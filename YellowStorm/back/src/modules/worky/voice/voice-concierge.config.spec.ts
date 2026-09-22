@@ -74,6 +74,11 @@ describe('voice-concierge.config', () => {
       expect(CONCIERGE_SYSTEM_PROMPT).toContain('worky');
     });
 
+    it('requires verifying a person via search_human_agents before dispatching', () => {
+      expect(CONCIERGE_SYSTEM_PROMPT).toContain('search_human_agents');
+      expect(CONCIERGE_SYSTEM_PROMPT).toMatch(/before you dispatch/i);
+    });
+
     it('appends the requester name and role to the system instruction', () => {
       const s = buildSetupMessage('gemini-live', 'Kore', decls, {
         requester: { name: 'Rabeb Sdiri', email: 'rabeb@yellowsys.fr', role: 'Data Scientist' },

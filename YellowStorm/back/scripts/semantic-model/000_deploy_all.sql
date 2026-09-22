@@ -107,6 +107,7 @@ CREATE TABLE IF NOT EXISTS semantic_model.node_types (
   aliases       JSONB       NOT NULL DEFAULT '[]'::jsonb,
   attributes    JSONB       NOT NULL DEFAULT '[]'::jsonb,
   position      JSONB       NOT NULL DEFAULT '{"x":0,"y":0}'::jsonb,
+  structured_mapping JSONB,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (version_id, id),
@@ -130,6 +131,7 @@ CREATE TABLE IF NOT EXISTS semantic_model.relation_types (
   traversable         BOOLEAN     NOT NULL DEFAULT true,
   filterable          BOOLEAN     NOT NULL DEFAULT true,
   attributes          JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  structured_mapping  JSONB,
   created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (version_id, id),
@@ -367,6 +369,115 @@ CREATE INDEX IF NOT EXISTS build_runs_heartbeat_active_idx
 
 
 -- =============================================================================
+-- 010 — Source mappings & identity rules (structured source modeling)
+-- =============================================================================
+-- Structured data mappings (Excel/CSV sheets) onto concepts, plus the concept
+-- identity rules used to recognize the same business entity across rows.
+-- Mappings are draft-scoped: concept ids refer to the current draft version.
+-- Version snapshotting of mappings ships with publish (see plan F12).
+
+CREATE TABLE IF NOT EXISTS semantic_model.source_mappings (
+  id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  model_id       UUID        NOT NULL REFERENCES semantic_model.models(id) ON DELETE CASCADE,
+  concept_id     UUID        NOT NULL,
+  workspace_id   TEXT        NOT NULL,
+  document_id    TEXT        NOT NULL,
+  sheet_name     TEXT        NOT NULL DEFAULT '',
+  asset_kind     TEXT        NOT NULL DEFAULT 'excel_sheet' CHECK (asset_kind IN ('excel_sheet', 'csv', 'document')),
+  field_mappings JSONB       NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(field_mappings) = 'array'),
+  status         TEXT        NOT NULL DEFAULT 'ready' CHECK (status IN ('draft', 'ready', 'needs_review', 'source_unavailable', 'broken')),
+  created_by     TEXT        NOT NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (model_id, concept_id, document_id, sheet_name)
+);
+
+ALTER TABLE semantic_model.source_mappings
+  DROP CONSTRAINT IF EXISTS source_mappings_asset_kind_check;
+ALTER TABLE semantic_model.source_mappings
+  ADD CONSTRAINT source_mappings_asset_kind_check
+  CHECK (asset_kind IN ('excel_sheet', 'csv', 'document'));
+
+CREATE INDEX IF NOT EXISTS semantic_source_mappings_model_idx
+  ON semantic_model.source_mappings (model_id);
+CREATE INDEX IF NOT EXISTS semantic_source_mappings_workspace_idx
+  ON semantic_model.source_mappings (workspace_id);
+
+CREATE TABLE IF NOT EXISTS semantic_model.identity_rules (
+  model_id    UUID        NOT NULL REFERENCES semantic_model.models(id) ON DELETE CASCADE,
+  concept_id  UUID        NOT NULL,
+  fields      JSONB       NOT NULL CHECK (jsonb_typeof(fields) = 'array' AND jsonb_array_length(fields) > 0),
+  updated_by  TEXT        NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (model_id, concept_id)
+);
+
+-- =============================================================================
+-- 011 — Cross-source relation resolution and source priority
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS semantic_model.relation_resolution_rules (
+  id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  model_id         UUID        NOT NULL REFERENCES semantic_model.models(id) ON DELETE CASCADE,
+  relation_id      UUID        NOT NULL,
+  source_attribute TEXT        NOT NULL,
+  target_attribute TEXT        NOT NULL,
+  strategy         TEXT        NOT NULL CHECK (strategy IN ('exact', 'case_insensitive', 'normalized')),
+  ambiguity_policy TEXT        NOT NULL DEFAULT 'review' CHECK (ambiguity_policy IN ('review', 'unresolved')),
+  updated_by       TEXT        NOT NULL,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (model_id, relation_id)
+);
+
+CREATE INDEX IF NOT EXISTS semantic_relation_resolution_rules_model_idx
+  ON semantic_model.relation_resolution_rules (model_id);
+
+CREATE TABLE IF NOT EXISTS semantic_model.source_resolution_policies (
+  model_id         UUID        NOT NULL REFERENCES semantic_model.models(id) ON DELETE CASCADE,
+  concept_id       UUID        NOT NULL,
+  priorities       JSONB       NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(priorities) = 'array'),
+  default_strategy TEXT        NOT NULL DEFAULT 'primary_then_fallback'
+    CHECK (default_strategy = 'primary_then_fallback'),
+  updated_by       TEXT        NOT NULL,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (model_id, concept_id)
+);
+
+CREATE TABLE IF NOT EXISTS semantic_model.review_items (
+  id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  model_id    UUID        NOT NULL REFERENCES semantic_model.models(id) ON DELETE CASCADE,
+  kind        TEXT        NOT NULL CHECK (kind IN ('ambiguous_relation', 'source_conflict', 'broken_mapping')),
+  target_id   TEXT        NOT NULL,
+  fingerprint TEXT        NOT NULL,
+  status      TEXT        NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved')),
+  details     JSONB       NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(details) = 'object'),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (model_id, fingerprint)
+);
+
+CREATE INDEX IF NOT EXISTS semantic_review_items_open_idx
+  ON semantic_model.review_items (model_id, updated_at DESC)
+  WHERE status = 'open';
+
+-- =============================================================================
+-- 012 - Business trust: mapping validation and review decisions
+-- =============================================================================
+
+ALTER TABLE semantic_model.source_mappings
+  ADD COLUMN IF NOT EXISTS validated_source_version TEXT,
+  ADD COLUMN IF NOT EXISTS validated_at TIMESTAMPTZ;
+
+ALTER TABLE semantic_model.review_items
+  ADD COLUMN IF NOT EXISTS resolution JSONB CHECK (resolution IS NULL OR jsonb_typeof(resolution) = 'object'),
+  ADD COLUMN IF NOT EXISTS resolved_by TEXT,
+  ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
+
+
+-- =============================================================================
 -- FIN
 -- =============================================================================
 
@@ -388,3 +499,35 @@ CREATE TABLE IF NOT EXISTS semantic_model.graph_index_jobs (
 CREATE INDEX IF NOT EXISTS graph_index_jobs_ready_idx
   ON semantic_model.graph_index_jobs (next_attempt_at, updated_at)
   WHERE status IN ('pending','in_progress');
+
+-- 014 - Revocable source-read grants
+CREATE SCHEMA IF NOT EXISTS semantic_access;
+CREATE TABLE IF NOT EXISTS semantic_access.read_grants (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(), actor_user_id TEXT NOT NULL,
+  model_id UUID NOT NULL REFERENCES semantic_model.models(id) ON DELETE CASCADE,
+  scope_hash TEXT NOT NULL, issued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ NOT NULL, revoked_at TIMESTAMPTZ,
+  jti TEXT NOT NULL UNIQUE, CHECK (expires_at > issued_at)
+);
+CREATE TABLE IF NOT EXISTS semantic_access.read_grant_sources (
+  grant_id UUID NOT NULL REFERENCES semantic_access.read_grants(id) ON DELETE CASCADE,
+  workspace_id TEXT NOT NULL, asset_id TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS semantic_read_grant_sources_uidx
+  ON semantic_access.read_grant_sources (grant_id, workspace_id, COALESCE(asset_id, ''));
+CREATE INDEX IF NOT EXISTS semantic_read_grants_actor_model_idx ON semantic_access.read_grants (actor_user_id, model_id);
+CREATE INDEX IF NOT EXISTS semantic_read_grants_expires_idx ON semantic_access.read_grants (expires_at);
+CREATE INDEX IF NOT EXISTS semantic_read_grant_sources_scope_idx ON semantic_access.read_grant_sources (grant_id, workspace_id, asset_id);
+REVOKE ALL ON SCHEMA semantic_access FROM PUBLIC;
+REVOKE ALL ON ALL TABLES IN SCHEMA semantic_access FROM PUBLIC;
+
+-- 015 - Per-model execution ownership
+ALTER TABLE semantic_model.models
+  ADD COLUMN IF NOT EXISTS execution_owner TEXT NOT NULL DEFAULT 'legacy',
+  ADD COLUMN IF NOT EXISTS runtime_claimed_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS runtime_claimed_by TEXT;
+ALTER TABLE semantic_model.models DROP CONSTRAINT IF EXISTS semantic_models_execution_owner_check;
+ALTER TABLE semantic_model.models ADD CONSTRAINT semantic_models_execution_owner_check CHECK (execution_owner IN ('legacy', 'runtime'));
+ALTER TABLE semantic_model.graph_index_jobs DROP CONSTRAINT IF EXISTS graph_index_jobs_status_check;
+ALTER TABLE semantic_model.graph_index_jobs ADD CONSTRAINT graph_index_jobs_status_check CHECK (status IN ('pending','in_progress','indexed','failed','superseded'));
+CREATE INDEX IF NOT EXISTS semantic_models_execution_owner_idx ON semantic_model.models (execution_owner, updated_at DESC);

@@ -1,19 +1,19 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types, FlattenMaps } from 'mongoose';
-import { UserProviderLink, UserProviderLinkDocument } from '../schemas/user-provider-link.schema';
+import { Inject } from '@nestjs/common';
+import { newObjectId } from '@common/postgres/object-id';
+import { USER_PROVIDER_LINK_STORE, type UserProviderLinkStore } from '../persistence/auth-provider.stores';
 import { UserService } from '@modules/user/user.service';
 import { LoggerService } from '@modules/logger';
 import { BadRequestException, ConflictException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 
-type UserProviderLinkLean = FlattenMaps<UserProviderLink> & { _id: Types.ObjectId };
+type UserProviderLinkLean = { id: string; userId: string; providerKey: string; providerUserId: string; providerEmail: string; linkedAt: Date };
 
 @Injectable()
 export class ProviderLinkService {
   constructor(
-    @InjectModel(UserProviderLink.name)
-    private readonly userProviderLinkModel: Model<UserProviderLinkDocument>,
+    @Inject(USER_PROVIDER_LINK_STORE)
+    private readonly userProviderLinkStore: UserProviderLinkStore,
     private readonly userService: UserService,
     private readonly logger: LoggerService,
   ) {
@@ -27,36 +27,27 @@ export class ProviderLinkService {
     providerKey: string,
     providerUserId: string,
   ): Promise<UserProviderLinkLean | null> {
-    return this.userProviderLinkModel
-      .findOne({ providerKey, providerUserId })
-      .lean()
-      .exec();
+    return this.userProviderLinkStore.findByProvider(providerKey, providerUserId);
   }
 
   /**
    * Find all linked providers for a user.
    */
   async findByUserId(userId: string): Promise<UserProviderLinkLean[]> {
-    return this.userProviderLinkModel
-      .find({ userId: new Types.ObjectId(userId) })
-      .lean()
-      .exec();
+    return this.userProviderLinkStore.findByUserId(userId);
   }
 
   /**
    * Create a new provider link.
    */
   async createLink(
-    userId: Types.ObjectId,
+    userId: string,
     providerKey: string,
     providerUserId: string,
     providerEmail: string,
-  ): Promise<UserProviderLinkDocument> {
+  ): Promise<UserProviderLinkLean> {
     // Check if already linked to another user
-    const existing = await this.userProviderLinkModel.findOne({
-      providerKey,
-      providerUserId,
-    });
+    const existing = await this.userProviderLinkStore.findByProvider(providerKey, providerUserId);
 
     if (existing) {
       if (existing.userId.toString() === userId.toString()) {
@@ -68,8 +59,8 @@ export class ProviderLinkService {
       );
     }
 
-    const link = await this.userProviderLinkModel.create({
-      userId,
+    const link = await this.userProviderLinkStore.create({
+      userId: String(userId),
       providerKey,
       providerUserId,
       providerEmail: providerEmail.toLowerCase(),
@@ -93,12 +84,9 @@ export class ProviderLinkService {
       );
     }
 
-    const result = await this.userProviderLinkModel.deleteOne({
-      userId: new Types.ObjectId(userId),
-      providerKey,
-    });
+    const deleted = await this.userProviderLinkStore.deleteByUserAndProvider(userId, providerKey);
 
-    if (result.deletedCount === 0) {
+    if (!deleted) {
       throw new BadRequestException(ErrorCode.AUTH_OAUTH_PROVIDER_NOT_FOUND, 'Provider link not found');
     }
 
@@ -118,10 +106,7 @@ export class ProviderLinkService {
     // OAuth-created users have a random hash that they don't know
 
     // Count other linked providers
-    const otherLinks = await this.userProviderLinkModel.countDocuments({
-      userId: new Types.ObjectId(userId),
-      providerKey: { $ne: providerKey },
-    });
+    const otherLinks = await this.userProviderLinkStore.countByUserExcluding(userId, providerKey);
 
     // Allow unlinking if user has other linked providers
     return otherLinks > 0;

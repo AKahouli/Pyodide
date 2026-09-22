@@ -50,6 +50,9 @@ export interface CatalogConnectorRecord {
     supportsBatch: boolean;
     supportsIteration: boolean;
     isEnabled: boolean;
+    resultKind?: string;
+    citationMode?: string;
+    resultMapping?: Record<string, unknown>;
   }>;
   referencedSkillSlugs: string[];
   isActive: boolean;

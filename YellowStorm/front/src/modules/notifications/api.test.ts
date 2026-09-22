@@ -22,9 +22,9 @@ vi.mock('@/lib/api', () => ({
     },
     // Dummy entries to satisfy re-exports elsewhere
     models: {
-      list: '/models',
-      byId: (id: string) => `/models/${id}`,
-      byChef: (slug: string) => `/models/chef/${slug}`,
+      list: '/model-catalog',
+      byId: (id: string) => `/model-catalog/${id}`,
+      byChef: (slug: string) => `/model-catalog/chef/${slug}`,
     },
   },
 }));

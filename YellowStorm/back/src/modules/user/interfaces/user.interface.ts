@@ -1,4 +1,4 @@
-import { RegistrationApproval, UserStatus } from '../schemas/user.schema';
+import { RegistrationApproval, UserStatus } from '../user.types';
 
 export interface IUserProfile {
   firstName?: string;

@@ -123,7 +123,7 @@ export default function ConversationV2SessionPage() {
     null;
 
   const handleSend = (text: string) => {
-    void sendMessage(text, activeModel?.litellmModel || undefined);
+    return sendMessage(text, activeModel?.litellmModel || undefined);
   };
 
   const latestPlan = useMemo(() => {

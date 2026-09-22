@@ -12,13 +12,15 @@ The Usage module provides plan management and token usage tracking for the Yello
 
 ## Architecture
 
-### Schemas
+### Tables
 
-| Schema | Description |
-|--------|-------------|
-| `Plan` | Defines subscription plans with token limits, features, and pricing |
-| `Usage` | Aggregated token usage per user per time window |
-| `UsageLog` | Detailed per-request logging for analytics |
+All persistence is PostgreSQL (Drizzle). Plans go through `PLAN_STORE` -> `PgPlanStore`; usage windows and logs go through `USAGE_STORE` -> `PostgresUsageStore`.
+
+| Table | Description |
+|-------|-------------|
+| `catalog.plans` | Subscription plans with token limits, features, and pricing (`PlanRecord`) |
+| `conversation.usage_windows` | Aggregated token usage per user per time window |
+| `conversation.usage_logs` | Detailed per-request logging for analytics |
 
 ### Time Windows
 
@@ -102,7 +104,7 @@ import { UsageService, UsageType } from '../usage';
 export class ChatService {
   constructor(private readonly usageService: UsageService) {}
 
-  async processChat(userId: string, plan: PlanDocument, result: ChatResult) {
+  async processChat(userId: string, plan: PlanRecord, result: ChatResult) {
     // Record the token usage
     await this.usageService.recordUsageWithPlan(
       {
@@ -183,7 +185,7 @@ Plans are automatically assigned during registration. To manually assign a plan:
 const plan = await usageService.getPlanBySlug('basic');
 
 // Assign to user
-await userService.assignPlan(userId, plan._id, plan.slug);
+await userService.assignPlan(userId, plan.id, plan.slug);
 ```
 
 ## Error Codes
@@ -223,23 +225,25 @@ const plan = await usageService.createPlan({
 
 ## Database Indexes
 
-The module creates the following indexes for performance:
+The Postgres schema defines the following indexes:
 
-**Plans Collection:**
-- `slug` (unique)
-- `isActive, displayOrder`
-- `isDefault`
+**`catalog.plans`:**
+- `name` (unique) and `slug` (unique)
+- `is_active, display_order`
 - `priority`
+- `is_default` (unique partial index WHERE `is_default`: at most one default plan)
 
-**Usage Collection:**
-- `userId, windowStart, windowEnd` (unique compound)
-- `userId, windowEnd`
-- `windowStart, planSlug`
+**`conversation.usage_windows`:**
+- `user_id, window_start, window_end` (unique)
+- `user_id, window_end DESC`
+- `window_start, plan_slug`
 
-**Usage Logs Collection:**
-- `userId, createdAt`
-- `usageType, modelName, createdAt`
-- `createdAt` (with 30-day TTL for auto-cleanup)
+**`conversation.usage_logs`:**
+- `user_id, created_at DESC`
+- `usage_type, model_name, created_at DESC`
+- `created_at DESC`
+
+There is no Mongo TTL index on usage logs: `UsageService.cleanupExpiredUsageLogs()` is an hourly `@Cron` job that deletes logs older than 30 days in batches via `usageStore.deleteLogsBefore()` (it is not a `PgTtlSweeper` registration).
 
 ## Integration with Auth Module
 
@@ -248,7 +252,7 @@ The auth module automatically assigns the default (free) plan to new users durin
 ```typescript
 // In AuthService.register()
 const defaultPlan = await this.usageService.getDefaultPlan();
-await this.userService.assignPlan(userId, defaultPlan._id, defaultPlan.slug);
+await this.userService.assignPlan(userId, defaultPlan.id, defaultPlan.slug);
 ```
 
 The user's plan is included in login responses and the `/users/me` endpoint.

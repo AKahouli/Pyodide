@@ -16,7 +16,7 @@ import { WorkyGovernanceService } from '../../services/worky-governance.service'
 import { UpsertWorkyGovernancePolicyDto } from '../../dto/worky-governance-policy.dto';
 import { RequirePermissions } from '../../../authorization/decorators/require-permissions.decorator';
 import { CurrentUser } from '../../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { Permissions } from '../../../authorization/constants/permissions';
 import { LoggerService } from '../../../logger';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
@@ -67,7 +67,7 @@ export class WorkyGovernanceAdminController {
   @RequirePermissions(Permissions.WORKY_ADMIN_GOVERNANCE)
   @ApiOperation({ summary: 'Upsert the workspace governance policy' })
   async upsert(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Body() dto: UpsertWorkyGovernancePolicyDto,
   ): Promise<IWorkyGovernancePolicyResponse> {
     const policy = await this.governance.upsertWorkspacePolicy(user._id.toString(), {

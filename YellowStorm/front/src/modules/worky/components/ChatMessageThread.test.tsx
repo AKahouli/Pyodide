@@ -369,7 +369,11 @@ describe('ChatMessageThread', () => {
 
     fireEvent.click(screen.getByRole('radio', { name: 'Approuver' }));
     await waitFor(() =>
-      expect(sendMutateAsync).toHaveBeenCalledWith(expect.objectContaining({ content: 'approve' })),
+      expect(sendMutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: JSON.stringify({ verdict: 'approve', questionId: 'confirm::call_1' }),
+        }),
+      ),
     );
   });
 });

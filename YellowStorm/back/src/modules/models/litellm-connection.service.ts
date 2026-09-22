@@ -26,6 +26,44 @@ export interface LiteLLMConnectionStatus {
   isReconnecting: boolean;
 }
 
+// Surfaces the proxy's error body (the part that says WHY a request failed —
+// invalid model name, context overflow, unsupported response_format...) instead
+// of Axios's generic "Request failed with status code N".
+export function describeLiteLlmHttpError(error: unknown): string {
+  if (error instanceof AxiosError) {
+    if (error.code === 'ECONNREFUSED') {
+      return 'Connection refused';
+    }
+    if (error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
+      return 'Connection timeout';
+    }
+    if (error.response) {
+      const data = error.response.data as unknown;
+      let detail = '';
+      if (typeof data === 'string') {
+        detail = data.trim();
+      } else if (data && typeof data === 'object') {
+        const record = data as Record<string, unknown>;
+        const candidate = (record.error ?? record.detail ?? record.message) as unknown;
+        if (typeof candidate === 'string') {
+          detail = candidate;
+        } else if (candidate && typeof candidate === 'object' && typeof (candidate as { message?: unknown }).message === 'string') {
+          detail = (candidate as { message: string }).message;
+        } else {
+          detail = JSON.stringify(data);
+        }
+      }
+      detail = detail ? `: ${detail.slice(0, 500)}` : `: ${error.response.statusText}`;
+      return `HTTP ${error.response.status}${detail}`;
+    }
+    return error.message;
+  }
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return 'Unknown error';
+}
+
 @Injectable()
 export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
   private httpClient: AxiosInstance | null = null;
@@ -259,22 +297,7 @@ export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
   }
 
   private extractErrorMessage(error: unknown): string {
-    if (error instanceof AxiosError) {
-      if (error.response) {
-        return `HTTP ${error.response.status}: ${error.response.statusText}`;
-      }
-      if (error.code === 'ECONNREFUSED') {
-        return 'Connection refused';
-      }
-      if (error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
-        return 'Connection timeout';
-      }
-      return error.message;
-    }
-    if (error instanceof Error) {
-      return error.message;
-    }
-    return 'Unknown error';
+    return describeLiteLlmHttpError(error);
   }
 
   // Public accessors

@@ -1,9 +1,12 @@
 import { ConversationArtifactService } from './conversation-artifact.service';
 
 describe('ConversationArtifactService', () => {
-  const messageService = { getMessageDocument: jest.fn() };
+  const messageService = { getMessageDocument: jest.fn(), listRecentArtifactMessages: jest.fn() };
   const documentService = { isAvailable: jest.fn(() => true), generateSasUrl: jest.fn() };
-  const conversationService = { getConversationDocument: jest.fn() };
+  const conversationService = {
+    getConversationDocument: jest.fn(),
+    filterAccessibleWorkspaceIds: jest.fn(async (_userId: string | undefined, ids: string[]) => ids),
+  };
   const workspaceDocumentService = { findByMultipleWorkspaces: jest.fn() };
   const service = new ConversationArtifactService(
     messageService as never,
@@ -13,6 +16,17 @@ describe('ConversationArtifactService', () => {
   );
 
   beforeEach(() => jest.clearAllMocks());
+
+  it('projects recent ready artifacts without storage paths', async () => {
+    messageService.listRecentArtifactMessages.mockResolvedValue([{
+      id: 'message-1', conversationId: 'conversation-1', conversationTitle: 'Quarterly review', updatedAt: new Date('2026-09-13T10:00:00Z'),
+      components: [{ type: 'artifact', data: { artifactId: 'artifact-1', filename: 'review.pdf', artifactKind: 'document', mimeType: 'application/pdf', storagePath: 'private/path' } }],
+    }]);
+
+    const result = await service.listRecent('user-1', 6);
+    expect(result).toEqual([expect.objectContaining({ artifactId: 'artifact-1', filename: 'review.pdf', conversationId: 'conversation-1' })]);
+    expect(JSON.stringify(result)).not.toContain('private/path');
+  });
 
   it('resolves a persisted artifact by scoped opaque identity', async () => {
     messageService.getMessageDocument.mockResolvedValue({
@@ -69,6 +83,23 @@ describe('ConversationArtifactService', () => {
       expiryMinutes: 10,
       checkExists: true,
     });
+  });
+
+  it('does not resolve a citation from a workspace the requester cannot access', async () => {
+    messageService.getMessageDocument.mockResolvedValue({
+      conversationId: { toString: () => 'conversation-1' },
+      components: [{ type: 'citation', data: { source: 'deepsearch', fileName: 'report.pdf', workspaceId: 'workspace-1' } }],
+    });
+    conversationService.getConversationDocument.mockResolvedValue({ workspaces: ['workspace-1'] });
+    conversationService.filterAccessibleWorkspaceIds.mockResolvedValueOnce([]);
+
+    await expect(service.resolveCitationUrl(
+      'conversation-1',
+      'message-1',
+      { source: 'deepsearch', fileName: 'report.pdf' },
+      'recipient-1',
+    )).rejects.toMatchObject({ status: 404 });
+    expect(workspaceDocumentService.findByMultipleWorkspaces).not.toHaveBeenCalled();
   });
 
   it('resolves a redacted selector by its persisted filename and reference', async () => {

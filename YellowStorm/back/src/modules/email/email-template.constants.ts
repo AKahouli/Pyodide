@@ -9,6 +9,7 @@ export enum EmailTemplate {
   LINK_OAUTH_ACCOUNT = 'link-oauth-account',
   REGISTRATION_PENDING_ADMIN = 'registration-pending-admin',
   REGISTRATION_APPROVED = 'registration-approved',
+  APP_SHARE_INVITE = 'app-share-invite',
 }
 
 export interface EmailTemplateConfig {
@@ -46,5 +47,9 @@ export const EMAIL_TEMPLATES: Record<EmailTemplate, EmailTemplateConfig> = {
   [EmailTemplate.REGISTRATION_APPROVED]: {
     file: 'registration-approved.html',
     subject: 'Your account has been approved - {{appName}}',
+  },
+  [EmailTemplate.APP_SHARE_INVITE]: {
+    file: 'app-share-invite.html',
+    subject: '{{appTitle}} — create your account',
   },
 };

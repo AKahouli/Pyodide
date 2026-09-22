@@ -1,0 +1,33 @@
+{
+  "id": "64b000000000000000000c01",
+  "name": "Support squad",
+  "description": "Handles support",
+  "members": [
+    {
+      "agentId": "64b000000000000000000c12",
+      "parentAgentId": null,
+      "order": 0,
+      "positionX": 10,
+      "positionY": 20
+    },
+    {
+      "agentId": "64b000000000000000000c11",
+      "parentAgentId": "64b000000000000000000c12",
+      "order": 1,
+      "positionX": 30,
+      "positionY": 40
+    },
+    {
+      "agentId": "64b000000000000000000c10",
+      "parentAgentId": "64b000000000000000000c12",
+      "order": 2,
+      "positionX": 50,
+      "positionY": 60
+    }
+  ],
+  "agentCount": 3,
+  "isActive": true,
+  "createdBy": "64b000000000000000000001",
+  "createdAt": "<volatile>",
+  "updatedAt": "<volatile>"
+}

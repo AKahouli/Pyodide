@@ -58,8 +58,8 @@ The conversation module provides:
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐       │
-│  │   Controllers    │◄──►│    Services      │◄──►│    Schemas       │       │
-│  │  (REST + SSE)    │    │  (Business Logic)│    │   (MongoDB)      │       │
+│  │   Controllers    │◄──►│    Services      │◄──►│  Store ports     │       │
+│  │  (REST + SSE)    │    │  (Business Logic)│    │  (PostgreSQL)    │       │
 │  └────────┬─────────┘    └────────┬─────────┘    └──────────────────┘       │
 │           │                       │                                         │
 │           ▼                       ▼                                         │
@@ -72,8 +72,8 @@ The conversation module provides:
 │  ┌──────────────────────────────────────────────────────────────────┐       │
 │  │                         External Services                        │       │
 │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐               │       │
-│  │  │   MongoDB   │  │ AI Service  │  │   Azure     │               │       │
-│  │  │  (Mongoose) │  │   (gRPC)    │  │    Blob     │               │       │
+│  │  │ PostgreSQL  │  │ AI Service  │  │   Azure     │               │       │
+│  │  │  (Drizzle)  │  │   (gRPC)    │  │    Blob     │               │       │
 │  │  └─────────────┘  └─────────────┘  └─────────────┘               │       │
 │  └──────────────────────────────────────────────────────────────────┘       │
 │                                                                             │
@@ -87,7 +87,7 @@ The conversation module provides:
 | Technology | Purpose |
 |------------|---------|
 | **NestJS 10** | Backend framework with dependency injection |
-| **MongoDB/Mongoose** | Database with schema validation |
+| **PostgreSQL/Drizzle** | Database (`conversation` schema) behind store ports (`CONVERSATION_STORE`, `MESSAGE_STORE`, `REPORT_STORE`, `SHARE_STORE`, ...) with `Postgres*` adapters |
 | **gRPC** | High-performance streaming to AI service |
 | **Server-Sent Events (SSE)** | Real-time streaming to browser clients |
 | **RxJS** | Reactive stream handling for SSE |
@@ -118,11 +118,7 @@ conversation/
 │   ├── stream-gateway.service.ts   # SSE connection management
 │   ├── share.service.ts            # Sharing logic
 │   └── report.service.ts           # Report management
-├── schemas/
-│   ├── conversation.schema.ts      # Conversation model
-│   ├── message.schema.ts           # Message model
-│   ├── report.schema.ts            # Report model
-│   └── shared-conversation.schema.ts # Shared conversation model
+├── persistence/                    # Store ports + Postgres adapters (postgres/postgres-*-store.ts)
 ├── interfaces/
 │   ├── conversation.interface.ts   # Conversation types
 │   ├── message.interface.ts        # Message types
@@ -161,13 +157,7 @@ The module is configured in `conversation.module.ts`:
 @Module({
   imports: [
     ConfigModule.forFeature(conversationConfig),
-    MongooseModule.forFeature([
-      { name: Conversation.name, schema: ConversationSchema },
-      { name: Message.name, schema: MessageSchema },
-      { name: Report.name, schema: ReportSchema },
-      { name: SharedConversation.name, schema: SharedConversationSchema },
-      { name: User.name, schema: UserSchema },
-    ]),
+    ConversationPersistenceModule,   // Postgres stores (CONVERSATION_STORE, MESSAGE_STORE, REPORT_STORE, SHARE_STORE, ...); no MongooseModule
     JwtModule.register({}),
     forwardRef(() => AuthModule),
     forwardRef(() => AuthorizationModule),
@@ -301,7 +291,7 @@ File upload and management for conversation attachments. Files are stored in a p
 
 **Blob path format:** `/{userId}/{conversationId}/{documentId}/{filename}`
 
-**Race condition handling:** When multiple files are attached simultaneously, concurrent calls to `ensureSystemWorkspace` may race to create the same workspace. This is handled by catching MongoDB duplicate key errors (E11000) and retrying the lookup.
+**Race condition handling:** When multiple files are attached simultaneously, concurrent calls to `ensureSystemWorkspace` may race to create the same workspace. If creation fails (for example because another request created it first), the service looks the workspace up again with `findSystemWorkspace` and reuses it.
 
 ---
 
@@ -434,6 +424,8 @@ class ReportService {
 
 ## Schemas
 
+The conversation domain lives in the Postgres `conversation` schema (Drizzle: `postgres/schema/conversation.schema.ts`), behind the store ports in `persistence/` (`CONVERSATION_STORE`, `MESSAGE_STORE`, `REPORT_STORE`, `SHARE_STORE`, `CONVERSATION_BRANCH_STORE`, `CONVERSATION_EXECUTION_STORE`, `CONVERSATION_ANALYTICS_STORE`, `CONVERSATION_PLAYBOOK_HANDOFF_STORE`) implemented by the `Postgres*Store` adapters and wired by `ConversationPersistenceModule`. The TypeScript classes below are the logical models. Array-valued fields are stored in child tables keyed by `(conversation_id, position)` with `ON DELETE CASCADE`: `conversation_workspaces`, `conversation_selected_skills`, `conversation_tagged_agents`, `conversation_group_tagged_agents`, `conversation_group_members`, `conversation_group_invites` and `conversation_member_mentions`. `messages`, reports (`reports`) and shared conversations (`shared_conversations`) are separate tables in the same schema.
+
 ### Conversation Schema
 
 ```typescript
@@ -457,14 +449,13 @@ class Conversation {
     isGroup: boolean;
     members: { userId: ObjectId; joinedAt: Date; status: string; job?: string }[];
     invitedUsers: { email: string; status: string; invitedAt: Date }[];
-    taggedAgents?: ObjectId[];      // Group shared toolbox ($addToSet; not sticky routing)
+    taggedAgents?: ObjectId[];      // Group shared toolbox (deduplicated; not sticky routing)
   };
 }
 
-// Indexes
-{ createdBy: 1, lastMessageAt: -1 }
-{ createdBy: 1, isArchived: 1, lastMessageAt: -1 }
-{ createdBy: 1, createdAt: -1 }
+// Indexes (Postgres, conversation.conversations): idx_conversations_owner_archived_last_message (created_by, is_archived, last_message_at)
+// plus partial owner/ready listing indexes ordered by last_message_at, created_at and title;
+// unique partial indexes on (created_by, <creation request id>) make creation idempotent
 ```
 
 ### Message Schema
@@ -531,12 +522,7 @@ class Message {
   updatedAt: Date;
 }
 
-// Indexes
-{ conversationId: 1, createdAt: 1 }
-{ conversationId: 1, conversationType: 1 }
-{ questionMessageId: 1 }
-{ isStreaming: 1, updatedAt: 1 }
-{ requestId: 1 }
+// Indexes: see postgres/schema/conversation.schema.ts (conversation.messages)
 ```
 
 ### MessageComponent Types
@@ -713,7 +699,7 @@ this.chatbotClient = new chatbotPackage.ChatbotService(grpcUrl, grpc.credentials
    - Throttle delivery to frontend (~60fps)
    - Track token usage
 4. On 'end':
-   - Persist components to MongoDB
+   - Persist components to Postgres
    - Record usage
    - Send stream_complete via SSE
 5. On 'error':
@@ -920,12 +906,12 @@ The backend implements logic to skip AI responses under certain conditions:
 
 In group conversations (`isGroup: true`), agents tagged by users in their messages are automatically persisted to the conversation's metadata (`groupMeta.taggedAgents`). This allows all members of the conversation to see and use the same agents, creating a **shared toolbox**.
 
-> **Not the same as sticky routing.** `groupMeta.taggedAgents` is append-only (`$addToSet`) and expands the agent pool available in group streams. Sticky routing (`taggedAgentIds`) selects which agents run on untagged follow-ups — see [Sticky Agent Routing](#sticky-agent-routing).
+> **Not the same as sticky routing.** `groupMeta.taggedAgents` is append-only (deduplicated) and expands the agent pool available in group streams. Sticky routing (`taggedAgentIds`) selects which agents run on untagged follow-ups — see [Sticky Agent Routing](#sticky-agent-routing).
 
 ### Persistence Workflow
 
 1.  **Tag Detection**: When a user sends or updates a message with `agentIds`, the `MessageService` detects these mentions.
-2.  **Metadata Update**: The `ConversationService.updateTaggedAgents` method is called to add these new agent IDs to the `groupMeta.taggedAgents` array using a MongoDB `$addToSet` operation.
+2.  **Metadata Update**: The `ConversationService.updateTaggedAgents` method is called to add these new agent IDs to the `groupMeta.taggedAgents` list (`conversation_group_tagged_agents`) without duplicates.
 3.  **Global Availability**: Once persisted, these agents are considered "shared" within the conversation.
 
 ### API Access
@@ -1133,7 +1119,7 @@ PATCH  /api/v1/reports/:id/status               Update report status
    ├── Create system workspace if files attached
    ├── resolveAgentIds(dto.agentIds, dto.teamIds) → mentionedAgentIds
    ├── resolveStickyAgentRouting
-   │   ├── mention → replaceTaggedAgentIds (full $set on conversation.taggedAgentIds)
+   │   ├── mention → replaceTaggedAgentIds (replaces the conversation.taggedAgentIds list)
    │   ├── sticky  → reuse conversation.taggedAgentIds
    │   └── none    → undefined (mono-agent later in buildAgentsForStream)
    └── effectiveAgentIds passed to message + stream
@@ -1141,7 +1127,7 @@ PATCH  /api/v1/reports/:id/status               Update report status
    ├── Validate content length (50000 max)
    ├── Validate file count (5 max)
    ├── Create message document (stores effective agentIds for regenerate)
-   ├── updateTaggedAgents (group roster $addToSet only if isGroup)
+   ├── updateTaggedAgents (group roster append (deduplicated) only if isGroup)
    └── Update conversation refs
 4. MessageService.createAIPlaceholder()
    ├── Create AI message (isStreaming: true)
@@ -1269,7 +1255,7 @@ const durationMs = Date.now() - startTime;
 
 ### Persistence
 
-All timing metrics are persisted to the message document and returned in API responses:
+All timing metrics are persisted to the message row and returned in API responses:
 
 ```typescript
 await this.messageService.completeAIMessage({
@@ -1401,7 +1387,7 @@ Sticky routing keeps the last `@mention` agent set on the conversation so follow
 | Field | Location | Semantics |
 |-------|----------|-----------|
 | `taggedAgentIds` | Top-level on `Conversation` | Sticky routing set — **full replace** on new mentions; **reuse** when the turn has no mentions |
-| `groupMeta.taggedAgents` | Group meta only | Shared toolbox — `$addToSet` (append-only); unrelated to sticky routing |
+| `groupMeta.taggedAgents` | Group meta only | Shared toolbox — append-only, deduplicated; unrelated to sticky routing |
 
 ### Decision helper
 
@@ -1416,7 +1402,7 @@ Sticky routing keeps the last `@mention` agent set on the conversation so follow
 
 ### Persistence
 
-`ConversationService.replaceTaggedAgentIds(conversationId, agentIds)` performs `$set: { taggedAgentIds }` (replace entire array). Called when the turn has new mentions.
+`ConversationService.replaceTaggedAgentIds(conversationId, agentIds)` replaces the whole `taggedAgentIds` list (`conversation_tagged_agents`). Called when the turn has new mentions.
 
 ### Examples
 
@@ -1549,15 +1535,15 @@ Group conversations persist **per-member mention records** on the conversation d
 
 ### Data model
 
-- **Schema** (`schemas/conversation.schema.ts`): Under `groupMeta.members[]`, each member may have `mentions[]` with:
-  - `messageId` (ref to `Message`)
+- **Storage**: table `conversation.conversation_member_mentions` (`conversation_id`, `user_id`, `position`, `message_id` FK to `messages` with `ON DELETE CASCADE`, `seen_at`); exposed logically as `groupMeta.members[].mentions[]` with:
+  - `messageId` (FK to `messages`)
   - `seenAt` (optional `Date`)
 - **Types** (`interfaces/conversation.interface.ts`): `GroupMember.mentions` is `{ messageId: string; seenAt?: string }[]` in API responses.
 
 ### Persistence (`ConversationService`)
 
-- **`addMention(conversationId, userId, messageId)`** — `$push` a new `{ messageId }` onto the target member’s `mentions` array (dedupe by application flow before insert).
-- **`markMentionSeen(conversationId, userId, messageId)`** — `$set` `seenAt` on the matching array element using array filters on `member.userId` and `mention.messageId`.
+- **`addMention(conversationId, userId, messageId)`** — appends a mention row for the target member (dedupe by application flow before insert).
+- **`markMentionSeen(conversationId, userId, messageId)`** — sets `seen_at` on the matching mention row for that user and message.
 
 ### HTTP API (`ConversationController`)
 
@@ -1568,11 +1554,11 @@ Group conversations persist **per-member mention records** on the conversation d
 Private method **`extractAndNotifyMentions(message, conversationId)`** runs after relevant user/AI messages are persisted (see call sites in the service for create/update flows). It only runs when the conversation is a **group** (`groupMeta.isGroup`).
 
 1. **Who is mentioned**
-   - Explicit **`memberIds`** on the message (Mongo ids) are always included.
+   - Explicit **`memberIds`** on the message (24-char hex ids) are always included.
    - Otherwise, **text scan**: for each group member, if the message body contains `@<name>` (case-insensitive) where `name` is the member’s display name or email local-part, that member is mentioned.
    - For **AI messages**, text is taken from text-type **components**; for **user** messages, from `content`.
 2. **Per mentioned user**
-   - **`addMention`** saves the record in MongoDB.
+   - **`addMention`** saves the record in Postgres.
    - **`broadcastMention`** sends an SSE payload to that user only via `StreamGatewayService.sendToUser` (not a broadcast to the whole conversation room).
 
 ### SSE event (`interfaces/stream.interface.ts`)

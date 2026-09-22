@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -6,8 +6,6 @@ import {
   ClassificationRunDocument,
   ClassificationRunStatus,
 } from '../schemas/classification-run.schema';
-import { Flow, FlowDocument } from '../../playbook-flow/schemas/playbook-flow.schema';
-import { WorkspaceDoc, WorkspaceDocumentDoc } from '../../workspace/schemas/workspace-document.schema';
 import {
   ClassifierFileAssignment,
   ClassifierFileAssignmentDocument,
@@ -22,6 +20,11 @@ import {
 } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { LoggerService } from '../../logger';
+import { FLOW_READ_PORT, type FlowReadPort } from '../../playbook-flow/ports/flow-read.port';
+import {
+  WORKSPACE_DOCUMENT_READ_PORT,
+  type WorkspaceDocumentReadPort,
+} from '../../workspace/ports';
 import { ClassifierAccessService } from './classifier-access.service';
 import { ClassifierRuleService } from './classifier-rule.service';
 
@@ -30,10 +33,8 @@ export class ClassifierRunService {
   constructor(
     @InjectModel(ClassificationRun.name)
     private readonly runModel: Model<ClassificationRunDocument>,
-    @InjectModel(Flow.name)
-    private readonly playbookModel: Model<FlowDocument>,
-    @InjectModel(WorkspaceDoc.name)
-    private readonly documentModel: Model<WorkspaceDocumentDoc>,
+    @Inject(FLOW_READ_PORT) private readonly flowReadPort: FlowReadPort,
+    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly documentReadPort: WorkspaceDocumentReadPort,
     @InjectModel(ClassifierFileAssignment.name)
     private readonly assignmentModel: Model<ClassifierFileAssignmentDocument>,
     private readonly access: ClassifierAccessService,
@@ -53,11 +54,7 @@ export class ClassifierRunService {
     if (!Types.ObjectId.isValid(dto.playbookId)) {
       throw new BadRequestException(ErrorCode.CLASSIFIER_RUN_PLAYBOOK_INVALID);
     }
-    const playbook = await this.playbookModel
-      .findById(dto.playbookId)
-      .select({ _id: 1, createdBy: 1 })
-      .lean()
-      .exec();
+    const playbook = await this.flowReadPort.findById(dto.playbookId);
     if (!playbook) {
       throw new BadRequestException(ErrorCode.CLASSIFIER_RUN_PLAYBOOK_INVALID);
     }
@@ -66,8 +63,7 @@ export class ClassifierRunService {
 
     // Count candidate files: all workspace docs (excluding folders), minus
     // already-classified ones when overwrite is false.
-    const baseFilter = { workspaceId: wsObjectId, isFolder: { $ne: true } };
-    const totalDocuments = await this.documentModel.countDocuments(baseFilter).exec();
+    const totalDocuments = await this.documentReadPort.countDocuments({ workspaceId, isFolder: false });
 
     let candidateCount = totalDocuments;
     if (!dto.overwrite) {

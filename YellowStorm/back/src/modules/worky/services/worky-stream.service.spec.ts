@@ -85,7 +85,6 @@ describe('WorkyStreamService.create', () => {
 
     const service = new WorkyStreamService(
       streamModel as any,
-      workspaceModel as any,
       agentRepository as any,
       connection as any,
       agentTypeService as any,
@@ -200,7 +199,6 @@ describe('WorkyStreamService.ensureKickoffContext', () => {
     const grpcClient = { createSession: jest.fn().mockResolvedValue('sess-new') };
     const service = new WorkyStreamService(
       streamModel as any,
-      workspaceModel as any,
       agentRepository as any,
       connection as any,
       agentTypeService as any,
@@ -308,7 +306,6 @@ describe('WorkyStreamService.patch (per-stream model selection)', () => {
     const grpcClient = { createSession: jest.fn().mockResolvedValue('sess-xyz') };
     const service = new WorkyStreamService(
       streamModel as any,
-      workspaceModel as any,
       agentRepository as any,
       connection as any,
       agentTypeService as any,
@@ -426,7 +423,6 @@ describe('WorkyStreamService.findAllForUser', () => {
     const grpcClient = { createSession: jest.fn() };
     const service = new WorkyStreamService(
       streamModel as any,
-      workspaceModel as any,
       agentRepository as any,
       connection as any,
       agentTypeService as any,
@@ -575,7 +571,6 @@ describe('WorkyStreamService.delete', () => {
     const grpcClient = { createSession: jest.fn().mockResolvedValue('sess-xyz') };
     const service = new WorkyStreamService(
       streamModel as any,
-      workspaceModel as any,
       agentRepository as any,
       connection as any,
       agentTypeService as any,

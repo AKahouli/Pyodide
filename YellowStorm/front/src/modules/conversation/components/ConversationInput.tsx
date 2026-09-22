@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { toast } from 'sonner';
-import { BrainCircuit, ChevronDown, X, Reply, Search } from 'lucide-react';
+import { X, Reply } from 'lucide-react';
 import Input from '@/components/ai-elements/input';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
-import { PromptInputButton } from '@/components/ai-elements/prompt-input';
 import type { PromptInputMessage } from '@/components/ai-elements/prompt-input';
-import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useSelectedSemanticModelId, useDeepSearchEnabled, useSetDeepSearchEnabled, useSelectedModelId, useSelectedReasoningEffort, useSetSelectedReasoningEffort } from '../store';
+import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useSelectedSemanticModelId, useDeepSearchEnabled, useSelectedModelId, useSelectedReasoningEffort, useWebConnectorAccessEnabled } from '../store';
 import { UsageLimitBanner } from '@/modules/usage';
 import { useUsage } from '@/modules/usage/UsageContext';
 import { useConversationFileUpload } from '../hooks/useConversationFileUpload';
+import { useConversationSettings } from '../hooks/useConversationSettings';
 import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '@/modules/auth/useAuth';
@@ -17,8 +16,8 @@ import { ComposerSuggestionChips } from './ComposerSuggestionChips';
 import { SelectedConnectorRepo } from './SelectedConnectorRepo';
 import { ContextMeter } from './ContextMeter';
 import { ReliabilityCheckToggle } from './ReasoningEffortSelect';
+import { WebSearchConnectorToggle } from './WebSearchConnectorToggle';
 import { useDefaultModel, useModels } from '@/modules/models';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 interface ConversationInputProps {
   conversationId: string;
@@ -28,6 +27,8 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   const sendMessage = useConversationStore((s) => s.sendMessage);
   const updateConversation = useConversationStore((s) => s.updateConversation);
   const { accept } = useAllowedUploadExtensions();
+  const conversationSettings = useConversationSettings();
+  const attachmentsDisabled = conversationSettings?.attachmentIntelligence?.enabled !== true;
   const stopStream = useConversationStore((s) => s.stopStream);
   const replyingToMessage = useReplyingToMessage();
   const clearReplyingTo = useConversationStore((s) => s.clearReplyingTo);
@@ -48,10 +49,9 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   const { t } = useModuleTranslation('conversation');
   const { user } = useAuth();
   const deepSearchEnabled = useDeepSearchEnabled();
-  const setDeepSearchEnabled = useSetDeepSearchEnabled();
+  const webConnectorAccessEnabled = useWebConnectorAccessEnabled();
   const selectedModelId = useSelectedModelId();
   const selectedReasoningEffort = useSelectedReasoningEffort();
-  const setSelectedReasoningEffort = useSetSelectedReasoningEffort();
   const models = useModels();
   const defaultModel = useDefaultModel();
   const selectedModel = models.find((model) => model.id === selectedModelId) ?? defaultModel ?? models[0];
@@ -176,6 +176,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         attachedFileIds: completedFileIds.length ? completedFileIds : undefined,
         attachedFiles: attachedFiles.length ? attachedFiles : undefined,
         deepSearchEnabled: deepSearchEnabled || undefined,
+        webConnectorAccessEnabled: runtimeManaged ? undefined : webConnectorAccessEnabled,
         modelId: runtimeManaged ? undefined : (modelId || undefined),
         semanticModelId: runtimeManaged ? undefined : (selectedSemanticModelId || undefined),
         agentIds: !runtimeManaged && agentIds?.length ? agentIds : undefined,
@@ -194,7 +195,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
       clearAll();
       clearReplyingTo();
     },
-    [completedFileIds, uploadFiles, sendMessage, conversationId, clearAll, clearReplyingTo, replyingToMessage?.id, runtimeManaged, hasStickyTaggedAgents, selectedWorkspaceIds, selectedSemanticModelId, setSelectedWorkspaceIds, updateConversation, deepSearchEnabled, effectiveReasoningEffort],
+    [completedFileIds, uploadFiles, sendMessage, conversationId, clearAll, clearReplyingTo, replyingToMessage?.id, runtimeManaged, hasStickyTaggedAgents, selectedWorkspaceIds, selectedSemanticModelId, setSelectedWorkspaceIds, updateConversation, deepSearchEnabled, webConnectorAccessEnabled, effectiveReasoningEffort],
   );
 
   const senderDisplayName = useMemo(() => {
@@ -259,6 +260,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
       )}
 
       <Input
+        draftKey={`${user?.id ?? 'anonymous'}:conversation:${conversationId}`}
         onSubmit={handleSubmit}
         onStop={stopStream}
         status={status}
@@ -270,49 +272,19 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         uploadingFiles={uploadFiles}
         accept={accept}
         maxFiles={5}
+        attachmentsDisabled={attachmentsDisabled}
         members={membersToTag}
         autoMention={autoMention}
         showWorkspaceSelect={!runtimeManaged}
         onWorkspaceSelectionChange={persistWorkspaceSelection}
         preserveWorkspaceSelectionOnSubmit
         showModelSelector={!runtimeManaged}
+        showReasoningEffort={!runtimeManaged && !hasStickyTaggedAgents}
         governedMode={runtimeManaged}
         enableTeamMentions={!runtimeManaged}
         extraTools={
           <>
-            <PromptInputButton
-              type='button'
-              onClick={() => setDeepSearchEnabled(!deepSearchEnabled)}
-              className={cn(deepSearchEnabled && 'bg-primary/10 text-primary')}
-              title={t('input.deepSearch')}
-              aria-label={t('input.deepSearch')}
-              aria-pressed={deepSearchEnabled}
-            >
-              <Search className='h-4 w-4' />
-            </PromptInputButton>
-            {!governedMode && !platformCopilot && !hasStickyTaggedAgents && reasoningEfforts.length > 0 && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <PromptInputButton type='button' aria-label={t('input.reasoning.label')}>
-                    <BrainCircuit className='h-4 w-4' />
-                    <span className='hidden sm:inline'>
-                      {reasoningEfforts.find((effort) => effort.id === effectiveReasoningEffort)?.name ?? t('input.reasoning.label')}
-                    </span>
-                    <ChevronDown className='h-3 w-3 opacity-60' />
-                  </PromptInputButton>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align='start'>
-                  <DropdownMenuLabel>{t('input.reasoning.label')}</DropdownMenuLabel>
-                  <DropdownMenuRadioGroup value={effectiveReasoningEffort ?? undefined} onValueChange={setSelectedReasoningEffort}>
-                    {reasoningEfforts.map((effort) => (
-                      <DropdownMenuRadioItem key={effort.id} value={effort.id} title={effort.description}>
-                        {effort.name}
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
+            {!runtimeManaged && <WebSearchConnectorToggle />}
             <ReliabilityCheckToggle />
           </>
         }

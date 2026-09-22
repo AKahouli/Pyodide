@@ -23,6 +23,7 @@ export function emptySlice(): SessionSlice {
     deployStatus: 'idle',
     deployedUrl: null,
     lastDeployedAt: null,
+    ownerInviteToken: null,
     appViewMode: 'nodepod',
     selectedToolCallId: null,
     selectedConnectorRepo: null,

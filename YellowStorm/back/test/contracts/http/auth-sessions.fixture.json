@@ -1,0 +1,22 @@
+{
+  "success": true,
+  "data": [
+    {
+      "id": "6ab0146ff026132b19466b2a",
+      "deviceInfo": {
+        "userAgent": "node",
+        "deviceType": "desktop"
+      },
+      "ipAddress": "127.0.0.1",
+      "createdAt": "<volatile>",
+      "lastActivityAt": "<volatile>",
+      "isCurrent": false
+    }
+  ],
+  "meta": {
+    "timestamp": "<volatile>",
+    "requestId": "<volatile>",
+    "path": "/api/v1/auth/sessions",
+    "duration": 23
+  }
+}

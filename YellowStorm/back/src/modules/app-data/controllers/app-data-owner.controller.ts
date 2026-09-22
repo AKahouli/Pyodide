@@ -28,6 +28,7 @@ import type { AppDataEnvironment } from '../constants/app-data.constants';
 import type { AppDataEndUserGrants, AppDataEndUserStatus } from '../constants/app-data.types';
 import { assertIdentifier } from '../utils/app-data-sql.util';
 import { parseAppDataEnvironment, parsePositiveInt } from '../utils/app-data-request.util';
+import { assertAppDataEnabled, assertEndUserManagementEnabled } from '../utils/app-data-feature.util';
 
 @ApiTags('App Data Owner')
 @Controller('conversation-v2/sessions/:id/app-data')
@@ -46,21 +47,11 @@ export class AppDataOwnerController {
   ) {}
 
   private assertEnabled(): void {
-    if (
-      !this.config.get<boolean>('appData.enabled', false) ||
-      !this.config.get<boolean>('appData.dataTabEnabled', false)
-    ) {
-      throw new ServiceUnavailableException('App Data owner API is disabled');
-    }
+    assertAppDataEnabled(this.config);
   }
 
   private assertEndUserManagementEnabled(): void {
-    if (
-      !this.config.get<boolean>('appData.enabled', false) ||
-      !this.config.get<boolean>('appData.endUserAuthEnabled', true)
-    ) {
-      throw new ServiceUnavailableException('App Data end-user management is disabled');
-    }
+    assertEndUserManagementEnabled(this.config);
   }
 
   private async workspaceId(sessionId: string): Promise<string> {
@@ -85,7 +76,7 @@ export class AppDataOwnerController {
   }
 
   @Get('end-users')
-  @ApiOperation({ summary: 'List registered app end-users and their CRUD grants' })
+  @ApiOperation({ summary: 'List registered app end-users and their CRUD + AI grants' })
   async listEndUsers(@Param('id') sessionId: string) {
     this.assertEndUserManagementEnabled();
     const app = await this.requireApp(sessionId);
@@ -93,7 +84,7 @@ export class AppDataOwnerController {
   }
 
   @Put('end-users/:userId/grants')
-  @ApiOperation({ summary: 'Update CRUD grants for an app end-user' })
+  @ApiOperation({ summary: 'Update CRUD + AI grants for an app end-user' })
   async updateEndUserGrants(
     @Param('id') sessionId: string,
     @Param('userId') userId: string,
@@ -102,12 +93,8 @@ export class AppDataOwnerController {
     this.assertEndUserManagementEnabled();
     const app = await this.requireApp(sessionId);
     await this.endUsers.requireById(app.id, userId);
-    const grants: AppDataEndUserGrants = {
-      create: body.create === true,
-      read: body.read === true,
-      update: body.update === true,
-      delete: body.delete === true,
-    };
+    const current = await this.grants.getGrants(app.id, userId);
+    const grants: AppDataEndUserGrants = AppDataEndUserGrantsService.mergeGrants(current, body);
     const updated = await this.grants.updateGrants(app.id, userId, grants);
     await this.audit.record({
       appId: app.id,

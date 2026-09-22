@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "hasToken": true,
+  "botUsername": "my_agent_bot",
+  "status": "active",
+  "updatedAt": "<volatile>",
+  "webhookRegistered": true,
+  "linkCode": "ABC123",
+  "linkCodeExpiresAt": "2026-01-02T00:10:00.000Z"
+}

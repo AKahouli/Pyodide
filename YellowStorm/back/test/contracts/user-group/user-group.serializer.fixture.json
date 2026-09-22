@@ -1,0 +1,20 @@
+{
+  "id": "64b000000000000000000030",
+  "name": "platform-team",
+  "description": "Platform engineers",
+  "members": [
+    {
+      "id": "64b000000000000000000001",
+      "email": "jane.doe@example.com",
+      "firstName": "Jane",
+      "lastName": "Doe"
+    },
+    {
+      "id": "64b000000000000000000004",
+      "email": "john@example.com"
+    }
+  ],
+  "memberCount": 2,
+  "createdAt": "<volatile>",
+  "updatedAt": "<volatile>"
+}

@@ -1,18 +1,27 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Inject, Injectable } from '@nestjs/common';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { CreateGovernanceDeploymentDto, CreateGovernanceRevisionDto, PublishGovernanceDeploymentDto, UpdateGovernanceDeploymentDto, UpdateGovernanceRevisionDto } from '../dto';
+import {
+  BINDING_STORE,
+  DEPLOYMENT_STORE,
+  DRY_RUN_STORE,
+  PUBLICATION_ATTEMPT_STORE,
+  REVISION_STORE,
+  type BindingStore,
+  type DeploymentStore,
+  type DryRunStore,
+  type GovernanceDeploymentRecord,
+  type GovernanceRevisionRecord,
+  type PublicationAttemptStore,
+  type RevisionStore,
+  GOVERNANCE_TRANSACTION, PASSTHROUGH_TRANSACTION, type GovernanceTransactionRunner
+} from '../persistence';
+import type { GovernancePublicationAttemptStatus } from '../domain/governance-types';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceScopeService } from './governance-scope.service';
 import { GovernanceAccessService } from './governance-access.service';
-import { GovernanceDeployment, GovernanceDeploymentDocument } from '../schemas/governance-deployment.schema';
-import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } from '../schemas/governance-deployment-revision.schema';
-import { GovernanceDryRun, GovernanceDryRunDocument } from '../schemas/governance-dry-run.schema';
-import { GovernanceWorkspaceBinding, GovernanceWorkspaceBindingDocument } from '../schemas/governance-workspace-binding.schema';
-import { GovernancePublicationAttempt, GovernancePublicationAttemptDocument, GovernancePublicationAttemptStatus } from '../schemas/governance-publication-attempt.schema';
 import { GovernanceDraftPreparationService } from './governance-draft-preparation.service';
 
 export interface GovernanceDeploymentResponse { id: string; programId: string; scopeId: string; name: string; status: string; currentDraftRevisionId?: string; currentPublishedRevisionId?: string; channels: Record<string, unknown>; createdAt: string; updatedAt: string }
@@ -23,25 +32,26 @@ export interface GovernanceReadinessCheck { key: string; label: string; status: 
 @Injectable()
 export class GovernanceDeploymentService {
   constructor(
-    @InjectModel(GovernanceDeployment.name) private readonly deploymentModel: Model<GovernanceDeploymentDocument>,
-    @InjectModel(GovernanceDeploymentRevision.name) private readonly revisionModel: Model<GovernanceDeploymentRevisionDocument>,
-    @InjectModel(GovernanceDryRun.name) private readonly dryRunModel: Model<GovernanceDryRunDocument>,
-    @InjectModel(GovernanceWorkspaceBinding.name) private readonly bindingModel: Model<GovernanceWorkspaceBindingDocument>,
-    @InjectModel(GovernancePublicationAttempt.name) private readonly attemptModel: Model<GovernancePublicationAttemptDocument>,
+    @Inject(DEPLOYMENT_STORE) private readonly deploymentStore: DeploymentStore,
+    @Inject(REVISION_STORE) private readonly revisionStore: RevisionStore,
+    @Inject(DRY_RUN_STORE) private readonly dryRunStore: DryRunStore,
+    @Inject(BINDING_STORE) private readonly bindingStore: BindingStore,
+    @Inject(PUBLICATION_ATTEMPT_STORE) private readonly attemptStore: PublicationAttemptStore,
     private readonly programService: GovernanceProgramService,
     private readonly scopeService: GovernanceScopeService,
     private readonly accessService: GovernanceAccessService,
     private readonly auditLogService: AuditLogService,
     private readonly draftPreparationService: GovernanceDraftPreparationService,
+    @Inject(GOVERNANCE_TRANSACTION) private readonly tx: GovernanceTransactionRunner = PASSTHROUGH_TRANSACTION,
   ) {}
 
   async create(actorId: string, actorEmail: string, programId: string, dto: CreateGovernanceDeploymentDto): Promise<GovernanceDeploymentResponse> {
     const scope = await this.scopeService.findById(actorId, programId, dto.scopeId);
     await this.accessService.assertScopeAccess(actorId, programId, dto.scopeId);
-    const duplicate = await this.deploymentModel.findOne({ programId: new Types.ObjectId(programId), scopeId: new Types.ObjectId(dto.scopeId) }).lean().exec();
+    const duplicate = await this.deploymentStore.findByProgramAndScope(programId, dto.scopeId);
     if (duplicate) throw new ConflictException(ErrorCode.GOVERNANCE_DEPLOYMENT_EXISTS);
-    const deployment = await this.deploymentModel.create({ programId: new Types.ObjectId(programId), scopeId: new Types.ObjectId(dto.scopeId), name: dto.name.trim(), status: 'draft', channels: dto.channels ?? {} });
-    this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.deployment.created', targetType: 'governance_deployment', targetId: deployment._id.toString(), metadata: { programId, scopeId: dto.scopeId } });
+    const deployment = await this.deploymentStore.insert({ programId, scopeId: dto.scopeId, name: dto.name.trim(), channels: dto.channels ?? {} });
+    this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.deployment.created', targetType: 'governance_deployment', targetId: deployment.id, metadata: { programId, scopeId: dto.scopeId } });
     if (scope.agentIds.length > 0) await this.draftPreparationService.prepare(actorId, actorEmail, programId, dto.scopeId);
     return this.toDeploymentResponse(deployment);
   }
@@ -49,10 +59,7 @@ export class GovernanceDeploymentService {
   async list(actorId: string, programId: string): Promise<GovernanceDeploymentResponse[]> {
     await this.programService.assertOwnedProgram(actorId, programId);
     const accessibleScopeIds = await this.accessService.getAccessibleScopeIds(actorId, programId);
-    const filter = accessibleScopeIds.includes('*')
-      ? { programId: new Types.ObjectId(programId) }
-      : { programId: new Types.ObjectId(programId), scopeId: { $in: accessibleScopeIds.map((id) => new Types.ObjectId(id)) } };
-    const deployments = await this.deploymentModel.find(filter).sort({ updatedAt: -1 }).lean().exec();
+    const deployments = await this.deploymentStore.listByProgramScopes(programId, accessibleScopeIds.includes('*') ? '*' : accessibleScopeIds);
     return deployments.map((deployment) => this.toDeploymentResponse(deployment));
   }
 
@@ -62,130 +69,114 @@ export class GovernanceDeploymentService {
   }
 
   async update(actorId: string, deploymentId: string, dto: UpdateGovernanceDeploymentDto): Promise<GovernanceDeploymentResponse> {
-    const deployment = await this.findOwnedDeploymentDocument(actorId, deploymentId);
-    if (dto.name !== undefined) deployment.name = dto.name.trim();
-    if (dto.channels !== undefined) deployment.channels = dto.channels;
-    await deployment.save();
-    return this.toDeploymentResponse(deployment);
+    const deployment = await this.findOwnedDeployment(actorId, deploymentId);
+    const updated = await this.deploymentStore.update(deployment.id, {
+      ...(dto.name !== undefined ? { name: dto.name.trim() } : {}),
+      ...(dto.channels !== undefined ? { channels: dto.channels } : {}),
+    });
+    if (!updated) throw new NotFoundException(ErrorCode.GOVERNANCE_DEPLOYMENT_NOT_FOUND);
+    return this.toDeploymentResponse(updated);
   }
 
   async createRevision(actorId: string, actorEmail: string, deploymentId: string, dto: CreateGovernanceRevisionDto): Promise<GovernanceRevisionResponse> {
-    const deployment = await this.findOwnedDeploymentDocument(actorId, deploymentId);
+    const deployment = await this.findOwnedDeployment(actorId, deploymentId);
     if (deployment.status === 'archived') throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
-    const deploymentObjectId = new Types.ObjectId(deploymentId);
-    const revisionNumber = (await this.revisionModel.countDocuments({ deploymentId: deploymentObjectId })) + 1;
     const allowedAgentIds = this.normalizeAllowedAgentIds(dto.agentId, dto.allowedAgentIds);
-    await this.assertAgentsBelongToScope(actorId, deployment.programId.toString(), deployment.scopeId.toString(), allowedAgentIds);
-    await this.assertWorkspacesBelongToScope(deployment.programId.toString(), deployment.scopeId.toString(), dto.workspaceIds ?? []);
-    const revision = await this.revisionModel.create({
-      deploymentId: deploymentObjectId,
-      revisionNumber,
-      agentId: new Types.ObjectId(dto.agentId),
-      allowedAgentIds: this.toObjectIds(allowedAgentIds),
-      workspaceIds: this.toObjectIds(dto.workspaceIds),
-      agentSnapshot: dto.agentSnapshot ?? {},
-      channelSnapshot: deployment.channels ?? {},
-      createdBy: new Types.ObjectId(actorId),
+    await this.assertAgentsBelongToScope(actorId, deployment.programId, deployment.scopeId, allowedAgentIds);
+    await this.assertWorkspacesBelongToScope(deployment.programId, deployment.scopeId, dto.workspaceIds ?? []);
+    // Revision insert and the deployment's draft pointer move together.
+    const revision = await this.tx.run(async () => {
+      const revisionNumber = (await this.revisionStore.countByDeployment(deployment.id)) + 1;
+      const inserted = await this.revisionStore.insert({
+        deploymentId: deployment.id,
+        revisionNumber,
+        agentId: dto.agentId,
+        allowedAgentIds,
+        workspaceIds: dto.workspaceIds,
+        agentSnapshot: dto.agentSnapshot ?? {},
+        channelSnapshot: (deployment.channels as Record<string, unknown>) ?? {},
+        createdBy: actorId,
+      });
+      await this.deploymentStore.update(deployment.id, {
+        currentDraftRevisionId: inserted.id,
+        ...(deployment.status !== 'published' ? { status: 'dry_run' as const } : {}),
+      });
+      return inserted;
     });
-    deployment.currentDraftRevisionId = revision._id;
-    if (deployment.status !== 'published') deployment.status = 'dry_run';
-    await deployment.save();
-    this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.revision.created', targetType: 'governance_revision', targetId: revision._id.toString(), metadata: { deploymentId } });
+    this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.revision.created', targetType: 'governance_revision', targetId: revision.id, metadata: { deploymentId } });
     return this.toRevisionResponse(revision);
   }
 
   async listRevisions(actorId: string, deploymentId: string): Promise<GovernanceRevisionResponse[]> {
     await this.findOwnedDeployment(actorId, deploymentId);
-    const revisions = await this.revisionModel.find({ deploymentId: new Types.ObjectId(deploymentId) }).sort({ revisionNumber: -1 }).lean().exec();
+    const revisions = await this.revisionStore.listByDeployment(deploymentId);
     return revisions.map((revision) => this.toRevisionResponse(revision));
   }
 
   async updateRevision(actorId: string, deploymentId: string, revisionId: string, dto: UpdateGovernanceRevisionDto): Promise<GovernanceRevisionResponse> {
     await this.findOwnedDeployment(actorId, deploymentId);
-    const revision = await this.revisionModel.findOne({ _id: new Types.ObjectId(revisionId), deploymentId: new Types.ObjectId(deploymentId) }).exec();
+    const revision = await this.revisionStore.findByDeploymentAndId(deploymentId, revisionId);
     if (!revision) throw new NotFoundException(ErrorCode.GOVERNANCE_REVISION_NOT_FOUND);
     if (revision.status === 'published') throw new ConflictException(ErrorCode.GOVERNANCE_REVISION_IMMUTABLE);
-    if (dto.agentId !== undefined) revision.agentId = new Types.ObjectId(dto.agentId);
+    const patch: Parameters<RevisionStore['update']>[1] = {};
+    if (dto.agentId !== undefined) patch.agentId = dto.agentId;
     if (dto.agentId !== undefined || dto.allowedAgentIds !== undefined) {
-      const primaryAgentId = dto.agentId ?? revision.agentId.toString();
-      const allowedAgentIds = this.normalizeAllowedAgentIds(primaryAgentId, dto.allowedAgentIds ?? revision.allowedAgentIds.map(String));
-      const deployment = await this.deploymentModel.findById(deploymentId).lean().exec();
+      const primaryAgentId = dto.agentId ?? revision.agentId ?? '';
+      const allowedAgentIds = this.normalizeAllowedAgentIds(primaryAgentId, dto.allowedAgentIds ?? revision.allowedAgentIds);
+      const deployment = await this.deploymentStore.findById(deploymentId);
       if (!deployment) throw new NotFoundException(ErrorCode.GOVERNANCE_DEPLOYMENT_NOT_FOUND);
-      await this.assertAgentsBelongToScope(actorId, deployment.programId.toString(), deployment.scopeId.toString(), allowedAgentIds);
-      revision.allowedAgentIds = this.toObjectIds(allowedAgentIds);
+      await this.assertAgentsBelongToScope(actorId, deployment.programId, deployment.scopeId, allowedAgentIds);
+      patch.allowedAgentIds = allowedAgentIds;
     }
     if (dto.workspaceIds !== undefined) {
-      const deployment = await this.deploymentModel.findById(deploymentId).lean().exec();
+      const deployment = await this.deploymentStore.findById(deploymentId);
       if (!deployment) throw new NotFoundException(ErrorCode.GOVERNANCE_DEPLOYMENT_NOT_FOUND);
-      await this.assertWorkspacesBelongToScope(deployment.programId.toString(), deployment.scopeId.toString(), dto.workspaceIds);
-      revision.workspaceIds = this.toObjectIds(dto.workspaceIds);
+      await this.assertWorkspacesBelongToScope(deployment.programId, deployment.scopeId, dto.workspaceIds);
+      patch.workspaceIds = dto.workspaceIds;
     }
-    if (dto.agentSnapshot !== undefined) revision.agentSnapshot = dto.agentSnapshot;
-    await revision.save();
-    return this.toRevisionResponse(revision);
+    if (dto.agentSnapshot !== undefined) patch.agentSnapshot = dto.agentSnapshot;
+    const updated = await this.revisionStore.update(revision.id, patch);
+    if (!updated) throw new NotFoundException(ErrorCode.GOVERNANCE_REVISION_NOT_FOUND);
+    return this.toRevisionResponse(updated);
   }
 
   async getReadiness(actorId: string, deploymentId: string): Promise<GovernanceReadiness> {
     const deployment = await this.findOwnedDeployment(actorId, deploymentId);
-    return this.buildReadiness(actorId, deploymentId, deployment);
+    return this.buildReadiness(deploymentId, deployment);
   }
 
   async publish(actorId: string, actorEmail: string, deploymentId: string, dto: PublishGovernanceDeploymentDto): Promise<GovernanceDeploymentResponse> {
-    const deployment = await this.findOwnedDeploymentDocument(actorId, deploymentId);
-    await this.accessService.assertScopeRole(actorId, deployment.programId.toString(), deployment.scopeId.toString(), ['scope_approver']);
+    const deployment = await this.findOwnedDeployment(actorId, deploymentId);
+    await this.accessService.assertScopeRole(actorId, deployment.programId, deployment.scopeId, ['scope_approver']);
     let readiness: GovernanceReadiness | undefined;
-    let revisionId = dto.revisionId ?? deployment.currentDraftRevisionId?.toString();
+    const revisionId = dto.revisionId ?? deployment.currentDraftRevisionId;
     try {
       if (deployment.status === 'archived') throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
-      const scope = await this.scopeService.findById(actorId, deployment.programId.toString(), deployment.scopeId.toString());
+      const scope = await this.scopeService.findById(actorId, deployment.programId, deployment.scopeId);
       if (scope.status !== 'active') throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
-      readiness = await this.buildReadiness(actorId, deploymentId, deployment);
+      readiness = await this.buildReadiness(deploymentId, deployment);
       if (readiness.blockers.length > 0 && !dto.allowPartial) {
         await this.createPublicationAttempt(actorId, actorEmail, deployment, revisionId, dto, 'blocked', readiness, ErrorCode.GOVERNANCE_PUBLISH_BLOCKED, 'Readiness blockers prevent publication');
         this.auditLogService.logFailure({ actorId, actorEmail, action: 'governance.deployment.published', targetType: 'governance_deployment', targetId: deploymentId, failureReason: 'Readiness blockers prevent publication', metadata: { blockers: readiness.blockers.map((blocker) => blocker.key) } });
         throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
       }
       if (!revisionId) throw new ConflictException(ErrorCode.GOVERNANCE_NO_DRAFT_REVISION);
-      if (revisionId !== deployment.currentDraftRevisionId?.toString()) throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
-      if (deployment.currentPublishedRevisionId?.toString() === revisionId) throw new ConflictException(ErrorCode.GOVERNANCE_REVISION_IMMUTABLE);
-      const revision = await this.revisionModel.findOne({ _id: new Types.ObjectId(revisionId), deploymentId: new Types.ObjectId(deploymentId) }).exec();
+      if (revisionId !== deployment.currentDraftRevisionId) throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
+      if (deployment.currentPublishedRevisionId === revisionId) throw new ConflictException(ErrorCode.GOVERNANCE_REVISION_IMMUTABLE);
+      const revision = await this.revisionStore.findByDeploymentAndId(deploymentId, revisionId);
       if (!revision) throw new NotFoundException(ErrorCode.GOVERNANCE_REVISION_NOT_FOUND);
       if (revision.status === 'published' || revision.status === 'rejected') throw new ConflictException(ErrorCode.GOVERNANCE_REVISION_IMMUTABLE);
       if (!revision.agentId || !revision.allowedAgentIds?.length) throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
-      const previousRevisionStatus = revision.status;
-      revision.status = 'published';
-      revision.publishedBy = new Types.ObjectId(actorId);
-      revision.publishedAt = new Date();
-      await revision.save();
-      let publishDeployment: GovernanceDeploymentDocument | null;
-      try {
-        publishDeployment = await this.deploymentModel.findOneAndUpdate(
-          { _id: deployment._id, currentDraftRevisionId: revision._id, currentPublishedRevisionId: { $ne: revision._id } },
-          { $set: { currentPublishedRevisionId: revision._id, status: 'published' } },
-          { new: true },
-        ).exec();
-      } catch (error) {
-        const observedDeployment = await this.deploymentModel.findById(deployment._id).exec();
-        if (observedDeployment?.currentPublishedRevisionId?.equals(revision._id)) publishDeployment = observedDeployment;
-        else {
-          revision.status = previousRevisionStatus;
-          revision.publishedBy = undefined;
-          revision.publishedAt = undefined;
-          await revision.save();
-          throw error;
-        }
-      }
-      if (!publishDeployment) {
-        const observedDeployment = await this.deploymentModel.findById(deployment._id).exec();
-        if (observedDeployment?.currentPublishedRevisionId?.equals(revision._id)) publishDeployment = observedDeployment;
-        else {
-          revision.status = previousRevisionStatus;
-          revision.publishedBy = undefined;
-          revision.publishedAt = undefined;
-          await revision.save();
-          throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
-        }
-      }
+      // Revision status and the deployment's published pointer commit together; a lost
+      // publish race throws and rolls the revision status back.
+      const publishDeployment = await this.tx.run(async () => {
+        await this.revisionStore.update(revision.id, { status: 'published', publishedBy: actorId, publishedAt: new Date() });
+        const published = await this.deploymentStore.publishGuarded(deployment.id, revisionId, revision.id);
+        if (published) return published;
+        const observedDeployment = await this.deploymentStore.findById(deployment.id);
+        if (observedDeployment?.currentPublishedRevisionId === revision.id) return observedDeployment;
+        throw new ConflictException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED);
+      });
       await this.createPublicationAttempt(actorId, actorEmail, publishDeployment, revisionId, dto, dto.allowPartial ? 'partial' : 'success', readiness);
       this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.deployment.published', targetType: 'governance_deployment', targetId: deploymentId, metadata: { revisionId, channels: dto.channels } });
       return this.toDeploymentResponse(publishDeployment);
@@ -198,87 +189,74 @@ export class GovernanceDeploymentService {
   }
 
   async suspend(actorId: string, actorEmail: string, deploymentId: string): Promise<GovernanceDeploymentResponse> {
-    const deployment = await this.findOwnedDeploymentDocument(actorId, deploymentId);
+    const deployment = await this.findOwnedDeployment(actorId, deploymentId);
     if (!deployment.currentPublishedRevisionId || deployment.status !== 'published') throw new ConflictException(ErrorCode.GOVERNANCE_NO_PUBLISHED_REVISION);
-    deployment.status = 'suspended';
-    await deployment.save();
-    this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.deployment.suspended', targetType: 'governance_deployment', targetId: deploymentId, metadata: { programId: deployment.programId.toString() } });
-    return this.toDeploymentResponse(deployment);
+    const updated = await this.deploymentStore.update(deployment.id, { status: 'suspended' });
+    if (!updated) throw new NotFoundException(ErrorCode.GOVERNANCE_DEPLOYMENT_NOT_FOUND);
+    this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.deployment.suspended', targetType: 'governance_deployment', targetId: deploymentId, metadata: { programId: deployment.programId } });
+    return this.toDeploymentResponse(updated);
   }
 
   async rollback(actorId: string, actorEmail: string, deploymentId: string): Promise<GovernanceDeploymentResponse> {
-    const deployment = await this.findOwnedDeploymentDocument(actorId, deploymentId);
+    const deployment = await this.findOwnedDeployment(actorId, deploymentId);
     if (!deployment.currentPublishedRevisionId) throw new ConflictException(ErrorCode.GOVERNANCE_NO_PUBLISHED_REVISION);
-    const previous = await this.revisionModel.findOne({ deploymentId: new Types.ObjectId(deploymentId), status: 'published', _id: { $ne: deployment.currentPublishedRevisionId } }).sort({ publishedAt: -1 }).exec();
+    const previous = await this.revisionStore.findPreviousPublished(deploymentId, deployment.currentPublishedRevisionId);
     if (!previous) throw new ConflictException(ErrorCode.GOVERNANCE_NO_PUBLISHED_REVISION);
-    deployment.currentPublishedRevisionId = previous._id;
-    deployment.status = 'published';
-    await deployment.save();
-    this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.deployment.rollback', targetType: 'governance_deployment', targetId: deploymentId, metadata: { revisionId: previous._id.toString() } });
-    return this.toDeploymentResponse(deployment);
+    const updated = await this.deploymentStore.update(deployment.id, { currentPublishedRevisionId: previous.id, status: 'published' });
+    if (!updated) throw new NotFoundException(ErrorCode.GOVERNANCE_DEPLOYMENT_NOT_FOUND);
+    this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.deployment.rollback', targetType: 'governance_deployment', targetId: deploymentId, metadata: { revisionId: previous.id } });
+    return this.toDeploymentResponse(updated);
   }
 
   async resolveContext(actorId: string, deploymentId: string): Promise<Record<string, unknown>> {
     const deployment = await this.findOwnedDeployment(actorId, deploymentId);
     if (deployment.status !== 'published') throw new BadRequestException(ErrorCode.GOVERNANCE_NO_PUBLISHED_REVISION);
     if (!deployment.currentPublishedRevisionId) throw new BadRequestException(ErrorCode.GOVERNANCE_NO_PUBLISHED_REVISION);
-    const revision = await this.revisionModel.findById(deployment.currentPublishedRevisionId).lean().exec();
+    const revision = await this.revisionStore.findById(deployment.currentPublishedRevisionId);
     if (!revision) throw new NotFoundException(ErrorCode.GOVERNANCE_REVISION_NOT_FOUND);
-    return { programId: deployment.programId.toString(), scopeId: deployment.scopeId.toString(), deploymentId, revisionId: revision._id.toString(), agentId: revision.agentId.toString(), workspaceIds: revision.workspaceIds.map((id) => id.toString()), channels: deployment.channels };
+    return { programId: deployment.programId, scopeId: deployment.scopeId, deploymentId, revisionId: revision.id, agentId: revision.agentId ?? '', workspaceIds: revision.workspaceIds, channels: deployment.channels };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private async findOwnedDeployment(actorId: string, deploymentId: string): Promise<any> {
-    const deployment = await this.deploymentModel.findById(deploymentId).lean().exec();
+  private async findOwnedDeployment(actorId: string, deploymentId: string): Promise<GovernanceDeploymentRecord> {
+    const deployment = await this.deploymentStore.findById(deploymentId);
     if (!deployment) throw new NotFoundException(ErrorCode.GOVERNANCE_DEPLOYMENT_NOT_FOUND);
-    await this.programService.assertOwnedProgram(actorId, deployment.programId.toString());
-    await this.accessService.assertScopeAccess(actorId, deployment.programId.toString(), deployment.scopeId.toString());
+    await this.programService.assertOwnedProgram(actorId, deployment.programId);
+    await this.accessService.assertScopeAccess(actorId, deployment.programId, deployment.scopeId);
     return deployment;
   }
 
-  private async findOwnedDeploymentDocument(actorId: string, deploymentId: string): Promise<GovernanceDeploymentDocument> {
-    const deployment = await this.deploymentModel.findById(deploymentId).exec();
-    if (!deployment) throw new NotFoundException(ErrorCode.GOVERNANCE_DEPLOYMENT_NOT_FOUND);
-    await this.programService.assertOwnedProgram(actorId, deployment.programId.toString());
-    await this.accessService.assertScopeAccess(actorId, deployment.programId.toString(), deployment.scopeId.toString());
-    return deployment;
-  }
-
-  private async buildReadiness(actorId: string, deploymentId: string, deployment: GovernanceDeploymentDocument): Promise<GovernanceReadiness> {
-    const checks = await this.buildReadinessChecks(actorId, deployment);
+  private async buildReadiness(deploymentId: string, deployment: GovernanceDeploymentRecord): Promise<GovernanceReadiness> {
+    const checks = await this.buildReadinessChecks(deployment);
     const blockers = checks.filter((check) => check.severity === 'blocking' && check.status === 'failed');
     const warnings = checks.filter((check) => check.severity === 'warning' && check.status !== 'passed');
     const score = Math.max(0, Math.round((checks.filter((check) => check.status === 'passed').length / checks.length) * 100));
     return { deploymentId, score, status: blockers.length ? 'blocked' : warnings.length ? 'warning' : 'ready', blockers, warnings, checks };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private async buildReadinessChecks(actorId: string, deployment: any): Promise<GovernanceReadinessCheck[]> {
+  private async buildReadinessChecks(deployment: GovernanceDeploymentRecord): Promise<GovernanceReadinessCheck[]> {
     const passedDryRun = deployment.currentDraftRevisionId
-      ? await this.dryRunModel.findOne({ deploymentId: deployment._id, revisionId: deployment.currentDraftRevisionId, status: 'passed' }).select('_id').lean().exec()
+      ? await this.dryRunStore.findPassedByDeploymentAndRevision(deployment.id, deployment.currentDraftRevisionId)
       : null;
-    const checks: GovernanceReadinessCheck[] = [
+    return [
       { key: 'draft_revision', label: 'Draft revision', status: deployment.currentDraftRevisionId ? 'passed' : 'failed', severity: 'blocking', targetType: 'rule' },
       { key: 'dry_run_passed', label: 'Dry-run passed', status: passedDryRun ? 'passed' : 'failed', severity: 'blocking', targetType: 'dry_run' },
       { key: 'published_revision', label: 'Published revision', status: deployment.currentPublishedRevisionId ? 'passed' : 'warning', severity: 'warning', targetType: 'rule' },
     ];
-    void actorId;
-    return checks;
   }
 
-  private async createPublicationAttempt(actorId: string, actorEmail: string, deployment: GovernanceDeploymentDocument, revisionId: string | undefined, dto: PublishGovernanceDeploymentDto, status: GovernancePublicationAttemptStatus, readiness?: GovernanceReadiness, errorCode?: string, errorMessage?: string): Promise<void> {
-    await this.attemptModel.create({
+  private async createPublicationAttempt(actorId: string, actorEmail: string, deployment: GovernanceDeploymentRecord, revisionId: string | undefined, dto: PublishGovernanceDeploymentDto, status: GovernancePublicationAttemptStatus, readiness?: GovernanceReadiness, errorCode?: string, errorMessage?: string): Promise<void> {
+    await this.attemptStore.insert({
       programId: deployment.programId,
       scopeId: deployment.scopeId,
-      deploymentId: deployment._id,
-      revisionId: revisionId ? new Types.ObjectId(revisionId) : undefined,
-      triggeredByUserId: new Types.ObjectId(actorId),
+      deploymentId: deployment.id,
+      revisionId,
+      triggeredByUserId: actorId,
       triggeredByEmail: actorEmail,
       requestedChannels: dto.channels ?? [],
       allowPartial: Boolean(dto.allowPartial),
       comment: dto.comment,
       status,
-      readinessSnapshot: readiness ?? {},
+      readinessSnapshot: (readiness ?? {}) as Record<string, unknown>,
       errorCode,
       errorMessage,
     });
@@ -292,15 +270,13 @@ export class GovernanceDeploymentService {
     return error instanceof Error ? error.message : undefined;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private toDeploymentResponse(doc: any): GovernanceDeploymentResponse {
-    return { id: doc._id?.toString() ?? '', programId: doc.programId?.toString() ?? '', scopeId: doc.scopeId?.toString() ?? '', name: String(doc.name ?? ''), status: String(doc.status ?? ''), currentDraftRevisionId: doc.currentDraftRevisionId?.toString(), currentPublishedRevisionId: doc.currentPublishedRevisionId?.toString(), channels: (doc.channels as Record<string, unknown>) ?? {}, createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
+  private toDeploymentResponse(doc: GovernanceDeploymentRecord): GovernanceDeploymentResponse {
+    return { id: doc.id, programId: doc.programId, scopeId: doc.scopeId, name: String(doc.name ?? ''), status: String(doc.status ?? ''), currentDraftRevisionId: doc.currentDraftRevisionId, currentPublishedRevisionId: doc.currentPublishedRevisionId, channels: (doc.channels as Record<string, unknown>) ?? {}, createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private toRevisionResponse(doc: any): GovernanceRevisionResponse {
-    const agentId = doc.agentId?.toString() ?? '';
-    return { id: doc._id?.toString() ?? '', deploymentId: doc.deploymentId?.toString() ?? '', revisionNumber: Number(doc.revisionNumber), status: String(doc.status ?? ''), agentId, allowedAgentIds: this.toStrings(doc.allowedAgentIds).length ? this.toStrings(doc.allowedAgentIds) : [agentId].filter(Boolean), workspaceIds: this.toStrings(doc.workspaceIds), workspaceBindingSnapshot: doc.workspaceBindingSnapshot ?? {}, configurationFingerprint: doc.configurationFingerprint, scopeSnapshot: doc.scopeSnapshot ?? {}, audienceSnapshot: doc.audienceSnapshot ?? {}, previousAudienceSnapshot: doc.previousAudienceSnapshot ?? {}, createdBy: doc.createdBy?.toString() ?? '', publishedBy: doc.publishedBy?.toString(), publishedAt: this.toOptionalIso(doc.publishedAt), createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
+  private toRevisionResponse(doc: GovernanceRevisionRecord): GovernanceRevisionResponse {
+    const agentId = doc.agentId ?? '';
+    return { id: doc.id, deploymentId: doc.deploymentId, revisionNumber: Number(doc.revisionNumber), status: String(doc.status ?? ''), agentId, allowedAgentIds: doc.allowedAgentIds.length ? doc.allowedAgentIds : [agentId].filter(Boolean), workspaceIds: doc.workspaceIds, workspaceBindingSnapshot: doc.workspaceBindingSnapshot ?? {}, configurationFingerprint: doc.configurationFingerprint, scopeSnapshot: doc.scopeSnapshot ?? {}, audienceSnapshot: doc.audienceSnapshot ?? {}, previousAudienceSnapshot: doc.previousAudienceSnapshot ?? {}, createdBy: doc.createdBy, publishedBy: doc.publishedBy, publishedAt: this.toOptionalIso(doc.publishedAt), createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
   }
 
   private normalizeAllowedAgentIds(primaryAgentId: string, allowedAgentIds?: string[]): string[] {
@@ -318,17 +294,10 @@ export class GovernanceDeploymentService {
   private async assertWorkspacesBelongToScope(programId: string, scopeId: string, workspaceIds: string[]): Promise<void> {
     const uniqueIds = [...new Set(workspaceIds)];
     if (!uniqueIds.length) return;
-    const matched = await this.bindingModel.distinct('workspaceId', {
-      programId: new Types.ObjectId(programId),
-      workspaceId: { $in: this.toObjectIds(uniqueIds) },
-      enabled: true,
-      $or: [{ scopeIds: new Types.ObjectId(scopeId) }, { visibility: 'program_shared' }],
-    }).exec();
-    if (new Set(matched.map(String)).size !== uniqueIds.length) throw new BadRequestException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED, 'Every workspace must be mapped to this scope before it can be published');
+    const matched = await this.bindingStore.filterWorkspaceIdsBoundToScope(programId, uniqueIds, scopeId);
+    if (new Set(matched).size !== uniqueIds.length) throw new BadRequestException(ErrorCode.GOVERNANCE_PUBLISH_BLOCKED, 'Every workspace must be mapped to this scope before it can be published');
   }
 
-  private toObjectIds(ids?: string[]): Types.ObjectId[] { return (ids ?? []).map((id) => new Types.ObjectId(id)); }
-  private toStrings(value: unknown): string[] { return Array.isArray(value) ? value.map((id) => id.toString()) : []; }
   private toIso(value: unknown): string { return value instanceof Date ? value.toISOString() : String(value ?? ''); }
   private toOptionalIso(value: unknown): string | undefined { return value ? this.toIso(value) : undefined; }
 }

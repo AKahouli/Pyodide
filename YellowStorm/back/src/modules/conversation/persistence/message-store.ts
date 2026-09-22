@@ -1,24 +1,18 @@
-import type {
-  CompleteAIMessageData,
-  CreateAIPlaceholderData,
-  CreateUserMessageData,
-  ConversationLatencyMetricsV1,
-  FeedbackType,
-  GuardrailDecisionMetadata,
-  MessageComponent,
-  MessageReplayContext,
-  ModelRequestTelemetry,
-  ReliabilityEvaluation,
-  ResponseCorrectionAttempt,
-  ResponseCorrectionWorkflow,
-} from '../interfaces/message.interface';
+import type { CompleteAIMessageData, CreateAIPlaceholderData, CreateUserMessageData, ConversationLatencyMetricsV1, FeedbackType, GuardrailDecisionMetadata, MessageComponent, MessageReplayContext, ModelRequestTelemetry, ReliabilityEvaluation, ResponseCorrectionAttempt, ResponseCorrectionWorkflow } from '../interfaces/message.interface';
 import type { FrontendLatencyPatch } from '../interfaces/latency.interface';
+import type { ConversationUsageEventInput, ConversationUsageMetrics } from '../utils/usage-metrics';
 
 export const MESSAGE_STORE = Symbol('MESSAGE_STORE');
 
 export interface AiMessageComponentsRecord {
   id: string;
   components: MessageComponent[];
+}
+
+export interface RecentArtifactMessageRecord extends AiMessageComponentsRecord {
+  conversationId: string;
+  conversationTitle: string;
+  updatedAt: Date;
 }
 
 export interface ReportMessageRecord {
@@ -101,13 +95,10 @@ export interface MessageStore {
    * (single round trip): user insert + conversation counters + placeholder
    * insert + question.answerMessageId linkage commit or roll back together.
    */
-  createUserWithAiPlaceholder(input: {
-    user: CreateUserMessageData;
-    placeholder: Omit<CreateAIPlaceholderData, 'questionMessageId'>;
-  }): Promise<{ user: MessageRecord; placeholder: MessageRecord }>;
-  completeAi(
-    input: CompleteAIMessageData & { guardrailDecision?: GuardrailDecisionMetadata },
-  ): Promise<MessageRecord | null>;
+  createUserWithAiPlaceholder(input: { user: CreateUserMessageData; placeholder: Omit<CreateAIPlaceholderData, 'questionMessageId'> }): Promise<{ user: MessageRecord; placeholder: MessageRecord }>;
+  completeAi(input: CompleteAIMessageData & { guardrailDecision?: GuardrailDecisionMetadata }): Promise<MessageRecord | null>;
+  recordConversationUsageEvents(events: ConversationUsageEventInput[]): Promise<void>;
+  getConversationUsage(conversationId: string): Promise<ConversationUsageMetrics>;
   findById(id: string): Promise<MessageRecord | null>;
   listPage(input: MessagePageInput): Promise<{ records: MessageRecord[]; total: number }>;
   listCursor(input: MessageCursorInput): Promise<{
@@ -116,42 +107,16 @@ export interface MessageStore {
     nextCursor: string | null;
   }>;
   listByConversation(conversationId: string, limit?: number): Promise<MessageRecord[]>;
-  findTurnByRequestId(
-    conversationId: string,
-    senderId: string,
-    requestId: string,
-  ): Promise<{ user: MessageRecord; aiId?: string } | null>;
-  updateFeedback(
-    id: string,
-    feedback: FeedbackType,
-    feedbackAt: Date,
-  ): Promise<MessageRecord | null>;
+  findTurnByRequestId(conversationId: string, senderId: string, requestId: string): Promise<{ user: MessageRecord; aiId?: string } | null>;
+  updateFeedback(id: string, feedback: FeedbackType, feedbackAt: Date): Promise<MessageRecord | null>;
   updateReliability(id: string, evaluation: ReliabilityEvaluation): Promise<MessageRecord | null>;
   claimStream(id: string, leaseId: string, now: Date, expiresAt: Date): Promise<boolean>;
   renewStream(id: string, leaseId: string, expiresAt: Date): Promise<boolean>;
   releaseStream(id: string, leaseId: string): Promise<void>;
-  claimReliability(
-    conversationId: string,
-    id: string,
-    manual: boolean,
-    requestedAt: string,
-  ): Promise<MessageRecord | null>;
-  updateCorrectionWorkflow(
-    id: string,
-    workflow: ResponseCorrectionWorkflow,
-    correctionRunId?: string,
-  ): Promise<MessageRecord | null>;
-  claimCorrectionRun(
-    id: string,
-    runId: string,
-    leaseExpiresAt: string,
-    now: string,
-  ): Promise<boolean>;
-  upsertCorrectionAttempt(
-    id: string,
-    attempt: ResponseCorrectionAttempt,
-    correctionRunId?: string,
-  ): Promise<MessageRecord | null>;
+  claimReliability(conversationId: string, id: string, manual: boolean, requestedAt: string): Promise<MessageRecord | null>;
+  updateCorrectionWorkflow(id: string, workflow: ResponseCorrectionWorkflow, correctionRunId?: string): Promise<MessageRecord | null>;
+  claimCorrectionRun(id: string, runId: string, leaseExpiresAt: string, now: string): Promise<boolean>;
+  upsertCorrectionAttempt(id: string, attempt: ResponseCorrectionAttempt, correctionRunId?: string): Promise<MessageRecord | null>;
   failStaleReliability(cutoff: Date): Promise<MessageRecord[]>;
   touchPendingReliability(ids: string[], now: Date): Promise<void>;
   markStreamFailed(id: string, leaseId?: string): Promise<void>;
@@ -160,11 +125,7 @@ export interface MessageStore {
    * the attempt is still streaming and its lease has expired; returns the
    * interrupted execution or null when another path already settled it.
    */
-  markExecutionInterrupted(
-    id: string,
-    reason: string,
-    now: Date,
-  ): Promise<{ id: string; conversationId: string; executionAttemptId: string | null } | null>;
+  markExecutionInterrupted(id: string, reason: string, now: Date): Promise<{ id: string; conversationId: string; executionAttemptId: string | null } | null>;
   /** Bounded scan of streaming AI attempts whose lease expired before cutoff. */
   findExpiredStreamExecutions(
     cutoff: Date,
@@ -183,22 +144,13 @@ export interface MessageStore {
    * is never overwritten. Returns null when the message does not exist, is not
    * an AI message, or the requestId does not match the persisted turn.
    */
-  updateFrontendLatency(
-    messageId: string,
-    requestId: string,
-    patch: FrontendLatencyPatch,
-  ): Promise<MessageRecord | null>;
+  updateFrontendLatency(messageId: string, requestId: string, patch: FrontendLatencyPatch): Promise<MessageRecord | null>;
   cleanupStaleStreams(cutoff: Date): Promise<number>;
-  updateUser(
-    id: string,
-    input: { content: string; agentIds?: string[]; memberIds?: string[]; editedAt: Date },
-  ): Promise<MessageRecord | null>;
+  updateUser(id: string, input: { content: string; agentIds?: string[]; memberIds?: string[]; editedAt: Date }): Promise<MessageRecord | null>;
   deleteByConversation(conversationId: string): Promise<number>;
   findBranchesByQuestion(questionMessageId: string): Promise<MessageRecord[]>;
   findBranchesByQuestions(questionMessageIds: string[]): Promise<Map<string, MessageRecord[]>>;
-  findAiComponents(
-    conversationId: string,
-    messageId: string,
-  ): Promise<AiMessageComponentsRecord | null>;
+  findAiComponents(conversationId: string, messageId: string): Promise<AiMessageComponentsRecord | null>;
+  listRecentArtifactMessages(userId: string, limit: number): Promise<RecentArtifactMessageRecord[]>;
   findReportMessageById(messageId: string): Promise<ReportMessageRecord | null>;
 }

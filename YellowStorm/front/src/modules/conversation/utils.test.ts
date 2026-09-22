@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { componentsToMarkdown, formatTimingMs, getConversationStreamActivity, getStreamErrorMessage, getUserMessageDisplayText, mapComponentsToContentParts, mapConversationComponentsToContentParts, messageToChat, normalizeChoiceComponentData } from './utils';
+import { componentsToMarkdown, formatTimingMs, getConversationStreamActivity, getStreamErrorMessage, getUserMessageDisplayText, mapComponentsToContentParts, mapConversationComponentsToContentParts, formatChoiceSubmissionContent, messageToChat, normalizeChoiceComponentData } from './utils';
 
 describe('conversation utils', () => {
   it('formats timing values', () => {
@@ -107,6 +107,24 @@ describe('conversation utils', () => {
         reference: '[2]',
       });
     }
+  });
+
+  it('preserves first-class web selectors when attaching citations to text', () => {
+    const parts = mapComponentsToContentParts([
+      { id: 'text-1', type: 'text', data: { content: 'Python added templates [1].' } } as never,
+      { type: 'citation', data: {
+        parentId: 'text-1', sourceKind: 'web', sourceType: 'web', source: 'https://example.com/python',
+        title: 'Python', exactText: 'Template strings are new.', prefix: 'Python 3.14', suffix: 'Details',
+        evidenceOrigin: 'page_content', reference: '1',
+      } } as never,
+    ]);
+
+    expect(parts[0]).toMatchObject({
+      type: 'text', citations: [{
+        sourceKind: 'web', sourceType: 'web', exactText: 'Template strings are new.',
+        prefix: 'Python 3.14', suffix: 'Details', evidenceOrigin: 'page_content',
+      }],
+    });
   });
 
   it('attaches a citation to repeated reference markers outside its original parent', () => {
@@ -224,5 +242,17 @@ describe('conversation utils', () => {
     });
     expect(choice?.editable).toBeUndefined();
     expect(choice?.fields).toBeUndefined();
+  });
+});
+
+describe('formatChoiceSubmissionContent', () => {
+  it('renders friendly labels for verdicts and edit payloads', () => {
+    expect(formatChoiceSubmissionContent('approve')).toBe('Approuvé');
+    expect(formatChoiceSubmissionContent('decline')).toBe('Refusé');
+    expect(formatChoiceSubmissionContent('{"verdict":"approve","edits":{"subject":"x"}}')).toBe('Approuvé');
+    expect(formatChoiceSubmissionContent('{"verdict":"decline"}')).toBe('Refusé');
+    // ordinary content passes through untouched
+    expect(formatChoiceSubmissionContent('Bonjour, peux-tu vérifier ?')).toBe('Bonjour, peux-tu vérifier ?');
+    expect(formatChoiceSubmissionContent('{not json')).toBe('{not json');
   });
 });

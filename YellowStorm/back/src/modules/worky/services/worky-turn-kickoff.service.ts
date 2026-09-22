@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { LoggerService } from '../../logger';
-import { UserDocument } from '../../user/schemas/user.schema';
+import { asAuthUser, type AuthUser } from '@common/auth/auth-user';
 import { UserService } from '../../user/user.service';
 import { requesterOpts } from '../worky-requester.util';
 import { WorkyOrchestratorGrpcClientService } from './worky-orchestrator.grpc-client.service';
@@ -14,7 +14,7 @@ interface WorkyTurnKickoffInput {
   userId: string;
   content: string;
   turnId?: string;
-  requester?: UserDocument;
+  requester?: AuthUser;
 }
 
 export interface PreparedWorkyTurn {
@@ -57,7 +57,7 @@ export class WorkyTurnKickoffService {
       aiSessionId: context.aiSessionId,
       agents,
       connectors,
-      requester: user ? requesterOpts(user) : {},
+      requester: user ? requesterOpts(asAuthUser(user)) : {},
     };
   }
 

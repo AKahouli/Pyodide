@@ -1,11 +1,2 @@
-import { randomBytes } from 'node:crypto';
-
-const OWNED_ID = /^[0-9a-f]{24}$/;
-
-export function isOwnedId(value: string): boolean {
-  return OWNED_ID.test(value);
-}
-
-export function newOwnedId(): string {
-  return randomBytes(12).toString('hex');
-}
+// Conversation v1 accepts only canonical (lowercase) ids, so it uses the strict check.
+export { isCanonicalObjectId as isOwnedId, newObjectId as newOwnedId } from '@common/postgres/object-id';

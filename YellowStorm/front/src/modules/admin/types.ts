@@ -176,6 +176,32 @@ export interface SetMaintenanceRequest {
   estimatedEndAt?: string;
 }
 
+export type NavigationTargetKey =
+  | 'platform' | 'newChat' | 'projects' | 'history' | 'workspace' | 'semanticModels'
+  | 'playbook' | 'agents' | 'teams' | 'groups' | 'worky' | 'connectedApps'
+  | 'appMarketplace' | 'governance' | 'admin';
+
+export interface NavigationNode {
+  id: string;
+  type: 'group' | 'item';
+  parentId: string | null;
+  position: number;
+  visible: boolean;
+  launcherVisible?: boolean;
+  labels: { en: string; fr: string };
+  targetKey?: NavigationTargetKey;
+}
+
+export interface NavigationSettings {
+  revision: number;
+  nodes: NavigationNode[];
+}
+
+export interface LoginSettings {
+  accessExpiry: string;
+  refreshExpiry: string;
+}
+
 export interface RegistrationStatus {
   enabled: boolean;
   disabledAt?: string;
@@ -200,6 +226,21 @@ export interface FeatureVisibility {
   agents: boolean;
   semanticModel: boolean;
   platformCopilot: boolean;
+  playbookDevtools: boolean;
+  playbookDeltaAutosave: boolean;
+  playbookMcpAssistant: boolean;
+  playbookMcpConnectorReconciliation: boolean;
+  governedConversations: boolean;
+  governanceScopeAudience: boolean;
+  governedScopeCarousel: boolean;
+  dataRoomDecisionFlows: boolean;
+  dataRoomGovernance: boolean;
+  dataRoomSourceVersioning: boolean;
+  dataRoomWorkspaceEvents: boolean;
+  dataRoomAutoSourceCreation: boolean;
+  dataRoomOutboxDispatch: boolean;
+  dataRoomValidityIntelligence: boolean;
+  dataRoomKnowledgeAssessment: boolean;
 }
 
 export interface CorsOriginEntry {
@@ -1602,9 +1643,21 @@ export interface ConnectorActionResponse {
   supportsBatch: boolean;
   supportsIteration: boolean;
   isEnabled: boolean;
+  resultKind?: ConnectorActionResultKind;
+  citationMode?: ConnectorCitationMode;
+  resultMapping?: ConnectorResultMapping;
+}
+
+export type ConnectorActionResultKind = 'generic' | 'web_search' | 'web_fetch' | 'document_search' | 'file_read' | 'database_query';
+export type ConnectorCitationMode = 'none' | 'source_only' | 'text_fragment' | 'document_evidence';
+
+export interface ConnectorResultMapping {
+  itemsPath?: string;
+  fields?: Partial<Record<'title' | 'url' | 'snippet' | 'content' | 'publishedAt' | 'author' | 'prefix' | 'suffix', string[]>>;
 }
 
 export type ConnectorDynamicHeaderSource =
+  | 'workspace'
   | 'user_id'
   | 'user_email'
   | 'user_first_name'
@@ -1682,6 +1735,9 @@ export interface CreateConnectorRequest {
     supportsBatch?: boolean;
     supportsIteration?: boolean;
     isEnabled?: boolean;
+    resultKind?: ConnectorActionResultKind;
+    citationMode?: ConnectorCitationMode;
+    resultMapping?: ConnectorResultMapping;
   }>;
   referencedSkillIds?: string[];
   isActive?: boolean;
@@ -1783,8 +1839,9 @@ export interface ComposerSuggestionSettings {
 }
 export interface ConversationNameSettings { modelId: string | null; }
 export interface CompactionSettings { enabled: boolean; compactionInterval: number; overlapSize: number; tokenFraction: number; eventRetentionSize: number; summarizerModel: string; }
-export interface ConversationSettingsResponse { composerSuggestions: ComposerSuggestionSettings; conversationName?: ConversationNameSettings; redactSensitiveText?: boolean; latencyInstrumentationEnabled?: boolean; compaction?: CompactionSettings; updatedAt?: string; }
-export type UpdateConversationSettingsRequest = Pick<ConversationSettingsResponse, 'composerSuggestions'> & { conversationName?: ConversationNameSettings; redactSensitiveText?: boolean; latencyInstrumentationEnabled?: boolean; compaction?: CompactionSettings };
+export interface AttachmentIntelligenceSettings { enabled: boolean; maxIndexedTabularRows: number; }
+export interface ConversationSettingsResponse { composerSuggestions: ComposerSuggestionSettings; conversationName?: ConversationNameSettings; redactSensitiveText?: boolean; latencyInstrumentationEnabled?: boolean; compaction?: CompactionSettings; attachmentIntelligence?: AttachmentIntelligenceSettings; updatedAt?: string; }
+export type UpdateConversationSettingsRequest = Pick<ConversationSettingsResponse, 'composerSuggestions'> & { conversationName?: ConversationNameSettings; redactSensitiveText?: boolean; latencyInstrumentationEnabled?: boolean; compaction?: CompactionSettings; attachmentIntelligence?: AttachmentIntelligenceSettings };
 export interface UpdateSensitiveTextRedactionRequest { redactSensitiveText: boolean; }
 export interface ConversationSettingsAgentOption { id: string; name: string; description?: string; agentTypeName?: string; model?: string; }
 
@@ -1803,4 +1860,98 @@ export interface UpsertTeamAutoBuilderConfigRequest {
   systemPrompt: string;
   temperature: number;
   isEnabled: boolean;
+}
+
+// ===== App Builder AI =====
+
+export interface AppBuilderAiOverview {
+  enabled: boolean;
+  periodHours: number;
+  totalTokens: number;
+  requestCount: number;
+  errorCount: number;
+  aiAppsCount: number;
+  usersWithOffer: number;
+  topModels: Array<{ model: string; totalTokens: number; requestCount: number }>;
+}
+
+export interface AppBuilderAiOffer {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  tokenLimit: number;
+  windowHours: number;
+  requestsPerMinute?: number;
+  maxTokensPerRequest?: number;
+  priority?: number;
+  isActive: boolean;
+  isDefault: boolean;
+  displayOrder?: number;
+}
+
+export interface AppBuilderAiOfferListResponse {
+  items: AppBuilderAiOffer[];
+}
+
+export interface CreateAppBuilderAiOfferRequest {
+  name: string;
+  slug: string;
+  description?: string;
+  tokenLimit: number;
+  windowHours: number;
+  requestsPerMinute?: number;
+  maxTokensPerRequest?: number;
+  priority?: number;
+  isActive?: boolean;
+  isDefault?: boolean;
+  displayOrder?: number;
+}
+
+export type UpdateAppBuilderAiOfferRequest = Partial<CreateAppBuilderAiOfferRequest>;
+
+export interface AppBuilderAiOfferMutationResponse {
+  id: string;
+  slug: string;
+  name: string;
+}
+
+export interface AppBuilderAiUserRow {
+  userId: string;
+  email: string;
+  displayName: string | null;
+  aiAppsCount: number;
+  offer: {
+    id: string;
+    name: string;
+    slug: string;
+    tokenLimit: number;
+  } | null;
+  usage: {
+    currentUsage: number;
+    limit: number;
+    resetsAt: string;
+    percentUsed: number;
+  } | null;
+}
+
+export interface AppBuilderAiUserListParams {
+  q?: string;
+  offerId?: string;
+  page?: number;
+  limit?: number;
+}
+
+export interface AppBuilderAiUserListResponse {
+  items: AppBuilderAiUserRow[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
+export interface AppBuilderAiEnabledResponse {
+  enabled: boolean;
 }

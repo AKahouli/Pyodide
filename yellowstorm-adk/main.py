@@ -43,6 +43,7 @@ from src.routers.evaluation_batch import router as evaluation_batch_router
 from src.routers.response_evaluation import router as response_evaluation_router
 from src.routers.response_correction import router as response_correction_router
 from src.routers.semantic_model import router as semantic_model_router
+from src.routers.vectorstores import router as vectorstores_router
 
 from src.evaluation.repository import EvaluationRepository, dispose_evaluation_engine
 from src.a2a_gateway.repository import A2AAgentRepository, dispose_a2a_engine
@@ -260,6 +261,7 @@ app.include_router(evaluation_batch_router)
 app.include_router(response_evaluation_router)
 app.include_router(response_correction_router)
 app.include_router(semantic_model_router)
+app.include_router(vectorstores_router)
 app.include_router(a2a_serving_router)
 app.include_router(health_router)
 if __name__ == "__main__":

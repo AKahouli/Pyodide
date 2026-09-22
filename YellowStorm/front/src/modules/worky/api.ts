@@ -29,9 +29,6 @@ import type {
   WorkyTask,
   WorkyTaskResult,
   WorkyTaskResultContent,
-  WorkyWhatsAppConnectResponse,
-  WorkyWhatsAppIntegration,
-  WorkyWhatsAppPairingResponse,
 } from './types';
 
 function unwrap<T>(response: { data: ApiResponse<T> }): T {
@@ -209,6 +206,17 @@ export async function getTaskResultContent(taskId: string): Promise<WorkyTaskRes
   return unwrap(response);
 }
 
+/** Signed view/download URLs for a generated task artifact (10-min SAS). */
+export async function getTaskArtifactUrl(
+  taskId: string,
+  artifactId: string,
+): Promise<{ viewUrl: string; downloadUrl: string }> {
+  const response = await apiClient.get<ApiResponse<{ viewUrl: string; downloadUrl: string }>>(
+    API_ENDPOINTS.worky.taskArtifactUrl(taskId, artifactId),
+  );
+  return unwrap(response);
+}
+
 export async function getGovernancePolicy(workspaceId: string): Promise<WorkyGovernancePolicy> {
   const response = await apiClient.get<ApiResponse<WorkyGovernancePolicy>>(
     API_ENDPOINTS.worky.governancePolicy,
@@ -366,6 +374,9 @@ export interface VoiceSessionEnvelope {
   streamIdTools?: string[];
   /** voice-memory sidecar WS (mic fork → long-term memory); empty/absent ⇒ fork off. */
   memoryWsUrl?: string;
+  /** thematic (smart-memory) ingestion on: the browser POSTs each finished turn's
+   *  transcript to the backend, which writes it via memory.write (key is server-side). */
+  thematicMemory?: boolean;
   expiresAt: string;
 }
 
@@ -476,62 +487,16 @@ export async function voiceTranscript(streamId: string, role: 'owner' | 'manager
   await apiClient.post(API_ENDPOINTS.worky.voiceTranscript, { streamId, role, text });
 }
 
-// =================================================================
-// WhatsApp integration (per stream)
-// =================================================================
-
-export async function getWorkyWhatsAppIntegration(
-  streamId: string,
-): Promise<WorkyWhatsAppIntegration | null> {
-  const response = await apiClient.get<ApiResponse<WorkyWhatsAppIntegration | null>>(
-    API_ENDPOINTS.worky.whatsappIntegration(streamId),
-  );
-  return unwrap(response);
+/** Ingest one finished voice turn into smart-memory (thematic). Backend writes it
+ *  via memory.write with the MCP key; best-effort — callers should not await hard. */
+export async function voiceThematicMemory(text: string, streamId?: string): Promise<void> {
+  await apiClient.post(API_ENDPOINTS.worky.voiceThematicMemory, { text, streamId });
 }
 
-export async function connectWorkyWhatsApp(
-  streamId: string,
-): Promise<WorkyWhatsAppConnectResponse> {
-  const response = await apiClient.post<ApiResponse<WorkyWhatsAppConnectResponse>>(
-    API_ENDPOINTS.worky.whatsappConnect(streamId),
-  );
-  return unwrap(response);
+/** Retrieve thematic (smart-memory) context for a query — backend proxies to
+ *  memory.retrieve with the MCP key. Returns the memory data (or an error field). */
+export async function voiceThematicRetrieve(query: string, streamId?: string): Promise<unknown> {
+  const res = await apiClient.post<ApiResponse<unknown>>(API_ENDPOINTS.worky.voiceThematicRetrieve, { query, streamId });
+  return unwrap(res);
 }
 
-export async function getWorkyWhatsAppPairing(
-  streamId: string,
-  sessionId: string,
-): Promise<WorkyWhatsAppPairingResponse> {
-  const response = await apiClient.get<ApiResponse<WorkyWhatsAppPairingResponse>>(
-    API_ENDPOINTS.worky.whatsappPairing(streamId, sessionId),
-  );
-  return unwrap(response);
-}
-
-export async function reconnectWorkyWhatsApp(
-  streamId: string,
-  sessionId: string,
-): Promise<WorkyWhatsAppIntegration> {
-  const response = await apiClient.post<ApiResponse<WorkyWhatsAppIntegration>>(
-    API_ENDPOINTS.worky.whatsappReconnect(streamId, sessionId),
-  );
-  return unwrap(response);
-}
-
-export async function disconnectWorkyWhatsAppSession(
-  streamId: string,
-  sessionId: string,
-): Promise<void> {
-  await apiClient.delete(API_ENDPOINTS.worky.whatsappSession(streamId, sessionId));
-}
-
-export async function deleteWorkyWhatsAppIntegration(streamId: string): Promise<void> {
-  await apiClient.delete(API_ENDPOINTS.worky.whatsappIntegration(streamId));
-}
-
-export async function getWorkyWhatsAppSystemBotStatus(): Promise<{ connected: boolean }> {
-  const response = await apiClient.get<ApiResponse<{ connected: boolean }>>(
-    API_ENDPOINTS.worky.whatsappSystemBotStatus,
-  );
-  return unwrap(response);
-}

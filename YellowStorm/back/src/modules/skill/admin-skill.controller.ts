@@ -33,7 +33,7 @@ import {
   multipartFileInterceptorOptions,
 } from '../../common/utils';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
 import { Permissions } from '../authorization/constants/permissions';
 import { PermissionsGuard } from '../authorization/guards/permissions.guard';
@@ -80,7 +80,7 @@ export class AdminSkillController {
   @ApiOperation({ summary: 'Create a skill' })
   async create(
     @Body() dto: CreateSkillDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<ISkillResponse> {
     const skill = await this.skillService.create(user._id.toString(), dto);
@@ -116,7 +116,7 @@ export class AdminSkillController {
   @ApiOperation({ summary: 'Import a skill from SKILL.md or a zipped skill package' })
   async importSkill(
     @UploadedFile() file: MulterFile,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<ISkillResponse> {
     // multer decodes the multipart filename as latin1; restore the real UTF-8 name.
@@ -141,7 +141,7 @@ export class AdminSkillController {
   @ApiParam({ name: 'id', description: 'Skill ID' })
   async exportSkill(
     @Param('id') id: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
     @Res() res: Response,
   ): Promise<void> {
@@ -173,7 +173,7 @@ export class AdminSkillController {
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateSkillDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<ISkillResponse> {
     const skill = await this.skillService.update(id, dto);
@@ -196,7 +196,7 @@ export class AdminSkillController {
   @ApiOperation({ summary: 'Delete a skill' })
   async delete(
     @Param('id') id: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<void> {
     const skill = await this.skillService.findById(id);

@@ -273,6 +273,7 @@ export class RuntimeToolDispatcherService {
             result: outcome.result,
             error: null,
             resultingRevisionId: revisionId ?? null,
+            durationMs: await this.elapsedMs(toolCallId),
           },
         },
       )
@@ -477,6 +478,10 @@ export class RuntimeToolDispatcherService {
               .digest('hex'),
             baseRevisionId: params.baseRevisionId ?? null,
             status: 'running',
+            startedAtMs: Date.now(),
+            durationMs: null,
+            error: null,
+            result: null,
           },
         },
         { upsert: true },
@@ -484,12 +489,32 @@ export class RuntimeToolDispatcherService {
       .exec();
   }
 
+  private async elapsedMs(toolCallId: string): Promise<number | null> {
+    const doc = await this.toolCalls
+      .findOne({ toolCallId })
+      .select({ startedAtMs: 1 })
+      .lean()
+      .exec();
+    const startedAtMs = doc?.startedAtMs;
+    if (typeof startedAtMs !== 'number') return null;
+    return Math.max(0, Date.now() - startedAtMs);
+  }
+
   private async settleFailure(
     toolCallId: string,
     error: RuntimeToolError,
   ): Promise<ToolInvokeEnvelope> {
     await this.toolCalls
-      .updateOne({ toolCallId }, { $set: { status: 'failed', error } })
+      .updateOne(
+        { toolCallId },
+        {
+          $set: {
+            status: 'failed',
+            error,
+            durationMs: await this.elapsedMs(toolCallId),
+          },
+        },
+      )
       .exec();
     return failure(toolCallId, error);
   }

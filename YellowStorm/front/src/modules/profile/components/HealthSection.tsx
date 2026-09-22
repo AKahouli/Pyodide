@@ -16,6 +16,7 @@ import {
   XCircle,
   AlertTriangle,
   TrendingUp,
+  Server,
 } from 'lucide-react';
 import { Area, AreaChart } from 'recharts';
 
@@ -53,6 +54,7 @@ import type {
   HealthHistoryResponse,
   HealthHistoryStats,
   HealthHistoryRecord,
+  AppDataHealthResult,
 } from '../types';
 
 type ProfileTranslate = (key: ModuleTranslationKey<'profile'>, params?: TranslationParams) => string;
@@ -379,6 +381,106 @@ function HealthCheckCard({
   );
 }
 
+function AppDataHealthCard({
+  data,
+  translate,
+}: {
+  data: AppDataHealthResult | null;
+  translate: ProfileTranslate;
+}) {
+  if (!data) return null;
+
+  const microservice = data.microservice;
+  const isHealthy = data.remote && microservice?.ready;
+  const isDegraded = data.remote && microservice?.reachable && !microservice?.ready;
+  const isDown = !data.remote || (microservice && !microservice.reachable);
+
+  const overallStatus = isHealthy ? 'up' : isDegraded ? 'degraded' : 'down';
+
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="flex items-start justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-md bg-muted">
+              <Server className="h-4 w-4" />
+            </div>
+            <div>
+              <p className="font-medium">{translate('health.appData.title')}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {translate('health.appData.description')}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {getStatusIcon(overallStatus)}
+          </div>
+        </div>
+
+        <div className="space-y-2 mt-3">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">{translate('health.appData.mode')}</span>
+            <Badge variant="outline" className={data.remote ? 'bg-green-500/10 text-green-600 border-green-500/20' : 'bg-muted text-muted-foreground'}>
+              {data.remote ? 'Remote' : 'Local'}
+            </Badge>
+          </div>
+
+          {data.remote && microservice && (
+            <>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">{translate('health.appData.reachable')}</span>
+                {microservice.reachable ? (
+                  <CheckCircle className="h-4 w-4 text-green-600" />
+                ) : (
+                  <XCircle className="h-4 w-4 text-red-600" />
+                )}
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">{translate('health.appData.live')}</span>
+                {microservice.live ? (
+                  <CheckCircle className="h-4 w-4 text-green-600" />
+                ) : (
+                  <XCircle className="h-4 w-4 text-red-600" />
+                )}
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">{translate('health.appData.ready')}</span>
+                {microservice.ready ? (
+                  <CheckCircle className="h-4 w-4 text-green-600" />
+                ) : (
+                  <XCircle className="h-4 w-4 text-red-600" />
+                )}
+              </div>
+              {microservice.database && (
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">{translate('health.appData.database')}</span>
+                  <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/20">
+                    {microservice.database}
+                  </Badge>
+                </div>
+              )}
+              {microservice.error && (
+                <div className="text-xs text-red-600 mt-2 p-2 bg-red-500/5 rounded">
+                  {microservice.error}
+                </div>
+              )}
+            </>
+          )}
+
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">{translate('health.appData.mcp')}</span>
+            {data.mcp ? (
+              <CheckCircle className="h-4 w-4 text-green-600" />
+            ) : (
+              <XCircle className="h-4 w-4 text-muted-foreground" />
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function HealthSkeleton() {
   return (
     <div className="space-y-6">
@@ -414,6 +516,7 @@ export function HealthSection() {
   const [health, setHealth] = React.useState<HealthCheckResult | null>(null);
   const [history, setHistory] = React.useState<HealthHistoryResponse | null>(null);
   const [stats, setStats] = React.useState<HealthHistoryStats | null>(null);
+  const [appDataHealth, setAppDataHealth] = React.useState<AppDataHealthResult | null>(null);
   const { t } = useModuleTranslation('profile');
   const { hasPermission } = usePermissions();
   const canViewHealth = hasPermission('system.maintenance');
@@ -442,12 +545,21 @@ export function HealthSection() {
     }
   );
 
+  const { execute: fetchAppDataHealth } = useApiAction(
+    profileApi.getAppDataHealth,
+    {
+      showErrorToast: false,
+      onSuccess: (data) => setAppDataHealth(data),
+    }
+  );
+
   const refreshAll = React.useCallback(() => {
     if (!canViewHealth || document.visibilityState === 'hidden') return;
     fetchHealth();
     fetchHistory({ minutes: 60, limit: 100 });
     fetchStats(60);
-  }, [canViewHealth, fetchHealth, fetchHistory, fetchStats]);
+    fetchAppDataHealth();
+  }, [canViewHealth, fetchHealth, fetchHistory, fetchStats, fetchAppDataHealth]);
 
   React.useEffect(() => {
     if (canViewHealth) refreshAll();
@@ -574,6 +686,8 @@ export function HealthSection() {
           ))}
         </CardContent>
       </Card>
+
+      <AppDataHealthCard data={appDataHealth} translate={t} />
     </div>
   );
 }

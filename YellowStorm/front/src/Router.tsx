@@ -6,7 +6,6 @@ import MaintenancePage from './pages/MaintenancePage';
 import { EmailVerificationPage, ResetPasswordPage, ProfileCompletionPage } from './modules/auth';
 import { OAuthCallbackPage } from './modules/auth/components/OAuthCallbackPage';
 import { RootGuard } from './modules/auth/components/RootGuard';
-import { dataRoomFeatures } from './config/dataRoomFeatures';
 import { AdminGuard } from './modules/admin/components/AdminGuard';
 import { AdminLayout } from './modules/admin/components/AdminLayout';
 import { PermissionGuard } from './modules/admin/components/PermissionGuard';
@@ -24,6 +23,9 @@ const PlatformOverviewPage = React.lazy(() =>
 const ConversationPage = React.lazy(() =>
   import('./modules/conversation/ConversationPage').then((m) => ({ default: m.ConversationPage }))
 );
+const NewConversationPage = React.lazy(() =>
+  import('./modules/conversation/NewConversationPage').then((m) => ({ default: m.NewConversationPage }))
+);
 const ConversationV2Page = React.lazy(() =>
   import('./modules/conversation-v2/ConversationV2Page')
 );
@@ -36,13 +38,16 @@ const SharedConversationPage = React.lazy(() =>
 const SharedConversationV2Page = React.lazy(() =>
   import('./modules/conversation-v2/SharedConversationV2Page')
 );
+const AllChatsPage = React.lazy(() =>
+  import('./modules/sidebar').then((m) => ({ default: m.AllChatsPage }))
+);
 const UpgradePage = React.lazy(() =>
   import('./modules/usage/components/UpgradePage').then((m) => ({ default: m.UpgradePage }))
 );
 
 // Lazy-loaded playbook routes
-const PlaybookListPage = React.lazy(() =>
-  import("./modules/playbook/components/PlaybookListPage").then((m) => ({ default: m.PlaybookListPage }))
+const PlaybooksConsolePage = React.lazy(() =>
+  import("./modules/playbook/console/PlaybooksConsolePage").then((m) => ({ default: m.PlaybooksConsolePage }))
 );
 const PlaybookCanvasPage = React.lazy(() =>
   import("./modules/playbook/components/PlaybookCanvasPage").then((m) => ({ default: m.PlaybookCanvasPage }))
@@ -73,11 +78,6 @@ const WorkyStreamReportPage = React.lazy(() =>
 const WorkyGovernanceAdminPage = React.lazy(() =>
   import("./modules/worky/components/admin/WorkyGovernancePage").then((m) => ({
     default: m.WorkyGovernancePage,
-  }))
-);
-const WorkyWhatsAppSystemBotPage = React.lazy(() =>
-  import("./modules/admin/pages/WorkyWhatsAppSystemBotPage").then((m) => ({
-    default: m.WorkyWhatsAppSystemBotPage,
   }))
 );
 const AgentHubPage = React.lazy(() =>
@@ -138,6 +138,9 @@ const LogsPage = React.lazy(() =>
 );
 const PlansPage = React.lazy(() =>
   import('./modules/admin/pages/PlansPage').then((m) => ({ default: m.PlansPage }))
+);
+const AppBuilderAiPage = React.lazy(() =>
+  import('./modules/admin/pages/AppBuilderAiPage').then((m) => ({ default: m.AppBuilderAiPage }))
 );
 const AnalyticsPage = React.lazy(() =>
   import('./modules/admin/pages/AnalyticsPage').then((m) => ({ default: m.AnalyticsPage }))
@@ -232,6 +235,10 @@ export const router = createHashRouter([
         ),
       },
       {
+        path: 'conversation',
+        element: lazyPage(<NewConversationPage />),
+      },
+      {
         path: 'conversation/:id',
         element: lazyPage(<ConversationPage />),
       },
@@ -244,6 +251,10 @@ export const router = createHashRouter([
         element: lazyPage(<ConversationV2SessionPage />),
       },
       {
+        path: 'chats',
+        element: lazyPage(<AllChatsPage />),
+      },
+      {
         path: 'apps',
         element: (
           <Suspense fallback={null}>
@@ -252,7 +263,7 @@ export const router = createHashRouter([
         ),
       },
       {
-        path: 'app-builder',
+        path: 'app-market',
         element: (
           <Suspense fallback={null}>
             <AppBuilderPage />
@@ -263,7 +274,7 @@ export const router = createHashRouter([
         path: 'playbooks',
         element: (
           <Suspense fallback={null}>
-            <PlaybookListPage />
+            <PlaybooksConsolePage />
           </Suspense>
         ),
       },
@@ -440,6 +451,14 @@ export const router = createHashRouter([
           { path: "audit", element: lazyPage(<AuditLogsPage />) },
           { path: "logs", element: lazyPage(<LogsPage />) },
           { path: "plans", element: lazyPage(<PlansPage />) },
+          {
+            path: 'app-builder-ai',
+            element: lazyPage(
+              <PermissionGuard permissions={['app_builder_ai.read', 'app_builder_ai.manage', 'app_builder_ai.*', '*']}>
+                <AppBuilderAiPage />
+              </PermissionGuard>
+            ),
+          },
           { path: "reports", element: lazyPage(<ReportsPage />) },
           { path: "models", element: lazyPage(<ModelsPage />) },
           { path: "guardrails", element: lazyPage(<GuardrailsPage />) },
@@ -482,16 +501,6 @@ export const router = createHashRouter([
               <PermissionGuard permissions={['worky.admin.governance', 'worky.admin.*', '*']}>
                 <Suspense fallback={null}>
                   <WorkyGovernanceAdminPage />
-                </Suspense>
-              </PermissionGuard>
-            ),
-          },
-          {
-            path: 'worky-whatsapp-system',
-            element: (
-              <PermissionGuard permissions={['worky.admin.governance', 'worky.admin.*', '*']}>
-                <Suspense fallback={null}>
-                  <WorkyWhatsAppSystemBotPage />
                 </Suspense>
               </PermissionGuard>
             ),
@@ -541,6 +550,14 @@ export const router = createHashRouter([
             element: lazyPage(
               <PermissionGuard permissions={['plans.read_all', 'plans.*', '*']}>
                 <PlansPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'app-builder-ai',
+            element: lazyPage(
+              <PermissionGuard permissions={['app_builder_ai.read', 'app_builder_ai.manage', 'app_builder_ai.*', '*']}>
+                <AppBuilderAiPage />
               </PermissionGuard>
             ),
           },

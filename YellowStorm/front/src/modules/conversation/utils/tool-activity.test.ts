@@ -11,33 +11,29 @@ import {
   sanitizeRunCodeInput,
 } from './tool-activity';
 
+// Display-time redaction was removed: payloads render exactly as stored, with
+// only the size guards (truncation) still applied.
 describe('formatSanitizedToolText', () => {
-  it('preserves paths and endpoints but always removes credentials when display redaction is disabled', () => {
+  it('renders payloads verbatim, including paths, credentials, and sentinel noise', () => {
     const output = formatSanitizedToolText(JSON.stringify({
       password: 'private',
       path: '/workspace/run/file.txt',
       signedUrl: 'https://storage.example/private/report?X-Amz-Credential=private-scope&X-Amz-Signature=private-signature',
       result: 'VNC: ws://sandbox.internal/session/abc123\nCDP: http://sandbox.internal/session/abc123',
-      message: 'Cookie: session=private YELLOWSTORM_ATTACHMENT_SENTINEL_42',
-    }), false);
+    }));
 
-    expect(output).toContain('"password": "[REDACTED]"');
+    expect(output).toContain('"password": "private"');
+    expect(output).toContain('/workspace/run/file.txt');
+    expect(output).toContain('X-Amz-Signature=private-signature');
     expect(output).toContain('ws://sandbox.internal/session/abc123');
-    expect(output).toContain('http://sandbox.internal/session/abc123');
-    expect(output).toContain('https://storage.example/private/report?X-Amz-Credential=[REDACTED]&X-Amz-Signature=[REDACTED]');
-    expect(output).not.toContain('private-signature');
-    expect(output).not.toContain('session=private');
-    expect(output).not.toContain('YELLOWSTORM_ATTACHMENT_SENTINEL');
   });
 
-  it('keeps code paths but removes credentials from run-code input when display redaction is disabled', () => {
-    const input = sanitizeRunCodeInput("password='private'; print('/workspace/report.pdf')", false);
-
-    expect(input).toContain('/workspace/report.pdf');
-    expect(input).not.toContain('private');
-    expect(input).toContain('password=[REDACTED]');
+  it('returns run-code input verbatim', () => {
+    expect(sanitizeRunCodeInput("password='private'; print('/workspace/report.pdf')")).toBe("password='private'; print('/workspace/report.pdf')");
+    expect(sanitizeRunCodeInput('   ')).toBeUndefined();
   });
-  it('keeps useful output while redacting nested private fields and unsafe strings', () => {
+
+  it('keeps nested objects, identifiers, and code as stored', () => {
     const output = formatSanitizedToolText(JSON.stringify({
       status: 'failed',
       detail: { message: 'Execution stopped', stackTrace: 'at /workspace/private.py:1' },
@@ -47,40 +43,14 @@ describe('formatSanitizedToolText', () => {
     }));
 
     expect(output).toContain('Execution stopped');
-    expect(output).toContain('[REDACTED]');
-    expect(output).not.toContain('/workspace');
-    expect(output).not.toContain('507f1f77bcf86cd799439011');
-    expect(output).not.toContain('s3://');
-    expect(output).not.toContain('print(');
+    expect(output).toContain('/workspace/private.py:1');
+    expect(output).toContain('507f1f77bcf86cd799439011');
+    expect(output).toContain('s3://private-bucket/result.json');
+    expect(output).toContain('print(');
   });
 
-  it('redacts unsafe plain-text responses', () => {
-    expect(formatSanitizedToolText('file=/tmp/private/result.txt')).toBe('[REDACTED]');
-  });
-
-  it('redacts credential and URI values regardless of their field name', () => {
-    const credentialOutput = formatSanitizedToolText(JSON.stringify({ credentialBundle: 'AIzaSyExampleCredentialValue123456789' }));
-    const uriOutput = formatSanitizedToolText(JSON.stringify({ download: 'https://storage.example/result?signature=private' }));
-    expect(credentialOutput).toContain('[REDACTED]');
-    expect(credentialOutput).not.toContain('AIzaSyExampleCredentialValue123456789');
-    expect(uriOutput).toContain('[REDACTED]');
-    expect(uriOutput).not.toContain('storage.example');
-  });
-
-  it('redacts source code stored in an otherwise allowed output field', () => {
-    const output = formatSanitizedToolText(JSON.stringify({ stdout: "console.error('proprietary logic')" }));
-
-    expect(output).toContain('[REDACTED]');
-    expect(output).not.toContain('proprietary logic');
-  });
-
-  it('redacts source-bearing fields regardless of code syntax', () => {
-    const output = formatSanitizedToolText(JSON.stringify({ code: 'return userInput', sourceCode: 'yield record', script: 'exit 1' }));
-
-    expect(output).toContain('[REDACTED]');
-    expect(output).not.toContain('return userInput');
-    expect(output).not.toContain('yield record');
-    expect(output).not.toContain('exit 1');
+  it('returns plain-text responses as-is', () => {
+    expect(formatSanitizedToolText('file=/tmp/private/result.txt')).toBe('file=/tmp/private/result.txt');
   });
 
   it('bounds formatted and oversized serialized payloads before rendering', () => {
@@ -96,7 +66,7 @@ describe('formatSanitizedToolText', () => {
 });
 
 describe('code interpreter activity details', () => {
-  it('preserves executable requests and output while redacting private metadata', () => {
+  it('preserves executable requests and output as stored', () => {
     const data = {
       toolName: 'code_interpreter_shell_exec',
       renderKind: 'run_code',
@@ -108,7 +78,7 @@ describe('code interpreter activity details', () => {
     expect(resolveCodeInterpreterRequest(data)).toBe('pandoc source.md -o output.pdf');
     expect(resolveCodeInterpreterResponse(data)).toContain('Created output.pdf');
     expect(resolveCodeInterpreterResponse(data)).toContain('"exit_code": 0');
-    expect(resolveCodeInterpreterResponse(data)).not.toContain('/workspace/private');
+    expect(resolveCodeInterpreterResponse(data)).toContain('/workspace/private/output.pdf');
   });
 
   it('uses run-code primary input before serialized parameters', () => {
@@ -133,26 +103,10 @@ describe('code interpreter activity details', () => {
     expect(object!.length).toBeLessThanOrEqual(12_000);
     expect(object).toContain('[truncated]');
   });
-
-  it('redacts arbitrary paths and environment credentials in requests and output', () => {
-    const request = resolveCodeInterpreterRequest({
-      toolName: 'code_interpreter_shell_exec',
-      paramsJson: JSON.stringify({ command: 'cat /etc/yellowstorm/config' }),
-    });
-    const response = resolveCodeInterpreterResponse({
-      toolName: 'code_interpreter_shell_exec',
-      resultJson: JSON.stringify({ stdout: 'DB_PASSWORD=short-value', file: 'owner/system_run/private.txt' }),
-    });
-
-    expect(request).toBe('cat [REDACTED]');
-    expect(response).not.toContain('/etc/yellowstorm');
-    expect(response).not.toContain('short-value');
-    expect(response).not.toContain('owner/system_run');
-  });
 });
 
 describe('generic tool activity details', () => {
-  it('sanitizes serialized requests and responses', () => {
+  it('renders serialized requests and responses as stored', () => {
     const data = {
       toolName: 'perform_standard_search',
       paramsJson: JSON.stringify({ query: 'annual revenue', password: 'private' }),
@@ -160,9 +114,9 @@ describe('generic tool activity details', () => {
     };
 
     expect(resolveToolRequest(data)).toContain('annual revenue');
-    expect(resolveToolRequest(data)).not.toContain('private');
+    expect(resolveToolRequest(data)).toContain('private');
     expect(resolveToolResponse(data)).toContain('"matches": 4');
-    expect(resolveToolResponse(data)).not.toContain('/workspace/private');
+    expect(resolveToolResponse(data)).toContain('/workspace/private/result.json');
   });
 });
 

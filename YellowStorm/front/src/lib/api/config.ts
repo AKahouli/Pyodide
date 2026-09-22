@@ -22,7 +22,7 @@ function isHttpUrl(value: string): boolean {
   return /^https?:\/\//i.test(value);
 }
 
-/** Origin for Socket.IO (app-runtime, browser-session, whatsapp). */
+/** Origin for Socket.IO (app-runtime, browser-session). */
 export function getSocketBaseUrl(): string {
   if (process.env.NODE_ENV === 'development') {
     const devOverride = import.meta.env.VITE_SOCKET_BASE_URL?.trim();
@@ -79,9 +79,11 @@ export const API_ENDPOINTS = {
     history: '/admin/health/history',
     stats: '/admin/health/stats',
     postgres: '/admin/health/postgres',
+    appData: '/app-data/health',
   },
   system: {
     maintenance: '/experimental/system/maintenance',
+    loginSettings: '/experimental/system/login-settings',
     registration: '/experimental/system/registration',
     appearance: '/experimental/system/appearance',
     appearanceLogos: '/experimental/system/appearance/logos',
@@ -89,6 +91,7 @@ export const API_ENDPOINTS = {
     appearanceLogoFile: (id: string) => `/experimental/system/appearance/logos/${id}/file`,
     cors: '/experimental/system/cors',
     features: '/experimental/system/features',
+    navigation: '/experimental/system/navigation',
     documentTreeInjection: '/experimental/system/document-tree-injection',
     emailLogo: '/experimental/system/email-logo',
   },
@@ -128,14 +131,6 @@ export const API_ENDPOINTS = {
   },
   adminEvaluationSettings: {
     base: '/admin/evaluation-settings',
-  },
-  adminWorkyWhatsAppSystemBot: {
-    base: '/admin/worky/whatsapp-system-bot',
-    expectedPhone: '/admin/worky/whatsapp-system-bot/expected-phone',
-    connect: '/admin/worky/whatsapp-system-bot/connect',
-    pairing: (sessionId: string) => `/admin/worky/whatsapp-system-bot/${sessionId}/pairing`,
-    reconnect: (sessionId: string) => `/admin/worky/whatsapp-system-bot/${sessionId}/reconnect`,
-    session: (sessionId: string) => `/admin/worky/whatsapp-system-bot/${sessionId}`,
   },
   adminTeamAutoBuilder: {
     config: '/admin/teams/auto-builder-config',
@@ -208,14 +203,15 @@ export const API_ENDPOINTS = {
     templates: '/workspace-settings/templates',
   },
   models: {
-    list: '/models',
-    byId: (id: string) => `/models/${id}`,
-    byChef: (chefSlug: string) => `/models/chef/${chefSlug}`,
+    list: '/model-catalog',
+    byId: (id: string) => `/model-catalog/${id}`,
+    byChef: (chefSlug: string) => `/model-catalog/chef/${chefSlug}`,
   },
   conversations: {
     list: '/conversations',
     create: '/conversations',
     createGoverned: '/conversations/governed',
+    recentArtifacts: '/conversations/artifacts/recent',
     byId: (id: string) => `/conversations/${id}`,
     branch: (id: string) => `/conversations/${id}/branches`,
     playbookHandoffs: (id: string) => `/conversations/${id}/playbook-handoffs`,
@@ -321,6 +317,15 @@ export const API_ENDPOINTS = {
     rejectRegistration: (id: string) => `/admin/users/${id}/reject-registration`,
     assignPlan: (id: string) => `/admin/users/${id}/assign-plan`,
   },
+  adminAppBuilderAi: {
+    overview: '/admin/app-builder-ai/overview',
+    enabled: '/admin/app-builder-ai/enabled',
+    offers: '/admin/app-builder-ai/offers',
+    offerById: (id: string) => `/admin/app-builder-ai/offers/${id}`,
+    users: '/admin/app-builder-ai/users',
+    userById: (id: string) => `/admin/app-builder-ai/users/${id}`,
+    assignOffer: (userId: string) => `/admin/app-builder-ai/users/${userId}/assign-offer`,
+  },
   auditLogs: {
     base: '/admin/audit-logs',
     actions: '/admin/audit-logs/actions',
@@ -400,6 +405,24 @@ export const API_ENDPOINTS = {
     ensureWorkspaceDefault: (workspaceId: string) => `/workspaces/${workspaceId}/semantic-model/ensure`,
     shares: (id: string) => `/semantic-models/${id}/shares`,
     share: (id: string, targetUserId: string) => `/semantic-models/${id}/shares/${targetUserId}`,
+    sourceAssets: (id: string) => `/semantic-models/${id}/source-assets`,
+    sourceAssetProfile: (id: string, documentId: string) => `/semantic-models/${id}/source-assets/${documentId}/profile`,
+    sourceAssetJob: (id: string, jobId: string) => `/semantic-models/${id}/source-assets/jobs/${jobId}`,
+    sourceMappings: (id: string) => `/semantic-models/${id}/source-mappings`,
+    bulkDocumentSourceMappings: (id: string) => `/semantic-models/${id}/source-mappings/bulk-documents`,
+    sourceMapping: (id: string, mappingId: string) => `/semantic-models/${id}/source-mappings/${mappingId}`,
+    sourceMappingPreview: (id: string) => `/semantic-models/${id}/source-mappings/preview`,
+    relationResolutionRules: (id: string) => `/semantic-models/${id}/relation-resolution-rules`,
+    relationResolutionPreview: (id: string, ruleId: string) => `/semantic-models/${id}/relation-resolution-rules/${ruleId}/preview`,
+    sourceResolutionPolicies: (id: string) => `/semantic-models/${id}/source-resolution-policies`,
+    sourceResolutionPolicy: (id: string, conceptId: string) => `/semantic-models/${id}/source-resolution-policies/${conceptId}`,
+    dataPreview: (id: string) => `/semantic-models/${id}/data-preview`,
+    populationRefresh: (id: string) => `/semantic-models/${id}/population/refresh`,
+    mappingHealth: (id: string) => `/semantic-models/${id}/mapping-health`,
+    readiness: (id: string) => `/semantic-models/${id}/readiness`,
+    reviewItems: (id: string) => `/semantic-models/${id}/review-items`,
+    resolveReviewItem: (id: string, reviewItemId: string) => `/semantic-models/${id}/review-items/${reviewItemId}/resolve`,
+    dataToken: (id: string) => `/semantic-models/${id}/data-token`,
   },
   adminCatalogTransfer: {
     exportConnectors: '/admin/catalog-transfer/connectors/export',
@@ -453,17 +476,6 @@ export const API_ENDPOINTS = {
     humainResolve: '/agents/humain/resolve',
     byId: (id: string) => `/agents/${id}`,
     telegramIntegration: (id: string) => `/agents/${id}/telegram-integration`,
-    whatsappIntegration: (id: string) => `/agents/${id}/whatsapp-integration`,
-    whatsappEvents: (id: string) => `/agents/${id}/whatsapp-integration/events`,
-    whatsappAutoRecover: (id: string) => `/agents/${id}/whatsapp-integration/auto-recover`,
-    whatsappEnabled: (id: string) => `/agents/${id}/whatsapp-integration/enabled`,
-    whatsappConnect: (id: string) => `/agents/${id}/whatsapp-integration/connect`,
-    whatsappPairing: (id: string, sessionId: string) =>
-      `/agents/${id}/whatsapp-integration/${sessionId}/pairing`,
-    whatsappReconnect: (id: string, sessionId: string) =>
-      `/agents/${id}/whatsapp-integration/${sessionId}/reconnect`,
-    whatsappSession: (id: string, sessionId: string) =>
-      `/agents/${id}/whatsapp-integration/${sessionId}`,
     a2aPublish: (id: string) => `/agents/${id}/a2a/publish`,
     a2aRotateKey: (id: string) => `/agents/${id}/a2a/rotate-key`,
     a2aRevoke: (id: string) => `/agents/${id}/a2a/revoke`,
@@ -586,6 +598,7 @@ export const API_ENDPOINTS = {
     repeatabilityTask: (id: string, taskId: string) => `/playbooks/${id}/repeatability/tasks/${taskId}`,
     bulkDelete: '/playbooks/bulk-delete',
     activeExecutions: '/playbooks/active-executions',
+    recentArtifacts: '/playbooks/recent-artifacts',
   },
   connectedApps: {
     list: '/connected-apps',
@@ -617,6 +630,12 @@ export const API_ENDPOINTS = {
     list: '/projects',
     create: '/projects',
     byId: (id: string) => `/projects/${id}`,
+    sharedWithMe: '/projects/shared-with-me',
+    visibility: (id: string) => `/projects/${id}/visibility`,
+  },
+  projectShares: {
+    list: (id: string) => `/projects/${id}/shares`,
+    byId: (id: string, shareId: string) => `/projects/${id}/shares/${shareId}`,
   },
   classifier: {
     folders: (workspaceId: string) => `/classifier/workspaces/${workspaceId}/folders`,
@@ -728,6 +747,7 @@ export const API_ENDPOINTS = {
     taskReview: (id: string) => `/worky/tasks/${id}/review`,
     taskResults: (id: string) => `/worky/tasks/${id}/results`,
     taskResultContent: (id: string) => `/worky/tasks/${id}/result-content`,
+    taskArtifactUrl: (id: string, artifactId: string) => `/worky/tasks/${id}/artifacts/${artifactId}/url`,
     taskHumanUpdate: (id: string) => `/worky/tasks/${id}/human-update`,
     streamBudget: (id: string) => `/worky/streams/${id}/budget`,
     executionReport: (id: string) => `/worky/streams/${id}/execution-report`,
@@ -746,15 +766,8 @@ export const API_ENDPOINTS = {
     voiceListTasks: '/worky/voice/tool/list-tasks',
     voiceTaskDetails: '/worky/voice/tool/task-details',
     voiceTranscript: '/worky/voice/tool/transcript',
+    voiceThematicMemory: '/worky/voice/thematic-memory',
+    voiceThematicRetrieve: '/worky/voice/thematic-memory/retrieve',
     voicePrompt: (streamId: string) => `/worky/voice/prompt/${streamId}`,
-    whatsappIntegration: (id: string) => `/worky/streams/${id}/whatsapp-integration`,
-    whatsappConnect: (id: string) => `/worky/streams/${id}/whatsapp-integration/connect`,
-    whatsappPairing: (id: string, sessionId: string) =>
-      `/worky/streams/${id}/whatsapp-integration/${sessionId}/pairing`,
-    whatsappReconnect: (id: string, sessionId: string) =>
-      `/worky/streams/${id}/whatsapp-integration/${sessionId}/reconnect`,
-    whatsappSession: (id: string, sessionId: string) =>
-      `/worky/streams/${id}/whatsapp-integration/${sessionId}`,
-    whatsappSystemBotStatus: '/worky/whatsapp-system-bot/status',
   },
 } as const;

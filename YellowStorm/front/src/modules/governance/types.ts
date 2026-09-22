@@ -272,7 +272,7 @@ export interface GovernanceDryRun {
 export interface CreateGovernanceDryRunPayload {
   executionMode?: 'conversation' | 'manual';
   input?: string;
-  simulatedChannel?: 'widget' | 'whatsapp' | 'telegram' | 'api';
+  simulatedChannel?: 'widget' | 'telegram' | 'api';
   conversationId?: string;
   agentId?: string;
   workspaceIds?: string[];

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   closeViewer: vi.fn(),
   createDecisionFlowArtifact: vi.fn(),
   refreshArtifacts: vi.fn(),
+  decisionFlowsEnabled: true,
 }));
 
 vi.mock('@/modules/workspace/artifact-api', () => ({
@@ -18,6 +19,9 @@ vi.mock('@/modules/workspace/store', () => ({
 }));
 vi.mock('../store', () => ({ useFileViewerStore: (selector: (state: { closeViewer: typeof mocks.closeViewer }) => unknown) => selector({ closeViewer: mocks.closeViewer }) }));
 vi.mock('@/lib/notifications', () => ({ showError: vi.fn(), showSuccess: vi.fn() }));
+vi.mock('@/modules/admin/featureVisibilityStore', () => ({
+  useFeatureVisibilityStore: (selector: (state: { visibility: { dataRoomDecisionFlows: boolean } }) => unknown) => selector({ visibility: { dataRoomDecisionFlows: mocks.decisionFlowsEnabled } }),
+}));
 vi.mock('@/modules/localization', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/modules/localization')>();
   return { ...actual, useModuleTranslation: () => ({ t: (key: string) => key }) };
@@ -28,6 +32,7 @@ describe('FileTransformationTools', () => {
     vi.clearAllMocks();
     window.history.replaceState(null, '', '/');
     mocks.refreshArtifacts.mockResolvedValue(undefined);
+    mocks.decisionFlowsEnabled = true;
   });
 
   it('opens the decision-flow configuration from the transformation menu', async () => {
@@ -60,5 +65,13 @@ describe('FileTransformationTools', () => {
     await waitFor(() => expect(window.location.hash).toBe('#/workspace/workspace-1/artifacts/artifact-42'));
     expect(mocks.closeViewer).toHaveBeenCalledOnce();
     expect(mocks.refreshArtifacts).toHaveBeenCalledOnce();
+  });
+
+  it('hides decision-flow tools when the runtime setting is disabled', () => {
+    mocks.decisionFlowsEnabled = false;
+
+    render(<FileTransformationTools tab={{ id: 'tab-1', workspaceId: 'workspace-1', documentId: 'document-1', path: 'workspace-1/parkour.pdf', fileName: 'parkour.pdf', mimeType: 'application/pdf', url: 'https://example.test/parkour.pdf', canWriteWorkspace: true, pageCount: 8 }} />);
+
+    expect(screen.queryByRole('button', { name: 'transformation.tools' })).not.toBeInTheDocument();
   });
 });

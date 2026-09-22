@@ -808,6 +808,9 @@ export function PlaybookDesignerPanel({
   }, [assistantOperationPending, onApplyHistorySuggestion]);
 
   const handlePasteDesignImages = useCallback((event: ClipboardEvent<HTMLTextAreaElement>) => {
+    // Excel/Word put an image of the selection on the clipboard alongside the text;
+    // only attach clipboard images when there is no text to paste (e.g. screenshots).
+    if (event.clipboardData.getData('text/plain')) return;
     const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'));
     if (files.length === 0) return;
 

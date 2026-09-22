@@ -13,7 +13,6 @@ function config(
   overrides: Partial<ConfigType<typeof semanticModelConfig>> = {},
 ): ConfigType<typeof semanticModelConfig> {
   return {
-    enabled: true,
     autoProvision: false,
     host: '',
     port: 5432,
@@ -28,12 +27,18 @@ function config(
     nativeSearchBatchUrl: 'http://localhost:8045/search_native/batch',
     nativeSearchAuthToken: 'test-token',
     nativeSearchLogQuery: false,
+    semanticSearchUrl: 'http://127.0.0.1:8100',
+    semanticSearchToken: 'test-token',
+    semanticSearchTimeoutMs: 300_000,
     evidenceSearchTimeoutMs: 180000,
     evidenceSearchConcurrency: 4,
     ontologyTimeoutMs: 0,
     mappingTimeoutMs: 0,
+    documentExtractionAgentId: '',
+    documentExtractionTimeoutMs: 180000,
     ...overrides,
-  };
+    // Partial spread widens every key to `T | undefined`; the base literal above supplies them all.
+  } as ConfigType<typeof semanticModelConfig>;
 }
 
 describe('SemanticModelNativeSearchClient', () => {
@@ -143,6 +148,21 @@ describe('SemanticModelNativeSearchClient', () => {
       { query: 'q', workspace_id: 'w', file_name: 'f.pdf' },
     ])).resolves.toEqual([{ sections: [], error: null }]);
     expect(mockedAxios.post).toHaveBeenCalledTimes(2);
+  });
+
+  it('supports a single bounded batch attempt for interactive extraction', async () => {
+    mockedAxios.post.mockRejectedValue({ response: { status: 503 } });
+    const client = new SemanticModelNativeSearchClient(config());
+
+    await expect(client.searchBatch([
+      { query: 'q', workspace_id: 'w', file_name: 'f.pdf' },
+    ], 30_000, 1)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(mockedAxios.post).toHaveBeenCalledTimes(1);
+    expect(mockedAxios.post).toHaveBeenCalledWith(
+      'http://localhost:8045/search_native/batch',
+      expect.any(Object),
+      expect.objectContaining({ timeout: 30_000 }),
+    );
   });
 
   it('rejects malformed responses', async () => {

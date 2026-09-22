@@ -3,6 +3,7 @@ export { RolesPage } from './RolesPage';
 export { AuditLogsPage } from './AuditLogsPage';
 export { LogsPage } from './LogsPage';
 export { PlansPage } from './PlansPage';
+export { AppBuilderAiPage } from './AppBuilderAiPage';
 export { AnalyticsPage } from './AnalyticsPage';
 export { SystemPage } from './SystemPage';
 export { AppearancePage } from './AppearancePage';

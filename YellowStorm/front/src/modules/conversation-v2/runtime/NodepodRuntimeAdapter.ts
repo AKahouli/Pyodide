@@ -21,6 +21,7 @@ import {
 const LOG = '[NodepodAdapter]';
 
 type NodepodInstance = Awaited<ReturnType<typeof Nodepod.boot>>;
+type NodepodProc = Awaited<ReturnType<NodepodInstance['spawn']>>;
 
 const VITE_PKG_PATH = '/node_modules/vite';
 const REACT_PKG_PATH = '/node_modules/react';
@@ -157,6 +158,7 @@ export class NodepodRuntimeAdapter {
   private revision: string = 'rev_0';
   private _files: VfsFiles | null = null;
   private lastInstallFingerprint: string | null = null;
+  private currentDevProc: NodepodProc | null = null;
 
   get currentPod(): NodepodInstance | null {
     return this.pod;
@@ -324,6 +326,19 @@ export class NodepodRuntimeAdapter {
       ...(extraEnv ?? {}),
     };
     const spawnEnv = Object.keys(devEnv).length > 0 ? devEnv : undefined;
+
+    // A restart must deterministically replace the previous Vite process:
+    // a stale survivor keeps the port alive (and the OLD VITE_YM_APP_DATA_*
+    // env baked into its module graph) and can win the ready-probe race.
+    if (this.currentDevProc) {
+      try {
+        this.currentDevProc.kill();
+      } catch {
+        // Already exited between the check and the kill.
+      }
+      this.currentDevProc = null;
+    }
+
     log('dev-server:spawn', { cmd, args, env: spawnEnv ?? null });
     onProgress?.('starting', `${cmd} ${args.join(' ')}`);
 
@@ -372,6 +387,7 @@ export class NodepodRuntimeAdapter {
 
       void (async () => {
         const proc = await pod.spawn(cmd, args, spawnEnv ? { env: spawnEnv } : undefined);
+        this.currentDevProc = proc;
         proc.on('output', (text: string) => {
           console.log(`${LOG} [dev:stdout]`, text);
           if (!resolved && !isStale() && looksLikeDevServerReady(text)) {
@@ -387,6 +403,7 @@ export class NodepodRuntimeAdapter {
         proc.on('error', (text: string) => console.warn(`${LOG} [dev:stderr]`, text));
         proc.on('exit', (code: number) => {
           devExited = true;
+          if (this.currentDevProc === proc) this.currentDevProc = null;
           log('dev-server:exit', { code });
           if (!resolved) finish(null);
         });

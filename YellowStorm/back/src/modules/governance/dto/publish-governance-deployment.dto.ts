@@ -7,11 +7,11 @@ export class PublishGovernanceDeploymentDto {
   @IsMongoId()
   revisionId?: string;
 
-  @ApiPropertyOptional({ enum: ['widget', 'whatsapp', 'telegram'], isArray: true })
+  @ApiPropertyOptional({ enum: ['widget', 'telegram'], isArray: true })
   @IsOptional()
   @IsArray()
-  @IsIn(['widget', 'whatsapp', 'telegram'], { each: true })
-  channels?: Array<'widget' | 'whatsapp' | 'telegram'>;
+  @IsIn(['widget', 'telegram'], { each: true })
+  channels?: Array<'widget' | 'telegram'>;
 
   @ApiPropertyOptional()
   @IsOptional()

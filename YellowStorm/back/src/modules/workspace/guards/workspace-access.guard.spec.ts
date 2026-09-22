@@ -15,9 +15,18 @@ function ctxFor(user: { _id: Types.ObjectId }, workspaceId: string): { ctx: Exec
 }
 
 function makeGuard(workspace: any, share: any) {
-  const workspaceModel: any = { findById: () => ({ exec: () => Promise.resolve(workspace) }) };
-  const shareModel: any = { findOne: () => ({ lean: () => ({ exec: () => Promise.resolve(share) }) }) };
-  return new WorkspaceAccessGuard(workspaceModel, shareModel);
+  const workspaceStore: any = {
+    findById: async () =>
+      workspace
+        ? {
+            id: String(workspace._id ?? workspace.id),
+            createdBy: String(workspace.createdBy ?? workspace.createdBy),
+            isPublic: Boolean(workspace.isPublic),
+          }
+        : null,
+  };
+  const shareStore: any = { findOneByWorkspaceAndUser: async () => share };
+  return new WorkspaceAccessGuard(workspaceStore, shareStore);
 }
 
 describe('WorkspaceAccessGuard — public access', () => {

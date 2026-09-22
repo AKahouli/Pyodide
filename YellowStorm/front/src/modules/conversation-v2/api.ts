@@ -24,6 +24,13 @@ export interface AppDataOwnerStatus {
   prod: { provisioned: boolean; schemaName: string | null; currentVersion: number | null };
 }
 
+export interface SeedResult {
+  total: number;
+  inserted: number;
+  skipped: number;
+  tables: { table: string; inserted: number; skipped: number }[];
+}
+
 export type {
   ListSessionsParams,
   DeployStatus,
@@ -306,9 +313,27 @@ export const conversationV2Api = {
     );
     return res.data.data;
   },
+  /** Opaque AI preview ticket for parent-frame relay (never sent into the iframe). */
+  async createAiPreviewTicket(
+    sessionId: string,
+  ): Promise<{ ticket: string; workspaceId: string; bindingId: string; expiresAt: string }> {
+    const res = await apiClient.post<
+      ApiResponse<{ ticket: string; workspaceId: string; bindingId: string; expiresAt: string }>
+    >(`/conversation-v2/sessions/${sessionId}/ai-preview-ticket`);
+    return res.data.data;
+  },
   async getAppDataStatus(sessionId: string): Promise<AppDataOwnerStatus> {
     const res = await apiClient.get<ApiResponse<AppDataOwnerStatus>>(
       `/conversation-v2/sessions/${sessionId}/app-data/status`,
+    );
+    return res.data.data;
+  },
+  /** Owner-scoped App Data data ticket for the dev preview relay. */
+  async getAppDataTicket(
+    sessionId: string,
+  ): Promise<{ ticket: string; appDataId: string; publicUrl: string | null }> {
+    const res = await apiClient.get<ApiResponse<{ ticket: string; appDataId: string; publicUrl: string | null }>>(
+      `/conversation-v2/sessions/${sessionId}/app-data/ticket`,
     );
     return res.data.data;
   },
@@ -329,6 +354,18 @@ export const conversationV2Api = {
     >(`/conversation-v2/sessions/${sessionId}/app-data/${environment}/tables/${encodeURIComponent(table)}/rows`, {
       params: { page },
     });
+    return res.data.data;
+  },
+  /** Idempotent bulk seed into DEV tables from the owner Data tab. */
+  async seedAppData(
+    sessionId: string,
+    environment: 'dev' | 'prod',
+    tables: Record<string, Record<string, unknown>[]>,
+  ): Promise<SeedResult> {
+    const res = await apiClient.post<ApiResponse<SeedResult>>(
+      `/conversation-v2/sessions/${sessionId}/app-data/${environment}/seed`,
+      { tables },
+    );
     return res.data.data;
   },
 };

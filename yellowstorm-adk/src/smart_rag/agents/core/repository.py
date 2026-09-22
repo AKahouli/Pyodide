@@ -104,6 +104,9 @@ class AgentRepository:
             return agent.get('id')
         return "no_id"
 
+    def get_agent_by_id(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        return next((agent for agent in self.agents if agent.get("id") == agent_id), None)
+
     def get_all_agents(self) -> List[Dict[str, Any]]:
         """Get all agents.
         

@@ -51,6 +51,21 @@ class _ImageClientSession(_ClientSession):
         )
 
 
+class _StructuredClientSession(_ClientSession):
+    async def call_tool(self, action_key: str, arguments: dict[str, Any]) -> Any:
+        return SimpleNamespace(
+            content=[SimpleNamespace(text="Model-facing search summary")],
+            structuredContent={
+                "results": [{
+                    "name": "Python 3.14",
+                    "url": "https://docs.python.org/3/whatsnew/3.14.html",
+                    "content": "Python 3.14 is the latest stable release.",
+                }]
+            },
+            isError=False,
+        )
+
+
 class _SensitiveErrorClientSession(_ClientSession):
     async def call_tool(self, action_key: str, arguments: dict[str, Any]) -> Any:
         return SimpleNamespace(
@@ -119,6 +134,26 @@ async def test_call_mcp_tool_logs_request_and_response(
         and '"text": "ok"' in message
         for message in messages
     )
+
+
+@pytest.mark.asyncio
+async def test_call_mcp_tool_prefers_structured_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mcp_module = ModuleType("mcp")
+    mcp_module.ClientSession = _StructuredClientSession
+    mcp_client_module = ModuleType("mcp.client")
+    stdio_module = ModuleType("mcp.client.stdio")
+    stdio_module.stdio_client = _stdio_client
+    stdio_module.StdioServerParameters = _StdioServerParameters
+    monkeypatch.setitem(sys.modules, "mcp", mcp_module)
+    monkeypatch.setitem(sys.modules, "mcp.client", mcp_client_module)
+    monkeypatch.setitem(sys.modules, "mcp.client.stdio", stdio_module)
+
+    response = await call_mcp_tool("stdio", "fake-command", {}, "linkup-search", {"query": "Python 3.14"})
+
+    assert response["results"][0]["name"] == "Python 3.14"
+    assert response["text"] == "Model-facing search summary"
 
 
 @pytest.mark.asyncio

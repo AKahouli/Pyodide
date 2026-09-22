@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { RequirePermissions, Permissions, PermissionsGuard, AuditLogService } from '../../authorization';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { UpdateWorkspaceEvidenceSearchSettingsDto } from '../dto/update-workspace-evidence-search-settings.dto';
 import { WorkspaceEvidenceSearchSettingsService } from '../workspace-evidence-search-settings.service';
 import type { WorkspaceEvidenceSearchConnectorOption, WorkspaceEvidenceSearchSettings } from '../interfaces/workspace-evidence-search-settings.interface';
@@ -22,7 +22,7 @@ export class AdminWorkspaceEvidenceSearchSettingsController {
   listActiveConnectors(): Promise<WorkspaceEvidenceSearchConnectorOption[]> { return this.settings.listActiveConnectorOptions(); }
   @Put() @RequirePermissions(Permissions.WORKSPACES_ALL)
   @ApiOperation({ summary: 'Set global workspace evidence search connector' })
-  async updateSettings(@Body() body: UpdateWorkspaceEvidenceSearchSettingsDto, @CurrentUser() user: UserDocument, @Req() req: Request): Promise<WorkspaceEvidenceSearchSettings> {
+  async updateSettings(@Body() body: UpdateWorkspaceEvidenceSearchSettingsDto, @CurrentUser() user: AuthUser, @Req() req: Request): Promise<WorkspaceEvidenceSearchSettings> {
     const result = await this.settings.updateSettings(body.connectorId ?? null);
     this.audit.logSuccess({ actorId: user._id.toString(), actorEmail: user.email, action: 'workspace.evidence_search_connector.update', metadata: { connectorId: result.connectorId }, ipAddress: req.ip, userAgent: req.headers['user-agent'] });
     return result;

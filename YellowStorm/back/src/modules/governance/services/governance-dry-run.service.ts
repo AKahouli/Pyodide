@@ -1,6 +1,4 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Inject, Injectable } from '@nestjs/common';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
 import { ConversationService } from '@modules/conversation/services/conversation.service';
 import { MessageService } from '@modules/conversation/services/message.service';
@@ -8,9 +6,7 @@ import { StreamService } from '@modules/conversation/services/stream.service';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { CreateGovernanceDryRunDto, MarkGovernanceDryRunDto } from '../dto';
-import { GovernanceDeployment, GovernanceDeploymentDocument } from '../schemas/governance-deployment.schema';
-import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } from '../schemas/governance-deployment-revision.schema';
-import { GovernanceDryRun, GovernanceDryRunDocument } from '../schemas/governance-dry-run.schema';
+import { DEPLOYMENT_STORE, DRY_RUN_STORE, REVISION_STORE, type DeploymentStore, type DryRunStore, type GovernanceDryRunRecord, type RevisionStore } from '../persistence';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceAccessService } from './governance-access.service';
 
@@ -33,9 +29,9 @@ export interface GovernanceDryRunResponse {
 @Injectable()
 export class GovernanceDryRunService {
   constructor(
-    @InjectModel(GovernanceDryRun.name) private readonly dryRunModel: Model<GovernanceDryRunDocument>,
-    @InjectModel(GovernanceDeployment.name) private readonly deploymentModel: Model<GovernanceDeploymentDocument>,
-    @InjectModel(GovernanceDeploymentRevision.name) private readonly revisionModel: Model<GovernanceDeploymentRevisionDocument>,
+    @Inject(DRY_RUN_STORE) private readonly dryRunStore: DryRunStore,
+    @Inject(DEPLOYMENT_STORE) private readonly deploymentStore: DeploymentStore,
+    @Inject(REVISION_STORE) private readonly revisionStore: RevisionStore,
     private readonly programService: GovernanceProgramService,
     private readonly accessService: GovernanceAccessService,
     private readonly conversationService: ConversationService,
@@ -47,59 +43,52 @@ export class GovernanceDryRunService {
   async create(actorId: string, actorEmail: string, deploymentId: string, dto: CreateGovernanceDryRunDto): Promise<GovernanceDryRunResponse> {
     const deployment = await this.findOwnedDeployment(actorId, deploymentId);
     if (!deployment.currentDraftRevisionId) throw new ConflictException(ErrorCode.GOVERNANCE_NO_DRAFT_REVISION);
-    const revision = await this.revisionModel.findById(deployment.currentDraftRevisionId).lean().exec();
+    const draftRevisionId = deployment.currentDraftRevisionId;
+    const revision = await this.revisionStore.findById(draftRevisionId);
     if (!revision) throw new NotFoundException(ErrorCode.GOVERNANCE_REVISION_NOT_FOUND);
     const input = dto.input ?? this.firstTestCaseInput(dto.testCases) ?? '';
     const simulatedChannel = dto.simulatedChannel ?? 'api';
-    const revisionWorkspaceIds = revision.workspaceIds.map((id) => id.toString());
+    const revisionWorkspaceIds = revision.workspaceIds;
     let workspaceIds = dto.workspaceIds?.length ? [...new Set(dto.workspaceIds)] : revisionWorkspaceIds;
     if (workspaceIds.some((workspaceId) => !revisionWorkspaceIds.includes(workspaceId))) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Dry-run workspaces must belong to the draft revision.');
     }
     // Which mapped agent to test — the panel lets the admin pick when several are mapped.
     // Falls back to the draft revision's primary agent when unspecified.
-    const agentId = dto.agentId ?? revision.agentId.toString();
-    const revisionAgentIds = revision.allowedAgentIds?.length ? revision.allowedAgentIds.map((id) => id.toString()) : [revision.agentId.toString()];
+    const agentId = dto.agentId ?? revision.agentId ?? '';
+    const revisionAgentIds = revision.allowedAgentIds?.length ? revision.allowedAgentIds : [revision.agentId ?? ''];
     if (!revisionAgentIds.includes(agentId)) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Dry-run agents must belong to the draft revision.');
     }
     if (dto.executionMode === 'manual') {
-      await this.accessService.assertScopeRole(actorId, deployment.programId.toString(), deployment.scopeId.toString(), ['scope_admin', 'scope_editor', 'scope_reviewer']);
+      await this.accessService.assertScopeRole(actorId, deployment.programId, deployment.scopeId, ['scope_admin', 'scope_editor', 'scope_reviewer']);
       if (dto.conversationId || input) {
         throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'A manual dry-run cannot include a conversation or test input.');
       }
-      const dryRun = await this.dryRunModel.create({
+      const dryRun = await this.dryRunStore.insert({
         programId: deployment.programId,
         scopeId: deployment.scopeId,
-        deploymentId: deployment._id,
-        revisionId: deployment.currentDraftRevisionId,
-        testerId: new Types.ObjectId(actorId),
+        deploymentId: deployment.id,
+        revisionId: draftRevisionId,
+        testerId: actorId,
         status: 'passed',
         executionMode: 'manual',
         testCases: [],
         checks: {
           ...(dto.checks ?? {}),
-          draftRevisionId: deployment.currentDraftRevisionId.toString(),
+          draftRevisionId,
           agentId,
           workspaceIds,
           executionMode: 'manual',
           attestedAt: new Date().toISOString(),
         },
       });
-      this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.dry_run.manually_passed', targetType: 'governance_dry_run', targetId: dryRun._id.toString(), metadata: { deploymentId, revisionId: deployment.currentDraftRevisionId.toString(), agentId, workspaceIds, executionMode: 'manual' } });
+      this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.dry_run.manually_passed', targetType: 'governance_dry_run', targetId: dryRun.id, metadata: { deploymentId, revisionId: draftRevisionId, agentId, workspaceIds, executionMode: 'manual' } });
       return this.toResponse(dryRun);
     }
     let conversationId: string;
     if (dto.conversationId) {
-      const existingDryRun = await this.dryRunModel
-        .findOne({
-          deploymentId: deployment._id,
-          revisionId: deployment.currentDraftRevisionId,
-          conversationId: new Types.ObjectId(dto.conversationId),
-          testerId: new Types.ObjectId(actorId),
-        })
-        .lean()
-        .exec();
+      const existingDryRun = await this.dryRunStore.findContinuation(deployment.id, draftRevisionId, dto.conversationId, actorId);
       if (!existingDryRun) {
         throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Continue a dry-run conversation created for this draft.');
       }
@@ -124,39 +113,39 @@ export class GovernanceDryRunService {
     } else {
       conversationId = (await this.conversationService.create(actorId, { title: 'Governance dry run', workspaces: workspaceIds })).id;
     }
-    const requestId = `governance-dry-run:${deployment.currentDraftRevisionId.toString()}:${Date.now()}`;
+    const requestId = `governance-dry-run:${draftRevisionId}:${Date.now()}`;
     const userMessage = await this.messageService.createUserMessage({ conversationId, senderId: actorId, content: input, agentIds: [agentId], requestId });
     const aiMessage = await this.messageService.createAIPlaceholder({ conversationId, questionMessageId: userMessage.id, requestId });
     const testCases = dto.testCases ?? [{ input, simulatedChannel, agentId, workspaceIds }];
-    const dryRun = await this.dryRunModel.create({
+    const dryRun = await this.dryRunStore.insert({
       programId: deployment.programId,
       scopeId: deployment.scopeId,
-      deploymentId: deployment._id,
-      revisionId: deployment.currentDraftRevisionId,
-      conversationId: new Types.ObjectId(conversationId),
-      testerId: new Types.ObjectId(actorId),
+      deploymentId: deployment.id,
+      revisionId: draftRevisionId,
+      conversationId,
+      testerId: actorId,
       status: 'running',
       executionMode: 'conversation',
       testCases,
-      checks: { ...(dto.checks ?? {}), draftRevisionId: deployment.currentDraftRevisionId.toString(), agentId, workspaceIds },
+      checks: { ...(dto.checks ?? {}), draftRevisionId, agentId, workspaceIds },
     });
     // Fire the stream non-blocking — mirrors MessageController so the POST returns
     // immediately (status 'running') and tokens are produced in the background. The
     // panel polls messages() for the reply and flips the readiness check once passed.
     void this.streamService
       .startStream(actorId, conversationId, aiMessage.id, { content: input, agentIds: [agentId] }, requestId, actorEmail)
-      .then(() => this.finishDryRun(dryRun, 'passed', { runtime: 'completed', simulatedChannel }))
+      .then(() => this.finishDryRun(dryRun.id, 'passed', { runtime: 'completed', simulatedChannel }))
       .catch(async (error) => {
         await this.messageService.markStreamFailed(aiMessage.id).catch(() => undefined);
-        await this.finishDryRun(dryRun, 'failed', { runtime: 'failed', simulatedChannel, error: error instanceof Error ? error.message : 'Unknown runtime failure' });
+        await this.finishDryRun(dryRun.id, 'failed', { runtime: 'failed', simulatedChannel, error: error instanceof Error ? error.message : 'Unknown runtime failure' });
       });
-    this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.dry_run.created', targetType: 'governance_dry_run', targetId: dryRun._id.toString(), metadata: { deploymentId, revisionId: deployment.currentDraftRevisionId.toString(), agentId, workspaceIds } });
+    this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.dry_run.created', targetType: 'governance_dry_run', targetId: dryRun.id, metadata: { deploymentId, revisionId: draftRevisionId, agentId, workspaceIds } });
     return this.toResponse(dryRun);
   }
 
   async list(actorId: string, deploymentId: string): Promise<GovernanceDryRunResponse[]> {
     await this.findOwnedDeployment(actorId, deploymentId);
-    const dryRuns = await this.dryRunModel.find({ deploymentId: new Types.ObjectId(deploymentId) }).sort({ createdAt: -1 }).lean().exec();
+    const dryRuns = await this.dryRunStore.listByDeployment(deploymentId);
     return dryRuns.map((dryRun) => this.toResponse(dryRun));
   }
 
@@ -166,27 +155,26 @@ export class GovernanceDryRunService {
   }
 
   async mark(actorId: string, actorEmail: string, dryRunId: string, dto: MarkGovernanceDryRunDto): Promise<GovernanceDryRunResponse> {
-    const dryRun = await this.findOwnedDryRunDocument(actorId, dryRunId);
-    dryRun.status = dto.status;
-    if (dto.checks !== undefined) dryRun.checks = dto.checks;
-    await dryRun.save();
+    const dryRun = await this.findOwnedDryRun(actorId, dryRunId);
+    const updated = await this.dryRunStore.update(dryRun.id, { status: dto.status, ...(dto.checks !== undefined ? { checks: dto.checks } : {}) });
+    if (!updated) throw new NotFoundException(ErrorCode.GOVERNANCE_DRY_RUN_NOT_FOUND);
     this.auditLogService.logSuccess({ actorId, actorEmail, action: 'governance.dry_run.marked', targetType: 'governance_dry_run', targetId: dryRunId, metadata: { status: dto.status } });
-    return this.toResponse(dryRun);
+    return this.toResponse(updated);
   }
 
   async messages(actorId: string, dryRunId: string): Promise<Array<Record<string, unknown>>> {
     const dryRun = await this.findOwnedDryRun(actorId, dryRunId);
     if (dryRun.conversationId) {
-      const page = await this.messageService.findByConversation(dryRun.conversationId.toString(), { page: 1, limit: 100 });
+      const page = await this.messageService.findByConversation(dryRun.conversationId, { page: 1, limit: 100 });
       return page.messages as unknown as Array<Record<string, unknown>>;
     }
     return dryRun.testCases as Array<Record<string, unknown>>;
   }
 
-  private async finishDryRun(dryRun: GovernanceDryRunDocument, status: 'passed' | 'failed', extraChecks: Record<string, unknown>): Promise<void> {
-    dryRun.status = status;
-    dryRun.checks = { ...dryRun.checks, ...extraChecks };
-    await dryRun.save();
+  private async finishDryRun(dryRunId: string, status: 'passed' | 'failed', extraChecks: Record<string, unknown>): Promise<void> {
+    const dryRun = await this.dryRunStore.findById(dryRunId);
+    if (!dryRun) return;
+    await this.dryRunStore.update(dryRunId, { status, checks: { ...dryRun.checks, ...extraChecks } });
   }
 
   private firstTestCaseInput(testCases?: Array<Record<string, unknown>>): string | undefined {
@@ -198,50 +186,37 @@ export class GovernanceDryRunService {
     return left.length === right.length && left.every((workspaceId) => right.includes(workspaceId));
   }
 
-  private async findOwnedDeployment(actorId: string, deploymentId: string): Promise<GovernanceDeploymentDocument> {
-    const deployment = await this.deploymentModel.findById(deploymentId).exec();
+  private async findOwnedDeployment(actorId: string, deploymentId: string) {
+    const deployment = await this.deploymentStore.findById(deploymentId);
     if (!deployment) throw new NotFoundException(ErrorCode.GOVERNANCE_DEPLOYMENT_NOT_FOUND);
-    await this.programService.assertOwnedProgram(actorId, deployment.programId.toString());
-    await this.accessService.assertScopeAccess(actorId, deployment.programId.toString(), deployment.scopeId.toString());
+    await this.programService.assertOwnedProgram(actorId, deployment.programId);
+    await this.accessService.assertScopeAccess(actorId, deployment.programId, deployment.scopeId);
     return deployment;
   }
 
-  private async findOwnedDryRun(actorId: string, dryRunId: string): Promise<Record<string, unknown>> {
-    const dryRun = await this.dryRunModel.findById(dryRunId).lean().exec();
+  private async findOwnedDryRun(actorId: string, dryRunId: string): Promise<GovernanceDryRunRecord> {
+    const dryRun = await this.dryRunStore.findById(dryRunId);
     if (!dryRun) throw new NotFoundException(ErrorCode.GOVERNANCE_DRY_RUN_NOT_FOUND);
-    await this.programService.assertOwnedProgram(actorId, dryRun.programId.toString());
-    await this.accessService.assertScopeAccess(actorId, dryRun.programId.toString(), dryRun.scopeId.toString());
+    await this.programService.assertOwnedProgram(actorId, dryRun.programId);
+    await this.accessService.assertScopeAccess(actorId, dryRun.programId, dryRun.scopeId);
     return dryRun;
   }
 
-  private async findOwnedDryRunDocument(actorId: string, dryRunId: string): Promise<GovernanceDryRunDocument> {
-    const dryRun = await this.dryRunModel.findById(dryRunId).exec();
-    if (!dryRun) throw new NotFoundException(ErrorCode.GOVERNANCE_DRY_RUN_NOT_FOUND);
-    await this.programService.assertOwnedProgram(actorId, dryRun.programId.toString());
-    await this.accessService.assertScopeAccess(actorId, dryRun.programId.toString(), dryRun.scopeId.toString());
-    return dryRun;
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private toResponse(doc: any): GovernanceDryRunResponse {
+  private toResponse(doc: GovernanceDryRunRecord): GovernanceDryRunResponse {
     return {
-      id: doc._id?.toString() ?? '',
-      programId: doc.programId?.toString() ?? '',
-      scopeId: doc.scopeId?.toString() ?? '',
-      deploymentId: doc.deploymentId?.toString() ?? '',
-      revisionId: doc.revisionId?.toString() ?? '',
-      conversationId: doc.conversationId?.toString(),
-      testerId: doc.testerId?.toString() ?? '',
-      status: doc.status as 'running' | 'passed' | 'failed' | 'needs_review',
+      id: doc.id,
+      programId: doc.programId,
+      scopeId: doc.scopeId,
+      deploymentId: doc.deploymentId,
+      revisionId: doc.revisionId,
+      conversationId: doc.conversationId,
+      testerId: doc.testerId,
+      status: doc.status,
       executionMode: doc.executionMode === 'manual' ? 'manual' : 'conversation',
-      testCases: (doc.testCases as Array<Record<string, unknown>>) ?? [],
-      checks: (doc.checks as Record<string, unknown>) ?? {},
-      createdAt: this.toIso(doc.createdAt),
-      updatedAt: this.toIso(doc.updatedAt),
+      testCases: doc.testCases ?? [],
+      checks: doc.checks ?? {},
+      createdAt: doc.createdAt instanceof Date ? doc.createdAt.toISOString() : String(doc.createdAt),
+      updatedAt: doc.updatedAt instanceof Date ? doc.updatedAt.toISOString() : String(doc.updatedAt),
     };
-  }
-
-  private toIso(value: unknown): string {
-    return value instanceof Date ? value.toISOString() : String(value ?? '');
   }
 }

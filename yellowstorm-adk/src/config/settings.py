@@ -16,7 +16,10 @@ class Settings(BaseSettings):
 
     TEMP_FOLDER: str = "./tmp"
     HOST: str = "localhost"
-    PORT: int = 8001
+    PORT: int = Field(
+        default=8001,
+        validation_alias=AliasChoices("PORT", "ADK_PORT"),
+    )
     SSL_KEYFILE: Optional[str] = None
     SSL_CERTFILE: Optional[str] = None
     LOG_CONFIG_PATH: str = "./src/logger/uvicorn_disable_logging.json"
@@ -106,9 +109,6 @@ class Settings(BaseSettings):
     CELERY_RESULT_BACKEND: Optional[str] = None
     CELERY_WORKER_CONCURRENCY: int = 4
     SECRET_KEY: str
-    ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-    NESTJS_JWT_SECRET: Optional[str] = None
     ADK_API_KEY: str
     VECTORSTORE_API_KEY: str
     # Ollama
@@ -176,7 +176,10 @@ class Settings(BaseSettings):
 
     # gRPC Configuration
     GRPC_ENABLED: bool = True
-    GRPC_PORT: int = 50051
+    GRPC_PORT: int = Field(
+        default=50051,
+        validation_alias=AliasChoices("GRPC_PORT", "ADK_GRPC_PORT"),
+    )
     # Bounded wait for FIRST serving readiness at startup. The supervisor
     # keeps retrying transient failures regardless of this window.
     GRPC_STARTUP_READY_TIMEOUT_SECONDS: int = 10
@@ -469,13 +472,6 @@ class Settings(BaseSettings):
     def validate_secret_key(cls, v):
         if not v or v.strip() == "":
             raise ValueError("SECRET_KEY is required and cannot be empty")
-        return v
-
-    @field_validator("ALGORITHM", mode="before")
-    @classmethod
-    def validate_algorithm(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("ALGORITHM is required and cannot be empty")
         return v
 
     def get_effective_pool_size(self) -> int:

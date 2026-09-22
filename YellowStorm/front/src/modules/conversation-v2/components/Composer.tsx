@@ -42,12 +42,14 @@ import { SelectedSkillsPills } from '@/modules/skill/components/SelectedSkillsPi
 import { UsageLimitBanner } from '@/modules/usage';
 import { useUsage } from '@/modules/usage/UsageContext';
 import { useModuleTranslation } from '@/modules/localization';
+import { useAuth } from '@/modules/auth/useAuth';
 
 interface ComposerProps {
-  onSend: (text: string, model?: string) => void;
+  onSend: (text: string, model?: string) => void | Promise<void>;
 }
 
 export function Composer({ onSend }: ComposerProps) {
+  const { user } = useAuth();
   const streaming = useConversationV2Store((s) => s.streaming);
   const events = useConversationV2Store((s) => s.events);
   const sessionId = useConversationV2Store((s) => s.sessionId);
@@ -141,7 +143,7 @@ export function Composer({ onSend }: ComposerProps) {
     <div className='shrink-0 z-10 border-t border-border/50 bg-background/80 p-4 backdrop-blur-xs'>
       {isLimitExceeded ? <UsageLimitBanner /> : null}
       <div className='mx-auto w-full max-w-3xl'>
-        <PromptInputProvider>
+        <PromptInputProvider key={`${user?.id ?? 'anonymous'}:${sessionId ?? 'new'}`} draftKey={`${user?.id ?? 'anonymous'}:conversation-v2:${sessionId ?? 'new'}`}>
           <PromptInput onSubmit={handleSubmit}>
             <PromptInputBody>
               <PromptInputTextarea

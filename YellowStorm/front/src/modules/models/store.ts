@@ -22,6 +22,8 @@ type ModelsSyncMessage = {
 export const CONVERSATION_V2_DEFAULT_MODEL_CHANGED_EVENT =
   'conversation-v2:default-model-changed';
 
+export const DEFAULT_MODEL_CHANGED_EVENT = 'models:default-model-changed';
+
 function applyConversationV2Default(
   modelId: string | null,
   previousDefaultIdOverride?: string | null,
@@ -175,6 +177,26 @@ export const useModelsStore = create<ModelsStore>()(
       syncConversationV2Default: (modelId) => {
         const previousDefaultId = applyConversationV2Default(modelId);
         broadcastConversationV2DefaultSync(modelId, previousDefaultId);
+      },
+
+      syncDefaultModel: (modelId: string | null) => {
+        const previousDefaultId =
+          useModelsStore.getState().models.find((m) => m.isDefault)?.id ?? null;
+
+        useModelsStore.setState((state) => ({
+          models: state.models.map((m) => ({
+            ...m,
+            isDefault: modelId !== null && m.id === modelId,
+          })),
+        }));
+
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent(DEFAULT_MODEL_CHANGED_EVENT, {
+              detail: { previousDefaultId, newDefaultId: modelId },
+            }),
+          );
+        }
       },
 
       reset: () => {

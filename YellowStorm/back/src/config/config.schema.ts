@@ -1,16 +1,7 @@
 import * as Joi from 'joi';
 
 export const configValidationSchema = Joi.object({
-  GOVERNED_CONVERSATIONS_ENABLED: Joi.boolean().default(false),
-  GOVERNANCE_SCOPE_AUDIENCE_ENABLED: Joi.boolean().default(false),
-  GOVERNED_SCOPE_CAROUSEL_ENABLED: Joi.boolean().default(false),
-  DATA_ROOM_GOVERNANCE_ENABLED: Joi.boolean().default(false),
-  DATA_ROOM_WORKSPACE_EVENTS_ENABLED: Joi.boolean().default(false),
   DATA_ROOM_GOVERNANCE_EVENT_CONSUMER_ENABLED: Joi.boolean().default(false),
-  DATA_ROOM_RECONCILIATION_ENABLED: Joi.boolean().default(false),
-  DATA_ROOM_OUTBOX_DISPATCH_ENABLED: Joi.boolean().default(false),
-  DATA_ROOM_VALIDITY_INTELLIGENCE_ENABLED: Joi.boolean().default(false),
-  DATA_ROOM_KNOWLEDGE_ASSESSMENT_ENABLED: Joi.boolean().default(false),
   // Application
   APP_NAME: Joi.string().default('YelloStorm'),
   NODE_ENV: Joi.string().valid('development', 'production', 'test').default('development'),
@@ -30,6 +21,10 @@ export const configValidationSchema = Joi.object({
   MEMORY_PG_PASSWORD: Joi.string().optional(),
   MEMORY_PG_DB: Joi.string().optional(),
   MEMORY_PG_SSL: Joi.boolean().optional(),
+  MEMORY_PG_POOL_MAX: Joi.number().integer().min(1).max(50).default(5),
+  MEMORY_PG_STATEMENT_TIMEOUT: Joi.number().min(1000).max(300000).default(30000),
+  MEMORY_PG_IDLE_IN_TRANSACTION_TIMEOUT: Joi.number().min(1000).max(300000).default(30000),
+  MEMORY_PG_CONNECT_TIMEOUT: Joi.number().min(1000).default(10000),
   MEMORY_LIMIT_MB: Joi.number().min(64).default(512),
 
   // App-owned Postgres (agents datastore — Drizzle)
@@ -45,40 +40,68 @@ export const configValidationSchema = Joi.object({
   POSTGRES_STATEMENT_TIMEOUT: Joi.number().min(1000).max(300000).default(30000),
   POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT: Joi.number().min(1000).max(300000).default(30000),
   POSTGRES_KEEPALIVE: Joi.boolean().default(true),
+  POSTGRES_KEEPALIVE_INITIAL_DELAY: Joi.number().min(0).default(10000),
+  // CA for server cert verification (all pools): PEM contents or a file path.
+  POSTGRES_SSL_CA: Joi.string().allow('').optional(),
+  // Unset => verify only when POSTGRES_SSL_CA is provided (backwards compatible).
+  POSTGRES_SSL_REJECT_UNAUTHORIZED: Joi.boolean().optional(),
   REPLICA_ID: Joi.string().max(100).optional(),
   CONVERSATION_MAX_CLONE_MESSAGES: Joi.number().min(1).max(10000).default(2000),
   CONVERSATION_MAX_PRIVATE_SHARE_RECIPIENTS: Joi.number().min(1).max(20).default(20),
   CONVERSATION_CLONE_INSERT_BATCH_SIZE: Joi.number().min(1).max(1000).default(250),
+  CONVERSATION_CARBON_FACTORS_JSON: Joi.string().default('{}'),
+  CONVERSATION_CARBON_METHODOLOGY: Joi.string().max(100).default('tokens-factor-v1'),
+  CONVERSATION_CARBON_FACTOR_VERSION: Joi.string().max(100).default('unconfigured'),
 
   // Semantic Model PostgreSQL / Apache AGE
-  SEMANTIC_MODELS_ENABLED: Joi.boolean().default(false),
   SEMANTIC_MODELS_AUTO_PROVISION: Joi.boolean().default(false),
-  SEMANTIC_PG_HOST: Joi.string().when('SEMANTIC_MODELS_ENABLED', {
-    is: true,
-    then: Joi.required(),
-    otherwise: Joi.optional().allow(''),
+  SEMANTIC_MODEL_RUNTIME_ENABLED: Joi.boolean().default(false),
+  // Runtime writes require the runtime feature; a mismatch must fail at boot, not silently no-op.
+  SEMANTIC_MODEL_RUNTIME_WRITES_ENABLED: Joi.boolean().default(false).when('SEMANTIC_MODEL_RUNTIME_ENABLED', {
+    is: false,
+    then: Joi.valid(false),
   }),
+  SEMANTIC_MODEL_RUNTIME_URL: Joi.string().uri().optional().allow(''),
+  SEMANTIC_RUNTIME_SERVICE_KEY: Joi.string().max(500).optional().allow(''),
+  SEMANTIC_MODEL_RUNTIME_REQUEST_TIMEOUT_MS: Joi.number().integer().min(1000).max(60000).default(5000),
+  SEMANTIC_MODEL_DATA_API_ENABLED: Joi.boolean().default(false),
+  SEMANTIC_MODEL_REALTIME_ENABLED: Joi.boolean().default(false).when('SEMANTIC_MODEL_DATA_API_ENABLED', {
+    is: false,
+    then: Joi.valid(false),
+  }),
+  SEMANTIC_MODEL_CONTEXT_SEARCH_ENABLED: Joi.boolean().default(false),
+  SEMANTIC_MODEL_LLM_FALLBACK_ENABLED: Joi.boolean().default(false),
+  SEMANTIC_PG_HOST: Joi.string().optional().allow(''),
   SEMANTIC_PG_PORT: Joi.number().min(1).max(65535).default(5432),
-  SEMANTIC_PG_USER: Joi.string().when('SEMANTIC_MODELS_ENABLED', {
-    is: true,
-    then: Joi.required(),
-    otherwise: Joi.optional().allow(''),
-  }),
+  SEMANTIC_PG_USER: Joi.string().optional().allow(''),
   SEMANTIC_PG_PASSWORD: Joi.string().allow('').optional(),
-  SEMANTIC_PG_DATABASE: Joi.string().when('SEMANTIC_MODELS_ENABLED', {
-    is: true,
-    then: Joi.required(),
-    otherwise: Joi.optional().allow(''),
-  }),
+  SEMANTIC_PG_DATABASE: Joi.string().optional().allow(''),
   SEMANTIC_PG_SSL: Joi.boolean().default(false),
   SEMANTIC_PG_POOL_MAX: Joi.number().min(1).max(50).default(10),
-  SEMANTIC_AGE_GRAPH: Joi.string().pattern(/^[a-z][a-z0-9_]{0,62}$/).default('semantic_model_graph'),
+  SEMANTIC_PG_STATEMENT_TIMEOUT: Joi.number().min(1000).max(3600000).default(60000),
+  SEMANTIC_PG_IDLE_IN_TRANSACTION_TIMEOUT: Joi.number().min(1000).max(300000).default(30000),
+  SEMANTIC_PG_CONNECT_TIMEOUT: Joi.number().min(1000).default(10000),
+  SEMANTIC_AGEGRAPH_HOST: Joi.string().optional().allow(''),
+  SEMANTIC_AGEGRAPH_PORT: Joi.number().min(1).max(65535).optional(),
+  SEMANTIC_AGEGRAPH_USER: Joi.string().optional().allow(''),
+  SEMANTIC_AGEGRAPH_PASSWORD: Joi.string().allow('').optional(),
+  SEMANTIC_AGEGRAPH_DATABASE: Joi.string().optional().allow(''),
+  SEMANTIC_DATA_JWT_SECRET: Joi.string().allow('').optional(),
+  SEMANTIC_REALTIME_JWT_SECRET: Joi.string().allow('').optional(),
+  SEMANTIC_DATA_TOKEN_TTL_SECONDS: Joi.number().min(10).max(600).default(60),
+  SEMANTIC_DATA_REST_URL: Joi.string().optional().allow(''),
+  SEMANTIC_DATA_REALTIME_URL: Joi.string().optional().allow(''),
+  SEMANTIC_AGE_GRAPH: Joi.string()
+    .pattern(/^[a-z][a-z0-9_]{0,62}$/)
+    .default('semantic_model_graph'),
   SEMANTIC_MODEL_NATIVE_SEARCH_URL: Joi.string().uri().default('http://localhost:8045/search_native'),
   SEMANTIC_MODEL_NATIVE_SEARCH_BATCH_URL: Joi.string().uri().default('http://localhost:8045/search_native/batch'),
   SEMANTIC_MODEL_NATIVE_SEARCH_AUTH_TOKEN: Joi.string().allow('').optional(),
   SEMANTIC_MODEL_NATIVE_SEARCH_LOG_QUERY: Joi.boolean().default(false),
   SEMANTIC_MODEL_EVIDENCE_SEARCH_TIMEOUT_MS: Joi.number().min(5000).max(1800000).default(180000),
   SEMANTIC_MODEL_EVIDENCE_SEARCH_CONCURRENCY: Joi.number().integer().min(1).max(16).default(4),
+  SEMANTIC_MODEL_DOCUMENT_EXTRACTION_AGENT_ID: Joi.string().allow('').optional(),
+  SEMANTIC_MODEL_DOCUMENT_EXTRACTION_TIMEOUT_MS: Joi.number().min(5000).max(1800000).default(180000),
   SEMANTIC_SEARCH_URL: Joi.string().uri().default('http://127.0.0.1:8100'),
   SEMANTIC_SEARCH_TOKEN: Joi.string().allow('').optional(),
   SEMANTIC_SEARCH_TIMEOUT_SECONDS: Joi.number().min(1).max(1800).default(300),
@@ -144,6 +167,10 @@ export const configValidationSchema = Joi.object({
   STORAGE_MAX_FILE_SIZE_MB: Joi.number().min(1).max(500).default(50),
   STORAGE_MAX_FILES_PER_UPLOAD: Joi.number().min(1).max(50).default(10),
   STORAGE_SAS_EXPIRY_MINUTES: Joi.number().min(1).max(10080).default(60),
+  SEMANTIC_DATASET_STORAGE_PREFIX: Joi.string()
+    .pattern(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/)
+    .default('semantic-model/datasets'),
+  SEMANTIC_DATASET_MAX_SIZE_MB: Joi.number().integer().min(1).max(2048).default(200),
   STORAGE_ALLOWED_MIME_TYPES: Joi.string().optional(),
   STORAGE_HEALTH_CHECK_ENABLED: Joi.boolean().default(true),
   STORAGE_HEALTH_CHECK_INTERVAL_MS: Joi.number().min(10000).max(3600000).default(60000),
@@ -159,8 +186,6 @@ export const configValidationSchema = Joi.object({
     then: Joi.required(),
     otherwise: Joi.optional(),
   }),
-  JWT_ACCESS_EXPIRY: Joi.string().default('15m'),
-  JWT_REFRESH_EXPIRY: Joi.string().default('7d'),
   JWT_ISSUER: Joi.string().default('yellostorm'),
   JWT_AUDIENCE: Joi.string().default('yellostorm-api'),
 
@@ -310,12 +335,19 @@ export const configValidationSchema = Joi.object({
 
   // Persistent App Data (PostgreSQL tenant schemas — see app-data/README.md).
   APP_DATA_ENABLED: Joi.boolean().default(false),
+  APP_DATA_REMOTE: Joi.boolean().default(false),
+  APP_DATA_SERVICE_URL: Joi.string().uri().allow('').optional(),
+  APP_DATA_SERVICE_TOKEN: Joi.string().allow('').default(''),
+  APP_DATA_REMOTE_PUBLIC_BASE_URL: Joi.string().uri().allow('').optional(),
+  APP_DATA_REMOTE_PUBLIC_BASE_URL_PROD: Joi.string().allow('').optional(),
+  APP_DATA_REMOTE_TIMEOUT_MS: Joi.number().min(1000).max(300_000).default(15_000),
+  APP_DATA_REMOTE_BIND_TIMEOUT_MS: Joi.number().min(1000).max(600_000).default(120_000),
   APP_DATA_MCP_ENABLED: Joi.boolean().default(false),
   APP_DATA_PUBLIC_API_ENABLED: Joi.boolean().default(false),
   APP_DATA_DATA_TAB_ENABLED: Joi.boolean().default(false),
-  APP_DATA_PUBLIC_BASE_URL: Joi.string().uri().optional(),
-  APP_DATA_PUBLIC_BASE_URL_PROD: Joi.string().uri().optional(),
-  APP_DATA_MCP_URL: Joi.string().uri().optional(),
+  APP_DATA_PUBLIC_BASE_URL: Joi.string().uri().allow('').optional(),
+  APP_DATA_PUBLIC_BASE_URL_PROD: Joi.string().uri().allow('').optional(),
+  APP_DATA_MCP_URL: Joi.string().uri().allow('').optional(),
   APP_DATA_MAX_TABLES: Joi.number().min(1).max(256).default(32),
   APP_DATA_MAX_COLUMNS: Joi.number().min(1).max(256).default(64),
   APP_DATA_MAX_ROW_BODY_BYTES: Joi.number().min(1024).max(1_048_576).default(65_536),
@@ -330,7 +362,16 @@ export const configValidationSchema = Joi.object({
   // LiteLLM
   LITELLM_API_URL: Joi.string().uri().optional(),
   LITELLM_API_KEY: Joi.string().optional(),
+  LITELLM_APP_BUILDER_API_KEY: Joi.string().optional(),
   LITELLM_TIMEOUT_MS: Joi.number().min(1000).max(60000).default(10000),
+  AI_PROXY_RATE_LIMIT_PER_USER: Joi.number().min(1).max(10_000).default(60),
+  AI_PROXY_RATE_LIMIT_WINDOW_MS: Joi.number().min(1000).max(3_600_000).default(60_000),
+  AI_PROXY_ALLOWED_MODELS: Joi.string().allow('').default(''),
+  AI_PROXY_MAX_TOKENS_PER_REQUEST: Joi.number().integer().min(1).max(1_000_000).default(4096),
+  AI_PROXY_MAX_BODY_BYTES: Joi.number().integer().min(1024).max(10 * 1024 * 1024).default(1_048_576),
+  AI_PROXY_MAX_MESSAGES: Joi.number().integer().min(1).max(10_000).default(100),
+  AI_PROXY_MAX_MESSAGE_CONTENT_CHARS: Joi.number().integer().min(1).max(10_000_000).default(100_000),
+  AI_PROXY_PREVIEW_TICKET_TTL_MS: Joi.number().integer().min(60_000).max(3_600_000).default(600_000),
   EMBEDDING_MODEL: Joi.string().default('qwen3-embedding'),
   EMBEDDING_DIMENSION: Joi.number().default(2560),
   LITELLM_HEALTH_CHECK_ENABLED: Joi.boolean().default(true),
@@ -380,9 +421,10 @@ export const configValidationSchema = Joi.object({
   PLAYBOOK_MAX_CONCURRENT_PER_MODEL: Joi.number().min(1).max(500).default(10),
   PLAYBOOK_DYNAMIC_REASONING_ENABLED: Joi.boolean().default(false),
   PLAYBOOK_ASYNC_DESIGN_ENABLED: Joi.boolean().default(false),
-  PLAYBOOK_MCP_ASSISTANT_ENABLED: Joi.boolean().default(false),
   PLAYBOOK_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8025/mcp'),
   PLAYBOOK_MCP_INGRESS_TOKEN: Joi.string().allow('').default(''),
+  AGENT_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8026/mcp'),
+  AGENT_MCP_INGRESS_TOKEN: Joi.string().allow('').default(''),
   PLAYBOOK_MAX_CONCURRENT_GLOBAL_DESIGN_OPERATIONS: Joi.number().min(1).max(100).default(10),
   PLAYBOOK_MAX_CONCURRENT_USER_DESIGN_OPERATIONS: Joi.number().min(1).max(50).default(3),
   // Telegram
@@ -395,32 +437,10 @@ export const configValidationSchema = Joi.object({
   TELEGRAM_WEBHOOK_RATE_WINDOW_MS: Joi.number().min(1000).max(3600000).default(60000),
   TELEGRAM_MAX_REPLY_LENGTH: Joi.number().min(64).max(4096).default(3900),
 
-  // WhatsApp
-  WHATSAPP_ENABLED: Joi.boolean().default(true),
-  WHATSAPP_MAX_REPLY_LENGTH: Joi.number().min(64).max(4096).default(4000),
-  WHATSAPP_PAIRING_TIMEOUT_MS: Joi.number().min(60000).max(1800000).default(300000),
-  WHATSAPP_RECONNECT_INITIAL_DELAY_MS: Joi.number().min(500).max(60000).default(1000),
-  WHATSAPP_RECONNECT_MAX_DELAY_MS: Joi.number().min(1000).max(600000).default(120000),
-  WHATSAPP_RECONNECT_MAX_ATTEMPTS: Joi.number().min(0).max(50).default(10),
-  WHATSAPP_CONNECTIVITY_PROBE_TIMEOUT_MS: Joi.number().min(1000).max(60000).default(10000),
-  WHATSAPP_PROCESSING_TIMEOUT_MS: Joi.number().min(30000).max(600000).default(180000),
-  WHATSAPP_MAX_INBOUND_PER_MINUTE: Joi.number().min(1).max(300).default(30),
-  WHATSAPP_FALLBACK_REPLY: Joi.string()
-    .max(500)
-    .default('I could not generate a response for this message.'),
-  WHATSAPP_CIRCUIT_BREAKER_FAILURE_THRESHOLD: Joi.number().min(1).max(20).default(3),
-  WHATSAPP_CIRCUIT_BREAKER_COOLDOWN_MS: Joi.number().min(5000).max(300000).default(60000),
-  WHATSAPP_INTERNAL_SEND_RATE_LIMIT_PER_MINUTE: Joi.number().min(1).max(600).default(30),
-  // WhatsApp MCP façade (agent-scoped outbound send over the standalone MCP server)
-  WHATSAPP_MCP_JWT_PRIVATE_KEY: Joi.string().allow('').default(''),
-  WHATSAPP_MCP_CONNECTOR_SLUG: Joi.string().default('mcp-whatsapp'),
-  WHATSAPP_MCP_TOKEN_TTL_SECONDS: Joi.number().min(30).max(3600).default(300),
-
   // Logging Persistence
   LOGGING_MONGODB_URI: Joi.string().optional(),
   LOGGING_BUFFER_SIZE: Joi.number().min(10).max(10000).default(100),
   LOGGING_FLUSH_INTERVAL_MS: Joi.number().min(1000).max(60000).default(5000),
-  LOGGING_TTL_DAYS: Joi.number().min(1).max(365).default(30),
   LOGGING_PERSISTENCE_ENABLED: Joi.boolean().default(true),
   LOGGING_DEFAULT_SAVE: Joi.boolean().default(true),
   LOGGING_DEFAULT_DISPLAY: Joi.boolean().default(true),
@@ -460,9 +480,7 @@ export const configValidationSchema = Joi.object({
   WORKY_VOICE_NAME: Joi.string().default('Kore'),
   WORKY_VOICE_WS_BASE_URL: Joi.string()
     .uri({ scheme: ['wss'] })
-    .default(
-      'wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained',
-    ),
+    .default('wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained'),
   WORKY_VOICE_TOKEN_TTL_SEC: Joi.number().min(60).max(3600).default(1800),
   WORKY_VOICE_SESSION_START_TTL_SEC: Joi.number().min(30).max(600).default(60),
 

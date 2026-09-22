@@ -14,10 +14,11 @@ export default registerAs('email', () => ({
   },
 
   // Outlook / Microsoft Graph Configuration
+  // Credentials fall back to MICROSOFT_* — same Azure app, single env source.
   outlook: {
-    clientId: process.env.AZURE_AD_CLIENT_ID || '',
-    clientSecret: process.env.AZURE_AD_CLIENT_SECRET || '',
-    tenantId: process.env.AZURE_AD_TENANT_ID || '',
+    clientId: process.env.AZURE_AD_CLIENT_ID || process.env.MICROSOFT_CLIENT_ID || '',
+    clientSecret: process.env.AZURE_AD_CLIENT_SECRET || process.env.MICROSOFT_CLIENT_SECRET || '',
+    tenantId: process.env.AZURE_AD_TENANT_ID || process.env.MICROSOFT_TENANT_ID || '',
     authority: process.env.AZURE_AD_INSTANCE || 'https://login.microsoftonline.com',
     senderEmail: process.env.OUTLOOK_SENDER_EMAIL || process.env.EMAIL_FROM_ADDRESS || '',
   },

@@ -1,9 +1,8 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
+import { isObjectId } from '@common/postgres';
 import { ConflictException, ForbiddenException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
-import { SkillCategory, SkillCategoryDocument } from './schemas/skill-category.schema';
+import { SKILL_CATEGORY_STORE, type SkillCategoryRow, type SkillCategoryStore } from './persistence/skill.store';
 import { CreateSkillCategoryDto } from './dto/create-skill-category.dto';
 import { UpdateSkillCategoryDto } from './dto/update-skill-category.dto';
 import { ISkillCategoryResponse } from './interfaces/skill.interface';
@@ -14,28 +13,15 @@ export const SYSTEM_CATEGORY_NAME = 'System';
 @Injectable()
 export class SkillCategoryService implements OnModuleInit {
   constructor(
-    @InjectModel(SkillCategory.name)
-    private readonly categoryModel: Model<SkillCategoryDocument>,
+    @Inject(SKILL_CATEGORY_STORE)
+    private readonly categoryStore: SkillCategoryStore,
   ) {}
 
   /** Ensure the reserved "System" category exists and is flagged, on every boot. */
   async onModuleInit(): Promise<void> {
-    const existing = await this.categoryModel
-      .findOne({ name: { $regex: `^${SYSTEM_CATEGORY_NAME}$`, $options: 'i' } })
-      .exec();
-
-    if (existing) {
-      if (!existing.isSystem) {
-        existing.isSystem = true;
-        await existing.save();
-      }
-      return;
-    }
-
-    await this.categoryModel.create({
+    await this.categoryStore.ensureSystem({
       name: SYSTEM_CATEGORY_NAME,
       description: 'Built-in skills hidden from users.',
-      isSystem: true,
     });
   }
 
@@ -47,12 +33,12 @@ export class SkillCategoryService implements OnModuleInit {
       );
     }
 
-    const existing = await this.categoryModel.findOne({ name: dto.name }).lean().exec();
+    const existing = await this.categoryStore.findByNameInsensitive(dto.name);
     if (existing) {
       throw new ConflictException(ErrorCode.SKILL_CATEGORY_ALREADY_EXISTS);
     }
 
-    const category = await this.categoryModel.create({
+    const category = await this.categoryStore.insert({
       name: dto.name,
       description: dto.description ?? '',
     });
@@ -61,16 +47,16 @@ export class SkillCategoryService implements OnModuleInit {
   }
 
   async findAll(): Promise<ISkillCategoryResponse[]> {
-    const categories = await this.categoryModel.find().sort({ name: 1 }).lean().exec();
+    const categories = await this.categoryStore.findAll();
     return categories.map((c) => this.toResponse(c));
   }
 
   async findById(id: string): Promise<ISkillCategoryResponse> {
-    if (!Types.ObjectId.isValid(id)) {
+    if (!isObjectId(id)) {
       throw new NotFoundException(ErrorCode.SKILL_CATEGORY_NOT_FOUND);
     }
 
-    const category = await this.categoryModel.findById(id).lean().exec();
+    const category = await this.categoryStore.findById(id);
     if (!category) {
       throw new NotFoundException(ErrorCode.SKILL_CATEGORY_NOT_FOUND);
     }
@@ -79,11 +65,11 @@ export class SkillCategoryService implements OnModuleInit {
   }
 
   async update(id: string, dto: UpdateSkillCategoryDto): Promise<ISkillCategoryResponse> {
-    if (!Types.ObjectId.isValid(id)) {
+    if (!isObjectId(id)) {
       throw new NotFoundException(ErrorCode.SKILL_CATEGORY_NOT_FOUND);
     }
 
-    const current = await this.categoryModel.findById(id).exec();
+    const current = await this.categoryStore.findById(id);
     if (!current) {
       throw new NotFoundException(ErrorCode.SKILL_CATEGORY_NOT_FOUND);
     }
@@ -103,30 +89,25 @@ export class SkillCategoryService implements OnModuleInit {
     }
 
     if (dto.name && dto.name !== current.name) {
-      const conflict = await this.categoryModel
-        .findOne({ name: dto.name, _id: { $ne: current._id } })
-        .lean()
-        .exec();
-      if (conflict) {
+      const conflict = await this.categoryStore.findByNameInsensitive(dto.name);
+      if (conflict && conflict.id !== current.id) {
         throw new ConflictException(ErrorCode.SKILL_CATEGORY_ALREADY_EXISTS);
       }
-      current.name = dto.name;
     }
 
-    if (dto.description !== undefined) {
-      current.description = dto.description;
+    const updated = await this.categoryStore.update(id, dto);
+    if (!updated) {
+      throw new NotFoundException(ErrorCode.SKILL_CATEGORY_NOT_FOUND);
     }
-
-    await current.save();
-    return this.toResponse(current);
+    return this.toResponse(updated);
   }
 
   async delete(id: string): Promise<void> {
-    if (!Types.ObjectId.isValid(id)) {
+    if (!isObjectId(id)) {
       throw new NotFoundException(ErrorCode.SKILL_CATEGORY_NOT_FOUND);
     }
 
-    const current = await this.categoryModel.findById(id).exec();
+    const current = await this.categoryStore.findById(id);
     if (!current) {
       throw new NotFoundException(ErrorCode.SKILL_CATEGORY_NOT_FOUND);
     }
@@ -138,18 +119,17 @@ export class SkillCategoryService implements OnModuleInit {
       );
     }
 
-    await current.deleteOne();
+    await this.categoryStore.delete(id);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private toResponse(doc: any): ISkillCategoryResponse {
+  private toResponse(row: SkillCategoryRow): ISkillCategoryResponse {
     return {
-      id: doc._id?.toString() ?? doc.id,
-      name: doc.name,
-      description: doc.description ?? '',
-      isSystem: doc.isSystem ?? false,
-      createdAt: doc.createdAt,
-      updatedAt: doc.updatedAt,
+      id: row.id,
+      name: row.name,
+      description: row.description ?? '',
+      isSystem: row.isSystem,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
     };
   }
 }

@@ -110,6 +110,9 @@ Legacy `POST /internal/app-runtime/tool-invoke` always answers HTTP 200 with a f
 
 - **Idempotence**: `toolCallId` is unique in `app_runtime_tool_calls`. A settled
   call replays its stored outcome instead of mutating twice.
+- **Duration telemetry (Phase 0)**: on `running`, the dispatcher stores `startedAtMs`;
+  on settle (`succeeded` / `failed`) it writes `durationMs`. Query
+  `app_runtime_tool_calls` by `workspaceId` / `tool` / `createdAt` for histograms.
 - **One mutation at a time**: `write`, `apply_patch` and `delete` serialize on a
   per-workspace lock; waiting longer than `APP_RUNTIME_MUTATION_WAIT_MS` yields
   `TOOL_TIMEOUT`.

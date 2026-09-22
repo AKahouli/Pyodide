@@ -13,6 +13,7 @@ describe('ConversationController active stream recovery', () => {
       {} as never,
       { getActiveStreamSnapshot } as never,
       {} as never,
+      {} as never,
     );
 
     expect(controller.getActiveStream('conversation-1')).toEqual({

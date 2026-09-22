@@ -323,6 +323,23 @@ class ReadModel:
                 ON CONFLICT (session_id, component_id) DO NOTHING
             """, session_id, message_id, component_id, ordinal, type, json.dumps(data))
 
+    async def close_confirm_choices(self, session_id: str, keep_ids: List[str]) -> None:
+        """Mark every `confirm::` approve/decline card in the session as submitted
+        EXCEPT the ones still outstanding (`keep_ids`), so a gate the owner already
+        answered — and any stale duplicate left by a re-drive — renders closed on
+        reload instead of re-arming (a refreshed card would otherwise let them send
+        twice). A genuinely-open parallel gate stays armed: its latest card's
+        questionId is in `keep_ids`; only its superseded older cards get closed."""
+        async with self._pool.acquire() as con:
+            await con.execute(f"""
+                UPDATE {_q(self._schema,'message_components')}
+                   SET data = jsonb_set(data, '{{status}}', '"submitted"')
+                 WHERE session_id=$1 AND type='choice'
+                   AND data->>'status'='ready'
+                   AND data->>'questionId' LIKE 'confirm::%'
+                   AND NOT (data->>'questionId' = ANY($2::text[]))
+            """, session_id, list(keep_ids))
+
     async def add_step_artifact(self, session_id: str, step_id: str, *, file_path: str,
                                 filename: str, artifact_kind: Optional[str] = None,
                                 mime_type: Optional[str] = None,
@@ -417,6 +434,15 @@ class ReadModel:
                 f"UPDATE {_q(self._schema,'mail_waits')} SET interrupt_id=$3 "
                 f"WHERE session_id=$1 AND step_id=$2 AND status='waiting'",
                 session_id, step_id, interrupt_id)
+
+    async def cancel_mail_wait(self, session_id: str, step_id: str) -> None:
+        """Drop one step's wait — its reply can never arrive (e.g. the send it was
+        waiting on failed). Scoped to the step, unlike cancel_mail_waits."""
+        async with self._pool.acquire() as con:
+            await con.execute(
+                f"UPDATE {_q(self._schema,'mail_waits')} SET status='cancelled' "
+                f"WHERE session_id=$1 AND step_id=$2 AND status='waiting'",
+                session_id, step_id)
 
     async def rebind_mail_wait(self, session_id: str, old_step_id: str, new_step_id: str) -> int:
         """Move a pending wait onto the real step it belongs to, returning how

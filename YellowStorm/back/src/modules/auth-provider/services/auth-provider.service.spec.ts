@@ -1,27 +1,24 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { AuthProviderService } from './auth-provider.service';
-import { AuthProvider } from '../schemas/auth-provider.schema';
-import { UserProviderLink } from '../schemas/user-provider-link.schema';
 import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';
 import { SystemService } from '@modules/system/system.service';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-
-function createQueryChain(resolvedValue: unknown) {
-  const chain: Record<string, jest.Mock> = {};
-  ['select', 'lean', 'sort', 'skip', 'limit', 'populate'].forEach((m) => {
-    chain[m] = jest.fn().mockReturnValue(chain);
-  });
-  chain.exec = jest.fn().mockResolvedValue(resolvedValue);
-  return chain;
-}
+import { AUTH_PROVIDER_STORE, USER_PROVIDER_LINK_STORE } from '../persistence/auth-provider.stores';
+import {
+  linkRecord,
+  makeProviderStoreFake,
+  makeUserProviderLinkStoreFake,
+  providerRecord,
+  type AuthProviderStoreFake,
+  type UserProviderLinkStoreFake,
+} from '../persistence/auth-provider-stores.fake';
 
 describe('AuthProviderService', () => {
   let service: AuthProviderService;
-  let authProviderModel: Record<string, jest.Mock>;
-  let userProviderLinkModel: Record<string, jest.Mock>;
+  let providerStore: AuthProviderStoreFake;
+  let linkStore: UserProviderLinkStoreFake;
   let cryptoService: { encrypt: jest.Mock; decrypt: jest.Mock; isEncrypted: jest.Mock };
   let systemService: {
     isRegistrationEnabled: jest.Mock;
@@ -30,25 +27,12 @@ describe('AuthProviderService', () => {
     setClassicAuthEnabled: jest.Mock;
   };
 
-  const MOCK_ID = new Types.ObjectId().toHexString();
+  const mockId = new Types.ObjectId().toHexString();
 
-  const mockProvider = {
-    _id: new Types.ObjectId(MOCK_ID),
-    providerKey: 'microsoft',
-    displayName: 'Microsoft',
-    clientId: 'encrypted:real-client-id',
-    clientSecret: 'encrypted:real-client-secret',
-    tenantId: 'encrypted:real-tenant-id',
-    authorizationUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
-    tokenUrl: 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
-    userinfoUrl: 'https://graph.microsoft.com/oidc/userinfo',
-    scopes: ['openid', 'email', 'profile'],
-    iconKey: 'microsoft',
-    sortOrder: 0,
-    pkceEnabled: true,
-    enabled: true,
-    createdAt: new Date(),
-    updatedAt: new Date(),
+  const seedProvider = (overrides = {}) => {
+    const record = providerRecord({ id: mockId, ...overrides });
+    providerStore.records.push(record);
+    return record;
   };
 
   const mockLoggerService = {
@@ -60,18 +44,8 @@ describe('AuthProviderService', () => {
   };
 
   beforeEach(async () => {
-    authProviderModel = {
-      find: jest.fn(),
-      findOne: jest.fn(),
-      findById: jest.fn(),
-      deleteOne: jest.fn(),
-      create: jest.fn(),
-    };
-
-    userProviderLinkModel = {
-      countDocuments: jest.fn(),
-      deleteMany: jest.fn(),
-    };
+    providerStore = makeProviderStoreFake();
+    linkStore = makeUserProviderLinkStoreFake();
 
     cryptoService = {
       encrypt: jest.fn((val: string) => `encrypted:${val}`),
@@ -89,8 +63,8 @@ describe('AuthProviderService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthProviderService,
-        { provide: getModelToken(AuthProvider.name), useValue: authProviderModel },
-        { provide: getModelToken(UserProviderLink.name), useValue: userProviderLinkModel },
+        { provide: AUTH_PROVIDER_STORE, useValue: providerStore },
+        { provide: USER_PROVIDER_LINK_STORE, useValue: linkStore },
         { provide: CryptoService, useValue: cryptoService },
         { provide: LoggerService, useValue: mockLoggerService },
         { provide: SystemService, useValue: systemService },
@@ -104,9 +78,8 @@ describe('AuthProviderService', () => {
 
   describe('findAll', () => {
     it('should return classic provider first, then all providers with masked secrets', async () => {
-      const chain = createQueryChain([mockProvider]);
-      authProviderModel.find.mockReturnValue(chain);
-      userProviderLinkModel.countDocuments.mockResolvedValue(3);
+      seedProvider({ tenantId: 'encrypted:real-tenant-id' });
+      linkStore.records.push(linkRecord({ providerKey: 'microsoft' }), linkRecord({ providerKey: 'microsoft' }), linkRecord({ providerKey: 'microsoft' }));
 
       const result = await service.findAll();
 
@@ -117,7 +90,7 @@ describe('AuthProviderService', () => {
       expect(result[0].providerKey).toBe('classic');
       expect(result[0].registrationEnabled).toBe(true);
 
-      // OAuth provider follows
+      // OAuth provider follows, secrets masked
       expect(result[1].type).toBe('oauth');
       expect(result[1].clientId).toBe('****');
       expect(result[1].clientSecret).toBe('****');
@@ -127,9 +100,6 @@ describe('AuthProviderService', () => {
     });
 
     it('should return only classic provider when no OAuth providers exist', async () => {
-      const chain = createQueryChain([]);
-      authProviderModel.find.mockReturnValue(chain);
-
       const result = await service.findAll();
 
       expect(result).toHaveLength(1);
@@ -140,13 +110,11 @@ describe('AuthProviderService', () => {
 
   describe('findEnabled', () => {
     it('should return enabled OAuth providers plus classic provider', async () => {
-      const chain = createQueryChain([mockProvider]);
-      authProviderModel.find.mockReturnValue(chain);
+      seedProvider();
 
       const result = await service.findEnabled();
 
       expect(result).toHaveLength(2);
-      // OAuth provider first (sorted by sortOrder)
       expect(result[0]).toEqual({
         type: 'oauth',
         providerKey: 'microsoft',
@@ -154,7 +122,6 @@ describe('AuthProviderService', () => {
         iconKey: 'microsoft',
         sortOrder: 0,
       });
-      // Classic provider appended last
       expect(result[1]).toEqual({
         type: 'classic',
         providerKey: 'classic',
@@ -163,12 +130,9 @@ describe('AuthProviderService', () => {
         sortOrder: 999,
         registrationEnabled: true,
       });
-      expect(authProviderModel.find).toHaveBeenCalledWith({ enabled: true });
     });
 
     it('should reflect registration disabled in classic provider', async () => {
-      const chain = createQueryChain([]);
-      authProviderModel.find.mockReturnValue(chain);
       systemService.isRegistrationEnabled.mockReturnValue(false);
 
       const result = await service.findEnabled();
@@ -179,8 +143,7 @@ describe('AuthProviderService', () => {
     });
 
     it('should exclude classic provider when classic auth is disabled', async () => {
-      const chain = createQueryChain([mockProvider]);
-      authProviderModel.find.mockReturnValue(chain);
+      seedProvider();
       systemService.isClassicAuthEnabled.mockReturnValue(false);
 
       const result = await service.findEnabled();
@@ -193,8 +156,11 @@ describe('AuthProviderService', () => {
 
   describe('findByKey', () => {
     it('should return decrypted provider config', async () => {
-      const chain = createQueryChain(mockProvider);
-      authProviderModel.findOne.mockReturnValue(chain);
+      seedProvider({
+        clientId: 'encrypted:real-client-id',
+        clientSecret: 'encrypted:real-client-secret',
+        tenantId: 'encrypted:real-tenant-id',
+      });
 
       const result = await service.findByKey('microsoft');
 
@@ -205,17 +171,13 @@ describe('AuthProviderService', () => {
     });
 
     it('should throw when provider not found', async () => {
-      const chain = createQueryChain(null);
-      authProviderModel.findOne.mockReturnValue(chain);
-
       await expect(service.findByKey('unknown')).rejects.toMatchObject({
         code: ErrorCode.AUTH_OAUTH_PROVIDER_NOT_FOUND,
       });
     });
 
     it('should throw when provider is disabled', async () => {
-      const chain = createQueryChain({ ...mockProvider, enabled: false });
-      authProviderModel.findOne.mockReturnValue(chain);
+      seedProvider({ enabled: false });
 
       await expect(service.findByKey('microsoft')).rejects.toMatchObject({
         code: ErrorCode.AUTH_OAUTH_PROVIDER_DISABLED,
@@ -225,21 +187,23 @@ describe('AuthProviderService', () => {
 
   describe('findById', () => {
     it('should return masked provider with linked user count', async () => {
-      const chain = createQueryChain(mockProvider);
-      authProviderModel.findById.mockReturnValue(chain);
-      userProviderLinkModel.countDocuments.mockResolvedValue(5);
+      seedProvider();
+      linkStore.records.push(
+        linkRecord({ providerKey: 'microsoft' }),
+        linkRecord({ providerKey: 'microsoft' }),
+        linkRecord({ providerKey: 'microsoft' }),
+        linkRecord({ providerKey: 'microsoft' }),
+        linkRecord({ providerKey: 'microsoft' }),
+      );
 
-      const result = await service.findById(MOCK_ID);
+      const result = await service.findById(mockId);
 
       expect(result.clientId).toBe('****');
       expect(result.linkedUserCount).toBe(5);
     });
 
     it('should throw when not found', async () => {
-      const chain = createQueryChain(null);
-      authProviderModel.findById.mockReturnValue(chain);
-
-      await expect(service.findById(MOCK_ID)).rejects.toMatchObject({
+      await expect(service.findById(mockId)).rejects.toMatchObject({
         code: ErrorCode.AUTH_PROVIDER_NOT_FOUND,
       });
     });
@@ -247,21 +211,6 @@ describe('AuthProviderService', () => {
 
   describe('create', () => {
     it('should encrypt secrets and create provider', async () => {
-      authProviderModel.findOne.mockResolvedValue(null);
-
-      const saveMock = jest.fn().mockResolvedValue(undefined);
-      const mockInstance = {
-        ...mockProvider,
-        save: saveMock,
-        toObject: jest.fn().mockReturnValue(mockProvider),
-      };
-
-      // Mock the constructor (new this.authProviderModel(...))
-      // We need to use a function constructor for the model
-      const constructorMock = jest.fn().mockReturnValue(mockInstance);
-      Object.assign(constructorMock, authProviderModel);
-      (service as any).authProviderModel = constructorMock;
-
       const dto = {
         providerKey: 'microsoft',
         displayName: 'Microsoft',
@@ -278,12 +227,12 @@ describe('AuthProviderService', () => {
       expect(cryptoService.encrypt).toHaveBeenCalledWith('real-client-id');
       expect(cryptoService.encrypt).toHaveBeenCalledWith('real-client-secret');
       expect(cryptoService.encrypt).toHaveBeenCalledWith('real-tenant-id');
-      expect(saveMock).toHaveBeenCalled();
+      expect(providerStore.records).toHaveLength(1);
       expect(result.clientId).toBe('****');
     });
 
     it('should reject duplicate provider key', async () => {
-      authProviderModel.findOne.mockResolvedValue(mockProvider);
+      seedProvider();
 
       const dto = {
         providerKey: 'microsoft',
@@ -303,34 +252,35 @@ describe('AuthProviderService', () => {
 
   describe('delete', () => {
     it('should delete provider without removing links by default', async () => {
-      authProviderModel.findById.mockResolvedValue(mockProvider);
-      authProviderModel.deleteOne.mockResolvedValue({ deletedCount: 1 });
+      seedProvider();
+      linkStore.records.push(linkRecord({ providerKey: 'microsoft' }));
 
-      const result = await service.delete(MOCK_ID);
+      const result = await service.delete(mockId);
 
-      expect(authProviderModel.deleteOne).toHaveBeenCalledWith({ _id: MOCK_ID });
-      expect(userProviderLinkModel.deleteMany).not.toHaveBeenCalled();
+      expect(providerStore.records).toHaveLength(0);
+      expect(linkStore.records).toHaveLength(1); // links preserved
       expect(result.unlinkedUsers).toBe(0);
     });
 
     it('should delete provider and links when deleteLinks is true', async () => {
-      authProviderModel.findById.mockResolvedValue(mockProvider);
-      authProviderModel.deleteOne.mockResolvedValue({ deletedCount: 1 });
-      userProviderLinkModel.deleteMany.mockResolvedValue({ deletedCount: 5 });
+      seedProvider();
+      linkStore.records.push(
+        linkRecord({ providerKey: 'microsoft' }),
+        linkRecord({ providerKey: 'microsoft' }),
+        linkRecord({ providerKey: 'microsoft' }),
+        linkRecord({ providerKey: 'microsoft' }),
+        linkRecord({ providerKey: 'microsoft' }),
+      );
 
-      const result = await service.delete(MOCK_ID, true);
+      const result = await service.delete(mockId, true);
 
-      expect(userProviderLinkModel.deleteMany).toHaveBeenCalledWith({
-        providerKey: 'microsoft',
-      });
-      expect(authProviderModel.deleteOne).toHaveBeenCalled();
+      expect(providerStore.records).toHaveLength(0);
+      expect(linkStore.records).toHaveLength(0);
       expect(result.unlinkedUsers).toBe(5);
     });
 
     it('should throw when provider not found', async () => {
-      authProviderModel.findById.mockResolvedValue(null);
-
-      await expect(service.delete(MOCK_ID)).rejects.toMatchObject({
+      await expect(service.delete(mockId)).rejects.toMatchObject({
         code: ErrorCode.AUTH_PROVIDER_NOT_FOUND,
       });
     });
@@ -338,14 +288,19 @@ describe('AuthProviderService', () => {
 
   describe('getLinkedUserCount', () => {
     it('should return the count of linked users', async () => {
-      userProviderLinkModel.countDocuments.mockResolvedValue(7);
+      linkStore.records.push(
+        linkRecord({ providerKey: 'microsoft' }),
+        linkRecord({ providerKey: 'microsoft' }),
+        linkRecord({ providerKey: 'microsoft' }),
+        linkRecord({ providerKey: 'microsoft' }),
+        linkRecord({ providerKey: 'microsoft' }),
+        linkRecord({ providerKey: 'microsoft' }),
+        linkRecord({ providerKey: 'microsoft' }),
+      );
 
       const count = await service.getLinkedUserCount('microsoft');
 
       expect(count).toBe(7);
-      expect(userProviderLinkModel.countDocuments).toHaveBeenCalledWith({
-        providerKey: 'microsoft',
-      });
     });
   });
 

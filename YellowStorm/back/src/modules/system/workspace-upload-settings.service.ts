@@ -1,11 +1,6 @@
-import { Injectable, OnApplicationBootstrap, BadRequestException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import {
-  SystemSetting,
-  SystemSettingDocument,
-} from './schemas/system-setting.schema';
+import { Inject, Injectable, OnApplicationBootstrap, BadRequestException } from '@nestjs/common';
 import { LoggerService } from '../logger';
+import { SYSTEM_SETTING_STORE, type SystemSettingStore } from './persistence/system-setting.store';
 import { EXTENSION_MIME_TYPES } from '../document/constants/mime-types.constant';
 import {
   DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS,
@@ -29,8 +24,8 @@ export class WorkspaceUploadSettingsService implements OnApplicationBootstrap {
   private static readonly CACHE_TTL_MS = 5_000;
 
   constructor(
-    @InjectModel(SystemSetting.name)
-    private readonly systemSettingModel: Model<SystemSettingDocument>,
+    @Inject(SYSTEM_SETTING_STORE)
+    private readonly systemSettings: SystemSettingStore,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(WorkspaceUploadSettingsService.name);
@@ -56,7 +51,7 @@ export class WorkspaceUploadSettingsService implements OnApplicationBootstrap {
       return this.buildSettingsResponse(this.cache);
     }
 
-    const setting = await this.systemSettingModel.findOne({ key: WORKSPACE_UPLOAD_SETTINGS_KEY }).lean().exec();
+    const setting = await this.systemSettings.get(WORKSPACE_UPLOAD_SETTINGS_KEY);
     if (setting && this.isUploadSettingsValue(setting.value)) {
       this.cache = { allowedExtensions: [...setting.value.allowedExtensions] };
       this.cacheLoadedAt = Date.now();
@@ -115,14 +110,7 @@ export class WorkspaceUploadSettingsService implements OnApplicationBootstrap {
     }
 
     const value: WorkspaceUploadSettingsValue = { allowedExtensions: normalized };
-    const updated = await this.systemSettingModel
-      .findOneAndUpdate(
-        { key: WORKSPACE_UPLOAD_SETTINGS_KEY },
-        { key: WORKSPACE_UPLOAD_SETTINGS_KEY, value },
-        { upsert: true, new: true, setDefaultsOnInsert: true },
-      )
-      .lean()
-      .exec();
+    const updated = await this.systemSettings.upsert(WORKSPACE_UPLOAD_SETTINGS_KEY, value);
 
     this.cache = { allowedExtensions: [...normalized] };
     this.cacheLoadedAt = Date.now();
@@ -134,21 +122,15 @@ export class WorkspaceUploadSettingsService implements OnApplicationBootstrap {
 
     return {
       ...this.buildSettingsResponse(this.cache),
-      updatedAt: updated?.updatedAt as Date | undefined,
+      updatedAt: updated.updatedAt,
     };
   }
 
   async ensureDefaultSettings(): Promise<void> {
-    const existing = await this.systemSettingModel
-      .findOne({ key: WORKSPACE_UPLOAD_SETTINGS_KEY })
-      .lean()
-      .exec();
+    const existing = await this.systemSettings.get(WORKSPACE_UPLOAD_SETTINGS_KEY);
     if (existing) return;
 
-    await this.systemSettingModel.create({
-      key: WORKSPACE_UPLOAD_SETTINGS_KEY,
-      value: { allowedExtensions: [...DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS] },
-    });
+    await this.systemSettings.upsert(WORKSPACE_UPLOAD_SETTINGS_KEY, { allowedExtensions: [...DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS] });
     this.cache = { allowedExtensions: [...DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS] };
     this.cacheLoadedAt = Date.now();
     this.logger.log('Seeded default workspace upload settings', {

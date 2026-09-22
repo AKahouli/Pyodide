@@ -20,7 +20,8 @@ export default function MaintenancePage() {
     }
   }, []);
 
-  // Countdown timer for estimated end time
+  // Countdown timer for estimated end time.
+
   useEffect(() => {
     if (!maintenance?.estimatedEndAt) return;
     const updateCountdown = () => {
@@ -135,7 +136,7 @@ export default function MaintenancePage() {
         {/* Auto-refresh notice */}
         <p className='text-xs text-muted-foreground'>
           {t('maintenance.autoRefreshNotice', {
-            defaultValue: 'This page checks automatically and will reopen when maintenance ends.',
+            defaultValue: 'This page checks automatically and will reopen when maintenance ends.!',
           })}
         </p>
       </div>

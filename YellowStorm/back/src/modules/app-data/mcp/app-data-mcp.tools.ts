@@ -12,6 +12,7 @@ export const APP_DATA_MCP_TOOL_NAMES = [
   'row_query',
   'row_update',
   'row_delete',
+  'seed',
 ] as const;
 
 export type AppDataMcpToolName = (typeof APP_DATA_MCP_TOOL_NAMES)[number];
@@ -22,7 +23,7 @@ export const APP_DATA_MCP_TOOL_DESCRIPTIONS: Record<AppDataMcpToolName, string> 
   appdata_status: 'Get App Data provisioning and schema status for the bound workspace',
   provision:
     'Provision DEV PostgreSQL schema for persistent app data (idempotent). After success, restart the Vite dev server (yellowruntime_dev_server action=restart) so VITE_YM_* env reaches the Nodepod preview.',
-  schema_get: 'Get current DEV schema manifest and version',
+  schema_get: 'Get current DEV schema manifest and version. In remote mode, returns table names only (no column-level detail) — call schema_apply directly with the full manifest.',
   schema_plan: 'Plan typed schema migration without applying',
   schema_apply:
     'Apply typed schema migration to DEV. New tables automatically receive default DEV policies (anonymous + yellowmind_owner CRUD).',
@@ -36,7 +37,63 @@ export const APP_DATA_MCP_TOOL_DESCRIPTIONS: Record<AppDataMcpToolName, string> 
   row_query: 'Query rows with pagination in DEV',
   row_update: 'Update a row in DEV',
   row_delete: 'Delete a row in DEV',
+  seed: 'Bulk-insert seed rows into DEV tables (idempotent — rows carrying an explicit "id" uuid are skipped on conflict). DEV only; PROD data stays user-generated.',
 };
+
+/**
+ * Shared JSON Schema for the `manifest` argument of schema_plan / schema_apply.
+ * Fully described so the model cannot misplace `version` inside `tables` —
+ * the shape must be { version, tables: { <name>: { columns: { <col>: {...} } } } }.
+ */
+const APP_DATA_MANIFEST_ARG = {
+  type: 'object',
+  description:
+    'Declarative schema manifest. Exact shape: {"version": <integer>, "tables": {"<table_name>": {"columns": {"<column_name>": {"type": "text"|"integer"|"boolean"|"timestamptz"|"uuid", "primaryKey"?: true, "nullable"?: true, "unique"?: true, "default"?: <literal>}}}}}. ' +
+    'IMPORTANT: "version" belongs at the manifest level only — NEVER place a "version" key inside "tables". ' +
+    'Table and column names must match ^[a-z][a-z0-9_]{0,62}$.',
+  required: ['version', 'tables'],
+  properties: {
+    version: {
+      type: 'integer',
+      description:
+        'Manifest version. Must be strictly greater than the current schema version reported by schema_get.',
+    },
+    tables: {
+      type: 'object',
+      description:
+        'Map of table name to its definition. Every key inside this object is a table name — do NOT put "version" or any metadata here.',
+      additionalProperties: {
+        type: 'object',
+        description: 'One table definition.',
+        required: ['columns'],
+        properties: {
+          columns: {
+            type: 'object',
+            description:
+              'Map of column name to column definition. At least one column; exactly one primaryKey column per table.',
+            additionalProperties: {
+              type: 'object',
+              description: 'One column definition.',
+              required: ['type'],
+              properties: {
+                type: { type: 'string', enum: ['text', 'integer', 'boolean', 'timestamptz', 'uuid'] },
+                primaryKey: { type: 'boolean' },
+                nullable: { type: 'boolean' },
+                unique: { type: 'boolean' },
+                default: {
+                  description: 'Literal default value (string, number, boolean or null).',
+                },
+              },
+              additionalProperties: false,
+            },
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  additionalProperties: false,
+} as const;
 
 export const APP_DATA_MCP_TOOL_SCHEMAS: Record<AppDataMcpToolName, Record<string, unknown>> = {
   appdata_status: { type: 'object', properties: {}, additionalProperties: false },
@@ -50,7 +107,7 @@ export const APP_DATA_MCP_TOOL_SCHEMAS: Record<AppDataMcpToolName, Record<string
     type: 'object',
     required: ['manifest', 'expectedVersion'],
     properties: {
-      manifest: { type: 'object' },
+      manifest: APP_DATA_MANIFEST_ARG,
       expectedVersion: { type: 'integer' },
     },
     additionalProperties: false,
@@ -59,7 +116,7 @@ export const APP_DATA_MCP_TOOL_SCHEMAS: Record<AppDataMcpToolName, Record<string
     type: 'object',
     required: ['manifest', 'expectedVersion'],
     properties: {
-      manifest: { type: 'object' },
+      manifest: APP_DATA_MANIFEST_ARG,
       expectedVersion: { type: 'integer' },
       confirmDestructive: { type: 'boolean' },
       toolCallId: { type: 'string' },
@@ -71,7 +128,13 @@ export const APP_DATA_MCP_TOOL_SCHEMAS: Record<AppDataMcpToolName, Record<string
   policy_apply: {
     type: 'object',
     required: ['policies'],
-    properties: { policies: { type: 'object' } },
+    properties: {
+      policies: { type: 'object' },
+      expectedVersion: {
+        type: 'integer',
+        description: 'Optional schema version to validate against before applying policies. Prevents stale policy writes over a newer schema.',
+      },
+    },
     additionalProperties: false,
   },
   table_sample: {
@@ -123,6 +186,25 @@ export const APP_DATA_MCP_TOOL_SCHEMAS: Record<AppDataMcpToolName, Record<string
     type: 'object',
     required: ['table', 'id'],
     properties: { table: { type: 'string' }, id: { type: 'string' }, idColumn: { type: 'string' } },
+    additionalProperties: false,
+  },
+  seed: {
+    type: 'object',
+    required: ['tables'],
+    description:
+      'Bulk idempotent seed. Exact shape: {"tables": {"<table_name>": [{"<column>": <value>, ...}, ...]}}. ' +
+      'Rows may carry an explicit "id" (uuid) so re-running the same seed is safe (ON CONFLICT DO NOTHING). ' +
+      'Reserved columns (id, owner_id, created_at, updated_at) are always server-managed. DEV only.',
+    properties: {
+      tables: {
+        type: 'object',
+        description: 'Map of table name to an array of row objects to insert.',
+        additionalProperties: {
+          type: 'array',
+          items: { type: 'object' },
+        },
+      },
+    },
     additionalProperties: false,
   },
 };

@@ -49,19 +49,40 @@ import {
 interface AppEndUsersDialogProps {
   sessionId: string;
   appTitle?: string;
+  /** When true, show the per-user AI usage permission toggle. */
+  hasAiFeatures?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
+type CrudGrantKey = 'create' | 'read' | 'update' | 'delete';
 type GrantKey = keyof AppEndUserGrants;
 
-const GRANT_KEYS: GrantKey[] = ['create', 'read', 'update', 'delete'];
+const CRUD_GRANT_KEYS: CrudGrantKey[] = ['create', 'read', 'update', 'delete'];
 
-const PRESETS: Record<'none' | 'readOnly' | 'full', AppEndUserGrants> = {
+const CRUD_PRESETS: Record<'none' | 'readOnly' | 'full', Pick<AppEndUserGrants, CrudGrantKey>> = {
   none: { create: false, read: false, update: false, delete: false },
   readOnly: { create: false, read: true, update: false, delete: false },
   full: { create: true, read: true, update: true, delete: true },
 };
+
+function normalizeGrants(grants: Partial<AppEndUserGrants> | undefined): AppEndUserGrants {
+  return {
+    create: grants?.create === true,
+    read: grants?.read === true,
+    update: grants?.update === true,
+    delete: grants?.delete === true,
+    useAi: grants?.useAi === true,
+  };
+}
+
+function visibleGrantKeys(showAiGrant: boolean): GrantKey[] {
+  return showAiGrant ? [...CRUD_GRANT_KEYS, 'useAi'] : [...CRUD_GRANT_KEYS];
+}
+
+function countEnabledGrants(grants: AppEndUserGrants, keys: GrantKey[]): number {
+  return keys.filter((key) => grants[key]).length;
+}
 
 function userInitials(user: AppEndUserSummary): string {
   const source = (user.displayName || user.email).trim();
@@ -70,10 +91,6 @@ function userInitials(user: AppEndUserSummary): string {
     return `${parts[0][0] ?? ''}${parts[1][0] ?? ''}`.toUpperCase();
   }
   return source.slice(0, 2).toUpperCase();
-}
-
-function countEnabledGrants(grants: AppEndUserGrants): number {
-  return GRANT_KEYS.filter((key) => grants[key]).length;
 }
 
 function matchesSearch(user: AppEndUserSummary, query: string): boolean {
@@ -88,6 +105,7 @@ function matchesSearch(user: AppEndUserSummary, query: string): boolean {
 export function AppEndUsersDialog({
   sessionId,
   appTitle,
+  hasAiFeatures = false,
   open,
   onOpenChange,
 }: AppEndUsersDialogProps) {
@@ -98,12 +116,23 @@ export function AppEndUsersDialog({
   const [search, setSearch] = useState('');
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
 
+  const showAiGrant = useMemo(
+    () => hasAiFeatures || users.some((user) => user.grants.useAi === true),
+    [hasAiFeatures, users],
+  );
+  const grantKeys = useMemo(() => visibleGrantKeys(showAiGrant), [showAiGrant]);
+
   const loadUsers = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const list = await appBuilderApi.listEndUsers(sessionId);
-      setUsers(list);
+      setUsers(
+        list.map((user) => ({
+          ...user,
+          grants: normalizeGrants(user.grants),
+        })),
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : t('endUsers.loadError'));
       setUsers([]);
@@ -125,14 +154,24 @@ export function AppEndUsersDialog({
   );
 
   const updateUser = (updated: AppEndUserSummary) => {
-    setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
+    setUsers((prev) =>
+      prev.map((u) =>
+        u.id === updated.id
+          ? { ...updated, grants: normalizeGrants(updated.grants) }
+          : u,
+      ),
+    );
   };
 
   const updateGrants = async (userId: string, grants: AppEndUserGrants) => {
     setSavingUserId(userId);
     setError(null);
     try {
-      const updated = await appBuilderApi.updateEndUserGrants(sessionId, userId, grants);
+      const updated = await appBuilderApi.updateEndUserGrants(
+        sessionId,
+        userId,
+        normalizeGrants(grants),
+      );
       updateUser(updated);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('endUsers.saveError'));
@@ -144,11 +183,16 @@ export function AppEndUsersDialog({
   const updateGrant = async (userId: string, key: GrantKey, value: boolean) => {
     const user = users.find((u) => u.id === userId);
     if (!user || user.status === 'disabled') return;
-    await updateGrants(userId, { ...user.grants, [key]: value });
+    await updateGrants(userId, { ...normalizeGrants(user.grants), [key]: value });
   };
 
-  const applyPreset = async (userId: string, preset: keyof typeof PRESETS) => {
-    await updateGrants(userId, PRESETS[preset]);
+  const applyPreset = async (userId: string, preset: keyof typeof CRUD_PRESETS) => {
+    const user = users.find((u) => u.id === userId);
+    if (!user || user.status === 'disabled') return;
+    await updateGrants(userId, {
+      ...CRUD_PRESETS[preset],
+      useAi: user.grants.useAi === true,
+    });
   };
 
   const userCountLabel =
@@ -262,10 +306,11 @@ export function AppEndUsersDialog({
                   <TableHeader>
                     <TableRow>
                       <TableHead>{t('endUsers.userColumn')}</TableHead>
-                      <TableHead className='text-center'>{t('endUsers.grants.create')}</TableHead>
-                      <TableHead className='text-center'>{t('endUsers.grants.read')}</TableHead>
-                      <TableHead className='text-center'>{t('endUsers.grants.update')}</TableHead>
-                      <TableHead className='text-center'>{t('endUsers.grants.delete')}</TableHead>
+                      {grantKeys.map((key) => (
+                        <TableHead key={key} className='text-center'>
+                          {t(`endUsers.grants.${key}`)}
+                        </TableHead>
+                      ))}
                       <TableHead className='w-[140px]'>{t('endUsers.actionsColumn')}</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -274,6 +319,7 @@ export function AppEndUsersDialog({
                       <EndUserTableRow
                         key={user.id}
                         user={user}
+                        grantKeys={grantKeys}
                         saving={savingUserId === user.id}
                         onToggleGrant={(key, value) => void updateGrant(user.id, key, value)}
                         onApplyPreset={(preset) => void applyPreset(user.id, preset)}
@@ -288,6 +334,7 @@ export function AppEndUsersDialog({
                   <EndUserMobileCard
                     key={user.id}
                     user={user}
+                    grantKeys={grantKeys}
                     saving={savingUserId === user.id}
                     onToggleGrant={(key, value) => void updateGrant(user.id, key, value)}
                     onApplyPreset={(preset) => void applyPreset(user.id, preset)}
@@ -304,20 +351,22 @@ export function AppEndUsersDialog({
 
 interface EndUserRowProps {
   user: AppEndUserSummary;
+  grantKeys: GrantKey[];
   saving: boolean;
   onToggleGrant: (key: GrantKey, value: boolean) => void;
-  onApplyPreset: (preset: keyof typeof PRESETS) => void;
+  onApplyPreset: (preset: keyof typeof CRUD_PRESETS) => void;
 }
 
 function EndUserTableRow({
   user,
+  grantKeys,
   saving,
   onToggleGrant,
   onApplyPreset,
 }: EndUserRowProps) {
   const { t } = useModuleTranslation('app-builder');
   const disabled = user.status === 'disabled';
-  const enabledCount = countEnabledGrants(user.grants);
+  const enabledCount = countEnabledGrants(user.grants, grantKeys);
 
   return (
     <TableRow className={cn(disabled && 'opacity-60')}>
@@ -339,7 +388,7 @@ function EndUserTableRow({
           </div>
         </div>
       </TableCell>
-      {GRANT_KEYS.map((key) => (
+      {grantKeys.map((key) => (
         <TableCell key={key} className='text-center'>
           <Switch
             checked={user.grants[key]}
@@ -354,7 +403,10 @@ function EndUserTableRow({
           {saving && <Loader2 className='h-4 w-4 animate-spin text-muted-foreground' />}
           <PresetMenu
             disabled={saving || disabled}
-            summary={t('endUsers.grantsSummary', { enabled: enabledCount, total: 4 })}
+            summary={t('endUsers.grantsSummary', {
+              enabled: enabledCount,
+              total: grantKeys.length,
+            })}
             onApplyPreset={onApplyPreset}
           />
         </div>
@@ -365,13 +417,14 @@ function EndUserTableRow({
 
 function EndUserMobileCard({
   user,
+  grantKeys,
   saving,
   onToggleGrant,
   onApplyPreset,
 }: EndUserRowProps) {
   const { t } = useModuleTranslation('app-builder');
   const disabled = user.status === 'disabled';
-  const enabledCount = countEnabledGrants(user.grants);
+  const enabledCount = countEnabledGrants(user.grants, grantKeys);
 
   return (
     <div className={cn('rounded-xl border p-4', disabled && 'opacity-60')}>
@@ -387,7 +440,10 @@ function EndUserMobileCard({
           <p className='mt-1 text-xs text-muted-foreground'>
             {t('endUsers.registeredAt', { date: new Date(user.createdAt).toLocaleDateString() })}
             {' · '}
-            {t('endUsers.grantsSummary', { enabled: enabledCount, total: 4 })}
+            {t('endUsers.grantsSummary', {
+              enabled: enabledCount,
+              total: grantKeys.length,
+            })}
           </p>
         </div>
         {saving && <Loader2 className='h-4 w-4 shrink-0 animate-spin text-muted-foreground' />}
@@ -401,7 +457,7 @@ function EndUserMobileCard({
       </div>
 
       <div className='grid grid-cols-2 gap-2'>
-        {GRANT_KEYS.map((key) => (
+        {grantKeys.map((key) => (
           <div
             key={key}
             className='flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2'
@@ -429,7 +485,7 @@ function PresetMenu({
 }: {
   disabled: boolean;
   summary?: string;
-  onApplyPreset: (preset: keyof typeof PRESETS) => void;
+  onApplyPreset: (preset: keyof typeof CRUD_PRESETS) => void;
 }) {
   const { t } = useModuleTranslation('app-builder');
   return (
@@ -449,6 +505,9 @@ function PresetMenu({
         <DropdownMenuItem onClick={() => onApplyPreset('full')}>
           {t('endUsers.presets.full')}
         </DropdownMenuItem>
+        <p className='max-w-[14rem] px-2 py-1.5 text-[10px] leading-snug text-muted-foreground'>
+          {t('endUsers.presets.hint')}
+        </p>
       </DropdownMenuContent>
     </DropdownMenu>
   );

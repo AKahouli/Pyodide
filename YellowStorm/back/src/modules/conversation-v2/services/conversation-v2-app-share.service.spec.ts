@@ -6,6 +6,7 @@ import { UserService } from '@modules/user/user.service';
 import { EmailService } from '@modules/email';
 import { NotificationsService } from '@modules/notifications/notifications.service';
 import { ServiceUnavailableException } from '@modules/exceptions';
+import { EmailTemplateRenderer } from '@modules/email/email-template-renderer.service';
 import { ConversationV2AppShare } from '../schemas/conversation-v2-app-share.schema';
 import { ConversationV2Session } from '../schemas/conversation-v2-session.schema';
 import { ConversationV2AppShareService } from './conversation-v2-app-share.service';
@@ -28,6 +29,17 @@ describe('ConversationV2AppShareService', () => {
     send: jest.fn().mockResolvedValue({ success: true }),
   };
   const notifications = { sendToUser: jest.fn().mockResolvedValue(undefined) };
+  const emailRenderer = {
+    render: jest.fn().mockImplementation(
+      (_template: string, data: Record<string, string>) =>
+        Promise.resolve({
+          subject: `${data.appTitle} — create your account`,
+          html: `<p>Invite ${data.appTitle} ${data.registerUrl}</p>`,
+          text: `Invite ${data.appTitle} ${data.registerUrl}`,
+          attachments: [],
+        }),
+    ),
+  };
   const config = {
     get: jest.fn((key: string, fallback?: unknown) => {
       if (key === 'app.name') return 'YelloStorm';
@@ -79,6 +91,7 @@ describe('ConversationV2AppShareService', () => {
         { provide: UserService, useValue: users },
         { provide: EmailService, useValue: email },
         { provide: NotificationsService, useValue: notifications },
+        { provide: EmailTemplateRenderer, useValue: emailRenderer },
         { provide: ConfigService, useValue: config },
       ],
     }).compile();
@@ -119,6 +132,8 @@ describe('ConversationV2AppShareService', () => {
       email.send.mock.invocationCallOrder[0],
     );
     expect(email.send.mock.calls[0][0].html).toContain('/register?invite=');
+    expect(email.send.mock.calls[0][0].html).toContain('https://apps.example/a/register?invite=');
+    expect(email.send.mock.calls[0][0].html).not.toContain('//register');
     expect(email.send.mock.calls[0][0].html).not.toContain('Open the app');
     expect(email.send.mock.calls[0][0].html).not.toContain('App Builder');
     expect(email.send.mock.calls[0][0].text).not.toContain('Conversation:');
@@ -223,6 +238,7 @@ describe('ConversationV2AppShareService', () => {
         source: 'shared',
         shareId: shareId.toString(),
         canOpenConversation: true,
+        hasAiFeatures: false,
         lastDeployedRevisionId: null,
         latestFinalizedRevisionId: null,
         latestFinalizedAt: null,

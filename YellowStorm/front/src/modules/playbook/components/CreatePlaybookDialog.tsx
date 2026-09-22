@@ -22,6 +22,7 @@ import { getWorkspaces } from '@/modules/workspace';
 import type { GeneratePlaybookData } from '../types';
 import { rewritePlaybookPromptStream } from '../api';
 import { toast } from 'sonner';
+import { STARTER_KEYS, type StarterKey } from '../utils/starter-playbooks';
 
 function getCaretCoordinates(textarea: HTMLTextAreaElement, position: number) {
   const style = window.getComputedStyle(textarea);
@@ -83,7 +84,8 @@ interface Props {
 }
 
 export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
-  const [tab, setTab] = useState<'manual' | 'auto'>('auto');
+  const [tab, setTab] = useState<'manual' | 'auto' | 'starter'>('auto');
+  const [starterKey, setStarterKey] = useState<StarterKey>('meeting');
 
   // Manual fields
   const [name, setName] = useState('');
@@ -158,7 +160,7 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
       });
       onOpenChange(false);
       resetForm();
-      navigate(`/playbooks/${playbook.id}`);
+      navigate(`/playbooks/${playbook.id}${tab === 'starter' ? `?starter=${starterKey}` : ''}`);
     } catch (err) {
       handleApiError(err);
     } finally {
@@ -308,7 +310,7 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
               </DialogTitle>
               <p className={cn(
                 'max-w-3xl text-sm leading-5 !text-muted-foreground',
-                tab === 'auto' ? 'hidden' : '',
+                tab !== 'manual' ? 'hidden' : '',
               )}>
                 {t('create.manualModalSubtitle')}
               </p>
@@ -316,8 +318,12 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
           </div>
 
           <div className="relative px-6 pb-5 pt-3">
-            <Tabs value={tab} onValueChange={(v) => setTab(v as 'manual' | 'auto')}>
-              <TabsList className="grid h-11 w-full grid-cols-2 rounded-full border border-border bg-background/60 p-1 shadow-none sm:max-w-[296px]">
+            <Tabs value={tab} onValueChange={(v) => {
+              setTab(v as 'manual' | 'auto' | 'starter');
+              if (v === 'starter' && !name.trim()) setName(t(`starter.${starterKey}.title`));
+            }}>
+              <TabsList className="grid h-11 w-full grid-cols-3 rounded-full border border-border bg-background/60 p-1 shadow-none sm:max-w-md">
+                <TabsTrigger value="starter" className="rounded-full">{t('starter.tab')}</TabsTrigger>
                 <TabsTrigger value="manual" className="rounded-full py-1.5 text-sm text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">
                   {t('create.tabManual')}
                 </TabsTrigger>
@@ -328,7 +334,17 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
               </TabsList>
 
               {/* Manual creation */}
-              <TabsContent value="manual" className="space-y-4 pt-5">
+              <TabsContent value={tab === 'starter' ? 'starter' : 'manual'} className="space-y-4 pt-5">
+                {tab === 'starter' && <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">{t('starter.hint')}</p>
+                  <div className="grid gap-2 sm:grid-cols-3">{STARTER_KEYS.map((key) => (
+                    <button type="button" key={key} aria-pressed={starterKey === key}
+                      className={cn('rounded-lg border p-3 text-left text-sm', starterKey === key && 'border-primary bg-primary/5')}
+                      onClick={() => { setStarterKey(key); setName(t(`starter.${key}.title`)); }}>
+                      <span className="block font-medium">{t(`starter.${key}.title`)}</span>
+                      <span className="mt-1 block text-xs text-muted-foreground">{t(`starter.${key}.description`)}</span>
+                    </button>))}</div>
+                </div>}
                 <div className="grid gap-4 rounded-3xl border border-border bg-card/85 p-5 shadow-sm md:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="playbook-name">{t('create.nameLabel')}</Label>
@@ -514,7 +530,7 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
             </Tabs>
           </div>
 
-          {tab === 'manual' && (
+          {(tab === 'manual' || tab === 'starter') && (
             <div className="relative border-t border-border bg-background/80 px-6 py-3 backdrop-blur-sm">
               <DialogFooter>
                 <Button variant="outline" onClick={() => handleClose(false)}>

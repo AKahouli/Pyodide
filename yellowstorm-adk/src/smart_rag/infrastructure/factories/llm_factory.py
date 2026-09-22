@@ -25,6 +25,9 @@ app_settings = get_settings()
 os.environ["OLLAMA_API_BASE"] = app_settings.OLLAMA_API_BASE_URL
 os.environ["OLLAMA_API_KEY"] = app_settings.OLLAMA_API_KEY
 
+LLM_REQUEST_TIMEOUT_SECONDS = 90
+LLM_REQUEST_NUM_RETRIES = 1
+
 
 def _resolve_model_config(model_name: str | dict) -> str:
     return resolve_model_config(model_name)
@@ -82,6 +85,8 @@ class LLMFactory:
                     api_key=app_settings.OLLAMA_API_KEY,
                     stream=True,
                     user=get_user_label(),
+                    timeout=LLM_REQUEST_TIMEOUT_SECONDS,
+                    num_retries=LLM_REQUEST_NUM_RETRIES,
                     **({"temperature": model_temperature} if temperature is not None else {}),
                     max_completion_tokens=max_completion_tokens,
                     **({"reasoning_effort": reasoning_effort} if reasoning_effort else {}),
@@ -95,6 +100,8 @@ class LLMFactory:
                     parallel_tool_calls=True,
                     stream=True,
                     user=get_user_label(),
+                    timeout=LLM_REQUEST_TIMEOUT_SECONDS,
+                    num_retries=LLM_REQUEST_NUM_RETRIES,
                     **({"temperature": model_temperature} if temperature is not None else {}),
                     max_completion_tokens=max_completion_tokens,
                     **({"reasoning_effort": reasoning_effort} if reasoning_effort else {}),
@@ -127,6 +134,8 @@ class LLMFactory:
                     api_key=app_settings.OLLAMA_API_KEY,
                     stream=True,
                     user=get_user_label(),
+                    timeout=LLM_REQUEST_TIMEOUT_SECONDS,
+                    num_retries=LLM_REQUEST_NUM_RETRIES,
                     **({"temperature": model_temperature} if temperature is not None else {}),
                     max_completion_tokens=max_completion_tokens,
                     **({"reasoning_effort": reasoning_effort} if reasoning_effort else {}),
@@ -141,6 +150,8 @@ class LLMFactory:
                     stream=True,
                     parallel_tool_calls=False,
                     user=get_user_label(),
+                    timeout=LLM_REQUEST_TIMEOUT_SECONDS,
+                    num_retries=LLM_REQUEST_NUM_RETRIES,
                     **({"temperature": model_temperature} if temperature is not None else {}),
                     tool_choice=tool_choice,
                     max_completion_tokens=max_completion_tokens,
@@ -177,10 +188,11 @@ class LLMFactory:
                     api_key=app_settings.OLLAMA_API_KEY,
                     stream=True,
                     user=get_user_label(),
+                    timeout=LLM_REQUEST_TIMEOUT_SECONDS,
                     **({"temperature": model_temperature} if temperature is not None else {}),
                     max_completion_tokens=max_completion_tokens,
                     **({"reasoning_effort": reasoning_effort} if reasoning_effort else {}),
-                    **({"num_retries": num_retries} if num_retries is not None else {}),
+                    num_retries=LLM_REQUEST_NUM_RETRIES if num_retries is None else num_retries,
                 )
                 logger.info(f"Successfully created Ollama no-tool-calls LLM for model: {model_name}")
             else:
@@ -190,10 +202,11 @@ class LLMFactory:
                     api_key=app_settings.LITELLM_API_SECRET_KEY,
                     stream=True,
                     user=get_user_label(),
+                    timeout=LLM_REQUEST_TIMEOUT_SECONDS,
                     **({"temperature": model_temperature} if temperature is not None else {}),
                     max_completion_tokens=max_completion_tokens,
                     **({"reasoning_effort": reasoning_effort} if reasoning_effort else {}),
-                    **({"num_retries": num_retries} if num_retries is not None else {}),
+                    num_retries=LLM_REQUEST_NUM_RETRIES if num_retries is None else num_retries,
                 )
                 logger.info(f"Successfully created LiteLLM proxy no-tool-calls LLM for model: {model_name}")
             return llm

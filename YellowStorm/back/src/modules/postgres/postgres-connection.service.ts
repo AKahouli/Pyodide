@@ -30,6 +30,29 @@ export class PostgresConnectionService implements OnModuleInit, OnModuleDestroy 
     if (this.poolErrorAttached) return;
     this.poolErrorAttached = true;
     this.pool.on('error', (err: Error) => this.handlePoolClientError(err));
+    this.logEffectivePoolConfig();
+  }
+
+  /** One-shot startup log of the effective pool config (never the password). */
+  private logEffectivePoolConfig(): void {
+    const opts = (this.pool as unknown as { options?: Record<string, unknown> }).options;
+    if (!opts) return;
+    const ssl = opts.ssl as { rejectUnauthorized?: boolean; ca?: unknown } | boolean | undefined;
+    this.logger.log('PostgreSQL pool configured', {
+      host: opts.host,
+      port: opts.port,
+      database: opts.database,
+      user: opts.user,
+      max: opts.max,
+      idleTimeoutMillis: opts.idleTimeoutMillis,
+      connectionTimeoutMillis: opts.connectionTimeoutMillis,
+      statementTimeout: opts.statement_timeout,
+      idleInTransactionSessionTimeout: opts.idle_in_transaction_session_timeout,
+      keepAlive: opts.keepAlive,
+      keepAliveInitialDelayMillis: opts.keepAliveInitialDelayMillis,
+      applicationName: opts.application_name,
+      ssl: ssl ? { verify: typeof ssl === 'object' ? ssl.rejectUnauthorized !== false : true, ca: typeof ssl === 'object' && Boolean(ssl.ca) } : false,
+    });
   }
 
   onModuleDestroy(): void {
@@ -116,8 +139,12 @@ export class PostgresConnectionService implements OnModuleInit, OnModuleDestroy 
   }
 
   /**
-   * A dropped connection on a checked-out client (server restart, network drop,
-   * server-side timeout) triggers a recovery probe loop. The pool reconnects
+   * pg-pool emits 'error' on the pool only for IDLE clients (the per-client
+   * idle listener is removed on checkout). Errors on checked-out clients are
+   * handled by the per-client listener attached in the pool factory
+   * (attachCheckedOutClientErrorHandler) and surface to the caller's query.
+   * An idle-client error (server restart, network drop, server-side timeout)
+   * triggers a recovery probe loop. The pool reconnects
    * lazily on the next query; the probe pings until the database answers again
    * so recovery is observable and the pool is warmed. Repeated errors and
    * failed probes within one outage episode are aggregated to avoid log floods.

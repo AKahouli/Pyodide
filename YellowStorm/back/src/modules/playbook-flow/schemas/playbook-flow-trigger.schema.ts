@@ -1,31 +1,4 @@
-import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-
-@Schema({ _id: false })
-export class FlowScheduleTriggerConfig {
-  @Prop({ required: true, type: Boolean })
-  enabled!: boolean;
-
-  @Prop({ required: false, type: String })
-  timezone?: string;
-
-  @Prop({ required: false, type: String })
-  scheduleType?: string;
-
-  @Prop({ required: false, type: String })
-  cronExpression?: string;
-
-  @Prop({ required: false, type: Number })
-  dayOfMonth?: number;
-
-  @Prop({ required: false, type: Number })
-  dayOfWeek?: number;
-
-  @Prop({ required: false, type: String })
-  timeOfDay?: string;
-
-  @Prop({ required: false, type: [String] })
-  days?: string[];
-}
+import { Prop, Schema } from '@nestjs/mongoose';
 
 @Schema({ _id: false })
 export class FlowMailTriggerFilters {
@@ -77,7 +50,3 @@ export class FlowMailTriggerConfig {
   @Prop({ type: FlowMailTriggerFilters, default: () => ({}) })
   filters?: FlowMailTriggerFilters;
 }
-
-export const FlowScheduleTriggerConfigSchema = SchemaFactory.createForClass(FlowScheduleTriggerConfig);
-export const FlowMailTriggerConfigSchema = SchemaFactory.createForClass(FlowMailTriggerConfig);
-export const FlowMailTriggerFiltersSchema = SchemaFactory.createForClass(FlowMailTriggerFilters);

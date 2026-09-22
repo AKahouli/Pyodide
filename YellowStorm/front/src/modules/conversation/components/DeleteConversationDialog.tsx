@@ -7,9 +7,11 @@ interface DeleteConversationDialogProps {
   onOpenChange: (open: boolean) => void;
   onConfirm: () => Promise<void>;
   title?: string;
+  /** Adds a warning that deleting also revokes shared people and public links. */
+  isShared?: boolean;
 }
 
-export function DeleteConversationDialog({ open, onOpenChange, onConfirm, title }: DeleteConversationDialogProps) {
+export function DeleteConversationDialog({ open, onOpenChange, onConfirm, title, isShared }: DeleteConversationDialogProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const { t } = useModuleTranslation('conversation');
   const { t: tCommon } = useModuleTranslation('common');
@@ -41,6 +43,11 @@ export function DeleteConversationDialog({ open, onOpenChange, onConfirm, title 
             )}{' '}
             {t('dialogs.delete.warning')}
           </AlertDialogDescription>
+          {isShared && (
+            <p data-shared-delete-warning className='text-sm font-medium text-destructive'>
+              {t('dialogs.delete.sharedWarning')}
+            </p>
+          )}
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isDeleting}>{tCommon('actionCancel')}</AlertDialogCancel>

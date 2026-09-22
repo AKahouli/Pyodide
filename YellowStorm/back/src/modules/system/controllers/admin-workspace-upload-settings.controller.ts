@@ -15,7 +15,7 @@ import {
 import { Request } from 'express';
 import { RequirePermissions, Permissions, PermissionsGuard, AuditLogService } from '../../authorization';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { UpdateWorkspaceUploadSettingsDto } from '../dto/update-workspace-upload-settings.dto';
 import { WorkspaceUploadSettingsService } from '../workspace-upload-settings.service';
 import type { WorkspaceUploadSettings } from '../interfaces/workspace-upload-settings.interface';
@@ -52,7 +52,7 @@ export class AdminWorkspaceUploadSettingsController {
   @RequirePermissions(Permissions.WORKSPACES_ALL)
   async updateSettings(
     @Body() body: UpdateWorkspaceUploadSettingsDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<WorkspaceUploadSettings> {
     const result = await this.settingsService.updateSettings(

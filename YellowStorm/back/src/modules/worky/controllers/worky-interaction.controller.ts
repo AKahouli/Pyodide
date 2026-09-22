@@ -11,7 +11,7 @@ import { WorkyInteractionService } from '../services/worky-interaction.service';
 import { WorkyPlanDeltaService } from '../services/worky-plan-delta.service';
 import { RespondWorkyInteractionDto } from '../dto/respond-worky-interaction.dto';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
 import { Permissions } from '../../authorization/constants/permissions';
 import { Types } from 'mongoose';
@@ -61,7 +61,7 @@ export class WorkyInteractionController {
   })
   @ApiParam({ name: 'id', description: 'Interaction id' })
   async respond(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') interactionId: string,
     @Body() dto: RespondWorkyInteractionDto,
   ): Promise<RespondInteractionResponse> {

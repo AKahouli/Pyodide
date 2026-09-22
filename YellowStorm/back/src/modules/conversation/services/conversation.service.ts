@@ -1,9 +1,8 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { User, UserDocument } from '../../user/schemas/user.schema';
+import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
+import type { AuthUser } from '@common/auth/auth-user';
 import {
   CreateConversationData,
   UpdateConversationData,
@@ -28,6 +27,7 @@ import {
 import { FeatureVisibilityService } from '../../system/feature-visibility.service';
 import { WorkspaceService } from '../../workspace/workspace.service';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
+import { WorkspaceShareService } from '../../workspace/workspace-share.service';
 import { EmailService } from '../../email/email.service';
 import {
   DocumentQueryParams,
@@ -39,6 +39,7 @@ import {
   type ConversationStore,
 } from '../persistence/conversation-store';
 import { newOwnedId } from '../persistence/owned-id';
+import { ProjectShareService } from '../../project/project-share.service';
 import { PG_POOL } from '../../postgres/postgres.constants';
 import type { Pool, PoolClient } from 'pg';
 
@@ -48,7 +49,7 @@ export class ConversationService {
 
   constructor(
     @Inject(CONVERSATION_STORE) private readonly conversationStore: ConversationStore,
-    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @Inject(USER_LOOKUP_PORT) private readonly userLookup: UserLookupPort,
     private readonly logger: LoggerService,
     private readonly configService: ConfigService,
     private readonly workspaceService: WorkspaceService,
@@ -56,7 +57,10 @@ export class ConversationService {
     private readonly emailService: EmailService,
     private readonly agentRepository: AgentRepository,
     private readonly featureVisibility: FeatureVisibilityService,
+    @Inject(forwardRef(() => ProjectShareService))
+    private readonly projectShareService: ProjectShareService,
     @Optional() @Inject(PG_POOL) private readonly postgresPool?: Pool,
+    @Optional() private readonly workspaceShareService?: WorkspaceShareService,
   ) {
     this.logger.setContext('ConversationService');
   }
@@ -70,6 +74,9 @@ export class ConversationService {
         undefined,
         'creationRequestId is only supported for platform-copilot conversations',
       );
+    }
+    if (data.projectId) {
+      await this.projectShareService.assertProjectWriteAccess(userId, data.projectId);
     }
     const emails =
       data.participants?.map((participant) => participant.email) ?? data.participantEmails;
@@ -237,6 +244,12 @@ export class ConversationService {
     userId: string,
     params: ConversationQueryParams,
   ): Promise<PaginatedConversations | import('../interfaces/conversation.interface').CursorPaginatedConversations> {
+    // A project the user can access (own, shared with them, or public) lists
+    // every conversation in it, including collaborators' conversations.
+    const projectAccessible =
+      Boolean(params.projectId) &&
+      params.projectId !== 'none' &&
+      (await this.projectShareService.hasAccess(userId, params.projectId!));
     if ((params.mode ?? 'legacy') === 'cursor') {
       if (params.page !== undefined) {
         throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'page is not valid in cursor mode');
@@ -251,6 +264,7 @@ export class ConversationService {
         sortOrder: params.sortOrder ?? 'desc',
         isArchived: params.isArchived,
         projectId: params.projectId,
+        projectIdUnscoped: projectAccessible,
         searchScope: params.searchScope,
         runtimePurpose: params.runtimePurpose,
       });
@@ -280,6 +294,7 @@ export class ConversationService {
       sortOrder: params.sortOrder ?? 'desc',
       isArchived: params.isArchived,
       projectId: params.projectId,
+      projectIdUnscoped: projectAccessible,
       searchScope: params.searchScope,
       runtimePurpose: params.runtimePurpose,
     });
@@ -303,6 +318,9 @@ export class ConversationService {
     data: UpdateConversationData,
   ): Promise<ConversationResponse> {
     const current = await this.requireOwned(conversationId, userId);
+    if (data.projectId) {
+      await this.projectShareService.assertProjectWriteAccess(userId, data.projectId);
+    }
     if (
       current.runtimeMode === 'governed' &&
       [
@@ -342,12 +360,12 @@ export class ConversationService {
         ];
       }
       if (additions.length) {
-        const owner = await this.userModel.findById(userId).lean().exec();
+        const owner = await this.userLookup.byId(userId);
         void this.sendGroupInvitations(
           additions.map((invite) => invite.email),
           conversationId,
           current.title,
-          this.userName(owner) ?? 'Someone',
+          this.userName(this.toLookupShape(owner)) ?? 'Someone',
         );
       }
     }
@@ -368,13 +386,12 @@ export class ConversationService {
   }
 
   async delete(conversationId: string, userId: string): Promise<void> {
-    const current = await this.requireOwned(conversationId, userId);
-    if (current.systemWorkspaceId) {
-      await this.workspaceDocumentService.deleteAllByWorkspace(current.systemWorkspaceId);
-      await this.workspaceService.deleteSystemWorkspace(current.systemWorkspaceId);
-    }
+    await this.requireOwned(conversationId, userId);
+    // Delete the conversation row first: it references the system workspace
+    // (system_workspace_id), so the workspace can only go once nothing points at it.
     const deleted = await this.conversationStore.deleteOwned(conversationId, userId);
     if (!deleted) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
+    await this.cleanupSystemWorkspace(deleted.systemWorkspaceId);
     this.logger.log('Conversation deleted with cascade', { conversationId, userId });
   }
 
@@ -405,6 +422,12 @@ export class ConversationService {
   }
 
   async joinGroup(conversationId: string, userId: string, email: string) {
+    const access = await this.conversationStore.findActiveAccessById(conversationId);
+    if (access && (access.createdBy === userId || access.memberIds.includes(userId))) {
+      // Owners and existing members already have access; re-entering must not
+      // fail with the invite-missing 404.
+      return this.findById(conversationId);
+    }
     const record = await this.conversationStore.joinGroup(
       conversationId,
       userId,
@@ -499,10 +522,14 @@ export class ConversationService {
   async getWorkspaceDocuments(
     conversationId: string,
     params: DocumentQueryParams,
+    userId?: string,
   ): Promise<PaginatedDocuments> {
     const record = await this.conversationStore.findById(conversationId, true);
     if (!record) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Conversation not found');
-    const workspaceIds = record.workspaces.filter((id) => id !== record.systemWorkspaceId);
+    const workspaceIds = await this.filterAccessibleWorkspaceIds(
+      userId,
+      record.workspaces.filter((id) => id !== record.systemWorkspaceId),
+    );
     if (!workspaceIds.length) {
       return {
         documents: [],
@@ -512,12 +539,23 @@ export class ConversationService {
     return this.workspaceDocumentService.findByMultipleWorkspaces(workspaceIds, params);
   }
 
+  async filterAccessibleWorkspaceIds(
+    userId: string | undefined,
+    workspaceIds: string[],
+  ): Promise<string[]> {
+    if (!userId) return workspaceIds;
+    if (!this.workspaceShareService) return [];
+    if (workspaceIds.length === 0) return [];
+    return this.workspaceShareService.filterAccessible(userId, workspaceIds);
+  }
+
   @Cron(CronExpression.EVERY_HOUR)
   async cleanupOrphanedConversations(): Promise<void> {
     if (this.isCleaningUp) return;
     this.isCleaningUp = true;
     let lockClient: PoolClient | undefined;
     let lockHeld = false;
+    let releaseError: Error | undefined;
     try {
       if (this.postgresPool) {
         lockClient = await this.postgresPool.connect();
@@ -535,11 +573,8 @@ export class ConversationService {
       const cutoff = new Date(Date.now() - hours * 60 * 60 * 1000);
       for (const record of await this.conversationStore.findOrphaned(cutoff, 50)) {
         try {
-          if (record.systemWorkspaceId) {
-            await this.workspaceDocumentService.deleteAllByWorkspace(record.systemWorkspaceId);
-            await this.workspaceService.deleteSystemWorkspace(record.systemWorkspaceId);
-          }
-          await this.conversationStore.deleteOwned(record.id, record.createdBy);
+          const deleted = await this.conversationStore.deleteOwned(record.id, record.createdBy);
+          await this.cleanupSystemWorkspace(deleted?.systemWorkspaceId ?? record.systemWorkspaceId);
         } catch (error: unknown) {
           this.logger.warn('Failed to cleanup orphaned conversation', {
             conversationId: record.id,
@@ -555,12 +590,15 @@ export class ConversationService {
               'conversation:orphan-cleanup:v1',
             ]);
           } catch (error) {
+            releaseError = error instanceof Error ? error : new Error('advisory unlock failed');
             this.logger.warn('Failed to release orphan cleanup advisory lock', {
-              error: error instanceof Error ? error.message : 'Unknown error',
+              error: releaseError.message,
             });
           }
         }
-        lockClient.release();
+        // A client whose unlock failed may still hold the session-level lock:
+        // destroy it instead of returning it to the pool.
+        lockClient.release(releaseError);
       }
       this.isCleaningUp = false;
     }
@@ -572,6 +610,13 @@ export class ConversationService {
 
   async addMention(conversationId: string, userId: string, messageId: string) {
     await this.conversationStore.addMention(conversationId, userId, messageId);
+  }
+
+  /** Remove the documents (blobs, vectors) and then the system workspace itself. */
+  private async cleanupSystemWorkspace(systemWorkspaceId: string | null | undefined): Promise<void> {
+    if (!systemWorkspaceId) return;
+    await this.workspaceDocumentService.deleteAllByWorkspace(systemWorkspaceId);
+    await this.workspaceService.deleteSystemWorkspace(systemWorkspaceId);
   }
 
   private async requireOwned(id: string, userId: string): Promise<ConversationRecord> {
@@ -597,12 +642,8 @@ export class ConversationService {
     const participantMap = new Map(
       participants?.map((participant) => [participant.email.toLowerCase(), participant.job]),
     );
-    const existing = await this.userModel
-      .find({ email: { $in: emails } })
-      .select('email')
-      .lean()
-      .exec();
-    const registered = new Set(existing.map((user) => user.email.toLowerCase()));
+    const byEmail = await this.userLookup.byEmails(emails);
+    const registered = new Set(byEmail.keys());
     const now = new Date().toISOString();
     return {
       isGroup: true,
@@ -618,7 +659,7 @@ export class ConversationService {
 
   private async mapToResponse(
     record: ConversationRecord,
-    users?: Map<string, Pick<UserDocument, 'email' | 'profile'>>,
+    users?: Map<string, Pick<AuthUser, 'email' | 'profile'>>,
   ): Promise<ConversationResponse> {
     const resolvedUsers =
       users ??
@@ -688,15 +729,20 @@ export class ConversationService {
 
   private async usersById(
     ids: string[],
-  ): Promise<Map<string, Pick<UserDocument, 'email' | 'profile'>>> {
+  ): Promise<Map<string, Pick<AuthUser, 'email' | 'profile'>>> {
     const unique = [...new Set(ids)];
     if (!unique.length) return new Map();
-    const users = await this.userModel
-      .find({ _id: { $in: unique } })
-      .select('email profile')
-      .lean()
-      .exec();
-    return new Map(users.map((user) => [user._id.toString(), user]));
+    const summaries = await this.userLookup.byIds(unique);
+    return new Map(
+      [...summaries.values()].map((s) => [
+        s.id,
+        { email: s.email, profile: { firstName: s.firstName, lastName: s.lastName } },
+      ]),
+    );
+  }
+
+  private toLookupShape(user?: { email: string; firstName: string; lastName: string } | null) {
+    return user ? { email: user.email, profile: { firstName: user.firstName, lastName: user.lastName } } : null;
   }
 
   private userName(
@@ -735,12 +781,12 @@ export class ConversationService {
     emails: string[],
     userId: string,
   ) {
-    const owner = await this.userModel.findById(userId).lean().exec();
+    const owner = await this.userLookup.byId(userId);
     void this.sendGroupInvitations(
       emails,
       record.id,
       record.title,
-      this.userName(owner) ?? 'Someone',
+      this.userName(this.toLookupShape(owner)) ?? 'Someone',
     );
   }
 

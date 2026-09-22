@@ -32,7 +32,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('react-router-dom', () => ({ useNavigate: () => mocks.navigate }));
-vi.mock('@/config/governedConversationFeatures', () => ({ governedConversationFeatures: { carouselEnabled: true } }));
+vi.mock('@/modules/admin/featureVisibilityStore', () => ({
+  useFeatureVisibilityStore: (selector: (state: { visibility: { governedScopeCarousel: boolean } }) => unknown) => selector({ visibility: { governedScopeCarousel: true } }),
+}));
 vi.mock('@/modules/conversation/api', () => ({ createGovernedConversation: mocks.createConversation }));
 vi.mock('@/lib/notifications', () => ({ showError: vi.fn() }));
 vi.mock('@/modules/localization', () => ({ useModuleTranslation: () => ({ t: (key: string) => key }) }));

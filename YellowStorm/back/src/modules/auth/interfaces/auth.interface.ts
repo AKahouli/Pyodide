@@ -1,8 +1,8 @@
 import { Request } from 'express';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 
 export interface AuthenticatedRequest extends Request {
-  user: UserDocument;
+  user: AuthUser;
 }
 
 export interface TokenPair {

@@ -1,8 +1,9 @@
+import { StrictMode } from 'react';
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { usePlaybookCanvas } from './usePlaybookCanvas';
 import { tasksToNodes } from './helpers/node-serializer';
-import { makePlaybook, makeTask } from '../test-utils';
+import { makeEdge, makePlaybook, makeTask } from '../test-utils';
 
 const storeFns = vi.hoisted(() => ({
   updateTasks: vi.fn(),
@@ -26,7 +27,10 @@ const currentPlaybookState = vi.hoisted(() => ({
 
 vi.mock('../store', () => ({
   useCurrentPlaybook: () => currentPlaybookState.value,
-  usePlaybookStore: (selector: (s: typeof storeFns) => unknown) => selector(storeFns),
+  usePlaybookStore: Object.assign(
+    (selector: (s: typeof storeFns) => unknown) => selector(storeFns),
+    { getState: () => ({ currentPlaybook: currentPlaybookState.value }) },
+  ),
 }));
 
 vi.mock('@xyflow/react', () => ({
@@ -1145,5 +1149,266 @@ describe('usePlaybookCanvas', () => {
     expect(nodes).toHaveLength(2);
     expect(nodes[0]).toMatchObject({ id: 'iterator-1', type: 'playbookIteratorContainer' });
     expect(nodes[1]).toMatchObject({ id: 'iterator-2', type: 'playbookIteratorContainer' });
+  });
+});
+
+describe('usePlaybookCanvas shared creation commits', () => {
+  const TITLES = { blankStep: 'Step', router: 'Router', humanApproval: 'Approval' };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    currentPlaybookState.value = makePlaybook();
+  });
+
+  it('createConnectedTask adds task, edge and binding in one snapshot', () => {
+    currentPlaybookState.value = makePlaybook({
+      tasks: [
+        makeTask({ id: 'task-1', executionOrder: 0, inputPorts: [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }], outputPorts: [{ id: 'default', name: 'Output', artifactKind: 'text' }] }),
+      ],
+      edges: [],
+      dataBindings: [],
+    });
+
+    const { result } = renderHook(() => usePlaybookCanvas());
+    act(() => vi.runAllTimers());
+
+    let createdId = '';
+    act(() => {
+      const created = result.current.createConnectedTask(
+        { kind: 'blank' },
+        {
+          position: { x: 100, y: 100 },
+          titles: TITLES,
+          source: { nodeId: 'task-1', sourcePortId: 'default' },
+        },
+      );
+      createdId = created?.id ?? '';
+    });
+    act(() => vi.runAllTimers());
+
+    expect(createdId).not.toBe('');
+    expect(result.current.nodes).toHaveLength(2);
+    expect(result.current.edges).toHaveLength(1);
+    expect(result.current.edges[0]).toMatchObject({ source: 'task-1', target: createdId });
+    expect(storeFns.captureSnapshot).toHaveBeenCalledTimes(1);
+    expect(storeFns.updateTasks).toHaveBeenCalledTimes(1);
+    expect(storeFns.updateEdges).toHaveBeenCalledTimes(1);
+    expect(storeFns.updateDataBindings).toHaveBeenCalledTimes(1);
+    expect(storeFns.updateDataBindings.mock.calls[0][0]).toMatchObject([
+      expect.objectContaining({ sourceNode: 'task-1', targetNode: createdId, sourceKind: 'node-output' }),
+    ]);
+    expect(storeFns.selectStep).toHaveBeenCalledWith(createdId);
+  });
+
+  it('createConnectedTask from the mail trigger creates a binding without a control edge', () => {
+    currentPlaybookState.value = makePlaybook({
+      automatedTriggerType: 'mail',
+      tasks: [],
+      edges: [],
+      dataBindings: [],
+    });
+
+    const { result } = renderHook(() => usePlaybookCanvas());
+    act(() => vi.runAllTimers());
+
+    let createdId = '';
+    act(() => {
+      const created = result.current.createConnectedTask(
+        { kind: 'blank' },
+        {
+          position: { x: 0, y: 0 },
+          titles: TITLES,
+          source: { nodeId: '__trigger__', sourcePortId: 'mail_data' },
+        },
+      );
+      createdId = created?.id ?? '';
+    });
+    act(() => vi.runAllTimers());
+
+    expect(createdId).not.toBe('');
+    expect(result.current.edges).toHaveLength(0);
+    expect(storeFns.updateEdges).not.toHaveBeenCalled();
+    expect(storeFns.updateDataBindings.mock.calls[0][0]).toMatchObject([
+      expect.objectContaining({ sourceKind: 'trigger', triggerPath: 'mail_data', targetNode: createdId }),
+    ]);
+  });
+
+  it('insertTaskOnEdge rewires the edge and splits its binding atomically', () => {
+    currentPlaybookState.value = makePlaybook({
+      tasks: [
+        makeTask({ id: 'task-1', executionOrder: 0, outputPorts: [{ id: 'default', name: 'Output', artifactKind: 'text' }] }),
+        makeTask({ id: 'task-2', executionOrder: 1, inputPorts: [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }] }),
+      ],
+      edges: [makeEdge({ id: 'edge-1', sourceId: 'task-1', targetId: 'task-2', sourceOutputPortId: 'default', targetInputPortId: 'default' })],
+      dataBindings: [{
+        id: 'db-1',
+        targetNode: 'task-2',
+        targetPort: 'default',
+        sourceKind: 'node-output',
+        sourceNode: 'task-1',
+        sourcePort: 'default',
+        iteration: 'current',
+      }],
+    });
+
+    const { result } = renderHook(() => usePlaybookCanvas());
+    act(() => vi.runAllTimers());
+
+    let createdId = '';
+    act(() => {
+      const created = result.current.insertTaskOnEdge('edge-1', { kind: 'blank' }, { titles: TITLES });
+      createdId = created?.id ?? '';
+    });
+    act(() => vi.runAllTimers());
+
+    expect(createdId).not.toBe('');
+    expect(result.current.nodes).toHaveLength(3);
+    expect(result.current.edges).toHaveLength(2);
+    expect(result.current.edges.some((edge) => edge.id === 'edge-1')).toBe(false);
+    expect(result.current.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source: 'task-1', target: createdId }),
+      expect.objectContaining({ source: createdId, target: 'task-2' }),
+    ]));
+    expect(storeFns.captureSnapshot).toHaveBeenCalledTimes(1);
+    expect(storeFns.updateTasks).toHaveBeenCalledTimes(1);
+    const nextBindings = storeFns.updateDataBindings.mock.calls[0][0] as Array<Record<string, unknown>>;
+    expect(nextBindings).toHaveLength(2);
+    expect(nextBindings.some((b) => b.sourceNode === 'task-1' && b.targetNode === createdId)).toBe(true);
+    expect(nextBindings.some((b) => b.sourceNode === createdId && b.targetNode === 'task-2')).toBe(true);
+  });
+
+  it('insertTaskOnEdge rejects a template that cannot bridge the edge', () => {
+    currentPlaybookState.value = makePlaybook({
+      tasks: [
+        makeTask({ id: 'task-1', executionOrder: 0, outputPorts: [{ id: 'default', name: 'Output', artifactKind: 'text' }] }),
+        makeTask({ id: 'task-2', executionOrder: 1, inputPorts: [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }] }),
+      ],
+      edges: [makeEdge({ id: 'edge-1', sourceId: 'task-1', targetId: 'task-2', sourceOutputPortId: 'default', targetInputPortId: 'default' })],
+      dataBindings: [],
+    });
+
+    const { result } = renderHook(() => usePlaybookCanvas());
+    act(() => vi.runAllTimers());
+
+    const documentOnlyTemplate = {
+      id: 'tpl',
+      key: 'tpl-key',
+      nodeType: 'agent' as const,
+      title: 'Summarize',
+      description: '',
+      icon: 'FileText',
+      color: '#3b82f6',
+      category: 'content' as const,
+      inputPorts: [{ id: 'in', name: 'Doc', artifactKind: 'document' as const, required: true }],
+      outputPorts: [{ id: 'out', name: 'Summary', artifactKind: 'text' as const }],
+      promptTemplate: '',
+      recommendedAgentTypeSlug: null,
+      requiredToolNames: [],
+    };
+
+    let created: unknown = 'unset';
+    act(() => {
+      created = result.current.insertTaskOnEdge('edge-1', { kind: 'template', template: documentOnlyTemplate }, { titles: TITLES });
+    });
+    act(() => vi.runAllTimers());
+
+    expect(created).toBeNull();
+    expect(storeFns.updateTasks).not.toHaveBeenCalled();
+    expect(storeFns.updateEdges).not.toHaveBeenCalled();
+    expect(result.current.edges).toHaveLength(1);
+  });
+});
+
+describe('usePlaybookCanvas commits under StrictMode double-invocation', () => {
+  const TITLES = { blankStep: 'Step', router: 'Router', humanApproval: 'Approval' };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    currentPlaybookState.value = makePlaybook({
+      tasks: [
+        makeTask({ id: 'task-1', executionOrder: 0, outputPorts: [{ id: 'default', name: 'Output', artifactKind: 'text' }] }),
+        makeTask({ id: 'task-2', executionOrder: 1, inputPorts: [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }] }),
+      ],
+      edges: [makeEdge({ id: 'edge-1', sourceId: 'task-1', targetId: 'task-2', sourceOutputPortId: 'default', targetInputPortId: 'default' })],
+      dataBindings: [],
+    });
+  });
+
+  it('insertTaskOnEdge keeps each replacement edge exactly once', () => {
+    const { result } = renderHook(() => usePlaybookCanvas(), { wrapper: StrictMode });
+    act(() => vi.runAllTimers());
+
+    act(() => {
+      result.current.insertTaskOnEdge('edge-1', { kind: 'blank' }, { titles: TITLES });
+    });
+    act(() => vi.runAllTimers());
+
+    expect(result.current.edges).toHaveLength(2);
+    const persistedEdges = storeFns.updateEdges.mock.calls[0][0];
+    expect(persistedEdges).toHaveLength(2);
+    const ids = persistedEdges.map((edge: { id: string }) => edge.id);
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  it('createConnectedTask keeps a single new edge and task', () => {
+    const { result } = renderHook(() => usePlaybookCanvas(), { wrapper: StrictMode });
+    act(() => vi.runAllTimers());
+
+    act(() => {
+      result.current.createConnectedTask(
+        { kind: 'blank' },
+        { position: { x: 0, y: 0 }, titles: TITLES, source: { nodeId: 'task-1', sourcePortId: 'default' } },
+      );
+    });
+    act(() => vi.runAllTimers());
+
+    expect(result.current.nodes).toHaveLength(3);
+    expect(result.current.edges).toHaveLength(2);
+    const persistedEdges = storeFns.updateEdges.mock.calls[0][0];
+    expect(persistedEdges).toHaveLength(2);
+    const persistedTasks = storeFns.updateTasks.mock.calls[0][0];
+    expect(persistedTasks).toHaveLength(3);
+  });
+});
+
+describe('usePlaybookCanvas flush-then-create sequencing', () => {
+  const TITLES = { blankStep: 'Step', router: 'Router', humanApproval: 'Approval' };
+
+  it('persists same-tick inspector edits together with the newly created step', () => {
+    currentPlaybookState.value = makePlaybook({
+      tasks: [
+        makeTask({
+          id: 'task-1',
+          executionOrder: 0,
+          inputPorts: [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }],
+          outputPorts: [{ id: 'default', name: 'Output', artifactKind: 'text' }],
+        }),
+      ],
+      edges: [],
+      dataBindings: [],
+    });
+
+    const { result } = renderHook(() => usePlaybookCanvas());
+    act(() => vi.runAllTimers());
+
+    // Same-tick sequence the picker uses: flush the open draft, then commit creation.
+    act(() => {
+      result.current.updateNodeData('task-1', { title: 'Edited title' });
+    });
+    act(() => {
+      result.current.createConnectedTask(
+        { kind: 'blank' },
+        { position: { x: 0, y: 0 }, titles: TITLES, source: { nodeId: 'task-1', sourcePortId: 'default' } },
+      );
+    });
+    act(() => vi.runAllTimers());
+
+    const calls = storeFns.updateTasks.mock.calls as Array<[Array<{ id: string; title?: string }>]>;;
+    const lastPayload = calls[calls.length - 1][0];
+    expect(lastPayload).toHaveLength(2);
+    expect(lastPayload.find((task) => task.id === 'task-1')?.title).toBe('Edited title');
+    expect(lastPayload.find((task) => task.id !== 'task-1')).toBeTruthy();
   });
 });

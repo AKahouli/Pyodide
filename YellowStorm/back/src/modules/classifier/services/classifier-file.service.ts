@@ -1,7 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { WorkspaceDoc, WorkspaceDocumentDoc } from '../../workspace/schemas/workspace-document.schema';
+import {
+  WORKSPACE_DOCUMENT_READ_PORT,
+  type WorkspaceDocumentReadPort,
+  type WorkspaceDocumentRecord,
+} from '../../workspace/ports';
 import {
   ClassifierFolder,
   ClassifierFolderDocument,
@@ -21,13 +25,11 @@ import {
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { LoggerService } from '../../logger';
 import { ClassifierAccessService } from './classifier-access.service';
-import { escapeRegex } from '../../../common/utils';
 
 @Injectable()
 export class ClassifierFileService {
   constructor(
-    @InjectModel(WorkspaceDoc.name)
-    private readonly documentModel: Model<WorkspaceDocumentDoc>,
+    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly documentReadPort: WorkspaceDocumentReadPort,
     @InjectModel(ClassifierFolder.name)
     private readonly folderModel: Model<ClassifierFolderDocument>,
     @InjectModel(ClassifierFileAssignment.name)
@@ -45,20 +47,14 @@ export class ClassifierFileService {
   ): Promise<IClassifierFileResponse[]> {
     await this.access.assertWorkspaceAccess(workspaceId, userId);
 
-    const wsObjectId = new Types.ObjectId(workspaceId);
-    const docFilter: Record<string, unknown> = {
-      workspaceId: wsObjectId,
-      isFolder: { $ne: true },
-    };
-    if (query.search) {
-      docFilter.originalName = { $regex: escapeRegex(query.search), $options: 'i' };
-    }
-
-    const documents = await this.documentModel
-      .find(docFilter)
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec();
+    const documents = await this.documentReadPort.find(
+      {
+        workspaceId,
+        isFolder: false,
+        ...(query.search ? { originalNameSearch: query.search } : {}),
+      },
+      { sort: { field: 'createdAt', direction: 'desc' } },
+    );
 
     if (documents.length === 0) return [];
 
@@ -70,9 +66,6 @@ export class ClassifierFileService {
     }, {});
     this.logger.log('[indexing-status] listFiles statuses', {
       workspaceId,
-      // Which Mongo DB/host is this running process actually connected to?
-      connectedDb: this.documentModel.db.name,
-      connectedHost: this.documentModel.db.host,
       total: documents.length,
       counts: statusCounts,
       sample: documents.slice(0, 5).map((d) => ({
@@ -84,7 +77,7 @@ export class ClassifierFileService {
     });
 
     const assignments = await this.assignmentModel
-      .find({ workspaceId: wsObjectId, documentId: { $in: documents.map((d) => d._id) } })
+      .find({ workspaceId: new Types.ObjectId(workspaceId), documentId: { $in: documents.map((d) => new Types.ObjectId(d.id)) } })
       .lean()
       .exec();
 
@@ -97,7 +90,7 @@ export class ClassifierFileService {
 
     return documents
       .map((doc) => {
-        const assignment = assignmentByDoc.get(doc._id.toString());
+        const assignment = assignmentByDoc.get(doc.id);
         const folderId = assignment?.folderId ? assignment.folderId.toString() : null;
         return {
           doc,
@@ -125,10 +118,10 @@ export class ClassifierFileService {
       throw new NotFoundException(ErrorCode.CLASSIFIER_FILE_NOT_FOUND);
     }
 
-    const document = await this.documentModel.findById(documentId).lean().exec();
+    const document = await this.documentReadPort.findById(documentId);
     if (
       !document ||
-      document.workspaceId.toString() !== workspaceId ||
+      document.workspaceId !== workspaceId ||
       document.isFolder
     ) {
       throw new NotFoundException(ErrorCode.CLASSIFIER_FILE_NOT_FOUND);
@@ -250,33 +243,32 @@ export class ClassifierFileService {
   }
 
   private toResponse(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    doc: any,
+    doc: WorkspaceDocumentRecord,
     folderId: string | null,
     source: AssignmentSource | null,
   ): IClassifierFileResponse {
     return {
-      id: (doc._id as { toString(): string }).toString(),
-      workspaceId: (doc.workspaceId as { toString(): string }).toString(),
-      name: (doc.originalName ?? doc.filename ?? '') as string,
-      mimeType: (doc.mimeType ?? 'application/octet-stream') as string,
-      size: (doc.size ?? 0) as number,
+      id: doc.id,
+      workspaceId: doc.workspaceId,
+      name: doc.originalName ?? doc.filename ?? '',
+      mimeType: doc.mimeType ?? 'application/octet-stream',
+      size: doc.size ?? 0,
       uploadedAt: doc.uploadedAt instanceof Date
         ? doc.uploadedAt.toISOString()
-        : (doc.uploadedAt as string | null) ?? null,
+        : (doc.uploadedAt as unknown as string | null) ?? null,
       folderId,
       assignmentSource: source,
-      path: (doc.path as string | undefined) ?? undefined,
+      path: doc.path,
       indexingStatus: (doc.indexingStatus ?? 'none') as IClassifierFileResponse['indexingStatus'],
-      indexingError: (doc.indexingError as string | undefined) ?? undefined,
+      indexingError: doc.indexingError,
       lastIndexedAt: doc.lastIndexedAt instanceof Date
         ? doc.lastIndexedAt.toISOString()
         : (doc.lastIndexedAt as string | undefined) ?? undefined,
       type: (doc.type as 'doc' | 'url') ?? 'doc',
-      sourceUrl: (doc.sourceUrl as string | undefined) ?? undefined,
-      sourceRootUrl: (doc.metadata?.sourceRootUrl as string | undefined) ?? undefined,
-      normalizedSourceRootUrl: (doc.metadata?.normalizedSourceRootUrl as string | undefined) ?? undefined,
-      sourceGroupId: (doc.metadata?.sourceGroupId as string | undefined) ?? undefined,
+      sourceUrl: doc.sourceUrl,
+      sourceRootUrl: doc.metadata?.sourceRootUrl,
+      normalizedSourceRootUrl: doc.metadata?.normalizedSourceRootUrl,
+      sourceGroupId: doc.metadata?.sourceGroupId,
       status: (doc.status as IClassifierFileResponse['status']) ?? 'completed',
     };
   }

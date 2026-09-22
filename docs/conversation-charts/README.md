@@ -32,3 +32,4 @@ Support inline analytical charts in assistant messages using a stable chart comp
 
 ## Related Features
 - [`conversation`](/docs/conversation/README.md)
+.

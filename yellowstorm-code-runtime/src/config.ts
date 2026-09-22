@@ -34,6 +34,13 @@ function boolean(env: NodeJS.ProcessEnv, name: string, fallback: boolean): boole
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServiceConfig {
+  if (env === process.env) {
+    try {
+      process.loadEnvFile();
+    } catch {
+      // ponytail: ignore missing .env, explicit env still wins
+    }
+  }
   const limits: RuntimeLimits = {
     maxCodeBytes: positiveInt(env, "RUN_CODE_MAX_CODE_BYTES", DEFAULT_LIMITS.maxCodeBytes),
     maxInputBytes: positiveInt(env, "RUN_CODE_MAX_INPUT_BYTES", DEFAULT_LIMITS.maxInputBytes),

@@ -178,6 +178,38 @@ def _skip_if_cancelled(step: Step):
     return _cb
 
 
+def _defer_if_deps_unmet(step: Step, unmet):
+    """Gate a node on its LIVE dependencies, not the frozen graph edges.
+
+    The ADK Workflow graph is built once at the start of a turn; a dependency
+    added mid-pass (create_task(kind='await_reply') / delegate_to_human_agent
+    re-parent a step onto the task they spawn) is NOT in those edges, so ADK
+    fires the dependent the moment its ORIGINAL edges clear — before the new
+    task finished. That is the phantom-run / early-report bug: a report step
+    ran while the reply it needed was still outstanding.
+
+    So re-check `depends_on` off the live plan at model-call time. If any dep
+    is still non-terminal (pending/running/blocked), this trigger is premature:
+    short-circuit with `LlmResponse(content=None)` — no model call, no tools, NO
+    email, and CRUCIALLY no recorded event of any kind. That last part is
+    load-bearing: a deferral must produce NOTHING terminal, or it enters ADK's
+    replay-barrier sequence at the deferral's (early) position — AHEAD of the
+    await the step depends on — and a later resume deadlocks the barrier waiting
+    for the step to re-emit before its own dependency (seen live: session
+    e37a716, "Replay divergence … 'n_89d37a7ba357@1'"). content=None leaves the
+    step PENDING and unrecorded; the drive-loop rebuild / mail-reply resume
+    re-runs it for real once the dep completes. Verified: content=None yields no
+    event and records none. Deliberately does NOT defer on a TERMINAL-but-failed
+    dep (would hang). Placed FIRST in the before_model chain, before
+    _mark_running, so a deferred step is never even projected 'running'."""
+    async def _cb(callback_context, llm_request):
+        if unmet(step):
+            from google.adk.models.llm_response import LlmResponse
+            return LlmResponse(content=None)
+        return None
+    return _cb
+
+
 def _inject_task_turn(task_text):
     """Deliver the step's task as a USER turn instead of baking it into the
     system prompt.
@@ -486,6 +518,20 @@ def stamp_send_email_tool(tool, *, token_provider: Callable[[], Awaitable[Option
                 kwargs["subject"] = mail_token.stamp_subject(kwargs["subject"], token)
             if kwargs.get("body"):
                 kwargs["body"] = mail_token.stamp_body(kwargs["body"], token)
+            # Edit-on-card: on the approval resume the connector re-applies the
+            # owner's confirmation payload OVER these args (connector_tools.py),
+            # and that payload is the pre-stamp DRAFT — it would overwrite the
+            # subject/body above and drop the token, so the sent mail carried no
+            # token and its reply could never route (seen live). The token is a
+            # routing invariant that must survive any edit, so stamp it into the
+            # payload too — onto whatever wording the owner approved/edited.
+            tc = kwargs.get("tool_context")
+            payload = getattr(getattr(tc, "tool_confirmation", None), "payload", None)
+            if isinstance(payload, dict):
+                if payload.get("subject") and token not in payload["subject"]:
+                    payload["subject"] = mail_token.stamp_subject(payload["subject"], token)
+                if payload.get("body") and token not in payload["body"]:
+                    payload["body"] = mail_token.stamp_body(payload["body"], token)
         else:
             # The step still sends; it just cannot be replied *to*. Better a mail
             # that lands than a step that refuses to run.
@@ -520,6 +566,13 @@ def _teams_chat_id(result) -> Optional[str]:
     missing one means the reply can never route back."""
     try:
         top = json.loads(result) if isinstance(result, str) else (result or {})
+        # MCP tools return the real payload as a JSON string under "text" — unwrap
+        # it, or chat_id is invisible and the reply can never route back.
+        if isinstance(top, dict) and "chat_id" not in top and isinstance(top.get("text"), str):
+            try:
+                top = json.loads(top["text"])
+            except (ValueError, TypeError):
+                pass
         # Prefer the id the send tool surfaces explicitly; fall back to the one
         # Graph echoes on the created message (not always present).
         return top.get("chat_id") or (top.get("data") or {}).get("chatId")
@@ -585,6 +638,7 @@ def make_llm_node_factory(
     tools_for_step: Optional[Callable[[Step, List], List]] = None,
     instruction_for_step: Optional[Callable[[Step], Optional[str]]] = None,
     context_for_step: Optional[Callable[[Step], Optional[str]]] = None,
+    gate_for_step: Optional[Callable[[Step], list]] = None,
     replay_completed: bool = False,
     on_model_start: Optional[Callable[[Step], Awaitable[None]]] = None,
 ) -> NodeFactory:
@@ -642,13 +696,22 @@ def make_llm_node_factory(
         # An "ask" step blocks deterministically asking the user (FunctionNode:
         # its interrupt id is stable across replays, so resume matches — unlike an
         # LLM tool call whose id is random each rerun).
+        # A step that already parked carries its bound interrupt id; re-park
+        # under that SAME id (fixed_iid), never a fresh node-path one — the path
+        # shifts as the plan grows mid-session (create_task adds steps) and a
+        # shifted id would orphan the bound mail wait, leaving the step stuck
+        # 'running' on a rebuild that runs a newly-ready sibling. None for a
+        # fresh wait, which parks under its node path as before.
         if step.kind == "ask":
-            return hitl.make_ask_user_node(name, step.question or step.description or "Please provide input.")
+            return hitl.make_ask_user_node(
+                name, step.question or step.description or "Please provide input.",
+                fixed_iid=step.interrupt_id)
         # An "await_reply" step parks the same way, but only an incoming email
         # reply can answer it — never the chat.
         if step.kind == "await_reply":
             return hitl.make_await_reply_node(
-                name, step.question or step.description or "Awaiting an email reply.")
+                name, step.question or step.description or "Awaiting an email reply.",
+                fixed_iid=step.interrupt_id)
         # A persona step already has an identity ("You are Rabeb."); a second,
         # contradicting "You are an execution agent" right after undermines it.
         identity = ("You are working on ONE step of a larger plan." if step.is_persona else
@@ -695,8 +758,10 @@ def make_llm_node_factory(
                 "question to relay, not something for you to answer in "
                 f"their place. Your job is to get {step.assignee_name}'s "
                 "ACTUAL answer, never invent or guess it: look up their "
-                "email via find_human_agents (there is no fixed roster), "
-                "send them the question below as a real email, then call "
+                "contact via find_human_agents (there is no fixed roster), "
+                "send them the question below on the channel the task "
+                "specifies — a Teams message if it says Teams, otherwise a "
+                "real email — then call "
                 "create_task(kind='await_reply') — that hands the actual "
                 "waiting off to a separate step, since their real reply can "
                 "take hours or days, far longer than this turn can stay "
@@ -737,9 +802,11 @@ def make_llm_node_factory(
                 "your job is to PREPARE, not decide. Think it through with their "
                 "judgment and expertise, draft the analysis, recommendation, or "
                 f"answer they would need — then get the actual decision from "
-                f"{step.assignee_name} themselves: look up their email via "
+                f"{step.assignee_name} themselves: look up their contact via "
                 "find_human_agents (there is no fixed roster), send them your "
-                "draft as a real email laying out the situation and asking for "
+                "draft on the channel the task specifies — a Teams message if "
+                "it says Teams, otherwise a real email — laying out the "
+                "situation and asking for "
                 "their call, then call create_task(kind='await_reply') — that "
                 "hands the actual waiting off to a separate step, since their "
                 "real reply can take hours or days, far longer than this turn "
@@ -848,6 +915,7 @@ def make_llm_node_factory(
             # as the user turn, then the call-budget guard on the resulting
             # contents (so its forced-answer fallback carries the task).
             before_model_callback=_compose_before_model(
+                *([_defer_if_deps_unmet(step, gate_for_step)] if gate_for_step else []),
                 _skip_if_cancelled(step), _mark_running(step, on_model_start),
                 _trace_execution(step, name),
                 _inject_task_turn(task_text), stop_cb),

@@ -35,10 +35,22 @@ export function ChoicePartRenderer({ componentId, onAction, submittedInteraction
   const [fieldValues, setFieldValues] = useState<Record<string, string>>(() =>
     Object.fromEntries((choice.fields ?? []).map((f) => [f.key, f.value ?? ''])));
   const [editing, setEditing] = useState(false);
-  const editSubmitText = (option: ChoiceComponentData['options'][number]) =>
-    isEditable && APPROVE_WORDS.has(option.submitText.trim().toLowerCase())
-      ? JSON.stringify({ verdict: 'approve', edits: fieldValues })
-      : option.submitText;
+  // Confirm gates (approve/decline of a gated send) echo the card's OWN
+  // questionId so the backend answers THIS gate. Without it every verdict fell
+  // back to the session's single interrupt id, so a second card's approval hit
+  // the first card's gate — mis-applying one send's edits to another and leaving
+  // the real gate unanswered (seen live: session 33dfebfa). Editable approvals
+  // also carry the edited fields. Non-confirm choices are unchanged.
+  const isConfirmGate = choice.questionId.startsWith('confirm::');
+  const editSubmitText = (option: ChoiceComponentData['options'][number]) => {
+    if (!isConfirmGate) return option.submitText;
+    const approve = APPROVE_WORDS.has(option.submitText.trim().toLowerCase());
+    return JSON.stringify({
+      verdict: option.submitText,
+      questionId: choice.questionId,
+      ...(approve && isEditable ? { edits: fieldValues } : {}),
+    });
+  };
   useEffect(() => {
     if (!submittedInteraction) return;
     setSelected(submittedInteraction.selectedOptions.map((option) => option.optionId));

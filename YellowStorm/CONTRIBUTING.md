@@ -155,20 +155,7 @@ Run from `back/` or `front/`:
 ```bash
 npm run release          # Auto-determine bump from commits
 npm run release:patch    # Force patch (0.0.1 -> 0.0.2)
-npm run release:minor    # Force minor (0.0.1 -> 0.1.0)
-npm run release:major    # Force major (0.0.1 -> 1.0.0)
-npm run release:first    # Initialize first release
 ```
-
-### Experimental Pre-releases
-
-Run from `back/` or `front/` on the `experimental` branch:
-
-```bash
-npm run release:exp      # Pre-release bump (0.1.0 -> 0.1.1-exp.0 -> 0.1.1-exp.1)
-```
-
-This produces versions like `0.2.0-exp.0`, `0.2.0-exp.1`, etc. These are not promoted to the stable channel.
 
 ### Promotion
 
@@ -247,22 +234,16 @@ git push --follow-tags
 # 5. Create PR: develop -> main (requires 2 approvals)
 ```
 
-### Experimental Release
+### Release
 
 ```bash
-# 1. Ensure you're on the experimental branch
-git checkout experimental
-git pull origin experimental
-
 # 2. Release backend (if changed)
 cd back
-npm run release:exp
-# -> Bumps to pre-release version (e.g., 0.2.0-exp.0)
+npm run release
 
 # 3. Release frontend (if changed)
 cd ../front
-npm run release:exp
-# -> Bumps to pre-release version (e.g., 0.2.0-exp.0)
+npm run release
 
 # 4. Push everything
 git push --follow-tags

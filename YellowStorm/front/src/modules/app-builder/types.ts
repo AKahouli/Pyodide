@@ -24,6 +24,8 @@ export interface DeployedApp extends AppRevisionCatalogFields {
   shareId: string | null;
   /** Shared recipients may open the conversation when the share included it. */
   canOpenConversation?: boolean;
+  /** App integrates Approach B AI features (yellowmind-ai / AI proxy). */
+  hasAiFeatures?: boolean;
 }
 
 export interface DraftApp extends AppRevisionCatalogFields {
@@ -31,6 +33,8 @@ export interface DraftApp extends AppRevisionCatalogFields {
   title: string;
   lastUpdatedAt: string;
   deployStatus: DraftDeployStatus;
+  /** App integrates Approach B AI features (yellowmind-ai / AI proxy). */
+  hasAiFeatures?: boolean;
 }
 
 export interface AppBuilderCatalog {
@@ -50,6 +54,7 @@ export interface AppEndUserGrants {
   read: boolean;
   update: boolean;
   delete: boolean;
+  useAi: boolean;
 }
 
 export interface AppEndUserSummary {

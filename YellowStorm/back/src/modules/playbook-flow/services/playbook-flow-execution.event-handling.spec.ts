@@ -352,4 +352,62 @@ describe('PlaybookFlowExecutionService event handling', () => {
     );
     expect(streamEvents.emitExecutionComplete).toHaveBeenCalledWith('exec-1', 'failed', 'upstream failed');
   });
+
+  it('persists and streams iterator child step starts per iteration turn', async () => {
+    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests();
+    taskResultModel.findOne.mockReturnValue({
+      sort: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(null),
+    });
+    taskResultModel.updateOne.mockResolvedValue(undefined);
+
+    await (service as any).handleRunEvent('exec-1', {
+      event_type: 'IteratorChildStepStarted',
+      node_id: 'iter-node',
+      iteration: 0,
+      payload: { iterationIndex: 0, taskId: 'child-step', taskTitle: 'Process Item', status: 'running' },
+    });
+
+    const persisted = taskResultModel.updateOne.mock.calls[0][1].$set.iteratorIterations;
+    expect(persisted[0].index).toBe(0);
+    expect(persisted[0].status).toBe('running');
+    expect(persisted[0].childResults[0]).toEqual(expect.objectContaining({ taskId: 'child-step', status: 'running' }));
+    expect(streamEvents.emitIteratorChildStepStarted).toHaveBeenCalledWith(
+      'exec-1',
+      'iter-node',
+      expect.objectContaining({ iterationIndex: 0, taskId: 'child-step', status: 'running' }),
+    );
+  });
+
+  it('persists and streams iterator child step completions per iteration turn', async () => {
+    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests();
+    taskResultModel.findOne.mockReturnValue({
+      sort: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue({
+        iteratorIterations: [
+          { index: 0, status: 'running', output: null, error: null, childResults: [{ taskId: 'child-step', taskTitle: 'Process Item', status: 'running' }] },
+        ],
+      }),
+    });
+    taskResultModel.updateOne.mockResolvedValue(undefined);
+
+    await (service as any).handleRunEvent('exec-1', {
+      event_type: 'IteratorChildStepCompleted',
+      node_id: 'iter-node',
+      iteration: 0,
+      payload: { iterationIndex: 0, taskId: 'child-step', taskTitle: 'Process Item', status: 'completed', output: 'result text' },
+    });
+
+    const persisted = taskResultModel.updateOne.mock.calls[0][1].$set.iteratorIterations;
+    expect(persisted).toHaveLength(1);
+    expect(persisted[0].status).toBe('completed');
+    expect(persisted[0].childResults[0]).toEqual(
+      expect.objectContaining({ taskId: 'child-step', status: 'completed', output: 'result text' }),
+    );
+    expect(streamEvents.emitIteratorChildStepCompleted).toHaveBeenCalledWith(
+      'exec-1',
+      'iter-node',
+      expect.objectContaining({ iterationIndex: 0, taskId: 'child-step', status: 'completed', output: 'result text' }),
+    );
+  });
 });

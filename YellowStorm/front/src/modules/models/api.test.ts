@@ -7,9 +7,9 @@ vi.mock('@/lib/api', () => ({
   apiClient: { get: getMock },
   API_ENDPOINTS: {
     models: {
-      list: '/models',
-      byId: (id: string) => `/models/${id}`,
-      byChef: (slug: string) => `/models/chef/${slug}`,
+      list: '/model-catalog',
+      byId: (id: string) => `/model-catalog/${id}`,
+      byChef: (slug: string) => `/model-catalog/chef/${slug}`,
     },
   },
 }));
@@ -24,7 +24,7 @@ describe('models api', () => {
 
     const result = await getModels();
 
-    expect(getMock).toHaveBeenCalledWith('/models');
+    expect(getMock).toHaveBeenCalledWith('/model-catalog');
     expect(result).toEqual({ items: [], total: 0 });
   });
 
@@ -33,7 +33,7 @@ describe('models api', () => {
 
     const result = await getModel('m1');
 
-    expect(getMock).toHaveBeenCalledWith('/models/m1');
+    expect(getMock).toHaveBeenCalledWith('/model-catalog/m1');
     expect(result).toEqual({ id: 'm1', name: 'Model' });
   });
 
@@ -42,7 +42,7 @@ describe('models api', () => {
 
     const result = await getModelsByChef('chef-x');
 
-    expect(getMock).toHaveBeenCalledWith('/models/chef/chef-x');
+    expect(getMock).toHaveBeenCalledWith('/model-catalog/chef/chef-x');
     expect(result).toEqual({ items: [{ id: 'm1' }], total: 1 });
   });
 });

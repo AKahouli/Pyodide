@@ -51,9 +51,11 @@ agent/
 │   └── agent-permission.guard.ts    # owner | write | read access
 ├── decorators/
 │   └── require-agent-permission.decorator.ts
-├── schemas/
-│   ├── agent.schema.ts
-│   └── shared-agent.schema.ts       # share grants (shared_agents collection)
+├── persistence/
+│   ├── agent-share.store.ts         # AGENT_SHARE_STORE port
+│   └── pg-agent-share.store.ts      # PgAgentShareStore (public.shared_agents)
+├── repositories/
+│   └── agent.repository.ts          # AgentRepository (Drizzle, public.agents + link tables)
 ├── dto/
 │   ├── create-agent.dto.ts
 │   ├── update-agent.dto.ts
@@ -66,9 +68,9 @@ agent/
 
 ### Module Configuration
 
-- **Imports**: `MongooseModule` (Agent + SharedAgent schemas), `AgentTypeModule`, `AuthorizationModule`, `ToolModule`, `UserModule` (sharing resolves recipients by email)
+- **Imports**: `AgentRepositoryModule` (Postgres-backed `AgentRepository`; no `MongooseModule`), `AgentTypeModule`, `AuthorizationModule`, `ToolModule`, `UserModule` (sharing resolves recipients by email)
 - **Controllers**: `AgentController`, `AdminAgentController`, `AgentShareController`
-- **Providers**: `AgentService`, `AgentShareService`, `AgentPermissionGuard`
+- **Providers**: `AgentService`, `AgentShareService`, `AgentPermissionGuard`, `AGENT_SHARE_STORE` -> `PgAgentShareStore`, `CHANNEL_TEARDOWN` (Telegram + widget teardown adapters)
 - **Exports**: `AgentService`, `AgentShareService` (consumed by `WhatsAppModule`, `TelegramModule`, `ConversationModule`, and others)
 
 Channel integration modules live in separate NestJS modules but expose REST routes nested under `/agents/:agentId/…`. They import `AgentModule` and call `AgentService.findUserAgentById()` to enforce that only the agent owner can configure connectors.
@@ -77,12 +79,12 @@ Channel integration modules live in separate NestJS modules but expose REST rout
 
 ## Schema
 
-Collection: `agents`
+Postgres table `public.agents` (Drizzle: `postgres/schema/agents.schema.ts`), accessed through `AgentRepository`. Ids are 24-char hex strings (`char(24)`, Mongo ObjectId-compatible for the cross-service contract). Only `agent_id` columns on the child tables have real foreign keys; references to other domains (agent type, tools, skills, connectors, workspaces, creator) are plain `char(24)` columns without a cross-schema FK. Multi-valued references live in join tables, each with `agent_id` -> `agents(id)` `ON DELETE CASCADE`: `agent_tools`, `agent_skills`, `agent_disabled_skills`, `agent_connectors`, `agent_knowledge_bases`, `agent_connector_actions`. Guardrails and deployment settings are `jsonb` columns. The shape below is the logical (API-level) model:
 
 ```typescript
 {
   name: string;              // Required, trim, min 2, max 50
-  agentType: ObjectId;       // Required, ref: AgentType
+  agentType: ObjectId;       // Required, ref: AgentType (agent_type_id)
   role: string;              // Required, max 50000
   description: string;       // Default '', max 1000
   temperature: number;       // Default 0, min 0, max 1
@@ -98,14 +100,16 @@ Collection: `agents`
   updatedAt: Date;           // Auto (timestamps)
 }
 
-// Indexes:
-// { agentType: 1 }
-// { isDefault: 1 }
-// { isActive: 1 }
-// { createdBy: 1, isActive: 1 }
-// { isDefault: 1, isActive: 1 }
-// { name: 1, createdBy: 1 }   unique — name uniqueness per user
+// Indexes (Postgres):
+// idx_agents_created_by_is_active (created_by, is_active)
+// idx_agents_is_default_is_active (is_default, is_active)
+// idx_agents_agent_type_slug, idx_agents_is_active, plus agent-type/default-for-type composites
+// uq_agents_name_created_by (name, created_by)   unique — name uniqueness per user
+// uq_agents_created_by_slug_non_default          unique partial (created_by, slug) WHERE is_default = false AND slug <> ''
+// uq_agents_slug_default                         unique partial (slug, is_default) WHERE is_default = true AND slug <> ''
 ```
+
+Shares live in `public.shared_agents` (`shared_by`, `shared_with`, `permission` constrained to `read`/`write`) with a unique index `uq_shared_agents_agent_user (agent_id, shared_with)`.
 
 ---
 
@@ -140,7 +144,7 @@ Base route: `/agents` — requires Bearer token. Access is enforced by `AgentPer
 
 - Only **personal** agents are shareable (you must own them; default agents are already global).
 - `read` recipients see the agent; `write` recipients can also edit it via `PATCH /agents/:id` (uniqueness checks are scoped to the **owner**, not the editor). Deletion stays owner-only.
-- Deleting an agent cascades and removes all of its share records.
+- Deleting an agent removes all of its share records via the `ON DELETE CASCADE` foreign key `public.shared_agents.agent_id -> public.agents(id)`.
 
 ### Agent Channel Integrations (separate modules)
 
@@ -198,7 +202,6 @@ Base route: `/admin/agents` — requires Bearer token + permissions.
 | `updateSharePermission(agentId, shareId, dto)` | Change a share's `read`/`write` level |
 | `removeShare(agentId, shareId)` | Owner revokes a specific share |
 | `unshareFromSelf(userId, agentId)` | Recipient removes a shared agent from their own list |
-| `removeAllSharesForAgent(agentId)` | Cascade cleanup on agent delete |
 | `getShareInfoMapForUser(userId)` | `Map<agentId, shareInfo>` for the user — lets `getAllForUserResponse` tag shared agents |
 | `getSharePermission(userId, agentId)` | The user's `read`/`write` level on an agent, or `null` |
 | `getShareInfo(userId, agentId)` | Full `shareInfo` for a user on an agent, or `null` |
@@ -365,7 +368,7 @@ WhatsApp DM  →  WhatsAppMessageService  →  agentIds: [agentId]
 
 ## Channel Integrations
 
-Agents can be connected to external messaging channels. Each integration stores its own MongoDB document keyed by `agentId` (unique per channel). The Agent module does **not** embed connector state in the `agents` collection — integration modules own their schemas and import `AgentModule` for validation.
+Agents can be connected to external messaging channels. Each integration stores its own row keyed by `agent_id` (unique per channel; Telegram and widget data live in the Postgres `channels` schema, while the deprecated WhatsApp module stays on Mongo). The Agent module does **not** embed connector state in the `agents` table — integration modules own their stores and import `AgentModule` for validation.
 
 ### Architecture
 
@@ -380,8 +383,8 @@ Agents can be connected to external messaging channels. Each integration stores 
         ▼                       ▼                       ▼
 ┌───────────────┐     ┌─────────────────┐     ┌──────────────────┐
 │ WhatsAppModule│     │ TelegramModule  │     │ ConversationModule│
-│ agent_whatsapp│     │ agent_telegram  │     │ (stream / chat)   │
-│ _integrations │     │ _integrations   │     │                   │
+│ (Mongo, depr.)│     │ channels.telegr.│     │ (stream / chat)   │
+│               │     │ _integrations   │     │                   │
 └───────────────┘     └─────────────────┘     └──────────────────┘
 ```
 
@@ -408,13 +411,19 @@ Agents can be connected to external messaging channels. Each integration stores 
 | Aspect | Detail |
 |--------|--------|
 | **Module** | [`../telegram/`](../telegram/) |
-| **Collection** | `agent_telegram_integrations` |
+| **Table** | `channels.telegram_integrations` (unique on `agent_id`) |
 | **Pattern** | Same agent-scoped REST under `/agents/:agentId/telegram-integration` |
 | **Transport** | Telegram Bot API webhooks (vs Baileys WebSocket for WhatsApp) |
 
 ### Agent deletion note
 
-Deleting an agent via `DELETE /agents/:id` does not automatically remove WhatsApp/Telegram integration documents. Clean up connectors explicitly through their module endpoints before or after agent deletion to avoid orphaned integration records.
+Deleting an agent via `DELETE /agents/:id` runs the `CHANNEL_TEARDOWN` adapters (Telegram and widget, provided in `AgentModule`), and the Postgres `ON DELETE CASCADE` foreign keys on `agent_id` (Telegram integrations, widget tokens, share rows, join tables) remove dependent rows. WhatsApp is not part of `CHANNEL_TEARDOWN`: clean up its connector explicitly through the WhatsApp module endpoints to avoid orphaned integration records.
+
+### Accepted deviations (documented)
+
+- worky-stream deletes its manager agent via the repository (`AgentRepository.deleteByIdAndOwner`), bypassing `CHANNEL_TEARDOWN` — accepted because manager agents have no Telegram/widget integrations and their rows are removed by FK cascades.
+- The widget teardown adapter deactivates the agent's tokens (`revokeAllForAgent`) rather than deleting them — the `ON DELETE CASCADE` FK removes them when the agent row is deleted.
+- WhatsApp is deprecated and intentionally not part of `CHANNEL_TEARDOWN` (the module stays on Mongo until it is cleaned up).
 
 ---
 

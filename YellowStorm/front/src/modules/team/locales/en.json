@@ -70,6 +70,7 @@
   "orgChart.noAgentsAvailable": "No agents available to add.",
   "orgChart.emptyState": "No agents in this team. Add agents to build your org chart.",
   "orgChart.cyclePrevented": "Cannot create this relationship — it would cause a cycle.",
+  "orgChart.managerSourceOnly": "Only manager agents can have children.",
   "orgChart.revert": "Revert",
   "orgChart.save": "Save",
   "orgChart.saving": "Saving...",
@@ -79,6 +80,8 @@
   "orgChart.readOnly": "Read-only — you have view access to this team",
 
   "node.root": "Root",
+  "node.connectFrom": "Drag to connect from {{name}}",
+  "node.connectTo": "Drop here to connect to {{name}}",
   "node.removeFromTeam": "Remove from team",
   "node.setAsRoot": "Set as root",
   "node.noDescription": "No description",
@@ -105,5 +108,14 @@
   "autoBuilder.actions.generate": "Generate team",
 
   "orgChart.generatingTitle": "Generating team...",
-  "orgChart.generatingSubtitle": "Building your team hierarchy with AI"
+  "orgChart.generatingSubtitle": "Building your team hierarchy with AI",
+  "wizard.purpose": "Purpose",
+  "wizard.members": "Members",
+  "wizard.review": "Review",
+  "wizard.next": "Continue",
+  "wizard.back": "Back",
+  "wizard.membersHint": "Choose complementary specialists. You can adjust the team structure afterward.",
+  "wizard.noPurpose": "No purpose added yet.",
+  "wizard.unavailable": "Unavailable agent",
+  "wizard.saveError": "The team could not be saved. Your changes are still here. Please try again."
 }

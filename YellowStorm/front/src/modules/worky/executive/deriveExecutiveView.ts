@@ -1,12 +1,35 @@
-import type { WorkyBoardResponse, WorkyStreamStatus, WorkyTask } from '../types';
+import type { MessageComponent, WorkyBoardResponse, WorkyMessage, WorkyStreamStatus, WorkyTask } from '../types';
 import type {
   WorkyCurrentWorkItem,
   WorkyCurrentWorkStatus,
   WorkyDelegationItem,
   WorkyExecutiveViewModel,
   WorkyMissionHealth,
+  WorkyPendingApproval,
   WorkyRuntimeAttentionItem,
 } from './executiveModel';
+
+/** Pending send/mail approval gates from the message stream: `confirm::` choice
+ *  cards still `ready` (answered ones are flipped to `submitted`). Latest card
+ *  per questionId wins, so a re-driven duplicate collapses to one. */
+export function collectPendingApprovals(messages: WorkyMessage[]): WorkyPendingApproval[] {
+  const byId = new Map<string, MessageComponent>();
+  for (const message of messages) {
+    for (const component of message.components ?? []) {
+      const data = component.data as { questionId?: unknown; status?: unknown } | undefined;
+      const questionId = data?.questionId;
+      if (
+        component.type === 'choice' &&
+        typeof questionId === 'string' &&
+        questionId.startsWith('confirm::') &&
+        data?.status === 'ready'
+      ) {
+        byId.set(questionId, component);
+      }
+    }
+  }
+  return [...byId.entries()].map(([questionId, component]) => ({ questionId, component }));
+}
 
 const CURRENT_WORK_ORDER: Record<WorkyCurrentWorkStatus, number> = {
   needs_input: 0,
@@ -34,6 +57,7 @@ function deriveHealth(
   board: WorkyBoardResponse,
   tasks: WorkyTask[],
   runtimeAsks: WorkyRuntimeAttentionItem[],
+  pendingApprovalsCount: number,
   fallbackStatus?: WorkyStreamStatus,
 ): WorkyMissionHealth {
   const sessionStatus = board.session?.status;
@@ -41,7 +65,7 @@ function deriveHealth(
   if (sessionStatus === 'completed') return 'completed';
   if (sessionStatus === 'paused') return 'paused';
   if (sessionStatus === 'failed') return 'at_risk';
-  if (runtimeAsks.some((ask) => ask.active) || board.pendingClarifications.length > 0) return 'needs_attention';
+  if (runtimeAsks.some((ask) => ask.active) || board.pendingClarifications.length > 0 || pendingApprovalsCount > 0) return 'needs_attention';
   if (board.plan?.status === 'failed' || tasks.some((task) => task.lane === 'failed')) return 'at_risk';
   if (tasks.some((task) => (task.kind ?? 'execute') === 'execute' && task.lane === 'blocked')) return 'at_risk';
   if (board.plan?.status === 'completed') return 'completed';
@@ -82,9 +106,11 @@ function deriveDelegations(tasks: WorkyTask[]): WorkyDelegationItem[] {
 export function deriveExecutiveView(
   board: WorkyBoardResponse,
   fallbackStatus?: WorkyStreamStatus,
+  messages: WorkyMessage[] = [],
 ): WorkyExecutiveViewModel {
   const tasks = Object.values(board.lanes).flat();
   const activeInterruptId = board.session?.activeInterruptId ?? null;
+  const pendingApprovals = collectPendingApprovals(messages);
   const runtimeAsks = tasks
     .filter((task) => task.kind === 'ask' && task.lane === 'blocked' && task.interruptId)
     .map((task) => ({
@@ -104,9 +130,10 @@ export function deriveExecutiveView(
   return {
     plan: board.plan ?? null,
     session: board.session ?? null,
-    health: deriveHealth(board, tasks, runtimeAsks, fallbackStatus),
+    health: deriveHealth(board, tasks, runtimeAsks, pendingApprovals.length, fallbackStatus),
     runtimeAsks,
     interactions: board.pendingClarifications,
+    pendingApprovals,
     currentWork,
     delegations: deriveDelegations(tasks),
     summary: {
@@ -114,7 +141,7 @@ export function deriveExecutiveView(
       completed: tasks.filter((task) => task.lane === 'done').length,
       active: tasks.filter((task) => task.lane === 'running' || task.lane === 'review').length,
       waitingExternal: currentWork.filter((item) => item.status === 'waiting_external').length,
-      needsInput: runtimeAsks.filter((ask) => ask.active).length + board.pendingClarifications.length,
+      needsInput: runtimeAsks.filter((ask) => ask.active).length + board.pendingClarifications.length + pendingApprovals.length,
     },
   };
 }

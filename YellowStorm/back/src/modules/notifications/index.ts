@@ -2,7 +2,7 @@ export * from './notifications.module';
 export * from './notifications.service';
 export * from './notifications.controller';
 export * from './notifications.gateway';
-export * from './schemas/notification.schema';
+export * from './notification.types';
 export {
   CreateNotificationData,
   InternalNotificationData,

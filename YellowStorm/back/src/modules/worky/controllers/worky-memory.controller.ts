@@ -15,7 +15,7 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { WorkyMemoryService, IWorkyMemoryEntryResponse, IWorkyMemoryProposalResponse } from '../services/worky-memory.service';
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { Permissions } from '../../authorization/constants/permissions';
 
 class RejectMemoryDto {
@@ -42,7 +42,7 @@ export class WorkyMemoryController {
   @RequirePermissions(Permissions.WORKY_STREAM_READ)
   @ApiOperation({ summary: 'List memory proposals for the current owner' })
   async listProposals(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Query('status') status?: 'pending' | 'confirmed' | 'rejected',
   ): Promise<IWorkyMemoryProposalResponse[]> {
     return this.memory.findProposals(user._id.toString(), status);
@@ -52,7 +52,7 @@ export class WorkyMemoryController {
   @RequirePermissions(Permissions.WORKY_STREAM_READ)
   @ApiOperation({ summary: 'List confirmed memory entries for the current owner' })
   async listEntries(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ): Promise<IWorkyMemoryEntryResponse[]> {
     return this.memory.findForOwner(user._id.toString());
   }
@@ -62,7 +62,7 @@ export class WorkyMemoryController {
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Confirm a pending memory proposal (writes the durable entry)' })
   async confirm(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
   ): Promise<IWorkyMemoryEntryResponse> {
     return this.memory.confirm({ proposalId: id, actorUserId: user._id.toString() });
@@ -73,7 +73,7 @@ export class WorkyMemoryController {
   @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
   @ApiOperation({ summary: 'Reject a pending memory proposal (writes nothing)' })
   async reject(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: RejectMemoryDto,
   ): Promise<IWorkyMemoryProposalResponse> {

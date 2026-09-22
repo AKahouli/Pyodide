@@ -55,6 +55,7 @@ The App Builder runtime lives in the sibling module
 | Deploy | HTTP App Builder (`POST …/sessions/:id/deploy`), independent of Nodepod |
 | **App sharing** | **Email-based share with notification, App Marketplace with owned + shared apps** |
 | **RBAC** | **Owner / viewer roles with granular permissions (session.read, events.read, files.read, workspace_documents.read, session.write, session.delete, stream.write, deploy.write, share.write)** |
+| **App Builder AI** | Session flag `hasAiFeatures` (set after successful AI usage, not merely on ticket issue); preview ticket `aiprev_…`; deploy rejects loopback `BACKEND_URL` when AI apps need a public Nest URL |
 
 ## Architecture
 
@@ -654,8 +655,9 @@ for that session.
 | `services/conversation-v2-event-store.service.ts` | Event append with sequence, listSince, tagModel |
 | `services/conversation-v2-pointer-writer.service.ts` | Update session status/title from events |
 | `services/conversation-v2-share.service.ts` | Token generation, hash, timing-safe verify |
-| `services/conversation-v2-deploy.service.ts` | Deploy via app-deployer, polling, timeout |
+| `services/conversation-v2-deploy.service.ts` | Deploy via app-deployer, polling, timeout; rejects loopback BACKEND_URL for AI apps |
 | `services/conversation-v2-app-share.service.ts` | Email share, notification, conversation access |
+| `services/conversation-v2-app-ai-features.service.ts` | Marks session `hasAiFeatures` after successful AI usage |
 | `services/conversation-v2-name-generator.service.ts` | Auto-title from first message |
 | `proto/conversation.proto` | gRPC contract (sync with APImanus) |
 | `types/conversation-v2.types.ts` | Event / payload TypeScript types |
@@ -674,8 +676,8 @@ for that session.
 | Path | Role |
 |---|---|
 | `app-data/controllers/app-data-owner.controller.ts` | End-user + table endpoints under `/conversation-v2/sessions/:id/app-data` |
-| `app-data/controllers/app-data-public-invite.controller.ts` | Public `GET …/invites/resolve` for register-invite tokens |
-| `app-data/services/app-data-end-user-auth.service.ts` | App end-user register/login + invite consume |
+| `app-data/controllers/remote/app-data-remote-owner.controller.ts` | Remote-mode passthrough of the owner Data tab to the app-data microservice |
+| `app-data/services/app-data-end-user-auth.service.ts` | App end-user register/login + invite consume (local mode) |
 | `app-data/services/app-data-end-user.service.ts` | End-user CRUD + status |
 | `app-data/services/app-data-end-user-grants.service.ts` | Per-user CRUD grant persistence |
 | `app-data/services/app-data-catalog.service.ts` | App registration, status, environment lookup |

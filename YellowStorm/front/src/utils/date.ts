@@ -60,9 +60,3 @@ export const formatFullDateLabel = (value: string, fallback = '', locale?: strin
   if (Number.isNaN(date.getTime())) return fallback;
   return getFullDateFormatter(locale).format(date);
 };
-
-export const formatShortDateLabel = (value: string, fallback = '', locale?: string) => {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return fallback;
-  return getShortDateFormatter(locale).format(date);
-};

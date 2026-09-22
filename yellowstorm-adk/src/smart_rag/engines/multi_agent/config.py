@@ -105,6 +105,7 @@ class AgentTeamConfig:
     previous_attached_files: Optional[List[dict]] = None
     connector_repo: Optional[Dict[str, str]] = None
     skills: Optional[List[dict]] = None
+    attachment_context: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.brain_ids is None and self.workspace_names is not None:

@@ -36,3 +36,13 @@ export class VoiceTranscriptDto {
   @IsIn(['owner', 'manager']) role!: 'owner' | 'manager';
   @IsString() @IsNotEmpty() @MaxLength(50000) text!: string;
 }
+
+export class VoiceThematicMemoryDto {
+  @IsOptional() @IsString() @MaxLength(256) streamId?: string;
+  @IsString() @IsNotEmpty() @MaxLength(50000) text!: string;
+}
+
+export class VoiceThematicRetrieveDto {
+  @IsOptional() @IsString() @MaxLength(256) streamId?: string;
+  @IsString() @IsNotEmpty() @MaxLength(2000) query!: string;
+}

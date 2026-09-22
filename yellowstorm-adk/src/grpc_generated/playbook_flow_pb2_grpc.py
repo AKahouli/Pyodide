@@ -5,7 +5,7 @@ import warnings
 
 from src.grpc_generated import playbook_flow_pb2 as playbook__flow__pb2
 
-GRPC_GENERATED_VERSION = '1.80.0'
+GRPC_GENERATED_VERSION = '1.81.1'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -25,7 +25,7 @@ if _version_not_supported:
     )
 
 
-class PlaybookFlowRuntimeStub(object):
+class PlaybookFlowRuntimeStub:
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -66,7 +66,7 @@ class PlaybookFlowRuntimeStub(object):
                 _registered_method=True)
 
 
-class PlaybookFlowRuntimeServicer(object):
+class PlaybookFlowRuntimeServicer:
     """Missing associated documentation comment in .proto file."""
 
     def Run(self, request, context):
@@ -146,7 +146,7 @@ def add_PlaybookFlowRuntimeServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class PlaybookFlowRuntime(object):
+class PlaybookFlowRuntime:
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod

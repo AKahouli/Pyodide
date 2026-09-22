@@ -15,12 +15,17 @@ import { CorsSettingsValue } from './schemas/system-setting.schema';
 import { decodeMultipartFilename, multipartFileInterceptorOptions } from '../../common/utils';
 import { RequirePermissions, PermissionsGuard, Permissions, AuditLogService } from '../authorization';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { FeatureVisibilityService } from './feature-visibility.service';
 import type { FeatureVisibility } from './interfaces/feature-visibility.interface';
 import { UpdateFeatureVisibilityDto } from './dto/update-feature-visibility.dto';
 import { UpdateDocumentTreeInjectionDto } from './dto/update-document-tree-injection.dto';
 import type { DocumentTreeInjectionSettings } from './interfaces/document-tree-settings.interface';
+import type { LoginSettings } from './interfaces/login-settings.interface';
+import { SetLoginSettingsDto } from './dto/set-login-settings.dto';
+import { NavigationSettingsService } from './navigation-settings.service';
+import type { NavigationSettings } from './interfaces/navigation-settings.interface';
+import { UpdateNavigationSettingsDto } from './dto/update-navigation-settings.dto';
 
 interface MulterFile {
   originalname: string;
@@ -60,6 +65,7 @@ export class SystemController {
     private readonly systemService: SystemService,
     private readonly auditLogService: AuditLogService,
     private readonly featureVisibilityService: FeatureVisibilityService,
+    private readonly navigationSettingsService: NavigationSettingsService,
   ) {}
 
   @Get('features')
@@ -76,7 +82,7 @@ export class SystemController {
   @ApiOperation({ summary: 'Update main sidebar feature visibility' })
   async updateFeatureVisibility(
     @Body() body: UpdateFeatureVisibilityDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<FeatureVisibility> {
     const result = await this.featureVisibilityService.updateVisibility(body);
@@ -109,7 +115,7 @@ export class SystemController {
   @ApiOperation({ summary: 'Enable or disable global document-tree prompt injection' })
   async updateDocumentTreeInjectionSettings(
     @Body() body: UpdateDocumentTreeInjectionDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<DocumentTreeInjectionSettings> {
     const result = await this.systemService.setDocumentTreeInjectionSettings(body.enabled);
@@ -148,6 +154,64 @@ export class SystemController {
     return this.systemService.getMaintenanceStatus();
   }
 
+  @Get('login-settings')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get login token expiry settings' })
+  getLoginSettings(): Promise<LoginSettings> {
+    return this.systemService.getLoginSettings();
+  }
+
+  @Post('login-settings')
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(Permissions.SYSTEM_MAINTENANCE)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Set login token expiry settings' })
+  async setLoginSettings(
+    @Body() body: SetLoginSettingsDto,
+    @CurrentUser() user: AuthUser,
+    @Req() req: Request,
+  ): Promise<LoginSettings> {
+    const result = await this.systemService.setLoginSettings(body);
+    this.auditLogService.logSuccess({
+      actorId: user._id.toString(),
+      actorEmail: user.email,
+      action: 'system.loginSettings',
+      metadata: { ...result },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    return result;
+  }
+
+  @Get('navigation')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get main sidebar navigation settings' })
+  getNavigationSettings(): Promise<NavigationSettings> {
+    return this.navigationSettingsService.getSettings();
+  }
+
+  @Put('navigation')
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(Permissions.SYSTEM_MAINTENANCE)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update main sidebar navigation settings' })
+  async updateNavigationSettings(
+    @Body() body: UpdateNavigationSettingsDto,
+    @CurrentUser() user: AuthUser,
+    @Req() req: Request,
+  ): Promise<NavigationSettings> {
+    const result = await this.navigationSettingsService.updateSettings(body.nodes);
+    this.auditLogService.logSuccess({
+      actorId: user._id.toString(),
+      actorEmail: user.email,
+      action: 'system.navigation',
+      metadata: { revision: result.revision, nodeCount: result.nodes.length },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    return result;
+  }
+
   @Post('maintenance')
   @UseGuards(PermissionsGuard)
   @RequirePermissions(Permissions.SYSTEM_MAINTENANCE)
@@ -171,7 +235,7 @@ export class SystemController {
   })
   async setMaintenanceMode(
     @Body() body: { enabled: boolean; message?: string; estimatedEndAt?: string },
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<MaintenanceStatus> {
     const result = await this.systemService.setMaintenanceMode(body.enabled, {
@@ -243,7 +307,7 @@ export class SystemController {
   })
   async setRegistrationStatus(
     @Body() body: { enabled: boolean },
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<RegistrationStatus> {
     const result = await this.systemService.setRegistrationEnabled(body.enabled, {
@@ -281,7 +345,7 @@ export class SystemController {
   @ApiOperation({ summary: 'Set appearance settings' })
   async setAppearanceSettings(
     @Body() body: SetAppearanceSettingsDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<AppearanceSettings> {
     const result = await this.systemService.setAppearanceSettings(body);
@@ -340,7 +404,7 @@ export class SystemController {
   @ApiOperation({ summary: 'Upload the email logo used in all transactional email templates (PNG/JPEG, max 512 KB)' })
   async setEmailLogo(
     @UploadedFile() file: MulterFile,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<{ logo: EmailLogoResponse }> {
     if (!file) {
@@ -390,7 +454,7 @@ export class SystemController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Remove the custom email logo and fall back to the bundled default' })
   async clearEmailLogo(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<{ logo: null }> {
     await this.systemService.clearEmailLogo(user._id.toString());
@@ -424,7 +488,7 @@ export class SystemController {
   @ApiOperation({ summary: 'Set CORS settings', description: 'Requires system.cors permission.' })
   async setCorsSettings(
     @Body() body: { origins: Array<{ origin: string; enabled: boolean }> },
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<CorsSettingsValue> {
     const result = await this.systemService.setCorsSettings(body.origins, user._id.toString());

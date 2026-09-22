@@ -25,7 +25,7 @@ import { AuditLogService } from '../authorization/services/audit-log.service';
 import { RequirePermissions } from '../authorization/decorators/require-permissions.decorator';
 import { PermissionsGuard } from '../authorization/guards/permissions.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { Permissions } from '../authorization/constants/permissions';
 import { CreateToolDto, UpdateToolDto, QueryToolDto } from './dto';
 import { IToolResponse } from './interfaces/tool.interface';
@@ -68,7 +68,7 @@ export class ToolController {
   @ApiResponse({ status: 409, description: 'Tool name already exists' })
   async create(
     @Body() dto: CreateToolDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<IToolResponse> {
     const tool = await this.toolService.create(dto);
@@ -98,7 +98,7 @@ export class ToolController {
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateToolDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<IToolResponse> {
     const tool = await this.toolService.update(id, dto);
@@ -126,7 +126,7 @@ export class ToolController {
   @ApiResponse({ status: 404, description: 'Tool not found' })
   async delete(
     @Param('id') id: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<void> {
     // Get tool name before deletion for audit log

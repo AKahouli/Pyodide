@@ -1,20 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  connectAgentWhatsApp,
   createAgent,
   deleteAgent,
   deleteAgentTelegramIntegration,
-  deleteAgentWhatsAppIntegration,
-  disconnectAgentWhatsAppSession,
   getActiveTools,
   getAgentTelegramIntegration,
   getAgentTypes,
-  getAgentWhatsAppIntegration,
-  getAgentWhatsAppPairing,
   getAllAgents,
-  reconnectAgentWhatsApp,
   updateAgent,
-  updateAgentWhatsAppEnabled,
+  updateDefaultAgent,
   upsertAgentTelegramIntegration,
 } from './api';
 
@@ -41,15 +35,9 @@ vi.mock('@/lib/api/config', () => ({
       list: '/agents',
       byId: (id: string) => `/agents/${id}`,
       telegramIntegration: (id: string) => `/agents/${id}/telegram-integration`,
-      whatsappIntegration: (id: string) => `/agents/${id}/whatsapp-integration`,
-      whatsappEnabled: (id: string) => `/agents/${id}/whatsapp-integration/enabled`,
-      whatsappConnect: (id: string) => `/agents/${id}/whatsapp-integration/connect`,
-      whatsappPairing: (id: string, sessionId: string) =>
-        `/agents/${id}/whatsapp-integration/${sessionId}/pairing`,
-      whatsappReconnect: (id: string, sessionId: string) =>
-        `/agents/${id}/whatsapp-integration/${sessionId}/reconnect`,
-      whatsappSession: (id: string, sessionId: string) =>
-        `/agents/${id}/whatsapp-integration/${sessionId}`,
+    },
+    adminAgents: {
+      byId: (id: string) => `/admin/agents/${id}`,
     },
     agentTypes: {
       active: '/agent-types/active',
@@ -92,13 +80,55 @@ describe('agent api', () => {
     expect(result).toEqual({ id: 'new' });
   });
 
+  it('serializes form reasoning effort when creating an agent', async () => {
+    postMock.mockResolvedValue({ data: { data: { id: 'new' } } });
+
+    await createAgent({
+      name: 'Agent',
+      slug: 'agent',
+      agentType: 'type',
+      role: 'role',
+      reasoningEffort: 'high',
+    });
+
+    expect(postMock).toHaveBeenCalledWith('/agents', expect.objectContaining({
+      reasoning_effort: 'high',
+    }));
+    expect(postMock.mock.calls[0][1]).not.toHaveProperty('reasoningEffort');
+  });
+
   it('updates agent via PATCH /agents/:id', async () => {
     patchMock.mockResolvedValue({ data: { data: { id: 'a1', name: 'Updated' } } });
 
-    const result = await updateAgent('a1', { name: 'Updated' });
+    const result = await updateAgent('a1', {
+      name: 'Updated',
+      reasoningEffort: 'high',
+    });
 
-    expect(patchMock).toHaveBeenCalledWith('/agents/a1', { name: 'Updated' });
+    expect(patchMock).toHaveBeenCalledWith('/agents/a1', {
+      name: 'Updated',
+      reasoning_effort: 'high',
+    });
+    expect(patchMock.mock.calls[0][1]).not.toHaveProperty('reasoningEffort');
     expect(result).toEqual({ id: 'a1', name: 'Updated' });
+  });
+
+  it('preserves serialized reasoning effort updates', async () => {
+    patchMock.mockResolvedValue({ data: { data: { id: 'a1' } } });
+
+    await updateAgent('a1', { reasoning_effort: 'low' });
+
+    expect(patchMock).toHaveBeenCalledWith('/agents/a1', { reasoning_effort: 'low' });
+    expect(patchMock.mock.calls[0][1]).not.toHaveProperty('reasoningEffort');
+  });
+
+  it('serializes empty reasoning effort when updating a default agent', async () => {
+    patchMock.mockResolvedValue({ data: { data: { id: 'a1' } } });
+
+    await updateDefaultAgent('a1', { reasoningEffort: '' });
+
+    expect(patchMock).toHaveBeenCalledWith('/admin/agents/a1', { reasoning_effort: '' });
+    expect(patchMock.mock.calls[0][1]).not.toHaveProperty('reasoningEffort');
   });
 
   it('deletes agent via DELETE /agents/:id', async () => {
@@ -154,76 +184,4 @@ describe('agent api', () => {
     expect(deleteMock).toHaveBeenCalledWith('/agents/a1/telegram-integration');
   });
 
-  it('gets agent whatsapp integration via GET', async () => {
-    getMock.mockResolvedValue({
-      data: { data: { status: 'CONNECTED', phoneNumber: '+1' } },
-    });
-
-    const result = await getAgentWhatsAppIntegration('a1');
-
-    expect(getMock).toHaveBeenCalledWith('/agents/a1/whatsapp-integration');
-    expect(result).toEqual({ status: 'CONNECTED', phoneNumber: '+1' });
-  });
-
-  it('connects agent whatsapp via POST', async () => {
-    postMock.mockResolvedValue({
-      data: { data: { sessionId: 's1', status: 'PAIRING' } },
-    });
-
-    const result = await connectAgentWhatsApp('a1');
-
-    expect(postMock).toHaveBeenCalledWith('/agents/a1/whatsapp-integration/connect');
-    expect(result).toEqual({ sessionId: 's1', status: 'PAIRING' });
-  });
-
-  it('updates agent whatsapp enabled via PATCH', async () => {
-    patchMock.mockResolvedValue({
-      data: { data: { enabled: false, status: 'CONNECTED' } },
-    });
-
-    const result = await updateAgentWhatsAppEnabled('a1', { enabled: false });
-
-    expect(patchMock).toHaveBeenCalledWith('/agents/a1/whatsapp-integration/enabled', {
-      enabled: false,
-    });
-    expect(result).toEqual({ enabled: false, status: 'CONNECTED' });
-  });
-
-  it('gets whatsapp pairing via GET', async () => {
-    getMock.mockResolvedValue({
-      data: { data: { qrCode: 'qr', pairingCode: '12345678' } },
-    });
-
-    const result = await getAgentWhatsAppPairing('a1', 's1');
-
-    expect(getMock).toHaveBeenCalledWith('/agents/a1/whatsapp-integration/s1/pairing');
-    expect(result).toEqual({ qrCode: 'qr', pairingCode: '12345678' });
-  });
-
-  it('reconnects whatsapp session via POST', async () => {
-    postMock.mockResolvedValue({
-      data: { data: { status: 'PAIRING', sessionId: 's1' } },
-    });
-
-    const result = await reconnectAgentWhatsApp('a1', 's1');
-
-    expect(postMock).toHaveBeenCalledWith('/agents/a1/whatsapp-integration/s1/reconnect');
-    expect(result).toEqual({ status: 'PAIRING', sessionId: 's1' });
-  });
-
-  it('disconnects whatsapp session via DELETE', async () => {
-    deleteMock.mockResolvedValue(undefined);
-
-    await disconnectAgentWhatsAppSession('a1', 's1');
-
-    expect(deleteMock).toHaveBeenCalledWith('/agents/a1/whatsapp-integration/s1');
-  });
-
-  it('deletes agent whatsapp integration via DELETE', async () => {
-    deleteMock.mockResolvedValue(undefined);
-
-    await deleteAgentWhatsAppIntegration('a1');
-
-    expect(deleteMock).toHaveBeenCalledWith('/agents/a1/whatsapp-integration');
-  });
 });

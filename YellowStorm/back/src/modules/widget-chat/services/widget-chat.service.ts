@@ -1,10 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { LoggerService } from '@modules/logger';
 import { ConfigService } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import { randomUUID, createHash } from 'node:crypto';
-import { Types } from 'mongoose';
+import { isObjectId } from '@common/postgres';
 import { Observable } from 'rxjs';
 import { ServiceUnavailableException, NotFoundException, ConflictException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
@@ -13,9 +11,15 @@ import { DocumentService } from '@modules/document/document.service';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { WorkspaceService } from '@modules/workspace/workspace.service';
 import { WidgetSseStreamRegistry } from './widget-sse-stream.registry';
-import { WidgetToken, WidgetTokenDocument } from '../schemas/widget-token.schema';
-import { WidgetSession, WidgetSessionDocument } from '../schemas/widget-session.schema';
-import { WidgetMessage, WidgetMessageDocument } from '../schemas/widget-message.schema';
+import {
+  WIDGET_MESSAGE_STORE,
+  WIDGET_SESSION_STORE,
+  WIDGET_TOKEN_STORE,
+  type WidgetMessageStore,
+  type WidgetSessionStore,
+  type WidgetTokenRow,
+  type WidgetTokenStore,
+} from '../persistence/widget.store';
 import { AgentService } from '@modules/agent/agent.service';
 import { ModelsService } from '@modules/models/models.service';
 import { AgentWidgetSettings, IGrpcAgent } from '@modules/agent/interfaces/agent.interface';
@@ -33,14 +37,22 @@ import {
 } from '../utils/widget-component-normalizer';
 import { createGrpcMetadata } from '../../../common/grpc/grpc-security.util';
 
+/** Public token shape — tokenHash never leaves the service (parity with the old toJSON transform). */
+type WidgetTokenView = Omit<WidgetTokenRow, 'tokenHash'>;
+
+function stripTokenHash(row: WidgetTokenRow): WidgetTokenView {
+  const { tokenHash: _tokenHash, ...view } = row;
+  return view;
+}
+
 @Injectable()
 export class WidgetChatService {
   private readonly sseRegistry = new WidgetSseStreamRegistry();
 
   constructor(
-    @InjectModel(WidgetToken.name) private readonly widgetTokenModel: Model<WidgetTokenDocument>,
-    @InjectModel(WidgetSession.name) private readonly widgetSessionModel: Model<WidgetSessionDocument>,
-    @InjectModel(WidgetMessage.name) private readonly widgetMessageModel: Model<WidgetMessageDocument>,
+    @Inject(WIDGET_TOKEN_STORE) private readonly widgetTokenStore: WidgetTokenStore,
+    @Inject(WIDGET_SESSION_STORE) private readonly widgetSessionStore: WidgetSessionStore,
+    @Inject(WIDGET_MESSAGE_STORE) private readonly widgetMessageStore: WidgetMessageStore,
     private readonly agentService: AgentService,
     private readonly modelsService: ModelsService,
     private readonly streamService: StreamService,
@@ -59,54 +71,41 @@ export class WidgetChatService {
     const token = randomUUID();
     const tokenHash = createHash('sha256').update(token).digest('hex');
 
-    const doc = new this.widgetTokenModel({
+    const row = await this.widgetTokenStore.insert({
       tokenHash,
       agentId,
-      label: opts.label,
+      label: opts.label ?? null,
       allowedOrigins: opts.allowedOrigins || [],
       isActive: true,
-      expiresAt: opts.expiresAt ? new Date(opts.expiresAt) : undefined,
+      expiresAt: opts.expiresAt ? new Date(opts.expiresAt) : null,
       createdBy,
     });
-    await doc.save();
 
-    return { id: doc.id, token, agentId };
+    return { id: row.id, token, agentId };
   }
 
   async listTokens(agentId: string) {
-    return this.widgetTokenModel.find({ agentId }).select('-tokenHash').sort({ createdAt: -1 }).lean().exec();
+    const rows = await this.widgetTokenStore.listByAgent(agentId);
+    return rows.map(stripTokenHash);
   }
 
   async hasActiveToken(agentId: string): Promise<boolean> {
-    const now = new Date();
-    const token = await this.widgetTokenModel
-      .findOne({
-        agentId,
-        isActive: true,
-        $or: [{ expiresAt: { $exists: false } }, { expiresAt: null }, { expiresAt: { $gt: now } }],
-      })
-      .select('_id')
-      .lean()
-      .exec();
-    return Boolean(token);
+    return this.widgetTokenStore.existsActiveForAgent(agentId);
   }
 
   async updateToken(agentId: string, tokenId: string, update: { label?: string; allowedOrigins?: string[]; isActive?: boolean; expiresAt?: string }) {
-    const doc = await this.widgetTokenModel.findOneAndUpdate(
-      { _id: tokenId, agentId },
-      {
-        ...(update.label !== undefined && { label: update.label }),
-        ...(update.allowedOrigins !== undefined && { allowedOrigins: update.allowedOrigins }),
-        ...(update.isActive !== undefined && { isActive: update.isActive }),
-        ...(update.expiresAt !== undefined && { expiresAt: update.expiresAt ? new Date(update.expiresAt) : null }),
-      },
-      { new: true },
-    ).select('-tokenHash').lean().exec();
-    return doc;
+    const row = await this.widgetTokenStore.update(agentId, tokenId, {
+      ...(update.label !== undefined && { label: update.label }),
+      ...(update.allowedOrigins !== undefined && { allowedOrigins: update.allowedOrigins }),
+      ...(update.isActive !== undefined && { isActive: update.isActive }),
+      ...(update.expiresAt !== undefined && { expiresAt: update.expiresAt ? new Date(update.expiresAt) : null }),
+    });
+    return row ? stripTokenHash(row) : null;
   }
 
   async revokeToken(agentId: string, tokenId: string) {
-    return this.widgetTokenModel.findOneAndDelete({ _id: tokenId, agentId }).lean().exec();
+    const row = await this.widgetTokenStore.delete(agentId, tokenId);
+    return row ? stripTokenHash(row) : null;
   }
 
   // ─── Session ─────────────────────────────────────────────────
@@ -129,34 +128,15 @@ export class WidgetChatService {
     agent?: { deploymentSettings?: { widget?: Partial<AgentWidgetSettings> } },
     channel: 'web_widget' | 'rest_api' = 'web_widget',
   ): Promise<{ id: string }> {
-    let session = await this.widgetSessionModel.findOne({ tokenHash, visitorId, status: 'active' }).lean().exec() as any;
-    if (session) {
-      const sessionId = session._id.toString();
-      this.logger.debug('Widget session reused', { sessionId, agentId, visitorId });
-      return { id: sessionId };
+    const { session, created } = await this.widgetSessionStore.createOrGetSession(
+      this.buildSessionPayload(tokenHash, agentId, visitorId, metadata, agent, channel),
+    );
+    if (created) {
+      this.logger.log('Widget session created', { sessionId: session.id, agentId, visitorId });
+    } else {
+      this.logger.debug('Widget session reused', { sessionId: session.id, agentId, visitorId });
     }
-
-    const clientContext = this.normalizeClientContext(metadata.clientContext);
-    const widgetSettings = normalizeWidgetSettings(agent?.deploymentSettings?.widget);
-    const appSource = {
-      channel,
-      appSourceName: widgetSettings.appSourceName,
-      sourceInstanceId: tokenHash.slice(0, 12),
-      origin: clientContext.origin || (metadata.origin as string | undefined),
-      pageUrl: clientContext.pageUrl,
-    };
-    session = await this.widgetSessionModel.create({
-      tokenHash,
-      agentId,
-      visitorId,
-      metadata,
-      clientContext,
-      appSource,
-      geo: { status: 'unavailable', reason: 'provider_not_configured' },
-    });
-    const sessionId = (session as any)._id.toString();
-    this.logger.log('Widget session created', { sessionId, agentId, visitorId });
-    return { id: sessionId };
+    return { id: session.id };
   }
 
   /** Closes the active visitor session and starts a fresh one (clear chat). */
@@ -167,20 +147,43 @@ export class WidgetChatService {
     metadata: Record<string, unknown>,
     agent?: { deploymentSettings?: { widget?: Partial<AgentWidgetSettings> } },
   ): Promise<{ sessionId: string }> {
-    const active = await this.widgetSessionModel
-      .findOne({ tokenHash, visitorId, status: 'active' })
-      .lean()
-      .exec();
+    // Close + insert move together (plan 4.13).
+    const { session, closedSessionIds } = await this.widgetSessionStore.resetVisitorSession(
+      this.buildSessionPayload(tokenHash, agentId, visitorId, metadata, agent, 'web_widget'),
+    );
 
-    if (active) {
-      const previousSessionId = active._id.toString();
-      await this.widgetSessionModel.findByIdAndUpdate(previousSessionId, { status: 'closed' }).exec();
+    for (const previousSessionId of closedSessionIds) {
       this.sseRegistry.cleanup(previousSessionId);
       this.logger.log('Widget session closed for reset', { previousSessionId, agentId, visitorId });
     }
-
-    const session = await this.createOrGetSession(tokenHash, agentId, visitorId, metadata, agent);
     return { sessionId: session.id };
+  }
+
+  private buildSessionPayload(
+    tokenHash: string,
+    agentId: string,
+    visitorId: string,
+    metadata: Record<string, unknown>,
+    agent?: { deploymentSettings?: { widget?: Partial<AgentWidgetSettings> } },
+    channel: 'web_widget' | 'rest_api' = 'web_widget',
+  ) {
+    const clientContext = this.normalizeClientContext(metadata.clientContext);
+    const widgetSettings = normalizeWidgetSettings(agent?.deploymentSettings?.widget);
+    return {
+      tokenHash,
+      agentId,
+      visitorId,
+      metadata,
+      clientContext,
+      appSource: {
+        channel,
+        appSourceName: widgetSettings.appSourceName,
+        sourceInstanceId: tokenHash.slice(0, 12),
+        origin: clientContext.origin || (metadata.origin as string | undefined),
+        pageUrl: clientContext.pageUrl,
+      },
+      geo: { status: 'unavailable', reason: 'provider_not_configured' },
+    };
   }
 
   private normalizeClientContext(value: unknown): Record<string, string> {
@@ -463,7 +466,8 @@ export class WidgetChatService {
     }
 
     try {
-      const userMsg = await this.widgetMessageModel.create({
+      // Message row + counter move together (plan 4.14).
+      const userMsg = await this.widgetMessageStore.insert({
         sessionId,
         tokenHash,
         agentId,
@@ -472,11 +476,7 @@ export class WidgetChatService {
         interaction,
       });
 
-      await this.widgetSessionModel.findByIdAndUpdate(sessionId, {
-        $inc: { messageCount: 1 },
-      }).exec();
-
-      await this.widgetTokenModel.findOneAndUpdate({ tokenHash }, { lastUsedAt: new Date() }).exec();
+      await this.widgetTokenStore.touchLastUsedThrottled(tokenHash);
 
       this.executeStream(sessionId, agentId, tokenHash, message, agent)
         .catch((err) => {
@@ -498,16 +498,11 @@ export class WidgetChatService {
     tokenHash: string;
     agentId: string;
   }): Promise<Observable<{ type: string; data: Record<string, unknown> }> | null> {
-    if (!Types.ObjectId.isValid(input.sessionId)) {
+    if (!isObjectId(input.sessionId)) {
       this.logger.warn('Widget SSE rejected: invalid sessionId');
       return null;
     }
-    const session = await this.widgetSessionModel.findOne({
-      _id: input.sessionId,
-      tokenHash: input.tokenHash,
-      agentId: input.agentId,
-      status: 'active',
-    }).select('_id').lean().exec();
+    const session = await this.widgetSessionStore.findByIdWithAgent(input.sessionId, input.tokenHash, input.agentId);
     if (!session) {
       this.logger.warn('Widget SSE rejected: unauthorized session', { sessionId: input.sessionId, agentId: input.agentId });
       return null;
@@ -551,7 +546,7 @@ export class WidgetChatService {
       messageLength: message.length,
     });
 
-    const userMsg = await this.widgetMessageModel.create({
+    const userMsg = await this.widgetMessageStore.insert({
       sessionId,
       tokenHash,
       agentId,
@@ -559,8 +554,7 @@ export class WidgetChatService {
       content: message,
     });
 
-    await this.widgetSessionModel.findByIdAndUpdate(sessionId, { $inc: { messageCount: 1 } }).exec();
-    await this.widgetTokenModel.findOneAndUpdate({ tokenHash }, { lastUsedAt: new Date() }).exec();
+    await this.widgetTokenStore.touchLastUsedThrottled(tokenHash);
 
     const streamResult = await this.runSingleAgentGrpc({
       sessionId,
@@ -585,7 +579,7 @@ export class WidgetChatService {
     }
 
     const replyText = streamResult.reply;
-    await this.widgetMessageModel.create({
+    await this.widgetMessageStore.insert({
       sessionId,
       tokenHash,
       agentId,
@@ -595,7 +589,6 @@ export class WidgetChatService {
       inputTokens: streamResult.usage.inputTokens,
       outputTokens: streamResult.usage.outputTokens,
     });
-    await this.widgetSessionModel.findByIdAndUpdate(sessionId, { $inc: { messageCount: 1 } }).exec();
 
     this.logger.log('Integration message completed', {
       sessionId,
@@ -664,7 +657,7 @@ export class WidgetChatService {
 
       const sanitizedReply = sanitizeWidgetTextContent(result.reply || '');
 
-      await this.widgetMessageModel.create({
+      await this.widgetMessageStore.insert({
         sessionId,
         tokenHash,
         agentId,
@@ -674,7 +667,6 @@ export class WidgetChatService {
         inputTokens: result.usage.inputTokens,
         outputTokens: result.usage.outputTokens,
       });
-      await this.widgetSessionModel.findByIdAndUpdate(sessionId, { $inc: { messageCount: 1 } }).exec();
 
       this.sseRegistry.emit(sessionId, {
         type: 'stream_complete',
@@ -859,7 +851,7 @@ export class WidgetChatService {
     const raw = agentDoc?.createdBy;
     if (!raw) return null;
     const id = typeof raw === 'string' ? raw : (raw as { toString(): string }).toString();
-    return Types.ObjectId.isValid(id) ? id : null;
+    return isObjectId(id) ? id : null;
   }
 
   private extractComponent(comp: any): { type: ComponentType; data: Record<string, unknown> } {

@@ -10,9 +10,46 @@ import { Label } from '@/components/ui/label';
  * Stay in the SPA after auth — a full reload would remount AuthProvider and
  * re-validate the token before the app renders. AppUrlNormalizer restores the
  * trailing slash that React Router drops for the app index.
+ *
+ * Never pass absolute/external URLs to navigate() — that throws in some hosts
+ * (sandboxed iframes / constrained browsers) as "External navigation is not allowed"
+ * and was incorrectly shown as a Register/Login form error.
  */
+function toInternalAppPath(from: string | null | undefined): string {
+  if (isAppHomePath(from)) return '/';
+  let raw = String(from ?? '/').trim();
+  if (!raw) return '/';
+
+  // Absolute or protocol-relative → home
+  if (/^[a-z][a-z0-9+.-]*:/i.test(raw) || raw.startsWith('//')) {
+    try {
+      const u = new URL(raw, typeof window !== 'undefined' ? window.location.origin : 'http://localhost');
+      raw = `${u.pathname}${u.search}${u.hash}` || '/';
+    } catch {
+      return '/';
+    }
+  }
+
+  const path = raw.startsWith('/') ? raw : `/${raw}`;
+  // Don't bounce back to auth screens after a successful session.
+  if (
+    path === '/login'
+    || path.startsWith('/login?')
+    || path === '/register'
+    || path.startsWith('/register?')
+  ) {
+    return '/';
+  }
+  return path;
+}
+
 function redirectAfterAuth(navigate: ReturnType<typeof useNavigate>, from: string) {
-  navigate(isAppHomePath(from) ? '/' : from, { replace: true });
+  const target = toInternalAppPath(from);
+  try {
+    navigate(target, { replace: true });
+  } catch {
+    navigate('/', { replace: true });
+  }
 }
 
 function useInviteToken(): string {
@@ -85,7 +122,22 @@ function AuthShell({
   return (
     <div className="auth-stars relative min-h-screen w-full overflow-hidden">
       <header className="absolute left-6 top-6 z-20">
-        <a href="https://www.yellowsys.ai/fr/" className="flex items-center gap-3" target="_blank" rel="noreferrer">
+        <a
+          href="https://www.yellowsys.ai/fr/"
+          className="flex items-center gap-3"
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => {
+            // Sandboxed preview iframes may block top-level / popup navigation.
+            // Prefer window.open; if blocked, do not surface a form error.
+            e.preventDefault();
+            try {
+              window.open('https://www.yellowsys.ai/fr/', '_blank', 'noopener,noreferrer');
+            } catch {
+              /* ignore */
+            }
+          }}
+        >
           <YellowsysMark className="h-10 w-auto" />
           <span className="text-lg font-semibold tracking-tight">Yellowsys</span>
         </a>
@@ -183,12 +235,13 @@ export function LoginPage() {
     setPending(true);
     try {
       await login(lockedEmail || email, password);
-      redirectAfterAuth(navigate, from);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Login failed');
-    } finally {
       setPending(false);
+      return;
     }
+    setPending(false);
+    redirectAfterAuth(navigate, from);
   }
 
   const registerTo = inviteToken ? `/register?invite=${encodeURIComponent(inviteToken)}` : '/register';
@@ -269,17 +322,20 @@ export function RegisterPage() {
     setPending(true);
     try {
       await register(lockedEmail || email, password, displayName || undefined, inviteToken || undefined);
-      redirectAfterAuth(navigate, from);
     } catch (err) {
+      const status = (err as Error & { status?: number }).status;
       const code = (err as Error & { code?: string }).code;
-      if (code === 'APP_DATA_EMAIL_TAKEN' && inviteToken) {
+      const message = err instanceof Error ? err.message : 'Registration failed';
+      if (status === 409 || code === 'CONFLICT' || /already registered/i.test(message)) {
         setError('This email is already registered. Sign in instead.');
       } else {
-        setError(err instanceof Error ? err.message : 'Registration failed');
+        setError(message);
       }
-    } finally {
       setPending(false);
+      return;
     }
+    setPending(false);
+    redirectAfterAuth(navigate, from);
   }
 
   if (invite.status === 'loading') {

@@ -8,8 +8,8 @@ describe('HumainAgentService', () => {
   const makeLogger = () => ({ setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() });
   const makeRoleEmbedding = () => ({ reindexHumainRole: jest.fn() });
 
-  const makeAgentTypeModel = (humainType: unknown) => ({
-    findOne: jest.fn().mockReturnValue({ lean: () => ({ exec: jest.fn().mockResolvedValue(humainType) }) }),
+  const makeAgentTypeService = (humainType: unknown) => ({
+    findBySlug: jest.fn().mockResolvedValue(humainType),
   });
 
   // agentRepository.findByOwnerAndType resolves `existing`; create + updateById are jest fns.
@@ -21,7 +21,7 @@ describe('HumainAgentService', () => {
 
   it('creates a human agent when none exists, keyed by createdBy + agentType, with a placeholder role when profile role is empty', async () => {
     const agentRepository = makeAgentRepository(null);
-    const service = new HumainAgentService(agentRepository as never, makeAgentTypeModel({ _id: humainTypeId, slug: 'humain' }) as never, makeRoleEmbedding() as never, makeLogger() as never);
+    const service = new HumainAgentService(agentRepository as never, makeAgentTypeService({ id: humainTypeId.toString(), slug: 'humain' }) as never, makeRoleEmbedding() as never, makeLogger() as never);
 
     await service.ensureForUser({ userId, email: 'jane.doe@acme.io', firstName: 'Jane', lastName: 'Doe' });
 
@@ -39,7 +39,7 @@ describe('HumainAgentService', () => {
 
   it('falls back to the email local-part for the name when no profile name exists', async () => {
     const agentRepository = makeAgentRepository(null);
-    const service = new HumainAgentService(agentRepository as never, makeAgentTypeModel({ _id: humainTypeId, slug: 'humain' }) as never, makeRoleEmbedding() as never, makeLogger() as never);
+    const service = new HumainAgentService(agentRepository as never, makeAgentTypeService({ id: humainTypeId.toString(), slug: 'humain' }) as never, makeRoleEmbedding() as never, makeLogger() as never);
 
     await service.ensureForUser({ userId, email: 'solo@acme.io' });
 
@@ -49,7 +49,7 @@ describe('HumainAgentService', () => {
   it('ensureForUser is a no-op when the agent already exists and email already matches', async () => {
     const existing = { _id: new Types.ObjectId().toString(), name: 'Old', slug: 'old', role: 'r', description: 'd', email: 'jane@acme.io' };
     const agentRepository = makeAgentRepository(existing);
-    const service = new HumainAgentService(agentRepository as never, makeAgentTypeModel({ _id: humainTypeId, slug: 'humain' }) as never, makeRoleEmbedding() as never, makeLogger() as never);
+    const service = new HumainAgentService(agentRepository as never, makeAgentTypeService({ id: humainTypeId.toString(), slug: 'humain' }) as never, makeRoleEmbedding() as never, makeLogger() as never);
 
     await service.ensureForUser({ userId, email: 'jane@acme.io', firstName: 'Jane', lastName: 'Doe', role: 'PM' });
 
@@ -60,7 +60,7 @@ describe('HumainAgentService', () => {
   it('ensureForUser fills the humain agent email from the user email when it is missing/stale', async () => {
     const existing = { _id: new Types.ObjectId().toString(), name: 'Jane Doe', slug: 'jane-doe', role: 'r', description: 'd', email: undefined };
     const agentRepository = makeAgentRepository(existing);
-    const service = new HumainAgentService(agentRepository as never, makeAgentTypeModel({ _id: humainTypeId, slug: 'humain' }) as never, makeRoleEmbedding() as never, makeLogger() as never);
+    const service = new HumainAgentService(agentRepository as never, makeAgentTypeService({ id: humainTypeId.toString(), slug: 'humain' }) as never, makeRoleEmbedding() as never, makeLogger() as never);
 
     await service.ensureForUser({ userId, email: 'jane@acme.io', firstName: 'Jane', lastName: 'Doe' });
 
@@ -71,7 +71,7 @@ describe('HumainAgentService', () => {
   it('syncFromProfile overwrites name/role/description on the existing agent via updateById', async () => {
     const existing = { _id: new Types.ObjectId().toString(), name: 'Old', slug: 'old', role: 'old-role', description: 'old' };
     const agentRepository = makeAgentRepository(existing);
-    const service = new HumainAgentService(agentRepository as never, makeAgentTypeModel({ _id: humainTypeId, slug: 'humain' }) as never, makeRoleEmbedding() as never, makeLogger() as never);
+    const service = new HumainAgentService(agentRepository as never, makeAgentTypeService({ id: humainTypeId.toString(), slug: 'humain' }) as never, makeRoleEmbedding() as never, makeLogger() as never);
 
     await service.syncFromProfile({ userId, email: 'jane@acme.io', firstName: 'Jane', lastName: 'Doe', role: 'Product Manager', description: 'Leads discovery' });
 
@@ -87,7 +87,7 @@ describe('HumainAgentService', () => {
 
   it('syncFromProfile creates the agent when none exists yet', async () => {
     const agentRepository = makeAgentRepository(null);
-    const service = new HumainAgentService(agentRepository as never, makeAgentTypeModel({ _id: humainTypeId, slug: 'humain' }) as never, makeRoleEmbedding() as never, makeLogger() as never);
+    const service = new HumainAgentService(agentRepository as never, makeAgentTypeService({ id: humainTypeId.toString(), slug: 'humain' }) as never, makeRoleEmbedding() as never, makeLogger() as never);
 
     await service.syncFromProfile({ userId, email: 'jane@acme.io', firstName: 'Jane', lastName: 'Doe', role: 'PM', description: 'bio' });
 
@@ -97,7 +97,7 @@ describe('HumainAgentService', () => {
   it('no-ops (does not touch the agent repository) and warns when the humain type is missing', async () => {
     const agentRepository = makeAgentRepository(null);
     const logger = makeLogger();
-    const service = new HumainAgentService(agentRepository as never, makeAgentTypeModel(null) as never, makeRoleEmbedding() as never, logger as never);
+    const service = new HumainAgentService(agentRepository as never, makeAgentTypeService(null) as never, makeRoleEmbedding() as never, logger as never);
 
     await service.ensureForUser({ userId, email: 'jane@acme.io' });
 
@@ -113,7 +113,7 @@ describe('HumainAgentService', () => {
       updateById: jest.fn(),
     };
     const logger = makeLogger();
-    const service = new HumainAgentService(agentRepository as never, makeAgentTypeModel({ _id: humainTypeId, slug: 'humain' }) as never, makeRoleEmbedding() as never, logger as never);
+    const service = new HumainAgentService(agentRepository as never, makeAgentTypeService({ id: humainTypeId.toString(), slug: 'humain' }) as never, makeRoleEmbedding() as never, logger as never);
 
     await expect(service.ensureForUser({ userId, email: 'jane@acme.io' })).resolves.toBeUndefined();
     expect(logger.warn).toHaveBeenCalled();

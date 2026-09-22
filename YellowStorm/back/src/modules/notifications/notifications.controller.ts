@@ -36,7 +36,7 @@ import { NotificationsGateway } from './notifications.gateway';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
 import { SseAuth } from './decorators/sse-auth.decorator';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { NotificationQueryDto } from './dto/notification-query.dto';
 import { MarkReadDto } from './dto/mark-read.dto';
 import { LoggerService } from '../logger';
@@ -176,7 +176,7 @@ export class NotificationsController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get notifications for current user' })
   async getNotifications(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Query() query: NotificationQueryDto,
   ) {
     return this.notificationsService.getUserNotifications(
@@ -191,7 +191,7 @@ export class NotificationsController {
   @Get('unread/count')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get unread notification count' })
-  async getUnreadCount(@CurrentUser() user: UserDocument) {
+  async getUnreadCount(@CurrentUser() user: AuthUser) {
     const count = await this.notificationsService.getUnreadCount(
       user._id.toString(),
     );
@@ -206,7 +206,7 @@ export class NotificationsController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Mark notifications as read' })
   async markAsRead(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Body() dto: MarkReadDto,
   ) {
     return this.notificationsService.markAsRead(user._id.toString(), dto);
@@ -219,7 +219,7 @@ export class NotificationsController {
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Mark all notifications as read' })
-  async markAllAsRead(@CurrentUser() user: UserDocument) {
+  async markAllAsRead(@CurrentUser() user: AuthUser) {
     return this.notificationsService.markAllAsRead(user._id.toString());
   }
 
@@ -232,7 +232,7 @@ export class NotificationsController {
   @ApiOperation({ summary: 'Delete a notification' })
   async deleteNotification(
     @Param('id') id: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
   ) {
     await this.notificationsService.deleteNotification(id, user._id.toString());
     return { message: 'Notification deleted' };

@@ -88,6 +88,19 @@ export class UpdateCompactionSettingsDto {
   summarizerModel!: string;
 }
 
+export class UpdateAttachmentIntelligenceSettingsDto {
+  @ApiProperty({ default: false })
+  @IsBoolean()
+  enabled!: boolean;
+
+  @ApiProperty({ minimum: 100, maximum: 1_000_000, default: 5000 })
+  @Type(() => Number)
+  @IsInt()
+  @Min(100)
+  @Max(1_000_000)
+  maxIndexedTabularRows!: number;
+}
+
 export class UpdateConversationSettingsDto {
   @ApiPropertyOptional({ default: true })
   @IsOptional()
@@ -119,6 +132,13 @@ export class UpdateConversationSettingsDto {
   @ValidateNested()
   @Type(() => UpdateCompactionSettingsDto)
   compaction?: UpdateCompactionSettingsDto;
+
+  @ApiPropertyOptional({ type: UpdateAttachmentIntelligenceSettingsDto })
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => UpdateAttachmentIntelligenceSettingsDto)
+  attachmentIntelligence?: UpdateAttachmentIntelligenceSettingsDto;
 }
 
 export class UpdateSensitiveTextRedactionDto {

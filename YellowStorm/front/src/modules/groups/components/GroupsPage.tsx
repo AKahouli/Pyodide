@@ -7,6 +7,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { useModuleTranslation } from '@/modules/localization';
+import { AgentNetworkTabs } from '@/modules/agent/components/AgentNetworkTabs';
 import { useGroupsStore, useGroups, useGroupsLoading, useGroupsInitialized } from '../store';
 import { CreateEditGroupDialog } from './CreateEditGroupDialog';
 import type { UserGroup } from '../types';
@@ -45,6 +46,10 @@ export function GroupsPage() {
           <p className='text-sm text-muted-foreground'>{t('page.subtitle')}</p>
         </div>
         <Button onClick={openCreate}><Plus className='mr-2 size-4' /> {t('page.newGroup')}</Button>
+      </div>
+
+      <div className='mb-6'>
+        <AgentNetworkTabs />
       </div>
 
       {showSpinner ? (

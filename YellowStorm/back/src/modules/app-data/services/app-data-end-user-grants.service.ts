@@ -23,6 +23,7 @@ const DENY_ALL_GRANTS: AppDataEndUserGrants = {
   read: false,
   update: false,
   delete: false,
+  useAi: false,
 };
 
 @Injectable()
@@ -44,12 +45,42 @@ export class AppDataEndUserGrantsService {
     }
   }
 
+  /** Normalize grant payloads. Missing keys default to deny (full replace). */
+  static coerceGrants(body: Partial<AppDataEndUserGrants> | null | undefined): AppDataEndUserGrants {
+    return {
+      create: body?.create === true,
+      read: body?.read === true,
+      update: body?.update === true,
+      delete: body?.delete === true,
+      useAi: body?.useAi === true,
+    };
+  }
+
+  /**
+   * Merge a partial grant update onto the current grants.
+   * Omitted keys keep their previous value (avoids wiping useAi on CRUD-only PUTs).
+   */
+  static mergeGrants(
+    current: AppDataEndUserGrants | null | undefined,
+    body: Partial<AppDataEndUserGrants> | null | undefined,
+  ): AppDataEndUserGrants {
+    const base = current ?? DENY_ALL_GRANTS;
+    return {
+      create: body?.create !== undefined ? body.create === true : base.create === true,
+      read: body?.read !== undefined ? body.read === true : base.read === true,
+      update: body?.update !== undefined ? body.update === true : base.update === true,
+      delete: body?.delete !== undefined ? body.delete === true : base.delete === true,
+      useAi: body?.useAi !== undefined ? body.useAi === true : base.useAi === true,
+    };
+  }
+
   toGrantsObject(row: AppDataEndUserGrantRow): AppDataEndUserGrants {
     return {
       create: row.canCreate,
       read: row.canRead,
       update: row.canUpdate,
       delete: row.canDelete,
+      useAi: row.canUseAi === true,
     };
   }
 
@@ -61,6 +92,7 @@ export class AppDataEndUserGrantsService {
       canRead: false,
       canUpdate: false,
       canDelete: false,
+      canUseAi: false,
     });
   }
 
@@ -86,6 +118,13 @@ export class AppDataEndUserGrantsService {
     }
   }
 
+  async assertUseAi(appId: string, userId: string): Promise<void> {
+    const grants = await this.getGrants(appId, userId);
+    if (!grants?.useAi) {
+      throw new AppDataGrantDeniedException('useAi');
+    }
+  }
+
   async updateGrants(
     appId: string,
     userId: string,
@@ -98,6 +137,7 @@ export class AppDataEndUserGrantsService {
         canRead: grants.read,
         canUpdate: grants.update,
         canDelete: grants.delete,
+        canUseAi: grants.useAi,
         updatedAt: new Date(),
       })
       .where(and(eq(appDataEndUserGrants.appId, appId), eq(appDataEndUserGrants.userId, userId)))

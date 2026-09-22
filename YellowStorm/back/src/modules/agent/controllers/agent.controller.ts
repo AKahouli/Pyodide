@@ -23,7 +23,7 @@ import { Request } from 'express';
 import { AgentService } from '../agent.service';
 import { AuditLogService } from '../../authorization/services/audit-log.service';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { CreateAgentDto, UpdateAgentDto, QueryAgentDto } from '../dto';
 import { IAgentResponse } from '../interfaces/agent.interface';
 import { PaginatedResponseDto } from '../../../common/dto/pagination.dto';
@@ -43,7 +43,7 @@ export class AgentController {
   @ApiOperation({ summary: 'List personal agents (paginated)' })
   @ApiResponse({ status: 200, description: 'Personal agents retrieved' })
   async findAll(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Query() query: QueryAgentDto,
   ): Promise<PaginatedResponseDto<IAgentResponse>> {
     return this.agentService.findUserAgents(user._id.toString(), query);
@@ -52,7 +52,7 @@ export class AgentController {
   @Get('all')
   @ApiOperation({ summary: 'Get all agents for user (personal + defaults, no pagination)' })
   @ApiResponse({ status: 200, description: 'All agents retrieved' })
-  async findAllForUser(@CurrentUser() user: UserDocument): Promise<IAgentResponse[]> {
+  async findAllForUser(@CurrentUser() user: AuthUser): Promise<IAgentResponse[]> {
     return this.agentService.getAllForUserResponse(user._id.toString());
   }
 
@@ -79,7 +79,7 @@ export class AgentController {
   @ApiResponse({ status: 200, description: 'Agent retrieved' })
   @ApiResponse({ status: 404, description: 'Agent not found' })
   async findById(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Req() request: { agentContext: AgentContext },
   ): Promise<IAgentResponse> {
@@ -95,7 +95,7 @@ export class AgentController {
   @ApiResponse({ status: 201, description: 'Agent created' })
   @ApiResponse({ status: 409, description: 'Agent name already exists' })
   async create(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Body() dto: CreateAgentDto,
   ): Promise<IAgentResponse> {
     return this.agentService.createPersonal(user._id.toString(), dto);
@@ -109,7 +109,7 @@ export class AgentController {
   @ApiResponse({ status: 200, description: 'Agent updated' })
   @ApiResponse({ status: 404, description: 'Agent not found' })
   async update(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: UpdateAgentDto,
     @Req() request: Request & { agentContext: AgentContext },
@@ -138,7 +138,7 @@ export class AgentController {
   @ApiResponse({ status: 204, description: 'Agent deleted' })
   @ApiResponse({ status: 404, description: 'Agent not found' })
   async delete(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
   ): Promise<void> {
     return this.agentService.deletePersonal(user._id.toString(), id);

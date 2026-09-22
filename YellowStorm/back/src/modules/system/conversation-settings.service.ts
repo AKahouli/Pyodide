@@ -1,8 +1,8 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { AgentService } from '../agent/agent.service';
+import { SYSTEM_SETTING_STORE, type SystemSettingStore } from './persistence/system-setting.store';
 import type {
+  AttachmentIntelligenceSettings,
   CompactionSettings,
   ComposerSuggestionSettings,
   ConversationNameSettings,
@@ -11,7 +11,6 @@ import type {
   ConversationSettingsValue,
 } from './interfaces/conversation-settings.interface';
 import { DEFAULT_CONVERSATION_SETTINGS } from './interfaces/conversation-settings.interface';
-import { SystemSetting, SystemSettingDocument } from './schemas/system-setting.schema';
 
 const KEY = 'conversation_settings';
 const CACHE_MS = 5_000;
@@ -24,7 +23,7 @@ export class ConversationSettingsService implements OnModuleInit {
   private cacheVersion = 0;
 
   constructor(
-    @InjectModel(SystemSetting.name) private readonly settings: Model<SystemSettingDocument>,
+    @Inject(SYSTEM_SETTING_STORE) private readonly settings: SystemSettingStore,
     private readonly agents: AgentService,
   ) {}
 
@@ -45,7 +44,7 @@ export class ConversationSettingsService implements OnModuleInit {
   }
 
   private async loadSettings(version: number): Promise<ConversationSettings> {
-    const setting = await this.settings.findOne({ key: KEY }).lean().exec();
+    const setting = await this.settings.get(KEY);
     const stored = setting?.value as Partial<ConversationSettingsValue> | undefined;
     const settings: ConversationSettings = {
       redactSensitiveText: stored?.redactSensitiveText !== false,
@@ -61,6 +60,10 @@ export class ConversationSettingsService implements OnModuleInit {
       compaction: {
         ...DEFAULT_CONVERSATION_SETTINGS.compaction,
         ...(stored?.compaction ?? {}),
+      },
+      attachmentIntelligence: {
+        ...DEFAULT_CONVERSATION_SETTINGS.attachmentIntelligence,
+        ...(stored?.attachmentIntelligence ?? {}),
       },
       updatedAt: setting?.updatedAt as Date | undefined,
     };
@@ -96,6 +99,32 @@ export class ConversationSettingsService implements OnModuleInit {
     return (await this.getSettings()).latencyInstrumentationEnabled !== false;
   }
 
+  async getAttachmentIntelligenceSettings(): Promise<AttachmentIntelligenceSettings> {
+    return (await this.getSettings()).attachmentIntelligence;
+  }
+
+  async isAttachmentIntelligenceEnabled(): Promise<boolean> {
+    return (await this.getSettings()).attachmentIntelligence.enabled === true;
+  }
+
+  /** Synchronous cached read for request-entry gates; falls back to default (disabled). */
+  isAttachmentIntelligenceEnabledCached(): boolean {
+    if (this.cache) {
+      const now = Date.now();
+      if (this.cache.expiresAt <= now) {
+        const version = this.cacheVersion;
+        void this.getSettings().catch(() => {
+          if (version === this.cacheVersion) this.cache = null;
+        });
+      }
+      if (now <= this.cache.expiresAt + MAX_STALE_MS) {
+        return this.cache.settings.attachmentIntelligence.enabled === true;
+      }
+    }
+    void this.getSettings().catch(() => undefined);
+    return false;
+  }
+
   /**
    * Synchronous cached read for request-entry paths that must not block on
    * settings DB I/O (latency instrumentation sampling). Serves the in-memory
@@ -124,6 +153,7 @@ export class ConversationSettingsService implements OnModuleInit {
       redactSensitiveText?: boolean;
       latencyInstrumentationEnabled?: boolean;
       compaction?: CompactionSettings;
+      attachmentIntelligence?: AttachmentIntelligenceSettings;
     },
   ): Promise<ConversationSettings> {
     if (value.composerSuggestions.agentId) {
@@ -138,15 +168,14 @@ export class ConversationSettingsService implements OnModuleInit {
       composerSuggestions: { ...value.composerSuggestions },
       conversationName: { ...(value.conversationName ?? current.conversationName) },
       compaction: { ...(value.compaction ?? current.compaction) },
+      attachmentIntelligence: {
+        ...(value.attachmentIntelligence ?? current.attachmentIntelligence),
+      },
     };
-    const updated = await this.settings.findOneAndUpdate(
-      { key: KEY },
-      { key: KEY, value: persisted },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
-    ).lean().exec();
+    const updated = await this.settings.upsert(KEY, persisted);
     const result: ConversationSettings = {
       ...persisted,
-      updatedAt: updated?.updatedAt as Date | undefined,
+      updatedAt: updated.updatedAt,
     };
     this.cacheVersion += 1;
     this.cache = { settings: result, expiresAt: Date.now() + CACHE_MS };

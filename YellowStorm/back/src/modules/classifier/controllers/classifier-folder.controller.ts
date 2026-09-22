@@ -16,7 +16,7 @@ import { UpdateFolderDto } from '../dto/update-folder.dto';
 import { MoveFolderDto } from '../dto/move-folder.dto';
 import { IClassifierFolderResponse } from '../interfaces/classifier.interface';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 
 @ApiTags('Classifier · Folders')
 @ApiBearerAuth()
@@ -28,7 +28,7 @@ export class ClassifierFolderController {
   @ApiOperation({ summary: 'List all classifier folders for a workspace' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   listByWorkspace(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
   ): Promise<IClassifierFolderResponse[]> {
     return this.folderService.listByWorkspace(user._id.toString(), workspaceId);
@@ -39,7 +39,7 @@ export class ClassifierFolderController {
   @ApiOperation({ summary: 'Create a classifier folder in a workspace' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   create(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @Body() dto: CreateFolderDto,
   ): Promise<IClassifierFolderResponse> {
@@ -50,7 +50,7 @@ export class ClassifierFolderController {
   @ApiOperation({ summary: 'Get a classifier folder by id' })
   @ApiParam({ name: 'id', description: 'Folder ID' })
   findById(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
   ): Promise<IClassifierFolderResponse> {
     return this.folderService.findById(user._id.toString(), id);
@@ -60,7 +60,7 @@ export class ClassifierFolderController {
   @ApiOperation({ summary: 'Rename or update a classifier folder' })
   @ApiParam({ name: 'id', description: 'Folder ID' })
   update(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: UpdateFolderDto,
   ): Promise<IClassifierFolderResponse> {
@@ -71,7 +71,7 @@ export class ClassifierFolderController {
   @ApiOperation({ summary: 'Move a classifier folder to a new parent' })
   @ApiParam({ name: 'id', description: 'Folder ID' })
   move(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: MoveFolderDto,
   ): Promise<IClassifierFolderResponse> {
@@ -85,7 +85,7 @@ export class ClassifierFolderController {
   })
   @ApiParam({ name: 'id', description: 'Folder ID' })
   delete(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
   ): Promise<void> {
     return this.folderService.delete(user._id.toString(), id);

@@ -920,6 +920,7 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
     fireEvent.paste(input, {
       clipboardData: {
         files: [image],
+        getData: () => '',
       },
     });
     await waitFor(() => expect(screen.getByAltText('diagram.png')).toBeInTheDocument());
@@ -948,6 +949,7 @@ describe('PlaybookDesignerPanel HITL feedback scope', () => {
     fireEvent.paste(input, {
       clipboardData: {
         files: [image],
+        getData: () => '',
       },
     });
     await waitFor(() => expect(screen.getByAltText('diagram.png')).toBeInTheDocument());

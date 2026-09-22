@@ -49,6 +49,10 @@ class _ChildResultQueue:
     async def put(self, item: Any) -> None:
         if not isinstance(item, dict):
             return
+        if "usage" in item:
+            if self._activity_queue is not None:
+                await self._activity_queue.put(item)
+            return
         component = item.get("component")
         if isinstance(component, dict):
             if component.get("type") == "tool_activity" and self._activity_queue is not None:

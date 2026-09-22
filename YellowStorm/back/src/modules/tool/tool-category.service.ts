@@ -1,9 +1,8 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Inject, Injectable } from '@nestjs/common';
+import { isObjectId } from '@common/postgres';
 import { ConflictException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
-import { ToolCategory, ToolCategoryDocument } from './schemas/tool-category.schema';
+import { TOOL_CATEGORY_STORE, type ToolCategoryRow, type ToolCategoryStore } from './persistence/tool.store';
 import { CreateToolCategoryDto } from './dto/create-tool-category.dto';
 import { UpdateToolCategoryDto } from './dto/update-tool-category.dto';
 import { IToolCategoryResponse } from './interfaces/tool.interface';
@@ -11,17 +10,17 @@ import { IToolCategoryResponse } from './interfaces/tool.interface';
 @Injectable()
 export class ToolCategoryService {
   constructor(
-    @InjectModel(ToolCategory.name)
-    private readonly categoryModel: Model<ToolCategoryDocument>,
+    @Inject(TOOL_CATEGORY_STORE)
+    private readonly categoryStore: ToolCategoryStore,
   ) {}
 
   async create(dto: CreateToolCategoryDto): Promise<IToolCategoryResponse> {
-    const existing = await this.categoryModel.findOne({ name: dto.name }).lean().exec();
+    const existing = await this.categoryStore.findByName(dto.name);
     if (existing) {
       throw new ConflictException(ErrorCode.TOOL_CATEGORY_ALREADY_EXISTS);
     }
 
-    const category = await this.categoryModel.create({
+    const category = await this.categoryStore.insert({
       name: dto.name,
       description: dto.description ?? '',
     });
@@ -30,16 +29,16 @@ export class ToolCategoryService {
   }
 
   async findAll(): Promise<IToolCategoryResponse[]> {
-    const categories = await this.categoryModel.find().sort({ name: 1 }).lean().exec();
+    const categories = await this.categoryStore.findAll();
     return categories.map((c) => this.toResponse(c));
   }
 
   async findById(id: string): Promise<IToolCategoryResponse> {
-    if (!Types.ObjectId.isValid(id)) {
+    if (!isObjectId(id)) {
       throw new NotFoundException(ErrorCode.TOOL_CATEGORY_NOT_FOUND);
     }
 
-    const category = await this.categoryModel.findById(id).lean().exec();
+    const category = await this.categoryStore.findById(id);
     if (!category) {
       throw new NotFoundException(ErrorCode.TOOL_CATEGORY_NOT_FOUND);
     }
@@ -48,53 +47,47 @@ export class ToolCategoryService {
   }
 
   async update(id: string, dto: UpdateToolCategoryDto): Promise<IToolCategoryResponse> {
-    if (!Types.ObjectId.isValid(id)) {
+    if (!isObjectId(id)) {
       throw new NotFoundException(ErrorCode.TOOL_CATEGORY_NOT_FOUND);
     }
 
-    const current = await this.categoryModel.findById(id).exec();
+    const current = await this.categoryStore.findById(id);
     if (!current) {
       throw new NotFoundException(ErrorCode.TOOL_CATEGORY_NOT_FOUND);
     }
 
     if (dto.name && dto.name !== current.name) {
-      const conflict = await this.categoryModel
-        .findOne({ name: dto.name, _id: { $ne: current._id } })
-        .lean()
-        .exec();
-      if (conflict) {
+      const conflict = await this.categoryStore.findByName(dto.name);
+      if (conflict && conflict.id !== current.id) {
         throw new ConflictException(ErrorCode.TOOL_CATEGORY_ALREADY_EXISTS);
       }
-      current.name = dto.name;
     }
 
-    if (dto.description !== undefined) {
-      current.description = dto.description;
+    const updated = await this.categoryStore.update(id, dto);
+    if (!updated) {
+      throw new NotFoundException(ErrorCode.TOOL_CATEGORY_NOT_FOUND);
     }
-
-    await current.save();
-    return this.toResponse(current);
+    return this.toResponse(updated);
   }
 
   async delete(id: string): Promise<void> {
-    if (!Types.ObjectId.isValid(id)) {
+    if (!isObjectId(id)) {
       throw new NotFoundException(ErrorCode.TOOL_CATEGORY_NOT_FOUND);
     }
 
-    const result = await this.categoryModel.findByIdAndDelete(id).exec();
-    if (!result) {
+    const deleted = await this.categoryStore.delete(id);
+    if (!deleted) {
       throw new NotFoundException(ErrorCode.TOOL_CATEGORY_NOT_FOUND);
     }
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private toResponse(doc: any): IToolCategoryResponse {
+  private toResponse(row: ToolCategoryRow): IToolCategoryResponse {
     return {
-      id: doc._id?.toString() ?? doc.id,
-      name: doc.name,
-      description: doc.description ?? '',
-      createdAt: doc.createdAt,
-      updatedAt: doc.updatedAt,
+      id: row.id,
+      name: row.name,
+      description: row.description ?? '',
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
     };
   }
 }

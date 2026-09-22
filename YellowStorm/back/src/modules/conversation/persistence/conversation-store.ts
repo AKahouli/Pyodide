@@ -5,6 +5,7 @@ export interface ConversationAccessRecord {
   createdBy: string;
   memberIds: string[];
   invitedEmails: string[];
+  projectId?: string | null;
 }
 
 export interface ConversationMemberRecord {
@@ -107,6 +108,12 @@ export interface ConversationListInput {
   sortOrder: 'asc' | 'desc';
   isArchived?: boolean;
   projectId?: string;
+  /**
+   * List every conversation in the project regardless of creator. Only set by
+   * the service after the requester's project access (owner/share/public) was
+   * verified — collaborators' conversations are then included in the listing.
+   */
+  projectIdUnscoped?: boolean;
   searchScope?: string;
   runtimePurpose?: string;
 }
@@ -160,8 +167,10 @@ export interface ConversationStore {
   markMentionSeen(conversationId: string, userId: string, messageId: string, seenAt: Date): Promise<void>;
   addMention(conversationId: string, userId: string, messageId: string): Promise<void>;
   findActiveAccessById(id: string): Promise<ConversationAccessRecord | null>;
-  countByProject(userId: string, projectId: string): Promise<number>;
-  countByProjects(userId: string, projectIds: string[]): Promise<Map<string, number>>;
-  detachProject(userId: string, projectId: string): Promise<number>;
+  /** Count of all conversations in a project (any creator) — projects are shared containers. */
+  countByProject(projectId: string): Promise<number>;
+  countByProjects(projectIds: string[]): Promise<Map<string, number>>;
+  /** Detach every conversation from a project (any creator). */
+  detachProject(projectId: string): Promise<number>;
   removeWorkspaceFromAll(workspaceId: string): Promise<number>;
 }

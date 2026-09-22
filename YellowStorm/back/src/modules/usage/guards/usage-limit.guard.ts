@@ -11,13 +11,13 @@ import { UsageService } from '../usage.service';
 import { CHECK_USAGE_KEY, CheckUsageOptions } from '../decorators/check-usage.decorator';
 import { ForbiddenException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
-import { UserDocument } from '../../user/schemas/user.schema';
-import { PlanDocument } from '../schemas/plan.schema';
+import type { AuthUser } from '@common/auth/auth-user';
+import type { PlanRecord } from '../persistence/plan.store';
 
 // Extend Express Request to include user
 interface RequestWithUser extends Request {
-  user?: UserDocument;
-  userPlan?: PlanDocument;
+  user?: AuthUser;
+  userPlan?: PlanRecord;
 }
 
 /**
@@ -44,8 +44,16 @@ export class UsageLimitGuard implements CanActivate {
       return true;
     }
 
-    const request = context.switchToHttp().getRequest<RequestWithUser>();
+    const request = context.switchToHttp().getRequest<RequestWithUser & {
+      aiProxyAuth?: { mode?: string };
+    }>();
     const user = request.user;
+
+    // App Builder AI Proxy uses a dedicated quota (AppBuilderAiUsageLimitGuard).
+    const mode = request.aiProxyAuth?.mode;
+    if (mode === 'ai_preview' || mode === 'app_end_user') {
+      return true;
+    }
 
     // If no user, let auth guard handle it
     if (!user) {

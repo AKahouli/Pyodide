@@ -2,7 +2,7 @@ import { AlertTriangle, Check, Circle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import { governedConversationFeatures } from '@/config/governedConversationFeatures';
+import { useFeatureVisibilityStore } from '@/modules/admin/featureVisibilityStore';
 import type { GovernanceScopeOverview } from '@/modules/governance';
 import { useGovernanceCheckLabel } from '../useGovernanceCheckLabel';
 import { ReadinessRing } from './ReadinessRing';
@@ -34,8 +34,8 @@ const actionHelpKeys: Partial<Record<string, string>> = {
   channel_ready: 'scopeShell.readiness.help.configureChannel',
 };
 
-export function isUserVisibleCheck(key: string): boolean {
-  return !key.startsWith('document_') && !key.startsWith('deployment_') && key !== 'draft_revision_publishable' && key !== 'published_workspace_set_valid' && (governedConversationFeatures.conversationsEnabled || key !== 'audience_configured');
+export function isUserVisibleCheck(key: string, governedConversations = useFeatureVisibilityStore.getState().visibility.governedConversations): boolean {
+  return !key.startsWith('document_') && !key.startsWith('deployment_') && key !== 'draft_revision_publishable' && key !== 'published_workspace_set_valid' && (governedConversations || key !== 'audience_configured');
 }
 
 function tabForCheck(key: string): TabKey {
@@ -51,6 +51,7 @@ interface Props {
 export function GovernanceReadinessPanel({ className, overview, onNavigateTab }: Readonly<Props>): JSX.Element {
   const { t } = useModuleTranslation('governance');
   const { translateCheck, translateBlocker } = useGovernanceCheckLabel();
+  const governedConversations = useFeatureVisibilityStore((state) => state.visibility.governedConversations);
   if (!overview) {
     return (
       <aside className={cn('rounded-2xl border bg-card p-5 shadow-sm lg:sticky lg:top-4 lg:self-start', className)}>
@@ -60,9 +61,9 @@ export function GovernanceReadinessPanel({ className, overview, onNavigateTab }:
     );
   }
 
-  const visibleBlockers = sortReadinessChecks(overview.readiness.blockers.filter((check) => isUserVisibleCheck(check.key)));
-  const visibleWarnings = sortReadinessChecks(overview.readiness.warnings.filter((check) => isUserVisibleCheck(check.key)));
-  const checks = sortReadinessChecks(overview.readiness.checks.filter((check) => isUserVisibleCheck(check.key)));
+  const visibleBlockers = sortReadinessChecks(overview.readiness.blockers.filter((check) => isUserVisibleCheck(check.key, governedConversations)));
+  const visibleWarnings = sortReadinessChecks(overview.readiness.warnings.filter((check) => isUserVisibleCheck(check.key, governedConversations)));
+  const checks = sortReadinessChecks(overview.readiness.checks.filter((check) => isUserVisibleCheck(check.key, governedConversations)));
   const nextAction = findNextReadinessCheck(checks);
   const actionLabelKey = nextAction ? actionLabelKeys[nextAction.key] : undefined;
   const actionHelpKey = nextAction ? actionHelpKeys[nextAction.key] : undefined;

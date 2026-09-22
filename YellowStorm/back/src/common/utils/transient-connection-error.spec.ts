@@ -38,4 +38,27 @@ describe('isTransientConnectionError', () => {
     expect(isTransientConnectionError(null)).toBe(false);
     expect(isTransientConnectionError(undefined)).toBe(false);
   });
+
+  it.each(['25P03', '57P02', '57P03', '57P05', '08000', '08001', '08003', '08004', '08006'])(
+    'matches Postgres SQLSTATE %s on error.code',
+    (code) => {
+      const error = new Error('some server error') as NodeJS.ErrnoException;
+      error.code = code;
+      expect(isTransientConnectionError(error)).toBe(true);
+    },
+  );
+
+  it.each([
+    'terminating connection due to idle-in-transaction timeout',
+    'server closed the connection unexpectedly',
+    'FATAL: 57P05 idle session timeout',
+  ])('matches message "%s"', (message) => {
+    expect(isTransientConnectionError(new Error(message))).toBe(true);
+  });
+
+  it('does not match non-connection SQLSTATEs such as unique violation', () => {
+    const error = new Error('duplicate key value violates unique constraint') as NodeJS.ErrnoException;
+    error.code = '23505';
+    expect(isTransientConnectionError(error)).toBe(false);
+  });
 });

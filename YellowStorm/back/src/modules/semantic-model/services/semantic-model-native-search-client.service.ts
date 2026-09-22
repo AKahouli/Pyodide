@@ -127,6 +127,8 @@ export class SemanticModelNativeSearchClient {
 
   async searchBatch(
     requests: SemanticModelNativeSearchRequest[],
+    timeoutMs = 0,
+    maxAttempts = 2,
   ): Promise<SemanticModelNativeSearchBatchResult[]> {
     if (requests.length === 0) return [];
     if (requests.length > NATIVE_SEARCH_BATCH_SIZE) {
@@ -146,7 +148,7 @@ export class SemanticModelNativeSearchClient {
       id: String(index),
       ...request,
     }));
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         this.logger.debug('Semantic native search batch request', {
           endpoint: this.config.nativeSearchBatchUrl,
@@ -164,7 +166,7 @@ export class SemanticModelNativeSearchClient {
             // No timeout: the semantic-model pipeline is a background job driven by the
             // build orchestrator + heartbeat. Native search can legitimately take a long time
             // for large evidence sets.
-            timeout: 0,
+            timeout: timeoutMs,
           },
         );
         return this.parseBatchResults(data, requests.length);
@@ -190,7 +192,7 @@ export class SemanticModelNativeSearchClient {
             `Semantic native search batch rejected the request: HTTP ${status}${detail}`,
           );
         }
-        if (attempt < 2) {
+        if (attempt < maxAttempts) {
           await new Promise((resolve) => setTimeout(resolve, 100));
           continue;
         }

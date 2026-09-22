@@ -7,7 +7,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '../../logger/logger.service';
 import { AppException } from '../exceptions/base.exception';
@@ -46,7 +46,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
-    const requestId = request.headers['request-id']?.toString() || request.headers['x-request-id']?.toString() || uuidv4();
+    const requestId = request.headers['request-id']?.toString() || request.headers['x-request-id']?.toString() || randomUUID();
 
     const errorResponse = this.buildErrorResponse(exception, request, requestId);
 
@@ -112,26 +112,34 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     const exceptionResponse = exception.getResponse();
 
     let message: string;
+    let code: ErrorCode;
     let details: ErrorDetail[] | undefined;
 
     if (typeof exceptionResponse === 'string') {
       message = exceptionResponse;
+      code = this.mapStatusToErrorCode(status);
     } else if (typeof exceptionResponse === 'object' && exceptionResponse !== null) {
       const responseObj = exceptionResponse as Record<string, unknown>;
       message = this.extractMessage(responseObj);
       details = this.extractValidationDetails(responseObj);
+
+      // Preserve domain-specific errorCode when present (e.g. AppDataException).
+      // Fall back to the generic status-based code.
+      const explicitCode = typeof responseObj.errorCode === 'string' ? responseObj.errorCode : undefined;
+      code = explicitCode && explicitCode in ErrorMessages
+        ? (explicitCode as ErrorCode)
+        : this.mapStatusToErrorCode(status);
     } else {
       message = 'An error occurred';
+      code = this.mapStatusToErrorCode(status);
     }
-
-    const code = this.mapStatusToErrorCode(status);
 
     return {
       ...baseResponse,
       error: {
         ...baseResponse.error,
         code,
-        message: this.isProduction ? ErrorMessages[code] : message,
+        message: this.isProduction ? (ErrorMessages[code] ?? message) : message,
         statusCode: status,
         details,
       },

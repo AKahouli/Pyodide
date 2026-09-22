@@ -14,6 +14,6 @@ Manages tools that can be assigned to agents. Provides CRUD operations for admin
 
 ## Schema
 
-- **Tool**: name (unique), description, defaultAgentTypes, attributes, isActive
-- **ToolAttribute**: name, type (string/number/boolean/enum), value, options (for enum)
+- **Tool** (`catalog.tools`, `TOOL_STORE` -> `PgToolStore`): name (unique), description, defaultAgentTypes, attributes, isActive
+- **ToolAttribute**: stored in the `attributes` `jsonb` column of the tool: name, type (string/number/boolean/enum), value, options (for enum). Tool categories live in `catalog.tool_categories` (`TOOL_CATEGORY_STORE` -> `PgToolCategoryStore`, unique name)
 - **AgentType**: manager, visualizer, simple

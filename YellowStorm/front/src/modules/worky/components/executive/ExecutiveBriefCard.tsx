@@ -1,5 +1,5 @@
 import type { JSX } from 'react';
-import { Target } from 'lucide-react';
+import { Target, BellRing } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import type { WorkyExecutiveViewModel } from '../../executive/executiveModel';
 import { MissionHealthBadge } from './MissionHealthBadge';
@@ -25,17 +25,31 @@ export function ExecutiveBriefCard({ model }: { model: WorkyExecutiveViewModel }
             {model.plan?.goal || t('executive.brief.goalUnavailable')}
           </p>
         </div>
-        <div className='grid grid-cols-3 gap-2 text-center'>
+        <div className={`grid ${model.summary.needsInput > 0 ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-3'} gap-2 text-center`}>
           <Metric value={`${model.summary.completed}/${model.summary.total}`} label={t('executive.brief.complete')} />
           <Metric value={String(model.summary.active)} label={t('executive.brief.active')} />
           <Metric value={String(model.summary.waitingExternal)} label={t('executive.brief.waiting')} />
+          {model.summary.needsInput > 0 && (
+            <Metric value={String(model.summary.needsInput)} label={t('executive.brief.needsInput')} attention />
+          )}
         </div>
       </div>
     </section>
   );
 }
 
-function Metric({ value, label }: { value: string; label: string }): JSX.Element {
+function Metric({ value, label, attention }: { value: string; label: string; attention?: boolean }): JSX.Element {
+  if (attention) {
+    return (
+      <div className='min-w-20 animate-pulse rounded-xl border border-amber-400/60 bg-amber-400/15 px-3 py-3'>
+        <div className='flex items-center justify-center gap-1 text-lg font-bold text-amber-600 dark:text-amber-400'>
+          <BellRing className='size-4' />
+          {value}
+        </div>
+        <div className='text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400'>{label}</div>
+      </div>
+    );
+  }
   return (
     <div className='min-w-20 rounded-xl bg-muted/60 px-3 py-3'>
       <div className='text-lg font-bold text-foreground'>{value}</div>

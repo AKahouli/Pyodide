@@ -29,6 +29,8 @@ describe('PostgresModule', () => {
     expect(moduleRef.get(PG_POOL)).toBeDefined();
     expect(moduleRef.get(DRIZZLE_DB)).toBeDefined();
     expect(moduleRef.get(PostgresConnectionService)).toBeInstanceOf(PostgresConnectionService);
+    // Checked-out clients get a permanent error listener via pool 'connect'.
+    expect(moduleRef.get<import('pg').Pool>(PG_POOL).listenerCount('connect')).toBe(1);
 
     // Close the pool opened by the factory so Jest exits cleanly.
     await moduleRef.close();

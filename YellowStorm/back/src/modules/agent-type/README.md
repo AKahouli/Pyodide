@@ -51,9 +51,9 @@ agent-type/
 
 ### Module Configuration
 
-- **Imports**: `MongooseModule` (AgentType + AgentTypePrompt schemas), `AuthorizationModule`
+- **Imports**: `AuthorizationModule`, `SkillModule`, `forwardRef(() => AgentModule)` (no `MongooseModule`)
 - **Controllers**: `AgentTypeController`
-- **Providers**: `AgentTypeService`
+- **Providers**: `AgentTypeService`, `AGENT_TYPE_STORE` -> `PgAgentTypeStore`
 - **Exports**: `AgentTypeService` (available for injection in other modules, used by `AgentModule`)
 
 ---
@@ -62,7 +62,7 @@ agent-type/
 
 ### AgentType
 
-Collection: `agent_types`
+Postgres table `catalog.agent_types` (Drizzle: `postgres/schema/catalog.schema.ts`), accessed through `AGENT_TYPE_STORE` -> `PgAgentTypeStore`. Skill assignments are held in the junction table `catalog.agent_type_skills` (FKs to agent types and skills with `ON DELETE CASCADE`, `position` keeps order).
 
 ```typescript
 {
@@ -75,18 +75,18 @@ Collection: `agent_types`
 }
 
 // Indexes:
-// { name: 1 }       — name is also unique at schema level
-// { slug: 1 }       — slug is also unique at schema level
-// { isActive: 1 }
+// uq_agent_types_name (name)   unique
+// uq_agent_types_slug (slug)   unique
+// idx_agent_types_active (is_active)
 ```
 
 ### AgentTypePrompt
 
-Collection: `agent_type_prompts`
+Postgres table `catalog.agent_type_prompts`. `agent_type_id` is an FK to `catalog.agent_types` with `ON DELETE CASCADE`; `model_id` is a soft link to `catalog.ai_models.model_id` (no FK, models are deactivated rather than deleted).
 
 ```typescript
 {
-  agentType: ObjectId;    // Required, ref: AgentType
+  agentType: ObjectId;    // Required, ref: AgentType (agent_type_id)
   modelId: string;        // Required (e.g. 'gpt-4o', 'claude-opus')
   prompt: string;         // Required, max 50000 chars
   createdAt: Date;        // Auto (timestamps)
@@ -94,7 +94,7 @@ Collection: `agent_type_prompts`
 }
 
 // Indexes:
-// { agentType: 1, modelId: 1 } unique — one prompt per model per agent type
+// uq_agent_type_prompts_type_model (agent_type_id, model_id) unique — one prompt per model per agent type
 ```
 
 ---
@@ -144,7 +144,7 @@ All endpoints require Bearer token + `PermissionsGuard`.
 | Method | Description |
 |--------|-------------|
 | `getPromptsForAgentType(agentTypeId)` | Get all model-specific prompts, sorted by modelId |
-| `upsertPrompt(agentTypeId, modelId, prompt)` | Create or update prompt (MongoDB upsert) |
+| `upsertPrompt(agentTypeId, modelId, prompt)` | Create or update prompt (`INSERT ... ON CONFLICT (agent_type_id, model_id) DO UPDATE`) |
 | `deletePrompt(agentTypeId, modelId)` | Delete a model-specific prompt |
 | `resolvePrompt(agentTypeId, modelId)` | Get prompt for a model, falling back to defaultPrompt |
 | `resolvePromptsInBatch(pairs)` | Resolve prompts for multiple agent type + model pairs efficiently |

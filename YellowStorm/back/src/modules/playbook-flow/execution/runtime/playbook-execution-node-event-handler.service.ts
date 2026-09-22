@@ -267,8 +267,90 @@ export class PlaybookExecutionNodeEventHandlerService {
     this.streamEvents.emitStepComplete(executionId, taskNodeId, undefined, undefined, iteration);
   }
 
+  async handleIteratorChildStarted(executionId: string, iteratorNodeId: string, iteration: number, payload: Record<string, unknown>): Promise<void> {
+    const child = await this.sanitizeIteratorChildPayload(payload, 'running');
+    await this.mergeIteratorChildIntoTaskResult(executionId, iteratorNodeId, iteration, child);
+    this.streamEvents.emitIteratorChildStepStarted(executionId, iteratorNodeId, child);
+  }
+
+  async handleIteratorChildCompleted(executionId: string, iteratorNodeId: string, iteration: number, payload: Record<string, unknown>): Promise<void> {
+    const child = await this.sanitizeIteratorChildPayload(payload, 'completed');
+    await this.mergeIteratorChildIntoTaskResult(executionId, iteratorNodeId, iteration, child);
+    this.streamEvents.emitIteratorChildStepCompleted(executionId, iteratorNodeId, child);
+  }
+
   discardExecutionTokens(executionId: string): void {
     this.directStreamRedactor.discardExecution(executionId);
+  }
+
+  private async sanitizeIteratorChildPayload(payload: Record<string, unknown>, fallbackStatus: string) {
+    const redactSensitiveText = await this.observabilityService.shouldRedactSensitiveText();
+    const sanitize = (value: unknown) => sanitizePlaybookPublicValue(value, false, redactSensitiveText);
+    return {
+      iterationIndex: Number(payload.iterationIndex ?? 0) || 0,
+      taskId: String(payload.taskId ?? ''),
+      taskTitle: payload.taskTitle === undefined ? undefined : String(payload.taskTitle),
+      status: String(payload.status ?? fallbackStatus),
+      output: typeof payload.output === 'string' ? sanitize(payload.output) as string : undefined,
+      error: typeof payload.error === 'string' ? sanitize(payload.error) as string : undefined,
+      components: Array.isArray(payload.components) ? sanitize(payload.components) as Array<Record<string, unknown>> : undefined,
+      artifacts: Array.isArray(payload.artifacts) ? sanitize(payload.artifacts) as Array<Record<string, unknown>> : undefined,
+    };
+  }
+
+  // Merges a streamed child result into the iterator task's iteratorIterations so
+  // pollers and reconnects see the same partial progress as SSE consumers.
+  private async mergeIteratorChildIntoTaskResult(
+    executionId: string,
+    iteratorNodeId: string,
+    iteration: number,
+    child: Awaited<ReturnType<PlaybookExecutionNodeEventHandlerService['sanitizeIteratorChildPayload']>>,
+  ): Promise<void> {
+    const doc = await this.taskResultModel
+      .findOne({ executionId, taskId: iteratorNodeId, iteration }, { iteratorIterations: 1 })
+      .lean();
+    const iterations: Array<Record<string, any>> = [...(doc?.iteratorIterations ?? [])];
+    const index = iterations.findIndex((entry) => Number(entry?.index ?? -1) === child.iterationIndex);
+    const iterationEntry: Record<string, any> = index >= 0
+      ? { ...iterations[index] }
+      : { index: child.iterationIndex, status: 'running', output: null, error: null, childResults: [] };
+    const childResults: Array<Record<string, any>> = [...(Array.isArray(iterationEntry.childResults) ? iterationEntry.childResults : [])];
+    const childIndex = childResults.findIndex((entry) => entry?.taskId === child.taskId);
+    const previous = childIndex >= 0 ? childResults[childIndex] : null;
+    const merged: Record<string, any> = {
+      taskId: child.taskId,
+      taskTitle: child.taskTitle || previous?.taskTitle || '',
+      status: child.status,
+      output: child.output ?? previous?.output ?? null,
+      error: child.error ?? previous?.error ?? null,
+      components: child.components ?? previous?.components ?? [],
+      artifacts: child.artifacts ?? previous?.artifacts ?? [],
+    };
+    if (childIndex >= 0) childResults[childIndex] = merged;
+    else childResults.push(merged);
+    iterationEntry.childResults = childResults;
+    iterationEntry.status = childResults.some((entry) => entry?.status === 'running' || entry?.status === 'interrupted')
+      ? 'running'
+      : childResults.some((entry) => entry?.status === 'failed')
+        ? 'failed'
+        : 'completed';
+    if (index >= 0) iterations[index] = iterationEntry;
+    else iterations.push(iterationEntry);
+
+    await this.taskResultModel.updateOne(
+      { executionId, taskId: iteratorNodeId, iteration },
+      {
+        $set: { iteratorIterations: iterations },
+        $setOnInsert: {
+          executionId,
+          taskId: iteratorNodeId,
+          iteration,
+          startedAt: new Date(),
+          status: 'running',
+        },
+      },
+      { upsert: true },
+    );
   }
 
   private async flushTokenStream(executionId: string, taskNodeId: string, iteration: number): Promise<void> {

@@ -1,14 +1,9 @@
 import { RateLimiterService } from './rate-limiter.service';
-import { MemoryStore } from './stores/memory.store';
 import { ConfigService } from '@nestjs/config';
 
 describe('RateLimiterService', () => {
   let service: RateLimiterService;
-  let store: MemoryStore;
-
   beforeEach(() => {
-    store = new MemoryStore();
-
     const mockConfigService = {
       get: jest.fn((key: string, defaultValue: number) => {
         if (key === 'app.throttleLimit') return 5;
@@ -17,11 +12,11 @@ describe('RateLimiterService', () => {
       }),
     } as unknown as ConfigService;
 
-    service = new RateLimiterService(mockConfigService, store);
+    service = new RateLimiterService(mockConfigService);
   });
 
   afterEach(() => {
-    store.onModuleDestroy();
+    service.onModuleDestroy();
   });
 
   describe('check', () => {

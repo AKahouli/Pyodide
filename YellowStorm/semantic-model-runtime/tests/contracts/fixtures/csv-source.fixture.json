@@ -1,0 +1,29 @@
+{
+  "fixtureId": "csv-source",
+  "scenario": "CSV asset uploaded via presigned URL (confirmUpload HEAD-check only, contentHash NULL)",
+  "source": {
+    "workspaceId": "6512f0a1c9e77a001234aaa1",
+    "assetId": "6512f0a1c9e77a001234ccc3",
+    "originalName": "pricing-2026-08.csv",
+    "mimeType": "text/csv",
+    "sizeBytes": 52428800,
+    "contentHash": null,
+    "uploadedAt": "2026-09-11T14:02:11.000Z",
+    "indexingStatus": null
+  },
+  "expectedResolution": {
+    "assetRef": {
+      "workspaceId": "6512f0a1c9e77a001234aaa1",
+      "assetId": "6512f0a1c9e77a001234ccc3",
+      "assetVersionId": "obs:6512f0a1c9e77a001234ccc3:1",
+      "sourceVersionVerification": "unknown",
+      "indexObservationId": null
+    },
+    "discovery": {
+      "status": "ready",
+      "structure": { "kind": "csv", "delimiter": ",", "encoding": "utf-8-sig", "headerRow": 1 },
+      "coverage": { "sampled": true, "completeProfileDone": false }
+    },
+    "population": "source-version-dependent acceptance requires explicit review while verification is unknown"
+  }
+}

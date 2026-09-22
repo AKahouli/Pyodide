@@ -63,7 +63,8 @@ class TestTeamOrchestratorExtended:
     async def test_run_agent_team_success(self):
         team = _orchestrator()
         team.agent_tools_manager.create_tools_from_all_agents.return_value = []
-        team.manager_factory.create_manager_agent.return_value = MagicMock(name="Manager")
+        manager_agent = MagicMock(name="Manager")
+        team.manager_factory.create_manager_agent.return_value = manager_agent
         team.streaming_processor.process_streaming_events = AsyncMock(return_value="done")
         team.document_helper._get_consolidated_document_tree_info_for_manager = MagicMock(return_value="")
         queue = AsyncMock()
@@ -71,7 +72,7 @@ class TestTeamOrchestratorExtended:
             "src.smart_rag.engines.multi_agent.team_orchestrator.get_shared_database_session_service",
             new_callable=AsyncMock,
         ) as mock_db, patch(
-            "src.smart_rag.engines.multi_agent.team_orchestrator.get_adk_runner"
+            "src.smart_rag.engines.multi_agent.team_orchestrator.make_chat_runner"
         ) as mock_runner, patch(
             "src.smart_rag.infrastructure.session.citation_manager.get_citation_manager",
             new=AsyncMock(return_value=MagicMock()),
@@ -80,6 +81,7 @@ class TestTeamOrchestratorExtended:
             mock_runner.return_value = MagicMock()
             result = await team.run_agent_team("user", "manager", "sess-1", False, queue)
         assert result is None
+        mock_runner.assert_called_once_with(manager_agent, mock_db.return_value)
         team.streaming_processor.process_streaming_events.assert_awaited_once()
 
     def test_inline_chart_guidance_present(self):

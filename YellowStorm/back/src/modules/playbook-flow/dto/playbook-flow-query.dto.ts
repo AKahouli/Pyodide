@@ -18,9 +18,9 @@ export class PlaybookFlowQueryDto {
   @Max(100)
   limit?: number = 10;
 
-  @ApiPropertyOptional({ enum: ['updatedAt', 'createdAt', 'name'], default: 'updatedAt' })
+  @ApiPropertyOptional({ enum: ['updatedAt', 'createdAt', 'name', 'activityAt'], default: 'updatedAt' })
   @IsOptional()
-  @IsIn(['updatedAt', 'createdAt', 'name'])
+  @IsIn(['updatedAt', 'createdAt', 'name', 'activityAt'])
   sortBy?: string = 'updatedAt';
 
   @ApiPropertyOptional({ enum: ['asc', 'desc'], default: 'desc' })

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { RefreshCwIcon, DatabaseIcon } from 'lucide-react';
+import { RefreshCwIcon, DatabaseIcon, SproutIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { conversationV2Api, type AppDataOwnerStatus } from '../../api';
+import { conversationV2Api, type AppDataOwnerStatus, type SeedResult } from '../../api';
 import { useConversationV2Translation } from '../../translation';
 
 type Environment = 'dev' | 'prod';
@@ -21,6 +21,12 @@ export function AppDataPanel({ sessionId }: AppDataPanelProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
+
+  const [seedOpen, setSeedOpen] = useState(false);
+  const [seedText, setSeedText] = useState('');
+  const [seeding, setSeeding] = useState(false);
+  const [seedError, setSeedError] = useState<string | null>(null);
+  const [seedResult, setSeedResult] = useState<SeedResult | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -78,6 +84,37 @@ export function AppDataPanel({ sessionId }: AppDataPanelProps) {
       active ? 'bg-background shadow-sm' : 'text-muted-foreground hover:text-foreground',
     );
 
+  const applySeed = async () => {
+    setSeedError(null);
+    setSeedResult(null);
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(seedText);
+    } catch {
+      setSeedError(t('appData.seedInvalidJson'));
+      return;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      setSeedError(t('appData.seedInvalidJson'));
+      return;
+    }
+    const tablesPayload = parsed as Record<string, Record<string, unknown>[]>;
+    if (Object.keys(tablesPayload).length === 0) {
+      setSeedError(t('appData.seedInvalidJson'));
+      return;
+    }
+    setSeeding(true);
+    try {
+      const result = await conversationV2Api.seedAppData(sessionId, environment, tablesPayload);
+      setSeedResult(result);
+      setRefreshNonce((n) => n + 1);
+    } catch (e) {
+      setSeedError(e instanceof Error ? e.message : t('appData.seedError'));
+    } finally {
+      setSeeding(false);
+    }
+  };
+
   if (loading && !status) {
     return <div className='flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground'>{t('appData.loading')}</div>;
   }
@@ -93,15 +130,52 @@ export function AppDataPanel({ sessionId }: AppDataPanelProps) {
             {t('appData.envProd')}
           </button>
         </div>
-        <Button
-          variant='ghost'
-          size='icon-sm'
-          aria-label={t('appData.refresh')}
-          onClick={() => setRefreshNonce((n) => n + 1)}
-        >
-          <RefreshCwIcon className='size-4' />
-        </Button>
+        <div className='inline-flex items-center gap-1'>
+          {environment === 'dev' && (
+            <Button
+              variant='ghost'
+              size='sm'
+              className='gap-1 text-xs'
+              disabled={!status?.appDataId || seeding}
+              onClick={() => setSeedOpen((o) => !o)}
+            >
+              <SproutIcon className='size-4' />
+              {t('appData.seed')}
+            </Button>
+          )}
+          <Button
+            variant='ghost'
+            size='icon-sm'
+            aria-label={t('appData.refresh')}
+            onClick={() => setRefreshNonce((n) => n + 1)}
+          >
+            <RefreshCwIcon className='size-4' />
+          </Button>
+        </div>
       </div>
+
+      {seedOpen && environment === 'dev' && (
+        <div className='border-b px-3 py-2'>
+          <textarea
+            value={seedText}
+            onChange={(e) => setSeedText(e.target.value)}
+            rows={6}
+            placeholder={t('appData.seedPlaceholder')}
+            className='w-full rounded border bg-muted/40 p-2 font-mono text-xs outline-none focus:border-ring'
+          />
+          <div className='mt-2 flex flex-wrap items-center gap-2'>
+            <Button type='button' size='sm' disabled={seeding} onClick={applySeed}>
+              {seeding ? t('appData.seeding') : t('appData.seedApply')}
+            </Button>
+            {seedError && <span className='text-xs text-destructive'>{seedError}</span>}
+            {seedResult && (
+              <span className='text-xs text-muted-foreground'>
+                {t('appData.seedDone', { inserted: seedResult.inserted, skipped: seedResult.skipped })}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
 
       {error ? (
         <div className='p-4 text-sm text-destructive'>{error}</div>

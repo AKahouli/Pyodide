@@ -13,7 +13,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createHash } from 'crypto';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import { Readable } from 'stream';
 import { LoggerService } from '../logger';
 import {
@@ -89,7 +89,7 @@ export class DocumentService {
     this.ensureAvailable();
     this.validateFile(originalName, mimeType, file instanceof Buffer ? file.length : undefined);
 
-    const id = uuidv4();
+    const id = randomUUID();
     const sanitizedName = this.sanitizeFileName(originalName);
     const storedName =
       options.generateUniqueName !== false
@@ -292,6 +292,7 @@ export class DocumentService {
         contentLength: response.ContentLength,
         contentRange: response.ContentRange,
         acceptRanges: response.AcceptRanges,
+        ...(response.Metadata ? { metadata: response.Metadata } : {}),
       };
     } catch (error) {
       if (error instanceof BadRequestException) throw error;
@@ -301,6 +302,34 @@ export class DocumentService {
       const err = error as Error;
       this.logger.error('Failed to stream document', { errorName: err.name });
       throw new InternalServerException(err, 'Failed to stream document');
+    }
+  }
+
+  async putStream(
+    objectKey: string,
+    body: Readable,
+    contentType: string,
+    contentLength: number,
+    metadata: Record<string, string> = {},
+  ): Promise<void> {
+    this.ensureAvailable();
+    try {
+      await this.getS3Client().send(new PutObjectCommand({
+        Bucket: this.getBucket(),
+        Key: objectKey,
+        Body: body,
+        ContentType: contentType,
+        ContentLength: contentLength,
+        CacheControl: 'private, no-store',
+        Metadata: this.normalizeMetadata(metadata),
+      }));
+    } catch (error) {
+      const err = error as Error;
+      this.logger.error('Failed to stream object to storage', {
+        errorName: err.name,
+        objectKeyFingerprint: this.storageKeyFingerprint(objectKey),
+      });
+      throw new InternalServerException(err, 'Failed to store streamed object');
     }
   }
 

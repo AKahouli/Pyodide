@@ -62,6 +62,7 @@ describe('ConversationV2SessionService', () => {
         source: 'owned',
         shareId: null,
         canOpenConversation: true,
+        hasAiFeatures: false,
         lastDeployedRevisionId: null,
         latestFinalizedRevisionId: null,
         latestFinalizedAt: null,
@@ -76,7 +77,7 @@ describe('ConversationV2SessionService', () => {
     });
     expect(sort).toHaveBeenCalledWith({ lastDeployedAt: -1 });
     expect(select).toHaveBeenCalledWith(
-      'title deployedAppTitle deployedUrl lastDeployedAt',
+      'title deployedAppTitle deployedUrl lastDeployedAt hasAiFeatures',
     );
   });
 
@@ -105,6 +106,7 @@ describe('ConversationV2SessionService', () => {
         title: 'Work in progress',
         lastUpdatedAt: '2026-07-15T10:00:00.000Z',
         deployStatus: 'idle',
+        hasAiFeatures: false,
         lastDeployedRevisionId: null,
         latestFinalizedRevisionId: null,
         latestFinalizedAt: null,
@@ -119,7 +121,9 @@ describe('ConversationV2SessionService', () => {
       $or: [{ deployStatus: { $ne: 'deployed' } }, { deployedUrl: null }],
     });
     expect(sort).toHaveBeenCalledWith({ lastEventAt: -1 });
-    expect(select).toHaveBeenCalledWith('title deployedAppTitle deployStatus lastEventAt');
+    expect(select).toHaveBeenCalledWith(
+      'title deployedAppTitle deployStatus lastEventAt hasAiFeatures',
+    );
   });
 
   it('removeDeployedApp clears deployment state without deleting the conversation', async () => {
@@ -160,6 +164,8 @@ describe('ConversationV2SessionService', () => {
               _id: id,
               aiSessionId: 'ai-1',
               lastDeployedRevisionId: 'rev_7',
+              hasAiFeatures: true,
+              aiFeaturesCheckedRevisionId: 'rev_7',
             },
           ]),
       }),
@@ -168,9 +174,14 @@ describe('ConversationV2SessionService', () => {
 
     const result = await svc.resolveRevisionContextBySessionIds([id.toString()]);
 
+    expect(select).toHaveBeenCalledWith(
+      'aiSessionId lastDeployedRevisionId hasAiFeatures aiFeaturesCheckedRevisionId',
+    );
     expect(result.get(id.toString())).toEqual({
       aiSessionId: 'ai-1',
       lastDeployedRevisionId: 'rev_7',
+      hasAiFeatures: true,
+      aiFeaturesCheckedRevisionId: 'rev_7',
     });
   });
 

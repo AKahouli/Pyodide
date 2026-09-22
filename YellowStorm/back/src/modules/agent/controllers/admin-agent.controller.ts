@@ -25,7 +25,7 @@ import { AuditLogService } from '../../authorization/services/audit-log.service'
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
 import { PermissionsGuard } from '../../authorization/guards/permissions.guard';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { Permissions } from '../../authorization/constants/permissions';
 import { CreateAgentDto, UpdateAgentDto, QueryAgentDto } from '../dto';
 import { IAgentResponse } from '../interfaces/agent.interface';
@@ -67,7 +67,7 @@ export class AdminAgentController {
   @ApiResponse({ status: 409, description: 'Agent name already exists' })
   async create(
     @Body() dto: CreateAgentDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<IAgentResponse> {
     const agent = await this.agentService.createDefault(user._id.toString(), dto);
@@ -95,7 +95,7 @@ export class AdminAgentController {
   async update(
     @Param('id') id: string,
     @Body() dto: UpdateAgentDto,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<IAgentResponse> {
     const agent = await this.agentService.updateDefault(id, dto);
@@ -123,7 +123,7 @@ export class AdminAgentController {
   @ApiResponse({ status: 404, description: 'Agent not found' })
   async delete(
     @Param('id') id: string,
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<void> {
     const agent = await this.agentService.findDefaultAgentById(id);

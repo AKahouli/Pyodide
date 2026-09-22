@@ -75,8 +75,8 @@ The user module provides:
 │                           │                                                  │
 │                           ▼                                                  │
 │                  ┌──────────────────┐      ┌────────────────────┐           │
-│                  │    MongoDB       │      │  Related Modules   │           │
-│                  │    (users)       │      │                    │           │
+│                  │   PgUserStore    │      │  Related Modules   │           │
+│                  │ (identity.users) │      │                    │           │
 │                  │                  │◄────►│ - AuthModule       │           │
 │                  │ - email          │      │ - UsageModule      │           │
 │                  │ - profile        │      │ - AuthorizationModule│         │
@@ -95,7 +95,7 @@ The user module provides:
 | Technology | Purpose |
 |------------|---------|
 | **NestJS** | Module framework with dependency injection |
-| **Mongoose** | MongoDB ODM for user persistence |
+| **Drizzle ORM / PostgreSQL** | User persistence (`identity.users`, `identity.user_roles`) via the `USER_STORE` port and `PgUserStore` |
 | **bcrypt** | Password hashing (12 rounds) |
 | **crypto** | Token generation for email verification |
 | **class-validator** | DTO validation |
@@ -113,8 +113,12 @@ user/
 ├── admin-user.controller.ts     # Admin API endpoints
 ├── user.service.ts              # Business logic
 ├── registration-approval.service.ts  # Super Admin registration notice + approve/reject
-├── schemas/
-│   └── user.schema.ts           # MongoDB schema with embedded documents
+├── persistence/
+│   ├── user.store.ts            # USER_STORE port + UserRecord types
+│   ├── pg-user.store.ts         # PgUserStore (Drizzle adapter)
+│   └── user-record.mapper.ts    # toUserWire() wire-shape mapper
+├── adapters/
+│   └── pg-user-lookup.adapter.ts # USER_LOOKUP_PORT implementation
 ├── interfaces/
 │   └── user.interface.ts        # TypeScript interfaces
 └── dto/
@@ -127,115 +131,29 @@ user/
 
 ## Data Model
 
-### User Schema
+### User Table
 
-```typescript
-@Schema({ timestamps: true, collection: 'users' })
-export class User {
-  // Core identity
-  @Prop({ required: true, unique: true, lowercase: true, trim: true, index: true })
-  email: string;
+Users live in the Postgres table `identity.users` (Drizzle: `postgres/schema/identity.schema.ts`), accessed through the `USER_STORE` port bound to `PgUserStore`. Ids are 24-char hex strings (`char(24)`). The API wire shape is built by `toUserWire()` in `persistence/user-record.mapper.ts` and keeps the nested `profile`, `appearance` and `consents` objects; in the table they are flat columns:
 
-  @Prop({ required: true })
-  passwordHash: string;
+| Wire field | Column(s) |
+|------------|-----------|
+| `email` | `email` (`varchar(320)`, unique, CHECK lower-case + trimmed) |
+| `passwordHash` | `password_hash` (never serialised) |
+| `emailVerified`, verification token / expiry | `email_verified`, `email_verification_token`, `email_verification_expiry` (token never serialised) |
+| password reset token / expiry | `password_reset_token`, `password_reset_expiry` (token never serialised) |
+| `profile.firstName / lastName / company / role / description` | `first_name`, `last_name`, `company`, `profile_role`, `description` |
+| `appearance.colorTheme / language` | `color_theme` (CHECK `default`/`yellow`/`orange`/`blue`), `language` |
+| `consents.privacyPolicy / dataSharing` (+ accepted-at) | `consent_privacy_policy`, `consent_privacy_policy_accepted_at`, `consent_data_sharing`, `consent_data_sharing_accepted_at` |
+| `profileComplete` | `profile_complete` |
+| `microsoftAccountId` | `microsoft_account_id` |
+| `planId`, `planSlug`, `planStartedAt` | `plan_id` (plain `char(24)`, no FK), `plan_slug`, `plan_started_at` |
+| `roles` | junction table `identity.user_roles` (`user_id` and `role_id` FKs with `ON DELETE CASCADE`; `position` preserves order) |
+| `permissionsVersion` | `permissions_version` (integer, default 1) |
+| `status` | `status` (CHECK `active`/`inactive`/`suspended`) |
+| `registrationApproval` | `registration_approval` (CHECK `pending`/`approved`/`rejected`, nullable) |
+| `createdAt`, `updatedAt`, `lastLoginAt` | `created_at`, `updated_at`, `last_login_at` (`timestamptz`) |
 
-  // Email verification
-  @Prop({ default: false })
-  emailVerified: boolean;
-
-  @Prop({ select: false })  // Hidden by default
-  emailVerificationToken?: string;
-
-  @Prop()
-  emailVerificationExpiry?: Date;
-
-  // Password reset
-  @Prop({ select: false })  // Hidden by default
-  passwordResetToken?: string;
-
-  @Prop()
-  passwordResetExpiry?: Date;
-
-  // Profile (embedded document)
-  @Prop({ type: UserProfile, default: {} })
-  profile: UserProfile;
-
-  // Consents (embedded document)
-  @Prop({ type: UserConsents, default: {} })
-  consents: UserConsents;
-
-  @Prop({ default: false })
-  profileComplete: boolean;
-
-  // Microsoft SSO
-  @Prop({ sparse: true, index: true })
-  microsoftAccountId?: string;
-
-  // Plan/Subscription
-  @Prop({ type: Types.ObjectId, ref: 'Plan', index: true })
-  planId?: Types.ObjectId;
-
-  @Prop({ maxlength: 50 })
-  planSlug?: string;
-
-  @Prop()
-  planStartedAt?: Date;
-
-  // RBAC
-  @Prop({ type: [Types.ObjectId], ref: 'Role', default: [] })
-  roles: Types.ObjectId[];
-
-  @Prop({ default: 1 })
-  permissionsVersion: number;
-
-  // Status
-  @Prop({ enum: UserStatus, default: UserStatus.ACTIVE })
-  status: UserStatus;
-
-  @Prop({ enum: RegistrationApproval })
-  registrationApproval?: RegistrationApproval;
-
-  // Timestamps
-  createdAt: Date;
-  updatedAt: Date;
-  lastLoginAt?: Date;
-}
-```
-
-### UserProfile (Embedded)
-
-```typescript
-@Schema({ _id: false })
-export class UserProfile {
-  @Prop({ trim: true, maxlength: 100 })
-  firstName?: string;
-
-  @Prop({ trim: true, maxlength: 100 })
-  lastName?: string;
-
-  @Prop({ trim: true, maxlength: 200 })
-  company?: string;
-}
-```
-
-### UserConsents (Embedded)
-
-```typescript
-@Schema({ _id: false })
-export class UserConsents {
-  @Prop({ default: false })
-  privacyPolicy: boolean;
-
-  @Prop()
-  privacyPolicyAcceptedAt?: Date;
-
-  @Prop({ default: false })
-  dataSharing: boolean;
-
-  @Prop()
-  dataSharingAcceptedAt?: Date;
-}
-```
+Unset optional fields are omitted from the wire shape (never emitted as `null`), and `fullName` is derived by `fullNameOf()` when the JSON is built.
 
 ### UserStatus Enum
 
@@ -251,23 +169,15 @@ enum UserStatus {
 
 | Index | Fields | Purpose |
 |-------|--------|---------|
-| Unique | `email` | Prevent duplicate accounts |
-| Sparse | `microsoftAccountId` | Microsoft SSO lookup |
-| Regular | `planId` | Plan-based queries |
-| Regular | `status` | Filter by account status |
-| Regular | `createdAt` (desc) | Recent users list |
+| Unique | `email` (`uq_users_email`) | Prevent duplicate accounts |
+| Partial | `microsoft_account_id` WHERE NOT NULL | Microsoft SSO lookup |
+| Regular | `plan_id`, `status`, `created_at` (desc) | Plan queries, status filter, recent users list |
+| Partial | `email_verification_token` / `password_reset_token` WHERE NOT NULL | Token lookups |
+| GIN trigram | `email`, `first_name`, `last_name` | Admin substring search |
 
-### Virtual Properties
+### Full Name
 
-```typescript
-// Full name computed from profile
-UserSchema.virtual('fullName').get(function() {
-  if (this.profile?.firstName && this.profile?.lastName) {
-    return `${this.profile.firstName} ${this.profile.lastName}`;
-  }
-  return this.profile?.firstName || this.profile?.lastName || undefined;
-});
-```
+`fullNameOf()` (`persistence/user-record.mapper.ts`) computes `fullName` when the wire shape is built: "First Last" when both exist, otherwise whichever exists.
 
 ---
 
@@ -710,37 +620,7 @@ const passwordHash = await bcrypt.hash(password, this.bcryptRounds);
 
 ### Sensitive Field Protection
 
-Sensitive fields are excluded from queries by default:
-
-```typescript
-@Prop({ select: false })
-emailVerificationToken?: string;
-
-@Prop({ select: false })
-passwordResetToken?: string;
-```
-
-To include them when needed:
-
-```typescript
-await userModel.findOne({ email })
-  .select('+emailVerificationToken +passwordResetToken');
-```
-
-### JSON Transform
-
-Password hash and tokens are removed from JSON output:
-
-```typescript
-UserSchema.set('toJSON', {
-  transform: (_doc, ret) => {
-    delete ret.passwordHash;
-    delete ret.emailVerificationToken;
-    delete ret.passwordResetToken;
-    return ret;
-  },
-});
-```
+`passwordHash`, `emailVerificationToken` and `passwordResetToken` are stored as columns on `identity.users` and are present on the internal `UserRecord`, but `toUserWire()` never emits them, so they are absent from every API response.
 
 ### Audit Logging
 
@@ -823,7 +703,7 @@ await userService.updateLastLogin(userId);
 ```typescript
 const updatedUser = await userService.assignPlan(
   userId,
-  planObjectId,
+  planId,
   'professional'
 );
 ```

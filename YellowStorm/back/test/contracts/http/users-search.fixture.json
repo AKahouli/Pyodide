@@ -1,0 +1,10 @@
+{
+  "success": true,
+  "data": [],
+  "meta": {
+    "timestamp": "<volatile>",
+    "requestId": "<volatile>",
+    "path": "/api/v1/users/search?q=rec",
+    "duration": 24
+  }
+}

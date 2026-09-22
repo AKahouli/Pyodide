@@ -1,9 +1,33 @@
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type { ApiResponse } from '@/lib/api/client';
-import type { AgeGraphEdge, AgeGraphNode, AgeGraphOperation, KnowledgeBinding, MappingProposalJob, Paginated, SemanticBuildApplyMode, SemanticBuildJob, SemanticBuildStatus, SemanticCorpusManifest, SemanticEvidenceSearchResponse, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMappingProposalResponse, SemanticModelManualInstances, SemanticModelMember, SemanticModelShareResult, SemanticModelShareRole, SemanticVersion, ValidationIssue } from './types';
+import type { AgeGraphEdge, AgeGraphNode, AgeGraphOperation, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, MappingProposalJob, Paginated, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticBuildApplyMode, SemanticBuildJob, SemanticBuildStatus, SemanticCorpusManifest, SemanticDataPreview, SemanticEvidenceSearchResponse, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMappingProposalResponse, SemanticModelManualInstances, SemanticModelMember,
+SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, SemanticReviewItem, SemanticVersion,
+SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
+StructuredSourceAsset, ValidationIssue } from './types';
+import type { SemanticDataTokenResponse } from './data-plane/semantic-api.types';
 
 const unwrap = <T>(response: { data: ApiResponse<T> }): T => response.data.data;
+
+interface DatasourceJob {
+  state: string;
+  result: Record<string, unknown> | null;
+  errorCode: string | null;
+}
+
+const waitForDatasourceJob = async (modelId: string, jobId: string): Promise<DatasourceJob> => {
+  for (let attempt = 0; attempt < 360; attempt += 1) {
+    const job = unwrap(await apiClient.get<ApiResponse<DatasourceJob>>(
+      API_ENDPOINTS.semanticModels.sourceAssetJob(modelId, jobId),
+    ));
+    if (job.state === 'completed' || job.state === 'completed_with_gaps') return job;
+    if (['failed', 'cancelled', 'superseded'].includes(job.state)) {
+      throw new Error(job.errorCode || 'Source analysis failed');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error('Source analysis timed out');
+};
 
 export const semanticModelApi = {
   async list(params: Record<string, string | number | undefined> = {}): Promise<Paginated<SemanticModel>> {
@@ -163,5 +187,84 @@ export const semanticModelApi = {
   },
   async revokeShare(id: string, targetUserId: string): Promise<void> {
     await apiClient.delete(API_ENDPOINTS.semanticModels.share(id, targetUserId));
+  },
+
+  // ── Structured source mappings ────────────────────────────────────────────
+  async listSourceAssets(id: string): Promise<{ assets: StructuredSourceAsset[] }> {
+    return unwrap(await apiClient.get<ApiResponse<{ assets: StructuredSourceAsset[] }>>(API_ENDPOINTS.semanticModels.sourceAssets(id)));
+  },
+  async profileSourceAsset(id: string, documentId: string, workspaceId: string, sheetName?: string): Promise<SheetProfile> {
+    return unwrap(await apiClient.get<ApiResponse<SheetProfile>>(API_ENDPOINTS.semanticModels.sourceAssetProfile(id, documentId), { params: { workspaceId, sheetName } }));
+  },
+  async analyzeSourceAsset(id: string, documentId: string, workspaceId: string, sheetName?: string): Promise<SheetProfile> {
+    const accepted = unwrap(await apiClient.post<ApiResponse<{ jobId: string }>>(API_ENDPOINTS.semanticModels.sourceAssetProfile(id, documentId), {}, { params: { workspaceId, sheetName } }));
+    await waitForDatasourceJob(id, accepted.jobId);
+    return semanticModelApi.profileSourceAsset(id, documentId, workspaceId, sheetName);
+  },
+  async listSourceMappings(id: string): Promise<ConceptSourceMapping[]> {
+    return unwrap(await apiClient.get<ApiResponse<ConceptSourceMapping[]>>(API_ENDPOINTS.semanticModels.sourceMappings(id)));
+  },
+  async createSourceMapping(id: string, draft: SourceMappingDraft): Promise<{ revision: number }> {
+    const model = await semanticModelApi.get(id);
+    return unwrap(await apiClient.post<ApiResponse<{ revision: number }>>(API_ENDPOINTS.semanticModels.sourceMappings(id), { ...draft, expectedRevision: model.revision }));
+  },
+  async deleteSourceMapping(id: string, mappingId: string): Promise<{ revision: number }> {
+    const model = await semanticModelApi.get(id);
+    return unwrap(await apiClient.delete<ApiResponse<{ revision: number }>>(API_ENDPOINTS.semanticModels.sourceMapping(id, mappingId), { data: { expectedRevision: model.revision } }));
+  },
+  async createBulkDocumentSourceMappings(id: string, payload: { conceptId: string; documents: Array<{ workspaceId: string; documentId: string }>; fieldMappings: SourceMappingDraft['fieldMappings']; identityFields: string[] }): Promise<{ revision: number; mappingCount: number }> {
+    const model = await semanticModelApi.get(id);
+    return unwrap(await apiClient.post<ApiResponse<{ revision: number; mappingCount: number }>>(API_ENDPOINTS.semanticModels.bulkDocumentSourceMappings(id), { ...payload, expectedRevision: model.revision }));
+  },
+  async previewSourceMapping(id: string, draft: SourceMappingPreviewDraft): Promise<SourceMappingPreviewResponse> {
+    const result = unwrap(await apiClient.post<ApiResponse<SourceMappingPreviewResponse | { jobId: string }>>(API_ENDPOINTS.semanticModels.sourceMappingPreview(id), draft));
+    if (!('jobId' in result)) return result;
+    const job = await waitForDatasourceJob(id, result.jobId);
+    const preview = job.result?.mappingPreview;
+    if (!preview || typeof preview !== 'object') throw new Error('Source preview did not produce a result');
+    return preview as unknown as SourceMappingPreviewResponse;
+  },
+  async listRelationResolutionRules(id: string): Promise<RelationResolutionRule[]> {
+    return unwrap(await apiClient.get<ApiResponse<RelationResolutionRule[]>>(API_ENDPOINTS.semanticModels.relationResolutionRules(id)));
+  },
+  async saveRelationResolutionRule(id: string, rule: { relationId: string; sourceAttribute: string; targetAttribute: string; strategy: RelationMatchStrategy; ambiguityPolicy: 'review' | 'unresolved' }): Promise<{ id: string; revision: number }> {
+    const model = await semanticModelApi.get(id);
+    return unwrap(await apiClient.post<ApiResponse<{ id: string; revision: number }>>(API_ENDPOINTS.semanticModels.relationResolutionRules(id), { ...rule, expectedRevision: model.revision }));
+  },
+  async previewRelationResolutionRule(id: string, ruleId: string, limit = 25): Promise<RelationResolutionPreview> {
+    return unwrap(await apiClient.post<ApiResponse<RelationResolutionPreview>>(API_ENDPOINTS.semanticModels.relationResolutionPreview(id, ruleId), { limit }, { timeout: 0 }));
+  },
+  async listSourceResolutionPolicies(id: string): Promise<SourceResolutionPolicy[]> {
+    return unwrap(await apiClient.get<ApiResponse<SourceResolutionPolicy[]>>(API_ENDPOINTS.semanticModels.sourceResolutionPolicies(id)));
+  },
+  async saveSourceResolutionPolicy(id: string, conceptId: string, priorities: Array<{ mappingId: string; rank: number }>): Promise<{ revision: number }> {
+    const model = await semanticModelApi.get(id);
+    return unwrap(await apiClient.put<ApiResponse<{ revision: number }>>(API_ENDPOINTS.semanticModels.sourceResolutionPolicy(id, conceptId), {
+      expectedRevision: model.revision,
+      priorities,
+      defaultStrategy: 'primary_then_fallback',
+    }));
+  },
+  async dataPreview(id: string, options: { conceptId?: string; limit?: number } = {}): Promise<SemanticDataPreview> {
+    return unwrap(await apiClient.post<ApiResponse<SemanticDataPreview>>(API_ENDPOINTS.semanticModels.dataPreview(id), options, { timeout: 0 }));
+  },
+  async mappingHealth(id: string): Promise<MappingHealthResponse> {
+    return unwrap(await apiClient.post<ApiResponse<MappingHealthResponse>>(API_ENDPOINTS.semanticModels.mappingHealth(id), {}));
+  },
+  async requestPopulationRefresh(id: string, body: { purpose: 'build' | 'refresh'; scope: { kind: 'model' } | { kind: 'mapping'; mappingId: string } }): Promise<PopulationRefreshResponse> {
+    return unwrap(await apiClient.post<ApiResponse<PopulationRefreshResponse>>(API_ENDPOINTS.semanticModels.populationRefresh(id), body, { timeout: 0 }));
+  },
+  async readiness(id: string): Promise<SemanticReadiness> {
+    return unwrap(await apiClient.get<ApiResponse<SemanticReadiness>>(API_ENDPOINTS.semanticModels.readiness(id)));
+  },
+  async reviewItems(id: string, status: 'open' | 'resolved' = 'open'): Promise<SemanticReviewItem[]> {
+    return unwrap(await apiClient.get<ApiResponse<SemanticReviewItem[]>>(API_ENDPOINTS.semanticModels.reviewItems(id), { params: { status } }));
+  },
+  async resolveReviewItem(id: string, reviewItemId: string, resolution: { decision: 'accepted' | 'dismissed' | 'leave_unresolved'; selectedTargetId?: string; selectedMappingId?: string }): Promise<{ revision: number }> {
+    const model = await semanticModelApi.get(id);
+    return unwrap(await apiClient.post<ApiResponse<{ revision: number }>>(API_ENDPOINTS.semanticModels.resolveReviewItem(id, reviewItemId), { ...resolution, expectedRevision: model.revision }));
+  },
+  async dataToken(id: string): Promise<SemanticDataTokenResponse> {
+    return unwrap(await apiClient.get<ApiResponse<SemanticDataTokenResponse>>(API_ENDPOINTS.semanticModels.dataToken(id)));
   },
 };

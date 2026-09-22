@@ -4,7 +4,7 @@ import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import { RequirePermissions } from '@modules/authorization/decorators/require-permissions.decorator';
 import { Permissions } from '@modules/authorization/constants/permissions';
 import { PermissionsGuard } from '@modules/authorization/guards/permissions.guard';
-import { UserDocument } from '@modules/user';
+import type { AuthUser } from '@common/auth/auth-user';
 import { FlowAccessService } from '../domain/flow-access.service';
 import { SharePlaybookDto, UpdatePlaybookSharePermissionDto } from '../dto/share-playbook.dto';
 import { IPlaybookShareEntry } from '../interfaces/playbook-share.interface';
@@ -26,7 +26,7 @@ export class PlaybookShareController {
   @ApiOperation({ summary: 'Share a playbook with users by email' })
   @ApiParam({ name: 'id', description: 'Playbook ID' })
   async sharePlaybook(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') playbookId: string,
     @Body() dto: SharePlaybookDto,
   ): Promise<IPlaybookShareEntry[]> {
@@ -39,7 +39,7 @@ export class PlaybookShareController {
   @ApiOperation({ summary: 'List all shares for a playbook' })
   @ApiParam({ name: 'id', description: 'Playbook ID' })
   async getPlaybookShares(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') playbookId: string,
   ): Promise<IPlaybookShareEntry[]> {
     await this.accessService.findOwnedFlow(playbookId, user._id.toString());
@@ -50,7 +50,7 @@ export class PlaybookShareController {
   @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
   @ApiOperation({ summary: 'Update a playbook share permission' })
   async updateSharePermission(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') playbookId: string,
     @Param('shareId') shareId: string,
     @Body() dto: UpdatePlaybookSharePermissionDto,
@@ -64,7 +64,7 @@ export class PlaybookShareController {
   @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
   @ApiOperation({ summary: 'Revoke a playbook share' })
   async removeShare(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') playbookId: string,
     @Param('shareId') shareId: string,
   ): Promise<void> {

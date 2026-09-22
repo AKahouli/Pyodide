@@ -1,9 +1,17 @@
 import type {
+  MessageComponent,
   WorkyCompanionSessionSummary,
   WorkyPendingClarification,
   WorkyPlanSummary,
   WorkyTask,
 } from '../types';
+
+/** A pending send/mail approval gate (a `confirm::` choice card still awaiting
+ *  the owner's approve/decline). Surfaced in "Needs you" so it isn't missed. */
+export interface WorkyPendingApproval {
+  questionId: string;
+  component: MessageComponent;
+}
 
 export type WorkyMissionHealth =
   | 'planning'
@@ -58,6 +66,7 @@ export interface WorkyExecutiveViewModel {
   health: WorkyMissionHealth;
   runtimeAsks: WorkyRuntimeAttentionItem[];
   interactions: WorkyPendingClarification[];
+  pendingApprovals: WorkyPendingApproval[];
   currentWork: WorkyCurrentWorkItem[];
   delegations: WorkyDelegationItem[];
   summary: WorkyExecutiveSummary;

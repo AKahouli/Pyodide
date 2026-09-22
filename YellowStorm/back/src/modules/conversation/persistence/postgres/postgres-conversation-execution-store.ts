@@ -8,7 +8,6 @@ import * as schema from '@modules/postgres/schema';
 import {
   AdmitExecutionInput,
   AdmitExecutionResult,
-  CONVERSATION_EXECUTION_STORE,
   ConversationExecutionConflictReason,
   ConversationExecutionStore,
 } from '../conversation-execution-store';
@@ -206,4 +205,3 @@ export function newExecutionId(): string {
   return randomUUID().replaceAll('-', '').slice(0, 24);
 }
 
-export const CONVERSATION_EXECUTION_STORE_PROVIDER = CONVERSATION_EXECUTION_STORE;

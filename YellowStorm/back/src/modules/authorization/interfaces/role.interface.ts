@@ -1,7 +1,6 @@
-import { Types } from 'mongoose';
 
 export interface IRole {
-  _id: Types.ObjectId;
+  _id: string;
   name: string;
   description: string;
   permissions: string[];
@@ -73,6 +72,8 @@ export const DEFAULT_ROLES: Array<{
       'workspaces.*',
       'analytics.*',
       'conversations.*',
+      'app_builder_ai.read',
+      'app_builder_ai.manage',
       'admin.roles.read',
       'admin.audit.read',
     ],

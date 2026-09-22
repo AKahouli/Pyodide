@@ -3,32 +3,31 @@ import {
   CanActivate,
   ExecutionContext,
   Inject,
-  forwardRef,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { isObjectId } from '@common/postgres';
 import { Request } from 'express';
-import { Workspace, WorkspaceDocument } from '../schemas/workspace.schema';
 import { ForbiddenException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
+import type { WorkspaceRecord } from '../ports/workspace-records';
+import { WORKSPACE_STORE, type WorkspaceStore } from '../stores/workspace-store';
 
 interface RequestWithWorkspace extends Request {
-  user?: UserDocument;
-  workspace?: WorkspaceDocument;
+  user?: AuthUser;
+  workspace?: WorkspaceRecord;
 }
 
 /**
  * Guard that verifies the authenticated user owns the workspace being accessed.
- * Attaches the workspace document to request for use in controllers.
+ * Attaches the workspace record to request for use in controllers.
  *
  * Expects workspaceId to be in params as either 'id' or 'workspaceId'
  */
 @Injectable()
 export class WorkspaceOwnerGuard implements CanActivate {
   constructor(
-    @InjectModel(Workspace.name)
-    private readonly workspaceModel: Model<WorkspaceDocument>,
+    @Inject(WORKSPACE_STORE)
+    private readonly workspaceStore: WorkspaceStore,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -41,9 +40,9 @@ export class WorkspaceOwnerGuard implements CanActivate {
     }
 
     // Get workspace ID from params (support both 'id' and 'workspaceId')
-    const workspaceId = request.params.id || request.params.workspaceId;
+    const rawWorkspaceId = request.params.id || request.params.workspaceId;
 
-    if (!workspaceId) {
+    if (!rawWorkspaceId) {
       throw new NotFoundException(
         ErrorCode.WORKSPACE_NOT_FOUND,
         'Workspace ID is required',
@@ -51,7 +50,8 @@ export class WorkspaceOwnerGuard implements CanActivate {
     }
 
     // Validate ObjectId format
-    if (!Types.ObjectId.isValid(workspaceId)) {
+    const workspaceId = rawWorkspaceId.toLowerCase();
+    if (!isObjectId(workspaceId)) {
       throw new NotFoundException(
         ErrorCode.WORKSPACE_NOT_FOUND,
         'Invalid workspace ID format',
@@ -59,7 +59,7 @@ export class WorkspaceOwnerGuard implements CanActivate {
     }
 
     // Find workspace
-    const workspace = await this.workspaceModel.findById(workspaceId).exec();
+    const workspace = await this.workspaceStore.findById(workspaceId);
 
     if (!workspace) {
       throw new NotFoundException(
@@ -69,7 +69,7 @@ export class WorkspaceOwnerGuard implements CanActivate {
     }
 
     // Check ownership
-    if (workspace.createdBy.toString() !== user._id.toString()) {
+    if (workspace.createdBy !== user._id.toString()) {
       throw new ForbiddenException(
         ErrorCode.WORKSPACE_FORBIDDEN,
         'You do not have access to this workspace',

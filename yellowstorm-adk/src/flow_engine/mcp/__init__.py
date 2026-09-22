@@ -8,14 +8,24 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 _MCP_CONTENT_PARTS_KEY = "__mcp_content_parts"
+_MCP_LOG_PAYLOAD_MAX_CHARS = 100
 
 
 def _log_payload(value: Any) -> str:
-    """Serialize payloads for full-fidelity logging."""
+    """Serialize a redacted payload within the terminal log size limit."""
     try:
-        return json.dumps(_redact_log_payload(value), ensure_ascii=False, default=str, indent=2)
+        serialized = json.dumps(
+            _redact_log_payload(value),
+            ensure_ascii=False,
+            default=str,
+            indent=2,
+        )
     except (TypeError, ValueError):
-        return str(value)
+        serialized = str(value)
+
+    if len(serialized) <= _MCP_LOG_PAYLOAD_MAX_CHARS:
+        return serialized
+    return serialized[: _MCP_LOG_PAYLOAD_MAX_CHARS - 3] + "..."
 
 
 def _redact_log_payload(value: Any) -> Any:
@@ -81,6 +91,29 @@ def _coerce_json(value: Any) -> Any:
         return json.loads(value)
     except (TypeError, json.JSONDecodeError):
         return value
+
+
+def _coerce_json_string_args(params: Any) -> Any:
+    """Parse a tool arg that arrived as a JSON-string list/object back into the
+    real structure. A model (or an upstream serialization) sometimes passes e.g.
+    attachments='[{...}]' or to_recipients='["a@b"]' as a string; the connector's
+    schema wants a list/dict, so it fails validation — and a gated send then
+    RETRIES, re-opening the approval card (one send, two cards). Only strings that
+    parse to a list/dict are touched; everything else is left exactly as-is."""
+    if not isinstance(params, dict):
+        return params
+    out: Dict[str, Any] = {}
+    for k, v in params.items():
+        if isinstance(v, str) and v.strip()[:1] in ("[", "{"):
+            try:
+                parsed = json.loads(v)
+            except (TypeError, json.JSONDecodeError):
+                parsed = None
+            if isinstance(parsed, (list, dict)):
+                out[k] = parsed
+                continue
+        out[k] = v
+    return out
 
 
 def _part_field(part: Any, *names: str) -> Any:
@@ -512,6 +545,7 @@ async def call_mcp_tool(
     """
     merged_headers = _build_headers(server_config, auth_headers, action_key=action_key)
     merged_env = _build_env(server_config, auth_env)
+    params = _coerce_json_string_args(params)
 
     logger.info(
         "mcp_call_tool action=%s transport=%s header_names=%s request_payload=%s",
@@ -613,7 +647,8 @@ async def call_mcp_tool(
         serialized_parts = _serialize_mcp_content_parts(content_parts)
         _log_mcp_image_bridge(action_key, serialized_parts)
         texts = []
-        parsed_payload = None
+        structured_content = _part_field(result, "structuredContent", "structured_content")
+        parsed_payload = _coerce_json(structured_content) if structured_content is not None else None
         for part in content_parts:
             if str(_part_field(part, "type") or "").lower() == "image":
                 continue

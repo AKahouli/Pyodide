@@ -1,23 +1,18 @@
 import { SystemService, EMAIL_LOGO_MAX_BYTES, EMAIL_LOGO_KEY } from './system.service';
+import type { SystemSettingRow } from './persistence/system-setting.store';
 
 describe('SystemService email logo', () => {
-  const makeService = (store: Map<string, { value: unknown }>) => {
-    const systemSettingModel = {
-      findOne: jest.fn(({ key }: { key: string }) => {
-        const doc = store.get(key) ?? null;
-        return {
-          lean: () => ({ exec: async () => doc }),
-        };
-      }),
-      findOneAndUpdate: jest.fn(
-        (_filter: { key: string }, update: { key: string; value: unknown }) => {
-          store.set(update.key, { value: update.value });
-          return { lean: () => ({ exec: async () => store.get(update.key) }) };
-        },
-      ),
-      deleteOne: jest.fn(async ({ key }: { key: string }) => {
-        store.delete(key);
-        return { deletedCount: 1 };
+  const makeService = (storeMap: Map<string, SystemSettingRow>) => {
+    const upsert = jest.fn(async (key: string, value: unknown) => {
+      const saved: SystemSettingRow = { key, value, updatedAt: new Date() };
+      storeMap.set(key, saved);
+      return saved;
+    });
+    const store = {
+      get: jest.fn(async (key: string) => storeMap.get(key) ?? null),
+      upsert,
+      delete: jest.fn(async (key: string) => {
+        storeMap.delete(key);
       }),
     };
     const logger = {
@@ -26,7 +21,7 @@ describe('SystemService email logo', () => {
       warn: jest.fn(),
       error: jest.fn(),
     };
-    const userModel = {};
+    const userStore = {};
     const appearanceLogoService = {
       list: jest.fn().mockResolvedValue([]),
       get: jest.fn(),
@@ -34,12 +29,12 @@ describe('SystemService email logo', () => {
       delete: jest.fn(),
     };
     const service = new SystemService(
-      systemSettingModel as never,
-      userModel as never,
+      store as never,
+      userStore as never,
       logger as never,
       appearanceLogoService as never,
     );
-    return { service, systemSettingModel, logger };
+    return { service, store, logger };
   };
 
   const pngLogo = () => ({
@@ -55,7 +50,7 @@ describe('SystemService email logo', () => {
   });
 
   it('stores the logo as base64 and returns the persisted value', async () => {
-    const { service, systemSettingModel } = makeService(new Map());
+    const { service, store } = makeService(new Map());
     const result = await service.setEmailLogo(pngLogo(), 'user-1');
 
     expect(result).toMatchObject({
@@ -65,11 +60,7 @@ describe('SystemService email logo', () => {
       data: Buffer.from('fake-png-bytes').toString('base64'),
       updatedBy: 'user-1',
     });
-    expect(systemSettingModel.findOneAndUpdate).toHaveBeenCalledWith(
-      { key: EMAIL_LOGO_KEY },
-      expect.objectContaining({ key: EMAIL_LOGO_KEY }),
-      { upsert: true, new: true },
-    );
+    expect(store.upsert).toHaveBeenCalledWith(EMAIL_LOGO_KEY, expect.objectContaining({ contentType: 'image/png' }));
     await expect(service.getEmailLogo()).resolves.toEqual(result);
   });
 
@@ -95,10 +86,10 @@ describe('SystemService email logo', () => {
   });
 
   it('treats a malformed stored value as absent', async () => {
-    const store = new Map<string, { value: unknown }>([
-      [EMAIL_LOGO_KEY, { value: { not: 'a logo' } }],
+    const storeMap = new Map<string, SystemSettingRow>([
+      [EMAIL_LOGO_KEY, { key: EMAIL_LOGO_KEY, value: { not: 'a logo' }, updatedAt: new Date() }],
     ]);
-    const { service } = makeService(store);
+    const { service } = makeService(storeMap);
     await expect(service.getEmailLogo()).resolves.toBeNull();
   });
 });

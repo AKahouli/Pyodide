@@ -3,32 +3,6 @@ import { Document, HydratedDocument, Types } from 'mongoose';
 
 export type WorkyMessageDocument = HydratedDocument<WorkyMessage>;
 
-@Schema({ _id: false })
-export class WorkyWhatsAppDelivery {
-  @Prop({ type: String, enum: ['pending', 'processing', 'failed', 'delivered', 'skipped'], required: true })
-  status!: 'pending' | 'processing' | 'failed' | 'delivered' | 'skipped';
-
-  @Prop({ type: Number, default: 0 })
-  attempts!: number;
-
-  @Prop({ type: Date, default: null })
-  nextAttemptAt?: Date | null;
-
-  @Prop({ type: String, default: null })
-  leaseToken?: string | null;
-
-  @Prop({ type: Date, default: null })
-  leaseExpiresAt?: Date | null;
-
-  @Prop({ type: Date, default: null })
-  deliveredAt?: Date | null;
-
-  @Prop({ type: String, default: null, maxlength: 500 })
-  lastError?: string | null;
-}
-
-const WorkyWhatsAppDeliverySchema = SchemaFactory.createForClass(WorkyWhatsAppDelivery);
-
 /**
  * A single prompt-bar turn between the stream owner and the Manager agent.
  * Persisted by `worky-message.service.ts` (Part 2). Part 1 only declares the
@@ -66,9 +40,6 @@ export class WorkyMessage extends Document {
   @Prop({ type: Date, default: null })
   emittedAt?: Date | null;
 
-  @Prop({ type: WorkyWhatsAppDeliverySchema, default: undefined })
-  whatsappDelivery?: WorkyWhatsAppDelivery;
-
   /** Set to 'voice' when the message originates from the realtime voice concierge. */
   @Prop({ type: String, required: false, enum: ['voice'] })
   origin?: 'voice';
@@ -85,12 +56,6 @@ WorkyMessageSchema.index(
   { streamId: 1, externalId: 1 },
   { unique: true, partialFilterExpression: { externalId: { $type: 'string' } } },
 );
-
-WorkyMessageSchema.index({
-  'whatsappDelivery.status': 1,
-  'whatsappDelivery.nextAttemptAt': 1,
-  'whatsappDelivery.leaseExpiresAt': 1,
-});
 
 WorkyMessageSchema.set('toJSON', {
   virtuals: true,

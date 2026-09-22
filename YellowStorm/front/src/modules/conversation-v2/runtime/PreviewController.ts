@@ -343,9 +343,14 @@ export class PreviewController {
    * Register the live preview iframe so `preview_inspect` / `preview_action`
    * can reach the running app's DOM. Safe to call repeatedly.
    */
-  async attachIframe(pod: PodLike, iframe: HTMLIFrameElement): Promise<void> {
+  async attachIframe(
+    pod: PodLike,
+    iframe: HTMLIFrameElement,
+    options?: { force?: boolean },
+  ): Promise<void> {
     const port = this._port ?? PREVIEW_PORTS[0];
-    if (this.iframe === iframe && this.attachedPort === port) return;
+    const force = options?.force === true;
+    if (!force && this.iframe === iframe && this.attachedPort === port) return;
 
     this.detachIframe(pod);
     this.iframe = iframe;
@@ -361,11 +366,17 @@ export class PreviewController {
       }
       pod.inspect.attach({ port, iframe });
       this.attachedPort = port;
-      log('inspect:attached', { port });
+      log('inspect:attached', { port, force });
     } catch (err) {
       // Inspection is best-effort: a failure must not break the preview itself.
       log('inspect:attach-error', { error: err instanceof Error ? err.message : String(err) });
+      this.attachedPort = null;
     }
+  }
+
+  /** True when a live inspector port is bound to the preview iframe. */
+  isInspectorAttached(): boolean {
+    return this.iframe !== null && this.attachedPort !== null;
   }
 
   detachIframe(pod?: PodLike): void {
@@ -409,7 +420,10 @@ export class PreviewController {
         ];
       } else {
         base.runtimeErrors = [
-          'The preview URL responds but the inspector is not attached yet. Call yellowruntime_dev_server restart, then retry preview_inspect.',
+          'The preview URL responds but the inspector is not attached yet. ' +
+            'Call yellowruntime_dev_server restart ONCE, then preview_inspect once. ' +
+            'If still unattached: open the preview panel or ask via `question` — do NOT loop restart/inspect. ' +
+            'Do NOT patch ProtectedRoute/auth to unblock Preview.',
         ];
       }
       return base;

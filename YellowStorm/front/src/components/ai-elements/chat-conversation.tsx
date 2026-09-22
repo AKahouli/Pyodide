@@ -5,7 +5,7 @@ import { Bot, ArrowDownIcon } from 'lucide-react';
 import type { ComponentProps, HTMLAttributes, ReactNode } from 'react';
 import { StickToBottom, useStickToBottomContext } from 'use-stick-to-bottom';
 import { Button } from '@/components/ui/button';
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { CodeArtifact, parseMessageContent } from '@/components/ai-elements/code-artifact';
 import { AIMessageContent, type MessageContentPart } from '@/components/ai-elements/ai-message-content';
 import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
@@ -62,6 +62,34 @@ export type ChatConversationContentProps = ComponentProps<typeof StickToBottom.C
  * ChatConversationContent - Wrapper for the message list
  */
 export const ChatConversationContent = ({ className, ...props }: ChatConversationContentProps) => <StickToBottom.Content className={cn('flex flex-col gap-4 px-2 py-4 md:px-4', className)} {...props} />;
+
+export const ChatConversationFollow = ({ active }: { active: boolean }) => {
+  const { scrollRef, scrollToBottom, stopScroll } = useStickToBottomContext();
+
+  useEffect(() => {
+    if (active) void scrollToBottom('instant');
+  }, [active, scrollToBottom]);
+
+  useEffect(() => {
+    if (!active || !scrollRef.current) return;
+    const container = scrollRef.current;
+    let stopFrame = 0;
+    const handleManualScroll = () => {
+      stopScroll();
+      cancelAnimationFrame(stopFrame);
+      stopFrame = requestAnimationFrame(stopScroll);
+    };
+    container.addEventListener('wheel', handleManualScroll, { passive: true });
+    container.addEventListener('touchmove', handleManualScroll, { passive: true });
+    return () => {
+      cancelAnimationFrame(stopFrame);
+      container.removeEventListener('wheel', handleManualScroll);
+      container.removeEventListener('touchmove', handleManualScroll);
+    };
+  }, [active, scrollRef, stopScroll]);
+
+  return null;
+};
 
 export type ChatMessageBubbleProps = HTMLAttributes<HTMLDivElement> & {
   message: ChatMessage;

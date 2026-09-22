@@ -1,9 +1,7 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, FilterQuery, Types } from 'mongoose';
+import { Inject, Injectable } from '@nestjs/common';
 import { LoggerService } from '../logger';
-import { Tool, ToolDocument, ToolAttributeType } from './schemas/tool.schema';
-import { AgentRepository } from '../agent/repositories/agent.repository';
+import { TOOL_STORE, type ToolRow, type ToolStore } from './persistence/tool.store';
+import { ToolAttributeType } from './tool.types';
 import { IToolResponse } from './interfaces/tool.interface';
 import { CreateToolDto } from './dto/create-tool.dto';
 import { UpdateToolDto } from './dto/update-tool.dto';
@@ -12,14 +10,12 @@ import { ToolAttributeDto } from './dto/tool-attribute.dto';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { NotFoundException, ConflictException, BadRequestException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
-import { escapeRegex } from '../../common/utils';
 
 @Injectable()
 export class ToolService {
   constructor(
-    @InjectModel(Tool.name)
-    private readonly toolModel: Model<ToolDocument>,
-    private readonly agentRepository: AgentRepository,
+    @Inject(TOOL_STORE)
+    private readonly toolStore: ToolStore,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(ToolService.name);
@@ -27,7 +23,7 @@ export class ToolService {
 
   async create(dto: CreateToolDto): Promise<IToolResponse> {
     // Check name uniqueness
-    const existing = await this.toolModel.findOne({ name: dto.name }).lean().exec();
+    const existing = await this.toolStore.findByName(dto.name);
     if (existing) {
       throw new ConflictException(ErrorCode.TOOL_ALREADY_EXISTS);
     }
@@ -37,13 +33,13 @@ export class ToolService {
       this.validateAttributes(dto.attributes);
     }
 
-    const tool = await this.toolModel.create({
+    const tool = await this.toolStore.insert({
       name: dto.name,
       description: dto.description ?? '',
       icon: dto.icon ?? '',
       color: dto.color ?? '',
       iconColor: dto.iconColor ?? 'light',
-      categoryId: dto.categoryId ? new Types.ObjectId(dto.categoryId) : null,
+      categoryId: dto.categoryId ?? null,
       defaultAgentTypes: dto.defaultAgentTypes ?? [],
       attributes: dto.attributes ?? [],
       requiredAppKey: dto.requiredAppKey || null,
@@ -51,7 +47,7 @@ export class ToolService {
     });
 
     this.logger.log('Tool created', {
-      toolId: tool._id.toString(),
+      toolId: tool.id,
       name: tool.name,
     });
 
@@ -59,38 +55,19 @@ export class ToolService {
   }
 
   async findAll(query: QueryToolDto): Promise<PaginatedResponseDto<IToolResponse>> {
-    const filter: FilterQuery<ToolDocument> = {};
-
-    if (query.search) {
-      const regex = { $regex: escapeRegex(query.search), $options: 'i' };
-      filter.$or = [{ name: regex }, { description: regex }];
-    }
-
-    if (query.agentType) {
-      filter.defaultAgentTypes = query.agentType;
-    }
-
-    if (query.isActive !== undefined) {
-      filter.isActive = query.isActive;
-    }
-
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
-    const skip = (page - 1) * limit;
 
-    const [tools, total] = await Promise.all([
-      this.toolModel
-        .find(filter)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean()
-        .exec(),
-      this.toolModel.countDocuments(filter).exec(),
-    ]);
+    const { rows, total } = await this.toolStore.list({
+      search: query.search,
+      agentType: query.agentType,
+      isActive: query.isActive,
+      page,
+      limit,
+    });
 
     return new PaginatedResponseDto(
-      tools.map((tool) => this.toToolResponse(tool)),
+      rows.map((tool) => this.toToolResponse(tool)),
       total,
       page,
       limit,
@@ -98,65 +75,41 @@ export class ToolService {
   }
 
   async findById(id: string): Promise<IToolResponse> {
-    const tool = await this.toolModel.findById(id).lean().exec();
-
+    const tool = await this.toolStore.findById(id);
     if (!tool) {
       throw new NotFoundException(ErrorCode.TOOL_NOT_FOUND);
     }
-
     return this.toToolResponse(tool);
   }
 
   async findByAgentType(agentType: string): Promise<IToolResponse[]> {
-    const tools = await this.toolModel
-      .find({ defaultAgentTypes: agentType, isActive: true })
-      .sort({ name: 1 })
-      .lean()
-      .exec();
-
+    const tools = await this.toolStore.findByAgentType(agentType);
     return tools.map((tool) => this.toToolResponse(tool));
   }
 
   async findByAgentTypeName(name: string): Promise<IToolResponse[]> {
-    const tools = await this.toolModel
-      .find({ defaultAgentTypes: name, isActive: true })
-      .sort({ name: 1 })
-      .lean()
-      .exec();
-
-    return tools.map((tool) => this.toToolResponse(tool));
+    return this.findByAgentType(name);
   }
 
   async findAllActive(): Promise<IToolResponse[]> {
-    const tools = await this.toolModel
-      .find({ isActive: true })
-      .sort({ name: 1 })
-      .lean()
-      .exec();
+    const tools = await this.toolStore.findAllActive();
     return tools.map((tool) => this.toToolResponse(tool));
   }
 
   async findByIds(ids: string[]): Promise<IToolResponse[]> {
-    if (!ids.length) return [];
-    const objectIds = ids.map((id) => new Types.ObjectId(id));
-    const tools = await this.toolModel
-      .find({ _id: { $in: objectIds }, isActive: true })
-      .sort({ name: 1 })
-      .lean()
-      .exec();
+    const tools = await this.toolStore.findByIds(ids);
     return tools.map((tool) => this.toToolResponse(tool));
   }
 
   async update(id: string, dto: UpdateToolDto): Promise<IToolResponse> {
-    // Check existence
-    const existing = await this.toolModel.findById(id).lean().exec();
+    const existing = await this.toolStore.findById(id);
     if (!existing) {
       throw new NotFoundException(ErrorCode.TOOL_NOT_FOUND);
     }
 
     // Check name uniqueness if changing name
     if (dto.name && dto.name !== existing.name) {
-      const duplicate = await this.toolModel.findOne({ name: dto.name }).lean().exec();
+      const duplicate = await this.toolStore.findByName(dto.name);
       if (duplicate) {
         throw new ConflictException(ErrorCode.TOOL_ALREADY_EXISTS);
       }
@@ -167,18 +120,15 @@ export class ToolService {
       this.validateAttributes(dto.attributes);
     }
     // Normalize requiredAppKey: empty string → null (clear the field)
-    const updateData = { ...dto };
+    const updateData: Record<string, unknown> = { ...dto };
     if ('requiredAppKey' in updateData) {
-      (updateData as Record<string, unknown>).requiredAppKey = updateData.requiredAppKey || null;
+      updateData.requiredAppKey = (updateData.requiredAppKey as string) || null;
     }
-    if (Object.prototype.hasOwnProperty.call(dto, 'categoryId')) {
-      (updateData as Record<string, unknown>).categoryId = dto.categoryId ? new Types.ObjectId(dto.categoryId) : null;
+    if (Object.prototype.hasOwnProperty.call(updateData, 'categoryId')) {
+      updateData.categoryId = (updateData.categoryId as string) || null;
     }
 
-    const tool = await this.toolModel
-      .findByIdAndUpdate(id, { $set: updateData }, { new: true })
-      .lean()
-      .exec();
+    const tool = await this.toolStore.update(id, updateData);
 
     if (!tool) {
       throw new NotFoundException(ErrorCode.TOOL_NOT_FOUND);
@@ -193,14 +143,12 @@ export class ToolService {
   }
 
   async delete(id: string): Promise<void> {
-    const tool = await this.toolModel.findByIdAndDelete(id).lean().exec();
+    // agent_tools junction rows cascade via the validated FK; no manual pull needed.
+    const tool = await this.toolStore.delete(id);
 
     if (!tool) {
       throw new NotFoundException(ErrorCode.TOOL_NOT_FOUND);
     }
-
-    // Remove tool reference from all agents
-    await this.agentRepository.pullToolFromAll(id);
 
     this.logger.log('Tool deleted', {
       toolId: id,
@@ -261,29 +209,27 @@ export class ToolService {
     }
   }
 
-  private toToolResponse(tool: ToolDocument | Record<string, unknown>): IToolResponse {
-    const doc = tool as Record<string, unknown>;
-
+  private toToolResponse(tool: ToolRow | Record<string, unknown>): IToolResponse {
     return {
-      id: (doc._id as { toString(): string }).toString(),
-      name: doc.name as string,
-      description: (doc.description as string) || '',
-      icon: (doc.icon as string) || '',
-      color: (doc.color as string) || '',
-      iconColor: ((doc.iconColor as 'light' | 'dark') || 'light'),
-      categoryId: doc.categoryId ? (doc.categoryId as { toString(): string }).toString() : null,
-      defaultAgentTypes: (doc.defaultAgentTypes as string[]) || [],
-      attributes: ((doc.attributes as Record<string, unknown>[]) || []).map((attr) => ({
-        id: attr._id ? (attr._id as { toString(): string }).toString() : undefined,
+      id: tool.id as string,
+      name: tool.name as string,
+      description: (tool.description as string) || '',
+      icon: (tool.icon as string) || '',
+      color: (tool.color as string) || '',
+      iconColor: ((tool.iconColor as 'light' | 'dark') || 'light'),
+      categoryId: (tool.categoryId as string) || null,
+      defaultAgentTypes: (tool.defaultAgentTypes as string[]) || [],
+      attributes: ((tool.attributes as Record<string, unknown>[]) || []).map((attr) => ({
+        id: attr.id as string | undefined,
         name: attr.name as string,
         type: attr.type as ToolAttributeType,
         value: attr.value as string | number | boolean,
         options: attr.options as string[] | undefined,
       })),
-      requiredAppKey: (doc.requiredAppKey as string) || undefined,
-      isActive: doc.isActive as boolean,
-      createdAt: doc.createdAt as Date,
-      updatedAt: doc.updatedAt as Date,
+      requiredAppKey: (tool.requiredAppKey as string) || undefined,
+      isActive: tool.isActive as boolean,
+      createdAt: tool.createdAt as Date,
+      updatedAt: tool.updatedAt as Date,
     };
   }
 }

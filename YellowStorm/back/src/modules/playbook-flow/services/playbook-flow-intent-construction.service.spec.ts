@@ -1,4 +1,6 @@
 import { PlaybookFlowIntentConstructionService } from './playbook-flow-intent-construction.service';
+import { ConflictException } from '@modules/exceptions';
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 
 describe('PlaybookFlowIntentConstructionService', () => {
   function createService(): PlaybookFlowIntentConstructionService {
@@ -51,6 +53,114 @@ describe('PlaybookFlowIntentConstructionService', () => {
     }
   });
 
+  it('keeps the durable worker lease alive while construction is running', async () => {
+    jest.useFakeTimers();
+    const operationService = { renewWorkerLease: jest.fn().mockResolvedValue(true) };
+    const service = new PlaybookFlowIntentConstructionService(
+      { normalizeConstructionSuggestions: jest.fn() } as any,
+      undefined,
+      operationService as any,
+    );
+    const job = {
+      id: 'operation-1', flowId: 'flow-1', ownerId: 'owner-1', status: 'running', events: [],
+      abortController: new AbortController(), waiters: new Set(),
+    };
+
+    try {
+      const timer = (service as any).startWorkerLeaseHeartbeat(job);
+      await jest.advanceTimersByTimeAsync(60_000);
+      expect(operationService.renewWorkerLease).toHaveBeenCalledWith('flow-1', 'owner-1', 'operation-1');
+      expect(job.abortController.signal.aborted).toBe(false);
+      clearInterval(timer);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('aborts and cleans up after durable lease ownership is lost', async () => {
+    jest.useFakeTimers();
+    const operationService = { renewWorkerLease: jest.fn().mockResolvedValue(false) };
+    const service = new PlaybookFlowIntentConstructionService({} as any, undefined, operationService as any);
+    const cleanup = jest.spyOn(service as any, 'scheduleCleanup');
+    const job = {
+      id: 'operation-1', flowId: 'flow-1', ownerId: 'owner-1', status: 'running', events: [],
+      abortController: new AbortController(), waiters: new Set(),
+    };
+
+    try {
+      const timer = (service as any).startWorkerLeaseHeartbeat(job);
+      await jest.advanceTimersByTimeAsync(60_000);
+      expect(job.abortController.signal.aborted).toBe(true);
+      expect(cleanup).toHaveBeenCalledWith(job);
+      clearInterval(timer);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not overlap slow worker lease renewals', async () => {
+    jest.useFakeTimers();
+    let resolveRenewal!: (renewed: boolean) => void;
+    const renewal = new Promise<boolean>((resolve) => { resolveRenewal = resolve; });
+    const operationService = { renewWorkerLease: jest.fn().mockReturnValue(renewal) };
+    const service = new PlaybookFlowIntentConstructionService({} as any, undefined, operationService as any);
+    const job = {
+      id: 'operation-1', flowId: 'flow-1', ownerId: 'owner-1', status: 'running', events: [],
+      abortController: new AbortController(), waiters: new Set(),
+    };
+
+    try {
+      const timer = (service as any).startWorkerLeaseHeartbeat(job);
+      await jest.advanceTimersByTimeAsync(180_000);
+      expect(operationService.renewWorkerLease).toHaveBeenCalledTimes(1);
+      resolveRenewal(true);
+      await Promise.resolve();
+      await jest.advanceTimersByTimeAsync(60_000);
+      expect(operationService.renewWorkerLease).toHaveBeenCalledTimes(2);
+      clearInterval(timer);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('aborts before the last confirmed lease expires while renewal is pending', async () => {
+    jest.useFakeTimers();
+    const operationService = { renewWorkerLease: jest.fn().mockReturnValue(new Promise<boolean>(() => undefined)) };
+    const service = new PlaybookFlowIntentConstructionService({} as any, undefined, operationService as any);
+    const job = {
+      id: 'operation-1', flowId: 'flow-1', ownerId: 'owner-1', status: 'running', events: [],
+      abortController: new AbortController(), waiters: new Set(),
+    };
+
+    try {
+      const timer = (service as any).startWorkerLeaseHeartbeat(job);
+      await jest.advanceTimersByTimeAsync(240_000);
+      expect(job.abortController.signal.aborted).toBe(true);
+      clearInterval(timer);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('aborts before expiry after repeated worker lease renewal errors', async () => {
+    jest.useFakeTimers();
+    const operationService = { renewWorkerLease: jest.fn().mockRejectedValue(new Error('database unavailable')) };
+    const service = new PlaybookFlowIntentConstructionService({} as any, undefined, operationService as any);
+    const job = {
+      id: 'operation-1', flowId: 'flow-1', ownerId: 'owner-1', status: 'running', events: [],
+      abortController: new AbortController(), waiters: new Set(),
+    };
+
+    try {
+      const timer = (service as any).startWorkerLeaseHeartbeat(job);
+      await jest.advanceTimersByTimeAsync(180_000);
+      expect(job.abortController.signal.aborted).toBe(true);
+      clearInterval(timer);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('does not append after a durable terminal event wins on another replica', async () => {
     const operationService = {
       append: jest.fn().mockRejectedValue(new Error('terminal conflict')),
@@ -80,6 +190,25 @@ describe('PlaybookFlowIntentConstructionService', () => {
     })).resolves.toBeUndefined();
     expect(job.abortController.signal.aborted).toBe(true);
     expect(job.events).toEqual([]);
+  });
+
+  it('stops cleanly when a worker event loses its durable lease', async () => {
+    const operationService = {
+      append: jest.fn().mockRejectedValue(new ConflictException(ErrorCode.CONFLICT, 'lease lost')),
+      getStatus: jest.fn().mockResolvedValue({ status: 'running' }),
+    };
+    const service = new PlaybookFlowIntentConstructionService({} as any, undefined, operationService as any);
+    const cleanup = jest.spyOn(service as any, 'scheduleCleanup');
+    const job = {
+      id: 'operation-1', flowId: 'flow-1', ownerId: 'owner-1', status: 'running', events: [],
+      abortController: new AbortController(), waiters: new Set(),
+    };
+
+    await expect((service as any).emit(job, {
+      type: 'progress', constructionId: 'operation-1', playbookId: 'flow-1', phase: 'planning', message: 'Planning',
+    })).resolves.toBeUndefined();
+    expect(job.abortController.signal.aborted).toBe(true);
+    expect(cleanup).toHaveBeenCalledWith(job);
   });
 
   it.each([

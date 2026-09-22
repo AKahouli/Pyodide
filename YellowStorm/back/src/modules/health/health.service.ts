@@ -11,6 +11,7 @@ import { StreamService } from '../conversation/services/stream.service';
 import { ConversationV2GrpcClientService } from '../conversation-v2/services/conversation-v2.grpc-client.service';
 import { SemanticModelDatabaseService } from '../semantic-model/infrastructure/semantic-model-database.service';
 import { PostgresConnectionService } from '../postgres/postgres-connection.service';
+import { FeatureVisibilityService } from '../system/feature-visibility.service';
 
 @Injectable()
 export class HealthService {
@@ -30,6 +31,7 @@ export class HealthService {
     private readonly conversationV2Grpc: ConversationV2GrpcClientService,
     private readonly semanticModelDatabase: SemanticModelDatabaseService,
     private readonly postgres: PostgresConnectionService,
+    private readonly featureVisibility: FeatureVisibilityService,
   ) {
     const memoryLimitMb = this.configService.get<number>('app.memoryLimitMb', 512);
     this.memoryLimitBytes = memoryLimitMb * 1024 * 1024;
@@ -182,7 +184,7 @@ export class HealthService {
 
   private async checkPlaybookMcp(): Promise<HealthCheckDetail> {
     const startTime = Date.now();
-    if (!this.configService.get<boolean>('playbook-flow.mcpAssistantEnabled', false)) {
+    if (!this.featureVisibility.isEnabled('playbookMcpAssistant')) {
       return {
         status: 'up',
         responseTime: 0,

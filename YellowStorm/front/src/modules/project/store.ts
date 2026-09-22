@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import { parseApiError } from '@/lib/api-error';
 import { i18nInstance } from '@/modules/localization/i18nInstance';
 import * as api from './api';
-import type { Project } from './types';
+import type { Project, SharedProjectResponse } from './types';
 import { useConversationStore } from '@/modules/conversation/store';
 
 function tProject(key: string, fallback: string, options?: Record<string, unknown>) {
@@ -17,11 +17,13 @@ function tProject(key: string, fallback: string, options?: Record<string, unknow
 
 interface ProjectState {
   projects: Project[];
+  sharedProjects: SharedProjectResponse[];
   loading: boolean;
   initialized: boolean;
   expandedProjectIds: Record<string, boolean>;
 
   fetchProjects: (search?: string) => Promise<void>;
+  fetchSharedProjects: () => Promise<void>;
   createProject: (name: string) => Promise<Project>;
   renameProject: (id: string, name: string) => Promise<void>;
   deleteProject: (id: string) => Promise<void>;
@@ -35,6 +37,7 @@ export const useProjectStore = create<ProjectState>()(
   devtools(
     (set, get) => ({
       projects: [],
+      sharedProjects: [],
       loading: false,
       initialized: false,
       expandedProjectIds: typeof window !== 'undefined'
@@ -49,6 +52,15 @@ export const useProjectStore = create<ProjectState>()(
         } catch (err) {
           set({ loading: false });
           console.error('[ProjectStore] fetchProjects error:', err);
+        }
+      },
+
+      fetchSharedProjects: async () => {
+        try {
+          const result = await api.getSharedProjects();
+          set({ sharedProjects: result.projects });
+        } catch (err) {
+          console.error('[ProjectStore] fetchSharedProjects error:', err);
         }
       },
 
@@ -150,6 +162,7 @@ function safeParse(input: string | null): Record<string, boolean> | null {
 }
 
 export const useProjects = () => useProjectStore(useShallow((s) => s.projects));
+export const useSharedProjects = () => useProjectStore(useShallow((s) => s.sharedProjects));
 export const useProjectsLoading = () => useProjectStore((s) => s.loading);
 export const useExpandedProjectIds = () =>
   useProjectStore(useShallow((s) => s.expandedProjectIds));

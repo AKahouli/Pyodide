@@ -1,12 +1,9 @@
-import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { Plan, PlanDocument, PlanTier } from './schemas/plan.schema';
-import { Usage, UsageDocument, UsageType } from './schemas/usage.schema';
-import { UsageLog, UsageLogDocument } from './schemas/usage-log.schema';
+import { Inject, Injectable, OnApplicationBootstrap } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { PlanTier } from './schemas/plan.schema';
+import { PLAN_STORE, type PlanRecord, type PlanStore } from './persistence/plan.store';
 import {
   PlanResponse,
-  PlanSummary,
   CreatePlanData,
   UpdatePlanData,
   DEFAULT_PLANS,
@@ -22,16 +19,26 @@ import { LoggerService } from '../logger';
 import {
   NotFoundException,
   ConflictException,
-  ForbiddenException,
 } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
+import {
+  USAGE_STORE,
+  type UsageStore,
+  type UsageWindowRecord,
+} from './persistence/usage-store';
+
+const USAGE_LOG_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+const USAGE_LOG_CLEANUP_BATCH_SIZE = 1000;
+const DEFAULT_PLAN_CACHE_TTL_MS = 30_000;
 
 @Injectable()
 export class UsageService implements OnApplicationBootstrap {
+  private defaultPlanCache: PlanRecord | null = null;
+  private defaultPlanCachedAt = 0;
+
   constructor(
-    @InjectModel(Plan.name) private readonly planModel: Model<PlanDocument>,
-    @InjectModel(Usage.name) private readonly usageModel: Model<UsageDocument>,
-    @InjectModel(UsageLog.name) private readonly usageLogModel: Model<UsageLogDocument>,
+    @Inject(PLAN_STORE) private readonly planStore: PlanStore,
+    @Inject(USAGE_STORE) private readonly usageStore: UsageStore,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('UsageService');
@@ -50,16 +57,31 @@ export class UsageService implements OnApplicationBootstrap {
     }
   }
 
+  @Cron(CronExpression.EVERY_HOUR)
+  async cleanupExpiredUsageLogs(): Promise<void> {
+    try {
+      const cutoff = new Date(Date.now() - USAGE_LOG_RETENTION_MS);
+      let deleted: number;
+      do {
+        deleted = await this.usageStore.deleteLogsBefore(
+          cutoff,
+          USAGE_LOG_CLEANUP_BATCH_SIZE,
+        );
+      } while (deleted === USAGE_LOG_CLEANUP_BATCH_SIZE);
+    } catch (error) {
+      this.logger.error('Failed to clean up expired usage logs', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    }
+  }
+
   /**
    * Seed default plans if they don't exist
    */
   private async seedDefaultPlans(): Promise<void> {
     for (const planData of DEFAULT_PLANS) {
-      const existing = await this.planModel.findOne({ slug: planData.slug });
-      if (!existing) {
-        await this.planModel.create(planData);
-        this.logger.log(`Created default plan: ${planData.name}`);
-      }
+      await this.planStore.seed(planData);
+      this.logger.log(`Seeded default plan: ${planData.name}`);
     }
   }
 
@@ -69,10 +91,7 @@ export class UsageService implements OnApplicationBootstrap {
    * Get all active plans
    */
   async getActivePlans(): Promise<PlanResponse[]> {
-    const plans = await this.planModel
-      .find({ isActive: true })
-      .sort({ displayOrder: 1 })
-      .exec();
+    const plans = await this.planStore.findActive();
     return plans.map((plan) => this.mapPlanToResponse(plan));
   }
 
@@ -80,15 +99,15 @@ export class UsageService implements OnApplicationBootstrap {
    * Get all plans (including inactive)
    */
   async getAllPlans(): Promise<PlanResponse[]> {
-    const plans = await this.planModel.find().sort({ displayOrder: 1 }).exec();
+    const plans = await this.planStore.findAll();
     return plans.map((plan) => this.mapPlanToResponse(plan));
   }
 
   /**
    * Get plan by ID
    */
-  async getPlanById(planId: string): Promise<PlanDocument> {
-    const plan = await this.planModel.findById(planId);
+  async getPlanById(planId: string): Promise<PlanRecord> {
+    const plan = await this.planStore.findById(planId);
     if (!plan) {
       throw new NotFoundException(ErrorCode.PLAN_NOT_FOUND, 'Plan not found');
     }
@@ -98,8 +117,8 @@ export class UsageService implements OnApplicationBootstrap {
   /**
    * Get plan by slug
    */
-  async getPlanBySlug(slug: string): Promise<PlanDocument> {
-    const plan = await this.planModel.findOne({ slug });
+  async getPlanBySlug(slug: string): Promise<PlanRecord> {
+    const plan = await this.planStore.findBySlug(slug);
     if (!plan) {
       throw new NotFoundException(ErrorCode.PLAN_NOT_FOUND, 'Plan not found');
     }
@@ -107,64 +126,63 @@ export class UsageService implements OnApplicationBootstrap {
   }
 
   /**
-   * Get default plan
+   * Get default plan. Cached for 30 seconds (invalidated on plan writes) so
+   * the per-request usage hot path does not gain a PG round-trip.
    */
-  async getDefaultPlan(): Promise<PlanDocument> {
+  async getDefaultPlan(): Promise<PlanRecord> {
+    if (this.defaultPlanCache && Date.now() - this.defaultPlanCachedAt < DEFAULT_PLAN_CACHE_TTL_MS) {
+      return this.defaultPlanCache;
+    }
     // Prefer the unlimited plan for new user registrations
-    let plan = await this.planModel.findOne({ slug: PlanTier.UNLIMITED, isActive: true });
-    if (!plan) {
+    let plan = await this.planStore.findBySlug(PlanTier.UNLIMITED);
+    if (!plan || !plan.isActive) {
       // Fallback to any plan marked as default
-      plan = await this.planModel.findOne({ isDefault: true, isActive: true });
+      plan = await this.planStore.findFlaggedDefault();
     }
     if (!plan) {
       throw new NotFoundException(ErrorCode.PLAN_NOT_FOUND, 'No default plan configured');
     }
+    this.defaultPlanCache = plan;
+    this.defaultPlanCachedAt = Date.now();
     return plan;
+  }
+
+  private invalidateDefaultPlanCache(): void {
+    this.defaultPlanCache = null;
+    this.defaultPlanCachedAt = 0;
   }
 
   /**
    * Create a new plan
    */
-  async createPlan(data: CreatePlanData): Promise<PlanDocument> {
-    const existing = await this.planModel.findOne({ slug: data.slug });
+  async createPlan(data: CreatePlanData): Promise<PlanRecord> {
+    const existing = await this.planStore.findBySlug(data.slug);
     if (existing) {
       throw new ConflictException(ErrorCode.PLAN_ALREADY_EXISTS, 'A plan with this slug already exists');
     }
 
-    // If this is set as default, unset other defaults
-    if (data.isDefault) {
-      await this.planModel.updateMany({ isDefault: true }, { isDefault: false });
+    const plan = await this.planStore.insert(data);
+    if (!plan) {
+      // Lost a race against a concurrent create with the same slug
+      throw new ConflictException(ErrorCode.PLAN_ALREADY_EXISTS, 'A plan with this slug already exists');
     }
-
-    const plan = await this.planModel.create(data);
-    this.logger.log('Plan created', { planId: plan._id, slug: plan.slug });
+    this.invalidateDefaultPlanCache();
+    this.logger.log('Plan created', { planId: plan.id, slug: plan.slug });
     return plan;
   }
 
   /**
    * Update a plan
    */
-  async updatePlan(planId: string, data: UpdatePlanData): Promise<PlanDocument> {
+  async updatePlan(planId: string, data: UpdatePlanData): Promise<PlanRecord> {
     const plan = await this.getPlanById(planId);
-
-    // If this is set as default, unset other defaults
-    if (data.isDefault) {
-      await this.planModel.updateMany(
-        { _id: { $ne: planId }, isDefault: true },
-        { isDefault: false },
-      );
+    const updated = await this.planStore.update(plan.id, data);
+    if (!updated) {
+      throw new NotFoundException(ErrorCode.PLAN_NOT_FOUND, 'Plan not found');
     }
-
-    // Only assign defined values to avoid overwriting with undefined
-    const definedData = Object.fromEntries(
-      Object.entries(data).filter(([, value]) => value !== undefined),
-    );
-
-    Object.assign(plan, definedData);
-    await plan.save();
-
-    this.logger.log('Plan updated', { planId: plan._id, slug: plan.slug });
-    return plan;
+    this.invalidateDefaultPlanCache();
+    this.logger.log('Plan updated', { planId: updated.id, slug: updated.slug });
+    return updated;
   }
 
   /**
@@ -177,10 +195,10 @@ export class UsageService implements OnApplicationBootstrap {
       throw new ConflictException(ErrorCode.PLAN_INVALID, 'Cannot delete the default plan');
     }
 
-    plan.isActive = false;
-    await plan.save();
+    await this.planStore.update(plan.id, { isActive: false });
+    this.invalidateDefaultPlanCache();
 
-    this.logger.log('Plan deactivated', { planId: plan._id, slug: plan.slug });
+    this.logger.log('Plan deactivated', { planId: plan.id, slug: plan.slug });
   }
 
   // ==================== Usage Tracking ====================
@@ -190,100 +208,29 @@ export class UsageService implements OnApplicationBootstrap {
    */
   async getOrCreateCurrentWindow(
     userId: string,
-    plan: PlanDocument,
-  ): Promise<UsageDocument> {
-    const now = new Date();
-    const windowHours = plan.windowHours;
-
-    // Calculate window boundaries
-    // Windows align to start of the hour for predictability
-    const windowStartHour = Math.floor(now.getHours() / windowHours) * windowHours;
-    const windowStart = new Date(now);
-    windowStart.setHours(windowStartHour, 0, 0, 0);
-
-    const windowEnd = new Date(windowStart);
-    windowEnd.setHours(windowEnd.getHours() + windowHours);
-
-    // Try to find existing window
-    let usage = await this.usageModel.findOne({
-      userId: new Types.ObjectId(userId),
-      windowStart: { $lte: now },
-      windowEnd: { $gt: now },
-    });
-
-    if (!usage) {
-      // Create new window
-      usage = await this.usageModel.create({
-        userId: new Types.ObjectId(userId),
-        windowStart,
-        windowEnd,
-        windowHours,
-        inputTokens: 0,
-        outputTokens: 0,
-        totalTokens: 0,
-        requestCount: 0,
-        planId: plan._id,
-        planSlug: plan.slug,
-        tokenLimitAtCreation: plan.tokenLimit,
-      });
-    }
-
-    return usage;
+    plan: PlanRecord,
+  ): Promise<UsageWindowRecord> {
+    return this.usageStore.getOrCreateCurrentWindow(userId, plan);
   }
 
   /**
    * Record usage for a user
    */
-  async recordUsage(data: RecordUsageData): Promise<UsageDocument> {
-    const totalTokens = data.inputTokens + data.outputTokens;
-
+  async recordUsage(data: RecordUsageData): Promise<UsageWindowRecord> {
     // Get user's plan (we need to look this up or have it passed in)
     // For now, we'll use the default plan if not found
     const plan = await this.getDefaultPlan();
 
-    // Get or create current window
-    const usage = await this.getOrCreateCurrentWindow(data.userId, plan);
-
-    // Update usage atomically
-    const updatedUsage = await this.usageModel.findByIdAndUpdate(
-      usage._id,
-      {
-        $inc: {
-          inputTokens: data.inputTokens,
-          outputTokens: data.outputTokens,
-          totalTokens,
-          requestCount: 1,
-        },
-      },
-      { new: true },
-    );
-
-    // Log the individual request
-    await this.usageLogModel.create({
-      userId: new Types.ObjectId(data.userId),
-      usageType: data.usageType || UsageType.CHAT,
-      modelName: data.modelName,
-      inputTokens: data.inputTokens,
-      outputTokens: data.outputTokens,
-      totalTokens,
-      durationMs: data.durationMs,
-      conversationId: data.conversationId ? new Types.ObjectId(data.conversationId) : undefined,
-      endpoint: data.endpoint,
-      ipAddress: data.ipAddress,
-      userAgent: data.userAgent,
-      success: data.success ?? true,
-      errorCode: data.errorCode,
-      metadata: data.metadata,
-    });
+    const updatedUsage = await this.usageStore.record(data, plan);
 
     this.logger.debug('Usage recorded', {
       userId: data.userId,
       inputTokens: data.inputTokens,
       outputTokens: data.outputTokens,
-      totalTokens,
+      totalTokens: data.inputTokens + data.outputTokens,
     });
 
-    return updatedUsage!;
+    return updatedUsage;
   }
 
   /**
@@ -291,46 +238,9 @@ export class UsageService implements OnApplicationBootstrap {
    */
   async recordUsageWithPlan(
     data: RecordUsageData,
-    plan: PlanDocument,
-  ): Promise<UsageDocument> {
-    const totalTokens = data.inputTokens + data.outputTokens;
-
-    // Get or create current window
-    const usage = await this.getOrCreateCurrentWindow(data.userId, plan);
-
-    // Update usage atomically
-    const updatedUsage = await this.usageModel.findByIdAndUpdate(
-      usage._id,
-      {
-        $inc: {
-          inputTokens: data.inputTokens,
-          outputTokens: data.outputTokens,
-          totalTokens,
-          requestCount: 1,
-        },
-      },
-      { new: true },
-    );
-
-    // Log the individual request
-    await this.usageLogModel.create({
-      userId: new Types.ObjectId(data.userId),
-      usageType: data.usageType || UsageType.CHAT,
-      modelName: data.modelName,
-      inputTokens: data.inputTokens,
-      outputTokens: data.outputTokens,
-      totalTokens,
-      durationMs: data.durationMs,
-      conversationId: data.conversationId ? new Types.ObjectId(data.conversationId) : undefined,
-      endpoint: data.endpoint,
-      ipAddress: data.ipAddress,
-      userAgent: data.userAgent,
-      success: data.success ?? true,
-      errorCode: data.errorCode,
-      metadata: data.metadata,
-    });
-
-    return updatedUsage!;
+    plan: PlanRecord,
+  ): Promise<UsageWindowRecord> {
+    return this.usageStore.record(data, plan);
   }
 
   /**
@@ -338,7 +248,7 @@ export class UsageService implements OnApplicationBootstrap {
    */
   async checkUsageLimit(
     userId: string,
-    plan: PlanDocument,
+    plan: PlanRecord,
     requestedTokens?: number,
   ): Promise<UsageCheckResult> {
     // Unlimited plan
@@ -378,7 +288,7 @@ export class UsageService implements OnApplicationBootstrap {
   /**
    * Get current usage status for a user
    */
-  async getUsageStatus(userId: string, plan: PlanDocument): Promise<UsageStatus> {
+  async getUsageStatus(userId: string, plan: PlanRecord): Promise<UsageStatus> {
     const usage = await this.getOrCreateCurrentWindow(userId, plan);
     const now = new Date();
 
@@ -416,7 +326,7 @@ export class UsageService implements OnApplicationBootstrap {
         isUnlimited: requestsUnlimited,
       },
       plan: {
-        id: plan._id.toString(),
+        id: plan.id,
         name: plan.name,
         slug: plan.slug,
         tokenLimit: plan.tokenLimit,
@@ -440,46 +350,12 @@ export class UsageService implements OnApplicationBootstrap {
   ): Promise<UsageHistoryResponse> {
     const { startDate, endDate, limit = 30, skip = 0 } = options;
 
-    const query: Record<string, unknown> = { userId: new Types.ObjectId(userId) };
-
-    if (startDate || endDate) {
-      query.windowStart = {};
-      if (startDate) (query.windowStart as Record<string, Date>).$gte = startDate;
-      if (endDate) (query.windowStart as Record<string, Date>).$lte = endDate;
-    }
-
-    const [records, total, aggregation] = await Promise.all([
-      this.usageModel
-        .find(query)
-        .sort({ windowStart: -1 })
-        .skip(skip)
-        .limit(limit)
-        .exec(),
-      this.usageModel.countDocuments(query),
-      this.usageModel.aggregate([
-        { $match: query },
-        {
-          $group: {
-            _id: null,
-            totalInputTokens: { $sum: '$inputTokens' },
-            totalOutputTokens: { $sum: '$outputTokens' },
-            totalTokens: { $sum: '$totalTokens' },
-            totalRequests: { $sum: '$requestCount' },
-            minDate: { $min: '$windowStart' },
-            maxDate: { $max: '$windowEnd' },
-          },
-        },
-      ]),
-    ]);
-
-    const summary = aggregation[0] || {
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      totalTokens: 0,
-      totalRequests: 0,
-      minDate: new Date(),
-      maxDate: new Date(),
-    };
+    const { records, total, summary } = await this.usageStore.getHistory(userId, {
+      startDate,
+      endDate,
+      limit,
+      skip,
+    });
 
     return {
       records: records.map((r) => this.mapUsageToResponse(r)),
@@ -489,20 +365,20 @@ export class UsageService implements OnApplicationBootstrap {
         totalOutputTokens: summary.totalOutputTokens,
         totalTokens: summary.totalTokens,
         totalRequests: summary.totalRequests,
-        periodStart: summary.minDate?.toISOString() || new Date().toISOString(),
-        periodEnd: summary.maxDate?.toISOString() || new Date().toISOString(),
+        periodStart: summary.minDate?.toISOString() ?? new Date().toISOString(),
+        periodEnd: summary.maxDate?.toISOString() ?? new Date().toISOString(),
       },
     };
   }
 
   // ==================== Helpers ====================
 
-  private mapPlanToResponse(plan: PlanDocument): PlanResponse {
+  private mapPlanToResponse(plan: PlanRecord): PlanResponse {
     return {
-      id: plan._id.toString(),
+      id: plan.id,
       name: plan.name,
       slug: plan.slug,
-      description: plan.description,
+      description: plan.description ?? undefined,
       tokenLimit: plan.tokenLimit,
       windowHours: plan.windowHours,
       requestsPerMinute: plan.requestsPerMinute,
@@ -521,10 +397,10 @@ export class UsageService implements OnApplicationBootstrap {
     };
   }
 
-  private mapUsageToResponse(usage: UsageDocument): UsageResponse {
+  private mapUsageToResponse(usage: UsageWindowRecord): UsageResponse {
     return {
-      id: usage._id.toString(),
-      userId: usage.userId.toString(),
+      id: usage.id,
+      userId: usage.userId,
       windowStart: usage.windowStart.toISOString(),
       windowEnd: usage.windowEnd.toISOString(),
       windowHours: usage.windowHours,
@@ -542,7 +418,7 @@ export class UsageService implements OnApplicationBootstrap {
   /**
    * Ensure user has a plan, assign default if not
    */
-  async ensureUserHasPlan(userId: string, currentPlanId?: Types.ObjectId): Promise<PlanDocument> {
+  async ensureUserHasPlan(userId: string, currentPlanId?: string): Promise<PlanRecord> {
     if (currentPlanId) {
       try {
         return await this.getPlanById(currentPlanId.toString());
@@ -557,13 +433,13 @@ export class UsageService implements OnApplicationBootstrap {
    * Assign a plan to a user
    * This is a helper that should be called when updating the user document
    */
-  getPlanAssignmentData(plan: PlanDocument): {
-    planId: Types.ObjectId;
+  getPlanAssignmentData(plan: PlanRecord): {
+    planId: string;
     planSlug: string;
     planStartedAt: Date;
   } {
     return {
-      planId: plan._id as Types.ObjectId,
+      planId: plan.id,
       planSlug: plan.slug,
       planStartedAt: new Date(),
     };

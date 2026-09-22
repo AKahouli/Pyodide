@@ -1,22 +1,35 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Inject, Injectable } from '@nestjs/common';
 import { NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
 import { GovernanceAccessService } from './governance-access.service';
 import { GovernanceProgramService } from './governance-program.service';
-import { GovernanceDeployment, GovernanceDeploymentDocument } from '../schemas/governance-deployment.schema';
-import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } from '../schemas/governance-deployment-revision.schema';
-import { GovernanceDryRun, GovernanceDryRunDocument } from '../schemas/governance-dry-run.schema';
-import { GovernanceMembership, GovernanceMembershipDocument } from '../schemas/governance-membership.schema';
-import { GovernanceMetric, GovernanceMetricDocument } from '../schemas/governance-metric.schema';
-import { GovernanceScope, GovernanceScopeDocument } from '../schemas/governance-scope.schema';
-import { GovernanceDocument, GovernanceDocumentDocument } from '../schemas/governance-document.schema';
-import { GovernanceWorkspaceBinding, GovernanceWorkspaceBindingDocument } from '../schemas/governance-workspace-binding.schema';
-import { WorkspaceDoc, WorkspaceDocumentDoc } from '@modules/workspace/schemas/workspace-document.schema';
-import { Agent, AgentDocument } from '@modules/agent/schemas/agent.schema';
+import {
+  BINDING_STORE,
+  DEPLOYMENT_STORE,
+  DRY_RUN_STORE,
+  GOVERNANCE_DOCUMENT_STORE,
+  MEMBERSHIP_STORE,
+  METRIC_STORE,
+  REVISION_STORE,
+  SCOPE_STORE,
+  type BindingStore,
+  type DeploymentStore,
+  type DryRunStore,
+  type GovernanceBindingRecord,
+  type GovernanceDeploymentRecord,
+  type GovernanceDocumentRecord,
+  type GovernanceDocumentStore,
+  type GovernanceDryRunRecord,
+  type GovernanceRevisionRecord,
+  type GovernanceScopeRecord,
+  type MembershipStore,
+  type MetricStore,
+  type RevisionStore,
+  type ScopeStore,
+} from '../persistence';
+import { WORKSPACE_DOCUMENT_READ_PORT, type WorkspaceDocumentReadPort } from '@modules/workspace/ports';
 import { AgentRepository } from '@modules/agent/repositories/agent.repository';
-import { User, UserDocument } from '@modules/user/schemas/user.schema';
 
 interface GovernanceActorSummary { id: string; displayName: string; email: string }
 
@@ -51,17 +64,17 @@ export interface GovernanceScopeOverview {
 @Injectable()
 export class GovernanceScopeOverviewService {
   constructor(
-    @InjectModel(GovernanceScope.name) private readonly scopeModel: Model<GovernanceScopeDocument>,
-    @InjectModel(GovernanceDocument.name) private readonly documentModel: Model<GovernanceDocumentDocument>,
-    @InjectModel(WorkspaceDoc.name) private readonly workspaceDocumentModel: Model<WorkspaceDocumentDoc>,
-    @InjectModel(GovernanceWorkspaceBinding.name) private readonly workspaceBindingModel: Model<GovernanceWorkspaceBindingDocument>,
-    @InjectModel(GovernanceDeployment.name) private readonly deploymentModel: Model<GovernanceDeploymentDocument>,
-    @InjectModel(GovernanceDeploymentRevision.name) private readonly revisionModel: Model<GovernanceDeploymentRevisionDocument>,
-    @InjectModel(GovernanceDryRun.name) private readonly dryRunModel: Model<GovernanceDryRunDocument>,
-    @InjectModel(GovernanceMembership.name) private readonly membershipModel: Model<GovernanceMembershipDocument>,
-    @InjectModel(GovernanceMetric.name) private readonly metricModel: Model<GovernanceMetricDocument>,
+    @Inject(SCOPE_STORE) private readonly scopeStore: ScopeStore,
+    @Inject(GOVERNANCE_DOCUMENT_STORE) private readonly documentStore: GovernanceDocumentStore,
+    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly workspaceDocumentReadPort: WorkspaceDocumentReadPort,
+    @Inject(BINDING_STORE) private readonly bindingStore: BindingStore,
+    @Inject(DEPLOYMENT_STORE) private readonly deploymentStore: DeploymentStore,
+    @Inject(REVISION_STORE) private readonly revisionStore: RevisionStore,
+    @Inject(DRY_RUN_STORE) private readonly dryRunStore: DryRunStore,
+    @Inject(MEMBERSHIP_STORE) private readonly membershipStore: MembershipStore,
+    @Inject(METRIC_STORE) private readonly metricStore: MetricStore,
     private readonly agentRepository: AgentRepository,
-    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @Inject(USER_LOOKUP_PORT) private readonly userLookup: UserLookupPort,
     private readonly programService: GovernanceProgramService,
     private readonly accessService: GovernanceAccessService,
   ) {}
@@ -70,23 +83,23 @@ export class GovernanceScopeOverviewService {
     await this.programService.assertOwnedProgram(actorId, programId);
     await this.accessService.assertScopeAccess(actorId, programId, scopeId);
     const [scope, workspaceBindings, deployment] = await Promise.all([
-      this.scopeModel.findOne({ _id: new Types.ObjectId(scopeId), programId: new Types.ObjectId(programId) }).lean().exec(),
+      this.scopeStore.findByProgramAndId(programId, scopeId),
       this.loadEffectiveWorkspaceBindings(programId, scopeId),
-      this.deploymentModel.findOne({ programId: new Types.ObjectId(programId), scopeId: new Types.ObjectId(scopeId) }).sort({ updatedAt: -1 }).lean().exec(),
+      this.deploymentStore.findByProgramAndScope(programId, scopeId),
     ]);
     if (!scope) throw new NotFoundException(ErrorCode.GOVERNANCE_SCOPE_NOT_FOUND);
-    const documents = await this.loadEffectiveDocuments(programId, workspaceBindings.map((binding) => String(binding.workspaceId)));
+    const documents = await this.loadEffectiveDocuments(programId, workspaceBindings.map((binding) => binding.workspaceId));
     const [draftRevision, publishedRevision, latestDryRun, scopeMemberships, metrics, mappedAgents, canApprove] = await Promise.all([
       this.findRevision(deployment?.currentDraftRevisionId),
       this.findRevision(deployment?.currentPublishedRevisionId),
-      this.findLatestDryRun(deployment?._id),
+      this.findLatestDryRun(deployment?.id),
       this.findScopeMemberships(programId, scopeId),
-      this.metricModel.find({ programId: new Types.ObjectId(programId), scopeId: new Types.ObjectId(scopeId) }).lean().exec(),
+      this.metricStore.listByProgramAndScope(programId, scopeId),
       this.findMappedAgents(scope.agentIds ?? []),
       this.accessService.canActInScopeRole(actorId, programId, scopeId, ['scope_approver']),
     ]);
     const checks = this.buildChecks(scope, documents, workspaceBindings.length > 0, draftRevision, latestDryRun, scopeMemberships, mappedAgents);
-    const revisionActors = await this.findRevisionActors([draftRevision, publishedRevision]);
+    const revisionActors = await this.findRevisionActors([draftRevision, publishedRevision] as unknown as Array<Record<string, unknown> | null>);
     const sharedWorkspaces = workspaceBindings.filter((binding) => binding.visibility === 'program_shared');
     const localWorkspaces = workspaceBindings.filter((binding) => binding.visibility !== 'program_shared');
     return {
@@ -94,8 +107,8 @@ export class GovernanceScopeOverviewService {
       authorization: { canApprove },
       readiness: this.buildReadiness(checks),
       knowledge: {
-        sharedWorkspaces,
-        localWorkspaces,
+        sharedWorkspaces: sharedWorkspaces as unknown as Record<string, unknown>[],
+        localWorkspaces: localWorkspaces as unknown as Record<string, unknown>[],
         documents,
         reviewBlockers: checks.filter((check) => check.targetType === 'document' && check.status !== 'passed'),
       },
@@ -105,46 +118,46 @@ export class GovernanceScopeOverviewService {
       publishedRevision: publishedRevision ? this.revisionToResponse(publishedRevision, revisionActors) : undefined,
       channels: (deployment?.channels as Record<string, unknown>) ?? {},
       latestDryRun: latestDryRun ? this.dryRunToResponse(latestDryRun) : undefined,
-      metricsSummary: this.summarizeMetrics(metrics),
+      metricsSummary: this.summarizeMetrics(metrics as unknown as Array<Record<string, unknown>>),
     };
   }
 
   private async loadEffectiveDocuments(programId: string, workspaceIds: string[]): Promise<Record<string, unknown>[]> {
     if (workspaceIds.length === 0) return [];
-    const governanceDocuments = await this.documentModel.find({ programId: new Types.ObjectId(programId), workspaceId: { $in: workspaceIds.map((id) => new Types.ObjectId(id)) }, status: { $ne: 'archived' } }).sort({ updatedAt: -1 }).lean().exec();
-    const artifacts = await this.workspaceDocumentModel.find({ _id: { $in: governanceDocuments.map((document) => document.documentId) }, isFolder: false }).lean().exec();
-    const byId = new Map(artifacts.map((artifact) => [artifact._id.toString(), artifact]));
+    const governanceDocuments = await this.documentStore.listForProgramWorkspaces(programId, workspaceIds, false);
+    const artifacts = await this.workspaceDocumentReadPort.find({ ids: governanceDocuments.map((document) => document.documentId), isFolder: false });
+    const byId = new Map(artifacts.map((artifact) => [artifact.id, artifact]));
     return governanceDocuments.map((governance) => {
-      const document = byId.get(governance.documentId.toString());
-      return { id: governance._id.toString(), programId: governance.programId.toString(), documentId: governance.documentId.toString(), workspaceId: governance.workspaceId.toString(), document: document ? { originalName: document.originalName, mimeType: document.mimeType, type: document.type, sourceUrl: document.sourceUrl, contentHash: document.contentHash, status: document.status, indexingStatus: document.indexingStatus, updatedAt: document.updatedAt } : undefined, governance: { status: governance.status, validity: governance.validity, tags: governance.tags, metadata: governance.metadata, ownerUserId: governance.ownerUserId?.toString(), ownerScopeId: governance.ownerScopeId?.toString(), updatedAt: governance.updatedAt } };
+      const document = byId.get(governance.documentId);
+      return { id: governance.id, programId: governance.programId, documentId: governance.documentId, workspaceId: governance.workspaceId, document: document ? { originalName: document.originalName, mimeType: document.mimeType, type: document.type, sourceUrl: document.sourceUrl, contentHash: document.contentHash, status: document.status, indexingStatus: document.indexingStatus, updatedAt: document.updatedAt } : undefined, governance: { status: governance.status, validity: governance.validity, tags: governance.tags, metadata: governance.metadata, ownerUserId: governance.ownerUserId, ownerScopeId: governance.ownerScopeId, updatedAt: governance.updatedAt } };
     });
   }
 
-  private async loadEffectiveWorkspaceBindings(programId: string, scopeId: string): Promise<Record<string, unknown>[]> {
-    return this.workspaceBindingModel.find({ programId: new Types.ObjectId(programId), enabled: true, $or: [{ visibility: 'program_shared' }, { scopeIds: new Types.ObjectId(scopeId) }] }).lean().exec();
+  private async loadEffectiveWorkspaceBindings(programId: string, scopeId: string): Promise<GovernanceBindingRecord[]> {
+    return this.bindingStore.listEnabled(programId, [scopeId]);
   }
 
-  private async findRevision(revisionId?: Types.ObjectId): Promise<Record<string, unknown> | null> {
+  private async findRevision(revisionId?: string): Promise<GovernanceRevisionRecord | null> {
     if (!revisionId) return null;
-    return this.revisionModel.findById(revisionId).lean().exec();
+    return this.revisionStore.findById(revisionId);
   }
 
-  private async findLatestDryRun(deploymentId?: Types.ObjectId): Promise<Record<string, unknown> | null> {
+  private async findLatestDryRun(deploymentId?: string): Promise<GovernanceDryRunRecord | null> {
     if (!deploymentId) return null;
-    return this.dryRunModel.findOne({ deploymentId }).sort({ createdAt: -1 }).lean().exec();
+    return this.dryRunStore.findLatestByDeployment(deploymentId);
   }
 
-  private buildChecks(scope: Record<string, unknown>, documents: Record<string, unknown>[], hasWorkspaceBinding: boolean, draftRevision: Record<string, unknown> | null, latestDryRun: Record<string, unknown> | null, memberships: Record<string, unknown>[], agents: Record<string, unknown>[]): GovernanceScopeOverviewCheck[] {
+  private buildChecks(scope: GovernanceScopeRecord, documents: Record<string, unknown>[], hasWorkspaceBinding: boolean, draftRevision: GovernanceRevisionRecord | null, latestDryRun: GovernanceDryRunRecord | null, memberships: Array<Record<string, unknown>>, agents: Record<string, unknown>[]): GovernanceScopeOverviewCheck[] {
     const agentIds = Array.isArray(scope.agentIds) ? scope.agentIds : [];
     const knowledge = scope.knowledge as { sourceMode?: string } | undefined;
     // LLM-only scopes need no mapped workspaces; legacy scopes without the
     // knowledge setting keep the workspace-binding requirement.
     const knowledgeConfigured = knowledge?.sourceMode === 'llm_only' || hasWorkspaceBinding;
-    const ownershipAssigned = memberships.some((membership) => membership.status === 'active' && String(membership.role) === 'scope_approver');
+    const ownershipAssigned = (memberships as Array<Record<string, unknown>>).some((membership) => membership.status === 'active' && String(membership.role) === 'scope_approver');
     const guardrailsReviewed = agents.length > 0 && agents.every((agent) => this.hasAnyGuardrailEnabled(agent));
     const audience = scope.audience as { mode?: string; userIds?: unknown[]; groupIds?: unknown[] } | undefined;
     const audienceConfigured = audience?.mode === 'all_authenticated' || Boolean(audience?.userIds?.length || audience?.groupIds?.length);
-    const roster = (draftRevision?.allowedAgentIds as unknown[] | undefined) ?? (draftRevision?.agentId ? [draftRevision.agentId] : []);
+    const roster = draftRevision?.allowedAgentIds ?? (draftRevision?.agentId ? [draftRevision.agentId] : []);
     const mappedAgentIds = new Set(agentIds.map(String));
     const rosterValid = roster.length > 0 && roster.every((id) => mappedAgentIds.has(String(id)));
     const workspaceSetValid = draftRevision !== null && Array.isArray(draftRevision.workspaceIds);
@@ -155,7 +168,7 @@ export class GovernanceScopeOverviewService {
       this.check('ownership_assigned', 'Ownership assigned', ownershipAssigned, 'blocking', 'rule'),
       this.check('guardrails_reviewed', 'Guardrails reviewed', guardrailsReviewed, 'warning', 'agent'),
       this.check('draft_revision', 'Draft revision exists', Boolean(draftRevision), 'blocking', 'rule'),
-      this.check('dry_run_passed', 'Dry-run passed', latestDryRun?.status === 'passed' && String(latestDryRun.revisionId) === String(draftRevision?._id), 'warning', 'dry_run'),
+      this.check('dry_run_passed', 'Dry-run passed', latestDryRun?.status === 'passed' && String(latestDryRun.revisionId) === String(draftRevision?.id), 'warning', 'dry_run'),
       this.check('audience_configured', 'Audience configured', audienceConfigured, 'warning', 'audience'),
       this.check('published_agent_roster_valid', 'Published assistant roster valid', rosterValid, 'blocking', 'agent'),
       this.check('published_workspace_set_valid', 'Published knowledge set valid', workspaceSetValid, 'blocking', 'workspace'),
@@ -163,28 +176,26 @@ export class GovernanceScopeOverviewService {
     ];
   }
 
-  private async findScopeMemberships(programId: string, scopeId: string): Promise<Record<string, unknown>[]> {
-    return this.membershipModel.find({
-      programId: new Types.ObjectId(programId),
-      status: 'active',
-      $or: [{ scopeId: null }, { scopeId: new Types.ObjectId(scopeId) }],
-    }).lean().exec();
+  private async findScopeMemberships(programId: string, scopeId: string): Promise<Array<Record<string, unknown>>> {
+    const memberships = await this.membershipStore.listByProgram(programId);
+    return memberships
+      .filter((membership) => membership.status === 'active' && (!membership.scopeId || membership.scopeId === scopeId))
+      .map((membership) => membership as unknown as Record<string, unknown>);
   }
 
   private async findMappedAgents(agentIds: unknown[]): Promise<Record<string, unknown>[]> {
-    const ids = Array.isArray(agentIds) ? agentIds.filter((id): id is Types.ObjectId | string => Boolean(id)) : [];
+    const ids = Array.isArray(agentIds) ? agentIds.filter((id): id is string => Boolean(id)) : [];
     if (ids.length === 0) return [];
     return this.agentRepository.findByIds(ids.map(String)) as unknown as Promise<Record<string, unknown>[]>;
   }
 
-  private async findRevisionActors(revisions: Array<Record<string, unknown> | null>): Promise<Map<string, GovernanceActorSummary>> {
-    const ids = [...new Set(revisions.flatMap((revision) => [revision?.createdBy, revision?.publishedBy]).filter(Boolean).map(String))];
+  private async findRevisionActors(revisions: Array<unknown>): Promise<Map<string, GovernanceActorSummary>> {
+    const ids = [...new Set(revisions.flatMap((revision) => [(revision as { createdBy?: string } | null)?.createdBy, (revision as { publishedBy?: string } | null)?.publishedBy]).filter(Boolean).map(String))];
     if (ids.length === 0) return new Map();
-    const users = await this.userModel.find({ _id: { $in: ids.map((id) => new Types.ObjectId(id)) } }).select('email profile').lean().exec();
-    return new Map(users.map((user) => {
-      const profile = user.profile as { firstName?: string; lastName?: string } | undefined;
-      const displayName = [profile?.firstName, profile?.lastName].filter(Boolean).join(' ').trim() || user.email;
-      return [user._id.toString(), { id: user._id.toString(), displayName, email: user.email }];
+    const users = await this.userLookup.byIds(ids);
+    return new Map([...users.values()].map((user) => {
+      const displayName = [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || user.email;
+      return [user.id, { id: user.id, displayName, email: user.email }];
     }));
   }
 
@@ -212,12 +223,12 @@ export class GovernanceScopeOverviewService {
     return { score, status: blockers.length ? 'blocked' : warnings.length ? 'warning' : 'ready', blockers, warnings, checks };
   }
 
-  private buildAgentSummary(agentIds: Types.ObjectId[]): GovernanceScopeOverview['agents'] {
-    const mappedAgents = agentIds.map((id, index) => ({ id: id.toString(), isPrimary: index === 0 }));
+  private buildAgentSummary(agentIds: string[]): GovernanceScopeOverview['agents'] {
+    const mappedAgents = agentIds.map((id, index) => ({ id, isPrimary: index === 0 }));
     return { mappedAgents, primaryAgentId: mappedAgents[0]?.id, missingAgent: mappedAgents.length === 0 };
   }
 
-  private summarizeMetrics(metrics: Record<string, unknown>[]): GovernanceScopeOverview['metricsSummary'] {
+  private summarizeMetrics(metrics: Array<Record<string, unknown>>): GovernanceScopeOverview['metricsSummary'] {
     const initialSummary: GovernanceScopeOverview['metricsSummary'] = { totalEvents: 0, byChannel: {}, byType: {} };
     return metrics.reduce<GovernanceScopeOverview['metricsSummary']>((summary, metric) => {
       const value = Number(metric.value ?? 0);
@@ -230,28 +241,26 @@ export class GovernanceScopeOverviewService {
     }, initialSummary);
   }
 
-  private scopeToResponse(doc: Record<string, unknown>): Record<string, unknown> {
-    const knowledge = (doc.knowledge ?? {}) as Record<string, unknown>;
-    return { id: String(doc._id), programId: String(doc.programId), parentScopeId: this.optionalId(doc.parentScopeId), name: doc.name, type: doc.type, status: doc.status, agentIds: this.toStrings(doc.agentIds), metadata: doc.metadata ?? {}, knowledge: { sourceMode: knowledge.sourceMode ?? 'llm_only', webSourcesEnabled: knowledge.webSourcesEnabled ?? false, webAllowedDomains: knowledge.webAllowedDomains ?? [], webBlockedDomains: knowledge.webBlockedDomains ?? [] }, createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
+  private scopeToResponse(scope: GovernanceScopeRecord): Record<string, unknown> {
+    const knowledge = scope.knowledge ?? { sourceMode: 'llm_only' as const, webSourcesEnabled: false, webAllowedDomains: [] as string[], webBlockedDomains: [] as string[] };
+    return { id: scope.id, programId: scope.programId, parentScopeId: scope.parentScopeId, name: scope.name, type: scope.type, status: scope.status, agentIds: scope.agentIds ?? [], metadata: scope.metadata ?? {}, knowledge: { sourceMode: knowledge.sourceMode ?? 'llm_only', webSourcesEnabled: knowledge.webSourcesEnabled ?? false, webAllowedDomains: knowledge.webAllowedDomains ?? [], webBlockedDomains: knowledge.webBlockedDomains ?? [] }, createdAt: this.toIso(scope.createdAt), updatedAt: this.toIso(scope.updatedAt) };
   }
 
-  private deploymentToResponse(doc: Record<string, unknown>): Record<string, unknown> {
-    return { id: String(doc._id), programId: String(doc.programId), scopeId: String(doc.scopeId), name: doc.name, status: doc.status, currentDraftRevisionId: this.optionalId(doc.currentDraftRevisionId), currentPublishedRevisionId: this.optionalId(doc.currentPublishedRevisionId), channels: doc.channels ?? {}, createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
+  private deploymentToResponse(deployment: GovernanceDeploymentRecord): Record<string, unknown> {
+    return { id: deployment.id, programId: deployment.programId, scopeId: deployment.scopeId, name: deployment.name, status: deployment.status, currentDraftRevisionId: deployment.currentDraftRevisionId, currentPublishedRevisionId: deployment.currentPublishedRevisionId, channels: deployment.channels ?? {}, createdAt: this.toIso(deployment.createdAt), updatedAt: this.toIso(deployment.updatedAt) };
   }
 
-  private revisionToResponse(doc: Record<string, unknown>, actors: Map<string, GovernanceActorSummary>): Record<string, unknown> {
-    const allowedAgentIds = this.toStrings(doc.allowedAgentIds);
-    const createdBy = String(doc.createdBy);
-    const publishedBy = this.optionalId(doc.publishedBy);
-    return { id: String(doc._id), deploymentId: String(doc.deploymentId), revisionNumber: doc.revisionNumber, status: doc.status, agentId: String(doc.agentId), allowedAgentIds: allowedAgentIds.length > 0 ? allowedAgentIds : [String(doc.agentId)], workspaceIds: this.toStrings(doc.workspaceIds), workspaceBindingSnapshot: doc.workspaceBindingSnapshot ?? {}, configurationFingerprint: doc.configurationFingerprint, scopeSnapshot: doc.scopeSnapshot ?? {}, audienceSnapshot: doc.audienceSnapshot ?? {}, previousAudienceSnapshot: doc.previousAudienceSnapshot ?? {}, createdBy, createdByUser: actors.get(createdBy), publishedBy, publishedByUser: publishedBy ? actors.get(publishedBy) : undefined, publishedAt: this.toOptionalIso(doc.publishedAt), createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
+  private revisionToResponse(revision: GovernanceRevisionRecord, actors: Map<string, GovernanceActorSummary>): Record<string, unknown> {
+    const allowedAgentIds = revision.allowedAgentIds ?? [];
+    const createdBy = String(revision.createdBy);
+    const publishedBy = revision.publishedBy;
+    return { id: revision.id, deploymentId: revision.deploymentId, revisionNumber: revision.revisionNumber, status: revision.status, agentId: String(revision.agentId ?? ''), allowedAgentIds: allowedAgentIds.length > 0 ? allowedAgentIds : [String(revision.agentId ?? '')], workspaceIds: revision.workspaceIds ?? [], workspaceBindingSnapshot: revision.workspaceBindingSnapshot ?? {}, configurationFingerprint: revision.configurationFingerprint, scopeSnapshot: revision.scopeSnapshot ?? {}, audienceSnapshot: revision.audienceSnapshot ?? {}, previousAudienceSnapshot: revision.previousAudienceSnapshot ?? {}, createdBy, createdByUser: actors.get(createdBy), publishedBy, publishedByUser: publishedBy ? actors.get(publishedBy) : undefined, publishedAt: this.toOptionalIso(revision.publishedAt), createdAt: this.toIso(revision.createdAt), updatedAt: this.toIso(revision.updatedAt) };
   }
 
-  private dryRunToResponse(doc: Record<string, unknown>): Record<string, unknown> {
-    return { id: String(doc._id), programId: String(doc.programId), scopeId: String(doc.scopeId), deploymentId: String(doc.deploymentId), revisionId: String(doc.revisionId), conversationId: this.optionalId(doc.conversationId), testerId: String(doc.testerId), status: doc.status, testCases: doc.testCases ?? [], checks: doc.checks ?? {}, createdAt: this.toIso(doc.createdAt), updatedAt: this.toIso(doc.updatedAt) };
+  private dryRunToResponse(dryRun: GovernanceDryRunRecord): Record<string, unknown> {
+    return { id: dryRun.id, programId: dryRun.programId, scopeId: dryRun.scopeId, deploymentId: dryRun.deploymentId, revisionId: dryRun.revisionId, conversationId: dryRun.conversationId, testerId: dryRun.testerId, status: dryRun.status, testCases: dryRun.testCases ?? [], checks: dryRun.checks ?? {}, createdAt: this.toIso(dryRun.createdAt), updatedAt: this.toIso(dryRun.updatedAt) };
   }
 
-  private toStrings(value: unknown): string[] { return Array.isArray(value) ? value.map((id) => id.toString()) : []; }
-  private optionalId(value: unknown): string | undefined { return value ? value.toString() : undefined; }
   private toIso(value: unknown): string { return value instanceof Date ? value.toISOString() : String(value ?? ''); }
   private toOptionalIso(value: unknown): string | undefined { return value ? this.toIso(value) : undefined; }
 }

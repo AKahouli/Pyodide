@@ -263,7 +263,7 @@ def apply_litellm_debug_patch():
             else:
                 kwargs["model"] = model_str
             
-            kwargs["timeout"] = 700 # Increase timeout for judge
+            kwargs.setdefault("timeout", 700) # Increase timeout for judge
             
             try:
                 res = await orig_acompletion(*args, **kwargs)
@@ -313,7 +313,7 @@ def apply_litellm_debug_patch():
             else:
                 kwargs["model"] = model_str
             
-            kwargs["timeout"] = 300
+            kwargs.setdefault("timeout", 300)
             
             try:
                 res = orig_completion(*args, **kwargs)

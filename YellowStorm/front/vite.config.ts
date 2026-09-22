@@ -2,7 +2,7 @@ import path from 'path';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import nodepod from '@scelar/nodepod/vite';
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 
 function getManualChunk(id: string): string | undefined {
   if (!id.includes('node_modules')) {
@@ -50,7 +50,10 @@ function getManualChunk(id: string): string | undefined {
     return 'vendor-pdf';
   }
 
-  if (id.includes('/node_modules/@cyntler/react-doc-viewer/')) {
+  if (
+    id.includes('/node_modules/docx-preview/')
+    || id.includes('/node_modules/docx/')
+  ) {
     return 'vendor-doc-viewer';
   }
 
@@ -70,7 +73,7 @@ function getManualChunk(id: string): string | undefined {
   return undefined;
 }
 
-export default defineConfig(() => {
+export default defineConfig(({ mode }) => {
   // Nodepod needs SharedArrayBuffer → COOP + COEP on the document origin.
   // Prefer credentialless over require-corp so cross-origin S3/API fetches
   // (no CORP headers) keep working.
@@ -78,6 +81,11 @@ export default defineConfig(() => {
     'Cross-Origin-Opener-Policy': 'same-origin',
     'Cross-Origin-Embedder-Policy': 'credentialless',
   };
+
+  // Dev/preview port configurable through `.env` via `VITE_PORT` (default 5173).
+  const env = loadEnv(mode, process.cwd(), '');
+  const parsedPort = Number.parseInt(env.VITE_PORT ?? process.env.VITE_PORT ?? '', 10);
+  const port = Number.isNaN(parsedPort) ? 5173 : parsedPort;
 
   return {
     base: '/',
@@ -91,10 +99,12 @@ export default defineConfig(() => {
       },
     },
     server: {
+      port,
       hmr: false,
       headers: crossOriginIsolationHeaders,
     },
     preview: {
+      port,
       headers: crossOriginIsolationHeaders,
     },
     resolve: {
@@ -104,7 +114,7 @@ export default defineConfig(() => {
       dedupe: ['react', 'react-dom'],
     },
     optimizeDeps: {
-      include: ['@embedpdf/react-pdf-viewer', '@embedpdf/snippet', '@cyntler/react-doc-viewer'],
+      include: ['@embedpdf/react-pdf-viewer', '@embedpdf/snippet'],
       dedupe: ['react', 'react-dom'],
       esbuildOptions: {
         target: 'es2022',

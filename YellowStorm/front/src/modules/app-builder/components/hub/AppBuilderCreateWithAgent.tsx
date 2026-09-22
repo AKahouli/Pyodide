@@ -59,24 +59,24 @@ export function AppBuilderCreateWithAgent() {
   return (
     <section
       className={cn(
-        'relative overflow-hidden rounded-2xl border border-border/60',
-        'bg-card/50 shadow-sm',
+        'relative overflow-hidden rounded-2xl border border-border/70',
+        'bg-card/60 shadow-sm',
         'before:pointer-events-none before:absolute before:inset-0 before:bg-gradient-to-br',
-        'before:from-sky-500/[0.07] before:via-transparent before:to-transparent',
+        'before:from-primary/[0.07] before:via-transparent before:to-transparent',
       )}
       aria-labelledby='app-builder-create-heading'
       aria-busy={isSending}
     >
-      <div className='relative space-y-4 p-4 sm:p-5'>
+      <div className='relative space-y-4 p-4 sm:p-6'>
         <div className='flex gap-3 sm:gap-4'>
           <div
             className={cn(
-              'flex h-11 w-11 shrink-0 items-center justify-center rounded-xl',
-              'bg-sky-500/12 text-sky-700 dark:bg-sky-500/25 dark:text-sky-300',
+              'flex size-11 shrink-0 items-center justify-center rounded-xl',
+              'bg-primary/10 text-primary ring-1 ring-inset ring-primary/15',
             )}
             aria-hidden
           >
-            <Bot className='h-5 w-5' />
+            <Bot className='size-5' />
           </div>
           <div className='min-w-0 flex-1 pt-0.5'>
             <p className='text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground'>
@@ -98,7 +98,7 @@ export function AppBuilderCreateWithAgent() {
           className={cn(
             'rounded-xl border border-border/70 bg-background/90 p-2.5 sm:p-3',
             'ring-1 ring-border/40 transition-[box-shadow,border-color] duration-200',
-            'focus-within:border-sky-500/40 focus-within:ring-2 focus-within:ring-sky-500/20',
+            'focus-within:border-primary/35 focus-within:ring-2 focus-within:ring-primary/15',
             isSending && 'pointer-events-none opacity-70',
           )}
         >
@@ -114,7 +114,7 @@ export function AppBuilderCreateWithAgent() {
         <div className='flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between'>
           <div className='min-w-0'>
             <p className='mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground'>
-              <Sparkles className='h-3 w-3 shrink-0' aria-hidden />
+              <Sparkles className='size-3 shrink-0' aria-hidden />
               {t('createWithAgent.suggestions.label')}
             </p>
             <div className='flex flex-wrap gap-1.5' role='list'>
@@ -130,8 +130,8 @@ export function AppBuilderCreateWithAgent() {
                     className={cn(
                       'max-w-full truncate rounded-full border border-border/70 bg-background/80',
                       'px-2.5 py-1 text-left text-xs text-foreground/90',
-                      'transition-colors hover:border-sky-500/35 hover:bg-sky-500/8',
-                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/35',
+                      'transition-colors hover:border-primary/30 hover:bg-primary/5',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
                       'disabled:pointer-events-none disabled:opacity-50',
                     )}
                   >
@@ -144,7 +144,7 @@ export function AppBuilderCreateWithAgent() {
 
           {isSending ? (
             <p className='inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground'>
-              <Loader2 className='h-3.5 w-3.5 animate-spin' aria-hidden />
+              <Loader2 className='size-3.5 animate-spin' aria-hidden />
               {t('createWithAgent.sending')}
             </p>
           ) : null}

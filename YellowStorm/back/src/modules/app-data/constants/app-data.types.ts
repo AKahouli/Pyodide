@@ -62,13 +62,15 @@ export interface AppDataRuntimeEnv {
 
 export type AppDataEndUserStatus = 'active' | 'disabled';
 
-export type AppDataGrantOperation = 'create' | 'read' | 'update' | 'delete';
+export type AppDataGrantOperation = 'create' | 'read' | 'update' | 'delete' | 'useAi';
 
 export interface AppDataEndUserGrants {
   create: boolean;
   read: boolean;
   update: boolean;
   delete: boolean;
+  /** Allow AI Proxy chat/completions for this end-user (deny by default). */
+  useAi: boolean;
 }
 
 export interface AppDataEndUserSummary {

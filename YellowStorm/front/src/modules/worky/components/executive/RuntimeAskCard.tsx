@@ -17,10 +17,14 @@ export function RuntimeAskCard({ streamId, ask }: { streamId: string; ask: Worky
   const notifySendError = useWorkyUiStore((state) => state.notifySendError);
 
   const submit = (): void => {
-    const content = answer.trim();
-    if (!ask.active || !content || send.isPending) return;
+    const text = answer.trim();
+    if (!ask.active || !text || send.isPending) return;
     const turnId = crypto.randomUUID();
     beginTurn(turnId);
+    // Target THIS ask by its interrupt id (card-only answers): with several asks
+    // open the answer resolves the right one, never the session default. The chat
+    // shows just the typed text (formatChoiceSubmissionContent unwraps the payload).
+    const content = JSON.stringify({ askInterruptId: ask.interruptId, answer: text });
     send.mutate({ content, turnId }, {
       onSuccess: () => setAnswer(''),
       onError: (error) => {
@@ -32,9 +36,9 @@ export function RuntimeAskCard({ streamId, ask }: { streamId: string; ask: Worky
 
   return (
     <article className='rounded-xl border border-amber-500/25 bg-amber-500/[0.06] p-4'>
-      <div className='flex items-center justify-between gap-3'>
-        <p className='font-medium text-foreground'>{ask.question}</p>
-        <span className='shrink-0 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300'>
+      <div className='flex items-start justify-between gap-3'>
+        <p className='min-w-0 whitespace-pre-wrap break-words font-medium text-foreground'>{ask.question}</p>
+        <span className='mt-0.5 shrink-0 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300'>
           {t(ask.active ? 'executive.needsYou.active' : 'executive.needsYou.parked')}
         </span>
       </div>

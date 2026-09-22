@@ -195,6 +195,8 @@ export const appDataEndUserGrants = appDataSchema.table(
     canRead: boolean('can_read').notNull().default(false),
     canUpdate: boolean('can_update').notNull().default(false),
     canDelete: boolean('can_delete').notNull().default(false),
+    /** Nest-local only. With APP_DATA_REMOTE=true, AI grant lives in MS ACL (`use_ai`). */
+    canUseAi: boolean('can_use_ai').notNull().default(false),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex('uq_app_data_end_user_grants_app_user').on(t.appId, t.userId)],

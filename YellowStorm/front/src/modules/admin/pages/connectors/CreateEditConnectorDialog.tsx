@@ -27,6 +27,8 @@ import type {
   ConnectorCategoryResponse,
   ConnectorDynamicHeader,
   ConnectorDynamicHeaderSource,
+  ConnectorActionResultKind,
+  ConnectorCitationMode,
   SkillResponse,
   McpToolDefinition,
 } from '../../types';
@@ -64,19 +66,47 @@ const TRANSPORT_TYPES = [
   { value: 'stdio', label: 'Stdio (local command)' },
 ];
 
+const RESULT_KIND_OPTIONS = [
+  { value: 'generic', labelKey: 'connectors.form.actions.resultKind.generic' },
+  { value: 'web_search', labelKey: 'connectors.form.actions.resultKind.web_search' },
+  { value: 'web_fetch', labelKey: 'connectors.form.actions.resultKind.web_fetch' },
+  { value: 'document_search', labelKey: 'connectors.form.actions.resultKind.document_search' },
+  { value: 'file_read', labelKey: 'connectors.form.actions.resultKind.file_read' },
+  { value: 'database_query', labelKey: 'connectors.form.actions.resultKind.database_query' },
+] as const;
+
+const CITATION_MODE_OPTIONS = [
+  { value: 'none', labelKey: 'connectors.form.actions.citationMode.none' },
+  { value: 'source_only', labelKey: 'connectors.form.actions.citationMode.source_only' },
+  { value: 'text_fragment', labelKey: 'connectors.form.actions.citationMode.text_fragment' },
+  { value: 'document_evidence', labelKey: 'connectors.form.actions.citationMode.document_evidence' },
+] as const;
+
+const WEB_SEARCH_MAPPING_FIELDS = [
+  { value: 'title', labelKey: 'connectors.form.actions.mapping.title' },
+  { value: 'url', labelKey: 'connectors.form.actions.mapping.url' },
+  { value: 'snippet', labelKey: 'connectors.form.actions.mapping.snippet' },
+  { value: 'content', labelKey: 'connectors.form.actions.mapping.content' },
+  { value: 'publishedAt', labelKey: 'connectors.form.actions.mapping.publishedAt' },
+  { value: 'author', labelKey: 'connectors.form.actions.mapping.author' },
+] as const;
+
+const WEB_FETCH_MAPPING_FIELDS = WEB_SEARCH_MAPPING_FIELDS.filter(({ value }) => ['title', 'url', 'content'].includes(value));
+
 const RUNTIME_AUTH_STRATEGIES = [
   { value: 'http_header_bearer', label: 'Bearer header' },
   { value: 'custom_headers', label: 'Custom headers' },
   { value: 'env_vars', label: 'Environment variables' },
 ];
 
-const DYNAMIC_HEADER_SOURCES: Array<{ value: ConnectorDynamicHeaderSource; label: string }> = [
-  { value: 'user_id', label: 'User ID' },
-  { value: 'user_email', label: 'User email' },
-  { value: 'user_first_name', label: 'User first name' },
-  { value: 'user_last_name', label: 'User last name' },
-  { value: 'user_full_name', label: 'User full name' },
-];
+const DYNAMIC_HEADER_SOURCES = [
+  { value: 'workspace', labelKey: 'connectors.form.dynamicHeaders.sources.workspace' },
+  { value: 'user_id', labelKey: 'connectors.form.dynamicHeaders.sources.userId' },
+  { value: 'user_email', labelKey: 'connectors.form.dynamicHeaders.sources.userEmail' },
+  { value: 'user_first_name', labelKey: 'connectors.form.dynamicHeaders.sources.userFirstName' },
+  { value: 'user_last_name', labelKey: 'connectors.form.dynamicHeaders.sources.userLastName' },
+  { value: 'user_full_name', labelKey: 'connectors.form.dynamicHeaders.sources.userFullName' },
+] as const satisfies ReadonlyArray<{ value: ConnectorDynamicHeaderSource; labelKey: string }>;
 
 function createDynamicHeaderRow(
   headerName = '',
@@ -200,7 +230,7 @@ function mapInspectToolsToActions(
   existingActions: ConnectorActionResponse[] = [],
 ): ConnectorActionResponse[] {
   const enabledByKey = new Map(
-    existingActions.map((action) => [action.key, action.isEnabled !== false]),
+    existingActions.map((action) => [action.key, action]),
   );
 
   return tools.map((tool) => ({
@@ -215,7 +245,10 @@ function mapInspectToolsToActions(
     safety: 'read',
     supportsBatch: false,
     supportsIteration: false,
-    isEnabled: enabledByKey.get(truncateValue(tool.name, CONNECTOR_ACTION_KEY_MAX_LENGTH)) ?? true,
+    isEnabled: enabledByKey.get(truncateValue(tool.name, CONNECTOR_ACTION_KEY_MAX_LENGTH))?.isEnabled ?? true,
+    resultKind: enabledByKey.get(truncateValue(tool.name, CONNECTOR_ACTION_KEY_MAX_LENGTH))?.resultKind ?? 'generic',
+    citationMode: enabledByKey.get(truncateValue(tool.name, CONNECTOR_ACTION_KEY_MAX_LENGTH))?.citationMode ?? 'none',
+    resultMapping: enabledByKey.get(truncateValue(tool.name, CONNECTOR_ACTION_KEY_MAX_LENGTH))?.resultMapping,
   }));
 }
 
@@ -608,6 +641,30 @@ export function CreateEditConnectorDialog({
     });
   };
 
+  const updateSelectedAction = (patch: Partial<ConnectorActionResponse>) => {
+    if (!selectedActionKeyForDisplay) return;
+    setForm((current) => {
+      const actions = (current.actions ?? []).map((action) =>
+        action.key === selectedActionKeyForDisplay ? { ...action, ...patch } : action,
+      );
+      return { ...current, actions, actionsJson: JSON.stringify(actions, null, 2) };
+    });
+  };
+
+  const updateMapping = (field: string, value: string) => {
+    if (!selectedAction) return;
+    const resultMapping = { ...(selectedAction.resultMapping ?? {}) };
+    if (field === 'itemsPath') {
+      resultMapping.itemsPath = value;
+    } else {
+      resultMapping.fields = {
+        ...(resultMapping.fields ?? {}),
+        [field]: value.split(',').map((item) => item.trim()).filter(Boolean),
+      };
+    }
+    updateSelectedAction({ resultMapping });
+  };
+
   const connectorActions = form.actions ?? [];
   const selectedAction = connectorActions.find((action) => action.key === selectedActionKey) ?? connectorActions[0];
   const selectedActionKeyForDisplay = selectedAction?.key ?? null;
@@ -924,7 +981,7 @@ export function CreateEditConnectorDialog({
               <div>
                 <Label>Dynamic headers</Label>
                 <p className='text-sm text-muted-foreground'>
-                  Headers automatically filled at runtime from the calling user (e.g. X-User-Id → user_id).
+                  {t('connectors.form.dynamicHeaders.helper')}
                 </p>
               </div>
               <Button type='button' variant='outline' size='sm' onClick={addDynamicHeader}>
@@ -954,7 +1011,7 @@ export function CreateEditConnectorDialog({
                     <SelectContent>
                       {DYNAMIC_HEADER_SOURCES.map((source) => (
                         <SelectItem key={source.value} value={source.value}>
-                          {source.label}
+                          {t(source.labelKey)}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -1036,6 +1093,37 @@ export function CreateEditConnectorDialog({
                         <div><p className='text-xs text-muted-foreground'>{t('connectors.form.actions.detail.safety')}</p><p>{safetyLabel(selectedAction.safety)}</p></div>
                         <div><p className='text-xs text-muted-foreground'>{t('connectors.form.actions.detail.batch')}</p><p>{selectedAction.supportsBatch ? t('connectors.form.actions.yes') : t('connectors.form.actions.no')}</p></div>
                         <div><p className='text-xs text-muted-foreground'>{t('connectors.form.actions.detail.iteration')}</p><p>{selectedAction.supportsIteration ? t('connectors.form.actions.yes') : t('connectors.form.actions.no')}</p></div>
+                      </div>
+                      <div className='space-y-3 border-t pt-3'>
+                        <p className='text-xs font-medium text-muted-foreground'>{t('connectors.form.actions.semantics.title')}</p>
+                        <div className='grid gap-3 sm:grid-cols-2'>
+                          <div className='space-y-1'>
+                            <Label>{t('connectors.form.actions.semantics.resultKind')}</Label>
+                            <Select value={selectedAction.resultKind ?? 'generic'} onValueChange={(value) => updateSelectedAction({ resultKind: value as ConnectorActionResultKind })}>
+                              <SelectTrigger><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {RESULT_KIND_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{t(option.labelKey)}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className='space-y-1'>
+                            <Label>{t('connectors.form.actions.semantics.citationMode')}</Label>
+                            <Select value={selectedAction.citationMode ?? 'none'} onValueChange={(value) => updateSelectedAction({ citationMode: value as ConnectorCitationMode })}>
+                              <SelectTrigger><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {CITATION_MODE_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{t(option.labelKey)}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                        {['web_search', 'web_fetch'].includes(selectedAction.resultKind ?? 'generic') ? (
+                          <div className='grid gap-3 sm:grid-cols-2'>
+                            {selectedAction.resultKind === 'web_search' ? <div className='space-y-1 sm:col-span-2'><Label>{t('connectors.form.actions.mapping.itemsPath')}</Label><Input value={selectedAction.resultMapping?.itemsPath ?? ''} onChange={(event) => updateMapping('itemsPath', event.target.value)} /></div> : null}
+                            {(selectedAction.resultKind === 'web_search' ? WEB_SEARCH_MAPPING_FIELDS : WEB_FETCH_MAPPING_FIELDS).map((field) => (
+                              <div key={field.value} className='space-y-1'><Label>{t(field.labelKey)}</Label><Input value={selectedAction.resultMapping?.fields?.[field.value]?.join(', ') ?? ''} onChange={(event) => updateMapping(field.value, event.target.value)} placeholder={t('connectors.form.actions.mapping.placeholder')} /></div>
+                            ))}
+                          </div>
+                        ) : null}
                       </div>
                       <div>
                         <p className='text-xs font-medium text-muted-foreground'>{t('connectors.form.actions.detail.inputSchema')}</p>

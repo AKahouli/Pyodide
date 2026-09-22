@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import { Plus, X, User, Trash2, Pencil, Check, Mail, Bot, Users } from 'lucide-react';
+import { Plus, X, User, Trash2, Pencil, Check, Mail, Bot, Users, Link2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,7 +12,8 @@ import { Separator } from '@/components/ui/separator';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '@/modules/auth';
 import { useConversationStore } from '../store';
-import { fetchTaggedAgents, removeConversationMember, updateConversationMemberJob } from '../api';
+import { fetchTaggedAgents, getShares, removeConversationMember, revokeShare, updateConversationMemberJob } from '../api';
+import type { ShareResponse } from '../types';
 import type { Agent } from '@/modules/agent/types';
 
 interface CreateGroupConversationDialogProps {
@@ -27,17 +28,19 @@ export function CreateGroupConversationDialog({ open, onOpenChange, mode = 'crea
   const [ownerJob, setOwnerJob] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [sharedAgents, setSharedAgents] = useState<Agent[]>([]);
+  const [publicLinks, setPublicLinks] = useState<ShareResponse[]>([]);
   const [editingJobId, setEditingJobId] = useState<string | null>(null);
   const [jobInput, setJobInput] = useState('');
   const createConversation = useConversationStore((s) => s.createConversation);
   const updateConversation = useConversationStore((s) => s.updateConversation);
-  const setCurrentConversation = useConversationStore((s) => s.setCurrentConversation);
+  const refreshCurrentConversation = useConversationStore((s) => s.refreshCurrentConversation);
   const navigate = useNavigate();
   const { user } = useAuth();
   const currentConversation = useConversationStore((s) => s.currentConversation);
 
   const isManageMode = mode === 'manage';
-  const isOwner = !isManageMode || (currentConversation?.groupMeta?.members?.some(m => m.userId === user?.id && m.status === 'owner'));
+  // `createdBy` is authoritative; legacy private shares omitted the owner member row.
+  const isOwner = !isManageMode || (!!user?.id && String(currentConversation?.createdBy) === String(user.id));
   const members = currentConversation?.groupMeta?.members || [];
   const invitedUsers = currentConversation?.groupMeta?.invitedUsers || [];
 
@@ -46,10 +49,16 @@ export function CreateGroupConversationDialog({ open, onOpenChange, mode = 'crea
       fetchTaggedAgents(currentConversation.id)
         .then(setSharedAgents)
         .catch(err => console.error('Failed to fetch shared agents:', err));
+      if (isOwner) {
+        getShares(currentConversation.id)
+          .then((shares) => setPublicLinks(shares.filter((share) => share.shareType === 'public' && !share.isRevoked)))
+          .catch(err => console.error('Failed to fetch share links:', err));
+      }
     } else if (!open) {
       setSharedAgents([]);
+      setPublicLinks([]);
     }
-  }, [open, isManageMode, currentConversation?.id]);
+  }, [open, isManageMode, currentConversation?.id, isOwner]);
 
   const handleOpenChange = (isOpen: boolean) => {
     if (!isOpen) {
@@ -149,10 +158,10 @@ export function CreateGroupConversationDialog({ open, onOpenChange, mode = 'crea
     if (!currentConversation) return;
     try {
       await removeConversationMember(currentConversation.id, memberId);
-      toast.success('Member removed successfully');
-      await setCurrentConversation(currentConversation.id);
+      toast.success(t('newConversation.groupDialog.memberRemoved'));
+      await refreshCurrentConversation(currentConversation.id);
     } catch (err: any) {
-      toast.error('Failed to remove member');
+      toast.error(t('newConversation.groupDialog.removeMemberError'));
     }
   };
 
@@ -160,12 +169,25 @@ export function CreateGroupConversationDialog({ open, onOpenChange, mode = 'crea
     if (!currentConversation) return;
     try {
       await updateConversationMemberJob(currentConversation.id, memberId, jobInput);
-      toast.success('Role updated successfully');
-      await setCurrentConversation(currentConversation.id);
+      toast.success(t('newConversation.groupDialog.roleUpdated'));
+      await refreshCurrentConversation(currentConversation.id);
     } catch (err: any) {
-      toast.error('Failed to update role');
+      toast.error(t('newConversation.groupDialog.roleUpdateError'));
     } finally {
       setEditingJobId(null);
+    }
+  };
+
+  const handleRevokePublicLink = async (shareId: string) => {
+    if (!currentConversation) return;
+    try {
+      await revokeShare(currentConversation.id, shareId);
+      setPublicLinks((prev) => prev.filter((share) => share.id !== shareId));
+      // Revoking the last link clears the derived shared flag, so refresh it.
+      await refreshCurrentConversation(currentConversation.id);
+      toast.success(t('newConversation.groupDialog.shareRevoked'));
+    } catch (err: any) {
+      toast.error(t('newConversation.groupDialog.shareRevokeError'));
     }
   };
 
@@ -291,7 +313,8 @@ export function CreateGroupConversationDialog({ open, onOpenChange, mode = 'crea
                           size='icon'
                           className='h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive shrink-0 ml-2 transition-colors'
                           onClick={() => handleRemoveMember(member.userId)}
-                          title='Remove member'
+                          aria-label={t('newConversation.groupDialog.removeMember')}
+                          title={t('newConversation.groupDialog.removeMember')}
                         >
                           <Trash2 className='h-4 w-4' />
                         </Button>
@@ -329,6 +352,43 @@ export function CreateGroupConversationDialog({ open, onOpenChange, mode = 'crea
                               </div>
                             </div>
                           </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {publicLinks.length > 0 && (
+                <>
+                  <Separator />
+                  <div className='space-y-3'>
+                    <div className="flex items-center gap-2">
+                      <Link2 className="h-4 w-4 text-muted-foreground" />
+                      <Label className="text-sm font-semibold">{t('newConversation.groupDialog.publicLinksLabel')}</Label>
+                    </div>
+                    <div className='max-h-32 overflow-y-auto space-y-2 pr-2 custom-scrollbar'>
+                      {publicLinks.map((link) => (
+                        <div key={link.id} className='flex items-center justify-between p-2.5 bg-card border rounded-lg shadow-sm'>
+                          <div className='flex flex-col overflow-hidden'>
+                            <span className='font-medium text-sm truncate'>{link.title}</span>
+                            <span className='text-[11px] text-muted-foreground'>
+                              {link.expiresAt
+                                ? t('newConversation.groupDialog.linkExpires', { date: new Date(link.expiresAt).toLocaleDateString() })
+                                : t('newConversation.groupDialog.linkNoExpiry')}
+                            </span>
+                          </div>
+                          <Button
+                            type='button'
+                            variant='ghost'
+                            size='icon'
+                            className='h-8 w-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive shrink-0 ml-2'
+                            aria-label={t('newConversation.groupDialog.revokeLink')}
+                            title={t('newConversation.groupDialog.revokeLink')}
+                            onClick={() => handleRevokePublicLink(link.id)}
+                          >
+                            <Trash2 className='h-4 w-4' />
+                          </Button>
                         </div>
                       ))}
                     </div>

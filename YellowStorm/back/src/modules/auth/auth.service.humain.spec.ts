@@ -1,5 +1,6 @@
 import { Types } from 'mongoose';
 import { AuthService } from './auth.service';
+import { makeSessionStoreFake } from './persistence/session-store.fake';
 
 describe('AuthService human-agent creation', () => {
   const buildUser = (overrides: Record<string, unknown> = {}) => ({
@@ -44,10 +45,13 @@ describe('AuthService human-agent creation', () => {
     };
     const usageService = { getDefaultPlan: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(), slug: 'unlimited', workspaceStorageBytes: 100 }) };
     const authorizationService = { getUserPermissions: jest.fn().mockResolvedValue([]), getUserRoleNames: jest.fn().mockResolvedValue([]) };
-    const systemService = { isRegistrationEnabled: jest.fn().mockReturnValue(true) };
+    const systemService = {
+      isRegistrationEnabled: jest.fn().mockReturnValue(true),
+      getLoginSettingsSync: () => ({ accessExpiry: '3600m', refreshExpiry: '7d' }),
+    };
     const workspaceInitializer = { getOrCreatePersonalWorkspace: jest.fn().mockResolvedValue(undefined) };
     const service = new AuthService(
-      makeSessionModel() as never,
+      makeSessionStoreFake() as never,
       userService as never,
       jwtService as never,
       configService as never,

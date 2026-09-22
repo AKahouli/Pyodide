@@ -10,7 +10,7 @@ import {
   IsObject,
   IsMongoId,
 } from 'class-validator';
-import { UsageType } from '../schemas/usage.schema';
+import { UsageType } from '../usage-type.enum';
 
 export class RecordUsageDto {
   @ApiProperty({ description: 'Number of input tokens', example: 150 })

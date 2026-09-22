@@ -1,0 +1,23 @@
+{
+  "id": "64b000000000000000000901",
+  "appKey": "microsoft",
+  "displayName": "Microsoft",
+  "description": "Microsoft 365",
+  "iconKey": "microsoft",
+  "clientId": "****",
+  "clientSecret": "****",
+  "tenantId": "****",
+  "authorizationUrl": "https://login.example.test/authorize",
+  "tokenUrl": "https://login.example.test/token",
+  "revokeUrl": "https://login.example.test/revoke",
+  "scopes": [
+    "offline_access",
+    "User.Read"
+  ],
+  "pkceEnabled": true,
+  "enabled": true,
+  "sortOrder": 1,
+  "connectedUserCount": 3,
+  "createdAt": "<volatile>",
+  "updatedAt": "<volatile>"
+}

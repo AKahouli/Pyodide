@@ -1646,6 +1646,14 @@ export async function executePlaybook(
   return response.data.data;
 }
 
+export async function fetchRecentPlaybookArtifacts(limit = 6): Promise<import('./types').RecentPlaybookArtifact[]> {
+  const response = await apiClient.get<ApiResponse<import('./types').RecentPlaybookArtifact[]>>(
+    API_ENDPOINTS.playbooks.recentArtifacts,
+    { params: { limit } },
+  );
+  return response.data.data;
+}
+
 function buildExecutionRequestPayload(data?: ExecutePlaybookData): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
   if (data?.singleStepTaskId) payload.singleStepTaskId = data.singleStepTaskId;

@@ -1,10 +1,11 @@
 import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Types } from 'mongoose';
+import { isObjectId, newObjectId } from '@common/postgres/object-id';
 import { LoggerService } from '../logger';
 import { IAgentResponse, IAgentForStream, IGrpcAgent, IGrpcCompaction, ISharedAgentInfo } from './interfaces/agent.interface';
 import { AgentShareService } from './services/agent-share.service';
 import { AgentConnectorRuntimeService } from './services/agent-connector-runtime.service';
+import { WEB_SEARCH_CATEGORY_NAME } from '../connector/connector-category.service';
 import { CreateAgentDto } from './dto/create-agent.dto';
 import { UpdateAgentDto } from './dto/update-agent.dto';
 import { QueryAgentDto } from './dto/query-agent.dto';
@@ -37,12 +38,14 @@ import { normalizeWidgetSettings } from './constants/widget-default-settings';
 import { AgentRepository, CreateAgentInput, UpdateAgentInput } from './repositories/agent.repository';
 import { AgentRecord } from './repositories/agent-record.mapper';
 import { AgentRoleEmbeddingService } from './services/agent-role-embedding.service';
+import { CHANNEL_TEARDOWN, type ChannelTeardown } from '../channels-teardown/channels-teardown.token';
 import {
   PLATFORM_COPILOT,
   PLATFORM_COPILOT_AGENT_SLUG,
   PLATFORM_COPILOT_HANDOFF_RUNTIME_INSTRUCTION,
   PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG,
 } from './constants/platform-copilot.constants';
+import { AGENT_MCP_CONNECTOR_SLUG } from '../connector/constants/agent-mcp.constants';
 import { SystemService } from '../system/system.service';
 
 /** Agent-type slug of the orchestrating manager agent. */
@@ -51,6 +54,16 @@ const MANAGER_SLUG = 'manager';
 const MONO_AGENT_SLUG = 'mono-agent';
 /** Agent-type slug for human agents exposed to third-party integrations. */
 const HUMAIN_AGENT_TYPE_SLUG = 'humain';
+/** Trusted system MCP connectors that receive runtime identity headers on their bindings. */
+const TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS = new Set([
+  PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG,
+  AGENT_MCP_CONNECTOR_SLUG,
+]);
+const PLATFORM_COPILOT_LEGACY_PLAYBOOK_ACTIONS = new Set([
+  'assess_playbook_request',
+  'continue_playbook_clarification',
+  'start_playbook_construction',
+]);
 
 export interface PlaybookPlannerAgentConfig {
   agentTypeId: string;
@@ -90,10 +103,29 @@ export class AgentService {
     private readonly guardrailsSettingsService: GuardrailsSettingsService,
     private readonly agentRepository: AgentRepository,
     private readonly agentRoleEmbedding: AgentRoleEmbeddingService,
+    @Optional() @Inject(CHANNEL_TEARDOWN) private readonly channelTeardowns?: ChannelTeardown[],
     @Optional() private readonly connectorRuntimeService?: AgentConnectorRuntimeService,
     @Optional() private readonly systemService?: SystemService,
   ) {
     this.logger.setContext(AgentService.name);
+  }
+
+  /**
+   * Best-effort channel cleanup before the agent row disappears (plan 4.6):
+   * unregisters webhooks / revokes live tokens; the FK CASCADE only covers rows.
+   */
+  private async teardownChannels(agentId: string): Promise<void> {
+    for (const teardown of this.channelTeardowns ?? []) {
+      try {
+        await teardown.deleteForAgent(agentId);
+      } catch (error) {
+        this.logger.warn('Agent channel teardown failed', {
+          agentId,
+          teardown: teardown.constructor?.name,
+          error: (error as Error).message,
+        });
+      }
+    }
   }
 
   // ==========================================
@@ -124,7 +156,7 @@ export class AgentService {
 
     await this.skillService.findByIds([...(dto.skills ?? []), ...(dto.disabledSkills ?? [])]);
 
-    const id = new Types.ObjectId().toString();
+    const id = newObjectId();
     const agentTypeSlug = await this.resolveAgentTypeSlug(dto.agentType);
     const agent = await this.agentRepository.create(
       this.dtoToCreateInput(userId, dto, { id, isDefault: false, slug: normalizedSlug, agentTypeSlug }),
@@ -332,13 +364,16 @@ export class AgentService {
       throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_FORBIDDEN);
     }
 
+    // Channels first: webhooks/tokens must not outlive the agent row (plan 4.6).
+    await this.teardownChannels(agentId);
+
     await this.agentRepository.deleteById(agentId);
 
     // Keep teams consistent: drop this agent from any team that referenced it.
-    await this.teamService.removeAgentFromAllTeams(agentId);
+    // team_members cascade on agent delete; children re-root via ON DELETE SET NULL (plan 4.3).
 
     // Drop any shares pointing at the now-deleted agent.
-    await this.agentShareService.removeAllSharesForAgent(agentId);
+    // shared_agents cascade via the validated FK (plan 4.1).
 
     this.logger.log('Personal agent deleted', {
       agentId,
@@ -374,7 +409,7 @@ export class AgentService {
 
     await this.skillService.findByIds([...(dto.skills ?? []), ...(dto.disabledSkills ?? [])]);
 
-    const id = new Types.ObjectId().toString();
+    const id = newObjectId();
     const agentTypeSlug = await this.resolveAgentTypeSlug(dto.agentType);
     const agent = await this.agentRepository.create(
       this.dtoToCreateInput(adminUserId, dto, { id, isDefault: true, slug: normalizedSlug, agentTypeSlug }),
@@ -494,6 +529,9 @@ export class AgentService {
       );
     }
 
+    // Channels first: webhooks/tokens must not outlive the agent row (plan 4.6).
+    await this.teardownChannels(agentId);
+
     await this.agentRepository.deleteById(agentId);
 
     this.logger.log('Default agent deleted', {
@@ -529,6 +567,7 @@ export class AgentService {
     runtimeContext?: { conversationId: string; correlationId: string; playbookHandoffAttached?: boolean },
     reasoningEffort?: string,
     compaction?: IGrpcCompaction,
+    webConnectorAccessEnabled = true,
   ): Promise<IGrpcAgent[]> {
     this.logger.log('Building agents for stream', {
       userId,
@@ -670,12 +709,16 @@ export class AgentService {
       managerName: selectedManager?.name,
     });
 
-    // A chat-level model selection is the default only for untagged mono-agent
-    // requests. Explicitly routed agents retain their configured model.
+    const inheritedDefaultModelId = filteredAgents.some((agent) => !agent.model)
+      ? (await this.modelsService.getDefaultModel())?.id || ''
+      : '';
+
+    // A chat-level model selection applies directly to untagged mono-agent
+    // requests. Explicitly routed agents inherit the Admin Models default.
     const effectiveModelIdForAgent = (agent: IAgentForStream): string =>
       pingedAgents.length === 0
-        ? fallbackModelId || agent.model || ''
-        : agent.model || fallbackModelId || '';
+        ? fallbackModelId || agent.model || inheritedDefaultModelId
+        : agent.model || inheritedDefaultModelId || fallbackModelId || '';
 
     // Batch-resolve prompts: collect all (agentTypeId, modelId) pairs
     const promptPairs = filteredAgents
@@ -707,15 +750,19 @@ export class AgentService {
     // Every lookup below depends only on the filtered roster, not on each
     // other — run them in one round so the remote-DB latency stacks once
     // instead of once per lookup.
-    const [promptMap, fetchedTools, modelResults, connectorsMap, adminGuardrailsSettings, guardrailsClassifierModel, documentTreeSettings] = await Promise.all([
+    const [promptMap, fetchedTools, modelResults, connectorsMap, blockedConnectorIds, adminGuardrailsSettings, guardrailsClassifierModel, documentTreeSettings] = await Promise.all([
       this.agentTypeService.resolvePromptsInBatch(promptPairs),
       allToolIds.length > 0 ? this.toolService.findByIds(allToolIds) : Promise.resolve([] as IToolResponse[]),
       Promise.all(allModelIds.map((id) => this.modelsService.findById(id))),
       this.buildConnectorsMap(allConnectorIds),
+      webConnectorAccessEnabled
+        ? Promise.resolve([])
+        : this.connectorService.findIdsByCategoryName(allConnectorIds, WEB_SEARCH_CATEGORY_NAME),
       this.guardrailsSettingsService.getSettings(),
       this.modelsService.getGuardrailsClassifierModel(),
       this.systemService?.getDocumentTreeInjectionSettings() ?? Promise.resolve({ enabled: true }),
     ]);
+    for (const connectorId of blockedConnectorIds) connectorsMap.delete(connectorId);
     const guardrailsClassifierModelId = this.modelsService.getModelIdentifier(guardrailsClassifierModel);
 
     const toolsMap = new Map<string, IToolResponse>();
@@ -801,6 +848,20 @@ export class AgentService {
             'X-Correlation-Id': runtimeContext.correlationId,
           };
         }
+      } else if (runtimeContext) {
+        // Trusted system MCP connectors need the same runtime identity on every
+        // agent (not just the copilot) — their MCP servers authorize per-call
+        // as the acting user.
+        for (const binding of connectorBindings) {
+          if (!TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS.has(String(binding.connector_slug || '').toLowerCase())) continue;
+          binding.auth_headers = {
+            ...((binding.auth_headers as Record<string, string> | undefined) ?? {}),
+            'X-YellowStorm-User-Id': userId,
+            'X-YellowStorm-Agent-Id': agent.id,
+            'X-YellowStorm-Conversation-Id': runtimeContext.conversationId,
+            'X-Correlation-Id': runtimeContext.correlationId,
+          };
+        }
       }
       const connectorToolDefs = this.buildConnectorToolDefs(connectorBindings);
 
@@ -837,7 +898,7 @@ export class AgentService {
         name: agent.name,
         description: agent.role || `you are the ${agent.name}`,
         prompt,
-        agent_type: agent.agentTypeName.toLowerCase(),
+        agent_type: agent.agentTypeSlug,
         save_memory: false,
         tools: (await this.buildToolsWithTokens(agentTools, userId)).concat(connectorToolDefs),
         skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
@@ -932,6 +993,7 @@ export class AgentService {
       nodeId?: string;
       iteration?: number;
     },
+    compaction?: IGrpcCompaction,
   ): Promise<IGrpcAgent[]> {
     if (agentIds.length === 0) return [];
 
@@ -972,7 +1034,7 @@ export class AgentService {
         .map((a) => a.model || inheritedDefaultModelId)
         .filter(Boolean) as string[],
     )];
-    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[]; reasoningEfforts: string[] }>();
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[]; reasoningEfforts: string[]; maxInputTokens?: number }>();
     if (allModelIds.length > 0) {
       const modelResults = await Promise.all(
         allModelIds.map((id) => this.modelsService.findById(id)),
@@ -983,6 +1045,7 @@ export class AgentService {
           omitTemperature: m.omitTemperature,
           inputModalities: m.inputModalities,
           reasoningEfforts: m.supportsReasoning ? m.reasoning.efforts.map((effort) => effort.id) : [],
+          maxInputTokens: m.maxInputTokens ?? undefined,
         });
       }
     }
@@ -1031,7 +1094,7 @@ export class AgentService {
           agent.id,
         );
         for (const binding of connectorBindings) {
-          if (String(binding.connector_slug || '').toLowerCase() !== 'playbook-mcp') continue;
+          if (!TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS.has(String(binding.connector_slug || '').toLowerCase())) continue;
           binding.auth_headers = {
             ...((binding.auth_headers as Record<string, string>) || {}),
             'X-YellowStorm-Agent-Id': agent.id,
@@ -1090,7 +1153,7 @@ export class AgentService {
           name: agent.name,
           description: agent.role || `you are the ${agent.name}`,
           prompt,
-          agent_type: agent.agentTypeName.toLowerCase(),
+          agent_type: agent.agentTypeSlug,
           save_memory: false,
           tools: (await this.buildToolsWithTokens(agentTools, userId)).concat(connectorToolDefs),
           skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
@@ -1102,6 +1165,8 @@ export class AgentService {
             model: proxyModel,
             input_modalities: resolvedModel?.inputModalities || ['text'],
             ...(effectiveReasoningEffort ? { reasoning_effort: effectiveReasoningEffort } : {}),
+            ...(resolvedModel?.maxInputTokens ? { context_window_tokens: resolvedModel.maxInputTokens } : {}),
+            ...(compaction ? { compaction } : {}),
           },
           agent_params: {
             params: {
@@ -1147,9 +1212,9 @@ export class AgentService {
   }
 
   /** Trusted governed-runtime path: exact published roster with pinned knowledge. */
-  async buildGovernedAgentsForStream(userId: string, agentIds: string[], workspaceIds: string[], fallbackModelId?: string): Promise<IGrpcAgent[]> {
+  async buildGovernedAgentsForStream(userId: string, agentIds: string[], workspaceIds: string[], compaction?: IGrpcCompaction, fallbackModelId?: string): Promise<IGrpcAgent[]> {
     const requestedIds = [...new Set(agentIds)];
-    const agents = await this.buildGrpcAgentsForPlaybook(userId, requestedIds, fallbackModelId);
+    const agents = await this.buildGrpcAgentsForPlaybook(userId, requestedIds, fallbackModelId, undefined, undefined, compaction);
     const builtIds = new Set(agents.map((agent) => agent.id));
     if (requestedIds.some((id) => !builtIds.has(id))) {
       throw new NotFoundException(ErrorCode.AGENT_NOT_FOUND, 'One or more published assistants are unavailable');
@@ -1564,7 +1629,7 @@ export class AgentService {
   }
 
   async assertActiveDefaultAgent(agentId: string): Promise<void> {
-    if (!Types.ObjectId.isValid(agentId)) {
+    if (!isObjectId(agentId)) {
       throw new BadRequestException(ErrorCode.AGENT_UNAVAILABLE, 'The selected decision-flow agent is invalid');
     }
     const exists = await this.agentRepository.existsActiveDefault(agentId);
@@ -1611,7 +1676,7 @@ export class AgentService {
   }
 
   async findPlaybookPlannerById(agentId: string): Promise<PlaybookPlannerAgentConfig> {
-    if (!Types.ObjectId.isValid(agentId)) {
+    if (!isObjectId(agentId)) {
       throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The selected Playbook Planner agent is invalid');
     }
     const record = await this.agentRepository.findById(agentId);
@@ -1640,11 +1705,11 @@ export class AgentService {
 
   private toResponse(
     doc: Record<string, unknown>,
-    agentTypeDoc?: { id: string; name: string },
+    agentTypeDoc?: { id: string; name: string; slug: string },
   ): IAgentResponse {
     const d = doc as Record<string, unknown>;
     const populatedAgentType = d.agentType as Record<string, unknown> | undefined;
-    let agentTypeInfo: { id: string; name: string };
+    let agentTypeInfo: { id: string; name: string; slug: string };
 
     if (agentTypeDoc) {
       agentTypeInfo = agentTypeDoc;
@@ -1652,11 +1717,13 @@ export class AgentService {
       agentTypeInfo = {
         id: (populatedAgentType._id as { toString(): string }).toString(),
         name: (populatedAgentType.name as string) || '',
+        slug: (populatedAgentType.slug as string) || '',
       };
     } else {
       agentTypeInfo = {
         id: d.agentType ? (d.agentType as { toString(): string }).toString() : '',
         name: '',
+        slug: (d.agentTypeSlug as string) || '',
       };
     }
 
@@ -1826,7 +1893,7 @@ export class AgentService {
   private normalizeConnectorActionSelections(
     connectorIds: string[] | undefined,
     selections?: Array<{ connectorId: string; actionKeys: string[] }>,
-  ): Array<{ connector: Types.ObjectId; actionKeys: string[] }> {
+  ): Array<{ connector: string; actionKeys: string[] }> {
     if (!connectorIds?.length || !selections?.length) {
       return [];
     }
@@ -1852,11 +1919,11 @@ export class AgentService {
         }
 
         return {
-          connector: new Types.ObjectId(selection.connectorId),
+          connector: selection.connectorId,
           actionKeys,
         };
       })
-      .filter(Boolean) as Array<{ connector: Types.ObjectId; actionKeys: string[] }>;
+      .filter(Boolean) as Array<{ connector: string; actionKeys: string[] }>;
   }
 
   private buildConnectorActionKeysByConnectorId(
@@ -1883,7 +1950,11 @@ export class AgentService {
     for (const connectorId of connectorIds) {
       const connector = connectorsMap.get(connectorId);
       if (connector?.slug?.toLowerCase() === PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG) {
-        runtimeSelections.delete(connectorId);
+        runtimeSelections.set(connectorId, new Set(
+          connector.actions
+            .filter((action) => action.isEnabled !== false && !PLATFORM_COPILOT_LEGACY_PLAYBOOK_ACTIONS.has(action.key))
+            .map((action) => action.key),
+        ));
       }
     }
     return runtimeSelections.size ? runtimeSelections : undefined;

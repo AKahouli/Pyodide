@@ -6,6 +6,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '../useAuth';
 import { exchangeOAuthToken } from '../api';
 import { AUTH_STORAGE_KEYS } from '@/lib/api/config';
+import { scheduleProactiveRefresh } from '@/lib/api/client';
 
 export function OAuthCallbackPage() {
   const [searchParams] = useSearchParams();
@@ -68,6 +69,7 @@ export function OAuthCallbackPage() {
       const response = await exchangeOAuthToken(token);
       // Store access token
       localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, response.accessToken);
+      scheduleProactiveRefresh(response.accessToken);
       if (response.user) {
         localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(response.user));
       }

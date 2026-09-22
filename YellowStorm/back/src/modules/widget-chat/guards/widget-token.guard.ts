@@ -1,13 +1,11 @@
-import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Inject, Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { LoggerService } from '@modules/logger';
 import { Request } from 'express';
 import { createHash } from 'crypto';
 import { UnauthorizedException, ForbiddenException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { WidgetToken, WidgetTokenDocument } from '../schemas/widget-token.schema';
+import { WIDGET_TOKEN_STORE, type WidgetTokenStore } from '../persistence/widget.store';
 import { AgentRepository } from '@modules/agent/repositories/agent.repository';
 import { AgentRecord } from '@modules/agent/repositories/agent-record.mapper';
 import { WIDGET_DEPLOYMENT_MODE_KEY, type WidgetDeploymentMode } from '../decorators/widget-deployment-mode.decorator';
@@ -21,7 +19,7 @@ interface RequestWithWidget extends Request {
 @Injectable()
 export class WidgetTokenGuard implements CanActivate {
   constructor(
-    @InjectModel(WidgetToken.name) private readonly widgetTokenModel: Model<WidgetTokenDocument>,
+    @Inject(WIDGET_TOKEN_STORE) private readonly widgetTokenStore: WidgetTokenStore,
     private readonly agentRepository: AgentRepository,
     private readonly reflector: Reflector,
     private readonly logger: LoggerService,
@@ -43,7 +41,8 @@ export class WidgetTokenGuard implements CanActivate {
 
     const tokenHash = createHash('sha256').update(rawToken).digest('hex');
 
-    const widgetToken = await this.widgetTokenModel.findOne({ tokenHash, isActive: true });
+    // Active only; expiry checked in code (plan 4.12 parity).
+    const widgetToken = await this.widgetTokenStore.findActiveByHash(tokenHash);
     if (!widgetToken) {
       this.logger.warn('Widget auth failed: invalid token hash', { path: request.path, origin: request.headers.origin });
       throw new UnauthorizedException(ErrorCode.WIDGET_TOKEN_INVALID, 'Invalid or inactive widget token');

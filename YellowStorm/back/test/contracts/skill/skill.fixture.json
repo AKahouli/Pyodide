@@ -1,0 +1,32 @@
+{
+  "id": "64b000000000000000000701",
+  "slug": "doc-qa",
+  "name": "doc-qa",
+  "description": "Answer questions from documents",
+  "icon": "book",
+  "color": "#000000",
+  "iconColor": "light",
+  "categoryId": null,
+  "categoryName": "General",
+  "license": "MIT",
+  "compatibility": "any",
+  "metadata": {
+    "owner": "platform"
+  },
+  "allowedTools": [
+    "search"
+  ],
+  "instructions": "Use the search tool.",
+  "files": [
+    {
+      "path": "SKILL.md",
+      "kind": "markdown",
+      "mimeType": "text/markdown",
+      "content": "# skill"
+    }
+  ],
+  "isActive": true,
+  "createdBy": "64b000000000000000000001",
+  "createdAt": "<volatile>",
+  "updatedAt": "<volatile>"
+}

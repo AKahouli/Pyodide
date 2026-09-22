@@ -1,0 +1,26 @@
+{
+  "success": true,
+  "data": {
+    "status": "unhealthy",
+    "timestamp": "<volatile>",
+    "components": {
+      "memory": true,
+      "eventLoop": true,
+      "database": true,
+      "postgres": true,
+      "storage": true,
+      "email": true,
+      "litellm": true,
+      "conversationGrpc": false,
+      "conversationV2Grpc": true,
+      "playbookMcp": true,
+      "semanticModel": true
+    }
+  },
+  "meta": {
+    "timestamp": "<volatile>",
+    "requestId": "<volatile>",
+    "path": "/api/v1/health",
+    "duration": 2585
+  }
+}

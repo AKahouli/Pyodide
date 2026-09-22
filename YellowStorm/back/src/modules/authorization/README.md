@@ -215,16 +215,11 @@ Authorization: Bearer <token-with-admin.roles.manage>
 }
 ```
 
-Via Database:
-```javascript
-db.roles.insertOne({
-  name: 'content_manager',
-  description: 'Manages workspaces and documents',
-  permissions: ['workspaces.*', 'reports.read'],
-  isActive: true,
-  isSystem: false,
-  priority: 40
-});
+Via Database (Postgres, table `authz.roles`; `id` is a 24-char hex ObjectId-style string and the name must be lower-case/trimmed):
+```sql
+INSERT INTO authz.roles (id, name, description, permissions, is_active, is_system, priority)
+VALUES ('<24-hex-id>', 'content_manager', 'Manages workspaces and documents',
+        ARRAY['workspaces.*', 'reports.read'], true, false, 40);
 ```
 
 ---
@@ -341,6 +336,8 @@ try {
 
 ### Audit Log Schema
 
+Stored in `authz.audit_logs` via `AUDIT_LOG_STORE` -> `PgAuditLogStore`. `actor_id` deliberately has no FK (audit history outlives users); `status` is constrained to `success`/`failure`; indexes cover `created_at`, `(actor_id, created_at)`, `(action, created_at)`, `(target_type, target_id, created_at)`, `status` and a trigram GIN index on `actor_email` for search. Roles live in `authz.roles` (`ROLE_STORE` -> `PgRoleStore`, unique on lower-case `name`); user-to-role assignments are the junction table `identity.user_roles` (FKs to users and roles, `ON DELETE CASCADE`, `position` preserves role order).
+
 ```typescript
 {
   actorId: ObjectId,       // Who performed the action
@@ -353,7 +350,7 @@ try {
   userAgent?: string,
   status: 'success' | 'failure',
   failureReason?: string,
-  createdAt: Date,         // Auto-indexed, TTL: 2 years
+  createdAt: Date,         // created_at, indexed; rows older than 730 days are swept by PgTtlSweeper
 }
 ```
 
@@ -440,34 +437,39 @@ Query parameters: `actorId`, `action`, `targetType`, `status`, `startDate`, `end
 
 After initial deployment, assign super_admin to your first admin user:
 
-### Option 1: MongoDB Shell
+### Option 1: psql
 
-```javascript
-// Connect to your MongoDB instance
-use yellostorm;
+Roles are in `authz.roles`; assignments are rows of the junction table `identity.user_roles`; `permissions_version` is a column on `identity.users`.
 
-// Find the super_admin role
-const role = db.roles.findOne({ name: 'super_admin' });
+```sql
+BEGIN;
 
-// Assign to user by email
-db.users.updateOne(
-  { email: 'admin@example.com' },
-  {
-    $addToSet: { roles: role._id },
-    $inc: { permissionsVersion: 1 }
-  }
-);
+-- Assign super_admin to the user by email (position keeps role order)
+INSERT INTO identity.user_roles (user_id, role_id, position)
+SELECT u.id, r.id, COALESCE((SELECT MAX(position) + 1 FROM identity.user_roles WHERE user_id = u.id), 0)
+FROM identity.users u, authz.roles r
+WHERE u.email = 'admin@example.com' AND r.name = 'super_admin'
+ON CONFLICT (user_id, role_id) DO NOTHING;
 
-// Verify
-db.users.findOne({ email: 'admin@example.com' }, { roles: 1, permissionsVersion: 1 });
+-- Force fresh permissions on next refresh
+UPDATE identity.users SET permissions_version = permissions_version + 1 WHERE email = 'admin@example.com';
+
+COMMIT;
+
+-- Verify
+SELECT u.email, u.permissions_version, r.name
+FROM identity.users u
+JOIN identity.user_roles ur ON ur.user_id = u.id
+JOIN authz.roles r ON r.id = ur.role_id
+WHERE u.email = 'admin@example.com';
 ```
 
-### Option 2: MongoDB Compass
+### Option 2: A Postgres GUI (pgAdmin, DBeaver, ...)
 
-1. Open `roles` collection, find `super_admin`, copy its `_id`
-2. Open `users` collection, find your admin user
-3. Add the role `_id` to the `roles` array
-4. Increment `permissionsVersion` by 1
+1. Open `authz.roles`, find `super_admin`, copy its `id`
+2. Open `identity.users`, find your admin user and copy its `id`
+3. Insert a row into `identity.user_roles` (`user_id`, `role_id`)
+4. Increment `permissions_version` on the user row by 1
 5. Save
 
 ### After Assignment
@@ -493,22 +495,7 @@ this.authorizationService.invalidateCache();
 
 ### Audit Log Retention
 
-Audit logs have a 2-year TTL (MongoDB TTL index). To change:
-
-```typescript
-// In audit-log.schema.ts
-AuditLogSchema.index(
-  { createdAt: 1 },
-  { expireAfterSeconds: 365 * 24 * 60 * 60 } // 1 year
-);
-```
-
-After changing, drop and recreate the index:
-
-```javascript
-db.audit_logs.dropIndex("createdAt_1");
-// Restart application to recreate with new TTL
-```
+Audit logs are retained for 730 days. Retention is enforced by `PgTtlSweeper`, not by a database index: `PgTtlRegistrationService` registers `authz.audit_logs.created_at` with `olderThan: '730 days'`. To change it, edit that registration in `src/modules/postgres/ttl/pg-ttl-registration.service.ts` and redeploy (no index to drop or recreate).
 
 ### Adding Permissions to Existing Roles
 
@@ -521,20 +508,19 @@ PUT /api/v1/admin/roles/:id
 ```
 
 Via Database (for system roles):
-```javascript
-db.roles.updateOne(
-  { name: 'admin' },
-  { $addToSet: { permissions: 'new.permission' } }
-);
-// Then invalidate cache or restart application
+```sql
+UPDATE authz.roles
+SET permissions = array_append(permissions, 'new.permission'), updated_at = now()
+WHERE name = 'admin' AND NOT ('new.permission' = ANY (permissions));
+-- Then invalidate cache or restart application
 ```
 
 ### Troubleshooting
 
 **User doesn't have expected permissions:**
-1. Check user has the role: `db.users.findOne({ _id: userId }, { roles: 1 })`
-2. Check role has the permission: `db.roles.findOne({ _id: roleId })`
-3. Check role is active: `isActive: true`
+1. Check user has the role: `SELECT * FROM identity.user_roles WHERE user_id = '<userId>'`
+2. Check role has the permission: `SELECT permissions FROM authz.roles WHERE id = '<roleId>'`
+3. Check role is active: `is_active = true`
 4. Have user log out and back in (refreshes JWT)
 
 **Permission check always fails:**
@@ -543,7 +529,7 @@ db.roles.updateOne(
 3. Ensure user is authenticated (JwtAuthGuard runs first)
 
 **Audit logs not appearing:**
-1. Check MongoDB connection
+1. Check the Postgres connection
 2. Verify `AuditLogService` is injected
 3. Check application logs for "Failed to write audit log" errors
 
@@ -558,3 +544,7 @@ db.roles.updateOne(
 | `ERR_2102` | `ROLE_SYSTEM_PROTECTED` | Cannot modify system role |
 | `ERR_2103` | `PERMISSION_DENIED` | User lacks required permission |
 | `ERR_2104` | `INVALID_PERMISSION` | Permission string not recognized |
+
+## Role cache (plan 1A.15)
+
+The in-process role cache (permissions + names per role id) refreshes on a 5-minute TTL and on local invalidation. Cross-instance invalidation remains TTL-bound: a role change on instance A is visible on instance B within the TTL at most. This is unchanged from the previous MongoDB implementation.

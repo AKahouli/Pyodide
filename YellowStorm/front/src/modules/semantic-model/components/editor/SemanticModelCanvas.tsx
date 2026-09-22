@@ -12,7 +12,7 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { showSuccess, showWarning } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
 import { useSemanticModelEditorStore } from '../../store';
-import { KNOWLEDGE_DRAG_TYPE, parseKnowledgeResource, type KnowledgeDropState, type KnowledgeLinkingController } from '../../hooks/use-knowledge-linking';
+import { KNOWLEDGE_DRAG_TYPE, parseKnowledgeResource, type KnowledgeDropState, type KnowledgeLinkingController, type KnowledgeResource } from '../../hooks/use-knowledge-linking';
 import type { SemanticNodeType, SemanticRecordRelation, SemanticRelationType } from '../../types';
 import { compatibleRecordRelations, nextLinkedConceptPosition, uniqueBusinessKey, type CompatibleRecordRelation } from '../../utils/model-utils';
 
@@ -121,7 +121,7 @@ const BusinessNode = memo(function BusinessNode({ data,selected,isConnectable }:
 
 const nodeTypes = { business:BusinessNode };
 
-export function SemanticModelCanvas({ canEdit,onConnectRequest,knowledge,onOpenKnowledge }: Readonly<{ canEdit:boolean;onConnectRequest:(connection:{sourceId:string;targetId:string})=>void;knowledge:KnowledgeLinkingController;onOpenKnowledge:(nodeId:string)=>void }>) {
+export function SemanticModelCanvas({ canEdit,onConnectRequest,knowledge,onOpenKnowledge,onMapStructuredDrop }: Readonly<{ canEdit:boolean;onConnectRequest:(connection:{sourceId:string;targetId:string})=>void;knowledge:KnowledgeLinkingController;onOpenKnowledge:(nodeId:string)=>void;onMapStructuredDrop?:(resource:Extract<KnowledgeResource,{kind:'document'}>,nodeId:string)=>void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const isMobile = useIsMobile();
   const graph = useSemanticModelEditorStore((state)=>state.graph);
@@ -183,7 +183,12 @@ export function SemanticModelCanvas({ canEdit,onConnectRequest,knowledge,onOpenK
     const resource=knowledge.draggedResource??parseKnowledgeResource(event.dataTransfer.getData(KNOWLEDGE_DRAG_TYPE));
     setDropNodeId(null);
     knowledge.setDraggedResource(null);
-    if (!resource||knowledge.hasBinding(nodeId,resource)||knowledge.isBusy) return;
+    if (!resource||knowledge.isBusy) return;
+    if (resource.kind==='document'&&resource.mappable&&onMapStructuredDrop) {
+      onMapStructuredDrop(resource,nodeId);
+      return;
+    }
+    if (knowledge.hasBinding(nodeId,resource)) return;
     void knowledge.link(nodeId,resource);
   };
 

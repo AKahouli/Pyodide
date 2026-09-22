@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { GovernanceReadinessCheck, GovernanceScopeOverview } from '@/modules/governance';
-import { findNextReadinessCheck, getLatestDryRunRevisionNumber, getTabReadinessState, governanceScopeTabs, isCurrentDraftDryRunPassed, isScopeKnowledgeReady, sortReadinessChecks } from './scope-readiness';
+import { findNextReadinessCheck, getGovernanceScopeTabs, getLatestDryRunRevisionNumber, getTabReadinessState, isCurrentDraftDryRunPassed, isScopeKnowledgeReady, sortReadinessChecks } from './scope-readiness';
 
 function readinessCheck(key: string, status: GovernanceReadinessCheck['status'] = 'passed', targetType: GovernanceReadinessCheck['targetType'] = 'rule'): GovernanceReadinessCheck {
   return { key, label: key, status, severity: status === 'passed' ? 'info' : 'blocking', targetType };
@@ -15,7 +15,7 @@ function overviewWith(checks: GovernanceReadinessCheck[], published = false): Go
 
 describe('scope readiness sequence', () => {
   it('keeps the canonical lifecycle order with Dry-run before Review', () => {
-    expect(governanceScopeTabs.filter((tab) => tab !== 'audience')).toEqual(['overview', 'knowledge', 'agents', 'ownership', 'guardrails', 'testPublish', 'review', 'monitor']);
+    expect(getGovernanceScopeTabs(false)).toEqual(['overview', 'knowledge', 'agents', 'ownership', 'guardrails', 'testPublish', 'review', 'monitor']);
   });
 
   it('sorts checklist items by their lifecycle tab', () => {

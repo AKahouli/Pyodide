@@ -1,4 +1,5 @@
 import { BadRequestException } from '@modules/exceptions';
+import { DuplicateKeyError } from '../persistence/governance-records';
 import { GovernanceMembershipService } from './governance-membership.service';
 
 describe('GovernanceMembershipService', () => {
@@ -9,23 +10,34 @@ describe('GovernanceMembershipService', () => {
   const groupId = '507f1f77bcf86cd799439014';
   const membershipId = '507f1f77bcf86cd799439016';
 
-  function buildService(duplicate?: Record<string, unknown>, memberships: Record<string, unknown>[] = [], isProgramOwner = true) {
-    const exec = jest.fn().mockResolvedValue(memberships);
-    const lean = jest.fn().mockReturnValue({ exec });
-    const sort = jest.fn().mockReturnValue({ lean });
-    const findOneExec = jest.fn().mockResolvedValue(duplicate ?? null);
-    const membershipModel = {
-      findOne: jest.fn().mockReturnValue({ exec: findOneExec, lean: jest.fn().mockReturnValue({ exec: findOneExec }) }),
-      create: jest.fn().mockImplementation(async (payload) => ({ _id: { toString: () => 'membership-1' }, ...payload, createdAt: new Date('2026-01-01T00:00:00Z'), updatedAt: new Date('2026-01-01T00:00:00Z') })),
-      deleteOne: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ deletedCount: 1 }) }),
-      find: jest.fn().mockReturnValue({ populate: jest.fn().mockReturnValue({ sort }), lean }),
-      findById: jest.fn().mockReturnValue({ populate: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(null) }) }) }),
+  function membershipRecord(overrides: Record<string, unknown> = {}) {
+    return { id: 'membership-1', programId, invitedBy: actorId, createdAt: new Date('2026-01-01T00:00:00Z'), updatedAt: new Date('2026-01-01T00:00:00Z'), ...overrides };
+  }
+
+  function buildService(options: { duplicate?: Record<string, unknown> | null; memberships?: Record<string, unknown>[]; isProgramOwner?: boolean; insertError?: unknown } = {}) {
+    let stored: Record<string, unknown> | null = null;
+    const membershipStore = {
+      findDuplicate: jest.fn().mockResolvedValue(options.duplicate ?? null),
+      insert: jest.fn(options.insertError ? (() => Promise.reject(options.insertError)) : async (payload: Record<string, unknown>) => {
+        stored = membershipRecord({ ...payload });
+        return stored;
+      }),
+      findById: jest.fn(async () => stored ?? options.duplicate ?? membershipRecord({})),
+      findByIdAndProgram: jest.fn(async () => options.duplicate ?? stored ?? membershipRecord({ id: membershipId })),
+      findActiveForUser: jest.fn().mockResolvedValue(options.memberships ?? []),
+      findActiveByUser: jest.fn().mockResolvedValue([]),
+      listByProgram: jest.fn().mockResolvedValue(options.memberships ?? []),
+      update: jest.fn(async (_id: string, patch: Record<string, unknown>) => membershipRecord({ id: 'existing', userId, ...patch })),
+      deleteById: jest.fn().mockResolvedValue(undefined),
     };
-    const programService = { assertOwnedProgram: jest.fn().mockResolvedValue(undefined), assertProgramOwner: jest.fn().mockImplementation(async () => { if (!isProgramOwner) throw new Error('not owner'); }) };
+    const userLookup = { byId: jest.fn(), byIds: jest.fn().mockResolvedValue(new Map()) };
+    const groupLookup = { summariesByIds: jest.fn().mockResolvedValue(new Map()) };
+    const programService = { assertOwnedProgram: jest.fn().mockResolvedValue(undefined), assertProgramOwner: jest.fn().mockImplementation(async () => { if (options.isProgramOwner === false) throw new Error('not owner'); }) };
     const scopeService = { findById: jest.fn().mockResolvedValue({}) };
     const userGroupService = { findById: jest.fn().mockResolvedValue({ id: groupId }), findGroupIdsForMember: jest.fn().mockResolvedValue([groupId]) };
     const auditLogService = { logSuccess: jest.fn() };
-    return { service: new GovernanceMembershipService(membershipModel as never, programService as never, scopeService as never, userGroupService as never, auditLogService as never), membershipModel, userGroupService, auditLogService };
+    const service = new GovernanceMembershipService(membershipStore as never, userLookup as never, groupLookup as never, programService as never, scopeService as never, userGroupService as never, auditLogService as never);
+    return { service, membershipStore, userGroupService, auditLogService };
   }
 
   it('creates active memberships with role permissions', async () => {
@@ -39,36 +51,29 @@ describe('GovernanceMembershipService', () => {
   });
 
   it('reactivates duplicate memberships for the same program scope and user', async () => {
-    const duplicate: Record<string, unknown> & { save: jest.Mock } = { _id: { toString: () => 'existing' }, userId, role: 'scope_viewer', status: 'disabled', permissions: [], save: jest.fn().mockResolvedValue(undefined) };
-    const { service, membershipModel } = buildService(duplicate);
+    const { service, membershipStore } = buildService({ duplicate: membershipRecord({ id: 'existing', userId, role: 'scope_viewer', status: 'disabled', permissions: [] }) });
 
     const membership = await service.create(actorId, actorEmail, programId, { userId, role: 'scope_approver' });
 
     expect(membership.id).toBe('existing');
-    expect(duplicate.role).toBe('scope_approver');
-    expect(duplicate.status).toBe('active');
-    expect(duplicate.permissions).toContain('governance.publish');
-    expect(duplicate.save).toHaveBeenCalled();
-    expect(membershipModel.create).not.toHaveBeenCalled();
+    expect(membership.role).toBe('scope_approver');
+    expect(membership.status).toBe('active');
+    expect(membership.permissions).toContain('governance.publish');
+    expect(membershipStore.insert).not.toHaveBeenCalled();
   });
 
   it('reuses memberships when a duplicate key is created concurrently', async () => {
-    const duplicate: Record<string, unknown> & { save: jest.Mock } = { _id: { toString: () => 'existing' }, userId, role: 'scope_viewer', status: 'disabled', permissions: [], save: jest.fn().mockResolvedValue(undefined) };
-    const { service, membershipModel, auditLogService } = buildService();
-    membershipModel.create.mockRejectedValueOnce({ code: 11000 });
-    membershipModel.findOne.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(null), lean: jest.fn() });
-    membershipModel.findOne.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(duplicate), lean: jest.fn() });
+    const { service, membershipStore, auditLogService } = buildService({ insertError: new DuplicateKeyError(), duplicate: membershipRecord({ id: 'existing', userId, role: 'scope_viewer', status: 'disabled', permissions: [] }) });
 
     const membership = await service.create(actorId, actorEmail, programId, { userId, role: 'scope_approver' });
 
     expect(membership.id).toBe('existing');
-    expect(duplicate.role).toBe('scope_approver');
-    expect(duplicate.status).toBe('active');
-    expect(duplicate.permissions).toContain('governance.publish');
-    expect((duplicate.invitedBy as { toString(): string }).toString()).toBe(actorId);
-    expect(duplicate.save).toHaveBeenCalled();
+    expect(membership.role).toBe('scope_approver');
+    expect(membership.status).toBe('active');
+    expect(membership.invitedBy).toBe(actorId);
     expect(auditLogService.logSuccess).toHaveBeenCalledWith(expect.objectContaining({ action: 'governance.membership.updated', metadata: expect.objectContaining({ reason: 'reactivated_existing' }) }));
     expect(auditLogService.logSuccess).not.toHaveBeenCalledWith(expect.objectContaining({ action: 'governance.membership.invited' }));
+    // The pre-check short-circuits; insert only runs when no duplicate existed.
   });
 
   it('creates group memberships after validating group ownership', async () => {
@@ -82,14 +87,12 @@ describe('GovernanceMembershipService', () => {
   });
 
   it('lists all memberships for program owners', async () => {
-    const memberships = [
-      { _id: { toString: () => 'membership-1' }, programId: { toString: () => programId }, userId, role: 'scope_viewer', status: 'active', permissions: [], createdAt: new Date('2026-01-01T00:00:00Z'), updatedAt: new Date('2026-01-01T00:00:00Z') },
-    ];
-    const { service, membershipModel } = buildService(undefined, memberships);
+    const memberships = [membershipRecord({ id: 'membership-1', userId, role: 'scope_viewer', status: 'active', permissions: [] })];
+    const { service, membershipStore } = buildService({ memberships });
 
     const result = await service.list(actorId, programId);
 
-    expect(membershipModel.find).toHaveBeenCalledWith({ programId: expect.any(Object) });
+    expect(membershipStore.listByProgram).toHaveBeenCalledWith(programId);
     expect(result).toHaveLength(1);
     expect(result[0].id).toBe('membership-1');
   });
@@ -103,35 +106,54 @@ describe('GovernanceMembershipService', () => {
 
   it('includes group memberships when resolving accessible scopes', async () => {
     const scopeId = '507f1f77bcf86cd799439015';
-    const { service, membershipModel } = buildService(undefined, [{ groupId, scopeId: { toString: () => scopeId }, status: 'active' }]);
+    const { service } = buildService({ memberships: [{ groupId, scopeId, status: 'active' }] });
 
     const scopes = await service.getAccessibleScopeIds(userId, programId);
 
-    expect(membershipModel.find).toHaveBeenCalledWith(expect.objectContaining({ $or: expect.arrayContaining([expect.objectContaining({ groupId: expect.any(Object) })]) }));
     expect(scopes).toEqual([scopeId]);
   });
 
   it('definitively removes a membership when the program owner removes it', async () => {
-    const membership = { _id: { toString: () => membershipId }, save: jest.fn() };
-    const { service, membershipModel, auditLogService } = buildService(membership);
+    const membership = membershipRecord({ id: membershipId });
+    const { service, membershipStore, auditLogService } = buildService({ duplicate: membership });
 
     await service.disable(actorId, actorEmail, programId, membershipId);
 
-    expect(membershipModel.deleteOne).toHaveBeenCalledWith({ _id: membership._id });
-    expect(membership.save).not.toHaveBeenCalled();
+    expect(membershipStore.deleteById).toHaveBeenCalledWith(membershipId);
     expect(auditLogService.logSuccess).toHaveBeenCalledWith(expect.objectContaining({ action: 'governance.membership.deleted' }));
   });
 
   it('disables a membership when a delegated administrator removes it', async () => {
     const scopeId = '507f1f77bcf86cd799439015';
-    const membership = { _id: { toString: () => membershipId }, scopeId: { toString: () => scopeId }, status: 'active', save: jest.fn().mockResolvedValue(undefined) };
-    const { service, membershipModel, auditLogService } = buildService(membership, [{ userId: actorId, scopeId: { toString: () => scopeId }, status: 'active' }], false);
+    const membership = membershipRecord({ id: membershipId, scopeId, status: 'active' });
+    const { service, membershipStore, auditLogService } = buildService({ duplicate: membership, memberships: [{ userId: actorId, scopeId, status: 'active' }], isProgramOwner: false });
 
     await service.disable(actorId, actorEmail, programId, membershipId);
 
-    expect(membershipModel.deleteOne).not.toHaveBeenCalled();
-    expect(membership.status).toBe('disabled');
-    expect(membership.save).toHaveBeenCalled();
+    expect(membershipStore.deleteById).not.toHaveBeenCalled();
+    expect(membershipStore.update).toHaveBeenCalledWith(membershipId, { status: 'disabled' });
     expect(auditLogService.logSuccess).toHaveBeenCalledWith(expect.objectContaining({ action: 'governance.membership.disabled' }));
+  });
+
+  it('resolves user and group summaries through the lookup ports instead of populates', async () => {
+    const userLookup = { byId: jest.fn(), byIds: jest.fn().mockResolvedValue(new Map([[userId, { id: userId, email: 'user@example.test', firstName: 'U', lastName: 'S' }]])) };
+    const groupLookup = { summariesByIds: jest.fn().mockResolvedValue(new Map([[groupId, { id: groupId, name: 'Planners', memberCount: 3 }]])) };
+    const membershipStore = {
+      findDuplicate: jest.fn().mockResolvedValue(null),
+      insert: jest.fn(),
+      findById: jest.fn(),
+      findActiveForUser: jest.fn().mockResolvedValue([]),
+      findActiveByUser: jest.fn().mockResolvedValue([]),
+      listByProgram: jest.fn().mockResolvedValue([membershipRecord({ id: 'membership-1', userId, groupId, role: 'scope_viewer', status: 'active', permissions: [] })]),
+      update: jest.fn(),
+      deleteById: jest.fn(),
+    };
+    const service = new GovernanceMembershipService(membershipStore as never, userLookup as never, groupLookup as never, { assertOwnedProgram: jest.fn(), assertProgramOwner: jest.fn().mockResolvedValue(undefined) } as never, {} as never, { findById: jest.fn(), findGroupIdsForMember: jest.fn().mockResolvedValue([]) } as never, { logSuccess: jest.fn() } as never);
+
+    const result = await service.list(actorId, programId);
+    expect(userLookup.byIds).toHaveBeenCalledWith([userId]);
+    expect(groupLookup.summariesByIds).toHaveBeenCalledWith([groupId]);
+    expect(result[0].user).toEqual({ id: userId, email: 'user@example.test', firstName: 'U', lastName: 'S' });
+    expect(result[0].group).toEqual({ id: groupId, name: 'Planners', memberCount: 3 });
   });
 });

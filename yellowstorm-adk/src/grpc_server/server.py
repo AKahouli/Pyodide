@@ -133,7 +133,8 @@ async def start_grpc_server(
         from src.grpc_generated import companion_ai_pb2_grpc as orch_grpc
         from src.companion_ai.bootstrap import OrchestratorRuntime
 
-        orchestrator_runtime = await OrchestratorRuntime().start()
+        orchestrator_runtime = OrchestratorRuntime()
+        await orchestrator_runtime.start()
         orch_grpc.add_CompanionAiServicer_to_server(
             orchestrator_runtime.servicer, server)
         from src.grpc_generated import companion_ai_pb2 as orch_pb
@@ -167,6 +168,11 @@ async def start_grpc_server(
     try:
         await server.start()
     except BaseException:
+        if orchestrator_runtime is not None:
+            try:
+                await orchestrator_runtime.stop()
+            except Exception as stop_error:
+                logger.error(f"[gRPC] Failed to stop orchestrator after startup failure: {stop_error}")
         await close_checkpointer()
         raise
     logger.info(f"✅ [gRPC] V2 Server started successfully on {host}:{port}")

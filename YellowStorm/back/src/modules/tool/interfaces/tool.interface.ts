@@ -1,4 +1,4 @@
-import { ToolAttributeType } from '../schemas/tool.schema';
+import { ToolAttributeType } from '../tool.types';
 
 export interface IToolAttribute {
   id?: string;

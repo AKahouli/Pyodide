@@ -7,4 +7,13 @@ export const semanticModelQueryKeys = {
   workspaces: (id: string) => ['semantic-models','workspaces',id] as const,
   versions: (id: string) => ['semantic-models','versions',id] as const,
   workspace: (id: string) => ['semantic-models','workspace-entry',id] as const,
+  sourceAssets: (id: string) => ['semantic-models','source-assets',id] as const,
+  sourceAssetProfile: (id: string, documentId: string, sheetName?: string) => ['semantic-models','source-asset-profile',id,documentId,sheetName??''] as const,
+  sourceMappings: (id: string) => ['semantic-models','source-mappings',id] as const,
+  relationRules: (id: string) => ['semantic-models','relation-rules',id] as const,
+  sourcePolicies: (id: string) => ['semantic-models','source-policies',id] as const,
+  dataPreview: (id: string, limit: number) => ['semantic-models','data-preview',id,limit] as const,
+  mappingHealth: (id: string) => ['semantic-models','mapping-health',id] as const,
+  readiness: (id: string) => ['semantic-models','readiness',id] as const,
+  reviewItems: (id: string, status: 'open' | 'resolved') => ['semantic-models','review-items',id,status] as const,
 };

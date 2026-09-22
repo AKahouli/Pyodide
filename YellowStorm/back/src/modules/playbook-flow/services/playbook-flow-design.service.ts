@@ -5,7 +5,7 @@ import { LoggerService } from '@modules/logger';
 import { AgentService } from '@modules/agent/agent.service';
 import { LiteLLMConnectionService } from '@modules/models/litellm-connection.service';
 import { UsageService } from '@modules/usage/usage.service';
-import { UsageType } from '@modules/usage/schemas/usage.schema';
+import { UsageType } from '@modules/usage/usage-type.enum';
 import { PlaybookFlowDesignGrpcService } from './playbook-flow-design-grpc.service';
 import { PlaybookFlowService } from './playbook-flow.service';
 import { PlaybookFlowContextService } from './playbook-flow-context.service';
