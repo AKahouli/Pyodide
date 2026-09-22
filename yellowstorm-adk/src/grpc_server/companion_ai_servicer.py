@@ -291,7 +291,7 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         token = active_turn_id.set(run_id)
         try:
             planner = _agent_by_type(request.agents, PLANNER_AGENT_TYPE)
-            await self._svc.converse_turn(
+            plan = await self._svc.converse_turn(
                 session_id=request.session_id, user_id=request.user_id,
                 message=request.message,
                 planner_model=planner.chatbot.model if planner else None,
@@ -300,6 +300,29 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                 requester=_requester(request))
             logger.info("[worky] converse turn done (session=%s run=%s)",
                         request.session_id, run_id)
+            # An amend that adds work to a PARKED plan promised "runs on resume",
+            # but a plain execute step has no resume trigger (no card, no mail
+            # reply) — it was orphaned pending forever (seen: session dd85c187).
+            # Drive it now, but only when no turn is executing (else the drive
+            # loop already picks it up) and nothing is waiting on a card/await
+            # (that resume owns the plan). continue_turn replays done steps and
+            # runs just the new ones.
+            sid = request.session_id
+            running = self._running.get(sid)
+            if (plan and (plan.steps or plan.ops)
+                    and (running is None or running.done())
+                    and self._rm is not None
+                    and not await self._rm.outstanding_interrupts(sid)):
+                executor = _agent_by_type(request.agents, EXECUTOR_AGENT_TYPE)
+                requester = _requester(request)
+                logger.info("[worky] converse added work to a parked plan — driving "
+                            "it (session=%s run=%s)", sid, run_id)
+                await self._svc.continue_turn(
+                    session_id=sid, user_id=request.user_id,
+                    model=(executor.chatbot.model if executor else "") or DEFAULT_MODEL,
+                    connectors=_agent_connector_bindings(executor),
+                    executor_prompt=_with_requester(
+                        executor.prompt if executor else None, requester))
         except asyncio.CancelledError:
             raise
         except Exception as exc:

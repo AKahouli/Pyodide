@@ -1592,21 +1592,29 @@ class OrchestratorService:
             return 0
         if len({s.id for s in new_steps}) != len(new_steps):
             raise ValueError("plan has duplicate step ids")
-        # The plan's frontier: steps nothing currently depends on. Injected steps
-        # hang off it so they schedule in a NEW wave AFTER all existing work.
-        # Without this, an independent step (no deps) lands in wave 0 alongside
-        # already-completed steps, and the re-drive re-RUNS that whole wave
-        # instead of replaying it — seen live: adding "search Ethereum" re-ran the
-        # finished Bitcoin step. create_task never hits this because its spawned
-        # steps always depend on their caller, i.e. a later wave.
-        frontier = [s.id for s in live.steps
-                    if not any(s.id in o.depends_on for o in live.steps)]
+        # The amend planner is shown the running plan WITH real step ids (see
+        # _amend_message), so a dep it names on a LIVE step is its placement
+        # decision — honor it ("email the summary" -> after the summary step),
+        # not just in-batch deps. Placement is the planner's, not the frontier's.
+        live_ids = {s.id for s in live.steps}
+        # Fallback for a step the planner left independent (depends_on: []): hang
+        # it off leaves that are already COMPLETED or RUNNING — a fresh later wave
+        # that won't re-run a started step (seen live: adding "search Ethereum"
+        # re-ran the finished Bitcoin step) — but NEVER off a BLOCKED or PENDING
+        # leaf (an open await, or work sitting behind one), so "also ask Imed" runs
+        # in PARALLEL with Adem's blocked reply instead of stranded behind it
+        # (session c7b084e1). Empty (nothing started) is safe: no wave to disturb.
+        anchor_frontier = [s.id for s in live.steps
+                           if s.status in (Status.COMPLETED, Status.RUNNING)
+                           and not any(s.id in o.depends_on for o in live.steps)]
         id_map = {s.id: uuid.uuid4().hex[:12] for s in new_steps}
         for s in new_steps:
             s.id = id_map[s.id]
-            # Keep the batch's own ordering; a batch-root (no in-batch dep) hangs
-            # off the frontier so no completed wave is disturbed.
-            s.depends_on = [id_map[d] for d in s.depends_on if d in id_map] or list(frontier)
+            # Keep in-batch deps (remapped) AND planner-named live-plan deps; only
+            # a step with no valid dep at all falls back to the anchor frontier.
+            kept = [id_map[d] if d in id_map else d
+                    for d in s.depends_on if d in id_map or d in live_ids]
+            s.depends_on = kept or list(anchor_frontier)
             s.status = Status.PENDING
             if not s.is_persona:
                 s.assignee = live.executor_id

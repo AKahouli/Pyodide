@@ -1991,3 +1991,37 @@ def test_mark_running_leaves_a_terminal_step_untouched():
     asyncio.run(cb(object(), object()))
     assert step.status == Status.COMPLETED
     assert seen == []
+
+
+async def test_inject_steps_honors_planner_live_deps_and_parallelizes_independent(monkeypatch):
+    """An amend's PLACEMENT is the planner's: a dep it names on a LIVE step is
+    kept, and a step it leaves independent hangs off only the COMPLETED frontier
+    so it runs parallel to an open branch instead of behind it (session c7b084e1:
+    Imed got chained behind Adem's blocked reply)."""
+    service = svc.OrchestratorService(MagicMock(), MagicMock(), planner_model="m")
+    monkeypatch.setattr(service, "_project_step", AsyncMock())
+    monkeypatch.setattr(service, "_mint_mail_waits", AsyncMock())
+
+    live = Plan(steps=[
+        Step(id="adem_send", description="ask Adem", status=Status.COMPLETED),
+        Step(id="adem_wait", description="await Adem", depends_on=["adem_send"], status=Status.BLOCKED),
+        Step(id="summary", description="summarize", status=Status.COMPLETED),
+    ])
+    new = [
+        Step(id="s1", description="ask Imed", depends_on=[]),              # independent
+        Step(id="s2", description="email the summary", depends_on=["summary"]),  # live dep
+        Step(id="s3", description="notify after Imed", depends_on=["s1"]),       # in-batch dep
+    ]
+    await service._inject_steps("sess", "u", live, new)
+
+    imed = next(s for s in live.steps if s.description == "ask Imed")
+    mail = next(s for s in live.steps if s.description == "email the summary")
+    notify = next(s for s in live.steps if s.description == "notify after Imed")
+
+    # independent Imed -> completed leaf only (summary), NOT the blocked await
+    assert imed.depends_on == ["summary"]
+    assert "adem_wait" not in imed.depends_on
+    # planner's dep on a LIVE step is honored, not discarded
+    assert mail.depends_on == ["summary"]
+    # in-batch dep still remapped to the new id
+    assert notify.depends_on == [imed.id]
