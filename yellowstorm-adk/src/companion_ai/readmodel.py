@@ -435,6 +435,15 @@ class ReadModel:
                 f"WHERE session_id=$1 AND step_id=$2 AND status='waiting'",
                 session_id, step_id, interrupt_id)
 
+    async def cancel_mail_wait(self, session_id: str, step_id: str) -> None:
+        """Drop one step's wait — its reply can never arrive (e.g. the send it was
+        waiting on failed). Scoped to the step, unlike cancel_mail_waits."""
+        async with self._pool.acquire() as con:
+            await con.execute(
+                f"UPDATE {_q(self._schema,'mail_waits')} SET status='cancelled' "
+                f"WHERE session_id=$1 AND step_id=$2 AND status='waiting'",
+                session_id, step_id)
+
     async def rebind_mail_wait(self, session_id: str, old_step_id: str, new_step_id: str) -> int:
         """Move a pending wait onto the real step it belongs to, returning how
         many rows moved (0 or 1).

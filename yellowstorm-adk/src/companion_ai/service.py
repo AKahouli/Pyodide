@@ -2103,10 +2103,27 @@ class OrchestratorService:
         """STEP 10 — the turn ends one of two ways: blocked on one or more
         questions (each step parks with its own interrupt id, resumable
         independently), or done."""
+        dead: set = set()
         for interrupt_id, step_id in interrupts:
             if not step_id:
                 continue
             step = plan.step(step_id)
+            # An await_reply whose upstream send FAILED can never be answered — the
+            # message was never sent. Parking it strands the session on a DEAD
+            # interrupt: it blocks forever AND makes a later amend look "owned" by a
+            # live await, so the amended step is never driven (session 0a08ea4b:
+            # 'Await Adam' hung on a failed 'Message Adam', and the corrected 'Ask
+            # Adem' never ran). Cancel it instead of blocking so the plan moves on.
+            if step is not None and step.kind == "await_reply" and any(
+                    (dep := plan.step(d)) is not None and dep.status is Status.FAILED
+                    for d in step.depends_on):
+                step.status = Status.CANCELLED
+                dead.add(step_id)
+                await self._project(self._rm and self._rm.set_step_status(
+                    session_id, step_id, Status.CANCELLED.value,
+                    blocked_reason="the message this awaited a reply to was not sent"))
+                await self._project(self._rm and self._rm.cancel_mail_wait(session_id, step_id))
+                continue
             step.status = Status.BLOCKED
             # Remember the exact id so a later same-turn rebuild re-parks this
             # ask/await under it rather than a shifted node-path id (see Step).
@@ -2128,6 +2145,23 @@ class OrchestratorService:
                 # A confirm already projected its approve/decline card in _drive.
                 await self._add_message(session_id, "assistant",
                                         step.question or step.description or "")
+
+        # Cancel the dead branch below a cancelled zombie await — those steps
+        # waited (transitively) on a reply that will never come, so the cleanup
+        # below must not mark them 'completed' with no result.
+        while dead:
+            propagated = False
+            for s in plan.steps:
+                if s.status in (Status.PENDING, Status.BLOCKED) and s.id not in dead \
+                        and any(d in dead for d in s.depends_on):
+                    s.status = Status.CANCELLED
+                    dead.add(s.id)
+                    propagated = True
+                    await self._project(self._rm and self._rm.set_step_status(
+                        session_id, s.id, Status.CANCELLED.value,
+                        blocked_reason="an upstream step it depended on could not complete"))
+            if not propagated:
+                break
 
         outstanding = await self._outstanding(session_id, interrupts)
         if outstanding:
