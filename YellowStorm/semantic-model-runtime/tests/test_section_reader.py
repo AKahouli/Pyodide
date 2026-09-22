@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 
 from app.datasource.section_reader import (SectionReadError, analyze_outline, get_outline,
-                                           read_evidence, read_sections, structural_closure)
+                                           read_complete_section_set, read_evidence, read_sections,
+                                           structural_closure)
 
 
 class FakeConnection:
@@ -18,7 +19,8 @@ class FakeConnection:
         if "AS block_pk" in sql:
             return self.evidence
         if "FROM logical_blocks" in sql:
-            return self.blocks
+            limit, offset = params[-2:]
+            return self.blocks[offset:offset + limit]
         if "FROM logical_sections" in sql:
             return self.sections[:params[-1]] if sql.endswith("LIMIT $2") else self.sections
         raise AssertionError(sql)
@@ -107,6 +109,21 @@ async def test_read_sections_truncates_with_continuation_and_empty_is_not_absenc
     empty_result = await read_sections(empty, document_pk=42, section_pks=[1])
     assert empty_result["sections"][0]["blocks"] == []
     assert empty_result["coverage"]["directBlocksComplete"] is True
+
+
+@pytest.mark.asyncio
+async def test_complete_section_set_follows_continuations(monkeypatch: pytest.MonkeyPatch):
+    import app.datasource.section_reader as reader
+
+    monkeypatch.setattr(reader, "MAX_BLOCKS", 2)
+    blocks = [{"id": i, "section_id": "sec_1", "block_id": f"b{i}", "block_type": "text/OCR",
+               "content": str(i), "page_number": i} for i in range(1, 4)]
+    conn = FakeConnection(sections=[_section(1, "sec_1", None)], blocks=blocks)
+    result = await read_complete_section_set(
+        conn, document_pk=42, section_pks=[1], max_total_blocks=3)
+    assert [block["blockKey"] for block in result["sections"][0]["blocks"]] == ["b1", "b2", "b3"]
+    assert result["sections"][0]["blocks"][0]["origin"] == "ocr"
+    assert result["coverage"]["directBlocksComplete"] is True
 
 
 @pytest.mark.asyncio

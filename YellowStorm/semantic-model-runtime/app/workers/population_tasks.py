@@ -45,7 +45,7 @@ def run_population_for_payload(command_dump: dict) -> dict:
     The canonical top-level ``workspaceId`` is the authenticated home and is
     required, mirroring discovery: an inner scope may never substitute for it.
     The supplied ``specHash`` must equal the recomputed canonical hash (P1.5);
-    every identity component must be column-mapped or the job is rejected
+    every identity component must be mapped or the job is rejected
     before any byte is fetched.
     """
     try:
@@ -85,14 +85,41 @@ def run_population_for_payload(command_dump: dict) -> dict:
             concept = compiled["concepts"].get(entry.get("conceptId"))
             if concept is None:
                 return {"ok": False, "errorCode": "unknown_concept"}
-            mapping = entry.get("columnMapping") or entry.get("column_mapping")
-            if not isinstance(mapping, dict) or not mapping:
-                return {"ok": False, "errorCode": "invalid_column_mapping"}
-            mapped_attributes = set(mapping.values())
+            source_kind = entry.get("sourceKind") or entry.get("source_kind")
+            if source_kind not in (None, "tabular", "excel_sheet", "csv", "document"):
+                return {"ok": False, "errorCode": "invalid_source_kind"}
+            if source_kind == "document":
+                field_mappings = entry.get("fieldMappings") or entry.get("field_mappings")
+                if not isinstance(field_mappings, list) or not field_mappings:
+                    return {"ok": False, "errorCode": "invalid_document_mapping"}
+                active = [item for item in field_mappings if isinstance(item, dict)
+                          and item.get("mode") != "ignore"]
+                if len(active) != len(field_mappings):
+                    return {"ok": False, "errorCode": "invalid_document_mapping"}
+                if any(item.get("mode") not in {"extract", "metadata", "constant"}
+                       or item.get("targetAttribute") not in concept["allowedFields"] for item in active):
+                    return {"ok": False, "errorCode": "invalid_document_mapping"}
+                if any(item.get("mode") == "extract"
+                       and (not isinstance(item.get("sourceField"), str)
+                            or not item["sourceField"].strip()) for item in active):
+                    return {"ok": False, "errorCode": "invalid_document_mapping"}
+                metadata_fields = {"document_name", "document_id", "workspace_id"}
+                if any(item.get("mode") == "metadata"
+                       and item.get("sourceField") not in metadata_fields for item in active):
+                    return {"ok": False, "errorCode": "invalid_document_mapping"}
+                mapped_attributes = {item["targetAttribute"] for item in active}
+                if len(mapped_attributes) != len(active):
+                    return {"ok": False, "errorCode": "duplicate_document_mapping"}
+                mapping = None
+            else:
+                mapping = entry.get("columnMapping") or entry.get("column_mapping")
+                if not isinstance(mapping, dict) or not mapping:
+                    return {"ok": False, "errorCode": "invalid_column_mapping"}
+                mapped_attributes = set(mapping.values())
             unmapped = [c for c in concept["keyComponents"] if c not in mapped_attributes]
             if unmapped:
                 return {"ok": False, "errorCode": "unmapped_identity"}
-            if len(set(mapping.values())) != len(mapping):
+            if mapping is not None and len(set(mapping.values())) != len(mapping):
                 return {"ok": False, "errorCode": "duplicate_column_mapping"}
             if "_row" in mapped_attributes:
                 return {"ok": False, "errorCode": "reserved_attribute_name"}
@@ -108,8 +135,10 @@ def run_population_for_payload(command_dump: dict) -> dict:
             options = entry.get("options") or {}
             normalized.append({
                 "conceptId": entry.get("conceptId"), "source": source,
+                "sourceKind": source_kind or "tabular",
                 "options": options if isinstance(options, dict) else {},
-                "columnMapping": dict(mapping),
+                **({"fieldMappings": active} if source_kind == "document"
+                   else {"columnMapping": dict(mapping)}),
                 "labelField": entry.get("labelField") or entry.get("label_field"),
                 "mappingVersion": entry.get("mappingVersion") or entry.get("mapping_version") or "v1",
             })
@@ -132,7 +161,7 @@ def run_population_for_payload(command_dump: dict) -> dict:
 
 
 async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=None,
-                                  query=None) -> dict:
+                                  query=None, index_connection=None, metadata_fetch=None) -> dict:
     """Fetch, prepare, query and populate every mapped source (bounded)."""
     import asyncio
     import os
@@ -153,9 +182,38 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     per_concept: dict[str, list[dict]] = {}
     dataset_fingerprints: set[str] = set()
     observations: list[dict] = []
+    document_coverage: list[dict] = []
+    index_observations: list[dict] = []
     complete_enumeration = True
     for entry in validated["sources"]:
         source, options = entry["source"], entry["options"]
+        if entry["sourceKind"] == "document":
+            from app.datasource.logical_index import create_index_pool
+            from app.population.document import populate_document
+
+            owned_pool = None
+            connection = index_connection
+            try:
+                if connection is None:
+                    owned_pool = await create_index_pool()
+                    connection = owned_pool
+                output = await populate_document(
+                    connection, entry, compiled["concepts"][entry["conceptId"]], actor,
+                    metadata_fetch=metadata_fetch)
+            finally:
+                if owned_pool is not None:
+                    await owned_pool.close()
+            per_concept.setdefault(entry["conceptId"], []).append(output)
+            document_coverage.append(output["coverage"])
+            observations.append(output["sourceObservation"])
+            if output.get("indexObservation"):
+                index_observations.append(output["indexObservation"])
+            fingerprint = output["sourceObservation"]["assetRef"].get("assetVersionId")
+            if isinstance(fingerprint, str) and fingerprint:
+                dataset_fingerprints.add(fingerprint)
+            if output["coverage"]["status"] == "budget_exhausted":
+                complete_enumeration = False
+            continue
         try:
             async with asyncio.timeout(ASSET_FETCH_WALL_SECONDS):
                 data = await (fetch or fetch_workspace_asset)(source, actor)
@@ -274,8 +332,9 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             "completeEnumeration": complete_enumeration, "entities": kept,
             "assertions": assertions, "relationships": relationships, "gaps": gaps,
             "counts": counts, "datasetFingerprints": sorted(dataset_fingerprints),
-            "sourceObservations": observations,
-            "jobState": "completed_with_gaps" if gaps else "completed"}
+             "sourceObservations": observations,
+             "documentCoverage": document_coverage, "indexObservations": index_observations,
+             "jobState": "completed_with_gaps" if gaps else "completed"}
 
 
 def preview_job_result(outcome: dict) -> dict:
@@ -325,8 +384,9 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict) -
                                model_version_id=model_version_id,
                                spec_hash=outcome["specHash"], specification=specification)
     coverage = {"counts": outcome.get("counts", {}),
-                "completeEnumeration": outcome.get("completeEnumeration", False),
-                "gapKinds": sorted({gap.get("kind") for gap in outcome.get("gaps", [])})}
+                 "completeEnumeration": outcome.get("completeEnumeration", False),
+                 "gapKinds": sorted({gap.get("kind") for gap in outcome.get("gaps", [])}),
+                 "documents": outcome.get("documentCoverage", [])}
     await create_data_revision(pool, revision_id=revision_id, model_id=model_id,
                                model_version_id=model_version_id,
                                spec_hash=outcome["specHash"],
@@ -338,7 +398,10 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict) -
     await store_assertions(pool, model_id=model_id, revision_id=revision_id,
                            assertions=outcome.get("assertions", []))
     await store_relationships(pool, model_id=model_id, revision_id=revision_id,
-                              relationships=outcome.get("relationships", []))
+                               relationships=outcome.get("relationships", []))
+    from app.persistence.index_observations import record_index_observation
+    for observation in outcome.get("indexObservations", []):
+        await record_index_observation(pool, observation)
     await store_entity_projections(
         pool, build_entity_projections(outcome.get("entities", []),
                                        model_id=model_id, revision_id=revision_id))

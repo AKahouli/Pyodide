@@ -19,6 +19,8 @@ const document = {
   indexingStatus: 'ready',
   contentHash: '0123456789abcdef0123456789abcdef',
   uploadedAt: '2026-09-20T12:00:00.000Z',
+  originalName: 'report.csv',
+  createdBy: query.actorUserId,
 };
 const config = { get: jest.fn((_key: string, fallback: unknown) => fallback) };
 
@@ -37,6 +39,24 @@ function responseSink() {
 }
 
 describe('WorkspaceAssetInternalController', () => {
+  it('reauthorizes and returns authoritative metadata without touching storage', async () => {
+    const shares = { assertUserHasAccess: jest.fn().mockResolvedValue(undefined) };
+    const documents = { findById: jest.fn().mockResolvedValue(document) };
+    const storage = { openReadStream: jest.fn() };
+    const result = await new WorkspaceAssetInternalController(
+      shares as any, documents as any, storage as any, config as any,
+    ).metadata(query);
+
+    expect(result).toMatchObject({
+      workspaceId: query.workspaceId,
+      assetId: query.documentId,
+      originalName: 'report.csv',
+      uploaderUserId: query.actorUserId,
+      contentHash: document.contentHash,
+    });
+    expect(storage.openReadStream).not.toHaveBeenCalled();
+  });
+
   it('authorizes and streams an identity-bound asset with authoritative headers', async () => {
     const shares = { assertUserHasAccess: jest.fn().mockResolvedValue(undefined) };
     const documents = { findById: jest.fn().mockResolvedValue(document) };

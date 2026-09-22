@@ -64,7 +64,8 @@ const setup = (
   const documents = {
     findById: jest.fn(async () => ({
       mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', originalName: 'a.xlsx',
-      contentHash: 'sha256:abc', updatedAt: '2026-01-01', size: 100,
+      contentHash: 'sha256:abc', updatedAt: '2026-01-01', uploadedAt: '2026-01-01', size: 100,
+      createdBy: 'uploader-1', indexingStatus: 'ready',
     })),
   };
   const runtime = {
@@ -129,20 +130,29 @@ describe('SemanticPopulationRefreshService', () => {
     expect(command.payload.specification.concepts.map((c: { conceptId: string }) => c.conceptId)).toEqual(['c-contract']);
   });
 
-  it('rejects document mappings in single scope and skips them in whole-model scope', async () => {
-    const doc = MAPPING({ id: 'm-doc', assetKind: 'document' });
-    const single = setup([doc]);
-    await expect(single.service.requestRefresh('u-1', 'model-1', {
+  it('admits document mappings with extraction recipes and current metadata', async () => {
+    const doc = MAPPING({
+      id: 'm-doc', assetKind: 'document', sheetName: '',
+      fieldMappings: [
+        { sourceField: 'Customer ID', targetAttribute: 'customer_id', mode: 'extract' },
+        { sourceField: 'document_name', targetAttribute: 'name', mode: 'metadata' },
+      ],
+    });
+    const { documents, runtime, service } = setup([doc]);
+    documents.findById.mockResolvedValueOnce({
+      mimeType: 'application/pdf', originalName: 'agreement.pdf', createdBy: 'uploader-1',
+      contentHash: 'sha256:abc', updatedAt: '2026-01-01', uploadedAt: '2026-01-01',
+      size: 100, indexingStatus: 'ready',
+    });
+    await service.requestRefresh('u-1', 'model-1', {
       purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' },
-    })).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED });
-
-    const whole = setup([MAPPING(), doc]);
-    const result = await whole.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
-    expect(result.skipped).toHaveLength(1);
-    expect(result.skipped[0].mappingId).toBe('m-doc');
-    expect(whole.runtime.mirrorSpecification).toHaveBeenCalledWith(expect.objectContaining({
-      specification: expect.objectContaining({ sourceScope: [{ workspaceId: 'ws-1', assetId: 'd-1' }] }),
-    }));
+    });
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    expect(calls[0][0].payload.sources[0]).toMatchObject({
+      sourceKind: 'document', conceptId: 'c-customer',
+      fieldMappings: doc.fieldMappings,
+      source: { originalName: 'agreement.pdf', uploaderUserId: 'uploader-1', indexingStatus: 'ready' },
+    });
   });
 
   it('rejects mappings that do not directly map every identity field', async () => {
@@ -158,7 +168,8 @@ describe('SemanticPopulationRefreshService', () => {
     const { documents, runtime, service } = setup();
     documents.findById.mockResolvedValueOnce({
       mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', originalName: 'a.xlsx',
-      contentHash: 'sha256:new', updatedAt: '2026-01-02', size: 100,
+      contentHash: 'sha256:new', updatedAt: '2026-01-02', uploadedAt: '2026-01-02', size: 100,
+      createdBy: 'uploader-1', indexingStatus: 'ready',
     });
     await expect(service.requestRefresh('u-1', 'model-1', {
       purpose: 'refresh', scope: { kind: 'mapping', mappingId: 'm-1' },
@@ -264,7 +275,7 @@ describe('SemanticPopulationRefreshService', () => {
     expect(calls[1][1]).not.toBe(calls[0][1]);
   });
 
-  it('caps whole-model refreshes at 25 structured sources', async () => {
+  it('caps whole-model refreshes at 25 sources', async () => {
     const mappings = Array.from({ length: 26 }, (_, index) => MAPPING({ id: `m-${index}`, documentId: `d-${index}` }));
     const { service } = setup(mappings);
     await expect(service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } }))

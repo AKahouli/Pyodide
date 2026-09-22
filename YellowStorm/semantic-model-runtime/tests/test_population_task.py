@@ -39,6 +39,19 @@ def test_valid_command_compiles():
     assert validated["purpose"] == "build"
 
 
+def test_valid_document_command_compiles_without_llm_configuration():
+    source = {**SOURCE, "mimeType": "application/pdf", "originalName": "agreement.pdf"}
+    validated = run_population_for_payload(command(sources=[{
+        "conceptId": "c1", "sourceKind": "document", "source": source,
+        "fieldMappings": [
+            {"sourceField": "Customer ID", "targetAttribute": "customer_id", "mode": "extract"},
+            {"sourceField": "document_name", "targetAttribute": "name", "mode": "metadata"},
+        ], "mappingVersion": "map-v1",
+    }]))
+    assert validated["ok"] is True
+    assert validated["sources"][0]["sourceKind"] == "document"
+
+
 def test_validator_rejects_before_any_fetch():
     assert run_population_for_payload({})["errorCode"] == "workspace_required"
     assert run_population_for_payload(None)["errorCode"] == "invalid_command"
@@ -72,6 +85,10 @@ def test_validator_rejects_before_any_fetch():
                                  "columnMapping": {"customer_id": "customer_id",
                                                    "row": "_row"}}])
     assert run_population_for_payload(reserved)["errorCode"] == "reserved_attribute_name"
+    unknown_kind = command(sources=[{"conceptId": "c1", "sourceKind": "binary",
+                                     "source": dict(SOURCE),
+                                     "columnMapping": {"customer_id": "customer_id"}}])
+    assert run_population_for_payload(unknown_kind)["errorCode"] == "invalid_source_kind"
 
 
 CSV = b"customer_id,name\nC-1,Acme\nC-2,Globex\n"
@@ -106,6 +123,37 @@ async def test_task_populates_from_prepared_rows():
     assert {a["attribute"] for a in outcome["assertions"]} == {"name"}
     assert outcome["relationships"] == []
     assert outcome["sourceObservations"][0]["datasetId"] == "ds_0123456789abcdef01234567"
+
+
+@pytest.mark.asyncio
+async def test_task_merges_tabular_and_document_sources(monkeypatch: pytest.MonkeyPatch):
+    import app.population.document as document
+
+    async def populate(_connection, entry, _concept, _actor, **_kwargs):
+        return {"entities": [{"entityId": "crm:doc", "conceptId": entry["conceptId"],
+                              "namespace": "crm", "identity": {"customer_id": "c-3"},
+                              "label": "C-3", "attributes": {}, "provenance": {"sources": []}}],
+                "assertions": [], "gaps": [],
+                "counts": {"scanned": 1, "excluded": 0, "queryable": 0,
+                           "materialized": 1, "gaps": 0},
+                "coverage": {"assetRef": {}, "status": "processed_complete"},
+                "sourceObservation": {"assetRef": {"assetVersionId": "sha256:doc"}},
+                "indexObservation": None}
+
+    monkeypatch.setattr(document, "populate_document", populate)
+    sources = command()["payload"]["sources"] + [{
+        "conceptId": "c1", "sourceKind": "document",
+        "source": {**SOURCE, "mimeType": "application/pdf", "originalName": "agreement.pdf"},
+        "fieldMappings": [
+            {"sourceField": "Customer ID", "targetAttribute": "customer_id", "mode": "extract"},
+            {"sourceField": "document_name", "targetAttribute": "name", "mode": "metadata"},
+        ], "mappingVersion": "map-v1",
+    }]
+    outcome = await run_population_for_task(
+        command(sources=sources), fetch=fake_fetch, prepare=fake_prepare,
+        query=fake_query, index_connection=object())
+    assert outcome["counts"]["materialized"] == 3
+    assert outcome["documentCoverage"][0]["status"] == "processed_complete"
 
 
 @pytest.mark.asyncio

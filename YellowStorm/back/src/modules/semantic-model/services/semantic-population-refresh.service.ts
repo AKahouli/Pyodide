@@ -11,7 +11,7 @@ import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-d
 import { ModelSpecificationService } from './model-specification.service';
 import { SemanticModelService } from './semantic-model.service';
 import { SemanticRuntimeClientService } from './semantic-runtime-client.service';
-import { STRUCTURED_MIME_PREFIXES } from './semantic-source-mapping.service';
+import { DOCUMENT_MIME_TYPES, STRUCTURED_MIME_PREFIXES } from './semantic-source-mapping.service';
 
 export type PopulationRefreshScope = { kind: 'model' } | { kind: 'mapping'; mappingId: string };
 
@@ -53,7 +53,7 @@ interface MappingRow {
 type RelationRuleRow = Pick<RelationResolutionRule,
   'relationId' | 'sourceAttribute' | 'targetAttribute' | 'strategy'>;
 
-const STRUCTURED_KINDS = new Set(['excel_sheet', 'csv']);
+const POPULATION_KINDS = new Set(['excel_sheet', 'csv', 'document']);
 const MAX_REFRESH_SOURCES = 25;
 
 @Injectable()
@@ -125,7 +125,7 @@ export class SemanticPopulationRefreshService {
       }
     }
     if (!sources.length) {
-      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'No usable structured source in the selected scope');
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'No usable source in the selected scope');
     }
     const scopedConceptIds = new Set(usableMappings.map((mapping) => mapping.conceptId));
     const concepts = nodes
@@ -148,10 +148,11 @@ export class SemanticPopulationRefreshService {
         matchingStrategy: rule?.strategy ?? 'normalized',
       });
       if (rule) {
-        const sourceFieldMapped = sources.some(
-          (source) => source.conceptId === relation.sourceNodeTypeId
-            && Object.values(source.columnMapping).includes(rule.sourceAttribute),
-        );
+        const sourceFieldMapped = sources.some((source) => {
+          if (source.conceptId !== relation.sourceNodeTypeId) return false;
+          if ('columnMapping' in source) return Object.values(source.columnMapping).includes(rule.sourceAttribute);
+          return source.fieldMappings.some((field) => field.targetAttribute === rule.sourceAttribute);
+        });
         const targetIdentity = identityRules.get(relation.targetNodeTypeId) ?? [];
         if (!sourceFieldMapped || targetIdentity.length !== 1 || targetIdentity[0] !== rule.targetAttribute) {
           throw new BadRequestException(
@@ -275,10 +276,7 @@ export class SemanticPopulationRefreshService {
        ORDER BY m.id`,
       [modelId],
     );
-    // Document mappings flow through so the caller reports them as skipped
-    // with a reason; only structured sources count toward the refresh cap.
-    const structured = result.rows.filter((row) => STRUCTURED_KINDS.has(row.assetKind));
-    if (structured.length > MAX_REFRESH_SOURCES) {
+    if (result.rows.length > MAX_REFRESH_SOURCES) {
       throw new BadRequestException(
         ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
         `Whole-model refresh supports at most ${MAX_REFRESH_SOURCES} sources; refresh a single mapping instead`,
@@ -288,10 +286,10 @@ export class SemanticPopulationRefreshService {
   }
 
   private assertUsable(mapping: MappingRow): void {
-    if (!STRUCTURED_KINDS.has(mapping.assetKind)) {
+    if (!POPULATION_KINDS.has(mapping.assetKind)) {
       throw new BadRequestException(
         ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
-        'Only spreadsheet and CSV mappings can populate; document extraction is not wired yet',
+        'The mapped source kind cannot populate',
       );
     }
     if (!mapping.sourceEnabled || mapping.status !== 'ready') {
@@ -305,7 +303,7 @@ export class SemanticPopulationRefreshService {
     const currentSourceVersion = document.contentHash || `${document.updatedAt}:${document.size}`;
     const currentKind = STRUCTURED_MIME_PREFIXES.some((prefix) => document.mimeType.startsWith(prefix))
       ? document.mimeType.includes('csv') ? 'csv' : 'excel_sheet'
-      : null;
+      : DOCUMENT_MIME_TYPES.has(document.mimeType) ? 'document' : null;
     if (currentSourceVersion !== mapping.validatedSourceVersion || currentKind !== mapping.assetKind) {
       throw new ConflictException(
         ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT,
@@ -320,23 +318,54 @@ export class SemanticPopulationRefreshService {
         'The mapping targets an attribute that is not present in the current draft',
       );
     }
-    if (activeMappings.some((field) => field.mode !== 'direct')) {
+    const allowedModes = mapping.assetKind === 'document'
+      ? new Set(['extract', 'metadata', 'constant'])
+      : new Set(['direct']);
+    if (activeMappings.some((field) => !allowedModes.has(field.mode))) {
       throw new BadRequestException(
         ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
-        'Population currently supports direct structured field mappings only',
+        'The mapping contains a field mode unsupported by its source kind',
       );
+    }
+    const mappedAttributes = new Set(activeMappings.map((field) => field.targetAttribute));
+    if (mappedAttributes.size !== activeMappings.length) {
+      throw new BadRequestException(
+        ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+        'A concept attribute can only be mapped once per source',
+      );
+    }
+    const identityFields = new Set(mapping.identityFields ?? []);
+    if ([...identityFields].some((field) => !mappedAttributes.has(field))) {
+      throw new BadRequestException(
+        ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+        'The mapping must populate every identity field',
+      );
+    }
+    const source = {
+      workspaceId: mapping.workspaceId,
+      assetId: mapping.documentId,
+      assetVersionId: mapping.validatedSourceVersion ?? undefined,
+      originalName: document.originalName,
+      uploaderUserId: document.createdBy,
+      mimeType: document.mimeType,
+      sizeBytes: document.size,
+      indexingStatus: document.indexingStatus,
+      contentHash: document.contentHash,
+      uploadedAt: document.uploadedAt,
+    };
+    const mappingVersion = mapping.updatedAt instanceof Date ? mapping.updatedAt.toISOString() : String(mapping.updatedAt);
+    if (mapping.assetKind === 'document') {
+      return {
+        sourceKind: 'document' as const,
+        conceptId: mapping.conceptId,
+        source,
+        fieldMappings: activeMappings,
+        mappingVersion,
+      };
     }
     const columnMapping: Record<string, string> = {};
     for (const field of mapping.fieldMappings ?? []) {
       if (field.mode === 'direct' && field.sourceField) columnMapping[field.sourceField] = field.targetAttribute;
-    }
-    const identityFields = new Set(mapping.identityFields ?? []);
-    const mappedAttributes = new Set(Object.values(columnMapping));
-    if (mappedAttributes.size !== Object.keys(columnMapping).length) {
-      throw new BadRequestException(
-        ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
-        'A concept attribute can only be mapped from one source column',
-      );
     }
     if (!Object.keys(columnMapping).length || [...identityFields].some((field) => !mappedAttributes.has(field))) {
       throw new BadRequestException(
@@ -348,17 +377,13 @@ export class SemanticPopulationRefreshService {
       (field) => field.mode === 'direct' && !identityFields.has(field.targetAttribute),
     )?.targetAttribute;
     return {
+      sourceKind: mapping.assetKind,
       conceptId: mapping.conceptId,
-      source: {
-        workspaceId: mapping.workspaceId,
-        assetId: mapping.documentId,
-        assetVersionId: mapping.validatedSourceVersion ?? undefined,
-        mimeType: document.mimeType,
-      },
+      source,
       options: mapping.sheetName ? { sheetName: mapping.sheetName } : {},
       columnMapping,
       ...(labelField ? { labelField } : {}),
-      mappingVersion: mapping.updatedAt instanceof Date ? mapping.updatedAt.toISOString() : String(mapping.updatedAt),
+      mappingVersion,
     };
   }
 }

@@ -74,6 +74,29 @@ export class WorkspaceAssetInternalController {
   }
 
   @Public()
+  @Get('semantic-asset-metadata')
+  @SkipResponseWrap()
+  @ApiOperation({ summary: 'Reauthorize and describe a Workspace asset for the semantic runtime' })
+  async metadata(@Query() query: SemanticAssetQueryDto) {
+    await this.shares.assertUserHasAccess(query.actorUserId, [query.workspaceId]);
+    const document = await this.documents.findById(query.workspaceId, query.documentId);
+    if (document.isFolder || document.status !== DocumentStatus.COMPLETED) {
+      throw new BadRequestException('Document is not available for semantic discovery');
+    }
+    return {
+      workspaceId: document.workspaceId,
+      assetId: document.id,
+      originalName: document.originalName,
+      uploaderUserId: document.createdBy,
+      mimeType: document.mimeType,
+      sizeBytes: document.size,
+      contentHash: document.contentHash,
+      uploadedAt: document.uploadedAt,
+      indexingStatus: document.indexingStatus,
+    };
+  }
+
+  @Public()
   @Get('semantic-asset')
   @SkipResponseWrap()
   @ApiOperation({ summary: 'Stream an authorized Workspace asset to the semantic runtime' })

@@ -29,7 +29,7 @@ export const STRUCTURED_MIME_PREFIXES = [
   'application/vnd.ms-excel',
   'text/csv',
 ];
-const DOCUMENT_MIME_TYPES = new Set([
+export const DOCUMENT_MIME_TYPES = new Set([
   'application/pdf',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',

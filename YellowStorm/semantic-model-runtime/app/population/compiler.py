@@ -1,9 +1,8 @@
-"""Deterministic population compiler (Phase 5A, P5.1-P5.3 tabular subset).
+"""Deterministic population compiler (Phase 5A, P5.1-P5.3).
 
 Pure stdlib. Compiles a canonical ``ModelSpecification`` into per-concept
-field groups, identity rules, matching plans and filter ASTs. Document
-extraction recipes (P5.4-P5.6) and LLM fallback (P5.16-P5.22) are out of scope:
-this slice compiles the deterministic tabular path only. Mirrors the reference
+field groups, identity rules, matching plans and filter ASTs. Document mapping
+recipes are validated by the worker because they are source-specific. Mirrors the reference
 validation in ``ModelSpecificationService`` (P1.2/P1.4/P1.5).
 """
 

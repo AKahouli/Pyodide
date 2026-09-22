@@ -17,6 +17,7 @@ MAX_CLOSURE_SECTIONS = 500
 MAX_BLOCKS = 2000
 MAX_EVIDENCE_BLOCKS = 200
 MAX_EVIDENCE_CHARS = 4000
+MAX_COMPLETE_SECTION_BLOCKS = 5000
 
 
 class SectionReadError(ValueError):
@@ -183,7 +184,7 @@ async def read_sections(connection: Any, *, document_pk: Any, section_pks: list[
         blocks_by_key.setdefault(str(row["section_id"]), []).append({
             "blockPk": row["id"], "blockKey": row.get("block_id"),
             "blockType": row.get("block_type"), "content": row.get("content"),
-            "pageNumber": row.get("page_number"),
+            "pageNumber": row.get("page_number"), "origin": _origin_for(row.get("block_type")),
         })
     return {
         "documentPk": document_pk,
@@ -196,6 +197,42 @@ async def read_sections(connection: Any, *, document_pk: Any, section_pks: list[
                      "returnedSections": len(selected),
                      "outlineTruncated": outline["truncated"]},
         "continuation": str(offset + max_blocks) if truncated else None,
+    }
+
+
+async def read_complete_section_set(connection: Any, *, document_pk: Any,
+                                    section_pks: list[int], include_descendants: bool = True,
+                                    max_total_blocks: int = MAX_COMPLETE_SECTION_BLOCKS) -> dict[str, Any]:
+    """Follow section continuations until complete or the total block budget is spent."""
+    _bounded_int(max_total_blocks, "max_total_blocks", maximum=MAX_COMPLETE_SECTION_BLOCKS)
+    offset = 0
+    merged: dict[int, dict[str, Any]] = {}
+    missing: list[int] = []
+    last: dict[str, Any] | None = None
+    while offset < max_total_blocks:
+        page_size = min(MAX_BLOCKS, max_total_blocks - offset)
+        last = await read_sections(
+            connection, document_pk=document_pk, section_pks=section_pks,
+            include_descendants=include_descendants, max_blocks=page_size, offset=offset)
+        for section in last["sections"]:
+            current = merged.setdefault(section["sectionPk"], {**section, "blocks": []})
+            current["blocks"].extend(section["blocks"])
+        missing.extend(pk for pk in last["missingTargets"] if pk not in missing)
+        if last["continuation"] is None:
+            break
+        offset = int(last["continuation"])
+    complete = bool(last is not None and last["continuation"] is None)
+    return {
+        "documentPk": document_pk,
+        "sections": list(merged.values()),
+        "missingTargets": missing,
+        "coverage": {
+            "directBlocksComplete": complete,
+            "requestedSections": len(section_pks),
+            "returnedSections": len(merged),
+            "budgetExhausted": not complete,
+        },
+        "continuation": None if complete else str(offset),
     }
 
 

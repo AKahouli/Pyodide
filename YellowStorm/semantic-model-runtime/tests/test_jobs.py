@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from copy import deepcopy
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -111,6 +113,27 @@ def test_admission_commits_before_202_and_reuses_same_command(job_client: TestCl
     assert duplicate.status_code == 202
     assert duplicate.json()["reused"] is True
     assert duplicate.json()["jobId"] == "job-1"
+
+
+def test_population_admission_accepts_document_mapping_and_rejects_mixed_shapes(
+        job_client: TestClient):
+    body = deepcopy(BODY)
+    body["payload"]["sources"] = [{
+        "conceptId": "c1", "sourceKind": "document",
+        "source": {"workspaceId": "6512f0a1c9e77a001234aaa1",
+                   "assetId": "6512f0a1c9e77a001234bbb1", "mimeType": "application/pdf"},
+        "fieldMappings": [
+            {"sourceField": "Customer ID", "targetAttribute": "customer_id", "mode": "extract"},
+        ],
+    }]
+    assert job_client.post(
+        "/v1/semantic-model-population/runs",
+        headers={**AUTH, "Idempotency-Key": "document-1"}, json=body).status_code == 202
+
+    body["payload"]["sources"][0]["columnMapping"] = {"id": "customer_id"}
+    assert job_client.post(
+        "/v1/semantic-model-population/runs",
+        headers={**AUTH, "Idempotency-Key": "document-2"}, json=body).status_code == 422
 
 
 def test_idempotency_key_with_different_payload_is_409(job_client: TestClient):

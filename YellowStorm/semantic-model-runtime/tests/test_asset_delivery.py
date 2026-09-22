@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from app.datasource.asset_delivery import (AssetFetchError, fetch_prepared_dataset, fetch_workspace_asset,
-                                           upload_prepared_dataset)
+                                           fetch_workspace_asset_metadata, upload_prepared_dataset)
 from app.workers.datasource_tasks import run_discovery_for_task, task_lease_seconds
 
 WS = "6512f0a1c9e77a001234aaa1"
@@ -103,6 +103,22 @@ async def test_rejects_same_length_storage_mutation_against_advertised_hash():
     async with httpx.AsyncClient(transport=httpx.MockTransport(response), follow_redirects=False) as client:
         with pytest.raises(AssetFetchError, match="asset_changed"):
             await fetch_workspace_asset(SOURCE, "6512f0a1c9e77a001234ccc3", client=client)
+
+
+@pytest.mark.asyncio
+async def test_reauthorizes_asset_metadata_without_downloading_content():
+    seen = {}
+
+    def response(request: httpx.Request) -> httpx.Response:
+        seen["request"] = request
+        return httpx.Response(200, json={
+            **SOURCE, "uploaderUserId": "u1",
+        }, request=request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as client:
+        current = await fetch_workspace_asset_metadata(SOURCE, "u1", client=client)
+    assert current["contentHash"] == HASH
+    assert seen["request"].url.path == "/api/workspaces/internal/semantic-asset-metadata"
 
 
 @pytest.mark.asyncio

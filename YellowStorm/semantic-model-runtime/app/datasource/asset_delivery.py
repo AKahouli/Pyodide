@@ -159,6 +159,57 @@ async def fetch_workspace_asset(source: dict[str, Any], actor_user_id: str,
             await http.aclose()
 
 
+async def fetch_workspace_asset_metadata(source: dict[str, Any], actor_user_id: str,
+                                         *, client: httpx.AsyncClient | None = None) -> dict[str, Any]:
+    """Reauthorize an asset and return current metadata without reading bytes."""
+    token = os.environ.get("YELLOWSTORM_INTERNAL_SERVICE_TOKEN", "")
+    if not token:
+        raise RuntimeError("internal_service_token_missing")
+    own_client = client is None
+    http = client or httpx.AsyncClient(timeout=httpx.Timeout(10, connect=5), follow_redirects=False)
+    try:
+        response = await http.get(
+            f"{_backend_url()}/{_api_prefix()}/workspaces/internal/semantic-asset-metadata",
+            params={"actorUserId": actor_user_id, "workspaceId": source.get("workspaceId", ""),
+                    "documentId": source.get("assetId", "")},
+            headers={"X-Internal-Token": token},
+        )
+        if response.is_redirect:
+            raise AssetFetchError("asset_redirected")
+        if response.status_code == 403:
+            raise AssetFetchError("workspace_forbidden")
+        if response.status_code == 404:
+            raise AssetFetchError("asset_not_found")
+        if response.status_code in {400, 409, 413, 422}:
+            raise AssetFetchError("asset_unavailable")
+        response.raise_for_status()
+        try:
+            current = response.json()
+        except ValueError as exc:
+            raise AssetFetchError("invalid_asset_response") from exc
+        if not isinstance(current, dict):
+            raise AssetFetchError("invalid_asset_response")
+        required = ("workspaceId", "assetId", "originalName", "mimeType", "sizeBytes")
+        if any(current.get(key) is None for key in required):
+            raise AssetFetchError("invalid_asset_response")
+        if (current["workspaceId"] != source.get("workspaceId")
+                or current["assetId"] != source.get("assetId")
+                or current["mimeType"] != source.get("mimeType")):
+            raise AssetFetchError("asset_changed")
+        size = current["sizeBytes"]
+        if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+            raise AssetFetchError("invalid_asset_response")
+        expected_size = source.get("sizeBytes")
+        if isinstance(expected_size, int) and not isinstance(expected_size, bool) and size != expected_size:
+            raise AssetFetchError("asset_changed")
+        if resolve_asset_ref(current)["assetVersionId"] != resolve_asset_ref(source)["assetVersionId"]:
+            raise AssetFetchError("asset_changed")
+        return current
+    finally:
+        if own_client:
+            await http.aclose()
+
+
 async def upload_prepared_dataset(source: dict[str, Any], actor_user_id: str,
                                   manifest: dict[str, Any], path: Path,
                                   *, client: httpx.AsyncClient | None = None) -> dict[str, Any]:

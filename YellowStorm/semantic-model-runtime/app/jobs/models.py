@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 JobState = Literal[
     "queued",
@@ -43,18 +43,29 @@ class DiscoveryCommand(JobCommand):
 
 
 class PopulationSource(BaseModel):
-    """One resolved mapped source. Columns are source-header names; the worker
-    renames them to concept attributes through ``columnMapping`` and drops
-    unmapped columns so unmapped source values never leak into assertions."""
+    """One resolved tabular or document mapping, discriminated by source kind."""
 
     model_config = ConfigDict(extra="forbid")
 
     concept_id: str = Field(alias="conceptId", min_length=1, max_length=200)
     source: dict[str, Any]
+    source_kind: Literal["tabular", "excel_sheet", "csv", "document"] | None = Field(
+        default=None, alias="sourceKind")
     options: dict[str, Any] = Field(default_factory=dict)
-    column_mapping: dict[str, str] = Field(alias="columnMapping", min_length=1)
+    column_mapping: dict[str, str] | None = Field(default=None, alias="columnMapping", min_length=1)
+    field_mappings: list[dict[str, Any]] | None = Field(
+        default=None, alias="fieldMappings", min_length=1, max_length=25)
     label_field: str | None = Field(default=None, alias="labelField", max_length=200)
     mapping_version: str = Field(default="v1", alias="mappingVersion", max_length=200)
+
+    @model_validator(mode="after")
+    def validate_mapping_shape(self):  # type: ignore[no-untyped-def]
+        if self.source_kind == "document":
+            if self.field_mappings is None or self.column_mapping is not None:
+                raise ValueError("document sources require fieldMappings only")
+        elif self.column_mapping is None or self.field_mappings is not None:
+            raise ValueError("tabular sources require columnMapping only")
+        return self
 
 
 class RelationBinding(BaseModel):
