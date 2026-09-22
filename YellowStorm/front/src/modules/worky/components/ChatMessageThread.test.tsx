@@ -1,18 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReactNode } from 'react';
 import { vi } from 'vitest';
 import { LocalizationProvider } from '@/modules/localization';
 import { ChatMessageThread } from './ChatMessageThread';
 import { useWorkyMessages, useWorkyStore } from '../store';
-
-vi.mock('./ChatClarificationCard', () => ({
-  ChatClarificationCard: ({
-    clarification,
-  }: {
-    clarification: { id: string; question: string };
-  }) => <li data-testid='worky-chat-clarification'>{clarification.question}</li>,
-}));
 
 vi.mock('../store', () => ({
   useWorkyMessages: vi.fn(),
@@ -267,7 +259,7 @@ describe('ChatMessageThread', () => {
     expect(screen.getByText('Research complete.')).toBeInTheDocument();
   });
 
-  it('renders clarifications inline after the owner message that triggered them', () => {
+  it('does not render clarifications in the chat (they live in "Needs you")', () => {
     mockedUseMessages.mockReturnValue([
       {
         id: 'm1',
@@ -275,13 +267,6 @@ describe('ChatMessageThread', () => {
         content: 'hello',
         planDeltaRef: null,
         createdAt: '2026-06-21T10:00:00.000Z',
-      },
-      {
-        id: 'm2',
-        role: 'owner',
-        content: 'second question',
-        planDeltaRef: null,
-        createdAt: '2026-06-21T10:05:00.000Z',
       },
     ]);
     const pendingClarifications = [
@@ -293,15 +278,6 @@ describe('ChatMessageThread', () => {
         taskId: null,
         blocksTaskIds: [],
         createdAt: '2026-06-21T10:01:00.000Z',
-      },
-      {
-        id: 'c2',
-        type: 'clarification',
-        question: 'Second clarification',
-        options: [],
-        taskId: null,
-        blocksTaskIds: [],
-        createdAt: '2026-06-21T10:06:00.000Z',
       },
     ];
     mockedUseStore.mockImplementation(
@@ -323,15 +299,12 @@ describe('ChatMessageThread', () => {
       </TestProviders>,
     );
 
-    const list = screen.getByTestId('worky-message-list');
-    const items = Array.from(list.children).map((node) => node.textContent ?? '');
-    expect(items[0]).toContain('hello');
-    expect(items[1]).toContain('First clarification');
-    expect(items[2]).toContain('second question');
-    expect(items[3]).toContain('Second clarification');
+    expect(screen.getByText('hello')).toBeInTheDocument();
+    expect(screen.queryByText('First clarification')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('worky-chat-clarification')).not.toBeInTheDocument();
   });
 
-  it('submits an approve/decline choice as a normal message (resumes the parked send)', async () => {
+  it('hides send-approval gates from the chat (they live in "Needs you")', () => {
     mockedUseMessages.mockReturnValue([
       {
         id: 'm1',
@@ -367,13 +340,8 @@ describe('ChatMessageThread', () => {
       </TestProviders>,
     );
 
-    fireEvent.click(screen.getByRole('radio', { name: 'Approuver' }));
-    await waitFor(() =>
-      expect(sendMutateAsync).toHaveBeenCalledWith(
-        expect.objectContaining({
-          content: JSON.stringify({ verdict: 'approve', questionId: 'confirm::call_1' }),
-        }),
-      ),
-    );
+    // The gate is the only message, so it's dropped and the thread is empty.
+    expect(screen.queryByRole('radio', { name: 'Approuver' })).not.toBeInTheDocument();
+    expect(screen.queryByText("Approuver l'envoi de cet e-mail ?")).not.toBeInTheDocument();
   });
 });
