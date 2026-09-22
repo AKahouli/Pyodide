@@ -61,7 +61,7 @@ def test_text_only_message_with_only_unsupported_parts_uses_absent_content():
     ]
 
 
-def test_unconfigured_messages_preserve_multimodal_content():
+def test_unregistered_models_default_to_text_only():
     messages = [
         {
             "role": "user",
@@ -72,7 +72,13 @@ def test_unconfigured_messages_preserve_multimodal_content():
         }
     ]
 
-    assert normalize_messages_for_model("azure/gpt-5.4", messages) is messages
+    normalized = normalize_messages_for_model("azure/gpt-5.4", messages)
+
+    # Unregistered models default to text-only: the proxy rejects non-text
+    # content ("messages.content.type is invalid, allowed values: ['text']").
+    assert normalized[0]["content"] == [
+        {"type": "text", "text": "Inspect this image"}
+    ]
 
 
 def test_text_only_messages_remove_every_non_text_block_type():
@@ -204,25 +210,61 @@ async def test_litellm_patch_normalizes_keyword_and_positional_text_only_message
     monkeypatch.delattr(litellm, "_is_yellowstorm_patched", raising=False)
     monkeypatch.setattr(litellm, "acompletion", async_completion)
     monkeypatch.setattr(litellm, "completion", sync_completion)
-    register_model_input_modalities("text-boundary-model", ["text"])
+    register_model_input_modalities("gpt-5.4-boundary", ["text"])
 
     apply_litellm_debug_patch()
 
     assert await litellm.acompletion(
-        "text-boundary-model", messages, num_retries=0
+        "gpt-5.4-boundary", messages, num_retries=0
     ) == "async-result"
     assert litellm.completion(
-        model="text-boundary-model", messages=messages, num_retries=0
+        model="gpt-5.4-boundary", messages=messages, num_retries=0
     ) == "sync-result"
-    assert calls[0][1] == "azure/text-boundary-model"
+    assert calls[0][1] == "azure/gpt-5.4-boundary"
     assert "model" not in calls[0][3]
     assert calls[0][3]["num_retries"] == 0
     assert calls[0][3]["timeout"] == 700  # async path carries the judge timeout bump
     assert calls[0][2][0]["content"] == [{"type": "text", "text": "question"}]
-    assert calls[1][1] == "azure/text-boundary-model"
+    assert calls[1][1] == "azure/gpt-5.4-boundary"
     assert calls[1][2][0]["content"] == [{"type": "text", "text": "question"}]
     assert calls[1][3]["num_retries"] == 0
     assert calls[1][3]["timeout"] == 300
+
+
+@pytest.mark.asyncio
+async def test_litellm_patch_qualifies_non_azure_model_as_openai(monkeypatch):
+    import litellm
+
+    from src.evaluation.agent_evaluator import apply_litellm_debug_patch
+
+    calls = []
+
+    async def async_completion(model, messages, **kwargs):
+        calls.append(("async", model, messages, kwargs))
+        return "async-result"
+
+    def sync_completion(model, messages, **kwargs):
+        calls.append(("sync", model, messages, kwargs))
+        return "sync-result"
+
+    monkeypatch.delattr(litellm, "_is_yellowstorm_patched", raising=False)
+    monkeypatch.setattr(litellm, "acompletion", async_completion)
+    monkeypatch.setattr(litellm, "completion", sync_completion)
+
+    apply_litellm_debug_patch()
+
+    await litellm.acompletion("glm-5.2", [{"role": "user", "content": "hi"}], num_retries=0)
+    litellm.completion(model="glm-5.2", messages=[{"role": "user", "content": "hi"}], num_retries=0)
+    await litellm.acompletion("openai/glm-5.2", [{"role": "user", "content": "hi"}], num_retries=0)
+
+    # Non-Azure models must be routed through the OpenAI-compatible proxy endpoint,
+    # not azure/<model> (the proxy rejects azure/glm-5.2, and litellm refuses a
+    # bare "glm-5.2" with "LLM Provider NOT provided").
+    assert calls[0][1] == "openai/glm-5.2"
+    assert calls[1][1] == "openai/glm-5.2"
+    assert calls[1][3]["num_retries"] == 0
+    # An already-qualified provider name is left untouched.
+    assert calls[2][1] == "openai/glm-5.2"
 
 
 # --- compaction resolution (configurable ADK context compaction) ---

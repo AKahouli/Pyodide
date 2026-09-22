@@ -85,10 +85,18 @@ def normalize_temperature_for_model(model_name: object, temperature: float | Non
 
 
 def normalize_messages_for_model(model_name: object, messages: Any) -> Any:
-    """Remove content blocks unsupported by the request-local model capability."""
+    """Remove content blocks unsupported by the request-local model capability.
+
+    Unregistered models fall back to text-only input: the proxy serves
+    OpenAI-compatible text endpoints, and non-text content would be rejected
+    server-side ("messages.content.type is invalid"). Mirrors the gRPC default
+    input_modalities=["text"].
+    """
     modalities = _model_input_modalities.get().get(str(model_name or ""))
-    if modalities is None or not isinstance(messages, list):
+    if not isinstance(messages, list):
         return messages
+    if modalities is None:
+        modalities = frozenset({"text"})
 
     allowed_content_types = {"text"}
     if "image" in modalities:

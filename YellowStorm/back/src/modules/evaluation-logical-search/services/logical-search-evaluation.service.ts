@@ -26,7 +26,6 @@ import {
 } from './evaluation-metrics';
 
 const ALLOWED_EXTENSIONS = ['.xlsx', '.csv'];
-const EVAL_TIMEOUT_SECONDS = 600;
 const ORPHAN_RUN_MAX_AGE_MS = 15 * 60 * 1000;
 
 function mergeTokenUsage(
@@ -264,7 +263,6 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       benchmark_zip_path: zipPath,
       benchmark_queries_member: 'benchmark_queries.json',
       output_directory: join(runDir, 'outputs'),
-      timeout_seconds: EVAL_TIMEOUT_SECONDS,
       query_path: ['input_context', 'query'],
       // The captured node keeps the manual question in metadata.description;
       // overwrite it or the agent answers the stale question.
@@ -451,7 +449,6 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       benchmark_zip_path: zipPath,
       benchmark_queries_member: 'benchmark_queries.json',
       output_directory: join(runDir, 'outputs'),
-      timeout_seconds: EVAL_TIMEOUT_SECONDS,
       query_path: ['input_context', 'query'],
       additional_query_paths: [
         ['snapshot', 'nodes', '0', 'metadata', 'description'],

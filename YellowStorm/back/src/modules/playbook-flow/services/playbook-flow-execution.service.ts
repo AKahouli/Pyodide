@@ -2085,7 +2085,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     opts: { captureTarget?: boolean; captureJudge?: boolean; timeoutMs?: number },
   ): Promise<EvaluationStreamResult> {
     const startedAt = Date.now();
-    const timeoutMs = opts.timeoutMs ?? 600_000;
+    // No implicit deadline: only enforce a timeout when a caller passes one, so
+    // evaluation runs can be investigated without being cut at 10 minutes.
+    const timeoutMs = typeof opts.timeoutMs === 'number' && opts.timeoutMs > 0 ? opts.timeoutMs : null;
     const call = this.runRuntime(request);
     return new Promise<EvaluationStreamResult>((resolve) => {
       let targetAnswer = '';
@@ -2097,11 +2099,11 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       let status: 'completed' | 'failed' = 'failed';
       let error: string | null = null;
       let resolved = false;
-      let timer: NodeJS.Timeout;
+      let timer: NodeJS.Timeout | undefined;
       const finalize = () => {
         if (!resolved) {
           resolved = true;
-          clearTimeout(timer);
+          if (timer) clearTimeout(timer);
           resolve({
             status,
             targetAnswer,
@@ -2115,12 +2117,14 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           });
         }
       };
-      timer = setTimeout(() => {
-        status = 'failed';
-        error = `Evaluation step timed out after ${String(timeoutMs / 1000)}s`;
-        call.cancel();
-        finalize();
-      }, timeoutMs);
+      if (timeoutMs !== null) {
+        timer = setTimeout(() => {
+          status = 'failed';
+          error = `Evaluation step timed out after ${String(timeoutMs / 1000)}s`;
+          call.cancel();
+          finalize();
+        }, timeoutMs);
+      }
 
       call.on('data', (event: Record<string, unknown>) => {
         try {
@@ -2145,8 +2149,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
             }
           }
 
-          // Token usage extraction from LLM response events
-          const usage = payload.token_usage ?? payload.usage_metadata ?? payload.llm_token_usage;
+          // Token usage extraction from LLM response events. The flow engine
+          // emits accumulated usage under payload.usage (UsageSummary asdict:
+          // input_tokens/output_tokens/total_tokens/model).
+          const usage = payload.token_usage ?? payload.usage_metadata ?? payload.llm_token_usage ?? payload.usage;
           if (usage && typeof usage === 'object' && !Array.isArray(usage)) {
             const u = usage as Record<string, unknown>;
             const total = u.total_tokens ?? u.totalTokens;
