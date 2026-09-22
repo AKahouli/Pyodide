@@ -3,6 +3,7 @@ import { useParams, useNavigate, useSearchParams, useLocation, useBlocker } from
 import { ArrowLeft, Loader2, PanelRightOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { ReactFlowProvider, useReactFlow, getNodesBounds, type Edge, type Node } from '@xyflow/react';
+import { foldIteratorGraph } from '../utils/fold-iterator-graph';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import '@xyflow/react/dist/style.css';
 
@@ -71,7 +72,7 @@ import { flowEdgesToControlEdges, flowEdgesToPlaybookEdges } from '../hooks/help
 import { dataBindingsToLayerEdges, filterMirroredDataLayerEdges } from '../hooks/helpers/data-binding-serializer';
 import { tasksToNodes, TRIGGER_NODE_ID } from '../hooks/helpers/node-serializer';
 import { useAutosave } from '../hooks/useAutosave';
-import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, ConnectionDragContext, CardDensityContext, type NodeContextMenuActions } from './PlaybookNode';
+import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, ConnectionDragContext, CardDensityContext, CanvasDesignContext, type NodeContextMenuActions } from './PlaybookNode';
 import { DynamicReasoningRuntimeNode } from './runtime/DynamicReasoningRuntimeNode';
 import { DynamicReasoningRuntimeContainerNode } from './runtime/DynamicReasoningRuntimeContainerNode';
 import { useExecutionFocusGraph } from '../hooks/useExecutionFocusGraph';
@@ -1622,19 +1623,19 @@ function PlaybookCanvasInner() {
       }
 
       const currentData = node.data as PlaybookNodeData;
-      const status = stepStatusMap.get(node.id);
-      const semanticMatch = stepSemanticMatchMap.get(node.id);
+      const status = pageMode === 'run' ? stepStatusMap.get(node.id) : undefined;
+      const semanticMatch = pageMode === 'run' ? stepSemanticMatchMap.get(node.id) : undefined;
       const judgeStatus = stepJudgeStatusMap.get(node.id);
       const judgeResult = stepJudgeResultMap.get(node.id);
-      const routerLabel = activeRouterLabelMap.get(node.id);
+      const routerLabel = pageMode === 'run' ? activeRouterLabelMap.get(node.id) : undefined;
       const nextSelected = resolveCanvasNodeSelection(selectedNodeIds, selectedNodeCount, node.id, selectedStepId);
       const nextData = {
         ...currentData,
         stepStatus: status,
-        ...(semanticMatch !== undefined ? { stepSemanticMatch: semanticMatch } : {}),
-        ...(judgeStatus !== undefined ? { stepJudgeStatus: judgeStatus } : {}),
-        ...(judgeResult !== undefined ? { stepJudgeResult: judgeResult } : {}),
-        ...(routerLabel !== undefined ? { activeRouterLabel: routerLabel } : {}),
+        stepSemanticMatch: semanticMatch,
+        stepJudgeStatus: judgeStatus,
+        stepJudgeResult: judgeResult,
+        activeRouterLabel: routerLabel,
       } as PlaybookNodeData;
 
       const dataChanged = currentData.stepStatus !== nextData.stepStatus
@@ -1653,7 +1654,7 @@ function PlaybookCanvasInner() {
         data: nextData,
       };
     });
-  }, [nodes, selectedStepId, stepStatusMap, stepSemanticMatchMap, stepJudgeStatusMap, stepJudgeResultMap, activeRouterLabelMap, triggerNodeActions, playbook?.id, mailTrigger?.enabled]);
+  }, [nodes, pageMode, selectedStepId, stepStatusMap, stepSemanticMatchMap, stepJudgeStatusMap, stepJudgeResultMap, activeRouterLabelMap, triggerNodeActions, playbook?.id, mailTrigger?.enabled]);
 
   const canvasNodes = useMemo(() => liveNodes.map((node) => ({
     ...node,
@@ -1667,7 +1668,7 @@ function PlaybookCanvasInner() {
   const styledControlEdges = useMemo(() => {
     if (stepStatusMap.size === 0 && recentlyChangedEdgeIds.length === 0) return edges;
     return edges.map((edge): Edge => {
-      const sourceStatus = stepStatusMap.get(edge.source) ?? 'pending';
+      const sourceStatus = pageMode === 'run' ? stepStatusMap.get(edge.source) ?? 'pending' : 'pending';
       const style = EDGE_STYLES[sourceStatus] || EDGE_STYLES.pending;
       const isRecent = recentlyChangedEdgeIds.includes(edge.id);
       const nextStyle = isRecent
@@ -1689,7 +1690,7 @@ function PlaybookCanvasInner() {
         },
       };
     });
-  }, [edges, recentlyChangedEdgeIds, stepStatusMap]);
+  }, [edges, pageMode, recentlyChangedEdgeIds, stepStatusMap]);
 
   const liveEdges = useMemo(() => {
     if (!playbook || !dataBindingsVisible) {
@@ -1734,18 +1735,31 @@ function PlaybookCanvasInner() {
     onToggleContainer: handleToggleRuntimeContainer,
   }), [handleToggleRuntimeContainer, runtimeContainerExpansion]);
   const executionRuntimeGraph = useExecutionFocusGraph(executionForCanvas, canvasNodes, liveEdges, runtimeGraphOptions);
-  const renderedCanvasNodes = useMemo(
+  const [collapsedIterators, setCollapsedIterators] = useState<Set<string>>(() => new Set());
+  useEffect(() => { setCollapsedIterators(new Set()); }, [id]);
+  const toggleIteratorCollapsed = useCallback((nodeId: string) => {
+    setCollapsedIterators((current) => {
+      const next = new Set(current);
+      if (next.has(nodeId)) next.delete(nodeId); else next.add(nodeId);
+      return next;
+    });
+  }, []);
+  const unfoldedCanvasNodes = useMemo(
     () => executionViewMode === 'focus'
       ? executionRuntimeGraph.focusNodes
       : [...executionRuntimeGraph.inlineCanvasNodes, ...executionRuntimeGraph.inlineNodes],
     [executionRuntimeGraph.focusNodes, executionRuntimeGraph.inlineCanvasNodes, executionRuntimeGraph.inlineNodes, executionViewMode],
   );
-  const renderedCanvasEdges = useMemo(
+  const unfoldedCanvasEdges = useMemo(
     () => executionViewMode === 'focus'
       ? executionRuntimeGraph.focusEdges
       : [...liveEdges, ...executionRuntimeGraph.inlineEdges],
     [executionRuntimeGraph.focusEdges, executionRuntimeGraph.inlineEdges, executionViewMode, liveEdges],
   );
+  const foldedCanvas = useMemo(() => foldIteratorGraph(unfoldedCanvasNodes, unfoldedCanvasEdges, collapsedIterators),
+    [unfoldedCanvasNodes, unfoldedCanvasEdges, collapsedIterators]);
+  const renderedCanvasNodes = foldedCanvas.nodes;
+  const renderedCanvasEdges = foldedCanvas.edges;
   const runtimeViewportNodes = useMemo(() => {
     if (executionViewMode === 'focus') return executionRuntimeGraph.focusNodes;
     return [
@@ -4701,14 +4715,16 @@ function PlaybookCanvasInner() {
               />
             ) : (
             <NodeContextMenuContext.Provider value={nodeContextMenuActions}>
-              <NodeDataActionsContext.Provider value={{ updateNodeData, setIteratorNodeSize, resizeIteratorNode: handleResizeIteratorNode, repackIteratorChildren: handleRepackIteratorChildren, openOutputFormatEditor, onConnectorDrop: handleConnectorDrop, onSkillDrop: handleSkillDrop, onAddNextStep: openPickerFromNodePlus }}>
+              <NodeDataActionsContext.Provider value={{ updateNodeData, toggleIteratorCollapsed, setIteratorNodeSize, resizeIteratorNode: handleResizeIteratorNode, repackIteratorChildren: handleRepackIteratorChildren, openOutputFormatEditor, onConnectorDrop: handleConnectorDrop, onSkillDrop: handleSkillDrop, onAddNextStep: openPickerFromNodePlus }}>
                 <ConnectionDragContext.Provider value={{ hoveredTargetId: connectionDragHoveredId }}>
                 <EdgeInsertContext.Provider value={{ onInsertStep: openPickerFromEdgeInsert }}>
                 <CardDensityContext.Provider value={compactCards}>
+                <CanvasDesignContext.Provider value={pageMode === 'design'}>
                 <Canvas
                   nodes={renderedCanvasNodes}
                   edges={renderedCanvasEdges}
-                  onNodesChange={onNodesChange}
+                  onNodesChange={(changes) => onNodesChange(changes.filter((change) =>
+                    change.type !== 'dimensions' || !foldedCanvas.collapsed.has(change.id)))}
                   onNodeDragStop={onNodeDragStop}
                   onEdgesChange={onEdgesChange}
                   onConnect={onConnect}
@@ -4808,6 +4824,7 @@ function PlaybookCanvasInner() {
                     onCancel={cancelNextStepPicker}
                   />
                 )}
+                </CanvasDesignContext.Provider>
                 </CardDensityContext.Provider>
                 </EdgeInsertContext.Provider>
                 </ConnectionDragContext.Provider>

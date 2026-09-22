@@ -1,6 +1,6 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Handle, Position, type NodeProps, useUpdateNodeInternals } from '@xyflow/react';
-import { LayoutGrid, RefreshCcw } from 'lucide-react';
+import { ChevronDown, ChevronRight, LayoutGrid, RefreshCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useModuleTranslation } from '@/modules/localization';
 import { NodeDataActionsContext } from './PlaybookNode';
@@ -28,6 +28,7 @@ export function PlaybookIteratorContainerNode({ data, selected }: NodeProps) {
   );
   const { t } = useModuleTranslation('playbook');
   const nodeActions = useContext(NodeDataActionsContext);
+  const collapsed = data.iteratorCollapsed === true;
   const updateNodeInternals = useUpdateNodeInternals();
   const childCount = node.childTaskIds?.length || 0;
   const isEmpty = childCount === 0;
@@ -56,7 +57,7 @@ export function PlaybookIteratorContainerNode({ data, selected }: NodeProps) {
     // React Flow measures handle positions from the DOM; iterator handles are percentage-positioned in a resizable shell.
     const frame = window.requestAnimationFrame(() => updateNodeInternals(node.id));
     return () => window.cancelAnimationFrame(frame);
-  }, [childCount, inputPortLayoutKey, node.height, node.id, node.width, outputPortLayoutKey, updateNodeInternals]);
+  }, [collapsed, childCount, inputPortLayoutKey, node.height, node.id, node.width, outputPortLayoutKey, updateNodeInternals]);
 
   const queueSizeUpdate = useCallback((clientX: number, clientY: number) => {
     const nextWidth = Math.max(ITERATOR_MIN_WIDTH, dragStart.current.width + (clientX - dragStart.current.x));
@@ -196,19 +197,26 @@ export function PlaybookIteratorContainerNode({ data, selected }: NodeProps) {
           />
         </div>
       ))}
-      <div className="flex items-start justify-between gap-3 border-b border-border/80 bg-background/70 px-4 py-2 backdrop-blur-sm">
+      <div className={`flex ${collapsed ? 'flex-col' : 'items-start justify-between'} gap-3 border-b border-border/80 bg-background/70 px-4 py-2`}>
         <div className="flex min-w-0 items-start gap-2">
           <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/15 text-primary">
             <RefreshCcw className="h-4 w-4" />
           </span>
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold text-foreground">{node.title || t('nodeEditor.nodeTypeIterator')}</div>
-            <div className="truncate text-[11px] text-muted-foreground">{t('nodeEditor.iteratorOutputPortHint')}</div>
+            {!collapsed && <div className="truncate text-[11px] text-muted-foreground">{t('nodeEditor.iteratorOutputPortHint')}</div>}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {data.iteratorFoldable === true && nodeActions?.toggleIteratorCollapsed && (
+            <button type="button" className="nodrag nopan rounded p-1 hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+              aria-expanded={!collapsed} aria-label={t(collapsed ? 'iterator.expand' : 'iterator.collapse')}
+              onClick={(event) => { event.stopPropagation(); nodeActions.toggleIteratorCollapsed?.(node.id); }}>
+              {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
+          )}
           {nodeData.stepStatus ? <PlaybookStatusBadge status={nodeData.stepStatus as StepStatus} size="xs" /> : null}
-          {nodeActions?.repackIteratorChildren ? (
+          {!collapsed && nodeActions?.repackIteratorChildren ? (
             <button
               type="button"
               className="nodrag nopan inline-flex h-7 items-center gap-1 rounded-md border border-border bg-background/85 px-2 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
@@ -231,7 +239,7 @@ export function PlaybookIteratorContainerNode({ data, selected }: NodeProps) {
           </Badge>
         </div>
       </div>
-      <div className="pointer-events-none h-[calc(100%-52px)] rounded-b-xl bg-gradient-to-b from-background/10 via-transparent to-background/5 p-3">
+      {!collapsed && <div className="pointer-events-none h-[calc(100%-52px)] rounded-b-xl bg-gradient-to-b from-background/10 via-transparent to-background/5 p-3">
         <div className="flex h-full min-h-0 flex-col rounded-lg border border-border/60 bg-background/20 shadow-inner">
           <div className="border-b border-border/60 px-4 py-2">
             <div className="truncate text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
@@ -247,8 +255,8 @@ export function PlaybookIteratorContainerNode({ data, selected }: NodeProps) {
             </div>
           </div>
         </div>
-      </div>
-      {selected && nodeActions?.setIteratorNodeSize && nodeActions?.resizeIteratorNode ? (
+      </div>}
+      {!collapsed && selected && nodeActions?.setIteratorNodeSize && nodeActions?.resizeIteratorNode ? (
         <div
           role="presentation"
           onPointerDown={handleResizeStart}

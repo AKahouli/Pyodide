@@ -66,6 +66,17 @@ describe('NextStepPicker', () => {
     expect(onChoose.mock.calls[0][0].blueprint).toEqual({ kind: 'blank' });
   });
 
+  it('keeps the configured catalog router instead of duplicating the preset', () => {
+    const router = { ...template, id: 'router', key: 'router', nodeType: 'router' as const, title: 'Router' };
+    renderPicker({ candidates: [
+      { ...presetCandidate, id: 'preset:router', title: 'Preset router', blueprint: { kind: 'router' } },
+      { ...presetCandidate, id: 'template:router', title: 'Router', blueprint: { kind: 'template', template: router } },
+    ] });
+    expect(screen.queryByText('Preset router')).not.toBeInTheDocument();
+    expect(screen.getByText('taskChoice.router')).toBeInTheDocument();
+    expect(screen.getByText('taskChoice.flowControls')).toBeInTheDocument();
+  });
+
   it('cancels on Escape', () => {
     const onCancel = vi.fn();
     renderPicker({ onCancel });

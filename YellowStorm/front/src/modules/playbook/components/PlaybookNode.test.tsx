@@ -1,7 +1,7 @@
 import { forwardRef } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { NodeDataActionsContext, PlaybookNode } from './PlaybookNode';
+import { CanvasDesignContext, CardDensityContext, getCompactCardSummary, NodeDataActionsContext, PlaybookNode } from './PlaybookNode';
 
 const storeState = vi.hoisted(() => ({
   currentPlaybook: {
@@ -9,6 +9,7 @@ const storeState = vi.hoisted(() => ({
     tasks: [],
   },
   selectedStepId: null as string | null,
+  openExecutionDetailTab: vi.fn(),
   addInputFileToTask: vi.fn(),
   bindResourceToInputPort: vi.fn(),
   removeInputFileFromTask: vi.fn(),
@@ -147,6 +148,40 @@ vi.mock('./PortLabel', () => ({
 }));
 
 describe('PlaybookNode', () => {
+  function renderCompact(extra: Record<string, unknown> = {}, design = false) {
+    return render(<CardDensityContext.Provider value={true}><CanvasDesignContext.Provider value={design}>
+      <PlaybookNode {...({ id: 'node-1', selected: false, data: {
+        id: 'node-1', title: 'Extract text', assignedAgentId: 'agent-1', executionOrder: 0,
+        inputPorts: [], outputPorts: [], ...extra,
+      } } as any)} />
+    </CanvasDesignContext.Provider></CardDensityContext.Provider>);
+  }
+
+  it('restores a clickable Advisor score on compact cards', () => {
+    renderCompact({ stepJudgeStatus: 'evaluated', stepJudgeResult: { overallScore: 0.87 } });
+    const badge = screen.getByRole('button', { name: 'nodeCard.advisorEvaluation' });
+    expect(badge).toHaveTextContent('87%');
+    fireEvent.click(badge);
+    expect(storeState.openExecutionDetailTab).toHaveBeenCalledWith('judge', 'node-1');
+  });
+
+  it('shows Advisor failure instead of a stale score', () => {
+    renderCompact({ stepJudgeStatus: 'failed', stepJudgeResult: { overallScore: 90 } });
+    expect(screen.getByRole('button', { name: 'nodeCard.advisorEvaluation' })).toHaveTextContent('node.advisorState.failed');
+    expect(screen.queryByText('90%')).not.toBeInTheDocument();
+  });
+
+  it('shows readiness in design even after an execution', () => {
+    renderCompact({ stepStatus: 'completed' }, true);
+    expect(screen.getByText('nodeCard.ready')).toBeInTheDocument();
+    expect(screen.queryByText('completed')).not.toBeInTheDocument();
+  });
+
+  it('uses the connected source before falling back to the agent', () => {
+    const translate = vi.fn((_key, values) => `From: ${values.name}`);
+    expect(getCompactCardSummary({ sourceLabel: 'Extracted text' }, 'Smart Agent', translate)).toBe('From: Extracted text');
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     storeState.currentPlaybook = {

@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 
 import { PORT_COLORS } from '../utils/port-colors';
+import { taskChoiceLabel } from '../utils/task-choice-label';
 import { usePlaybookStore } from '../store';
 import { usePlatformCopilotPanelStore } from '../../platform-copilot/platformCopilotPanelStore';
 import type { InterruptType, TaskTemplate } from '../types';
@@ -519,16 +520,16 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
                   <Plus className="mr-2 h-4 w-4" />
                   {t('toolbar.addBlankStep')}
                 </DropdownMenuItem>
-                {onAddRouterNode && (
+                {onAddRouterNode && !flowNodeTemplates.some((template) => template.nodeType === 'router') && (
                   <DropdownMenuItem onClick={onAddRouterNode}>
                     <GitBranch className="mr-2 h-4 w-4 text-muted-foreground" />
-                    {t('toolbar.addRouterNode')}
+                    {t('taskChoice.router')}
                   </DropdownMenuItem>
                 )}
-                {onAddHumanApprovalNode && (
+                {onAddHumanApprovalNode && !flowNodeTemplates.some((template) => template.nodeType === 'human_approval') && (
                   <DropdownMenuItem onClick={onAddHumanApprovalNode}>
                     <Hand className="mr-2 h-4 w-4 text-muted-foreground" />
-                    {t('toolbar.addHumanApprovalNode')}
+                    {t('taskChoice.approval')}
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuSeparator />
@@ -545,7 +546,7 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
                     return (
                       <DropdownMenuItem key={template.id} onClick={() => onAddStepFromTemplate(template)}>
                         <KindIcon className="mr-2 h-4 w-4 text-muted-foreground" />
-                        {template.title}
+                        {taskChoiceLabel(template, t)}
                       </DropdownMenuItem>
                     );
                   })

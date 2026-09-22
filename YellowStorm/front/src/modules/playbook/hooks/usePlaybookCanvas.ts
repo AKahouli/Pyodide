@@ -93,7 +93,7 @@ function isPointInsideIterator(point: { x: number; y: number }, iteratorNode: No
     && point.y <= iteratorNode.position.y + iteratorSize.height;
 }
 
-function findDropTargetIterator(
+export function findDropTargetIterator(
   nodes: Node[],
   draggedNode: Node,
   dropPoint: { x: number; y: number } | null,
@@ -101,6 +101,7 @@ function findDropTargetIterator(
   const target = nodes.find(
     (node) => node.id !== draggedNode.id
       && node.type === 'playbookIteratorContainer'
+      && !node.hidden && node.data.iteratorCollapsed !== true
       && (dropPoint ? isPointInsideIterator(dropPoint, node) : isNodeInsideIterator(draggedNode, node)),
   );
   return target?.id ?? null;
@@ -170,7 +171,7 @@ export function usePlaybookCanvas(
 ) {
   const playbook = useCurrentPlaybook();
   const { t } = useModuleTranslation('playbook');
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, getNodes } = useReactFlow();
   const updateTasks = usePlaybookStore((s) => s.updateTasks);
   const updateEdges = usePlaybookStore((s) => s.updateEdges);
   const updateDataBindings = usePlaybookStore((s) => s.updateDataBindings);
@@ -327,7 +328,7 @@ export function usePlaybookCanvas(
         : null;
       const targetIteratorId = draggedNode.parentId
         ? null
-        : findDropTargetIterator(nodesRef.current, draggedNode, dropPoint);
+        : findDropTargetIterator(getNodes?.() ?? nodesRef.current, draggedNode, dropPoint);
       const tasks = nodesToTasks(nodesRef.current).map((task) => {
         if (task.id !== node.id || !targetIteratorId) return task;
         return { ...task, containerConfig: { parentIteratorId: targetIteratorId } };
@@ -335,7 +336,7 @@ export function usePlaybookCanvas(
       captureSnapshot();
       updateTasks(tasks);
     },
-    [updateTasks, captureSnapshot, screenToFlowPosition],
+    [updateTasks, captureSnapshot, screenToFlowPosition, getNodes],
   );
 
   const onEdgesChange: OnEdgesChange = useCallback(

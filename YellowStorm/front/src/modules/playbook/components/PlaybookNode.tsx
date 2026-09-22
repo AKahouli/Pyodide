@@ -40,6 +40,7 @@ import { getUnboundRequiredPorts } from '../utils/required-port-validation';
 import { PORT_COLORS } from '../utils/port-colors';
 import { migrateTask } from '../hooks/helpers/node-serializer';
 import { getEffectiveNodeType } from '../utils/node-type';
+import { normalizeAdvisorScore } from '../utils/advisor-evaluation-metrics';
 import { detectPortHit } from '../utils/port-hit-detection';
 import { createCompatibleInputPort } from '../utils/port-compatibility';
 import type { ArtifactKind, DataBinding, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort, ToolBinding, PlaybookResourceReference } from '../types';
@@ -171,12 +172,14 @@ export function getCompactCardSummary(
     inputFiles?: InputFile[];
     selectedAction?: string;
     evaluationConfig?: { expectation?: string } | null;
+    sourceLabel?: string;
   },
   agentName: string | null | undefined,
   t: Translate,
 ): string {
   const firstFile = task.inputFiles?.[0];
   if (firstFile?.name) return t('nodeCard.summaryFrom', { name: firstFile.name });
+  if (task.sourceLabel) return t('nodeCard.summaryFrom', { name: task.sourceLabel });
   if (task.selectedAction) {
     return `${String(task.selectedAction).charAt(0).toUpperCase()}${String(task.selectedAction).slice(1)}`;
   }
@@ -186,6 +189,7 @@ export function getCompactCardSummary(
 }
 
 export interface NodeDataActions {
+  toggleIteratorCollapsed?: (nodeId: string) => void;
   updateNodeData: (nodeId: string, data: Partial<PlaybookNodeData>) => void;
   setIteratorNodeSize?: (nodeId: string, size: { width: number; height: number }) => void;
   resizeIteratorNode?: (nodeId: string, size: { width: number; height: number }) => void;
@@ -201,6 +205,7 @@ export const NodeDataActionsContext = createContext<NodeDataActions | null>(null
 
 /** Page-level density switch for compact (~240px) task cards. */
 export const CardDensityContext = createContext<boolean>(false);
+export const CanvasDesignContext = createContext<boolean>(false);
 
 export const NodeContextMenuContext = createContext<NodeContextMenuActions | null>(null);
 
@@ -317,7 +322,8 @@ function JudgeScoreBadge({
 }: {
   score: number;
 }) {
-  const normalizedScore = score <= 1 ? score * 100 : score;
+  const normalizedScore = normalizeAdvisorScore(score);
+  if (normalizedScore === null) return null;
   const tone = getSemanticScoreTone(normalizedScore);
 
   return (
@@ -429,6 +435,7 @@ function CompactCardBody({
   onAddNextStep,
   onViewResults,
   headerBgClass,
+  advisor,
 }: {
   id: string;
   title: string;
@@ -443,6 +450,7 @@ function CompactCardBody({
   onAddNextStep: (anchor: { x: number; y: number }) => void;
   onViewResults: () => void;
   headerBgClass: string;
+  advisor?: React.ReactNode;
 }) {
   const { t } = useModuleTranslation('playbook');
   const KindIcon = COMPACT_KIND_ICON[nodeKind];
@@ -504,6 +512,7 @@ function CompactCardBody({
         </DropdownMenu>
       </div>
       <p className="truncate text-xs text-muted-foreground" title={summary}>{summary}</p>
+      <div className="flex flex-wrap items-center gap-1.5">
       {status ? (
         <PlaybookStatusBadge status={status} size="xs" />
       ) : (
@@ -512,6 +521,8 @@ function CompactCardBody({
           {readinessConfig.label}
         </span>
       )}
+      {advisor}
+      </div>
       <button
         type="button"
         className="nodrag nopan absolute -bottom-3 right-3 z-20 flex h-6 w-6 items-center justify-center rounded-full border bg-background shadow-sm transition-colors hover:border-primary/60 hover:text-primary"
@@ -531,6 +542,7 @@ function CompactCardBody({
 export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const data = rawData as unknown as PlaybookNodeData;
   const actions = useContext(NodeContextMenuContext);
+  const isDesignMode = useContext(CanvasDesignContext);
   const connectionDrag = useContext(ConnectionDragContext);
   const nodeDataActions = useContext(NodeDataActionsContext);
   const { t } = useModuleTranslation('playbook');
@@ -601,6 +613,11 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     () => new Map(dataBindings.filter((b) => b.targetNode === id).map((b) => [b.targetPort, b])),
     [dataBindings, id],
   );
+  const sourceBinding = dataBindings.find((binding) => binding.targetNode === id && binding.sourceKind !== 'constant');
+  const sourceTask = currentPlaybook?.tasks.find((task) => task.id === sourceBinding?.sourceNode);
+  const sourceLabel = sourceTask?.outputPorts?.find((port) => port.id === sourceBinding?.sourcePort)?.name
+    || sourceTask?.title
+    || inputPorts.find((port) => port.id === sourceBinding?.targetPort)?.name;
   const effectiveTask = currentTask || data;
   const iteratorChildExecutionStatus = useMemo(
     () => resolveIteratorChildExecutionStatus(
@@ -627,8 +644,8 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const semanticMatch = data.stepSemanticMatch;
   const judgeStatus = data.stepJudgeStatus;
   const judgeResult = data.stepJudgeResult;
-  const ringClass = status ? STATUS_RING[status] : '';
-  const headerBgClass = status ? STATUS_HEADER_BG[status] : '';
+  const ringClass = status && !isDesignMode ? STATUS_RING[status] : '';
+  const headerBgClass = status && !isDesignMode ? STATUS_HEADER_BG[status] : '';
   const isStepRunning = status === 'running';
   const isExplicitlyDisabled = data.enabled === false;
   const isEnabled = !isExplicitlyDisabled;
@@ -1037,13 +1054,33 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
               summary={getCompactCardSummary(
                 {
                   inputFiles,
+                  sourceLabel,
                   selectedAction: effectiveTask.selectedAction,
                   evaluationConfig: effectiveTask.evaluationConfig,
                 },
                 agent?.name,
                 t,
               )}
-              status={status}
+              status={isDesignMode ? undefined : status}
+              advisor={((judgeStatus && judgeStatus !== 'idle') || judgeResult) ? (
+                <button
+                  type="button"
+                  className="nodrag nopan inline-flex items-center gap-1 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label={t('nodeCard.advisorEvaluation')}
+                  title={t('nodeCard.advisorEvaluation')}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    openExecutionDetailTab('judge', id);
+                  }}
+                >
+                  <Sparkles className="h-3 w-3 text-muted-foreground" aria-hidden="true" />
+                  <span className="text-[10px] text-muted-foreground">{t('nodeCard.advisorLabel')}</span>
+                  {judgeResult && judgeStatus !== 'evaluating' && judgeStatus !== 'failed'
+                    && normalizeAdvisorScore(judgeResult.overallScore) !== null
+                    ? <JudgeScoreBadge score={judgeResult.overallScore} />
+                    : <JudgeStateBadge status={judgeStatus} />}
+                </button>
+              ) : undefined}
               readiness={
                 unboundRequiredPortIds.size > 0
                   ? 'missing-inputs'

@@ -13,6 +13,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { PORT_COLORS } from '../utils/port-colors';
 import type { StepBlueprint } from '../utils/step-creation';
 import type { TaskTemplate } from '../types';
+import { taskChoiceLabel } from '../utils/task-choice-label';
 
 export interface PickerCandidate {
   id: string;
@@ -81,10 +82,17 @@ export function NextStepPicker({
     return () => window.removeEventListener('keydown', onKey, true);
   }, [onCancel]);
 
-  const groups = useMemo(() => ({
-    presets: candidates.filter((c) => c.id.startsWith('preset:')),
-    templates: candidates.filter((c) => c.id.startsWith('template:')),
-  }), [candidates]);
+  const groups = useMemo(() => {
+    const isControl = (candidate: PickerCandidate) => candidate.blueprint.kind === 'router'
+      || candidate.blueprint.kind === 'humanApproval'
+      || (candidate.blueprint.kind === 'template'
+        && ['iterator', 'router', 'human_approval'].includes(candidate.blueprint.template.nodeType));
+    const catalogControls = new Set(candidates.flatMap((candidate) => candidate.blueprint.kind === 'template'
+      ? [candidate.blueprint.template.nodeType] : []));
+    const distinct = candidates.filter((candidate) => !(candidate.blueprint.kind === 'router' && catalogControls.has('router'))
+      && !(candidate.blueprint.kind === 'humanApproval' && catalogControls.has('human_approval')));
+    return { presets: distinct.filter((c) => !isControl(c)), templates: distinct.filter(isControl) };
+  }, [candidates]);
 
   return (
     <>
@@ -130,14 +138,14 @@ export function NextStepPicker({
               <CommandList style={{ maxHeight: PICKER_MAX_HEIGHT - 44 }}>
                 <CommandEmpty>{t('nextStep.empty')}</CommandEmpty>
                 {groups.presets.length > 0 && (
-                  <CommandGroup heading={t('nextStep.presets')}>
+                  <CommandGroup heading={t('taskChoice.actions')}>
                     {groups.presets.map((candidate) => (
                       <CandidateItem key={candidate.id} candidate={candidate} onChoose={onChoose} />
                     ))}
                   </CommandGroup>
                 )}
                 {groups.templates.length > 0 && (
-                  <CommandGroup heading={t('nextStep.templates')}>
+                  <CommandGroup heading={t('taskChoice.flowControls')}>
                     {groups.templates.map((candidate) => (
                       <CandidateItem key={candidate.id} candidate={candidate} onChoose={onChoose} />
                     ))}
@@ -160,13 +168,20 @@ function CandidateItem({
   onChoose: (candidate: PickerCandidate) => void;
 }) {
   const Icon = candidate.icon;
+  const { t } = useModuleTranslation('playbook');
+  const title = candidate.blueprint.kind === 'template' ? taskChoiceLabel(candidate.blueprint.template, t) : candidate.title;
+  const description = candidate.blueprint.kind === 'template' && title !== candidate.title
+    ? t(candidate.blueprint.template.nodeType === 'iterator' ? 'taskChoice.iteratorHint'
+      : candidate.blueprint.template.nodeType === 'router' ? 'nextStep.routerHint'
+        : 'taskChoice.configureHint')
+    : candidate.description;
   return (
-    <CommandItem value={`${candidate.title} ${candidate.description}`} onSelect={() => onChoose(candidate)}>
+    <CommandItem value={`${title} ${candidate.title} ${candidate.description}`} onSelect={() => onChoose(candidate)}>
       <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
       <div className="min-w-0">
-        <div className="truncate text-sm">{candidate.title}</div>
-        {candidate.description ? (
-          <div className="truncate text-xs text-muted-foreground">{candidate.description}</div>
+        <div className="truncate text-sm">{title}</div>
+        {description ? (
+          <div className="truncate text-xs text-muted-foreground">{description}</div>
         ) : null}
       </div>
     </CommandItem>
@@ -187,14 +202,14 @@ export function usePresetCandidates(): PickerCandidate[] {
     {
       id: 'preset:router',
       blueprint: { kind: 'router' } as StepBlueprint,
-      title: t('toolbar.addRouterNode'),
+      title: t('taskChoice.router'),
       description: t('nextStep.routerHint'),
       icon: GitBranch,
     },
     {
       id: 'preset:humanApproval',
       blueprint: { kind: 'humanApproval' } as StepBlueprint,
-      title: t('toolbar.addHumanApprovalNode'),
+      title: t('taskChoice.approval'),
       description: t('nextStep.humanApprovalHint'),
       icon: Hand,
     },
