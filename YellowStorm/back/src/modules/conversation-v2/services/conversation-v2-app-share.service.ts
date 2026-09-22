@@ -116,34 +116,43 @@ export class ConversationV2AppShareService {
     const pointers = sessionIds.length
       ? await this.sessionModel
           .find({ _id: { $in: sessionIds } })
-          .select('title deployedAppTitle')
+          .select('title deployedAppTitle hasAiFeatures')
           .lean()
           .exec()
       : [];
-    const liveTitleBySession = new Map(
+    const liveMetaBySession = new Map(
       pointers.map((pointer) => [
         (pointer._id as Types.ObjectId).toString(),
-        (pointer as unknown as { deployedAppTitle?: string | null }).deployedAppTitle ??
-          (pointer as unknown as { title?: string | null }).title ??
-          '',
+        {
+          title:
+            (pointer as unknown as { deployedAppTitle?: string | null }).deployedAppTitle ??
+            (pointer as unknown as { title?: string | null }).title ??
+            '',
+          hasAiFeatures:
+            (pointer as unknown as { hasAiFeatures?: boolean | null }).hasAiFeatures === true,
+        },
       ]),
     );
 
-    return docs.map((doc) => ({
-      sessionId: doc.sessionId.toString(),
-      title: liveTitleBySession.get(doc.sessionId.toString()) || doc.title || '',
-      deployedUrl: doc.deployedUrl,
-      lastDeployedAt: doc.lastDeployedAt
-        ? new Date(doc.lastDeployedAt).toISOString()
-        : null,
-      source: 'shared' as const,
-      shareId: doc._id.toString(),
-      canOpenConversation: doc.includeConversation !== false,
-      lastDeployedRevisionId: null,
-      latestFinalizedRevisionId: null,
-      latestFinalizedAt: null,
-      finalizedVersionCount: 0,
-    }));
+    return docs.map((doc) => {
+      const live = liveMetaBySession.get(doc.sessionId.toString());
+      return {
+        sessionId: doc.sessionId.toString(),
+        title: live?.title || doc.title || '',
+        deployedUrl: doc.deployedUrl,
+        lastDeployedAt: doc.lastDeployedAt
+          ? new Date(doc.lastDeployedAt).toISOString()
+          : null,
+        source: 'shared' as const,
+        shareId: doc._id.toString(),
+        canOpenConversation: doc.includeConversation !== false,
+        hasAiFeatures: live?.hasAiFeatures === true,
+        lastDeployedRevisionId: null,
+        latestFinalizedRevisionId: null,
+        latestFinalizedAt: null,
+        finalizedVersionCount: 0,
+      };
+    });
   }
 
   /** True when the user has an app-share row with conversation access for this session. */
@@ -544,7 +553,8 @@ export class ConversationV2AppShareService {
   }
 
   private buildRegisterInviteUrl(deployedUrl: string, token: string): string {
-    const base = deployedUrl.replace(/\/?$/, '/');
+    // Deployed URLs end with `/` — append `register` with no extra leading slash.
+    const base = `${(deployedUrl || '').trim().replace(/\/+$/, '')}/`;
     return `${base}register?invite=${encodeURIComponent(token)}`;
   }
 

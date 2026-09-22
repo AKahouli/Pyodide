@@ -1,7 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { WidgetChatService } from '@modules/widget-chat/services/widget-chat.service';
-import { WhatsAppIntegrationService } from '@modules/whatsapp/services/whatsapp-integration.service';
-import { WhatsAppIntegrationStatus } from '@modules/whatsapp/schemas/agent-whatsapp-integration.schema';
 import { TelegramIntegrationService } from '@modules/telegram/services/telegram-integration.service';
 import { TelegramIntegrationStatus } from '@modules/telegram/telegram.types';
 import type { GovernanceReadinessCheck } from './governance-deployment.service';
@@ -10,7 +8,6 @@ import type { GovernanceReadinessCheck } from './governance-deployment.service';
 export class GovernanceChannelReadinessService {
   constructor(
     private readonly widgetChatService: WidgetChatService,
-    private readonly whatsappIntegrationService: WhatsAppIntegrationService,
     private readonly telegramIntegrationService: TelegramIntegrationService,
   ) {}
 
@@ -42,10 +39,6 @@ export class GovernanceChannelReadinessService {
   private async isChannelReady(userId: string, agentId: string, channel: string): Promise<boolean> {
     try {
       if (channel === 'widget') return this.widgetChatService.hasActiveToken(agentId);
-      if (channel === 'whatsapp') {
-        const integration = await this.whatsappIntegrationService.getByAgentForUser(userId, agentId);
-        return integration?.enabled === true && integration.status === WhatsAppIntegrationStatus.CONNECTED;
-      }
       if (channel === 'telegram') {
         const integration = await this.telegramIntegrationService.getByAgentForUser(userId, agentId);
         return integration?.enabled === true && integration.status === TelegramIntegrationStatus.ACTIVE;

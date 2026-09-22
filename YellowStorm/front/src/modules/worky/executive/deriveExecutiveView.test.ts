@@ -1,6 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import type { WorkyBoardResponse, WorkyTask } from '../types';
-import { deriveExecutiveView } from './deriveExecutiveView';
+import type { WorkyBoardResponse, WorkyMessage, WorkyTask } from '../types';
+import { collectPendingApprovals, deriveExecutiveView } from './deriveExecutiveView';
+
+const msg = (components: WorkyMessage['components']): WorkyMessage =>
+  ({ id: 'm1', role: 'manager', content: '', createdAt: '2026-09-14T10:00:00.000Z', components }) as WorkyMessage;
+const choice = (questionId: string, status: string) =>
+  ({ id: questionId, type: 'choice', data: { questionId, status } }) as NonNullable<WorkyMessage['components']>[number];
+
+describe('collectPendingApprovals', () => {
+  it('keeps only ready confirm:: cards, deduped by questionId (latest wins)', () => {
+    const messages = [
+      msg([choice('confirm::a', 'ready'), choice('ask::x', 'ready')]),
+      msg([choice('confirm::b', 'submitted')]),
+      msg([choice('confirm::a', 'ready')]),
+    ];
+    expect(collectPendingApprovals(messages).map((a) => a.questionId)).toEqual(['confirm::a']);
+  });
+
+  it('feeds needsInput + needs_attention health through the model', () => {
+    const view = deriveExecutiveView(board([]), undefined, [msg([choice('confirm::a', 'ready')])]);
+    expect(view.pendingApprovals).toHaveLength(1);
+    expect(view.summary.needsInput).toBe(1);
+    expect(view.health).toBe('needs_attention');
+  });
+});
 
 const task = (overrides: Partial<WorkyTask>): WorkyTask => ({
   id: 'task-1', streamId: 'stream-1', externalId: 'step-1', title: 'Task', description: '',

@@ -210,6 +210,7 @@ export function ModelsPage() {
         setModels((prev) =>
           sortModels(prev.map((m) => (m.id === updated.id ? normalizeModel(updated) : m)))
         );
+        useModelsStore.getState().syncDefaultModel(null);
         toast.success(t('models.toasts.defaultCleared.title'), {
           description: t('models.toasts.defaultCleared.description', { name: updated.name }),
         });
@@ -225,6 +226,7 @@ export function ModelsPage() {
             }))
           )
         );
+        useModelsStore.getState().syncDefaultModel(updated.id);
         toast.success(t('models.toasts.defaultSet.title'), {
           description: t('models.toasts.defaultSet.description', { name: updated.name }),
         });

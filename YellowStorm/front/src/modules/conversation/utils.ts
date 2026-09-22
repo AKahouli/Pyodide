@@ -121,11 +121,13 @@ export function formatChoiceSubmissionContent(content: string): string {
   if (!raw) return content;
   if (raw.startsWith('{')) {
     try {
-      const parsed = JSON.parse(raw) as { verdict?: unknown; edits?: unknown };
+      const parsed = JSON.parse(raw) as { verdict?: unknown; edits?: unknown; answer?: unknown; askInterruptId?: unknown };
       if (parsed && typeof parsed === 'object' && 'verdict' in parsed) {
-        const base = VERDICT_LABELS[String(parsed.verdict).toLowerCase()] ?? String(parsed.verdict);
-        const edited = parsed.edits && typeof parsed.edits === 'object' && Object.keys(parsed.edits as object).length > 0;
-        return edited ? `${base} — message modifié` : base;
+        return VERDICT_LABELS[String(parsed.verdict).toLowerCase()] ?? String(parsed.verdict);
+      }
+      // Targeted ask card: show just the typed answer, not the {askInterruptId, answer} payload.
+      if (parsed && typeof parsed === 'object' && 'askInterruptId' in parsed && typeof parsed.answer === 'string') {
+        return parsed.answer;
       }
     } catch { /* not our payload — fall through */ }
   }

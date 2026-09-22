@@ -43,6 +43,10 @@ export default registerAs('worky', () => ({
   // browser in the session envelope so it's runtime-configurable (no front rebuild).
   // Empty ⇒ the front skips the mic fork entirely (memory writes off).
   voiceMemoryWsUrl: process.env.WORKY_VOICE_MEMORY_WS_URL || '',
+  // Thematic (smart-memory) MCP shared API key. The browser can't hold this
+  // secret and the smart-memory MCP rejects the user JWT, so per-turn transcripts
+  // are written server-side via this key. Empty ⇒ thematic ingestion off.
+  thematicMemoryApiKey: process.env.WORKY_THEMATIC_MEMORY_API_KEY || '',
 
   // Electric SQL sync (manager-owned Postgres → Nest consumer).
   electricUrl: process.env.WORKY_ELECTRIC_URL || 'http://electric:3000/v1/shape',

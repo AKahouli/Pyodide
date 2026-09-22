@@ -10,6 +10,7 @@ export const CONCIERGE_SYSTEM_PROMPT = [
   // --- Tools ---
   'You do NOT do tasks yourself — a separate worky agent, working alongside you, does all the real work. Your job is to hand work off to it. Whenever the user asks for ANYTHING to be done — research, a lookup, writing, sending an email, contacting someone, any action or deliverable — first acknowledge out loud, then call dispatch_task with a clear, self-contained instruction that captures exactly what they want, and once it succeeds tell them you have started. Never try to do the work or answer a work request from your own knowledge, and never say you cannot do it — dispatch it. You answer directly ONLY for small talk and questions about the run itself (status, what tasks exist, a task detail).',
   'Do NOT dispatch while the user is still talking or explaining. Let them finish laying out the full request, ask a brief clarifying question if anything is unclear, and only when the discussion has clearly wrapped up and you have every detail do you call dispatch_task — once, at the end, with the complete instruction. Never dispatch mid-sentence or on a half-formed request.',
+  'When the request involves a PERSON — contacting, messaging, emailing, calling, delegating to, or sending anything to someone named or referred to by role — you MUST first call search_human_agents to verify that person exists and resolve exactly who they are, BEFORE you dispatch. Never dispatch a task that names a person to reach without confirming them first. If the lookup returns no match, or more than one plausible match, do NOT dispatch: briefly say so and ask the user to clarify who they mean (or for an email address). Only dispatch once the person is confirmed.',
   'Worky runs the work asynchronously; you will receive progress updates prefixed with "[worky update:" — verbalize them naturally and briefly.',
   'Use query_status when the user asks whether something is done or how the overall run is going.',
   'Use list_tasks when the user asks what tasks exist, what is on the board, or which one to talk about — it returns each task with an id, title, lane and state.',
@@ -37,6 +38,29 @@ export const CONCIERGE_SYSTEM_PROMPT = [
  * Execution stays the client-side relay to the right MCP per tool.
  */
 export const WORKY_CONCIERGE_CONNECTOR_SLUGS = ['worky-concierge', 'human-agents', 'voice-memory'];
+
+/**
+ * Thematic (smart-memory) retrieval tool. NOT sourced from the connector like the
+ * others: smart-memory's MCP needs a secret key the browser can't hold, so this
+ * tool is backend-proxied — the browser routes this specific call to our own
+ * /worky/voice/thematic-memory/retrieve endpoint (see useRealtimeVoiceSession),
+ * which forwards to smart-memory with the key. Added to the setup only when
+ * thematic memory is enabled (connector + key present).
+ */
+export const THEMATIC_RETRIEVE_TOOL_NAME = 'retrieve_thematic_memory';
+export const THEMATIC_RETRIEVE_TOOL = {
+  name: THEMATIC_RETRIEVE_TOOL_NAME,
+  description:
+    "Search the user's long-term thematic memory (facts, preferences, past decisions, people, dates, amounts) " +
+    'for anything relevant to the current request. Call this whenever the answer depends on who the user is or ' +
+    'what they like, want, or told you before — including references like "my usual" or "like last time". ' +
+    'Returns memory cards; if it returns nothing, you simply do not know yet, so ask.',
+  parameters: {
+    type: 'OBJECT',
+    properties: { query: { type: 'STRING', description: 'What to look up, in natural language.' } },
+    required: ['query'],
+  },
+} as unknown as FunctionDeclaration;
 
 /**
  * A connector's mcpServerUrl is a canonical/server-side URL, but the browser

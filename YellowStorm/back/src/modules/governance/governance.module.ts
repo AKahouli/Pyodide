@@ -3,7 +3,6 @@ import { AuthorizationModule } from '@modules/authorization';
 import { LoggerModule } from '@modules/logger';
 import { ConversationModule } from '@modules/conversation/conversation.module';
 import { WidgetChatModule } from '@modules/widget-chat/widget-chat.module';
-import { WhatsAppModule } from '@modules/whatsapp';
 import { TelegramModule } from '@modules/telegram';
 import { UserGroupModule } from '@modules/user-group';
 import { UserModule } from '@modules/user/user.module';
@@ -73,7 +72,6 @@ import { PgGovernancePersistenceModule } from './persistence/postgres/pg-governa
     AuthorizationModule,
     forwardRef(() => ConversationModule),
     WidgetChatModule,
-    WhatsAppModule,
     TelegramModule,
     UserGroupModule,
     UserModule,

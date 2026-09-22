@@ -605,18 +605,10 @@ def _with_default_workspace_params(
         else None
     )
 
-    # Generic connector schemas expose a free-form `params` object, so bind the
-    # canonical workspace_id there. Explicit schemas only receive declared fields.
+    # Bind workspace values only when the action explicitly declares a
+    # workspace parameter. Empty schemas may describe strict zero-argument
+    # MCP tools, or legacy tools whose real parameters are unavailable.
     if not isinstance(properties, dict) or not properties:
-        # Special case: Teams MCP tools with no parameters reject workspace_id injection
-        # causing validation errors. For Teams, skip automatic injection for empty schemas.
-        is_teams_mcp = "teams" in connector_name.lower()
-        if is_teams_mcp:
-            # For Teams tools with no parameters, don't inject workspace_id
-            return merged_params
-
-        if _needs_workspace_binding(merged_params.get("workspace_id")):
-            merged_params["workspace_id"] = default_workspace_id
         return merged_params
 
     available_workspace_ids = [
@@ -993,6 +985,25 @@ def create_connector_tools(
             default_workspace_id = _resolve_default_workspace_id(
                 effective_workspace_names, context.workspace_id
             )
+            # parameter_schema may be {} when the backend serialized the real
+            # schema as a JSON string (parameter_schema_json) to avoid Protobuf
+            # Struct recursion-depth limits. Parse that string here so workspace
+            # injection decisions use the real schema, while the lightweight {}
+            # is kept for building the ADK function schema/signature to avoid
+            # any recursion issues in schema building.
+            parameter_schema_json_str = str(action.get("parameter_schema_json") or "")
+            effective_parameter_schema: Dict[str, Any] = {}
+            if parameter_schema_json_str:
+                try:
+                    import json as _json
+                    parsed = _json.loads(parameter_schema_json_str)
+                    if isinstance(parsed, dict):
+                        effective_parameter_schema = parsed
+                except (ValueError, TypeError):
+                    pass
+            # Fall back to the inline schema when no JSON string is provided.
+            if not effective_parameter_schema:
+                effective_parameter_schema = action.get("parameter_schema") or {}
             parameter_schema = _relax_bound_workspace_requirements(
                 action.get("parameter_schema") or {},
                 default_workspace_id,
@@ -1001,9 +1012,18 @@ def create_connector_tools(
                 parameter_schema,
                 fixed_params,
             )
-            schema = _build_function_schema(tool_name, description, parameter_schema)
-            signature = _build_signature(parameter_schema)
-            parameter_properties = parameter_schema.get("properties") or {}
+            # Effective schema relaxed for workspace/fixed-param requirements.
+            effective_parameter_schema = _relax_bound_workspace_requirements(
+                effective_parameter_schema,
+                default_workspace_id,
+            )
+            effective_parameter_schema = _relax_fixed_param_requirements(
+                effective_parameter_schema,
+                fixed_params,
+            )
+            schema = _build_function_schema(tool_name, description, effective_parameter_schema)
+            signature = _build_signature(effective_parameter_schema)
+            parameter_properties = effective_parameter_schema.get("properties") or {}
             has_reserved_purpose = any(
                 key in parameter_properties
                 for key in (DISPLAY_PURPOSE_KEY, LEGACY_DISPLAY_PURPOSE_KEY)
@@ -1028,7 +1048,7 @@ def create_connector_tools(
                 _auth_headers: Dict[str, str] = dict(binding_auth_headers),
                 _auth_env: Dict[str, str] = binding_auth_env,
                 _dynamic_headers: List[Dict[str, Any]] = list(binding_dynamic_headers),
-                _parameter_schema: Dict[str, Any] = parameter_schema,
+                _parameter_schema: Dict[str, Any] = effective_parameter_schema,
                 _tool_name: str = tool_name,
                 _connector_context: Dict[str, List[str]] = connector_context,
                 _session_id: Optional[str] = context.session_id,
@@ -1060,6 +1080,14 @@ def create_connector_tools(
                     params.pop(LEGACY_DISPLAY_PURPOSE_KEY, None)
                 merged_params = {**_fixed_params, **params}
                 merged_params.pop("user_id", None)
+                merged_params = {
+                    key: value
+                    for key, value in merged_params.items()
+                    if value is not None
+                    and not (isinstance(value, str) and not value.strip())
+                    and not (isinstance(value, (list, tuple, set)) and not value)
+                    and not (isinstance(value, dict) and not value)
+                }
                 # Edit-on-card: the owner's approval may carry edited fields as
                 # the ToolConfirmation payload; apply them over the drafted args
                 # so the SENT message is the edited one. Only keys the action's

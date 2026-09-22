@@ -25,6 +25,7 @@ import {
 } from '@modules/conversation-v2/schemas/conversation-v2-session.schema';
 import { AppDataClientService } from '../../services/app-data-client.service';
 import { AppDataDeploymentService } from '../../services/app-data-deployment.service';
+import { AppDataEndUserGrantsService } from '../../services/app-data-end-user-grants.service';
 import type { AppDataEnvironment } from '../../constants/app-data.constants';
 import type { AppDataEndUserGrants, AppDataEndUserStatus } from '../../constants/app-data.types';
 import { assertIdentifier } from '../../utils/app-data-sql.util';
@@ -156,7 +157,7 @@ export class AppDataRemoteOwnerController {
   }
 
   @Get('end-users')
-  @ApiOperation({ summary: 'List registered app end-users and their CRUD grants (remote)' })
+  @ApiOperation({ summary: 'List registered app end-users and their CRUD + AI grants (remote)' })
   async listEndUsers(@Param('id') sessionId: string) {
     this.assertEndUserManagementEnabled();
     const { appId } = await this.requireRemoteAppId(sessionId);
@@ -164,7 +165,7 @@ export class AppDataRemoteOwnerController {
   }
 
   @Put('end-users/:userId/grants')
-  @ApiOperation({ summary: 'Update CRUD grants for an app end-user (remote)' })
+  @ApiOperation({ summary: 'Update CRUD + AI grants for an app end-user (remote)' })
   async updateEndUserGrants(
     @Param('id') sessionId: string,
     @Param('userId') userId: string,
@@ -172,12 +173,9 @@ export class AppDataRemoteOwnerController {
   ) {
     this.assertEndUserManagementEnabled();
     const { appId } = await this.requireRemoteAppId(sessionId);
-    const grants: AppDataEndUserGrants = {
-      create: body?.create === true,
-      read: body?.read === true,
-      update: body?.update === true,
-      delete: body?.delete === true,
-    };
+    const usersBefore = await this.client.listEndUsers(appId);
+    const current = usersBefore.find((u) => u.id === userId)?.grants ?? null;
+    const grants: AppDataEndUserGrants = AppDataEndUserGrantsService.mergeGrants(current, body);
     await this.client.replaceWildcardGrants(appId, userId, grants);
     const users = await this.client.listEndUsers(appId);
     return { user: users.find((u) => u.id === userId) ?? null };

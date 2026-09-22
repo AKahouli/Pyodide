@@ -267,6 +267,23 @@ Split des bases :
 `AppDataRemoteOwnerController` : lit le mapping session→workspace localement,
 proxifie vers l'internal API du microservice avec le service token.
 
+### 5.6 Grant AI end-user (`useAi` / ACL `use_ai`)
+
+Les apps générées qui appellent l’AI Proxy nécessitent un grant explicite pour
+chaque end-user (deny-by-default).
+
+| Mode | Source de vérité | Stockage |
+|------|------------------|----------|
+| **Remote** (`APP_DATA_REMOTE=true`) | Microservice App Data | ACL `resource='*'`, `action='use_ai'` |
+| Local | Nest Postgres | Colonne booléenne via migration `0017` **uniquement** |
+
+Le BFF Nest (`AppDataEndUserGrantsService` / remote owner) envoie
+`grants.useAi` sur `PUT …/wildcard-grants`. Omettre `useAi` **préserve** le grant AI existant.
+
+⚠️ Ne jamais appliquer `0017` sur la DB control-plane du microservice.
+Voir `drizzle/MIGRATIONS-APP-BUILDER-AI.md` et
+`app-data/docs/END_USER_AI_GRANT.md` (repo sibling).
+
 ---
 
 ## 6. Endpoints microservice (`http://localhost:8443/v1/...`)
@@ -371,7 +388,7 @@ Voir `constants/app-data.errors.ts` :
 | `App Data proxy timeout` | Relay parent absent (onglet rechargé) | Hard-reload YellowStorm ; relay répond erreur immédiate |
 | Écran blanc après ajout de données | Data-plane retournait row brute au lieu de `{ row }` | Contrat `{ row }` restauré sur POST/PATCH/DELETE |
 | 401 partout dans le preview | Pas de data ticket (app non provisionnée ou endpoint absent) | Provisionner via l'agent ; vérifier `remote: true` |
-| Preview en login screen | `VITE_YM_APP_DATA_ENV` absent | Restart du dev server (`yellowruntime_dev_server restart`) |
+| Preview en login screen | `isDevPreview()` false (`VITE_YM_APP_DATA_ENV` / `VITE_YM_AI_PROXY` absent) | Host injecte `VITE_YM_APP_DATA_ENV=dev` (+ AI proxy) ; `dev_server restart` après provision ; ne pas patcher `ProtectedRoute` |
 | `normalizeSchemaManifest` drop des tables | Entrées non-objet dans le manifeste LLM | Vérifier la structure : `{ tables: { "name": { columns: {...} } } }` |
 | `seed` inserting 0 rows | `ON CONFLICT DO NOTHING` sur IDs existants | IDs déjà présents ; changer les IDs ouvider les tables |
 

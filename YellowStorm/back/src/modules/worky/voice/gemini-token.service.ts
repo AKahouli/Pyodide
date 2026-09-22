@@ -6,6 +6,7 @@ import {
   browserReachableMcpUrl,
   connectorActionsToFunctionDeclarations,
   WORKY_CONCIERGE_CONNECTOR_SLUGS,
+  THEMATIC_RETRIEVE_TOOL,
 } from './voice-concierge.config';
 import { ConnectorService } from '../../connector/connector.service';
 
@@ -22,6 +23,11 @@ export interface VoiceSessionEnvelope {
   /** voice-memory sidecar WS (mic fork → long-term memory). Empty/absent ⇒ the
    *  browser skips the fork (memory writes off). Runtime-configured server-side. */
   memoryWsUrl: string;
+  /** Thematic (smart-memory) ingestion enabled. When true the browser POSTs each
+   *  finished turn's transcript to the backend, which writes it to smart-memory
+   *  via memory.write (the MCP's shared key can't be exposed to the browser).
+   *  False/absent ⇒ off (no active smart-memory connector, or no key configured). */
+  thematicMemory?: boolean;
   expiresAt: string;
 }
 
@@ -35,6 +41,7 @@ export class GeminiTokenService implements OnModuleInit {
   private readonly tokenTtlSec: number;
   private readonly startTtlSec: number;
   private readonly memoryWsUrl: string;
+  private readonly thematicMemoryApiKey: string;
 
   constructor(
     private readonly config: ConfigService,
@@ -47,6 +54,7 @@ export class GeminiTokenService implements OnModuleInit {
     this.tokenTtlSec = this.config.get<number>('worky.voiceTokenTtlSec') ?? 1800;
     this.startTtlSec = this.config.get<number>('worky.voiceSessionStartTtlSec') ?? 60;
     this.memoryWsUrl = this.config.get<string>('worky.voiceMemoryWsUrl') ?? '';
+    this.thematicMemoryApiKey = this.config.get<string>('worky.thematicMemoryApiKey') ?? '';
   }
 
   onModuleInit(): void {
@@ -116,6 +124,17 @@ export class GeminiTokenService implements OnModuleInit {
       }
     }
 
+    // Thematic memory (smart-memory) ingestion — backend-mediated, NOT a browser
+    // tool: the smart-memory MCP needs a shared secret key the browser can't hold,
+    // so the browser only signals per-turn transcripts to our backend endpoint,
+    // which does the memory.write. On only when both the connector and key exist.
+    const smart = await this.connectors.findBySlug('smart-memory');
+    const thematicMemory = !!(smart?.actions?.some((a) => a.key === 'memory.write') && this.thematicMemoryApiKey);
+    // Give the model a retrieval tool too (backend-proxied — see THEMATIC_RETRIEVE_TOOL).
+    if (thematicMemory && smart?.actions?.some((a) => a.key === 'memory.retrieve')) {
+      functionDeclarations.push(THEMATIC_RETRIEVE_TOOL);
+    }
+
     this.logger.log(
       `[voice] concierge session created — tools from [${connectors.map((c) => c.slug).join(', ')}]: ` +
         Object.entries(toolEndpoints)
@@ -134,6 +153,7 @@ export class GeminiTokenService implements OnModuleInit {
       toolEndpoints,
       streamIdTools,
       memoryWsUrl: this.memoryWsUrl,
+      thematicMemory,
       expiresAt: new Date(expireMs).toISOString(),
     };
   }

@@ -1817,12 +1817,18 @@ def test_a_projection_failure_never_fails_the_tool_call():
 def test_requester_context_names_the_user_and_forbids_delegating_to_them():
     """The planner/executor preamble must name the requester and rule out
     emailing or delegating work back to them — the fix for worky not knowing who
-    it works for."""
+    it works for. It must also forbid messaging them on ANY channel (Teams too,
+    not just email) and require relaying results back in the reply, not as an
+    outbound message — a Teams message to the requester is a self-chat that fails
+    (session f261efd3)."""
     ctx = svc.requester_context(
         {"name": "Rabeb Sdiri", "email": "rabeb@yellowsys.fr", "role": "Data Scientist"})
     assert "Rabeb Sdiri" in ctx and "rabeb@yellowsys.fr" in ctx and "Data Scientist" in ctx
     low = ctx.lower()
     assert "never" in low and ("delegat" in low or "assign" in low) and "email" in low
+    assert "teams" in low                              # not just email
+    assert "ask" in low                                # ask-step for input
+    assert "reply" in low or "result" in low           # relay results back, not send them
 
 
 def test_requester_context_is_empty_without_a_name_or_email():
@@ -1991,3 +1997,37 @@ def test_mark_running_leaves_a_terminal_step_untouched():
     asyncio.run(cb(object(), object()))
     assert step.status == Status.COMPLETED
     assert seen == []
+
+
+async def test_inject_steps_honors_planner_live_deps_and_parallelizes_independent(monkeypatch):
+    """An amend's PLACEMENT is the planner's: a dep it names on a LIVE step is
+    kept, and a step it leaves independent hangs off only the COMPLETED frontier
+    so it runs parallel to an open branch instead of behind it (session c7b084e1:
+    Imed got chained behind Adem's blocked reply)."""
+    service = svc.OrchestratorService(MagicMock(), MagicMock(), planner_model="m")
+    monkeypatch.setattr(service, "_project_step", AsyncMock())
+    monkeypatch.setattr(service, "_mint_mail_waits", AsyncMock())
+
+    live = Plan(steps=[
+        Step(id="adem_send", description="ask Adem", status=Status.COMPLETED),
+        Step(id="adem_wait", description="await Adem", depends_on=["adem_send"], status=Status.BLOCKED),
+        Step(id="summary", description="summarize", status=Status.COMPLETED),
+    ])
+    new = [
+        Step(id="s1", description="ask Imed", depends_on=[]),              # independent
+        Step(id="s2", description="email the summary", depends_on=["summary"]),  # live dep
+        Step(id="s3", description="notify after Imed", depends_on=["s1"]),       # in-batch dep
+    ]
+    await service._inject_steps("sess", "u", live, new)
+
+    imed = next(s for s in live.steps if s.description == "ask Imed")
+    mail = next(s for s in live.steps if s.description == "email the summary")
+    notify = next(s for s in live.steps if s.description == "notify after Imed")
+
+    # independent Imed -> completed leaf only (summary), NOT the blocked await
+    assert imed.depends_on == ["summary"]
+    assert "adem_wait" not in imed.depends_on
+    # planner's dep on a LIVE step is honored, not discarded
+    assert mail.depends_on == ["summary"]
+    # in-batch dep still remapped to the new id
+    assert notify.depends_on == [imed.id]

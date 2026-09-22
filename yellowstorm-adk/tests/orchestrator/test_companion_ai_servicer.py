@@ -376,3 +376,47 @@ async def test_mail_reply_serializes_behind_an_in_flight_turn_not_cancels():
     await _drain(s)
     assert not prev.cancelled()
     service.resume_turn.assert_awaited_once()
+
+
+async def test_converse_drives_parked_plan_with_no_open_interrupt():
+    """An amend that adds work to a PARKED plan with no card/await open must be
+    DRIVEN — else the new execute step is orphaned pending forever (session
+    dd85c187: declined mail, "use Teams" amend never ran)."""
+    rm = MagicMock(
+        snapshot=AsyncMock(return_value={
+            "session": {"status": "blocked", "interrupt_id": None},
+            "plan": {"id": "p1"},
+            "steps": [{"step_id": "s1", "status": "completed"}]}),
+        outstanding_interrupts=AsyncMock(return_value=[]))
+    added = MagicMock(steps=[MagicMock()], ops=[])
+    service = MagicMock(plan_turn=AsyncMock(), resume_turn=AsyncMock(),
+                        converse_turn=AsyncMock(return_value=added),
+                        continue_turn=AsyncMock())
+    s = _servicer(rm=rm, service=service)
+    resp = await s.RunTask(pb.RunRequest(
+        user_id="u", session_id="s1", message="use Teams not email", agents=_AGENTS), _ctx())
+    assert resp.accepted is True
+    await _drain(s)
+    service.converse_turn.assert_awaited_once()
+    service.continue_turn.assert_awaited_once()       # parked plan got driven
+
+
+async def test_converse_does_not_drive_when_a_card_is_open():
+    """A still-outstanding card/await owns the plan's resume — the amend must NOT
+    drive (that would double-run / hijack the awaited step)."""
+    rm = MagicMock(
+        snapshot=AsyncMock(return_value={
+            "session": {"status": "blocked", "interrupt_id": "confirm::x"},
+            "plan": {"id": "p1"},
+            "steps": [{"step_id": "s1", "status": "blocked"}]}),
+        outstanding_interrupts=AsyncMock(return_value=[("confirm::x", "s1")]))
+    added = MagicMock(steps=[MagicMock()], ops=[])
+    service = MagicMock(plan_turn=AsyncMock(), resume_turn=AsyncMock(),
+                        converse_turn=AsyncMock(return_value=added),
+                        continue_turn=AsyncMock())
+    s = _servicer(rm=rm, service=service)
+    await s.RunTask(pb.RunRequest(
+        user_id="u", session_id="s1", message="also loop in Sana", agents=_AGENTS), _ctx())
+    await _drain(s)
+    service.converse_turn.assert_awaited_once()
+    service.continue_turn.assert_not_awaited()

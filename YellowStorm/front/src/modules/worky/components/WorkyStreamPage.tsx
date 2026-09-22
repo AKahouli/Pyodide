@@ -7,7 +7,6 @@ import { PlanDeltaToast } from './PlanDeltaToast';
 import { ApprovalModal } from './ApprovalModal';
 import { TaskDetailDrawer } from './TaskDetailDrawer';
 import { FileViewerSidebar } from '@/modules/file-viewer';
-import { WorkyWhatsAppConnectModal } from './WorkyWhatsAppConnectModal';
 import { workyKeys } from '../query/queryKeys';
 import { subscribeToStreamEvents } from '../stream/sse';
 import { useWorkyStore } from '../store';
@@ -17,9 +16,7 @@ import {
   useMessages,
   useStream,
   useUpdateStream,
-  useWorkyWhatsAppIntegration,
 } from '../query/hooks';
-import { isWhatsAppConnected } from '@/lib/whatsapp-integration-utils';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { WorkyMobileStream } from './mobile/WorkyMobileStream';
 import { WorkyVoiceDock } from './desktop/WorkyVoiceDock';
@@ -71,15 +68,12 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   const updateStream = useUpdateStream();
   const [selectedTask, setSelectedTask] = useState<WorkyTask | null>(null);
   const [approvalFor, setApprovalFor] = useState<WorkyPendingClarification | null>(null);
-  const [whatsappModalOpen, setWhatsappModalOpen] = useState(false);
-  const whatsappQuery = useWorkyWhatsAppIntegration(streamId);
   const isMobile = useIsMobile();
   const pushActivity = useWorkyUiStore((s) => s.pushActivity);
   const clearActivity = useWorkyUiStore((s) => s.clearActivity);
   const activitySeq = useRef(0);
 
   useEffect(() => {
-    setWhatsappModalOpen(false);
     setStreaming(false);
   }, [streamId, setStreaming]);
 
@@ -112,7 +106,19 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
             planDeltaRef: null,
             createdAt: new Date().toISOString(),
           };
-          if (m.id) appendMessage(m);
+          if (m.id) {
+            appendMessage(m);
+            // Also land it in the React Query cache. The messages effect
+            // (setMessages) replaces the store list wholesale from this cache on
+            // every refetch/setQueryData — e.g. the next useSendMessage.onSuccess.
+            // Without this the SSE-only message lives only in the store and gets
+            // wiped on the next send, even though it's already durable in Mongo.
+            qc.setQueryData<WorkyMessage[]>(workyKeys.messages(streamId), (existing) => {
+              if (!existing) return existing;
+              if (existing.some((x) => x.id === m.id)) return existing;
+              return [...existing, m];
+            });
+          }
           if (m.role === 'manager') resetAssistantText();
           break;
         }
@@ -279,9 +285,11 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
     pushActivity,
   ]);
 
-  // Reset the in-session activity feed when switching streams.
+  // Reset per-stream UI when switching streams: the activity feed and the task
+  // detail drawer (its selectedTask is a stale task from the previous stream).
   useEffect(() => {
     clearActivity();
+    setSelectedTask(null);
   }, [streamId, clearActivity]);
 
   useEffect(() => {
@@ -306,7 +314,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   const voice = useWorkyVoiceSession(streamId, voiceOpen && !isMobile);
   const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
-  const executiveModel = deriveExecutiveView(boardQuery.data ?? EMPTY_BOARD, streamQuery.data?.status);
+  const executiveModel = deriveExecutiveView(boardQuery.data ?? EMPTY_BOARD, streamQuery.data?.status, messagesQuery.data ?? []);
   // Close the slide-over automatically on stream switch so the next
   // stream doesn't inherit the open state of the previous one.
   useEffect(() => {
@@ -320,8 +328,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         approvalFor={approvalFor}
         onApprovalClose={() => setApprovalFor(null)}
         model={executiveModel}
-        onWhatsAppClick={() => setWhatsappModalOpen(true)}
-        whatsappConnected={isWhatsAppConnected(whatsappQuery.data?.status)}
       />
     );
   }
@@ -347,8 +353,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
       ) : null}
       <WorkyActivityRail
         streamId={streamId}
-        onWhatsAppClick={() => setWhatsappModalOpen(true)}
-        whatsappConnected={isWhatsAppConnected(whatsappQuery.data?.status)}
         model={executiveModel}
       />
       {/* Sidebar-mode file viewer host. Floating mode is mounted globally in
@@ -360,8 +364,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         streamId={streamId}
         open={orchestratorOpen}
         onOpenChange={setOrchestratorOpen}
-        onWhatsAppClick={() => setWhatsappModalOpen(true)}
-        whatsappConnected={isWhatsAppConnected(whatsappQuery.data?.status)}
         sessionStatus={executiveModel.session?.status}
       />
       <PlanDeltaToast />
@@ -371,13 +373,6 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           streamId={streamId}
           interaction={approvalFor}
           onClose={() => setApprovalFor(null)}
-        />
-      ) : null}
-      {whatsappModalOpen ? (
-        <WorkyWhatsAppConnectModal
-          open
-          streamId={streamId}
-          onClose={() => setWhatsappModalOpen(false)}
         />
       ) : null}
       <WorkyVoiceDock

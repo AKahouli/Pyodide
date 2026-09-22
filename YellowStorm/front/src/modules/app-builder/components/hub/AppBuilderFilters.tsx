@@ -1,4 +1,4 @@
-import { LayoutGrid, List, Search, X } from 'lucide-react';
+import { LayoutGrid, List, Search, Sparkles, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -26,6 +26,8 @@ interface AppBuilderFiltersProps {
   onSortChange: (value: AppSortKey) => void;
   view: AppViewMode;
   onViewChange: (value: AppViewMode) => void;
+  aiOnly: boolean;
+  onAiOnlyChange: (value: boolean) => void;
   hasActiveFilters: boolean;
   onClearAll: () => void;
 }
@@ -40,33 +42,36 @@ export function AppBuilderFilters({
   onSortChange,
   view,
   onViewChange,
+  aiOnly,
+  onAiOnlyChange,
   hasActiveFilters,
   onClearAll,
 }: AppBuilderFiltersProps) {
   const { t } = useModuleTranslation('app-builder');
 
   return (
-    <div className='flex flex-wrap items-center gap-2 rounded-xl border border-border/60 bg-card/40 p-2'>
+    <div className='flex flex-wrap items-center gap-2 rounded-2xl border border-border/70 bg-card/60 p-2 shadow-sm backdrop-blur-sm'>
       <div className='relative min-w-[220px] flex-1'>
-        <Search className='pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground' />
+        <Search className='pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground' />
         <Input
           value={searchInput}
           onChange={(e) => onSearchChange(e.target.value)}
           placeholder={t('hub.filters.searchPlaceholder')}
-          className='border-transparent bg-transparent pl-9 pr-8 shadow-none focus-visible:border-border focus-visible:bg-background'
+          className='h-9 border-transparent bg-transparent pl-9 pr-8 shadow-none focus-visible:border-border focus-visible:bg-background'
         />
         {searchInput && (
           <button
             type='button'
             onClick={() => onSearchChange('')}
             className='absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground transition hover:text-foreground'
+            aria-label={t('hub.filters.clear')}
           >
-            <X className='h-4 w-4' />
+            <X className='size-4' />
           </button>
         )}
       </div>
 
-      <div className='h-5 w-px bg-border/60' />
+      <div className='hidden h-5 w-px bg-border/60 sm:block' aria-hidden />
 
       <Select value={tab} onValueChange={(v) => onTabChange(v as AppBuilderTab)}>
         <SelectTrigger
@@ -84,6 +89,23 @@ export function AppBuilderFilters({
           ))}
         </SelectContent>
       </Select>
+
+      <button
+        type='button'
+        onClick={() => onAiOnlyChange(!aiOnly)}
+        aria-pressed={aiOnly}
+        aria-label={t('hub.filters.aiOnly')}
+        title={t('hub.filters.aiOnlyHint')}
+        className={cn(
+          'inline-flex h-9 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition',
+          aiOnly
+            ? 'border-primary/30 bg-primary/10 text-primary'
+            : 'border-transparent bg-transparent text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+        )}
+      >
+        <Sparkles className='size-3.5' aria-hidden />
+        {t('hub.filters.aiOnly')}
+      </button>
 
       <Select value={sort} onValueChange={(v) => onSortChange(v as AppSortKey)}>
         <SelectTrigger className='h-9 w-[260px] gap-1.5 border-transparent bg-transparent shadow-none hover:bg-accent/50 [&>span]:line-clamp-1'>

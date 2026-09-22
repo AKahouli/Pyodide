@@ -15,10 +15,12 @@ import * as grpc from '@grpc/grpc-js';
 import { VmUnavailableException } from './exceptions/vm-unavailable.exception';
 import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
 import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
+import { ConversationV2AppAiFeaturesService } from './services/conversation-v2-app-ai-features.service';
 import { ConversationV2SessionAccessGuard } from './guards/conversation-v2-session-access.guard';
 import { ConversationV2OwnerGuard } from './guards/conversation-v2-owner.guard';
 import type { ConversationV2ResolvedSession } from './services/conversation-v2-session-access.service';
 import { RuntimeTicketService } from '@modules/app-runtime/services/runtime-ticket.service';
+import { AiPreviewTicketService } from '@modules/ai-proxy/services/ai-preview-ticket.service';
 import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
 import { RuntimeBindingService } from '@modules/app-runtime/services/runtime-binding.service';
 import { RuntimeFinalizedRevisionService } from '@modules/app-runtime/services/runtime-finalized-revision.service';
@@ -62,6 +64,7 @@ describe('ConversationV2Controller', () => {
     listDeployedApps: jest.fn(),
     listDraftApps: jest.fn(),
     resolveRevisionContextBySessionIds: jest.fn(),
+    setAiFeaturesFlag: jest.fn(),
     removeDeployedApp: jest.fn(),
     softDelete: jest.fn(),
   };
@@ -108,6 +111,7 @@ describe('ConversationV2Controller', () => {
   const mockConfig = { get: jest.fn().mockReturnValue(52428800) };
   const mockDeployment = { deploy: jest.fn() };
   const mockRuntimeTickets = { issue: jest.fn() };
+  const mockAiPreviewTickets = { issue: jest.fn() };
   const mockRuntimeRevisions = {
     listFiles: jest.fn(),
     getAuthorizedRevision: jest.fn(),
@@ -120,6 +124,11 @@ describe('ConversationV2Controller', () => {
     resolveLatestFinalized: jest.fn().mockResolvedValue(null),
     assertFinalized: jest.fn().mockResolvedValue(undefined),
     summarizeByWorkspaces: jest.fn().mockResolvedValue(new Map()),
+  };
+  const mockAppAiFeatures = {
+    resolveForCatalog: jest.fn().mockResolvedValue(new Map()),
+    detectAndPersist: jest.fn().mockResolvedValue(false),
+    markHasAiFeatures: jest.fn().mockResolvedValue(undefined),
   };
 
   const emptyRevisionCatalog = {
@@ -145,9 +154,11 @@ describe('ConversationV2Controller', () => {
         { provide: ConversationV2DeployService, useValue: mockDeployment },
         { provide: ConversationV2AppShareService, useValue: mockAppShares },
         { provide: RuntimeTicketService, useValue: mockRuntimeTickets },
+        { provide: AiPreviewTicketService, useValue: mockAiPreviewTickets },
         { provide: RuntimeRevisionService, useValue: mockRuntimeRevisions },
         { provide: RuntimeBindingService, useValue: mockRuntimeBindings },
         { provide: RuntimeFinalizedRevisionService, useValue: mockFinalizedRevisions },
+        { provide: ConversationV2AppAiFeaturesService, useValue: mockAppAiFeatures },
       ],
     })
       .overrideGuard(ConversationV2SessionAccessGuard)
@@ -168,12 +179,17 @@ describe('ConversationV2Controller', () => {
       ...Object.values(mockDeployment),
       ...Object.values(mockAppShares),
       ...Object.values(mockRuntimeTickets),
+      ...Object.values(mockAiPreviewTickets),
       ...Object.values(mockRuntimeRevisions),
       ...Object.values(mockRuntimeBindings),
       ...Object.values(mockFinalizedRevisions),
+      ...Object.values(mockAppAiFeatures),
     ].forEach((fn) => (fn as jest.Mock).mockReset?.());
     mockConfig.get.mockReturnValue(52428800);
     mockAppShares.listSharedWithUser.mockResolvedValue([]);
+    mockAppAiFeatures.resolveForCatalog.mockResolvedValue(new Map());
+    mockAppAiFeatures.detectAndPersist.mockResolvedValue(false);
+    mockAppAiFeatures.markHasAiFeatures.mockResolvedValue(undefined);
   });
 
   // --- POST /sessions ---
@@ -387,6 +403,7 @@ describe('ConversationV2Controller', () => {
         source: 'owned',
         shareId: null,
         canOpenConversation: true,
+        hasAiFeatures: false,
         ...emptyRevisionCatalog,
       },
     ]);
@@ -396,6 +413,7 @@ describe('ConversationV2Controller', () => {
         title: 'Draft app',
         lastUpdatedAt: '2026-07-15T10:00:00.000Z',
         deployStatus: 'idle',
+        hasAiFeatures: true,
         ...emptyRevisionCatalog,
       },
     ]);
@@ -408,6 +426,7 @@ describe('ConversationV2Controller', () => {
         source: 'shared',
         shareId: 'share-2',
         canOpenConversation: true,
+        hasAiFeatures: false,
         ...emptyRevisionCatalog,
       },
     ]);
@@ -415,10 +434,31 @@ describe('ConversationV2Controller', () => {
       new Map([
         [
           'session-1',
-          { aiSessionId: 'ai-1', lastDeployedRevisionId: 'rev_7' },
+          {
+            aiSessionId: 'ai-1',
+            lastDeployedRevisionId: 'rev_7',
+            hasAiFeatures: false,
+            aiFeaturesCheckedRevisionId: null,
+          },
         ],
-        ['session-2', { aiSessionId: 'ai-2', lastDeployedRevisionId: 'rev_3' }],
-        ['session-3', { aiSessionId: 'ai-3', lastDeployedRevisionId: null }],
+        [
+          'session-2',
+          {
+            aiSessionId: 'ai-2',
+            lastDeployedRevisionId: 'rev_3',
+            hasAiFeatures: false,
+            aiFeaturesCheckedRevisionId: null,
+          },
+        ],
+        [
+          'session-3',
+          {
+            aiSessionId: 'ai-3',
+            lastDeployedRevisionId: null,
+            hasAiFeatures: true,
+            aiFeaturesCheckedRevisionId: 'rev_5',
+          },
+        ],
       ]),
     );
     mockFinalizedRevisions.summarizeByWorkspaces.mockResolvedValueOnce(
@@ -441,6 +481,13 @@ describe('ConversationV2Controller', () => {
         ],
       ]),
     );
+    mockAppAiFeatures.resolveForCatalog.mockResolvedValueOnce(
+      new Map([
+        ['session-1', false],
+        ['session-2', false],
+        ['session-3', true],
+      ]),
+    );
 
     await expect(controller.listDeployedApps({ id: 'user-1' })).resolves.toEqual({
       deployed: [
@@ -452,6 +499,7 @@ describe('ConversationV2Controller', () => {
           source: 'owned',
           shareId: null,
           canOpenConversation: true,
+          hasAiFeatures: false,
           lastDeployedRevisionId: 'rev_7',
           latestFinalizedRevisionId: 'rev_12',
           latestFinalizedAt: '2026-09-02T10:00:00.000Z',
@@ -467,6 +515,7 @@ describe('ConversationV2Controller', () => {
           source: 'shared',
           shareId: 'share-2',
           canOpenConversation: true,
+          hasAiFeatures: false,
           lastDeployedRevisionId: 'rev_3',
           latestFinalizedRevisionId: null,
           latestFinalizedAt: null,
@@ -479,6 +528,7 @@ describe('ConversationV2Controller', () => {
           title: 'Draft app',
           lastUpdatedAt: '2026-07-15T10:00:00.000Z',
           deployStatus: 'idle',
+          hasAiFeatures: true,
           lastDeployedRevisionId: null,
           latestFinalizedRevisionId: 'rev_5',
           latestFinalizedAt: '2026-09-01T10:00:00.000Z',
@@ -498,6 +548,7 @@ describe('ConversationV2Controller', () => {
     ]);
     expect(mockAppShares.listSharedWithUser).toHaveBeenCalledWith('user-1');
     expect(mockSessions.listDraftApps).toHaveBeenCalledWith('user-1');
+    expect(mockAppAiFeatures.resolveForCatalog).toHaveBeenCalled();
   });
 
   it('POST /sessions/:id/share-deploy grants Marketplace access by email', async () => {
@@ -755,6 +806,26 @@ describe('ConversationV2Controller', () => {
       ConversationV2Controller.prototype.issueRuntimeTicket,
     );
     expect(permission).toBe(ConversationV2SessionPermissions.SESSION_WRITE);
+  });
+
+  it('POST /sessions/:id/ai-preview-ticket returns an opaque preview ticket', async () => {
+    mockAiPreviewTickets.issue.mockResolvedValueOnce({
+      ticket: 'aiprev_test',
+      workspaceId: 'sess_1',
+      bindingId: 'arb_1',
+      expiresAt: '2026-01-01T00:10:00.000Z',
+    });
+
+    const result = await controller.issueAiPreviewTicket(
+      resolvedSession('u1', { aiSessionId: 'sess_1' }),
+    );
+
+    expect(mockAiPreviewTickets.issue).toHaveBeenCalledWith({
+      conversationSessionId: 'sess_1',
+      billableUserId: 'u1',
+    });
+    expect(mockAppAiFeatures.markHasAiFeatures).not.toHaveBeenCalled();
+    expect(result.ticket).toBe('aiprev_test');
   });
 
   it('POST /sessions/:id/runtime-ticket throws NotFoundException when the AI session is not attached yet', () => {

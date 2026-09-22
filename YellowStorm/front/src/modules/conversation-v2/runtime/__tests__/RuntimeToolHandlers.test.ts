@@ -106,6 +106,7 @@ function makePreviewCtrl() {
   return {
     previewUrl: 'http://localhost/__virtual__/pod-1/5173/',
     port: 5173,
+    isInspectorAttached: vi.fn().mockReturnValue(true),
     getCachedHealthyInspect: vi.fn().mockReturnValue(null),
     inspectPreview: vi.fn().mockResolvedValue({
       url: 'http://localhost/__virtual__/pod-1/5173/',
@@ -719,7 +720,7 @@ describe('dev_server', () => {
       url: 'http://localhost/__virtual__/pod-1/5173/',
       port: 5173,
     });
-    expect(String(result.message)).toMatch(/virtual URL|this URL/i);
+    expect(String(result.message)).toMatch(/inspector|URL|running/i);
   });
 
   it('restarts through startDevServer', async () => {

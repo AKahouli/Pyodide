@@ -6,6 +6,7 @@ import { RequirePermissions } from '../../authorization/decorators/require-permi
 import { Permissions } from '../../authorization/constants/permissions';
 import { GeminiTokenService, VoiceSessionEnvelope } from './gemini-token.service';
 import { VoiceToolService } from './voice-tool.service';
+import { ThematicMemoryService } from './thematic-memory.service';
 import { requesterOpts } from '../worky-requester.util';
 import { WorkyPlanningService } from '../services/worky-planning.service';
 import { CONCIERGE_SYSTEM_PROMPT } from './voice-concierge.config';
@@ -17,6 +18,8 @@ import {
   VoiceStatusDto,
   VoiceStopDto,
   VoiceTaskDetailsDto,
+  VoiceThematicMemoryDto,
+  VoiceThematicRetrieveDto,
   VoiceTranscriptDto,
 } from './dto/voice.dto';
 
@@ -33,6 +36,7 @@ export class WorkyVoiceController {
     private readonly tokens: GeminiTokenService,
     private readonly tools: VoiceToolService,
     private readonly planning: WorkyPlanningService,
+    private readonly thematicMemory: ThematicMemoryService,
   ) {}
 
   @Post('session')
@@ -122,5 +126,21 @@ export class WorkyVoiceController {
   @ApiOperation({ summary: 'Persist a voice transcript turn into chat history' })
   async transcript(@CurrentUser() user: AuthUser, @Body() dto: VoiceTranscriptDto) {
     return this.planning.appendVoiceMessage(user._id.toString(), dto.streamId, dto.role, dto.text);
+  }
+
+  @Post('thematic-memory')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
+  @ApiOperation({ summary: 'Ingest one finished voice turn into smart-memory (thematic memory)' })
+  async ingestThematicMemory(@CurrentUser() user: AuthUser, @Body() dto: VoiceThematicMemoryDto) {
+    return this.thematicMemory.ingestTurn(user._id.toString(), dto.text);
+  }
+
+  @Post('thematic-memory/retrieve')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
+  @ApiOperation({ summary: 'Retrieve thematic (smart-memory) context for a query — a concierge tool' })
+  async retrieveThematicMemory(@CurrentUser() user: AuthUser, @Body() dto: VoiceThematicRetrieveDto) {
+    return this.thematicMemory.retrieve(user._id.toString(), dto.query);
   }
 }

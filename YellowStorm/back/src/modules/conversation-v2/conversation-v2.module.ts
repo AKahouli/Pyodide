@@ -14,12 +14,14 @@ import { ConversationV2StreamGatewayService } from './services/conversation-v2-s
 import { ConversationV2StreamService } from './services/conversation-v2-stream.service';
 import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
 import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
+import { ConversationV2AppAiFeaturesService } from './services/conversation-v2-app-ai-features.service';
 import { ConversationV2OwnerGuard } from './guards/conversation-v2-owner.guard';
 import { ConversationV2SessionAccessGuard } from './guards/conversation-v2-session-access.guard';
 import { ConversationV2SessionAccessService } from './services/conversation-v2-session-access.service';
 import { SseAuthGuard } from '@modules/conversation/guards/stream-auth.guard';
 import { AuthModule } from '@modules/auth/auth.module';
 import { AppRuntimeModule } from '@modules/app-runtime/app-runtime.module';
+import { AiProxyModule } from '@modules/ai-proxy/ai-proxy.module';
 import { AppDataModule } from '@modules/app-data/app-data.module';
 import { WorkspaceModule } from '@modules/workspace/workspace.module';
 import { ChatCompletionModule } from '@modules/chat-completion';
@@ -51,6 +53,7 @@ import {
     forwardRef(() => AuthModule),
     forwardRef(() => WorkspaceModule),
     forwardRef(() => AppRuntimeModule),
+    forwardRef(() => AiProxyModule),
     forwardRef(() => AppDataModule),
     UserModule,
     NotificationsModule,
@@ -66,7 +69,7 @@ import {
     ]),
   ],
   controllers: [ConversationV2Controller, ConversationV2StreamController],
-  providers: [ConversationV2GrpcClientService, ConversationV2SessionService, SseAuthGuard, ConversationV2PointerWriterService, ConversationV2ShareService, ConversationV2EventStoreService, ConversationV2StreamGatewayService, ConversationV2StreamService, ConversationV2OwnerGuard, ConversationV2SessionAccessGuard, ConversationV2SessionAccessService, ConversationV2NameGeneratorService, ConversationV2DeployService, ConversationV2AppShareService],
+  providers: [ConversationV2GrpcClientService, ConversationV2SessionService, SseAuthGuard, ConversationV2PointerWriterService, ConversationV2ShareService, ConversationV2EventStoreService, ConversationV2StreamGatewayService, ConversationV2StreamService, ConversationV2OwnerGuard, ConversationV2SessionAccessGuard, ConversationV2SessionAccessService, ConversationV2NameGeneratorService, ConversationV2DeployService, ConversationV2AppShareService, ConversationV2AppAiFeaturesService],
   exports: [ConversationV2GrpcClientService, ConversationV2SessionService, ConversationV2PointerWriterService, ConversationV2ShareService, ConversationV2EventStoreService, ConversationV2OwnerGuard, ConversationV2SessionAccessGuard, ConversationV2SessionAccessService, ConversationV2StreamService, ConversationV2AppShareService],
 })
 export class ConversationV2Module {}

@@ -403,7 +403,7 @@ describe('StreamService guardrail metadata buffering', () => {
     expect(contextB.sources.map((source: { workspaceId: string }) => source.workspaceId)).toEqual(['shared', 'private-b']);
   });
 
-  it('injects run-code context for WhatsApp and Telegram single-agent execution', async () => {
+  it('injects run-code context for Telegram single-agent execution', async () => {
     const service = Object.create(StreamService.prototype) as StreamService;
     const agent = {
       id: 'agent-1',

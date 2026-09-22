@@ -3,6 +3,7 @@
  * Register/login against YellowStorm App Data public auth API.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { ymDiag } from '@/lib/ym-diag';
 
 const TOKEN_KEY = 'ym_app_auth_token';
 const USER_KEY = 'ym_app_auth_user';
@@ -29,11 +30,30 @@ interface AuthContextValue extends AuthState {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 /**
- * YellowStorm Nodepod preview runs `vite dev` with VITE_YM_APP_DATA_ENV=dev.
- * Deployed static builds must enforce auth even if a stale env var says "dev".
+ * YellowStorm Nodepod preview runs `vite dev` with platform-injected env.
+ * Bypass production end-user auth when App Data DEV env is set, or when the
+ * AI preview proxy is injected (AI-only apps before App Data provision).
+ * Deployed static builds must enforce auth (`import.meta.env.DEV` is false).
  */
 export function isDevPreview(): boolean {
-  return import.meta.env.DEV && import.meta.env.VITE_YM_APP_DATA_ENV === 'dev';
+  if (!import.meta.env.DEV) return false;
+  return (
+    import.meta.env.VITE_YM_APP_DATA_ENV === 'dev' ||
+    import.meta.env.VITE_YM_AI_PROXY === 'true'
+  );
+}
+
+/**
+ * Dev preview: the app runs WITHOUT login — App Data calls are attributed to
+ * the workspace owner via the preview relay's injected data ticket. A stale
+ * end-user token left over from an earlier session would otherwise be sent
+ * as `Authorization` and rejected with "Invalid token" on every call, so
+ * purge it once at module load (dev preview only — prod builds keep sessions).
+ */
+if (typeof window !== 'undefined' && isDevPreview()) {
+  sessionStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(USER_KEY);
+  ymDiag.info('auth', 'dev preview: cleared end-user session keys');
 }
 
 const proxyEnabled = import.meta.env.VITE_YM_APP_DATA_PROXY === 'true' && typeof window !== 'undefined';
@@ -44,7 +64,7 @@ function resolveAppDataRootUrl(): string {
   const dataUrl = import.meta.env.VITE_YM_APP_DATA_URL as string | undefined;
   const appDataId = import.meta.env.VITE_YM_APP_DATA_ID as string | undefined;
   if (!dataUrl || !appDataId) {
-    throw new Error('App auth is not configured (missing VITE_YM_APP_DATA_URL or VITE_YM_APP_DATA_ID).');
+    throw new Error('Sign-in is not ready yet. Refresh the preview and try again.');
   }
   return dataUrl.replace(/\/$/, '').replace(/\/(dev|prod|auth)$/, '');
 }
@@ -162,15 +182,20 @@ export async function resolveInvite(token: string): Promise<ResolvedInvite> {
 
 export async function login(email: string, password: string): Promise<{ token: string; user: AppUser }> {
   const base = resolveAuthBaseUrl();
+  ymDiag.info('auth', 'login start', { email, base, proxy: proxyEnabled });
   const res = await authFetch(`${base}/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
   });
   const payload = (await parseJsonResponse(res)) as { token?: string; user?: AppUser; message?: string; code?: string };
-  if (!res.ok) throwAuthError(res, payload, 'Login failed');
+  if (!res.ok) {
+    ymDiag.warn('auth', 'login failed', { status: res.status, code: payload?.code, message: payload?.message });
+    throwAuthError(res, payload, 'Login failed');
+  }
   if (!payload.token || !payload.user) throw new Error('Login response missing token or user');
   persistSession(payload.token, payload.user);
+  ymDiag.info('auth', 'login ok', { userId: payload.user.id, email: payload.user.email });
   return { token: payload.token, user: payload.user };
 }
 
@@ -181,15 +206,26 @@ export async function register(
   inviteToken?: string,
 ): Promise<{ token: string; user: AppUser }> {
   const base = resolveAuthBaseUrl();
+  ymDiag.info('auth', 'register start', {
+    email,
+    base,
+    hasDisplayName: Boolean(displayName),
+    hasInvite: Boolean(inviteToken),
+    proxy: proxyEnabled,
+  });
   const res = await authFetch(`${base}/register`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password, displayName, inviteToken }),
   });
   const payload = (await parseJsonResponse(res)) as { token?: string; user?: AppUser; message?: string; code?: string };
-  if (!res.ok) throwAuthError(res, payload, 'Register failed');
+  if (!res.ok) {
+    ymDiag.warn('auth', 'register failed', { status: res.status, code: payload?.code, message: payload?.message });
+    throwAuthError(res, payload, 'Register failed');
+  }
   if (!payload.token || !payload.user) throw new Error('Register response missing token or user');
   persistSession(payload.token, payload.user);
+  ymDiag.info('auth', 'register ok', { userId: payload.user.id, email: payload.user.email });
   return { token: payload.token, user: payload.user };
 }
 
@@ -209,10 +245,12 @@ export async function getMe(): Promise<AppUser> {
 
 export function logout(): void {
   clearSession();
+  ymDiag.info('auth', 'logout');
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const previewDev = isDevPreview();
+  ymDiag.debug('auth', 'AuthProvider mount', { previewDev, proxy: proxyEnabled });
   const [state, setState] = useState<AuthState>({
     user: previewDev ? null : getStoredUser(),
     token: previewDev ? null : getAuthToken(),
@@ -222,19 +260,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refreshMe = useCallback(async () => {
     if (isDevPreview()) {
       setState({ user: null, token: null, isLoading: false });
+      ymDiag.debug('auth', 'refreshMe skipped (dev preview)');
       return;
     }
     const token = getAuthToken();
     if (!token) {
       setState({ user: null, token: null, isLoading: false });
+      ymDiag.debug('auth', 'refreshMe: no token');
       return;
     }
     try {
       const user = await getMe();
       setState({ user, token, isLoading: false });
-    } catch {
+      ymDiag.info('auth', 'refreshMe ok', { userId: user.id });
+    } catch (err) {
       clearSession();
       setState({ user: null, token: null, isLoading: false });
+      ymDiag.warn('auth', 'refreshMe failed — session cleared', {
+        message: err instanceof Error ? err.message : String(err),
+      });
     }
   }, []);
 

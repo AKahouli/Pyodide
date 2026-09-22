@@ -313,6 +313,15 @@ export const conversationV2Api = {
     );
     return res.data.data;
   },
+  /** Opaque AI preview ticket for parent-frame relay (never sent into the iframe). */
+  async createAiPreviewTicket(
+    sessionId: string,
+  ): Promise<{ ticket: string; workspaceId: string; bindingId: string; expiresAt: string }> {
+    const res = await apiClient.post<
+      ApiResponse<{ ticket: string; workspaceId: string; bindingId: string; expiresAt: string }>
+    >(`/conversation-v2/sessions/${sessionId}/ai-preview-ticket`);
+    return res.data.data;
+  },
   async getAppDataStatus(sessionId: string): Promise<AppDataOwnerStatus> {
     const res = await apiClient.get<ApiResponse<AppDataOwnerStatus>>(
       `/conversation-v2/sessions/${sessionId}/app-data/status`,

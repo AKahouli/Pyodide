@@ -366,8 +366,10 @@ def _service():
     rm = MagicMock(
         set_step_status=AsyncMock(), set_waiting=AsyncMock(), set_session_status=AsyncMock(),
         upsert_plan=AsyncMock(), upsert_steps=AsyncMock(), add_message=AsyncMock(),
+        add_message_component=AsyncMock(),
         outstanding_interrupts=AsyncMock(return_value=[]),
         register_mail_wait=AsyncMock(), cancel_mail_waits=AsyncMock(),
+        cancel_mail_wait=AsyncMock(),
         set_mail_wait_expected_from=AsyncMock(), bind_mail_wait_interrupt=AsyncMock())
     svc = OrchestratorService(MagicMock(), rm, planner_model="m")
     return svc, rm
@@ -898,3 +900,64 @@ def test_dep_gate_deferral_emits_no_terminal_event():
     node_terms = [e for e in recorded if is_terminal_event(e)
                   and e.node_info and e.node_info.path]
     assert not node_terms, f"deferral recorded a terminal node event: {node_terms}"
+
+
+def test_teams_chat_id_unwraps_the_mcp_text_envelope():
+    """The send_teams_message MCP tool returns its payload as a JSON string under
+    "text" — the chat id must be read from inside it, else the Teams wait never
+    gets a conversation_id and the poller stays blind (session c7b084e1)."""
+    import json
+    envelope = {"text": json.dumps({
+        "status": "success",
+        "chat_id": "19:abc_def@unq.gbl.spaces",
+        "data": {"id": "1790066864309", "chatId": "19:abc_def@unq.gbl.spaces"}})}
+    assert nodes._teams_chat_id(envelope) == "19:abc_def@unq.gbl.spaces"
+    # a JSON-string envelope works too (result arriving as a str)
+    assert nodes._teams_chat_id(json.dumps(envelope)) == "19:abc_def@unq.gbl.spaces"
+
+
+def test_teams_chat_id_still_reads_the_flat_shapes():
+    """Back-compat: a flat dict/string with chat_id (or data.chatId) still works."""
+    assert nodes._teams_chat_id({"chat_id": "19:x@unq.gbl.spaces"}) == "19:x@unq.gbl.spaces"
+    assert nodes._teams_chat_id({"data": {"chatId": "19:y@unq.gbl.spaces"}}) == "19:y@unq.gbl.spaces"
+    assert nodes._teams_chat_id({"text": "not json"}) is None
+    assert nodes._teams_chat_id(None) is None
+
+
+def test_finalize_cancels_an_await_whose_send_failed_and_its_dead_branch():
+    """An await_reply whose upstream send FAILED can never be answered — parking it
+    strands the session on a dead interrupt and blocks later amends (session
+    0a08ea4b). _finalize cancels it (and its wait) and cascades to the branch
+    below it, instead of blocking or phantom-completing them."""
+    svc, rm = _service()
+    plan = Plan(id="p", title="t", goal="g", steps=[
+        Step(id="s0", kind="execute", description="Message Adam", status=Status.FAILED),
+        Step(id="m", kind="await_reply", question="Await Adam", depends_on=["s0"]),
+        Step(id="r", kind="execute", description="Report", depends_on=["m"]),
+    ])
+    interrupts = [("mail:plan@1/m@1", "m")]
+    rm.outstanding_interrupts.return_value = []   # after cancel, nothing is outstanding
+
+    asyncio.run(svc._finalize("s1", plan, interrupts))
+
+    assert plan.step("m").status is Status.CANCELLED   # the zombie await
+    assert plan.step("r").status is Status.CANCELLED    # dead branch, not phantom-completed
+    rm.cancel_mail_wait.assert_awaited_once_with("s1", "m")
+    # session is no longer held hostage by the dead await
+    rm.set_session_status.assert_awaited()
+
+
+def test_finalize_still_blocks_a_healthy_await():
+    """Guard: an await whose send SUCCEEDED (dep completed) still parks normally."""
+    svc, rm = _service()
+    plan = Plan(id="p", title="t", goal="g", steps=[
+        Step(id="s0", kind="execute", description="Message Adem", status=Status.COMPLETED),
+        Step(id="m", kind="await_reply", question="Await Adem", depends_on=["s0"]),
+    ])
+    interrupts = [("mail:plan@1/m@1", "m")]
+    rm.outstanding_interrupts.return_value = interrupts
+
+    asyncio.run(svc._finalize("s1", plan, interrupts))
+
+    assert plan.step("m").status is Status.BLOCKED
+    rm.cancel_mail_wait.assert_not_awaited()

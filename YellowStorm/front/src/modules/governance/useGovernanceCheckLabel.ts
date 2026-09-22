@@ -32,7 +32,6 @@ const blockerLabelKeys = {
 
 const channelNameKeys = {
   widget: 'scopeShell.channels.widget',
-  whatsapp: 'scopeShell.channels.whatsapp',
   telegram: 'scopeShell.channels.telegram',
   api: 'scopeShell.channels.api',
 } as const;

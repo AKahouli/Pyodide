@@ -362,7 +362,16 @@ export const configValidationSchema = Joi.object({
   // LiteLLM
   LITELLM_API_URL: Joi.string().uri().optional(),
   LITELLM_API_KEY: Joi.string().optional(),
+  LITELLM_APP_BUILDER_API_KEY: Joi.string().optional(),
   LITELLM_TIMEOUT_MS: Joi.number().min(1000).max(60000).default(10000),
+  AI_PROXY_RATE_LIMIT_PER_USER: Joi.number().min(1).max(10_000).default(60),
+  AI_PROXY_RATE_LIMIT_WINDOW_MS: Joi.number().min(1000).max(3_600_000).default(60_000),
+  AI_PROXY_ALLOWED_MODELS: Joi.string().allow('').default(''),
+  AI_PROXY_MAX_TOKENS_PER_REQUEST: Joi.number().integer().min(1).max(1_000_000).default(4096),
+  AI_PROXY_MAX_BODY_BYTES: Joi.number().integer().min(1024).max(10 * 1024 * 1024).default(1_048_576),
+  AI_PROXY_MAX_MESSAGES: Joi.number().integer().min(1).max(10_000).default(100),
+  AI_PROXY_MAX_MESSAGE_CONTENT_CHARS: Joi.number().integer().min(1).max(10_000_000).default(100_000),
+  AI_PROXY_PREVIEW_TICKET_TTL_MS: Joi.number().integer().min(60_000).max(3_600_000).default(600_000),
   EMBEDDING_MODEL: Joi.string().default('qwen3-embedding'),
   EMBEDDING_DIMENSION: Joi.number().default(2560),
   LITELLM_HEALTH_CHECK_ENABLED: Joi.boolean().default(true),
@@ -427,25 +436,6 @@ export const configValidationSchema = Joi.object({
   TELEGRAM_WEBHOOK_RATE_LIMIT: Joi.number().min(1).max(10000).default(60),
   TELEGRAM_WEBHOOK_RATE_WINDOW_MS: Joi.number().min(1000).max(3600000).default(60000),
   TELEGRAM_MAX_REPLY_LENGTH: Joi.number().min(64).max(4096).default(3900),
-
-  // WhatsApp
-  WHATSAPP_ENABLED: Joi.boolean().default(true),
-  WHATSAPP_MAX_REPLY_LENGTH: Joi.number().min(64).max(4096).default(4000),
-  WHATSAPP_PAIRING_TIMEOUT_MS: Joi.number().min(60000).max(1800000).default(300000),
-  WHATSAPP_RECONNECT_INITIAL_DELAY_MS: Joi.number().min(500).max(60000).default(1000),
-  WHATSAPP_RECONNECT_MAX_DELAY_MS: Joi.number().min(1000).max(600000).default(120000),
-  WHATSAPP_RECONNECT_MAX_ATTEMPTS: Joi.number().min(0).max(50).default(10),
-  WHATSAPP_CONNECTIVITY_PROBE_TIMEOUT_MS: Joi.number().min(1000).max(60000).default(10000),
-  WHATSAPP_PROCESSING_TIMEOUT_MS: Joi.number().min(30000).max(600000).default(180000),
-  WHATSAPP_MAX_INBOUND_PER_MINUTE: Joi.number().min(1).max(300).default(30),
-  WHATSAPP_FALLBACK_REPLY: Joi.string().max(500).default('I could not generate a response for this message.'),
-  WHATSAPP_CIRCUIT_BREAKER_FAILURE_THRESHOLD: Joi.number().min(1).max(20).default(3),
-  WHATSAPP_CIRCUIT_BREAKER_COOLDOWN_MS: Joi.number().min(5000).max(300000).default(60000),
-  WHATSAPP_INTERNAL_SEND_RATE_LIMIT_PER_MINUTE: Joi.number().min(1).max(600).default(30),
-  // WhatsApp MCP façade (agent-scoped outbound send over the standalone MCP server)
-  WHATSAPP_MCP_JWT_PRIVATE_KEY: Joi.string().allow('').default(''),
-  WHATSAPP_MCP_CONNECTOR_SLUG: Joi.string().default('mcp-whatsapp'),
-  WHATSAPP_MCP_TOKEN_TTL_SECONDS: Joi.number().min(30).max(3600).default(300),
 
   // Logging Persistence
   LOGGING_MONGODB_URI: Joi.string().optional(),

@@ -79,6 +79,6 @@ import { PgAppearanceLogoStore } from './persistence/pg-appearance-logo.store';
       useClass: MaintenanceGuard,
     },
   ],
-  exports: [SystemService, WorkspaceUploadSettingsService, WorkspaceEvidenceSearchSettingsService, WorkspaceTransformationSettingsService, ConversationSettingsService, FeatureVisibilityService, NavigationSettingsService],
+  exports: [SystemService, SYSTEM_SETTING_STORE, WorkspaceUploadSettingsService, WorkspaceEvidenceSearchSettingsService, WorkspaceTransformationSettingsService, ConversationSettingsService, FeatureVisibilityService, NavigationSettingsService],
 })
 export class SystemModule {}

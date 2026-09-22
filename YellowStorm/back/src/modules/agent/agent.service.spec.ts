@@ -153,7 +153,8 @@ describe('AgentService connector skill inheritance', () => {
     const agentShareService = {
       getShareInfoMapForUser: jest.fn().mockResolvedValue(new Map()),
       getShareInfo: jest.fn().mockResolvedValue(null),
-      getSharePermission: jest.fn().mockResolvedValue(null),
+      getSharePermission: jest.fn().mockResolvedValue(null),
+      removeAllSharesForAgent: jest.fn().mockResolvedValue(undefined),
     };
     const guardrailsSettingsService = {
       getSettings: jest.fn().mockResolvedValue({
@@ -192,7 +193,7 @@ describe('AgentService connector skill inheritance', () => {
       guardrailsSettingsService as any,
       agentRepository as any,
       agentRoleEmbedding as any,
-      [], // channelTeardowns (plan 4.6); not exercised by this spec
+      [],
       new AgentConnectorRuntimeService(
         logger as any,
         skillService as any,
@@ -788,17 +789,9 @@ describe('AgentService connector skill inheritance', () => {
 
   it('falls back to the admin default model when the agent has no model set', async () => {
     const { service, agentRepository, modelsService, agentTypeService } = createService();
-    const compaction = {
-      enabled: true,
-      compaction_interval: 10,
-      overlap_size: 2,
-      token_fraction: 0.75,
-      event_retention_size: 6,
-      summarizer_model: 'summary-model',
-    };
     modelsService.getDefaultModel.mockResolvedValue({ id: 'admin-default-id' } as any);
     modelsService.getGuardrailsClassifierModel.mockResolvedValue({ id: 'guardrails-classifier', omitTemperature: false });
-    modelsService.findById.mockResolvedValue({ id: 'admin-default-id', omitTemperature: false, maxInputTokens: 128000 } as any);
+    modelsService.findById.mockResolvedValue({ id: 'admin-default-id', omitTemperature: false } as any);
 
     const objectId = new Types.ObjectId();
     agentRepository.findByIds.mockResolvedValue([
@@ -814,20 +807,11 @@ describe('AgentService connector skill inheritance', () => {
       new Map([['333333333333333222222222', { id: '333333333333333222222222', name: 'Worker', slug: 'worker', skills: [] }]]),
     );
 
-    const result = await service.buildGrpcAgentsForPlaybook(
-      userId,
-      [objectId.toString()],
-      undefined,
-      undefined,
-      undefined,
-      compaction,
-    );
+    const result = await service.buildGrpcAgentsForPlaybook(userId, [objectId.toString()]);
 
     expect(modelsService.getDefaultModel).toHaveBeenCalled();
     expect(result).toHaveLength(1);
     expect(result[0].chatbot.model).toBe('admin-default-id');
-    expect(result[0].chatbot.context_window_tokens).toBe(128000);
-    expect(result[0].chatbot.compaction).toEqual(compaction);
     expect(result[0].agent_params?.params.temperature).toBe('0');
     expect(JSON.parse(result[0].agent_params?.params.guardrails_json as string).classifier)
       .toEqual({ omitTemperature: false });
@@ -863,47 +847,6 @@ describe('AgentService connector skill inheritance', () => {
     expect(result[0].chatbot.model).toBe('explicit-fallback');
     expect(result[0].agent_params?.params).toEqual(expect.objectContaining({ omit_temperature: 'true' }));
     expect(result[0].agent_params?.params.temperature).toBeUndefined();
-  });
-
-  it('adds model context and compaction to governed stream agents', async () => {
-    const { service } = createService();
-    const compaction = {
-      enabled: true,
-      compaction_interval: 10,
-      overlap_size: 2,
-      token_fraction: 0.75,
-      event_retention_size: 6,
-      summarizer_model: 'summary-model',
-    };
-    jest.spyOn(service, 'buildGrpcAgentsForPlaybook').mockResolvedValue([{
-      id: 'agent-1',
-      chatbot: { model: 'model-1', context_window_tokens: 128000, compaction },
-      brain_context: [],
-    } as any]);
-
-    const result = await service.buildGovernedAgentsForStream(
-      userId,
-      ['agent-1'],
-      ['workspace-1'],
-      compaction,
-    );
-
-    expect(result[0].chatbot).toEqual({
-      model: 'model-1',
-      context_window_tokens: 128000,
-      compaction,
-    });
-    expect(result[0].brain_context).toEqual([
-      { workspace_id: 'workspace-1', workspace_documents: [] },
-    ]);
-    expect(service.buildGrpcAgentsForPlaybook).toHaveBeenCalledWith(
-      userId,
-      ['agent-1'],
-      undefined,
-      undefined,
-      undefined,
-      compaction,
-    );
   });
 
   describe('sandbox scope injection', () => {
@@ -1079,11 +1022,12 @@ describe('AgentService connector skill inheritance', () => {
         fixed_params: { limit: 10 },
         actions: [expect.objectContaining({
           action_key: 'search',
-          parameter_schema: {
+          parameter_schema: {},
+          parameter_schema_json: JSON.stringify({
             type: 'object',
             properties: { query: { type: 'string' }, limit: { type: 'number' } },
             additionalProperties: false,
-          },
+          }),
         })],
       }),
     ]);

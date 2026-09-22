@@ -31,6 +31,7 @@ import { WorkyTtsService } from './services/worky-tts.service';
 import { WorkyVoiceController } from './voice/worky-voice.controller';
 import { GeminiTokenService } from './voice/gemini-token.service';
 import { VoiceToolService } from './voice/voice-tool.service';
+import { ThematicMemoryService } from './voice/thematic-memory.service';
 import { WorkyBoardController } from './controllers/worky-board.controller';
 import { WorkyInteractionController } from './controllers/worky-interaction.controller';
 import { WorkyTaskController } from './controllers/worky-task.controller';
@@ -155,22 +156,6 @@ import { UserModule } from '../user/user.module';
 import { WorkspaceModule } from '../workspace/workspace.module';
 import { ModelsModule } from '../models/models.module';
 import { ConnectorModule } from '../connector/connector.module';
-import { WhatsAppModule } from '../whatsapp/whatsapp.module';
-import { WorkyWhatsAppIntegrationController } from './controllers/worky-whatsapp-integration.controller';
-import {
-  WorkyWhatsAppIntegration,
-  WorkyWhatsAppIntegrationSchema,
-} from './schemas/worky-whatsapp-integration.schema';
-import {
-  WorkyWhatsAppSystemBot,
-  WorkyWhatsAppSystemBotSchema,
-} from './schemas/worky-whatsapp-system-bot.schema';
-import { WorkyWhatsAppIngressService } from './services/worky-whatsapp-ingress.service';
-import { WorkyWhatsAppIntegrationService } from './services/worky-whatsapp-integration.service';
-import { WorkyWhatsAppSystemBotService } from './services/worky-whatsapp-system-bot.service';
-import { WorkyWhatsAppDeliveryService } from './services/worky-whatsapp-delivery.service';
-import { WorkyWhatsAppSystemBotAdminController } from './controllers/admin/worky-whatsapp-system-bot.controller';
-import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-whatsapp-system-bot-status.controller';
 
 @Module({
   imports: [
@@ -187,7 +172,6 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
     ModelsModule,
     ConnectorModule,
     ConnectedAppModule,
-    forwardRef(() => WhatsAppModule),
     MongooseModule.forFeature([
       { name: WorkyStream.name, schema: WorkyStreamSchema },
       { name: WorkyTask.name, schema: WorkyTaskSchema },
@@ -213,11 +197,6 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
       { name: WorkyMessageComponent.name, schema: WorkyMessageComponentSchema },
       { name: WorkyPlanStepComponent.name, schema: WorkyPlanStepComponentSchema },
       { name: WorkyPlanStepArtifact.name, schema: WorkyPlanStepArtifactSchema },
-      // Re-registered here so WorkyStreamService can inject them directly
-      // without pulling in AgentModule/WorkspaceModule's full transitive
-      // dependency graph. Nest reuses the same Mongoose model instance via DI.
-      { name: WorkyWhatsAppIntegration.name, schema: WorkyWhatsAppIntegrationSchema },
-      { name: WorkyWhatsAppSystemBot.name, schema: WorkyWhatsAppSystemBotSchema },
     ]),
   ],
   controllers: [
@@ -232,11 +211,8 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
     WorkyInteractionController,
     WorkyTaskController,
     WorkyGovernanceAdminController,
-    WorkyWhatsAppSystemBotAdminController,
-    WorkyWhatsAppSystemBotStatusController,
     WorkyMemoryController,
     WorkyTraceController,
-    WorkyWhatsAppIntegrationController,
   ],
   providers: [
     WorkyStreamService,
@@ -269,10 +245,7 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
     WorkyTtsService,
     GeminiTokenService,
     VoiceToolService,
-    WorkyWhatsAppIngressService,
-    WorkyWhatsAppIntegrationService,
-    WorkyWhatsAppSystemBotService,
-    WorkyWhatsAppDeliveryService,
+    ThematicMemoryService,
     WorkyStreamAccessGuard,
     WorkyTaskStreamAccessGuard,
   ],
@@ -294,9 +267,6 @@ import { WorkyWhatsAppSystemBotStatusController } from './controllers/worky-what
     WorkyMemoryService,
     WorkyTraceService,
     WorkyTaskResultService,
-    WorkyWhatsAppIngressService,
-    WorkyWhatsAppIntegrationService,
-    WorkyWhatsAppSystemBotService,
     WorkyStreamAccessGuard,
     WorkyTaskStreamAccessGuard,
   ],

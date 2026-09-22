@@ -566,6 +566,13 @@ def _teams_chat_id(result) -> Optional[str]:
     missing one means the reply can never route back."""
     try:
         top = json.loads(result) if isinstance(result, str) else (result or {})
+        # MCP tools return the real payload as a JSON string under "text" — unwrap
+        # it, or chat_id is invisible and the reply can never route back.
+        if isinstance(top, dict) and "chat_id" not in top and isinstance(top.get("text"), str):
+            try:
+                top = json.loads(top["text"])
+            except (ValueError, TypeError):
+                pass
         # Prefer the id the send tool surfaces explicitly; fall back to the one
         # Graph echoes on the created message (not always present).
         return top.get("chat_id") or (top.get("data") or {}).get("chatId")
@@ -751,8 +758,10 @@ def make_llm_node_factory(
                 "question to relay, not something for you to answer in "
                 f"their place. Your job is to get {step.assignee_name}'s "
                 "ACTUAL answer, never invent or guess it: look up their "
-                "email via find_human_agents (there is no fixed roster), "
-                "send them the question below as a real email, then call "
+                "contact via find_human_agents (there is no fixed roster), "
+                "send them the question below on the channel the task "
+                "specifies — a Teams message if it says Teams, otherwise a "
+                "real email — then call "
                 "create_task(kind='await_reply') — that hands the actual "
                 "waiting off to a separate step, since their real reply can "
                 "take hours or days, far longer than this turn can stay "
@@ -793,9 +802,11 @@ def make_llm_node_factory(
                 "your job is to PREPARE, not decide. Think it through with their "
                 "judgment and expertise, draft the analysis, recommendation, or "
                 f"answer they would need — then get the actual decision from "
-                f"{step.assignee_name} themselves: look up their email via "
+                f"{step.assignee_name} themselves: look up their contact via "
                 "find_human_agents (there is no fixed roster), send them your "
-                "draft as a real email laying out the situation and asking for "
+                "draft on the channel the task specifies — a Teams message if "
+                "it says Teams, otherwise a real email — laying out the "
+                "situation and asking for "
                 "their call, then call create_task(kind='await_reply') — that "
                 "hands the actual waiting off to a separate step, since their "
                 "real reply can take hours or days, far longer than this turn "

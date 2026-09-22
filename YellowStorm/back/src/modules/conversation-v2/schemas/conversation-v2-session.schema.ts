@@ -79,6 +79,17 @@ export class ConversationV2Session extends Document {
   @Prop({ type: String, default: null })
   lastDeployedRevisionId!: string | null;
 
+  /**
+   * True when the generated app integrates Approach B AI (yellowmind-ai usage
+   * and/or runtime AI proxy calls). Surfaced on App Builder catalog cards.
+   */
+  @Prop({ type: Boolean, default: false })
+  hasAiFeatures!: boolean;
+
+  /** Revision id last inspected for `hasAiFeatures` (skip re-scan when unchanged). */
+  @Prop({ type: String, default: null })
+  aiFeaturesCheckedRevisionId!: string | null;
+
   // Workspace ObjectIds the user attached to this session via the frontend selector.
   // Persisted so the UI can re-display the selection on session reload. Access is
   // re-checked at chat time — entries here may become stale if the user loses access.

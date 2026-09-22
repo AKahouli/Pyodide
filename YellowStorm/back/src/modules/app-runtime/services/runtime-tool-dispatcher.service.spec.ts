@@ -80,7 +80,13 @@ describe('RuntimeToolDispatcherService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
 
-    findOne.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve(null) }) });
+    const leanExec = (value: unknown = null) => ({
+      lean: () => ({ exec: () => Promise.resolve(value) }),
+    });
+    findOne.mockReturnValue({
+      ...leanExec(null),
+      select: () => leanExec(null),
+    });
     updateOne.mockReturnValue({ exec: () => Promise.resolve(undefined) });
     findByWorkspaceId.mockResolvedValue(BINDING);
 
