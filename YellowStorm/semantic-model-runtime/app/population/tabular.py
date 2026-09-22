@@ -205,21 +205,19 @@ def merge_concept_results(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def match_relationships(compiled: dict[str, Any], source_entities: list[dict[str, Any]],
-                        target_entities: list[dict[str, Any]], reference_field: str) -> dict[str, Any]:
+                        target_entities: list[dict[str, Any]], reference_field: str,
+                        target_field: str) -> dict[str, Any]:
     """Establish relationships through an approved reference role (P5.9).
 
-    ``reference_field`` is the source-entity attribute holding the target
-    identity string, bound by the population payload's compiled matching plan.
-    Matching runs on the normalized identity space: identities are stored
-    trim/lowercased at construction, so the reference is normalized identically
-    before the strategy applies. An exact occurrence of the reference proves
-    presence, never the business role, and an ambiguous reference never
-    auto-links (T06/T09).
+    The fields come from an approved relation rule in the population payload.
+    Multiple matching targets are valid only for to-many cardinalities; an
+    ambiguous to-one reference never auto-links (T06/T09).
     """
     strategy = compiled["matchingStrategy"]
     targets: dict[str, list[dict[str, Any]]] = {}
     for entity in target_entities:
-        key = match_value("|".join(entity["identity"].values()), strategy)
+        raw = entity["attributes"].get(target_field, entity["identity"].get(target_field))
+        key = match_value(raw, strategy)
         if key is not None:
             targets.setdefault(key, []).append(entity)
     relationships: list[dict[str, Any]] = []
@@ -236,13 +234,14 @@ def match_relationships(compiled: dict[str, Any], source_entities: list[dict[str
         if not candidates:
             gaps.append({"kind": "unresolved_reference", "relationId": compiled["relationId"],
                          "sourceEntityId": source["entityId"], "detail": "no approved target matches"})
-        elif len(candidates) > 1:
+        elif len(candidates) > 1 and compiled["cardinality"] not in ("one_to_many", "many_to_many"):
             gaps.append({"kind": "ambiguous_reference", "relationId": compiled["relationId"],
                          "sourceEntityId": source["entityId"],
                          "detail": f"{len(candidates)} targets share the normalized reference"})
         else:
-            relationships.append({"relationId": compiled["relationId"],
+            relationships.extend({"relationId": compiled["relationId"],
                                   "sourceEntityId": source["entityId"],
-                                  "targetEntityId": candidates[0]["entityId"],
-                                  "matchingStrategy": strategy})
+                                  "targetEntityId": candidate["entityId"],
+                                  "matchingStrategy": strategy}
+                                 for candidate in candidates)
     return {"relationships": relationships, "gaps": gaps}

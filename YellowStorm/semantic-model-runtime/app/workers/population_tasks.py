@@ -145,16 +145,27 @@ def run_population_for_payload(command_dump: dict) -> dict:
         bindings = payload.get("relationBindings") or payload.get("relation_bindings") or []
         if not isinstance(bindings, list):
             return {"ok": False, "errorCode": "invalid_relation_bindings"}
+        normalized_bindings = []
         for binding in bindings:
             if not isinstance(binding, dict):
                 return {"ok": False, "errorCode": "invalid_relation_bindings"}
-            if compiled["relations"].get(binding.get("relationId")) is None:
+            relation = compiled["relations"].get(binding.get("relationId"))
+            if relation is None:
                 return {"ok": False, "errorCode": "unknown_relation"}
             reference = binding.get("referenceField") or binding.get("reference_field")
-            if not isinstance(reference, str) or not reference:
+            target = binding.get("targetField") or binding.get("target_field")
+            source_concept = compiled["concepts"][relation["sourceConceptId"]]
+            target_concept = compiled["concepts"][relation["targetConceptId"]]
+            target_identity = target_concept["keyComponents"]
+            if target is None and len(target_identity) == 1:
+                target = target_identity[0]
+            if (not isinstance(reference, str) or reference not in source_concept["allowedFields"]
+                    or not isinstance(target, str) or target not in target_identity):
                 return {"ok": False, "errorCode": "invalid_relation_bindings"}
+            normalized_bindings.append({"relationId": relation["relationId"],
+                                        "referenceField": reference, "targetField": target})
         return {"ok": True, "compiled": compiled, "sources": normalized,
-                "relationBindings": bindings, "purpose": payload.get("purpose"),
+                "relationBindings": normalized_bindings, "purpose": payload.get("purpose"),
                 "specHash": expected_hash}
     except Exception:
         return {"ok": False, "errorCode": "invalid_command"}
@@ -308,12 +319,13 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     relationships: list[dict] = []
     for binding in validated["relationBindings"]:
         relation = compiled["relations"][binding.get("relationId")]
-        reference = binding.get("referenceField") or binding.get("reference_field")
+        reference = binding["referenceField"]
+        target = binding["targetField"]
         matched = match_relationships(
             relation,
             trimmed.get(relation["sourceConceptId"], []),
             trimmed.get(relation["targetConceptId"], []),
-            reference)
+            reference, target)
         relationships.extend(matched["relationships"])
         gaps.extend(matched["gaps"])
     if len(relationships) > MAX_TOTAL_RELATIONSHIPS:

@@ -155,6 +155,32 @@ describe('SemanticPopulationRefreshService', () => {
     });
   });
 
+  it('uses the concept attribute label for document extraction mappings without a source field', async () => {
+    const doc = MAPPING({
+      id: 'm-doc', assetKind: 'document', sheetName: '',
+      fieldMappings: [
+        { sourceField: null, targetAttribute: 'customer_id', mode: 'extract' },
+        { sourceField: null, targetAttribute: 'name', mode: 'extract' },
+      ],
+    });
+    const { documents, runtime, service } = setup([doc]);
+    documents.findById.mockResolvedValueOnce({
+      mimeType: 'application/pdf', originalName: 'agreement.pdf', createdBy: 'uploader-1',
+      contentHash: 'sha256:abc', updatedAt: '2026-01-01', uploadedAt: '2026-01-01',
+      size: 100, indexingStatus: 'ready',
+    });
+
+    await service.requestRefresh('u-1', 'model-1', {
+      purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' },
+    });
+
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    expect(calls[0][0].payload.sources[0].fieldMappings).toEqual([
+      { sourceField: 'Id', targetAttribute: 'customer_id', mode: 'extract' },
+      { sourceField: 'Name', targetAttribute: 'name', mode: 'extract' },
+    ]);
+  });
+
   it('rejects mappings that do not directly map every identity field', async () => {
     const mapping = MAPPING({ fieldMappings: [{ sourceField: 'legal_name', targetAttribute: 'name', mode: 'direct' }] });
     const { runtime, service } = setup([mapping]);
@@ -269,10 +295,68 @@ describe('SemanticPopulationRefreshService', () => {
     }, [relation], [rule]);
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
     const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
-    expect(calls[0][0].payload.relationBindings).toEqual([{ relationId: 'r-1', referenceField: 'customer_ref' }]);
+    expect(calls[0][0].payload.relationBindings).toEqual([{
+      relationId: 'r-1', referenceField: 'customer_ref', targetField: 'customer_id',
+    }]);
     rule.sourceAttribute = 'contract_id';
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
     expect(calls[1][1]).not.toBe(calls[0][1]);
+  });
+
+  it('binds one-to-many relations through one field of a composite target identity', async () => {
+    const contract = MAPPING({
+      id: 'm-2', conceptId: 'c-contract', documentId: 'd-2', identityFields: ['customer_ref', 'contract_id'],
+      fieldMappings: [
+        { sourceField: 'contract_id', targetAttribute: 'contract_id', mode: 'direct' },
+        { sourceField: 'customer_ref', targetAttribute: 'customer_ref', mode: 'direct' },
+      ],
+    });
+    const relation = {
+      id: 'r-1', key: 'customer_contracts', sourceNodeTypeId: 'c-customer',
+      targetNodeTypeId: 'c-contract', cardinality: 'one_to_many',
+    };
+    const rule = {
+      relationId: 'r-1', sourceConceptId: 'c-customer', targetConceptId: 'c-contract',
+      sourceAttribute: 'customer_id', targetAttribute: 'customer_ref', cardinality: 'one_to_many',
+      strategy: 'exact', ambiguityPolicy: 'review',
+    };
+    const { runtime, service } = setup([MAPPING(), contract], {
+      'c-customer': ['customer_id'], 'c-contract': ['customer_ref', 'contract_id'],
+    }, [relation], [rule]);
+
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    expect(calls[0][0].payload.relationBindings).toEqual([{
+      relationId: 'r-1', referenceField: 'customer_id', targetField: 'customer_ref',
+    }]);
+  });
+
+  it('rejects relation target fields outside the target identity', async () => {
+    const contract = MAPPING({
+      id: 'm-2', conceptId: 'c-contract', documentId: 'd-2', identityFields: ['contract_id'],
+      fieldMappings: [
+        { sourceField: 'contract_id', targetAttribute: 'contract_id', mode: 'direct' },
+        { sourceField: 'customer_ref', targetAttribute: 'customer_ref', mode: 'direct' },
+      ],
+    });
+    const relation = {
+      id: 'r-1', key: 'customer_contracts', sourceNodeTypeId: 'c-customer',
+      targetNodeTypeId: 'c-contract', cardinality: 'one_to_many',
+    };
+    const rule = {
+      relationId: 'r-1', sourceConceptId: 'c-customer', targetConceptId: 'c-contract',
+      sourceAttribute: 'customer_id', targetAttribute: 'customer_ref', cardinality: 'one_to_many',
+      strategy: 'exact', ambiguityPolicy: 'review',
+    };
+    const { runtime, service } = setup([MAPPING(), contract], {
+      'c-customer': ['customer_id'], 'c-contract': ['contract_id'],
+    }, [relation], [rule]);
+
+    await expect(service.requestRefresh('u-1', 'model-1', {
+      purpose: 'build', scope: { kind: 'model' },
+    })).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED });
+    expect(runtime.requestPopulationRun).not.toHaveBeenCalled();
   });
 
   it('caps whole-model refreshes at 25 sources', async () => {

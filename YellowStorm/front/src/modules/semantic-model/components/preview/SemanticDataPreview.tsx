@@ -8,6 +8,7 @@ import { parseApiError } from '@/lib/api-error';
 import { useFileViewerStore } from '@/modules/file-viewer/store';
 import { useModuleTranslation } from '@/modules/localization';
 import { useSemanticDataPreview } from '../../query/hooks';
+import type { SourcePreviewIssue } from '../../types';
 
 export function SemanticDataPreview({ modelId }: Readonly<{ modelId: string }>) {
   const { t } = useModuleTranslation('semantic-model');
@@ -48,7 +49,24 @@ export function SemanticDataPreview({ modelId }: Readonly<{ modelId: string }>) 
         <div className='space-y-1.5'><Label>{t('dataPreview.sample')}</Label><Select value={String(limit)} onValueChange={(value) => setLimit(Number(value))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{[10, 25, 50].map((value) => <SelectItem key={value} value={String(value)}>{value}</SelectItem>)}</SelectContent></Select></div>
         <label className='flex min-h-10 items-center gap-2 text-xs'><input type='checkbox' checked={showUnresolved} onChange={(event) => setShowUnresolved(event.target.checked)} />{t('dataPreview.showUnresolved')}</label>
       </div>
-      {preview.data?.sourceIssues.map((issue) => <p key={`${issue.mappingId}-${issue.message}`} className='flex gap-2 rounded-xl bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400'><AlertTriangle className='h-4 w-4 shrink-0' />{issue.message}</p>)}
+      {preview.data && preview.data.sourceIssues.length > 0 && <section className='rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4'>
+        <div className='flex items-start gap-2'>
+          <AlertTriangle className='mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400' />
+          <div className='min-w-0 flex-1 space-y-2'>
+            <h3 className='text-sm font-semibold text-amber-700 dark:text-amber-400'>{t('dataPreview.sourceIssuesTitle', { count: preview.data.sourceIssues.length })}</h3>
+            <ul className='space-y-2'>{groupSourceIssues(preview.data.sourceIssues).map((group) => <li key={group.key} className='text-sm'>
+              <p className='break-words'>{group.issues.length === 1
+                ? group.issues[0].message
+                : t('dataPreview.sourceIssueGroup', { count: group.issues.length, reason: group.reason })}</p>
+              {group.issues.length > 1 && <p className='mt-1 break-words text-xs text-muted-foreground'>{group.issues.map((issue) => issue.documentName).filter(Boolean).join(', ')}</p>}
+              {group.detail && <details className='mt-1'>
+                <summary className='cursor-pointer text-xs text-muted-foreground'>{t('dataPreview.sourceIssueDetail')}</summary>
+                <p className='mt-1 break-words font-mono text-[11px] text-muted-foreground'>{group.detail}</p>
+              </details>}
+            </li>)}</ul>
+          </div>
+        </div>
+      </section>}
       {concepts.map((concept) => <section key={concept.id} className='space-y-3'>
         <div className='flex items-baseline justify-between'><h3 className='text-lg font-semibold'>{concept.label}</h3><span className='text-xs text-muted-foreground'>{t('dataPreview.entityCount', { count: concept.entities.length })}</span></div>
         <div className='grid gap-3 lg:grid-cols-2'>{concept.entities.map((entity) => <article key={entity.id} className='rounded-2xl border bg-background p-4 shadow-sm'>
@@ -65,6 +83,18 @@ export function SemanticDataPreview({ modelId }: Readonly<{ modelId: string }>) 
       {preview.data && <section className='rounded-2xl border bg-background p-4'><h3 className='font-semibold'>{t('dataPreview.relationships')}</h3><div className='mt-3 space-y-2'>{preview.data.relations.filter((relation) => relation.status === 'resolved' || showUnresolved).map((relation, index) => <div key={`${relation.relationId}-${relation.sourceEntityId}-${index}`} className={`rounded-lg p-3 text-xs ${relation.status === 'resolved' ? 'bg-emerald-500/10' : 'bg-amber-500/10'}`}><div className='flex items-center gap-2'><span className='font-medium'>{labels.get(relation.sourceEntityId) ?? relation.sourceEntityId}</span><span className='text-muted-foreground'>→ {relation.relationLabel} →</span><span className='font-medium'>{relation.targetEntityIds.map((id) => labels.get(id) ?? id).join(', ') || t(`relationMatching.status.${relation.status}`)}</span></div><p className='mt-1 text-muted-foreground'>{relation.sourceAttribute} = {String(relation.sourceValue ?? '')}{relation.targetValues.length ? ` · ${relation.targetAttribute} = ${relation.targetValues.map(String).join(', ')}` : ''}</p></div>)}{preview.data.relations.length === 0 && <p className='text-sm text-muted-foreground'>{t('dataPreview.noRelationships')}</p>}</div></section>}
     </div>
   </div>;
+}
+
+/** Sources that fail for the same cause read as one line, so a configuration problem is not mistaken for eight file problems. */
+function groupSourceIssues(issues: SourcePreviewIssue[]) {
+  const groups = new Map<string, { key: string; reason?: string; detail?: string; issues: SourcePreviewIssue[] }>();
+  for (const issue of issues) {
+    const key = `${issue.code}|${issue.reason ?? issue.message}`;
+    const group = groups.get(key) ?? { key, reason: issue.reason, detail: issue.detail, issues: [] };
+    group.issues.push(issue);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
 }
 
 function Summary({ value, label, good = false, warn = false }: Readonly<{ value: number; label: string; good?: boolean; warn?: boolean }>) {

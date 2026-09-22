@@ -39,6 +39,14 @@ def test_valid_command_compiles():
     assert validated["purpose"] == "build"
 
 
+def test_legacy_binding_infers_single_target_identity():
+    validated = run_population_for_payload(command(bindings=[{
+        "relationId": "r1", "referenceField": "parent_ref"}]))
+    assert validated["ok"] is True
+    assert validated["relationBindings"] == [{
+        "relationId": "r1", "referenceField": "parent_ref", "targetField": "agreement_no"}]
+
+
 def test_valid_document_command_compiles_without_llm_configuration():
     source = {**SOURCE, "mimeType": "application/pdf", "originalName": "agreement.pdf"}
     validated = run_population_for_payload(command(sources=[{
@@ -71,8 +79,13 @@ def test_validator_rejects_before_any_fetch():
     unmapped = command(sources=[{"conceptId": "c1", "source": dict(SOURCE),
                                  "columnMapping": {"name": "name"}}])
     assert run_population_for_payload(unmapped)["errorCode"] == "unmapped_identity"
-    bad_binding = command(bindings=[{"relationId": "nope", "referenceField": "x"}])
+    bad_binding = command(bindings=[{
+        "relationId": "nope", "referenceField": "x", "targetField": "y"}])
     assert run_population_for_payload(bad_binding)["errorCode"] == "unknown_relation"
+    non_identity_binding = command(bindings=[{
+        "relationId": "r1", "referenceField": "parent_ref", "targetField": "country"}])
+    assert run_population_for_payload(non_identity_binding)["errorCode"] == \
+        "invalid_relation_bindings"
     missing_filter = command(sources=[{"conceptId": "c2", "source": dict(SOURCE),
                                        "columnMapping": {"agreement_no": "agreement_no",
                                                          "country": "country"}}])

@@ -4,6 +4,7 @@ import { SemanticDataPreview } from './SemanticDataPreview';
 
 const openFile = vi.fn();
 const refetch = vi.fn();
+const sourceIssues: Array<Record<string, unknown>> = [];
 
 vi.mock('@/modules/file-viewer/store', () => ({ useFileViewerStore: { getState: () => ({ openFile }) } }));
 vi.mock('../../query/hooks', () => ({
@@ -22,14 +23,44 @@ vi.mock('../../query/hooks', () => ({
           provenance: { id: { mappingId: 'mapping', source: { kind: 'csv', workspaceId: 'workspace', documentId: 'document', documentName: 'customers.csv', documentPath: '/customers.csv', mimeType: 'text/csv', sheetName: 'CSV' }, rowNumber: 2 } },
         }],
       }],
-      relations: [], sourceIssues: [],
+      relations: [], sourceIssues,
       summary: { entities: 1, resolvedRelations: 1, unresolvedRelations: 0, ambiguousRelations: 0, conflicts: 0 },
     },
   }),
 }));
 
 describe('SemanticDataPreview', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sourceIssues.length = 0;
+  });
+
+  it('names the source that failed and keeps the technical cause on demand', () => {
+    sourceIssues.push({
+      mappingId: 'mapping-1', conceptId: 'amendment', documentName: 'amendment-01.pdf', code: 'source_failed',
+      message: 'amendment-01.pdf could not be read: extraction agent is not configured',
+      detail: 'ServiceUnavailableException: extraction agent is not configured',
+    });
+    render(<SemanticDataPreview modelId='model' />);
+    expect(screen.getByText(/amendment-01\.pdf could not be read/)).toBeInTheDocument();
+    expect(screen.getByText(/ServiceUnavailableException/)).toBeInTheDocument();
+  });
+
+  it('groups sources that failed for the same cause into one line', () => {
+    for (const name of ['amendment-01.pdf', 'amendment-02.pdf', 'master-agreement-0041.pdf']) {
+      sourceIssues.push({
+        mappingId: `mapping-${name}`, documentName: name, code: 'source_failed',
+        reason: 'extraction agent is not configured',
+        message: `${name} could not be read: extraction agent is not configured`,
+        detail: 'ServiceUnavailableException: extraction agent is not configured',
+      });
+    }
+    render(<SemanticDataPreview modelId='model' />);
+    // The test harness stubs translation to return the key, so the grouped line shows as its key.
+    expect(screen.getByText('dataPreview.sourceIssueGroup')).toBeInTheDocument();
+    expect(screen.getByText('amendment-01.pdf, amendment-02.pdf, master-agreement-0041.pdf')).toBeInTheDocument();
+    expect(screen.queryByText(/amendment-02\.pdf could not be read/)).not.toBeInTheDocument();
+  });
 
   it('shows sampled entities and opens their source provenance', () => {
     render(<SemanticDataPreview modelId='model' />);

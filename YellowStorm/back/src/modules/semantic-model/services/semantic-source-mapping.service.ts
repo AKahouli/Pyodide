@@ -5,6 +5,7 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import {
   type ResolvedMappingEntity,
+  type SourcePreviewIssue,
 } from '../domain/semantic-cross-source.types';
 import {
   computeFieldProfiles,
@@ -199,11 +200,28 @@ export class SemanticSourceMappingService {
        WHERE m.model_id=$1${conceptFilter}
        ORDER BY m.created_at`, params);
     const entities: ResolvedMappingEntity[] = [];
-    const issues: Array<{ mappingId: string; code: 'source_unavailable'; message: string }> = [];
+    const issues: SourcePreviewIssue[] = [];
     const incompleteConceptIds = new Set<string>();
-    for (const mapping of result.rows.slice(0, MAX_PREVIEW_MAPPINGS)) {
-      if (!mapping.sourceEnabled || mapping.status !== 'ready') {
-        issues.push({ mappingId: mapping.id, code: 'source_unavailable', message: 'The mapped source is not available.' });
+    const previewRows = result.rows.slice(0, MAX_PREVIEW_MAPPINGS);
+    const documentNames = await this.documentNames(previewRows);
+    for (const mapping of previewRows) {
+      const documentName = documentNames.get(mapping.documentId) ?? '';
+      const source = documentName || 'This source';
+      if (!mapping.sourceEnabled) {
+        issues.push({
+          mappingId: mapping.id, conceptId: mapping.conceptId, documentName, code: 'source_disabled',
+          reason: 'its workspace is no longer linked to this model',
+          message: `${source} is not available: its workspace is no longer linked to this model.`,
+        });
+        incompleteConceptIds.add(mapping.conceptId);
+        continue;
+      }
+      if (mapping.status !== 'ready') {
+        issues.push({
+          mappingId: mapping.id, conceptId: mapping.conceptId, documentName, code: 'source_not_ready',
+          reason: `its mapping is marked "${mapping.status}"`,
+          message: `${source} is not used yet: its mapping is marked "${mapping.status}".`,
+        });
         incompleteConceptIds.add(mapping.conceptId);
         continue;
       }
@@ -249,16 +267,41 @@ export class SemanticSourceMappingService {
           entity,
         })));
       } catch (error) {
-        this.logger.warn(`Could not resolve semantic source mapping ${mapping.id}: ${(error as Error).name}`);
-        issues.push({ mappingId: mapping.id, code: 'source_unavailable', message: 'The mapped source could not be resolved.' });
+        const reason = this.previewFailureReason(error);
+        this.logger.warn(`Could not resolve semantic source mapping ${mapping.id} (${documentName || mapping.documentId}): ${(error as Error).name}: ${reason}`);
+        issues.push({
+          mappingId: mapping.id, conceptId: mapping.conceptId, documentName, code: 'source_failed',
+          reason,
+          message: `${source} could not be read: ${reason}`,
+          detail: `${(error as Error).name}: ${reason}`,
+        });
         incompleteConceptIds.add(mapping.conceptId);
       }
     }
     if (result.rows.length > MAX_PREVIEW_MAPPINGS) {
-      issues.push({ mappingId: '', code: 'source_unavailable', message: `Preview is limited to ${MAX_PREVIEW_MAPPINGS} mappings.` });
+      issues.push({ mappingId: '', code: 'preview_limited', message: `Preview is limited to ${MAX_PREVIEW_MAPPINGS} sources.` });
       result.rows.slice(MAX_PREVIEW_MAPPINGS).forEach((mapping) => incompleteConceptIds.add(mapping.conceptId));
     }
     return { entities, issues, incompleteConceptIds: [...incompleteConceptIds] };
+  }
+
+  private async documentNames(rows: SourceMappingRow[]) {
+    const documentIds = [...new Set(rows.map((row) => row.documentId))];
+    if (!documentIds.length) return new Map<string, string>();
+    try {
+      const documents = await this.documents.findByIds(documentIds);
+      return new Map(documents.map((document) => [document.id, document.originalName]));
+    } catch (error) {
+      this.logger.warn(`Could not read source document names: ${(error as Error).message}`);
+      return new Map<string, string>();
+    }
+  }
+
+  /** Human-readable cause of a failed source preview, so the UI never has to say "could not be resolved". */
+  private previewFailureReason(error: unknown) {
+    const message = (error as Error)?.message?.trim();
+    if (!message) return 'unexpected error';
+    return message.endsWith('.') ? message.slice(0, -1) : message;
   }
 
   async create(userId: string, modelId: string, dto: CreateSourceMappingDto) {

@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SemanticGraph } from "../types";
@@ -9,12 +9,14 @@ import { SemanticModelEditorPage } from "./SemanticModelEditorPage";
 const apiMocks = vi.hoisted(() => ({
   applyOperations: vi.fn(),
   rebuildAgeGraph: vi.fn(),
+  connectWorkspace: vi.fn(),
 }));
 
 vi.mock("../api", () => ({
   semanticModelApi: {
     applyOperations: apiMocks.applyOperations,
     rebuildAgeGraph: apiMocks.rebuildAgeGraph,
+    connectWorkspace: apiMocks.connectWorkspace,
   },
 }));
 
@@ -55,6 +57,7 @@ vi.mock("../query/hooks", () => ({
   useSemanticGraph: () => ({ data: graph, isLoading: false, isError: false }),
   useSemanticReadiness: () => ({ data: { status: 'not_configured', score: 0, completeAreas: 0, totalAreas: 5, areas: [] }, isLoading: false, isError: false }),
   useSourceMappings: () => ({ data: [], isLoading: false, isError: false }),
+  useSemanticReviewItems: () => ({ data: [], isLoading: false, isError: false }),
 }));
 
 vi.mock("../hooks/use-knowledge-linking", () => ({
@@ -83,13 +86,23 @@ vi.mock("../components/editor/EditorDialogs", () => ({
   AddRelationDialog: () => null,
 }));
 vi.mock("../components/editor/SemanticModelCanvas", () => ({
-  SemanticModelCanvas: () => <div>semantic-model-canvas</div>,
+  SemanticModelCanvas: ({ onMapStructuredDrop }: { onMapStructuredDrop?: (resource: Record<string, unknown>, nodeId: string) => void }) => <div>
+    semantic-model-canvas
+    <button onClick={() => onMapStructuredDrop?.({ kind: 'document', workspaceId: 'workspace-1', documentId: 'document-1', name: 'customers.xlsx', structured: true, mappable: true }, 'customer')}>map-source</button>
+  </div>,
 }));
 vi.mock("../components/editor/SemanticModelInspector", () => ({
   SemanticModelInspector: () => null,
 }));
 vi.mock("../components/versions/VersionsPanel", () => ({
   VersionsPanel: () => null,
+}));
+vi.mock("../components/mapping/SourceMappingDrawer", () => ({
+  sourceMappingTargetFromResource: (resource: Record<string, unknown>, conceptId: string) => ({
+    workspaceId: resource.workspaceId, documentId: resource.documentId, documentName: resource.name,
+    assetKind: 'excel_sheet', conceptId,
+  }),
+  SourceMappingDrawer: ({ target }: { target: { documentName: string } | null }) => target ? <div>{target.documentName}</div> : null,
 }));
 
 describe("SemanticModelEditorPage", () => {
@@ -103,6 +116,7 @@ describe("SemanticModelEditorPage", () => {
       failedEdgeCount: 0,
       graphViewerWarning: null,
     });
+    apiMocks.connectWorkspace.mockResolvedValue(undefined);
     useSemanticModelEditorStore.getState().reset();
   });
 
@@ -154,7 +168,28 @@ describe("SemanticModelEditorPage", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
 
-    expect(await screen.findByRole('button', { name: 'readinessState.notConfigured' })).toBeInTheDocument();
+    // The journey bar replaces the readiness badge: an unconfigured model has nothing to report yet.
+    const verifyStep = await screen.findByRole('button', { name: /journey\.verify/ });
+    expect(verifyStep).toHaveTextContent('journey.todo');
     expect(screen.queryByText(/% ready/i)).not.toBeInTheDocument();
+  });
+
+  it('opens model health from the journey bar', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
+
+    fireEvent.click(await screen.findByRole('button', { name: /journey\.verify/ }));
+
+    expect(await screen.findByText('trust.title')).toBeInTheDocument();
+  });
+
+  it('establishes an origin workspace before opening source mapping', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'map-source' }));
+
+    await waitFor(() => expect(apiMocks.connectWorkspace).toHaveBeenCalledWith('model-1', 'workspace-1', false));
+    expect(await screen.findByText('customers.xlsx')).toBeInTheDocument();
   });
 });

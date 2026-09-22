@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (BaseModel, ConfigDict, Field, SerializerFunctionWrapHandler,
+                      model_serializer, model_validator)
 
 JobState = Literal[
     "queued",
@@ -69,13 +70,21 @@ class PopulationSource(BaseModel):
 
 
 class RelationBinding(BaseModel):
-    """Compiled matching-plan input: which source attribute holds the target
-    reference for one relation."""
+    """Compiled matching-plan fields for one relation rule."""
 
     model_config = ConfigDict(extra="forbid")
 
     relation_id: str = Field(alias="relationId", min_length=1, max_length=200)
     reference_field: str = Field(alias="referenceField", min_length=1, max_length=200)
+    target_field: str | None = Field(default=None, alias="targetField", min_length=1, max_length=200)
+
+    @model_serializer(mode="wrap")
+    def serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data = handler(self)
+        if self.target_field is None:
+            data.pop("targetField", None)
+            data.pop("target_field", None)
+        return data
 
 
 class PopulationPayload(BaseModel):

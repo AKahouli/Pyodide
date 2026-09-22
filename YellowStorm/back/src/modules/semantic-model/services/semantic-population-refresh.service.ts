@@ -133,7 +133,7 @@ export class SemanticPopulationRefreshService {
       .map((node) => this.conceptSpec(node, identityRules.get(node.id) ?? []));
     const inScope = new Set(concepts.map((concept) => concept.conceptId));
     const relations: RelationSpec[] = [];
-    const relationBindings: Array<{ relationId: string; referenceField: string }> = [];
+    const relationBindings: Array<{ relationId: string; referenceField: string; targetField: string }> = [];
     for (const relation of relationRows.filter(
       (candidate) => inScope.has(candidate.sourceNodeTypeId) && inScope.has(candidate.targetNodeTypeId),
     )) {
@@ -153,14 +153,23 @@ export class SemanticPopulationRefreshService {
           if ('columnMapping' in source) return Object.values(source.columnMapping).includes(rule.sourceAttribute);
           return source.fieldMappings.some((field) => field.targetAttribute === rule.sourceAttribute);
         });
+        const targetFieldMapped = sources.some((source) => {
+          if (source.conceptId !== relation.targetNodeTypeId) return false;
+          if ('columnMapping' in source) return Object.values(source.columnMapping).includes(rule.targetAttribute);
+          return source.fieldMappings.some((field) => field.targetAttribute === rule.targetAttribute);
+        });
         const targetIdentity = identityRules.get(relation.targetNodeTypeId) ?? [];
-        if (!sourceFieldMapped || targetIdentity.length !== 1 || targetIdentity[0] !== rule.targetAttribute) {
+        if (!sourceFieldMapped || !targetFieldMapped || !targetIdentity.includes(rule.targetAttribute)) {
           throw new BadRequestException(
             ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
             `Relation "${relation.key}" cannot be populated by the selected mappings`,
           );
         }
-        relationBindings.push({ relationId: relation.id, referenceField: rule.sourceAttribute });
+        relationBindings.push({
+          relationId: relation.id,
+          referenceField: rule.sourceAttribute,
+          targetField: rule.targetAttribute,
+        });
       }
     }
     if (!concepts.length) {
@@ -355,11 +364,14 @@ export class SemanticPopulationRefreshService {
     };
     const mappingVersion = mapping.updatedAt instanceof Date ? mapping.updatedAt.toISOString() : String(mapping.updatedAt);
     if (mapping.assetKind === 'document') {
+      const labels = new Map((node.attributes ?? []).map((attribute) => [attribute.key, attribute.label]));
       return {
         sourceKind: 'document' as const,
         conceptId: mapping.conceptId,
         source,
-        fieldMappings: activeMappings,
+        fieldMappings: activeMappings.map((field) => field.mode === 'extract' && !field.sourceField
+          ? { ...field, sourceField: labels.get(field.targetAttribute) || field.targetAttribute }
+          : field),
         mappingVersion,
       };
     }
