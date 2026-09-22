@@ -84,7 +84,7 @@ describe('StreamService guardrail metadata buffering', () => {
     };
   };
 
-  it('returns a process-local snapshot for an active conversation stream as stored', () => {
+  it('returns an active stream snapshot without exposing artifact storage paths', () => {
     const service = Object.create(StreamService.prototype) as StreamService;
     Object.assign(service as object, {
       componentBuffers: new Map([
@@ -126,7 +126,7 @@ describe('StreamService guardrail metadata buffering', () => {
         {
           id: 'artifact-1',
           type: 'artifact',
-          data: { filename: 'report.pdf', storagePath: '/workspace/private/report.pdf' },
+          data: { filename: 'report.pdf' },
         },
       ],
     });

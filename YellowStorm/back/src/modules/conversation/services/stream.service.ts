@@ -40,6 +40,7 @@ import type { PreparedConversationAttachment } from '../interfaces/conversation-
 import { SemanticModelService } from '../../semantic-model/services/semantic-model.service';
 import { PLATFORM_COPILOT } from '../../agent/constants/platform-copilot.constants';
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
+import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
 import type { ConversationLatencyMetricsV1, ConversationLatencyStartContext, StreamChunkLatencyData } from '../interfaces/latency.interface';
 import { LatencyEnvelopeTracker } from '../utils/latency-metrics';
 import { beginBackendPreAdkStage, endBackendPreAdkStage, getBackendPreAdkTracker, markGrpcDispatchedForLatency } from '../utils/backend-latency-tracker';
@@ -2658,9 +2659,9 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   }
 
   private sanitizeComponent(component: MessageComponent): MessageComponent {
-    // Conversation streams render exactly as stored — display-time
-    // sanitization was removed by product decision. Public share snapshots
-    // are still sanitized separately in ShareService.
-    return component;
+    // Conversation streams render as stored except for private artifact paths.
+    return component.type === 'artifact'
+      ? sanitizePublicComponent(component, { redactSensitiveText: false })
+      : component;
   }
 }
