@@ -14,7 +14,7 @@ import { StartRunDto } from '../dto/start-run.dto';
 import { ListRunsQueryDto } from '../dto/list-runs-query.dto';
 import { IClassificationRunResponse } from '../interfaces/classifier.interface';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 
 interface PaginatedRunsResponse {
   items: IClassificationRunResponse[];
@@ -37,7 +37,7 @@ export class ClassifierRunController {
   @ApiOperation({ summary: 'Start a classification run via a playbook' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   start(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @Body() dto: StartRunDto,
   ): Promise<IClassificationRunResponse> {
@@ -48,7 +48,7 @@ export class ClassifierRunController {
   @ApiOperation({ summary: 'List recent classification runs for a workspace' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   async list(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('workspaceId') workspaceId: string,
     @Query() query: ListRunsQueryDto,
   ): Promise<PaginatedRunsResponse> {
@@ -72,7 +72,7 @@ export class ClassifierRunController {
   @ApiOperation({ summary: 'Get a classification run by id (poll for status)' })
   @ApiParam({ name: 'id', description: 'Run ID' })
   findById(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
   ): Promise<IClassificationRunResponse> {
     return this.runService.findById(user._id.toString(), id);

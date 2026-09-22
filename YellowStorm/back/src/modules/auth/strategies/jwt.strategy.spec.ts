@@ -1,7 +1,7 @@
 import { JwtStrategy } from './jwt.strategy';
+import { makeSessionStoreFake, sessionRecord } from '../persistence/session-store.fake';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
-import { UserStatus } from '../../user/schemas/user.schema';
-
+import { UserStatus } from '../../user/user.types';
 describe('JwtStrategy account access', () => {
   const payload = {
     sub: 'user-1',
@@ -14,6 +14,27 @@ describe('JwtStrategy account access', () => {
   };
 
   const makeStrategy = (user: { status: string } | null) => {
+    const sessionStore = makeSessionStoreFake([
+      sessionRecord({
+        id: 'session-1',
+        userId: 'user-1',
+        isValid: true,
+        expiresAt: new Date(Date.now() + 60_000),
+        deviceInfo: {},
+        refreshTokenHash: 'hash',
+        tokenFamily: 'family',
+      }),
+    ]);
+    if (user) {
+      (Object.assign(sessionStore.records[0], {}) as unknown as Record<string, unknown>);
+      jest.spyOn(sessionStore, 'findValidByIdWithUser').mockResolvedValue({
+        session: sessionStore.records[0],
+        user: { id: 'user-1', status: user.status } as never,
+        valid: true,
+      });
+    } else {
+      jest.spyOn(sessionStore, 'findValidByIdWithUser').mockResolvedValue(null);
+    }
     const configService = {
       get: jest.fn((key: string) => {
         const values: Record<string, string> = {
@@ -29,9 +50,10 @@ describe('JwtStrategy account access', () => {
     const strategy = new JwtStrategy(
       configService as never,
       userService as never,
-      authService as never,
+      { isSessionValid: jest.fn().mockResolvedValue(true) } as never,
+      sessionStore as never,
     );
-    return { strategy };
+    return { strategy, sessionStore };
   };
 
   it('rejects suspended users with AUTH_ACCOUNT_SUSPENDED', async () => {
@@ -59,6 +81,25 @@ describe('JwtStrategy account access', () => {
     await expect(strategy.validate(payload)).resolves.toMatchObject({
       status: UserStatus.ACTIVE,
       permissions: [],
+    });
+  });
+
+  // R-09: a Postgres outage must answer 503 so clients keep retrying —
+  // never 401, which would destroy a valid login context.
+  it('answers 503 (not 401) when the session store is down with a wrapped 57P01', async () => {
+    const { strategy, sessionStore } = makeStrategy({ status: UserStatus.ACTIVE });
+    jest.spyOn(sessionStore, 'findValidByIdWithUser').mockRejectedValue(
+      new Error('Failed query: select ...', {
+        cause: Object.assign(new Error('terminating connection due to administrator command'), { code: '57P01' }),
+      }),
+    );
+
+    await expect(strategy.validate(payload)).rejects.toMatchObject({
+      code: ErrorCode.AUTH_DEPENDENCY_UNAVAILABLE,
+      getStatus: expect.anything(),
+    });
+    await strategy.validate(payload).catch((e) => {
+      expect(e.getStatus()).toBe(503);
     });
   });
 });

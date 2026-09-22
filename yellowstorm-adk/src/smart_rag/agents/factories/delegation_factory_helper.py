@@ -617,6 +617,18 @@ def _build_mcp_context_note(config, agent_config: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _append_attachment_context(prompt: str, config: Any) -> str:
+    """Append the backend-built bounded <conversation_attachments> block.
+
+    Executor-level only: managers intentionally receive the lightweight file
+    manifest instead, so full attachment content is not duplicated per agent.
+    """
+    text = getattr(config, "attachment_context", None)
+    if not text:
+        return prompt
+    return f"{prompt}\n\n{text}"
+
+
 def create_search_agent_with_tools(
     helper,
     agent_factory,
@@ -671,6 +683,7 @@ def create_search_agent_with_tools(
         agent_config.get("agent_params") or {},
         enabled=document_tree_injection_enabled(agent_config),
     )
+    enhanced_prompt = _append_attachment_context(enhanced_prompt, config)
 
     agent_params = agent_config.get("agent_params") or {}
     enhanced_prompt = _append_run_code_guidance(
@@ -927,6 +940,7 @@ def create_standard_agent_with_tools(
         agent_params,
         enabled=document_tree_injection_enabled(agent_config),
     )
+    enhanced_prompt = _append_attachment_context(enhanced_prompt, config)
     enhanced_prompt = _append_run_code_guidance(
         enhanced_prompt,
         agent_config.get("tools", []),

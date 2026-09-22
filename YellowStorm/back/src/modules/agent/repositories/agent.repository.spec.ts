@@ -1,6 +1,7 @@
 import { Types } from 'mongoose';
 import { sql as sqlTag } from 'drizzle-orm';
 import { AgentRepository, CreateAgentInput } from './agent.repository';
+import type { AgentRecord } from './agent-record.mapper';
 import { describeIntegration, makeTestDb, deleteAgents } from '../../postgres/testing/pg-integration';
 
 // Remote Postgres → allow generous timeouts for network round-trips in hooks/tests.
@@ -8,10 +9,41 @@ jest.setTimeout(60000);
 
 const oid = () => new Types.ObjectId().toString();
 
+/** Connectors seeded by createAgent; removed once the whole file has run. */
+const seededConnectorIds = new Set<string>();
+afterAll(async () => {
+  if (seededConnectorIds.size === 0) return;
+  const { db, close } = makeTestDb();
+  const ids = [...seededConnectorIds].map((id) => sqlTag`${id}`);
+  await db.execute(sqlTag`DELETE FROM integrations.connectors WHERE id IN (${sqlTag.join(ids, sqlTag`, `)})`);
+  await close();
+});
+
 /** Create many agents concurrently and register their ids for cleanup. */
-async function seed(repo: AgentRepository, sink: string[], inputs: CreateAgentInput[]): Promise<void> {
+async function seed(repo: AgentRepository, sink: string[], db: { execute: (q: ReturnType<typeof sqlTag>) => Promise<unknown> }, inputs: CreateAgentInput[]): Promise<void> {
   sink.push(...inputs.map((i) => i.id));
-  await Promise.all(inputs.map((i) => repo.create(i)));
+  for (const input of inputs) await createAgent(repo, db, input);
+}
+
+/** fk_agents_agent_type requires the type row; seed it, then create the agent. */
+async function createAgent(repo: AgentRepository, db: { execute: (q: ReturnType<typeof sqlTag>) => Promise<unknown> }, input: CreateAgentInput): Promise<AgentRecord> {
+  // The 1B.4 FKs require referenced catalog rows to exist; seed them.
+  await db.execute(
+    sqlTag`INSERT INTO catalog.agent_types (id, name, slug, default_prompt) VALUES (${input.agentType}, ${'type-' + input.agentType}, ${'type-' + input.agentType}, '') ON CONFLICT DO NOTHING`,
+  );
+  for (const toolId of input.tools ?? []) {
+    await db.execute(sqlTag`INSERT INTO catalog.tools (id, name, description) VALUES (${toolId}, ${'tool-' + toolId}, '') ON CONFLICT DO NOTHING`);
+  }
+  for (const skillId of [...(input.skills ?? []), ...(input.disabledSkills ?? [])]) {
+    await db.execute(sqlTag`INSERT INTO catalog.skills (id, slug, name, description, created_by) VALUES (${skillId}, ${'skill-' + skillId}, ${'skill-' + skillId}, '', '000000000000000000000000') ON CONFLICT DO NOTHING`);
+  }
+  // fk_agent_connectors_connector / fk_agent_connector_actions_connector (0025) need real connectors.
+  const connectorIds = [...new Set([...(input.connectors ?? []), ...(input.connectorActionSelections ?? []).map((s) => s.connectorId)])];
+  for (const connectorId of connectorIds) {
+    await db.execute(sqlTag`INSERT INTO integrations.connectors (id, slug, name, description, mcp_server_url, created_by) VALUES (${connectorId}, ${'spec-connector-' + connectorId}, ${'spec-connector-' + connectorId}, '', 'http://localhost:0/mcp', '000000000000000000000000') ON CONFLICT DO NOTHING`);
+    seededConnectorIds.add(connectorId);
+  }
+  return repo.create(input);
 }
 
 function createInput(over: Partial<CreateAgentInput> = {}): CreateAgentInput {
@@ -60,7 +92,7 @@ describeIntegration('AgentRepository create/findById (integration)', () => {
     });
     created.push(input.id);
 
-    const rec = await repo.create(input);
+    const rec = await createAgent(repo, db, input);
     expect(rec._id).toBe(input.id);
     expect(rec.tools).toEqual([toolId]);
     expect(rec.connectorActionSelections).toEqual([{ connector: connectorId, actionKeys: ['send', 'list'] }]);
@@ -91,7 +123,7 @@ describeIntegration('AgentRepository reads (integration)', () => {
     const def = createInput({ isDefault: true, isActive: true, name: `def-${oid().slice(-6)}` });
     const otherUser = createInput({ createdBy: oid(), isDefault: false, isActive: true, name: `other-${oid().slice(-6)}` });
     const inactiveMine = createInput({ createdBy: userId, isDefault: false, isActive: false, name: `inact-${oid().slice(-6)}` });
-    await seed(repo, created, [mine, def, otherUser, inactiveMine]);
+    await seed(repo, created, db, [mine, def, otherUser, inactiveMine]);
 
     const result = await repo.findForUser(userId);
     const ids = result.map((r) => r._id);
@@ -105,7 +137,7 @@ describeIntegration('AgentRepository reads (integration)', () => {
     const userId = oid();
     const a = createInput({ createdBy: userId, name: `Zeta-${oid().slice(-6)}` });
     const b = createInput({ createdBy: userId, name: `Alpha-${oid().slice(-6)}` });
-    await seed(repo, created, [a, b]);
+    await seed(repo, created, db, [a, b]);
     const page = await repo.listUserAgents({ userId, search: 'alpha', page: 1, limit: 10 });
     expect(page.total).toBe(1);
     expect(page.items[0]._id).toBe(b.id);
@@ -115,7 +147,7 @@ describeIntegration('AgentRepository reads (integration)', () => {
     const userId = oid();
     const slug = `slug-${oid().slice(-6)}`;
     const a = createInput({ createdBy: userId, slug, isDefault: false });
-    created.push(a.id); await repo.create(a);
+    created.push(a.id); await createAgent(repo, db, a);
     expect((await repo.findByNameAndOwner(a.name, userId))!._id).toBe(a.id);
     expect(await repo.findByNameAndOwner(a.name, oid())).toBeNull();
     expect((await repo.findBySlug({ slug, isDefault: false, userId }))!._id).toBe(a.id);
@@ -125,7 +157,7 @@ describeIntegration('AgentRepository reads (integration)', () => {
   it('countByAgentType counts all agents of a type', async () => {
     const typeId = oid();
     const a = createInput({ agentType: typeId }); const b = createInput({ agentType: typeId });
-    await seed(repo, created, [a, b]);
+    await seed(repo, created, db, [a, b]);
     expect(await repo.countByAgentType(typeId)).toBe(2);
   });
 });
@@ -140,7 +172,8 @@ describeIntegration('AgentRepository update/delete (integration)', () => {
   it('updateById replaces provided junctions and updates scalars', async () => {
     const t1 = oid(), t2 = oid();
     const input = createInput({ tools: [t1], description: 'old' });
-    created.push(input.id); await repo.create(input);
+    created.push(input.id); await createAgent(repo, db, input);
+    await db.execute(sqlTag`INSERT INTO catalog.tools (id, name, description) VALUES (${t2}, ${'tool-' + t2}, '') ON CONFLICT DO NOTHING`);
 
     const updated = await repo.updateById(input.id, { description: 'new', tools: [t2] });
     expect(updated!.description).toBe('new');
@@ -150,14 +183,14 @@ describeIntegration('AgentRepository update/delete (integration)', () => {
   it('updateById leaves junctions untouched when the array is omitted', async () => {
     const t1 = oid();
     const input = createInput({ tools: [t1] });
-    created.push(input.id); await repo.create(input);
+    created.push(input.id); await createAgent(repo, db, input);
     const updated = await repo.updateById(input.id, { description: 'x' });
     expect(updated!.tools).toEqual([t1]);
   });
 
   it('updateById persists new guardrails and deploymentSettings jsonb', async () => {
     const input = createInput({ guardrails: {}, deploymentSettings: {} });
-    created.push(input.id); await repo.create(input);
+    created.push(input.id); await createAgent(repo, db, input);
     const updated = await repo.updateById(input.id, {
       guardrails: { promptInjection: { inputGuardrailEnabled: true } },
       deploymentSettings: { embedEnabled: true, restEnabled: false, widget: null },
@@ -168,7 +201,7 @@ describeIntegration('AgentRepository update/delete (integration)', () => {
 
   it('deleteById removes the agent and cascades junctions', async () => {
     const input = createInput({ tools: [oid()] });
-    created.push(input.id); await repo.create(input);
+    created.push(input.id); await createAgent(repo, db, input);
     await repo.deleteById(input.id);
     expect(await repo.findById(input.id)).toBeNull();
   });
@@ -176,7 +209,7 @@ describeIntegration('AgentRepository update/delete (integration)', () => {
   it('clearDefaultForType unsets the flag for the matching personal scope', async () => {
     const userId = oid(); const typeId = oid();
     const a = createInput({ createdBy: userId, agentType: typeId, isDefault: false, isDefaultForType: true });
-    created.push(a.id); await repo.create(a);
+    created.push(a.id); await createAgent(repo, db, a);
     await repo.clearDefaultForType({ agentTypeId: typeId, isPersonal: true, userId });
     expect((await repo.findById(a.id))!.isDefaultForType).toBe(false);
   });
@@ -192,7 +225,7 @@ describeIntegration('AgentRepository plan-4 methods (integration)', () => {
   it('deleteByIdAndOwner deletes only when the owner matches', async () => {
     const owner = oid();
     const a = createInput({ createdBy: owner });
-    created.push(a.id); await repo.create(a);
+    created.push(a.id); await createAgent(repo, db, a);
     await repo.deleteByIdAndOwner(a.id, oid()); // wrong owner -> no-op
     expect(await repo.findById(a.id)).not.toBeNull();
     await repo.deleteByIdAndOwner(a.id, owner);
@@ -203,7 +236,7 @@ describeIntegration('AgentRepository plan-4 methods (integration)', () => {
     const typeId = oid();
     const a = createInput({ agentType: typeId, isDefault: true, isActive: true });
     const b = createInput({ agentType: typeId, isDefault: true, isActive: true });
-    await seed(repo, created, [a, b]);
+    await seed(repo, created, db, [a, b]);
     const found = await repo.findActiveDefaultsByType(typeId, 2);
     expect(found).toHaveLength(2);
   });
@@ -222,7 +255,7 @@ describeIntegration('AgentRepository plan-4 methods (integration)', () => {
       knowledgeBases: [oid()],
     });
     created.push(existing.id);
-    await repo.create(existing);
+    await createAgent(repo, db, existing);
 
     const result = await repo.createDefaultSystemAgentIfMissing({
       ...createInput({ slug, isDefault: true }),
@@ -253,6 +286,9 @@ describeIntegration('AgentRepository plan-4 methods (integration)', () => {
     const second = { ...first, id: oid() };
     created.push(first.id, second.id);
 
+    await db.execute(
+      sqlTag`INSERT INTO catalog.agent_types (id, name, slug, default_prompt) VALUES (${first.agentType}, ${'type-' + first.agentType}, ${'type-' + first.agentType}, '') ON CONFLICT DO NOTHING`,
+    );
     const [a, b] = await Promise.all([
       repo.createDefaultSystemAgentIfMissing(first),
       repo.createDefaultSystemAgentIfMissing(second),
@@ -262,10 +298,14 @@ describeIntegration('AgentRepository plan-4 methods (integration)', () => {
     expect(a.slug).toBe(slug);
   });
 
-  it('setRoleEmbedding stores a 2560-dim halfvec on the agent', async () => {
+  it('setRoleEmbedding stores a halfvec of the column dimension on the agent', async () => {
     const input = createInput({});
-    created.push(input.id); await repo.create(input);
-    const vec = Array.from({ length: 2560 }, (_, i) => (i % 7) / 10);
+    created.push(input.id); await createAgent(repo, db, input);
+    // The dimension is a property of the migrated column (3072 since 0004, 2560 on older
+    // databases): read it instead of hard-coding one.
+    const dim = await (db as never as { execute: (q: unknown) => Promise<{ rows: Array<{ dim: number }> }> })
+      .execute(sqlTag`SELECT atttypmod AS dim FROM pg_attribute WHERE attrelid = 'public.agents'::regclass AND attname = 'role_embedding'`);
+    const vec = Array.from({ length: dim.rows[0].dim }, (_, i) => (i % 7) / 10);
     await repo.setRoleEmbedding(input.id, vec);
     const rows = await (db as never as { execute: (q: unknown) => Promise<{ rows: Array<{ has: boolean }> }> })
       .execute(sqlTag`SELECT role_embedding IS NOT NULL AS has FROM agents WHERE id = ${input.id}`);
@@ -274,29 +314,39 @@ describeIntegration('AgentRepository plan-4 methods (integration)', () => {
 
 });
 
-describeIntegration('AgentRepository pull ops (integration)', () => {
+describeIntegration('AgentRepository catalog junction cascades (integration)', () => {
+  // Since 1B.4.8 the agent junctions cascade from catalog.tools / catalog.skills
+  // via validated FKs — deleting the catalog row cleans every agent's junction.
   const { db, close } = makeTestDb();
   const repo = new AgentRepository(db as never);
   const created: string[] = [];
+  const catalogIds: string[] = [];
   afterEach(async () => { await deleteAgents(db, created.splice(0)); });
   afterAll(async () => { await close(); });
 
-  it('pullToolFromAll removes the tool from every agent', async () => {
+  it('deleting a catalog tool cascades agent_tools rows away', async () => {
     const toolId = oid();
+    await db.execute(sqlTag`INSERT INTO catalog.tools (id, name, description) VALUES (${toolId}, ${'cascade-tool-' + toolId}, '')`);
+    catalogIds.push(toolId);
     const a = createInput({ tools: [toolId, oid()] });
-    const b = createInput({ tools: [toolId] });
-    await seed(repo, created, [a, b]);
-    await repo.pullToolFromAll(toolId);
-    expect((await repo.findById(a.id))!.tools).not.toContain(toolId);
-    expect((await repo.findById(b.id))!.tools).toEqual([]);
+    await seed(repo, created, db, [a]);
+
+    await db.execute(sqlTag`DELETE FROM catalog.tools WHERE id = ${toolId}`);
+
+    const rec = await repo.findById(a.id)!;
+    expect(rec!.tools).not.toContain(toolId);
+    expect(rec!.tools).toHaveLength(1);
   });
 
-  it('pullSkillFromAll and pullDisabledSkillFromAll remove from both tables', async () => {
+  it('deleting a catalog skill cascades agent_skills and agent_disabled_skills', async () => {
     const skillId = oid();
+    await db.execute(sqlTag`INSERT INTO catalog.skills (id, slug, name, description, created_by) VALUES (${skillId}, ${'cascade-skill-' + skillId}, ${'cascade-skill-' + skillId}, '', '000000000000000000000000')`);
+    catalogIds.push(skillId);
     const a = createInput({ skills: [skillId], disabledSkills: [skillId] });
-    created.push(a.id); await repo.create(a);
-    await repo.pullSkillFromAll(skillId);
-    await repo.pullDisabledSkillFromAll(skillId);
+    created.push(a.id); await createAgent(repo, db, a);
+
+    await db.execute(sqlTag`DELETE FROM catalog.skills WHERE id = ${skillId}`);
+
     const rec = await repo.findById(a.id);
     expect(rec!.skills).toEqual([]);
     expect(rec!.disabledSkills).toEqual([]);

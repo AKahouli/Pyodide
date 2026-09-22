@@ -4,6 +4,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import requests
 from google.adk.tools.tool_context import ToolContext
@@ -698,6 +699,7 @@ def _collect_connector_context(
     workspace_ids: List[Any] = []
     header_workspace_ids: List[Any] = []
     workspace_paths: List[Any] = []
+    file_paths: List[Any] = []
 
     selected_workspace_id = str(workspace_id or "").strip()
     documents = [doc for doc in brain_documents or [] if isinstance(doc, dict)]
@@ -726,6 +728,9 @@ def _collect_connector_context(
         workspace_ids.append(doc_workspace_id)
         header_workspace_ids.append(doc_workspace_id)
         workspace_paths.append(_document_workspace_path(doc, user_id))
+        # Exact object keys let the sandbox mount the real files (essential
+        # for CODE_ONLY attachments excluded from search indexing).
+        file_paths.append(doc.get("filepath"))
 
     workspace_ids.append(workspace_id)
     header_workspace_ids.append(workspace_id)
@@ -758,6 +763,7 @@ def _collect_connector_context(
         "workspace_ids": _unique_strings(workspace_ids),
         "header_workspace_ids": _unique_strings(header_workspace_ids),
         "workspace_paths": _unique_workspace_paths(workspace_paths),
+        "file_paths": _unique_strings(file_paths),
     }
 
 
@@ -864,7 +870,28 @@ def _apply_streamable_http_context_headers(
     if workspace_paths:
         headers["x-workspace-paths"] = ",".join(workspace_paths)
 
+    file_paths = context.get("file_paths") or []
+    if file_paths:
+        # ponytail: comma-delimited raw keys is the sandbox's contract
+        # (matches the playbook engine, spaces included). Passing a key with
+        # a comma corrupts the list and a non-latin-1 key crashes the latin-1
+        # header encode — those entries are percent-encoded instead, so the
+        # request survives; the consumer must unquote to mount them.
+        encoded = ",".join(
+            quote(str(path), safe="/") if _needs_encoding(str(path)) else str(path)
+            for path in file_paths
+        )
+        headers["x-file-paths"] = encoded
+
     return headers
+
+
+def _needs_encoding(path: str) -> bool:
+    try:
+        path.encode("latin-1")
+    except UnicodeEncodeError:
+        return True
+    return "," in path
 
 
 def _header_user_id(headers: Dict[str, str]) -> str:

@@ -1,0 +1,17 @@
+{
+  "forceActivation": true,
+  "promptInjection": {
+    "inputEnabled": true,
+    "outputEnabled": false,
+    "mode": "balanced",
+    "inputClassifierPrompt": "legacy",
+    "outputClassifierPrompt": "legacy",
+    "blockMessage": "I cannot follow this instruction."
+  },
+  "toolActionReview": {
+    "enabled": false,
+    "mode": "balanced",
+    "classifierPrompt": "legacy",
+    "blockMessage": "I cannot perform this action."
+  }
+}

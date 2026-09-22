@@ -1,8 +1,17 @@
 import { Inject, Injectable, forwardRef } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { Project, ProjectDocument } from './schemas/project.schema';
-import { ProjectShare, ProjectShareDocument } from './schemas/project-share.schema';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
+import * as schema from '@modules/postgres/schema';
+import { isObjectId, normalizeObjectId } from '@common/postgres/object-id';
+import { isUniqueViolation } from '@common/postgres/errors';
+import { withTransaction } from '@common/postgres/transaction';
+import { USER_LOOKUP_PORT, type UserLookupPort, type UserSummary } from '@common/ports/user-lookup.port';
+import { PROJECT_STORE, type ProjectRecord, type ProjectStore } from './persistence/project-store';
+import {
+  PROJECT_SHARE_STORE,
+  type ProjectShareRecord,
+  type ProjectShareStore,
+} from './persistence/project-share-store';
 import {
   IPaginatedProjectShares,
   IPaginatedSharedProjects,
@@ -14,7 +23,7 @@ import {
 import { ShareProjectDto } from './dto/share-project.dto';
 import { ShareQueryDto } from './dto/share-query.dto';
 import { LoggerService } from '../logger';
-import { ForbiddenException, NotFoundException } from '../exceptions';
+import { ConflictException, ForbiddenException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import {
   CONVERSATION_STORE,
@@ -22,24 +31,37 @@ import {
 } from '../conversation/persistence/conversation-store';
 import { UserService } from '../user/user.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { NotificationType } from '../notifications/schemas/notification.schema';
-import { UserDocument } from '../user/schemas/user.schema';
+import { NotificationType } from '../notifications/notification.types';
+import { asAuthUser, type AuthUser } from '@common/auth/auth-user';
 
 type ShareEventType = 'project_shared' | 'project_share_revoked' | 'project_share_updated';
+
+interface ShareIntent {
+  user: UserSummary;
+  /** Existing share id in PG, or null when the user is not yet shared. */
+  shareId: string | null;
+  /** Permission requested for this user (last entry wins within a batch). */
+  permission: ProjectPermission;
+  record: ProjectShareRecord | null;
+}
 
 @Injectable()
 export class ProjectShareService {
   constructor(
-    @InjectModel(Project.name)
-    private readonly projectModel: Model<ProjectDocument>,
-    @InjectModel(ProjectShare.name)
-    private readonly shareModel: Model<ProjectShareDocument>,
+    @Inject(PROJECT_STORE)
+    private readonly projectStore: ProjectStore,
+    @Inject(PROJECT_SHARE_STORE)
+    private readonly shareStore: ProjectShareStore,
     @Inject(CONVERSATION_STORE)
     private readonly conversationStore: ConversationStore,
-    private readonly logger: LoggerService,
-    private readonly userService: UserService,
+    @Inject(USER_LOOKUP_PORT)
+    private readonly userLookup: UserLookupPort,
     @Inject(forwardRef(() => NotificationsService))
     private readonly notificationsService: NotificationsService,
+    private readonly userService: UserService,
+    private readonly logger: LoggerService,
+    // Opened here so share writes + the stored shareCount counter commit atomically.
+    @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>,
   ) {
     this.logger.setContext('ProjectShareService');
   }
@@ -49,19 +71,17 @@ export class ProjectShareService {
    * or a public project. Mirrors WorkspaceShareService.hasAccess.
    */
   async hasAccess(userId: string, projectId: string): Promise<boolean> {
-    if (!Types.ObjectId.isValid(userId) || !Types.ObjectId.isValid(projectId)) {
+    if (!isObjectId(userId) || !isObjectId(projectId)) {
       return false;
     }
-    const projectObjectId = new Types.ObjectId(projectId);
-    const userObjectId = new Types.ObjectId(userId);
+    userId = normalizeObjectId(userId);
+    projectId = normalizeObjectId(projectId);
     const [owned, shared, isPublic] = await Promise.all([
-      this.projectModel.exists({ _id: projectObjectId, createdBy: userObjectId }).exec(),
-      this.shareModel
-        .exists({ projectId: projectObjectId, sharedWithUserId: userObjectId })
-        .exec(),
-      this.projectModel.exists({ _id: projectObjectId, isPublic: true }).exec(),
+      this.projectStore.existsOwnedBy(projectId, userId),
+      this.shareStore.existsForUser(projectId, userId),
+      this.projectStore.existsPublic(projectId),
     ]);
-    return Boolean(owned || shared || isPublic);
+    return owned || shared || isPublic;
   }
 
   /**
@@ -69,26 +89,21 @@ export class ProjectShareService {
    * collaborator actions that create/move conversations into the project.
    */
   async assertProjectWriteAccess(userId: string, projectId: string): Promise<void> {
-    if (!Types.ObjectId.isValid(projectId)) {
+    if (!isObjectId(projectId)) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND, 'Invalid project ID format');
     }
-    const project = await this.projectModel.findById(projectId).lean().exec();
+    projectId = normalizeObjectId(projectId);
+    const project = await this.projectStore.findById(projectId);
     if (!project) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND, 'Project not found');
     }
-    if (project.createdBy.toString() === userId) return;
+    if (project.createdBy === userId) return;
 
     if (project.isPublic) {
       throw new ForbiddenException(ErrorCode.PROJECT_SHARE_READ_ONLY, 'You have read-only access to this project');
     }
 
-    const share = await this.shareModel
-      .findOne({
-        projectId: new Types.ObjectId(projectId),
-        sharedWithUserId: new Types.ObjectId(userId),
-      })
-      .lean()
-      .exec();
+    const share = await this.shareStore.findOneByProjectAndUser(projectId, userId);
     if (!share) {
       throw new ForbiddenException(ErrorCode.PROJECT_FORBIDDEN, 'You do not have access to this project');
     }
@@ -99,11 +114,12 @@ export class ProjectShareService {
 
   /** Share a project with one or more users by email (owner-only, caller-checked). */
   async share(projectId: string, ownerId: string, data: ShareProjectDto): Promise<IShareProjectResult> {
-    const project = await this.projectModel.findById(projectId).exec();
+    projectId = normalizeObjectId(projectId);
+    const project = await this.projectStore.findById(projectId);
     if (!project) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND, 'Project not found');
     }
-    if (project.createdBy.toString() !== ownerId) {
+    if (project.createdBy !== ownerId) {
       throw new ForbiddenException(ErrorCode.PROJECT_FORBIDDEN, 'You do not have access to this project');
     }
     if (project.isPublic) {
@@ -116,11 +132,13 @@ export class ProjectShareService {
     }
     const ownerEmail = owner.email.toLowerCase();
 
-    const shared: IProjectShareResponse[] = [];
     const notFound: string[] = [];
     const invalid: string[] = [];
-    const createdEvents: Array<{ userId: string; shareId: string; permission: ProjectPermission }> = [];
-    const updatedEvents: Array<{ userId: string; shareId: string; permission: ProjectPermission }> = [];
+    // Resolve users first (Mongo reads), tracking per-user state so duplicate
+    // emails in one batch behave like the old sequential loop: one share row,
+    // one write with the last requested permission, one response per entry.
+    const pending = new Map<string, ShareIntent>();
+    const entries: ShareIntent[] = [];
 
     for (const entry of data.shares) {
       const email = entry.email.toLowerCase().trim();
@@ -133,57 +151,67 @@ export class ProjectShareService {
         notFound.push(email);
         continue;
       }
-
-      const existingShare = await this.shareModel
-        .findOne({
-          projectId: new Types.ObjectId(projectId),
-          sharedWithUserId: user._id,
-        })
-        .exec();
-
-      if (existingShare) {
-        if (existingShare.permission !== entry.permission) {
-          await this.shareModel
-            .updateOne({ _id: existingShare._id }, { $set: { permission: entry.permission } })
-            .exec();
-          existingShare.permission = entry.permission;
-          updatedEvents.push({
-            userId: user._id.toString(),
-            shareId: existingShare._id.toString(),
-            permission: entry.permission,
-          });
-        }
-        shared.push(this.mapToResponse(existingShare, user));
-        continue;
+      const summary = toSummary(user._id.toString(), user.email, user.profile);
+      let intent = pending.get(summary.id);
+      if (!intent) {
+        const existingShare = await this.shareStore.findOneByProjectAndUser(projectId, summary.id);
+        intent = {
+          user: summary,
+          shareId: existingShare?.id ?? null,
+          permission: entry.permission,
+          record: existingShare,
+        };
+        pending.set(summary.id, intent);
       }
-
-      const share = await this.shareModel.create({
-        projectId: new Types.ObjectId(projectId),
-        ownerId: project.createdBy,
-        sharedWithUserId: user._id,
-        permission: entry.permission,
-        sharedBy: new Types.ObjectId(ownerId),
-      });
-      shared.push(this.mapToResponse(share, user));
-      createdEvents.push({
-        userId: user._id.toString(),
-        shareId: share._id.toString(),
-        permission: entry.permission,
-      });
+      intent.permission = entry.permission;
+      entries.push(intent);
     }
 
-    if (createdEvents.length > 0) {
-      await this.projectModel.updateOne({ _id: projectId }, { $inc: { shareCount: createdEvents.length } });
+    const createdEvents: { userId: string; shareId: string; permission: ProjectPermission }[] = [];
+    const updatedEvents: { userId: string; shareId: string; permission: ProjectPermission }[] = [];
+
+    if (pending.size > 0) {
+      await this.withShareConflictMapping(() => withTransaction(this.db, async () => {
+        for (const intent of pending.values()) {
+          if (intent.shareId && intent.record) {
+            // Only write + notify when the requested permission differs (old guard).
+            if (intent.record.permission !== intent.permission) {
+              const record = await this.shareStore.updatePermission(intent.shareId, intent.permission);
+              if (record) {
+                intent.record = record;
+                updatedEvents.push({ userId: intent.user.id, shareId: record.id, permission: intent.permission });
+              }
+            }
+          } else {
+            intent.record = await this.shareStore.create({
+              projectId,
+              ownerId: project.createdBy,
+              sharedWithUserId: intent.user.id,
+              permission: intent.permission,
+              sharedBy: ownerId,
+            });
+            createdEvents.push({ userId: intent.user.id, shareId: intent.record.id, permission: intent.permission });
+          }
+        }
+        if (createdEvents.length > 0) {
+          await this.projectStore.incrementShareCount(projectId, createdEvents.length);
+        }
+      }));
+    }
+
+    const shared: { record: ProjectShareRecord; user: UserSummary }[] = [];
+    for (const intent of entries) {
+      if (intent.record) shared.push({ record: intent.record, user: intent.user });
     }
 
     for (const event of createdEvents) {
-      await this.pushShareNotification('project_shared', event.userId, project, owner, {
+      await this.pushShareNotification('project_shared', event.userId, project, asAuthUser(owner), {
         shareId: event.shareId,
         permission: event.permission,
       });
     }
     for (const event of updatedEvents) {
-      await this.pushShareNotification('project_share_updated', event.userId, project, owner, {
+      await this.pushShareNotification('project_share_updated', event.userId, project, asAuthUser(owner), {
         shareId: event.shareId,
         permission: event.permission,
       });
@@ -197,27 +225,24 @@ export class ProjectShareService {
       invalidCount: invalid.length,
     });
 
-    return { shared, notFound, invalid };
+    return {
+      shared: shared.map(({ record, user }) => this.mapToResponse(record, user)),
+      notFound,
+      invalid,
+    };
   }
 
   /** List all shares for a project (owner view). */
   async findByProject(projectId: string, params: ShareQueryDto): Promise<IPaginatedProjectShares> {
+    projectId = normalizeObjectId(projectId);
     const { page = 1, limit = 20 } = params;
-    const skip = (page - 1) * limit;
 
-    const [shares, total] = await Promise.all([
-      this.shareModel
-        .find({ projectId: new Types.ObjectId(projectId) })
-        .populate('sharedWithUserId', 'email profile.firstName profile.lastName')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .exec(),
-      this.shareModel.countDocuments({ projectId: new Types.ObjectId(projectId) }),
-    ]);
+    const { rows, total } = await this.shareStore.findByProject(projectId, { limit, offset: (page - 1) * limit });
+
+    const users = await this.userLookup.byIds(rows.map((share) => share.sharedWithUserId));
 
     return {
-      shares: shares.map((share) => this.mapToResponse(share)),
+      shares: rows.map((share) => this.mapToResponse(share, users.get(share.sharedWithUserId))),
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     };
   }
@@ -228,15 +253,16 @@ export class ProjectShareService {
     shareId: string,
     permission: ProjectPermission,
   ): Promise<IProjectShareResponse> {
-    const share = await this.shareModel.findById(shareId).exec();
-    if (!share || share.projectId.toString() !== projectId) {
+    projectId = normalizeObjectId(projectId);
+    shareId = normalizeObjectId(shareId);
+    const share = await this.shareStore.findById(shareId);
+    if (share?.projectId !== projectId) {
       throw new NotFoundException(ErrorCode.PROJECT_SHARE_NOT_FOUND, 'Share not found');
     }
 
     const changed = share.permission !== permission;
     if (changed) {
-      await this.shareModel.updateOne({ _id: shareId }, { $set: { permission } }).exec();
-      share.permission = permission;
+      await this.shareStore.updatePermission(shareId, permission);
     }
 
     this.logger.log('Project share permission updated', { shareId, permission });
@@ -244,12 +270,12 @@ export class ProjectShareService {
     if (changed) {
       try {
         const [project, owner] = await Promise.all([
-          this.projectModel.findById(share.projectId).exec(),
-          this.userService.findById(share.ownerId.toString()),
+          this.projectStore.findById(share.projectId),
+          this.userService.findById(share.ownerId),
         ]);
         if (project && owner) {
-          await this.pushShareNotification('project_share_updated', share.sharedWithUserId.toString(), project, owner, {
-            shareId: share._id.toString(),
+          await this.pushShareNotification('project_share_updated', share.sharedWithUserId, project, asAuthUser(owner), {
+            shareId: share.id,
             permission,
           });
         }
@@ -261,30 +287,40 @@ export class ProjectShareService {
       }
     }
 
-    return this.mapToResponse(share);
+    return this.mapToResponse({ ...share, permission });
   }
 
   /** Revoke a share. Caller has verified project ownership. */
   async revoke(projectId: string, shareId: string): Promise<void> {
-    const share = await this.shareModel.findById(shareId).exec();
-    if (!share || share.projectId.toString() !== projectId) {
+    projectId = normalizeObjectId(projectId);
+    shareId = normalizeObjectId(shareId);
+    const share = await this.shareStore.findById(shareId);
+    if (share?.projectId !== projectId) {
       throw new NotFoundException(ErrorCode.PROJECT_SHARE_NOT_FOUND, 'Share not found');
     }
 
-    const recipientId = share.sharedWithUserId.toString();
+    const recipientId = share.sharedWithUserId;
 
-    await this.shareModel.deleteOne({ _id: shareId });
-    await this.projectModel.updateOne({ _id: projectId }, { $inc: { shareCount: -1 } });
+    // Only the request that actually removed the row decrements the counter,
+    // so a concurrent double revoke cannot drive shareCount down twice.
+    const deleted = await withTransaction(this.db, async () => {
+      const removed = await this.shareStore.deleteById(shareId);
+      if (removed) await this.projectStore.incrementShareCount(projectId, -1);
+      return removed;
+    });
+    if (!deleted) {
+      throw new NotFoundException(ErrorCode.PROJECT_SHARE_NOT_FOUND, 'Share not found');
+    }
 
     this.logger.log('Project share revoked', { shareId, projectId });
 
     try {
       const [project, owner] = await Promise.all([
-        this.projectModel.findById(share.projectId).exec(),
-        this.userService.findById(share.ownerId.toString()),
+        this.projectStore.findById(share.projectId),
+        this.userService.findById(share.ownerId),
       ]);
       if (project && owner) {
-        await this.pushShareNotification('project_share_revoked', recipientId, project, owner, {
+        await this.pushShareNotification('project_share_revoked', recipientId, project, asAuthUser(owner), {
           shareId,
         });
       }
@@ -299,55 +335,38 @@ export class ProjectShareService {
   /** List projects shared with a user (their own projects excluded). */
   async findSharedWithUser(userId: string, params: ShareQueryDto): Promise<IPaginatedSharedProjects> {
     const { page = 1, limit = 20 } = params;
-    const skip = (page - 1) * limit;
 
-    const query = { sharedWithUserId: new Types.ObjectId(userId) };
+    const { rows, total } = await this.shareStore.findByUser(userId, { limit, offset: (page - 1) * limit });
 
-    const [shares, total] = await Promise.all([
-      this.shareModel
-        .find(query)
-        .populate([
-          { path: 'projectId', select: 'name createdAt updatedAt' },
-          { path: 'sharedBy', select: 'email profile.firstName profile.lastName' },
-        ])
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean()
-        .exec(),
-      this.shareModel.countDocuments(query),
-    ]);
+    const projectMap = await this.projectStore.findByIds(rows.map((share) => share.projectId));
+    const owners = await this.userLookup.byIds(rows.map((share) => share.sharedBy));
 
-    const countMap = await this.conversationStore.countByProjects(
-      shares
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .map((share) => (share as any).projectId?._id?.toString())
-        .filter((id): id is string => Boolean(id)),
-    );
+    const countMap = await this.conversationStore.countByProjects([...projectMap.keys()]);
 
-    const projects: ISharedProjectResponse[] = shares.map((share) => {
-      /* eslint-disable @typescript-eslint/no-explicit-any */
-      const project = (share as any).projectId;
-      const owner = (share as any).sharedBy;
-      /* eslint-enable @typescript-eslint/no-explicit-any */
-
-      return {
-        id: project._id.toString(),
+    const projects: ISharedProjectResponse[] = [];
+    for (const share of rows) {
+      const project = projectMap.get(share.projectId);
+      if (!project) continue;
+      const owner = owners.get(share.sharedBy);
+      projects.push({
+        id: project.id,
         name: project.name,
         owner: {
-          id: owner._id.toString(),
-          email: owner.email,
-          firstName: owner.profile?.firstName,
-          lastName: owner.profile?.lastName,
+          id: owner?.id ?? share.sharedBy,
+          email: owner?.email ?? '',
+          // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- '' names must stay absent in JSON; ?? would emit ""
+          firstName: owner?.firstName ? owner.firstName : undefined,
+          // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- '' names must stay absent in JSON; ?? would emit ""
+          lastName: owner?.lastName ? owner.lastName : undefined,
         },
         permission: share.permission,
-        shareId: share._id.toString(),
-        conversationCount: countMap.get(project._id.toString()) ?? 0,
+        shareId: share.id,
+        conversationCount: countMap.get(project.id) ?? 0,
         sharedAt: share.createdAt.toISOString(),
         createdAt: project.createdAt.toISOString(),
         updatedAt: project.updatedAt.toISOString(),
-      };
-    });
+      });
+    }
 
     return {
       projects,
@@ -357,11 +376,27 @@ export class ProjectShareService {
 
   /** Remove all shares for a project (cascade on project delete). */
   async removeAllByProject(projectId: string): Promise<void> {
-    const result = await this.shareModel.deleteMany({ projectId: new Types.ObjectId(projectId) }).exec();
+    const deletedCount = await this.shareStore.deleteByProject(projectId);
     this.logger.log('All shares removed for project', {
       projectId,
-      deletedCount: result.deletedCount,
+      deletedCount,
     });
+  }
+
+  /**
+   * A concurrent share of the same user can win the (project_id,
+   * shared_with_user_id) unique index after our existence read; surface a 409
+   * instead of a 500. The whole transaction rolls back, so retrying is safe.
+   */
+  private async withShareConflictMapping<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn();
+    } catch (err) {
+      if (isUniqueViolation(err, 'uq_project_shares_project_user')) {
+        throw new ConflictException(ErrorCode.CONFLICT, 'This project was concurrently shared with the same user; please retry');
+      }
+      throw err;
+    }
   }
 
   /**
@@ -371,8 +406,8 @@ export class ProjectShareService {
   private async pushShareNotification(
     eventType: ShareEventType,
     recipientId: string,
-    project: ProjectDocument,
-    owner: UserDocument,
+    project: ProjectRecord,
+    owner: AuthUser,
     extra: { shareId: string; permission?: ProjectPermission },
   ): Promise<void> {
     try {
@@ -401,7 +436,7 @@ export class ProjectShareService {
         message,
         data: {
           eventType,
-          projectId: project._id.toString(),
+          projectId: project.id,
           projectName: project.name,
           shareId: extra.shareId,
           permission: extra.permission,
@@ -418,50 +453,33 @@ export class ProjectShareService {
       this.logger.warn('Failed to send share notification', {
         eventType,
         recipientId,
-        projectId: project._id.toString(),
+        projectId: project.id,
         error: err instanceof Error ? err.message : 'Unknown error',
       });
     }
   }
 
-  /**
-   * Map share document to response. When `sharedWithUserId` is populated it's a user
-   * document; otherwise it's an ObjectId. Callers that just created/updated a share
-   * (no populate) can pass `userOverride` so the response still carries email/name.
-   */
-  private mapToResponse(share: ProjectShareDocument, userOverride?: UserDocument): IProjectShareResponse {
-    const ref = share.sharedWithUserId as unknown;
-    const populated =
-      typeof ref === 'object' && ref !== null && 'email' in (ref as Record<string, unknown>)
-        ? (ref as {
-            _id: Types.ObjectId;
-            email: string;
-            profile?: { firstName?: string; lastName?: string };
-          })
-        : null;
-
-    const userInfo = userOverride
-      ? {
-          id: userOverride._id.toString(),
-          email: userOverride.email,
-          firstName: userOverride.profile?.firstName,
-          lastName: userOverride.profile?.lastName,
-        }
-      : {
-          id: populated ? populated._id.toString() : share.sharedWithUserId.toString(),
-          email: populated?.email ?? '',
-          firstName: populated?.profile?.firstName,
-          lastName: populated?.profile?.lastName,
-        };
-
+  /** `user` is the resolved recipient (lookup join); empty names stay absent in JSON. */
+  private mapToResponse(share: ProjectShareRecord, user?: UserSummary): IProjectShareResponse {
     return {
-      id: share._id.toString(),
-      projectId: share.projectId.toString(),
-      user: userInfo,
+      id: share.id,
+      projectId: share.projectId,
+      user: {
+        id: user?.id ?? share.sharedWithUserId,
+        email: user?.email ?? '',
+        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- '' names must stay absent in JSON; ?? would emit ""
+        firstName: user?.firstName ? user.firstName : undefined,
+        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- '' names must stay absent in JSON; ?? would emit ""
+        lastName: user?.lastName ? user.lastName : undefined,
+      },
       permission: share.permission,
-      sharedBy: share.sharedBy.toString(),
+      sharedBy: share.sharedBy,
       createdAt: share.createdAt.toISOString(),
       updatedAt: share.updatedAt.toISOString(),
     };
   }
+}
+
+function toSummary(id: string, email: string, profile?: { firstName?: string; lastName?: string }): UserSummary {
+  return { id, email, firstName: profile?.firstName ?? '', lastName: profile?.lastName ?? '' };
 }

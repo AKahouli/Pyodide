@@ -79,7 +79,7 @@ def build_run_code_artifacts(
 ) -> list[dict[str, Any]]:
     if not isinstance(result, dict) or not isinstance(result.get("written_files"), list):
         return []
-    params = agent_config.get("agent_params", {}).get("params", {}) if agent_config else {}
+    params = agent_config.get("agent_params", {}) if agent_config else {}
     context = parse_run_code_context(params)
     if context is None:
         return []

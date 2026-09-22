@@ -1,15 +1,14 @@
-import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Inject, Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
 import { Request } from 'express';
-import { Project, ProjectDocument } from '../schemas/project.schema';
+import { PROJECT_STORE, type ProjectRecord, type ProjectStore } from '../persistence/project-store';
+import { isObjectId, normalizeObjectId } from '@common/postgres/object-id';
 import { ForbiddenException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 
 interface RequestWithProject extends Request {
-  user?: UserDocument;
-  project?: ProjectDocument;
+  user?: AuthUser;
+  project?: ProjectRecord;
 }
 
 /**
@@ -18,10 +17,7 @@ interface RequestWithProject extends Request {
  */
 @Injectable()
 export class ProjectOwnerGuard implements CanActivate {
-  constructor(
-    @InjectModel(Project.name)
-    private readonly projectModel: Model<ProjectDocument>,
-  ) {}
+  constructor(@Inject(PROJECT_STORE) private readonly projectStore: ProjectStore) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<RequestWithProject>();
@@ -36,15 +32,15 @@ export class ProjectOwnerGuard implements CanActivate {
     if (!projectId) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND, 'Project ID is required');
     }
-    if (!Types.ObjectId.isValid(projectId)) {
+    if (!isObjectId(projectId)) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND, 'Invalid project ID format');
     }
 
-    const project = await this.projectModel.findById(projectId).exec();
+    const project = await this.projectStore.findById(normalizeObjectId(projectId));
     if (!project) {
       throw new NotFoundException(ErrorCode.PROJECT_NOT_FOUND, 'Project not found');
     }
-    if (project.createdBy.toString() !== user._id.toString()) {
+    if (project.createdBy !== user._id.toString()) {
       throw new ForbiddenException(ErrorCode.PROJECT_FORBIDDEN, 'You do not have access to this project');
     }
 

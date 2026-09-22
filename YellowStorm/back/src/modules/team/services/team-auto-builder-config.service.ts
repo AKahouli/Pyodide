@@ -1,51 +1,43 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Inject, Injectable } from '@nestjs/common';
 import { LoggerService } from '../../logger';
-import {
-  TeamAutoBuilderConfig,
-  TeamAutoBuilderConfigDocument,
-} from '../schemas/team-auto-builder-config.schema';
+import { TEAM_AUTO_BUILDER_STORE, type TeamAutoBuilderConfigRow, type TeamAutoBuilderStore } from '../persistence/team.store';
 import { ITeamAutoBuilderConfigResponse } from '../interfaces/team-auto-builder-config.interface';
 import { UpsertAutoBuilderConfigDto } from '../dto/upsert-auto-builder-config.dto';
 
 @Injectable()
 export class TeamAutoBuilderConfigService {
   constructor(
-    @InjectModel(TeamAutoBuilderConfig.name)
-    private readonly configModel: Model<TeamAutoBuilderConfigDocument>,
+    @Inject(TEAM_AUTO_BUILDER_STORE)
+    private readonly configStore: TeamAutoBuilderStore,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(TeamAutoBuilderConfigService.name);
   }
 
   async getConfig(): Promise<ITeamAutoBuilderConfigResponse | null> {
-    const doc = await this.configModel.findOne({}).lean().exec();
-    if (!doc) return null;
-    return this.toResponse(doc);
+    const row = await this.configStore.find();
+    if (!row) return null;
+    return this.toResponse(row);
   }
 
   async upsertConfig(dto: UpsertAutoBuilderConfigDto): Promise<ITeamAutoBuilderConfigResponse> {
-    const doc = await this.configModel
-      .findOneAndUpdate({}, { $set: dto }, { upsert: true, new: true })
-      .lean()
-      .exec();
+    const row = await this.configStore.upsert(dto);
 
     this.logger.log('Team auto-builder config updated', {
       modelId: dto.modelId,
       isEnabled: dto.isEnabled,
     });
 
-    return this.toResponse(doc!);
+    return this.toResponse(row);
   }
 
-  private toResponse(doc: Record<string, unknown>): ITeamAutoBuilderConfigResponse {
+  private toResponse(row: TeamAutoBuilderConfigRow & { updatedAt: Date }): ITeamAutoBuilderConfigResponse {
     return {
-      modelId: doc.modelId as string,
-      systemPrompt: doc.systemPrompt as string,
-      temperature: doc.temperature as number,
-      isEnabled: doc.isEnabled as boolean,
-      updatedAt: doc.updatedAt as Date,
+      modelId: row.modelId,
+      systemPrompt: row.systemPrompt,
+      temperature: row.temperature,
+      isEnabled: row.isEnabled,
+      updatedAt: row.updatedAt,
     };
   }
 }

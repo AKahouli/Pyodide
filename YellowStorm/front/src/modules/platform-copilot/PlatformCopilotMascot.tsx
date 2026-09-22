@@ -8,19 +8,17 @@ import { ResizablePanel } from '@/components/ui/resizable-panel';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Textarea } from '@/components/ui/textarea';
 import { ChatConversation, ChatConversationContent, ChatScrollButton } from '@/components/ai-elements/chat-conversation';
-import { AssistantMarkdown } from '@/components/ai-elements/assistant-response';
+import { MessageProvider } from '@/components/ai-elements/message-context';
 import { handleApiError } from '@/lib/api-error';
 import { useModuleTranslation } from '@/modules/localization';
 import { usePlaybookStore, usePlaybookUiStore } from '@/modules/playbook';
 import { buildChoiceInteractionIndex } from '@/modules/conversation/choice-interactions';
-import { getUserMessageDisplayText, normalizeChoiceComponentData } from '@/modules/conversation/utils';
+import { getUserMessageDisplayText } from '@/modules/conversation/utils';
 import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
-import { ChoicePartRenderer } from '@/components/ai-elements/choice/ChoicePartRenderer';
-import { ChoiceTabsQuestions } from '@/components/ai-elements/choice/ChoiceTabsQuestions';
 import type { Message as ConversationMessage, MessageComponent } from '@/modules/conversation/types';
+import { ConversationAssistantBubble } from '@/modules/conversation/components/activity/ConversationAssistantBubble';
 import { dedupePlatformCopilotUiTargets, executePlatformCopilotUiTarget, findUiTargets, getPlatformCopilotUiTargetIdentity } from './action-bus';
 import type { PlatformCopilotPageContext, PlatformCopilotUiTarget } from './types';
-import { PlatformCopilotActivity } from './PlatformCopilotActivity';
 import { PlatformCopilotHistoryDialog } from './PlatformCopilotHistoryDialog';
 import { usePlatformCopilotConversation } from './usePlatformCopilotConversation';
 import { usePlatformCopilotPanelStore } from './platformCopilotPanelStore';
@@ -170,29 +168,31 @@ export function PlatformCopilotMascot() {
   React.useEffect(() => {
     if (platformCopilot.error) handleApiError(platformCopilot.error);
   }, [platformCopilot.error]);
+  const persistedMessages = React.useMemo(() => platformCopilot.messages
+    .map((message) => toDisplayMessage(message))
+    .filter((message): message is Message => message !== null), [platformCopilot.messages]);
   const messages = React.useMemo(() => {
-    const persisted = platformCopilot.messages
-      .map((message) => {
-        const isStreaming = message.id === platformCopilot.streamingMessageId;
-        return toDisplayMessage({
-          ...message,
-          components: isStreaming ? platformCopilot.streamingComponents : message.components,
-        }, isStreaming);
-      })
-      .filter((message): message is Message => message !== null);
-    if (!platformCopilot.streamingMessageId || persisted.some((message) => message.id === platformCopilot.streamingMessageId)) return persisted;
+    if (!platformCopilot.streamingMessageId) return persistedMessages;
+    const persisted = platformCopilot.messages.find((message) => message.id === platformCopilot.streamingMessageId);
     const streaming = toDisplayMessage({
-      id: platformCopilot.streamingMessageId,
-      conversationId: platformCopilot.conversationId ?? '',
-      conversationType: 'ai',
+      ...(persisted ?? {
+        id: platformCopilot.streamingMessageId,
+        conversationId: platformCopilot.conversationId ?? '',
+        conversationType: 'ai' as const,
+        webSearchEnabled: false,
+        isComplete: false,
+        createdAt: new Date().toISOString(),
+      }),
       components: platformCopilot.streamingComponents,
-      webSearchEnabled: false,
       isStreaming: true,
-      isComplete: false,
-      createdAt: new Date().toISOString(),
     }, true);
-    return streaming ? [...persisted, streaming] : persisted;
-  }, [platformCopilot.conversationId, platformCopilot.messages, platformCopilot.streamingComponents, platformCopilot.streamingMessageId]);
+    if (!streaming) return persistedMessages;
+    const index = persistedMessages.findIndex((message) => message.id === streaming.id);
+    if (index < 0) return [...persistedMessages, streaming];
+    const next = [...persistedMessages];
+    next[index] = streaming;
+    return next;
+  }, [persistedMessages, platformCopilot.conversationId, platformCopilot.messages, platformCopilot.streamingComponents, platformCopilot.streamingMessageId]);
   const loading = platformCopilot.loading || Boolean(platformCopilot.streamingMessageId);
   const handoffExpired = Boolean(pendingHandoff && new Date(pendingHandoff.expiresAt).getTime() <= Date.now());
 
@@ -226,7 +226,11 @@ export function PlatformCopilotMascot() {
   const handleLauncherPointerUp = (event: React.PointerEvent<HTMLButtonElement>) => {
     const drag = launcherDragRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
-    suppressLauncherClickRef.current = drag.moved;
+    const handleTouchTap = event.pointerType === 'touch' && !drag.moved;
+    suppressLauncherClickRef.current = drag.moved || handleTouchTap;
+    if (suppressLauncherClickRef.current) {
+      window.setTimeout(() => { suppressLauncherClickRef.current = false; }, 0);
+    }
     if (drag.moved && launcherPositionRef.current) {
       setLauncherMovementAnnouncement(t('launcher.position', {
         x: Math.round(launcherPositionRef.current.left),
@@ -235,6 +239,10 @@ export function PlatformCopilotMascot() {
     }
     launcherDragRef.current = null;
     releaseLauncherPointer(event.currentTarget, event.pointerId);
+    if (handleTouchTap) {
+      hasOpenedRef.current = true;
+      openPanel();
+    }
   };
 
   const handleLauncherPointerCancel = (event: React.PointerEvent<HTMLButtonElement>) => {
@@ -414,41 +422,19 @@ export function PlatformCopilotMascot() {
                 ? 'rounded-2xl rounded-tr-sm bg-primary px-4 py-3 text-sm text-primary-foreground shadow-sm'
                 : 'min-w-0 max-w-full overflow-hidden text-sm leading-6 text-foreground'}>
                 {message.role === 'assistant' ? (
-                  <>
-                    <PlatformCopilotActivity components={message.components} isStreaming={message.isStreaming} />
-                    {message.text && <AssistantMarkdown>{message.text}</AssistantMarkdown>}
-                    {(() => {
-                      const pendingChoices = message.components
-                        .filter((component) => component.type === 'choice')
-                        .map((component) => ({ component, choice: normalizeChoiceComponentData(component.data) }))
-                        .filter((entry): entry is { component: MessageComponent & { type: 'choice' }; choice: NonNullable<ReturnType<typeof normalizeChoiceComponentData>> } => entry.choice !== null);
-                      const answered = (component: MessageComponent) => component.id ? Boolean(choiceInteractions.get(component.id)) : false;
-                      const pendingUnanswered = pendingChoices.filter((entry) => !answered(entry.component));
-                      if (pendingUnanswered.length > 1) {
-                        return (
-                          <div className='mt-3'>
-                            <ChoiceTabsQuestions
-                              questions={pendingUnanswered.map(({ component, choice }) => ({ componentId: component.id || '', choice }))}
-                              onSubmitAll={handleSubmitQuestions(message.id)}
-                              submittedInteractions={choiceInteractions}
-                              externallyDisabled={message.isStreaming}
-                            />
-                          </div>
-                        );
-                      }
-                      return pendingChoices.map(({ component, choice }) => (
-                        <div key={component.id || `choice-${choice.questionId}`} className='mt-3'>
-                          <ChoicePartRenderer
-                            componentId={component.id || ''}
-                            {...choice}
-                            onAction={(action) => handleChoiceAction(message.id, action)}
-                            submittedInteraction={component.id ? choiceInteractions.get(component.id) : undefined}
-                            externallyDisabled={message.isStreaming}
-                          />
-                        </div>
-                      ));
-                    })()}
-                  </>
+                  <MessageProvider isStreaming={message.isStreaming} isLastAiMessage>
+                    <ConversationAssistantBubble
+                      conversationId={platformCopilot.conversationId ?? ''}
+                      messageId={message.id}
+                      components={message.components}
+                      isStreaming={message.isStreaming}
+                      showWorking={message.isStreaming && message.components.length === 0}
+                      restrictActivityDetails
+                      choiceInteractions={choiceInteractions}
+                      onComponentAction={(action) => handleChoiceAction(message.id, action)}
+                      onSubmitQuestions={handleSubmitQuestions(message.id)}
+                    />
+                  </MessageProvider>
                 ) : <p className='whitespace-pre-wrap break-words'>{message.text}</p>}
               </div>
               {(() => {
@@ -627,7 +613,7 @@ function toDisplayMessage(message: ConversationMessage, isStreaming = false): Me
   const displayMessage: Message = {
     id: message.id,
     role: message.conversationType === 'user' ? 'user' : 'assistant',
-    text: message.conversationType === 'user' ? getUserMessageDisplayText(message) : getAssistantText(components),
+    text: message.conversationType === 'user' ? getUserMessageDisplayText(message) : '',
     components,
     isStreaming,
     targets: dedupePlatformCopilotUiTargets(components.flatMap((component) => findUiTargets(getToolResult(component)))),
@@ -636,21 +622,10 @@ function toDisplayMessage(message: ConversationMessage, isStreaming = false): Me
     && !displayMessage.text
     && !displayMessage.targets?.length
     && !isStreaming
-    && !components.some((component) => ['agentActivity', 'toolActivity', 'plan', 'queue', 'checkpoint', 'task', 'choice'].includes(component.type))) {
+    && components.length === 0) {
     return null;
   }
   return displayMessage;
-}
-
-function getAssistantText(components: MessageComponent[]): string {
-  return components
-    .filter((component) => component.type === 'text' || component.type === 'code' || component.type === 'error')
-    .map((component) => {
-      const content = component.data.content ?? component.data.text;
-      if (typeof content !== 'string') return '';
-      return component.type === 'error' ? `\n\n${content}` : content;
-    })
-    .join('');
 }
 
 function getToolResult(component: MessageComponent): unknown {

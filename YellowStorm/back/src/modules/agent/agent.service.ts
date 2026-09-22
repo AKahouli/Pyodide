@@ -1,6 +1,6 @@
 import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Types } from 'mongoose';
+import { isObjectId, newObjectId } from '@common/postgres/object-id';
 import { LoggerService } from '../logger';
 import { IAgentResponse, IAgentForStream, IGrpcAgent, IGrpcCompaction, ISharedAgentInfo } from './interfaces/agent.interface';
 import { AgentShareService } from './services/agent-share.service';
@@ -38,6 +38,7 @@ import { normalizeWidgetSettings } from './constants/widget-default-settings';
 import { AgentRepository, CreateAgentInput, UpdateAgentInput } from './repositories/agent.repository';
 import { AgentRecord } from './repositories/agent-record.mapper';
 import { AgentRoleEmbeddingService } from './services/agent-role-embedding.service';
+import { CHANNEL_TEARDOWN, type ChannelTeardown } from '../channels-teardown/channels-teardown.token';
 import {
   PLATFORM_COPILOT,
   PLATFORM_COPILOT_AGENT_SLUG,
@@ -102,10 +103,29 @@ export class AgentService {
     private readonly guardrailsSettingsService: GuardrailsSettingsService,
     private readonly agentRepository: AgentRepository,
     private readonly agentRoleEmbedding: AgentRoleEmbeddingService,
+    @Optional() @Inject(CHANNEL_TEARDOWN) private readonly channelTeardowns?: ChannelTeardown[],
     @Optional() private readonly connectorRuntimeService?: AgentConnectorRuntimeService,
     @Optional() private readonly systemService?: SystemService,
   ) {
     this.logger.setContext(AgentService.name);
+  }
+
+  /**
+   * Best-effort channel cleanup before the agent row disappears (plan 4.6):
+   * unregisters webhooks / revokes live tokens; the FK CASCADE only covers rows.
+   */
+  private async teardownChannels(agentId: string): Promise<void> {
+    for (const teardown of this.channelTeardowns ?? []) {
+      try {
+        await teardown.deleteForAgent(agentId);
+      } catch (error) {
+        this.logger.warn('Agent channel teardown failed', {
+          agentId,
+          teardown: teardown.constructor?.name,
+          error: (error as Error).message,
+        });
+      }
+    }
   }
 
   // ==========================================
@@ -136,7 +156,7 @@ export class AgentService {
 
     await this.skillService.findByIds([...(dto.skills ?? []), ...(dto.disabledSkills ?? [])]);
 
-    const id = new Types.ObjectId().toString();
+    const id = newObjectId();
     const agentTypeSlug = await this.resolveAgentTypeSlug(dto.agentType);
     const agent = await this.agentRepository.create(
       this.dtoToCreateInput(userId, dto, { id, isDefault: false, slug: normalizedSlug, agentTypeSlug }),
@@ -344,13 +364,16 @@ export class AgentService {
       throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_FORBIDDEN);
     }
 
+    // Channels first: webhooks/tokens must not outlive the agent row (plan 4.6).
+    await this.teardownChannels(agentId);
+
     await this.agentRepository.deleteById(agentId);
 
     // Keep teams consistent: drop this agent from any team that referenced it.
-    await this.teamService.removeAgentFromAllTeams(agentId);
+    // team_members cascade on agent delete; children re-root via ON DELETE SET NULL (plan 4.3).
 
     // Drop any shares pointing at the now-deleted agent.
-    await this.agentShareService.removeAllSharesForAgent(agentId);
+    // shared_agents cascade via the validated FK (plan 4.1).
 
     this.logger.log('Personal agent deleted', {
       agentId,
@@ -386,7 +409,7 @@ export class AgentService {
 
     await this.skillService.findByIds([...(dto.skills ?? []), ...(dto.disabledSkills ?? [])]);
 
-    const id = new Types.ObjectId().toString();
+    const id = newObjectId();
     const agentTypeSlug = await this.resolveAgentTypeSlug(dto.agentType);
     const agent = await this.agentRepository.create(
       this.dtoToCreateInput(adminUserId, dto, { id, isDefault: true, slug: normalizedSlug, agentTypeSlug }),
@@ -505,6 +528,9 @@ export class AgentService {
         'Platform Copilot technical identity is system-reserved',
       );
     }
+
+    // Channels first: webhooks/tokens must not outlive the agent row (plan 4.6).
+    await this.teardownChannels(agentId);
 
     await this.agentRepository.deleteById(agentId);
 
@@ -967,6 +993,7 @@ export class AgentService {
       nodeId?: string;
       iteration?: number;
     },
+    compaction?: IGrpcCompaction,
   ): Promise<IGrpcAgent[]> {
     if (agentIds.length === 0) return [];
 
@@ -1007,7 +1034,7 @@ export class AgentService {
         .map((a) => a.model || inheritedDefaultModelId)
         .filter(Boolean) as string[],
     )];
-    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[]; reasoningEfforts: string[] }>();
+    const modelMap = new Map<string, { model: string; omitTemperature: boolean; inputModalities: string[]; reasoningEfforts: string[]; maxInputTokens?: number }>();
     if (allModelIds.length > 0) {
       const modelResults = await Promise.all(
         allModelIds.map((id) => this.modelsService.findById(id)),
@@ -1018,6 +1045,7 @@ export class AgentService {
           omitTemperature: m.omitTemperature,
           inputModalities: m.inputModalities,
           reasoningEfforts: m.supportsReasoning ? m.reasoning.efforts.map((effort) => effort.id) : [],
+          maxInputTokens: m.maxInputTokens ?? undefined,
         });
       }
     }
@@ -1137,6 +1165,8 @@ export class AgentService {
             model: proxyModel,
             input_modalities: resolvedModel?.inputModalities || ['text'],
             ...(effectiveReasoningEffort ? { reasoning_effort: effectiveReasoningEffort } : {}),
+            ...(resolvedModel?.maxInputTokens ? { context_window_tokens: resolvedModel.maxInputTokens } : {}),
+            ...(compaction ? { compaction } : {}),
           },
           agent_params: {
             params: {
@@ -1182,9 +1212,9 @@ export class AgentService {
   }
 
   /** Trusted governed-runtime path: exact published roster with pinned knowledge. */
-  async buildGovernedAgentsForStream(userId: string, agentIds: string[], workspaceIds: string[], fallbackModelId?: string): Promise<IGrpcAgent[]> {
+  async buildGovernedAgentsForStream(userId: string, agentIds: string[], workspaceIds: string[], compaction?: IGrpcCompaction, fallbackModelId?: string): Promise<IGrpcAgent[]> {
     const requestedIds = [...new Set(agentIds)];
-    const agents = await this.buildGrpcAgentsForPlaybook(userId, requestedIds, fallbackModelId);
+    const agents = await this.buildGrpcAgentsForPlaybook(userId, requestedIds, fallbackModelId, undefined, undefined, compaction);
     const builtIds = new Set(agents.map((agent) => agent.id));
     if (requestedIds.some((id) => !builtIds.has(id))) {
       throw new NotFoundException(ErrorCode.AGENT_NOT_FOUND, 'One or more published assistants are unavailable');
@@ -1599,7 +1629,7 @@ export class AgentService {
   }
 
   async assertActiveDefaultAgent(agentId: string): Promise<void> {
-    if (!Types.ObjectId.isValid(agentId)) {
+    if (!isObjectId(agentId)) {
       throw new BadRequestException(ErrorCode.AGENT_UNAVAILABLE, 'The selected decision-flow agent is invalid');
     }
     const exists = await this.agentRepository.existsActiveDefault(agentId);
@@ -1646,7 +1676,7 @@ export class AgentService {
   }
 
   async findPlaybookPlannerById(agentId: string): Promise<PlaybookPlannerAgentConfig> {
-    if (!Types.ObjectId.isValid(agentId)) {
+    if (!isObjectId(agentId)) {
       throw new BadRequestException(ErrorCode.PLAYBOOK_PLANNER_UNAVAILABLE, 'The selected Playbook Planner agent is invalid');
     }
     const record = await this.agentRepository.findById(agentId);
@@ -1863,7 +1893,7 @@ export class AgentService {
   private normalizeConnectorActionSelections(
     connectorIds: string[] | undefined,
     selections?: Array<{ connectorId: string; actionKeys: string[] }>,
-  ): Array<{ connector: Types.ObjectId; actionKeys: string[] }> {
+  ): Array<{ connector: string; actionKeys: string[] }> {
     if (!connectorIds?.length || !selections?.length) {
       return [];
     }
@@ -1889,11 +1919,11 @@ export class AgentService {
         }
 
         return {
-          connector: new Types.ObjectId(selection.connectorId),
+          connector: selection.connectorId,
           actionKeys,
         };
       })
-      .filter(Boolean) as Array<{ connector: Types.ObjectId; actionKeys: string[] }>;
+      .filter(Boolean) as Array<{ connector: string; actionKeys: string[] }>;
   }
 
   private buildConnectorActionKeysByConnectorId(

@@ -297,15 +297,11 @@ export class AgentRepository {
     await this.db.update(agents).set({ isDefaultForType: false }).where(and(...conds));
   }
 
-  async pullToolFromAll(toolId: string): Promise<void> {
-    await this.db.delete(agentTools).where(eq(agentTools.toolId, toolId));
-  }
-  async pullSkillFromAll(skillId: string): Promise<void> {
-    await this.db.delete(agentSkills).where(eq(agentSkills.skillId, skillId));
-  }
-  async pullDisabledSkillFromAll(skillId: string): Promise<void> {
-    await this.db.delete(agentDisabledSkills).where(eq(agentDisabledSkills.skillId, skillId));
-  }
+  // pullToolFromAll / pullSkillFromAll / pullDisabledSkillFromAll were removed
+  // with the 1B.4 catalog cutover: agent_tools / agent_skills /
+  // agent_disabled_skills cascade from catalog.tools / catalog.skills via
+  // validated FKs, so deleting a tool or skill cleans the junctions itself.
+
   async pullKnowledgeBaseFromAll(workspaceId: string): Promise<void> {
     await this.db.delete(agentKnowledgeBases).where(eq(agentKnowledgeBases.workspaceId, workspaceId));
   }

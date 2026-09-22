@@ -11,7 +11,7 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { SkillFileKind } from '../schemas/skill.schema';
+import { SkillFileKind } from '../skill.types';
 
 export class SkillFileDto {
   @ApiProperty({ description: 'Relative path inside the skill package, e.g. references/REFERENCE.md' })

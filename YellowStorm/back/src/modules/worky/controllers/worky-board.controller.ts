@@ -5,7 +5,7 @@ import { Model, Types } from 'mongoose';
 import { WorkyStreamAccessGuard } from '../guards/worky-stream-access.guard';
 import { WorkyTaskService, IBoardTaskView, BoardLane, BOARD_LANES } from '../services/worky-task.service';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
 import { Permissions } from '../../authorization/constants/permissions';
 import { WorkyInteraction } from '../schemas/worky-interaction.schema';
@@ -47,7 +47,7 @@ export class WorkyBoardController {
   @ApiOperation({ summary: 'Get the six-lane Kanban projection for a stream' })
   @ApiParam({ name: 'id', description: 'Stream id' })
   async board(
-    @CurrentUser() _user: UserDocument,
+    @CurrentUser() _user: AuthUser,
     @Param('id') streamId: string,
   ): Promise<WorkyBoardResponse> {
     const streamObjectId = new Types.ObjectId(streamId);

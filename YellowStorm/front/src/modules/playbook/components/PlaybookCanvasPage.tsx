@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { useParams, useNavigate, useSearchParams, useLocation, useBlocker } from 'react-router-dom';
 import { ArrowLeft, Loader2, PanelRightOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { ReactFlowProvider, useReactFlow, getNodesBounds, type Edge, type Node } from '@xyflow/react';
+import { foldIteratorGraph } from '../utils/fold-iterator-graph';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { PlaybookStarterPanel } from './PlaybookStarterPanel';
 import '@xyflow/react/dist/style.css';
 
 import { Button } from '@/components/ui/button';
@@ -62,7 +64,7 @@ import { CommunityGraphPanel } from './CommunityGraphPanel';
 import { useAgentStore, useDefaultAgents } from '@/modules/agent/store';
 import { autoLayoutTasks } from '../utils/auto-layout';
 import { isIntentIteratorTask } from '../utils/intent-task-template';
-import { usePlaybookCanvas, type TriggerNodeActions } from '../hooks/usePlaybookCanvas';
+import { usePlaybookCanvas, type TriggerNodeActions, type EmptyConnectDrop } from '../hooks/usePlaybookCanvas';
 import { usePlaybookCanvasNodeHandlers, type PlaybookBindingModalState } from '../hooks/usePlaybookCanvasNodeHandlers';
 import { usePlaybookCanvasPageHandlers } from '../hooks/usePlaybookCanvasPageHandlers';
 import { buildPlaybookRunOptions, usePlaybookCanvasExecutionHandlers } from '../hooks/usePlaybookCanvasExecutionHandlers';
@@ -71,7 +73,15 @@ import { flowEdgesToControlEdges, flowEdgesToPlaybookEdges } from '../hooks/help
 import { dataBindingsToLayerEdges, filterMirroredDataLayerEdges } from '../hooks/helpers/data-binding-serializer';
 import { tasksToNodes, TRIGGER_NODE_ID } from '../hooks/helpers/node-serializer';
 import { useAutosave } from '../hooks/useAutosave';
-import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, ConnectionDragContext, type NodeContextMenuActions } from './PlaybookNode';
+
+const NODE_INSPECTOR_DEFAULT_WIDTH = 520;
+const NODE_INSPECTOR_MIN_WIDTH = 400;
+const NODE_INSPECTOR_MAX_WIDTH = 720;
+const getNodeInspectorMaxWidth = () => Math.max(
+  NODE_INSPECTOR_MIN_WIDTH,
+  Math.min(NODE_INSPECTOR_MAX_WIDTH, Math.floor(window.innerWidth * 0.6)),
+);
+import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, ConnectionDragContext, CardDensityContext, CanvasDesignContext, type NodeContextMenuActions } from './PlaybookNode';
 import { DynamicReasoningRuntimeNode } from './runtime/DynamicReasoningRuntimeNode';
 import { DynamicReasoningRuntimeContainerNode } from './runtime/DynamicReasoningRuntimeContainerNode';
 import { useExecutionFocusGraph } from '../hooks/useExecutionFocusGraph';
@@ -82,6 +92,13 @@ import { RouterNode } from './RouterNode';
 import { HumanApprovalNode } from './HumanApprovalNode';
 import { ConditionalEdge } from './ConditionalEdge';
 import { DataBindingEdge } from './DataBindingEdge';
+import { NextStepPicker, templateToCandidate, usePresetCandidates, type PickerCandidate } from './NextStepPicker';
+import { EdgeInsertContext, makeInsertableEdge } from './InsertStepEdge';
+import {
+  blueprintCanInsertOnEdge,
+  type BlueprintTitles,
+  type StepBlueprint,
+} from '../utils/step-creation';
 import { PlaybookOverviewCanvas } from './PlaybookOverviewCanvas';
 import { PlaybookNodeEditor, type PlaybookNodeEditorHandle } from './PlaybookNodeEditor';
 import { PlaybookStatusActions, PlaybookToolbar } from './PlaybookToolbar';
@@ -580,6 +597,9 @@ function PlaybookCanvasInner() {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [canvasViewMode, setCanvasViewMode] = useState<CanvasViewMode>('expanded');
+  const [starterDismissed, setStarterDismissed] = useState(false);
+  const [starterTaskIds, setStarterTaskIds] = useState<string[]>([]);
+  useEffect(() => { setStarterDismissed(false); setStarterTaskIds([]); }, [id]);
   const [executionViewMode, setExecutionViewMode] = useState<ExecutionViewMode>('full');
   const [loadedPlaybookId, setLoadedPlaybookId] = useState<string | null>(null);
   const { t } = useModuleTranslation('playbook');
@@ -662,6 +682,46 @@ function PlaybookCanvasInner() {
   const autoLayoutAppliedPlaybookRef = useRef<string | null>(null);
   const globalSidebarOpenRef = useRef(setGlobalSidebarOpen);
 
+  // ---- Shared next-step picker (creation entry points) ----
+  interface NextStepPickerState {
+    origin: 'node-plus' | 'drag-empty' | 'edge-insert';
+    sourceNodeId: string | null;
+    sourceHandleId: string | null;
+    edgeId: string | null;
+    screenAnchor: { x: number; y: number };
+    flowPosition: { x: number; y: number };
+  }
+  const [nextStepPicker, setNextStepPicker] = useState<NextStepPickerState | null>(null);
+
+  const [compactCards, setCompactCards] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('ys_playbook_compact_cards') !== '0';
+    } catch {
+      return true;
+    }
+  });
+
+  const toggleCompactCards = useCallback(() => {
+    const next = !compactCards;
+    try {
+      localStorage.setItem('ys_playbook_compact_cards', next ? '1' : '0');
+    } catch {
+      // Private-mode browsers: preference not persisted, UI still toggles.
+    }
+    setCompactCards(next);
+  }, [compactCards]);
+
+  const openPickerFromEmptyDrop = useCallback((drop: EmptyConnectDrop) => {
+    setNextStepPicker({
+      origin: 'drag-empty',
+      sourceNodeId: drop.nodeId,
+      sourceHandleId: drop.handleId,
+      edgeId: null,
+      screenAnchor: drop.screenPosition,
+      flowPosition: drop.flowPosition,
+    });
+  }, []);
+
   useEffect(() => {
     globalSidebarOpenRef.current = setGlobalSidebarOpen;
   }, [setGlobalSidebarOpen]);
@@ -727,7 +787,10 @@ function PlaybookCanvasInner() {
     cutSelection,
     pasteClipboard,
     artifactKindMismatch,
-  } = usePlaybookCanvas(triggerNodeActions);
+    isValidConnection,
+    createConnectedTask,
+    insertTaskOnEdge,
+  } = usePlaybookCanvas(triggerNodeActions, { onConnectDropOnEmpty: openPickerFromEmptyDrop });
 
   const fitCanvasToNodes = useCallback(() => {
     window.requestAnimationFrame(() => {
@@ -771,6 +834,11 @@ function PlaybookCanvasInner() {
   const [dataBindingsVisible, setDataBindingsVisible] = useState(false);
   const editorOpen = usePlaybookStore((s) => s.nodeEditorOpen);
   const setEditorOpen = usePlaybookStore((s) => s.setNodeEditorOpen);
+  const [nodeInspectorWidth, setNodeInspectorWidth] = useState(NODE_INSPECTOR_DEFAULT_WIDTH);
+  const [nodeInspectorMaxWidth, setNodeInspectorMaxWidth] = useState(getNodeInspectorMaxWidth);
+  const nodeInspectorResizeDragging = useRef(false);
+  const nodeInspectorResizeStartX = useRef(0);
+  const nodeInspectorResizeStartWidth = useRef(0);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState('');
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
@@ -800,6 +868,168 @@ function PlaybookCanvasInner() {
   const viewExecutionInPanel = usePlaybookStore((s) => s.viewExecutionInPanel);
   const addToolBindingToTask = usePlaybookStore((s) => s.addToolBindingToTask);
   const addSkillBindingToTask = usePlaybookStore((s) => s.addSkillBindingToTask);
+
+  const clampNodeInspectorWidth = useCallback((width: number) => {
+    return Math.min(nodeInspectorMaxWidth, Math.max(NODE_INSPECTOR_MIN_WIDTH, width));
+  }, [nodeInspectorMaxWidth]);
+
+  useEffect(() => {
+    const syncNodeInspectorBounds = () => {
+      if (window.innerWidth < 1024) return;
+      const nextMax = getNodeInspectorMaxWidth();
+      setNodeInspectorMaxWidth(nextMax);
+      setNodeInspectorWidth((current) => Math.min(nextMax, Math.max(NODE_INSPECTOR_MIN_WIDTH, current)));
+    };
+    window.addEventListener('resize', syncNodeInspectorBounds);
+    return () => window.removeEventListener('resize', syncNodeInspectorBounds);
+  }, []);
+
+  const handleNodeInspectorResizeStart = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    nodeInspectorResizeDragging.current = true;
+    nodeInspectorResizeStartX.current = event.clientX;
+    nodeInspectorResizeStartWidth.current = nodeInspectorWidth;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }, [nodeInspectorWidth]);
+
+  const handleNodeInspectorResizeMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!nodeInspectorResizeDragging.current) return;
+    const delta = nodeInspectorResizeStartX.current - event.clientX;
+    setNodeInspectorWidth(clampNodeInspectorWidth(nodeInspectorResizeStartWidth.current + delta));
+  }, [clampNodeInspectorWidth]);
+
+  const handleNodeInspectorResizeEnd = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!nodeInspectorResizeDragging.current) return;
+    nodeInspectorResizeDragging.current = false;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }, []);
+
+  const handleNodeInspectorResizeKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Home') {
+      event.preventDefault();
+      setNodeInspectorWidth(clampNodeInspectorWidth(NODE_INSPECTOR_DEFAULT_WIDTH));
+      return;
+    }
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const delta = event.shiftKey ? 32 : 16;
+    setNodeInspectorWidth((current) => clampNodeInspectorWidth(current + (event.key === 'ArrowLeft' ? delta : -delta)));
+  }, [clampNodeInspectorWidth]);
+
+  // ---- Shared next-step picker commits (all entry points share graph mutations) ----
+  const flowNodeTemplates = usePlaybookStore((s) => s.flowNodeTemplates);
+  const presetCandidates = usePresetCandidates();
+  const blueprintTitles: BlueprintTitles = useMemo(() => ({
+    blankStep: t('nextStep.blankStepTitle'),
+    router: t('toolbar.addRouterNode'),
+    humanApproval: t('toolbar.addHumanApprovalNode'),
+  }), [t]);
+
+  const openPickerFromNodePlus = useCallback((nodeId: string, anchor: { x: number; y: number }) => {
+    const node = nodes.find((n) => n.id === nodeId);
+    if (!node) return;
+    // Iterator children store parent-relative positions; resolve to absolute.
+    const parent = node.parentId ? nodes.find((n) => n.id === node.parentId) : null;
+    const baseX = (parent ? parent.position.x : 0) + node.position.x;
+    const baseY = (parent ? parent.position.y : 0) + node.position.y;
+    setNextStepPicker({
+      origin: 'node-plus',
+      sourceNodeId: nodeId,
+      sourceHandleId: null,
+      edgeId: null,
+      screenAnchor: anchor,
+      flowPosition: { x: baseX + 320, y: baseY },
+    });
+  }, [nodes]);
+
+  const openPickerFromEdgeInsert = useCallback((edgeId: string) => {
+    const edge = edges.find((e) => e.id === edgeId);
+    if (!edge) return;
+    const source = nodes.find((n) => n.id === edge.source);
+    const target = nodes.find((n) => n.id === edge.target);
+    if (!source || !target) return;
+    const mid = {
+      x: (source.position.x + target.position.x) / 2,
+      y: (source.position.y + target.position.y) / 2,
+    };
+    setNextStepPicker({
+      origin: 'edge-insert',
+      sourceNodeId: edge.source,
+      sourceHandleId: edge.sourceHandle ?? null,
+      edgeId,
+      screenAnchor: reactFlow.flowToScreenPosition(mid),
+      flowPosition: mid,
+    });
+  }, [edges, nodes, reactFlow]);
+
+  const edgeInsertKinds = useMemo(() => {
+    if (!nextStepPicker?.edgeId) return null;
+    const edge = edges.find((e) => e.id === nextStepPicker.edgeId);
+    if (!edge) return null;
+    const sourceData = nodes.find((n) => n.id === edge.source)?.data as PlaybookNodeData | undefined;
+    const targetData = nodes.find((n) => n.id === edge.target)?.data as PlaybookNodeData | undefined;
+    return {
+      source: sourceData?.outputPorts?.find((p) => p.id === (edge.sourceHandle ?? 'default'))?.artifactKind,
+      target: targetData?.inputPorts?.find((p) => p.id === (edge.targetHandle ?? 'default'))?.artifactKind,
+    };
+  }, [edges, nextStepPicker?.edgeId, nodes]);
+
+  const pickerCandidates = useMemo<PickerCandidate[]>(() => {
+    if (!nextStepPicker) return [];
+    const base = [...presetCandidates, ...flowNodeTemplates.map(templateToCandidate)];
+    if (nextStepPicker.origin !== 'edge-insert' || !edgeInsertKinds) return base;
+    return base.filter((candidate) =>
+      blueprintCanInsertOnEdge(candidate.blueprint, edgeInsertKinds.source, edgeInsertKinds.target));
+  }, [edgeInsertKinds, flowNodeTemplates, nextStepPicker, presetCandidates]);
+
+  const pickerOutputChoices = useMemo(() => {
+    if (!nextStepPicker || nextStepPicker.origin !== 'node-plus'
+      || !nextStepPicker.sourceNodeId || nextStepPicker.sourceHandleId) {
+      return null;
+    }
+    const data = nodes.find((n) => n.id === nextStepPicker.sourceNodeId)?.data as PlaybookNodeData | undefined;
+    const ports = data?.outputPorts ?? [];
+    if (ports.length <= 1) return null;
+    return ports.map((port) => ({ id: port.id, label: port.name || port.id }));
+  }, [nextStepPicker, nodes]);
+
+  const handlePickerChoose = useCallback((candidate: PickerCandidate) => {
+    if (!nextStepPicker) return;
+    // Flush the open draft BEFORE committing: the creation commit captures the
+    // task array it persists, so the flush must land in the store first or the
+    // deferred creation write would overwrite the just-flushed edits.
+    if (editorOpen && editingTask) {
+      nodeEditorRef.current?.flushSave();
+    }
+    let created: PlaybookTask | null = null;
+    if (nextStepPicker.origin === 'edge-insert' && nextStepPicker.edgeId) {
+      created = insertTaskOnEdge(nextStepPicker.edgeId, candidate.blueprint, { titles: blueprintTitles });
+    } else {
+      const position = nextStepPicker.origin === 'drag-empty'
+        ? { x: nextStepPicker.flowPosition.x - 120, y: nextStepPicker.flowPosition.y - 30 }
+        : nextStepPicker.flowPosition;
+      created = createConnectedTask(candidate.blueprint, {
+        position,
+        titles: blueprintTitles,
+        source: nextStepPicker.sourceNodeId
+          ? { nodeId: nextStepPicker.sourceNodeId, sourcePortId: nextStepPicker.sourceHandleId }
+          : null,
+      });
+    }
+    setNextStepPicker(null);
+    if (created) {
+      setEditingTask(created);
+      setEditorInitialView('setup');
+      setEditorOpen(true);
+    }
+  }, [blueprintTitles, createConnectedTask, editingTask, editorOpen, insertTaskOnEdge, nextStepPicker, nodeEditorRef, setEditorOpen]);
+
+  const handlePickerResolveOutput = useCallback((outputId: string) => {
+    setNextStepPicker((current) => (current ? { ...current, sourceHandleId: outputId } : current));
+  }, []);
+
+  const cancelNextStepPicker = useCallback(() => setNextStepPicker(null), []);
 
   const [bindingModalState, setBindingModalState] = useState<PlaybookBindingModalState | null>(null);
 
@@ -1315,10 +1545,24 @@ function PlaybookCanvasInner() {
         e.preventDefault();
         void pasteClipboard();
       }
+      // Enter on a focused canvas node opens its inspector (keyboard alternative to click).
+      if (e.key === 'Enter' && activeEl instanceof HTMLElement && activeEl.classList.contains('react-flow__node')) {
+        const nodeId = activeEl.getAttribute('data-id');
+        const taskFromPlaybook = nodeId ? playbook?.tasks.find((task) => task.id === nodeId) : null;
+        if (taskFromPlaybook && pageMode === 'design') {
+          e.preventDefault();
+          if (editorOpen && editingTask && editingTask.id !== taskFromPlaybook.id) {
+            nodeEditorRef.current?.flushSave();
+          }
+          setEditingTask(taskFromPlaybook);
+          setEditorInitialView('setup');
+          setEditorOpen(true);
+        }
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [canUndo, canRedo, canvasViewMode, constructionActive, undo, redo, copySelection, cutSelection, pasteClipboard]);
+  }, [canUndo, canRedo, canvasViewMode, constructionActive, editingTask, editorOpen, nodeEditorRef, pageMode, playbook?.tasks, redo, undo, copySelection, cutSelection, pasteClipboard, setEditingTask, setEditorInitialView, setEditorOpen]);
 
   // Refresh usage indicator when execution ends, generation or design completes
   const prevIsGenerating = useRef(isGenerating);
@@ -1349,9 +1593,9 @@ function PlaybookCanvasInner() {
     dynamicReasoningRuntimeContainer: DynamicReasoningRuntimeContainerNode,
   }), []);
   const edgeTypes = useMemo(() => ({
-    animated: AiEdge.Animated,
-    'animated-warning': AiEdge.AnimatedWarning,
-    conditional: ConditionalEdge,
+    animated: makeInsertableEdge(AiEdge.Animated),
+    'animated-warning': makeInsertableEdge(AiEdge.AnimatedWarning, 16),
+    conditional: makeInsertableEdge(ConditionalEdge, 18),
     dataBinding: DataBindingEdge,
   }), []);
   const executionForCanvas =
@@ -1444,19 +1688,19 @@ function PlaybookCanvasInner() {
       }
 
       const currentData = node.data as PlaybookNodeData;
-      const status = stepStatusMap.get(node.id);
-      const semanticMatch = stepSemanticMatchMap.get(node.id);
+      const status = pageMode === 'run' ? stepStatusMap.get(node.id) : undefined;
+      const semanticMatch = pageMode === 'run' ? stepSemanticMatchMap.get(node.id) : undefined;
       const judgeStatus = stepJudgeStatusMap.get(node.id);
       const judgeResult = stepJudgeResultMap.get(node.id);
-      const routerLabel = activeRouterLabelMap.get(node.id);
+      const routerLabel = pageMode === 'run' ? activeRouterLabelMap.get(node.id) : undefined;
       const nextSelected = resolveCanvasNodeSelection(selectedNodeIds, selectedNodeCount, node.id, selectedStepId);
       const nextData = {
         ...currentData,
         stepStatus: status,
-        ...(semanticMatch !== undefined ? { stepSemanticMatch: semanticMatch } : {}),
-        ...(judgeStatus !== undefined ? { stepJudgeStatus: judgeStatus } : {}),
-        ...(judgeResult !== undefined ? { stepJudgeResult: judgeResult } : {}),
-        ...(routerLabel !== undefined ? { activeRouterLabel: routerLabel } : {}),
+        stepSemanticMatch: semanticMatch,
+        stepJudgeStatus: judgeStatus,
+        stepJudgeResult: judgeResult,
+        activeRouterLabel: routerLabel,
       } as PlaybookNodeData;
 
       const dataChanged = currentData.stepStatus !== nextData.stepStatus
@@ -1475,7 +1719,7 @@ function PlaybookCanvasInner() {
         data: nextData,
       };
     });
-  }, [nodes, selectedStepId, stepStatusMap, stepSemanticMatchMap, stepJudgeStatusMap, stepJudgeResultMap, activeRouterLabelMap, triggerNodeActions, playbook?.id, mailTrigger?.enabled]);
+  }, [nodes, pageMode, selectedStepId, stepStatusMap, stepSemanticMatchMap, stepJudgeStatusMap, stepJudgeResultMap, activeRouterLabelMap, triggerNodeActions, playbook?.id, mailTrigger?.enabled]);
 
   const canvasNodes = useMemo(() => liveNodes.map((node) => ({
     ...node,
@@ -1489,7 +1733,7 @@ function PlaybookCanvasInner() {
   const styledControlEdges = useMemo(() => {
     if (stepStatusMap.size === 0 && recentlyChangedEdgeIds.length === 0) return edges;
     return edges.map((edge): Edge => {
-      const sourceStatus = stepStatusMap.get(edge.source) ?? 'pending';
+      const sourceStatus = pageMode === 'run' ? stepStatusMap.get(edge.source) ?? 'pending' : 'pending';
       const style = EDGE_STYLES[sourceStatus] || EDGE_STYLES.pending;
       const isRecent = recentlyChangedEdgeIds.includes(edge.id);
       const nextStyle = isRecent
@@ -1511,7 +1755,7 @@ function PlaybookCanvasInner() {
         },
       };
     });
-  }, [edges, recentlyChangedEdgeIds, stepStatusMap]);
+  }, [edges, pageMode, recentlyChangedEdgeIds, stepStatusMap]);
 
   const liveEdges = useMemo(() => {
     if (!playbook || !dataBindingsVisible) {
@@ -1556,18 +1800,31 @@ function PlaybookCanvasInner() {
     onToggleContainer: handleToggleRuntimeContainer,
   }), [handleToggleRuntimeContainer, runtimeContainerExpansion]);
   const executionRuntimeGraph = useExecutionFocusGraph(executionForCanvas, canvasNodes, liveEdges, runtimeGraphOptions);
-  const renderedCanvasNodes = useMemo(
+  const [collapsedIterators, setCollapsedIterators] = useState<Set<string>>(() => new Set());
+  useEffect(() => { setCollapsedIterators(new Set()); }, [id]);
+  const toggleIteratorCollapsed = useCallback((nodeId: string) => {
+    setCollapsedIterators((current) => {
+      const next = new Set(current);
+      if (next.has(nodeId)) next.delete(nodeId); else next.add(nodeId);
+      return next;
+    });
+  }, []);
+  const unfoldedCanvasNodes = useMemo(
     () => executionViewMode === 'focus'
       ? executionRuntimeGraph.focusNodes
       : [...executionRuntimeGraph.inlineCanvasNodes, ...executionRuntimeGraph.inlineNodes],
     [executionRuntimeGraph.focusNodes, executionRuntimeGraph.inlineCanvasNodes, executionRuntimeGraph.inlineNodes, executionViewMode],
   );
-  const renderedCanvasEdges = useMemo(
+  const unfoldedCanvasEdges = useMemo(
     () => executionViewMode === 'focus'
       ? executionRuntimeGraph.focusEdges
       : [...liveEdges, ...executionRuntimeGraph.inlineEdges],
     [executionRuntimeGraph.focusEdges, executionRuntimeGraph.inlineEdges, executionViewMode, liveEdges],
   );
+  const foldedCanvas = useMemo(() => foldIteratorGraph(unfoldedCanvasNodes, unfoldedCanvasEdges, collapsedIterators),
+    [unfoldedCanvasNodes, unfoldedCanvasEdges, collapsedIterators]);
+  const renderedCanvasNodes = foldedCanvas.nodes;
+  const renderedCanvasEdges = foldedCanvas.edges;
   const runtimeViewportNodes = useMemo(() => {
     if (executionViewMode === 'focus') return executionRuntimeGraph.focusNodes;
     return [
@@ -4084,8 +4341,6 @@ function PlaybookCanvasInner() {
 
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: any) => {
-      if (editorOpen) setEditorOpen(false);
-
       const executionForSelection =
         currentExecution?.playbookId === id
           ? currentExecution
@@ -4103,13 +4358,35 @@ function PlaybookCanvasInner() {
       selectStep(node.id);
 
       if (pageMode === 'design') {
+        // Single click selects the step and opens its inspector; a completed
+        // drag never reaches this handler (React Flow click-vs-drag threshold).
+        const taskFromPlaybook = playbook?.tasks.find((task) => task.id === node.id);
+        if (taskFromPlaybook) {
+          // Flush the previous step's draft so switching never discards edits.
+          if (editorOpen && editingTask && editingTask.id !== node.id) {
+            nodeEditorRef.current?.flushSave();
+          }
+          setEditingTask(taskFromPlaybook);
+          setEditorInitialView('setup');
+          setEditorOpen(true);
+        }
         return;
       }
 
       setExecutionPanelOpen(true);
     },
-    [currentExecution, editorOpen, execution, id, pageMode, selectStep, setEditorOpen, setExecutionPanelOpen, setPageMode, viewExecutionInPanel],
+    [currentExecution, editingTask, editorOpen, execution, id, nodeEditorRef, pageMode, playbook?.tasks, selectStep, setEditingTask, setEditorInitialView, setEditorOpen, setExecutionPanelCollapsed, setExecutionPanelOpen, setPageMode, viewExecutionInPanel],
   );
+
+  // Closing the inspector returns focus to the selected node (keyboard flow).
+  useEffect(() => {
+    if (!editorOpen && selectedStepId) {
+      document
+        .querySelector<HTMLElement>(`.react-flow__node[data-id="${selectedStepId}"]`)
+        ?.focus();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editorOpen]);
 
   const handleEdgeDoubleClick = useCallback(
     (_event: React.MouseEvent, edge: Edge) => {
@@ -4441,6 +4718,15 @@ function PlaybookCanvasInner() {
       />
 
       {/* Main content area with optional workspace explorer */}
+      {starterTaskIds.length > 0 && playbook?.tasks.some((task) => task.id === starterTaskIds[0]) && (
+        <div className="flex flex-wrap items-center gap-2 border-b bg-muted/20 px-4 py-2" aria-label={t('starter.title')}>
+          <span className="text-xs text-muted-foreground">{t('starter.inputDone')}</span>
+          <Button variant="ghost" size="sm" onClick={() => handleEditNode(starterTaskIds[0])}>{t('starter.editInput')}</Button>
+          <Button variant="outline" size="sm" onClick={() => handleEditNode(starterTaskIds[1] || starterTaskIds[0])}>{t('starter.adapt')}</Button>
+          <Button size="sm" disabled={!canRunWithInputs} onClick={handleRunRequest}>{t('starter.test')}</Button>
+          <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setStarterTaskIds([])}>{t('starter.dismiss')}</Button>
+        </div>
+      )}
       <TooltipProvider delayDuration={300}>
       <div className="flex flex-1 overflow-hidden">
         {/* Workspace Explorer Sidebar */}
@@ -4468,6 +4754,12 @@ function PlaybookCanvasInner() {
               }
             }}
           >
+            {playbook?.tasks.length === 0 && !starterDismissed && !constructionActive && (
+              <div className="absolute inset-0 z-40 overflow-auto bg-background p-4 sm:p-8">
+                <PlaybookStarterPanel initialKey={searchParams.get('starter')} onDismiss={() => setStarterDismissed(true)}
+                  onApplied={(taskIds) => { setStarterTaskIds(taskIds); setStarterDismissed(true); }} />
+              </div>
+            )}
             <div
               ref={canvasViewModeRef}
               className="absolute left-3 top-3 z-30 inline-flex rounded-full border bg-background/95 p-1 shadow-sm sm:left-4 sm:top-4"
@@ -4503,12 +4795,16 @@ function PlaybookCanvasInner() {
               />
             ) : (
             <NodeContextMenuContext.Provider value={nodeContextMenuActions}>
-              <NodeDataActionsContext.Provider value={{ updateNodeData, setIteratorNodeSize, resizeIteratorNode: handleResizeIteratorNode, repackIteratorChildren: handleRepackIteratorChildren, openOutputFormatEditor, onConnectorDrop: handleConnectorDrop, onSkillDrop: handleSkillDrop }}>
+              <NodeDataActionsContext.Provider value={{ updateNodeData, toggleIteratorCollapsed, setIteratorNodeSize, resizeIteratorNode: handleResizeIteratorNode, repackIteratorChildren: handleRepackIteratorChildren, openOutputFormatEditor, onConnectorDrop: handleConnectorDrop, onSkillDrop: handleSkillDrop, onAddNextStep: openPickerFromNodePlus }}>
                 <ConnectionDragContext.Provider value={{ hoveredTargetId: connectionDragHoveredId }}>
+                <EdgeInsertContext.Provider value={{ onInsertStep: openPickerFromEdgeInsert }}>
+                <CardDensityContext.Provider value={compactCards}>
+                <CanvasDesignContext.Provider value={pageMode === 'design'}>
                 <Canvas
                   nodes={renderedCanvasNodes}
                   edges={renderedCanvasEdges}
-                  onNodesChange={onNodesChange}
+                  onNodesChange={(changes) => onNodesChange(changes.filter((change) =>
+                    change.type !== 'dimensions' || !foldedCanvas.collapsed.has(change.id)))}
                   onNodeDragStop={onNodeDragStop}
                   onEdgesChange={onEdgesChange}
                   onConnect={onConnect}
@@ -4528,6 +4824,10 @@ function PlaybookCanvasInner() {
                   nodeTypes={nodeTypes}
                   edgeTypes={edgeTypes}
                   connectionLineComponent={Connection}
+                  connectionRadius={24}
+                  isValidConnection={isValidConnection}
+                  nodesFocusable
+                  edgesFocusable
                   panOnDrag
                   panOnScroll={false}
                   zoomOnScroll
@@ -4562,6 +4862,8 @@ function PlaybookCanvasInner() {
                   onAddHumanApprovalNode={handleAddHumanApprovalNode}
                   onAddStepFromTemplate={handleAddStepFromTemplate}
                   onAutoLayout={handleAutoLayout}
+                  compactCards={compactCards}
+                  onToggleCompactCards={toggleCompactCards}
                   onUndo={undo}
                   onRedo={redo}
                   onToggleExplorer={() => setWorkspaceExplorerOpen(!workspaceExplorerOpen)}
@@ -4591,6 +4893,20 @@ function PlaybookCanvasInner() {
                   onCollapsedChange={setToolbarCollapsed}
                   minLeftOffset={TOOLBAR_MIN_LEFT_OFFSET}
                 />
+                {nextStepPicker && (
+                  <NextStepPicker
+                    anchor={nextStepPicker.screenAnchor}
+                    title={t('nextStep.title')}
+                    candidates={pickerCandidates}
+                    outputChoices={pickerOutputChoices}
+                    onResolveOutput={handlePickerResolveOutput}
+                    onChoose={handlePickerChoose}
+                    onCancel={cancelNextStepPicker}
+                  />
+                )}
+                </CanvasDesignContext.Provider>
+                </CardDensityContext.Provider>
+                </EdgeInsertContext.Provider>
                 </ConnectionDragContext.Provider>
               </NodeDataActionsContext.Provider>
             </NodeContextMenuContext.Provider>
@@ -4635,6 +4951,50 @@ function PlaybookCanvasInner() {
             )}
           </div>
 
+          {/* Docked step inspector: reduces the canvas on large screens,
+              full-width overlay below lg (canvas stays mounted beneath). */}
+          <div
+            className={
+              editorOpen
+                ? 'absolute inset-y-0 right-0 z-40 flex w-full flex-col border-l bg-background shadow-xl max-lg:max-w-none lg:relative lg:inset-auto lg:z-auto lg:w-[var(--node-inspector-width)] lg:max-w-[60vw] lg:shrink-0 lg:shadow-none'
+                : 'hidden'
+            }
+            style={{ '--node-inspector-width': `${nodeInspectorWidth}px` } as CSSProperties}
+            data-node-inspector
+          >
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={t('nodeEditor.resizeInspector')}
+              aria-valuemin={NODE_INSPECTOR_MIN_WIDTH}
+              aria-valuemax={nodeInspectorMaxWidth}
+              aria-valuenow={nodeInspectorWidth}
+              aria-keyshortcuts="Home ArrowLeft ArrowRight"
+              tabIndex={0}
+              onPointerDown={handleNodeInspectorResizeStart}
+              onPointerMove={handleNodeInspectorResizeMove}
+              onPointerUp={handleNodeInspectorResizeEnd}
+              onPointerCancel={handleNodeInspectorResizeEnd}
+              onKeyDown={handleNodeInspectorResizeKeyDown}
+              onDoubleClick={() => setNodeInspectorWidth(NODE_INSPECTOR_DEFAULT_WIDTH)}
+              className="group absolute inset-y-0 left-0 z-50 hidden w-2 -translate-x-1/2 cursor-ew-resize touch-none items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:flex"
+            >
+              <span className="h-12 w-1 rounded-full bg-border transition-colors group-hover:bg-primary/40" />
+            </div>
+            <PlaybookNodeEditor
+              ref={nodeEditorRef}
+              playbookId={playbook.id}
+              task={effectiveEditingTask}
+              allTasks={playbook.tasks}
+              open={editorOpen}
+              onOpenChange={setEditorOpen}
+              onSave={handleNodeSave}
+              initialView={editorInitialView}
+              variant="docked"
+              onViewResults={(taskId) => openExecutionDetailTab('results', taskId)}
+            />
+          </div>
+
           {isExecutionPanelVisible && (
             <ExecutionPanel
               playbookId={id}
@@ -4668,18 +5028,6 @@ function PlaybookCanvasInner() {
         </div>
       </div>
       </TooltipProvider>
-
-      {/* Node Editor Sheet */}
-      <PlaybookNodeEditor
-        ref={nodeEditorRef}
-        playbookId={playbook.id}
-        task={effectiveEditingTask}
-        allTasks={playbook.tasks}
-        open={editorOpen}
-        onOpenChange={setEditorOpen}
-        onSave={handleNodeSave}
-        initialView={editorInitialView}
-      />
 
       <PlaybookNodeAdvisorDialog
         open={nodeAdvisorOpen}

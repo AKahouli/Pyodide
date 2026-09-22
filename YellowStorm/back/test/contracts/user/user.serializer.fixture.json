@@ -1,0 +1,37 @@
+{
+  "email": "jane.doe@example.com",
+  "emailVerified": true,
+  "emailVerificationExpiry": "<volatile>",
+  "passwordResetExpiry": "<volatile>",
+  "profile": {
+    "firstName": "Jane",
+    "lastName": "Doe",
+    "company": "Acme",
+    "role": "Engineer",
+    "description": ""
+  },
+  "appearance": {
+    "colorTheme": "yellow",
+    "language": "en"
+  },
+  "consents": {
+    "privacyPolicy": true,
+    "privacyPolicyAcceptedAt": "<volatile>",
+    "dataSharing": false
+  },
+  "profileComplete": true,
+  "planId": "64b000000000000000000002",
+  "planSlug": "unlimited",
+  "planStartedAt": "<volatile>",
+  "roles": [
+    "64b000000000000000000003"
+  ],
+  "permissionsVersion": 1,
+  "status": "active",
+  "registrationApproval": "approved",
+  "createdAt": "<volatile>",
+  "updatedAt": "<volatile>",
+  "lastLoginAt": "<volatile>",
+  "fullName": "Jane Doe",
+  "id": "64b000000000000000000001"
+}

@@ -123,6 +123,7 @@ def create_team_config(user_request: RunAgentTeamRequest) -> AgentTeamConfig:
         previous_attached_files=user_request.previous_attached_files,
         connector_repo=user_request.connector_repo,
         skills=normalize_skills(user_request.skills),
+        attachment_context=getattr(user_request, 'attachment_context', None),
     )
 
 

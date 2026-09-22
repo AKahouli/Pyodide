@@ -898,6 +898,29 @@ class ChatbotServicer(
             metadata=chatbot_pb2.Metadata(message_id=message_id),
         )
 
+    @staticmethod
+    def _convert_chatbot(pb_chatbot: "chatbot_pb2.Chatbot") -> Dict[str, Any]:
+        return {
+            "provider": pb_chatbot.model,
+            "input_modalities": list(pb_chatbot.input_modalities) or ["text"],
+            **({"reasoning_effort": pb_chatbot.reasoning_effort} if pb_chatbot.reasoning_effort else {}),
+            **({"context_window_tokens": pb_chatbot.context_window_tokens} if pb_chatbot.context_window_tokens > 0 else {}),
+            **(
+                {
+                    "compaction": {
+                        "enabled": pb_chatbot.compaction.enabled,
+                        "compaction_interval": pb_chatbot.compaction.compaction_interval,
+                        "overlap_size": pb_chatbot.compaction.overlap_size,
+                        "token_fraction": pb_chatbot.compaction.token_fraction,
+                        "event_retention_size": pb_chatbot.compaction.event_retention_size,
+                        "summarizer_model": pb_chatbot.compaction.summarizer_model,
+                    }
+                }
+                if pb_chatbot.HasField("compaction") and pb_chatbot.compaction.enabled
+                else {}
+            ),
+        }
+
     def _convert_agent(self, pb_agent: "chatbot_pb2.Agent") -> AgentSuggestion:
         """Convert protobuf Agent (V2) to internal V1 AgentSuggestion Pydantic model.
 
@@ -1042,26 +1065,7 @@ class ChatbotServicer(
             brain_ids=workspace_ids or workspace_names,
             brain_documents=brain_documents,
             brain_relations={"nodes": [], "relationships": []},
-            chatbot_name={
-                "provider": pb_agent.chatbot.model,
-                "input_modalities": list(pb_agent.chatbot.input_modalities) or ["text"],
-                **({"reasoning_effort": pb_agent.chatbot.reasoning_effort} if pb_agent.chatbot.reasoning_effort else {}),
-                **({"context_window_tokens": pb_agent.chatbot.context_window_tokens} if pb_agent.chatbot.context_window_tokens > 0 else {}),
-                **(
-                    {
-                        "compaction": {
-                            "enabled": pb_agent.chatbot.compaction.enabled,
-                            "compaction_interval": pb_agent.chatbot.compaction.compaction_interval,
-                            "overlap_size": pb_agent.chatbot.compaction.overlap_size,
-                            "token_fraction": pb_agent.chatbot.compaction.token_fraction,
-                            "event_retention_size": pb_agent.chatbot.compaction.event_retention_size,
-                            "summarizer_model": pb_agent.chatbot.compaction.summarizer_model,
-                        }
-                    }
-                    if pb_agent.chatbot.HasField("compaction") and pb_agent.chatbot.compaction.enabled
-                    else {}
-                ),
-            }
+            chatbot_name=self._convert_chatbot(pb_agent.chatbot)
             if pb_agent.HasField("chatbot")
             else None,
             agent_params=raw_agent_params if raw_agent_params else None,
@@ -1146,6 +1150,9 @@ class ChatbotServicer(
                         "enable_extract_images": doc.enable_extract_images,
                         "sheet_name": doc.sheet_name if doc.sheet_name else None,
                         "in_memory": doc.in_memory,
+                        "document_id": doc.document_id,
+                        "processing_policy": doc.processing_policy,
+                        "search_index_allowed": doc.search_index_allowed,
                     }
                 )
 
@@ -1199,6 +1206,8 @@ class ChatbotServicer(
         existing_ids = {doc.get("_id") for doc in brain_documents if doc.get("_id")}
 
         for doc in attached_documents:
+            if doc.get("processing_policy") == "CODE_ONLY":
+                continue  # excluded from search trees; reachable via code tools only
             doc_name = doc.get("workspace_name")
             if doc_name and doc_name not in existing_ids:
                 brain_documents.append(
@@ -1316,14 +1325,12 @@ class ChatbotServicer(
         LLM/prompt are taken from the single agent itself instead of a manager.
         """
         ctx = await self._build_brain_and_file_context(pb_request)
+        attachment_context_text = getattr(getattr(pb_request, "attachment_context", None), "text", "") or None
 
         # Chatbot config + base prompt come from the single agent (no manager).
         agent_chatbot_name = None
         if pb_request.agent.HasField("chatbot"):
-            agent_chatbot_name = {
-                "provider": pb_request.agent.chatbot.model,
-                "input_modalities": list(pb_request.agent.chatbot.input_modalities) or ["text"],
-            }
+            agent_chatbot_name = self._convert_chatbot(pb_request.agent.chatbot)
         if not agent_chatbot_name:
             logger.error(
                 f"No chatbot model provided for single agent in conversation {pb_request.conversation_id}"
@@ -1355,6 +1362,7 @@ class ChatbotServicer(
             skills=self._build_skills(pb_request),
             deep_search_enabled=getattr(pb_request, "deep_search_enabled", False),
             correction_replay_context=self._build_correction_replay_context(pb_request),
+            attachment_context=attachment_context_text,
         )
 
     async def _convert_agent_team_request_v2(
@@ -1457,6 +1465,9 @@ class ChatbotServicer(
                         "enable_extract_images": doc.enable_extract_images,
                         "sheet_name": doc.sheet_name if doc.sheet_name else None,
                         "in_memory": doc.in_memory,
+                        "document_id": doc.document_id,
+                        "processing_policy": doc.processing_policy,
+                        "search_index_allowed": doc.search_index_allowed,
                     }
                 )
 
@@ -1512,6 +1523,8 @@ class ChatbotServicer(
         existing_ids = {doc.get("_id") for doc in brain_documents if doc.get("_id")}
 
         for doc in attached_documents:
+            if doc.get("processing_policy") == "CODE_ONLY":
+                continue  # excluded from search trees; reachable via code tools only
             doc_name = doc.get("workspace_name")
             if doc_name and doc_name not in existing_ids:
                 brain_documents.append(
@@ -1572,10 +1585,7 @@ class ChatbotServicer(
             if (root_agent_id and agent.id == root_agent_id) or (not root_agent_id and agent.agent_type == "manager"):
                 # Found the manager agent - use its chatbot configuration and prompt
                 if agent.HasField("chatbot"):
-                    manager_chatbot_name = {
-                        "provider": agent.chatbot.model,
-                        "input_modalities": list(agent.chatbot.input_modalities) or ["text"],
-                    }
+                    manager_chatbot_name = self._convert_chatbot(agent.chatbot)
                 if agent.prompt:
                     manager_prompt = agent.prompt
                 break
@@ -1629,6 +1639,7 @@ class ChatbotServicer(
             else None
         )
 
+        attachment_context_text = getattr(getattr(pb_request, "attachment_context", None), "text", "") or None
         converted = RunAgentTeamRequest(
             user_id=pb_request.user_context.user_id,  # V2: user_context.user_id → V1: user_id
             session_id=pb_request.conversation_id,  # V2: conversation_id → V1: session_id
@@ -1672,6 +1683,7 @@ class ChatbotServicer(
                     for node in pb_request.team_definition.nodes
                 ],
             } if has_team_definition else None,
+            attachment_context=attachment_context_text,
         )
         if has_team_definition:
             from src.smart_rag.engines.multi_agent.hierarchical_agents import validate_hierarchical_request
@@ -1794,6 +1806,17 @@ class ChatbotServicer(
                 "[gRPC] VECTORSTORE_API_KEY not configured - skipping document indexing"
             )
             return
+
+        # Documents prepared by the backend (processing_policy set) are indexed
+        # by the backend pipeline only — skip them to avoid double indexing.
+        prepared = [doc for doc in documents if doc.get("processing_policy")]
+        if prepared:
+            logger.info(
+                f"[gRPC] Skipping ADK indexing for {len(prepared)} backend-prepared attachment(s)"
+            )
+            documents = [doc for doc in documents if not doc.get("processing_policy")]
+            if not documents:
+                return
 
         index_url = f"{vectorstores_url.rstrip('/')}/vectorstores/indexDocumentFromAzureDatalake"
         headers = {

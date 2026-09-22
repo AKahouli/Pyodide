@@ -1,6 +1,6 @@
+import { isObjectId } from '@common/postgres/object-id';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Types } from 'mongoose';
 import { LoggerService } from '../../logger';
 import { stripTrailingChar } from '@common/utils';
 import { AgentRepository } from '../repositories/agent.repository';
@@ -170,7 +170,7 @@ export class A2APublishService {
     agentId: string,
     canManageDefault: boolean,
   ): Promise<AgentRecord> {
-    if (!Types.ObjectId.isValid(agentId)) {
+    if (!isObjectId(agentId)) {
       throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
     }
 

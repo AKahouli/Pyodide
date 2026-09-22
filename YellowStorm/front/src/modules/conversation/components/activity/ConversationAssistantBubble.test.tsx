@@ -28,6 +28,7 @@ vi.mock('@/modules/localization', () => ({
     'stream.activity.assistant': 'Assistant',
     'stream.activity.delegateTo': `Delegate to ${options?.name || ''}`,
     'stream.activity.usingTools': 'Using tools',
+    'stream.activity.clarificationQuestions': `Prepared ${options?.count} clarification questions`,
     'stream.activity.tool.runCode': 'Run code',
     'stream.activity.tool.search': 'Search',
     'stream.activity.request': 'Request',
@@ -516,6 +517,121 @@ describe('ConversationAssistantBubble', () => {
     expect(screen.getAllByText(/Calculate the totals/)).not.toHaveLength(0);
     expect(screen.queryByText('stream.activity.toolFallback')).not.toBeInTheDocument();
     expect(screen.queryByText(/private code/)).not.toBeInTheDocument();
+  });
+
+  it('collapses repeated present_choices activity when questions are rendered', () => {
+    const choice = (id: string) => ({
+      id: `choice-${id}`,
+      type: 'choice' as const,
+      data: {
+        schemaVersion: 1, questionId: id, prompt: `Question ${id}`, presentation: 'list', selectionMode: 'single', submitBehavior: 'explicit', status: 'ready', dismissible: false,
+        options: [{ id: 'a', label: 'A', submitText: 'Choose A' }, { id: 'b', label: 'B', submitText: 'Choose B' }],
+      },
+    });
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      restrictActivityDetails
+      components={[
+        { id: 'tool-1', type: 'toolActivity', data: { toolName: 'present_choices', summary: 'Present Choices', status: 'completed', renderKind: 'generic' } },
+        { id: 'tool-2', type: 'toolActivity', data: { toolName: 'present_choices', summary: 'Present Choices', status: 'completed', renderKind: 'generic' } },
+        choice('one'),
+        choice('two'),
+      ]}
+    />);
+
+    expect(screen.getAllByText('Prepared 2 clarification questions')).toHaveLength(2);
+    expect(screen.queryByText('Present Choices')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['failed first', ['failed', 'completed']],
+    ['failed last', ['completed', 'failed']],
+  ] as const)('preserves exceptional present_choices activity when %s', (_label, statuses) => {
+    const choice = (id: string) => ({
+      id: `choice-${id}`,
+      type: 'choice' as const,
+      data: {
+        schemaVersion: 1, questionId: id, prompt: `Question ${id}`, presentation: 'list', selectionMode: 'single', submitBehavior: 'explicit', status: 'ready', dismissible: false,
+        options: [{ id: 'a', label: 'A', submitText: 'Choose A' }, { id: 'b', label: 'B', submitText: 'Choose B' }],
+      },
+    });
+    render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming={false}
+      components={[
+        ...statuses.map((status, index) => ({
+          id: `tool-${index}`,
+          type: 'toolActivity' as const,
+          data: { toolName: 'present_choices', summary: status === 'failed' ? 'Could not prepare question' : 'Present Choices', status, renderKind: 'generic' as const },
+        })),
+        choice('one'),
+        choice('two'),
+      ]}
+    />);
+
+    expect(screen.getAllByText('Prepared 2 clarification questions').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('Could not prepare question').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('replaces sensitive summaries on restricted assistant surfaces', () => {
+    const { container } = render(<ConversationAssistantBubble
+      conversationId='conversation-1'
+      messageId='message-1'
+      isStreaming
+      restrictActivityDetails
+      components={[
+        { id: 'activity-1', type: 'agentActivity', data: { summary: 'authorization=Bearer private-token', status: 'running' } },
+        { id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', summary: 'Password: private-secret', status: 'running', renderKind: 'search' } },
+      ]}
+    />);
+
+    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Preparing your request');
+    expect(container.querySelector('[data-tool-summary]')).toHaveTextContent('Search');
+    expect(container).not.toHaveTextContent(/authorization|bearer|private-token|password|private-secret/i);
+    expect(container.querySelector('[data-desktop-activity] button')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /activity|steps/i })).not.toBeInTheDocument();
+    expect(container.querySelector('[data-mobile-activity]')).toBeInTheDocument();
+  });
+
+  it.each([
+    '',
+    '<strong>Internal operation</strong>',
+    'access_token=private',
+    'clientSecret=private',
+    'user-password=private',
+    'Authorization: private',
+    'session_cookie=private',
+    'apiKey=private',
+    'Bearer private',
+    'x'.repeat(181),
+  ])('uses generic restricted fallbacks for unsafe summary %#', (summary) => {
+    const { container } = render(<>
+      <ConversationAssistantBubble
+        conversationId='conversation-1'
+        messageId='agent-message'
+        isStreaming
+        restrictActivityDetails
+        components={[{ id: 'activity-1', type: 'agentActivity', data: { summary, detail: 'Reviewing the requested operation safely', status: 'running' } }]}
+      />
+      <ConversationAssistantBubble
+        conversationId='conversation-1'
+        messageId='tool-message'
+        isStreaming
+        restrictActivityDetails
+        components={[{ id: 'tool-1', type: 'toolActivity', data: { toolName: 'search', summary, status: 'running', renderKind: 'search' } }]}
+      />
+    </>);
+
+    expect(container.querySelector('[data-agent-summary]')).toHaveTextContent('Preparing your request');
+    expect(container.querySelector('[data-tool-summary]')).toHaveTextContent('Search');
+    const mobileLabels = [...container.querySelectorAll('[data-mobile-activity]')].map((node) => node.textContent);
+    expect(mobileLabels).toEqual(expect.arrayContaining([
+      expect.stringContaining('Preparing your request'),
+      expect.stringContaining('Search'),
+    ]));
   });
 
   it('keeps the activity description in one row and moves the tool name into details', () => {

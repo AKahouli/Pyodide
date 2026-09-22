@@ -1,4 +1,4 @@
-import type { PlanDocument } from '../schemas/plan.schema';
+import type { PlanRecord } from './plan.store';
 import type { RecordUsageData } from '../interfaces/usage.interface';
 
 export const USAGE_STORE = Symbol('USAGE_STORE');
@@ -53,8 +53,8 @@ export interface UsageAnalyticsResult {
 }
 
 export interface UsageStore {
-  getOrCreateCurrentWindow(userId: string, plan: PlanDocument): Promise<UsageWindowRecord>;
-  record(data: RecordUsageData, plan: PlanDocument): Promise<UsageWindowRecord>;
+  getOrCreateCurrentWindow(userId: string, plan: PlanRecord): Promise<UsageWindowRecord>;
+  record(data: RecordUsageData, plan: PlanRecord): Promise<UsageWindowRecord>;
   getHistory(
     userId: string,
     options: { startDate?: Date; endDate?: Date; limit: number; skip: number },

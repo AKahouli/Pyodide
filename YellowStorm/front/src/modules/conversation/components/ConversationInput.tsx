@@ -8,6 +8,7 @@ import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useRep
 import { UsageLimitBanner } from '@/modules/usage';
 import { useUsage } from '@/modules/usage/UsageContext';
 import { useConversationFileUpload } from '../hooks/useConversationFileUpload';
+import { useConversationSettings } from '../hooks/useConversationSettings';
 import { useAllowedUploadExtensions } from '@/modules/workspace/hooks/useAllowedUploadExtensions';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '@/modules/auth/useAuth';
@@ -26,6 +27,8 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   const sendMessage = useConversationStore((s) => s.sendMessage);
   const updateConversation = useConversationStore((s) => s.updateConversation);
   const { accept } = useAllowedUploadExtensions();
+  const conversationSettings = useConversationSettings();
+  const attachmentsDisabled = conversationSettings?.attachmentIntelligence?.enabled !== true;
   const stopStream = useConversationStore((s) => s.stopStream);
   const replyingToMessage = useReplyingToMessage();
   const clearReplyingTo = useConversationStore((s) => s.clearReplyingTo);
@@ -269,6 +272,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         uploadingFiles={uploadFiles}
         accept={accept}
         maxFiles={5}
+        attachmentsDisabled={attachmentsDisabled}
         members={membersToTag}
         autoMention={autoMention}
         showWorkspaceSelect={!runtimeManaged}

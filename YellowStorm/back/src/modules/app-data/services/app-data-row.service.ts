@@ -92,7 +92,7 @@ export class AppDataRowService {
     const client = await this.pool.connect();
     try {
       const timeoutMs = this.config.get<number>('appData.statementTimeoutMs', 30_000);
-      await client.query('SET statement_timeout = $1', [timeoutMs]);
+      await client.query("SELECT set_config('statement_timeout', $1, false)", [String(Math.max(1, Math.floor(Number(timeoutMs))))]);
       const result = await client.query(sql, values);
       return result.rows[0] ?? null;
     } finally {
@@ -179,7 +179,7 @@ export class AppDataRowService {
     const client = await this.pool.connect();
     try {
       const timeoutMs = this.config.get<number>('appData.statementTimeoutMs', 30_000);
-      await client.query('SET statement_timeout = $1', [timeoutMs]);
+      await client.query("SELECT set_config('statement_timeout', $1, false)", [String(Math.max(1, Math.floor(Number(timeoutMs))))]);
       const result = await client.query(sql, values);
       const inserted = result.rowCount ?? 0;
       const skipped = params.rows.length - inserted;

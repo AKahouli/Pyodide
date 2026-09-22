@@ -14,6 +14,8 @@ export interface BuildAgentExecutionRequestInput {
   skills: unknown[];
   correctionReplayContext?: CorrectionReplayContext;
   teamDefinition?: TeamExecutionDefinition;
+  /** Bounded attachment context text; sent out-of-band, never merged into the query. */
+  attachmentContext?: string;
 }
 
 export interface BuiltAgentExecutionRequest {
@@ -54,6 +56,7 @@ export class ConversationAgentRequestBuilder {
           instructions: input.correctionReplayContext.instructions,
         },
       } : {}),
+      ...(input.attachmentContext ? { attachment_context: { text: input.attachmentContext } } : {}),
     };
 
     if (input.teamDefinition) {

@@ -1,11 +1,15 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
+import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Model, Types } from 'mongoose';
+import { newObjectId } from '@common/postgres/object-id';
+import { asAuthUser } from '@common/auth/auth-user';
 import * as crypto from 'crypto';
-import { OAuthState, OAuthStateDocument } from '../schemas/oauth-state.schema';
-import { ProviderLinkToken, ProviderLinkTokenDocument } from '../schemas/provider-link-token.schema';
 import { AuthProviderService } from './auth-provider.service';
+import {
+  OAUTH_STATE_STORE,
+  PROVIDER_LINK_TOKEN_STORE,
+  type OAuthStateStore,
+  type ProviderLinkTokenStore,
+} from '../persistence/auth-provider.stores';
 import { ProviderLinkService } from './provider-link.service';
 import { AuthService } from '@modules/auth/auth.service';
 import { UserService } from '@modules/user/user.service';
@@ -30,10 +34,8 @@ export class OAuthFlowService {
   private readonly appName: string;
 
   constructor(
-    @InjectModel(OAuthState.name)
-    private readonly oauthStateModel: Model<OAuthStateDocument>,
-    @InjectModel(ProviderLinkToken.name)
-    private readonly providerLinkTokenModel: Model<ProviderLinkTokenDocument>,
+    @Inject(OAUTH_STATE_STORE) private readonly oauthStateStore: OAuthStateStore,
+    @Inject(PROVIDER_LINK_TOKEN_STORE) private readonly providerLinkTokenStore: ProviderLinkTokenStore,
     private readonly authProviderService: AuthProviderService,
     private readonly providerLinkService: ProviderLinkService,
     private readonly authService: AuthService,
@@ -71,10 +73,10 @@ export class OAuthFlowService {
     }
 
     // Save state to DB with TTL
-    await this.oauthStateModel.create({
+    await this.oauthStateStore.create({
       state,
       providerKey: provider.providerKey,
-      codeVerifier,
+      codeVerifier: codeVerifier ?? null,
       expiresAt: new Date(Date.now() + OAUTH_STATE_TTL_MS),
     });
 
@@ -115,7 +117,7 @@ export class OAuthFlowService {
     userAgent: string,
   ): Promise<OAuthCallbackResult> {
     // 1. Validate state (find, check, delete)
-    const oauthState = await this.oauthStateModel.findOneAndDelete({ state });
+    const oauthState = await this.oauthStateStore.consumeByState(state);
     if (!oauthState) {
       throw new BadRequestException(ErrorCode.AUTH_OAUTH_STATE_INVALID, 'Invalid or expired OAuth state');
     }
@@ -139,7 +141,7 @@ export class OAuthFlowService {
       redirectUri,
       provider.clientId,
       provider.clientSecret,
-      oauthState.codeVerifier,
+      oauthState.codeVerifier ?? undefined,
     );
 
     const accessToken = tokenResponse.access_token;
@@ -170,10 +172,10 @@ export class OAuthFlowService {
     ipAddress: string,
     userAgent: string,
   ): Promise<{ accessToken: string; expiresIn: number; refreshToken: string; user: Record<string, unknown> }> {
-    const linkToken = await this.providerLinkTokenModel.findOneAndDelete({
-      token: tempToken,
-      providerKey: '__temp_login__',
-    });
+    const linkToken = await this.providerLinkTokenStore.consumeByTokenAndProviderKey(
+      tempToken,
+      '__temp_login__',
+    );
 
     if (!linkToken) {
       throw new UnauthorizedException(ErrorCode.AUTH_OAUTH_LINK_TOKEN_INVALID, 'Invalid or expired temp token');
@@ -197,7 +199,7 @@ export class OAuthFlowService {
       this.authorizationService.getUserRoleNames(userRoles),
     ]);
 
-    const tokens = await this.authService.generateTokens(user, ipAddress, userAgent, permissions, roleNames);
+    const tokens = await this.authService.generateTokens(asAuthUser(user), ipAddress, userAgent, permissions, roleNames);
 
     await this.userService.updateLastLogin(user._id.toString());
 
@@ -213,7 +215,7 @@ export class OAuthFlowService {
    * Verify a link token from email and link the provider account.
    */
   async verifyAndLink(token: string): Promise<{ userId: string; providerKey: string }> {
-    const linkToken = await this.providerLinkTokenModel.findOneAndDelete({ token });
+    const linkToken = await this.providerLinkTokenStore.consumeByToken(token);
 
     if (!linkToken) {
       throw new BadRequestException(ErrorCode.AUTH_OAUTH_LINK_TOKEN_INVALID, 'Invalid linking token');
@@ -287,7 +289,7 @@ export class OAuthFlowService {
       // User exists but not linked — require email verification to link
       const linkToken = crypto.randomBytes(32).toString('hex');
 
-      await this.providerLinkTokenModel.create({
+      await this.providerLinkTokenStore.create({
         token: linkToken,
         userId: existingUser._id,
         providerKey,
@@ -324,7 +326,7 @@ export class OAuthFlowService {
       defaultPlan = await this.usageService.getDefaultPlan();
       await this.userService.assignPlan(
         newUser._id.toString(),
-        defaultPlan._id as Types.ObjectId,
+        defaultPlan.id,
         defaultPlan.slug,
       );
     } catch (error) {
@@ -390,12 +392,12 @@ export class OAuthFlowService {
   /**
    * Create a short-lived temp token for frontend exchange.
    */
-  private async createTempLoginToken(userId: Types.ObjectId): Promise<string> {
+  private async createTempLoginToken(userId: string): Promise<string> {
     const token = crypto.randomBytes(32).toString('hex');
 
-    await this.providerLinkTokenModel.create({
+    await this.providerLinkTokenStore.create({
       token,
-      userId,
+      userId: String(userId),
       providerKey: '__temp_login__',
       providerUserId: '__temp__',
       providerEmail: '__temp__',

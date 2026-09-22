@@ -1,22 +1,12 @@
-import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
+import { Inject, Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Model } from 'mongoose';
-import { HealthHistory, HealthHistoryDocument, HealthCheckDetailRecord } from './schemas/health-history.schema';
+import { HealthCheckDetailRecord } from './schemas/health-history.schema';
+import { HEALTH_HISTORY_STORE, type HealthHistoryRow, type HealthHistoryStore } from './persistence/health-history.store';
 import { HealthService } from './health.service';
 import { LoggerService } from '../logger';
 
-// Plain object type for lean queries
-export interface HealthHistoryRecord {
-  _id: string;
-  status: 'healthy' | 'unhealthy' | 'degraded';
-  timestamp: string;
-  version: string;
-  uptime: number;
-  checks: Record<string, HealthCheckDetailRecord>;
-  recordedAt: Date;
-  expireAt: Date;
-}
+// Row shape kept for API parity with the former Mongo lean documents
+export type HealthHistoryRecord = HealthHistoryRow;
 
 export interface HealthHistoryQuery {
   /** Time range in minutes (default: 60) */
@@ -63,8 +53,8 @@ export class HealthHistoryService implements OnModuleInit, OnModuleDestroy {
   private isRunning = false;
 
   constructor(
-    @InjectModel(HealthHistory.name)
-    private readonly healthHistoryModel: Model<HealthHistoryDocument>,
+    @Inject(HEALTH_HISTORY_STORE)
+    private readonly healthHistoryStore: HealthHistoryStore,
     private readonly healthService: HealthService,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
@@ -141,11 +131,16 @@ export class HealthHistoryService implements OnModuleInit, OnModuleDestroy {
       const expireAt = new Date();
       expireAt.setHours(expireAt.getHours() + this.retentionHours);
 
-      await this.healthHistoryModel.create({
-        ...result,
-        recordedAt: new Date(),
+      await this.healthHistoryStore.insert(
+        {
+          status: result.status,
+          timestamp: result.timestamp,
+          version: result.version,
+          uptime: result.uptime,
+          checks: result.checks as Record<string, HealthCheckDetailRecord>,
+        },
         expireAt,
-      });
+      );
     } catch (error) {
       const err = error as Error;
       this.logger.error('Failed to save health check to history', {
@@ -167,27 +162,16 @@ export class HealthHistoryService implements OnModuleInit, OnModuleDestroy {
     const to = new Date();
     const from = new Date(to.getTime() - minutes * 60 * 1000);
 
-    const filter: Record<string, unknown> = {
-      recordedAt: { $gte: from, $lte: to },
-    };
-
-    if (query.status) {
-      filter.status = query.status;
-    }
-
-    const [records, total] = await Promise.all([
-      this.healthHistoryModel
-        .find(filter)
-        .sort({ recordedAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean()
-        .exec(),
-      this.healthHistoryModel.countDocuments(filter).exec(),
-    ]);
+    const { records, total } = await this.healthHistoryStore.findRange({
+      from,
+      to,
+      status: query.status,
+      limit,
+      skip,
+    });
 
     return {
-      records: records as unknown as HealthHistoryRecord[],
+      records,
       total,
       query: { from, to, minutes },
     };
@@ -201,10 +185,7 @@ export class HealthHistoryService implements OnModuleInit, OnModuleDestroy {
     const to = new Date();
     const from = new Date(to.getTime() - constrainedMinutes * 60 * 1000);
 
-    const records = await this.healthHistoryModel
-      .find({ recordedAt: { $gte: from, $lte: to } })
-      .lean()
-      .exec();
+    const records = await this.healthHistoryStore.findAllInRange(from, to);
 
     const totalRecords = records.length;
 
@@ -261,18 +242,21 @@ export class HealthHistoryService implements OnModuleInit, OnModuleDestroy {
   /**
    * Manually trigger a health check and save
    */
-  async triggerCheck(): Promise<HealthHistoryDocument> {
+  async triggerCheck(): Promise<HealthHistoryRecord> {
     const result = await this.healthService.check();
 
     const expireAt = new Date();
     expireAt.setHours(expireAt.getHours() + this.retentionHours);
 
-    const record = await this.healthHistoryModel.create({
-      ...result,
-      recordedAt: new Date(),
+    return this.healthHistoryStore.insert(
+      {
+        status: result.status,
+        timestamp: result.timestamp,
+        version: result.version,
+        uptime: result.uptime,
+        checks: result.checks as Record<string, HealthCheckDetailRecord>,
+      },
       expireAt,
-    });
-
-    return record;
+    );
   }
 }

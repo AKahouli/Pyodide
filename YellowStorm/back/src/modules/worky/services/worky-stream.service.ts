@@ -4,7 +4,6 @@ import { ConfigService } from '@nestjs/config';
 import { Connection, Model, Types } from 'mongoose';
 import { InjectConnection } from '@nestjs/mongoose';
 import { WorkyStream, WorkyStreamDocument } from '../schemas/worky-stream.schema';
-import { Workspace, WorkspaceDocument } from '../../workspace/schemas/workspace.schema';
 import { AgentRepository } from '../../agent/repositories/agent.repository';
 import { WorkspaceService } from '../../workspace/workspace.service';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
@@ -54,8 +53,6 @@ export class WorkyStreamService implements OnModuleInit {
   constructor(
     @InjectModel(WorkyStream.name)
     private readonly streamModel: Model<WorkyStreamDocument>,
-    @InjectModel(Workspace.name)
-    private readonly workspaceModel: Model<WorkspaceDocument>,
     private readonly agentRepository: AgentRepository,
     @InjectConnection()
     private readonly connection: Connection,

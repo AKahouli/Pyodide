@@ -27,9 +27,11 @@ export class SemanticGraphIndexWorkerService {
     return this.database.transaction(async (client) => {
       const result = await client.query<IndexTarget>(
         `SELECT model_id AS "modelId",target_version_id AS "versionId",target_revision::int AS revision
-         FROM semantic_model.graph_index_jobs
-         WHERE (status='pending' OR (status='in_progress' AND started_at < now()-interval '10 minutes'))
-           AND next_attempt_at<=now() ORDER BY updated_at FOR UPDATE SKIP LOCKED LIMIT 1`);
+         FROM semantic_model.graph_index_jobs job
+         JOIN semantic_model.models model ON model.id=job.model_id
+         WHERE (job.status='pending' OR (job.status='in_progress' AND job.started_at < now()-interval '10 minutes'))
+           AND model.execution_owner='legacy'
+           AND job.next_attempt_at<=now() ORDER BY job.updated_at FOR UPDATE OF job SKIP LOCKED LIMIT 1`);
       const target = result.rows[0];
       if (!target) return null;
       await client.query(`UPDATE semantic_model.graph_index_jobs SET status='in_progress',started_at=now(),
@@ -46,10 +48,10 @@ export class SemanticGraphIndexWorkerService {
         await this.database.query(`UPDATE semantic_model.graph_index_jobs SET status='pending',next_attempt_at=now()+interval '5 seconds',updated_at=now() WHERE model_id=$1 AND target_version_id=$2 AND target_revision=$3`,[target.modelId,target.versionId,target.revision]);
         return;
       }
-      const current = await this.database.query(
+      const current = await lockClient.query(
         `SELECT 1 FROM semantic_model.graph_index_jobs j JOIN semantic_model.models m ON m.id=j.model_id
          WHERE j.model_id=$1 AND j.target_version_id=$2 AND j.target_revision=$3
-           AND j.status='in_progress' AND m.status<>'archived'`,[target.modelId,target.versionId,target.revision]);
+            AND j.status='in_progress' AND m.status<>'archived' AND m.execution_owner='legacy'`,[target.modelId,target.versionId,target.revision]);
       if (!current.rowCount) return;
       const graph = await this.graphs.getGraph(target.modelId,target.versionId,target.revision);
       await this.ageGraph.dropGraph(target.modelId,true);
@@ -68,8 +70,12 @@ export class SemanticGraphIndexWorkerService {
          WHERE model_id=$1 AND target_version_id=$3 AND target_revision=$4`, [target.modelId,message,target.versionId,target.revision]);
       this.logger.error('Semantic graph indexing failed', { modelId: target.modelId, error: message });
     } finally {
-      await lockClient.query('SELECT pg_advisory_unlock(hashtext($1))',[target.modelId]).catch(() => undefined);
-      lockClient.release();
+      // A failed unlock leaves the session-level lock held on this client:
+      // destroy it instead of returning it to the pool.
+      const unlockErr = await lockClient.query('SELECT pg_advisory_unlock(hashtext($1))',[target.modelId])
+        .then(() => undefined, (err: unknown) => (err instanceof Error ? err : new Error(String(err))));
+      if (unlockErr) this.logger.warn('Semantic graph advisory unlock failed; discarding client', { modelId: target.modelId, error: unlockErr.message });
+      lockClient.release(unlockErr);
     }
   }
 }

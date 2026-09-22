@@ -1,7 +1,5 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { GovernanceMetric, GovernanceMetricDocument } from '../schemas/governance-metric.schema';
+import { Inject, Injectable } from '@nestjs/common';
+import { METRIC_STORE, type MetricStore } from '../persistence/metric-store';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceAccessService } from './governance-access.service';
 
@@ -22,7 +20,7 @@ export interface GovernanceMetricResponse {
 @Injectable()
 export class GovernanceMetricService {
   constructor(
-    @InjectModel(GovernanceMetric.name) private readonly metricModel: Model<GovernanceMetricDocument>,
+    @Inject(METRIC_STORE) private readonly metricStore: MetricStore,
     private readonly programService: GovernanceProgramService,
     private readonly accessService: GovernanceAccessService,
   ) {}
@@ -30,16 +28,13 @@ export class GovernanceMetricService {
   async list(actorId: string, programId: string): Promise<GovernanceMetricResponse[]> {
     await this.programService.assertOwnedProgram(actorId, programId);
     const accessibleScopeIds = await this.accessService.getAccessibleScopeIds(actorId, programId);
-    const filter = accessibleScopeIds.includes('*')
-      ? { programId: new Types.ObjectId(programId) }
-      : { programId: new Types.ObjectId(programId), scopeId: { $in: accessibleScopeIds.map((id) => new Types.ObjectId(id)) } };
-    const metrics = await this.metricModel.find(filter).sort({ periodStart: -1 }).limit(100).lean().exec();
+    const metrics = await this.metricStore.listForProgramScopes(programId, accessibleScopeIds.includes('*') ? '*' : accessibleScopeIds, 100);
     return metrics.map((metric) => ({
-      id: metric._id.toString(),
-      programId: metric.programId.toString(),
-      scopeId: metric.scopeId?.toString(),
-      deploymentId: metric.deploymentId?.toString(),
-      agentId: metric.agentId?.toString(),
+      id: metric.id,
+      programId: metric.programId,
+      scopeId: metric.scopeId,
+      deploymentId: metric.deploymentId,
+      agentId: metric.agentId,
       channel: metric.channel,
       type: metric.type,
       value: metric.value,

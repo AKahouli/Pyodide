@@ -1,10 +1,8 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
-import { Model, FilterQuery, Types } from 'mongoose';
 import { LoggerService } from '../logger';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
-import { escapeRegex, stripLeadingTrailingChar } from '../../common/utils';
+import { stripLeadingTrailingChar } from '../../common/utils';
 import {
   SandboxRuntimeContext,
   CODE_INTERPRETER_CONNECTOR_SLUG,
@@ -13,16 +11,14 @@ import {
 import { BadRequestException, ConflictException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { CreateConnectorDto, QueryConnectorDto, UpdateConnectorDto } from './dto';
+import { ConnectorAction, ConnectorDynamicHeader, ConnectorActionResultKind, ConnectorCitationMode, DynamicHeaderSource } from './connector.types';
 import {
-  Connector,
-  ConnectorDocument,
-  ConnectorAction,
-  ConnectorDynamicHeader,
-  ConnectorActionResultKind,
-  ConnectorCitationMode,
-  DynamicHeaderSource,
-} from './schemas/connector.schema';
-import { ConnectorCategory } from './schemas/connector-category.schema';
+  CONNECTOR_CATEGORY_STORE,
+  CONNECTOR_STORE,
+  type ConnectorCategoryStore,
+  type ConnectorRow,
+  type ConnectorStore,
+} from './persistence/connector.store';
 import {
   IConnectorResponse,
   IMcpInspectResult,
@@ -45,10 +41,10 @@ export class ConnectorService {
   private static readonly CONNECTOR_ACTION_DESCRIPTION_MAX_LENGTH = 1024;
 
   constructor(
-    @InjectModel(Connector.name)
-    private readonly connectorModel: Model<ConnectorDocument>,
-    @InjectModel(ConnectorCategory.name)
-    private readonly connectorCategoryModel: Model<ConnectorCategory>,
+    @Inject(CONNECTOR_STORE)
+    private readonly connectorStore: ConnectorStore,
+    @Inject(CONNECTOR_CATEGORY_STORE)
+    private readonly connectorCategoryStore: ConnectorCategoryStore,
     private readonly logger: LoggerService,
     private readonly connectedAppTokenService: ConnectedAppTokenService,
     @Inject('ConnectorAuthService')
@@ -60,10 +56,7 @@ export class ConnectorService {
   }
 
   async create(createdBy: string, dto: CreateConnectorDto): Promise<IConnectorResponse> {
-    const existing = await this.connectorModel
-      .findOne({ slug: dto.slug, createdBy: new Types.ObjectId(createdBy) })
-      .lean()
-      .exec();
+    const existing = await this.connectorStore.findBySlugAndOwner(dto.slug, createdBy);
     if (existing) {
       throw new ConflictException(ErrorCode.CONNECTOR_ALREADY_EXISTS);
     }
@@ -72,14 +65,14 @@ export class ConnectorService {
     const sanitizedMcpServerConfig = this.sanitizeMcpServerConfig(dto.mcpServerConfig);
     const dynamicHeaders = this.normalizeDynamicHeaders(dto.dynamicHeaders);
 
-    const connector = await this.connectorModel.create({
+    const connector = await this.connectorStore.insert({
       slug: dto.slug,
       name: dto.name,
       description: dto.description,
       icon: dto.icon ?? '',
       color: dto.color ?? '',
       iconColor: dto.iconColor ?? 'light',
-      categoryId: dto.categoryId ? new Types.ObjectId(dto.categoryId) : null,
+      categoryId: dto.categoryId ?? null,
       authType: dto.authType ?? 'none',
       authConfigSchema: dto.authConfigSchema ?? {},
       authSourceType: dto.authSourceType ?? 'credential',
@@ -90,10 +83,11 @@ export class ConnectorService {
       mcpServerConfig: sanitizedMcpServerConfig,
       dynamicHeaders,
       actions,
-      referencedSkillIds: (dto.referencedSkillIds ?? []).map((id) => new Types.ObjectId(id)),
+      skillIds: dto.referencedSkillIds ?? [],
       isActive: dto.isActive ?? true,
+      isSystem: false,
       isHidden: dto.isHidden ?? false,
-      createdBy: new Types.ObjectId(createdBy),
+      createdBy,
     });
 
     return this.toResponse(connector);
@@ -106,64 +100,52 @@ export class ConnectorService {
    * edits are preserved via $setOnInsert.
    */
   async ensureSystemAgentMcpConnector(): Promise<IConnectorResponse> {
-    const connector = await this.connectorModel.findOneAndUpdate(
-      { slug: AGENT_MCP_CONNECTOR_SLUG },
+    const connector = await this.connectorStore.upsertSystemActionsBySlug(
+      AGENT_MCP_CONNECTOR_SLUG,
       {
-        $set: {
-          actions: this.normalizeConnectorActions(AGENT_MCP_ACTIONS),
-        },
-        $setOnInsert: {
-          slug: AGENT_MCP_CONNECTOR_SLUG,
-          name: 'Agent Management (MCP)',
-          description: 'Agent and team CRUD tools served by the mcp-agent MCP server.',
-          icon: '',
-          color: '',
-          iconColor: 'light',
-          categoryId: null,
-          authType: 'none',
-          authConfigSchema: {},
-          authSourceType: 'server_config',
-          connectedAppKey: '',
-          runtimeAuthConfig: { strategy: 'http_header_bearer', secretKey: AGENT_MCP_RUNTIME_AUTH_SECRET_KEY },
-          mcpTransportType: 'streamable_http',
-          mcpServerUrl: this.configService?.get<string>('agentMcp.mcpServerUrl', 'http://localhost:8026/mcp') ?? 'http://localhost:8026/mcp',
-          mcpServerConfig: {},
-          dynamicHeaders: this.normalizeDynamicHeaders([
-            { headerName: 'X-YellowStorm-User-Id', source: DynamicHeaderSource.USER_ID },
-          ]),
-          referencedSkillIds: [],
-          isActive: true,
-          isHidden: true,
-          isSystem: true,
-          createdBy: new Types.ObjectId(RESERVED_SYSTEM_OWNER_ID),
-        },
+        slug: AGENT_MCP_CONNECTOR_SLUG,
+        name: 'Agent Management (MCP)',
+        description: 'Agent and team CRUD tools served by the mcp-agent MCP server.',
+        icon: '',
+        color: '',
+        iconColor: 'light',
+        categoryId: null,
+        authType: 'none',
+        authConfigSchema: {},
+        authSourceType: 'server_config',
+        connectedAppKey: '',
+        runtimeAuthConfig: { strategy: 'http_header_bearer', secretKey: AGENT_MCP_RUNTIME_AUTH_SECRET_KEY },
+        mcpTransportType: 'streamable_http',
+        mcpServerUrl: this.configService?.get<string>('agentMcp.mcpServerUrl', 'http://localhost:8026/mcp') ?? 'http://localhost:8026/mcp',
+        mcpServerConfig: {},
+        dynamicHeaders: this.normalizeDynamicHeaders([
+          { headerName: 'X-YellowStorm-User-Id', source: DynamicHeaderSource.USER_ID },
+        ]),
+        actions: this.normalizeConnectorActions(AGENT_MCP_ACTIONS),
+        skillIds: [],
+        isActive: true,
+        isSystem: true,
+        isHidden: true,
+        createdBy: RESERVED_SYSTEM_OWNER_ID,
       },
-      { upsert: true, new: true, setDefaultsOnInsert: true },
-    ).lean().exec();
-    return this.toResponse(connector!);
+      this.normalizeConnectorActions(AGENT_MCP_ACTIONS),
+    );
+    return this.toResponse(connector);
   }
 
   async findAll(query: QueryConnectorDto): Promise<PaginatedResponseDto<IConnectorResponse>> {
-    const filter: FilterQuery<ConnectorDocument> = {};
-    if (query.search) {
-      const regex = { $regex: escapeRegex(query.search), $options: 'i' };
-      filter.$or = [{ slug: regex }, { name: regex }];
-    }
-    if (query.isActive !== undefined) {
-      filter.isActive = query.isActive;
-    }
-
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
-    const skip = (page - 1) * limit;
 
-    const [connectors, total] = await Promise.all([
-      this.connectorModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean().exec(),
-      this.connectorModel.countDocuments(filter).exec(),
-    ]);
+    const { rows, total } = await this.connectorStore.list({
+      search: query.search,
+      isActive: query.isActive,
+      page,
+      limit,
+    });
 
     return new PaginatedResponseDto(
-      connectors.map((c) => this.toResponse(c)),
+      rows.map((c) => this.toResponse(c)),
       total,
       page,
       limit,
@@ -171,7 +153,7 @@ export class ConnectorService {
   }
 
   async findById(id: string): Promise<IConnectorResponse> {
-    const connector = await this.connectorModel.findById(id).lean().exec();
+    const connector = await this.connectorStore.findById(id);
     if (!connector) {
       throw new NotFoundException(ErrorCode.CONNECTOR_NOT_FOUND);
     }
@@ -179,45 +161,20 @@ export class ConnectorService {
   }
 
   async findBySlug(slug: string): Promise<IConnectorResponse | null> {
-    const connector = await this.connectorModel
-      .findOne({ slug, isActive: true })
-      .lean()
-      .exec();
+    const connector = await this.connectorStore.findActiveBySlug(slug);
     return connector ? this.toResponse(connector) : null;
   }
 
   async findByIds(ids: string[]): Promise<IConnectorResponse[]> {
-    if (!ids.length) return [];
-
-    const connectors = await this.connectorModel
-      .find({ _id: { $in: ids.map((id) => new Types.ObjectId(id)) }, isActive: true })
-      .sort({ name: 1 })
-      .lean()
-      .exec();
-
+    const connectors = await this.connectorStore.findByIds(ids);
     return connectors.map((c) => this.toResponse(c));
   }
 
   async findIdsByCategoryName(ids: string[], categoryName: string): Promise<string[]> {
     if (!ids.length) return [];
-
-    const categories = await this.connectorCategoryModel
-      .find({ name: { $regex: `^${escapeRegex(categoryName)}$`, $options: 'i' } })
-      .select('_id')
-      .lean()
-      .exec();
-    if (!categories.length) return [];
-
-    const connectors = await this.connectorModel
-      .find({
-        _id: { $in: ids.map((id) => new Types.ObjectId(id)) },
-        categoryId: { $in: categories.map((category) => category._id) },
-        isActive: true,
-      })
-      .select('_id')
-      .lean()
-      .exec();
-    return connectors.map((connector) => connector._id.toString());
+    const categoryIds = await this.connectorCategoryStore.findIdsByNameInsensitive(categoryName);
+    if (!categoryIds.length) return [];
+    return this.connectorStore.findIdsInCategories(ids, categoryIds);
   }
 
   /**
@@ -308,65 +265,37 @@ export class ConnectorService {
   }
 
   async findAllActive(): Promise<IConnectorResponse[]> {
-    const connectors = await this.connectorModel
-      .find({
-        isActive: true,
-        $or: [
-          { isHidden: { $ne: true } },
-          { slug: 'playbook-mcp' },
-        ],
-      })
-      .sort({ name: 1 })
-      .lean()
-      .exec();
+    const connectors = await this.connectorStore.findAllActiveVisible('playbook-mcp');
 
     const categoryNameById = await this.buildCategoryNameMap(connectors);
 
     return connectors.map((c) =>
       this.toResponse({
         ...c,
-        categoryName: c.categoryId
-          ? (categoryNameById.get(c.categoryId.toString()) ?? null)
-          : null,
+        categoryName: c.categoryId ? (categoryNameById.get(c.categoryId) ?? null) : null,
       }),
     );
   }
 
   /** Resolve category id -> name for the given connectors in a single query. */
   private async buildCategoryNameMap(
-    connectors: Array<{ categoryId?: Types.ObjectId | null }>,
+    connectors: Array<{ categoryId?: string | null }>,
   ): Promise<Map<string, string>> {
     const categoryIds = Array.from(
-      new Set(
-        connectors
-          .map((c) => c.categoryId?.toString())
-          .filter((id): id is string => Boolean(id)),
-      ),
+      new Set(connectors.map((c) => c.categoryId).filter((id): id is string => Boolean(id))),
     );
     if (!categoryIds.length) return new Map();
-
-    const categories = await this.connectorCategoryModel
-      .find({ _id: { $in: categoryIds.map((id) => new Types.ObjectId(id)) } })
-      .select('_id name')
-      .lean()
-      .exec();
-
-    return new Map(
-      categories.map((cat: any) => [cat._id.toString(), cat.name as string]),
-    );
+    return this.connectorCategoryStore.findNamesByIds(categoryIds);
   }
 
   async update(id: string, dto: UpdateConnectorDto): Promise<IConnectorResponse> {
-    const existing = await this.connectorModel.findById(id).lean().exec();
+    const existing = await this.connectorStore.findById(id);
     if (!existing) {
       throw new NotFoundException(ErrorCode.CONNECTOR_NOT_FOUND);
     }
 
     if (dto.slug && dto.slug !== existing.slug) {
-      const duplicate = await this.connectorModel
-        .findOne({ _id: { $ne: new Types.ObjectId(id) }, slug: dto.slug, createdBy: existing.createdBy })
-        .lean()
-        .exec();
+      const duplicate = await this.connectorStore.findBySlugExcludingOwner(dto.slug, id, existing.createdBy);
       if (duplicate) {
         throw new ConflictException(ErrorCode.CONNECTOR_ALREADY_EXISTS);
       }
@@ -379,9 +308,8 @@ export class ConnectorService {
       (updateData as Record<string, unknown>).actions = normalizedActions;
     }
     if (dto.referencedSkillIds) {
-      (updateData as Record<string, unknown>).referencedSkillIds = dto.referencedSkillIds.map(
-        (id) => new Types.ObjectId(id),
-      );
+      (updateData as Record<string, unknown>).skillIds = dto.referencedSkillIds;
+      delete (updateData as Record<string, unknown>).referencedSkillIds;
     }
     if (dto.mcpServerConfig) {
       (updateData as Record<string, unknown>).mcpServerConfig = this.sanitizeMcpServerConfig(dto.mcpServerConfig);
@@ -390,13 +318,10 @@ export class ConnectorService {
       (updateData as Record<string, unknown>).dynamicHeaders = this.normalizeDynamicHeaders(dto.dynamicHeaders);
     }
     if (Object.prototype.hasOwnProperty.call(dto, 'categoryId')) {
-      (updateData as Record<string, unknown>).categoryId = dto.categoryId ? new Types.ObjectId(dto.categoryId) : null;
+      (updateData as Record<string, unknown>).categoryId = dto.categoryId || null;
     }
 
-    const updated = await this.connectorModel
-      .findByIdAndUpdate(id, { $set: updateData }, { new: true })
-      .lean()
-      .exec();
+    const updated = await this.connectorStore.update(id, updateData);
     if (!updated) {
       throw new NotFoundException(ErrorCode.CONNECTOR_NOT_FOUND);
     }
@@ -418,7 +343,10 @@ export class ConnectorService {
   }
 
   async delete(id: string): Promise<void> {
-    const connector = await this.connectorModel.findByIdAndDelete(id).lean().exec();
+    // Credentials and connector_skills cascade via validated FKs (plan 3.5);
+    // agent junction rows keep the explicit pullConnectorFromAll until their
+    // FK lands with the agent-side pass.
+    const connector = await this.connectorStore.delete(id);
     if (!connector) {
       throw new NotFoundException(ErrorCode.CONNECTOR_NOT_FOUND);
     }
@@ -450,26 +378,37 @@ export class ConnectorService {
       supportsBatch: false,
       supportsIteration: false,
       isEnabled: true,
-    }));
+      resultKind: ConnectorActionResultKind.GENERIC,
+      citationMode: ConnectorCitationMode.NONE,
+    })) as ConnectorAction[];
 
-    const creatorId = new Types.ObjectId(createdBy);
     const baseName = inspectResult.serverName || this.slugify(serverUrl.split('/').pop() ?? serverUrl) || 'connector';
     const baseSlug = this.slugify(baseName) || 'connector';
-    const { name, slug } = await this.getUniqueImportedIdentity(baseName, baseSlug, creatorId);
+    const { name, slug } = await this.getUniqueImportedIdentity(baseName, baseSlug, createdBy);
 
-    await this.connectorModel.create({
+    await this.connectorStore.insert({
       slug,
       name,
       description: `MCP connector imported from ${serverUrl}`,
+      icon: '',
+      color: '',
+      iconColor: 'light',
+      categoryId: null,
       authType: 'none',
       authConfigSchema: {},
-      referencedSkillIds: [],
-      isActive: true,
-      createdBy: creatorId,
+      authSourceType: 'credential',
+      connectedAppKey: '',
+      runtimeAuthConfig: {},
       mcpTransportType: transportType,
       mcpServerUrl: serverUrl,
       mcpServerConfig: this.sanitizeMcpServerConfig(serverConfig),
+      dynamicHeaders: [],
       actions,
+      skillIds: [],
+      isActive: true,
+      isSystem: false,
+      isHidden: false,
+      createdBy,
     });
 
     return inspectResult;
@@ -478,19 +417,15 @@ export class ConnectorService {
   private async getUniqueImportedIdentity(
     baseName: string,
     baseSlug: string,
-    createdBy: Types.ObjectId,
+    createdBy: string,
   ): Promise<{ name: string; slug: string }> {
-    const existingConnectors = await this.connectorModel
-      .find({ createdBy, slug: { $regex: `^${escapeRegex(baseSlug)}(?:-[0-9]+)?$` } })
-      .select({ slug: 1, name: 1 })
-      .lean()
-      .exec();
+    // `slug` OR `slug-<n>` on the owner — regex-escaped inside the store (plan 3.4).
+    const existingSlugs = new Set(await this.connectorStore.findImportSlugs(createdBy, baseSlug));
 
-    if (!existingConnectors.some((connector) => connector.slug === baseSlug)) {
+    if (!existingSlugs.has(baseSlug)) {
       return { name: baseName, slug: baseSlug };
     }
 
-    const existingSlugs = new Set(existingConnectors.map((connector) => connector.slug));
     let suffix = 2;
     let nextSlug = `${baseSlug}-${suffix}`;
     while (existingSlugs.has(nextSlug)) {
@@ -795,15 +730,15 @@ export class ConnectorService {
     return value.length > maxLength ? value.slice(0, maxLength) : value;
   }
 
-  toResponse(doc: any): IConnectorResponse {
+  toResponse(doc: ConnectorRow & { categoryName?: string | null }): IConnectorResponse {
     return {
-      id: doc._id?.toString() ?? doc.id,
+      id: doc.id,
       slug: doc.slug,
       name: doc.name,
       description: doc.description,
       icon: doc.icon,
       color: doc.color,
-      iconColor: doc.iconColor ?? 'light',
+      iconColor: (doc.iconColor as 'light' | 'dark') ?? 'light',
       categoryId: doc.categoryId ? doc.categoryId.toString() : null,
       categoryName: doc.categoryName ?? null,
       authType: doc.authType,
@@ -819,7 +754,7 @@ export class ConnectorService {
         source: h.source,
         enabled: h.enabled ?? true,
       })),
-      actions: (doc.actions ?? []).map((a: any) => ({
+      actions: (doc.actions ?? []).map((a) => ({
         key: a.key,
         label: a.label,
         description: a.description ?? '',
@@ -831,9 +766,9 @@ export class ConnectorService {
         isEnabled: a.isEnabled ?? true,
         resultKind: a.resultKind ?? ConnectorActionResultKind.GENERIC,
         citationMode: a.citationMode ?? ConnectorCitationMode.NONE,
-        ...(a.resultMapping ? { resultMapping: a.resultMapping } : {}),
-      })),
-      referencedSkillIds: (doc.referencedSkillIds ?? []).map((id: any) => id.toString()),
+        ...('resultMapping' in a && a.resultMapping ? { resultMapping: a.resultMapping } : {}),
+      })) as ConnectorAction[],
+      referencedSkillIds: doc.skillIds,
       isActive: doc.isActive,
       isSystem: doc.isSystem ?? false,
       isHidden: doc.isHidden ?? false,

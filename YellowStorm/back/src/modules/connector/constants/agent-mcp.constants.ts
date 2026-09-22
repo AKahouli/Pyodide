@@ -1,4 +1,4 @@
-import { ConnectorActionSafety } from '../schemas/connector.schema';
+import { ConnectorActionSafety } from '../connector.types';
 
 export const AGENT_MCP_CONNECTOR_SLUG = 'agent-mcp';
 

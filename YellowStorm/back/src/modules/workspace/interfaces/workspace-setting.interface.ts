@@ -1,4 +1,8 @@
-import { RagType } from '../schemas/workspace-setting.schema';
+export enum RagType {
+  STANDARD = 'standard',
+  ADVANCED_RAG = 'advancedRag',
+  SMART_RAG = 'smartRag',
+}
 
 export interface CreateWorkspaceSettingData {
   name: string;

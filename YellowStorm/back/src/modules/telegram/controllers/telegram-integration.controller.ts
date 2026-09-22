@@ -18,7 +18,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
-import { UserDocument } from '@modules/user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { TelegramIntegrationService } from '../services/telegram-integration.service';
 import { UpsertAgentTelegramIntegrationDto } from '../dto/upsert-agent-telegram-integration.dto';
 import {
@@ -45,7 +45,7 @@ export class TelegramIntegrationController {
   @ApiParam({ name: 'agentId', description: 'Agent ID' })
   @ApiResponse({ status: 200, type: TelegramIntegrationResponseDto })
   async getIntegration(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('agentId') agentId: string,
   ): Promise<TelegramIntegrationResponseDto | null> {
     return this.integrationService.getByAgentForUser(user._id.toString(), agentId);
@@ -58,7 +58,7 @@ export class TelegramIntegrationController {
   @ApiParam({ name: 'agentId', description: 'Agent ID' })
   @ApiResponse({ status: 200, type: TelegramIntegrationResponseDto })
   async upsertIntegration(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('agentId') agentId: string,
     @Body() dto: UpsertAgentTelegramIntegrationDto,
   ): Promise<TelegramIntegrationResponseDto> {
@@ -72,7 +72,7 @@ export class TelegramIntegrationController {
   @ApiParam({ name: 'agentId', description: 'Agent ID' })
   @HttpCode(HttpStatus.OK)
   async registerWebhook(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('agentId') agentId: string,
   ): Promise<{ registered: true }> {
     await this.integrationService.registerWebhookForAgent(user._id.toString(), agentId);
@@ -86,7 +86,7 @@ export class TelegramIntegrationController {
   @ApiParam({ name: 'agentId', description: 'Agent ID' })
   @ApiResponse({ status: 200, type: TelegramLinkCodeResponseDto })
   async generateLinkCode(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('agentId') agentId: string,
   ): Promise<TelegramLinkCodeResponseDto> {
     const integration = await this.integrationService.getDocumentByAgentForUser(
@@ -103,7 +103,7 @@ export class TelegramIntegrationController {
   @ApiOperation({ summary: 'Delete Telegram integration settings for this agent' })
   @ApiParam({ name: 'agentId', description: 'Agent ID' })
   async deleteIntegration(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('agentId') agentId: string,
   ): Promise<void> {
     await this.integrationService.deleteForAgent(user._id.toString(), agentId);

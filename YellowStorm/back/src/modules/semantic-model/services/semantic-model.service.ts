@@ -9,6 +9,7 @@ import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-d
 import { SemanticAgeGraphRepository } from '../repositories/semantic-age-graph.repository';
 import { SemanticGraphRepository } from '../repositories/semantic-graph.repository';
 import { SemanticModelRepository, SemanticModelRow } from '../repositories/semantic-model.repository';
+import { SemanticRealtimeSignalService } from './semantic-realtime-signal.service';
 
 interface CloneIdMaps {
   nodeIds: Map<string, string>;
@@ -41,6 +42,7 @@ export class SemanticModelService {
     private readonly graph: SemanticGraphRepository,
     private readonly workspaces: WorkspaceService,
     private readonly ageGraph: SemanticAgeGraphRepository,
+    private readonly realtimeSignals: SemanticRealtimeSignalService,
   ) {}
 
   list(userId: string, query: SemanticModelQueryDto) {
@@ -133,9 +135,12 @@ export class SemanticModelService {
   async update(userId: string, modelId: string, dto: UpdateSemanticModelDto): Promise<SemanticModelRow> {
     await this.requireActiveRole(userId, modelId, ['owner', 'editor']);
     try {
-      const model = await this.models.update(modelId, dto.expectedRevision, dto);
-      if (!model) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT);
-      return model;
+      return await this.database.transaction(async (client) => {
+        const model = await this.models.update(client, modelId, dto.expectedRevision, dto);
+        if (!model) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT);
+        await this.audit(client, modelId, model.currentDraftVersionId, userId, 'model.updated', {});
+        return model;
+      });
     } catch (error) {
       if (this.isUniqueViolation(error)) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NAME_EXISTS);
       throw error;
@@ -151,6 +156,7 @@ export class SemanticModelService {
          WHERE id=$1 AND revision=$2`, [model.id, expectedRevision]);
       if (!result.rowCount) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT);
       await client.query('DELETE FROM semantic_model.graph_index_jobs WHERE model_id=$1',[modelId]);
+      await this.audit(client, modelId, model.currentDraftVersionId, userId, 'model.archived', {});
     });
   }
 
@@ -346,6 +352,10 @@ export class SemanticModelService {
       'INSERT INTO semantic_model.events (model_id,version_id,actor_user_id,event_type,payload) VALUES ($1,$2,$3,$4,$5)',
       [modelId, versionId, actorId, eventType, JSON.stringify(payload)],
     );
+    await this.realtimeSignals.enqueue(client, modelId,
+      eventType.startsWith('review_item.') ? 'review-items-changed' : 'model-read-state-changed', {
+      reason: eventType,
+    });
   }
 
   async advanceRevision(client: PoolClient, modelId: string, expectedRevision: number): Promise<number> {

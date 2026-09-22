@@ -127,10 +127,11 @@ class TestAutoAgentGenerationTeam:
         mock_memory_session.create_session = AsyncMock()
         created_runners = []
 
-        class MockRunner:
-            def __init__(self, agent, app_name, session_service, plugins):
-                self.session_service = session_service
-                created_runners.append(self)
+        def make_runner(agent, session_service):
+            runner = MagicMock()
+            runner.session_service = session_service
+            created_runners.append(runner)
+            return runner
 
         with patch.object(orchestrator, 'agent_tools_manager') as mock_tools_manager, \
              patch.object(orchestrator, 'manager_factory') as mock_manager_factory, \
@@ -138,7 +139,7 @@ class TestAutoAgentGenerationTeam:
              patch.object(orchestrator, 'memory_service') as mock_memory_service, \
              patch('src.smart_rag.engines.multi_agent.team_orchestrator.get_shared_database_session_service', new_callable=AsyncMock) as mock_db_factory, \
              patch('src.smart_rag.engines.multi_agent.team_orchestrator.get_in_memory_session_service') as mock_memory_factory, \
-             patch('src.smart_rag.engines.multi_agent.team_orchestrator.get_adk_runner', return_value=MockRunner), \
+             patch('src.smart_rag.engines.multi_agent.team_orchestrator.make_chat_runner', side_effect=make_runner), \
              patch('src.smart_rag.infrastructure.session.citation_manager.get_citation_manager', new=AsyncMock(return_value=MagicMock())):
 
             mock_tools_manager.create_tools_from_all_agents.return_value = []

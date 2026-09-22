@@ -144,7 +144,6 @@ import {
   WorkyPlanStepArtifact,
   WorkyPlanStepArtifactSchema,
 } from './schemas/worky-plan-step-artifact.schema';
-import { Workspace, WorkspaceSchema } from '../workspace/schemas/workspace.schema';
 import workyConfig from '../../config/worky.config';
 import workyOrchestratorConfig from '../../config/worky-orchestrator.config';
 import workyOrchestratorSecurityConfig from '../../config/grpc-security-worky-orchestrator.config';
@@ -198,10 +197,6 @@ import { ConnectorModule } from '../connector/connector.module';
       { name: WorkyMessageComponent.name, schema: WorkyMessageComponentSchema },
       { name: WorkyPlanStepComponent.name, schema: WorkyPlanStepComponentSchema },
       { name: WorkyPlanStepArtifact.name, schema: WorkyPlanStepArtifactSchema },
-      // Re-registered here so WorkyStreamService can inject them directly
-      // without pulling in AgentModule/WorkspaceModule's full transitive
-      // dependency graph. Nest reuses the same Mongoose model instance via DI.
-      { name: Workspace.name, schema: WorkspaceSchema },
     ]),
   ],
   controllers: [

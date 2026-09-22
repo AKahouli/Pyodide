@@ -14,11 +14,6 @@ import { WorkspaceModule } from '@modules/workspace/workspace.module';
 import { ConnectedAppModule } from '@modules/connected-app/connected-app.module';
 import { UserModule } from '@modules/user';
 import { ConversationModule } from '@modules/conversation/conversation.module';
-import { WorkspaceSchema, Workspace } from '@modules/workspace/schemas/workspace.schema';
-import {
-  WorkspaceSetting,
-  WorkspaceSettingSchema,
-} from '@modules/workspace/schemas/workspace-setting.schema';
 
 import playbookFlowConfig from '@config/playbook-flow.config';
 
@@ -193,8 +188,6 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
       { name: PlaybookAssistantRequest.name, schema: PlaybookAssistantRequestSchema },
       { name: PlaybookAssistantMessage.name, schema: PlaybookAssistantMessageSchema },
       { name: PlaybookAssistantAttachment.name, schema: PlaybookAssistantAttachmentSchema },
-      { name: Workspace.name, schema: WorkspaceSchema },
-      { name: WorkspaceSetting.name, schema: WorkspaceSettingSchema },
     ]),
     JwtModule.register({}),
     AuthModule,

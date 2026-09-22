@@ -232,8 +232,9 @@ The gRPC API runs alongside FastAPI on a separate port and shares the same busin
 
 ```bash
 # .env
+PORT=8001            # ADK HTTP port (default: 8001, alias: ADK_PORT)
 GRPC_ENABLED=true    # Enable/disable gRPC server (default: true)
-GRPC_PORT=50051      # gRPC port (default: 50051)
+GRPC_PORT=50051      # gRPC port (default: 50051, alias: ADK_GRPC_PORT)
 ```
 
 Set `GRPC_ENABLED=false` to run in REST-only mode.

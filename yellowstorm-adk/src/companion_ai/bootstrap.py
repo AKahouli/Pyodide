@@ -26,11 +26,19 @@ class OrchestratorRuntime:
     def __init__(self, settings: Optional[OrchestratorSettings] = None):
         self._s = settings or get_orchestrator_settings()
         self._pool: Optional[asyncpg.Pool] = None
+        self._session_service: Optional[DatabaseSessionService] = None
         self._poller: Optional[MCPTaskPoller] = None
         self._mail_sweep: Optional[asyncio.Task] = None
         self.servicer: Optional[CompanionAiServicer] = None
 
     async def start(self) -> "OrchestratorRuntime":
+        try:
+            return await self._start()
+        except BaseException:
+            await self.stop()
+            raise
+
+    async def _start(self) -> "OrchestratorRuntime":
         s = self._s
         schema = s.ORCHESTRATOR_READMODEL_SCHEMA
         self._pool = await asyncpg.create_pool(
@@ -44,12 +52,12 @@ class OrchestratorRuntime:
         # Durable ADK sessions on Postgres (companion_ai) so a turn blocked on
         # ask-the-user resumes in a later RunTask / another replica. ADK's tables
         # go in a separate schema (search_path) to avoid the read model's names.
-        session_service = DatabaseSessionService(
+        self._session_service = DatabaseSessionService(
             db_url=s.session_service_url(),
             connect_args={"server_settings": {"search_path": s.ORCHESTRATOR_ADK_SCHEMA}})
 
         def runner_factory(node, app_name):
-            return Runner(node=node, app_name=app_name, session_service=session_service)
+            return Runner(node=node, app_name=app_name, session_service=self._session_service)
 
         service = OrchestratorService(
             runner_factory, read_model=rm,
@@ -115,8 +123,29 @@ class OrchestratorRuntime:
                 await self._mail_sweep
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
+            self._mail_sweep = None
+        cleanup_error: Optional[BaseException] = None
         if self._poller:
-            await self._poller.stop()
+            poller, self._poller = self._poller, None
+            try:
+                await poller.stop()
+            except BaseException as error:
+                self._poller = poller
+                cleanup_error = error
+        if self._session_service:
+            session_service, self._session_service = self._session_service, None
+            try:
+                await session_service.close()
+            except BaseException as error:
+                self._session_service = session_service
+                cleanup_error = cleanup_error or error
         if self._pool:
-            await self._pool.close()
+            pool, self._pool = self._pool, None
+            try:
+                await pool.close()
+            except BaseException as error:
+                self._pool = pool
+                cleanup_error = cleanup_error or error
+        if cleanup_error:
+            raise cleanup_error
         logger.info("[orchestrator] runtime stopped")

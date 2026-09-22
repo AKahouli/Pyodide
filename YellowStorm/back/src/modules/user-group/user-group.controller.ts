@@ -12,7 +12,7 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { UserGroupService } from './user-group.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { CreateUserGroupDto, UpdateUserGroupDto, AddMembersDto } from './dto';
 import { IUserGroupResponse } from './interfaces/user-group.interface';
 
@@ -24,14 +24,14 @@ export class UserGroupController {
 
   @Get()
   @ApiOperation({ summary: 'List the current user groups' })
-  async findAll(@CurrentUser() user: UserDocument): Promise<IUserGroupResponse[]> {
+  async findAll(@CurrentUser() user: AuthUser): Promise<IUserGroupResponse[]> {
     return this.userGroupService.findAllForUser(user._id.toString());
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a group by id (with populated members)' })
   async findById(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
   ): Promise<IUserGroupResponse> {
     return this.userGroupService.findById(user._id.toString(), id);
@@ -41,7 +41,7 @@ export class UserGroupController {
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Create a group' })
   async create(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Body() dto: CreateUserGroupDto,
   ): Promise<IUserGroupResponse> {
     return this.userGroupService.create(user._id.toString(), dto);
@@ -50,7 +50,7 @@ export class UserGroupController {
   @Patch(':id')
   @ApiOperation({ summary: 'Update a group name/description' })
   async update(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: UpdateUserGroupDto,
   ): Promise<IUserGroupResponse> {
@@ -60,14 +60,14 @@ export class UserGroupController {
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete a group' })
-  async delete(@CurrentUser() user: UserDocument, @Param('id') id: string): Promise<void> {
+  async delete(@CurrentUser() user: AuthUser, @Param('id') id: string): Promise<void> {
     return this.userGroupService.delete(user._id.toString(), id);
   }
 
   @Post(':id/members')
   @ApiOperation({ summary: 'Add members to a group' })
   async addMembers(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() dto: AddMembersDto,
   ): Promise<IUserGroupResponse> {
@@ -77,7 +77,7 @@ export class UserGroupController {
   @Delete(':id/members/:userId')
   @ApiOperation({ summary: 'Remove a member from a group' })
   async removeMember(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Param('userId') memberId: string,
   ): Promise<IUserGroupResponse> {

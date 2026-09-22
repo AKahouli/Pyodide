@@ -116,6 +116,7 @@ vi.mock('@/modules/localization', () => ({
         'activity.status.completed': 'Done',
         'activity.status.failed': 'Failed',
         'activity.status.pending': 'Queued',
+        'stream.activity.tool.search': 'Search playbooks',
         'history.open': 'Open Yellowmind conversation history',
         'history.title': 'Conversation history',
         'history.description': 'Return to an earlier Yellowmind conversation.',
@@ -527,6 +528,22 @@ describe('PlatformCopilotMascot', () => {
     expect(drawer.previousElementSibling).toHaveClass('z-40');
   });
 
+  it('opens the compact drawer directly from a touch tap', () => {
+    setViewport(390);
+    renderMascot();
+    const launcher = screen.getByRole('button', { name: 'Open Yellowmind' });
+    Object.defineProperties(launcher, {
+      setPointerCapture: { configurable: true, value: vi.fn() },
+      hasPointerCapture: { configurable: true, value: vi.fn().mockReturnValue(true) },
+      releasePointerCapture: { configurable: true, value: vi.fn() },
+    });
+
+    fireEvent.pointerDown(launcher, { button: 0, clientX: 300, clientY: 800, pointerId: 9, pointerType: 'touch' });
+    fireEvent.pointerUp(launcher, { clientX: 300, clientY: 800, pointerId: 9, pointerType: 'touch' });
+
+    expect(screen.getByRole('dialog', { name: 'Yellowmind' })).toBeInTheDocument();
+  });
+
   it('preserves an edited handoff prompt across pending-state refreshes', async () => {
     const user = userEvent.setup();
     const pendingHandoff = {
@@ -599,7 +616,7 @@ describe('PlatformCopilotMascot', () => {
     ));
   });
 
-  it('renders multiple present_choices as tabs and submits all answers in one send', async () => {
+  it('renders multiple present_choices as pages and submits all answers in one send', async () => {
     const user = userEvent.setup();
     platformCopilotMock.current = {
       ...platformCopilotMock.current,
@@ -644,12 +661,16 @@ describe('PlatformCopilotMascot', () => {
     renderMascot();
     fireEvent.click(screen.getByRole('button', { name: 'Open Yellowmind' }));
 
-    expect(screen.getByRole('tab', { name: /Pick a region/ })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /Pick a scope/ })).toBeInTheDocument();
-
-    await user.click(screen.getByRole('tab', { name: /Pick a region/ }));
-    await user.click(screen.getByRole('radio', { name: 'Germany' }));
-    await user.click(screen.getByRole('tab', { name: /Pick a scope/ }));
+    expect(screen.getByText('Pick a region')).toBeInTheDocument();
+    expect(screen.queryByText('Pick a scope')).not.toBeInTheDocument();
+    const germany = screen.getByRole('radio', { name: 'Germany' });
+    expect(germany).toBeEnabled();
+    await user.click(germany);
+    expect(germany).toBeChecked();
+    const next = screen.getByRole('button', { name: 'choice.next' });
+    expect(next).toBeEnabled();
+    await user.click(next);
+    expect(screen.getByText('Pick a scope')).toBeInTheDocument();
     await user.click(screen.getByRole('radio', { name: 'Marketing' }));
     await user.click(screen.getByRole('button', { name: 'choice.submitAll' }));
 
@@ -707,7 +728,7 @@ describe('PlatformCopilotMascot', () => {
       streamingMessageId: 'assistant-live',
       streamingComponents: [
         { id: 'activity-live', type: 'agentActivity', data: { summary: 'Preparing playbook search', status: 'running' } },
-        { id: 'tool-live', type: 'toolActivity', data: { toolName: 'search_playbooks', summary: '', renderKind: 'search', status: 'running', paramsJson: '{"token":"hidden"}' } },
+        { id: 'tool-live', type: 'toolActivity', data: { toolName: 'search_playbooks', summary: 'Search playbooks', renderKind: 'search', status: 'running', paramsJson: '{"token":"hidden"}', resultJson: '{"password":"hidden"}' } },
       ],
       messages: [{
         id: 'assistant-live', conversationId: 'conversation-1', conversationType: 'ai', components: [],
@@ -719,9 +740,12 @@ describe('PlatformCopilotMascot', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open Yellowmind' }));
 
     expect(screen.getAllByText('Yellowmind')).toHaveLength(2);
-    expect(screen.getByText('search playbooks')).toBeInTheDocument();
+    const toolSummaries = screen.getAllByText('Search playbooks');
+    expect(toolSummaries).toHaveLength(2);
+    toolSummaries.forEach((summary) => expect(summary.closest('button')).toBeNull());
     expect(screen.queryByText('private hidden reasoning')).not.toBeInTheDocument();
     expect(screen.queryByText(/token/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/password/)).not.toBeInTheDocument();
   });
 
   it('provides new-conversation and searchable history controls', async () => {

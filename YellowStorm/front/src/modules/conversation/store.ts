@@ -13,7 +13,10 @@ import { translateConversation } from './translation';
 import { computeFrontendLatency, mergeLatencyMetrics, type FrontendPaintComputation } from './utils/latency-paint';
 import { streamMetrics } from './utils/stream-metrics';
 import { createLatencyPaintController, type PendingLatencyPaint } from './store-latency';
+import { applyChunksToComponents, StreamingBuffer, type BufferedStreamChunk } from './stream-buffer';
 import type { Conversation, ConversationSummary, ConversationUsageMetrics, Message, MessageComponent, StreamingComponent, SendMessagePayload, CreateReportPayload, StreamStartEvent, StreamChunkEvent, StreamCompleteEvent, StreamErrorEvent, ConversationNameGeneratedEvent, SSEConnectionStatus, MessageCreatedEvent, MessageUpdatedEvent, StreamResyncRequiredEvent, StreamChunkLatencyData, ActiveStreamSnapshot } from './types';
+
+export { applyChunksToComponents } from './stream-buffer';
 
 export type { PendingLatencyPaint };
 
@@ -53,12 +56,6 @@ let pendingStreamReconcileTarget: string | null = null;
 const PENDING_STREAM_RECONCILE_INTERVAL_MS = 2_000;
 const MAX_PENDING_STREAM_RECONCILE_ATTEMPTS = 150;
 
-type BufferedStreamChunk = {
-  action: 'add' | 'update' | 'delete';
-  component: StreamingComponent;
-  revision?: number;
-};
-
 /**
  * Attach the browser-computed sixth latency metric to a persisted message.
  * Never overwrites an already-present frontend value. Delegates to the shared
@@ -89,45 +86,6 @@ interface CachedStreamingState {
  * Used both by the buffer flush callback (current conversation) and by direct
  * cache updates (background conversations).
  */
-export function applyChunksToComponents(components: StreamingComponent[], chunks: BufferedStreamChunk[]): StreamingComponent[] {
-  let result = [...components];
-  for (const { action, component } of chunks) {
-    if (action === 'add') {
-      const existingIndex = result.findIndex((item) => item.id === component.id);
-      if (component.type === 'toolActivity' && existingIndex >= 0) {
-        const existing = result[existingIndex];
-        result[existingIndex] = {
-          ...existing,
-          data: mergeStreamingData('toolActivity', existing.data, component.data),
-        };
-      } else {
-        result.push({
-          ...component,
-          data: initializeStreamingData(component.type, component.data),
-        });
-      }
-    } else if (action === 'update') {
-      const hasExisting = result.some((comp) => comp.id === component.id);
-      result = result.map((comp) => {
-        if (comp.id !== component.id) return comp;
-        return {
-          ...comp,
-          data: mergeStreamingData(comp.type, comp.data, component.data),
-        };
-      });
-      if (!hasExisting && component.type === 'toolActivity') {
-        result.push({
-          ...component,
-          data: initializeStreamingData(component.type, component.data),
-        });
-      }
-    } else if (action === 'delete') {
-      result = result.filter((comp) => comp.id !== component.id);
-    }
-  }
-  return result;
-}
-
 /**
  * Streaming chunk queue with frame-oriented coalescing.
  * Chunks arrive fast from SSE; they are applied in ONE store transaction per
@@ -136,116 +94,10 @@ export function applyChunksToComponents(components: StreamingComponent[], chunks
  * the queue stays bounded: on overflow the backlog is dropped and canonical
  * state is refetched instead of freezing the tab with a synchronous flush.
  */
-const MAX_QUEUED_CHUNKS = 500;
-const HIDDEN_TAB_FLUSH_INTERVAL_MS = 250;
-
-class StreamingBuffer {
-  private queue: BufferedStreamChunk[] = [];
-  private scheduled = false;
-  private rafId: number | null = null;
-  private hiddenTimer: ReturnType<typeof setTimeout> | null = null;
-  private flushCallback: ((chunks: BufferedStreamChunk[]) => void) | null = null;
-  private overflowCallback: (() => void) | null = null;
-
-  setFlushCallback(callback: (chunks: BufferedStreamChunk[]) => void) {
-    this.flushCallback = callback;
-  }
-
-  /** Invoked when the bounded queue overflows; the store reconciles from canonical state. */
-  setOverflowCallback(callback: () => void) {
-    this.overflowCallback = callback;
-  }
-
-  addChunk(action: 'add' | 'update' | 'delete', component: StreamingComponent, revision?: number) {
-    streamMetrics.recordQueueEnqueue();
-    this.queue.push({ action, component, revision });
-
-    // Hidden-tab safety cap: rather than an unbounded synchronous flush (the
-    // old >500 behavior), drop the backlog instead of freezing the tab. The
-    // stream continues merging onto the retained tail; there is no mid-stream
-    // replay of the dropped span — completion reconciliation restores the
-    // canonical persisted message.
-    if (this.queue.length > MAX_QUEUED_CHUNKS) {
-      this.queue = [];
-      this.cancelScheduledFlush();
-      const overflow = this.overflowCallback;
-      if (overflow) overflow();
-      return;
-    }
-
-    this.scheduleFlush();
-  }
-
-  /** Synchronously drain all remaining chunks (used on stream end / terminal events). */
-  flush() {
-    this.cancelScheduledFlush();
-    if (this.queue.length > 0 && this.flushCallback) {
-      const chunks = this.queue.splice(0);
-      const startedAt = performance.now();
-      this.flushCallback(chunks);
-      streamMetrics.recordQueueFlush(chunks.length, performance.now() - startedAt, 1);
-    }
-  }
-
-  clear() {
-    this.queue = [];
-    this.cancelScheduledFlush();
-  }
-
-  discardThrough(revision: number) {
-    this.queue = this.queue.filter((chunk) => chunk.revision === undefined || chunk.revision > revision);
-  }
-
-  // --- internals ---
-
-  private scheduleFlush() {
-    if (this.scheduled || this.queue.length === 0) return;
-    this.scheduled = true;
-    const hidden = typeof document !== 'undefined' && document.hidden;
-    if (hidden) {
-      // RAF is suspended while hidden; drain on a coarse timer instead.
-      this.hiddenTimer = setTimeout(() => {
-        this.hiddenTimer = null;
-        this.scheduled = false;
-        this.flushQueued();
-      }, HIDDEN_TAB_FLUSH_INTERVAL_MS);
-    } else if (typeof requestAnimationFrame === 'function') {
-      this.rafId = requestAnimationFrame(() => {
-        this.rafId = null;
-        this.scheduled = false;
-        this.flushQueued();
-      });
-    } else {
-      this.hiddenTimer = setTimeout(() => {
-        this.hiddenTimer = null;
-        this.scheduled = false;
-        this.flushQueued();
-      }, 0);
-    }
-  }
-
-  private flushQueued() {
-    if (this.queue.length === 0 || !this.flushCallback) return;
-    const chunks = this.queue.splice(0);
-    const startedAt = performance.now();
-    this.flushCallback(chunks);
-    streamMetrics.recordQueueFlush(chunks.length, performance.now() - startedAt, 1);
-  }
-
-  private cancelScheduledFlush() {
-    if (this.rafId !== null) {
-      cancelAnimationFrame(this.rafId);
-      this.rafId = null;
-    }
-    if (this.hiddenTimer) {
-      clearTimeout(this.hiddenTimer);
-      this.hiddenTimer = null;
-    }
-    this.scheduled = false;
-  }
-}
-
-const streamingBuffer = new StreamingBuffer();
+const streamingBuffer = new StreamingBuffer({
+  recordEnqueue: () => streamMetrics.recordQueueEnqueue(),
+  recordFlush: (chunkCount, durationMs) => streamMetrics.recordQueueFlush(chunkCount, durationMs, 1),
+});
 
 /** Guards against overlapping snapshot repairs when overflow fires repeatedly. */
 let streamSnapshotRepairInFlight = false;
@@ -521,190 +373,6 @@ function upsertMessage(messages: Message[], message: Message): { messages: Messa
   return { messages: next, inserted: false };
 }
 
-/**
- * Initialize component data with proper structure based on type.
- * Called on 'add' action.
- */
-function initializeStreamingData(type: string, data: Record<string, unknown>): Record<string, unknown> {
-  if (type === 'chart') {
-    // Backend sends chart data as an object with:
-    // - data: array of data points (or nested object with data.data)
-    // - chartData: sometimes array, sometimes empty string
-    // - config: JSON string or object
-    // - Other props: title, xAxisKey, yAxisKey, series, kind, etc.
-
-    const parseJsonArray = (value: unknown): Record<string, unknown>[] => {
-      if (Array.isArray(value)) return value;
-      if (typeof value !== 'string') return [];
-
-      try {
-        const parsed = JSON.parse(value);
-        return Array.isArray(parsed) ? parsed : [];
-      } catch {
-        return [];
-      }
-    };
-
-    // Extract the actual data array
-    let actualData: Record<string, unknown>[] = [];
-
-    // Check if data.data is already an array (most common case from backend)
-    if (Array.isArray(data.data)) {
-      actualData = data.data;
-    }
-    // Check if data.data is a nested object with a data property
-    else if (typeof data.data === 'object' && data.data !== null && 'data' in (data.data as Record<string, unknown>)) {
-      const nested = (data.data as Record<string, unknown>).data;
-      if (Array.isArray(nested)) {
-        actualData = nested;
-      }
-    }
-    // Fallback to chartData if it's an array
-    else if (Array.isArray(data.chartData)) {
-      actualData = data.chartData;
-    } else {
-      actualData = parseJsonArray(data.data) || parseJsonArray(data.chartData);
-    }
-
-    // Return the data structure with chartData set to the actual data array
-    return {
-      ...data,
-      chartData: actualData,
-      data: actualData,
-    };
-  }
-
-  // All other types use data directly - queue/plan arrive fully formed
-  return { ...data };
-}
-
-/**
- * Merge incoming data into existing component data based on type.
- * Called on 'update' action.
- */
-function mergeStreamingData(type: string, existing: Record<string, unknown>, incoming: Record<string, unknown>): Record<string, unknown> {
-  switch (type) {
-    case 'text': {
-      if (incoming.guardrailDecision) {
-        return { ...existing, ...incoming };
-      }
-      // Append content for streaming text types
-      const existingContent = (existing.content as string) || '';
-      const newContent = (incoming.content as string) || '';
-      const sentenceGap = /[.!?][\])"']?$/.test(existingContent) && /^\p{Lu}/u.test(newContent) ? ' ' : '';
-      return {
-        ...existing,
-        content: existingContent + sentenceGap + newContent,
-      };
-    }
-    case 'agentActivity':
-      return { ...existing, ...incoming };
-    case 'code': {
-      // Append content, preserve language/filename from first chunk
-      const existingContent = (existing.content as string) || '';
-      const newContent = (incoming.content as string) || '';
-      return {
-        ...existing,
-        content: existingContent + newContent,
-        // Only update language/filename if incoming has non-empty values
-        language: (incoming.language as string) || existing.language,
-        filename: (incoming.filename as string) || existing.filename,
-      };
-    }
-    case 'queue':
-    case 'plan':
-    case 'checkpoint':
-    case 'task':
-    case 'error':
-    case 'citation':
-      // Charts and other structured components replace the full payload on update.
-      return { ...incoming };
-    case 'toolActivity':
-      // Terminal tool updates only include status. Retain the arguments from
-      // the initial event so the live debug pane matches persisted history.
-      const existingStatus = (existing.status as string) || 'running';
-      const incomingStatus = (incoming.status as string) || existingStatus;
-      const existingIsTerminal = existingStatus === 'completed' || existingStatus === 'failed' || existingStatus === 'stopped';
-      const merged: Record<string, unknown> = {
-        ...existing,
-        ...incoming,
-        toolName: (incoming.toolName as string) || (existing.toolName as string) || '',
-        status: existingIsTerminal ? existingStatus : incomingStatus,
-        paramsJson: (incoming.paramsJson as string) || (existing.paramsJson as string) || '',
-        startedAt: (incoming.startedAt as string) || (existing.startedAt as string) || '',
-        ...(incoming.summary || existing.summary
-          ? {
-              summary: (incoming.summary as string) || (existing.summary as string),
-            }
-          : {}),
-        ...(incoming.renderKind || existing.renderKind
-          ? {
-              renderKind: existing.renderKind && existing.renderKind !== 'generic' ? existing.renderKind : incoming.renderKind || existing.renderKind || 'generic',
-            }
-          : {}),
-      };
-      return merged;
-    case 'chart': {
-      // For charts, data is an object with properties (title, data, config, etc.)
-      // and chartData is the actual array of data points
-      const parseJsonArray = (value: unknown): Record<string, unknown>[] => {
-        if (Array.isArray(value)) return value;
-        if (typeof value !== 'string') return [];
-
-        try {
-          const parsed = JSON.parse(value);
-          return Array.isArray(parsed) ? parsed : [];
-        } catch {
-          return [];
-        }
-      };
-
-      const incomingChartData = parseJsonArray(incoming.chartData);
-      const existingChartData = parseJsonArray(existing.chartData);
-
-      // Determine the best chart data array to use
-      let finalChartData: Record<string, unknown>[] = [];
-      if (Array.isArray(incomingChartData) && incomingChartData.length > 0) {
-        finalChartData = incomingChartData;
-      } else if (Array.isArray(existingChartData) && existingChartData.length > 0) {
-        finalChartData = existingChartData;
-      }
-
-      // For chart data object, merge properties with incoming taking precedence
-      const chartDataObj =
-        typeof incoming.data === 'object' && incoming.data !== null
-          ? {
-              ...(typeof existing.data === 'object' && existing.data !== null ? (existing.data as Record<string, unknown>) : {}),
-              ...(incoming.data as Record<string, unknown>),
-            }
-          : typeof existing.data === 'object' && existing.data !== null
-            ? (existing.data as Record<string, unknown>)
-            : {};
-
-      return {
-        ...existing,
-        ...incoming,
-        data: chartDataObj,
-        chartData: finalChartData,
-        kind: (incoming.kind as string) || (existing.kind as string) || 'bar',
-        layout: (incoming.layout as string) || (existing.layout as string) || 'horizontal',
-      };
-    }
-    case 'sandbox':
-      // Sandbox: merge code from first chunk with output/error from update
-      // Preserve non-empty values from existing when incoming has empty values
-      // For outputAvailable: if incoming explicitly sets it to true, use true; otherwise keep existing
-      return {
-        code: (incoming.code as string) || (existing.code as string) || '',
-        output: (incoming.output as string) || (existing.output as string) || '',
-        error: (incoming.error as string) || (existing.error as string) || '',
-        outputAvailable: incoming.outputAvailable === true || existing.outputAvailable === true,
-      };
-    default:
-      return { ...existing, ...incoming };
-  }
-}
-
 interface ConversationState {
   // Conversation list - flat array for simpler CRUD
   conversations: Conversation[];
@@ -831,6 +499,8 @@ interface ConversationState {
     },
   ) => void;
   setCurrentConversation: (id: string) => Promise<void>;
+  /** Re-fetch the open conversation in place (no loading shell) after a share change. */
+  refreshCurrentConversation: (id: string) => Promise<void>;
 
   // Actions - History Panel
   setHistoryPanelOpen: (open: boolean) => void;
@@ -1274,6 +944,21 @@ export const useConversationStore = create<ConversationState>()(
           if (requestSequence !== currentConversationRequestSequence || get().currentConversationId !== id) return;
           set({ currentConversation: null, conversationLoading: false });
           console.error('[ConversationStore] setCurrentConversation error:', err);
+        }
+      },
+
+      refreshCurrentConversation: async (id) => {
+        const requestSequence = ++currentConversationRequestSequence;
+        try {
+          const conversation = await api.fetchConversation(id);
+          if (requestSequence !== currentConversationRequestSequence || get().currentConversationId !== id) return;
+          set({
+            currentConversation: conversation,
+            selectedSkillIds: conversation.selectedSkills ?? [],
+            selectedWorkspaceIds: conversation.workspaces ?? [],
+          });
+        } catch (err) {
+          console.error('[ConversationStore] refreshCurrentConversation error:', err);
         }
       },
 

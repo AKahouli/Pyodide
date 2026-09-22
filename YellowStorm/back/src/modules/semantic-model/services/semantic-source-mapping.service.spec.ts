@@ -1,16 +1,10 @@
-import * as ExcelJS from 'exceljs';
-import AdmZip = require('adm-zip');
-import type { DocumentService } from '@modules/document/document.service';
-import type { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import {
   computeFieldProfiles,
   identityKeyOf,
   normalizeIdentityValue,
   resolveSheetEntities,
-  SHEET_ROW_KEY,
   suggestFieldMappings,
 } from '../domain/semantic-source-mapping.types';
-import { SpreadsheetConceptResolver } from './spreadsheet-concept.resolver';
 import { SemanticSourceMappingService } from './semantic-source-mapping.service';
 
 describe('semantic source mapping domain', () => {
@@ -213,16 +207,36 @@ describe('SemanticSourceMappingService boundaries', () => {
       requireRole: jest.fn().mockResolvedValue({ id: 'model-1', currentDraftVersionId: 'version-1' }),
       requireActiveRole: jest.fn().mockResolvedValue({ id: 'model-1', currentDraftVersionId: 'version-1' }),
     };
-    const documents = { findById: jest.fn().mockResolvedValue({ id: 'document-1', mimeType, originalName: 'Source.pdf' }), findByIds: jest.fn() };
+    const documents = { findById: jest.fn().mockResolvedValue({ id: 'document-1', workspaceId: 'workspace-1', mimeType, originalName: 'Source.pdf', size: 10, updatedAt: 'now', indexingStatus: 'ready' }), findByIds: jest.fn() };
+    const runtime = { requestDatasourceDiscovery: jest.fn(), getJob: jest.fn() };
     const service = new SemanticSourceMappingService(
       database as never,
       models as never,
       documents as never,
-      { preview: jest.fn() } as never,
+      runtime as never,
       { preview: jest.fn() } as never,
     );
-    return { service, database, models, documents };
+    return { service, database, models, documents, runtime };
   };
+
+  it('reads a persisted profile without admitting a job on GET', async () => {
+    const { service, database, runtime } = buildService('text/csv');
+    database.query
+      .mockResolvedValueOnce({ rows: [{}] })
+      .mockResolvedValueOnce({ rows: [{ profile: {
+        structure: { kind: 'csv', selectedSheet: 'CSV', dataRows: 2 },
+        fieldProfiles: [{ name: 'id', type: 'text', sample: 'C1', populatedRatio: 1, uniqueRatio: 1 }],
+        samples: [{ id: 'C1' }], scannedRows: 2, coverage: { completeProfileDone: true },
+      } }] });
+
+    await expect(service.profileAsset('user-1', 'model-1', 'workspace-1', 'document-1', {
+      workspaceId: 'workspace-1', sheetName: 'CSV',
+    })).resolves.toMatchObject({ fields: [{ name: 'id' }], totalRows: 2, complete: true });
+    expect(database.query).toHaveBeenLastCalledWith(expect.stringContaining('source_version=$3'), [
+      'workspace-1', 'document-1', 'now:10', 'CSV',
+    ]);
+    expect(runtime.requestDatasourceDiscovery).not.toHaveBeenCalled();
+  });
 
   it('rejects a client asset kind that conflicts with the stored MIME type', async () => {
     const { service, database } = buildService();

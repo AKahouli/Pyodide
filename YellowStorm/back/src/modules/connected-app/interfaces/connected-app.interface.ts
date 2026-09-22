@@ -1,4 +1,4 @@
-import { ConnectionStatus } from '../schemas/user-app-connection.schema';
+import { ConnectionStatus } from '../connected-app.types';
 
 export interface DecryptedAppConfig {
   appKey: string;

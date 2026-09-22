@@ -1,18 +1,102 @@
 import { Test } from '@nestjs/testing';
-import { getModelToken } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { lookup } from 'dns/promises';
 import axios from 'axios';
 import { Readable } from 'stream';
 import { Types } from 'mongoose';
 import { WorkspaceDocumentService } from './workspace-document.service';
+// D.10 cutover: the Mongo stores are gone; these fakes implement the
+// DocumentStore/UploadSessionStore contracts in-memory so the service logic
+// (not a driver) is what's under test.
+function makeFakeDocumentStore(overrides: Record<string, unknown> = {}) {
+  const store: any = {
+    create: jest.fn(async (input: any) => ({
+      filename: undefined,
+      contentHash: undefined,
+      url: undefined,
+      uploadedAt: undefined,
+      metadata: undefined,
+      indexingStatus: input.indexingStatus ?? 'none',
+      indexingError: undefined,
+      errorMessage: undefined,
+      parentId: input.parentId ?? undefined,
+      isFolder: input.isFolder ?? false,
+      folderName: input.folderName,
+      type: input.type ?? 'doc',
+      sourceUrl: input.sourceUrl,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      ...input,
+      id: input.id ?? 'doc1',
+    })),
+    findById: jest.fn(async () => null),
+    findByIdAndWorkspace: jest.fn(async () => null),
+    findByIds: jest.fn(async () => []),
+    findByIdsInWorkspace: jest.fn(async () => []),
+    originalNameExists: jest.fn(async () => false),
+    findFolderDuplicate: jest.fn(async () => null),
+    findChildFolderIds: jest.fn(async () => []),
+    findDirectChildren: jest.fn(async () => []),
+    findAllByWorkspaceId: jest.fn(async () => []),
+    listByWorkspace: jest.fn(async () => ({ items: [], total: 0 })),
+    listByWorkspaces: jest.fn(async () => ({ items: [], total: 0 })),
+    listFolders: jest.fn(async () => []),
+    listFolderContents: jest.fn(async () => ({ items: [], total: 0 })),
+    findUrlSources: jest.fn(async () => []),
+    updateById: jest.fn(async (id: string, patch: any) => ({
+      id,
+      workspaceId: WS_ID,
+      createdBy: USER_ID,
+      originalName: 'seed.pdf',
+      mimeType: 'application/pdf',
+      size: 0,
+      status: 'processing',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      ...patch,
+    })),
+    // Merge into whatever findById last returned so callers can assert on the
+    // same object they seeded (mirrors the old doc.save() mutation semantics).
+    markUploaded: jest.fn(async (id: string, fields: any) => {
+      const results = (store.findById as jest.Mock).mock.results;
+      const last = results.length ? results[results.length - 1].value : null;
+      const rec = last instanceof Promise ? await last : last;
+      return rec ? Object.assign(rec, fields) : { id, ...fields };
+    }),
+    renameOriginalName: jest.fn(async (id: string, originalName: string) => ({ id, originalName })),
+    renameFolder: jest.fn(async (id: string, folderName: string) => ({ id, folderName, originalName: folderName })),
+    mergeMetadata: jest.fn(async () => undefined),
+    setParent: jest.fn(async () => undefined),
+    deleteById: jest.fn(async () => undefined),
+    deleteByIdAndWorkspace: jest.fn(async () => undefined),
+    deleteManyByWorkspace: jest.fn(async () => 0),
+    ...overrides,
+  };
+  return store;
+}
+
+function makeFakeSessionStore(overrides: Record<string, unknown> = {}) {
+  const store: any = {
+    create: jest.fn(async (input: any) => ({ id: 'session1', createdAt: new Date(), updatedAt: new Date(), ...input })),
+    findByIdWorkspaceUser: jest.fn(async () => null),
+    findExpired: jest.fn(async () => []),
+    updateFileProgress: jest.fn(async () => undefined),
+    setStatus: jest.fn(async () => undefined),
+    setOutcome: jest.fn(async () => undefined),
+    markExpired: jest.fn(async () => undefined),
+    deleteManyByWorkspace: jest.fn(async () => undefined),
+    ...overrides,
+  };
+  return store;
+}
+
+import { DOCUMENT_STORE, UPLOAD_SESSION_STORE } from './stores';
 import { BadRequestException } from '../exceptions';
 import * as urlSafetyModule from './services/url-safety';
 
 jest.mock('dns/promises');
 jest.mock('axios');
-import { WorkspaceDoc, DocumentStatus } from './schemas/workspace-document.schema';
-import { UploadSession } from './schemas/upload-session.schema';
+import { DocumentStatus } from './interfaces/document-status.enum';
 import { WorkspaceService } from './workspace.service';
 import { DocumentService } from '../document/document.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -36,14 +120,14 @@ describe('WorkspaceDocumentService.createFromAiArtifact', () => {
   let updateStorageUsage: jest.Mock;
 
   beforeEach(async () => {
-    create = jest.fn().mockResolvedValue({});
+    create = jest.fn().mockResolvedValue({ id: 'doc1' });
     updateStorageUsage = jest.fn().mockResolvedValue(undefined);
 
     const mod = await Test.createTestingModule({
       providers: [
         WorkspaceDocumentService,
-        { provide: getModelToken(WorkspaceDoc.name), useValue: { create } },
-        { provide: getModelToken(UploadSession.name), useValue: {} },
+        { provide: DOCUMENT_STORE, useValue: makeFakeDocumentStore({ create }) },
+        { provide: UPLOAD_SESSION_STORE, useValue: makeFakeSessionStore() },
         {
           provide: WorkspaceService,
           useValue: {
@@ -145,16 +229,24 @@ describe('WorkspaceDocumentService upload validation', () => {
   let getAllowedExtensions: jest.Mock;
 
   beforeEach(async () => {
-    create = jest.fn().mockResolvedValue({ _id: 'doc1' });
+    create = jest.fn().mockResolvedValue({
+      id: 'doc1',
+      workspaceId: WS_ID,
+      createdBy: USER_ID,
+      originalName: 'report.pdf',
+      mimeType: 'application/pdf',
+      size: 1024,
+      status: 'pending',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
     getAllowedExtensions = jest.fn().mockResolvedValue(['.pdf', '.png']);
-
-    const exists = jest.fn().mockReturnValue({ lean: () => Promise.resolve(null) });
 
     const mod = await Test.createTestingModule({
       providers: [
         WorkspaceDocumentService,
-        { provide: getModelToken(WorkspaceDoc.name), useValue: { create, exists } },
-        { provide: getModelToken(UploadSession.name), useValue: {} },
+        { provide: DOCUMENT_STORE, useValue: makeFakeDocumentStore({ create }) },
+        { provide: UPLOAD_SESSION_STORE, useValue: makeFakeSessionStore() },
         {
           provide: WorkspaceService,
           useValue: {
@@ -252,8 +344,8 @@ describe('WorkspaceDocumentService.mapToResponse', () => {
     const mod = await Test.createTestingModule({
       providers: [
         WorkspaceDocumentService,
-        { provide: getModelToken(WorkspaceDoc.name), useValue: {} },
-        { provide: getModelToken(UploadSession.name), useValue: {} },
+        { provide: DOCUMENT_STORE, useValue: makeFakeDocumentStore() },
+        { provide: UPLOAD_SESSION_STORE, useValue: makeFakeSessionStore() },
         {
           provide: WorkspaceService,
           useValue: {
@@ -322,7 +414,7 @@ describe('WorkspaceDocumentService.mapToResponse', () => {
       createdAt: new Date(),
       updatedAt: new Date(),
     };
-    const res = (svc as any).mapToResponse(doc);
+    const res = (svc as any).support.mapToResponse(doc);
     expect(res.type).toBe('doc');
     expect(res.sourceUrl).toBeUndefined();
   });
@@ -330,7 +422,7 @@ describe('WorkspaceDocumentService.mapToResponse', () => {
 
 describe('WorkspaceDocumentService url document (addLink)', () => {
   let service: WorkspaceDocumentService;
-  let documentModel: { create: jest.Mock; findByIdAndUpdate: jest.Mock; exists: jest.Mock };
+  let documentStore: ReturnType<typeof makeFakeDocumentStore>;
   let workspaceService: {
     getStorageContext: jest.Mock;
     checkStorageQuota: jest.Mock;
@@ -341,20 +433,7 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
   let documentService: { upload: jest.Mock };
 
   beforeEach(async () => {
-    documentModel = {
-      // Echo the create() argument back (it already carries a real ObjectId
-      // _id/workspaceId/createdBy set by the service), so mapToResponse()
-      // has real values to read instead of crashing on an empty object.
-      // A real Mongoose model stamps createdAt/updatedAt on insert; fill
-      // those in here since this plain-object mock doesn't.
-      create: jest.fn().mockImplementation(async (doc: any) => ({
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        ...doc,
-      })),
-      findByIdAndUpdate: jest.fn().mockResolvedValue({}),
-      exists: jest.fn().mockReturnValue({ lean: () => Promise.resolve(null) }),
-    };
+    documentStore = makeFakeDocumentStore();
     workspaceService = {
       getStorageContext: jest.fn().mockResolvedValue({ ownerUserId: USER_ID, storagePrefix: 'ws' }),
       checkStorageQuota: jest.fn().mockResolvedValue({ allowed: true, available: 999_999 }),
@@ -370,8 +449,8 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
     const mod = await Test.createTestingModule({
       providers: [
         WorkspaceDocumentService,
-        { provide: getModelToken(WorkspaceDoc.name), useValue: documentModel },
-        { provide: getModelToken(UploadSession.name), useValue: {} },
+        { provide: DOCUMENT_STORE, useValue: documentStore },
+        { provide: UPLOAD_SESSION_STORE, useValue: makeFakeSessionStore() },
         { provide: WorkspaceService, useValue: workspaceService },
         { provide: DocumentService, useValue: documentService },
         { provide: NotificationsService, useValue: {} },
@@ -425,7 +504,7 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
   });
 
   it('derives a page-name .pdf filename from a URL', () => {
-    const d = (service as any).deriveFilenameFromUrl.bind(service);
+    const d = (service as any).support.deriveFilenameFromUrl.bind((service as any).support);
     // Last path segment only (the "page name"), not the full URL.
     expect(d('https://www.example.com/docs/guide/')).toBe('guide.pdf');
     expect(d('https://example.com/page/pagename')).toBe('pagename.pdf');
@@ -435,31 +514,31 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
   });
 
   it('addLink creates a processing url document and returns it', async () => {
-    (service as any).resolveUniqueOriginalName = jest.fn().mockResolvedValue('example.com.pdf');
+    (service as any).links.support.resolveUniqueOriginalName = jest.fn().mockResolvedValue('example.com.pdf');
     const created = {
-      _id: { toString: () => 'doc1' },
+      id: 'doc1',
       originalName: 'example.com.pdf',
       mimeType: 'application/pdf',
       size: 0,
       type: 'url',
       sourceUrl: 'https://example.com',
-      workspaceId: { toString: () => 'ws1' },
-      createdBy: { toString: () => 'u1' },
+      workspaceId: 'ws1',
+      createdBy: 'u1',
       status: 'processing',
       indexingStatus: 'none',
       isFolder: false,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
-    documentModel.create.mockResolvedValue(created);
+    documentStore.create.mockResolvedValue(created);
     // Prevent the fire-and-forget conversion from doing real work in this test.
-    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    (service as any).links.convertAndStore = jest.fn().mockResolvedValue(undefined);
 
     const res = await service.addLink(WS_ID, USER_ID, 'https://example.com');
     expect(res.type).toBe('url');
     expect(res.status).toBe('processing');
     expect(res.sourceUrl).toBe('https://example.com');
-    expect((service as any).convertAndStore).toHaveBeenCalled();
+    expect((service as any).links.convertAndStore).toHaveBeenCalled();
   });
 
   it('addLink inserts a unique non-null path to satisfy the unique path index', async () => {
@@ -468,40 +547,40 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
     // Link docs have no blob yet at creation, so addLink must assign a unique
     // placeholder path (mirroring the folder-creation pattern) that
     // convertAndStore later overwrites with the real blob path.
-    (service as any).resolveUniqueOriginalName = jest.fn().mockResolvedValue('example.com.pdf');
-    documentModel.create.mockResolvedValue({
-      _id: { toString: () => 'doc1' },
+    (service as any).links.support.resolveUniqueOriginalName = jest.fn().mockResolvedValue('example.com.pdf');
+    documentStore.create.mockResolvedValue({
+      id: 'doc1',
       originalName: 'example.com.pdf',
       mimeType: 'application/pdf',
       size: 0,
       type: 'url',
       sourceUrl: 'https://example.com',
-      workspaceId: { toString: () => 'ws1' },
-      createdBy: { toString: () => 'u1' },
+      workspaceId: 'ws1',
+      createdBy: 'u1',
       status: 'processing',
       indexingStatus: 'none',
       isFolder: false,
       createdAt: new Date(),
       updatedAt: new Date(),
     });
-    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    (service as any).links.convertAndStore = jest.fn().mockResolvedValue(undefined);
 
     await service.addLink(WS_ID, USER_ID, 'https://example.com');
 
-    const createArg = documentModel.create.mock.calls[0][0];
+    const createArg = documentStore.create.mock.calls[0][0];
     expect(typeof createArg.path).toBe('string');
     expect(createArg.path).toContain('link-pending:');
     // Placeholder must embed the doc's own id so concurrent link adds never collide.
-    expect(createArg.path).toContain(createArg._id.toString());
+    expect(createArg.path).toContain(createArg.id);
   });
 
   it('addLinks creates one processing url doc per URL with a unique path', async () => {
-    (service as any).resolveUniqueOriginalName = jest.fn(async (_ws, name) => name);
-    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    (service as any).links.support.resolveUniqueOriginalName = jest.fn(async (_ws, name) => name);
+    (service as any).links.convertAndStore = jest.fn().mockResolvedValue(undefined);
     const created: any[] = [];
-    (documentModel.create as jest.Mock).mockImplementation(async (doc: any) => {
-      const d = { ...doc, _id: { toString: () => String(created.length + 1) },
-        workspaceId: { toString: () => 'ws1' }, createdBy: { toString: () => 'u1' },
+    documentStore.create.mockImplementation(async (doc: any) => {
+      const d = { ...doc, id: String(created.length + 1),
+        workspaceId: 'ws1', createdBy: 'u1',
         createdAt: new Date(), updatedAt: new Date() };
       created.push(d);
       return d;
@@ -520,46 +599,46 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
     // item's mocked call resolves (a microtask hop beyond addLinks
     // returning), so flush pending microtasks before asserting both ran.
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect((service as any).convertAndStore).toHaveBeenCalledTimes(2);
+    expect((service as any).links.convertAndStore).toHaveBeenCalledTimes(2);
   });
 
   it('addLinks persists sourceRootUrl and its normalized form in metadata', async () => {
-    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    (service as any).links.convertAndStore = jest.fn().mockResolvedValue(undefined);
     await service.addLinks(WS_ID, USER_ID, ['https://a.com/x'], { sourceRootUrl: 'https://a.com/services' });
-    const createArg = documentModel.create.mock.calls[0][0];
+    const createArg = documentStore.create.mock.calls[0][0];
     expect(createArg.metadata.sourceRootUrl).toBe('https://a.com/services');
     expect(createArg.metadata.normalizedSourceRootUrl).toBe('https://a.com/services');
   });
 
   it('addLinks omits sourceRootUrl metadata when none is provided', async () => {
-    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    (service as any).links.convertAndStore = jest.fn().mockResolvedValue(undefined);
     await service.addLinks(WS_ID, USER_ID, ['https://a.com/x']);
-    const createArg = documentModel.create.mock.calls[0][0];
+    const createArg = documentStore.create.mock.calls[0][0];
     expect(createArg.metadata.sourceRootUrl).toBeUndefined();
   });
 
   it('addLinks stamps one generated sourceGroupId across the whole batch', async () => {
-    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    (service as any).links.convertAndStore = jest.fn().mockResolvedValue(undefined);
     await service.addLinks(WS_ID, USER_ID, ['https://a.com/x', 'https://a.com/y']);
-    const first = documentModel.create.mock.calls[0][0];
-    const second = documentModel.create.mock.calls[1][0];
+    const first = documentStore.create.mock.calls[0][0];
+    const second = documentStore.create.mock.calls[1][0];
     expect(first.metadata.sourceGroupId).toEqual(expect.any(String));
     expect(second.metadata.sourceGroupId).toBe(first.metadata.sourceGroupId);
   });
 
   it('addLinks reuses a provided sourceGroupId (continue mode)', async () => {
-    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    (service as any).links.convertAndStore = jest.fn().mockResolvedValue(undefined);
     await service.addLinks(WS_ID, USER_ID, ['https://a.com/x'], { sourceGroupId: 'grp-123' });
-    const createArg = documentModel.create.mock.calls[0][0];
+    const createArg = documentStore.create.mock.calls[0][0];
     expect(createArg.metadata.sourceGroupId).toBe('grp-123');
   });
 
   it('addLinks names the document from the provided link text when present', async () => {
-    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    (service as any).links.convertAndStore = jest.fn().mockResolvedValue(undefined);
     await service.addLinks(WS_ID, USER_ID, ['https://a.com/services'], {
       names: { 'https://a.com/services': '  Our   Services  ' },
     });
-    const createArg = documentModel.create.mock.calls[0][0];
+    const createArg = documentStore.create.mock.calls[0][0];
     // Link docs are always PDFs; the provided name gets a `.pdf` extension so the
     // converted blob key carries one (an extensionless key can't be signed for
     // view/download — DocumentService.generateSasUrl rejects it as a folder).
@@ -567,26 +646,26 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
   });
 
   it('addLinks falls back to the url-derived name when no link text is provided', async () => {
-    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    (service as any).links.convertAndStore = jest.fn().mockResolvedValue(undefined);
     await service.addLinks(WS_ID, USER_ID, ['https://a.com/services']);
-    const createArg = documentModel.create.mock.calls[0][0];
+    const createArg = documentStore.create.mock.calls[0][0];
     expect(createArg.originalName).toBe('services.pdf');
   });
 
   it('addLinks roots a manual link to its own url via the roots override', async () => {
-    (service as any).convertAndStore = jest.fn().mockResolvedValue(undefined);
+    (service as any).links.convertAndStore = jest.fn().mockResolvedValue(undefined);
     await service.addLinks(WS_ID, USER_ID, ['https://a.com/x', 'https://manual.org/p'], {
       sourceRootUrl: 'https://a.com/services',
       roots: { 'https://manual.org/p': 'https://manual.org/p' },
     });
-    const first = documentModel.create.mock.calls[0][0];
-    const second = documentModel.create.mock.calls[1][0];
+    const first = documentStore.create.mock.calls[0][0];
+    const second = documentStore.create.mock.calls[1][0];
     expect(first.metadata.sourceRootUrl).toBe('https://a.com/services'); // session root
     expect(second.metadata.sourceRootUrl).toBe('https://manual.org/p'); // self-rooted
   });
 
   it('crawlSite returns only pages under the seed path', async () => {
-    (service as any).websiteCrawler = {
+    (service as any).links.websiteCrawler = {
       crawl: jest.fn().mockResolvedValue({ pages: [{ url: 'https://a.com/docs/x' }, { url: 'https://a.com/pricing' }, { url: 'https://a.com/docsfoo/y' }], truncated: false }),
     };
     const res = await service.crawlSite(WS_ID, 'https://a.com/docs');
@@ -595,7 +674,7 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
   });
 
   it('crawlSite (root seed) keeps all pages', async () => {
-    (service as any).websiteCrawler = {
+    (service as any).links.websiteCrawler = {
       crawl: jest.fn().mockResolvedValue({ pages: [{ url: 'https://a.com/docs/x' }, { url: 'https://a.com/pricing' }], truncated: true }),
     };
     const res = await service.crawlSite(WS_ID, 'https://a.com');
@@ -615,8 +694,8 @@ describe('WorkspaceDocumentService SSRF guard (assertUrlIsSafe / checkUrlReachab
     const mod = await Test.createTestingModule({
       providers: [
         WorkspaceDocumentService,
-        { provide: getModelToken(WorkspaceDoc.name), useValue: {} },
-        { provide: getModelToken(UploadSession.name), useValue: {} },
+        { provide: DOCUMENT_STORE, useValue: makeFakeDocumentStore() },
+        { provide: UPLOAD_SESSION_STORE, useValue: makeFakeSessionStore() },
         { provide: WorkspaceService, useValue: {} },
         { provide: DocumentService, useValue: {} },
         { provide: NotificationsService, useValue: {} },
@@ -782,8 +861,8 @@ describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', 
     const mod = await Test.createTestingModule({
       providers: [
         WorkspaceDocumentService,
-        { provide: getModelToken(WorkspaceDoc.name), useValue: {} },
-        { provide: getModelToken(UploadSession.name), useValue: {} },
+        { provide: DOCUMENT_STORE, useValue: makeFakeDocumentStore() },
+        { provide: UPLOAD_SESSION_STORE, useValue: makeFakeSessionStore() },
         { provide: WorkspaceService, useValue: {} },
         { provide: DocumentService, useValue: {} },
         { provide: NotificationsService, useValue: {} },
@@ -821,7 +900,7 @@ describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', 
     }).compile();
 
     service = mod.get(WorkspaceDocumentService);
-    jest.spyOn(service, 'uploadSmallFile' as any).mockResolvedValue({
+    jest.spyOn((service as any).write, 'uploadSmallFile').mockResolvedValue({
       id: 'doc1',
       originalName: 'file.bin',
     });
@@ -994,7 +1073,7 @@ describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', 
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
 
-    expect(service.uploadSmallFile as jest.Mock).not.toHaveBeenCalled();
+    expect((service as any).write.uploadSmallFile as jest.Mock).not.toHaveBeenCalled();
   });
 
   it('rejects when Content-Length exceeds the hard byte cap without reading the body', async () => {
@@ -1019,13 +1098,13 @@ describe('WorkspaceDocumentService.ingestFromUrl SSRF / credential forwarding', 
     ).rejects.toBeInstanceOf(BadRequestException);
 
     expect(destroy).toHaveBeenCalled();
-    expect(service.uploadSmallFile as jest.Mock).not.toHaveBeenCalled();
+    expect((service as any).write.uploadSmallFile as jest.Mock).not.toHaveBeenCalled();
   });
 });
 
 describe('WorkspaceDocumentService.addLinks sequencing', () => {
   let service: WorkspaceDocumentService;
-  let documentModel: { create: jest.Mock; findByIdAndUpdate: jest.Mock };
+  let documentStore: ReturnType<typeof makeFakeDocumentStore>;
   let workspaceService: {
     checkStorageQuota: jest.Mock;
     getStorageContext: jest.Mock;
@@ -1061,16 +1140,16 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
     });
 
     let createCount = 0;
-    documentModel = {
+    documentStore = makeFakeDocumentStore({
       create: jest.fn(async (doc: any) => {
         createCount += 1;
         return {
-          ...doc,
-          _id: { toString: () => `doc${createCount}` },
-          workspaceId: { toString: () => 'ws1' },
-          createdBy: { toString: () => 'u1' },
+          id: `doc${createCount}`,
+          workspaceId: 'ws1',
+          createdBy: 'u1',
           createdAt: new Date(),
           updatedAt: new Date(),
+          ...doc,
         };
       }),
       // findByIdAndUpdate with a COMPLETED/FAILED status is the last step of
@@ -1079,11 +1158,22 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
       // from "started concurrently but happened to call convert() in input
       // order" — the latter is exactly what the old bounded-concurrency
       // fan-out produces with fast, same-speed mocks.
-      findByIdAndUpdate: jest.fn(async (documentId: string) => {
+      updateById: jest.fn(async (documentId: string, patch: Record<string, unknown>) => {
         events.push(`update:${documentId}`);
-        return {};
+        return {
+          id: documentId,
+          workspaceId: WS_ID,
+          createdBy: USER_ID,
+          originalName: 'seed.pdf',
+          mimeType: 'application/pdf',
+          size: 0,
+          status: 'processing',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          ...patch,
+        };
       }),
-    };
+    });
     workspaceService = {
       checkStorageQuota: jest.fn().mockResolvedValue({ allowed: true, available: 999_999 }),
       getStorageContext: jest.fn().mockResolvedValue({ ownerUserId: USER_ID, storagePrefix: 'ws' }),
@@ -1106,8 +1196,8 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
     const mod = await Test.createTestingModule({
       providers: [
         WorkspaceDocumentService,
-        { provide: getModelToken(WorkspaceDoc.name), useValue: documentModel },
-        { provide: getModelToken(UploadSession.name), useValue: {} },
+        { provide: DOCUMENT_STORE, useValue: documentStore },
+        { provide: UPLOAD_SESSION_STORE, useValue: makeFakeSessionStore() },
         { provide: WorkspaceService, useValue: workspaceService },
         { provide: DocumentService, useValue: documentService },
         { provide: NotificationsService, useValue: {} },
@@ -1159,7 +1249,7 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
     // Real resolveUniqueOriginalName issues a documentModel.exists(...).lean()
     // query; stub it out (mirroring the existing addLinks tests above) since
     // uniqueness resolution isn't what this test is about.
-    (service as any).resolveUniqueOriginalName = jest.fn(async (_ws: string, name: string) => name);
+    (service as any).links.support.resolveUniqueOriginalName = jest.fn(async (_ws: string, name: string) => name);
   });
 
   afterEach(() => {
@@ -1217,8 +1307,8 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
 
     expect(crawler.fetchTitle).toHaveBeenCalledWith('https://a.example/pricing');
     // The completion update renames the doc to the (collapsed) title + .pdf.
-    const updateCall = documentModel.findByIdAndUpdate.mock.calls.at(-1)!;
-    expect(updateCall[1].$set.originalName).toBe('Our Pricing Page.pdf');
+    const updateCall = documentStore.updateById.mock.calls.at(-1)!;
+    expect(updateCall[1].originalName).toBe('Our Pricing Page.pdf');
   });
 
   it('keeps the URL-derived name when no title is found (fallback)', async () => {
@@ -1226,9 +1316,9 @@ describe('WorkspaceDocumentService.addLinks sequencing', () => {
     await service.addLinks(WS_ID, USER_ID, ['https://a.example/pricing']);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const updateCall = documentModel.findByIdAndUpdate.mock.calls.at(-1)!;
+    const updateCall = documentStore.updateById.mock.calls.at(-1)!;
     // No rename → originalName is not set in the completion update.
-    expect(updateCall[1].$set.originalName).toBeUndefined();
+    expect(updateCall[1].originalName).toBeUndefined();
   });
 
   it('does not fetch a title when a name was provided (uses the provided name)', async () => {
@@ -1245,8 +1335,8 @@ describe('WorkspaceDocumentService.completeBulkUpload', () => {
   const DOC_ID = '507f1f77bcf86cd7994390aa';
 
   let service: WorkspaceDocumentService;
-  let documentModel: { findById: jest.Mock; deleteOne: jest.Mock };
-  let uploadSessionModel: { findOne: jest.Mock };
+  let documentStore: ReturnType<typeof makeFakeDocumentStore>;
+  let sessionStore: ReturnType<typeof makeFakeSessionStore>;
   let documentService: { exists: jest.Mock; delete: jest.Mock };
   let indexingService: { queueDocument: jest.Mock };
   let workspaceService: { updateStorageUsage: jest.Mock };
@@ -1254,26 +1344,25 @@ describe('WorkspaceDocumentService.completeBulkUpload', () => {
   let logger: { setContext: jest.Mock; log: jest.Mock; warn: jest.Mock; error: jest.Mock; debug: jest.Mock };
 
   const makeDoc = () => ({
-    _id: { toString: () => DOC_ID },
+    id: DOC_ID,
     filename: 'file.pdf',
     originalName: 'file.pdf',
     mimeType: 'application/pdf',
     size: 100,
     path: 'owner/ws/file.pdf',
-    workspaceId: { toString: () => WS_ID },
-    createdBy: { toString: () => USER_ID },
+    workspaceId: WS_ID,
+    createdBy: USER_ID,
     status: DocumentStatus.PENDING,
     isFolder: false,
     metadata: {} as Record<string, string>,
-    save: jest.fn().mockResolvedValue(undefined),
     createdAt: new Date(),
     updatedAt: new Date(),
   });
 
   const makeSession = (documentId = DOC_ID) => ({
-    _id: { toString: () => SESSION_ID },
-    workspaceId: new Types.ObjectId(WS_ID),
-    userId: new Types.ObjectId(USER_ID),
+    id: SESSION_ID,
+    workspaceId: WS_ID,
+    userId: USER_ID,
     status: 'pending',
     files: [
       {
@@ -1281,7 +1370,7 @@ describe('WorkspaceDocumentService.completeBulkUpload', () => {
         filename: 'file.pdf',
         mimeType: 'application/pdf',
         size: 100,
-        documentId: new Types.ObjectId(documentId),
+        documentId,
         status: 'completed',
         progress: 100,
       },
@@ -1290,17 +1379,14 @@ describe('WorkspaceDocumentService.completeBulkUpload', () => {
     totalSize: 100,
     completedFiles: 0,
     failedFiles: 0,
-    save: jest.fn().mockResolvedValue(undefined),
+    expiresAt: new Date(Date.now() + 3_600_000),
+    createdAt: new Date(),
+    updatedAt: new Date(),
   });
 
   beforeEach(async () => {
-    documentModel = {
-      findById: jest.fn(),
-      deleteOne: jest.fn().mockResolvedValue({ deletedCount: 1 }),
-    };
-    uploadSessionModel = {
-      findOne: jest.fn(),
-    };
+    documentStore = makeFakeDocumentStore();
+    sessionStore = makeFakeSessionStore();
     documentService = {
       exists: jest.fn().mockResolvedValue(true),
       delete: jest.fn().mockResolvedValue(undefined),
@@ -1325,8 +1411,8 @@ describe('WorkspaceDocumentService.completeBulkUpload', () => {
     const mod = await Test.createTestingModule({
       providers: [
         WorkspaceDocumentService,
-        { provide: getModelToken(WorkspaceDoc.name), useValue: documentModel },
-        { provide: getModelToken(UploadSession.name), useValue: uploadSessionModel },
+        { provide: DOCUMENT_STORE, useValue: documentStore },
+        { provide: UPLOAD_SESSION_STORE, useValue: sessionStore },
         { provide: WorkspaceService, useValue: workspaceService },
         { provide: DocumentService, useValue: documentService },
         { provide: NotificationsService, useValue: notificationsService },
@@ -1354,21 +1440,22 @@ describe('WorkspaceDocumentService.completeBulkUpload', () => {
 
   it('queues indexing when autoIndex is true and blob exists', async () => {
     const doc = makeDoc();
-    documentModel.findById.mockResolvedValue(doc);
-    uploadSessionModel.findOne.mockResolvedValue(makeSession());
+    documentStore.findById.mockResolvedValue(doc);
+    sessionStore.findByIdWorkspaceUser.mockResolvedValue(makeSession());
 
     const result = await service.completeBulkUpload(WS_ID, USER_ID, SESSION_ID, false, true);
 
     expect(result.status).toBe('success');
     expect(result.successful.count).toBe(1);
+    expect(doc.status).toBe(DocumentStatus.COMPLETED);
     expect(doc.metadata.autoIndexRequested).toBe('true');
     expect(indexingService.queueDocument).toHaveBeenCalledWith(DOC_ID, false);
   });
 
   it('does not queue indexing when autoIndex is false', async () => {
     const doc = makeDoc();
-    documentModel.findById.mockResolvedValue(doc);
-    uploadSessionModel.findOne.mockResolvedValue(makeSession());
+    documentStore.findById.mockResolvedValue(doc);
+    sessionStore.findByIdWorkspaceUser.mockResolvedValue(makeSession());
 
     await service.completeBulkUpload(WS_ID, USER_ID, SESSION_ID, false, false);
 
@@ -1378,8 +1465,8 @@ describe('WorkspaceDocumentService.completeBulkUpload', () => {
 
   it('treats HeadObject 403 as present and still queues indexing', async () => {
     const doc = makeDoc();
-    documentModel.findById.mockResolvedValue(doc);
-    uploadSessionModel.findOne.mockResolvedValue(makeSession());
+    documentStore.findById.mockResolvedValue(doc);
+    sessionStore.findByIdWorkspaceUser.mockResolvedValue(makeSession());
     documentService.exists.mockRejectedValue(
       Object.assign(new Error('UnknownError'), {
         name: 'Unknown',
@@ -1400,8 +1487,8 @@ describe('WorkspaceDocumentService.completeBulkUpload', () => {
 
   it('rethrows non-403 exists failures', async () => {
     const doc = makeDoc();
-    documentModel.findById.mockResolvedValue(doc);
-    uploadSessionModel.findOne.mockResolvedValue(makeSession());
+    documentStore.findById.mockResolvedValue(doc);
+    sessionStore.findByIdWorkspaceUser.mockResolvedValue(makeSession());
     documentService.exists.mockRejectedValue(
       Object.assign(new Error('Boom'), {
         name: 'InternalError',
@@ -1418,19 +1505,10 @@ describe('WorkspaceDocumentService.completeBulkUpload', () => {
 
 describe('WorkspaceDocumentService.findByMultipleWorkspaces search scope', () => {
   const buildService = () => {
-    const findChain = {
-      sort: jest.fn().mockReturnThis(),
-      skip: jest.fn().mockReturnThis(),
-      limit: jest.fn().mockReturnThis(),
-      exec: jest.fn().mockResolvedValue([]),
-    };
-    const documentModel = {
-      find: jest.fn().mockReturnValue(findChain),
-      countDocuments: jest.fn().mockResolvedValue(0),
-    };
+    const documentStore = makeFakeDocumentStore();
     const service = new WorkspaceDocumentService(
-      documentModel as never,
-      {} as never,
+      documentStore,
+      makeFakeSessionStore(),
       {} as never,
       {} as never,
       {} as never,
@@ -1442,33 +1520,31 @@ describe('WorkspaceDocumentService.findByMultipleWorkspaces search scope', () =>
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
+      {} as never,
     );
-    return { service, documentModel };
+    return { service, documentStore };
   };
 
   it('searches only originalName by default', async () => {
-    const { service, documentModel } = buildService();
+    const { service, documentStore } = buildService();
 
     await service.findByMultipleWorkspaces([WS_ID], { search: 'report.pdf' });
 
-    const query = documentModel.find.mock.calls[0][0];
-    expect(query.originalName).toEqual({ $regex: 'report\\.pdf', $options: 'i' });
-    expect(query.$or).toBeUndefined();
+    const params = documentStore.listByWorkspaces.mock.calls[0][1];
+    expect(params.search).toBe('report.pdf');
+    expect(params.searchFilename).toBeUndefined();
   });
 
   it('matches originalName or storage filename when searchFilename is set', async () => {
-    const { service, documentModel } = buildService();
+    const { service, documentStore } = buildService();
 
     await service.findByMultipleWorkspaces([WS_ID], {
       search: 'FP_PRET_EMPRUNT_TEC10_CHROME_v1.pdf',
       searchFilename: true,
     });
 
-    const query = documentModel.find.mock.calls[0][0];
-    expect(query.$or).toEqual([
-      { originalName: { $regex: 'FP_PRET_EMPRUNT_TEC10_CHROME_v1\\.pdf', $options: 'i' } },
-      { filename: { $regex: 'FP_PRET_EMPRUNT_TEC10_CHROME_v1\\.pdf', $options: 'i' } },
-    ]);
-    expect(query.originalName).toBeUndefined();
+    const params = documentStore.listByWorkspaces.mock.calls[0][1];
+    expect(params.searchFilename).toBe(true);
   });
 });

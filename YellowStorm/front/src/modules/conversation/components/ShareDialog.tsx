@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useModuleTranslation } from '@/modules/localization';
 import { createShare } from '../api';
+import { useConversationStore } from '../store';
 import type { ShareType, ShareResponse } from '../types';
 
 interface ShareDialogProps {
@@ -36,6 +37,8 @@ export function ShareDialog({ open, onOpenChange, conversationId, conversationTi
   const [isLoading, setIsLoading] = useState(false);
   const [shareResult, setShareResult] = useState<ShareResponse | null>(null);
   const [copied, setCopied] = useState(false);
+  const refreshCurrentConversation = useConversationStore((s) => s.refreshCurrentConversation);
+  const fetchConversations = useConversationStore((s) => s.fetchConversations);
   const { t } = useModuleTranslation('conversation');
   const { t: tCommon } = useModuleTranslation('common');
 
@@ -90,6 +93,11 @@ export function ShareDialog({ open, onOpenChange, conversationId, conversationTi
 
       const result = await createShare(conversationId, payload);
       setShareResult(result);
+
+      // Sharing changes membership/link state, so the derived "shared" flag and
+      // member list must be refreshed or the header badge and manage action go stale.
+      await refreshCurrentConversation(conversationId);
+      void fetchConversations({ reset: true });
 
       if (activeTab === 'public') {
         toast.success(t('toasts.share.linkCreated'));

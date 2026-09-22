@@ -17,6 +17,10 @@ export function pgAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
   );
 }
 
+// Real-database round trips (remote server, or a busy CI runner) routinely exceed jest's
+// 5 s default under load; a slow query must not read as a failed assertion.
+if (pgAvailable()) jest.setTimeout(30_000);
+
 export const describeIntegration: jest.Describe = pgAvailable() ? describe : describe.skip;
 
 export function makeTestDb(): { db: NodePgDatabase<typeof schema>; pool: Pool; close: () => Promise<void> } {

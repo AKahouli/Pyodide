@@ -55,6 +55,7 @@ export interface DocumentReadStream {
   contentLength?: number;
   contentRange?: string;
   acceptRanges?: string;
+  metadata?: Record<string, string>;
 }
 
 export interface SasUrlOptions {

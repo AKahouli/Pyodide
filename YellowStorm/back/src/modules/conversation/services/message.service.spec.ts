@@ -196,7 +196,7 @@ describe('MessageService store lifecycle', () => {
     await expect(service.findToolActivityResult(new Types.ObjectId().toString(), messageId, 'tool-1')).rejects.toThrow('Message not found');
   });
 
-  it('returns persisted components as stored without display-time sanitization', () => {
+  it('returns persisted components without exposing artifact storage paths', () => {
     const response = (service as any).mapToResponse(
       record({
         conversationType: 'ai',
@@ -225,7 +225,6 @@ describe('MessageService store lifecycle', () => {
         data: {
           artifactId: 'opaque-1',
           filename: 'report.pdf',
-          storagePath: 'owner/run/report.pdf',
         },
       },
       {

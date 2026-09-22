@@ -1,25 +1,21 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
 import { ConversationService } from '@modules/conversation/services/conversation.service';
 import { ConversationResponse } from '@modules/conversation/interfaces/conversation.interface';
 import { ConflictException, NotFoundException, ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { GovernanceScope, GovernanceScopeDocument } from '../schemas/governance-scope.schema';
-import { GovernanceDeployment, GovernanceDeploymentDocument } from '../schemas/governance-deployment.schema';
-import { GovernanceDeploymentRevision, GovernanceDeploymentRevisionDocument } from '../schemas/governance-deployment-revision.schema';
-import { CreateGovernedConversationDto } from '../dto';
-import { GovernanceScopeAudienceService } from './governance-scope-audience.service';
 import { AgentRepository } from '@modules/agent/repositories/agent.repository';
 import { ForbiddenException } from '@modules/exceptions';
+import { DEPLOYMENT_STORE, REVISION_STORE, SCOPE_STORE, type DeploymentStore, type RevisionStore, type ScopeStore } from '../persistence';
+import { CreateGovernedConversationDto } from '../dto';
+import { GovernanceScopeAudienceService } from './governance-scope-audience.service';
 
 @Injectable()
 export class GovernedConversationService {
   constructor(
-    @InjectModel(GovernanceScope.name) private readonly scopeModel: Model<GovernanceScopeDocument>,
-    @InjectModel(GovernanceDeployment.name) private readonly deploymentModel: Model<GovernanceDeploymentDocument>,
-    @InjectModel(GovernanceDeploymentRevision.name) private readonly revisionModel: Model<GovernanceDeploymentRevisionDocument>,
+    @Inject(SCOPE_STORE) private readonly scopeStore: ScopeStore,
+    @Inject(DEPLOYMENT_STORE) private readonly deploymentStore: DeploymentStore,
+    @Inject(REVISION_STORE) private readonly revisionStore: RevisionStore,
     private readonly agentRepository: AgentRepository,
     private readonly audienceService: GovernanceScopeAudienceService,
     private readonly conversationService: ConversationService,
@@ -30,26 +26,27 @@ export class GovernedConversationService {
     if (!this.featureVisibility.isEnabled('governedConversations')) {
       throw new ServiceUnavailableException(ErrorCode.SERVICE_UNAVAILABLE, 'Governed conversations are not enabled');
     }
-    const scope = await this.scopeModel.findOne({ _id: new Types.ObjectId(dto.scopeId), status: 'active' }).lean().exec();
-    if (!scope) throw new NotFoundException(ErrorCode.GOVERNANCE_SCOPE_NOT_FOUND);
+    const scope = await this.scopeStore.findById(dto.scopeId);
+    if (!scope || scope.status !== 'active') throw new NotFoundException(ErrorCode.GOVERNANCE_SCOPE_NOT_FOUND);
     await this.audienceService.assertUserAuthorized(userId, dto.scopeId);
-    const deployment = await this.deploymentModel.findOne({ scopeId: scope._id, status: 'published', currentPublishedRevisionId: { $exists: true } }).lean().exec();
+    const deployments = await this.deploymentStore.listPublishedByScopes([scope.id]);
+    const deployment = deployments.find((candidate) => candidate.scopeId === scope.id);
     if (!deployment?.currentPublishedRevisionId) throw new ConflictException(ErrorCode.GOVERNANCE_NO_PUBLISHED_REVISION);
-    const revision = await this.revisionModel.findOne({ _id: deployment.currentPublishedRevisionId, deploymentId: deployment._id, status: 'published' }).lean().exec();
-    if (!revision) throw new NotFoundException(ErrorCode.GOVERNANCE_REVISION_NOT_FOUND);
-    const allowedAgentIds = (revision.allowedAgentIds?.length ? revision.allowedAgentIds : [revision.agentId]).map(String);
+    const revision = await this.revisionStore.findByDeploymentAndId(deployment.id, deployment.currentPublishedRevisionId);
+    if (!revision || revision.status !== 'published') throw new NotFoundException(ErrorCode.GOVERNANCE_REVISION_NOT_FOUND);
+    const allowedAgentIds = (revision.allowedAgentIds?.length ? revision.allowedAgentIds : [revision.agentId ?? '']).filter(Boolean);
     // No title: governed conversations follow the standard flow and get their
     // name generated from the first message like normal conversations.
     return this.conversationService.createGoverned(userId, {
       requestId: dto.requestId,
-      programId: scope.programId.toString(),
-      scopeId: scope._id.toString(),
-      deploymentId: deployment._id.toString(),
-      revisionId: revision._id.toString(),
+      programId: scope.programId,
+      scopeId: scope.id,
+      deploymentId: deployment.id,
+      revisionId: revision.id,
       revisionNumber: revision.revisionNumber,
-      primaryAgentId: revision.agentId.toString(),
+      primaryAgentId: revision.agentId ?? '',
       allowedAgentIds,
-      workspaceIds: revision.workspaceIds.map(String),
+      workspaceIds: revision.workspaceIds,
     });
   }
 
@@ -59,14 +56,14 @@ export class GovernedConversationService {
     if (conversation.runtimeMode !== 'governed' || !conversation.governanceContext) return { runtimeMode: 'standard' };
     await this.audienceService.assertUserAuthorized(userId, conversation.governanceContext.scopeId);
     const [scope, agents, revision] = await Promise.all([
-      this.scopeModel.findById(conversation.governanceContext.scopeId).select('name').lean().exec(),
+      this.scopeStore.findById(conversation.governanceContext.scopeId),
       this.agentRepository.findByIds(conversation.governanceContext.runtimeDefinition.allowedAgentIds.map(String), { activeOnly: true }),
-      this.revisionModel.findById(conversation.governanceContext.revisionId).select('publishedAt').lean().exec(),
+      this.revisionStore.findById(conversation.governanceContext.revisionId),
     ]);
     if (!scope) throw new NotFoundException(ErrorCode.GOVERNANCE_SCOPE_NOT_FOUND);
     return {
       runtimeMode: 'governed',
-      scope: { id: scope._id.toString(), name: scope.name },
+      scope: { id: scope.id, name: scope.name },
       revision: { id: conversation.governanceContext.revisionId, number: conversation.governanceContext.revisionNumber, publishedAt: revision?.publishedAt?.toISOString() },
       agents: agents.map((agent) => ({ id: agent._id.toString(), name: agent.name, description: agent.description, isPrimary: agent._id.toString() === conversation.governanceContext?.runtimeDefinition.primaryAgentId })),
       permissions: { canSelectAgent: agents.length > 1, canSelectWorkspace: false, canSelectModel: false, canSelectConnector: false, canSelectSkills: false, canCreateGroupChat: false, canAttachFiles: true },

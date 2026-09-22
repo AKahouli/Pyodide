@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { AUTH_LOST_EVENT, AUTH_STORAGE_KEYS } from '@/lib/api';
+import { AUTH_LOST_EVENT, AUTH_STORAGE_KEYS, bumpAuthGeneration } from '@/lib/api';
 import { AuthProvider } from './AuthContext';
 import type { User } from './types';
 import { useAuth } from './useAuth';
@@ -26,6 +26,9 @@ vi.mock('./api', () => authApiMock);
 vi.mock('@/modules/notifications', () => ({
   notificationsService: notificationsServiceMock,
 }));
+
+const dataGrantsMock = vi.hoisted(() => ({ clearDataGrants: vi.fn() }));
+vi.mock('@/modules/semantic-model/data-plane/data-access-token', () => dataGrantsMock);
 
 const baseUser: User = {
   id: 'user-1',
@@ -107,6 +110,40 @@ describe('AuthProvider', () => {
     expect(localStorage.getItem(AUTH_STORAGE_KEYS.user)).toBeNull();
   });
 
+  it('clears data-plane grants on explicit logout and on login', async () => {
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: AuthProvider,
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    await act(async () => {
+      await result.current.login({ email: 'user@example.com', password: testPassword });
+    });
+    expect(dataGrantsMock.clearDataGrants).toHaveBeenCalled();
+
+    dataGrantsMock.clearDataGrants.mockClear();
+    await act(async () => {
+      await result.current.logout();
+    });
+    expect(dataGrantsMock.clearDataGrants).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears data-plane grants on definitive bootstrap denial', async () => {
+    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'stale-token');
+    localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(baseUser));
+    authApiMock.getCurrentUser.mockRejectedValue({ statusCode: 401, code: 'ERR_1001' });
+
+    const { result } = renderHook(() => useAuth(), {
+      wrapper: AuthProvider,
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.isAuthenticated).toBe(false);
+    expect(localStorage.getItem(AUTH_STORAGE_KEYS.accessToken)).toBeNull();
+    expect(dataGrantsMock.clearDataGrants).toHaveBeenCalled();
+  });
+
   it('updates mounted auth state when the shared client loses the session', async () => {
     localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'access-token');
     localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(baseUser));
@@ -117,6 +154,41 @@ describe('AuthProvider', () => {
 
     expect(result.current.isAuthenticated).toBe(false);
     expect(result.current.user).toBeNull();
+  });
+
+  it('revalidates an authenticated session when the tab regains focus', async () => {
+    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'access-token');
+    localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(baseUser));
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    await waitFor(() => expect(result.current.isAuthenticated).toBe(true));
+    authApiMock.getCurrentUser.mockClear();
+
+    act(() => window.dispatchEvent(new Event('focus')));
+
+    await waitFor(() => expect(authApiMock.getCurrentUser).toHaveBeenCalledTimes(1));
+  });
+
+  it('does not restore auth when a stale focus revalidation finishes after auth loss', async () => {
+    localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, 'access-token');
+    localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(baseUser));
+    const { result } = renderHook(() => useAuth(), { wrapper: AuthProvider });
+    await waitFor(() => expect(result.current.isAuthenticated).toBe(true));
+
+    let resolveRevalidation: (user: User) => void = () => undefined;
+    authApiMock.getCurrentUser.mockImplementationOnce(() => new Promise<User>((resolve) => {
+      resolveRevalidation = resolve;
+    }));
+    act(() => window.dispatchEvent(new Event('focus')));
+    await waitFor(() => expect(authApiMock.getCurrentUser).toHaveBeenCalledTimes(2));
+
+    act(() => {
+      bumpAuthGeneration();
+      window.dispatchEvent(new Event(AUTH_LOST_EVENT));
+    });
+    expect(result.current.isAuthenticated).toBe(false);
+
+    await act(async () => resolveRevalidation(baseUser));
+    expect(result.current.isAuthenticated).toBe(false);
   });
 
   it('starts polling getCurrentUser while the signed-in account is inactive', async () => {

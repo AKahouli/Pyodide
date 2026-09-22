@@ -15,6 +15,7 @@ import { ConversationSettingsService } from '../../system/conversation-settings.
 import { MESSAGE_STORE, type MessageRecord, type MessageStore } from '../persistence/message-store';
 import { ConversationUsageAccountingService } from './conversation-usage-accounting.service';
 import type { ConversationUsageAttribution, ConversationUsageMetrics } from '../utils/usage-metrics';
+import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
 
 const SETTINGS_LOOKUP_TIMEOUT_MS = 1_000;
 
@@ -967,13 +968,14 @@ export class MessageService {
 
   private publicComponents(components: unknown, includeToolResults = false, _resolvedRedactSensitiveText?: boolean): MessageComponent[] | undefined {
     if (!Array.isArray(components)) return undefined;
-    // Conversation content is rendered exactly as stored: display-time
-    // sanitization was removed by product decision (public share snapshots
-    // are still sanitized separately in ShareService). toolActivity resultJson
-    // stays out of bulk reads purely for payload size — clients fetch it on
-    // demand via findToolActivityResult.
+    // Conversation content is rendered as stored except for private artifact
+    // paths. toolActivity resultJson stays out of bulk reads purely for payload
+    // size; clients fetch it on demand via findToolActivityResult.
     return components.map((component) => {
       if (!component?.data) return component;
+      if (component.type === 'artifact') {
+        return sanitizePublicComponent(component, { redactSensitiveText: false });
+      }
       if (component.type === 'toolActivity' && !includeToolResults) {
         const { resultJson: _resultJson, result_json: _resultJsonSnake, ...publicData } = component.data;
         return { id: component.id, type: component.type, data: publicData };

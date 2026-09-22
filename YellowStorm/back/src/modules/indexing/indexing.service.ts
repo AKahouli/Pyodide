@@ -1,20 +1,23 @@
 import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
-import { Model, Types } from 'mongoose';
 import axios from 'axios';
+import { DocumentStatus, IndexingStatus } from '../workspace/interfaces/document-status.enum';
 import {
-  WorkspaceDoc,
-  WorkspaceDocumentDoc,
-  DocumentStatus,
-  IndexingStatus,
-} from '../workspace/schemas/workspace-document.schema';
-import { Workspace, WorkspaceDocument } from '../workspace/schemas/workspace.schema';
-import { WorkspaceSetting, WorkspaceSettingDocument } from '../workspace/schemas/workspace-setting.schema';
+  WORKSPACE_DOCUMENT_READ_PORT,
+  WORKSPACE_DOCUMENT_WRITE_PORT,
+  WORKSPACE_READ_PORT,
+  WORKSPACE_SETTING_READ_PORT,
+  type IndexingStatePatch,
+  type WorkspaceDocumentReadPort,
+  type WorkspaceDocumentWritePort,
+  type WorkspaceDocumentRecord,
+  type WorkspaceReadPort,
+  type WorkspaceSettingReadPort,
+} from '../workspace/ports';
 import { IndexingClientService } from './indexing-client.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { NotificationType } from '../notifications/schemas/notification.schema';
+import { NotificationType } from '../notifications/notification.types';
 import { DocumentService } from '../document/document.service';
 import { LoggerService } from '../logger';
 import {
@@ -35,12 +38,14 @@ export class IndexingService {
   private isProcessing = false;
 
   constructor(
-    @InjectModel(WorkspaceDoc.name)
-    private readonly documentModel: Model<WorkspaceDocumentDoc>,
-    @InjectModel(Workspace.name)
-    private readonly workspaceModel: Model<WorkspaceDocument>,
-    @InjectModel(WorkspaceSetting.name)
-    private readonly workspaceSettingModel: Model<WorkspaceSettingDocument>,
+    @Inject(WORKSPACE_DOCUMENT_READ_PORT)
+    private readonly documentReadPort: WorkspaceDocumentReadPort,
+    @Inject(WORKSPACE_DOCUMENT_WRITE_PORT)
+    private readonly documentWritePort: WorkspaceDocumentWritePort,
+    @Inject(WORKSPACE_READ_PORT)
+    private readonly workspaceReadPort: WorkspaceReadPort,
+    @Inject(WORKSPACE_SETTING_READ_PORT)
+    private readonly workspaceSettingReadPort: WorkspaceSettingReadPort,
     @Inject(forwardRef(() => IndexingClientService))
     private readonly indexingClient: IndexingClientService,
     @Inject(forwardRef(() => NotificationsService))
@@ -67,13 +72,13 @@ export class IndexingService {
       return;
     }
 
-    const document = await this.documentModel.findById(documentId);
+    const document = await this.documentReadPort.findById(documentId);
     if (!document) {
       this.logger.warn('Cannot queue indexing: document not found', { documentId });
       return;
     }
 
-    const workspaceId = document.workspaceId.toString();
+    const workspaceId = document.workspaceId;
 
     // Only index completed documents
     if (document.status !== DocumentStatus.COMPLETED) {
@@ -85,16 +90,28 @@ export class IndexingService {
       return;
     }
 
+    // Defense-in-depth: conversation attachments marked CODE_ONLY (heavy or
+    // unprobed spreadsheets) must never reach the indexing pipeline, no
+    // matter which caller queued them.
+    if (document.metadata?.attachmentPolicy === 'CODE_ONLY') {
+      this.logger.warn('Blocked indexing of CODE_ONLY conversation attachment', {
+        documentId,
+        workspaceId,
+      });
+      return;
+    }
+
     // Reset to pending if needed
     if (document.indexingStatus !== IndexingStatus.PENDING) {
-      document.indexingStatus = IndexingStatus.PENDING;
-      document.indexingError = undefined;
-      document.indexingTaskName = undefined;
-      document.indexingTaskId = undefined;
-      document.indexingAttemptId = randomUUID();
-      document.indexingAttemptStartedAt = undefined;
-      document.indexingAttemptCompletedAt = undefined;
-      await document.save();
+      await this.documentWritePort.updateIndexingState(documentId, {
+        indexingStatus: IndexingStatus.PENDING,
+        indexingError: undefined,
+        indexingTaskName: undefined,
+        indexingTaskId: undefined,
+        indexingAttemptId: randomUUID(),
+        indexingAttemptStartedAt: undefined,
+        indexingAttemptCompletedAt: undefined,
+      });
     }
 
     this.logger.debug('Document queued for indexing', {
@@ -119,22 +136,32 @@ export class IndexingService {
    * Called by cron job or manually
    */
   async processDocument(documentId: string, deepSearch?: boolean): Promise<void> {
-    const document = await this.documentModel.findById(documentId);
-    if (!document) {
+    const record = await this.documentReadPort.findById(documentId);
+    if (!record) {
       throw new NotFoundException(
         ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND,
         'Document not found',
       );
     }
 
+    // Same invariant as queueDocument: CODE_ONLY conversation attachments
+    // (heavy/unprobed spreadsheets) must never reach the indexing pipeline.
+    if (record.metadata?.attachmentPolicy === 'CODE_ONLY') {
+      this.logger.warn('Blocked processing of CODE_ONLY conversation attachment', {
+        documentId,
+        workspaceId: record.workspaceId,
+      });
+      return;
+    }
+
     // Resolve deep search: explicit param wins, else persisted flag from reindex.
     // The cron does not pass deepSearch, so without this fallback any retry
     // would silently drop the user's deep-search intent.
-    const effectiveDeepSearch = deepSearch ?? document.metadata?.deepSearchRequested === 'true';
+    const effectiveDeepSearch = deepSearch ?? record.metadata?.deepSearchRequested === 'true';
 
-    const workspaceId = document.workspaceId.toString();
+    const workspaceId = record.workspaceId;
 
-    if (document.indexingStatus === IndexingStatus.PROCESSING) {
+    if (record.indexingStatus === IndexingStatus.PROCESSING) {
       this.logger.debug('Document already processing, skipping', {
         documentId,
         workspaceId,
@@ -146,15 +173,19 @@ export class IndexingService {
     }
 
     // Mark as processing
-    document.indexingStatus = IndexingStatus.PROCESSING;
-    document.indexingError = undefined;
-    document.indexingTaskName = undefined;
-    document.indexingTaskId = undefined;
-    document.indexingStartedAt = new Date();
-    document.indexingAttemptId ??= randomUUID();
-    document.indexingAttemptStartedAt = document.indexingStartedAt;
-    document.indexingAttemptCompletedAt = undefined;
-    await document.save();
+    const indexingStartedAt = new Date();
+    const processingPatch: IndexingStatePatch = {
+      indexingStatus: IndexingStatus.PROCESSING,
+      indexingError: undefined,
+      indexingTaskName: undefined,
+      indexingTaskId: undefined,
+      indexingStartedAt,
+      indexingAttemptId: record.indexingAttemptId ?? randomUUID(),
+      indexingAttemptStartedAt: indexingStartedAt,
+      indexingAttemptCompletedAt: undefined,
+    };
+    await this.documentWritePort.updateIndexingState(documentId, processingPatch);
+    const document = { ...record, ...processingPatch } as WorkspaceDocumentRecord;
     await this.recordIndexingEvent(WorkspaceIntegrationEvents.IndexingStartedV1, document);
 
     // Send notification so frontend sees pending → processing transition
@@ -172,10 +203,10 @@ export class IndexingService {
 
     try {
       // Load workspace and settings
-      const workspace = await this.workspaceModel.findById(document.workspaceId);
-      let settings: WorkspaceSettingDocument | null = null;
-      if (workspace?.settings) {
-        settings = await this.workspaceSettingModel.findById(workspace.settings);
+      const workspace = await this.workspaceReadPort.findById(document.workspaceId);
+      let settings = null;
+      if (workspace?.settingsId) {
+        settings = await this.workspaceSettingReadPort.findById(workspace.settingsId);
       }
 
       // Skip indexing for folders
@@ -191,7 +222,7 @@ export class IndexingService {
 
       // Call indexing API
       const result = await this.indexingClient.indexDocument({
-        documentId: document._id.toString(),
+        documentId: document.id,
         workspaceId,
         filename: document.originalName,
         mimeType: document.mimeType,
@@ -216,13 +247,14 @@ export class IndexingService {
 
       // Store API response IDs in metadata, keep status as PROCESSING
       // The webhook callback will set the final status (READY or FAILED)
-      document.metadata = {
-        ...document.metadata,
-        download_id: result.download_id,
-        indexing_id: result.indexing_id,
-      };
-      document.chunk_size = settings?.chunks || 4000;
-      await document.save();
+      await this.documentWritePort.updateIndexingState(documentId, {
+        metadata: {
+          ...document.metadata,
+          download_id: result.download_id,
+          indexing_id: result.indexing_id,
+        },
+        chunk_size: settings?.chunks || 4000,
+      });
 
       this.logger.log('Indexing API call successful, waiting for webhook', {
         documentId,
@@ -235,11 +267,13 @@ export class IndexingService {
       const rawError = error instanceof Error ? error.message : 'Unknown error';
 
       // Store a user-friendly error — never expose raw API details
-      document.indexingStatus = IndexingStatus.FAILED;
-      document.indexingError = 'Document indexing failed. Please try again later.';
-      document.indexingAttemptCompletedAt = new Date();
-      await document.save();
-      await this.recordIndexingEvent(WorkspaceIntegrationEvents.IndexingFailedV1, document);
+      const failurePatch: IndexingStatePatch = {
+        indexingStatus: IndexingStatus.FAILED,
+        indexingError: 'Document indexing failed. Please try again later.',
+        indexingAttemptCompletedAt: new Date(),
+      };
+      await this.documentWritePort.updateIndexingState(documentId, failurePatch);
+      await this.recordIndexingEvent(WorkspaceIntegrationEvents.IndexingFailedV1, { ...document, ...failurePatch });
 
       // Log the full technical error for debugging
       this.logger.error('Document indexing failed', {
@@ -256,9 +290,9 @@ export class IndexingService {
     }
   }
 
-  private async recordIndexingEvent(eventType: string, document: WorkspaceDocumentDoc): Promise<void> {
+  private async recordIndexingEvent(eventType: string, document: WorkspaceDocumentRecord): Promise<void> {
     if (!this.outbox || this.featureVisibility?.isEnabled('dataRoomWorkspaceEvents') === false) return;
-    await this.outbox.record({ eventId: randomUUID(), eventType, aggregateType: 'workspace_document', aggregateId: document._id.toString(), payload: { workspaceId: document.workspaceId.toString(), documentId: document._id.toString(), createdBy: document.createdBy.toString(), documentType: document.type, originalName: document.originalName, mimeType: document.mimeType, sourceUrl: document.sourceUrl, normalizedSourceUrl: document.metadata?.normalizedSourceUrl, contentHash: document.contentHash, documentStatus: document.status, indexingStatus: document.indexingStatus, indexingTaskId: document.indexingTaskId, indexingAttemptId: document.indexingAttemptId, deepSearchRequested: document.metadata?.deepSearchRequested === 'true', metadata: document.metadata }, occurredAt: new Date() });
+    await this.outbox.record({ eventId: randomUUID(), eventType, aggregateType: 'workspace_document', aggregateId: document.id, payload: { workspaceId: document.workspaceId, documentId: document.id, createdBy: document.createdBy, documentType: document.type, originalName: document.originalName, mimeType: document.mimeType, sizeBytes: document.size, uploadedAt: document.uploadedAt, updatedAt: document.updatedAt, sourceUrl: document.sourceUrl, normalizedSourceUrl: document.metadata?.normalizedSourceUrl, contentHash: document.contentHash, documentStatus: document.status, indexingStatus: document.indexingStatus, indexingTaskId: document.indexingTaskId, indexingAttemptId: document.indexingAttemptId, deepSearchRequested: document.metadata?.deepSearchRequested === 'true', metadata: document.metadata }, occurredAt: new Date() });
   }
 
   /**
@@ -269,31 +303,28 @@ export class IndexingService {
     documentId: string,
     deepSearch?: boolean,
     idempotencyKey?: string,
-  ): Promise<WorkspaceDocumentDoc> {
-    const document = await this.documentModel.findOne({
-      _id: documentId,
-      workspaceId: new Types.ObjectId(workspaceId),
-    });
+  ): Promise<WorkspaceDocumentRecord> {
+    const record = await this.documentReadPort.findOne({ id: documentId, workspaceId });
 
-    if (!document) {
+    if (!record) {
       throw new NotFoundException(
         ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND,
         'Document not found',
       );
     }
 
-    if (idempotencyKey && document.metadata?.governanceReindexIdempotencyKey === idempotencyKey) {
-      return document;
+    if (idempotencyKey && record.metadata?.governanceReindexIdempotencyKey === idempotencyKey) {
+      return record;
     }
 
-    if (document.status !== DocumentStatus.COMPLETED) {
+    if (record.status !== DocumentStatus.COMPLETED) {
       throw new BadRequestException(
         ErrorCode.INDEXING_FAILED,
         'Only completed documents can be indexed',
       );
     }
 
-    if (document.indexingStatus === IndexingStatus.PROCESSING) {
+    if (record.indexingStatus === IndexingStatus.PROCESSING) {
       throw new BadRequestException(
         ErrorCode.INDEXING_IN_PROGRESS,
         'Document is already being indexed',
@@ -302,18 +333,21 @@ export class IndexingService {
 
 
     // Reset to pending for re-indexing
-    document.indexingStatus = IndexingStatus.PENDING;
-    document.indexingError = undefined;
-    document.indexingAttemptId = randomUUID();
-    document.indexingAttemptStartedAt = undefined;
-    document.indexingAttemptCompletedAt = undefined;
-    const { download_id, indexing_id, ...restMetadata } = document.metadata || {};
-    document.metadata = {
+    const reindexPatch: IndexingStatePatch = {
+      indexingStatus: IndexingStatus.PENDING,
+      indexingError: undefined,
+      indexingAttemptId: randomUUID(),
+      indexingAttemptStartedAt: undefined,
+      indexingAttemptCompletedAt: undefined,
+    };
+    const { download_id: _downloadId, indexing_id: _indexingId, ...restMetadata } = record.metadata || {};
+    reindexPatch.metadata = {
       ...restMetadata,
       deepSearchRequested: deepSearch === true ? 'true' : 'false',
       ...(idempotencyKey ? { governanceReindexIdempotencyKey: idempotencyKey } : {}),
     };
-    await document.save();
+    await this.documentWritePort.updateIndexingState(documentId, reindexPatch);
+    const document = { ...record, ...reindexPatch } as WorkspaceDocumentRecord;
 
     this.logger.debug('Document queued for re-indexing', {
       documentId,
@@ -345,10 +379,7 @@ export class IndexingService {
     indexingTaskId?: string;
     lastIndexedAt?: Date;
   }> {
-    const document = await this.documentModel.findOne({
-      _id: documentId,
-      workspaceId: new Types.ObjectId(workspaceId),
-    });
+    const document = await this.documentReadPort.findOne({ id: documentId, workspaceId });
 
     if (!document) {
       throw new NotFoundException(
@@ -358,7 +389,7 @@ export class IndexingService {
     }
 
     return {
-      documentId: document._id.toString(),
+      documentId: document.id,
       indexingStatus: document.indexingStatus,
       indexingError: document.indexingError,
       lastIndexedAt: document.lastIndexedAt,
@@ -388,10 +419,7 @@ export class IndexingService {
       // file_path, file_name) triple the upstream endpoint needs. All callers
       // (single delete, bulk delete, reindex) invoke us BEFORE removing the
       // document row, so the lookup is guaranteed to find it.
-      const document = await this.documentModel.findOne({
-        _id: documentId,
-        workspaceId: new Types.ObjectId(workspaceId),
-      });
+      const document = await this.documentReadPort.findOne({ id: documentId, workspaceId });
       if (!document) {
         this.logger.warn('Document not found for index delete, skipping', {
           documentId,
@@ -399,7 +427,7 @@ export class IndexingService {
         });
         return;
       }
-      const workspace = await this.workspaceModel.findById(document.workspaceId);
+      const workspace = await this.workspaceReadPort.findById(document.workspaceId);
 
       const result = await this.indexingClient.deleteIndex({
         documentId,
@@ -456,7 +484,7 @@ export class IndexingService {
       processingTaskName: details.processingTaskName,
     });
 
-    const document = await this.documentModel.findById(documentId);
+    const document = await this.documentReadPort.findById(documentId);
 
     if (!document) {
       this.logger.warn('Webhook received for unknown document', { documentId });
@@ -466,61 +494,62 @@ export class IndexingService {
       );
     }
 
-    const workspaceId = document.workspaceId.toString();
+    const workspaceId = document.workspaceId;
     const previousStatus = document.indexingStatus;
 
     // Save detected language from webhook
-    document.detected_language = detectedLanguage || 'fr';
+    const patch: IndexingStatePatch = { detected_language: detectedLanguage || 'fr' };
 
     if (details.processingTaskName) {
-      document.indexingTaskName = details.processingTaskName;
+      patch.indexingTaskName = details.processingTaskName;
     }
     if (details.processingTaskId) {
-      document.indexingTaskId = details.processingTaskId;
+      patch.indexingTaskId = details.processingTaskId;
     }
 
     // Update document status based on webhook
  if (status === 'START' || status === 'PROCESSING' || details.processingStatus === 'PROCESSING') {
-      document.indexingStatus = IndexingStatus.PROCESSING;
-      document.indexingError = undefined;
+      patch.indexingStatus = IndexingStatus.PROCESSING;
+      patch.indexingError = undefined;
     } else if (status === 'FINISH') {
-      document.indexingStatus = IndexingStatus.READY;
-      document.lastIndexedAt = new Date();
-      document.indexingAttemptCompletedAt = document.lastIndexedAt;
-      document.indexingError = undefined;
-      document.indexingTaskName = undefined;
-      document.indexingTaskId = undefined;
+      patch.indexingStatus = IndexingStatus.READY;
+      patch.lastIndexedAt = new Date();
+      patch.indexingAttemptCompletedAt = patch.lastIndexedAt;
+      patch.indexingError = undefined;
+      patch.indexingTaskName = undefined;
+      patch.indexingTaskId = undefined;
     } else {
-      document.indexingStatus = IndexingStatus.FAILED;
-      document.indexingError = details.errorMessage || 'Document indexing failed. Please try again later.';
-      document.indexingAttemptCompletedAt = new Date();
+      patch.indexingStatus = IndexingStatus.FAILED;
+      patch.indexingError = details.errorMessage || 'Document indexing failed. Please try again later.';
+      patch.indexingAttemptCompletedAt = new Date();
       this.logger.warn('Webhook reported indexing failure', {
         documentId,
         workspaceId,
         rawStatus: status,
-        error: document.indexingError,
+        error: patch.indexingError,
       });
     }
 
-    await document.save();
+    await this.documentWritePort.updateIndexingState(documentId, patch);
+    const updatedDocument = { ...document, ...patch } as WorkspaceDocumentRecord;
     await this.recordIndexingEvent(
-      document.indexingStatus === IndexingStatus.READY
+      updatedDocument.indexingStatus === IndexingStatus.READY
         ? WorkspaceIntegrationEvents.IndexingReadyV1
-        : document.indexingStatus === IndexingStatus.FAILED
+        : updatedDocument.indexingStatus === IndexingStatus.FAILED
           ? WorkspaceIntegrationEvents.IndexingFailedV1
           : WorkspaceIntegrationEvents.IndexingStartedV1,
-      document,
+      updatedDocument,
     );
 
     this.logger.log('Webhook processed successfully', {
       documentId,
       workspaceId,
       previousStatus,
-      newStatus: document.indexingStatus,
+      newStatus: updatedDocument.indexingStatus,
     });
 
     // Send notification to document owner
-    await this.sendIndexingStatusNotification(document);
+    await this.sendIndexingStatusNotification(updatedDocument);
   }
 
   /**
@@ -528,7 +557,7 @@ export class IndexingService {
    * Used by processDocument, handleWebhook, and can be called externally
    */
   async sendIndexingStatusNotification(
-    document: WorkspaceDocumentDoc,
+    document: WorkspaceDocumentRecord,
   ): Promise<void> {
     try {
       const userId = document.createdBy.toString();
@@ -564,8 +593,8 @@ export class IndexingService {
         message,
         data: {
           eventType: 'indexing_status_change',
-          documentId: document._id.toString(),
-          workspaceId: document.workspaceId.toString(),
+          documentId: document.id,
+          workspaceId: document.workspaceId,
           indexingStatus: status,
           indexingError: document.indexingError,
           indexingTaskName: document.indexingTaskName,
@@ -582,12 +611,12 @@ export class IndexingService {
 
       this.logger.debug('Indexing notification sent', {
         userId,
-        documentId: document._id,
+        documentId: document.id,
         status,
       });
     } catch (err) {
       this.logger.warn('Failed to send indexing notification', {
-        documentId: document._id,
+        documentId: document.id,
         error: err instanceof Error ? err.message : 'Unknown error',
       });
     }
@@ -629,14 +658,10 @@ export class IndexingService {
 
     try {
       // Find pending documents
-      const pendingDocuments = await this.documentModel
-        .find({
-          status: DocumentStatus.COMPLETED,
-          indexingStatus: IndexingStatus.PENDING,
-        })
-        .sort({ createdAt: 1 })
-        .limit(this.batchSize)
-        .exec();
+      const pendingDocuments = await this.documentReadPort.find(
+        { status: DocumentStatus.COMPLETED, indexingStatus: IndexingStatus.PENDING },
+        { sort: { field: 'createdAt', direction: 'asc' }, limit: this.batchSize },
+      );
 
       if (pendingDocuments.length === 0) {
         return;
@@ -650,7 +675,7 @@ export class IndexingService {
       // Process documents sequentially to avoid overwhelming the API
       for (const document of pendingDocuments) {
         try {
-          await this.processDocument(document._id.toString());
+          await this.processDocument(document.id);
           successCount++;
         } catch (error) {
           // Error already logged in processDocument
@@ -687,14 +712,14 @@ export class IndexingService {
     try {
       const cutoff = new Date(Date.now() - this.indexingTimeoutMs);
 
-      const staleDocuments = await this.documentModel
-        .find({
+      const staleDocuments = await this.documentReadPort.find(
+        {
           status: DocumentStatus.COMPLETED,
           indexingStatus: IndexingStatus.PROCESSING,
-          indexingStartedAt: { $lt: cutoff },
-        })
-        .limit(this.batchSize)
-        .exec();
+          indexingStartedBefore: cutoff,
+        },
+        { limit: this.batchSize },
+      );
 
       if (staleDocuments.length === 0) {
         return;
@@ -706,14 +731,16 @@ export class IndexingService {
       });
 
       for (const document of staleDocuments) {
-        const documentId = document._id.toString();
-        const workspaceId = document.workspaceId.toString();
+        const documentId = document.id;
+        const workspaceId = document.workspaceId;
 
-        document.indexingStatus = IndexingStatus.FAILED;
-        document.indexingError = 'Indexing timed out. Please try re-indexing the document.';
-        document.indexingAttemptCompletedAt = new Date();
-        await document.save();
-        await this.recordIndexingEvent(WorkspaceIntegrationEvents.IndexingFailedV1, document);
+        const timeoutPatch: IndexingStatePatch = {
+          indexingStatus: IndexingStatus.FAILED,
+          indexingError: 'Indexing timed out. Please try re-indexing the document.',
+          indexingAttemptCompletedAt: new Date(),
+        };
+        await this.documentWritePort.updateIndexingState(documentId, timeoutPatch);
+        await this.recordIndexingEvent(WorkspaceIntegrationEvents.IndexingFailedV1, { ...document, ...timeoutPatch });
 
         this.logger.warn('Document indexing timed out', {
           documentId,

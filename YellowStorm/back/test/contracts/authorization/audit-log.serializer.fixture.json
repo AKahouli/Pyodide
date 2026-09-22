@@ -1,0 +1,15 @@
+{
+  "actorId": "64b000000000000000000001",
+  "actorEmail": "jane.doe@example.com",
+  "action": "auth.login",
+  "targetId": "64b000000000000000000002",
+  "targetType": "user",
+  "metadata": {
+    "method": "password"
+  },
+  "ipAddress": "127.0.0.1",
+  "userAgent": "jest",
+  "status": "success",
+  "createdAt": "<volatile>",
+  "id": "64b000000000000000000020"
+}

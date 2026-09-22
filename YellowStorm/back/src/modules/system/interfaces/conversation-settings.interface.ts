@@ -28,6 +28,12 @@ export interface CompactionSettings {
   summarizerModel: string;
 }
 
+export interface AttachmentIntelligenceSettings {
+  enabled: boolean;
+  /** CSV/XLS/XLSX files with more non-empty rows than this are never indexed (CODE_ONLY). */
+  maxIndexedTabularRows: number;
+}
+
 export interface ConversationSettingsValue {
   composerSuggestions: ComposerSuggestionSettings;
   conversationName: ConversationNameSettings;
@@ -35,6 +41,7 @@ export interface ConversationSettingsValue {
   /** End-to-end latency instrumentation for the classic Conversation flow. */
   latencyInstrumentationEnabled: boolean;
   compaction: CompactionSettings;
+  attachmentIntelligence: AttachmentIntelligenceSettings;
 }
 
 export interface ConversationSettings extends ConversationSettingsValue {
@@ -70,5 +77,9 @@ export const DEFAULT_CONVERSATION_SETTINGS: ConversationSettingsValue = {
     minimumDraftLength: 3,
     requestsPerMinute: 60,
     maxOutputTokens: 256,
+  },
+  attachmentIntelligence: {
+    enabled: false,
+    maxIndexedTabularRows: 5000,
   },
 };

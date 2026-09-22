@@ -1,6 +1,4 @@
-import type { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { SemanticBusinessTrustService } from './semantic-business-trust.service';
-import type { SpreadsheetConceptResolver } from './spreadsheet-concept.resolver';
 
 describe('SemanticBusinessTrustService', () => {
   const mapping = {
@@ -21,34 +19,30 @@ describe('SemanticBusinessTrustService', () => {
       advanceRevision: jest.fn().mockResolvedValue(8),
       audit: jest.fn(),
     };
-    const documents = { findById: jest.fn().mockResolvedValue({ originalName: 'contracts.csv', contentHash: 'new-version', updatedAt: 'now', size: 10 }) };
-    const spreadsheets = { profile: jest.fn().mockResolvedValue({ fields: [{ name: 'contract_id' }] }) };
     return {
-      service: new SemanticBusinessTrustService(database as never, models as never, documents as unknown as WorkspaceDocumentService, spreadsheets as unknown as SpreadsheetConceptResolver),
+      service: new SemanticBusinessTrustService(database as never, models as never),
       database,
       models,
-      documents,
-      spreadsheets,
       client,
     };
   };
 
-  it('detects removed fields and creates one durable broken-mapping review', async () => {
+  it('returns persisted broken mapping health without reparsing the source', async () => {
     const { service, database } = buildService();
-    database.query.mockResolvedValueOnce({ rows: [mapping] }).mockResolvedValue({ rows: [] });
+    database.query.mockResolvedValueOnce({ rows: [{ ...mapping, state: 'broken', missingFields: ['old_id'], availableFields: ['contract_id'], totalCount: '1' }] });
 
     await expect(service.mappingHealth('user', 'model')).resolves.toMatchObject({
       summary: { broken: 1 },
       items: [{ state: 'broken', missingFields: ['old_id'], availableFields: ['contract_id'] }],
     });
-    expect(database.query.mock.calls.some(([sql]) => String(sql).includes("status=$3"))).toBe(true);
-    expect(database.query.mock.calls.some(([sql]) => String(sql).includes("'broken_mapping'"))).toBe(true);
+    expect(database.query).toHaveBeenCalledTimes(1);
+    expect(String(database.query.mock.calls[0][0])).toContain('semantic_datasource.mapping_health');
   });
 
   it('restores health after a source reconnects without writing for a viewer', async () => {
     const { service, database, models } = buildService();
     models.requireActiveRole.mockResolvedValue({ id: 'model', currentDraftVersionId: 'version', role: 'viewer' });
-    database.query.mockResolvedValueOnce({ rows: [{ ...mapping, status: 'source_unavailable', validatedSourceVersion: 'new-version' }] });
+    database.query.mockResolvedValueOnce({ rows: [{ ...mapping, state: 'healthy', totalCount: '1' }] });
 
     await expect(service.mappingHealth('viewer', 'model')).resolves.toMatchObject({ summary: { healthy: 1 } });
     expect(database.query).toHaveBeenCalledTimes(1);

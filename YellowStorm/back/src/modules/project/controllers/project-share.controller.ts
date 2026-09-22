@@ -15,7 +15,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth, ApiResponse, ApiParam } from '@ne
 import { ProjectShareService } from '../project-share.service';
 import { ProjectOwnerGuard } from '../guards/project-owner.guard';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import {
   ShareProjectDto,
   ShareQueryDto,
@@ -39,7 +39,7 @@ export class ProjectShareController {
   @ApiResponse({ status: 201, description: 'Project shared successfully' })
   @ApiParam({ name: 'id', description: 'Project ID' })
   async share(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') projectId: string,
     @Body() dto: ShareProjectDto,
   ): Promise<IShareProjectResult> {

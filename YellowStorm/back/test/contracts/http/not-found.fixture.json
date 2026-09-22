@@ -1,0 +1,12 @@
+{
+  "success": false,
+  "error": {
+    "timestamp": "<volatile>",
+    "path": "/api/v1/__definitely_not_a_route__",
+    "method": "GET",
+    "requestId": "<volatile>",
+    "code": "ERR_1002",
+    "message": "Cannot GET /api/v1/__definitely_not_a_route__",
+    "statusCode": 404
+  }
+}

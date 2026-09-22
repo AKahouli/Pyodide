@@ -78,29 +78,9 @@
 .conversation-home-text-action svg { transition: transform 180ms var(--home-ease); }
 .conversation-home-text-action:is(:hover, :focus-visible) svg { transform: translateX(3px); }
 
-.conversation-home-prompts { display: flex; flex-wrap: wrap; width: 100%; gap: 8px; padding: 0 24px 14px; }
-.conversation-home-prompts button {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 36px;
-  padding: 7px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--muted-foreground);
-  font-size: 0.75rem;
-  text-align: left;
-  transition: background-color 150ms ease-out, border-color 150ms ease-out, color 150ms ease-out;
-}
-.conversation-home-prompts button > svg { flex-shrink: 0; }
-.conversation-home-prompts button > svg:last-child { opacity: 0.6; transition: transform 180ms var(--home-ease); }
-.conversation-home-prompts button:is(:hover, :focus-visible) > svg:last-child { transform: translate(2px, -2px); }
-.conversation-home-prompts button:is(:hover, :focus-visible) { background: color-mix(in oklch, var(--primary) 7%, transparent); border-color: var(--primary); color: var(--foreground); }
 @container (max-width: 500px) {
   .conversation-home-signature { left: -9px; top: -18px; right: auto; width: 76px; height: 52px; }
   .conversation-home-motion-toggle { position: absolute; right: 0; top: -8px; min-height: 44px; margin-top: 0; }
-  .conversation-home-prompts { padding: 0 16px 12px; gap: 6px; }
-  .conversation-home-prompts button { min-height: 44px; }
   .conversation-home-shortcut { gap: 8px; }
   .conversation-home-shortcut-arrow { top: 28px; right: 16px; }
 }

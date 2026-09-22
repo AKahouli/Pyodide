@@ -1,3 +1,5 @@
+import type { AuthUser } from '@common/auth/auth-user';
+import { RegistrationApproval, UserStatus } from './user.types';
 import {
   Controller,
   Get,
@@ -15,7 +17,7 @@ import { CompleteProfileDto } from './dto/complete-profile.dto';
 import { SearchUsersDto } from './dto/search-users.dto';
 import { UserSearchResultDto } from './dto/user-search-result.dto';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { UserDocument } from './schemas/user.schema';
+import { UserDocLike } from './persistence/user-record.mapper';
 import { UserResponse } from './interfaces/user.interface';
 import { Permissions, RequirePermissions } from '../authorization';
 
@@ -28,7 +30,7 @@ export class UserController {
   @Get('me')
   @ApiOperation({ summary: 'Get current user profile' })
   @ApiResponse({ status: 200, description: 'User profile retrieved' })
-  async getProfile(@CurrentUser() user: UserDocument): Promise<UserResponse> {
+  async getProfile(@CurrentUser() user: AuthUser): Promise<UserResponse> {
     return this.mapUserToResponse(user);
   }
 
@@ -36,7 +38,7 @@ export class UserController {
   @ApiOperation({ summary: 'Update current user profile' })
   @ApiResponse({ status: 200, description: 'Profile updated successfully' })
   async updateProfile(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Body() dto: UpdateProfileDto,
   ): Promise<UserResponse> {
     // Only include defined properties to avoid overwriting with undefined
@@ -69,7 +71,7 @@ export class UserController {
   @ApiResponse({ status: 200, description: 'Profile completed successfully' })
   @ApiResponse({ status: 400, description: 'Privacy policy must be accepted' })
   async completeProfile(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Body() dto: CompleteProfileDto,
   ): Promise<UserResponse> {
     const updatedUser = await this.userService.completeProfile(user._id.toString(), {
@@ -89,7 +91,7 @@ export class UserController {
   @ApiOperation({ summary: 'Search active users by name or email' })
   @ApiResponse({ status: 200, description: 'Search results returned', type: [UserSearchResultDto] })
   async searchUsers(
-    @CurrentUser() currentUser: UserDocument,
+    @CurrentUser() currentUser: AuthUser,
     @Query() dto: SearchUsersDto,
   ): Promise<UserSearchResultDto[]> {
     return this.userService.searchUsers({
@@ -103,14 +105,14 @@ export class UserController {
   @RequirePermissions([Permissions.GOVERNANCE_MEMBERSHIPS_MANAGE, Permissions.GOVERNANCE_ALL], 'any')
   @ApiOperation({ summary: 'List active users for selection' })
   @ApiResponse({ status: 200, description: 'Active users returned', type: [UserSearchResultDto] })
-  async listDirectory(@CurrentUser() currentUser: UserDocument): Promise<UserSearchResultDto[]> {
+  async listDirectory(@CurrentUser() currentUser: AuthUser): Promise<UserSearchResultDto[]> {
     return this.userService.listActiveUsers(currentUser._id.toString(), 50);
   }
 
   /**
    * Map UserDocument to UserResponse
    */
-  private mapUserToResponse(user: UserDocument): UserResponse {
+  private mapUserToResponse(user: AuthUser | UserDocLike): UserResponse {
     // permissions and roleNames are attached to user by JwtStrategy from JWT payload
     const userWithPermissions = user as unknown as {
       permissions?: string[];
@@ -144,8 +146,8 @@ export class UserController {
             startedAt: user.planStartedAt,
           }
         : undefined,
-      status: user.status,
-      registrationApproval: user.registrationApproval,
+      status: user.status as UserStatus,
+      registrationApproval: (user.registrationApproval ?? undefined) as RegistrationApproval | undefined,
       permissions: userWithPermissions.permissions,
       roleNames: userWithPermissions.roleNames,
     };

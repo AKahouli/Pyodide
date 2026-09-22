@@ -111,7 +111,7 @@ Returns token usage analytics including totals, breakdown by model, and usage tr
 }
 ```
 
-**Note:** UsageLogs have a 30-day TTL, so historical usage data is limited.
+**Note:** Usage logs are retained for 30 days (hourly batch cleanup in `UsageService`), so historical usage data is limited.
 
 ---
 
@@ -214,11 +214,12 @@ All analytics are filtered to only include data from users who have consented to
 
 ```typescript
 // In UserAnalyticsService
-async getConsentingUserIds(): Promise<Types.ObjectId[]> {
-  const users = await this.userModel
-    .find({ 'consents.dataSharing': true }, { _id: 1 })
-    .lean();
-  return users.map((u) => u._id as Types.ObjectId);
+async getConsentingUserIds(): Promise<string[]> {
+  const rows = await this.q
+    .select({ id: schema.identityUsers.id })
+    .from(schema.identityUsers)
+    .where(sql`${schema.identityUsers.consentDataSharing} = true`);
+  return rows.map((r) => r.id);
 }
 ```
 
@@ -230,18 +231,18 @@ Each analytics method filters by these user IDs before aggregating data.
 |---------|----------------|
 | `AnalyticsService` | Main orchestrator, coordinates other services |
 | `UserAnalyticsService` | User counts, registration trends, consent management |
-| `UsageAnalyticsService` | Token metrics from `usagelogs` collection |
+| `UsageAnalyticsService` | Token metrics from `conversation.usage_logs` via `USAGE_STORE` |
 | `ConversationAnalyticsService` | Message/conversation metrics, quality metrics |
 
 ### Data Sources
 
-| Metric | Collection | Key Fields |
+| Metric | Table / source | Key Fields |
 |--------|-----------|------------|
-| User counts | `users` | `consents.dataSharing`, `createdAt`, `emailVerified` |
-| Token usage | `usagelogs` | `inputTokens`, `outputTokens`, `modelName`, `createdAt` |
-| Conversations | `conversations` | `createdBy`, `createdAt`, `messageCount` |
-| Messages | `messages` | `conversationType`, `components`, `feedback`, `createdAt` |
-| Reports | `reports` | `reason`, `userId`, `createdAt` |
+| User counts | `identity.users` | `consent_data_sharing`, `created_at`, `email_verified` |
+| Token usage | `conversation.usage_logs` | `input_tokens`, `output_tokens`, `model_name`, `created_at` |
+| Conversations | conversation store (`CONVERSATION_ANALYTICS_STORE`) | `createdBy`, `createdAt`, `messageCount` |
+| Messages | conversation store | `conversationType`, `components`, `feedback`, `createdAt` |
+| Reports | conversation store | `reason`, `userId`, `createdAt` |
 
 ---
 
@@ -277,19 +278,16 @@ curl -X GET \
 
 ### `analytics.module.ts`
 
-Defines the module, imports required Mongoose models, and registers services/controllers.
+Defines the module, imports the modules that supply the Postgres-backed stores (no Mongoose models), and registers services/controllers.
 
 ```typescript
 @Module({
   imports: [
+    UserModule,
     LoggerModule,
-    MongooseModule.forFeature([
-      { name: User.name, schema: UserSchema },
-      { name: UsageLog.name, schema: UsageLogSchema },
-      { name: Conversation.name, schema: ConversationSchema },
-      { name: Message.name, schema: MessageSchema },
-      { name: Report.name, schema: ReportSchema },
-    ]),
+    forwardRef(() => AuthorizationModule),
+    UsageModule,
+    ConversationPersistenceModule,
   ],
   controllers: [AnalyticsController],
   providers: [
@@ -417,8 +415,8 @@ Handles conversation and quality analytics:
 
 ## Notes
 
-- All aggregations use MongoDB aggregation pipelines for performance
-- UsageLogs have a 30-day TTL, limiting historical usage data
+- Aggregations run in the database (SQL over Postgres via Drizzle for user analytics; `USAGE_STORE` and `CONVERSATION_ANALYTICS_STORE` ports for usage and conversation metrics)
+- Usage logs are cleaned up after 30 days, limiting historical usage data
 - No PII (Personally Identifiable Information) is exposed in responses
 - The module is registered in `AppModule` and available immediately
 - Endpoints are documented in Swagger under "Analytics (Experimental)" tag

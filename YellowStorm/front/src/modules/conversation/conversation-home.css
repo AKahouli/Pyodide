@@ -52,7 +52,8 @@
   box-shadow: none;
 }
 .conversation-home-composer textarea[data-slot='input-group-control'] {
-  min-height: 128px;
+  /* line-height 1.6 on a 1rem font is one text line. */
+  min-height: calc(128px - 1.6rem);
   max-height: 280px;
   padding: 22px 24px;
   font-size: 1rem;
@@ -189,7 +190,7 @@
   .conversation-scope-picker { flex: 1 1 100%; gap: 10px; }
   .conversation-scope-select { flex: 1; }
   .conversation-scope-select select { width: 100%; max-width: 100%; min-width: 0; min-height: 44px; }
-  .conversation-home-composer textarea[data-slot='input-group-control'] { padding: 18px 16px; min-height: 112px; }
+  .conversation-home-composer textarea[data-slot='input-group-control'] { padding: 18px 16px; min-height: calc(112px - 1.6rem); }
   .conversation-home-composer [data-slot='input-group-addon'] { padding: 8px 10px 12px; }
   .conversation-home-composer [data-slot='input-group-addon'] button { min-height: 44px; }
   .conversation-home-shortcuts { grid-template-columns: repeat(2, minmax(0, 1fr)); }

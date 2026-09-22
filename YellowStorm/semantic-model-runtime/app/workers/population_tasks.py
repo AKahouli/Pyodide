@@ -1,0 +1,507 @@
+"""Population worker entry point (Phase 5).
+
+Claims the durable ``semantic_jobs`` lease, runs the pure deterministic domain
+in :mod:`app.population.compiler` / :mod:`app.population.tabular` over
+prepared Parquet queried through the Phase 3 pipeline, then completes with
+fencing. Only task references cross RabbitMQ; canonical inputs stay in
+PostgreSQL. No LLM, no formula execution, no raw SQL: rows come from bounded
+``query_parquet`` calls and every failure maps to an ``errorCode``.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
+from app.population.compiler import (canonical_spec_hash, compile_specification,
+                                     filter_fields, validate_specification)
+from app.population.tabular import (match_relationships, merge_concept_results,
+                                    populate_concept_rows)
+
+from .celery_app import POPULATION_QUEUES, celery_app
+
+logger = logging.getLogger(__name__)
+ASSET_FETCH_WALL_SECONDS = 35
+QUERY_ROW_LIMIT = 1000
+MAX_SOURCES_PER_TASK = 25
+MAX_TOTAL_ENTITIES = 10000
+MAX_TOTAL_ASSERTIONS = 50000
+MAX_TOTAL_RELATIONSHIPS = 20000
+
+
+def population_lease_seconds(source_count: int, parser_timeout: int) -> int:
+    """Cover fetch, prepare, query and completion for every mapped source."""
+    units = max(1, min(source_count, MAX_SOURCES_PER_TASK))
+    return min(1800, max(300, units * (parser_timeout + 60)))
+
+
+def attempts_exhausted(attempt_count: int, max_attempts: int) -> bool:
+    return attempt_count > max_attempts
+
+
+def run_population_for_payload(command_dump: dict) -> dict:
+    """Pure validate+compile entry point (no DB, no I/O). Never raises.
+
+    The canonical top-level ``workspaceId`` is the authenticated home and is
+    required, mirroring discovery: an inner scope may never substitute for it.
+    The supplied ``specHash`` must equal the recomputed canonical hash (P1.5);
+    every identity component must be mapped or the job is rejected
+    before any byte is fetched.
+    """
+    try:
+        if not isinstance(command_dump, dict):
+            return {"ok": False, "errorCode": "invalid_command"}
+        actor = command_dump.get("actorUserId") or command_dump.get("actor_user_id")
+        model_id = command_dump.get("modelId") or command_dump.get("model_id")
+        home_ws = command_dump.get("workspaceId") or command_dump.get("workspace_id")
+        if not isinstance(home_ws, str) or not home_ws:
+            return {"ok": False, "errorCode": "workspace_required"}
+        if not isinstance(actor, str) or not actor:
+            return {"ok": False, "errorCode": "invalid_command"}
+        if not isinstance(model_id, str) or not model_id:
+            return {"ok": False, "errorCode": "invalid_command"}
+        payload = command_dump.get("payload")
+        if not isinstance(payload, dict):
+            return {"ok": False, "errorCode": "invalid_command"}
+        if payload.get("purpose") not in ("preview", "build", "refresh"):
+            return {"ok": False, "errorCode": "invalid_purpose"}
+        spec = payload.get("specification")
+        issues = validate_specification(spec)
+        if issues:
+            return {"ok": False, "errorCode": "invalid_specification",
+                    "issues": issues[:10]}
+        expected_hash = payload.get("specHash") or payload.get("spec_hash")
+        if canonical_spec_hash(spec) != expected_hash:
+            return {"ok": False, "errorCode": "spec_hash_mismatch"}
+        sources = payload.get("sources")
+        if (not isinstance(sources, list) or not sources
+                or len(sources) > MAX_SOURCES_PER_TASK):
+            return {"ok": False, "errorCode": "invalid_sources"}
+        compiled = compile_specification(spec)
+        normalized: list[dict] = []
+        for entry in sources:
+            if not isinstance(entry, dict):
+                return {"ok": False, "errorCode": "invalid_sources"}
+            concept = compiled["concepts"].get(entry.get("conceptId"))
+            if concept is None:
+                return {"ok": False, "errorCode": "unknown_concept"}
+            source_kind = entry.get("sourceKind") or entry.get("source_kind")
+            if source_kind not in (None, "tabular", "excel_sheet", "csv", "document"):
+                return {"ok": False, "errorCode": "invalid_source_kind"}
+            if source_kind == "document":
+                field_mappings = entry.get("fieldMappings") or entry.get("field_mappings")
+                if not isinstance(field_mappings, list) or not field_mappings:
+                    return {"ok": False, "errorCode": "invalid_document_mapping"}
+                active = [item for item in field_mappings if isinstance(item, dict)
+                          and item.get("mode") != "ignore"]
+                if len(active) != len(field_mappings):
+                    return {"ok": False, "errorCode": "invalid_document_mapping"}
+                if any(item.get("mode") not in {"extract", "metadata", "constant"}
+                       or item.get("targetAttribute") not in concept["allowedFields"] for item in active):
+                    return {"ok": False, "errorCode": "invalid_document_mapping"}
+                if any(item.get("mode") == "extract"
+                       and (not isinstance(item.get("sourceField"), str)
+                            or not item["sourceField"].strip()) for item in active):
+                    return {"ok": False, "errorCode": "invalid_document_mapping"}
+                metadata_fields = {"document_name", "document_id", "workspace_id"}
+                if any(item.get("mode") == "metadata"
+                       and item.get("sourceField") not in metadata_fields for item in active):
+                    return {"ok": False, "errorCode": "invalid_document_mapping"}
+                mapped_attributes = {item["targetAttribute"] for item in active}
+                if len(mapped_attributes) != len(active):
+                    return {"ok": False, "errorCode": "duplicate_document_mapping"}
+                mapping = None
+            else:
+                mapping = entry.get("columnMapping") or entry.get("column_mapping")
+                if not isinstance(mapping, dict) or not mapping:
+                    return {"ok": False, "errorCode": "invalid_column_mapping"}
+                mapped_attributes = set(mapping.values())
+            unmapped = [c for c in concept["keyComponents"] if c not in mapped_attributes]
+            if unmapped:
+                return {"ok": False, "errorCode": "unmapped_identity"}
+            if mapping is not None and len(set(mapping.values())) != len(mapping):
+                return {"ok": False, "errorCode": "duplicate_column_mapping"}
+            if "_row" in mapped_attributes:
+                return {"ok": False, "errorCode": "reserved_attribute_name"}
+            # A filter on an unmapped attribute sees only None: eq never
+            # matches, so the source would report a clean empty population.
+            for filt in (concept.get("eligibility"), concept.get("materialization")):
+                for field in filter_fields(filt):
+                    if field not in mapped_attributes:
+                        return {"ok": False, "errorCode": "unmapped_filter_field"}
+            source = entry.get("source")
+            if not isinstance(source, dict) or not source.get("assetId"):
+                return {"ok": False, "errorCode": "invalid_sources"}
+            options = entry.get("options") or {}
+            normalized.append({
+                "conceptId": entry.get("conceptId"), "source": source,
+                "sourceKind": source_kind or "tabular",
+                "options": options if isinstance(options, dict) else {},
+                **({"fieldMappings": active} if source_kind == "document"
+                   else {"columnMapping": dict(mapping)}),
+                "labelField": entry.get("labelField") or entry.get("label_field"),
+                "mappingVersion": entry.get("mappingVersion") or entry.get("mapping_version") or "v1",
+            })
+        bindings = payload.get("relationBindings") or payload.get("relation_bindings") or []
+        if not isinstance(bindings, list):
+            return {"ok": False, "errorCode": "invalid_relation_bindings"}
+        for binding in bindings:
+            if not isinstance(binding, dict):
+                return {"ok": False, "errorCode": "invalid_relation_bindings"}
+            if compiled["relations"].get(binding.get("relationId")) is None:
+                return {"ok": False, "errorCode": "unknown_relation"}
+            reference = binding.get("referenceField") or binding.get("reference_field")
+            if not isinstance(reference, str) or not reference:
+                return {"ok": False, "errorCode": "invalid_relation_bindings"}
+        return {"ok": True, "compiled": compiled, "sources": normalized,
+                "relationBindings": bindings, "purpose": payload.get("purpose"),
+                "specHash": expected_hash}
+    except Exception:
+        return {"ok": False, "errorCode": "invalid_command"}
+
+
+async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=None,
+                                  query=None, index_connection=None, metadata_fetch=None) -> dict:
+    """Fetch, prepare, query and populate every mapped source (bounded)."""
+    import asyncio
+    import os
+    import tempfile
+    from pathlib import Path
+
+    from app.datasource.asset_delivery import AssetFetchError, fetch_workspace_asset
+    from app.datasource.dataset_query import query_parquet
+    from app.datasource.discovery import resolve_asset_ref
+    from app.datasource.parsers import SHEET_ROW_KEY
+    from app.datasource.parser_sandbox import prepare_dataset_subprocess
+
+    validated = run_population_for_payload(command_dump)
+    if not validated.get("ok"):
+        return validated
+    actor = command_dump.get("actorUserId") or command_dump.get("actor_user_id")
+    compiled = validated["compiled"]
+    per_concept: dict[str, list[dict]] = {}
+    dataset_fingerprints: set[str] = set()
+    observations: list[dict] = []
+    document_coverage: list[dict] = []
+    index_observations: list[dict] = []
+    complete_enumeration = True
+    for entry in validated["sources"]:
+        source, options = entry["source"], entry["options"]
+        if entry["sourceKind"] == "document":
+            from app.datasource.logical_index import create_index_pool
+            from app.population.document import populate_document
+
+            owned_pool = None
+            connection = index_connection
+            try:
+                if connection is None:
+                    owned_pool = await create_index_pool()
+                    connection = owned_pool
+                output = await populate_document(
+                    connection, entry, compiled["concepts"][entry["conceptId"]], actor,
+                    metadata_fetch=metadata_fetch)
+            finally:
+                if owned_pool is not None:
+                    await owned_pool.close()
+            per_concept.setdefault(entry["conceptId"], []).append(output)
+            document_coverage.append(output["coverage"])
+            observations.append(output["sourceObservation"])
+            if output.get("indexObservation"):
+                index_observations.append(output["indexObservation"])
+            fingerprint = output["sourceObservation"]["assetRef"].get("assetVersionId")
+            if isinstance(fingerprint, str) and fingerprint:
+                dataset_fingerprints.add(fingerprint)
+            if output["coverage"]["status"] == "budget_exhausted":
+                complete_enumeration = False
+            continue
+        try:
+            async with asyncio.timeout(ASSET_FETCH_WALL_SECONDS):
+                data = await (fetch or fetch_workspace_asset)(source, actor)
+        except AssetFetchError as exc:
+            return {"ok": False, "errorCode": exc.code}
+        temp_root = os.environ.get("SEMANTIC_TASK_TEMP_DIR")
+        try:
+            with tempfile.TemporaryDirectory(prefix="semantic-populate-",
+                                             dir=temp_root) as directory:
+                artifact = Path(directory) / "dataset.parquet"
+                manifest = await asyncio.to_thread(
+                    prepare or prepare_dataset_subprocess, source, options, data, artifact)
+                columns = sorted(set(entry["columnMapping"]) | {SHEET_ROW_KEY})
+                page = await asyncio.to_thread(
+                    query or query_parquet, artifact, columns=columns, limit=QUERY_ROW_LIMIT)
+        except ValueError as exc:
+            return {"ok": False, "errorCode": str(exc) or "parser_failed"}
+        except AssetFetchError as exc:
+            return {"ok": False, "errorCode": exc.code}
+        fingerprint = manifest.get("contentHash") if isinstance(manifest, dict) else None
+        if isinstance(fingerprint, str) and fingerprint:
+            dataset_fingerprints.add(fingerprint)
+        if page["returnedRows"] >= QUERY_ROW_LIMIT:
+            complete_enumeration = False
+        try:
+            asset_ref = resolve_asset_ref(source)
+        except ValueError as exc:
+            return {"ok": False, "errorCode": str(exc) or "invalid_source"}
+        asset_ref["datasetRevisionId"] = manifest.get("datasetId")
+        observations.append({
+            "assetRef": {key: asset_ref[key] for key in
+                         ("workspaceId", "assetId", "assetVersionId") if key in asset_ref},
+            "datasetId": manifest.get("datasetId"),
+            "contentHash": manifest.get("contentHash"),
+            "sizeBytes": manifest.get("sizeBytes"),
+            "rowCount": manifest.get("rowCount")})
+        mapping = entry["columnMapping"]
+        rows = []
+        for raw in page["rows"]:
+            renamed: dict = {"_row": raw.get(SHEET_ROW_KEY)}
+            for source_column, attribute in mapping.items():
+                if source_column in raw:
+                    renamed[attribute] = raw[source_column]
+            rows.append(renamed)
+        concept = compiled["concepts"][entry["conceptId"]]
+        output = populate_concept_rows(
+            concept, rows, {"assetRef": asset_ref,
+                            "mappingVersion": entry["mappingVersion"],
+                            "labelField": entry.get("labelField")})
+        per_concept.setdefault(entry["conceptId"], []).append(output)
+
+    counts = {"scanned": 0, "excluded": 0, "queryable": 0, "materialized": 0, "gaps": 0}
+    merged_by_concept: dict[str, dict] = {}
+    for concept_id, outputs in per_concept.items():
+        merged = merge_concept_results(outputs)
+        merged_by_concept[concept_id] = merged
+        for key in counts:
+            counts[key] += merged["counts"].get(key, 0)
+    # Bound the result before matching so relationships never reference dropped
+    # entities and assertions never outlive their entity.
+    kept: list[dict] = []
+    for concept_id in sorted(merged_by_concept):
+        ordered = sorted(merged_by_concept[concept_id]["entities"],
+                         key=lambda item: item["entityId"])
+        for entity in ordered:
+            if len(kept) >= MAX_TOTAL_ENTITIES:
+                break
+            kept.append(entity)
+        if len(kept) >= MAX_TOTAL_ENTITIES:
+            break
+    kept_ids = {entity["entityId"] for entity in kept}
+    gaps: list[dict] = []
+    assertions: list[dict] = []
+    for merged in merged_by_concept.values():
+        gaps.extend(merged["gaps"])
+        for assertion in merged["assertions"]:
+            if assertion["entityId"] in kept_ids and len(assertions) < MAX_TOTAL_ASSERTIONS:
+                assertions.append(assertion)
+    dropped_entities = (sum(len(merged["entities"]) for merged in merged_by_concept.values())
+                        - len(kept))
+    if dropped_entities > 0:
+        gaps.append({"kind": "materialization_cap", "conceptId": None, "rowNumber": None,
+                     "detail": f"bounded result capped at {MAX_TOTAL_ENTITIES} entities"})
+    dropped_assertions = (sum(len(merged["assertions"]) for merged in merged_by_concept.values())
+                          - len(assertions))
+    if dropped_assertions > 0:
+        gaps.append({"kind": "assertion_cap", "conceptId": None, "rowNumber": None,
+                     "detail": f"bounded result capped at {MAX_TOTAL_ASSERTIONS} assertions"})
+    trimmed = {concept_id: [entity for entity in merged["entities"]
+                            if entity["entityId"] in kept_ids]
+               for concept_id, merged in merged_by_concept.items()}
+    relationships: list[dict] = []
+    for binding in validated["relationBindings"]:
+        relation = compiled["relations"][binding.get("relationId")]
+        reference = binding.get("referenceField") or binding.get("reference_field")
+        matched = match_relationships(
+            relation,
+            trimmed.get(relation["sourceConceptId"], []),
+            trimmed.get(relation["targetConceptId"], []),
+            reference)
+        relationships.extend(matched["relationships"])
+        gaps.extend(matched["gaps"])
+    if len(relationships) > MAX_TOTAL_RELATIONSHIPS:
+        relationships = sorted(relationships,
+                               key=lambda item: (item.get("relationId", ""),
+                                                 item.get("sourceEntityId", ""),
+                                                 item.get("targetEntityId", "")))[:MAX_TOTAL_RELATIONSHIPS]
+        gaps.append({"kind": "relationship_cap", "conceptId": None, "rowNumber": None,
+                     "detail": f"bounded result capped at {MAX_TOTAL_RELATIONSHIPS} relationships"})
+    if not complete_enumeration:
+        gaps.append({"kind": "enumeration_capped", "conceptId": None, "rowNumber": None,
+                     "detail": f"per-source enumeration capped at {QUERY_ROW_LIMIT} rows"})
+    counts["materialized"] = len(kept)
+    counts["gaps"] = len(gaps)
+    return {"ok": True, "specHash": validated["specHash"], "purpose": validated["purpose"],
+            "completeEnumeration": complete_enumeration, "entities": kept,
+            "assertions": assertions, "relationships": relationships, "gaps": gaps,
+            "counts": counts, "datasetFingerprints": sorted(dataset_fingerprints),
+             "sourceObservations": observations,
+             "documentCoverage": document_coverage, "indexObservations": index_observations,
+             "jobState": "completed_with_gaps" if gaps else "completed"}
+
+
+def preview_job_result(outcome: dict) -> dict:
+    """Preview/Test result: bounded computed output, no revision, no storage."""
+    return {key: value for key, value in outcome.items() if key not in {"ok", "jobState"}}
+
+
+def summarize_job_result(revision_id: str, outcome: dict, persisted: dict) -> dict:
+    """Bounded job summary built from storage counts, never submitted rows."""
+    return {
+        "dataRevisionId": revision_id, "specHash": outcome.get("specHash"),
+        "purpose": outcome.get("purpose"),
+        "completeEnumeration": outcome.get("completeEnumeration"),
+        "counts": outcome.get("counts"),
+        "gapKinds": sorted({gap.get("kind") for gap in outcome.get("gaps", [])}),
+        "entityCount": persisted["entities"],
+        "assertionCount": persisted["assertions"],
+        "relationshipCount": persisted["relationships"],
+    }
+
+
+async def persist_population_revision(pool, command_dump: dict, outcome: dict) -> str:
+    """Persist a computed population as an inert data revision (P6A, P6.16).
+
+    Idempotent (ON CONFLICT DO NOTHING): a retried task re-stores the same
+    revision without duplicates. The revision is inert until an explicit
+    activation swaps the serving binding, so a stored-but-uncompleted task
+    leaves serving state untouched.
+    """
+    from app.persistence.population_store import (create_data_revision, mirror_specification,
+                                                  model_correction_sequence, revision_id_for,
+                                                  set_revision_validation, store_assertions,
+                                                  store_entities, store_relationships)
+    from app.persistence.search_store import store_entity_projections
+    from app.search.projections import build_entity_projections
+
+    payload = command_dump.get("payload", {})
+    specification = payload.get("specification", {})
+    model_id = command_dump.get("modelId") or command_dump.get("model_id", "")
+    model_version_id = payload.get("modelVersionId") or payload.get("model_version_id", "")
+    home_ws = command_dump.get("workspaceId") or command_dump.get("workspace_id", "")
+    correction_sequence = await model_correction_sequence(pool, model_id)
+    revision_id = revision_id_for(model_version_id, outcome["specHash"],
+                                  outcome.get("datasetFingerprints", []),
+                                  correction_sequence)
+    await mirror_specification(pool, home_workspace_id=home_ws, model_id=model_id,
+                               model_version_id=model_version_id,
+                               spec_hash=outcome["specHash"], specification=specification)
+    coverage = {"counts": outcome.get("counts", {}),
+                 "completeEnumeration": outcome.get("completeEnumeration", False),
+                 "gapKinds": sorted({gap.get("kind") for gap in outcome.get("gaps", [])}),
+                 "documents": outcome.get("documentCoverage", [])}
+    await create_data_revision(pool, revision_id=revision_id, model_id=model_id,
+                               model_version_id=model_version_id,
+                               spec_hash=outcome["specHash"],
+                               source_observations=outcome.get("sourceObservations", []),
+                               correction_sequence=correction_sequence,
+                               coverage=coverage)
+    await store_entities(pool, model_id=model_id, revision_id=revision_id,
+                         entities=outcome.get("entities", []))
+    await store_assertions(pool, model_id=model_id, revision_id=revision_id,
+                           assertions=outcome.get("assertions", []))
+    await store_relationships(pool, model_id=model_id, revision_id=revision_id,
+                               relationships=outcome.get("relationships", []))
+    from app.persistence.index_observations import record_index_observation
+    for observation in outcome.get("indexObservations", []):
+        await record_index_observation(pool, observation)
+    await store_entity_projections(
+        pool, build_entity_projections(outcome.get("entities", []),
+                                       model_id=model_id, revision_id=revision_id))
+    await set_revision_validation(pool, revision_id, "valid")
+    return revision_id
+
+
+async def _run_task(task_id: int, lease_owner: str) -> dict:
+    import asyncpg
+
+    from app.jobs.models import StaleLease
+    from app.persistence.postgres_jobs import PostgresJobRepository
+    from app.datasource.parser_sandbox import parser_timeout_seconds
+
+    from .celery_app import POPULATION_QUEUES as _QUEUES
+    import os
+
+    max_attempts = max_attempts_from_env(os.environ.get("SEMANTIC_TASK_MAX_ATTEMPTS"))
+    retry_seconds = retry_seconds_from_env(os.environ.get("SEMANTIC_TASK_RETRY_SECONDS"))
+    pool = await asyncpg.create_pool(
+        os.environ["SEMANTIC_RUNTIME_DATABASE_URL"], min_size=1, max_size=2,
+        command_timeout=10,
+        server_settings={"application_name": "semantic-model-population-worker",
+                         "statement_timeout": "10s", "lock_timeout": "2s",
+                         "idle_in_transaction_session_timeout": "10s"},
+    )
+    lease = None
+    try:
+        repository = PostgresJobRepository(pool)
+        lease = await repository.claim_task(
+            task_id=task_id, queue_name=_QUEUES[1], lease_owner=lease_owner,
+            lease_seconds=population_lease_seconds(MAX_SOURCES_PER_TASK,
+                                                   parser_timeout_seconds()))
+        if lease is None:
+            return {"ok": False, "errorCode": "lease_unavailable"}
+        if attempts_exhausted(lease.attempt_count, max_attempts):
+            try:
+                await repository.complete_task(task_id=task_id, lease_owner=lease_owner,
+                                               lease_epoch=lease.lease_epoch, job_state="failed",
+                                               result=None, error_code="attempts_exhausted")
+            except StaleLease:
+                return {"ok": False, "errorCode": "stale_lease"}
+            return {"ok": False, "errorCode": "attempts_exhausted"}
+        outcome = await run_population_for_task(lease.payload)
+        if not outcome.get("ok"):
+            try:
+                await repository.complete_task(task_id=task_id, lease_owner=lease_owner,
+                                               lease_epoch=lease.lease_epoch, job_state="failed",
+                                               result=None, error_code=outcome["errorCode"])
+            except StaleLease:
+                return {"ok": False, "errorCode": "stale_lease"}
+            return outcome
+        # Preview/Test runs never mutate stored state: the bounded computed
+        # output travels in the job result and no revision is created.
+        if outcome.get("purpose") == "preview":
+            result = preview_job_result(outcome)
+        else:
+            # Durably persist before acknowledging: the job result carries only
+            # a bounded summary while canonical rows live in semantic_population.
+            # Counts are re-read from storage so ON CONFLICT skips never inflate
+            # the summary.
+            from app.persistence.population_store import count_revision_rows
+
+            revision_id = await persist_population_revision(pool, lease.payload, outcome)
+            persisted = await count_revision_rows(pool, revision_id)
+            result = summarize_job_result(revision_id, outcome, persisted)
+        try:
+            await repository.complete_task(task_id=task_id, lease_owner=lease_owner,
+                                           lease_epoch=lease.lease_epoch,
+                                           job_state=outcome["jobState"], result=result)
+        except StaleLease:
+            return {"ok": False, "errorCode": "stale_lease"}
+        return {"ok": True, **result, "jobState": outcome["jobState"]}
+    except Exception as exc:
+        if lease is not None:
+            try:
+                await PostgresJobRepository(pool).requeue_task(
+                    task_id=task_id, lease_owner=lease_owner, lease_epoch=lease.lease_epoch,
+                    error_code=type(exc).__name__, retry_seconds=retry_seconds)
+            except Exception as requeue_exc:
+                logger.warning("Semantic population requeue failed; lease recovery will retry",
+                               extra={"error_code": type(requeue_exc).__name__[:100]})
+        raise
+    finally:
+        await pool.close()
+
+
+@celery_app.task(bind=True, name="semantic-model-population.run", queue=POPULATION_QUEUES[1])
+def populate_model(self, task_id: int) -> dict:  # type: ignore[no-untyped-def]
+    import asyncio
+    import os
+    import uuid
+
+    if isinstance(task_id, bool) or not isinstance(task_id, int):
+        return {"ok": False, "errorCode": "invalid_task_reference"}
+    max_attempts = max_attempts_from_env(os.environ.get("SEMANTIC_TASK_MAX_ATTEMPTS"))
+    retry_seconds = retry_seconds_from_env(os.environ.get("SEMANTIC_TASK_RETRY_SECONDS"))
+    try:
+        return asyncio.run(_run_task(task_id, f"population-worker:{uuid.uuid4().hex}"))
+    except Exception as exc:
+        logger.warning("Semantic population task failed, scheduling bounded retry",
+                       extra={"error_code": type(exc).__name__[:100]})
+        raise self.retry(exc=exc, countdown=retry_seconds, max_retries=max_attempts)

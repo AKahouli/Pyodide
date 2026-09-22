@@ -1,0 +1,36 @@
+{
+  "id": "gpt-4o",
+  "name": "GPT-4o",
+  "chef": "OpenAI",
+  "chefSlug": "openai",
+  "litellmModel": "openai/gpt-4o",
+  "providers": [
+    "openai",
+    "azure"
+  ],
+  "type": "chat",
+  "types": [
+    "chat"
+  ],
+  "isActive": true,
+  "isDefault": true,
+  "isConversationV2Default": false,
+  "omitTemperature": false,
+  "inputModalities": [
+    "text",
+    "image"
+  ],
+  "maxInputTokens": 128000,
+  "maxOutputTokens": 16384,
+  "supportsReasoning": true,
+  "reasoning": {
+    "efforts": [
+      {
+        "id": "low",
+        "name": "Low",
+        "description": "Fast"
+      }
+    ],
+    "defaultEffort": "low"
+  }
+}

@@ -8,9 +8,8 @@ import {
   BadRequestException,
   InternalServerErrorException,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, FilterQuery, Types } from 'mongoose';
-import { Team, TeamDocument, TeamMember } from './schemas/team.schema';
+import { isObjectId } from '@common/postgres';
+import { TEAM_STORE, type TeamMemberRow, type TeamRow, type TeamStore } from './persistence/team.store';
 import { CreateTeamDto, UpdateTeamDto, QueryTeamDto, UpdateHierarchyDto, GenerateTeamDto } from './dto';
 import {
   ITeamResponse,
@@ -64,8 +63,8 @@ type MemberAgentInfo = {
 @Injectable()
 export class TeamService {
   constructor(
-    @InjectModel(Team.name)
-    private readonly teamModel: Model<TeamDocument>,
+    @Inject(TEAM_STORE)
+    private readonly teamStore: TeamStore,
     private readonly logger: LoggerService,
     @Inject(forwardRef(() => AgentService))
     private readonly agentService: AgentService,
@@ -80,46 +79,36 @@ export class TeamService {
   }
 
   async create(userId: string, dto: CreateTeamDto): Promise<ITeamResponse> {
-    const existing = await this.teamModel
-      .findOne({ name: dto.name, createdBy: new Types.ObjectId(userId) })
-      .lean()
-      .exec();
+    const existing = await this.teamStore.findByOwnerAndName(dto.name, userId);
     if (existing) {
       throw new ConflictException(ErrorCode.TEAM_ALREADY_EXISTS);
     }
 
-    const team = await this.teamModel.create({
+    const team = await this.teamStore.create({
       name: dto.name,
       description: dto.description ?? '',
       members: this.agentIdsToMembers(dto.agentIds),
       isActive: true,
-      createdBy: new Types.ObjectId(userId),
+      createdBy: userId,
     });
 
-    this.logger.log('Team created', { teamId: team._id.toString(), name: team.name, userId });
+    this.logger.log('Team created', { teamId: team.id, name: team.name, userId });
     return this.toResponse(team);
   }
 
   async findUserTeams(userId: string, query: QueryTeamDto): Promise<PaginatedResponseDto<ITeamResponse>> {
-    const filter: FilterQuery<TeamDocument> = { createdBy: new Types.ObjectId(userId) };
-
-    if (query.search) {
-      filter.name = { $regex: escapeRegex(query.search), $options: 'i' };
-    }
-    if (query.isActive !== undefined) {
-      filter.isActive = query.isActive;
-    }
-
     const page = query.page ?? 1;
     const limit = query.limit ?? 10;
-    const skip = (page - 1) * limit;
 
-    const [teams, total] = await Promise.all([
-      this.teamModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean().exec(),
-      this.teamModel.countDocuments(filter).exec(),
-    ]);
+    const { rows, total } = await this.teamStore.list({
+      createdBy: userId,
+      search: query.search,
+      isActive: query.isActive,
+      page,
+      limit,
+    });
 
-    return new PaginatedResponseDto(teams.map((t) => this.toResponse(t)), total, page, limit);
+    return new PaginatedResponseDto(rows.map((t) => this.toResponse(t)), total, page, limit);
   }
 
   /**
@@ -128,11 +117,7 @@ export class TeamService {
    */
   async findAllForUser(userId: string): Promise<ITeamResponse[]> {
     const [owned, shared] = await Promise.all([
-      this.teamModel
-        .find({ createdBy: new Types.ObjectId(userId), isActive: true })
-        .sort({ createdAt: -1 })
-        .lean()
-        .exec(),
+      this.teamStore.findActiveByOwner(userId),
       this.teamShareService.getSharedTeamsForUser(userId),
     ]);
     return [...owned.map((t) => this.toResponse(t)), ...shared];
@@ -144,15 +129,15 @@ export class TeamService {
    * for shared viewers, agent details are loaded without an ownership filter.
    */
   async findUserTeamById(userId: string, teamId: string): Promise<ITeamWithAgentsResponse> {
-    if (!Types.ObjectId.isValid(teamId)) {
+    if (!isObjectId(teamId)) {
       throw new NotFoundException(ErrorCode.TEAM_NOT_FOUND);
     }
-    const team = await this.teamModel.findById(teamId).lean().exec();
+    const team = await this.teamStore.findById(teamId);
     if (!team) {
       throw new NotFoundException(ErrorCode.TEAM_NOT_FOUND);
     }
 
-    const isOwner = team.createdBy.toString() === userId;
+    const isOwner = team.createdBy === userId;
     let shareInfo: ISharedTeamInfo | undefined;
     if (!isOwner) {
       const info = await this.teamShareService.getShareInfo(userId, teamId);
@@ -178,34 +163,30 @@ export class TeamService {
 
     if (dto.name !== undefined && dto.name !== team.name) {
       // Name must be unique within the owner's namespace (not the editor's).
-      const clash = await this.teamModel
-        .findOne({ name: dto.name, createdBy: team.createdBy, _id: { $ne: team._id } })
-        .lean()
-        .exec();
+      const clash = await this.teamStore.findNameClash(dto.name, team.createdBy, team.id);
       if (clash) {
         throw new ConflictException(ErrorCode.TEAM_ALREADY_EXISTS);
       }
-      team.name = dto.name;
     }
 
-    if (dto.description !== undefined) team.description = dto.description;
-    if (dto.isActive !== undefined) team.isActive = dto.isActive;
     // Editing the agent list from the simple dialog: reconcile against the
     // existing hierarchy so positions/parents are preserved for kept agents.
-    if (dto.agentIds !== undefined) {
-      team.members = this.reconcileMembers(team.members, dto.agentIds);
-    }
+    const updated = await this.teamStore.update(team.id, {
+      ...(dto.name !== undefined ? { name: dto.name } : {}),
+      ...(dto.description !== undefined ? { description: dto.description } : {}),
+      ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
+      ...(dto.agentIds !== undefined ? { members: this.reconcileMembers(team.members, dto.agentIds) } : {}),
+    });
 
-    await team.save();
     this.logger.log('Team updated', { teamId, userId });
-    return this.toResponse(team);
+    return this.toResponse(updated!);
   }
 
   /** Replace the whole hierarchy (org-chart save). Validates structure + access. */
   async updateHierarchy(userId: string, teamId: string, dto: UpdateHierarchyDto): Promise<ITeamResponse> {
     const team = await this.loadTeamForWrite(userId, teamId);
-    const isOwner = team.createdBy.toString() === userId;
-    const existingAgentIds = team.members.map((m) => m.agentId.toString());
+    const isOwner = team.createdBy === userId;
+    const existingAgentIds = team.members.map((m) => m.agentId);
     const { members } = dto;
 
     const agentIds = members.map((m) => m.agentId);
@@ -241,29 +222,27 @@ export class TeamService {
       }
     }
 
-    team.members = members.map((m) => ({
-      agentId: new Types.ObjectId(m.agentId),
-      parentAgentId: m.parentAgentId ? new Types.ObjectId(m.parentAgentId) : null,
+    const teamMembers: TeamMemberRow[] = members.map((m) => ({
+      agentId: m.agentId,
+      parentAgentId: m.parentAgentId ?? null,
       order: m.order ?? 0,
       positionX: m.positionX ?? 0,
       positionY: m.positionY ?? 0,
-    })) as TeamMember[];
+    }));
+    const updated = await this.teamStore.update(team.id, { members: teamMembers });
 
-    await team.save();
     this.logger.log('Team hierarchy updated', { teamId, userId, memberCount: members.length });
 
     const agentMap = isOwner
       ? await this.buildAgentMap(agentIds, userId)
       : await this.buildAgentMapForTeamAccess(agentIds);
-    return this.toResponseWithAgents(team, agentMap);
+    return this.toResponseWithAgents(updated!, agentMap);
   }
 
   async delete(userId: string, teamId: string): Promise<void> {
-    const team = await this.getOwnedTeam(userId, teamId);
-    await Promise.all([
-      this.teamModel.findByIdAndDelete(team._id).exec(),
-      this.teamShareService.removeAllSharesForTeam(teamId),
-    ]);
+    await this.getOwnedTeam(userId, teamId);
+    // Single DELETE — shares + members cascade (plan 4.3).
+    await this.teamStore.delete(teamId);
     this.logger.log('Team deleted', { teamId, userId });
   }
 
@@ -282,10 +261,7 @@ export class TeamService {
       throw new BadRequestException(ErrorCode.TEAM_AUTO_BUILDER_NOT_CONFIGURED);
     }
 
-    const existing = await this.teamModel
-      .findOne({ name: dto.name, createdBy: new Types.ObjectId(userId) })
-      .lean()
-      .exec();
+    const existing = await this.teamStore.findByOwnerAndName(dto.name, userId);
     if (existing) {
       throw new ConflictException(ErrorCode.TEAM_ALREADY_EXISTS);
     }
@@ -437,24 +413,24 @@ export class TeamService {
     }
 
     const selectedAgentIds = resolvedMembers.map((m) => m.agentId);
-    const membersToStore: TeamMember[] = resolvedMembers.map((m) => ({
-      agentId: new Types.ObjectId(m.agentId),
-      parentAgentId: m.parentAgentId ? new Types.ObjectId(m.parentAgentId) : null,
+    const membersToStore: TeamMemberRow[] = resolvedMembers.map((m) => ({
+      agentId: m.agentId,
+      parentAgentId: m.parentAgentId ?? null,
       order: m.order ?? 0,
       positionX: 0,
       positionY: 0,
-    })) as TeamMember[];
+    }));
 
-    const team = await this.teamModel.create({
+    const team = await this.teamStore.create({
       name: dto.name,
       description: dto.prompt,
       members: membersToStore,
       isActive: true,
-      createdBy: new Types.ObjectId(userId),
+      createdBy: userId,
     });
 
     this.logger.log('Team generated via auto-builder', {
-      teamId: team._id.toString(),
+      teamId: team.id,
       name: team.name,
       userId,
       memberCount: membersToStore.length,
@@ -588,17 +564,10 @@ Rules:
   async resolveAgentIds(teamIds: string[], userId: string): Promise<string[]> {
     if (!teamIds || teamIds.length === 0) return [];
 
-    const validIds = teamIds.filter((id) => Types.ObjectId.isValid(id));
+    const validIds = teamIds.filter((id) => isObjectId(id));
     if (validIds.length === 0) return [];
 
-    const teams = await this.teamModel
-      .find({
-        _id: { $in: validIds.map((id) => new Types.ObjectId(id)) },
-        createdBy: new Types.ObjectId(userId),
-        isActive: true,
-      })
-      .lean()
-      .exec();
+    const teams = await this.teamStore.findByIdsActiveForOwner(validIds, userId);
 
     const agentIds = new Set<string>();
     for (const team of teams) {
@@ -610,11 +579,11 @@ Rules:
   }
 
   async resolveExecutionDefinition(userId: string, teamId: string): Promise<TeamExecutionDefinition> {
-    if (!Types.ObjectId.isValid(teamId)) throw new NotFoundException(ErrorCode.TEAM_NOT_FOUND);
-    const team = await this.teamModel.findById(teamId).lean().exec();
+    if (!isObjectId(teamId)) throw new NotFoundException(ErrorCode.TEAM_NOT_FOUND);
+    const team = await this.teamStore.findById(teamId);
     if (!team || !team.isActive) throw new NotFoundException(ErrorCode.TEAM_NOT_FOUND);
 
-    if (team.createdBy.toString() !== userId) {
+    if (team.createdBy !== userId) {
       const permission = await this.teamShareService.getSharePermission(userId, teamId);
       if (permission !== 'read' && permission !== 'write') throw new ForbiddenException(ErrorCode.TEAM_FORBIDDEN);
     }
@@ -634,7 +603,7 @@ Rules:
 
   /** Ordered (BFS) agent IDs of a single team. */
   async getOrderedAgentIds(teamId: string): Promise<string[]> {
-    const team = await this.teamModel.findById(teamId).lean().exec();
+    const team = await this.teamStore.findById(teamId);
     if (!team) return [];
     return this.orderMembers(this.readMembers(team));
   }
@@ -644,38 +613,20 @@ Rules:
    * parent). Called when an agent is deleted, so teams never point at a dangling
    * agent and orphaned children become roots.
    */
-  async removeAgentFromAllTeams(agentId: string): Promise<void> {
-    if (!Types.ObjectId.isValid(agentId)) return;
-    const objectId = new Types.ObjectId(agentId);
-
-    const removed = await this.teamModel
-      .updateMany({ 'members.agentId': objectId }, { $pull: { members: { agentId: objectId } } })
-      .exec();
-
-    await this.teamModel
-      .updateMany(
-        { 'members.parentAgentId': objectId },
-        { $set: { 'members.$[elem].parentAgentId': null } },
-        { arrayFilters: [{ 'elem.parentAgentId': objectId }] },
-      )
-      .exec();
-
-    if (removed.modifiedCount > 0) {
-      this.logger.log('Agent removed from teams', { agentId, teamsAffected: removed.modifiedCount });
-    }
-  }
+  // removeAgentFromAllTeams was deleted (plan 4.3): team_members cascades on
+  // agent delete (member rows) and nulls parentAgentId (ON DELETE SET NULL).
 
   // ===== Helpers =====
 
-  private async getOwnedTeam(userId: string, teamId: string): Promise<TeamDocument> {
-    if (!Types.ObjectId.isValid(teamId)) {
+  private async getOwnedTeam(userId: string, teamId: string): Promise<TeamRow> {
+    if (!isObjectId(teamId)) {
       throw new NotFoundException(ErrorCode.TEAM_NOT_FOUND);
     }
-    const team = await this.teamModel.findById(teamId).exec();
+    const team = await this.teamStore.findById(teamId);
     if (!team) {
       throw new NotFoundException(ErrorCode.TEAM_NOT_FOUND);
     }
-    if (team.createdBy.toString() !== userId) {
+    if (team.createdBy !== userId) {
       throw new ForbiddenException(ErrorCode.TEAM_FORBIDDEN);
     }
     return team;
@@ -685,15 +636,15 @@ Rules:
    * Load a team the user may modify: the owner, or a user it has been shared
    * with at the 'write' level. Returns the hydrated document.
    */
-  private async loadTeamForWrite(userId: string, teamId: string): Promise<TeamDocument> {
-    if (!Types.ObjectId.isValid(teamId)) {
+  private async loadTeamForWrite(userId: string, teamId: string): Promise<TeamRow> {
+    if (!isObjectId(teamId)) {
       throw new NotFoundException(ErrorCode.TEAM_NOT_FOUND);
     }
-    const team = await this.teamModel.findById(teamId).exec();
+    const team = await this.teamStore.findById(teamId);
     if (!team) {
       throw new NotFoundException(ErrorCode.TEAM_NOT_FOUND);
     }
-    if (team.createdBy.toString() === userId) {
+    if (team.createdBy === userId) {
       return team;
     }
     const permission = await this.teamShareService.getSharePermission(userId, teamId);
@@ -706,15 +657,15 @@ Rules:
   }
 
   /** Build flat members (all roots) from an ordered list of agent IDs. */
-  private agentIdsToMembers(agentIds?: string[]): TeamMember[] {
-    const unique = [...new Set(agentIds || [])].filter((id) => Types.ObjectId.isValid(id));
+  private agentIdsToMembers(agentIds?: string[]): TeamMemberRow[] {
+    const unique = [...new Set(agentIds || [])].filter((id) => isObjectId(id));
     return unique.map((id, index) => ({
-      agentId: new Types.ObjectId(id),
+      agentId: id,
       parentAgentId: null,
       order: index,
       positionX: 0,
       positionY: 0,
-    })) as TeamMember[];
+    }));
   }
 
   /**
@@ -722,31 +673,31 @@ Rules:
    * positions for agents that remain, add new agents as roots, drop removed ones
    * and re-root any children that pointed at a removed agent.
    */
-  private reconcileMembers(existing: TeamMember[], agentIds: string[]): TeamMember[] {
-    const newIds = [...new Set(agentIds || [])].filter((id) => Types.ObjectId.isValid(id));
+  private reconcileMembers(existing: TeamMemberRow[], agentIds: string[]): TeamMemberRow[] {
+    const newIds = [...new Set(agentIds || [])].filter((id) => isObjectId(id));
     const keep = new Set(newIds);
-    const byId = new Map(existing.map((m) => [m.agentId.toString(), m]));
+    const byId = new Map(existing.map((m) => [m.agentId, m]));
 
     return newIds.map((id, index) => {
       const prev = byId.get(id);
       const parent = prev?.parentAgentId ?? null;
-      const parentKept = parent && keep.has(parent.toString()) ? parent : null;
+      const parentKept = parent && keep.has(parent) ? parent : null;
       return {
-        agentId: new Types.ObjectId(id),
+        agentId: id,
         parentAgentId: parentKept,
         order: prev?.order ?? index,
         positionX: prev?.positionX ?? 0,
         positionY: prev?.positionY ?? 0,
       };
-    }) as TeamMember[];
+    });
   }
 
   /** BFS order: roots first (by `order`), then children (by `order`). */
-  private orderMembers(members: TeamMember[]): string[] {
+  private orderMembers(members: TeamMemberRow[]): string[] {
     if (!members || members.length === 0) return [];
 
-    const childrenMap = new Map<string, TeamMember[]>();
-    const roots: TeamMember[] = [];
+    const childrenMap = new Map<string, TeamMemberRow[]>();
+    const roots: TeamMemberRow[] = [];
     for (const m of members) {
       if (!m.parentAgentId) {
         roots.push(m);
@@ -853,10 +804,13 @@ Rules:
    * flat `agentIds` array (pre-hierarchy). Legacy agents become flat root
    * members; the team auto-heals to `members` on its next save.
    */
-  private readMembers(team: Record<string, unknown>): TeamMember[] {
-    const members = team.members as TeamMember[] | undefined;
+  private readMembers(team: TeamRow | Record<string, unknown>): TeamMemberRow[] {
+    if ('members' in team && 'createdBy' in team && !('agentIds' in team)) {
+      return (team as TeamRow).members;
+    }
+    const members = (team as Record<string, unknown>).members as TeamMemberRow[] | undefined;
     if (members && members.length > 0) return members;
-    const legacy = team.agentIds as Types.ObjectId[] | undefined;
+    const legacy = team.agentIds as string[] | undefined;
     if (legacy && legacy.length > 0) {
       return legacy.map((agentId, index) => ({
         agentId,
@@ -864,16 +818,16 @@ Rules:
         order: index,
         positionX: 0,
         positionY: 0,
-      })) as TeamMember[];
+      }));
     }
     return members || [];
   }
 
-  private toResponse(team: TeamDocument | Record<string, unknown>): ITeamResponse {
+  private toResponse(team: TeamRow | Record<string, unknown>): ITeamResponse {
     const d = team as Record<string, unknown>;
     const members = this.readMembers(d);
     return {
-      id: (d._id as { toString(): string }).toString(),
+      id: d.id as string,
       name: d.name as string,
       description: (d.description as string) || '',
       members: members.map((m) => this.toMemberResponse(m as unknown as Record<string, unknown>)),
@@ -886,7 +840,7 @@ Rules:
   }
 
   private toResponseWithAgents(
-    team: TeamDocument | Record<string, unknown>,
+    team: TeamRow | Record<string, unknown>,
     agentMap: Map<string, MemberAgentInfo>,
   ): ITeamWithAgentsResponse {
     const base = this.toResponse(team);

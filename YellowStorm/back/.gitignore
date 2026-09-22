@@ -40,4 +40,5 @@ coverage/
 .env.example
 
 */.claude
-*cwd*
+*cwd*.smoke/
+jest-results.json

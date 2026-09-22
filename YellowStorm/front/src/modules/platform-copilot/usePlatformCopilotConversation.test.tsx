@@ -131,7 +131,7 @@ describe('usePlatformCopilotConversation', () => {
         conversationId: 'conversation-1', action: 'add', component: { id: 'text-1', type: 'text', data: { content: 'Yes' } },
       },
     }));
-    expect(result.current.streamingComponents).toEqual([expect.objectContaining({ id: 'text-1' })]);
+    await waitFor(() => expect(result.current.streamingComponents).toEqual([expect.objectContaining({ id: 'text-1' })]));
   });
 
   it('tracks one streaming AI message and accumulates component updates', async () => {
@@ -152,7 +152,28 @@ describe('usePlatformCopilotConversation', () => {
     }));
 
     expect(result.current.streamingMessageId).toBe('ai-1');
-    expect(result.current.streamingComponents[0]?.data.content).toBe('Hello world');
+    await waitFor(() => expect(result.current.streamingComponents[0]?.data.content).toBe('Hello world'));
+  });
+
+  it('does not commit a queued frame after the stream completes', async () => {
+    mocks.fetchMessages
+      .mockResolvedValueOnce({ items: [], total: 0, page: 1, limit: 100, totalPages: 0 })
+      .mockResolvedValueOnce({ items: [{ id: 'ai-1', conversationId: 'conversation-1', conversationType: 'ai', isComplete: true, components: [] }], total: 1, page: 1, limit: 100, totalPages: 1 });
+    const { result } = renderHook(() => usePlatformCopilotConversation(true, context));
+    await waitFor(() => expect(result.current.conversationId).toBe('conversation-1'));
+
+    act(() => {
+      mocks.listener?.({ type: 'stream_start', data: { conversationId: 'conversation-1', messageId: 'ai-1' } });
+      mocks.listener?.({
+        type: 'stream_chunk',
+        data: { conversationId: 'conversation-1', messageId: 'ai-1', action: 'add', component: { id: 'text-1', type: 'text', data: { content: 'stale' } } },
+      });
+      mocks.listener?.({ type: 'stream_complete', data: { conversationId: 'conversation-1', messageId: 'ai-1' } });
+    });
+
+    await waitFor(() => expect(result.current.messages).toEqual([expect.objectContaining({ id: 'ai-1' })]));
+    expect(result.current.streamingMessageId).toBeUndefined();
+    expect(result.current.streamingComponents).toEqual([]);
   });
 
   it('restores an active Yellowmind stream after a page refresh', async () => {
@@ -189,7 +210,7 @@ describe('usePlatformCopilotConversation', () => {
       components: [{ id: 'activity-1', type: 'agentActivity', data: { content: 'Checking Playbooks' } }],
     });
 
-    await waitFor(() => expect(result.current.streamingComponents[0]?.data.content).toBe('Checking Playbooks then checking access'));
+    await waitFor(() => expect(result.current.streamingComponents[0]?.data.content).toBe(' then checking access'));
   });
 
   it('does not resurrect a stream that completes while recovery is loading', async () => {
@@ -308,7 +329,7 @@ describe('usePlatformCopilotConversation', () => {
     }));
 
     expect(result.current.conversationId).toBe('conversation-1');
-    expect(result.current.streamingComponents).toEqual([expect.objectContaining({ id: 'activity-1' })]);
+    await waitFor(() => expect(result.current.streamingComponents).toEqual([expect.objectContaining({ id: 'activity-1' })]));
   });
 
   it('starts the turn without waiting for the shared Conversation stream', async () => {

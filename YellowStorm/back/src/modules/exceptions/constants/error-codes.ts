@@ -65,6 +65,7 @@ export enum ErrorCode {
   CHAT_BRANCH_INVALID = 'ERR_1421',
   CHAT_BRANCH_UNSUPPORTED = 'ERR_1422',
   CHAT_BRANCH_SEED_FAILED = 'ERR_1423',
+  CHAT_ATTACHMENTS_DISABLED = 'ERR_1424',
 
   // External service errors (1500-1599)
   EXTERNAL_SERVICE_ERROR = 'ERR_1500',
@@ -455,6 +456,7 @@ export enum ErrorCode {
   SEMANTIC_MODEL_VERSION_IMMUTABLE = 'ERR_3708',
   SEMANTIC_MODEL_NO_DRAFT = 'ERR_3709',
   SEMANTIC_MODEL_UNAVAILABLE = 'ERR_3710',
+  SEMANTIC_MODEL_RUNTIME_OWNED = 'ERR_3711',
 }
 
 export const ErrorMessages: Record<ErrorCode, string> = {
@@ -531,6 +533,7 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.CHAT_BRANCH_INVALID]: 'The selected conversation branch is invalid.',
   [ErrorCode.CHAT_BRANCH_UNSUPPORTED]: 'This conversation cannot be branched.',
   [ErrorCode.CHAT_BRANCH_SEED_FAILED]: 'Failed to initialize the branched conversation.',
+  [ErrorCode.CHAT_ATTACHMENTS_DISABLED]: 'Attachments are disabled for this conversation.',
 
   [ErrorCode.EXTERNAL_SERVICE_ERROR]: 'External service error.',
   [ErrorCode.AI_SERVICE_ERROR]: 'AI service encountered an error.',
@@ -809,6 +812,7 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.SEMANTIC_MODEL_VERSION_IMMUTABLE]: 'Published Semantic Model versions cannot be changed.',
   [ErrorCode.SEMANTIC_MODEL_NO_DRAFT]: 'This Semantic Model has no editable draft.',
   [ErrorCode.SEMANTIC_MODEL_UNAVAILABLE]: 'Semantic Model storage is temporarily unavailable.',
+  [ErrorCode.SEMANTIC_MODEL_RUNTIME_OWNED]: 'This Semantic Model is owned by the semantic runtime.',
 
   [ErrorCode.APP_DATA_DISABLED]: 'App Data is disabled on this instance.',
   [ErrorCode.APP_DATA_REMOTE_UNAVAILABLE]: 'The App Data microservice is unavailable.',

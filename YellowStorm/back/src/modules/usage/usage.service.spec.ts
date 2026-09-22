@@ -1,17 +1,34 @@
-import { Types } from 'mongoose';
 import { UsageService } from './usage.service';
+import type { PlanRecord } from './persistence/plan.store';
 import type { UsageStore, UsageWindowRecord } from './persistence/usage-store';
 
 describe('UsageService PostgreSQL persistence', () => {
-  const plan = {
-    _id: new Types.ObjectId(),
+  const plan: PlanRecord = {
+    id: '6ab01464b68fc5a92f1122a6',
+    name: 'Basic',
     slug: 'basic',
-    windowHours: 24,
+    description: null,
     tokenLimit: 1000,
-  } as never;
+    windowHours: 24,
+    requestsPerMinute: 60,
+    maxTokensPerRequest: -1,
+    features: [],
+    priority: 0,
+    priceMonthly: 0,
+    priceYearly: 0,
+    currency: 'USD',
+    isActive: true,
+    isDefault: false,
+    displayOrder: 0,
+    maxWorkspaces: 3,
+    workspaceStorageBytes: 104857600,
+    metadata: {},
+    createdAt: new Date('2026-09-12T00:00:00.000Z'),
+    updatedAt: new Date('2026-09-12T00:00:00.000Z'),
+  };
   const record: UsageWindowRecord = {
-    id: new Types.ObjectId().toString(),
-    userId: new Types.ObjectId().toString(),
+    id: '6ab01464b68fc5a92f1122a7',
+    userId: '6ab01464b68fc5a92f1122a8',
     windowStart: new Date('2026-09-12T00:00:00.000Z'),
     windowEnd: new Date('2026-09-13T00:00:00.000Z'),
     windowHours: 24,
@@ -29,7 +46,11 @@ describe('UsageService PostgreSQL persistence', () => {
     getAnalytics: jest.fn(),
     deleteLogsBefore: jest.fn(),
   } as jest.Mocked<UsageStore>;
-  const planModel = { findOne: jest.fn().mockResolvedValue(plan) };
+  const planStore = {
+    findBySlug: jest.fn().mockResolvedValue(plan),
+    findFlaggedDefault: jest.fn().mockResolvedValue(null),
+    findById: jest.fn(),
+  };
   const logger = {
     setContext: jest.fn(),
     debug: jest.fn(),
@@ -37,7 +58,7 @@ describe('UsageService PostgreSQL persistence', () => {
     warn: jest.fn(),
     log: jest.fn(),
   };
-  const service = new UsageService(planModel as never, usageStore, logger as never);
+  const service = new UsageService(planStore as never, usageStore, logger as never);
 
   beforeEach(() => jest.clearAllMocks());
 

@@ -17,7 +17,7 @@ import {
 } from '@nestjs/swagger';
 import { EvaluationService } from './evaluation.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 
 @ApiTags('Evaluation')
 @ApiBearerAuth()
@@ -34,7 +34,7 @@ export class EvaluationController {
     @Post('datasets')
     @ApiOperation({ summary: 'Create a new dataset' })
     async createDataset(
-        @CurrentUser() user: UserDocument,
+        @CurrentUser() user: AuthUser,
         @Body() body: { name: string; items: any[] },
     ) {
         return this.evaluationService.createDataset(user._id.toString(), body.name, body.items);
@@ -42,7 +42,7 @@ export class EvaluationController {
 
     @Get('datasets')
     @ApiOperation({ summary: 'List all datasets for user' })
-    async findAllDatasets(@CurrentUser() user: UserDocument) {
+    async findAllDatasets(@CurrentUser() user: AuthUser) {
         return this.evaluationService.findAllDatasets(user._id.toString());
     }
 
@@ -60,7 +60,7 @@ export class EvaluationController {
     @Post('launch')
     @ApiOperation({ summary: 'Create an evaluation record' })
     async launch(
-        @CurrentUser() user: UserDocument,
+        @CurrentUser() user: AuthUser,
         @Body() body: {
             agentId: string;
             datasetId: string;
@@ -83,7 +83,7 @@ export class EvaluationController {
     @Post('run')
     @ApiOperation({ summary: 'Run a single evaluation run and return results when done' })
     async runSingleEvaluation(
-        @CurrentUser() user: UserDocument,
+        @CurrentUser() user: AuthUser,
         @Headers('authorization') authHeader: string,
         @Body() body: {
             agentId: string;
@@ -114,7 +114,7 @@ export class EvaluationController {
     @Patch('results/:id/finalize')
     @ApiOperation({ summary: 'Mark an evaluation as completed or failed' })
     async finalizeEvaluation(
-        @CurrentUser() user: UserDocument,
+        @CurrentUser() user: AuthUser,
         @Param('id') id: string,
         @Body() body: { status: 'completed' | 'failed'; error?: string },
     ) {
@@ -129,13 +129,13 @@ export class EvaluationController {
 
     @Get('results/single/:id')
     @ApiOperation({ summary: 'Get a single evaluation by ID' })
-    async getEvaluationById(@CurrentUser() user: UserDocument, @Param('id') id: string) {
+    async getEvaluationById(@CurrentUser() user: AuthUser, @Param('id') id: string) {
         return this.evaluationService.findEvaluationByIdForUser(user._id.toString(), id);
     }
 
     @Get('results/:agentId')
     @ApiOperation({ summary: 'Get evaluation results for an agent' })
-    async getResults(@CurrentUser() user: UserDocument, @Param('agentId') agentId: string) {
+    async getResults(@CurrentUser() user: AuthUser, @Param('agentId') agentId: string) {
         return this.evaluationService.findEvaluationsByAgent(user._id.toString(), agentId);
     }
 
@@ -143,13 +143,13 @@ export class EvaluationController {
     @HttpCode(HttpStatus.NO_CONTENT)
     @ApiOperation({ summary: 'Delete an evaluation result' })
     async deleteEvaluation(
-        @CurrentUser() user: UserDocument,
+        @CurrentUser() user: AuthUser,
         @Param('id') id: string
     ) {
         return this.evaluationService.deleteEvaluation(user._id.toString(), this.permissionsOf(user), id);
     }
 
-    private permissionsOf(user: UserDocument): string[] {
+    private permissionsOf(user: AuthUser): string[] {
         return (user as unknown as { permissions?: string[] }).permissions ?? [];
     }
 }
