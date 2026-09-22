@@ -370,9 +370,14 @@ def requester_context(requester: Optional[dict]) -> str:
         who += f", {role}"
     return (
         f"You are working for {who}. They are the requester — the person who asked "
-        f"for this. Address them directly, and NEVER create a step that emails them "
-        f"or delegates/assigns a task to them: they are not a colleague to hand work "
-        f"to. If the task needs input from them, that is an 'ask' step, not an email."
+        f"for this, and they are ALREADY in this conversation. Address them directly. "
+        f"NEVER create a step or call a tool that sends them a message on ANY channel "
+        f"(Teams, email, etc.) or delegates/assigns a task to them: they are not a "
+        f"colleague to hand work to, and messaging the requester on Teams/email is "
+        f"invalid — it tries to open a chat with the account itself and fails. To ASK "
+        f"them something, use an 'ask' step. To TELL them a result — or relay someone "
+        f"else's reply back to them — put it in your own reply/step result; never send "
+        f"it to them as a Teams or email message."
     )
 
 
