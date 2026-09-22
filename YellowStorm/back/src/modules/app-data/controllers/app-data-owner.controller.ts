@@ -12,18 +12,13 @@ import {
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { ConversationV2OwnerGuard } from '@modules/conversation-v2/guards/conversation-v2-owner.guard';
+import { ConversationV2SessionService } from '@modules/conversation-v2/services/conversation-v2-session.service';
 import { AppDataCatalogService } from '../services/app-data-catalog.service';
 import { AppDataMigrationService } from '../services/app-data-migration.service';
 import { AppDataQueryService } from '../services/app-data-query.service';
 import { AppDataEndUserService } from '../services/app-data-end-user.service';
 import { AppDataEndUserGrantsService } from '../services/app-data-end-user-grants.service';
 import { AppDataAuditService } from '../services/app-data-audit.service';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import {
-  ConversationV2Session,
-  ConversationV2SessionDocument,
-} from '@modules/conversation-v2/schemas/conversation-v2-session.schema';
 import type { AppDataEnvironment } from '../constants/app-data.constants';
 import type { AppDataEndUserGrants, AppDataEndUserStatus } from '../constants/app-data.types';
 import { assertIdentifier } from '../utils/app-data-sql.util';
@@ -42,8 +37,7 @@ export class AppDataOwnerController {
     private readonly endUsers: AppDataEndUserService,
     private readonly grants: AppDataEndUserGrantsService,
     private readonly audit: AppDataAuditService,
-    @InjectModel(ConversationV2Session.name)
-    private readonly sessions: Model<ConversationV2SessionDocument>,
+    private readonly sessions: ConversationV2SessionService,
   ) {}
 
   private assertEnabled(): void {
@@ -55,7 +49,7 @@ export class AppDataOwnerController {
   }
 
   private async workspaceId(sessionId: string): Promise<string> {
-    const session = await this.sessions.findById(sessionId).lean();
+    const session = await this.sessions.getById(sessionId);
     if (!session?.aiSessionId) {
       throw new ServiceUnavailableException('Session has no AI workspace attached');
     }

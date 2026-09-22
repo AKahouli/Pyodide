@@ -48,13 +48,11 @@ export default tseslint.config(
       '!src/modules/knowledge-intelligence/**',
       '!src/modules/classifier/**',
       '!src/modules/evaluation/**',
-      '!src/modules/conversation-v2/**',
       '!src/modules/app-runtime/**',
       '!src/modules/integration-events/**',
       '!src/modules/logger/**',
       '!src/modules/database/**',
       '!src/modules/health/**',
-      '!src/modules/app-data/**',
       '!src/modules/connector/services/connector-playbook-binding-sync.service.ts',
     ],
     rules: {

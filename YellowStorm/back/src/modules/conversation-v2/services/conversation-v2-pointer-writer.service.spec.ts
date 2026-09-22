@@ -1,24 +1,24 @@
-// back/src/modules/conversation-v2/services/conversation-v2-pointer-writer.service.spec.ts
 import { Test } from '@nestjs/testing';
-import { getModelToken } from '@nestjs/mongoose';
-import { Types } from 'mongoose';
 import { ConversationV2PointerWriterService } from './conversation-v2-pointer-writer.service';
-import { ConversationV2Session } from '../schemas/conversation-v2-session.schema';
+import {
+  CONVERSATION_V2_SESSION_STORE,
+  type ConversationV2SessionStore,
+} from '../persistence/conversation-v2-session.store';
 import type { ConversationV2Event } from '../types/conversation-v2.types';
 
 describe('ConversationV2PointerWriterService', () => {
   let svc: ConversationV2PointerWriterService;
-  let updateOne: jest.Mock;
+  let applyPointerPatch: jest.MockedFunction<ConversationV2SessionStore['applyPointerPatch']>;
   const SESSION_HEX = '507f1f77bcf86cd799439011';
 
   beforeEach(async () => {
-    updateOne = jest.fn().mockResolvedValue({});
+    applyPointerPatch = jest.fn().mockResolvedValue(undefined);
     const mod = await Test.createTestingModule({
       providers: [
         ConversationV2PointerWriterService,
         {
-          provide: getModelToken(ConversationV2Session.name),
-          useValue: { updateOne },
+          provide: CONVERSATION_V2_SESSION_STORE,
+          useValue: { applyPointerPatch },
         },
       ],
     }).compile();
@@ -34,59 +34,62 @@ describe('ConversationV2PointerWriterService', () => {
 
   it('TitleEvent updates pointer title', async () => {
     await svc.apply(SESSION_HEX, ev('title', { title: 'My Run' } as any));
-    expect(updateOne).toHaveBeenCalledWith(
-      { _id: new Types.ObjectId(SESSION_HEX) },
-      { $set: expect.objectContaining({ title: 'My Run', lastEventAt: expect.any(Date) }) },
+    expect(applyPointerPatch).toHaveBeenCalledWith(
+      SESSION_HEX,
+      expect.objectContaining({ title: 'My Run', lastEventAt: expect.any(Date) }),
     );
   });
 
   it('DoneEvent flips status to completed', async () => {
     await svc.apply(SESSION_HEX, ev('done'));
-    expect(updateOne).toHaveBeenCalledWith(
-      { _id: new Types.ObjectId(SESSION_HEX) },
-      { $set: expect.objectContaining({ status: 'completed' }) },
+    expect(applyPointerPatch).toHaveBeenCalledWith(
+      SESSION_HEX,
+      expect.objectContaining({ status: 'completed' }),
     );
   });
 
   it('WaitEvent flips status to waiting', async () => {
     await svc.apply(SESSION_HEX, ev('wait'));
-    expect(updateOne).toHaveBeenCalledWith(
-      { _id: new Types.ObjectId(SESSION_HEX) },
-      { $set: expect.objectContaining({ status: 'waiting' }) },
+    expect(applyPointerPatch).toHaveBeenCalledWith(
+      SESSION_HEX,
+      expect.objectContaining({ status: 'waiting' }),
     );
   });
 
   it('ErrorEvent flips status to error', async () => {
     await svc.apply(SESSION_HEX, ev('error', { error: 'boom' } as any));
-    expect(updateOne).toHaveBeenCalledWith(
-      { _id: new Types.ObjectId(SESSION_HEX) },
-      { $set: expect.objectContaining({ status: 'error' }) },
+    expect(applyPointerPatch).toHaveBeenCalledWith(
+      SESSION_HEX,
+      expect.objectContaining({ status: 'error' }),
     );
   });
 
   it('user MessageEvent sets status active', async () => {
     await svc.apply(SESSION_HEX, ev('message', { role: 'user', content: 'hi' } as any));
-    expect(updateOne).toHaveBeenCalledWith(
-      { _id: new Types.ObjectId(SESSION_HEX) },
-      { $set: expect.objectContaining({ status: 'active', lastEventAt: expect.any(Date) }) },
+    expect(applyPointerPatch).toHaveBeenCalledWith(
+      SESSION_HEX,
+      expect.objectContaining({ status: 'active', lastEventAt: expect.any(Date) }),
     );
   });
 
   it('assistant MessageEvent only bumps lastEventAt', async () => {
     await svc.apply(SESSION_HEX, ev('message', { role: 'assistant', content: 'hi' } as any));
-    expect(updateOne).toHaveBeenCalledWith(
-      { _id: new Types.ObjectId(SESSION_HEX) },
-      { $set: { lastEventAt: expect.any(Date) } },
+    expect(applyPointerPatch).toHaveBeenCalledWith(
+      SESSION_HEX,
+      { lastEventAt: expect.any(Date) },
     );
   });
 
   it('swallows update errors (best effort)', async () => {
-    updateOne.mockRejectedValueOnce(new Error('mongo down'));
+    applyPointerPatch.mockRejectedValueOnce(new Error('postgres down'));
     await expect(svc.apply(SESSION_HEX, ev('done'))).resolves.toBeUndefined();
   });
 
-  it('no-ops when sessionId is not a valid ObjectId hex', async () => {
+  it('still delegates when sessionId is not a valid ObjectId hex (store may no-op)', async () => {
     await svc.apply('not-a-hex', ev('done'));
-    expect(updateOne).not.toHaveBeenCalled();
+    expect(applyPointerPatch).toHaveBeenCalledWith(
+      'not-a-hex',
+      expect.objectContaining({ status: 'completed' }),
+    );
   });
 });

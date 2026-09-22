@@ -190,6 +190,13 @@
       "when": 1790019745486,
       "tag": "0025_cross_schema_fks",
       "statements": []
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1790100000000,
+      "tag": "0026_conversation_v2",
+      "breakpoints": true
     }
   ]
 }

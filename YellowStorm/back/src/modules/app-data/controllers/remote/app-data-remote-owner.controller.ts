@@ -15,14 +15,9 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import type { Request } from 'express';
 import { ConversationV2OwnerGuard } from '@modules/conversation-v2/guards/conversation-v2-owner.guard';
-import {
-  ConversationV2Session,
-  ConversationV2SessionDocument,
-} from '@modules/conversation-v2/schemas/conversation-v2-session.schema';
+import { ConversationV2SessionService } from '@modules/conversation-v2/services/conversation-v2-session.service';
 import { AppDataClientService } from '../../services/app-data-client.service';
 import { AppDataDeploymentService } from '../../services/app-data-deployment.service';
 import { AppDataEndUserGrantsService } from '../../services/app-data-end-user-grants.service';
@@ -43,8 +38,7 @@ export class AppDataRemoteOwnerController {
   constructor(
     private readonly config: ConfigService,
     private readonly client: AppDataClientService,
-    @InjectModel(ConversationV2Session.name)
-    private readonly sessions: Model<ConversationV2SessionDocument>,
+    private readonly sessions: ConversationV2SessionService,
     @Inject(AppDataDeploymentService)
     private readonly deployment: AppDataDeploymentService,
   ) {}
@@ -58,7 +52,7 @@ export class AppDataRemoteOwnerController {
   }
 
   private async workspaceId(sessionId: string): Promise<string> {
-    const session = await this.sessions.findById(sessionId).lean();
+    const session = await this.sessions.getById(sessionId);
     if (!session?.aiSessionId) {
       throw new ServiceUnavailableException('Session has no AI workspace attached');
     }

@@ -8,10 +8,7 @@ import { UserModule } from '../user/user.module';
 import { AppDataModule } from '../app-data/app-data.module';
 import { AppRuntimeModule } from '../app-runtime/app-runtime.module';
 import { AppBuilderAiModule } from '../app-builder-ai/app-builder-ai.module';
-import {
-  ConversationV2Session,
-  ConversationV2SessionSchema,
-} from '../conversation-v2/schemas/conversation-v2-session.schema';
+import { ConversationV2Module } from '../conversation-v2/conversation-v2.module';
 import { AiProxyController } from './ai-proxy.controller';
 import { AiProxyService } from './ai-proxy.service';
 import { AiProxyStreamService } from './ai-proxy-stream.service';
@@ -32,13 +29,13 @@ import {
     JwtModule.register({}),
     MongooseModule.forFeature([
       { name: AiPreviewTicket.name, schema: AiPreviewTicketSchema },
-      { name: ConversationV2Session.name, schema: ConversationV2SessionSchema },
     ]),
     forwardRef(() => AuthModule),
     forwardRef(() => UserModule),
     forwardRef(() => AppDataModule),
     forwardRef(() => AppRuntimeModule),
     forwardRef(() => AppBuilderAiModule),
+    forwardRef(() => ConversationV2Module),
   ],
   controllers: [AiProxyController],
   providers: [

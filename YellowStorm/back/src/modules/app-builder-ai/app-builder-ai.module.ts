@@ -4,11 +4,8 @@ import { PostgresModule } from '../postgres/postgres.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { RateLimiterModule } from '../rate-limiter/rate-limiter.module';
 import { AppDataModule } from '../app-data/app-data.module';
+import { ConversationV2Module } from '../conversation-v2/conversation-v2.module';
 import { User, UserSchema } from '../user/schemas/user.schema';
-import {
-  ConversationV2Session,
-  ConversationV2SessionSchema,
-} from '../conversation-v2/schemas/conversation-v2-session.schema';
 import {
   AppBuilderAiOffer,
   AppBuilderAiOfferSchema,
@@ -27,10 +24,10 @@ import { AdminAppBuilderAiController } from './controllers/admin-app-builder-ai.
     RateLimiterModule,
     forwardRef(() => AuthorizationModule),
     forwardRef(() => AppDataModule),
+    forwardRef(() => ConversationV2Module),
     MongooseModule.forFeature([
       { name: AppBuilderAiOffer.name, schema: AppBuilderAiOfferSchema },
       { name: User.name, schema: UserSchema },
-      { name: ConversationV2Session.name, schema: ConversationV2SessionSchema },
     ]),
   ],
   controllers: [AdminAppBuilderAiController],

@@ -1,6 +1,5 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Injectable, Logger, Optional, Inject } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Inject } from '@nestjs/common';
 import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { Model, Types } from 'mongoose';
@@ -11,9 +10,9 @@ import { NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { User, UserDocument } from '../../user/schemas/user.schema';
 import {
-  ConversationV2Session,
-  ConversationV2SessionDocument,
-} from '../../conversation-v2/schemas/conversation-v2-session.schema';
+  CONVERSATION_V2_SESSION_STORE,
+  type ConversationV2SessionStore,
+} from '../../conversation-v2/persistence/conversation-v2-session.store';
 import { AppDataClientService } from '../../app-data/services/app-data-client.service';
 import { APP_BUILDER_AI_USAGE_SOURCE } from '../constants';
 import { AppBuilderAiSettingsService } from './app-builder-ai-settings.service';
@@ -38,8 +37,8 @@ export class AppBuilderAiAdminService {
     private readonly usage: AppBuilderAiUsageService,
     @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>,
     @InjectModel(User.name) private readonly users: Model<UserDocument>,
-    @InjectModel(ConversationV2Session.name)
-    private readonly sessions: Model<ConversationV2SessionDocument>,
+    @Inject(CONVERSATION_V2_SESSION_STORE)
+    private readonly sessions: ConversationV2SessionStore,
     @Optional() private readonly appDataClient?: AppDataClientService,
   ) {}
 
@@ -80,10 +79,7 @@ export class AppBuilderAiAdminService {
       .orderBy(desc(sql`sum(${schema.usageLogs.totalTokens})`))
       .limit(10);
 
-    const aiAppsCount = await this.sessions.countDocuments({
-      hasAiFeatures: true,
-      deletedAt: null,
-    });
+    const aiAppsCount = await this.sessions.countWithAiFeatures();
 
     const usersWithOffer = await this.users.countDocuments({
       appBuilderAiOfferId: { $exists: true, $ne: null },
@@ -143,17 +139,7 @@ export class AppBuilderAiAdminService {
     ]);
 
     const userIds = items.map((u) => u._id.toString());
-    const aiAppCounts = await this.sessions.aggregate<{ _id: string; count: number }>([
-      {
-        $match: {
-          ownerId: { $in: userIds },
-          hasAiFeatures: true,
-          deletedAt: null,
-        },
-      },
-      { $group: { _id: '$ownerId', count: { $sum: 1 } } },
-    ]);
-    const countByOwner = new Map(aiAppCounts.map((r) => [r._id, r.count]));
+    const countByOwner = await this.sessions.countWithAiFeaturesByOwners(userIds);
 
     const offerIds = [
       ...new Set(
@@ -231,12 +217,7 @@ export class AppBuilderAiAdminService {
     }
 
     const status = await this.usage.getStatus(userId);
-    const apps = await this.sessions
-      .find({ ownerId: userId, hasAiFeatures: true, deletedAt: null })
-      .select('title deployedAppTitle deployStatus deployedUrl lastDeployedAt aiSessionId')
-      .sort({ lastEventAt: -1 })
-      .lean()
-      .exec();
+    const apps = await this.sessions.listWithAiFeaturesByOwner(userId);
 
     const since = status.window.windowStart;
     const logs = await this.db
@@ -326,7 +307,7 @@ export class AppBuilderAiAdminService {
         requestCount: status.window.requestCount,
       },
       apps: apps.map((app) => {
-        const sessionId = app._id.toString();
+        const sessionId = app.id;
         const appDataId = app.aiSessionId
           ? appDataIdByWorkspace.get(app.aiSessionId)
           : undefined;

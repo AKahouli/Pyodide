@@ -89,6 +89,10 @@ const IN_SCOPE = [
   'widget_tokens',
   'widget_sessions',
   'widget_messages',
+  // P8 — conversation v2
+  'conversation_v2_sessions',
+  'conversation_v2_events',
+  'conversation_v2_app_shares',
 ];
 
 async function main(): Promise<void> {

@@ -2,6 +2,7 @@ import { UsageService } from '../usage';
 import { LoggerService } from '../logger';
 import { ModelsService } from '../models/models.service';
 import { AiProxyUsageService } from './ai-proxy-usage.service';
+import type { ConversationV2SessionStore } from '../conversation-v2/persistence/conversation-v2-session.store';
 
 describe('AiProxyUsageService', () => {
   const usageService = {
@@ -89,19 +90,13 @@ describe('AiProxyUsageService', () => {
     const appBuilderAiUsage = {
       recordUsage: jest.fn().mockResolvedValue(undefined),
     };
-    const sessions = {
-      findOne: jest.fn().mockReturnValue({
-        select: () => ({
-          lean: () => ({
-            exec: async () => ({
-              _id: { toString: () => 'session-42' },
-              title: 'Draft',
-              deployedAppTitle: 'Deployed App',
-            }),
-          }),
-        }),
+    const sessions: jest.Mocked<Pick<ConversationV2SessionStore, 'findByAiSessionId' | 'setAiFeaturesFlag'>> = {
+      findByAiSessionId: jest.fn().mockResolvedValue({
+        id: 'session-42',
+        title: 'Draft',
+        deployedAppTitle: 'Deployed App',
       }),
-      updateOne: jest.fn().mockResolvedValue({ acknowledged: true }),
+      setAiFeaturesFlag: jest.fn().mockResolvedValue(undefined),
     };
     const appDataCatalog = {
       findByAppDataId: jest.fn().mockResolvedValue({
@@ -140,10 +135,7 @@ describe('AiProxyUsageService', () => {
     });
 
     expect(appDataCatalog.findByAppDataId).toHaveBeenCalledWith('appdata_1');
-    expect(sessions.findOne).toHaveBeenCalledWith({
-      aiSessionId: 'ws-1',
-      deletedAt: null,
-    });
+    expect(sessions.findByAiSessionId).toHaveBeenCalledWith('ws-1');
     expect(appBuilderAiUsage.recordUsage).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: 'owner-1',
@@ -159,10 +151,7 @@ describe('AiProxyUsageService', () => {
         }),
       }),
     );
-    expect(sessions.updateOne).toHaveBeenCalledWith(
-      { _id: 'session-42', deletedAt: null },
-      { $set: { hasAiFeatures: true } },
-    );
+    expect(sessions.setAiFeaturesFlag).toHaveBeenCalledWith('session-42', true, null);
     expect(usageService.recordUsage).not.toHaveBeenCalled();
   });
 
@@ -170,19 +159,13 @@ describe('AiProxyUsageService', () => {
     const appBuilderAiUsage = {
       recordUsage: jest.fn().mockResolvedValue(undefined),
     };
-    const sessions = {
-      findOne: jest.fn().mockReturnValue({
-        select: () => ({
-          lean: () => ({
-            exec: async () => ({
-              _id: { toString: () => 'session-99' },
-              title: 'Remote App',
-              deployedAppTitle: 'Remote Deployed',
-            }),
-          }),
-        }),
+    const sessions: jest.Mocked<Pick<ConversationV2SessionStore, 'findByAiSessionId' | 'setAiFeaturesFlag'>> = {
+      findByAiSessionId: jest.fn().mockResolvedValue({
+        id: 'session-99',
+        title: 'Remote App',
+        deployedAppTitle: 'Remote Deployed',
       }),
-      updateOne: jest.fn().mockResolvedValue({ acknowledged: true }),
+      setAiFeaturesFlag: jest.fn().mockResolvedValue(undefined),
     };
     const appDataClient = {
       isEnabled: () => true,
@@ -221,6 +204,7 @@ describe('AiProxyUsageService', () => {
     });
 
     expect(appDataClient.getStatus).toHaveBeenCalledWith('appdata_remote');
+    expect(sessions.findByAiSessionId).toHaveBeenCalledWith('ws-remote');
     expect(appBuilderAiUsage.recordUsage).toHaveBeenCalledWith(
       expect.objectContaining({
         metadata: expect.objectContaining({

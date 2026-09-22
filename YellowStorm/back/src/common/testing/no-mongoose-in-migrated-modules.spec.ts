@@ -23,7 +23,6 @@ const ALLOWLIST: Array<[string, string]> = [
   ['modules/knowledge-intelligence/', 'P6 knowledge-intelligence'],
   ['modules/classifier/', 'P6 classifier'],
   ['modules/evaluation/', 'P6 evaluation'],
-  ['modules/conversation-v2/', 'P8 conversation-v2'],
   ['modules/app-runtime/', 'P8 app-runtime'],
   ['modules/integration-events/', 'P8 integration-events'],
   ['modules/logger/', 'P9 logger'],
