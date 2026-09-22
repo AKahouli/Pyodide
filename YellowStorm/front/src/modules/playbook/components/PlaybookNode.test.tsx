@@ -1,7 +1,7 @@
 import { forwardRef } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { CanvasDesignContext, CardDensityContext, getCompactCardSummary, NodeDataActionsContext, PlaybookNode } from './PlaybookNode';
+import { CanvasDesignContext, CardDensityContext, NodeDataActionsContext, PlaybookNode } from './PlaybookNode';
 
 const storeState = vi.hoisted(() => ({
   currentPlaybook: {
@@ -17,6 +17,7 @@ const storeState = vi.hoisted(() => ({
     taskResults: [
       {
         taskId: 'node-1',
+        status: 'completed',
         artifacts: [
           {
             portId: 'out-1',
@@ -177,9 +178,16 @@ describe('PlaybookNode', () => {
     expect(screen.queryByText('completed')).not.toBeInTheDocument();
   });
 
-  it('uses the connected source before falling back to the agent', () => {
-    const translate = vi.fn((_key, values) => `From: ${values.name}`);
-    expect(getCompactCardSummary({ sourceLabel: 'Extracted text' }, 'Smart Agent', translate)).toBe('From: Extracted text');
+  it('keeps compact cards free of repeated source summaries', () => {
+    const { container } = renderCompact();
+    expect(container.querySelector('p[title]')).not.toBeInTheDocument();
+  });
+
+  it('anchors the completed result beside the output rail', () => {
+    renderCompact({ outputPorts: [{ id: 'out-1', name: 'Report', artifactKind: 'document' }] });
+    const trigger = screen.getByRole('button', { name: 'nodeOutput.open' });
+    expect(trigger).toHaveTextContent('nodeOutput.badge');
+    expect(trigger.parentElement).toHaveClass('bottom-[calc(100%+0.375rem)]');
   });
 
   beforeEach(() => {
@@ -193,6 +201,7 @@ describe('PlaybookNode', () => {
       taskResults: [
         {
           taskId: 'node-1',
+          status: 'completed',
           artifacts: [
             {
               portId: 'out-1',

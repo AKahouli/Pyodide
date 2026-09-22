@@ -26,10 +26,10 @@ import {
   NodeContent,
 } from '@/components/ai-elements/node';
 import { PlaybookStatusBadge } from './PlaybookStatusBadge';
+import { NodeOutputPreview } from './NodeOutputPreview';
 import { InputFilesPopover } from './InputFilesPopover';
 import { PortLabel } from './PortLabel';
 import { useModuleTranslation } from '@/modules/localization';
-import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
 import { useAgentStore } from '@/modules/agent/store';
 import { CreateEditAgentDialog } from '@/modules/agent/components/CreateEditAgentDialog';
 import type { UserAgentFormValues } from '@/modules/agent/components/AgentFormSchema';
@@ -159,33 +159,6 @@ function formatConstantInputLabel(value: unknown): string | undefined {
 function getInputConstantLabel(binding: DataBinding | undefined): string | undefined {
   if (binding?.sourceKind !== 'constant') return undefined;
   return formatConstantInputLabel(binding.constantValue);
-}
-
-type Translate = (key: ModuleTranslationKey<'playbook'>, params?: TranslationParams) => string;
-
-/**
- * One-line configuration summary for the compact card: the input source when
- * bound, otherwise the action/evaluation focus, otherwise the agent.
- */
-export function getCompactCardSummary(
-  task: {
-    inputFiles?: InputFile[];
-    selectedAction?: string;
-    evaluationConfig?: { expectation?: string } | null;
-    sourceLabel?: string;
-  },
-  agentName: string | null | undefined,
-  t: Translate,
-): string {
-  const firstFile = task.inputFiles?.[0];
-  if (firstFile?.name) return t('nodeCard.summaryFrom', { name: firstFile.name });
-  if (task.sourceLabel) return t('nodeCard.summaryFrom', { name: task.sourceLabel });
-  if (task.selectedAction) {
-    return `${String(task.selectedAction).charAt(0).toUpperCase()}${String(task.selectedAction).slice(1)}`;
-  }
-  if (task.evaluationConfig?.expectation?.trim()) return task.evaluationConfig.expectation.trim();
-  if (agentName) return agentName;
-  return t('nodeCard.summaryFallback');
 }
 
 export interface NodeDataActions {
@@ -424,7 +397,6 @@ type CompactReadiness = 'ready' | 'not-configured' | 'missing-inputs';
 function CompactCardBody({
   id,
   title,
-  summary,
   status,
   readiness,
   nodeKind,
@@ -436,10 +408,10 @@ function CompactCardBody({
   onViewResults,
   headerBgClass,
   advisor,
+  outputPreview,
 }: {
   id: string;
   title: string;
-  summary: string;
   status: StepStatus | undefined;
   readiness: CompactReadiness;
   nodeKind: keyof typeof COMPACT_KIND_ICON;
@@ -451,6 +423,7 @@ function CompactCardBody({
   onViewResults: () => void;
   headerBgClass: string;
   advisor?: React.ReactNode;
+  outputPreview?: React.ReactNode;
 }) {
   const { t } = useModuleTranslation('playbook');
   const KindIcon = COMPACT_KIND_ICON[nodeKind];
@@ -468,6 +441,7 @@ function CompactCardBody({
         <NodeTitle className="min-w-0 flex-1 text-sm font-semibold leading-snug line-clamp-2" title={title}>
           {title}
         </NodeTitle>
+        {outputPreview}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -511,7 +485,6 @@ function CompactCardBody({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      <p className="truncate text-xs text-muted-foreground" title={summary}>{summary}</p>
       <div className="flex flex-wrap items-center gap-1.5">
       {status ? (
         <PlaybookStatusBadge status={status} size="xs" />
@@ -548,11 +521,11 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const { t } = useModuleTranslation('playbook');
   const getAgentById = useAgentStore((s) => s.getAgentById);
   const currentTask = usePlaybookStore((s) => s.currentPlaybook?.tasks.find((t) => t.id === id));
-  const executionTaskResults = usePlaybookStore((s) => {
+  const nodeExecution = usePlaybookStore((s) => {
     const playbookId = s.currentPlaybook?.id;
     if (!playbookId) return null;
     if (s.currentExecution?.playbookId === playbookId) {
-      return s.currentExecution.taskResults;
+      return s.currentExecution;
     }
 
     let latest = null as typeof s.currentExecution;
@@ -561,8 +534,9 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
       if (!latest || execution.updatedAt > latest.updatedAt) latest = execution;
     }
 
-    return latest?.taskResults ?? null;
+    return latest;
   });
+  const executionTaskResults = nodeExecution?.taskResults ?? null;
   const openExecutionDetailTab = usePlaybookStore((s) => s.openExecutionDetailTab);
   const addInputFileToTask = usePlaybookStore((s) => s.addInputFileToTask);
   const removeInputFileFromTask = usePlaybookStore((s) => s.removeInputFileFromTask);
@@ -581,6 +555,11 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const migratedTask = useMemo(() => migrateTask(data), [data]);
   const inputPorts = migratedTask.inputPorts ?? [];
   const outputPorts = migratedTask.outputPorts ?? [];
+  const nodeTaskResult = executionTaskResults?.find((result) => result.taskId === id);
+  const resultOutputPortId = nodeTaskResult
+    ? nodeTaskResult.artifacts?.find((artifact) => outputPorts.some((port) => port.id === artifact.portId))?.portId
+      ?? outputPorts[0]?.id
+    : undefined;
   const runtimeSourceHandleId = typeof data.dynamicReasoningRuntimeSourceHandleId === 'string'
     ? data.dynamicReasoningRuntimeSourceHandleId
     : null;
@@ -613,11 +592,6 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     () => new Map(dataBindings.filter((b) => b.targetNode === id).map((b) => [b.targetPort, b])),
     [dataBindings, id],
   );
-  const sourceBinding = dataBindings.find((binding) => binding.targetNode === id && binding.sourceKind !== 'constant');
-  const sourceTask = currentPlaybook?.tasks.find((task) => task.id === sourceBinding?.sourceNode);
-  const sourceLabel = sourceTask?.outputPorts?.find((port) => port.id === sourceBinding?.sourcePort)?.name
-    || sourceTask?.title
-    || inputPorts.find((port) => port.id === sourceBinding?.targetPort)?.name;
   const effectiveTask = currentTask || data;
   const iteratorChildExecutionStatus = useMemo(
     () => resolveIteratorChildExecutionStatus(
@@ -1020,6 +994,12 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                 className="absolute right-0 z-10 flex items-center -translate-y-1/2 pointer-events-auto"
                 style={{ top: `${getPortTopPercent(idx, outputPorts.length)}%` }}
               >
+                {useCompactCard && port.id === resultOutputPortId && (
+                  <div className="absolute bottom-[calc(100%+0.375rem)] left-2 z-30">
+                    <NodeOutputPreview compact result={nodeTaskResult} executionId={nodeExecution?.id}
+                      onDetails={() => openExecutionDetailTab('results', id)} />
+                  </div>
+                )}
                 <Handle
                   id={port.id}
                   type="source"
@@ -1051,16 +1031,8 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
             <CompactCardBody
               id={id}
               title={data.title || t('node.untitled')}
-              summary={getCompactCardSummary(
-                {
-                  inputFiles,
-                  sourceLabel,
-                  selectedAction: effectiveTask.selectedAction,
-                  evaluationConfig: effectiveTask.evaluationConfig,
-                },
-                agent?.name,
-                t,
-              )}
+              outputPreview={outputPorts.length === 0 ? <NodeOutputPreview compact result={nodeTaskResult}
+                executionId={nodeExecution?.id} onDetails={() => openExecutionDetailTab('results', id)} /> : undefined}
               status={isDesignMode ? undefined : status}
               advisor={((judgeStatus && judgeStatus !== 'idle') || judgeResult) ? (
                 <button

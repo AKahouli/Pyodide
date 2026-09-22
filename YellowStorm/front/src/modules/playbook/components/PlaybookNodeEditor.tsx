@@ -1354,6 +1354,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
 
                 <EditorSection title={t('dataFlow.sectionTitle')} defaultOpen resetKey={`${task.id}:data-flow`}>
                     <PlaybookDataFlowSection
+                      hideTitle
                       targetNodeId={task.id}
                       inputPortsOverride={draft.inputPorts}
                       outputPortsOverride={draft.outputPorts}

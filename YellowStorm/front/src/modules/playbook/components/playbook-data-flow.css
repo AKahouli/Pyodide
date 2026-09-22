@@ -1,0 +1,5 @@
+.playbook-data-flow { overflow-wrap: anywhere; }
+.playbook-data-flow input, .playbook-data-flow select { min-width: 0; max-width: 100%; }
+.playbook-data-flow .group { flex-wrap: wrap; }
+.playbook-data-flow .group:focus-within .opacity-0 { opacity: 1; }
+.playbook-data-flow button { max-width: 100%; white-space: normal; height: auto; min-height: 1.75rem; }

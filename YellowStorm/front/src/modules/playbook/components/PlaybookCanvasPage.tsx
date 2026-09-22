@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { useParams, useNavigate, useSearchParams, useLocation, useBlocker } from 'react-router-dom';
 import { ArrowLeft, Loader2, PanelRightOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { ReactFlowProvider, useReactFlow, getNodesBounds, type Edge, type Node } from '@xyflow/react';
 import { foldIteratorGraph } from '../utils/fold-iterator-graph';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { PlaybookStarterPanel } from './PlaybookStarterPanel';
 import '@xyflow/react/dist/style.css';
 
 import { Button } from '@/components/ui/button';
@@ -72,6 +73,14 @@ import { flowEdgesToControlEdges, flowEdgesToPlaybookEdges } from '../hooks/help
 import { dataBindingsToLayerEdges, filterMirroredDataLayerEdges } from '../hooks/helpers/data-binding-serializer';
 import { tasksToNodes, TRIGGER_NODE_ID } from '../hooks/helpers/node-serializer';
 import { useAutosave } from '../hooks/useAutosave';
+
+const NODE_INSPECTOR_DEFAULT_WIDTH = 520;
+const NODE_INSPECTOR_MIN_WIDTH = 400;
+const NODE_INSPECTOR_MAX_WIDTH = 720;
+const getNodeInspectorMaxWidth = () => Math.max(
+  NODE_INSPECTOR_MIN_WIDTH,
+  Math.min(NODE_INSPECTOR_MAX_WIDTH, Math.floor(window.innerWidth * 0.6)),
+);
 import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, ConnectionDragContext, CardDensityContext, CanvasDesignContext, type NodeContextMenuActions } from './PlaybookNode';
 import { DynamicReasoningRuntimeNode } from './runtime/DynamicReasoningRuntimeNode';
 import { DynamicReasoningRuntimeContainerNode } from './runtime/DynamicReasoningRuntimeContainerNode';
@@ -588,6 +597,9 @@ function PlaybookCanvasInner() {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [canvasViewMode, setCanvasViewMode] = useState<CanvasViewMode>('expanded');
+  const [starterDismissed, setStarterDismissed] = useState(false);
+  const [starterTaskIds, setStarterTaskIds] = useState<string[]>([]);
+  useEffect(() => { setStarterDismissed(false); setStarterTaskIds([]); }, [id]);
   const [executionViewMode, setExecutionViewMode] = useState<ExecutionViewMode>('full');
   const [loadedPlaybookId, setLoadedPlaybookId] = useState<string | null>(null);
   const { t } = useModuleTranslation('playbook');
@@ -822,6 +834,11 @@ function PlaybookCanvasInner() {
   const [dataBindingsVisible, setDataBindingsVisible] = useState(false);
   const editorOpen = usePlaybookStore((s) => s.nodeEditorOpen);
   const setEditorOpen = usePlaybookStore((s) => s.setNodeEditorOpen);
+  const [nodeInspectorWidth, setNodeInspectorWidth] = useState(NODE_INSPECTOR_DEFAULT_WIDTH);
+  const [nodeInspectorMaxWidth, setNodeInspectorMaxWidth] = useState(getNodeInspectorMaxWidth);
+  const nodeInspectorResizeDragging = useRef(false);
+  const nodeInspectorResizeStartX = useRef(0);
+  const nodeInspectorResizeStartWidth = useRef(0);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState('');
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
@@ -851,6 +868,54 @@ function PlaybookCanvasInner() {
   const viewExecutionInPanel = usePlaybookStore((s) => s.viewExecutionInPanel);
   const addToolBindingToTask = usePlaybookStore((s) => s.addToolBindingToTask);
   const addSkillBindingToTask = usePlaybookStore((s) => s.addSkillBindingToTask);
+
+  const clampNodeInspectorWidth = useCallback((width: number) => {
+    return Math.min(nodeInspectorMaxWidth, Math.max(NODE_INSPECTOR_MIN_WIDTH, width));
+  }, [nodeInspectorMaxWidth]);
+
+  useEffect(() => {
+    const syncNodeInspectorBounds = () => {
+      if (window.innerWidth < 1024) return;
+      const nextMax = getNodeInspectorMaxWidth();
+      setNodeInspectorMaxWidth(nextMax);
+      setNodeInspectorWidth((current) => Math.min(nextMax, Math.max(NODE_INSPECTOR_MIN_WIDTH, current)));
+    };
+    window.addEventListener('resize', syncNodeInspectorBounds);
+    return () => window.removeEventListener('resize', syncNodeInspectorBounds);
+  }, []);
+
+  const handleNodeInspectorResizeStart = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    nodeInspectorResizeDragging.current = true;
+    nodeInspectorResizeStartX.current = event.clientX;
+    nodeInspectorResizeStartWidth.current = nodeInspectorWidth;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }, [nodeInspectorWidth]);
+
+  const handleNodeInspectorResizeMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!nodeInspectorResizeDragging.current) return;
+    const delta = nodeInspectorResizeStartX.current - event.clientX;
+    setNodeInspectorWidth(clampNodeInspectorWidth(nodeInspectorResizeStartWidth.current + delta));
+  }, [clampNodeInspectorWidth]);
+
+  const handleNodeInspectorResizeEnd = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!nodeInspectorResizeDragging.current) return;
+    nodeInspectorResizeDragging.current = false;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }, []);
+
+  const handleNodeInspectorResizeKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Home') {
+      event.preventDefault();
+      setNodeInspectorWidth(clampNodeInspectorWidth(NODE_INSPECTOR_DEFAULT_WIDTH));
+      return;
+    }
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const delta = event.shiftKey ? 32 : 16;
+    setNodeInspectorWidth((current) => clampNodeInspectorWidth(current + (event.key === 'ArrowLeft' ? delta : -delta)));
+  }, [clampNodeInspectorWidth]);
 
   // ---- Shared next-step picker commits (all entry points share graph mutations) ----
   const flowNodeTemplates = usePlaybookStore((s) => s.flowNodeTemplates);
@@ -4653,6 +4718,15 @@ function PlaybookCanvasInner() {
       />
 
       {/* Main content area with optional workspace explorer */}
+      {starterTaskIds.length > 0 && playbook?.tasks.some((task) => task.id === starterTaskIds[0]) && (
+        <div className="flex flex-wrap items-center gap-2 border-b bg-muted/20 px-4 py-2" aria-label={t('starter.title')}>
+          <span className="text-xs text-muted-foreground">{t('starter.inputDone')}</span>
+          <Button variant="ghost" size="sm" onClick={() => handleEditNode(starterTaskIds[0])}>{t('starter.editInput')}</Button>
+          <Button variant="outline" size="sm" onClick={() => handleEditNode(starterTaskIds[1] || starterTaskIds[0])}>{t('starter.adapt')}</Button>
+          <Button size="sm" disabled={!canRunWithInputs} onClick={handleRunRequest}>{t('starter.test')}</Button>
+          <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setStarterTaskIds([])}>{t('starter.dismiss')}</Button>
+        </div>
+      )}
       <TooltipProvider delayDuration={300}>
       <div className="flex flex-1 overflow-hidden">
         {/* Workspace Explorer Sidebar */}
@@ -4680,6 +4754,12 @@ function PlaybookCanvasInner() {
               }
             }}
           >
+            {playbook?.tasks.length === 0 && !starterDismissed && !constructionActive && (
+              <div className="absolute inset-0 z-40 overflow-auto bg-background p-4 sm:p-8">
+                <PlaybookStarterPanel initialKey={searchParams.get('starter')} onDismiss={() => setStarterDismissed(true)}
+                  onApplied={(taskIds) => { setStarterTaskIds(taskIds); setStarterDismissed(true); }} />
+              </div>
+            )}
             <div
               ref={canvasViewModeRef}
               className="absolute left-3 top-3 z-30 inline-flex rounded-full border bg-background/95 p-1 shadow-sm sm:left-4 sm:top-4"
@@ -4876,11 +4956,31 @@ function PlaybookCanvasInner() {
           <div
             className={
               editorOpen
-                ? 'absolute inset-y-0 right-0 z-40 flex w-full flex-col border-l bg-background shadow-xl max-lg:max-w-none lg:static lg:z-auto lg:w-[400px] lg:shrink-0 lg:shadow-none'
+                ? 'absolute inset-y-0 right-0 z-40 flex w-full flex-col border-l bg-background shadow-xl max-lg:max-w-none lg:relative lg:inset-auto lg:z-auto lg:w-[var(--node-inspector-width)] lg:max-w-[60vw] lg:shrink-0 lg:shadow-none'
                 : 'hidden'
             }
+            style={{ '--node-inspector-width': `${nodeInspectorWidth}px` } as CSSProperties}
             data-node-inspector
           >
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={t('nodeEditor.resizeInspector')}
+              aria-valuemin={NODE_INSPECTOR_MIN_WIDTH}
+              aria-valuemax={nodeInspectorMaxWidth}
+              aria-valuenow={nodeInspectorWidth}
+              aria-keyshortcuts="Home ArrowLeft ArrowRight"
+              tabIndex={0}
+              onPointerDown={handleNodeInspectorResizeStart}
+              onPointerMove={handleNodeInspectorResizeMove}
+              onPointerUp={handleNodeInspectorResizeEnd}
+              onPointerCancel={handleNodeInspectorResizeEnd}
+              onKeyDown={handleNodeInspectorResizeKeyDown}
+              onDoubleClick={() => setNodeInspectorWidth(NODE_INSPECTOR_DEFAULT_WIDTH)}
+              className="group absolute inset-y-0 left-0 z-50 hidden w-2 -translate-x-1/2 cursor-ew-resize touch-none items-center justify-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:flex"
+            >
+              <span className="h-12 w-1 rounded-full bg-border transition-colors group-hover:bg-primary/40" />
+            </div>
             <PlaybookNodeEditor
               ref={nodeEditorRef}
               playbookId={playbook.id}
