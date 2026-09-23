@@ -1,6 +1,6 @@
 import { useState, type JSX } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Zap, ChevronDown, LayoutGrid, Plus } from 'lucide-react';
+import { Zap, ChevronDown, LayoutGrid, Plus, Network } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import {
   DropdownMenu,
@@ -22,7 +22,7 @@ import { NewStreamDialog } from '../NewStreamDialog';
  * Stream search lives on the landing dashboard only. Budget is shown by
  * `WorkyActivityRail`, so it is not duplicated here.
  */
-export function WorkyTopBar({ streamId }: { streamId: string }): JSX.Element {
+export function WorkyTopBar({ streamId, onOpenGraph, graphAvailable }: { streamId: string; onOpenGraph: () => void; graphAvailable: boolean }): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const navigate = useNavigate();
   const { data: stream } = useStream(streamId);
@@ -86,6 +86,19 @@ export function WorkyTopBar({ streamId }: { streamId: string }): JSX.Element {
         </Button>
       </div>
 
+      <Button
+        type="button"
+        size="icon"
+        variant="outline"
+        onClick={onOpenGraph}
+        disabled={!graphAvailable}
+        aria-label={t('graph.openFromHeader')}
+        title={t('graph.openFromHeader')}
+        data-testid="worky-header-graph"
+        className="ml-auto size-9 shrink-0"
+      >
+        <Network className="size-4" />
+      </Button>
       <NewStreamDialog open={createOpen} onOpenChange={setCreateOpen} />
     </div>
   );

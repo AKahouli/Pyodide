@@ -41,6 +41,9 @@ export type WorkyCurrentWorkStatus =
 export interface WorkyCurrentWorkItem {
   task: WorkyTask;
   status: WorkyCurrentWorkStatus;
+  openPrerequisites: WorkyTask[];
+  canceledPrerequisites: number;
+  unavailablePrerequisites: number;
 }
 
 export interface WorkyDelegationItem {
@@ -56,6 +59,8 @@ export interface WorkyExecutiveSummary {
   total: number;
   completed: number;
   active: number;
+  blocked: number;
+  remaining: number;
   waitingExternal: number;
   needsInput: number;
 }

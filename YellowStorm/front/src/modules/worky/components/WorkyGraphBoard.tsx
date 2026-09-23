@@ -17,12 +17,15 @@ import type { WorkyTask } from '../types';
 
 interface WorkyGraphBoardProps {
   onTaskClick?: (task: WorkyTask) => void;
+  initialFullscreen?: boolean;
+  onExitFullscreen?: () => void;
+  attention?: { taskId: string; sequence: number } | null;
 }
 
 const NODE_TYPES = { workyStep: WorkyGraphNode };
 const EDGE_TYPES = { workyDependency: WorkyDependencyEdge };
 
-export function WorkyGraphBoard({ onTaskClick }: WorkyGraphBoardProps): JSX.Element {
+export function WorkyGraphBoard({ onTaskClick, initialFullscreen = false, onExitFullscreen, attention }: WorkyGraphBoardProps): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const board = useWorkyBoard();
   const loading = useWorkyBoardLoading();
@@ -53,20 +56,27 @@ export function WorkyGraphBoard({ onTaskClick }: WorkyGraphBoardProps): JSX.Elem
     return { nodes, edges: laidOut.edges, taskById };
   }, [tasks, nameByKey]);
 
-  if (loading && !board) return <div className='flex h-full items-center justify-center text-sm text-muted-foreground'>{t('kanban.loading')}</div>;
-  if (error) return <div className='flex h-full items-center justify-center text-sm text-destructive'>{t('kanban.error')}</div>;
-  return <ReactFlowProvider><GraphWorkspace {...graph} onTaskClick={onTaskClick} /></ReactFlowProvider>;
+  if (!board && (loading || error)) return (
+    <div className={cn('flex h-full items-center justify-center bg-background text-sm', initialFullscreen && 'fixed inset-0 h-dvh w-screen')}>
+      <span className={error ? 'text-destructive' : 'text-muted-foreground'}>{t(error ? 'kanban.error' : 'kanban.loading')}</span>
+      {onExitFullscreen && <button type='button' autoFocus onClick={onExitFullscreen} className='absolute right-3 top-3 rounded-md bg-primary px-3 py-2 text-xs text-primary-foreground' aria-label={t('graph.exitFullscreen')}>{t('graph.exitFullscreen')}</button>}
+    </div>
+  );
+  return <ReactFlowProvider><GraphWorkspace {...graph} onTaskClick={onTaskClick} initialFullscreen={initialFullscreen} onExitFullscreen={onExitFullscreen} attention={attention} /></ReactFlowProvider>;
 }
 
-function GraphWorkspace({ nodes: baseNodes, edges: baseEdges, taskById, onTaskClick }: {
+function GraphWorkspace({ nodes: baseNodes, edges: baseEdges, taskById, onTaskClick, initialFullscreen, onExitFullscreen, attention }: {
   nodes: Node[];
   edges: Edge[];
   taskById: Map<string, WorkyTask>;
   onTaskClick?: (task: WorkyTask) => void;
+  initialFullscreen: boolean;
+  onExitFullscreen?: () => void;
+  attention?: { taskId: string; sequence: number } | null;
 }): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const flow = useReactFlow();
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(initialFullscreen);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [focus, setFocus] = useState<'all' | 'upstream' | 'downstream'>('all');
   const [query, setQuery] = useState('');
@@ -82,6 +92,7 @@ function GraphWorkspace({ nodes: baseNodes, edges: baseEdges, taskById, onTaskCl
   const interacted = useRef(false);
   const hasExpanded = useRef(false);
   const preserveOnExpand = useRef(false);
+  const handledAttention = useRef<number | null>(null);
   useOnViewportChange({ onChange: ({ zoom }) => setCompact((previous) => previous === (zoom < 0.65) ? previous : zoom < 0.65) });
 
   const topology = useMemo(() => `${baseNodes.map((node) => node.id).join('|')}::${baseEdges.map((edge) => `${edge.source}>${edge.target}`).join('|')}`, [baseNodes, baseEdges]);
@@ -97,6 +108,7 @@ function GraphWorkspace({ nodes: baseNodes, edges: baseEdges, taskById, onTaskCl
     const onEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       if (selectedId) setSelectedId(null);
+      else if (onExitFullscreen) onExitFullscreen();
       else {
         setExpanded(false);
         if (savedViewport.current) {
@@ -110,7 +122,7 @@ function GraphWorkspace({ nodes: baseNodes, edges: baseEdges, taskById, onTaskCl
       document.body.style.overflow = previousOverflow;
       window.removeEventListener('keydown', onEscape);
     };
-  }, [expanded, selectedId, flow]);
+  }, [expanded, selectedId, flow, onExitFullscreen]);
 
   useEffect(() => {
     if (!expanded) return;
@@ -123,6 +135,16 @@ function GraphWorkspace({ nodes: baseNodes, edges: baseEdges, taskById, onTaskCl
     }, 100);
     return () => window.clearTimeout(timer);
   }, [expanded]);
+
+  useEffect(() => {
+    if (!expanded || !attention || handledAttention.current === attention.sequence || !taskById.has(attention.taskId)) return;
+    handledAttention.current = attention.sequence;
+    setSelectedId(attention.taskId);
+    const timer = window.setTimeout(() => {
+      void flow.fitView({ nodes: [{ id: attention.taskId }], duration: 250, padding: 0.3, maxZoom: 1.2 });
+    }, 160);
+    return () => window.clearTimeout(timer);
+  }, [attention, expanded, flow, taskById]);
 
   const selected = selectedId ? taskById.get(selectedId) ?? null : null;
   const traced = selectedId && focus !== 'all' ? traceWorkyDependencies(baseEdges, selectedId, focus) : null;
@@ -162,6 +184,10 @@ function GraphWorkspace({ nodes: baseNodes, edges: baseEdges, taskById, onTaskCl
   };
   const toggleExpanded = () => {
     if (expanded) {
+      if (onExitFullscreen) {
+        onExitFullscreen();
+        return;
+      }
       setExpanded(false);
       if (savedViewport.current) {
         const viewport = savedViewport.current;
@@ -196,7 +222,7 @@ function GraphWorkspace({ nodes: baseNodes, edges: baseEdges, taskById, onTaskCl
         <button type='button' className='rounded-md border border-border px-2 py-1.5 text-xs hover:bg-muted' onClick={() => setAttentionOnly(!attentionOnly)} aria-pressed={attentionOnly}>{t('graph.attention')}</button>
         <button type='button' className='rounded-md border border-border px-2 py-1.5 text-xs hover:bg-muted' onClick={() => { if (!hideCompleted && selected?.lane === 'done') setSelectedId(null); setHideCompleted(!hideCompleted); }} aria-pressed={hideCompleted}>{t('graph.hideCompleted')}</button>
         {expanded && <select className='h-8 max-w-40 rounded-md border border-border bg-background px-2 text-xs' value={owner} onChange={(event) => setOwner(event.target.value)} aria-label={t('graph.owner')}><option value=''>{t('graph.allOwners')}</option>{owners.map((name) => <option key={name}>{name}</option>)}</select>}
-        <button type='button' className='inline-flex items-center gap-1 rounded-md bg-primary px-2 py-1.5 text-xs text-primary-foreground' onClick={toggleExpanded} aria-label={expanded ? t('graph.exitFullscreen') : t('graph.fullscreen')}>
+        <button type='button' autoFocus={Boolean(onExitFullscreen)} className='inline-flex items-center gap-1 rounded-md bg-primary px-2 py-1.5 text-xs text-primary-foreground' onClick={toggleExpanded} aria-label={expanded ? t('graph.exitFullscreen') : t('graph.fullscreen')}>
           {expanded ? <Shrink className='size-4' /> : <Expand className='size-4' />}{expanded ? t('graph.exitFullscreen') : t('graph.fullscreen')}
         </button>
       </header>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useModuleTranslation } from '@/modules/localization';
@@ -29,7 +29,10 @@ import { ConciergeInstructionsDialog } from './voice/ConciergeInstructionsDialog
 import type { WorkyBoardResponse, WorkyEvent, WorkyMessage, WorkyPendingClarification, WorkyTask } from '../types';
 import { deriveExecutiveView } from '../executive/deriveExecutiveView';
 import { WorkyExecutiveView } from './executive/WorkyExecutiveView';
+import { WorkyGraphDialog } from './WorkyGraphDialog';
 import { canOperateStream } from '../streamAccess';
+import { findNewAttention, playAttentionChime } from '../attention';
+import type { WorkyCurrentWorkStatus } from '../executive/executiveModel';
 
 const EMPTY_BOARD: WorkyBoardResponse = {
   streamId: '',
@@ -69,6 +72,9 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   const updateStream = useUpdateStream();
   const [selectedTask, setSelectedTask] = useState<WorkyTask | null>(null);
   const [approvalFor, setApprovalFor] = useState<WorkyPendingClarification | null>(null);
+  const [graphOpen, setGraphOpen] = useState(false);
+  const [attention, setAttention] = useState<{ taskId: string; sequence: number } | null>(null);
+  const previousAttention = useRef<{ streamId: string; statuses: Map<string, WorkyCurrentWorkStatus> } | null>(null);
   const isMobile = useIsMobile();
   const pushActivity = useWorkyUiStore((s) => s.pushActivity);
   const clearActivity = useWorkyUiStore((s) => s.clearActivity);
@@ -291,6 +297,8 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   useEffect(() => {
     clearActivity();
     setSelectedTask(null);
+    setGraphOpen(false);
+    setAttention(null);
   }, [streamId, clearActivity]);
 
   useEffect(() => {
@@ -317,7 +325,17 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   const voice = useWorkyVoiceSession(streamId, voiceOpen && !isMobile && canOperate);
   const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
-  const executiveModel = deriveExecutiveView(boardQuery.data ?? EMPTY_BOARD, streamQuery.data?.status, messagesQuery.data ?? []);
+  const executiveModel = useMemo(() => deriveExecutiveView(boardQuery.data ?? EMPTY_BOARD, streamQuery.data?.status, messagesQuery.data ?? []), [boardQuery.data, streamQuery.data?.status, messagesQuery.data]);
+  useEffect(() => {
+    if (!boardQuery.data || boardQuery.data.streamId !== streamId) return;
+    const previous = previousAttention.current?.streamId === streamId ? previousAttention.current.statuses : null;
+    const { current, taskId } = findNewAttention(previous, executiveModel.currentWork);
+    previousAttention.current = { streamId, statuses: current };
+    if (taskId) {
+      setAttention((currentAttention) => ({ taskId, sequence: (currentAttention?.sequence ?? 0) + 1 }));
+      playAttentionChime();
+    }
+  }, [boardQuery.data, executiveModel.currentWork, streamId]);
   useEffect(() => {
     if (!canOperate && voiceOpen) setVoiceOpen(false);
   }, [canOperate, voiceOpen, setVoiceOpen]);
@@ -335,13 +353,15 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         onApprovalClose={() => setApprovalFor(null)}
         model={executiveModel}
         readOnly={readOnly}
+        graphAvailable={Boolean(boardQuery.data)}
+        attention={attention}
       />
     );
   }
 
   return (
     <div className='flex h-full w-full flex-col overflow-hidden'>
-      <WorkyTopBar streamId={streamId} />
+      <WorkyTopBar streamId={streamId} onOpenGraph={() => setGraphOpen(true)} graphAvailable={Boolean(boardQuery.data)} />
       {readOnly ? (
         <div className="border-b border-border bg-muted px-4 py-1 text-center text-xs text-muted-foreground">
           {tWorky('stream.readOnly')}
@@ -354,7 +374,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
       >
         <StreamHeader streamId={streamId} onRename={readOnly ? undefined : onRename} />
         <div className='min-h-0 flex-1 overflow-y-auto bg-muted/20' data-testid='worky-executive-scroll'>
-          <WorkyExecutiveView streamId={streamId} model={executiveModel} onTaskClick={setSelectedTask} readOnly={readOnly} />
+          <WorkyExecutiveView streamId={streamId} model={executiveModel} onTaskClick={setSelectedTask} onReviewApproval={() => setOrchestratorOpen(true)} readOnly={readOnly} attention={attention} focusAttention={!graphOpen} />
         </div>
       </main>
       {selectedTask ? (
@@ -399,6 +419,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
       /> : null}
       {!readOnly ? <VoiceSettingsSheet open={voiceSettingsOpen} onOpenChange={setVoiceSettingsOpen} level={voice.level} /> : null}
       {!readOnly ? <ConciergeInstructionsDialog streamId={streamId} open={promptOpen} onOpenChange={setPromptOpen} /> : null}
+      {graphOpen && <WorkyGraphDialog onClose={() => setGraphOpen(false)} onTaskClick={setSelectedTask} attention={attention} />}
     </div>
   );
 }

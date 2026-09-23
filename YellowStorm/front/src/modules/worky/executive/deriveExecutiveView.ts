@@ -1,4 +1,5 @@
 import type { MessageComponent, WorkyBoardResponse, WorkyMessage, WorkyStreamStatus, WorkyTask } from '../types';
+import { normalizeChoiceComponentData } from '@/modules/conversation/utils';
 import type {
   WorkyCurrentWorkItem,
   WorkyCurrentWorkStatus,
@@ -18,14 +19,10 @@ export function collectPendingApprovals(messages: WorkyMessage[]): WorkyPendingA
     for (const component of message.components ?? []) {
       const data = component.data as { questionId?: unknown; status?: unknown } | undefined;
       const questionId = data?.questionId;
-      if (
-        component.type === 'choice' &&
-        typeof questionId === 'string' &&
-        questionId.startsWith('confirm::') &&
-        data?.status === 'ready'
-      ) {
-        byId.set(questionId, component);
-      }
+      if (component.type !== 'choice' || typeof questionId !== 'string' || !questionId.startsWith('confirm::')) continue;
+      const choice = normalizeChoiceComponentData(component.data);
+      if (data?.status === 'ready' && choice) byId.set(questionId, { ...component, data: choice });
+      else byId.delete(questionId);
     }
   }
   return [...byId.entries()].map(([questionId, component]) => ({ questionId, component }));
@@ -46,7 +43,7 @@ function currentWorkStatus(task: WorkyTask, activeInterruptId: string | null): W
   if (kind === 'ask' && task.lane === 'blocked' && task.interruptId === activeInterruptId) return 'needs_input';
   if (task.lane === 'failed') return 'failed';
   if (kind === 'await_reply' && task.lane === 'blocked') return 'waiting_external';
-  if (task.lane === 'blocked' && kind === 'execute') return 'blocked';
+  if (task.lane === 'blocked') return 'blocked';
   if (task.lane === 'running') return 'running';
   if (task.lane === 'review') return 'review';
   if (task.lane === 'ready' || task.lane === 'backlog') return 'pending';
@@ -109,6 +106,7 @@ export function deriveExecutiveView(
   messages: WorkyMessage[] = [],
 ): WorkyExecutiveViewModel {
   const tasks = Object.values(board.lanes).flat();
+  const taskByStepId = new Map(tasks.filter((task) => task.externalId).map((task) => [task.externalId as string, task]));
   const activeInterruptId = board.session?.activeInterruptId ?? null;
   const pendingApprovals = collectPendingApprovals(messages);
   const runtimeAsks = tasks
@@ -122,7 +120,15 @@ export function deriveExecutiveView(
   const currentWork: WorkyCurrentWorkItem[] = tasks
     .map((task) => {
       const status = currentWorkStatus(task, activeInterruptId);
-      return status ? { task, status } : null;
+      if (!status) return null;
+      const prerequisites = [...new Set(task.dependsOnStepIds ?? [])].map((id) => taskByStepId.get(id));
+      return {
+        task,
+        status,
+        openPrerequisites: prerequisites.filter((item): item is WorkyTask => Boolean(item && item.lane !== 'done' && item.lane !== 'canceled')),
+        canceledPrerequisites: prerequisites.filter((item) => item?.lane === 'canceled').length,
+        unavailablePrerequisites: prerequisites.filter((item) => !item).length,
+      };
     })
     .filter((item): item is WorkyCurrentWorkItem => item !== null)
     .sort((a, b) => CURRENT_WORK_ORDER[a.status] - CURRENT_WORK_ORDER[b.status] || (a.task.ordinal ?? 0) - (b.task.ordinal ?? 0));
@@ -140,6 +146,8 @@ export function deriveExecutiveView(
       total: tasks.length,
       completed: tasks.filter((task) => task.lane === 'done').length,
       active: tasks.filter((task) => task.lane === 'running' || task.lane === 'review').length,
+      blocked: tasks.filter((task) => task.lane === 'blocked' || task.lane === 'failed').length,
+      remaining: tasks.filter((task) => task.lane !== 'done' && task.lane !== 'canceled').length,
       waitingExternal: currentWork.filter((item) => item.status === 'waiting_external').length,
       needsInput: runtimeAsks.filter((ask) => ask.active).length + board.pendingClarifications.length + pendingApprovals.length,
     },

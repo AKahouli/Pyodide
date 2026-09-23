@@ -129,12 +129,12 @@ export class WorkyPlanningService {
   > {
     await this.loadStream(streamId, userId);
     const streamObjectId = new Types.ObjectId(streamId);
-    const docs = await this.messages
+    const docs = (await this.messages
       .find({ streamId: streamObjectId })
-      .sort({ createdAt: 1 })
+      .sort({ createdAt: -1, _id: -1 })
       .limit(limit)
       .lean()
-      .exec();
+      .exec()).reverse();
     const externalIds = docs
       .map((message) => message.externalId)
       .filter((value): value is string => typeof value === 'string');
