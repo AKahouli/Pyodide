@@ -24,6 +24,12 @@ import {
   EvaluationRunSummary,
   EvaluationProgress,
 } from './evaluation-metrics';
+import {
+  buildExecutionLogsExport,
+  buildExportArchive,
+  buildExportFilename,
+  truncateExportRow,
+} from './evaluation-export.util';
 
 const ALLOWED_EXTENSIONS = ['.xlsx', '.csv'];
 const ORPHAN_RUN_MAX_AGE_MS = 15 * 60 * 1000;
@@ -815,7 +821,10 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     }
   }
 
-  async exportXlsx(ownerId: string, evaluationId: string): Promise<Buffer> {
+  async exportArchive(
+    ownerId: string,
+    evaluationId: string,
+  ): Promise<{ buffer: Buffer; filename: string }> {
     await this.getById(ownerId, evaluationId);
     const runDir = join(process.cwd(), 'uploads', 'eval', evaluationId);
     let results: EvaluationQueryResult[] = [];
@@ -912,7 +921,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
         'Execution Logs / Tool Calls': toolCallsText,
         'Token Usage': tokenUsageText,
       };
-    });
+    }).map(truncateExportRow);
 
     const workbook = XLSX.utils.book_new();
     const summarySheet = XLSX.utils.json_to_sheet(summarySheetData);
@@ -930,6 +939,9 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     });
     XLSX.utils.book_append_sheet(workbook, detailsSheet, 'Detailed Results');
 
-    return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+    const xlsxBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
+    const logsJson = JSON.stringify(buildExecutionLogsExport(evaluationId, results), null, 2);
+    const buffer = buildExportArchive({ evaluationId, xlsx: xlsxBuffer, logsJson });
+    return { buffer, filename: buildExportFilename() };
   }
 }

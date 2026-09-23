@@ -109,7 +109,7 @@ export const evaluationLogicalSearchApi = {
       responseType: 'blob',
     });
     const disposition = res.headers?.['content-disposition'] as string | undefined;
-    const filename = parseFilenameFromContentDisposition(disposition) ?? `logical_search_evaluation_${id}.xlsx`;
+    const filename = parseFilenameFromContentDisposition(disposition) ?? `evaluation_export_${id}.zip`;
     return { blob: res.data, filename };
   },
 };

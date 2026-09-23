@@ -94,16 +94,16 @@ export class LogicalSearchEvaluationController {
   }
 
   @Get(':id/export')
-  @ApiOperation({ summary: 'Download the logical search evaluation results as XLSX' })
+  @ApiOperation({ summary: 'Download the evaluation results as a ZIP (XLSX + raw execution logs JSON)' })
   async export(
     @CurrentUser() user: UserDocument,
     @Param('id') id: string,
     @Res() res: Response,
   ): Promise<void> {
-    const buffer = await this.service.exportXlsx(user._id.toString(), id);
+    const { buffer, filename } = await this.service.exportArchive(user._id.toString(), id);
     res.status(200);
-    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="logical_search_evaluation_${id}.xlsx"`);
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Content-Length', buffer.length);
     res.send(buffer);
   }

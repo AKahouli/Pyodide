@@ -219,7 +219,7 @@ def build_tool_wrapper():
             duration_ms = int((time.perf_counter() - started) * 1000)
             actual_args = last_mcp_actual_args.get() or args
             last_mcp_actual_args.set({})
-            preview = str(getattr(result, "content", result))[:500]
+            preview = str(getattr(result, "content", result))
             if context.trace_collector is not None:
                 context.trace_collector.record_tool_call(tool_name=tool_name, args=actual_args, output_summary=preview, status="completed", duration_ms=duration_ms, agent_name=context.agent_name, agent_role=context.agent_role)
                 if context.on_trace_update is not None:

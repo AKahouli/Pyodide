@@ -68,7 +68,7 @@ class TraceCollector:
                 call_index=call_index,
                 tool_name=tool_name,
                 args=bound_value(args),
-                output_summary=bound_string(output_summary or "", MAX_OUTPUT_SUMMARY_LENGTH) if output_summary is not None else None,
+                output_summary=output_summary,
                 status=status,
                 duration_ms=duration_ms,
                 error=bound_string(error, MAX_OUTPUT_SUMMARY_LENGTH) if error else None,
