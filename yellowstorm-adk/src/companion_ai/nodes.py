@@ -9,6 +9,7 @@ Reuses the project's LLMFactory so model/proxy config stays in one place.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -269,6 +270,45 @@ def _mark_running(step: Step, on_model_start):
         if on_model_start is not None and step.status == Status.PENDING:
             step.status = Status.RUNNING
             await on_model_start(step)
+        return None
+    return _cb
+
+
+def _project_tool_activity(step: Step, on_tool_activity):
+    """after_tool_callback that records each tool call as a `toolActivity`
+    plan_step_component, so the step drawer shows the model's tool trace
+    (AssistantActivity) for traceability. `summary` uses the model's own
+    `display_purpose` arg when present (its stated reason for the call), else the
+    humanised tool name. Idempotent per (step, function_call): a re-drive/replay
+    re-fires the callback but the component_id is stable and the insert is
+    DO NOTHING. Best-effort — a projection failure never breaks the tool call."""
+    seq = {"n": 0}
+
+    async def _cb(tool, args, tool_context, tool_response):
+        try:
+            resp = tool_response if isinstance(tool_response, dict) else {}
+            err = resp.get("error") if isinstance(resp, dict) else None
+            # The approval gate's "requires confirmation" is not a real call or
+            # failure — the real send fires on resume and records THEN. Skip it.
+            if isinstance(err, str) and (
+                    "requires confirmation" in err.lower()
+                    or "approve or reject" in err.lower()):
+                return None
+            name = getattr(tool, "name", None) or getattr(tool, "__name__", "tool")
+            summary = None
+            if isinstance(args, dict):
+                dp = args.get("display_purpose")
+                if isinstance(dp, str) and dp.strip():
+                    summary = dp.strip()
+            summary = summary or name.replace("_", " ")
+            status = "failed" if err else "completed"
+            fcid = getattr(tool_context, "function_call_id", None) or ""
+            cid = hashlib.sha1(f"{step.id}:{fcid}:{name}".encode()).hexdigest()[:12]
+            ordinal, seq["n"] = seq["n"], seq["n"] + 1
+            await on_tool_activity(step, cid, ordinal, "toolActivity",
+                                   {"summary": summary, "toolName": name, "status": status})
+        except Exception as e:
+            logger.warning("tool-activity projection failed: %s", e)
         return None
     return _cb
 
@@ -658,6 +698,7 @@ def make_llm_node_factory(
     gate_for_step: Optional[Callable[[Step], list]] = None,
     replay_completed: bool = False,
     on_model_start: Optional[Callable[[Step], Awaitable[None]]] = None,
+    on_tool_activity: Optional[Callable[..., Awaitable[None]]] = None,
 ) -> NodeFactory:
     """Build a NodeFactory that creates one LlmAgent per step.
 
@@ -936,6 +977,8 @@ def make_llm_node_factory(
                 _skip_if_cancelled(step), _mark_running(step, on_model_start),
                 _trace_execution(step, name),
                 _inject_task_turn(task_text), stop_cb),
+            after_tool_callback=(_project_tool_activity(step, on_tool_activity)
+                                 if on_tool_activity else None),
         )
 
     return factory

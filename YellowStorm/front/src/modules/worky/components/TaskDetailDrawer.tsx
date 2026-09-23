@@ -4,6 +4,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { showError } from '@/lib/notifications';
 import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
 import type { MessageContentPart } from '@/components/ai-elements/ai-message-content';
+import { AssistantActivity } from '@/components/ai-elements/assistant-response';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { openFileViewerFromUrlLoader, getMimeTypeFromFilename } from '@/modules/file-viewer';
@@ -17,12 +18,16 @@ interface TaskDetailDrawerProps {
   onClose: () => void;
 }
 
-/** Renderable component parts from a step's result-content. Artifacts are NOT
- *  included here — the generic 'artifact' part is a static card; the drawer
- *  renders artifacts as clickable cards (TaskArtifactCard) that open the file
- *  viewer, the same way the conversation does. */
+/** Component types shown as an activity card (AssistantActivity — the step's
+ *  tool/reasoning trace, "Voir le processus"), NOT as inline content. Same set
+ *  the conversation thread uses. */
+const ACTIVITY_COMPONENT_TYPES = new Set(['agentActivity', 'toolActivity', 'checkpoint', 'plan', 'task', 'queue']);
+
+/** Renderable component parts from a step's result-content. Activity components
+ *  are excluded (rendered by AssistantActivity instead); artifacts are excluded
+ *  too — the drawer renders those as clickable cards (TaskArtifactCard). */
 export function buildResultParts(content: WorkyTaskResultContent): MessageContentPart[] {
-  return mapComponentsToContentParts(content.components);
+  return mapComponentsToContentParts(content.components.filter((c) => !ACTIVITY_COMPONENT_TYPES.has(c.type)));
 }
 
 /** A generated artifact row — identical to the conversation's ArtifactRow: View
@@ -106,6 +111,17 @@ export function TaskDetailDrawer({ task, onClose }: TaskDetailDrawerProps): JSX.
   const latestResult = results.data?.[0] ?? null;
   const richParts = resultContent.data ? buildResultParts(resultContent.data) : [];
   const artifacts = resultContent.data?.artifacts ?? [];
+  const activityComponents = (resultContent.data?.components ?? []).filter((c) => ACTIVITY_COMPONENT_TYPES.has(c.type));
+  const activityLabels = {
+    title: tWorky('messages.activity.title'),
+    reasoning: tWorky('messages.activity.reasoning'),
+    status: {
+      running: tWorky('messages.activity.status.running'),
+      completed: tWorky('messages.activity.status.completed'),
+      failed: tWorky('messages.activity.status.failed'),
+      pending: tWorky('messages.activity.status.pending'),
+    },
+  };
 
   return (
     <div
@@ -150,6 +166,9 @@ export function TaskDetailDrawer({ task, onClose }: TaskDetailDrawerProps): JSX.
             ) : null}
           </TabsContent>
           <TabsContent value='results' className='space-y-3'>
+            {activityComponents.length > 0 ? (
+              <AssistantActivity components={activityComponents} isStreaming={false} labels={activityLabels} />
+            ) : null}
             {richParts.length > 0 || artifacts.length > 0 ? (
               <div className='space-y-3'>
                 {richParts.length > 0 ? (

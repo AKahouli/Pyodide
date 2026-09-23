@@ -1098,6 +1098,16 @@ class OrchestratorService:
                 session_id, step.id, Status.RUNNING.value))
         return _on_start
 
+    def _project_step_tool_activity(self, session_id: str):
+        """Project one tool call as a plan_step_component (see
+        nodes._project_tool_activity), so the task drawer shows the step's tool
+        trace as an activity card."""
+        async def _on_tool(step: Step, component_id: str, ordinal: int,
+                           type: str, data: dict) -> None:
+            await self._project(self._rm and self._rm.add_step_component(
+                session_id, step.id, component_id, type, data, ordinal))
+        return _on_tool
+
     def _build_workflow(self, session_id: str, user_id: str, plan: Plan, model: str,
                         connectors: Optional[List[dict]], executor_prompt: Optional[str],
                         replay_completed: bool = False):
@@ -1184,7 +1194,8 @@ class OrchestratorService:
             gate_for_step=self._unmet_deps(plan),
             custom_instruction=executor_prompt,
             replay_completed=replay_completed,
-            on_model_start=self._mark_step_running(session_id))
+            on_model_start=self._mark_step_running(session_id),
+            on_tool_activity=self._project_step_tool_activity(session_id))
         factory_holder.append(factory)
 
         wf = graph.to_workflow(plan, factory, name=f"plan_{session_id}",
