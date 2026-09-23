@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils';
 import { useDeleteStream, useStreams } from '../../query/hooks';
 import { NewStreamDialog } from '../NewStreamDialog';
 import { StreamCard } from '../StreamCard';
+import { ShareStreamDialog } from '../ShareStreamDialog';
 import {
   STREAM_STATUS_GROUPS,
   sumStatusCounts,
@@ -47,6 +48,7 @@ export function StreamsDashboard(): JSX.Element {
   const [createdTo, setCreatedTo] = useState('');
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
+  const [sharing, setSharing] = useState<{ id: string; title: string } | null>(null);
 
   // Debounce the free-text search and reset to page 1 when it settles.
   useEffect(() => {
@@ -257,6 +259,7 @@ export function StreamsDashboard(): JSX.Element {
               stream={s}
               onOpen={() => navigate(`/worky/${s.id}`)}
               onDelete={() => void onDelete(s)}
+              onShare={() => setSharing({ id: s.id, title: s.title })}
               isDeleting={deleteStream.isPending}
             />
           ))}
@@ -294,6 +297,14 @@ export function StreamsDashboard(): JSX.Element {
       ) : null}
 
       <NewStreamDialog open={createOpen} onOpenChange={setCreateOpen} />
+      {sharing ? (
+        <ShareStreamDialog
+          streamId={sharing.id}
+          title={sharing.title}
+          open
+          onOpenChange={(open) => { if (!open) setSharing(null); }}
+        />
+      ) : null}
     </div>
   );
 }

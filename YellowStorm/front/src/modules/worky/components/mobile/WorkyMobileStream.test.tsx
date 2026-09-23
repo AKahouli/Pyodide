@@ -82,4 +82,22 @@ describe('WorkyMobileStream', () => {
     await userEvent.click(screen.getByLabelText('nav.voice'));
     expect(screen.getByText('voice-session-open')).toBeTruthy();
   });
+
+  it('keeps navigation visible but disables voice in read-only mode', () => {
+    render(
+      <MemoryRouter>
+        <WorkyMobileStream
+          streamId="s1"
+          approvalFor={null}
+          onApprovalClose={() => {}}
+          model={model}
+          readOnly
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText('nav.home')).toBeTruthy();
+    expect(screen.getByText('Atlas')).toBeTruthy();
+    expect(screen.getByLabelText('nav.voice')).toBeDisabled();
+  });
 });

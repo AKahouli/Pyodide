@@ -29,6 +29,7 @@ import { ConciergeInstructionsDialog } from './voice/ConciergeInstructionsDialog
 import type { WorkyBoardResponse, WorkyEvent, WorkyMessage, WorkyPendingClarification, WorkyTask } from '../types';
 import { deriveExecutiveView } from '../executive/deriveExecutiveView';
 import { WorkyExecutiveView } from './executive/WorkyExecutiveView';
+import { canOperateStream } from '../streamAccess';
 
 const EMPTY_BOARD: WorkyBoardResponse = {
   streamId: '',
@@ -311,10 +312,15 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   // Inline voice runs on the desktop dock; gate on !isMobile so the mobile sheet
   // (which runs its own session) doesn't double-instantiate. Must be called
   // before the isMobile early return below (Rules of Hooks).
-  const voice = useWorkyVoiceSession(streamId, voiceOpen && !isMobile);
+  const canOperate = canOperateStream(streamQuery.isSuccess, streamQuery.data?.access);
+  const readOnly = !canOperate;
+  const voice = useWorkyVoiceSession(streamId, voiceOpen && !isMobile && canOperate);
   const [voiceSettingsOpen, setVoiceSettingsOpen] = useState(false);
   const [promptOpen, setPromptOpen] = useState(false);
   const executiveModel = deriveExecutiveView(boardQuery.data ?? EMPTY_BOARD, streamQuery.data?.status, messagesQuery.data ?? []);
+  useEffect(() => {
+    if (!canOperate && voiceOpen) setVoiceOpen(false);
+  }, [canOperate, voiceOpen, setVoiceOpen]);
   // Close the slide-over automatically on stream switch so the next
   // stream doesn't inherit the open state of the previous one.
   useEffect(() => {
@@ -325,9 +331,10 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
     return (
       <WorkyMobileStream
         streamId={streamId}
-        approvalFor={approvalFor}
+        approvalFor={readOnly ? null : approvalFor}
         onApprovalClose={() => setApprovalFor(null)}
         model={executiveModel}
+        readOnly={readOnly}
       />
     );
   }
@@ -335,14 +342,19 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
   return (
     <div className='flex h-full w-full flex-col overflow-hidden'>
       <WorkyTopBar streamId={streamId} />
+      {readOnly ? (
+        <div className="border-b border-border bg-muted px-4 py-1 text-center text-xs text-muted-foreground">
+          {tWorky('stream.readOnly')}
+        </div>
+      ) : null}
       <div className='flex min-h-0 flex-1 overflow-hidden'>
       <main
         data-testid='worky-stream-main'
         className='flex min-w-0 flex-1 flex-col overflow-hidden'
       >
-        <StreamHeader streamId={streamId} onRename={onRename} />
+        <StreamHeader streamId={streamId} onRename={readOnly ? undefined : onRename} />
         <div className='min-h-0 flex-1 overflow-y-auto bg-muted/20' data-testid='worky-executive-scroll'>
-          <WorkyExecutiveView streamId={streamId} model={executiveModel} onTaskClick={setSelectedTask} />
+          <WorkyExecutiveView streamId={streamId} model={executiveModel} onTaskClick={setSelectedTask} readOnly={readOnly} />
         </div>
       </main>
       {selectedTask ? (
@@ -351,23 +363,23 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           onClose={() => setSelectedTask(null)}
         />
       ) : null}
-      <WorkyActivityRail
+      {!readOnly ? <WorkyActivityRail
         streamId={streamId}
         model={executiveModel}
-      />
+      /> : null}
       {/* Sidebar-mode file viewer host. Floating mode is mounted globally in
           App.tsx; sidebar mode needs a per-page host — without this, clicking
           "view" on a desktop artifact (sidebar display mode) rendered nothing. */}
       <FileViewerSidebar />
       </div>
-      <ManagerChatSheet
+      {!readOnly ? <ManagerChatSheet
         streamId={streamId}
         open={orchestratorOpen}
         onOpenChange={setOrchestratorOpen}
         sessionStatus={executiveModel.session?.status}
-      />
+      /> : null}
       <PlanDeltaToast />
-      {approvalFor ? (
+      {!readOnly && approvalFor ? (
         <ApprovalModal
           open
           streamId={streamId}
@@ -375,7 +387,7 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
           onClose={() => setApprovalFor(null)}
         />
       ) : null}
-      <WorkyVoiceDock
+      {!readOnly ? <WorkyVoiceDock
         state={voice.state}
         level={voice.level}
         muted={voice.muted}
@@ -384,9 +396,9 @@ function WorkyStreamBody({ streamId }: { streamId: string }): JSX.Element {
         onMute={voice.toggleMute}
         onOpenSettings={() => setVoiceSettingsOpen(true)}
         onOpenPrompt={() => setPromptOpen(true)}
-      />
-      <VoiceSettingsSheet open={voiceSettingsOpen} onOpenChange={setVoiceSettingsOpen} level={voice.level} />
-      <ConciergeInstructionsDialog streamId={streamId} open={promptOpen} onOpenChange={setPromptOpen} />
+      /> : null}
+      {!readOnly ? <VoiceSettingsSheet open={voiceSettingsOpen} onOpenChange={setVoiceSettingsOpen} level={voice.level} /> : null}
+      {!readOnly ? <ConciergeInstructionsDialog streamId={streamId} open={promptOpen} onOpenChange={setPromptOpen} /> : null}
     </div>
   );
 }

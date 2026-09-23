@@ -732,6 +732,8 @@ export const API_ENDPOINTS = {
   worky: {
     streams: '/worky/streams',
     streamById: (id: string) => `/worky/streams/${id}`,
+    streamShares: (id: string) => `/worky/streams/${id}/shares`,
+    streamShareById: (id: string, shareId: string) => `/worky/streams/${id}/shares/${shareId}`,
     streamEvents: (id: string) => `/worky/streams/${id}/events`,
     streamMessages: (id: string) => `/worky/streams/${id}/messages`,
     streamBoard: (id: string) => `/worky/streams/${id}/board`,

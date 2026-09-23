@@ -25,11 +25,13 @@ export function WorkyMobileStream({
   approvalFor,
   onApprovalClose,
   model,
+  readOnly = false,
 }: {
   streamId: string;
   approvalFor: WorkyPendingClarification | null;
   onApprovalClose: () => void;
   model: WorkyExecutiveViewModel;
+  readOnly?: boolean;
 }): JSX.Element {
   const navigate = useNavigate();
   const activeSheet = useWorkyUiStore((s) => s.activeSheet);
@@ -51,7 +53,7 @@ export function WorkyMobileStream({
       />
       {/* pb keeps the last agent card clear of the nav's raised voice button. */}
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-1 pb-8">
-        <WorkyExecutiveView streamId={streamId} model={model} onTaskClick={openTask} />
+        <WorkyExecutiveView streamId={streamId} model={model} onTaskClick={openTask} readOnly={readOnly} />
       </div>
 
       <div className="shrink-0">
@@ -59,6 +61,7 @@ export function WorkyMobileStream({
           onHome={() => navigate('/worky')}
           onVoice={() => setVoiceOpen(true)}
           onChat={() => setActiveSheet('chat')}
+          canOperate={!readOnly}
         />
       </div>
 
@@ -67,26 +70,26 @@ export function WorkyMobileStream({
         open={activeSheet === 'task'}
         onOpenChange={(o) => setActiveSheet(o ? 'task' : null)}
       />
-      <ManagerChatSheet
+      {!readOnly ? <ManagerChatSheet
         streamId={streamId}
         open={activeSheet === 'chat'}
         onOpenChange={(o) => setActiveSheet(o ? 'chat' : null)}
         sessionStatus={model.session?.status}
-      />
-      <ApprovalSheet
+      /> : null}
+      {!readOnly ? <ApprovalSheet
         streamId={streamId}
         interaction={approvalFor}
         open={Boolean(approvalFor)}
         onOpenChange={(o) => {
           if (!o) onApprovalClose();
         }}
-      />
-      <VoiceSession
+      /> : null}
+      {!readOnly ? <VoiceSession
         streamId={streamId}
         open={voiceOpen}
         onOpenChange={setVoiceOpen}
         onKeyboard={() => setActiveSheet('chat')}
-      />
+      /> : null}
       <PlanDeltaToast />
     </div>
   );

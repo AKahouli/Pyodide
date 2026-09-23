@@ -35,6 +35,7 @@ import { StreamsDashboard } from './StreamsDashboard';
 const makeStream = (over: Partial<WorkyStreamListItem>): WorkyStreamListItem => ({
   id: 'x',
   ownerUserId: 'u',
+  access: 'owner',
   workspaceId: 'w',
   artifactWorkspaceId: null,
   managerAgentId: null,

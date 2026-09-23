@@ -83,6 +83,7 @@ export interface WorkyHumainRef {
 export interface WorkyStream {
   id: string;
   ownerUserId: string;
+  access: 'owner' | 'write' | 'read';
   workspaceId: string;
   /** Legacy: null for streams created after the workspace/agent removal. */
   artifactWorkspaceId: string | null;
@@ -110,6 +111,18 @@ export interface WorkyStream {
   createdAt: string;
   updatedAt: string;
   lastActivityAt: string;
+}
+
+export interface WorkyStreamShare {
+  id: string;
+  permission: 'read' | 'write';
+  user: {
+    id: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+  };
+  createdAt: string;
 }
 
 /**

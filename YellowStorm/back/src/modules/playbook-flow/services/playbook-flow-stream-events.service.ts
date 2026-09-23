@@ -41,6 +41,13 @@ export class PlaybookFlowStreamEventsService {
     this.executionOwnerCache.delete(executionId);
   }
 
+  emitPlaybookShared(userId: string, playbookId: string): void {
+    this.streamGateway.sendToUser(userId, {
+      type: 'playbook_shared',
+      data: { playbookId },
+    });
+  }
+
   async emitExecutionStart(
     executionId: string,
     flowId: string,

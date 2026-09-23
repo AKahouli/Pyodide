@@ -5,6 +5,7 @@
 export interface IWorkyStreamResponse {
   id: string;
   ownerUserId: string;
+  access: 'owner' | 'write' | 'read';
   workspaceId: string;
   /** Legacy: null for streams created after the workspace/agent removal. */
   artifactWorkspaceId: string | null;
@@ -70,4 +71,16 @@ export interface IWorkyStreamListResult {
     totalPages: number;
     statusCounts: Record<string, number>;
   };
+}
+
+export interface IWorkyStreamShareResponse {
+  id: string;
+  permission: 'read' | 'write';
+  user: {
+    id: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+  };
+  createdAt: string;
 }

@@ -1,5 +1,5 @@
 import type { JSX } from 'react';
-import { Clock, Loader2, Trash2 } from 'lucide-react';
+import { Clock, Loader2, Share2, Trash2 } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -12,6 +12,7 @@ interface StreamCardProps {
   stream: WorkyStreamListItem;
   onOpen: () => void;
   onDelete: () => void;
+  onShare: () => void;
   isDeleting: boolean;
 }
 
@@ -19,9 +20,10 @@ interface StreamCardProps {
  * A single stream tile on the home page: status, elapsed active time, live task
  * rollup, progress meter and (when a budget is set) a slim spend line.
  */
-export function StreamCard({ stream, onOpen, onDelete, isDeleting }: StreamCardProps): JSX.Element {
+export function StreamCard({ stream, onOpen, onDelete, onShare, isDeleting }: StreamCardProps): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const { stats, budget } = stream;
+  const access = stream.access ?? 'owner';
   const progressPct = Math.round((stats.progress || 0) * 100);
   const hasBudget = budget.limitUsd > 0;
   const budgetPct = hasBudget ? Math.min(100, Math.round((budget.spendUsd / budget.limitUsd) * 100)) : 0;
@@ -34,7 +36,7 @@ export function StreamCard({ stream, onOpen, onDelete, isDeleting }: StreamCardP
         onClick={onOpen}
         className="flex flex-col gap-3 text-left"
       >
-        <div className="flex items-center justify-between gap-2 pr-8">
+        <div className="flex items-center justify-between gap-2 pr-16">
           <StatusBadge status={stream.status} />
           <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
             <Clock className="size-3.5" aria-hidden />
@@ -42,7 +44,14 @@ export function StreamCard({ stream, onOpen, onDelete, isDeleting }: StreamCardP
           </span>
         </div>
 
-        <span className="truncate text-base font-semibold text-foreground">{stream.title}</span>
+        <div className="flex items-center gap-2">
+          <span className="truncate text-base font-semibold text-foreground">{stream.title}</span>
+          {access !== 'owner' ? (
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+              {t(`sharing.${access}`)}
+            </span>
+          ) : null}
+        </div>
 
         <div data-testid="stream-card-tasks" className="text-xs text-muted-foreground">
           {stats.totalTasks === 0 ? (
@@ -85,7 +94,18 @@ export function StreamCard({ stream, onOpen, onDelete, isDeleting }: StreamCardP
         ) : null}
       </button>
 
-      <Button
+      {access === 'owner' ? <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="absolute right-9 top-2 size-7 text-muted-foreground opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
+        aria-label={t('sharing.open', { title: stream.title })}
+        onClick={onShare}
+      >
+        <Share2 className="size-3.5" />
+      </Button> : null}
+
+      {access === 'owner' ? <Button
         type="button"
         variant="ghost"
         size="icon"
@@ -102,7 +122,7 @@ export function StreamCard({ stream, onOpen, onDelete, isDeleting }: StreamCardP
         ) : (
           <Trash2 className="size-3.5" />
         )}
-      </Button>
+      </Button> : null}
     </div>
   );
 }

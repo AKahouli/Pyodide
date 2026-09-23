@@ -172,11 +172,14 @@ describe('WorkyStreamService.ensureKickoffContext', () => {
   const streamId = new Types.ObjectId().toString();
 
   const makeEnsureService = (findByIdResolved: unknown) => {
+    const streamDoc = findByIdResolved
+      ? { ownerUserId: new Types.ObjectId(userId), shares: [], ...(findByIdResolved as object) }
+      : null;
     const updateOne = jest.fn(() => writeQuery({ acknowledged: true }));
     const streamModel = {
       create: jest.fn(),
       findById: jest.fn().mockReturnValue({
-        lean: () => ({ exec: () => Promise.resolve(findByIdResolved) }),
+        lean: () => ({ exec: () => Promise.resolve(streamDoc) }),
       }),
       find: jest.fn(),
       findOne: jest.fn(),
@@ -218,7 +221,7 @@ describe('WorkyStreamService.ensureKickoffContext', () => {
 
     const res = await service.ensureKickoffContext(streamId, userId);
 
-    expect(res).toEqual({ aiSessionId: 'sess-existing' });
+    expect(res).toEqual({ aiSessionId: 'sess-existing', ownerUserId: userId });
     expect(grpcClient.createSession).not.toHaveBeenCalled();
     expect(updateOne).not.toHaveBeenCalled();
   });
@@ -232,7 +235,7 @@ describe('WorkyStreamService.ensureKickoffContext', () => {
 
     expect(grpcClient.createSession).toHaveBeenCalledWith(userId);
     expect(updateOne).toHaveBeenCalledWith({ _id: streamId }, { $set: { aiSessionId: 'sess-new' } });
-    expect(res).toEqual({ aiSessionId: 'sess-new' });
+    expect(res).toEqual({ aiSessionId: 'sess-new', ownerUserId: userId });
   });
 
   it('throws WORKY_STREAM_NOT_FOUND when the stream does not exist', async () => {
@@ -453,9 +456,9 @@ describe('WorkyStreamService.findAllForUser', () => {
     expect(findChain.skip).toHaveBeenCalledWith(20);
     expect(findChain.limit).toHaveBeenCalledWith(10);
     expect(findChain.sort).toHaveBeenCalledWith(expect.objectContaining({ lastActivityAt: -1 }));
-    // owner scoping is always applied
+    // Owner and direct stream shares are both visible.
     expect(streamModel.find).toHaveBeenCalledWith(
-      expect.objectContaining({ ownerUserId: expect.anything() }),
+      expect.objectContaining({ $or: expect.any(Array) }),
     );
   });
 

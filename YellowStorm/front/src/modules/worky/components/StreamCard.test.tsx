@@ -15,6 +15,7 @@ vi.mock('@/modules/localization', () => ({
 const baseStream: WorkyStreamListItem = {
   id: 's1',
   ownerUserId: 'u1',
+  access: 'owner',
   workspaceId: 'w1',
   artifactWorkspaceId: null,
   managerAgentId: null,
@@ -48,6 +49,7 @@ describe('StreamCard', () => {
         stream={{ ...baseStream, ...overrides }}
         onOpen={onOpen}
         onDelete={onDelete}
+        onShare={vi.fn()}
         isDeleting={false}
       />,
     );

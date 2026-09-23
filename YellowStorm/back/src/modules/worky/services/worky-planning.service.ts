@@ -11,6 +11,7 @@ import { BadRequestException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { WorkyEventService } from './worky-event.service';
 import { CreateWorkyMessageDto } from '../dto/create-worky-message.dto';
+import { canWriteWorkyStream, getWorkyStreamAccess } from '../worky-stream-access';
 
 @Injectable()
 export class WorkyPlanningService {
@@ -29,7 +30,7 @@ export class WorkyPlanningService {
     streamId: string,
     dto: CreateWorkyMessageDto,
   ): Promise<{ id: string; content: string; createdAt: string; turnId: string | null }> {
-    const stream = await this.loadStream(streamId, userId);
+    const stream = await this.loadStream(streamId, userId, true);
     if (stream.status === 'archived') {
       throw new BadRequestException(
         ErrorCode.WORKY_STREAM_PHASE_INVALID,
@@ -76,6 +77,7 @@ export class WorkyPlanningService {
     role: 'owner' | 'manager',
     content: string,
   ): Promise<{ id: string }> {
+    await this.loadStream(streamId, userId, true);
     const message = await this.messages.create({
       streamId: new Types.ObjectId(streamId),
       role,
@@ -103,7 +105,7 @@ export class WorkyPlanningService {
     streamId: string,
     prompt: string | null,
   ): Promise<{ prompt: string | null }> {
-    const stream = await this.loadStream(streamId, userId);
+    const stream = await this.loadStream(streamId, userId, true);
     const trimmed = typeof prompt === 'string' ? prompt.trim() : '';
     stream.voicePrompt = trimmed || null;
     await stream.save();
@@ -173,7 +175,11 @@ export class WorkyPlanningService {
     }));
   }
 
-  private async loadStream(streamId: string, userId: string): Promise<WorkyStreamDocument> {
+  private async loadStream(
+    streamId: string,
+    userId: string,
+    requireWrite = false,
+  ): Promise<WorkyStreamDocument> {
     if (!Types.ObjectId.isValid(streamId)) {
       throw new NotFoundException(
         ErrorCode.WORKY_STREAM_NOT_FOUND,
@@ -181,7 +187,10 @@ export class WorkyPlanningService {
       );
     }
     const stream = await this.streams.findById(streamId).exec();
-    if (!stream || stream.ownerUserId.toString() !== userId) {
+    const allowed = stream && (requireWrite
+      ? canWriteWorkyStream(stream, userId)
+      : Boolean(getWorkyStreamAccess(stream, userId)));
+    if (!stream || !allowed) {
       throw new NotFoundException(
         ErrorCode.WORKY_STREAM_NOT_FOUND,
         'Worky stream not found.',
