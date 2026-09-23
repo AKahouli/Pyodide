@@ -1,12 +1,10 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
 import { randomBytes } from 'crypto';
-import { Model } from 'mongoose';
 import {
-  AppRuntimeTicket,
-  AppRuntimeTicketDocument,
-} from '../schemas/app-runtime-ticket.schema';
+  RUNTIME_TICKET_STORE,
+  type RuntimeTicketStore,
+} from '../persistence/runtime-ticket.store';
 import type { RuntimeTicketResult } from '../types/app-runtime-protocol';
 import { RuntimeBindingService } from './runtime-binding.service';
 import { RuntimeTokenService } from './runtime-token.service';
@@ -34,8 +32,8 @@ export class RuntimeTicketService {
   private readonly logger = new Logger(RuntimeTicketService.name);
 
   constructor(
-    @InjectModel(AppRuntimeTicket.name)
-    private readonly model: Model<AppRuntimeTicketDocument>,
+    @Inject(RUNTIME_TICKET_STORE)
+    private readonly store: RuntimeTicketStore,
     private readonly bindings: RuntimeBindingService,
     private readonly tokens: RuntimeTokenService,
     private readonly config: ConfigService,
@@ -54,14 +52,13 @@ export class RuntimeTicketService {
     const ttlMs = this.config.get<number>('appRuntime.ticketTtlMs', 60_000);
     const expiresAt = new Date(Date.now() + ttlMs);
 
-    await this.model.create({
+    await this.store.create({
       runtimeSessionId,
       ticketHash: this.tokens.hash(ticket),
       bindingId: binding.bindingId,
       workspaceId: binding.workspaceId,
       userId,
       expiresAt,
-      consumedAt: null,
     });
 
     this.logger.debug(
@@ -90,18 +87,7 @@ export class RuntimeTicketService {
   async consume(ticket: string): Promise<ConsumedRuntimeTicket | null> {
     if (!ticket) return null;
 
-    const consumed = await this.model
-      .findOneAndUpdate(
-        {
-          ticketHash: this.tokens.hash(ticket),
-          consumedAt: null,
-          expiresAt: { $gt: new Date() },
-        },
-        { $set: { consumedAt: new Date() } },
-        { new: true },
-      )
-      .lean()
-      .exec();
+    const consumed = await this.store.consumeByHash(this.tokens.hash(ticket));
 
     if (!consumed) return null;
 

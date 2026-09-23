@@ -13,3 +13,5 @@ export * from './integrations.schema';
 export * from './agent-shares.schema';
 export * from './teams.schema';
 export * from './channels.schema';
+export * from './conversation-v2.schema';
+export * from './app-runtime.schema';

@@ -3,12 +3,11 @@ import { Request } from 'express';
 import { ForbiddenException, TooManyRequestsException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { RateLimiterService } from '../../rate-limiter';
-import { UserDocument } from '../../user/schemas/user.schema';
 import { AppBuilderAiUsageService } from '../services/app-builder-ai-usage.service';
 import { isAppBuilderAiProxyMode } from '../utils/app-builder-ai-mode';
 
 type AiProxyAuthedRequest = Request & {
-  user?: UserDocument;
+  user?: { _id: { toString(): string } | string };
   aiProxyAuth?: { mode?: 'platform' | 'app_end_user' | 'ai_preview' };
   body?: { max_tokens?: number; max_completion_tokens?: number };
 };
@@ -33,7 +32,7 @@ export class AppBuilderAiUsageLimitGuard implements CanActivate {
     const user = request.user;
     if (!user) return true;
 
-    const userId = user._id.toString();
+    const userId = typeof user._id === 'string' ? user._id : user._id.toString();
     const check = await this.usage.checkLimit(userId);
     if (!check.allowed) {
       throw new ForbiddenException(

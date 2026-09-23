@@ -24,11 +24,7 @@ describe('AppDataRemoteOwnerController', () => {
       issueTicket: jest.fn().mockResolvedValue({ ticket: 'ticket-1' }),
     };
     const sessions = {
-      findById: jest.fn().mockReturnValue({
-        lean: jest.fn().mockResolvedValue(
-          aiSessionId ? { aiSessionId } : null,
-        ),
-      }),
+      getById: jest.fn().mockResolvedValue(aiSessionId ? { aiSessionId } : null),
     };
     const deployment = {
       getRuntimeEnvForWorkspace: jest.fn().mockResolvedValue({

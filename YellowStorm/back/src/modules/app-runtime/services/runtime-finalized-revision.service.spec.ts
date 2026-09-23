@@ -1,46 +1,42 @@
 import { BadRequestException } from '@nestjs/common';
-import { getModelToken } from '@nestjs/mongoose';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConversationV2EventStoreService } from '@modules/conversation-v2/services/conversation-v2-event-store.service';
-import { AppFinalizedRevision } from '../schemas/app-finalized-revision.schema';
+import { RUNTIME_FINALIZED_REVISION_STORE, type RuntimeFinalizedRevisionStore } from '../persistence/runtime-finalized-revision.store';
 import { RuntimeFinalizedRevisionService } from './runtime-finalized-revision.service';
 
 describe('RuntimeFinalizedRevisionService', () => {
   let svc: RuntimeFinalizedRevisionService;
 
-  const find = jest.fn();
-  const findOne = jest.fn();
-  const updateOne = jest.fn();
+  const upsert = jest.fn();
+  const listByWorkspace = jest.fn();
+  const resolveLatestFinalized = jest.fn();
+  const existsByWorkspaceAndRevision = jest.fn();
+  const summarizeByWorkspaces = jest.fn();
   const listByType = jest.fn();
-  const aggregate = jest.fn();
+
+  const store: RuntimeFinalizedRevisionStore = {
+    upsert,
+    listByWorkspace,
+    resolveLatestFinalized,
+    existsByWorkspaceAndRevision,
+    summarizeByWorkspaces,
+  };
 
   beforeEach(async () => {
     jest.clearAllMocks();
-    find.mockReturnValue({
-      sort: () => ({
-        lean: () => ({ exec: () => Promise.resolve([]) }),
-      }),
-    });
-    findOne.mockReturnValue({
-      sort: () => ({
-        select: () => ({
-          lean: () => ({ exec: () => Promise.resolve(null) }),
-        }),
-      }),
-      select: () => ({
-        lean: () => ({ exec: () => Promise.resolve(null) }),
-      }),
-    });
-    updateOne.mockResolvedValue({});
+    listByWorkspace.mockResolvedValue([]);
+    resolveLatestFinalized.mockResolvedValue(null);
+    existsByWorkspaceAndRevision.mockResolvedValue(false);
+    upsert.mockResolvedValue(undefined);
     listByType.mockResolvedValue([]);
-    aggregate.mockReturnValue({ exec: () => Promise.resolve([]) });
+    summarizeByWorkspaces.mockResolvedValue(new Map());
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         RuntimeFinalizedRevisionService,
         {
-          provide: getModelToken(AppFinalizedRevision.name),
-          useValue: { find, findOne, updateOne, aggregate },
+          provide: RUNTIME_FINALIZED_REVISION_STORE,
+          useValue: store,
         },
         {
           provide: ConversationV2EventStoreService,
@@ -60,34 +56,44 @@ describe('RuntimeFinalizedRevisionService', () => {
       eventId: 'evt-1',
     });
 
-    expect(updateOne).toHaveBeenCalledWith(
-      { workspaceId: 'ws-1', revisionId: 'rev_7' },
+    expect(upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        $set: expect.objectContaining({ title: 'My App', eventId: 'evt-1' }),
+        workspaceId: 'ws-1',
+        revisionId: 'rev_7',
+        title: 'My App',
+        eventId: 'evt-1',
       }),
-      { upsert: true },
     );
   });
 
   it('lists finalized revisions newest first', async () => {
     const rows = [
       {
+        id: 'id1',
+        workspaceId: 'ws-1',
         revisionId: 'rev_10',
         title: 'App',
         finalizedAt: new Date('2026-09-02T10:00:00.000Z'),
+        eventId: 'evt-1',
         fileCount: 12,
+        cephManifestPath: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
       },
       {
+        id: 'id2',
+        workspaceId: 'ws-1',
         revisionId: 'rev_7',
         title: 'App',
         finalizedAt: new Date('2026-09-01T10:00:00.000Z'),
+        eventId: 'evt-2',
+        fileCount: null,
+        cephManifestPath: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
       },
     ];
-    find.mockReturnValueOnce({
-      sort: () => ({
-        lean: () => ({ exec: () => Promise.resolve(rows) }),
-      }),
-    });
+    listByWorkspace.mockResolvedValueOnce(rows);
 
     const items = await svc.listByWorkspace('ws-1');
 
@@ -107,11 +113,7 @@ describe('RuntimeFinalizedRevisionService', () => {
   });
 
   it('assertFinalized throws when revision is not finalized', async () => {
-    findOne.mockReturnValueOnce({
-      select: () => ({
-        lean: () => ({ exec: () => Promise.resolve(null) }),
-      }),
-    });
+    existsByWorkspaceAndRevision.mockResolvedValueOnce(false);
 
     await expect(svc.assertFinalized('ws-1', 'rev_99')).rejects.toBeInstanceOf(
       BadRequestException,
@@ -119,11 +121,7 @@ describe('RuntimeFinalizedRevisionService', () => {
   });
 
   it('backfills from application_component events when collection is empty', async () => {
-    findOne.mockReturnValueOnce({
-      select: () => ({
-        lean: () => ({ exec: () => Promise.resolve(null) }),
-      }),
-    });
+    listByWorkspace.mockResolvedValueOnce([]);
     listByType.mockResolvedValueOnce([
       {
         eventId: 'evt-a',
@@ -140,27 +138,29 @@ describe('RuntimeFinalizedRevisionService', () => {
     await svc.backfillFromEvents('pointer-1', 'ws-1');
 
     expect(listByType).toHaveBeenCalledWith('pointer-1', 'application_component');
-    expect(updateOne).toHaveBeenCalledWith(
-      { workspaceId: 'ws-1', revisionId: 'rev_7' },
+    expect(upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        $set: expect.objectContaining({ title: 'Backfill App', eventId: 'evt-a' }),
+        workspaceId: 'ws-1',
+        revisionId: 'rev_7',
+        title: 'Backfill App',
+        eventId: 'evt-a',
       }),
-      { upsert: true },
     );
   });
 
   it('summarizeByWorkspaces returns latest revision and counts per workspace', async () => {
-    aggregate.mockReturnValueOnce({
-      exec: () =>
-        Promise.resolve([
+    summarizeByWorkspaces.mockResolvedValueOnce(
+      new Map([
+        [
+          'ws-1',
           {
-            _id: 'ws-1',
             latestRevisionId: 'rev_12',
-            latestFinalizedAt: new Date('2026-09-02T10:00:00.000Z'),
+            latestFinalizedAt: '2026-09-02T10:00:00.000Z',
             versionCount: 3,
           },
-        ]),
-    });
+        ],
+      ]),
+    );
 
     const summary = await svc.summarizeByWorkspaces(['ws-1', 'ws-2']);
 
@@ -173,11 +173,13 @@ describe('RuntimeFinalizedRevisionService', () => {
   });
 
   it('skips backfill when finalized rows already exist', async () => {
-    findOne.mockReturnValueOnce({
-      select: () => ({
-        lean: () => ({ exec: () => Promise.resolve({ _id: 'x' }) }),
-      }),
-    });
+    listByWorkspace.mockResolvedValueOnce([
+      {
+        id: 'id1', workspaceId: 'ws-1', revisionId: 'rev_1', title: 'App',
+        finalizedAt: new Date(), eventId: 'evt-1', fileCount: null, cephManifestPath: null,
+        createdAt: new Date(), updatedAt: new Date(),
+      },
+    ]);
 
     await svc.backfillFromEvents('pointer-1', 'ws-1');
 
