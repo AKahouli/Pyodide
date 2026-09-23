@@ -1,4 +1,6 @@
 -- P8 app-builder-ai: offers catalog + user assignment columns (Mongo cutover).
+SET LOCAL lock_timeout = '5s';
+
 CREATE TABLE IF NOT EXISTS catalog.app_builder_ai_offers (
   id                      char(24)     PRIMARY KEY,
   name                    varchar(100) NOT NULL,

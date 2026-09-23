@@ -1,4 +1,6 @@
 -- P8 conversation-v2: dedicated schema (do not reuse conversation.* V1 tables).
+SET LOCAL lock_timeout = '5s';
+
 CREATE SCHEMA IF NOT EXISTS conversation_v2;
 
 CREATE TABLE IF NOT EXISTS conversation_v2.sessions (

@@ -1,5 +1,7 @@
 -- P8 app-runtime: bindings, tickets, tool_calls, source_revisions,
 -- finalized_revisions, ai_preview_tickets (Mongo cutover).
+SET LOCAL lock_timeout = '5s';
+
 CREATE SCHEMA IF NOT EXISTS app_runtime;
 
 -- bindings
