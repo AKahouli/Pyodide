@@ -580,6 +580,11 @@ export class DataPreviewDto {
   @Min(1)
   @Max(50)
   limit: number = 25;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  dataRevisionId?: string;
 }
 
 export class ListReviewItemsQueryDto {

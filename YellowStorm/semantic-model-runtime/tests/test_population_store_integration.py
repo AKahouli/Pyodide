@@ -27,7 +27,8 @@ async def pool():
         for name in ("001_durable_jobs.sql", "005_runtime_store.sql", "006_population_store.sql",
                       "008_versioned_specification_mirrors.sql",
                       "009_invalidate_unverified_age_projections.sql",
-                      "010_ui_signal_outbox.sql"):
+                      "010_ui_signal_outbox.sql", "015_population_execution_fingerprint.sql",
+                      "016_draft_population_binding.sql"):
             await connection.execute((ROOT / "migrations" / name).read_text(encoding="utf-8"))
     finally:
         await connection.close()
@@ -42,16 +43,19 @@ async def test_revision_lifecycle_with_idempotent_writes(pool: asyncpg.Pool):
         pool, home_workspace_id="ws1", model_id="m1", model_version_id="v1",
         spec_hash="sha256:" + "a" * 64, specification={"concepts": []})
     assert spec_id
-    revision = store.revision_id_for("v1", "sha256:" + "a" * 64, ["sha256:abc"], 0)
+    fingerprint = "sha256:" + "b" * 64
+    revision = store.revision_id_for("v1", fingerprint, ["sha256:abc"], 0)
     assert revision.startswith("dr_")
     assert await store.create_data_revision(
         pool, revision_id=revision, model_id="m1", model_version_id="v1",
-        spec_hash="sha256:" + "a" * 64, source_observations=[], correction_sequence=0,
+        spec_hash="sha256:" + "a" * 64, execution_fingerprint=fingerprint,
+        source_observations=[], correction_sequence=0,
         coverage={}) == revision
     # Idempotent re-creation returns the same id.
     assert await store.create_data_revision(
         pool, revision_id=revision, model_id="m1", model_version_id="v1",
-        spec_hash="sha256:" + "a" * 64, source_observations=[], correction_sequence=0,
+        spec_hash="sha256:" + "a" * 64, execution_fingerprint=fingerprint,
+        source_observations=[], correction_sequence=0,
         coverage={}) == revision
 
     entities = [{"entityId": "crm:aaa", "conceptId": "c1", "namespace": "crm",
@@ -103,6 +107,10 @@ async def test_revision_lifecycle_with_idempotent_writes(pool: asyncpg.Pool):
 
 @pytest.mark.asyncio
 async def test_corrections_reviews_and_cas_binding(pool: asyncpg.Pool):
+    spec_hash = "sha256:" + "a" * 64
+    await store.mirror_specification(
+        pool, home_workspace_id="ws1", model_id="m1", model_version_id="v1",
+        spec_hash=spec_hash, specification={"concepts": []})
     assert await store.model_correction_sequence(pool, "m1") == 0
     first = await store.record_correction(
         pool, model_id="m1", model_version_id="v1", actor_user_id="u1",
@@ -131,12 +139,12 @@ async def test_corrections_reviews_and_cas_binding(pool: asyncpg.Pool):
     assert await store.cas_active_binding(
         pool, model_id="m1", expected_version=None, model_version_id="v1",
         data_revision_id="dr_1", projection_ref="age:graph_1",
-        correction_sequence=2) is True
+        correction_sequence=2, spec_hash=spec_hash) is True
     # Create is idempotent-safe: an existing binding blocks a second create.
     assert await store.cas_active_binding(
         pool, model_id="m1", expected_version=None, model_version_id="v1",
         data_revision_id="dr_1", projection_ref="age:graph_1",
-        correction_sequence=2) is False
+        correction_sequence=2, spec_hash=spec_hash) is False
     binding = await store.get_active_binding(pool, "m1")
     assert binding is not None
     assert binding["data_revision_id"] == "dr_1"
@@ -145,21 +153,25 @@ async def test_corrections_reviews_and_cas_binding(pool: asyncpg.Pool):
     assert await store.cas_active_binding(
         pool, model_id="m1", expected_version=1, model_version_id="v1",
         data_revision_id="dr_2", projection_ref="age:graph_2",
-        correction_sequence=2) is True
+        correction_sequence=2, spec_hash=spec_hash) is True
     assert await store.cas_active_binding(
         pool, model_id="m1", expected_version=1, model_version_id="v1",
         data_revision_id="dr_3", projection_ref="age:graph_3",
-        correction_sequence=2) is False
+        correction_sequence=2, spec_hash=spec_hash) is False
     assert (await store.get_active_binding(pool, "m1"))["data_revision_id"] == "dr_2"
 
 
 @pytest.mark.asyncio
 async def test_activation_atomically_enqueues_revision_signal(pool: asyncpg.Pool):
     model_id = "11111111-1111-1111-1111-111111111111"
+    spec_hash = "sha256:" + "a" * 64
+    await store.mirror_specification(
+        pool, home_workspace_id="ws1", model_id=model_id, model_version_id="v1",
+        spec_hash=spec_hash, specification={"concepts": []})
     assert await store.cas_active_binding(
         pool, model_id=model_id, expected_version=None, model_version_id="v1",
         data_revision_id="dr_1", projection_ref="age:graph_1",
-        correction_sequence=0, emit_signal=True) is True
+        correction_sequence=0, spec_hash=spec_hash, emit_signal=True) is True
     signal = await pool.fetchrow(
         "SELECT event_type, payload FROM semantic_jobs.ui_signal_outbox")
     payload = signal["payload"] if isinstance(signal["payload"], dict) else json.loads(signal["payload"])

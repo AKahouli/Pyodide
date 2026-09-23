@@ -1422,22 +1422,35 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-primary"
-                      aria-label={t('node.executeStep')}
-                      disabled={!isEnabled || !isConfigured || !actions?.canExecute || actions?.isExecuting}
+                      className={cn(
+                        'h-7 w-7 text-muted-foreground',
+                        actions?.isExecuting ? 'hover:text-destructive' : 'hover:text-primary',
+                      )}
+                      aria-label={actions?.isExecuting ? t('toolbar.stop') : t('node.executeStep')}
+                      disabled={actions?.isExecuting
+                        ? !nodeExecution?.id
+                        : !isEnabled || !isConfigured || !actions?.canExecute}
                       onClick={(e) => {
                         e.stopPropagation();
+                        if (actions?.isExecuting) {
+                          if (nodeExecution?.id && currentPlaybook?.id) {
+                            void stopExecution(currentPlaybook.id, nodeExecution.id);
+                          }
+                          return;
+                        }
                         actions?.onExecuteStep(id);
                       }}
                     >
-                      {isStepRunning ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      {actions?.isExecuting ? (
+                        <Square className="h-3.5 w-3.5" />
                       ) : (
                         <Play className="h-3.5 w-3.5" />
                       )}
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent side="bottom">{t('node.executeStep')}</TooltipContent>
+                  <TooltipContent side="bottom">
+                    {actions?.isExecuting ? t('toolbar.stop') : t('node.executeStep')}
+                  </TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>

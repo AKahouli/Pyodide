@@ -53,7 +53,8 @@ class PopulationSource(BaseModel):
     source_kind: Literal["tabular", "excel_sheet", "csv", "document"] | None = Field(
         default=None, alias="sourceKind")
     options: dict[str, Any] = Field(default_factory=dict)
-    column_mapping: dict[str, str] | None = Field(default=None, alias="columnMapping", min_length=1)
+    column_mapping: dict[str, str] | None = Field(default=None, alias="columnMapping")
+    constant_mapping: dict[str, Any] | None = Field(default=None, alias="constantMapping", min_length=1)
     field_mappings: list[dict[str, Any]] | None = Field(
         default=None, alias="fieldMappings", min_length=1, max_length=25)
     label_field: str | None = Field(default=None, alias="labelField", max_length=200)
@@ -62,9 +63,11 @@ class PopulationSource(BaseModel):
     @model_validator(mode="after")
     def validate_mapping_shape(self):  # type: ignore[no-untyped-def]
         if self.source_kind == "document":
-            if self.field_mappings is None or self.column_mapping is not None:
+            if (self.field_mappings is None or self.column_mapping is not None
+                    or self.constant_mapping is not None):
                 raise ValueError("document sources require fieldMappings only")
-        elif self.column_mapping is None or self.field_mappings is not None:
+        elif ((self.column_mapping is None and self.constant_mapping is None)
+              or self.field_mappings is not None):
             raise ValueError("tabular sources require columnMapping only")
         return self
 
@@ -87,6 +90,13 @@ class RelationBinding(BaseModel):
         return data
 
 
+class PopulationScope(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["model", "mapping"]
+    mapping_id: str | None = Field(default=None, alias="mappingId", max_length=200)
+
+
 class PopulationPayload(BaseModel):
     """Concrete population command (plan 5.4). The canonical specification and
     the resolved source set travel inline as a documented bridge until the
@@ -96,7 +106,11 @@ class PopulationPayload(BaseModel):
 
     model_version_id: str = Field(alias="modelVersionId", min_length=1, max_length=200)
     spec_hash: str = Field(alias="specHash", pattern=r"^sha256:[0-9a-f]{64}$")
+    population_execution_fingerprint: str | None = Field(
+        default=None, alias="populationExecutionFingerprint",
+        pattern=r"^sha256:[0-9a-f]{64}$")
     purpose: Literal["preview", "build", "refresh"]
+    scope: PopulationScope
     specification: dict[str, Any]
     sources: list[PopulationSource] = Field(min_length=1, max_length=25)
     relation_bindings: list[RelationBinding] = Field(
@@ -175,7 +189,7 @@ class ActivateRevisionCommand(BaseModel):
         alias="expectedCorrectionSequence", ge=0)
     expected_active_data_revision_id: str | None = Field(
         default=None, alias="expectedActiveDataRevisionId", max_length=200)
-    environment: Literal["production", "shadow", "test"] = "production"
+    environment: Literal["draft", "production", "shadow", "test"] = "production"
 
 
 class SourceEventPayload(BaseModel):

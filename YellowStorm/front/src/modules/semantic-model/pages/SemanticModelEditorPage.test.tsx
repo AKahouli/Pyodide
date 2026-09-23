@@ -10,6 +10,7 @@ const apiMocks = vi.hoisted(() => ({
   applyOperations: vi.fn(),
   rebuildAgeGraph: vi.fn(),
   connectWorkspace: vi.fn(),
+  getPopulationJob: vi.fn(),
 }));
 
 vi.mock("../api", () => ({
@@ -17,6 +18,7 @@ vi.mock("../api", () => ({
     applyOperations: apiMocks.applyOperations,
     rebuildAgeGraph: apiMocks.rebuildAgeGraph,
     connectWorkspace: apiMocks.connectWorkspace,
+    getPopulationJob: apiMocks.getPopulationJob,
   },
 }));
 
@@ -94,6 +96,10 @@ vi.mock("../components/editor/SemanticModelCanvas", () => ({
 vi.mock("../components/editor/SemanticModelInspector", () => ({
   SemanticModelInspector: () => null,
 }));
+vi.mock('../components/editor/SemanticModelValidateDialog', () => ({
+  SemanticModelValidateDialog: ({ onPopulationStarted }: { onPopulationStarted: (outcome: { jobId: string; status: string; skipped: []; reused: boolean }) => void }) =>
+    <button onClick={() => onPopulationStarted({ jobId: 'dialog-job', status: 'queued', skipped: [], reused: false })}>start-dialog-population</button>,
+}));
 vi.mock("../components/versions/VersionsPanel", () => ({
   VersionsPanel: () => null,
 }));
@@ -103,6 +109,16 @@ vi.mock("../components/mapping/SourceMappingDrawer", () => ({
     assetKind: 'excel_sheet', conceptId,
   }),
   SourceMappingDrawer: ({ target }: { target: { documentName: string } | null }) => target ? <div>{target.documentName}</div> : null,
+}));
+vi.mock('../components/mapping/SemanticMappingsView', () => ({
+  SemanticMappingsView: ({ onPopulationAccepted }: { onPopulationAccepted?: (jobId: string) => void }) =>
+    <button onClick={() => onPopulationAccepted?.('job-1')}>accept-population</button>,
+}));
+vi.mock('../components/preview/SemanticDataPreview', () => ({
+  SemanticDataPreview: ({ dataRevisionId, onDataRevision }: { dataRevisionId?: string; onDataRevision: (revisionId: string) => void }) => <>
+    <span>{`revision:${dataRevisionId ?? 'none'}`}</span>
+    <button onClick={() => onDataRevision('old-revision')}>pin-revision</button>
+  </>,
 }));
 
 describe("SemanticModelEditorPage", () => {
@@ -117,6 +133,7 @@ describe("SemanticModelEditorPage", () => {
       graphViewerWarning: null,
     });
     apiMocks.connectWorkspace.mockResolvedValue(undefined);
+    apiMocks.getPopulationJob.mockResolvedValue({ jobId: 'job-1', state: 'completed' });
     useSemanticModelEditorStore.getState().reset();
   });
 
@@ -191,5 +208,41 @@ describe("SemanticModelEditorPage", () => {
 
     await waitFor(() => expect(apiMocks.connectWorkspace).toHaveBeenCalledWith('model-1', 'workspace-1', false));
     expect(await screen.findByText('customers.xlsx')).toBeInTheDocument();
+  });
+
+  it('releases the revision pin when population completes after leaving mappings', async () => {
+    let completeJob!: (value: unknown) => void;
+    apiMocks.getPopulationJob.mockImplementationOnce(() => new Promise((resolve) => { completeJob = resolve; }));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
+
+    act(() => useSemanticModelEditorStore.getState().setMode('records'));
+    fireEvent.click(await screen.findByText('pin-revision'));
+    expect(screen.getByText('revision:old-revision')).toBeInTheDocument();
+    act(() => useSemanticModelEditorStore.getState().setMode('mappings'));
+    fireEvent.click(await screen.findByText('accept-population'));
+    await waitFor(() => expect(apiMocks.getPopulationJob).toHaveBeenCalledWith('model-1', 'job-1'));
+    act(() => useSemanticModelEditorStore.getState().setMode('structure'));
+
+    completeJob({ jobId: 'job-1', state: 'completed' });
+    await waitFor(() => expect(queryClient.getQueryData(['semantic-models', 'population-job', 'model-1', 'job-1'])).toMatchObject({ state: 'completed' }));
+    act(() => useSemanticModelEditorStore.getState().setMode('records'));
+    expect(await screen.findByText('revision:none')).toBeInTheDocument();
+  });
+
+  it('tracks population launched from validation', async () => {
+    apiMocks.getPopulationJob.mockResolvedValueOnce({ jobId: 'dialog-job', state: 'completed' });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
+
+    act(() => useSemanticModelEditorStore.getState().setMode('records'));
+    fireEvent.click(await screen.findByText('pin-revision'));
+    act(() => useSemanticModelEditorStore.getState().setMode('structure'));
+    fireEvent.click(await screen.findByText('start-dialog-population'));
+
+    await waitFor(() => expect(apiMocks.getPopulationJob).toHaveBeenCalledWith('model-1', 'dialog-job'));
+    await waitFor(() => expect(queryClient.getQueryData(['semantic-models', 'population-job', 'model-1', 'dialog-job'])).toMatchObject({ state: 'completed' }));
+    act(() => useSemanticModelEditorStore.getState().setMode('records'));
+    expect(await screen.findByText('revision:none')).toBeInTheDocument();
   });
 });

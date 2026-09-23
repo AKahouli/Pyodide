@@ -46,6 +46,7 @@ export interface SemanticModel {
   updatedAt: string;
   indexStatus: SemanticModelIndexStatus;
   indexError: string | null;
+  executionOwner?: 'legacy' | 'runtime';
 }
 
 export interface SemanticModelManualInstances {
@@ -403,6 +404,15 @@ export interface PopulationRefreshResponse {
   skipped: Array<{ mappingId: string; reason: string }>;
 }
 
+export interface PopulationJob {
+  jobId: string;
+  jobType: string;
+  modelId: string | null;
+  state: string;
+  result: Record<string, unknown> | null;
+  errorCode: string | null;
+}
+
 export interface SemanticReadiness {
   status: 'not_configured' | 'needs_review' | 'ready';
   score: number;
@@ -508,9 +518,13 @@ export interface SourcePreviewIssue {
   mappingId: string;
   code: 'source_unavailable';
   message: string;
+  documentName?: string;
+  reason?: string;
+  detail?: string;
 }
 
 export interface SemanticDataPreview {
+  dataRevisionId?: string;
   concepts: Array<{
     id: string;
     label: string;

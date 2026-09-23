@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, ExternalLink, Loader2, RefreshCw, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -10,13 +10,16 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useSemanticDataPreview } from '../../query/hooks';
 import type { SourcePreviewIssue } from '../../types';
 
-export function SemanticDataPreview({ modelId }: Readonly<{ modelId: string }>) {
+export function SemanticDataPreview({ modelId, dataRevisionId, onDataRevision }: Readonly<{ modelId: string; dataRevisionId?: string; onDataRevision?: (revisionId: string) => void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const [limit, setLimit] = useState(25);
   const [conceptId, setConceptId] = useState('all');
   const [search, setSearch] = useState('');
   const [showUnresolved, setShowUnresolved] = useState(true);
-  const preview = useSemanticDataPreview(modelId, limit);
+  const preview = useSemanticDataPreview(modelId, limit, true, dataRevisionId);
+  useEffect(() => {
+    if (preview.data?.dataRevisionId) onDataRevision?.(preview.data.dataRevisionId);
+  }, [onDataRevision, preview.data?.dataRevisionId]);
   const concepts = useMemo(() => (preview.data?.concepts ?? [])
     .filter((concept) => conceptId === 'all' || concept.id === conceptId)
     .map((concept) => ({

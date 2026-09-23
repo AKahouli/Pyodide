@@ -51,9 +51,11 @@ class AsyncContext:
 
 
 class FakeAgeConnection:
-    def __init__(self, vertices: int = 1, edges: int = 1) -> None:
+    def __init__(self, vertices: int = 1, edges: int = 1,
+                 graph_rows: list[list[dict]] | None = None) -> None:
         self.vertices = vertices
         self.edges = edges
+        self.graph_rows = list(graph_rows or [])
         self.statements: list[str] = []
 
     def transaction(self) -> AsyncContext:
@@ -73,10 +75,15 @@ class FakeAgeConnection:
             return str(self.edges)
         return True
 
+    async def fetch(self, sql: str, *_params):  # type: ignore[no-untyped-def]
+        self.statements.append(sql)
+        return self.graph_rows.pop(0)
+
 
 class FakeAgePool:
-    def __init__(self, vertices: int = 1, edges: int = 1) -> None:
-        self.connection = FakeAgeConnection(vertices, edges)
+    def __init__(self, vertices: int = 1, edges: int = 1,
+                 graph_rows: list[list[dict]] | None = None) -> None:
+        self.connection = FakeAgeConnection(vertices, edges, graph_rows)
 
     def acquire(self) -> AsyncContext:
         return AsyncContext(self.connection)
@@ -178,6 +185,48 @@ def test_project_compiles_and_records_graph(client: TestClient):
                        headers=AUTH).status_code == 409
 
 
+def test_bound_records_and_graph_share_the_draft_revision(client: TestClient):
+    binding = {"model_id": "m1", "model_version_id": "v1",
+               "data_revision_id": "dr_1", "projection_ref": "age:v1:pop_dr_1"}
+    counts = {"entities": 1, "assertions": 1, "relationships": 1}
+    entity = {"id": "crm::1", "concept_id": "c1", "namespace": "crm", "label": "Acme",
+              "attributes": {"name": "Acme"}, "provenance": {}}
+    relationship = {"relation_id": "r1", "source_entity_id": "crm::1",
+                    "target_entity_id": "crm::1", "matching_strategy": "exact"}
+    specification = {"concepts": [{"conceptId": "c1", "label": "Customer",
+                                    "allowedFields": ["name"]}],
+                     "relations": [{"relationId": "r1", "label": "knows"}]}
+    _inject(client, ScriptedPool([binding, counts, [entity], [relationship],
+                                  {"specification": specification}]))
+    records = client.get("/v1/semantic-model-population/models/m1/records?limit=25",
+                         headers=AUTH)
+    assert records.status_code == 200
+    assert records.json()["dataRevisionId"] == "dr_1"
+    assert records.json()["entities"][0]["entityId"] == "crm::1"
+
+    graph_rows = [
+        [{"record_id": '"crm::1"', "concept_id": '"c1"', "label": '"Acme"',
+          "properties": '{"record_id":"crm::1","concept_id":"c1","label":"Acme"}'}],
+        [{"relation_id": '"r1"', "source_id": '"crm::1"', "target_id": '"crm::1"',
+          "properties": '{"relation_id":"r1"}'}],
+    ]
+    _inject(client, ScriptedPool([binding, {"specification": specification}]),
+            FakeAgePool(graph_rows=graph_rows))
+    graph = client.get("/v1/semantic-model-population/models/m1/graph", headers=AUTH)
+    assert graph.status_code == 200
+    assert graph.json()["dataRevisionId"] == "dr_1"
+    assert graph.json()["nodes"][0]["id"] == "crm::1"
+    assert graph.json()["nodes"][0]["properties"]["record_label"] == "Acme"
+
+    _inject(client, ScriptedPool([binding]))
+    stale = client.get(
+        "/v1/semantic-model-population/models/m1/records?dataRevisionId=dr_old",
+        headers=AUTH,
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"] == "active_binding_changed"
+
+
 def test_project_rejects_truncated_listing(client: TestClient):
     revision = {"id": "dr_9", "model_id": "m1", "validation_state": "valid",
                 "projection_ref": None, "correction_sequence": 0}
@@ -231,7 +280,8 @@ def test_project_rebuilds_legacy_unverified_reference(client: TestClient):
 
 
 def test_activation_swaps_binding_only_on_expected_tuple(client: TestClient):
-    revision = {"id": "dr_1", "model_id": "m1", "validation_state": "valid",
+    revision = {"id": "dr_1", "model_id": "m1", "spec_hash": "sha256:" + "a" * 64,
+                "validation_state": "valid",
                 "projection_ref": "age:v1:pop_dr_1", "correction_sequence": 2}
     binding = {"model_id": "m1", "environment": "production", "data_revision_id": "dr_1",
                "version": 4, "projection_ref": "revision:dr_2"}

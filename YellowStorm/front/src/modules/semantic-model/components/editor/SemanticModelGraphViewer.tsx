@@ -45,6 +45,8 @@ interface Props {
   onClose: () => void;
   modelId: string;
   canEdit?: boolean;
+  dataRevisionId?: string;
+  onDataRevision?: (revisionId: string) => void;
 }
 
 // Wrap long text into 2 lines to fit inside the circle
@@ -55,9 +57,11 @@ function wrapLines(text: string, maxLen = 11): [string, string | null] {
   return [text.slice(0, maxLen) + '…', null];
 }
 
-export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = false }: Props) {
+export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = false, dataRevisionId, onDataRevision }: Props) {
   const { t } = useModuleTranslation('semantic-model');
   const model = useSemanticModel(open ? modelId : undefined);
+  const runtimeOwned = model.data?.executionOwner === 'runtime';
+  const graphCanEdit = canEdit && !runtimeOwned;
   const queryClient = useQueryClient();
   const markIndexPending = useCallback(() => {
     queryClient.setQueryData(semanticModelQueryKeys.model(modelId), (current: typeof model.data) => current ? { ...current,indexStatus: 'pending' as const,indexError: null } : current);
@@ -73,7 +77,6 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
   const [modelGraph, setModelGraph] = useState<SemanticGraph | null>(null);
   const [corpus, setCorpus] = useState<SemanticCorpusManifest | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [syncFailed, setSyncFailed] = useState(false);
   const [selectedNode, setSelectedNode] = useState<AgeGraphNode | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<AgeGraphEdge | null>(null);
   const [editorMode, setEditorMode] = useState<'node' | null>(null);
@@ -98,16 +101,16 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    setSyncFailed(false);
     setSelectedNode(null);
     setSelectedEdge(null);
     try {
-      const [{ nodes, edges }, structure, preparedCorpus] = await Promise.all([
-        semanticModelApi.getAgeGraph(modelId),
+      const [{ nodes, edges, dataRevisionId: loadedRevisionId }, structure, preparedCorpus] = await Promise.all([
+        semanticModelApi.getAgeGraph(modelId, dataRevisionId),
         semanticModelApi.graph(modelId),
         semanticModelApi.corpus(modelId),
       ]);
       setAgeNodes(nodes);
+      if (loadedRevisionId) onDataRevision?.(loadedRevisionId);
       setAgeEdges(edges);
       setModelGraph(structure);
       setCorpus(preparedCorpus);
@@ -118,7 +121,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
     } finally {
       setLoading(false);
     }
-  }, [modelId]);
+  }, [dataRevisionId, modelId, onDataRevision]);
 
   useEffect(() => {
     if (open && modelId) void load();
@@ -335,7 +338,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
         .text(d.type);
     });
 
-    if (canEdit) {
+    if (graphCanEdit) {
       node
         .append('circle')
         .attr('cx', NODE_R - 2)
@@ -365,7 +368,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
 
     simRef.current = sim;
     return () => { sim.stop(); };
-  }, [ageNodes, ageEdges, canEdit, modelGraph, t]);
+  }, [ageNodes, ageEdges, graphCanEdit, modelGraph, t]);
 
   const apply = useCallback(async (operation: AgeGraphOperation) => {
     setMutationLoading(true);
@@ -376,22 +379,6 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
       setEditorMode(null);
       await load();
     } catch (err: unknown) {
-      setError(parseApiError(err).message);
-    } finally {
-      setMutationLoading(false);
-    }
-  }, [load, markIndexPending, modelId]);
-
-  const synchronize = useCallback(async () => {
-    setMutationLoading(true);
-    setError(null);
-    setSyncFailed(false);
-    try {
-      await semanticModelApi.indexAgeGraph(modelId);
-      markIndexPending();
-      await load();
-    } catch (err: unknown) {
-      setSyncFailed(true);
       setError(parseApiError(err).message);
     } finally {
       setMutationLoading(false);
@@ -417,7 +404,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
         <div className="flex items-center gap-3">
           <h2 className="text-sm font-semibold text-white">{t('graphViewer.title')}</h2>
           <span className={`h-2.5 w-2.5 rounded-full ${model.data?.indexStatus === 'indexed' ? 'bg-emerald-500' : model.data?.indexStatus === 'failed' ? 'bg-red-500' : `bg-amber-500 ${model.data?.indexStatus === 'pending' || model.data?.indexStatus === 'in_progress' ? 'animate-pulse' : ''}`}`} title={model.data?.indexStatus ?? 'not_indexed'} />
-          {canEdit && <span className="text-[10px] text-white/45">{t('graphViewer.mouseRelationHint')}</span>}
+           {graphCanEdit && <span className="text-[10px] text-white/45">{t('graphViewer.mouseRelationHint')}</span>}
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           {allTypes.map((lbl) => (
@@ -430,14 +417,14 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
             variant="ghost"
             size="sm"
             className="text-white/60 hover:text-white hover:bg-white/10 gap-1.5"
-            onClick={() => void synchronize()}
+             onClick={() => void load()}
             disabled={loading || mutationLoading}
             aria-label={t('graphViewer.button')}
             title={t('graphViewer.button')}
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading || mutationLoading ? 'animate-spin' : ''}`} />
           </Button>
-          {canEdit && (
+           {graphCanEdit && (
             <>
               <Button variant="outline" size="sm" className="text-white border-white/20 hover:bg-white/10 gap-1.5" onClick={() => setEditorMode('node')} disabled={mutationLoading}>
                 <Plus className="h-3.5 w-3.5" />{t('graphViewer.addNode')}
@@ -471,7 +458,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => void (syncFailed ? synchronize() : load())}
+                 onClick={() => void load()}
                 className="text-white border-white/20 hover:bg-white/10"
               >
                 {t('graphViewer.retry')}
@@ -484,7 +471,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
             </div>
           )}
           <svg ref={svgRef} className="w-full h-full" />
-          {canEdit && editorMode === 'node' && (
+           {graphCanEdit && editorMode === 'node' && (
             <form
               className="absolute left-4 top-4 z-10 w-80 space-y-3 rounded-xl border border-white/15 bg-[#171725]/95 p-4 shadow-xl"
               onSubmit={(event) => {
@@ -517,7 +504,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
               <div className="flex justify-end gap-2"><Button type="button" variant="ghost" className="text-white/70 hover:bg-white/10 hover:text-white" onClick={() => setEditorMode(null)}>{t('graphViewer.cancel')}</Button><Button type="submit" disabled={mutationLoading}>{t('graphViewer.save')}</Button></div>
             </form>
           )}
-          {canEdit && pendingRelationChoice && pendingRelationChoice.relations.length > 1 && (
+           {graphCanEdit && pendingRelationChoice && pendingRelationChoice.relations.length > 1 && (
             <div className="absolute left-4 top-4 z-10 w-80 space-y-3 rounded-xl border border-white/15 bg-[#171725]/95 p-4 shadow-xl">
               <div className="flex items-center justify-between"><p className="text-sm font-semibold text-white">{t('graphViewer.chooseRelation')}</p><button type="button" className="text-white/50 hover:text-white" onClick={() => setPendingRelationChoice(null)}><X className="h-4 w-4" /></button></div>
               <select value={pendingRelationTypeId} onChange={(event) => setPendingRelationTypeId(event.target.value)} className="h-10 w-full rounded-md border border-white/15 bg-white/5 px-3 text-sm text-white">
@@ -526,7 +513,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
               <div className="flex justify-end gap-2"><Button type="button" variant="ghost" className="text-white/70 hover:bg-white/10 hover:text-white" onClick={() => setPendingRelationChoice(null)}>{t('graphViewer.cancel')}</Button><Button type="button" disabled={mutationLoading || !pendingRelationTypeId} onClick={() => { const relation = pendingRelationChoice.relations.find((item) => item.id === pendingRelationTypeId); if (relation) setPendingRelationChoice({ ...pendingRelationChoice, relations: [relation] }); }}>{t('graphViewer.save')}</Button></div>
             </div>
           )}
-          {canEdit && (selectedNode || selectedEdge) && (
+           {graphCanEdit && (selectedNode || selectedEdge) && (
             <div className="absolute bottom-4 left-4 z-10 flex items-center gap-2 rounded-xl border border-white/15 bg-[#171725]/95 p-2 shadow-xl">
               <span className="max-w-48 truncate px-2 text-xs text-white/70">{selectedNode ? String(selectedNode.properties.record_label ?? selectedNode.id) : selectedEdge?.label}</span>
               <Button size="sm" variant="destructive" disabled={mutationLoading} onClick={() => void apply(selectedNode ? { type: 'node.delete', nodeId: selectedNode.id } : { type: 'edge.delete', edgeId: selectedEdge!.id })}>

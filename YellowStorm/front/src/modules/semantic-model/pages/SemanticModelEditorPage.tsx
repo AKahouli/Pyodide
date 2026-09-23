@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useBlocker, useNavigate, useParams } from "react-router-dom";
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -65,6 +65,8 @@ function apiCode(error: unknown): string | undefined {
   return parseApiError(error).code;
 }
 
+const POPULATION_TERMINAL_STATES = new Set(['completed', 'completed_with_gaps', 'failed', 'cancelled', 'superseded']);
+
 export function SemanticModelEditorPage() {
   const { modelId } = useParams();
   const { t } = useModuleTranslation("semantic-model");
@@ -112,8 +114,23 @@ export function SemanticModelEditorPage() {
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [validateOpen, setValidateOpen] = useState(false);
   const [graphViewerOpen, setGraphViewerOpen] = useState(false);
+  const [boundDataRevisionId, setBoundDataRevisionId] = useState<string>();
+  const [populationJobId, setPopulationJobId] = useState<string>();
   const [trustOpen, setTrustOpen] = useState(false);
   const [population, setPopulation] = useState<PopulationOutcome | null>(null);
+  useEffect(() => setBoundDataRevisionId(undefined), [modelId]);
+  const populationJob = useQuery({
+    queryKey: ['semantic-models', 'population-job', modelId, populationJobId],
+    queryFn: () => semanticModelApi.getPopulationJob(modelId!, populationJobId!),
+    enabled: Boolean(modelId && populationJobId),
+    refetchInterval: (query) => POPULATION_TERMINAL_STATES.has(query.state.data?.state ?? '') ? false : 2000,
+    retry: false,
+  });
+  useEffect(() => {
+    if (!populationJob.data || !POPULATION_TERMINAL_STATES.has(populationJob.data.state)) return;
+    if (['completed', 'completed_with_gaps'].includes(populationJob.data.state)) setBoundDataRevisionId(undefined);
+    setPopulationJobId(undefined);
+  }, [populationJob.data]);
   const [mappingTarget, setMappingTarget] = useState<SourceMappingTarget | null>(null);
   const openMappingTarget = useCallback(async (target: SourceMappingTarget) => {
     if (!modelId) return;
@@ -309,15 +326,6 @@ export function SemanticModelEditorPage() {
   };
   const openGraphViewer = () => {
     setGraphViewerOpen(true);
-    if (!modelId) return;
-    void semanticModelApi.indexAgeGraph(modelId)
-      .then(() => {
-        queryClient.setQueryData(semanticModelQueryKeys.model(modelId), (current: typeof model.data) => current ? { ...current,indexStatus: 'pending' as const,indexError: null } : current);
-        return queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.all });
-      })
-      .catch((error: unknown) => {
-        showError(t('save.error'), { description: parseApiError(error).message });
-      });
   };
   return (
     <div className="flex h-[100dvh] w-full min-w-0 max-w-full flex-col overflow-hidden bg-muted/15">
@@ -488,8 +496,8 @@ export function SemanticModelEditorPage() {
             }}
             onMapStructuredDrop={(resource, nodeId) => void openMappingTarget(sourceMappingTargetFromResource(resource, nodeId))}
           />}
-          {mode === 'records' && modelId && <SemanticDataPreview modelId={modelId} />}
-          {mode === 'mappings' && modelId && <SemanticMappingsView modelId={modelId} canEdit={canEdit} onRepairMapping={(mapping) => void openMappingTarget({ workspaceId: mapping.workspaceId, documentId: mapping.documentId, documentName: mapping.documentName ?? mapping.documentId, assetKind: mapping.assetKind, mimeType: mapping.mimeType, path: mapping.documentPath, conceptId: mapping.conceptId, mapping })} />}
+          {mode === 'records' && modelId && <SemanticDataPreview modelId={modelId} dataRevisionId={boundDataRevisionId} onDataRevision={setBoundDataRevisionId} />}
+          {mode === 'mappings' && modelId && <SemanticMappingsView modelId={modelId} canEdit={canEdit} onPopulationAccepted={setPopulationJobId} onRepairMapping={(mapping) => void openMappingTarget({ workspaceId: mapping.workspaceId, documentId: mapping.documentId, documentName: mapping.documentName ?? mapping.documentId, assetKind: mapping.assetKind, mimeType: mapping.mimeType, path: mapping.documentPath, conceptId: mapping.conceptId, mapping })} />}
           {mode === 'structure' && canEdit && graph.nodes.length > 0 && (
             <div className="absolute bottom-5 right-5 z-10 flex gap-2">
               <Button
@@ -561,7 +569,7 @@ export function SemanticModelEditorPage() {
           open={validateOpen}
           onOpenChange={setValidateOpen}
           modelId={modelId}
-          onPopulationStarted={(outcome) => { setPopulation(outcome); setTrustOpen(false); }}
+          onPopulationStarted={(outcome) => { setPopulation(outcome); setPopulationJobId(outcome.jobId); setTrustOpen(false); }}
         />
       )}
       {modelId && (
@@ -569,6 +577,8 @@ export function SemanticModelEditorPage() {
           open={graphViewerOpen}
           onClose={() => setGraphViewerOpen(false)}
           modelId={modelId}
+          dataRevisionId={boundDataRevisionId}
+          onDataRevision={setBoundDataRevisionId}
           canEdit={canEdit}
         />
       )}

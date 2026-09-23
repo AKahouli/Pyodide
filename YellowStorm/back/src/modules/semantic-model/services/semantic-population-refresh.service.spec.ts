@@ -60,6 +60,7 @@ const setup = (
   };
   const models = {
     requireActiveRole: jest.fn(async () => ({ id: 'model-1', currentDraftVersionId: 'v-1' })),
+    requireRole: jest.fn(async () => ({ id: 'model-1', currentDraftVersionId: 'v-1' })),
   };
   const documents = {
     findById: jest.fn(async () => ({
@@ -71,6 +72,17 @@ const setup = (
   const runtime = {
     mirrorSpecification: jest.fn(async () => ({ reused: false })),
     requestPopulationRun: jest.fn(async () => ({ jobId: 'j-1', status: 'queued', reused: false })),
+    getJob: jest.fn(async () => ({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'completed' })),
+    getBoundRecords: jest.fn(async () => ({
+      dataRevisionId: 'dr-1',
+      entities: [{ entityId: 'e-1', conceptId: 'c-customer', label: 'Acme', attributes: { name: 'Acme' }, provenance: {} }],
+      relationships: [],
+      counts: { entities: 1, assertions: 1, relationships: 0 },
+      specification: {
+        concepts: [{ conceptId: 'c-customer', label: 'Customer', allowedFields: ['customer_id', 'name'] }],
+        relations: [],
+      },
+    })),
   };
   const service = new SemanticPopulationRefreshService(
     database as any, models as any, documents as any,
@@ -80,6 +92,20 @@ const setup = (
 };
 
 describe('SemanticPopulationRefreshService', () => {
+  it('returns only matching population jobs', async () => {
+    const { runtime, service } = setup();
+    await expect(service.getJob('u-1', 'model-1', 'j-1')).resolves.toMatchObject({ state: 'completed' });
+    runtime.getJob.mockResolvedValueOnce({ jobId: 'j-2', jobType: 'datasource.discovery', modelId: 'model-1', state: 'completed' });
+    await expect(service.getJob('u-1', 'model-1', 'j-2')).rejects.toThrow('Population job not found');
+  });
+
+  it('shapes bound runtime entities as the existing Records contract', async () => {
+    const { service } = setup();
+    const result = await service.boundRecords('u-1', 'model-1', 25);
+    expect(result).toMatchObject({ dataRevisionId: 'dr-1', summary: { entities: 1, resolvedRelations: 0 } });
+    expect(result.concepts[0]).toMatchObject({ id: 'c-customer', entities: [{ id: 'e-1', values: { name: 'Acme' } }] });
+  });
+
   it('assembles, mirrors and runs a whole-model refresh', async () => {
     const { database, runtime, service } = setup();
     const result = await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
@@ -94,6 +120,7 @@ describe('SemanticPopulationRefreshService', () => {
     expect(command.payload.purpose).toBe('build');
     expect(command.payload.specification.concepts).toHaveLength(1);
     expect(command.payload.sources).toHaveLength(1);
+    expect(command.payload.populationExecutionFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect(command.payload.sources[0]).toMatchObject({
       conceptId: 'c-customer',
       columnMapping: { customer_id: 'customer_id', legal_name: 'name' },
@@ -105,6 +132,38 @@ describe('SemanticPopulationRefreshService', () => {
     const ruleQuery = database.query.mock.calls.find(([sql]) =>
       sql.includes('FROM semantic_model.relation_resolution_rules'))?.[0] ?? '';
     expect(ruleQuery).not.toMatch(/source_concept_id|target_concept_id|cardinality/);
+  });
+
+  it('fingerprints the JSON-normalized source payload', async () => {
+    const { documents, runtime, service } = setup();
+    documents.findById.mockResolvedValueOnce({
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', originalName: 'a.xlsx', size: 100,
+      createdBy: 'uploader-1', indexingStatus: 'ready',
+      contentHash: 'sha256:abc', updatedAt: '2026-01-01', uploadedAt: undefined,
+    } as any);
+
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const command = calls[0][0];
+    const source = command.payload.sources[0];
+    expect(source).toEqual(JSON.parse(JSON.stringify(source)));
+    expect(command.payload.populationExecutionFingerprint).toBe(new ModelSpecificationService().hashCanonical({
+      specHash: command.payload.specHash,
+      sources: command.payload.sources.map((entry: Record<string, any>) => ({
+        conceptId: entry.conceptId,
+        sourceKind: entry.sourceKind,
+        source: entry.source,
+        mappingVersion: entry.mappingVersion,
+        columnMapping: entry.columnMapping ?? null,
+        constantMapping: entry.constantMapping ?? null,
+        fieldMappings: entry.fieldMappings ?? null,
+        options: entry.options ?? {},
+        labelField: entry.labelField ?? null,
+      })),
+      relationBindings: command.payload.relationBindings,
+      populationEngineVersion: 'r1-mvp-4',
+    }));
   });
 
   it('scopes a single mapping to its concept only', async () => {
@@ -332,7 +391,7 @@ describe('SemanticPopulationRefreshService', () => {
     }]);
   });
 
-  it('rejects relation target fields outside the target identity', async () => {
+  it('accepts a mapped type-compatible relation target outside the target identity', async () => {
     const contract = MAPPING({
       id: 'm-2', conceptId: 'c-contract', documentId: 'd-2', identityFields: ['contract_id'],
       fieldMappings: [
@@ -353,10 +412,26 @@ describe('SemanticPopulationRefreshService', () => {
       'c-customer': ['customer_id'], 'c-contract': ['contract_id'],
     }, [relation], [rule]);
 
-    await expect(service.requestRefresh('u-1', 'model-1', {
+    await service.requestRefresh('u-1', 'model-1', {
       purpose: 'build', scope: { kind: 'model' },
-    })).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED });
-    expect(runtime.requestPopulationRun).not.toHaveBeenCalled();
+    });
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    expect(calls[0][0].payload.relationBindings).toEqual([{
+      relationId: 'r-1', referenceField: 'customer_id', targetField: 'customer_ref',
+    }]);
+  });
+
+  it('compiles structured constants without replacing direct fields', async () => {
+    const mapping = MAPPING({ fieldMappings: [
+      { sourceField: 'customer_id', targetAttribute: 'customer_id', mode: 'direct' },
+      { sourceField: null, targetAttribute: 'name', mode: 'constant', constantValue: 'Unknown' },
+    ] });
+    const { runtime, service } = setup([mapping]);
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    expect(calls[0][0].payload.sources[0]).toMatchObject({
+      columnMapping: { customer_id: 'customer_id' }, constantMapping: { name: 'Unknown' },
+    });
   });
 
   it('caps whole-model refreshes at 25 sources', async () => {

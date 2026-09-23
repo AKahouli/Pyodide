@@ -72,6 +72,195 @@ async def test_extracts_mapped_fields_with_ocr_provenance(monkeypatch: pytest.Mo
     assert assertion["evidence"]["rawEvidenceHash"].startswith("sha256:")
 
 
+AMENDMENT_CONCEPT = {
+    "conceptId": "amendment", "namespace": "amendment",
+    "keyComponents": ["contract_number", "amendment_number"],
+    "allowedFields": ["contract_number", "amendment_number", "effective_date"],
+    "populationMode": "materialized", "eligibility": None, "materialization": None,
+}
+
+
+@pytest.mark.asyncio
+async def test_reads_flattened_record_row_and_ignores_prose_mentions(
+        monkeypatch: pytest.MonkeyPatch, index_stubs):
+    async def read(*_args, **_kwargs):
+        return {"sections": [{"sectionPk": 7, "sectionKey": "s7", "blocks": [
+            {"blockPk": 9, "blockKey": "b9", "origin": "native_text",
+             "content": "This instrument amends the agreement identified by contract number "
+                        "CNT-2026-0041 and amendment number shown below."},
+            {"blockPk": 10, "blockKey": "b10", "origin": "native_text",
+             "content": "Contract number CNT-2026-0041 Amendment number 3 "
+                        "Effective date 2026-04-01 Document status Accepted"},
+        ]}], "coverage": {"directBlocksComplete": True}}
+
+    monkeypatch.setattr(document, "read_complete_section_set", read)
+    result = await document.populate_document(object(), entry(
+        {"sourceField": "contract number", "targetAttribute": "contract_number", "mode": "extract"},
+        {"sourceField": "amendment number", "targetAttribute": "amendment_number", "mode": "extract"},
+        {"sourceField": "effective date", "targetAttribute": "effective_date", "mode": "extract"},
+    ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata)
+    assert result["coverage"]["status"] == "processed_complete"
+    assert result["entities"][0]["identity"] == {
+        "contract_number": "cnt-2026-0041", "amendment_number": "3"}
+    assert {assertion["attribute"]: assertion["value"] for assertion in result["assertions"]} == {
+        "effective_date": "2026-04-01"}
+    assert result["assertions"][0]["evidence"]["blockKey"] == "b10"
+
+
+@pytest.mark.asyncio
+async def test_multi_word_colon_values_keep_line_anchored_semantics(
+        monkeypatch: pytest.MonkeyPatch, index_stubs):
+    async def read(*_args, **_kwargs):
+        return {"sections": [{"sectionPk": 7, "sectionKey": "s7", "blocks": [{
+            "blockPk": 9, "blockKey": "b9", "origin": "native_text",
+            "content": "Contract Number: Master Services Agreement\nCustomer Reference: C-99",
+        }]}], "coverage": {"directBlocksComplete": True}}
+
+    monkeypatch.setattr(document, "read_complete_section_set", read)
+    result = await document.populate_document(object(), entry(
+        {"sourceField": "Contract Number", "targetAttribute": "contract_number", "mode": "extract"},
+        {"sourceField": "Customer Reference", "targetAttribute": "customer_reference", "mode": "extract"},
+    ), CONCEPT, "u1", metadata_fetch=metadata)
+    assert result["entities"][0]["identity"] == {"contract_number": "master services agreement"}
+    assert result["assertions"][0]["value"] == "C-99"
+
+
+@pytest.mark.asyncio
+async def test_multi_word_hyphen_values_keep_line_anchored_semantics(
+        monkeypatch: pytest.MonkeyPatch, index_stubs):
+    async def read(*_args, **_kwargs):
+        return {"sections": [{"sectionPk": 7, "sectionKey": "s7", "blocks": [{
+            "blockPk": 9, "blockKey": "b9", "origin": "native_text",
+            "content": "Contract Number - Master Services Agreement\n"
+                       "Customer Reference - C-99",
+        }]}], "coverage": {"directBlocksComplete": True}}
+
+    monkeypatch.setattr(document, "read_complete_section_set", read)
+    result = await document.populate_document(object(), entry(
+        {"sourceField": "Contract Number", "targetAttribute": "contract_number", "mode": "extract"},
+        {"sourceField": "Customer Reference", "targetAttribute": "customer_reference", "mode": "extract"},
+    ), CONCEPT, "u1", metadata_fetch=metadata)
+    assert result["entities"][0]["identity"] == {"contract_number": "master services agreement"}
+    assert result["assertions"][0]["value"] == "C-99"
+
+
+@pytest.mark.asyncio
+async def test_hyphen_separator_without_symmetric_spaces_keeps_line_anchored_semantics(
+        monkeypatch: pytest.MonkeyPatch, index_stubs):
+    async def read(*_args, **_kwargs):
+        return {"sections": [{"sectionPk": 7, "sectionKey": "s7", "blocks": [{
+            "blockPk": 9, "blockKey": "b9", "origin": "native_text",
+            "content": "Contract Number- Master Services Agreement\n"
+                       "Customer Reference- C-99",
+        }]}], "coverage": {"directBlocksComplete": True}}
+
+    monkeypatch.setattr(document, "read_complete_section_set", read)
+    result = await document.populate_document(object(), entry(
+        {"sourceField": "Contract Number", "targetAttribute": "contract_number", "mode": "extract"},
+        {"sourceField": "Customer Reference", "targetAttribute": "customer_reference", "mode": "extract"},
+    ), CONCEPT, "u1", metadata_fetch=metadata)
+    assert result["entities"][0]["identity"] == {"contract_number": "master services agreement"}
+    assert result["assertions"][0]["value"] == "C-99"
+
+
+@pytest.mark.asyncio
+async def test_shorter_label_inside_longer_label_counts_once(
+        monkeypatch: pytest.MonkeyPatch, index_stubs):
+    async def read(*_args, **_kwargs):
+        return {"sections": [{"sectionPk": 7, "sectionKey": "s7", "blocks": [{
+            "blockPk": 9, "blockKey": "b9", "origin": "native_text",
+            "content": "Customer ID C041",
+        }]}], "coverage": {"directBlocksComplete": True}}
+
+    monkeypatch.setattr(document, "read_complete_section_set", read)
+    result = await document.populate_document(object(), entry(
+        {"sourceField": "customer id", "targetAttribute": "contract_number", "mode": "extract"},
+        {"sourceField": "id", "targetAttribute": "amendment_number", "mode": "extract"},
+    ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata)
+    assert result["entities"] == []
+    assert result["coverage"]["status"] == "unresolved_identity"
+
+
+@pytest.mark.asyncio
+async def test_punctuation_free_prose_with_two_labels_stays_unresolved(
+        monkeypatch: pytest.MonkeyPatch, index_stubs):
+    async def read(*_args, **_kwargs):
+        return {"sections": [{"sectionPk": 7, "sectionKey": "s7", "blocks": [{
+            "blockPk": 9, "blockKey": "b9", "origin": "native_text",
+            "content": "Refer to contract number CNT-2026-0041 and amendment number 3 below",
+        }]}], "coverage": {"directBlocksComplete": True}}
+
+    monkeypatch.setattr(document, "read_complete_section_set", read)
+    result = await document.populate_document(object(), entry(
+        {"sourceField": "contract number", "targetAttribute": "contract_number", "mode": "extract"},
+        {"sourceField": "amendment number", "targetAttribute": "amendment_number", "mode": "extract"},
+        {"sourceField": "effective date", "targetAttribute": "effective_date", "mode": "extract"},
+    ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata)
+    assert result["entities"] == []
+    assert result["coverage"]["status"] == "unresolved_identity"
+
+
+@pytest.mark.asyncio
+async def test_missing_value_before_another_label_stays_unresolved(
+        monkeypatch: pytest.MonkeyPatch, index_stubs):
+    async def read(*_args, **_kwargs):
+        return {"sections": [{"sectionPk": 7, "sectionKey": "s7", "blocks": [{
+            "blockPk": 9, "blockKey": "b9", "origin": "native_text",
+            "content": "Contract number Amendment number 3 Effective date 2026-04-01",
+        }]}], "coverage": {"directBlocksComplete": True}}
+
+    monkeypatch.setattr(document, "read_complete_section_set", read)
+    result = await document.populate_document(object(), entry(
+        {"sourceField": "contract number", "targetAttribute": "contract_number", "mode": "extract"},
+        {"sourceField": "amendment number", "targetAttribute": "amendment_number", "mode": "extract"},
+        {"sourceField": "effective date", "targetAttribute": "effective_date", "mode": "extract"},
+    ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata)
+    assert result["entities"] == []
+    assert result["coverage"]["status"] == "unresolved_identity"
+
+
+@pytest.mark.asyncio
+async def test_conflicting_row_and_line_candidates_stay_unresolved(
+        monkeypatch: pytest.MonkeyPatch, index_stubs):
+    async def read(*_args, **_kwargs):
+        return {"sections": [{"sectionPk": 7, "sectionKey": "s7", "blocks": [
+            {"blockPk": 9, "blockKey": "b9", "origin": "native_text",
+             "content": "Contract number CNT-2026-0041 Effective date 2026-04-01"},
+            {"blockPk": 10, "blockKey": "b10", "origin": "native_text",
+             "content": "Contract number: CNT-9999-0001\nEffective date: 2026-09-09"},
+        ]}], "coverage": {"directBlocksComplete": True}}
+
+    monkeypatch.setattr(document, "read_complete_section_set", read)
+    result = await document.populate_document(object(), entry(
+        {"sourceField": "contract number", "targetAttribute": "contract_number", "mode": "extract"},
+        {"sourceField": "effective date", "targetAttribute": "effective_date", "mode": "extract"},
+    ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata)
+    assert result["entities"] == []
+    assert result["coverage"]["status"] == "unresolved_identity"
+
+
+@pytest.mark.asyncio
+async def test_record_row_token_is_bounded_by_the_field_limit(
+        monkeypatch: pytest.MonkeyPatch, index_stubs):
+    long_value = "V" * (document.MAX_FIELD_VALUE_CHARS + 50)
+
+    async def read(*_args, **_kwargs):
+        return {"sections": [{"sectionPk": 7, "sectionKey": "s7", "blocks": [{
+            "blockPk": 9, "blockKey": "b9", "origin": "native_text",
+            "content": f"Contract number {long_value} Amendment number 7 "
+                       "Effective date 2026-04-01",
+        }]}], "coverage": {"directBlocksComplete": True}}
+
+    monkeypatch.setattr(document, "read_complete_section_set", read)
+    result = await document.populate_document(object(), entry(
+        {"sourceField": "contract number", "targetAttribute": "contract_number", "mode": "extract"},
+        {"sourceField": "amendment number", "targetAttribute": "amendment_number", "mode": "extract"},
+        {"sourceField": "effective date", "targetAttribute": "effective_date", "mode": "extract"},
+    ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata)
+    assert result["entities"][0]["identity"]["contract_number"] == \
+        long_value[:document.MAX_FIELD_VALUE_CHARS].lower()
+
+
 @pytest.mark.asyncio
 async def test_ignores_unlabelled_mentions_and_generated_descriptions(
         monkeypatch: pytest.MonkeyPatch, index_stubs):

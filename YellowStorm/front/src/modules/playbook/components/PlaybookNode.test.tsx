@@ -151,6 +151,27 @@ vi.mock('./PortLabel', () => ({
 }));
 
 describe('PlaybookNode', () => {
+  function createActions(overrides: Partial<NodeContextMenuActions> = {}): NodeContextMenuActions {
+    return {
+      onEdit: vi.fn(),
+      onClone: vi.fn(),
+      onDelete: vi.fn(),
+      onToggleEnabled: vi.fn(),
+      onExecuteStep: vi.fn(),
+      onResumeFromStep: vi.fn(),
+      onRunFromStep: vi.fn(),
+      onSkipStep: vi.fn(),
+      onSaveBaseline: vi.fn(),
+      canExecute: true,
+      isExecuting: false,
+      canResumeFromStep: () => false,
+      canRunFromStep: () => false,
+      canSkipStep: () => false,
+      canSaveBaseline: () => false,
+      ...overrides,
+    };
+  }
+
   function renderCompact(extra: Record<string, unknown> = {}, design = false, actions: NodeContextMenuActions | null = null) {
     return render(<NodeContextMenuContext.Provider value={actions}><CardDensityContext.Provider value={true}><CanvasDesignContext.Provider value={design}>
       <PlaybookNode {...({ id: 'node-1', selected: false, data: {
@@ -214,23 +235,7 @@ describe('PlaybookNode', () => {
 
   it('shows play and stop controls at the bottom of compact cards', () => {
     const onExecuteStep = vi.fn();
-    const actions = {
-      onEdit: vi.fn(),
-      onClone: vi.fn(),
-      onDelete: vi.fn(),
-      onToggleEnabled: vi.fn(),
-      onExecuteStep,
-      onResumeFromStep: vi.fn(),
-      onRunFromStep: vi.fn(),
-      onSkipStep: vi.fn(),
-      onSaveBaseline: vi.fn(),
-      canExecute: true,
-      isExecuting: false,
-      canResumeFromStep: () => false,
-      canRunFromStep: () => false,
-      canSkipStep: () => false,
-      canSaveBaseline: () => false,
-    } satisfies NodeContextMenuActions;
+    const actions = createActions({ onExecuteStep });
     const { rerender } = renderCompact({}, false, actions);
 
     fireEvent.click(screen.getByRole('button', { name: 'node.executeStep' }));
@@ -246,6 +251,30 @@ describe('PlaybookNode', () => {
       </CanvasDesignContext.Provider></CardDensityContext.Provider>
     </NodeContextMenuContext.Provider>);
 
+    fireEvent.click(screen.getByRole('button', { name: 'toolbar.stop' }));
+    expect(storeState.stopExecution).toHaveBeenCalledWith('playbook-1', 'execution-1');
+  });
+
+  it('uses the old detailed card action strip with contextual play and stop', () => {
+    const onExecuteStep = vi.fn();
+    const actions = createActions({ onExecuteStep });
+    const nodeProps = { id: 'node-1', selected: false, data: {
+      id: 'node-1', title: 'Extract text', description: 'Extract the source text.', assignedAgentId: 'agent-1',
+      executionOrder: 0, inputPorts: [], outputPorts: [],
+    } } as any;
+    const { rerender } = render(
+      <NodeContextMenuContext.Provider value={actions}><PlaybookNode {...nodeProps} /></NodeContextMenuContext.Provider>,
+    );
+
+    expect(screen.getByText('Extract the source text.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'node.executeStep' }));
+    expect(onExecuteStep).toHaveBeenCalledWith('node-1');
+
+    rerender(
+      <NodeContextMenuContext.Provider value={{ ...actions, canExecute: false, isExecuting: true }}>
+        <PlaybookNode {...nodeProps} />
+      </NodeContextMenuContext.Provider>,
+    );
     fireEvent.click(screen.getByRole('button', { name: 'toolbar.stop' }));
     expect(storeState.stopExecution).toHaveBeenCalledWith('playbook-1', 'execution-1');
   });

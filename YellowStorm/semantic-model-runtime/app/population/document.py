@@ -15,8 +15,9 @@ from app.datasource.section_reader import MAX_CLOSURE_SECTIONS, read_complete_se
 
 from .tabular import populate_concept_rows
 
-EXTRACTOR_VERSION = "label-value-v1"
+EXTRACTOR_VERSION = "label-value-v4"
 MAX_FIELD_VALUE_CHARS = 500
+RECORD_ROW_MIN_LABELS = 2
 
 
 def _metadata_value(source: dict[str, Any], field: str) -> Any:
@@ -32,6 +33,109 @@ def _label_value(text: Any, label: str) -> str | None:
         rf"(?:^|[\r\n])\s*{re.escape(label)}\s*[:\-]\s*([^\r\n]{{1,{MAX_FIELD_VALUE_CHARS}}})",
         text, flags=re.IGNORECASE)
     return match.group(1).strip() if match else None
+
+
+def _label_spans(text: Any, labels: list[str]) -> list[tuple[int, int, str]]:
+    """Non-overlapping whole-word label occurrences, longest label first.
+
+    Scanning longest-first stops a shorter mapped label from matching inside a
+    longer one, so ``id`` is never counted within ``customer id``.
+    """
+    if not isinstance(text, str) or not labels:
+        return []
+    ordered = sorted(set(labels), key=len, reverse=True)
+    pattern = re.compile(
+        "|".join(rf"(?<![A-Za-z0-9_]){re.escape(label)}(?![A-Za-z0-9_])" for label in ordered),
+        re.IGNORECASE)
+    spans: list[tuple[int, int, str]] = []
+    for match in pattern.finditer(text):
+        if spans and match.start() < spans[-1][1]:
+            continue
+        matched = match.group(0)
+        spans.append((match.start(), match.end(),
+                      next(label for label in ordered if label.lower() == matched.lower())))
+    return spans
+
+
+def _record_row_value(text: str, label: str, labels: list[str],
+                      spans: list[tuple[int, int, str]]) -> str | None:
+    r"""Single token following a whole-word label inside a flattened record row.
+
+    Extracted PDF tables arrive as one line of ``Label value`` pairs, so the
+    separator is whitespace and later labels are not at line start. Exactly one
+    bounded token is accepted, so a value cannot swallow the neighbouring pairs,
+    and a label followed straight away by another mapped label is treated as a
+    missing value rather than as a value named after the next label.
+    """
+    target = next(((start, end) for start, end, name in spans if name == label), None)
+    if target is None:
+        return None
+    if any(start > target[1] and not text[target[1]:start].strip() for start, _, _ in spans):
+        return None
+    remainder = text[target[1]:]
+    value = re.match(rf"(?:\s*[:\-]\s+|\s+)(\S{{1,{MAX_FIELD_VALUE_CHARS}}})", remainder)
+    return value.group(1) if value else None
+
+
+def _has_explicit_label_separator(text: str, labels: list[str]) -> bool:
+    """A mapped label followed by ``:`` or ``-`` uses the explicit form."""
+    return any(
+        re.search(rf"(?<![A-Za-z0-9_]){re.escape(label)}(?![A-Za-z0-9_])\s*[:\-]", text,
+                  flags=re.IGNORECASE)
+        for label in labels)
+
+
+def _is_record_row(text: Any, labels: list[str]) -> bool:
+    """A record row is a punctuation-free line that opens with a mapped label.
+
+    Blocks using explicit separators keep the line-anchored semantics, which
+    preserves multi-word values; only flattened ``Label value`` rows that start
+    at a label are read as records, so prose that merely mentions two labels is
+    not mistaken for one.
+    """
+    if not isinstance(text, str) or "." in text:
+        return False
+    if _has_explicit_label_separator(text, labels):
+        return False
+    spans = _label_spans(text, labels)
+    if not spans or text[:spans[0][0]].strip():
+        return False
+    return len({name for _, _, name in spans}) >= RECORD_ROW_MIN_LABELS
+
+
+def _record_row_blocks(sections: list[dict[str, Any]], labels: list[str],
+                       ) -> list[tuple[dict[str, Any], dict[str, Any], list[tuple[int, int, str]]]]:
+    rows = []
+    for section in sections:
+        for block in section["blocks"]:
+            if block.get("origin") == "generated_visual_description":
+                continue
+            text = block.get("content")
+            if _is_record_row(text, labels):
+                rows.append((block, section, _label_spans(text, labels)))
+    return rows
+
+
+def _record_row_candidates(
+        rows: list[tuple[dict[str, Any], dict[str, Any], list[tuple[int, int, str]]]],
+        label: str, labels: list[str]) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+    candidates = []
+    for block, section, spans in rows:
+        value = _record_row_value(block.get("content"), label, labels, spans)
+        if value is not None:
+            candidates.append((value, block, section))
+    return candidates
+
+
+def _line_anchored_candidates(sections: list[dict[str, Any]], label: str,
+                              ) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+    candidates = []
+    for section in sections:
+        for block in section["blocks"]:
+            value = _label_value(block.get("content"), label)
+            if value is not None and block.get("origin") != "generated_visual_description":
+                candidates.append((value, block, section))
+    return candidates
 
 
 def _evidence(block: dict[str, Any], section: dict[str, Any], raw_text: str,
@@ -122,19 +226,19 @@ async def populate_document(
         read = await read_complete_section_set(
             connection, document_pk=document_pk,
             section_pks=[hit["sectionPk"] for hit in hits], include_descendants=True)
+        extract_labels = [m["sourceField"] for m in extract_mappings]
+        record_rows = _record_row_blocks(read["sections"], extract_labels)
         for mapping in extract_mappings:
-            candidates: list[tuple[str, dict[str, Any]]] = []
-            for section in read["sections"]:
-                for block in section["blocks"]:
-                    value = _label_value(block.get("content"), mapping["sourceField"])
-                    if value is not None and block.get("origin") != "generated_visual_description":
-                        candidates.append((value, _evidence(
-                            block, section, str(block.get("content") or ""), asset_ref,
-                            entry["mappingVersion"])))
-            unique = {value for value, _ in candidates}
+            label = mapping["sourceField"]
+            candidates = _line_anchored_candidates(read["sections"], label)
+            candidates += _record_row_candidates(record_rows, label, extract_labels)
+            unique = {value for value, _, _ in candidates}
             if len(unique) == 1:
-                values[mapping["targetAttribute"]] = candidates[0][0]
-                evidence_by_field[mapping["targetAttribute"]] = candidates[0][1]
+                value, block, section = candidates[0]
+                values[mapping["targetAttribute"]] = value
+                evidence_by_field[mapping["targetAttribute"]] = _evidence(
+                    block, section, str(block.get("content") or ""), asset_ref,
+                    entry["mappingVersion"])
 
     row = {**values, "_row": None}
     output = populate_concept_rows(

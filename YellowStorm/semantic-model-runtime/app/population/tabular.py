@@ -70,6 +70,7 @@ def populate_concept_rows(compiled: dict[str, Any], rows: list[dict[str, Any]],
     key_components: list[str] = compiled["keyComponents"]
     allowed = set(compiled["allowedFields"])
     label_field = source_ref.get("labelField")
+    constant_fields = set(source_ref.get("constantFields", []))
     entities: dict[str, dict[str, Any]] = {}
     assertions: list[dict[str, Any]] = []
     gaps: list[dict[str, Any]] = []
@@ -137,7 +138,7 @@ def populate_concept_rows(compiled: dict[str, Any], rows: list[dict[str, Any]],
                     continue
                 entity["attributes"][field] = value
                 assertions.append({"entityId": key, "attribute": field, "value": value,
-                                   "origin": "source",
+                                   "origin": "human" if field in constant_fields else "source",
                                    "evidence": {"assetRef": source_ref.get("assetRef"),
                                                 "rowNumber": row_number, "column": field,
                                                 "mappingVersion": source_ref.get("mappingVersion")}})
