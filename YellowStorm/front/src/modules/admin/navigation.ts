@@ -78,6 +78,49 @@ export function findNavigationTarget(settings: NavigationSettings, targetKey: Na
   return settings.nodes.find((node) => node.targetKey === targetKey);
 }
 
+/**
+ * Ensures the evaluation logical search entry is always present in the managed
+ * navigation, right after Governance in the same group. This keeps the entry
+ * reachable even when the backend returns navigation settings persisted before
+ * the target existed (the injected node is not part of the persisted payload).
+ */
+export function ensureEvaluationTarget(settings: NavigationSettings): NavigationSettings {
+  if (settings.nodes.some((node) => node.targetKey === 'evaluationLogicalSearch')) {
+    return settings;
+  }
+
+  const governance = settings.nodes.find((node) => node.targetKey === 'governance');
+  const governGroup = settings.nodes.find(
+    (node) => node.type === 'group' && (node.id === 'govern' || node.id === governance?.parentId),
+  );
+  const parentId = governance?.parentId ?? governGroup?.id ?? null;
+  const siblings = settings.nodes.filter((node) => node.parentId === parentId);
+  const anchor = siblings.find((node) => node.targetKey === 'governance');
+  const position = anchor
+    ? anchor.position + 1
+    : siblings.length
+      ? Math.max(...siblings.map((node) => node.position)) + 1
+      : 0;
+
+  const nodes = settings.nodes.map((node) =>
+    node.parentId === parentId && node.position >= position
+      ? { ...node, position: node.position + 1 }
+      : node,
+  );
+  nodes.push({
+    id: 'evaluation-logical-search',
+    type: 'item',
+    parentId,
+    position,
+    visible: true,
+    launcherVisible: true,
+    labels: NAVIGATION_TARGETS.evaluationLogicalSearch.defaultLabels,
+    targetKey: 'evaluationLogicalSearch',
+  });
+
+  return { ...settings, nodes };
+}
+
 export function isNavigationNodeVisible(settings: NavigationSettings, id: string, placement: 'sidebar' | 'launcher' = 'sidebar'): boolean {
   const byId = new Map(settings.nodes.map((node) => [node.id, node]));
   let node = byId.get(id);

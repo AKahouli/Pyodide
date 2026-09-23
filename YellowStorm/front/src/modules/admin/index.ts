@@ -39,6 +39,7 @@ export { ADMIN_ACCESS_PERMISSIONS, ADMIN_MENU_ITEMS, DEFAULT_FEATURE_VISIBILITY 
 export {
   DEFAULT_NAVIGATION_SETTINGS,
   NAVIGATION_TARGETS,
+  ensureEvaluationTarget,
   findNavigationTarget,
   isNavigationNodeVisible,
   navigationLabel,
