@@ -7,11 +7,13 @@ import re
 from typing import Any, Awaitable, Callable
 
 from app.datasource.asset_delivery import AssetFetchError, fetch_workspace_asset_metadata
+from app.datasource.attribute_extraction import AttributeExtractionError, extract_attributes
 from app.datasource.discovery import resolve_asset_ref
 from app.datasource.logical_index import (build_index_observation, detect_capabilities,
                                           resolve_document_candidates)
 from app.datasource.logical_search import LogicalSearchError, combine_hits, search_exact, search_lexical
-from app.datasource.section_reader import MAX_CLOSURE_SECTIONS, read_complete_section_set
+from app.datasource.section_reader import (MAX_CLOSURE_SECTIONS, SectionReadError,
+                                           get_outline, read_complete_section_set)
 
 from .tabular import populate_concept_rows
 
@@ -92,6 +94,11 @@ def _is_record_row(text: Any, labels: list[str]) -> bool:
     preserves multi-word values; only flattened ``Label value`` rows that start
     at a label are read as records, so prose that merely mentions two labels is
     not mistaken for one.
+
+    The two-label minimum is what separates a row from a sentence. A consequence
+    is that a document mapping with a single extracted field cannot use this
+    path; such a field needs an explicit ``Label:``/``Label -`` form, or AI
+    extraction.
     """
     if not isinstance(text, str) or "." in text:
         return False
@@ -150,9 +157,101 @@ def _evidence(block: dict[str, Any], section: dict[str, Any], raw_text: str,
     }
 
 
+async def _ai_evidence(connection: Any, document_pk: Any) -> tuple[list[dict[str, Any]],
+                                                                  dict[str, tuple[dict[str, Any], dict[str, Any]]]]:
+    """Whole-document evidence for AI extraction, independent of label search.
+
+    Label search would bias the model towards the fields the deterministic
+    extractor already finds, so the outline is read instead, bounded by the same
+    closure limits. Only blocks that really exist can ground a value.
+    """
+    outline = await get_outline(connection, document_pk=document_pk)
+    section_pks = [section["sectionPk"] for section in outline["sections"]][:MAX_CLOSURE_SECTIONS]
+    if not section_pks:
+        return [], {}
+    read = await read_complete_section_set(
+        connection, document_pk=document_pk, section_pks=section_pks, include_descendants=True)
+    payload: list[dict[str, Any]] = []
+    by_reference: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+    for section in read["sections"]:
+        for block in section["blocks"]:
+            content = block.get("content")
+            if not isinstance(content, str) or not content.strip():
+                continue
+            reference = f"section:{section['sectionPk']}/block:{block['blockPk']}"
+            payload.append({"sectionPk": section["sectionPk"], "blockPk": block["blockPk"],
+                            "content": content})
+            by_reference[reference] = (block, section)
+    return payload, by_reference
+
+
+def _normalize_for_grounding(value: Any) -> str:
+    return " ".join(str(value).split()).casefold()
+
+
+def _value_in_block(value: Any, content: Any) -> bool:
+    """True when the value appears in the cited block, ignoring case/spacing."""
+    if value is None or not isinstance(content, str):
+        return False
+    if isinstance(value, (list, tuple, dict)):
+        return False
+    normalized = _normalize_for_grounding(value).strip('"\'')
+    return bool(normalized) and normalized in _normalize_for_grounding(content)
+
+
+async def _apply_ai_extraction(
+    connection: Any, entry: dict[str, Any], asset_ref: dict[str, Any], document_pk: Any,
+    ai_mappings: list[dict[str, Any]], model_id: str, ai_extraction: dict[str, Any] | None,
+    values: dict[str, Any], evidence_by_field: dict[str, dict[str, Any]],
+) -> str | None:
+    """Resolve AI-mapped fields; return a failure code or None when it ran."""
+    try:
+        sections, by_reference = await _ai_evidence(connection, document_pk)
+    except SectionReadError as exc:
+        return exc.code
+    if not sections:
+        return "no_evidence"
+    attributes = [{"key": mapping["targetAttribute"],
+                   "label": mapping.get("sourceField") or mapping["targetAttribute"]}
+                  for mapping in ai_mappings]
+    try:
+        result = await extract_attributes(
+            model_id=model_id, concept_id=entry["conceptId"],
+            concept_label=entry.get("conceptLabel") or entry["conceptId"],
+            document_id=str(entry["source"].get("assetId") or ""),
+            file_name=str(entry["source"].get("originalName") or ""),
+            attributes=attributes, sections=sections, ai_extraction=ai_extraction)
+    except AttributeExtractionError as exc:
+        return exc.code
+    extractor_version = str(result.get("extractorVersion") or "ai-attribute-v1")
+    for item in result.get("values") or []:
+        key = item.get("key") if isinstance(item, dict) else None
+        if not key or key in values:
+            continue
+        grounded = [reference for reference in (item.get("evidenceReferences") or [])
+                    if reference in by_reference]
+        if not grounded:
+            continue
+        block, section = by_reference[grounded[0]]
+        # A real reference is not proof of a real value: the value must occur in
+        # the block it cites, otherwise the model invented it.
+        if not _value_in_block(item.get("value"), block.get("content")):
+            continue
+        values[key] = item.get("value")
+        evidence = _evidence(block, section, str(block.get("content") or ""), asset_ref,
+                             entry["mappingVersion"])
+        evidence["origin"] = "ai"
+        evidence["extractorVersion"] = extractor_version
+        if result.get("model"):
+            evidence["model"] = result["model"]
+        evidence_by_field[key] = evidence
+    return None
+
+
 async def populate_document(
     connection: Any, entry: dict[str, Any], concept: dict[str, Any], actor_user_id: str,
     *, metadata_fetch: Callable[[dict[str, Any], str], Awaitable[dict[str, Any]]] | None = None,
+    model_id: str = "", ai_extraction: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Reauthorize, correlate, retrieve, and deterministically populate one mapped document."""
     source = entry["source"]
@@ -186,7 +285,10 @@ async def populate_document(
 
     values: dict[str, Any] = {}
     evidence_by_field: dict[str, dict[str, Any]] = {}
-    extract_mappings = [m for m in entry["fieldMappings"] if m["mode"] == "extract"]
+    extract_mappings = [m for m in entry["fieldMappings"] if m["mode"] == "extract"
+                        and m.get("extractionStrategy") != "ai"]
+    ai_mappings = [m for m in entry["fieldMappings"] if m["mode"] == "extract"
+                   and m.get("extractionStrategy") == "ai"]
     for mapping in entry["fieldMappings"]:
         if mapping["mode"] == "metadata":
             values[mapping["targetAttribute"]] = _metadata_value(current, mapping["sourceField"])
@@ -240,6 +342,14 @@ async def populate_document(
                     block, section, str(block.get("content") or ""), asset_ref,
                     entry["mappingVersion"])
 
+    # AI extraction must finish before the row is turned into entities, otherwise
+    # the resolved values would never reach the assertions.
+    ai_failure: str | None = None
+    if ai_mappings:
+        ai_failure = await _apply_ai_extraction(
+            connection, entry, asset_ref, document_pk, ai_mappings, model_id, ai_extraction,
+            values, evidence_by_field)
+
     row = {**values, "_row": None}
     output = populate_concept_rows(
         concept, [row], {"assetRef": asset_ref, "mappingVersion": entry["mappingVersion"],
@@ -252,6 +362,18 @@ async def populate_document(
     for field in missing_fields:
         output["gaps"].append({"kind": "unresolved_document_field", "conceptId": entry["conceptId"],
                                "rowNumber": None, "detail": f"field '{field}' was not resolved"})
+    for mapping in ai_mappings:
+        if mapping["targetAttribute"] in values:
+            continue
+        # Never silently fall back to deterministic values when AI was requested.
+        if ai_failure is not None:
+            output["gaps"].append({"kind": "ai_extraction_unavailable", "conceptId": entry["conceptId"],
+                                   "rowNumber": None,
+                                   "detail": f"AI extraction failed for '{mapping['targetAttribute']}': {ai_failure}"})
+        else:
+            output["gaps"].append({"kind": "ai_extraction_unresolved", "conceptId": entry["conceptId"],
+                                   "rowNumber": None,
+                                   "detail": f"field '{mapping['targetAttribute']}' was not grounded by the extraction agent"})
     complete = bool(read is None or read["coverage"]["directBlocksComplete"])
     if read is not None and not complete:
         output["gaps"].append({"kind": "budget_exhausted", "conceptId": entry["conceptId"],

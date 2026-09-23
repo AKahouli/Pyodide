@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 import app.population.document as document
+from app.datasource.attribute_extraction import AttributeExtractionError
 
 SOURCE = {
     "workspaceId": "6512f0a1c9e77a001234aaa1",
@@ -105,6 +106,123 @@ async def test_reads_flattened_record_row_and_ignores_prose_mentions(
     assert {assertion["attribute"]: assertion["value"] for assertion in result["assertions"]} == {
         "effective_date": "2026-04-01"}
     assert result["assertions"][0]["evidence"]["blockKey"] == "b10"
+
+
+AI_BLOCK = {"blockPk": 9, "blockKey": "b9", "origin": "native_text",
+            "content": "Contract number CNT-2026-0041 Amendment number 3 Effective date 2026-04-01"}
+
+
+def ai_stubs(monkeypatch: pytest.MonkeyPatch, extraction) -> None:
+    """Outline + read for the AI evidence path, plus a stub extraction client."""
+    async def outline(*_args, **_kwargs):
+        return {"sections": [{"sectionPk": 7, "sectionKey": "s7"}], "truncated": False}
+
+    async def read(*_args, **_kwargs):
+        return {"sections": [{"sectionPk": 7, "sectionKey": "s7", "blocks": [AI_BLOCK]}],
+                "coverage": {"directBlocksComplete": True}}
+
+    monkeypatch.setattr(document, "get_outline", outline)
+    monkeypatch.setattr(document, "read_complete_section_set", read)
+    monkeypatch.setattr(document, "extract_attributes", extraction)
+
+
+def ai_entry(*mappings: dict) -> dict:
+    return entry(*mappings)
+
+
+def ai_amendment_entry(*mappings: dict) -> dict:
+    return entry(*mappings)
+
+
+AI_DETERMINISTIC = [
+    {"sourceField": "contract number", "targetAttribute": "contract_number", "mode": "extract"},
+    {"sourceField": "amendment number", "targetAttribute": "amendment_number", "mode": "extract"},
+]
+
+
+@pytest.mark.asyncio
+async def test_ai_extraction_grounds_a_value_on_a_real_block(
+        monkeypatch: pytest.MonkeyPatch, index_stubs):
+    async def extraction(**_kwargs):
+        return {"model": "gpt-test", "extractorVersion": "ai-attribute-v1",
+                "values": [{"key": "effective_date", "value": "2026-04-01",
+                            "evidenceReferences": ["section:7/block:9"]}],
+                "failed": []}
+
+    ai_stubs(monkeypatch, extraction)
+    result = await document.populate_document(object(), ai_amendment_entry(
+        *AI_DETERMINISTIC,
+        {"sourceField": "effective date", "targetAttribute": "effective_date", "mode": "extract",
+         "extractionStrategy": "ai"},
+    ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata, model_id="model-1")
+
+    assert result["entities"][0]["identity"] == {
+        "contract_number": "cnt-2026-0041", "amendment_number": "3"}
+    assertion = next(item for item in result["assertions"] if item["attribute"] == "effective_date")
+    assert assertion["value"] == "2026-04-01"
+    assert assertion["evidence"]["origin"] == "ai"
+    assert assertion["evidence"]["extractorVersion"] == "ai-attribute-v1"
+    assert assertion["evidence"]["model"] == "gpt-test"
+    assert assertion["evidence"]["blockKey"] == "b9"
+
+
+@pytest.mark.asyncio
+async def test_ai_value_without_a_supplied_reference_is_discarded(
+        monkeypatch: pytest.MonkeyPatch, index_stubs):
+    async def extraction(**_kwargs):
+        return {"extractorVersion": "ai-attribute-v1",
+                "values": [{"key": "effective_date", "value": "1999-01-01",
+                            "evidenceReferences": ["section:999/block:999"]}],
+                "failed": []}
+
+    ai_stubs(monkeypatch, extraction)
+    result = await document.populate_document(object(), ai_amendment_entry(
+        *AI_DETERMINISTIC,
+        {"sourceField": "effective date", "targetAttribute": "effective_date", "mode": "extract",
+         "extractionStrategy": "ai"},
+    ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata, model_id="model-1")
+
+    assert all(item["attribute"] != "effective_date" for item in result["assertions"])
+    assert {gap["kind"] for gap in result["gaps"]} >= {"ai_extraction_unresolved"}
+
+
+@pytest.mark.asyncio
+async def test_ai_value_absent_from_its_cited_block_is_discarded(
+        monkeypatch: pytest.MonkeyPatch, index_stubs):
+    async def extraction(**_kwargs):
+        return {"extractorVersion": "ai-attribute-v1",
+                "values": [{"key": "effective_date", "value": "1999-01-01",
+                            "evidenceReferences": ["section:7/block:9"]}],
+                "failed": []}
+
+    ai_stubs(monkeypatch, extraction)
+    result = await document.populate_document(object(), ai_amendment_entry(
+        *AI_DETERMINISTIC,
+        {"sourceField": "effective date", "targetAttribute": "effective_date", "mode": "extract",
+         "extractionStrategy": "ai"},
+    ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata, model_id="model-1")
+
+    # The reference is real but the value is not in that block: invented data.
+    assert all(item["attribute"] != "effective_date" for item in result["assertions"])
+    assert {gap["kind"] for gap in result["gaps"]} >= {"ai_extraction_unresolved"}
+
+
+@pytest.mark.asyncio
+async def test_ai_extraction_failure_is_an_explicit_gap_never_a_silent_fallback(
+        monkeypatch: pytest.MonkeyPatch, index_stubs):
+    async def extraction(**_kwargs):
+        raise AttributeExtractionError("attribute_extraction_unavailable")
+
+    ai_stubs(monkeypatch, extraction)
+    result = await document.populate_document(object(), ai_entry(
+        {"sourceField": "contract number", "targetAttribute": "contract_number", "mode": "extract",
+         "extractionStrategy": "ai"},
+        {"sourceField": "effective date", "targetAttribute": "effective_date", "mode": "extract"},
+    ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata, model_id="model-1")
+
+    assert {gap["kind"] for gap in result["gaps"]} >= {"ai_extraction_unavailable"}
+    assert result["entities"] == []
+    assert result["assertions"] == []
 
 
 @pytest.mark.asyncio

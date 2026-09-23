@@ -84,11 +84,14 @@ const setup = (
       },
     })),
   };
+  const aiExtractionAgent = {
+    resolveAgent: jest.fn(async () => ({ slug: 'semantic-field-extraction', llmModel: 'gpt-5.4-nano' })),
+  };
   const service = new SemanticPopulationRefreshService(
     database as any, models as any, documents as any,
-    new ModelSpecificationService(), runtime as any,
+    new ModelSpecificationService(), runtime as any, aiExtractionAgent as any,
   );
-  return { database, models, documents, runtime, service };
+  return { database, models, documents, runtime, service, aiExtractionAgent };
 };
 
 describe('SemanticPopulationRefreshService', () => {
@@ -162,7 +165,8 @@ describe('SemanticPopulationRefreshService', () => {
         labelField: entry.labelField ?? null,
       })),
       relationBindings: command.payload.relationBindings,
-      populationEngineVersion: 'r1-mvp-4',
+      aiExtraction: command.payload.aiExtraction,
+      populationEngineVersion: 'r1-mvp-5',
     }));
   });
 
@@ -212,6 +216,83 @@ describe('SemanticPopulationRefreshService', () => {
       fieldMappings: doc.fieldMappings,
       source: { originalName: 'agreement.pdf', uploaderUserId: 'uploader-1', indexingStatus: 'ready' },
     });
+  });
+
+  it('carries the per-field extraction strategy into the population payload and fingerprint', async () => {
+    const doc = MAPPING({
+      id: 'm-doc', assetKind: 'document', sheetName: '',
+      fieldMappings: [
+        { sourceField: 'Customer ID', targetAttribute: 'customer_id', mode: 'extract', extractionStrategy: 'ai' },
+        { sourceField: 'Name', targetAttribute: 'name', mode: 'extract', extractionStrategy: 'deterministic' },
+      ],
+    });
+    const { documents, runtime, service } = setup([doc]);
+    documents.findById.mockResolvedValueOnce({
+      mimeType: 'application/pdf', originalName: 'agreement.pdf', createdBy: 'uploader-1',
+      contentHash: 'sha256:abc', updatedAt: '2026-01-01', uploadedAt: '2026-01-01',
+      size: 100, indexingStatus: 'ready',
+    });
+
+    await service.requestRefresh('u-1', 'model-1', {
+      purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' },
+    });
+
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    expect(calls[0][0].payload.sources[0].fieldMappings).toEqual([
+      { sourceField: 'Customer ID', targetAttribute: 'customer_id', mode: 'extract', extractionStrategy: 'ai' },
+      { sourceField: 'Name', targetAttribute: 'name', mode: 'extract', extractionStrategy: 'deterministic' },
+    ]);
+    expect(calls[0][0].payload.populationExecutionFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
+  });
+
+  it('binds the AI agent identity into revision identity so a model change is a new revision', async () => {
+    const doc = MAPPING({
+      id: 'm-doc', assetKind: 'document', sheetName: '',
+      fieldMappings: [
+        { sourceField: 'Customer ID', targetAttribute: 'customer_id', mode: 'extract', extractionStrategy: 'ai' },
+      ],
+    });
+    const first = setup([doc]);
+    first.documents.findById.mockResolvedValue({
+      mimeType: 'application/pdf', originalName: 'agreement.pdf', createdBy: 'uploader-1',
+      contentHash: 'sha256:abc', updatedAt: '2026-01-01', uploadedAt: '2026-01-01',
+      size: 100, indexingStatus: 'ready',
+    });
+    await first.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' } });
+    const firstCall = (first.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0];
+    expect(firstCall.payload.aiExtraction).toEqual({
+      agentSlug: 'semantic-field-extraction', model: 'gpt-5.4-nano', contractVersion: 'ai-attribute-v1',
+    });
+
+    // The admin points the agent at another model: the fingerprint must move.
+    const second = setup([doc]);
+    second.aiExtractionAgent.resolveAgent.mockResolvedValue({ slug: 'semantic-field-extraction', llmModel: 'other-model' });
+    second.documents.findById.mockResolvedValue({
+      mimeType: 'application/pdf', originalName: 'agreement.pdf', createdBy: 'uploader-1',
+      contentHash: 'sha256:abc', updatedAt: '2026-01-01', uploadedAt: '2026-01-01',
+      size: 100, indexingStatus: 'ready',
+    });
+    await second.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' } });
+    const secondCall = (second.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0];
+    expect(secondCall.payload.populationExecutionFingerprint)
+      .not.toEqual(firstCall.payload.populationExecutionFingerprint);
+  });
+
+  it('omits the AI identity when no mapping uses AI extraction', async () => {
+    const doc = MAPPING({
+      id: 'm-doc', assetKind: 'document', sheetName: '',
+      fieldMappings: [{ sourceField: 'Customer ID', targetAttribute: 'customer_id', mode: 'extract' }],
+    });
+    const { documents, runtime, service, aiExtractionAgent } = setup([doc]);
+    documents.findById.mockResolvedValueOnce({
+      mimeType: 'application/pdf', originalName: 'agreement.pdf', createdBy: 'uploader-1',
+      contentHash: 'sha256:abc', updatedAt: '2026-01-01', uploadedAt: '2026-01-01',
+      size: 100, indexingStatus: 'ready',
+    });
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' } });
+    const call = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0];
+    expect(call.payload.aiExtraction).toBeNull();
+    expect(aiExtractionAgent.resolveAgent).not.toHaveBeenCalled();
   });
 
   it('uses the concept attribute label for document extraction mappings without a source field', async () => {

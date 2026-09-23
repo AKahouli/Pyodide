@@ -65,6 +65,40 @@ def test_valid_document_command_compiles_without_llm_configuration():
     assert validated["sources"][0]["sourceKind"] == "document"
 
 
+def _document_command(field_mappings: list[dict]) -> dict:
+    source = {**SOURCE, "mimeType": "application/pdf", "originalName": "agreement.pdf"}
+    return command(sources=[{
+        "conceptId": "c1", "sourceKind": "document", "source": source,
+        "fieldMappings": field_mappings, "mappingVersion": "map-v1",
+    }])
+
+
+def test_document_command_accepts_an_explicit_extraction_strategy():
+    validated = run_population_for_payload(_document_command([
+        {"sourceField": "Customer ID", "targetAttribute": "customer_id", "mode": "extract",
+         "extractionStrategy": "deterministic"},
+        {"sourceField": "document_name", "targetAttribute": "name", "mode": "metadata"},
+    ]))
+    assert validated["ok"] is True
+    assert validated["sources"][0]["fieldMappings"][0]["extractionStrategy"] == "deterministic"
+
+
+def test_document_command_rejects_unknown_extraction_strategy():
+    validated = run_population_for_payload(_document_command([
+        {"sourceField": "Customer ID", "targetAttribute": "customer_id", "mode": "extract",
+         "extractionStrategy": "magic"},
+    ]))
+    assert validated["errorCode"] == "invalid_document_mapping"
+
+
+def test_document_command_rejects_strategy_on_a_non_extract_mapping():
+    validated = run_population_for_payload(_document_command([
+        {"sourceField": "document_name", "targetAttribute": "name", "mode": "metadata",
+         "extractionStrategy": "ai"},
+    ]))
+    assert validated["errorCode"] == "invalid_document_mapping"
+
+
 def test_validator_rejects_execution_fingerprint_mismatch():
     payload = command()
     payload["payload"]["populationExecutionFingerprint"] = "sha256:" + "0" * 64

@@ -115,6 +115,10 @@ class PopulationPayload(BaseModel):
     sources: list[PopulationSource] = Field(min_length=1, max_length=25)
     relation_bindings: list[RelationBinding] = Field(
         default_factory=list, alias="relationBindings", max_length=50)
+    # Identity of the AI extractor actually used (agent slug, effective model,
+    # contract version), or null when no mapping requests AI extraction. Part of
+    # the execution fingerprint so a model change produces a new revision.
+    ai_extraction: dict[str, Any] | None = Field(default=None, alias="aiExtraction")
     expected_active_data_revision_id: str | None = Field(
         default=None, alias="expectedActiveDataRevisionId", max_length=200)
     expected_correction_sequence: int = Field(

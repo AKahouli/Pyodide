@@ -350,11 +350,15 @@ export interface SheetProfile {
   complete?: boolean;
 }
 
+export type SourceExtractionStrategy = 'deterministic' | 'ai';
+
 export interface SourceFieldMapping {
   sourceField: string | null;
   targetAttribute: string;
   mode: 'direct' | 'extract' | 'metadata' | 'constant' | 'ignore';
   constantValue?: unknown;
+  // Only meaningful for mode='extract'; absent means deterministic.
+  extractionStrategy?: SourceExtractionStrategy;
 }
 
 export interface ConceptSourceMapping {

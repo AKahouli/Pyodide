@@ -65,4 +65,27 @@ describe('DocumentSourceMappingDrawer', () => {
     ]) })));
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['semantic-models', 'data-preview', 'model-1'] });
   });
+
+  it('defaults extracted fields to deterministic and saves an AI choice', async () => {
+    api.createSourceMapping.mockResolvedValue({ revision: 1, mappingCount: 1 });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><DocumentSourceMappingDrawer modelId='model-1' target={{
+      workspaceId: 'workspace-1', documentId: 'document-1', documentName: 'One.pdf', assetKind: 'document', conceptId: 'concept-1', mimeType: 'application/pdf', path: 'one.pdf',
+    }} onClose={vi.fn()} /></QueryClientProvider>);
+
+    // Two extracted fields, so two strategy selectors; the first is the contract number.
+    const strategyTriggers = await screen.findAllByRole('combobox', { name: 'mapping.strategyFor' });
+    expect(strategyTriggers).toHaveLength(2);
+
+    fireEvent.click(strategyTriggers[0]);
+    fireEvent.click(await screen.findByRole('option', { name: 'mapping.strategy.ai' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.save' }));
+    await waitFor(() => expect(api.createSourceMapping).toHaveBeenCalledWith('model-1', expect.objectContaining({
+      fieldMappings: [
+        expect.objectContaining({ targetAttribute: 'contract_number', mode: 'extract', extractionStrategy: 'ai' }),
+        expect.objectContaining({ targetAttribute: 'amendment_number', mode: 'extract', extractionStrategy: 'deterministic' }),
+      ],
+    })));
+  });
 });

@@ -11,6 +11,7 @@ import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-d
 import { ModelSpecificationService } from './model-specification.service';
 import { SemanticModelService } from './semantic-model.service';
 import { SemanticRuntimeClientService } from './semantic-runtime-client.service';
+import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
 import { DOCUMENT_MIME_TYPES, STRUCTURED_MIME_PREFIXES } from './semantic-source-mapping.service';
 
 export type PopulationRefreshScope = { kind: 'model' } | { kind: 'mapping'; mappingId: string };
@@ -55,7 +56,10 @@ type RelationRuleRow = Pick<RelationResolutionRule,
 
 const POPULATION_KINDS = new Set(['excel_sheet', 'csv', 'document']);
 const MAX_REFRESH_SOURCES = 25;
-const POPULATION_ENGINE_VERSION = 'r1-mvp-4';
+const POPULATION_ENGINE_VERSION = 'r1-mvp-5';
+// Version of the AI extraction contract (prompt + response shape). Must equal the
+// ADK's reported extractorVersion; bump both together.
+const AI_EXTRACTION_CONTRACT_VERSION = 'ai-attribute-v1';
 
 @Injectable()
 export class SemanticPopulationRefreshService {
@@ -67,7 +71,27 @@ export class SemanticPopulationRefreshService {
     private readonly documents: WorkspaceDocumentService,
     private readonly specifications: ModelSpecificationService,
     private readonly runtime: SemanticRuntimeClientService,
+    private readonly aiExtractionAgent: SemanticAttributeExtractionService,
   ) {}
+
+  /**
+   * Identity of the AI extractor actually used, or null when no mapping needs
+   * it. Resolved from the admin-managed default agent so a model change there
+   * changes the revision identity.
+   */
+  private async aiExtractionIdentity(
+    sources: Array<{ fieldMappings?: SourceFieldMapping[] | null }>,
+  ): Promise<{ agentSlug: string; model: string | null; contractVersion: string } | null> {
+    const usesAi = sources.some((source) => (source.fieldMappings ?? [])
+      .some((field) => field.mode === 'extract' && field.extractionStrategy === 'ai'));
+    if (!usesAi) return null;
+    const agent = await this.aiExtractionAgent.resolveAgent();
+    return {
+      agentSlug: agent.slug,
+      model: agent.llmModel ?? null,
+      contractVersion: AI_EXTRACTION_CONTRACT_VERSION,
+    };
+  }
 
   async getJob(userId: string, modelId: string, jobId: string) {
     await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
@@ -300,6 +324,9 @@ export class SemanticPopulationRefreshService {
     const scopeKey = scope.kind === 'model' ? 'model' : `mapping:${scope.mappingId}`;
     relationBindings.sort((left, right) => left.relationId < right.relationId ? -1 : left.relationId > right.relationId ? 1 : 0);
     const runtimeSources = JSON.parse(JSON.stringify(sources)) as typeof sources;
+    // The AI agent's effective model is part of revision identity, so an admin
+    // changing it produces a new revision instead of reusing persisted rows.
+    const aiExtraction = await this.aiExtractionIdentity(runtimeSources);
     const populationExecutionFingerprint = this.specifications.hashCanonical({
       specHash,
       sources: runtimeSources.map((source) => ({
@@ -314,6 +341,7 @@ export class SemanticPopulationRefreshService {
         labelField: 'labelField' in source ? source.labelField ?? null : null,
       })),
       relationBindings,
+      aiExtraction,
       populationEngineVersion: POPULATION_ENGINE_VERSION,
     });
     const idempotencyKey = createHash('sha256')
@@ -340,6 +368,7 @@ export class SemanticPopulationRefreshService {
         specification: snapshot,
         sources: runtimeSources,
         relationBindings,
+        aiExtraction,
       },
     }, idempotencyKey);
     return { ...accepted, skipped };

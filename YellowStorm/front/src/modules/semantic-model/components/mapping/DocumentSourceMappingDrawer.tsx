@@ -14,7 +14,7 @@ import { semanticModelApi } from '../../api';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
 import { useSourceMappings } from '../../query/hooks';
 import { useSemanticModelEditorStore } from '../../store';
-import type { SourceFieldMapping, SourceMappingPreviewResponse, StructuredSourceAsset } from '../../types';
+import type { SourceExtractionStrategy, SourceFieldMapping, SourceMappingPreviewResponse, StructuredSourceAsset } from '../../types';
 import type { SourceMappingTarget } from './SourceMappingDrawer';
 
 type PreviewItem = { asset: StructuredSourceAsset; result: SourceMappingPreviewResponse };
@@ -45,6 +45,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
       sourceField: attribute.key === 'source_document' ? 'document_name' : null,
       targetAttribute: attribute.key,
       mode: attribute.key === 'source_document' ? 'metadata' : 'extract',
+      extractionStrategy: attribute.key === 'source_document' ? undefined : 'deterministic',
     })));
     setIdentityFields(target.mapping?.identityFields ?? sourceMappings.find((mapping) => mapping.conceptId === nextConceptId)?.identityFields ?? []);
     setSelectedDocuments(new Set([target.documentId]));
@@ -123,7 +124,13 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
       mode,
       sourceField: mode === 'metadata' ? 'document_name' : null,
       constantValue: mode === 'constant' ? mapping.constantValue ?? '' : undefined,
+      // A strategy only applies to extracted fields.
+      extractionStrategy: mode === 'extract' ? mapping.extractionStrategy ?? 'deterministic' : undefined,
     } : mapping));
+  };
+
+  const setStrategy = (index: number, strategy: SourceExtractionStrategy) => {
+    setMappings(mappings.map((mapping, itemIndex) => itemIndex === index ? { ...mapping, extractionStrategy: strategy } : mapping));
   };
 
   return <Sheet open={Boolean(target)} onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -138,7 +145,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
           <Select value={conceptId} disabled={Boolean(target.mapping)} onValueChange={(value) => {
             setConceptId(value);
             const next = graph?.nodes.find((node) => node.id === value);
-            setMappings((next?.attributes ?? []).map((attribute) => ({ sourceField: null, targetAttribute: attribute.key, mode: 'extract' })));
+            setMappings((next?.attributes ?? []).map((attribute) => ({ sourceField: null, targetAttribute: attribute.key, mode: 'extract', extractionStrategy: 'deterministic' })));
             setIdentityFields(sourceMappings.find((mapping) => mapping.conceptId === value)?.identityFields ?? []);
             preview.reset();
           }}>
@@ -177,6 +184,13 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
                     <SelectItem value='ignore'>{t('mapping.method.ignore')}</SelectItem>
                   </SelectContent>
                 </Select>
+                {mapping.mode === 'extract' && <Select value={mapping.extractionStrategy ?? 'deterministic'} onValueChange={(value: SourceExtractionStrategy) => setStrategy(index, value)}>
+                  <SelectTrigger className='h-8 w-40 text-xs' aria-label={t('mapping.strategyFor', { field: mapping.targetAttribute })}><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value='deterministic'>{t('mapping.strategy.deterministic')}</SelectItem>
+                    <SelectItem value='ai'>{t('mapping.strategy.ai')}</SelectItem>
+                  </SelectContent>
+                </Select>}
               </div>
               {mapping.mode === 'constant' && <Input value={String(mapping.constantValue ?? '')} onChange={(event) => setMappings(mappings.map((item, itemIndex) => itemIndex === index ? { ...item, constantValue: event.target.value } : item))} placeholder={t('mapping.constantPlaceholder')} />}
             </div>)}

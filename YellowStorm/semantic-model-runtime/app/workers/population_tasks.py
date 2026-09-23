@@ -29,11 +29,12 @@ MAX_SOURCES_PER_TASK = 25
 MAX_TOTAL_ENTITIES = 10000
 MAX_TOTAL_ASSERTIONS = 50000
 MAX_TOTAL_RELATIONSHIPS = 20000
-POPULATION_ENGINE_VERSION = "r1-mvp-4"
+POPULATION_ENGINE_VERSION = "r1-mvp-5"
 
 
 def population_execution_fingerprint(spec_hash: str, sources: list[dict],
-                                     relation_bindings: list[dict]) -> str:
+                                     relation_bindings: list[dict],
+                                     ai_extraction: dict | None = None) -> str:
     canonical_sources = [{
         "conceptId": source["conceptId"],
         "sourceKind": source["sourceKind"],
@@ -45,8 +46,12 @@ def population_execution_fingerprint(spec_hash: str, sources: list[dict],
         "options": source.get("options", {}),
         "labelField": source.get("labelField"),
     } for source in sources]
+    # The AI agent's effective model is part of revision identity: changing it in
+    # the agent library must produce a new revision instead of reusing persisted
+    # rows. Always present (null when unused) so both sides hash the same body.
     body = json.dumps({"specHash": spec_hash, "sources": canonical_sources,
                        "relationBindings": relation_bindings,
+                       "aiExtraction": ai_extraction,
                        "populationEngineVersion": POPULATION_ENGINE_VERSION},
                       sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
@@ -131,6 +136,10 @@ def run_population_for_payload(command_dump: dict) -> dict:
                 if any(item.get("mode") == "metadata"
                        and item.get("sourceField") not in metadata_fields for item in active):
                     return {"ok": False, "errorCode": "invalid_document_mapping"}
+                if any(item.get("extractionStrategy") not in (None, "deterministic", "ai")
+                       or (item.get("extractionStrategy") is not None
+                           and item.get("mode") != "extract") for item in active):
+                    return {"ok": False, "errorCode": "invalid_document_mapping"}
                 mapped_attributes = {item["targetAttribute"] for item in active}
                 if len(mapped_attributes) != len(active):
                     return {"ok": False, "errorCode": "duplicate_document_mapping"}
@@ -194,8 +203,11 @@ def run_population_for_payload(command_dump: dict) -> dict:
                 return {"ok": False, "errorCode": "invalid_relation_bindings"}
             normalized_bindings.append({"relationId": relation["relationId"],
                                         "referenceField": reference, "targetField": target})
+        ai_extraction = payload.get("aiExtraction") or payload.get("ai_extraction")
+        if ai_extraction is not None and not isinstance(ai_extraction, dict):
+            return {"ok": False, "errorCode": "invalid_command"}
         execution_fingerprint = population_execution_fingerprint(
-            expected_hash, normalized, normalized_bindings)
+            expected_hash, normalized, normalized_bindings, ai_extraction)
         supplied_fingerprint = (payload.get("populationExecutionFingerprint")
                                 or payload.get("population_execution_fingerprint"))
         if supplied_fingerprint is not None and supplied_fingerprint != execution_fingerprint:
@@ -225,6 +237,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     if not validated.get("ok"):
         return validated
     actor = command_dump.get("actorUserId") or command_dump.get("actor_user_id")
+    ai_extraction = (command_dump.get("payload") or {}).get("aiExtraction")
     compiled = validated["compiled"]
     per_concept: dict[str, list[dict]] = {}
     dataset_fingerprints: set[str] = set()
@@ -246,7 +259,9 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                     connection = owned_pool
                 output = await populate_document(
                     connection, entry, compiled["concepts"][entry["conceptId"]], actor,
-                    metadata_fetch=metadata_fetch)
+                    metadata_fetch=metadata_fetch,
+                    model_id=str(command_dump.get("modelId") or ""),
+                    ai_extraction=ai_extraction)
             finally:
                 if owned_pool is not None:
                     await owned_pool.close()

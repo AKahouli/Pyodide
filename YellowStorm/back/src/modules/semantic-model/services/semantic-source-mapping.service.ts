@@ -585,5 +585,10 @@ export class SemanticSourceMappingService {
     if (kind === 'document' && mappings.filter((mapping) => mapping.mode === 'extract').length > MAX_DOCUMENT_EXTRACTION_FIELDS) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Document mappings support at most ${MAX_DOCUMENT_EXTRACTION_FIELDS} extracted fields`);
     }
+    const invalidStrategy = mappings.find((mapping) => mapping.extractionStrategy !== undefined
+      && (kind !== 'document' || mapping.mode !== 'extract'));
+    if (invalidStrategy) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'An extraction strategy is only supported for extracted document fields');
+    }
   }
 }

@@ -153,6 +153,19 @@ describe('SemanticSourceMappingService boundaries', () => {
     })).rejects.toThrow('mapped concept attributes');
   });
 
+  it('rejects an extraction strategy outside an extracted document field', async () => {
+    const { service, database } = buildService('text/csv');
+    database.query
+      .mockResolvedValueOnce({ rows: [{}] })
+      .mockResolvedValueOnce({ rows: [{ label: 'Customer', attributes: [{ key: 'id', label: 'ID', type: 'text', required: true }] }] });
+
+    await expect(service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1', assetKind: 'csv', sheetName: 'CSV',
+      fieldMappings: [{ sourceField: 'customer_id', targetAttribute: 'id', mode: 'direct', extractionStrategy: 'ai' }],
+      identityFields: ['customer_id'],
+    })).rejects.toThrow('extraction strategy');
+  });
+
   it('lists mappings only through enabled workspace links', async () => {
     const { service, database, documents } = buildService();
     database.query.mockResolvedValue({ rows: [] });
