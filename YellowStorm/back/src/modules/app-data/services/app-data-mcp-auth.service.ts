@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { RuntimeMcpAuthService } from '@modules/app-runtime/services/runtime-mcp-auth.service';
-import type { AppRuntimeBinding } from '@modules/app-runtime/schemas/app-runtime-binding.schema';
+import type { RuntimeBindingRecord as AppRuntimeBinding } from '@modules/app-runtime/persistence/runtime-binding.store';
 
 @Injectable()
 export class AppDataMcpAuthService {

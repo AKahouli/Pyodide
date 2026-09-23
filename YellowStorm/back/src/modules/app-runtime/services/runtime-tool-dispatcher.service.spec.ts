@@ -1,7 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import type { Socket } from 'socket.io';
 import { AppRuntimeErrorCodes } from '../constants/app-runtime-error-codes';
-import type { AppRuntimeToolCallDocument } from '../schemas/app-runtime-tool-call.schema';
+import { RUNTIME_TOOL_CALL_STORE, type RuntimeToolCallStore } from '../persistence/runtime-tool-call.store';
 import type { ToolInvokeEnvelope } from '../types/app-runtime-protocol';
 import { RuntimeBindingService } from './runtime-binding.service';
 import { RuntimeConnectionRegistry } from './runtime-connection.registry';
@@ -29,12 +29,23 @@ describe('RuntimeToolDispatcherService', () => {
   let registry: RuntimeConnectionRegistry;
   let socket: Socket & { emit: jest.Mock };
 
-  const findOne = jest.fn();
-  const updateOne = jest.fn();
+  const findByToolCallId = jest.fn();
+  const upsertRunning = jest.fn();
+  const markSucceeded = jest.fn();
+  const markFailed = jest.fn();
+  const getStartedAtMs = jest.fn();
   const findByWorkspaceId = jest.fn();
   const markWaitingForBrowser = jest.fn();
   const updateRevision = jest.fn();
   const revisionExists = jest.fn().mockResolvedValue(true);
+
+  const store: RuntimeToolCallStore = {
+    findByToolCallId,
+    upsertRunning,
+    markSucceeded,
+    markFailed,
+    getStartedAtMs,
+  };
 
   const config = {
     get: jest.fn((key: string, fallback?: number) => CONFIG[key] ?? fallback),
@@ -80,14 +91,11 @@ describe('RuntimeToolDispatcherService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
 
-    const leanExec = (value: unknown = null) => ({
-      lean: () => ({ exec: () => Promise.resolve(value) }),
-    });
-    findOne.mockReturnValue({
-      ...leanExec(null),
-      select: () => leanExec(null),
-    });
-    updateOne.mockReturnValue({ exec: () => Promise.resolve(undefined) });
+    findByToolCallId.mockResolvedValue(null);
+    upsertRunning.mockResolvedValue(undefined);
+    markSucceeded.mockResolvedValue(undefined);
+    markFailed.mockResolvedValue(undefined);
+    getStartedAtMs.mockResolvedValue(null);
     findByWorkspaceId.mockResolvedValue(BINDING);
 
     socket = { id: 's1', emit: jest.fn(), disconnect: jest.fn() } as unknown as Socket & {
@@ -96,7 +104,7 @@ describe('RuntimeToolDispatcherService', () => {
     registry = new RuntimeConnectionRegistry(config);
 
     dispatcher = new RuntimeToolDispatcherService(
-      { findOne, updateOne } as unknown as import('mongoose').Model<AppRuntimeToolCallDocument>,
+      store as unknown as RuntimeToolCallStore,
       {
         findByWorkspaceId,
         markWaitingForBrowser,
@@ -414,7 +422,6 @@ describe('RuntimeToolDispatcherService', () => {
       );
       connect();
 
-      // Hold the lock without answering so the waiter times out.
       let releaseHold!: () => void;
       const hold = new Promise<void>((resolve) => {
         releaseHold = resolve;
@@ -463,15 +470,10 @@ describe('RuntimeToolDispatcherService', () => {
   describe('idempotency', () => {
     it('replays a succeeded call instead of dispatching again', async () => {
       connect();
-      findOne.mockReturnValue({
-        lean: () => ({
-          exec: () =>
-            Promise.resolve({
-              status: 'succeeded',
-              result: { path: 'a.ts' },
-              resultingRevisionId: 'rev_2',
-            }),
-        }),
+      findByToolCallId.mockResolvedValueOnce({
+        status: 'succeeded',
+        result: { path: 'a.ts' },
+        resultingRevisionId: 'rev_2',
       });
 
       const envelope = await dispatcher.invoke({
@@ -492,14 +494,9 @@ describe('RuntimeToolDispatcherService', () => {
 
     it('replays a failed call with its stored error', async () => {
       connect();
-      findOne.mockReturnValue({
-        lean: () => ({
-          exec: () =>
-            Promise.resolve({
-              status: 'failed',
-              error: { code: AppRuntimeErrorCodes.PROCESS_FAILED, message: 'boom' },
-            }),
-        }),
+      findByToolCallId.mockResolvedValueOnce({
+        status: 'failed',
+        error: { code: AppRuntimeErrorCodes.PROCESS_FAILED, message: 'boom' },
       });
 
       const envelope = await dispatcher.invoke({
@@ -523,16 +520,15 @@ describe('RuntimeToolDispatcherService', () => {
         arguments: { path: 'a.ts' },
       });
 
-      const [filter, update, options] = updateOne.mock.calls[0];
-      expect(filter).toEqual({ toolCallId: 'tc_1' });
-      expect(update.$set).toMatchObject({
-        bindingId: 'arb_1',
-        workspaceId: 'sess_1',
-        tool: 'read',
-        status: 'running',
-      });
-      expect(update.$set.argumentsHash).toMatch(/^[0-9a-f]{64}$/);
-      expect(options).toEqual({ upsert: true });
+      expect(upsertRunning).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolCallId: 'tc_1',
+          bindingId: 'arb_1',
+          workspaceId: 'sess_1',
+          tool: 'read',
+        }),
+      );
+      expect(upsertRunning.mock.calls[0][0].argumentsHash).toMatch(/^[0-9a-f]{64}$/);
     });
 
     it('attaches a retry of the same toolCallId to the in-flight call', async () => {
@@ -571,11 +567,7 @@ describe('RuntimeToolDispatcherService', () => {
 
     it('does not re-dispatch a running record left by another owner', async () => {
       connect();
-      findOne.mockReturnValue({
-        lean: () => ({
-          exec: () => Promise.resolve({ status: 'running' }),
-        }),
-      });
+      findByToolCallId.mockResolvedValueOnce({ status: 'running' });
 
       const envelope = await dispatcher.invoke({
         workspaceId: 'sess_1',
@@ -592,20 +584,15 @@ describe('RuntimeToolDispatcherService', () => {
     it('replays once a running record settles without dispatching', async () => {
       connect();
       let status: 'running' | 'succeeded' = 'running';
-      findOne.mockReturnValue({
-        lean: () => ({
-          exec: () =>
-            Promise.resolve(
-              status === 'succeeded'
-                ? {
-                    status: 'succeeded',
-                    result: { path: 'a.ts' },
-                    resultingRevisionId: 'rev_2',
-                  }
-                : { status: 'running' },
-            ),
-        }),
-      });
+      findByToolCallId.mockImplementation(async () =>
+        status === 'succeeded'
+          ? {
+              status: 'succeeded',
+              result: { path: 'a.ts' },
+              resultingRevisionId: 'rev_2',
+            }
+          : { status: 'running' },
+      );
       setTimeout(() => {
         status = 'succeeded';
       }, 20);

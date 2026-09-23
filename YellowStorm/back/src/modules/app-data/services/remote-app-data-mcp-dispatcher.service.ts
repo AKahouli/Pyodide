@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'crypto';
-import type { AppRuntimeBinding } from '@modules/app-runtime/schemas/app-runtime-binding.schema';
+import type { RuntimeBindingRecord as AppRuntimeBinding } from '@modules/app-runtime/persistence/runtime-binding.store';
 import {
   AuthError,
   JsonRpcErrorCode,

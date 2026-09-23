@@ -1,13 +1,12 @@
 import { createHash } from 'crypto';
 import {
   BadRequestException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import { DocumentService } from '@modules/document/document.service';
 import {
   DEFAULT_STARTER_MANIFEST_KEY,
@@ -18,10 +17,10 @@ import {
 import { STARTER_REACT_VITE_V1_REVISION_ID } from '../constants/starter-react-vite-v1';
 import { blobObjectKey } from '../utils/blob-object-key';
 import {
-  AppSourceRevision,
-  AppSourceRevisionDocument,
-  AppSourceRevisionFile,
-} from '../schemas/app-source-revision.schema';
+  RUNTIME_SOURCE_REVISION_STORE,
+  type RuntimeSourceRevisionStore,
+  type SourceRevisionFileRecord,
+} from '../persistence/runtime-source-revision.store';
 
 export interface RevisionManifest {
   revisionId: string;
@@ -29,7 +28,7 @@ export interface RevisionManifest {
   parentRevisionId: string | null;
   manifestHash: string;
   manifestObjectKey: string;
-  files: AppSourceRevisionFile[];
+  files: SourceRevisionFileRecord[];
 }
 
 interface CephStarterManifestJson {
@@ -49,8 +48,8 @@ export class RuntimeRevisionService {
   private starterCache: RevisionManifest | null = null;
 
   constructor(
-    @InjectModel(AppSourceRevision.name)
-    private readonly model: Model<AppSourceRevisionDocument>,
+    @Inject(RUNTIME_SOURCE_REVISION_STORE)
+    private readonly store: RuntimeSourceRevisionStore,
     private readonly documents: DocumentService,
     private readonly config: ConfigService,
   ) {}
@@ -81,10 +80,7 @@ export class RuntimeRevisionService {
       return this.getStarterManifest();
     }
 
-    const doc = await this.model
-      .findOne({ workspaceId, revisionId })
-      .lean()
-      .exec();
+    const doc = await this.store.findByWorkspaceAndRevision(workspaceId, revisionId);
 
     if (!doc) {
       throw new NotFoundException(
@@ -116,16 +112,13 @@ export class RuntimeRevisionService {
   }
 
   /**
-   * Ensure the workspace has a Mongo row for the starter revision (idempotent).
+   * Ensure the workspace has a row for the starter revision (idempotent).
    * Binding still points `latestRevisionId` at the shared starter id; this
    * records the file list for later workspace-local children.
    */
   async ensureStarterRevision(workspaceId: string): Promise<RevisionManifest> {
     const starter = await this.getStarterManifest();
-    const existing = await this.model
-      .findOne({ workspaceId, revisionId: starter.revisionId })
-      .lean()
-      .exec();
+    const existing = await this.store.findByWorkspaceAndRevision(workspaceId, starter.revisionId);
 
     if (existing) {
       return {
@@ -138,30 +131,23 @@ export class RuntimeRevisionService {
       };
     }
 
-    try {
-      await this.model.create({
-        revisionId: starter.revisionId,
-        workspaceId,
-        parentRevisionId: null,
-        manifestHash: starter.manifestHash,
-        manifestObjectKey: starter.manifestObjectKey,
-        files: starter.files,
-        createdByToolCallId: null,
-      });
-    } catch (error) {
-      // Concurrent first-bind race: unique index on (workspaceId, revisionId).
-      if ((error as { code?: number } | null)?.code !== 11000) {
-        throw error;
-      }
-    }
+    const created = await this.store.createIfNotExists({
+      revisionId: starter.revisionId,
+      workspaceId,
+      parentRevisionId: null,
+      manifestHash: starter.manifestHash,
+      manifestObjectKey: starter.manifestObjectKey,
+      files: starter.files,
+      createdByToolCallId: null,
+    });
 
-    return { ...starter, workspaceId };
+    return { ...starter, workspaceId: created.workspaceId };
   }
 
   async listFiles(
     workspaceId: string,
     revisionId: string,
-  ): Promise<{ revisionId: string; files: AppSourceRevisionFile[] }> {
+  ): Promise<{ revisionId: string; files: SourceRevisionFileRecord[] }> {
     const revision = await this.getAuthorizedRevision(workspaceId, revisionId);
     return { revisionId: revision.revisionId, files: revision.files };
   }
@@ -219,17 +205,12 @@ export class RuntimeRevisionService {
     if (revisionId === this.starterRevisionId) {
       return true;
     }
-    const doc = await this.model
-      .findOne({ workspaceId, revisionId })
-      .select({ _id: 1 })
-      .lean()
-      .exec();
-    return !!doc;
+    return this.store.existsByWorkspaceAndRevision(workspaceId, revisionId);
   }
 
   /**
    * Persist a workspace revision snapshot to Ceph (content-addressed blobs +
-   * manifest) and Mongo. Called by the browser runtime after each mutating tool.
+   * manifest) and Postgres. Called by the browser runtime after each mutating tool.
    */
   async commitWorkspaceRevision(input: {
     workspaceId: string;
@@ -245,10 +226,7 @@ export class RuntimeRevisionService {
       throw new BadRequestException('Cannot overwrite the system starter revision');
     }
 
-    const existing = await this.model
-      .findOne({ workspaceId, revisionId })
-      .lean()
-      .exec();
+    const existing = await this.store.findByWorkspaceAndRevision(workspaceId, revisionId);
     if (existing) {
       return {
         revisionId: existing.revisionId,
@@ -269,7 +247,7 @@ export class RuntimeRevisionService {
       }
     }
 
-    const manifestFiles: AppSourceRevisionFile[] = [];
+    const manifestFiles: SourceRevisionFileRecord[] = [];
     for (const raw of input.files) {
       const path = this.normalizeRelativePath(raw.path);
       const body = Buffer.from(raw.content, 'utf8');
@@ -312,21 +290,15 @@ export class RuntimeRevisionService {
       },
     );
 
-    try {
-      await this.model.create({
-        revisionId,
-        workspaceId,
-        parentRevisionId,
-        manifestHash,
-        manifestObjectKey,
-        files: manifestFiles,
-        createdByToolCallId: input.toolCallId ?? null,
-      });
-    } catch (error) {
-      if ((error as { code?: number } | null)?.code !== 11000) {
-        throw error;
-      }
-    }
+    await this.store.createIfNotExists({
+      revisionId,
+      workspaceId,
+      parentRevisionId,
+      manifestHash,
+      manifestObjectKey,
+      files: manifestFiles,
+      createdByToolCallId: input.toolCallId ?? null,
+    });
 
     this.logger.log(
       `Committed workspace revision workspaceId=${workspaceId} revisionId=${revisionId} files=${manifestFiles.length}`,
@@ -354,7 +326,7 @@ export class RuntimeRevisionService {
   }): Promise<RevisionManifest> {
     const base = await this.getAuthorizedRevision(input.workspaceId, input.baseRevisionId);
 
-    const newFiles: AppSourceRevisionFile[] = [];
+    const newFiles: SourceRevisionFileRecord[] = [];
     for (const raw of input.additionalFiles) {
       const path = this.normalizeRelativePath(raw.path);
       const body = Buffer.from(raw.content, 'utf8');
@@ -392,19 +364,15 @@ export class RuntimeRevisionService {
       { generateUniqueName: false, customFileName: manifestObjectKey },
     );
 
-    try {
-      await this.model.create({
-        revisionId: input.newRevisionId,
-        workspaceId: input.workspaceId,
-        parentRevisionId: input.baseRevisionId,
-        manifestHash,
-        manifestObjectKey,
-        files: manifestFiles,
-        createdByToolCallId: null,
-      });
-    } catch (error) {
-      if ((error as { code?: number } | null)?.code !== 11000) throw error;
-    }
+    await this.store.createIfNotExists({
+      revisionId: input.newRevisionId,
+      workspaceId: input.workspaceId,
+      parentRevisionId: input.baseRevisionId,
+      manifestHash,
+      manifestObjectKey,
+      files: manifestFiles,
+      createdByToolCallId: null,
+    });
 
     this.logger.log(
       `Patched revision workspaceId=${input.workspaceId} base=${input.baseRevisionId} new=${input.newRevisionId} files=${manifestFiles.length}`,
@@ -421,11 +389,7 @@ export class RuntimeRevisionService {
   }
 
   /**
-   * Branch a fresh revision from an existing one without mutating it: the new
-   * revision carries the same file manifest but a brand-new id minted ABOVE
-   * every persisted revision of the workspace, so existing history (and its
-   * Ceph manifests / finalized rows) is never rewritten. Used when a user
-   * messages the agent while previewing a historical version.
+   * Branch a fresh revision from an existing one without mutating it.
    */
   async branchRevision(
     workspaceId: string,
@@ -433,13 +397,10 @@ export class RuntimeRevisionService {
   ): Promise<RevisionManifest> {
     const source = await this.getAuthorizedRevision(workspaceId, sourceRevisionId);
 
-    const rows = await this.model
-      .find({ workspaceId }, { revisionId: 1 })
-      .lean()
-      .exec();
+    const revisionIds = await this.store.listRevisionIds(workspaceId);
     let maxNumber = 0;
-    for (const row of rows) {
-      const match = /^rev_(\d+)$/.exec(row.revisionId);
+    for (const rid of revisionIds) {
+      const match = /^rev_(\d+)$/.exec(rid);
       if (match) {
         maxNumber = Math.max(maxNumber, Number.parseInt(match[1]!, 10));
       }

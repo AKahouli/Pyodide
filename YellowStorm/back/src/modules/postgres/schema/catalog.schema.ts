@@ -113,6 +113,34 @@ export const catalogPlans = catalogSchema.table(
   ],
 );
 
+/** App Builder AI usage offers (P8; was Mongo app_builder_ai_offers). */
+export const catalogAppBuilderAiOffers = catalogSchema.table(
+  'app_builder_ai_offers',
+  {
+    id: objectId('id').primaryKey(),
+    name: varchar('name', { length: 100 }).notNull(),
+    slug: varchar('slug', { length: 50 }).notNull(),
+    description: varchar('description', { length: 500 }),
+    tokenLimit: bigint('token_limit', { mode: 'number' }).notNull().default(0),
+    windowHours: integer('window_hours').notNull().default(24),
+    requestsPerMinute: integer('requests_per_minute').notNull().default(60),
+    maxTokensPerRequest: bigint('max_tokens_per_request', { mode: 'number' }).notNull().default(-1),
+    priority: integer('priority').notNull().default(0),
+    isActive: boolean('is_active').notNull().default(true),
+    isDefault: boolean('is_default').notNull().default(false),
+    displayOrder: integer('display_order').notNull().default(0),
+    ...timestamps(),
+  },
+  (t) => [
+    check('ab_ai_offers_slug_shape', sql`${t.slug} = lower(btrim(${t.slug}))`),
+    check('ab_ai_offers_window_hours_min', sql`${t.windowHours} >= 1`),
+    uniqueIndex('uq_ab_ai_offers_name').on(t.name),
+    uniqueIndex('uq_ab_ai_offers_slug').on(t.slug),
+    index('idx_ab_ai_offers_active_order').on(t.isActive, t.displayOrder),
+    uniqueIndex('uq_ab_ai_offers_single_default').on(t.isDefault).where(sql`${t.isDefault}`),
+  ],
+);
+
 export const catalogToolCategories = catalogSchema.table(
   'tool_categories',
   {

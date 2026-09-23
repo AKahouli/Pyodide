@@ -1,6 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
-import { MongooseModule } from '@nestjs/mongoose';
 import { ModelsModule } from '../models';
 import { UsageModule } from '../usage';
 import { AuthModule } from '../auth';
@@ -17,19 +16,14 @@ import { AiProxyRateLimitGuard } from './guards/ai-proxy-rate-limit.guard';
 import { AiProxyPayloadLimitGuard } from './guards/ai-proxy-payload-limit.guard';
 import { AppBuilderAiAuthGuard } from './guards/app-builder-ai-auth.guard';
 import { AiPreviewTicketService } from './services/ai-preview-ticket.service';
-import {
-  AiPreviewTicket,
-  AiPreviewTicketSchema,
-} from './schemas/ai-preview-ticket.schema';
+import { AI_PREVIEW_TICKET_STORE } from './persistence/ai-preview-ticket.store';
+import { PgAiPreviewTicketStore } from './persistence/pg-ai-preview-ticket.store';
 
 @Module({
   imports: [
     ModelsModule,
     UsageModule,
     JwtModule.register({}),
-    MongooseModule.forFeature([
-      { name: AiPreviewTicket.name, schema: AiPreviewTicketSchema },
-    ]),
     forwardRef(() => AuthModule),
     forwardRef(() => UserModule),
     forwardRef(() => AppDataModule),
@@ -39,6 +33,7 @@ import {
   ],
   controllers: [AiProxyController],
   providers: [
+    { provide: AI_PREVIEW_TICKET_STORE, useClass: PgAiPreviewTicketStore },
     AiProxyService,
     AiProxyStreamService,
     AiProxyUsageService,

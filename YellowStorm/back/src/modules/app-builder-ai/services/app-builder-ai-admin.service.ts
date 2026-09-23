@@ -1,14 +1,14 @@
 import { Injectable, Logger, Optional, Inject } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, ilike, inArray, isNotNull, or, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { Model, Types } from 'mongoose';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { appDataApps } from '@modules/postgres/schema/app-data.schema';
+import { isObjectId, normalizeObjectId } from '@common/postgres';
+import { escapeLike } from '@common/postgres/like';
 import { NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
-import { User, UserDocument } from '../../user/schemas/user.schema';
+import { USER_STORE, type UserStore } from '../../user/persistence/user.store';
 import {
   CONVERSATION_V2_SESSION_STORE,
   type ConversationV2SessionStore,
@@ -36,7 +36,7 @@ export class AppBuilderAiAdminService {
     private readonly offers: AppBuilderAiOfferService,
     private readonly usage: AppBuilderAiUsageService,
     @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>,
-    @InjectModel(User.name) private readonly users: Model<UserDocument>,
+    @Inject(USER_STORE) private readonly users: UserStore,
     @Inject(CONVERSATION_V2_SESSION_STORE)
     private readonly sessions: ConversationV2SessionStore,
     @Optional() private readonly appDataClient?: AppDataClientService,
@@ -81,9 +81,10 @@ export class AppBuilderAiAdminService {
 
     const aiAppsCount = await this.sessions.countWithAiFeatures();
 
-    const usersWithOffer = await this.users.countDocuments({
-      appBuilderAiOfferId: { $exists: true, $ne: null },
-    });
+    const [offerCount] = await this.db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(schema.identityUsers)
+      .where(isNotNull(schema.identityUsers.appBuilderAiOfferId));
 
     return {
       enabled: settings.enabled,
@@ -92,7 +93,7 @@ export class AppBuilderAiAdminService {
       requestCount: Number(tokenAgg?.requestCount ?? 0),
       errorCount: Number(tokenAgg?.errorCount ?? 0),
       aiAppsCount,
-      usersWithOffer,
+      usersWithOffer: Number(offerCount?.n ?? 0),
       topModels: topModels.map((row) => ({
         model: row.model || 'unknown',
         totalTokens: Number(row.totalTokens ?? 0),
@@ -113,49 +114,63 @@ export class AppBuilderAiAdminService {
   }) {
     const page = Math.max(1, query.page ?? 1);
     const limit = Math.min(100, Math.max(1, query.limit ?? 20));
-    const filter: Record<string, unknown> = {};
-    if (query.offerId && Types.ObjectId.isValid(query.offerId)) {
-      filter.appBuilderAiOfferId = new Types.ObjectId(query.offerId);
+    const conditions = [];
+    if (query.offerId && isObjectId(query.offerId)) {
+      conditions.push(
+        eq(schema.identityUsers.appBuilderAiOfferId, normalizeObjectId(query.offerId)),
+      );
     }
     if (query.q?.trim()) {
-      const q = query.q.trim();
-      filter.$or = [
-        { email: { $regex: q, $options: 'i' } },
-        { 'profile.firstName': { $regex: q, $options: 'i' } },
-        { 'profile.lastName': { $regex: q, $options: 'i' } },
-      ];
+      const pattern = `%${escapeLike(query.q.trim())}%`;
+      conditions.push(
+        or(
+          ilike(schema.identityUsers.email, pattern),
+          ilike(schema.identityUsers.firstName, pattern),
+          ilike(schema.identityUsers.lastName, pattern),
+        ),
+      );
     }
+    const where = conditions.length ? and(...conditions) : undefined;
 
-    const [items, total] = await Promise.all([
-      this.users
-        .find(filter)
-        .select('email profile appBuilderAiOfferId appBuilderAiOfferStartedAt')
-        .sort({ updatedAt: -1 })
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean()
-        .exec(),
-      this.users.countDocuments(filter),
-    ]);
+    const [countRow] = await this.db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(schema.identityUsers)
+      .where(where);
+    const total = Number(countRow?.n ?? 0);
 
-    const userIds = items.map((u) => u._id.toString());
+    const items = await this.db
+      .select({
+        id: schema.identityUsers.id,
+        email: schema.identityUsers.email,
+        firstName: schema.identityUsers.firstName,
+        lastName: schema.identityUsers.lastName,
+        appBuilderAiOfferId: schema.identityUsers.appBuilderAiOfferId,
+        appBuilderAiOfferStartedAt: schema.identityUsers.appBuilderAiOfferStartedAt,
+      })
+      .from(schema.identityUsers)
+      .where(where)
+      .orderBy(desc(schema.identityUsers.updatedAt))
+      .limit(limit)
+      .offset((page - 1) * limit);
+
+    const userIds = items.map((u) => u.id);
     const countByOwner = await this.sessions.countWithAiFeaturesByOwners(userIds);
 
     const offerIds = [
       ...new Set(
         items
-          .map((u) => u.appBuilderAiOfferId?.toString())
+          .map((u) => u.appBuilderAiOfferId)
           .filter((id): id is string => !!id),
       ),
     ];
     const offerDocs = await Promise.all(offerIds.map((id) => this.offers.findById(id)));
     const offerById = new Map(
-      offerDocs.filter(Boolean).map((o) => [o!._id.toString(), o!]),
+      offerDocs.filter(Boolean).map((o) => [o!.id, o!]),
     );
 
     const rows = await Promise.all(
       items.map(async (user) => {
-        const userId = user._id.toString();
+        const userId = user.id;
         let status = null as Awaited<ReturnType<AppBuilderAiUsageService['peekStatus']>> | null;
         try {
           status = await this.usage.peekStatus(userId);
@@ -165,18 +180,18 @@ export class AppBuilderAiAdminService {
           );
           status = null;
         }
-        const offerId = user.appBuilderAiOfferId?.toString() ?? null;
+        const offerId = user.appBuilderAiOfferId ?? null;
         const offer = offerId ? offerById.get(offerId) : status?.offer ?? null;
         return {
           userId,
           email: user.email,
           displayName:
-            [user.profile?.firstName, user.profile?.lastName].filter(Boolean).join(' ')
+            [user.firstName, user.lastName].filter(Boolean).join(' ')
             || null,
           aiAppsCount: countByOwner.get(userId) ?? 0,
           offer: offer
             ? {
-                id: offer._id.toString(),
+                id: offer.id,
                 name: offer.name,
                 slug: offer.slug,
                 tokenLimit: offer.tokenLimit,
@@ -204,14 +219,10 @@ export class AppBuilderAiAdminService {
   }
 
   async getUserDetail(userId: string) {
-    if (!Types.ObjectId.isValid(userId)) {
+    if (!isObjectId(userId)) {
       throw new NotFoundException(ErrorCode.USER_NOT_FOUND, 'User not found');
     }
-    const user = await this.users
-      .findById(userId)
-      .select('email profile appBuilderAiOfferId appBuilderAiOfferStartedAt')
-      .lean()
-      .exec();
+    const user = await this.users.findById(userId);
     if (!user) {
       throw new NotFoundException(ErrorCode.USER_NOT_FOUND, 'User not found');
     }
@@ -286,11 +297,11 @@ export class AppBuilderAiAdminService {
         userId,
         email: user.email,
         displayName:
-          [user.profile?.firstName, user.profile?.lastName].filter(Boolean).join(' ')
+          [user.firstName, user.lastName].filter(Boolean).join(' ')
           || null,
       },
       offer: {
-        id: status.offer._id.toString(),
+        id: status.offer.id,
         name: status.offer.name,
         slug: status.offer.slug,
         tokenLimit: status.offer.tokenLimit,
@@ -466,10 +477,10 @@ export class AppBuilderAiAdminService {
   }
 
   async assignOffer(userId: string, offerId: string) {
-    if (!Types.ObjectId.isValid(userId)) {
+    if (!isObjectId(userId)) {
       throw new NotFoundException(ErrorCode.USER_NOT_FOUND, 'User not found');
     }
-    const user = await this.users.findById(userId).select('_id').lean().exec();
+    const user = await this.users.findById(userId);
     if (!user) {
       throw new NotFoundException(ErrorCode.USER_NOT_FOUND, 'User not found');
     }

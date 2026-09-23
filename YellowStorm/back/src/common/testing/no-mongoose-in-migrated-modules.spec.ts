@@ -23,15 +23,11 @@ const ALLOWLIST: Array<[string, string]> = [
   ['modules/knowledge-intelligence/', 'P6 knowledge-intelligence'],
   ['modules/classifier/', 'P6 classifier'],
   ['modules/evaluation/', 'P6 evaluation'],
-  ['modules/app-runtime/', 'P8 app-runtime'],
   ['modules/integration-events/', 'P8 integration-events'],
   ['modules/logger/', 'P9 logger'],
   ['modules/database/', 'P9 logger (connection shell)'],
   ['modules/health/', 'health Mongo ping (P9)'],
-  ['modules/app-data/', '2 controllers (P8)'],
-  ['modules/ai-proxy/', 'still Mongo-backed (preview tickets / usage)'],
-  ['modules/app-builder-ai/', 'still Mongo-backed (offers / usage)'],
-  ['modules/user/schemas/user.schema.ts', 'legacy schema until app-builder-ai drops InjectModel(User)'],
+  ['modules/user/schemas/user.schema.ts', 'legacy UserDocument type until ai-proxy drops it'],
   ['modules/connector/services/connector-playbook-binding-sync.service.ts', 'bridge — removed with P5'],
 ];
 
