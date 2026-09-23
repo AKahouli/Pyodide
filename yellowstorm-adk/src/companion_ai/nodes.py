@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from email.utils import parseaddr
 from typing import Awaitable, Callable, List, Optional
@@ -469,6 +470,20 @@ def capture_artifacts_tool(tool, *, on_artifact: Callable[[dict], Awaitable[None
                          require_confirmation=getattr(tool, "_require_confirmation", False))
 
 
+def send_gate_enabled() -> bool:
+    """Whether send tools (email/Teams) gate on the owner's approval.
+
+    Default ON: contacting real people needs a human OK. Set
+    WORKY_SEND_APPROVAL_GATE=0 to disable — a mitigation for the create_task
+    replay-barrier divergence (the gate turns one gated send into a retry-storm
+    that grows the plan mid-turn). ponytail: does NOT fully fix divergence —
+    runtime create_task(await_reply) still shifts barrier slots; the real fix is
+    planned send->await->act steps. Read per-call so a deploy can flip it.
+    """
+    return os.environ.get("WORKY_SEND_APPROVAL_GATE", "1").strip().lower() not in (
+        "0", "false", "off", "no", "")
+
+
 def _recipients(kwargs) -> List[str]:
     """Every address a reply may come from — all `to_recipients` entries, as bare
     lower-cased addresses. A mail to several people can be answered by any of
@@ -556,7 +571,8 @@ def stamp_send_email_tool(tool, *, token_provider: Callable[[], Awaitable[Option
     # raises an adk_request_confirmation interrupt on the first call; the token
     # stamping above only runs once approved (this func is invoked after the
     # gate). Declined → the model gets "rejected" and re-plans.
-    return SearchToolADK(stamped, {"function": tool.custom_schema}, require_confirmation=True)
+    return SearchToolADK(stamped, {"function": tool.custom_schema},
+                         require_confirmation=send_gate_enabled())
 
 
 def _teams_chat_id(result) -> Optional[str]:
@@ -610,7 +626,8 @@ def record_send_teams_tool(tool, *, token_provider: Callable[[], Awaitable[Optio
     recorded.__signature__ = original.__signature__
     recorded.__annotations__ = original.__annotations__
     # Same gate as send_email: contacting a Teams user needs the owner's OK.
-    return SearchToolADK(recorded, {"function": tool.custom_schema}, require_confirmation=True)
+    return SearchToolADK(recorded, {"function": tool.custom_schema},
+                         require_confirmation=send_gate_enabled())
 
 
 def _stored_result_node(name: str, text: str):
