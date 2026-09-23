@@ -36,3 +36,53 @@ def apply_replay_barrier_timeout_patch(timeout_sec: float | None = None) -> None
     barrier.__init__ = __init__
     barrier._worky_timeout_patched = True
     logger.info("✅ ADK replay-barrier timeout raised to %.0fs (was 15s)", timeout_sec)
+
+
+def apply_replay_barrier_resilience_patch() -> None:
+    """Degrade an UNREACHABLE replay-barrier key to a warning instead of a crash.
+
+    Root cause of "Replay divergence detected: Timed out waiting for sequence
+    key '…'": ADK's barrier makes recovered (already-completed) nodes fast-forward
+    in recorded chronological order. worky rebuilds the plan graph every turn and
+    a create_task/delegate step that first ran nested is promoted to a TOP-LEVEL
+    node on the rebuild, so its recorded position no longer matches — a
+    predecessor key never advances and the barrier deadlocks, then times out and
+    kills the whole turn. Raising the timeout (the other patch) only delays it;
+    with spawned steps the key is genuinely unreachable, so it always fires.
+
+    Safe to degrade: `ReplaySequenceBarrier.wait(key)` is called ONLY when a node
+    is being fast-forwarded as a replayed NO-OP (see _workflow.py, the
+    recovered_executions / not should_run branch — it returns a mock context).
+    It never gates real execution, so proceeding on timeout re-surfaces the
+    node's already-recorded output slightly out of order — no model call, no tool
+    call, no re-sent email. worky reads results from the read model / step.result,
+    not ADK output ordering, so ordering doesn't matter here.
+
+    Idempotent. Disable with ORCHESTRATOR_REPLAY_BARRIER_FAST_FORWARD=0 to get
+    ADK's original hard-fail back (e.g. to surface a genuine divergence in a repro).
+    """
+    if os.environ.get("ORCHESTRATOR_REPLAY_BARRIER_FAST_FORWARD", "1").strip().lower() in (
+            "0", "false", "off", "no"):
+        return
+    import asyncio
+    from google.adk.workflow.utils import _replay_sequence_barrier as mod
+    barrier = mod.ReplaySequenceBarrier
+    if getattr(barrier, "_worky_resilience_patched", False):
+        return
+
+    async def wait(self, key):
+        if key in self.events:
+            try:
+                await asyncio.wait_for(self.events[key].wait(), timeout=self.timeout_sec)
+            except asyncio.TimeoutError:
+                # Unreachable key (plan grew: spawned step promoted to top-level).
+                # Proceed — the node only fast-forwards recorded output; it does
+                # NOT re-execute. Crashing the turn is strictly worse.
+                logger.warning(
+                    "replay barrier: key %r never unblocked in %.0fs — proceeding "
+                    "(fast-forward out of order; spawned-step graph reshape)",
+                    key, self.timeout_sec)
+
+    barrier.wait = wait
+    barrier._worky_resilience_patched = True
+    logger.info("✅ ADK replay-barrier resilience patch applied (unreachable key → warn, not crash)")
