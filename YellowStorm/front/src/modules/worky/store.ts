@@ -44,6 +44,7 @@ interface WorkyState {
   messagesLoading: boolean;
   setMessages: (messages: WorkyMessage[]) => void;
   appendMessage: (message: WorkyMessage) => void;
+  markConfirmSubmitted: (questionId: string) => void;
 
   pendingClarifications: WorkyBoardResponse['pendingClarifications'];
   setPendingClarifications: (
@@ -143,6 +144,29 @@ export const useWorkyStore = create<WorkyState>()(
             ...(completesTurn ? { streaming: false, activeTurnId: null } : {}),
           };
         }),
+      // Optimistically flip an answered confirm gate to 'submitted' so the card
+      // leaves "Needs you" at once. The SSE path only APPENDS new messages — it
+      // carries no component-status UPDATE on an existing message — so without
+      // this the answered card lingers 'ready' until a full messages refetch.
+      // A later setMessages refetch is consistent: the read model / Mongo already
+      // hold it 'submitted'.
+      markConfirmSubmitted: (questionId) =>
+        set((state) => ({
+          messages: state.messages.map((m) => {
+            const hit = m.components?.some(
+              (c) => (c.data as { questionId?: unknown } | undefined)?.questionId === questionId,
+            );
+            if (!hit) return m;
+            return {
+              ...m,
+              components: m.components!.map((c) =>
+                (c.data as { questionId?: unknown } | undefined)?.questionId === questionId
+                  ? { ...c, data: { ...(c.data as Record<string, unknown>), status: 'submitted' } }
+                  : c,
+              ),
+            };
+          }),
+        })),
       setPendingClarifications: (pendingClarifications) => set({ pendingClarifications }),
       appendAssistantToken: (text) =>
         set((state) => ({ assistantText: state.assistantText + text })),
