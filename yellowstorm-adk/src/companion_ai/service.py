@@ -2521,6 +2521,21 @@ class OrchestratorService:
             logger.info("[worky] 7. mail wait registered session=%s step=%s expires=%s",
                         session_id, step.id, expires_at.isoformat(timespec="seconds"))
 
+    async def _keep_completed_on_rerun_failure(self, session_id: str, step) -> bool:
+        """A re-drive of an already-completed step self-reported a failure. Its
+        work is already done, so keep the recorded result instead of downgrading
+        (see the _completed_once note at re-entry). Returns True if it protected
+        the step (caller must then stop, not write FAILED)."""
+        if not getattr(step, "_completed_once", False):
+            return False
+        step.status = Status.COMPLETED
+        step.error = None
+        logger.warning("[worky] 9. re-run failure IGNORED for already-completed step=%s "
+                       "— keeping recorded result", step.id)
+        await self._project(self._rm and self._rm.set_step_status(
+            session_id, step.id, "completed", result=step.result))
+        return True
+
     async def _apply_event(self, session_id: str, plan: Plan, ev, name_to_step: dict, started: set) -> None:
         """STEP 9 (per event) — one ADK node event → one step status → one row
         update the client sees live."""
@@ -2570,6 +2585,15 @@ class OrchestratorService:
             # benign replay; pair it with the "⚡ REAL MODEL CALL" line for the
             # same node to tell replay (no model call) from a true re-run.
             if step.status.is_terminal():
+                # Protect real prior work: a step that already COMPLETED with a
+                # result must not be downgraded to FAILED by a re-drive. Its side
+                # effect already happened (e.g. the GitHub ticket exists), and the
+                # re-run can self-report STEP_FAILED on stale/ambiguous context
+                # (seen live: session 09bf4bea, "Créer ticket Sophie" completed
+                # then failed after an ambiguous email answer). Completed→completed
+                # re-runs stay allowed (a step may re-run to add more).
+                if step.status is Status.COMPLETED and (step.result or "").strip():
+                    step._completed_once = True
                 logger.warning("[worky] 9. ⟲ completed step re-entered session=%s step=%s "
                                "(was %s) — replay unless it also logs a REAL MODEL CALL",
                                session_id, step_id, step.status.value)
@@ -2585,6 +2609,8 @@ class OrchestratorService:
         # FAILED with the error, so the failing step reads correctly.
         err = getattr(ev, "error_message", None) or getattr(ev, "error_code", None)
         if err:
+            if await self._keep_completed_on_rerun_failure(session_id, step):
+                return
             step.status = Status.FAILED
             step.error = str(err)[:500]
             step.result = step.error
@@ -2615,6 +2641,8 @@ class OrchestratorService:
             # error event (above) otherwise fails a step. ponytail: free-text
             # sentinel, fragile; a fail_task tool would be sturdier if it drifts.
             if text.lstrip().upper().startswith("STEP_FAILED"):
+                if await self._keep_completed_on_rerun_failure(session_id, step):
+                    return
                 step.status = Status.FAILED
                 step.error = text.lstrip()[len("STEP_FAILED"):].lstrip(" :–-\t").strip()[:500] or "step failed"
                 step.result = step.error
