@@ -106,7 +106,7 @@ describe('ExecutionPanel', () => {
     expect(screen.getByText('execution.stop')).toBeInTheDocument();
   });
 
-  it('shows running header when a step is running even if the execution status is completed', () => {
+  it('keeps terminal header when a step result is stale', () => {
     const execution = makeExecution({
       status: 'completed',
       taskResults: [
@@ -118,8 +118,8 @@ describe('ExecutionPanel', () => {
       currentExecution: execution,
     });
     render(<ExecutionPanel />);
-    expect(screen.getByText('running')).toBeInTheDocument();
-    expect(screen.getByText('execution.stop')).toBeInTheDocument();
+    expect(screen.getByText('completed')).toBeInTheDocument();
+    expect(screen.queryByText('execution.stop')).not.toBeInTheDocument();
   });
 
   it('shows replay evaluation rerun action in evaluation tab', async () => {

@@ -151,6 +151,7 @@ describe('usePlaybookCanvas', () => {
 
   it('stores trigger connections as data bindings without persisting control edges', () => {
     currentPlaybookState.value = makePlaybook({
+      automatedTriggerType: 'mail',
       edges: [],
       dataBindings: [],
       tasks: [
@@ -184,6 +185,77 @@ describe('usePlaybookCanvas', () => {
       },
     ]);
     expect(storeFns.updateControlEdges).not.toHaveBeenCalled();
+  });
+
+  it('rejects a mail data handle dropped on a document input', () => {
+    currentPlaybookState.value = makePlaybook({
+      automatedTriggerType: 'mail',
+      edges: [], dataBindings: [],
+      tasks: [makeTask({ id: 'task-1', inputPorts: [
+        { id: 'cv', name: 'CV', artifactKind: 'document', required: false },
+      ] })],
+    });
+    const { result } = renderHook(() => usePlaybookCanvas());
+
+    act(() => result.current.onConnect({
+      source: '__trigger__', target: 'task-1', sourceHandle: 'mail_data', targetHandle: 'cv',
+    } as any));
+    act(() => vi.runAllTimers());
+
+    expect(storeFns.updateDataBindings).not.toHaveBeenCalled();
+    expect(storeFns.updateEdges).not.toHaveBeenCalled();
+  });
+
+  it('connects a mail trigger dropped on a step body to an unbound compatible input', () => {
+    currentPlaybookState.value = makePlaybook({
+      automatedTriggerType: 'mail',
+      edges: [],
+      dataBindings: [],
+      tasks: [makeTask({ id: 'task-1', inputPorts: [
+        { id: 'cv', name: 'CV', artifactKind: 'document', required: false },
+        { id: 'mail', name: 'Mail', artifactKind: 'data', required: false },
+      ] })],
+    });
+    const { result } = renderHook(() => usePlaybookCanvas());
+    act(() => {
+      result.current.onConnectStart({} as any, { nodeId: '__trigger__', handleId: 'mail_data', handleType: 'source' } as any);
+      result.current.onNodeMouseEnter({} as any, { id: 'task-1' } as any);
+    });
+    act(() => result.current.onConnectEnd({ clientX: 0, clientY: 0 } as any, null as any));
+    act(() => vi.runAllTimers());
+
+    expect(storeFns.updateDataBindings).toHaveBeenLastCalledWith([
+      expect.objectContaining({ sourceKind: 'trigger', triggerPath: 'mail_data', targetNode: 'task-1', targetPort: 'mail' }),
+    ]);
+    expect(storeFns.updateTasks).not.toHaveBeenCalled();
+    expect(storeFns.updateEdges).not.toHaveBeenCalled();
+  });
+
+  it('creates a compatible input when every matching port is already bound', () => {
+    currentPlaybookState.value = makePlaybook({
+      automatedTriggerType: 'mail',
+      edges: [],
+      dataBindings: [{ id: 'existing', sourceKind: 'constant', targetNode: 'task-1', targetPort: 'mail', constantValue: 'keep' }],
+      tasks: [makeTask({ id: 'task-1', inputPorts: [
+        { id: 'mail', name: 'Mail', artifactKind: 'data', required: false },
+      ] })],
+    });
+    const { result } = renderHook(() => usePlaybookCanvas());
+    act(() => {
+      result.current.onConnectStart({} as any, { nodeId: '__trigger__', handleId: 'mail_data', handleType: 'source' } as any);
+      result.current.onNodeMouseEnter({} as any, { id: 'task-1' } as any);
+    });
+    act(() => result.current.onConnectEnd({ clientX: 0, clientY: 0 } as any, null as any));
+    act(() => vi.runAllTimers());
+
+    const newPort = (result.current.nodes.find((node) => node.id === 'task-1')?.data as any).inputPorts[1];
+    expect(newPort).toMatchObject({ name: 'Mail data', artifactKind: 'data' });
+    expect(storeFns.updateTasks).toHaveBeenCalled();
+    expect(storeFns.updateDataBindings).toHaveBeenLastCalledWith([
+      expect.objectContaining({ id: 'existing', targetPort: 'mail' }),
+      expect.objectContaining({ sourceKind: 'trigger', triggerPath: 'mail_data', targetPort: newPort.id }),
+    ]);
+    expect(storeFns.updateEdges).not.toHaveBeenCalled();
   });
 
   it('ignores generic edge remove events so double-click stays the only edge delete path', () => {

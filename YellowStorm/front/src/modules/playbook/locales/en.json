@@ -239,6 +239,7 @@
   "canvas.overview.type.human_approval": "Human approval",
   "canvas.cycleRejected": "Cannot create a cycle unless it passes through a router with max iterations enabled.",
   "canvas.insertIncompatible": "This step cannot bridge the connection without changing port types.",
+  "canvas.triggerPortMismatch": "Choose an input port with the same data type as the mail output.",
   "nextStep.title": "Add next step",
   "nextStep.searchPlaceholder": "Search steps…",
   "nextStep.chooseOutput": "Choose an output",
