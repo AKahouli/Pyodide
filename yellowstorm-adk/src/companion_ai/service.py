@@ -2180,6 +2180,15 @@ class OrchestratorService:
                 break
 
         outstanding = await self._outstanding(session_id, interrupts)
+        # Reconcile send-approval cards against the PER-STEP outstanding set (the
+        # real multi-interrupt record), not the single sessions.interrupt_id. A
+        # confirm card stays armed only while a step is still parked on its gate;
+        # close every other one. Parallel gates from spawned steps drift the
+        # single session slot, orphaning cards whose step already resolved — those
+        # were never closed by the resume path and lingered 'ready' forever. Runs
+        # every turn end: keep_confirm empty on completion closes all of them.
+        keep_confirm = [i for i, _ in outstanding if hitl.is_confirm(i)]
+        await self._project(self._rm and self._rm.close_confirm_choices(session_id, keep_confirm))
         if outstanding:
             plan.status = Status.BLOCKED
             logger.info("[worky] 10. blocked on %d step(s) session=%s: %s",
