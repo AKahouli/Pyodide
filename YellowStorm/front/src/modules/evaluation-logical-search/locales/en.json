@@ -38,6 +38,7 @@
     "prepareTarget": "Target evaluation: {{name}}",
     "run": "Run evaluation",
     "running": "Running…",
+    "resume": "Resume",
     "stop": "Stop",
     "stopping": "Stopping…",
     "export": "Export results",
@@ -60,6 +61,9 @@
   },
   "adhoc": {
     "title": "Direct configuration",
+    "benchmark": "Benchmark (dataset)",
+    "benchmarkPlaceholder": "Select an existing benchmark…",
+    "benchmarkHelp": "Reuse a previously uploaded dataset. Launching creates a new evaluation from it.",
     "agent": "Target Agent",
     "agentPlaceholder": "Select target agent…",
     "workspace": "Workspace",

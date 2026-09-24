@@ -205,6 +205,32 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     return evaluation;
   }
 
+  /**
+   * Start a fresh evaluation seeded from an existing benchmark dataset, so the
+   * same questions can be re-tested without re-uploading the file. The source
+   * evaluation is left untouched.
+   */
+  async duplicate(ownerId: string, sourceId: string) {
+    const source = await this.getById(ownerId, sourceId);
+    const queries = (source.queries as { queries?: unknown[] } | null)?.queries;
+    if (!Array.isArray(queries) || queries.length === 0) {
+      throw new BadRequestException('Benchmark has no queries to reuse.');
+    }
+    const created = await this.repository.create({
+      ownerId,
+      name: source.name,
+      sourceFileName: source.sourceFileName,
+      queryCount: queries.length,
+      queries: { queries },
+    });
+    return {
+      evaluationId: created.id,
+      name: created.name,
+      sourceFileName: created.sourceFileName,
+      queryCount: created.queryCount,
+    };
+  }
+
   async listByOwner(ownerId: string) {
     return this.repository.listByOwner(ownerId);
   }
@@ -585,7 +611,9 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       }
       if (!Array.isArray(results)) results = [];
     }
-    const doneQueryIds = new Set(results.map((r) => r.query_id));
+    const doneQueryIds = new Set(
+      results.filter((r) => r.status === 'completed').map((r) => r.query_id),
+    );
     const runStartedAt = new Date().toISOString();
     let runError: string | null = null;
     let stopped = false;

@@ -88,13 +88,14 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
       const result = await evaluationLogicalSearchApi.upload(file);
       setUploadResult(result);
       setSelectedEvalId(result.evaluationId);
+      refreshEvaluations();
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : 'Upload failed');
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
-  }, []);
+  }, [refreshEvaluations]);
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -132,25 +133,23 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
     e.stopPropagation();
   }, []);
 
-  const activeEvalId = selectedEvalId ?? evaluations[0]?.id ?? null;
-  const queryIdFor = useCallback(
-    (id: string | null | undefined) => (id && id === activeEvalId ? selectedQueryId || undefined : undefined),
-    [activeEvalId, selectedQueryId],
-  );
-
   const handleLaunch = useCallback(async () => {
-    const targetId = selectedEvalId ?? evaluations[0]?.id;
-    if (!targetId || !selectedAgentId || !selectedEvaluatorAgentId) return;
+    const source = evaluations.find((e) => e.id === selectedEvalId);
+    if (!source || !selectedAgentId || !selectedEvaluatorAgentId || !selectedWorkspaceId) return;
+    const queryId = selectedQueryId || undefined;
     setLaunching(true);
     setLaunchError(null);
-    setRunningEvalId(targetId);
     try {
-      await evaluationLogicalSearchApi.prepareAdhoc(targetId, {
+      // Launching always creates a new evaluation seeded from the selected
+      // benchmark, so previous results are never overwritten.
+      const { evaluationId } = await evaluationLogicalSearchApi.duplicate(source.id);
+      setRunningEvalId(evaluationId);
+      await evaluationLogicalSearchApi.prepareAdhoc(evaluationId, {
         agentId: selectedAgentId,
         workspaceId: selectedWorkspaceId || undefined,
         evaluatorAgentId: selectedEvaluatorAgentId,
       });
-      await evaluationLogicalSearchApi.run(targetId, queryIdFor(targetId));
+      await evaluationLogicalSearchApi.run(evaluationId, queryId);
       refreshEvaluations();
     } catch (err) {
       setRunError(err instanceof Error ? err.message : 'Launch failed');
@@ -159,20 +158,22 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
       setRunningEvalId(null);
       refreshEvaluations();
     }
-  }, [selectedEvalId, selectedAgentId, selectedEvaluatorAgentId, selectedWorkspaceId, evaluations, refreshEvaluations, queryIdFor]);
+  }, [selectedEvalId, selectedAgentId, selectedEvaluatorAgentId, selectedWorkspaceId, evaluations, refreshEvaluations, selectedQueryId]);
 
-  const handleRun = useCallback(async (id: string) => {
+  // Resume a failed evaluation in place: re-runs only the queries that did not
+  // complete, keeping the attributes stored at prepare time (agent/workspace/judge).
+  const handleResume = useCallback(async (id: string) => {
     setRunningEvalId(id);
     setRunError(null);
     try {
-      await evaluationLogicalSearchApi.run(id, queryIdFor(id));
+      await evaluationLogicalSearchApi.run(id);
     } catch (err) {
-      setRunError(err instanceof Error ? err.message : 'Run failed');
+      setRunError(err instanceof Error ? err.message : 'Resume failed');
     } finally {
       setRunningEvalId(null);
       refreshEvaluations();
     }
-  }, [refreshEvaluations, queryIdFor]);
+  }, [refreshEvaluations]);
 
   const handleStop = useCallback(async (id: string) => {
     setStoppingEvalId(id);
@@ -239,13 +240,26 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   // ── Derived ─────────────────────────────────────────────────
   const previewRows: BenchmarkQuery[] = useMemo(() => uploadResult?.preview ?? [], [uploadResult]);
   const activeEvaluation = useMemo(
-    () => evaluations.find((e) => e.id === activeEvalId) ?? null,
-    [evaluations, activeEvalId],
+    () => evaluations.find((e) => e.id === selectedEvalId) ?? null,
+    [evaluations, selectedEvalId],
   );
   const queryOptions = useMemo(() => activeEvaluation?.queries?.queries ?? [], [activeEvaluation]);
   const launchEvalName = useMemo(() => activeEvaluation?.name ?? '', [activeEvaluation]);
+  // Same file imported several times yields duplicate rows: keep one entry per
+  // source file, preferring the never-run (dataset_ready) benchmark.
+  const benchmarkOptions = useMemo(() => {
+    const byKey = new Map<string, LogicalSearchEvaluation>();
+    for (const e of evaluations) {
+      const key = e.sourceFileName || e.name;
+      const prev = byKey.get(key);
+      if (!prev || (prev.status !== 'dataset_ready' && e.status === 'dataset_ready')) {
+        byKey.set(key, e);
+      }
+    }
+    return [...byKey.values()].map((e) => ({ value: e.id, label: `${e.name} · ${e.queryCount}` }));
+  }, [evaluations]);
 
-  useEffect(() => { setSelectedQueryId(''); }, [activeEvalId]);
+  useEffect(() => { setSelectedQueryId(''); }, [selectedEvalId]);
 
   return (
     <div className='h-full w-full overflow-auto'>
@@ -326,6 +340,20 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
           <CardHeader><CardTitle>{t('adhoc.title')}</CardTitle></CardHeader>
           <CardContent className='space-y-4'>
 
+            {/* Benchmark (existing dataset to reuse) */}
+            <div className='space-y-1'>
+              <label className='text-sm font-medium'>{t('adhoc.benchmark')}</label>
+              <SearchSelect
+                options={benchmarkOptions}
+                value={selectedEvalId ?? ''}
+                onValueChange={setSelectedEvalId}
+                placeholder={t('adhoc.benchmarkPlaceholder')}
+                searchPlaceholder={t('select.search')}
+                emptyText={t('select.noResults')}
+              />
+              <p className='text-xs text-muted-foreground'>{t('adhoc.benchmarkHelp')}</p>
+            </div>
+
             {/* Agent (required) */}
             <div className='space-y-1'>
               <label className='text-sm font-medium'>
@@ -374,7 +402,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
             {launchError && <p className='text-sm text-destructive'>{launchError}</p>}
             <Button
               onClick={handleLaunch}
-              disabled={!selectedAgentId || !selectedEvaluatorAgentId || !selectedWorkspaceId || launching}
+              disabled={!selectedEvalId || !selectedAgentId || !selectedEvaluatorAgentId || !selectedWorkspaceId || launching}
               className='w-full'
             >
               {launching ? t('adhoc.launching') : t('adhoc.launch')}
@@ -442,15 +470,6 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
                     }`}>
                       {t(`status.${ev.status}` as any) ?? ev.status}
                     </span>
-                    {(ev.status === 'prepared' || ev.status === 'running' || ev.status === 'failed') && (
-                      <Button
-                        size='sm'
-                        onClick={(e) => { e.stopPropagation(); void handleRun(ev.id); }}
-                        disabled={runningEvalId !== null}
-                      >
-                        {runningEvalId === ev.id ? t('actions.running') : t('actions.run')}
-                      </Button>
-                    )}
                     {ev.status === 'running' && (
                       <Button
                         size='sm'
@@ -459,6 +478,15 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
                         disabled={stoppingEvalId !== null}
                       >
                         {stoppingEvalId === ev.id ? t('actions.stopping') : t('actions.stop')}
+                      </Button>
+                    )}
+                    {ev.status === 'failed' && (
+                      <Button
+                        size='sm'
+                        onClick={(e) => { e.stopPropagation(); void handleResume(ev.id); }}
+                        disabled={runningEvalId !== null}
+                      >
+                        {runningEvalId === ev.id ? t('actions.running') : t('actions.resume')}
                       </Button>
                     )}
                     {(ev.status === 'completed' || ev.status === 'failed' || ev.status === 'running') && (

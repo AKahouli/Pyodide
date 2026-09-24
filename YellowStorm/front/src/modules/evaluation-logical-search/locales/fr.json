@@ -38,6 +38,7 @@
     "prepareTarget": "Évaluation cible : {{name}}",
     "run": "Lancer l'évaluation",
     "running": "Exécution en cours…",
+    "resume": "Reprendre",
     "stop": "Arrêter",
     "stopping": "Arrêt…",
     "export": "Exporter les résultats",
@@ -60,6 +61,9 @@
   },
   "adhoc": {
     "title": "Configuration directe",
+    "benchmark": "Benchmark (jeu de données)",
+    "benchmarkPlaceholder": "Sélectionner un benchmark existant…",
+    "benchmarkHelp": "Réutilise un jeu de données déjà importé. Le lancement crée une nouvelle évaluation à partir de celui-ci.",
     "agent": "Agent Cible",
     "agentPlaceholder": "Sélectionner l'agent cible…",
     "workspace": "Workspace",

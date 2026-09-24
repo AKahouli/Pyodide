@@ -64,6 +64,13 @@ export const evaluationLogicalSearchApi = {
     return res.data.data;
   },
 
+  async duplicate(id: string): Promise<{ evaluationId: string }> {
+    const res = await apiClient.post<{ data: { evaluationId: string } }>(
+      `${API_ENDPOINTS.logicalSearchEvaluation.base}/${id}/duplicate`,
+    );
+    return res.data.data;
+  },
+
   async prepare(
     id: string,
     payload: { executionId: string; agentId?: string; workspaceId?: string },

@@ -46,6 +46,12 @@ export class LogicalSearchEvaluationController {
     return this.service.getById(user._id.toString(), id);
   }
 
+  @Post(':id/duplicate')
+  @ApiOperation({ summary: 'Create a new evaluation seeded from an existing benchmark dataset' })
+  async duplicate(@CurrentUser() user: UserDocument, @Param('id') id: string) {
+    return this.service.duplicate(user._id.toString(), id);
+  }
+
   @Post(':id/prepare')
   @ApiOperation({ summary: 'Capture a playbook execution snapshot and generate evaluator inputs' })
   async prepare(
