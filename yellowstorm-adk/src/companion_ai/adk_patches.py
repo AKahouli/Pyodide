@@ -72,15 +72,25 @@ def apply_replay_barrier_resilience_patch() -> None:
 
     async def wait(self, key):
         if key in self.events:
+            # Once ANY key times out, the sequence is permanently stalled for this
+            # turn: check_and_advance only ever sets sequence[current_index+1], and
+            # the stuck expected key won't be produced (graph reshaped), so
+            # current_index can never move again. Every remaining wait() is thus
+            # guaranteed to time out too — skip the wait instead of re-paying it
+            # (~100s over a big plan collapses to one timeout).
+            if getattr(self, "_worky_diverged", False):
+                return
             try:
                 await asyncio.wait_for(self.events[key].wait(), timeout=self.timeout_sec)
             except asyncio.TimeoutError:
                 # Unreachable key (plan grew: spawned step promoted to top-level).
                 # Proceed — the node only fast-forwards recorded output; it does
                 # NOT re-execute. Crashing the turn is strictly worse.
+                self._worky_diverged = True
                 logger.warning(
                     "replay barrier: key %r never unblocked in %.0fs — proceeding "
-                    "(fast-forward out of order; spawned-step graph reshape)",
+                    "(fast-forward out of order; spawned-step graph reshape). "
+                    "Sequence stalled; subsequent unreachable keys skip instantly.",
                     key, self.timeout_sec)
 
     barrier.wait = wait
