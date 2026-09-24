@@ -23,6 +23,7 @@ import {
   EvaluationQueryResult,
   EvaluationRunSummary,
   EvaluationProgress,
+  selectBenchmarkQueries,
 } from './evaluation-metrics';
 import {
   buildExecutionLogsExport,
@@ -530,8 +531,10 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     };
   }
 
-  async run(ownerId: string, evaluationId: string) {
+  async run(ownerId: string, evaluationId: string, options: { queryId?: string } = {}) {
     const evaluation = await this.getById(ownerId, evaluationId);
+    const targetQueryId = options.queryId?.trim() || undefined;
+    const isTargeted = Boolean(targetQueryId);
     let rescued = false;
     if (evaluation.status === 'running') {
       if (this.activeRuns.has(evaluationId)) {
@@ -544,10 +547,11 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       });
       rescued = true;
     }
-    if (evaluation.status === 'completed') {
+    if (evaluation.status === 'completed' && !isTargeted) {
       throw new BadRequestException(`Evaluation is already completed; create a new evaluation to re-run.`);
     }
-    if (evaluation.status !== 'prepared' && evaluation.status !== 'failed' && !rescued) {
+    const allowedStatuses = isTargeted ? ['prepared', 'failed', 'completed'] : ['prepared', 'failed'];
+    if (!allowedStatuses.includes(evaluation.status) && !rescued) {
       throw new BadRequestException(`Evaluation is ${evaluation.status}; run prepare first.`);
     }
 
@@ -555,9 +559,13 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     const config = await readJson<PreparedConfig>(join(runDir, 'config.json'));
     const template = await readJson<PreparedTemplate>(join(runDir, 'request_template.json'));
     const benchmark = await readJson<{ queries: BenchmarkQuery[] }>(join(runDir, 'benchmark_queries.json'));
-    const queries = Array.isArray(benchmark.queries) ? benchmark.queries : [];
-    if (queries.length === 0) {
+    const allQueries = Array.isArray(benchmark.queries) ? benchmark.queries : [];
+    if (allQueries.length === 0) {
       throw new BadRequestException('Benchmark has no queries.');
+    }
+    const queries = selectBenchmarkQueries(allQueries, targetQueryId);
+    if (queries.length === 0) {
+      throw new BadRequestException(`Unknown query id: ${targetQueryId}`);
     }
 
     await this.repository.applyRunStart(evaluationId);
@@ -566,13 +574,17 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     const queryPath = config.query_path ?? ['input_context', 'query'];
     const additionalQueryPaths = config.additional_query_paths ?? [];
     const answerNodeId = config.answer_node_id ?? evaluation.answerNodeId ?? undefined;
+    // A targeted run always re-executes its single query and rewrites the run
+    // output, so the export only contains that question.
     let results: EvaluationQueryResult[] = [];
-    try {
-      results = await readJson<EvaluationQueryResult[]>(join(runDir, 'results.json'));
-    } catch {
-      results = [];
+    if (!isTargeted) {
+      try {
+        results = await readJson<EvaluationQueryResult[]>(join(runDir, 'results.json'));
+      } catch {
+        results = [];
+      }
+      if (!Array.isArray(results)) results = [];
     }
-    if (!Array.isArray(results)) results = [];
     const doneQueryIds = new Set(results.map((r) => r.query_id));
     const runStartedAt = new Date().toISOString();
     let runError: string | null = null;

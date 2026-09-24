@@ -69,5 +69,11 @@
     "launch": "Lancer l'évaluation",
     "launching": "Lancement…",
     "target": "Évaluation cible : {{name}}"
+  },
+  "targeted": {
+    "title": "Cibler une seule question",
+    "help": "Laissez « Toutes les questions » pour exécuter tout le jeu de données. Choisissez un identifiant de question pour n'exécuter que celle-ci ; son résultat remplace les résultats et l'export.",
+    "all": "Toutes les questions",
+    "placeholder": "Sélectionner un identifiant de question…"
   }
 }

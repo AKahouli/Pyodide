@@ -69,5 +69,11 @@
     "launch": "Launch evaluation",
     "launching": "Launching…",
     "target": "Target evaluation: {{name}}"
+  },
+  "targeted": {
+    "title": "Target a single question",
+    "help": "Leave on \"All questions\" to run the whole dataset. Pick a question id to run only that one; its output replaces the run results and export.",
+    "all": "All questions",
+    "placeholder": "Select a question id…"
   }
 }

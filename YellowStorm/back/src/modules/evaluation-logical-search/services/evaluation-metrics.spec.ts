@@ -8,7 +8,29 @@ import {
   buildQueryResult,
   normalizeFilename,
   extractFilePagePairs,
+  selectBenchmarkQueries,
 } from './evaluation-metrics';
+
+describe('selectBenchmarkQueries', () => {
+  const queries = [
+    { query_id: 'Q001', query: 'a' },
+    { query_id: 'Q003', query: 'b' },
+    { query_id: 'Q025', query: 'c' },
+  ];
+
+  it('keeps the whole dataset when no query id is given', () => {
+    expect(selectBenchmarkQueries(queries)).toHaveLength(3);
+    expect(selectBenchmarkQueries(queries, '  ')).toHaveLength(3);
+  });
+
+  it('scopes to a single query id', () => {
+    expect(selectBenchmarkQueries(queries, 'Q003')).toEqual([{ query_id: 'Q003', query: 'b' }]);
+  });
+
+  it('returns an empty list for an unknown query id', () => {
+    expect(selectBenchmarkQueries(queries, 'Q999')).toEqual([]);
+  });
+});
 
 describe('tokenOverlapMetrics', () => {
   it('computes recall/precision/f1 over token sets', () => {

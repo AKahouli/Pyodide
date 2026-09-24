@@ -836,3 +836,18 @@ export function buildSummary(results: EvaluationQueryResult[]): EvaluationRunSum
     retrieval_exact_match_rate: total === 0 ? 0 : round4(retrievalExactMatches / total),
   };
 }
+
+/**
+ * Scope a benchmark to a single query id. An empty/absent id keeps the whole
+ * dataset so the default run behavior is unchanged.
+ */
+export function selectBenchmarkQueries<T extends { query_id: string }>(
+  queries: T[],
+  queryId?: string,
+): T[] {
+  const target = queryId?.trim();
+  if (!target) {
+    return queries;
+  }
+  return queries.filter((query) => query.query_id === target);
+}

@@ -45,6 +45,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   // ── History ─────────────────────────────────────────────────
   const [evaluations, setEvaluations] = useState<LogicalSearchEvaluation[]>([]);
   const [selectedEvalId, setSelectedEvalId] = useState<string | null>(null);
+  const [selectedQueryId, setSelectedQueryId] = useState<string>('');
 
   // ── Load agents ─────────────────────────────────────────────
   useEffect(() => { void useAgentStore.getState().fetchAgents(); }, []);
@@ -131,6 +132,12 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
     e.stopPropagation();
   }, []);
 
+  const activeEvalId = selectedEvalId ?? evaluations[0]?.id ?? null;
+  const queryIdFor = useCallback(
+    (id: string | null | undefined) => (id && id === activeEvalId ? selectedQueryId || undefined : undefined),
+    [activeEvalId, selectedQueryId],
+  );
+
   const handleLaunch = useCallback(async () => {
     const targetId = selectedEvalId ?? evaluations[0]?.id;
     if (!targetId || !selectedAgentId || !selectedEvaluatorAgentId) return;
@@ -143,7 +150,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
         workspaceId: selectedWorkspaceId || undefined,
         evaluatorAgentId: selectedEvaluatorAgentId,
       });
-      await evaluationLogicalSearchApi.run(targetId);
+      await evaluationLogicalSearchApi.run(targetId, queryIdFor(targetId));
       refreshEvaluations();
     } catch (err) {
       setRunError(err instanceof Error ? err.message : 'Launch failed');
@@ -152,20 +159,20 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
       setRunningEvalId(null);
       refreshEvaluations();
     }
-  }, [selectedEvalId, selectedAgentId, selectedEvaluatorAgentId, selectedWorkspaceId, evaluations, refreshEvaluations]);
+  }, [selectedEvalId, selectedAgentId, selectedEvaluatorAgentId, selectedWorkspaceId, evaluations, refreshEvaluations, queryIdFor]);
 
   const handleRun = useCallback(async (id: string) => {
     setRunningEvalId(id);
     setRunError(null);
     try {
-      await evaluationLogicalSearchApi.run(id);
+      await evaluationLogicalSearchApi.run(id, queryIdFor(id));
     } catch (err) {
       setRunError(err instanceof Error ? err.message : 'Run failed');
     } finally {
       setRunningEvalId(null);
       refreshEvaluations();
     }
-  }, [refreshEvaluations]);
+  }, [refreshEvaluations, queryIdFor]);
 
   const handleStop = useCallback(async (id: string) => {
     setStoppingEvalId(id);
@@ -231,10 +238,14 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
 
   // ── Derived ─────────────────────────────────────────────────
   const previewRows: BenchmarkQuery[] = useMemo(() => uploadResult?.preview ?? [], [uploadResult]);
-  const launchEvalName = useMemo(
-    () => evaluations.find((e) => e.id === (selectedEvalId ?? evaluations[0]?.id))?.name ?? '',
-    [evaluations, selectedEvalId],
+  const activeEvaluation = useMemo(
+    () => evaluations.find((e) => e.id === activeEvalId) ?? null,
+    [evaluations, activeEvalId],
   );
+  const queryOptions = useMemo(() => activeEvaluation?.queries?.queries ?? [], [activeEvaluation]);
+  const launchEvalName = useMemo(() => activeEvaluation?.name ?? '', [activeEvaluation]);
+
+  useEffect(() => { setSelectedQueryId(''); }, [activeEvalId]);
 
   return (
     <div className='h-full w-full overflow-auto'>
@@ -371,6 +382,27 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
             <p className='text-xs text-muted-foreground'>
               {t('adhoc.target', { name: launchEvalName })}
             </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Targeted run ─────────────────────────────────────── */}
+      {evaluations.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle>{t('targeted.title')}</CardTitle></CardHeader>
+          <CardContent className='space-y-2'>
+            <p className='text-xs text-muted-foreground'>{t('targeted.help')}</p>
+            <SearchSelect
+              options={[
+                { value: '', label: t('targeted.all') },
+                ...queryOptions.map((q) => ({ value: q.query_id, label: `${q.query_id} — ${q.query.slice(0, 60)}` })),
+              ]}
+              value={selectedQueryId}
+              onValueChange={setSelectedQueryId}
+              placeholder={t('targeted.placeholder')}
+              searchPlaceholder={t('select.search')}
+              emptyText={t('select.noResults')}
+            />
           </CardContent>
         </Card>
       )}

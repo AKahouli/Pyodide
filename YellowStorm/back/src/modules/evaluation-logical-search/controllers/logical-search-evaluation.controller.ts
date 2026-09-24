@@ -77,8 +77,12 @@ export class LogicalSearchEvaluationController {
 
   @Post(':id/run')
   @ApiOperation({ summary: 'Run the logical search benchmark queries against the runtime' })
-  async run(@CurrentUser() user: UserDocument, @Param('id') id: string) {
-    return this.service.run(user._id.toString(), id);
+  async run(
+    @CurrentUser() user: UserDocument,
+    @Param('id') id: string,
+    @Body() body: { queryId?: string },
+  ) {
+    return this.service.run(user._id.toString(), id, { queryId: body?.queryId });
   }
 
   @Post(':id/stop')

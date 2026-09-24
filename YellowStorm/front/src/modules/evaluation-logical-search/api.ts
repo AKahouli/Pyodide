@@ -83,9 +83,10 @@ export const evaluationLogicalSearchApi = {
     return res.data.data;
   },
 
-  async run(id: string): Promise<EvaluationRunResult> {
+  async run(id: string, queryId?: string): Promise<EvaluationRunResult> {
     const res = await apiClient.post<{ data: EvaluationRunResult }>(
       `${API_ENDPOINTS.logicalSearchEvaluation.base}/${id}/run`,
+      queryId ? { queryId } : {},
     );
     return res.data.data;
   },
