@@ -50,11 +50,13 @@ interface Props {
 }
 
 // Wrap long text into 2 lines to fit inside the circle
-function wrapLines(text: string, maxLen = 11): [string, string | null] {
+function wrapLines(text: string, maxLen = 14): [string, string | null] {
+  const qualified = text.split(' · ');
+  if (qualified.length === 2 && qualified.every((part) => part.length <= maxLen)) return [qualified[0], qualified[1]];
   if (text.length <= maxLen) return [text, null];
-  const mid = text.lastIndexOf(' ', maxLen);
-  if (mid > 0) return [text.slice(0, mid), text.slice(mid + 1).slice(0, maxLen)];
-  return [text.slice(0, maxLen) + '…', null];
+  const mid = Math.max(text.lastIndexOf(' ', maxLen), text.lastIndexOf('-', maxLen - 1));
+  if (mid > 0) return [text.slice(0, mid + (text[mid] === '-' ? 1 : 0)), text.slice(mid + 1).slice(0, maxLen)];
+  return [text.slice(0, maxLen - 1) + '…', null];
 }
 
 export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = false, dataRevisionId, onDataRevision }: Props) {
@@ -173,9 +175,18 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
     // Data
     const allTypes = [...new Set(ageNodes.map((n) => n.label))];
 
+    const labelCounts = new Map<string, number>();
+    for (const node of ageNodes) {
+      const key = `${node.label}:${String(node.properties.record_label ?? node.id)}`;
+      labelCounts.set(key, (labelCounts.get(key) ?? 0) + 1);
+    }
     const simNodes: SimNode[] = ageNodes.map((n) => ({
       id: n.id,
-      displayLabel: String(n.properties.record_label ?? n.id),
+      displayLabel: (() => {
+        const label = String(n.properties.record_label ?? n.id);
+        const qualifier = n.properties.effective_date ?? n.properties.amendment_number;
+        return (labelCounts.get(`${n.label}:${label}`) ?? 0) > 1 && qualifier ? `${label} · ${qualifier}` : label;
+      })(),
       type: n.label,
       raw: n,
       x: width / 2 + (Math.random() - 0.5) * 300,
@@ -186,7 +197,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
 
     const simLinks: SimLink[] = ageEdges
       .filter((e) => nodeById.has(e.sourceId) && nodeById.has(e.targetId))
-      .map((e) => ({ id: e.id, edgeLabel: e.label, source: e.sourceId, target: e.targetId }));
+      .map((e) => ({ id: e.id, edgeLabel: modelGraph?.relations.find((relation) => relation.id === e.label || relation.key === e.label)?.label ?? e.label.replaceAll('_', ' '), source: e.sourceId, target: e.targetId }));
 
     // Simulation — stays alive for continuous animation
     const sim = d3
@@ -324,7 +335,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
           .attr('font-weight', 700)
           .attr('font-family', 'system-ui, sans-serif')
           .attr('pointer-events', 'none')
-          .text(line2.length > 11 ? line2.slice(0, 10) + '…' : line2);
+        .text(line2.length > 14 ? line2.slice(0, 13) + '…' : line2);
       }
 
       // Type sublabel

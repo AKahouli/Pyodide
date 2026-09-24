@@ -27,6 +27,8 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
   const [mappings, setMappings] = useState<SourceFieldMapping[]>([]);
   const [identityFields, setIdentityFields] = useState<string[]>([]);
   const [selectedDocuments, setSelectedDocuments] = useState<Set<string>>(new Set());
+  const [documentSearch, setDocumentSearch] = useState('');
+  const [savedCount, setSavedCount] = useState(0);
   const concept = graph?.nodes.find((node) => node.id === conceptId);
   const sourceMappings = useSourceMappings(modelId).data ?? [];
   const assetsQuery = useQuery({
@@ -48,12 +50,18 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
       extractionStrategy: attribute.key === 'source_document' ? undefined : 'deterministic',
     })));
     setIdentityFields(target.mapping?.identityFields ?? sourceMappings.find((mapping) => mapping.conceptId === nextConceptId)?.identityFields ?? []);
-    setSelectedDocuments(new Set([target.documentId]));
+    setSelectedDocuments(new Set([target.documentId, ...(target.bulkEdit ? sourceMappings.filter((mapping) => mapping.conceptId === nextConceptId && mapping.assetKind === 'document').map((mapping) => mapping.documentId) : [])]));
+    setDocumentSearch('');
+    setSavedCount(0);
     preview.reset();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target?.documentId, target?.mapping?.id, graph?.versionId, sourceMappings.length]);
 
-  const selectedAssets = [...selectedDocuments].map((documentId) => documentAssets.find((asset) => asset.documentId === documentId)
+  const eligibleDocuments = target?.bulkEdit
+    ? documentAssets.filter((asset) => sourceMappings.some((mapping) => mapping.conceptId === conceptId && mapping.assetKind === 'document' && mapping.documentId === asset.documentId))
+    : documentAssets;
+  const filteredDocuments = eligibleDocuments.filter((asset) => asset.name.toLocaleLowerCase().includes(documentSearch.trim().toLocaleLowerCase()));
+  const selectedAssets = [...selectedDocuments].map((documentId) => eligibleDocuments.find((asset) => asset.documentId === documentId)
     ?? (documentId === target?.documentId ? {
       workspaceId: target.workspaceId,
       documentId,
@@ -85,14 +93,9 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
     onError: (error) => showError(t('mapping.previewError'), { description: error instanceof Error ? error.message : undefined }),
   });
   const save = useMutation({
-    mutationFn: () => selectedAssets.length > 1
-      ? semanticModelApi.createBulkDocumentSourceMappings(modelId, {
-        conceptId,
-        documents: selectedAssets.map((asset) => ({ workspaceId: asset.workspaceId, documentId: asset.documentId })),
-        fieldMappings: activeMappings,
-        identityFields,
-      })
-      : semanticModelApi.createSourceMapping(modelId, {
+    mutationFn: async () => {
+      setSavedCount(0);
+      if (selectedAssets.length === 1) return semanticModelApi.createSourceMapping(modelId, {
         conceptId,
         workspaceId: selectedAssets[0].workspaceId,
         documentId: selectedAssets[0].documentId,
@@ -100,7 +103,23 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
         assetKind: 'document',
         fieldMappings: activeMappings,
         identityFields,
-      }),
+      });
+      for (let start = 0; start < selectedAssets.length; start += 50) {
+        const batch = selectedAssets.slice(start, start + 50);
+        try {
+          await semanticModelApi.createBulkDocumentSourceMappings(modelId, {
+            conceptId,
+            documents: batch.map((asset) => ({ workspaceId: asset.workspaceId, documentId: asset.documentId })),
+            fieldMappings: activeMappings,
+            identityFields,
+          });
+        } catch (error) {
+          if (start) throw new Error(t('dataWorkflow.partialSaved', { count: start }), { cause: error });
+          throw error;
+        }
+        setSavedCount(start + batch.length);
+      }
+    },
     onSuccess: async () => {
       await Promise.all([
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) }),
@@ -112,7 +131,13 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
       showSuccess(t('mapping.documentSaved', { count: selectedAssets.length }));
       onClose();
     },
-    onError: (error) => showError(t('mapping.saveError'), { description: error instanceof Error ? error.message : undefined }),
+    onError: (error) => {
+      void Promise.all([
+        client.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) }),
+        client.invalidateQueries({ queryKey: semanticModelQueryKeys.mappingHealth(modelId) }),
+      ]);
+      showError(t('mapping.saveError'), { description: error instanceof Error ? error.message : undefined });
+    },
   });
   const identityValid = identityFields.every((field) => activeMappings.some((mapping) => mapping.targetAttribute === field));
   const canSave = Boolean(conceptId && selectedAssets.length && activeMappings.length && identityValid) && !save.isPending;
@@ -136,8 +161,8 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
   return <Sheet open={Boolean(target)} onOpenChange={(open) => { if (!open) onClose(); }}>
     {target && <SheetContent side='right' className='flex w-full flex-col gap-0 p-0 sm:max-w-2xl'>
       <SheetHeader className='border-b p-5'>
-        <SheetTitle>{target.mapping ? t('mapping.editDocumentTitle') : t('mapping.documentTitle', { name: target.documentName })}</SheetTitle>
-        <SheetDescription>{t('mapping.documentDescription')}</SheetDescription>
+        <SheetTitle>{target.bulkEdit ? t('dataWorkflow.bulkTitle') : target.mapping ? t('mapping.editDocumentTitle') : t('mapping.documentTitle', { name: target.documentName })}</SheetTitle>
+        <SheetDescription>{target.bulkEdit ? t('dataWorkflow.bulkDescription', { name: target.documentName }) : t('mapping.documentDescription')}</SheetDescription>
       </SheetHeader>
       <div className='min-h-0 flex-1 space-y-5 overflow-y-auto p-5'>
         <div className='space-y-2'>
@@ -154,18 +179,25 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
           </Select>
         </div>
 
-        {!target.mapping && documentAssets.length > 1 && <div className='space-y-2'>
-          <Label>{t('mapping.bulkDocuments', { count: selectedDocuments.size })}</Label>
+        {((target.bulkEdit && eligibleDocuments.length > 1) || (!target.mapping && eligibleDocuments.length > 1)) && <div className='space-y-2'>
+          <Label>{t('mapping.bulkDocuments', { count: selectedAssets.length })}</Label>
           <p className='text-xs text-muted-foreground'>{t('mapping.bulkDocumentsHelp')}</p>
-          <div className='max-h-40 space-y-1 overflow-y-auto rounded-xl border p-2'>
-            {documentAssets.map((asset) => <label key={asset.documentId} className='flex min-h-10 items-center gap-2 rounded-lg px-2 text-xs hover:bg-muted/60'>
-              <input type='checkbox' checked={selectedDocuments.has(asset.documentId)} disabled={asset.documentId === target.documentId || (!selectedDocuments.has(asset.documentId) && selectedDocuments.size >= 50)} onChange={(event) => setSelectedDocuments((current) => {
+          {target.bulkEdit && <p className='text-xs text-muted-foreground'>{t('dataWorkflow.bulkReplaceHelp')}</p>}
+          <div className='flex flex-wrap items-center gap-2'>
+            <Input className='min-w-40 flex-1' value={documentSearch} onChange={(event) => setDocumentSearch(event.target.value)} placeholder={t('dataWorkflow.searchDocuments')} aria-label={t('dataWorkflow.searchDocuments')} />
+            <Button size='sm' variant='outline' type='button' onClick={() => setSelectedDocuments((current) => new Set([...current, ...filteredDocuments.map((asset) => asset.documentId)]))}>{t('dataWorkflow.selectAll', { count: filteredDocuments.length })}</Button>
+            <Button size='sm' variant='ghost' type='button' onClick={() => setSelectedDocuments((current) => new Set([...current].filter((id) => !filteredDocuments.some((asset) => asset.documentId === id))))}>{t('dataWorkflow.clearSelection')}</Button>
+          </div>
+          <div className='max-h-48 space-y-1 overflow-y-auto rounded-xl border p-2'>
+            {filteredDocuments.map((asset) => <label key={asset.documentId} className='flex min-h-10 items-center gap-2 rounded-lg px-2 text-xs hover:bg-muted/60'>
+              <input type='checkbox' checked={selectedDocuments.has(asset.documentId)} onChange={(event) => setSelectedDocuments((current) => {
                 const next = new Set(current);
-                if (event.target.checked && next.size < 50) next.add(asset.documentId); else if (asset.documentId !== target.documentId) next.delete(asset.documentId);
+                if (event.target.checked) next.add(asset.documentId); else next.delete(asset.documentId);
                 return next;
               })} />
               <span className='truncate'>{asset.name}</span>
             </label>)}
+            {!filteredDocuments.length && <p className='p-2 text-xs text-muted-foreground'>{t('dataWorkflow.noDocumentsMatch')}</p>}
           </div>
         </div>}
 
@@ -226,7 +258,8 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
       <div className='flex items-center justify-end gap-2 p-4'>
         <Button variant='outline' onClick={onClose}>{t('action.cancel')}</Button>
         <Button variant='outline' disabled={!canSave || preview.isPending} onClick={() => preview.mutate()}>{preview.isPending && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}{t('mapping.previewButton')}</Button>
-        <Button disabled={!canSave} onClick={() => save.mutate()}>{save.isPending && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}{t('mapping.save')}</Button>
+        <Button disabled={!canSave} onClick={() => save.mutate()}>{save.isPending && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}{target.bulkEdit ? selectedAssets.length === 1 ? t('dataWorkflow.applyToOne') : t('dataWorkflow.applyToSources', { count: selectedAssets.length }) : t('mapping.save')}</Button>
+        {save.isPending && selectedAssets.length > 50 && <span className='text-xs text-muted-foreground'>{t('dataWorkflow.saveProgress', { saved: savedCount, total: selectedAssets.length })}</span>}
       </div>
     </SheetContent>}
   </Sheet>;

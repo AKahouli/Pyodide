@@ -25,6 +25,7 @@ export function SemanticTrustPanel({ modelId, canEdit, validation = [], canRunCh
   const { t } = useModuleTranslation('semantic-model');
   const client = useQueryClient();
   const focus = useSemanticModelEditorStore((state) => state.focus);
+  const graph = useSemanticModelEditorStore((state) => state.graph);
   const restoreFocusRef = useRef(document.activeElement instanceof HTMLElement ? document.activeElement : null);
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 639px)').matches);
   const [status, setStatus] = useState<'open' | 'resolved'>('open');
@@ -84,7 +85,7 @@ export function SemanticTrustPanel({ modelId, canEdit, validation = [], canRunCh
             >
               <AlertTriangle className={`mt-0.5 h-4 w-4 shrink-0 ${issue.severity === 'error' ? 'text-destructive' : 'text-amber-600'}`} />
               <span className='min-w-0 text-xs'>
-                {issue.targetLabel && <strong className='block truncate text-sm font-semibold'>{issue.targetLabel}</strong>}
+                {issue.targetId && <strong className='block truncate text-sm font-semibold'>{graph?.nodes.find((node) => node.id === issue.targetId)?.label ?? graph?.relations.find((relation) => relation.id === issue.targetId)?.label ?? graph?.records.find((record) => record.id === issue.targetId)?.label}</strong>}
                 {t(`validation.issue.${issue.code}`)}
               </span>
             </button>)}</div>}

@@ -140,6 +140,7 @@ describe("SemanticModelEditorPage", () => {
   it("does not block autosave on a synchronous AGE rebuild", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
+    fireEvent.click(await screen.findByRole('button', { name: 'workspaceUi.diagram' }));
     await screen.findByText("semantic-model-canvas");
 
     act(() => {
@@ -177,6 +178,7 @@ describe("SemanticModelEditorPage", () => {
       </QueryClientProvider>,
     );
 
+    fireEvent.click(await screen.findByRole('button', { name: 'workspaceUi.diagram' }));
     expect(await screen.findByText("semantic-model-canvas")).toBeInTheDocument();
     expect(screen.queryByText("editor.loading")).not.toBeInTheDocument();
   });
@@ -185,17 +187,16 @@ describe("SemanticModelEditorPage", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
 
-    // The journey bar replaces the readiness badge: an unconfigured model has nothing to report yet.
-    const verifyStep = await screen.findByRole('button', { name: /journey\.verify/ });
-    expect(verifyStep).toHaveTextContent('journey.todo');
+    const review = await screen.findByRole('button', { name: /workspaceUi\.review/ });
+    expect(review).toHaveTextContent('—');
     expect(screen.queryByText(/% ready/i)).not.toBeInTheDocument();
   });
 
-  it('opens model health from the journey bar', async () => {
+  it('opens model health from the review action', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
 
-    fireEvent.click(await screen.findByRole('button', { name: /journey\.verify/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /workspaceUi\.review/ }));
 
     expect(await screen.findByText('trust.title')).toBeInTheDocument();
   });
@@ -204,6 +205,7 @@ describe("SemanticModelEditorPage", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
 
+    fireEvent.click(await screen.findByRole('button', { name: 'workspaceUi.diagram' }));
     fireEvent.click(await screen.findByRole('button', { name: 'map-source' }));
 
     await waitFor(() => expect(apiMocks.connectWorkspace).toHaveBeenCalledWith('model-1', 'workspace-1', false));
