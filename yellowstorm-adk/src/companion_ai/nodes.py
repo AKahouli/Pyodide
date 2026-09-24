@@ -9,8 +9,10 @@ Reuses the project's LLMFactory so model/proxy config stays in one place.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
 import re
 from email.utils import parseaddr
 from typing import Awaitable, Callable, List, Optional
@@ -272,6 +274,45 @@ def _mark_running(step: Step, on_model_start):
     return _cb
 
 
+def _project_tool_activity(step: Step, on_tool_activity):
+    """after_tool_callback that records each tool call as a `toolActivity`
+    plan_step_component, so the step drawer shows the model's tool trace
+    (AssistantActivity) for traceability. `summary` uses the model's own
+    `display_purpose` arg when present (its stated reason for the call), else the
+    humanised tool name. Idempotent per (step, function_call): a re-drive/replay
+    re-fires the callback but the component_id is stable and the insert is
+    DO NOTHING. Best-effort — a projection failure never breaks the tool call."""
+    seq = {"n": 0}
+
+    async def _cb(tool, args, tool_context, tool_response):
+        try:
+            resp = tool_response if isinstance(tool_response, dict) else {}
+            err = resp.get("error") if isinstance(resp, dict) else None
+            # The approval gate's "requires confirmation" is not a real call or
+            # failure — the real send fires on resume and records THEN. Skip it.
+            if isinstance(err, str) and (
+                    "requires confirmation" in err.lower()
+                    or "approve or reject" in err.lower()):
+                return None
+            name = getattr(tool, "name", None) or getattr(tool, "__name__", "tool")
+            summary = None
+            if isinstance(args, dict):
+                dp = args.get("display_purpose")
+                if isinstance(dp, str) and dp.strip():
+                    summary = dp.strip()
+            summary = summary or name.replace("_", " ")
+            status = "failed" if err else "completed"
+            fcid = getattr(tool_context, "function_call_id", None) or ""
+            cid = hashlib.sha1(f"{step.id}:{fcid}:{name}".encode()).hexdigest()[:12]
+            ordinal, seq["n"] = seq["n"], seq["n"] + 1
+            await on_tool_activity(step, cid, ordinal, "toolActivity",
+                                   {"summary": summary, "toolName": name, "status": status})
+        except Exception as e:
+            logger.warning("tool-activity projection failed: %s", e)
+        return None
+    return _cb
+
+
 def _trace_execution(step: Step, name: str):
     """DIAGNOSTIC (remove once replay-vs-rerun is confirmed): fires ONLY on a
     real model call for this step. ADK replays an already-completed node from
@@ -469,6 +510,20 @@ def capture_artifacts_tool(tool, *, on_artifact: Callable[[dict], Awaitable[None
                          require_confirmation=getattr(tool, "_require_confirmation", False))
 
 
+def send_gate_enabled() -> bool:
+    """Whether send tools (email/Teams) gate on the owner's approval.
+
+    Default ON: contacting real people needs a human OK. Set
+    WORKY_SEND_APPROVAL_GATE=0 to disable — a mitigation for the create_task
+    replay-barrier divergence (the gate turns one gated send into a retry-storm
+    that grows the plan mid-turn). ponytail: does NOT fully fix divergence —
+    runtime create_task(await_reply) still shifts barrier slots; the real fix is
+    planned send->await->act steps. Read per-call so a deploy can flip it.
+    """
+    return os.environ.get("WORKY_SEND_APPROVAL_GATE", "1").strip().lower() not in (
+        "0", "false", "off", "no", "")
+
+
 def _recipients(kwargs) -> List[str]:
     """Every address a reply may come from — all `to_recipients` entries, as bare
     lower-cased addresses. A mail to several people can be answered by any of
@@ -556,7 +611,8 @@ def stamp_send_email_tool(tool, *, token_provider: Callable[[], Awaitable[Option
     # raises an adk_request_confirmation interrupt on the first call; the token
     # stamping above only runs once approved (this func is invoked after the
     # gate). Declined → the model gets "rejected" and re-plans.
-    return SearchToolADK(stamped, {"function": tool.custom_schema}, require_confirmation=True)
+    return SearchToolADK(stamped, {"function": tool.custom_schema},
+                         require_confirmation=send_gate_enabled())
 
 
 def _teams_chat_id(result) -> Optional[str]:
@@ -610,7 +666,8 @@ def record_send_teams_tool(tool, *, token_provider: Callable[[], Awaitable[Optio
     recorded.__signature__ = original.__signature__
     recorded.__annotations__ = original.__annotations__
     # Same gate as send_email: contacting a Teams user needs the owner's OK.
-    return SearchToolADK(recorded, {"function": tool.custom_schema}, require_confirmation=True)
+    return SearchToolADK(recorded, {"function": tool.custom_schema},
+                         require_confirmation=send_gate_enabled())
 
 
 def _stored_result_node(name: str, text: str):
@@ -641,6 +698,7 @@ def make_llm_node_factory(
     gate_for_step: Optional[Callable[[Step], list]] = None,
     replay_completed: bool = False,
     on_model_start: Optional[Callable[[Step], Awaitable[None]]] = None,
+    on_tool_activity: Optional[Callable[..., Awaitable[None]]] = None,
 ) -> NodeFactory:
     """Build a NodeFactory that creates one LlmAgent per step.
 
@@ -919,6 +977,8 @@ def make_llm_node_factory(
                 _skip_if_cancelled(step), _mark_running(step, on_model_start),
                 _trace_execution(step, name),
                 _inject_task_turn(task_text), stop_cb),
+            after_tool_callback=(_project_tool_activity(step, on_tool_activity)
+                                 if on_tool_activity else None),
         )
 
     return factory

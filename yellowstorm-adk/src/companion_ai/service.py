@@ -699,6 +699,11 @@ class OrchestratorService:
                        if o.id != sub_step.id and o.id not in siblings
                        and caller_step_id in o.depends_on
                        and sub_step.id not in o.depends_on
+                       # Never delay a step a PLANNED await_reply depends on — it
+                       # is that await's SEND; delaying it inverts send->await and
+                       # deadlocks the await (see create_task block below).
+                       and not any(s.kind == "await_reply" and o.id in s.depends_on
+                                   for s in plan.steps)
                        and o.status == Status.PENDING]
             for other in affected:
                 other.depends_on.append(sub_step.id)
@@ -962,9 +967,23 @@ class OrchestratorService:
                        and o.id not in after_ids
                        and caller_step_id in o.depends_on
                        and sub_step.id not in o.depends_on
+                       # A step a PLANNED await_reply depends on is the SEND for
+                       # that await; delaying it behind this spawn inverts
+                       # send->await and parks the await before the send runs
+                       # (deadlock, session 40465b3f). Don't re-parent it.
+                       and not any(s.kind == "await_reply" and o.id in s.depends_on
+                                   for s in plan.steps)
                        and o.status == Status.PENDING]
+            # Re-parent each caller-dependent onto the spawned chain's TAIL — the
+            # "act on reply" step that reads the reply — not the raw await. Hung on
+            # the await, a pre-planned dependent (e.g. the N2 step) runs in PARALLEL
+            # with the act instead of AFTER it. tail == the await when there is no
+            # followup. Only steps that ALREADY depended on the caller are in
+            # `affected`, so unrelated parallel steps stay parallel, and several
+            # dependents each just wait on the tail (still parallel to one another).
+            tail = followup_step.id if followup_step is not None else sub_step.id
             for other in affected:
-                other.depends_on.append(sub_step.id)
+                other.depends_on.append(tail)
             siblings.add(sub_step.id)
             if followup_step is not None:
                 siblings.add(followup_step.id)
@@ -1098,6 +1117,16 @@ class OrchestratorService:
                 session_id, step.id, Status.RUNNING.value))
         return _on_start
 
+    def _project_step_tool_activity(self, session_id: str):
+        """Project one tool call as a plan_step_component (see
+        nodes._project_tool_activity), so the task drawer shows the step's tool
+        trace as an activity card."""
+        async def _on_tool(step: Step, component_id: str, ordinal: int,
+                           type: str, data: dict) -> None:
+            await self._project(self._rm and self._rm.add_step_component(
+                session_id, step.id, component_id, type, data, ordinal))
+        return _on_tool
+
     def _build_workflow(self, session_id: str, user_id: str, plan: Plan, model: str,
                         connectors: Optional[List[dict]], executor_prompt: Optional[str],
                         replay_completed: bool = False):
@@ -1184,7 +1213,8 @@ class OrchestratorService:
             gate_for_step=self._unmet_deps(plan),
             custom_instruction=executor_prompt,
             replay_completed=replay_completed,
-            on_model_start=self._mark_step_running(session_id))
+            on_model_start=self._mark_step_running(session_id),
+            on_tool_activity=self._project_step_tool_activity(session_id))
         factory_holder.append(factory)
 
         wf = graph.to_workflow(plan, factory, name=f"plan_{session_id}",
@@ -2169,6 +2199,15 @@ class OrchestratorService:
                 break
 
         outstanding = await self._outstanding(session_id, interrupts)
+        # Reconcile send-approval cards against the PER-STEP outstanding set (the
+        # real multi-interrupt record), not the single sessions.interrupt_id. A
+        # confirm card stays armed only while a step is still parked on its gate;
+        # close every other one. Parallel gates from spawned steps drift the
+        # single session slot, orphaning cards whose step already resolved — those
+        # were never closed by the resume path and lingered 'ready' forever. Runs
+        # every turn end: keep_confirm empty on completion closes all of them.
+        keep_confirm = [i for i, _ in outstanding if hitl.is_confirm(i)]
+        await self._project(self._rm and self._rm.close_confirm_choices(session_id, keep_confirm))
         if outstanding:
             plan.status = Status.BLOCKED
             logger.info("[worky] 10. blocked on %d step(s) session=%s: %s",
@@ -2482,6 +2521,21 @@ class OrchestratorService:
             logger.info("[worky] 7. mail wait registered session=%s step=%s expires=%s",
                         session_id, step.id, expires_at.isoformat(timespec="seconds"))
 
+    async def _keep_completed_on_rerun_failure(self, session_id: str, step) -> bool:
+        """A re-drive of an already-completed step self-reported a failure. Its
+        work is already done, so keep the recorded result instead of downgrading
+        (see the _completed_once note at re-entry). Returns True if it protected
+        the step (caller must then stop, not write FAILED)."""
+        if not getattr(step, "_completed_once", False):
+            return False
+        step.status = Status.COMPLETED
+        step.error = None
+        logger.warning("[worky] 9. re-run failure IGNORED for already-completed step=%s "
+                       "— keeping recorded result", step.id)
+        await self._project(self._rm and self._rm.set_step_status(
+            session_id, step.id, "completed", result=step.result))
+        return True
+
     async def _apply_event(self, session_id: str, plan: Plan, ev, name_to_step: dict, started: set) -> None:
         """STEP 9 (per event) — one ADK node event → one step status → one row
         update the client sees live."""
@@ -2531,6 +2585,15 @@ class OrchestratorService:
             # benign replay; pair it with the "⚡ REAL MODEL CALL" line for the
             # same node to tell replay (no model call) from a true re-run.
             if step.status.is_terminal():
+                # Protect real prior work: a step that already COMPLETED with a
+                # result must not be downgraded to FAILED by a re-drive. Its side
+                # effect already happened (e.g. the GitHub ticket exists), and the
+                # re-run can self-report STEP_FAILED on stale/ambiguous context
+                # (seen live: session 09bf4bea, "Créer ticket Sophie" completed
+                # then failed after an ambiguous email answer). Completed→completed
+                # re-runs stay allowed (a step may re-run to add more).
+                if step.status is Status.COMPLETED and (step.result or "").strip():
+                    step._completed_once = True
                 logger.warning("[worky] 9. ⟲ completed step re-entered session=%s step=%s "
                                "(was %s) — replay unless it also logs a REAL MODEL CALL",
                                session_id, step_id, step.status.value)
@@ -2546,6 +2609,8 @@ class OrchestratorService:
         # FAILED with the error, so the failing step reads correctly.
         err = getattr(ev, "error_message", None) or getattr(ev, "error_code", None)
         if err:
+            if await self._keep_completed_on_rerun_failure(session_id, step):
+                return
             step.status = Status.FAILED
             step.error = str(err)[:500]
             step.result = step.error
@@ -2576,6 +2641,8 @@ class OrchestratorService:
             # error event (above) otherwise fails a step. ponytail: free-text
             # sentinel, fragile; a fail_task tool would be sturdier if it drifts.
             if text.lstrip().upper().startswith("STEP_FAILED"):
+                if await self._keep_completed_on_rerun_failure(session_id, step):
+                    return
                 step.status = Status.FAILED
                 step.error = text.lstrip()[len("STEP_FAILED"):].lstrip(" :–-\t").strip()[:500] or "step failed"
                 step.result = step.error
