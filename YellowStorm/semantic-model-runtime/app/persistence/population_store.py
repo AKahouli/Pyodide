@@ -20,10 +20,11 @@ def _json(value: Any) -> str:
     return json.dumps(value, separators=(",", ":"), sort_keys=True)
 
 
-def revision_id_for(model_version_id: str, spec_hash: str, dataset_fingerprints: list[str],
-                    correction_sequence: int) -> str:
+def revision_id_for(model_version_id: str, execution_fingerprint: str,
+                    dataset_fingerprints: list[str], correction_sequence: int) -> str:
     """Deterministic data-revision id for a fixed spec, inputs and watermark."""
-    body = _json({"modelVersionId": model_version_id, "specHash": spec_hash,
+    body = _json({"modelVersionId": model_version_id,
+                  "executionFingerprint": execution_fingerprint,
                   "datasets": sorted(dataset_fingerprints),
                   "correctionSequence": correction_sequence})
     return "dr_" + hashlib.sha256(body.encode("utf-8")).hexdigest()[:24]
@@ -31,14 +32,16 @@ def revision_id_for(model_version_id: str, spec_hash: str, dataset_fingerprints:
 
 async def mirror_specification(pool: Any, *, home_workspace_id: str, model_id: str,
                                model_version_id: str, spec_hash: str,
-                               specification: dict[str, Any]) -> str:
-    """Insert an immutable snapshot; edited drafts receive a new hash-keyed row."""
+                               specification: dict[str, Any],
+                               select_current: bool = False) -> str:
+    """Store an immutable snapshot; only admission advances its selection time."""
     row = await pool.fetchrow(
-        """
+        f"""
         INSERT INTO semantic_runtime.specifications
           (home_workspace_id, model_id, model_version_id, spec_hash, specification)
         VALUES ($1, $2, $3, $4, $5::jsonb)
-        ON CONFLICT (home_workspace_id, model_id, model_version_id, spec_hash) DO NOTHING
+        ON CONFLICT (home_workspace_id, model_id, model_version_id, spec_hash)
+        {"DO UPDATE SET selected_at = clock_timestamp()" if select_current else "DO NOTHING"}
         RETURNING id::text
         """,
         home_workspace_id, model_id, model_version_id, spec_hash, _json(specification),
@@ -58,20 +61,21 @@ async def mirror_specification(pool: Any, *, home_workspace_id: str, model_id: s
 
 async def create_data_revision(pool: Any, *, revision_id: str, model_id: str,
                                model_version_id: str, spec_hash: str,
+                               execution_fingerprint: str,
                                source_observations: list[dict[str, Any]],
                                correction_sequence: int,
                                coverage: dict[str, Any]) -> str:
     row = await pool.fetchrow(
         """
         INSERT INTO semantic_population.data_revisions
-          (id, model_id, model_version_id, spec_hash, source_observations,
-           correction_sequence, coverage)
-        VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb)
+          (id, model_id, model_version_id, spec_hash, execution_fingerprint,
+           source_observations, correction_sequence, coverage)
+        VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb)
         ON CONFLICT (id) DO NOTHING
         RETURNING id
         """,
-        revision_id, model_id, model_version_id, spec_hash, _json(source_observations),
-        correction_sequence, _json(coverage),
+        revision_id, model_id, model_version_id, spec_hash, execution_fingerprint,
+        _json(source_observations), correction_sequence, _json(coverage),
     )
     return row["id"] if row else revision_id
 
@@ -258,12 +262,28 @@ async def get_review_item(pool: Any, review_id: str) -> dict[str, Any] | None:
 
 async def get_data_revision(pool: Any, revision_id: str) -> dict[str, Any] | None:
     row = await pool.fetchrow(
-        "SELECT id, model_id, model_version_id, spec_hash, correction_sequence, "
+        "SELECT id, model_id, model_version_id, spec_hash, execution_fingerprint, correction_sequence, "
         "projection_ref, coverage, validation_state "
         "FROM semantic_population.data_revisions WHERE id = $1",
         revision_id,
     )
     return dict(row) if row else None
+
+
+async def get_revision_specification(pool: Any, revision_id: str) -> dict[str, Any] | None:
+    row = await pool.fetchrow(
+        "SELECT specification FROM semantic_runtime.specifications specification "
+        "JOIN semantic_population.data_revisions revision "
+        "ON specification.model_id = revision.model_id "
+        "AND specification.model_version_id = revision.model_version_id "
+        "AND specification.spec_hash = revision.spec_hash "
+        "WHERE revision.id = $1 ORDER BY specification.created_at DESC LIMIT 1",
+        revision_id,
+    )
+    if row is None:
+        return None
+    value = row["specification"]
+    return json.loads(value) if isinstance(value, str) else dict(value)
 
 
 async def get_active_binding(pool: Any, model_id: str,
@@ -280,7 +300,8 @@ async def get_active_binding(pool: Any, model_id: str,
 async def cas_active_binding(pool: Any, *, model_id: str, environment: str = "production",
                              expected_version: int | None, model_version_id: str,
                              data_revision_id: str, projection_ref: str,
-                             correction_sequence: int, emit_signal: bool = False) -> bool:
+                             correction_sequence: int, spec_hash: str,
+                             emit_signal: bool = False) -> bool:
     """Compare-and-swap the serving tuple. ``expected_version=None`` creates."""
     async with pool.acquire() as connection:
         async with connection.transaction():
@@ -288,7 +309,7 @@ async def cas_active_binding(pool: Any, *, model_id: str, environment: str = "pr
                 connection, model_id=model_id, environment=environment,
                 expected_version=expected_version, model_version_id=model_version_id,
                 data_revision_id=data_revision_id, projection_ref=projection_ref,
-                correction_sequence=correction_sequence,
+                correction_sequence=correction_sequence, spec_hash=spec_hash,
             )
             if row is not None and emit_signal:
                 await enqueue_ui_signal(
@@ -301,32 +322,39 @@ async def cas_active_binding(pool: Any, *, model_id: str, environment: str = "pr
 
 
 async def _cas_active_binding(connection: Any, *, model_id: str, environment: str,
-                              expected_version: int | None, model_version_id: str,
-                              data_revision_id: str, projection_ref: str,
-                              correction_sequence: int):  # type: ignore[no-untyped-def]
+                               expected_version: int | None, model_version_id: str,
+                               data_revision_id: str, projection_ref: str,
+                               correction_sequence: int, spec_hash: str):  # type: ignore[no-untyped-def]
+    current_spec = """
+        SELECT spec_hash FROM semantic_runtime.specifications
+        WHERE model_id = $1 AND model_version_id = $3
+        ORDER BY selected_at DESC, id DESC LIMIT 1
+    """
     if expected_version is None:
         return await connection.fetchrow(
-            """
+            f"""
             INSERT INTO semantic_runtime.active_bindings
               (model_id, environment, model_version_id, data_revision_id,
                projection_ref, correction_sequence)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            SELECT $1, $2, $3, $4, $5, $6
+            WHERE ({current_spec}) = $7
             ON CONFLICT (model_id, environment) DO NOTHING
             RETURNING version
             """,
             model_id, environment, model_version_id, data_revision_id,
-            projection_ref, correction_sequence,
+            projection_ref, correction_sequence, spec_hash,
         )
     return await connection.fetchrow(
-        """
+        f"""
         UPDATE semantic_runtime.active_bindings
         SET model_version_id = $3, data_revision_id = $4, projection_ref = $5,
             correction_sequence = $6, version = version + 1, updated_at = now()
         WHERE model_id = $1 AND environment = $2 AND version = $7
+          AND ({current_spec}) = $8
         RETURNING version
         """,
         model_id, environment, model_version_id, data_revision_id,
-        projection_ref, correction_sequence, expected_version,
+        projection_ref, correction_sequence, expected_version, spec_hash,
     )
 
 
@@ -367,20 +395,31 @@ async def count_revision_rows(pool: Any, revision_id: str) -> dict[str, int]:
 
 
 async def list_revision_entities(pool: Any, revision_id: str,
-                                 limit: int = 10000) -> list[dict[str, Any]]:
+                                 limit: int = 50000,
+                                 concept_id: str | None = None) -> list[dict[str, Any]]:
     rows = await pool.fetch(
-        "SELECT id, concept_id, namespace, label, attributes FROM semantic_population.entities "
-        "WHERE data_revision_id = $1 ORDER BY id LIMIT $2",
-        revision_id, limit,
+        "SELECT id, concept_id, namespace, label, attributes, provenance "
+        "FROM semantic_population.entities WHERE data_revision_id = $1 "
+        "AND ($3::text IS NULL OR concept_id = $3) ORDER BY id LIMIT $2",
+        revision_id, limit, concept_id,
     )
-    return [{"entityId": row["id"], "conceptId": row["concept_id"],
-             "namespace": row["namespace"], "label": row["label"],
-             "attributes": json.loads(row["attributes"]) if isinstance(row["attributes"], str)
-             else dict(row["attributes"])} for row in rows]
+    result = []
+    for row in rows:
+        values = dict(row)
+        result.append({
+            "entityId": values["id"], "conceptId": values["concept_id"],
+            "namespace": values["namespace"], "label": values["label"],
+            "attributes": json.loads(values["attributes"])
+            if isinstance(values["attributes"], str) else dict(values["attributes"]),
+            "provenance": json.loads(values.get("provenance") or "{}")
+            if isinstance(values.get("provenance"), str)
+            else dict(values.get("provenance") or {}),
+        })
+    return result
 
 
 async def list_revision_relationships(pool: Any, revision_id: str,
-                                      limit: int = 10000) -> list[dict[str, Any]]:
+                                      limit: int = 20000) -> list[dict[str, Any]]:
     rows = await pool.fetch(
         "SELECT relation_id, source_entity_id, target_entity_id, matching_strategy "
         "FROM semantic_population.relationships WHERE data_revision_id = $1 "

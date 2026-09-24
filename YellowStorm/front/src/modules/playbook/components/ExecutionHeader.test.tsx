@@ -54,7 +54,7 @@ describe('ExecutionHeader', () => {
     expect(screen.getByText('execution.stop')).toBeInTheDocument();
   });
 
-  it('shows running badge when a task is running even if the execution status is completed', () => {
+  it('keeps terminal execution status when a task result is stale', () => {
     const execution = makeExecution({
       status: 'completed',
       taskResults: [
@@ -63,8 +63,8 @@ describe('ExecutionHeader', () => {
     });
 
     render(<ExecutionHeader execution={execution} playbook={null} />);
-    expect(screen.getByText('running')).toBeInTheDocument();
-    expect(screen.getByText('execution.stop')).toBeInTheDocument();
+    expect(screen.getByText('completed')).toBeInTheDocument();
+    expect(screen.queryByText('execution.stop')).not.toBeInTheDocument();
   });
 
   it('does not show stop button for completed execution', () => {

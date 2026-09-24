@@ -48,9 +48,17 @@ describe('SemanticModelInspector', () => {
     ]);
   });
 
-  it('uses the empty inspector as the knowledge tray', () => {
+  it('updates whether a business field is required', () => {
+    useSemanticModelEditorStore.getState().hydrate({ ...graph, nodes: [{ ...graph.nodes[0], attributes: [{ key: 'country', label: 'Country', type: 'text', required: false }] }] });
+    useSemanticModelEditorStore.getState().select('customer');
+    renderInspector(true);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'attributes.required' }));
+    expect(useSemanticModelEditorStore.getState().graph?.nodes[0].attributes[0].required).toBe(true);
+  });
+
+  it('keeps the knowledge tray out of the empty details state', () => {
     useSemanticModelEditorStore.getState().select(null);
     renderInspector(true);
-    expect(screen.getByText('knowledge-tray')).toBeInTheDocument();
+    expect(screen.queryByText('knowledge-tray')).not.toBeInTheDocument();
   });
 });

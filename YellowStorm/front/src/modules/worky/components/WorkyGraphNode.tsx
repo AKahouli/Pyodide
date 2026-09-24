@@ -19,6 +19,10 @@ export interface WorkyGraphNodeData {
   completedAt?: string | null;
   /** Resolved display name of the executor agent handling this task, if any. */
   assigneeName?: string | null;
+  compact?: boolean;
+  dimmed?: boolean;
+  isSelected?: boolean;
+  hiddenPrerequisites?: number;
   [key: string]: unknown;
 }
 
@@ -32,34 +36,29 @@ const STATUS_BORDER: Record<OrchStepStatus, string> = {
 };
 
 export function WorkyGraphNode({ data }: NodeProps): JSX.Element {
-  const { title, status, wave, lane, createdAt, updatedAt, startedAt, completedAt, assigneeName } = data as unknown as WorkyGraphNodeData;
+  const { title, status, lane, createdAt, updatedAt, startedAt, completedAt, assigneeName, compact, dimmed, isSelected, hiddenPrerequisites } = data as unknown as WorkyGraphNodeData;
   const { t } = useModuleTranslation('worky');
   return (
     <div
       className={cn(
-        'w-[220px] rounded-md border-2 bg-background/95 px-3 py-2 shadow-sm',
+        'box-border h-[104px] w-[260px] overflow-hidden rounded-xl border-2 bg-background px-3 py-2 shadow-sm transition-opacity',
         STATUS_BORDER[status],
+        dimmed && 'opacity-35',
+        isSelected && 'ring-2 ring-primary ring-offset-2 ring-offset-background',
       )}
     >
       <Handle type='target' position={Position.Left} className='!h-2 !w-2' />
       <Handle type='source' position={Position.Right} className='!h-2 !w-2' />
-      <div className='mb-1 flex items-start justify-between gap-2'>
-        <h3 className='line-clamp-2 text-xs font-medium leading-snug'>{title}</h3>
-        {wave !== null ? (
-          <span className='shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground'>
-            {t('kanban.graph.wave', { n: wave })}
-          </span>
-        ) : null}
-      </div>
-      {assigneeName ? (
-        <div className='mb-1 flex items-center gap-1 text-[10px] text-muted-foreground' title={assigneeName}>
+      <h3 className='line-clamp-2 min-h-8 text-xs font-semibold leading-snug' title={title}>{title}</h3>
+      {!compact && assigneeName ? (
+        <div className='mb-1 flex items-center gap-1 text-[11px] text-muted-foreground' title={assigneeName}>
           <User className='h-3 w-3 shrink-0' aria-hidden />
           <span className='truncate'>{assigneeName}</span>
         </div>
       ) : null}
-      <div className='flex items-center justify-between gap-2'>
+      <div className='mt-1 flex items-center justify-between gap-2'>
         <StatusBadge status={status} />
-        {lane ? (
+        {hiddenPrerequisites ? <span className='text-[10px] font-medium text-amber-500' title={t('graph.hiddenPrerequisites', { count: hiddenPrerequisites })}>{t('graph.hiddenCount', { count: hiddenPrerequisites })}</span> : !compact && lane ? (
           <TaskTimestamp task={{ lane, createdAt, updatedAt, startedAt: startedAt ?? null, completedAt: completedAt ?? null }} />
         ) : null}
       </div>

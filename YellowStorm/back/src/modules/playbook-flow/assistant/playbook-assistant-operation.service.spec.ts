@@ -97,6 +97,29 @@ describe('PlaybookAssistantOperationService', () => {
     expect(updateExec).toHaveBeenCalled();
   });
 
+  it('returns an already applied canonical operation without committing it again', async () => {
+    const operationModel = {
+      findOne: jest.fn().mockImplementation(() => leanExec({
+        operationId: 'operation-1', playbookId: 'flow-1', ownerId: 'owner-1',
+        status: 'completed', target: 'canonical', disposition: 'applied',
+        baseDefinitionRevision: 5, committedRevision: 6,
+      })),
+    };
+    const committed = { id: 'flow-1', definitionRevision: 6 };
+    const flowService = {
+      findOneBase: jest.fn().mockResolvedValue(committed),
+      update: jest.fn(),
+    };
+    const service = new PlaybookAssistantOperationService(operationModel as any, flowService as any);
+
+    await expect(service.commit('flow-1', 'owner-1', 'operation-1', {
+      name: 'Generated', expectedDefinitionRevision: 5,
+    })).resolves.toBe(committed);
+
+    expect(flowService.findOneBase).toHaveBeenCalledWith('flow-1', 'owner-1');
+    expect(flowService.update).not.toHaveBeenCalled();
+  });
+
   it('commits a corrected canonical draft from an explicitly marked strict-validation failure', async () => {
     const updateExec = jest.fn().mockResolvedValue({});
     const operationModel = {
@@ -244,9 +267,11 @@ describe('PlaybookAssistantOperationService', () => {
       service.applyPreview('flow-1', 'owner-1', 'advisor-new', payload),
       service.applyPreview('flow-1', 'owner-1', 'advisor-new', payload),
     ]);
+    const retry = await service.applyPreview('flow-1', 'owner-1', 'advisor-new', payload);
 
     expect(first.id).toBe('flow-2');
     expect(second.id).toBe('flow-2');
+    expect(retry.id).toBe('flow-2');
     expect(flowService.create).toHaveBeenCalledTimes(1);
     expect(flowService.create).toHaveBeenCalledWith(
       'owner-1',

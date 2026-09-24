@@ -38,6 +38,22 @@ export interface ResolvedMappingEntity {
   entity: ResolvedEntity;
 }
 
+export type SourcePreviewIssueCode = 'source_disabled' | 'source_not_ready' | 'source_failed' | 'preview_limited';
+
+/** One unusable source in a preview: which file, which concept, and why it failed. */
+export interface SourcePreviewIssue {
+  mappingId: string;
+  conceptId?: string;
+  documentName?: string;
+  code: SourcePreviewIssueCode;
+  /** Cause without the source name, so identical causes can be grouped. */
+  reason?: string;
+  /** Sentence shown to the user, naming the source. */
+  message: string;
+  /** Technical cause, shown on demand. */
+  detail?: string;
+}
+
 export interface ReconciledEntity {
   id: string;
   conceptId: string;

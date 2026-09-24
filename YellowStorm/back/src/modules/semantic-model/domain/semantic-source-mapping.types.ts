@@ -2,12 +2,16 @@ import type { AttributeDefinition } from './semantic-model.types';
 
 export type SourceAssetKind = 'excel_sheet' | 'csv' | 'document';
 export type SourceFieldMappingMode = 'direct' | 'extract' | 'metadata' | 'constant' | 'ignore';
+// How an `extract` mapping resolves its value. Deterministic is the default so
+// existing mappings keep their current behaviour without a migration.
+export type SourceExtractionStrategy = 'deterministic' | 'ai';
 
 export interface SourceFieldMapping {
   sourceField: string | null;
   targetAttribute: string;
   mode: SourceFieldMappingMode;
   constantValue?: unknown;
+  extractionStrategy?: SourceExtractionStrategy;
 }
 
 export interface SheetFieldProfile {

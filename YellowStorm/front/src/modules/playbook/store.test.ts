@@ -2674,6 +2674,22 @@ describe('playbook store', () => {
     expect(apiMock.cancelFlowExecution).toHaveBeenCalledWith('e1');
   });
 
+  it('reconciles an already finished execution with the server status', async () => {
+    const running = makeExecution({ id: 'e1', playbookId: 'p1', status: 'running' });
+    const failed = makeExecution({ ...running, status: 'failed', error: 'Step failed' });
+    usePlaybookStore.setState({ currentExecution: running, executionCache: { e1: running } });
+    apiMock.cancelFlowExecution.mockRejectedValueOnce(new Error('already finished'));
+    parseApiErrorMock.mockReturnValueOnce({
+      code: 'ERR_1006', message: 'Execution already finished', statusCode: 400, requiresReAuth: false, raw: null,
+    });
+    apiMock.getExecution.mockResolvedValueOnce(failed);
+
+    await usePlaybookStore.getState().stopExecution('p1', 'e1');
+
+    expect(apiMock.getExecution).toHaveBeenCalledWith('p1', 'e1');
+    expect(usePlaybookStore.getState().currentExecution).toMatchObject({ status: 'failed', error: 'Step failed' });
+  });
+
   // ===== Execution Panel =====
 
   it('viewExecutionInPanel loads from cache and opens panel', () => {

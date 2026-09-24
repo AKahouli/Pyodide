@@ -47,4 +47,5 @@ export type PlaybookStreamEvent =
   | { type: 'playbook_hitl_blocker_disabled'; data: Record<string, unknown> }
   | { type: 'playbook_hitl_policy_updated'; data: Record<string, unknown> }
   | { type: 'playbook_replay_hitl_summary_updated'; data: Record<string, unknown> }
+  | { type: 'playbook_shared'; data: { playbookId: string } }
   | { type: 'playbook_dynamic_reasoning_update' | 'playbook_runtime_subgraph_created' | 'playbook_runtime_subgraph_completed' | 'playbook_runtime_subgraph_failed'; data: DynamicReasoningStreamUpdate };

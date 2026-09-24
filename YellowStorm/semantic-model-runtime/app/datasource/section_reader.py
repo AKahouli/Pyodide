@@ -26,6 +26,11 @@ class SectionReadError(ValueError):
         self.code = code
 
 
+def _valid_document_pk(value: Any) -> bool:
+    return bool(isinstance(value, str) and value.strip()
+                or isinstance(value, int) and not isinstance(value, bool) and value > 0)
+
+
 def _bounded_int(value: Any, name: str, *, maximum: int, minimum: int = 1) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
         raise SectionReadError(f"invalid_{name}")
@@ -118,7 +123,7 @@ def structural_closure(sections: list[dict[str, Any]], target_pks: list[int],
 async def get_outline(connection: Any, *, document_pk: Any,
                       max_nodes: int = MAX_OUTLINE_NODES) -> dict[str, Any]:
     """Bounded outline for one logical document (P4.14)."""
-    if isinstance(document_pk, bool) or not isinstance(document_pk, int) or document_pk <= 0:
+    if not _valid_document_pk(document_pk):
         raise SectionReadError("invalid_document_pk")
     _bounded_int(max_nodes, "max_nodes", maximum=MAX_OUTLINE_NODES)
     # +1 row reports truncation precisely instead of false-positiving when the
@@ -148,7 +153,7 @@ async def read_sections(connection: Any, *, document_pk: Any, section_pks: list[
     stored blocks (P4.17). Zero returned blocks is reported as ``directBlocks``
     zero, never as "nothing relevant exists" (P4.20).
     """
-    if isinstance(document_pk, bool) or not isinstance(document_pk, int) or document_pk <= 0:
+    if not _valid_document_pk(document_pk):
         raise SectionReadError("invalid_document_pk")
     if not isinstance(section_pks, list) or not section_pks:
         raise SectionReadError("invalid_section_selection")
@@ -257,7 +262,7 @@ async def read_evidence(connection: Any, *, document_pk: Any, block_pks: list[in
     ``blockPk`` is a database id that dies on reindex and is always paired with
     the parser-local ``blockKey`` and ``sectionKey`` (P4.14).
     """
-    if isinstance(document_pk, bool) or not isinstance(document_pk, int) or document_pk <= 0:
+    if not _valid_document_pk(document_pk):
         raise SectionReadError("invalid_document_pk")
     if not isinstance(block_pks, list) or not block_pks:
         raise SectionReadError("invalid_block_selection")

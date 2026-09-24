@@ -631,6 +631,66 @@ describe('PlaybookFlowService', () => {
     );
   });
 
+  it('validates full-save constant bindings as plain objects after Mongoose casts them', async () => {
+    let bindings: any[] = [];
+    const flowDocument: Record<string, any> = {
+      _id: 'flow-1',
+      ownerId: 'user-1',
+      definitionRevision: 2,
+      settings: { recursionLimit: 25, maxParallelism: 5 },
+      hitlPolicy: { mode: 'auto' },
+      hitlBlockers: [],
+      nodes: [{ id: 'target', input: { ports: [{ id: 'destination', type: 'data', required: true }] } }],
+      controlEdges: [],
+      workspaces: [],
+    };
+    Object.defineProperty(flowDocument, 'dataBindings', {
+      get: () => bindings,
+      set: (value: any[]) => {
+        bindings = value.map((binding) => {
+          const { constantValue, ...fields } = binding;
+          return Object.assign(
+            Object.create({ constantValue }),
+            fields,
+            { toObject: () => ({ ...binding }) },
+          );
+        });
+      },
+    });
+    const savedDocument = {
+      toJSON: () => ({ id: 'flow-1', definitionRevision: 3, nodes: flowDocument.nodes, controlEdges: [], dataBindings: bindings }),
+    };
+    const validatorService = { validate: jest.fn() };
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PlaybookFlowService,
+        FlowAccessService,
+        FlowResponseAssemblerService,
+        FlowWorkspacePolicyService,
+        FlowGraphSanitizerService,
+        FlowDeltaPatchService,
+        { provide: PlaybookFlowIdempotencyService, useValue: idempotencyService },
+        { provide: PlaybookShareService, useValue: playbookShareService },
+        { provide: getModelToken(Flow.name), useValue: { findById: jest.fn().mockResolvedValue(flowDocument), findOneAndUpdate: jest.fn().mockResolvedValue(savedDocument) } },
+        { provide: getModelToken(FlowExecution.name), useValue: {} },
+        { provide: PlaybookFlowValidatorService, useValue: validatorService },
+        { provide: PlaybookFlowReplayService, useValue: { getActiveReplays: jest.fn() } },
+        { provide: PlaybookFlowReplayReportService, useValue: { findLatestScoresForReplays: jest.fn() } },
+        { provide: ConfigService, useValue: { get: jest.fn().mockReturnValue(true) } },
+      ],
+    }).compile();
+
+    const constantValue = { workspaceId: 'workspace-1', workspaceName: 'Workspace' };
+    await moduleRef.get(PlaybookFlowService).update('507f1f77bcf86cd799439011', 'user-1', {
+      expectedDefinitionRevision: 2,
+      dataBindings: [{ id: 'binding-1', targetNode: 'target', targetPort: 'destination', sourceKind: 'constant', constantValue }],
+    } as any);
+
+    const validatedBindings = validatorService.validate.mock.calls[0][2];
+    expect(validatedBindings[0]).toEqual(expect.objectContaining({ constantValue }));
+    expect(Object.prototype.hasOwnProperty.call(validatedBindings[0], 'constantValue')).toBe(true);
+  });
+
   it('throws conflict when a full editor update loses the compare-and-swap race', async () => {
     const flowDocument = {
       _id: 'flow-1',

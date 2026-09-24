@@ -12,6 +12,7 @@ as escaped literals inside allowlisted query shapes (P6.19).
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
@@ -23,6 +24,11 @@ LIVE_PROJECTION_PREFIX = "age:v1:"
 _CYPHER_TAG = "$agecypher$"
 _GRAPH_RE = re.compile(r"^pop_[a-z0-9_]{1,64}$")
 _KEY_RE = re.compile(r"[^a-zA-Z0-9_]")
+logger = logging.getLogger(__name__)
+
+
+class ProjectionUnavailable(RuntimeError):
+    pass
 
 
 def projection_graph_name(revision_id: Any) -> str:
@@ -176,6 +182,51 @@ def _agtype_count(value: Any) -> int:
     return parsed
 
 
+def _agtype_value(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    return json.loads(re.sub(r"::(?:vertex|edge|path)$", "", value))
+
+
+async def read_projection_graph(age_pool: Any, projection_ref: str) -> dict[str, Any]:
+    """Read one immutable projection without rebuilding or indexing it."""
+    if not is_live_projection_ref(projection_ref):
+        raise PopulationError("revision_not_projected")
+    graph = projection_ref[len(LIVE_PROJECTION_PREFIX):]
+    async with age_pool.acquire() as connection:
+        nodes = await connection.fetch(_cypher(
+            graph,
+            "MATCH (n:Entity) RETURN n.record_id, n.concept_id, n.label, properties(n)",
+            "record_id ag_catalog.agtype, concept_id ag_catalog.agtype, "
+            "label ag_catalog.agtype, properties ag_catalog.agtype",
+        ))
+        edges = await connection.fetch(_cypher(
+            graph,
+            "MATCH (s:Entity)-[r:RELATED_TO]->(t:Entity) "
+            "RETURN r.relation_id, s.record_id, t.record_id, properties(r)",
+            "relation_id ag_catalog.agtype, source_id ag_catalog.agtype, "
+            "target_id ag_catalog.agtype, properties ag_catalog.agtype",
+        ))
+    return {
+        "nodes": [{
+            "id": str(_agtype_value(row["record_id"])),
+            "label": str(_agtype_value(row["concept_id"])),
+            "properties": {
+                **(_agtype_value(row["properties"]) or {}),
+                "record_label": _agtype_value(row["label"]),
+            },
+        } for row in nodes],
+        "edges": [{
+            "id": f"{_agtype_value(row['relation_id'])}:"
+                  f"{_agtype_value(row['source_id'])}:{_agtype_value(row['target_id'])}",
+            "label": str(_agtype_value(row["relation_id"])),
+            "sourceId": str(_agtype_value(row["source_id"])),
+            "targetId": str(_agtype_value(row["target_id"])),
+            "properties": _agtype_value(row["properties"]) or {},
+        } for row in edges],
+    }
+
+
 async def projection_counts(connection: Any, graph: str) -> dict[str, int]:
     vertices = await connection.fetchval(_cypher(
         graph, "MATCH (n) RETURN count(n)", "value ag_catalog.agtype"))
@@ -186,3 +237,129 @@ async def projection_counts(connection: Any, graph: str) -> dict[str, int]:
 
 async def drop_projection(connection: Any, graph: str) -> None:
     await connection.execute(drop_graph_sql(_check_graph(graph)))
+
+
+async def ensure_revision_projection(pool: Any, age_pool: Any,
+                                     revision_id: str) -> dict[str, Any]:
+    """Build, validate and record one immutable revision projection."""
+    from app.persistence import population_store as store
+
+    revision = await store.get_data_revision(pool, revision_id)
+    if revision is None:
+        raise PopulationError("revision_not_found")
+    if revision["validation_state"] != "valid":
+        raise PopulationError("revision_not_valid")
+    if is_live_projection_ref(revision["projection_ref"]):
+        return {"revisionId": revision_id, "projectionRef": revision["projection_ref"],
+                "reused": True}
+    graph = projection_graph_name(revision_id)
+    async with age_pool.acquire() as connection:
+        await connection.fetchval("SELECT pg_advisory_lock(hashtextextended($1, 0))", graph)
+        try:
+            current = await store.get_data_revision(pool, revision_id)
+            if current is None:
+                raise PopulationError("revision_not_found")
+            if is_live_projection_ref(current["projection_ref"]):
+                return {"revisionId": revision_id, "projectionRef": current["projection_ref"],
+                        "reused": True}
+            return await _build_revision_projection(
+                pool, connection, revision_id, graph, current["projection_ref"])
+        finally:
+            await connection.fetchval("SELECT pg_advisory_unlock(hashtextextended($1, 0))", graph)
+
+
+async def _build_revision_projection(pool: Any, connection: Any, revision_id: str,
+                                     graph: str, previous_ref: str | None) -> dict[str, Any]:
+    from app.persistence import population_store as store
+
+    stored = await store.count_revision_rows(pool, revision_id)
+    entities = await store.list_revision_entities(pool, revision_id)
+    relationships = await store.list_revision_relationships(pool, revision_id)
+    if stored["entities"] != len(entities) or stored["relationships"] != len(relationships):
+        raise PopulationError("projection_too_large")
+    known_ids = {entity["entityId"] for entity in entities}
+    if any(relationship["sourceEntityId"] not in known_ids
+           or relationship["targetEntityId"] not in known_ids
+           for relationship in relationships):
+        raise PopulationError("projection_incoherent")
+    plan = compile_projection(entities, relationships)
+    expected = {"vertices": len(entities), "edges": len(relationships)}
+    try:
+        async with connection.transaction():
+            if await projection_exists(connection, graph):
+                await drop_projection(connection, graph)
+            await project_revision(connection, graph=graph, plan=plan)
+            if validate_projection(expected, await projection_counts(connection, graph)):
+                raise PopulationError("projection_validation_failed")
+    except PopulationError:
+        raise
+    except Exception as exc:
+        logger.warning("AGE projection failed for revision %s: %s",
+                       revision_id, type(exc).__name__)
+        raise ProjectionUnavailable("age_projection_failed") from exc
+    projection_ref = live_projection_ref(graph)
+    try:
+        recorded = await store.set_revision_projection(
+            pool, revision_id, projection_ref, previous_ref)
+    except Exception as exc:
+        logger.warning("Projection persistence failed for revision %s: %s",
+                       revision_id, type(exc).__name__)
+        current = await _revision_after_persistence_error(pool, revision_id)
+        if current is not None and current["projection_ref"] == projection_ref:
+            recorded = True
+        else:
+            if current is not None and current["projection_ref"] == previous_ref:
+                await _discard_projection(connection, graph, revision_id)
+            raise ProjectionUnavailable("projection_persistence_failed") from exc
+    if not recorded:
+        current = await store.get_data_revision(pool, revision_id)
+        if current is None or current["projection_ref"] != projection_ref:
+            await _discard_projection(connection, graph, revision_id)
+            raise PopulationError("projection_record_conflict")
+    return {"revisionId": revision_id, "projectionRef": projection_ref,
+            "graph": graph, **expected, "reused": not recorded}
+
+
+async def _revision_after_persistence_error(pool: Any, revision_id: str):  # type: ignore[no-untyped-def]
+    from app.persistence import population_store as store
+
+    try:
+        return await store.get_data_revision(pool, revision_id)
+    except Exception as exc:
+        logger.error("Could not reconcile projection persistence for revision %s: %s",
+                     revision_id, type(exc).__name__)
+        return None
+
+
+async def _discard_projection(connection: Any, graph: str, revision_id: str) -> None:
+    try:
+        if await projection_exists(connection, graph):
+            await drop_projection(connection, graph)
+    except Exception as exc:
+        logger.error("Failed to discard AGE graph for revision %s: %s",
+                     revision_id, type(exc).__name__)
+
+
+async def finalize_draft_revision(pool: Any, age_pool: Any,
+                                  revision_id: str) -> dict[str, Any]:
+    """Project and atomically move only the draft serving binding."""
+    from app.persistence import population_store as store
+
+    projected = await ensure_revision_projection(pool, age_pool, revision_id)
+    revision = await store.get_data_revision(pool, revision_id)
+    if revision is None:
+        raise PopulationError("revision_not_found")
+    sequence = await store.model_correction_sequence(pool, revision["model_id"])
+    if revision["correction_sequence"] != sequence:
+        raise PopulationError("stale_revision_watermark")
+    current = await store.get_active_binding(pool, revision["model_id"], "draft")
+    swapped = await store.cas_active_binding(
+        pool, model_id=revision["model_id"], environment="draft",
+        expected_version=current["version"] if current else None,
+        model_version_id=revision["model_version_id"], data_revision_id=revision_id,
+        projection_ref=projected["projectionRef"], correction_sequence=sequence,
+        spec_hash=revision["spec_hash"],
+    )
+    if not swapped:
+        raise PopulationError("stale_model_definition")
+    return {**projected, "environment": "draft"}

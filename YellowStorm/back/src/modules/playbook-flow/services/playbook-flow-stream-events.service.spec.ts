@@ -5,6 +5,18 @@ const configService = {
 };
 
 describe('PlaybookFlowStreamEventsService', () => {
+  it('notifies a recipient when a playbook is shared with them', () => {
+    const streamGateway = { sendToUser: jest.fn() };
+    const service = new PlaybookFlowStreamEventsService(streamGateway as any, {} as any, configService as any);
+
+    service.emitPlaybookShared('user-1', 'flow-1');
+
+    expect(streamGateway.sendToUser).toHaveBeenCalledWith('user-1', {
+      type: 'playbook_shared',
+      data: { playbookId: 'flow-1' },
+    });
+  });
+
   it('includes step execution modes in execution start events', async () => {
     const streamGateway = {
       sendToUser: jest.fn(),

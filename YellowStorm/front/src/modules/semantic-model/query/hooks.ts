@@ -36,10 +36,10 @@ export function useRelationResolutionRules(id: string | undefined) {
 export function useSourceResolutionPolicies(id: string | undefined) {
   return useQuery({ queryKey: semanticModelQueryKeys.sourcePolicies(id ?? 'none'), queryFn: () => semanticModelApi.listSourceResolutionPolicies(id ?? ''), enabled: Boolean(id) });
 }
-export function useSemanticDataPreview(id: string | undefined, limit: number, enabled = true) {
+export function useSemanticDataPreview(id: string | undefined, limit: number, enabled = true, dataRevisionId?: string) {
   return useQuery({
-    queryKey: semanticModelQueryKeys.dataPreview(id ?? 'none', limit),
-    queryFn: () => semanticModelApi.dataPreview(id ?? '', { limit }),
+    queryKey: [...semanticModelQueryKeys.dataPreview(id ?? 'none', limit), dataRevisionId ?? 'active'],
+    queryFn: () => semanticModelApi.dataPreview(id ?? '', { limit, dataRevisionId }),
     enabled: Boolean(id) && enabled,
     staleTime: 60_000,
     retry: false,

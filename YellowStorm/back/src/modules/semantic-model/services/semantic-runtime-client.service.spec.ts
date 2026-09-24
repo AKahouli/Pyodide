@@ -55,6 +55,12 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
     expect(mockedAxios.post).not.toHaveBeenCalled();
   });
 
+  it('allows bound reads when runtime writes are disabled', async () => {
+    mockedAxios.get.mockResolvedValueOnce({ data: { dataRevisionId: 'dr_1', nodes: [], edges: [] } });
+    const client = new SemanticRuntimeClientService(config({ runtimeWritesEnabled: false }) as any);
+    await expect(client.getBoundGraph('m1', 'u1')).resolves.toMatchObject({ dataRevisionId: 'dr_1' });
+  });
+
   it('maps runtime 409 to conflict and 404 to not-found', async () => {
     const client = new SemanticRuntimeClientService(config() as any);
     (axios.isAxiosError as unknown as jest.Mock).mockReturnValue(true);

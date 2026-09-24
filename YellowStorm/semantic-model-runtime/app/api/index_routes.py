@@ -95,7 +95,7 @@ async def document_outline(body: OutlineBody, request: Request) -> dict[str, obj
 
 @router.post("/documents/search")
 async def document_search(body: SearchBody, request: Request) -> dict[str, object]:
-    async def operation(connection: Any, document_pk: int) -> dict[str, Any]:
+    async def operation(connection: Any, document_pk: int | str) -> dict[str, Any]:
         if body.method == "lexical":
             manifest = await detect_capabilities(connection)
             return await search_lexical(connection, document_pk=document_pk, query=body.value,

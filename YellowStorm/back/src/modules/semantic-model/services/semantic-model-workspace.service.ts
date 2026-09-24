@@ -32,11 +32,18 @@ export class SemanticModelWorkspaceService {
     const workspace = await this.workspaces.findById(dto.workspaceId);
     const revision = await this.database.transaction(async (client) => {
       const revision = await this.models.advanceRevision(client,modelId,dto.expectedRevision);
+      const role = !model.originWorkspaceId || model.originWorkspaceId === dto.workspaceId ? 'origin' : 'connected';
+      if (!model.originWorkspaceId) {
+        await client.query(
+          'UPDATE semantic_model.models SET origin_workspace_id=$2,updated_at=now() WHERE id=$1 AND origin_workspace_id IS NULL',
+          [modelId,dto.workspaceId],
+        );
+      }
       await client.query(
         `INSERT INTO semantic_model.workspace_links(model_id,workspace_id,role,created_by)
-         VALUES ($1,$2,'connected',$3)
-         ON CONFLICT(model_id,workspace_id) DO UPDATE SET enabled=true,updated_at=now()`,
-        [modelId,dto.workspaceId,userId],
+         VALUES ($1,$2,$3,$4)
+         ON CONFLICT(model_id,workspace_id) DO UPDATE SET role=$3,enabled=true,updated_at=now()`,
+        [modelId,dto.workspaceId,role,userId],
       );
       if (dto.addToDocumentsFallback) {
         const node = await client.query<{ id: string }>(

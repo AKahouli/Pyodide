@@ -386,6 +386,8 @@ export enum ErrorCode {
   WORKY_OWNER_MEMORY_FORBIDDEN = 'ERR_3528',
   WORKY_REPLAN_REJECTED = 'ERR_3529',
   WORKY_NO_DEFAULT_MODEL = 'ERR_3530',
+  WORKY_STREAM_SHARE_NOT_FOUND = 'ERR_3531',
+  WORKY_STREAM_SHARE_USER_NOT_FOUND = 'ERR_3532',
 
   // Governance errors (3600-3699)
   GOVERNANCE_PROGRAM_NOT_FOUND = 'ERR_3600',
@@ -769,6 +771,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.WORKY_REPLAN_REJECTED]: 'Plan-delta replan was rejected by the auto-apply guard.',
   [ErrorCode.WORKY_NO_DEFAULT_MODEL]:
     'No model is configured for this Worky stream. Select a model in the prompt bar or set a default in Admin > Models.',
+  [ErrorCode.WORKY_STREAM_SHARE_NOT_FOUND]: 'Worky stream share not found.',
+  [ErrorCode.WORKY_STREAM_SHARE_USER_NOT_FOUND]: 'User not found.',
 
   [ErrorCode.GOVERNANCE_PROGRAM_NOT_FOUND]: 'Governance program not found.',
   [ErrorCode.GOVERNANCE_PROGRAM_NAME_EXISTS]: 'A governance program with this name already exists.',

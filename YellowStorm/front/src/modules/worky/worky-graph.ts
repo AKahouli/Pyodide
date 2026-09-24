@@ -44,3 +44,22 @@ export function buildWorkyGraph(tasks: WorkyTask[]): { nodes: Node[]; edges: Edg
 
   return { nodes, edges };
 }
+
+export function traceWorkyDependencies(edges: Edge[], taskId: string, direction: 'upstream' | 'downstream'): Set<string> {
+  const visited = new Set([taskId]);
+  const queue = [taskId];
+  while (queue.length) {
+    const current = queue.shift();
+    for (const edge of edges) {
+      if (direction === 'upstream' && edge.target === current && !visited.has(edge.source)) {
+        visited.add(edge.source);
+        queue.push(edge.source);
+      }
+      if (direction === 'downstream' && edge.source === current && !visited.has(edge.target)) {
+        visited.add(edge.target);
+        queue.push(edge.target);
+      }
+    }
+  }
+  return visited;
+}

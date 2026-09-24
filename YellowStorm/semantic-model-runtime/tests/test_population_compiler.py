@@ -46,10 +46,12 @@ def test_validation_rejects_identity_relation_and_scope_gaps():
     spec["concepts"][1]["materialization"] = None
     spec["concepts"][1]["eligibility"] = {"field": "nope", "op": "eq", "value": "x"}
     spec["relations"][0]["targetConceptId"] = "missing"
+    spec["relations"][0]["cardinality"] = "invalid"
     spec["sourceScope"] = []
     found = codes(validate_specification(spec))
     for code in ("duplicate_concept_id", "duplicate_concept_key", "empty_identity_key",
-                 "unknown_filter_field", "unknown_relation_endpoint", "empty_source_scope"):
+                 "unknown_filter_field", "unknown_relation_endpoint", "invalid_cardinality",
+                 "empty_source_scope"):
         assert code in found
 
 

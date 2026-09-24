@@ -1,4 +1,4 @@
-import { IsArray, IsDateString, IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsArray, IsBoolean, IsDateString, IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { WORKY_STREAM_STATUSES } from '../constants/worky.constants';
@@ -40,6 +40,12 @@ export class QueryWorkyStreamsDto {
   @IsArray()
   @IsIn(WORKY_STREAM_STATUSES, { each: true })
   status?: string[];
+
+  @ApiPropertyOptional({ description: 'Streams waiting for input or containing blocked or failed tasks' })
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  attention?: boolean;
 
   @ApiPropertyOptional({ enum: WORKY_STREAM_SORT_FIELDS, default: 'lastActivity' })
   @IsOptional()

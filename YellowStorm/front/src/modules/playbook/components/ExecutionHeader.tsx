@@ -8,6 +8,7 @@ import { useIsStopping } from '../store';
 import type { PlaybookExecution, Playbook } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { usePlaybookStore } from '../store';
+import { getVisibleExecutionStatus } from '../utils/playbook-canvas-status';
 
 interface Props {
   execution: PlaybookExecution | null;
@@ -31,16 +32,6 @@ function formatDuration(ms: number | null): string {
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = seconds % 60;
   return `${minutes}m ${remainingSeconds}s`;
-}
-
-function getVisibleExecutionStatus(execution: PlaybookExecution): PlaybookExecution['status'] {
-  if (execution.taskResults.some((taskResult) => taskResult.status === 'running')) {
-    return 'running';
-  }
-  if (execution.taskResults.some((taskResult) => taskResult.status === 'interrupted')) {
-    return 'interrupted';
-  }
-  return execution.status;
 }
 
 export function ExecutionHeader({ execution, playbook }: Props) {

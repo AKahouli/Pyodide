@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Connection, Model, Types } from 'mongoose';
@@ -16,6 +16,7 @@ import {
   IWorkyStreamListItem,
   IWorkyStreamListResult,
   IWorkyStreamStats,
+  IWorkyStreamShareResponse,
 } from '../interfaces/worky-stream.interface';
 import { LoggerService } from '../../logger';
 import { NotFoundException, ForbiddenException, ConflictException } from '../../exceptions';
@@ -38,6 +39,9 @@ import { WorkyTask } from '../schemas/worky-task.schema';
 import { WorkyTaskResult } from '../schemas/worky-task-result.schema';
 import { WorkyTrace } from '../schemas/worky-trace.schema';
 import { WorkyOrchestratorGrpcClientService } from './worky-orchestrator.grpc-client.service';
+import { USER_LOOKUP_PORT, UserLookupPort } from '@common/ports/user-lookup.port';
+import { canWriteWorkyStream, getWorkyStreamAccess } from '../worky-stream-access';
+import { WorkyEventService } from './worky-event.service';
 
 /**
  * Aggregate lifecycle for Worky streams. Part 1 covers:
@@ -62,6 +66,9 @@ export class WorkyStreamService implements OnModuleInit {
     private readonly config: ConfigService,
     private readonly logger: LoggerService,
     private readonly orchestrator: WorkyOrchestratorGrpcClientService,
+    @Inject(USER_LOOKUP_PORT)
+    private readonly users: UserLookupPort = null!,
+    private readonly events: WorkyEventService = null!,
   ) {
     this.logger.setContext(WorkyStreamService.name);
   }
@@ -131,7 +138,7 @@ export class WorkyStreamService implements OnModuleInit {
       userId,
     });
 
-    return this.toResponse(stream);
+    return this.toResponse(stream, userId);
   }
 
   /**
@@ -148,20 +155,34 @@ export class WorkyStreamService implements OnModuleInit {
   async ensureKickoffContext(
     streamId: string,
     userId: string,
-  ): Promise<{ aiSessionId: string }> {
-    const doc = await this.streamModel
-      .findById(streamId)
-      .lean<{ aiSessionId?: string | null }>()
-      .exec();
-    if (!doc) {
-      throw new NotFoundException(ErrorCode.WORKY_STREAM_NOT_FOUND, 'Worky stream not found.');
-    }
-    let aiSessionId = doc.aiSessionId ?? null;
+  ): Promise<{ aiSessionId: string; ownerUserId: string }> {
+    const context = await this.getRuntimeContext(streamId, userId);
+    let aiSessionId = context.aiSessionId;
     if (!aiSessionId) {
-      aiSessionId = await this.orchestrator.createSession(userId);
+      aiSessionId = await this.orchestrator.createSession(context.ownerUserId);
       await this.streamModel.updateOne({ _id: streamId }, { $set: { aiSessionId } }).exec();
     }
-    return { aiSessionId };
+    return { aiSessionId, ownerUserId: context.ownerUserId };
+  }
+
+  async getRuntimeContext(
+    streamId: string,
+    userId: string,
+  ): Promise<{ aiSessionId: string | null; ownerUserId: string }> {
+    const stream = await this.streamModel.findById(streamId).lean().exec();
+    if (!stream) {
+      throw new NotFoundException(ErrorCode.WORKY_STREAM_NOT_FOUND, 'Worky stream not found.');
+    }
+    if (!canWriteWorkyStream(stream, userId)) {
+      throw new ForbiddenException(
+        ErrorCode.WORKY_STREAM_FORBIDDEN,
+        'You do not have write access to this Worky stream.',
+      );
+    }
+    return {
+      aiSessionId: stream.aiSessionId ?? null,
+      ownerUserId: stream.ownerUserId.toString(),
+    };
   }
 
   async findByAiSessionId(
@@ -214,14 +235,16 @@ export class WorkyStreamService implements OnModuleInit {
     userId: string,
     query: QueryWorkyStreamsDto,
   ): Promise<IWorkyStreamListResult> {
-    const ownerUserId = new Types.ObjectId(userId);
+    const userObjectId = new Types.ObjectId(userId);
     const page = Math.max(1, query.page ?? 1);
     const limit = Math.min(100, Math.max(1, query.limit ?? 12));
 
     // `baseFilter` scopes to the owner + search + created-date window. It drives
     // `statusCounts` so the home-page tiles/chips show the full breakdown
     // regardless of which status is currently selected.
-    const baseFilter: Record<string, unknown> = { ownerUserId };
+    const baseFilter: Record<string, unknown> = {
+      $or: [{ ownerUserId: userObjectId }, { 'shares.userId': userObjectId }],
+    };
     if (query.search) {
       baseFilter.title = { $regex: escapeRegex(query.search), $options: 'i' };
     }
@@ -230,31 +253,35 @@ export class WorkyStreamService implements OnModuleInit {
     if (query.createdTo) createdAt.$lte = new Date(query.createdTo);
     if (Object.keys(createdAt).length > 0) baseFilter.createdAt = createdAt;
 
-    // `filter` adds the active status selection — it bounds the paginated data
-    // and the total count, but intentionally NOT statusCounts.
-    const filter: Record<string, unknown> = { ...baseFilter };
-    if (query.status?.length) filter.status = { $in: query.status };
-
-    const sortSpec = this.buildStreamSortSpec(query.sort, query.sortDir);
-
-    const [total, streams, statusAgg] = await Promise.all([
-      this.streamModel.countDocuments(filter).exec(),
-      this.streamModel
-        .find(filter)
-        .sort(sortSpec)
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean()
-        .exec(),
-      this.streamModel
-        .aggregate([{ $match: baseFilter }, { $group: { _id: '$status', count: { $sum: 1 } } }])
-        .exec(),
-    ]);
-
+    // Compute portfolio counts within the user's search and date scope.
+    const statusAgg = await this.streamModel
+      .aggregate([{ $match: baseFilter }, { $group: { _id: '$status', count: { $sum: 1 }, ids: { $push: '$_id' } } }])
+      .exec() as Array<{ _id: string; count: number; ids?: Types.ObjectId[] }>;
     const statusCounts: Record<string, number> = {};
-    for (const row of statusAgg as Array<{ _id: string; count: number }>) {
+    for (const row of statusAgg) {
       if (row._id) statusCounts[row._id] = row.count;
     }
+
+    const scopedIds = statusAgg.flatMap((row) => row.ids ?? []);
+    const blockerAgg = scopedIds.length ? await this.connection.model(WorkyTask.name)
+      .aggregate([
+        { $match: { streamId: { $in: scopedIds }, lane: { $in: ['blocked', 'failed'] } } },
+        { $group: { _id: '$streamId' } },
+      ]).exec() as Array<{ _id: Types.ObjectId }> : [];
+    const attentionStatuses = new Set(['start_validation_failed', 'waiting_for_owner', 'waiting_for_human', 'waiting_for_budget_decision', 'partially_blocked']);
+    const attentionIds = new Set<string>([
+      ...statusAgg.filter((row) => attentionStatuses.has(row._id)).flatMap((row) => row.ids ?? []).map((id) => id.toString()),
+      ...blockerAgg.map((row) => row._id.toString()),
+    ]);
+
+    const filter: Record<string, unknown> = { ...baseFilter };
+    if (query.status?.length) filter.status = { $in: query.status };
+    if (query.attention) filter._id = { $in: [...attentionIds].map((id) => new Types.ObjectId(id)) };
+    const sortSpec = this.buildStreamSortSpec(query.sort, query.sortDir);
+    const [total, streams] = await Promise.all([
+      this.streamModel.countDocuments(filter).exec(),
+      this.streamModel.find(filter).sort(sortSpec).skip((page - 1) * limit).limit(limit).lean().exec(),
+    ]);
 
     const streamIds = (streams as Array<{ _id: Types.ObjectId }>).map((s) => s._id);
     const laneAgg =
@@ -271,13 +298,13 @@ export class WorkyStreamService implements OnModuleInit {
     const statsByStream = this.buildStatsByStream(laneAgg);
 
     const data: IWorkyStreamListItem[] = (streams as unknown[]).map((s) => {
-      const item = this.toResponse(s);
+      const item = this.toResponse(s, userId);
       return { ...item, stats: statsByStream.get(item.id) ?? this.emptyStreamStats() };
     });
 
     return {
       data,
-      meta: { total, page, limit, totalPages: Math.ceil(total / limit) || 0, statusCounts },
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) || 0, statusCounts, attentionCount: attentionIds.size },
     };
   }
 
@@ -329,13 +356,13 @@ export class WorkyStreamService implements OnModuleInit {
         'Worky stream not found.',
       );
     }
-    if (stream.ownerUserId.toString() !== userId) {
+    if (!getWorkyStreamAccess(stream, userId)) {
       throw new ForbiddenException(
         ErrorCode.WORKY_STREAM_FORBIDDEN,
         'You do not have access to this Worky stream.',
       );
     }
-    return this.toResponse(stream);
+    return this.toResponse(stream, userId);
   }
 
   /**
@@ -358,7 +385,7 @@ export class WorkyStreamService implements OnModuleInit {
         'Worky stream not found.',
       );
     }
-    if (stream.ownerUserId.toString() !== userId) {
+    if (!canWriteWorkyStream(stream, userId)) {
       throw new ForbiddenException(
         ErrorCode.WORKY_STREAM_FORBIDDEN,
         'You do not have access to this Worky stream.',
@@ -402,7 +429,73 @@ export class WorkyStreamService implements OnModuleInit {
       }
     }
     await stream.save();
-    return this.toResponse(stream);
+    return this.toResponse(stream, userId);
+  }
+
+  async listShares(userId: string, streamId: string): Promise<IWorkyStreamShareResponse[]> {
+    const stream = await this.findOwnedStream(userId, streamId);
+    const users = await this.users.byIds(stream.shares.map((share) => share.userId.toString()));
+    return stream.shares.flatMap((share) => {
+      const sharedUser = users.get(share.userId.toString());
+      return sharedUser ? [this.toShareResponse(share, sharedUser)] : [];
+    });
+  }
+
+  async createShare(
+    userId: string,
+    streamId: string,
+    email: string,
+    permission: 'read' | 'write',
+  ): Promise<IWorkyStreamShareResponse> {
+    const normalizedEmail = email.trim().toLowerCase();
+    const [stream, usersByEmail] = await Promise.all([
+      this.findOwnedStream(userId, streamId),
+      this.users.byEmails([normalizedEmail]),
+    ]);
+    const sharedUser = usersByEmail.get(normalizedEmail);
+    if (!sharedUser) {
+      throw new NotFoundException(ErrorCode.WORKY_STREAM_SHARE_USER_NOT_FOUND, 'User not found.');
+    }
+    if (sharedUser.id === userId) {
+      throw new ConflictException(ErrorCode.CONFLICT, 'The stream owner already has access.');
+    }
+    const existing = stream.shares.find((share) => share.userId.toString() === sharedUser.id);
+    if (existing) {
+      existing.permission = permission;
+    } else {
+      stream.shares.push({ userId: new Types.ObjectId(sharedUser.id), permission } as never);
+    }
+    await stream.save();
+    const share = stream.shares.find((item) => item.userId.toString() === sharedUser.id)!;
+    return this.toShareResponse(share, sharedUser);
+  }
+
+  async updateShare(
+    userId: string,
+    streamId: string,
+    shareId: string,
+    permission: 'read' | 'write',
+  ): Promise<IWorkyStreamShareResponse> {
+    const stream = await this.findOwnedStream(userId, streamId);
+    const share = stream.shares.find((item) => item._id.toString() === shareId);
+    if (!share) this.throwShareNotFound();
+    share!.permission = permission;
+    await stream.save();
+    const sharedUser = await this.users.byId(share!.userId.toString());
+    if (!sharedUser) {
+      throw new NotFoundException(ErrorCode.WORKY_STREAM_SHARE_USER_NOT_FOUND, 'User not found.');
+    }
+    return this.toShareResponse(share!, sharedUser);
+  }
+
+  async revokeShare(userId: string, streamId: string, shareId: string): Promise<void> {
+    const stream = await this.findOwnedStream(userId, streamId);
+    const index = stream.shares.findIndex((share) => share._id.toString() === shareId);
+    if (index < 0) this.throwShareNotFound();
+    const revokedUserId = stream.shares[index].userId.toString();
+    stream.shares.splice(index, 1);
+    await stream.save();
+    this.events?.disconnectUserFromStream(revokedUserId, streamId);
   }
 
   // ===== Private helpers =====
@@ -447,12 +540,50 @@ export class WorkyStreamService implements OnModuleInit {
     });
   }
 
+  private async findOwnedStream(userId: string, streamId: string): Promise<WorkyStreamDocument> {
+    const stream = await this.streamModel.findById(streamId).exec();
+    if (!stream) {
+      throw new NotFoundException(ErrorCode.WORKY_STREAM_NOT_FOUND, 'Worky stream not found.');
+    }
+    if (stream.ownerUserId.toString() !== userId) {
+      throw new ForbiddenException(
+        ErrorCode.WORKY_STREAM_FORBIDDEN,
+        'Only the stream owner can manage sharing.',
+      );
+    }
+    return stream;
+  }
+
+  private throwShareNotFound(): never {
+    throw new NotFoundException(
+      ErrorCode.WORKY_STREAM_SHARE_NOT_FOUND,
+      'Worky stream share not found.',
+    );
+  }
+
+  private toShareResponse(
+    share: { _id: Types.ObjectId; permission: 'read' | 'write'; createdAt: Date },
+    user: { id: string; email: string; firstName: string; lastName: string },
+  ): IWorkyStreamShareResponse {
+    return {
+      id: share._id.toString(),
+      permission: share.permission,
+      user,
+      createdAt: this.toIso(share.createdAt) ?? new Date().toISOString(),
+    };
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private toResponse(doc: any): IWorkyStreamResponse {
+  private toResponse(doc: any, userId: string): IWorkyStreamResponse {
     const id = (doc._id as Types.ObjectId).toString();
+    const access = getWorkyStreamAccess(doc, userId);
+    if (!access) {
+      throw new ForbiddenException(ErrorCode.WORKY_STREAM_FORBIDDEN, 'Access denied.');
+    }
     return {
       id,
       ownerUserId: (doc.ownerUserId as Types.ObjectId).toString(),
+      access,
       workspaceId: (doc.workspaceId as Types.ObjectId).toString(),
       artifactWorkspaceId: doc.artifactWorkspaceId
         ? (doc.artifactWorkspaceId as Types.ObjectId).toString()

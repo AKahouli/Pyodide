@@ -27,6 +27,7 @@ import {
 } from '../store';
 import { useModuleTranslation } from '@/modules/localization';
 import type { AdvisorIntentApplyRequest, PlaybookPageMode } from '../types';
+import { getVisibleExecutionStatus } from '../utils/playbook-canvas-status';
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -264,13 +265,7 @@ export function ExecutionPanel({
     }
     return map;
   }, [playbook?.tasks]);
-  const visibleExecutionStatus = execution
-    ? (execution.taskResults.some((taskResult) => taskResult.status === 'running')
-      ? 'running'
-      : execution.taskResults.some((taskResult) => taskResult.status === 'interrupted')
-        ? 'interrupted'
-        : execution.status)
-    : null;
+  const visibleExecutionStatus = getVisibleExecutionStatus(execution);
 
   useEffect(() => {
     const clampWidth = () => {

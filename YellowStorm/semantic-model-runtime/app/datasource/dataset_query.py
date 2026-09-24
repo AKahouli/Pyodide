@@ -14,7 +14,8 @@ def _quote(name: str) -> str:
 
 
 def query_parquet(path: Path, *, columns: list[str] | None = None,
-                  filters: list[dict[str, Any]] | None = None, limit: int = 100) -> dict[str, Any]:
+                  filters: list[dict[str, Any]] | None = None, limit: int = 100,
+                  offset: int = 0) -> dict[str, Any]:
     import duckdb
     import pyarrow.parquet as pq
 
@@ -22,6 +23,8 @@ def query_parquet(path: Path, *, columns: list[str] | None = None,
         raise ValueError("dataset_not_found")
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_QUERY_ROWS:
         raise ValueError("invalid_query_limit")
+    if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+        raise ValueError("invalid_query_offset")
     available = pq.read_schema(path).names
     selected = columns or available
     if not selected or any(not isinstance(name, str) or name not in available for name in selected):
@@ -42,7 +45,8 @@ def query_parquet(path: Path, *, columns: list[str] | None = None,
         else:
             raise ValueError("invalid_query_filter")
     where = f" WHERE {' AND '.join(predicates)}" if predicates else ""
-    sql = f"SELECT {', '.join(_quote(name) for name in selected)} FROM read_parquet(?){where} LIMIT {limit}"
+    sql = f"SELECT {', '.join(_quote(name) for name in selected)} FROM read_parquet(?){where} LIMIT ? OFFSET ?"
+    parameters.extend((limit, offset))
     connection = duckdb.connect(config={
         "allow_persistent_secrets": False,
         "threads": 2,
@@ -56,4 +60,4 @@ def query_parquet(path: Path, *, columns: list[str] | None = None,
     finally:
         connection.close()
     return {"columns": selected, "rows": [dict(zip(selected, row, strict=True)) for row in rows],
-            "returnedRows": len(rows), "limit": limit}
+            "returnedRows": len(rows), "limit": limit, "offset": offset}

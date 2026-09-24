@@ -30,14 +30,18 @@ export class PlaybookFlowMailWebhookService {
   async handleNotifications(payload: { value?: Array<Record<string, any>> }) {
     const results: Array<Record<string, any>> = [];
 
-    for (const item of payload.value || []) {
-      const subscriptionId = item.subscriptionId as string | undefined;
+    for (const item of Array.isArray(payload?.value) ? payload.value : []) {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+      const subscriptionId = item.subscriptionId;
+      const clientState = item.clientState;
       const resource = typeof item.resource === 'string' ? item.resource : undefined;
       const resourceData = (item.resourceData || {}) as Record<string, any>;
-      const messageId = resourceData.id as string | undefined;
-      if (!subscriptionId || !messageId) continue;
+      const messageId = resourceData.id;
+      if (typeof subscriptionId !== 'string' || !subscriptionId ||
+          typeof clientState !== 'string' || !clientState ||
+          typeof messageId !== 'string' || !messageId) continue;
 
-      const flow = await this.findFlowBySubscription(subscriptionId, item.clientState as string);
+      const flow = await this.findFlowBySubscription(subscriptionId, clientState);
       if (!flow) continue;
 
       try {
@@ -97,9 +101,13 @@ export class PlaybookFlowMailWebhookService {
     return { processed: results.length, results };
   }
 
-  private async findFlowBySubscription(subscriptionId: string, clientState?: string): Promise<FlowDocument | null> {
-    const query: any = { 'triggerConfig.kind': 'mail' };
-    if (clientState) query['triggerConfig.params.subscriptionClientState'] = clientState;
+  private async findFlowBySubscription(subscriptionId: string, clientState: string): Promise<FlowDocument | null> {
+    const query = {
+      'triggerConfig.kind': 'mail',
+      'triggerConfig.params.enabled': true,
+      'triggerConfig.params.subscriptionId': subscriptionId,
+      'triggerConfig.params.subscriptionClientState': clientState,
+    };
     const flow = await this.flowModel
       .findOne(query)
       .select('_id ownerId triggerConfig workspaces')
@@ -108,7 +116,7 @@ export class PlaybookFlowMailWebhookService {
 
     if (!flow) return null;
     const params = flow.triggerConfig?.params ?? {};
-    if (params['subscriptionId'] !== subscriptionId) return null;
+    if (params['subscriptionId'] !== subscriptionId || params['subscriptionClientState'] !== clientState) return null;
     return flow as FlowDocument;
   }
 

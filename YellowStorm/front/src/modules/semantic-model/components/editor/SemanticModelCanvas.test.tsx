@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SemanticGraph } from '../../types';
+import type { ConceptSourceMapping, SemanticGraph } from '../../types';
 import type { KnowledgeLinkingController } from '../../hooks/use-knowledge-linking';
 import { useSemanticModelEditorStore } from '../../store';
 import { SemanticModelCanvas } from './SemanticModelCanvas';
@@ -12,6 +12,7 @@ vi.mock('@xyflow/react', () => ({
   Background:() => null,
   Controls:() => null,
   Handle:() => null,
+  MarkerType:{ArrowClosed:'arrowclosed'},
   Position:{Left:'left',Right:'right'},
   ReactFlow:(props:Record<string,unknown>) => {
     flow.props=props;
@@ -39,10 +40,74 @@ const knowledge = {
   setDraggedResource:vi.fn(),hasBinding:vi.fn(()=>false),link:vi.fn(),remove:vi.fn(),
 } as unknown as KnowledgeLinkingController;
 
-const renderCanvas = () => render(<SemanticModelCanvas canEdit knowledge={knowledge} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} />);
+const renderCanvas = (sourceMappings?: ConceptSourceMapping[]) => render(<SemanticModelCanvas canEdit knowledge={knowledge} sourceMappings={sourceMappings} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} />);
+
+function mapping(overrides: Partial<ConceptSourceMapping>): ConceptSourceMapping {
+  return {
+    id:'mapping',conceptId:'contract',workspaceId:'workspace',documentId:'document',documentName:'master-agreement-0041.pdf',
+    sheetName:'',assetKind:'document',fieldMappings:[],status:'ready',createdBy:'user',createdAt:'',updatedAt:'',
+    identityFields:['contract_number'],...overrides,
+  };
+}
+
+const contractGraph: SemanticGraph = {
+  ...graph,
+  nodes:[{
+    id:'contract',key:'contract',label:'Contract',description:'An agreement.',category:'business_object',
+    recordPolicy:'expected',systemKey:null,aliases:[],position:{x:0,y:0},
+    attributes:[
+      {key:'contract_number',label:'contract number',type:'text',required:false},
+      {key:'customer_id',label:'customer id',type:'text',required:false},
+      {key:'effective_date',label:'effective date',type:'date',required:false},
+      {key:'title',label:'title',type:'text',required:false},
+      {key:'status',label:'status',type:'text',required:false},
+    ],
+  }],
+};
 
 describe('SemanticModelCanvas', () => {
   beforeEach(() => {useSemanticModelEditorStore.getState().hydrate(graph);vi.clearAllMocks();knowledge.draggedResource=null;knowledge.isBusy=false;knowledge.countsByNode={};});
+
+  it('shows what a concept holds: fields, their type, the matching key and its sources', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    renderCanvas([mapping({}), mapping({ id:'mapping-2', documentName:'master-agreement-0099.pdf' })]);
+
+    expect(screen.getByText('contract number')).toBeInTheDocument();
+    expect(screen.getAllByText('attribute.type.text').length).toBe(3);
+    expect(screen.getByText('attribute.type.date')).toBeInTheDocument();
+    // Only the first four fields fit on a card; the rest are counted.
+    expect(screen.queryByText('status')).not.toBeInTheDocument();
+    expect(screen.getByText('editor.moreFields')).toBeInTheDocument();
+    expect(screen.getByLabelText('editor.matchingKey')).toBeInTheDocument();
+    expect(screen.getByText('editor.sourceCount')).toBeInTheDocument();
+    expect(screen.getByText('editor.status.ready')).toBeInTheDocument();
+  });
+
+  it('flags a concept that expects data but has no source', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    renderCanvas([]);
+    expect(screen.getByText('editor.status.noSource')).toBeInTheDocument();
+  });
+
+  it('flags sources that are not ready yet', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    renderCanvas([mapping({ status:'needs_review' })]);
+    expect(screen.getByText('editor.status.sourcesNotReady')).toBeInTheDocument();
+  });
+
+  it('draws relationships as arrows a reader can follow', () => {
+    useSemanticModelEditorStore.getState().hydrate({
+      ...contractGraph,
+      nodes:[...contractGraph.nodes,{...contractGraph.nodes[0],id:'customer',key:'customer',label:'Customer',attributes:[]}],
+      relations:[{id:'signs',key:'signs',label:'signs',inverseLabel:'',description:'',sourceNodeTypeId:'customer',targetNodeTypeId:'contract',cardinality:'one_to_many',traversable:true,filterable:true,attributes:[]}],
+    });
+    renderCanvas([]);
+    const edges = flow.props.edges as Array<{type:string;markerEnd:{type:string};data:Record<string,unknown>}>;
+    expect(edges).toHaveLength(1);
+    expect(edges[0].type).toBe('relation');
+    expect(edges[0].markerEnd.type).toBe('arrowclosed');
+    expect(edges[0].data).toMatchObject({label:'signs',cardinality:'one_to_many'});
+  });
 
   it('prevents protected concepts from producing layout operations', () => {
     renderCanvas();

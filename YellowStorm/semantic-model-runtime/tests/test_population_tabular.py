@@ -90,7 +90,8 @@ def test_relationship_matching_requires_approved_role(plan: dict):
                 "attributes": {}}]
     sources = [{"entityId": "e2", "identity": {"agreement_no": "amd-1"},
                 "attributes": {"parent_ref": "AGR 2026-014"}}]
-    matched = match_relationships(relation, sources, targets, reference_field="parent_ref")
+    matched = match_relationships(relation, sources, targets,
+                                  reference_field="parent_ref", target_field="agreement_no")
     assert matched["relationships"] == [{"relationId": "r1", "sourceEntityId": "e2",
                                          "targetEntityId": "e1",
                                          "matchingStrategy": "normalized"}]
@@ -100,7 +101,8 @@ def test_relationship_matching_requires_approved_role(plan: dict):
                                   [{"entityId": "e3",
                                     "identity": {"agreement_no": "amd-2"},
                                     "attributes": {"parent_ref": "mentions AGR-2026-014"}}],
-                                  targets, reference_field="parent_ref")
+                                  targets, reference_field="parent_ref",
+                                  target_field="agreement_no")
     assert example["relationships"] == []
     assert [g["kind"] for g in example["gaps"]] == ["unresolved_reference"]
 
@@ -108,7 +110,7 @@ def test_relationship_matching_requires_approved_role(plan: dict):
                                 targets + [{"entityId": "e4",
                                             "identity": {"agreement_no": "AGR-2026-014"},
                                             "attributes": {}}],
-                                reference_field="parent_ref")
+                                reference_field="parent_ref", target_field="agreement_no")
     assert twins["relationships"] == []
     assert [g["kind"] for g in twins["gaps"]] == ["ambiguous_reference"]
 
@@ -148,7 +150,8 @@ def test_exact_and_case_insensitive_strategies_match_symmetrically(plan: dict):
     exact = dict(plan["relations"]["r1"], matchingStrategy="exact")
     sources = [{"entityId": "e2", "identity": {"customer_id": "x"},
                 "attributes": {"customer_ref": " C001 "}}]
-    matched = match_relationships(exact, sources, targets, reference_field="customer_ref")
+    matched = match_relationships(exact, sources, targets,
+                                  reference_field="customer_ref", target_field="customer_id")
     assert [r["targetEntityId"] for r in matched["relationships"]] == ["e1"]
 
     folded = dict(plan["relations"]["r1"], matchingStrategy="case_insensitive")
@@ -157,5 +160,28 @@ def test_exact_and_case_insensitive_strategies_match_symmetrically(plan: dict):
     targets_upper = [{"entityId": "e4", "identity": {"customer_id": "c001"},
                       "attributes": {}}]
     matched_folded = match_relationships(folded, mixed, targets_upper,
-                                          reference_field="customer_ref")
+                                          reference_field="customer_ref",
+                                          target_field="customer_id")
     assert [r["targetEntityId"] for r in matched_folded["relationships"]] == ["e4"]
+
+
+def test_one_to_many_matches_one_field_of_composite_target_identity(plan: dict):
+    relation = dict(plan["relations"]["r1"], cardinality="one_to_many")
+    sources = [{"entityId": "contract", "identity": {"contract_number": "c-1"},
+                "attributes": {}}]
+    targets = [
+        {"entityId": "amendment-1",
+         "identity": {"contract_number": "c-1", "amendment_number": "1"},
+         "attributes": {}},
+        {"entityId": "amendment-2",
+         "identity": {"contract_number": "c-1", "amendment_number": "2"},
+         "attributes": {}},
+    ]
+
+    matched = match_relationships(relation, sources, targets,
+                                  reference_field="contract_number",
+                                  target_field="contract_number")
+
+    assert [item["targetEntityId"] for item in matched["relationships"]] == [
+        "amendment-1", "amendment-2"]
+    assert matched["gaps"] == []

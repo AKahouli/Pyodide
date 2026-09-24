@@ -28,12 +28,17 @@ import { WorkyBudgetControlDto } from '../dto/worky-budget-control.dto';
 import {
   IWorkyStreamResponse,
   IWorkyStreamListResult,
+  IWorkyStreamShareResponse,
 } from '../interfaces/worky-stream.interface';
 import { WorkyStreamAccessGuard } from '../guards/worky-stream-access.guard';
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import type { AuthUser } from '@common/auth/auth-user';
 import { Permissions } from '../../authorization/constants/permissions';
+import {
+  CreateWorkyStreamShareDto,
+  UpdateWorkyStreamShareDto,
+} from '../dto/worky-stream-share.dto';
 
 @ApiTags('Worky')
 @ApiBearerAuth()
@@ -92,6 +97,52 @@ export class WorkyStreamController {
     @Body() dto: UpdateWorkyStreamDto,
   ): Promise<IWorkyStreamResponse> {
     return this.streams.patch(user._id.toString(), id, dto);
+  }
+
+  @Get(':id/shares')
+  @RequirePermissions(Permissions.WORKY_STREAM_READ)
+  @ApiOperation({ summary: 'List stream shares (owner only)' })
+  async listShares(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+  ): Promise<IWorkyStreamShareResponse[]> {
+    return this.streams.listShares(user._id.toString(), id);
+  }
+
+  @Post(':id/shares')
+  @HttpCode(HttpStatus.CREATED)
+  @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
+  @ApiOperation({ summary: 'Share a stream with a user (owner only)' })
+  async createShare(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: CreateWorkyStreamShareDto,
+  ): Promise<IWorkyStreamShareResponse> {
+    return this.streams.createShare(user._id.toString(), id, dto.email, dto.permission);
+  }
+
+  @Patch(':id/shares/:shareId')
+  @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
+  @ApiOperation({ summary: 'Update a stream share (owner only)' })
+  async updateShare(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('shareId') shareId: string,
+    @Body() dto: UpdateWorkyStreamShareDto,
+  ): Promise<IWorkyStreamShareResponse> {
+    return this.streams.updateShare(user._id.toString(), id, shareId, dto.permission);
+  }
+
+  @Delete(':id/shares/:shareId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermissions(Permissions.WORKY_STREAM_WRITE)
+  @ApiOperation({ summary: 'Revoke a stream share (owner only)' })
+  async revokeShare(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Param('shareId') shareId: string,
+  ): Promise<void> {
+    return this.streams.revokeShare(user._id.toString(), id, shareId);
   }
 
   @Delete(':id/delete')

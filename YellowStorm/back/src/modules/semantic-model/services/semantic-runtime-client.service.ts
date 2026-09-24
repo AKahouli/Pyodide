@@ -42,6 +42,45 @@ export interface RuntimeJob {
   errorCode: string | null;
 }
 
+export interface RuntimeBoundRecords {
+  modelId: string;
+  modelVersionId: string;
+  dataRevisionId: string;
+  entities: Array<{
+    entityId: string;
+    conceptId: string;
+    label: string;
+    attributes: Record<string, unknown>;
+    provenance: Record<string, unknown>;
+  }>;
+  relationships: Array<{
+    relationId: string;
+    sourceEntityId: string;
+    targetEntityId: string;
+    matchingStrategy: string | null;
+  }>;
+  counts: { entities: number; assertions: number; relationships: number };
+  specification: {
+    concepts: Array<{ conceptId: string; label: string; allowedFields: string[] }>;
+    relations: Array<{ relationId: string; label: string }>;
+  };
+}
+
+export interface RuntimeBoundGraph {
+  modelId: string;
+  modelVersionId: string;
+  dataRevisionId: string;
+  nodes: Array<{ id: string; label: string; properties: Record<string, unknown> }>;
+  edges: Array<{
+    id: string;
+    label: string;
+    sourceId: string;
+    targetId: string;
+    properties: Record<string, unknown>;
+  }>;
+  specification: RuntimeBoundRecords['specification'];
+}
+
 export interface RuntimeCorrectionCommand {
   actorUserId: string;
   modelId: string;
@@ -76,20 +115,24 @@ export class SemanticRuntimeClientService {
     private readonly config: ConfigType<typeof semanticModelConfig>,
   ) {}
 
-  private requireWrites(): string {
-    if (!this.config.runtimeEnabled || !this.config.runtimeWritesEnabled) {
-      throw new ServiceUnavailableException(
-        ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
-        'Semantic runtime writes are disabled',
-      );
-    }
-    if (!this.config.runtimeUrl || !this.config.runtimeServiceKey) {
+  private requireRuntime(): string {
+    if (!this.config.runtimeEnabled || !this.config.runtimeUrl || !this.config.runtimeServiceKey) {
       throw new ServiceUnavailableException(
         ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
         'Semantic runtime is not configured',
       );
     }
     return this.config.runtimeUrl.replace(/\/+$/, '');
+  }
+
+  private requireWrites(): string {
+    if (!this.config.runtimeWritesEnabled) {
+      throw new ServiceUnavailableException(
+        ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
+        'Semantic runtime writes are disabled',
+      );
+    }
+    return this.requireRuntime();
   }
 
   private async post<T>(
@@ -126,7 +169,7 @@ export class SemanticRuntimeClientService {
   }
 
   private async get<T>(path: string, actorUserId: string): Promise<T> {
-    const base = this.requireWrites();
+    const base = this.requireRuntime();
     try {
       const { data } = await axios.get<T>(`${base}${path}`, {
         headers: {
@@ -176,6 +219,23 @@ export class SemanticRuntimeClientService {
   async getJob(jobId: string, actorUserId: string): Promise<RuntimeJob> {
     return this.get<RuntimeJob>(
       `/v1/semantic-model-jobs/${encodeURIComponent(jobId)}`,
+      actorUserId,
+    );
+  }
+
+  async getBoundRecords(modelId: string, actorUserId: string, limit: number, conceptId?: string, dataRevisionId?: string): Promise<RuntimeBoundRecords> {
+    const concept = conceptId ? `&conceptId=${encodeURIComponent(conceptId)}` : '';
+    const revision = dataRevisionId ? `&dataRevisionId=${encodeURIComponent(dataRevisionId)}` : '';
+    return this.get<RuntimeBoundRecords>(
+      `/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/records?environment=draft&limit=${limit}${concept}${revision}`,
+      actorUserId,
+    );
+  }
+
+  async getBoundGraph(modelId: string, actorUserId: string, dataRevisionId?: string): Promise<RuntimeBoundGraph> {
+    const revision = dataRevisionId ? `&dataRevisionId=${encodeURIComponent(dataRevisionId)}` : '';
+    return this.get<RuntimeBoundGraph>(
+      `/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/graph?environment=draft${revision}`,
       actorUserId,
     );
   }

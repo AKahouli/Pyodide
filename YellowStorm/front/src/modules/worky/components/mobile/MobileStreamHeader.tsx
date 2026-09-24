@@ -1,8 +1,10 @@
 import type { JSX } from 'react';
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, Network } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import { useStream } from '../../query/hooks';
 import { useStreamAgents } from '../../agents/useStreamAgents';
+import { AttentionSettingsButton } from '../AttentionSettingsButton';
+import type { AttentionPreferences } from '../../attentionPreferences';
 
 /**
  * Mobile app bar: back, the stream title with an "N agents · Status" subtitle,
@@ -11,9 +13,19 @@ import { useStreamAgents } from '../../agents/useStreamAgents';
 export function MobileStreamHeader({
   streamId,
   onBack,
+  onOpenGraph,
+  graphAvailable,
+  attentionPreferences = { sound: true, focus: true },
+  onAttentionPreferencesChange = () => {},
+  attentionCount = 0,
 }: {
   streamId: string;
   onBack: () => void;
+  onOpenGraph: () => void;
+  graphAvailable: boolean;
+  attentionPreferences?: AttentionPreferences;
+  onAttentionPreferencesChange?: (value: AttentionPreferences) => void;
+  attentionCount?: number;
 }): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const { data: stream } = useStream(streamId);
@@ -36,6 +48,18 @@ export function MobileStreamHeader({
         <div className="truncate text-lg font-bold text-foreground">{stream?.title ?? ''}</div>
         <div className="truncate text-xs text-muted-foreground">{subtitle}</div>
       </div>
+      <AttentionSettingsButton value={attentionPreferences} onChange={onAttentionPreferencesChange} count={attentionCount} />
+      <button
+        type="button"
+        onClick={onOpenGraph}
+        disabled={!graphAvailable}
+        aria-label={t('graph.openFromHeader')}
+        title={t('graph.openFromHeader')}
+        data-testid="worky-header-graph"
+        className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border text-foreground disabled:opacity-40"
+      >
+        <Network className="size-5" />
+      </button>
     </div>
   );
 }

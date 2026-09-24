@@ -51,6 +51,7 @@ function releaseLauncherPointer(launcher: HTMLButtonElement, pointerId: number) 
 export function PlatformCopilotMascot() {
   const { t, language } = useModuleTranslation('platform-copilot');
   const location = useLocation();
+  const compactModelLauncher = /^\/semantic-models\/[^/]+/.test(location.pathname);
   const navigate = useNavigate();
   const isDirty = usePlaybookStore((state) => state.isDirty);
   const currentPlaybook = usePlaybookStore((state) => state.currentPlaybook);
@@ -495,7 +496,7 @@ export function PlatformCopilotMascot() {
   return (
     <>
       {!open && (
-        <Button ref={launcherRef} type='button' style={launcherPosition ? { ...launcherPosition, right: 'auto', bottom: 'auto' } : undefined} className='pointer-events-auto fixed bottom-5 right-5 z-[120] h-14 cursor-grab touch-none select-none rounded-full border border-primary-foreground/20 px-5 shadow-xl shadow-primary/20 active:cursor-grabbing' aria-label={t('open')} aria-describedby='platform-copilot-launcher-instructions' onPointerDown={handleLauncherPointerDown} onPointerMove={handleLauncherPointerMove} onPointerUp={handleLauncherPointerUp} onPointerCancel={handleLauncherPointerCancel} onLostPointerCapture={handleLauncherLostPointerCapture} onKeyDown={handleLauncherKeyDown} onClick={(event) => {
+        <Button ref={launcherRef} type='button' style={launcherPosition ? { ...launcherPosition, right: 'auto', bottom: 'auto' } : undefined} className={`pointer-events-auto fixed bottom-5 right-5 z-[120] cursor-grab touch-none select-none rounded-full border border-primary-foreground/20 shadow-xl shadow-primary/20 active:cursor-grabbing ${compactModelLauncher ? 'h-11 w-11 p-0' : 'h-14 px-5'}`} aria-label={t('open')} aria-describedby='platform-copilot-launcher-instructions' onPointerDown={handleLauncherPointerDown} onPointerMove={handleLauncherPointerMove} onPointerUp={handleLauncherPointerUp} onPointerCancel={handleLauncherPointerCancel} onLostPointerCapture={handleLauncherLostPointerCapture} onKeyDown={handleLauncherKeyDown} onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
           if (suppressLauncherClickRef.current) {
@@ -505,8 +506,8 @@ export function PlatformCopilotMascot() {
           hasOpenedRef.current = true;
           openPanel();
         }}>
-          <Sparkles className='mr-2 h-5 w-5' />
-          {t('title')}
+          <Sparkles className={compactModelLauncher ? 'h-5 w-5' : 'mr-2 h-5 w-5'} />
+          {!compactModelLauncher && t('title')}
         </Button>
       )}
       <span id='platform-copilot-launcher-instructions' className='sr-only'>{t('launcher.moveInstructions')}</span>
