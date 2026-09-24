@@ -16,6 +16,7 @@ from typing import Any
 POPULATION_MODES = {"materialized", "filtered_materialized", "query_backed"}
 FILTER_OPS = {"eq", "neq", "in", "not_in", "is_null", "is_not_null"}
 MATCHING_STRATEGIES = {"exact", "case_insensitive", "normalized"}
+RELATION_CARDINALITIES = {"one_to_one", "one_to_many", "many_to_one", "many_to_many"}
 SPEC_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
@@ -98,6 +99,9 @@ def validate_specification(spec: Any) -> list[dict[str, Any]]:
             if entry.get("matchingStrategy") not in MATCHING_STRATEGIES:
                 issues.append({"code": "invalid_matching_strategy", "targetId": relation_id,
                                "message": "Matching strategy must be exact, case_insensitive or normalized."})
+            if entry.get("cardinality") not in RELATION_CARDINALITIES:
+                issues.append({"code": "invalid_cardinality", "targetId": relation_id,
+                               "message": "Relation cardinality is not supported."})
 
     if not isinstance(spec.get("sourceScope"), list) or not spec.get("sourceScope"):
         issues.append({"code": "empty_source_scope", "message": "Source scope must not be empty."})

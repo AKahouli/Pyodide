@@ -153,6 +153,19 @@ describe('SemanticSourceMappingService boundaries', () => {
     })).rejects.toThrow('mapped concept attributes');
   });
 
+  it('rejects an extraction strategy outside an extracted document field', async () => {
+    const { service, database } = buildService('text/csv');
+    database.query
+      .mockResolvedValueOnce({ rows: [{}] })
+      .mockResolvedValueOnce({ rows: [{ label: 'Customer', attributes: [{ key: 'id', label: 'ID', type: 'text', required: true }] }] });
+
+    await expect(service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1', assetKind: 'csv', sheetName: 'CSV',
+      fieldMappings: [{ sourceField: 'customer_id', targetAttribute: 'id', mode: 'direct', extractionStrategy: 'ai' }],
+      identityFields: ['customer_id'],
+    })).rejects.toThrow('extraction strategy');
+  });
+
   it('lists mappings only through enabled workspace links', async () => {
     const { service, database, documents } = buildService();
     database.query.mockResolvedValue({ rows: [] });
@@ -178,10 +191,15 @@ describe('SemanticSourceMappingService boundaries', () => {
       sheetName: '', assetKind: 'document', fieldMappings: [], identityFields: [], status: 'ready', sourceEnabled: true,
     }] });
     documents.findById.mockRejectedValue(new Error('unavailable'));
+    documents.findByIds.mockResolvedValue([{ id: 'document-1', originalName: 'Source.pdf' }]);
 
     await expect(service.resolveConfigured('viewer', 'model-1')).resolves.toMatchObject({
       incompleteConceptIds: ['concept-1'],
-      issues: [{ mappingId: 'mapping-1', code: 'source_unavailable' }],
+      issues: [{
+        mappingId: 'mapping-1', conceptId: 'concept-1', documentName: 'Source.pdf', code: 'source_failed',
+        message: 'Source.pdf could not be read: unavailable',
+        detail: 'Error: unavailable',
+      }],
     });
   });
 
@@ -191,11 +209,12 @@ describe('SemanticSourceMappingService boundaries', () => {
       id: 'mapping-1', conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
       sheetName: '', assetKind: 'document', fieldMappings: [], identityFields: [], status: 'ready', sourceEnabled: false,
     }] });
+    documents.findByIds.mockResolvedValue([{ id: 'document-1', originalName: 'Source.pdf' }]);
 
     await expect(service.resolveConfigured('viewer', 'model-1')).resolves.toMatchObject({
       entities: [],
       incompleteConceptIds: ['concept-1'],
-      issues: [{ mappingId: 'mapping-1', code: 'source_unavailable' }],
+      issues: [{ mappingId: 'mapping-1', code: 'source_disabled', documentName: 'Source.pdf' }],
     });
     expect(documents.findById).not.toHaveBeenCalled();
   });

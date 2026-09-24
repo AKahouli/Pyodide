@@ -49,7 +49,8 @@ export function StreamHeader({ streamId, onRename }: StreamHeaderProps): JSX.Ele
           <button
             type='button'
             onClick={startEditing}
-            className='text-left text-lg font-semibold leading-tight hover:underline'
+            disabled={!onRename}
+            className='text-left text-lg font-semibold leading-tight enabled:hover:underline'
             data-testid='stream-title'
           >
             {stream.title}

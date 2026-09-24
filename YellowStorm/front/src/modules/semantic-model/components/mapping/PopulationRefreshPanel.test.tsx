@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConceptSourceMapping } from '../../types';
 import { PopulationRefreshPanel } from './PopulationRefreshPanel';
 
-const api = vi.hoisted(() => ({ requestPopulationRefresh: vi.fn() }));
+const api = vi.hoisted(() => ({ requestPopulationRefresh: vi.fn(), getPopulationJob: vi.fn() }));
 
 vi.mock('../../api', () => ({ semanticModelApi: api }));
 
@@ -18,14 +18,15 @@ const mappings = [
   { ...base, status: 'stale', id: 'm-3', conceptId: 'c-1', documentId: 'd-3', documentName: 'stale.csv', sheetName: '', assetKind: 'csv', fieldMappings: [], identityFields: [] },
 ] as ConceptSourceMapping[];
 
-function renderPanel(canEdit = true) {
-  return render(<QueryClientProvider client={new QueryClient()}><PopulationRefreshPanel modelId='model-1' mappings={mappings} canEdit={canEdit} /></QueryClientProvider>);
+function renderPanel(canEdit = true, onAccepted?: (jobId: string) => void) {
+  return render(<QueryClientProvider client={new QueryClient()}><PopulationRefreshPanel modelId='model-1' mappings={mappings} canEdit={canEdit} onAccepted={onAccepted} /></QueryClientProvider>);
 }
 
 describe('PopulationRefreshPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     api.requestPopulationRefresh.mockResolvedValue({ jobId: 'j-1', status: 'queued', progressUrl: '/jobs/j-1', reused: false, skipped: [] });
+    api.getPopulationJob.mockResolvedValue({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'completed', result: {}, errorCode: null });
   });
 
   it('prepares the whole model by default', async () => {
@@ -35,7 +36,16 @@ describe('PopulationRefreshPanel', () => {
       purpose: 'build',
       scope: { kind: 'model' },
     }));
-    expect(await screen.findByText(/populationRefresh.accepted/)).toBeInTheDocument();
+    await waitFor(() => expect(api.getPopulationJob).toHaveBeenCalledWith('model-1', 'j-1'));
+    expect(await screen.findByText('populationRefresh.status')).toBeInTheDocument();
+  });
+
+  it('reports accepted jobs to the persistent editor observer', async () => {
+    const onAccepted = vi.fn();
+    renderPanel(true, onAccepted);
+    fireEvent.click(screen.getByRole('button', { name: 'populationRefresh.prepare' }));
+
+    await waitFor(() => expect(onAccepted).toHaveBeenCalledWith('j-1'));
   });
 
   it('refreshes a single structured mapping', async () => {
@@ -52,6 +62,26 @@ describe('PopulationRefreshPanel', () => {
       purpose: 'refresh',
       scope: { kind: 'mapping', mappingId: 'm-1' },
     }));
+  });
+
+  it('stops polling and exposes a terminal failure', async () => {
+    api.getPopulationJob.mockResolvedValueOnce({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'failed', result: null, errorCode: 'projection_failed' });
+    renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'populationRefresh.prepare' }));
+
+    expect(await screen.findByText(/projection_failed/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'populationRefresh.prepare' })).toBeEnabled();
+    expect(api.getPopulationJob).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers from a polling request failure', async () => {
+    api.getPopulationJob.mockRejectedValueOnce(new Error('network unavailable'));
+    renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'populationRefresh.prepare' }));
+
+    expect(await screen.findByText('network unavailable')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'action.retry' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'populationRefresh.prepare' })).toBeEnabled();
   });
 
   it('lists only structured mappings as single-mapping candidates', async () => {
