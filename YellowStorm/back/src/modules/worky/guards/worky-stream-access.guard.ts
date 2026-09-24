@@ -8,10 +8,12 @@ import {
 import { Types } from 'mongoose';
 import { WorkyStreamService } from '../services/worky-stream.service';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { canWriteWorkyStream, getWorkyStreamAccess } from '../worky-stream-access';
 
 interface RequestShape {
   user?: { id: string };
   params: { id?: string };
+  method: string;
 }
 
 /**
@@ -34,7 +36,10 @@ export class WorkyStreamAccessGuard implements CanActivate {
 
     const stream = await this.streams.findByIdInternal(streamId);
     if (!stream) throw new NotFoundException('Stream not found');
-    if (stream.ownerUserId.toString() !== userId) {
+    const allowed = req.method === 'GET'
+      ? Boolean(getWorkyStreamAccess(stream, userId))
+      : canWriteWorkyStream(stream, userId);
+    if (!allowed) {
       throw new ForbiddenException(
         ErrorCode.WORKY_STREAM_FORBIDDEN,
         'You do not have access to this Worky stream.',

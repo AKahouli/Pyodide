@@ -13,12 +13,16 @@ interface SemanticModelEditorState {
   undoStack: HistoryEntry[];
   redoStack: HistoryEntry[];
   validation: ValidationIssue[];
+  /** Last request to bring an element into view; `at` makes repeat requests for the same id distinct. */
+  focusRequest: { id: string; at: number } | null;
   saveStatus: SaveStatus;
   saveInFlight: boolean;
   saveAttempt: number;
   hydrate: (graph: SemanticGraph) => void;
   setMode: (mode: EditorMode) => void;
   select: (id: string | null) => void;
+  /** Select an element and bring it into view on the canvas. */
+  focus: (id: string) => void;
   commit: (operation: SemanticGraphOperation, update: (graph: SemanticGraph) => SemanticGraph) => void;
   commitBatch: (operations: SemanticOperationGroup, update: (graph: SemanticGraph) => SemanticGraph) => void;
   replaceGraph: (graph: SemanticGraph) => void;
@@ -50,6 +54,7 @@ export const semanticModelEditorInitialState = {
   undoStack: [] as HistoryEntry[],
   redoStack: [] as HistoryEntry[],
   validation: [] as ValidationIssue[],
+  focusRequest: null as { id: string; at: number } | null,
   saveStatus: 'saved' as SaveStatus,
   saveInFlight: false,
   saveAttempt: 0,
@@ -79,6 +84,7 @@ export const useSemanticModelEditorStore = create<SemanticModelEditorState>()(de
   hydrate: (graph) => set({ ...semanticModelEditorInitialState, graph }),
   setMode: (mode) => set({ mode, selectedId: null }),
   select: (selectedId) => set({ selectedId }),
+  focus: (id) => set({ selectedId: id, focusRequest: { id, at: Date.now() } }),
   commit: (operation, update) => set((state) => {
     if (!state.graph) return state;
     const history = { graph: state.graph, pending: state.pending };

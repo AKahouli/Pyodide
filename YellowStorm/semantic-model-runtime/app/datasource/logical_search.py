@@ -20,10 +20,12 @@ class LogicalSearchError(ValueError):
         self.code = code
 
 
-def _document_pk(value: Any) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        raise LogicalSearchError("invalid_document_pk")
-    return value
+def _document_pk(value: Any) -> int | str:
+    if isinstance(value, str) and value.strip():
+        return value
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    raise LogicalSearchError("invalid_document_pk")
 
 
 def _limit(value: Any) -> int:

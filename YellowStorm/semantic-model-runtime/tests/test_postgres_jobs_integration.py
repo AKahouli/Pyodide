@@ -82,6 +82,22 @@ async def test_migration_and_concurrent_idempotent_admission(pool: asyncpg.Pool)
 
 
 @pytest.mark.asyncio
+async def test_failed_population_can_be_retried_without_duplicate_concurrent_jobs(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    first = await admit(repository)
+    await pool.execute("UPDATE semantic_jobs.jobs SET state = 'failed' WHERE id = $1::uuid", first.job_id)
+
+    retry, concurrent = await asyncio.gather(admit(repository), admit(repository))
+    assert retry.job_id == concurrent.job_id
+    assert retry.job_id != first.job_id
+    assert {retry.reused, concurrent.reused} == {False, True}
+
+    await pool.execute("UPDATE semantic_jobs.jobs SET state = 'failed' WHERE id = $1::uuid", retry.job_id)
+    later = await admit(repository)
+    assert later.job_id not in {first.job_id, retry.job_id}
+
+
+@pytest.mark.asyncio
 async def test_same_key_different_operation_conflicts(pool: asyncpg.Pool):
     repository = PostgresJobRepository(pool)
     await admit(repository)

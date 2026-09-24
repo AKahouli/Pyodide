@@ -1731,27 +1731,20 @@ class OrchestratorService:
         snap = await self._rm.snapshot(session_id)
         if not snap:
             raise RuntimeError(f"session {session_id} unknown; nothing to resume")
-        # A caller-supplied id wins; else the approval card's own questionId (so a
-        # specific gate is answered when several are open — see _answer_target);
-        # else the session default. The old order collapsed parallel gates onto
-        # one, mis-applying one card's edits to another's send.
+        # A confirm card's questionId identifies the only gate its verdict may
+        # answer. Otherwise use the caller's interrupt id or the session default.
         card_target = _answer_target(answer)
-        interrupt_id = interrupt_id or card_target or snap["session"].get("interrupt_id")
+        interrupt_id = card_target or interrupt_id or snap["session"].get("interrupt_id")
         if not interrupt_id:
             raise RuntimeError(f"session {session_id} is not waiting on input")
-        # Guard: edit-on-card edits are specific to the gate the card was for. If
-        # we end up answering a DIFFERENT gate than the card explicitly targeted
-        # (its id drifted / is gone), the edits must NOT ride along — applying one
-        # send's edited fields (recipient, subject, body) to another send is how a
-        # mis-routed approval emailed the wrong person. Drop them on any such
-        # mismatch; the send still goes with its own drafted args.
-        drop_edits = False
         # Resuming an id that is not parked would answer nothing yet still let
-        # _finalize complete the plan; refuse instead. Sessions parked before
-        # per-step ids existed have no rows, so an empty set skips the check.
+        # _finalize complete the plan; refuse instead. Legacy untargeted
+        # sessions may have no per-step rows; targeted confirm cards must match.
         outstanding_pairs = await self._rm.outstanding_interrupts(session_id)
         outstanding = {i for i, _ in outstanding_pairs}
         step_by_interrupt = {i: sid for i, sid in outstanding_pairs}
+        if card_target and card_target not in outstanding:
+            raise RuntimeError(f"approval {card_target} is no longer pending")
         if outstanding and interrupt_id not in outstanding:
             # The session-level interrupt id can go STALE relative to the
             # per-step outstanding rows when several steps park in parallel and
@@ -1761,9 +1754,8 @@ class OrchestratorService:
             # (approve/decline/text) carries no specific target, so answering a
             # currently-outstanding interrupt is correct — pick one of the SAME
             # dialect as the stale id (a verdict answers a confirm; text answers
-            # an ask) rather than failing the whole turn. Only an explicitly
-            # targeted id that the caller passed AND that is gone is a real
-            # error, but even then falling back is safer than dropping the answer.
+            # an ask) rather than failing the whole turn. An explicitly
+            # targeted confirm card has already been rejected above if stale.
             same_dialect = [i for i, _ in outstanding_pairs
                             if hitl.is_confirm(i) == hitl.is_confirm(interrupt_id)]
             fallback = (same_dialect or [i for i, _ in outstanding_pairs])[0]
@@ -1771,11 +1763,6 @@ class OrchestratorService:
                 "[worky] resume: stored interrupt %s not outstanding (outstanding=%s) "
                 "— answering %s instead (parallel-gate id drift)",
                 interrupt_id, sorted(outstanding), fallback)
-            # If the card targeted a specific gate and we're now answering a
-            # different one, its edits belong to the gate that's gone — not this
-            # one. Drop them so we can't email the wrong recipient.
-            if card_target and fallback != card_target:
-                drop_edits = True
             interrupt_id = fallback
 
         # STEP 8 (resume) — same step ids + depends_on ⇒ same node names + edges,
@@ -1834,11 +1821,6 @@ class OrchestratorService:
             # the edits ride along as the ToolConfirmation payload and the
             # connector tool merges them into the send. Plain text still works.
             confirmed, edits = _parse_verdict(answer)
-            if drop_edits and edits:
-                logger.warning("[worky] resume: dropping edit-on-card edits — the approval "
-                               "targeted a gate that is no longer outstanding (session=%s)",
-                               session_id)
-                edits = None
             resume = hitl.confirmation_resume_part(
                 hitl.confirm_fc_id(interrupt_id), confirmed=confirmed, payload=edits)
             # Close the answered card (and any stale re-drive duplicate) NOW —

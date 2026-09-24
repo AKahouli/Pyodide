@@ -172,11 +172,14 @@ describe('WorkyStreamService.ensureKickoffContext', () => {
   const streamId = new Types.ObjectId().toString();
 
   const makeEnsureService = (findByIdResolved: unknown) => {
+    const streamDoc = findByIdResolved
+      ? { ownerUserId: new Types.ObjectId(userId), shares: [], ...(findByIdResolved as object) }
+      : null;
     const updateOne = jest.fn(() => writeQuery({ acknowledged: true }));
     const streamModel = {
       create: jest.fn(),
       findById: jest.fn().mockReturnValue({
-        lean: () => ({ exec: () => Promise.resolve(findByIdResolved) }),
+        lean: () => ({ exec: () => Promise.resolve(streamDoc) }),
       }),
       find: jest.fn(),
       findOne: jest.fn(),
@@ -218,7 +221,7 @@ describe('WorkyStreamService.ensureKickoffContext', () => {
 
     const res = await service.ensureKickoffContext(streamId, userId);
 
-    expect(res).toEqual({ aiSessionId: 'sess-existing' });
+    expect(res).toEqual({ aiSessionId: 'sess-existing', ownerUserId: userId });
     expect(grpcClient.createSession).not.toHaveBeenCalled();
     expect(updateOne).not.toHaveBeenCalled();
   });
@@ -232,7 +235,7 @@ describe('WorkyStreamService.ensureKickoffContext', () => {
 
     expect(grpcClient.createSession).toHaveBeenCalledWith(userId);
     expect(updateOne).toHaveBeenCalledWith({ _id: streamId }, { $set: { aiSessionId: 'sess-new' } });
-    expect(res).toEqual({ aiSessionId: 'sess-new' });
+    expect(res).toEqual({ aiSessionId: 'sess-new', ownerUserId: userId });
   });
 
   it('throws WORKY_STREAM_NOT_FOUND when the stream does not exist', async () => {
@@ -392,8 +395,9 @@ describe('WorkyStreamService.findAllForUser', () => {
   const makeService = (opts: {
     streams?: unknown[];
     total?: number;
-    statusAgg?: unknown[];
-    laneAgg?: unknown[];
+      statusAgg?: unknown[];
+      laneAgg?: unknown[];
+      blockerAgg?: unknown[];
   } = {}) => {
     const streams = opts.streams ?? [buildStreamDoc(streamAId), buildStreamDoc(streamBId)];
     const findChain = {
@@ -411,7 +415,9 @@ describe('WorkyStreamService.findAllForUser', () => {
       countDocuments: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(opts.total ?? streams.length) })),
       aggregate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(opts.statusAgg ?? []) })),
     };
-    const taskAggregate = jest.fn(() => ({ exec: jest.fn().mockResolvedValue(opts.laneAgg ?? []) }));
+      const taskAggregate = jest.fn((pipeline: Array<Record<string, any>>) => ({
+        exec: jest.fn().mockResolvedValue(pipeline.some((stage) => stage.$group?._id === '$streamId') ? opts.blockerAgg ?? [] : opts.laneAgg ?? []),
+      }));
     const connection = { model: jest.fn(() => ({ aggregate: taskAggregate })) };
     const workspaceModel = { create: jest.fn(), findOne: jest.fn() };
     const agentRepository = { create: jest.fn(), findByNameAndOwner: jest.fn(), deleteByIdAndOwner: jest.fn() };
@@ -453,9 +459,9 @@ describe('WorkyStreamService.findAllForUser', () => {
     expect(findChain.skip).toHaveBeenCalledWith(20);
     expect(findChain.limit).toHaveBeenCalledWith(10);
     expect(findChain.sort).toHaveBeenCalledWith(expect.objectContaining({ lastActivityAt: -1 }));
-    // owner scoping is always applied
+    // Owner and direct stream shares are both visible.
     expect(streamModel.find).toHaveBeenCalledWith(
-      expect.objectContaining({ ownerUserId: expect.anything() }),
+      expect.objectContaining({ $or: expect.any(Array) }),
     );
   });
 
@@ -495,7 +501,7 @@ describe('WorkyStreamService.findAllForUser', () => {
     });
   });
 
-  it('applies the status filter to the list query but not to statusCounts', async () => {
+    it('applies the status filter to the list query but not to statusCounts', async () => {
     const { service, streamModel } = makeService({
       statusAgg: [
         { _id: 'active', count: 5 },
@@ -512,8 +518,28 @@ describe('WorkyStreamService.findAllForUser', () => {
     // ...but statusCounts reflects the full (status-unfiltered) scope.
     expect(result.meta.statusCounts).toEqual({ active: 5, paused: 2 });
     const statusAggMatch = (streamModel.aggregate.mock.calls as any[])[0][0][0].$match;
-    expect(statusAggMatch.status).toBeUndefined();
-  });
+      expect(statusAggMatch.status).toBeUndefined();
+    });
+
+    it('counts and filters attention from waiting statuses and task blockers within the visible scope', async () => {
+      const { service, streamModel, taskAggregate } = makeService({
+        statusAgg: [
+          { _id: 'created', count: 1, ids: [streamAId] },
+          { _id: 'waiting_for_human', count: 1, ids: [streamBId] },
+        ],
+        blockerAgg: [{ _id: streamAId }],
+      });
+
+      const result = await service.findAllForUser(userId, { attention: true } as any);
+
+      expect(result.meta.attentionCount).toBe(2);
+      expect(streamModel.find).toHaveBeenCalledWith(expect.objectContaining({
+        _id: { $in: expect.arrayContaining([streamAId, streamBId]) },
+      }));
+      expect(taskAggregate).toHaveBeenCalledWith(expect.arrayContaining([
+        { $match: { streamId: { $in: [streamAId, streamBId] }, lane: { $in: ['blocked', 'failed'] } } },
+      ]));
+    });
 
   it('applies search and created-date bounds to the filter', async () => {
     const { service, streamModel } = makeService();

@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 
 from app.population.age_projection import (PopulationError, compile_projection, create_graph_sql,
-                                            drop_graph_sql, drop_projection, project_revision,
+                                            drop_graph_sql, drop_projection, finalize_draft_revision,
+                                            project_revision,
                                             projection_counts, projection_graph_name, render_edge_batch,
                                             render_vertex_batch, validate_projection)
 
@@ -78,3 +79,53 @@ async def test_projection_counts_reads_live_graph_counts():
 def test_drop_rejects_unsafe_names():
     with pytest.raises(PopulationError):
         drop_graph_sql("ag_catalog")
+
+
+@pytest.mark.asyncio
+async def test_finalize_moves_only_the_draft_binding(monkeypatch: pytest.MonkeyPatch):
+    from app.persistence import population_store as store
+    from app.population import age_projection
+
+    revision = {"model_id": "m1", "model_version_id": "v1",
+                "spec_hash": "sha256:" + "a" * 64, "correction_sequence": 2}
+    captured = {}
+
+    async def projected(_pool, _age_pool, _revision_id):  # type: ignore[no-untyped-def]
+        return {"projectionRef": "age:v1:pop_dr_1", "reused": False}
+
+    async def get_revision(_pool, _revision_id):  # type: ignore[no-untyped-def]
+        return revision
+
+    async def sequence(_pool, _model_id):  # type: ignore[no-untyped-def]
+        return 2
+
+    async def binding(_pool, _model_id, environment):  # type: ignore[no-untyped-def]
+        assert environment == "draft"
+        return {"version": 4, "data_revision_id": "dr_old"}
+
+    async def swap(_pool, **kwargs):  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+        return True
+
+    monkeypatch.setattr(age_projection, "ensure_revision_projection", projected)
+    monkeypatch.setattr(store, "get_data_revision", get_revision)
+    monkeypatch.setattr(store, "model_correction_sequence", sequence)
+    monkeypatch.setattr(store, "get_active_binding", binding)
+    monkeypatch.setattr(store, "cas_active_binding", swap)
+
+    result = await finalize_draft_revision(object(), object(), "dr_1")
+    assert result["environment"] == "draft"
+    assert captured["environment"] == "draft"
+    assert captured["expected_version"] == 4
+    assert captured["spec_hash"] == revision["spec_hash"]
+
+
+def test_only_whole_model_builds_finalize():
+    from app.workers.population_tasks import is_whole_model_build
+
+    assert is_whole_model_build({"payload": {"purpose": "build",
+                                               "scope": {"kind": "model"}}}) is True
+    assert is_whole_model_build({"payload": {"purpose": "build",
+                                               "scope": {"kind": "mapping"}}}) is False
+    assert is_whole_model_build({"payload": {"purpose": "refresh",
+                                               "scope": {"kind": "model"}}}) is False

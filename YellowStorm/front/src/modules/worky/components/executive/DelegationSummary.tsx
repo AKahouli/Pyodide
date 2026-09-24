@@ -6,7 +6,7 @@ import type { WorkyDelegationItem } from '../../executive/executiveModel';
 export function DelegationSummary({ items }: { items: WorkyDelegationItem[] }): JSX.Element {
   const { t } = useModuleTranslation('worky');
   return (
-    <section className='rounded-2xl border border-border/70 bg-card p-5 shadow-sm'>
+    <section className='min-w-0 rounded-2xl border border-border/70 bg-card p-5 shadow-sm'>
       <h2 className='mb-4 flex items-center gap-2 text-sm font-bold uppercase tracking-[0.16em] text-foreground'>
         <Users className='size-4 text-primary' />
         {t('executive.delegation.title')}

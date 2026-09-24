@@ -212,6 +212,27 @@ def _defer_if_deps_unmet(step: Step, unmet):
     return _cb
 
 
+def _replay_if_completed(step):
+    """A step already COMPLETED in a prior turn re-enters on every resume:
+    resume_turn rebuilds it as a live LLM node (replay_completed=False, since a
+    FunctionNode swap would diverge from resume_part's recorded shape), and a
+    create_task graph reshape stops ADK fast-forwarding it — so it re-executes
+    for REAL every resume (wasteful model calls + tools; seen live re-running
+    completed steps each turn). Short-circuit: emit the STORED result as the
+    model response — no model call, no tools (no re-sent email / duplicate
+    ticket). It IS a terminal event (unlike the dep-gate's content=None), so the
+    barrier advances normally, and the node type stays LlmAgent so resume_part's
+    recorded shape is unchanged. Placed FIRST in the chain: a done step needs no
+    gate/running/trace. Completed→completed only — a failed dep still re-runs."""
+    async def _cb(callback_context, llm_request):
+        if step.status == Status.COMPLETED and (step.result or "").strip():
+            from google.adk.models.llm_response import LlmResponse
+            return LlmResponse(content=genai_types.Content(
+                role="model", parts=[genai_types.Part(text=step.result)]))
+        return None
+    return _cb
+
+
 def _inject_task_turn(task_text):
     """Deliver the step's task as a USER turn instead of baking it into the
     system prompt.
@@ -973,6 +994,7 @@ def make_llm_node_factory(
             # as the user turn, then the call-budget guard on the resulting
             # contents (so its forced-answer fallback carries the task).
             before_model_callback=_compose_before_model(
+                _replay_if_completed(step),
                 *([_defer_if_deps_unmet(step, gate_for_step)] if gate_for_step else []),
                 _skip_if_cancelled(step), _mark_running(step, on_model_start),
                 _trace_execution(step, name),

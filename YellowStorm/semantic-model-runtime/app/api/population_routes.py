@@ -7,25 +7,20 @@ serving tuple. None of these write AGE or projections directly."""
 
 from __future__ import annotations
 
-import logging
 import os
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 
 from app.jobs.models import (ActivateRevisionCommand, CorrectionCommand, IdempotencyConflict,
                              MirrorSpecificationCommand, PopulationCommand,
                              ReviewResolveCommand)
 from app.persistence import population_store as store
-from app.population.age_projection import (compile_projection, drop_projection,
-                                            is_live_projection_ref, live_projection_ref,
-                                            project_revision as execute_projection,
-                                            projection_counts, projection_exists,
-                                            projection_graph_name, validate_projection)
+from app.population.age_projection import (ProjectionUnavailable, ensure_revision_projection,
+                                             is_live_projection_ref, read_projection_graph)
 from app.population.compiler import (PopulationError, canonical_spec_hash, validate_specification)
 from app.workers.celery_app import POPULATION_QUEUES
 
 router = APIRouter(prefix="/v1/semantic-model-population", tags=["population"])
-logger = logging.getLogger(__name__)
 
 
 @router.post("/runs", status_code=status.HTTP_202_ACCEPTED)
@@ -66,6 +61,13 @@ def _population_pool(request: Request):  # type: ignore[no-untyped-def]
     return pool
 
 
+def _population_read_pool(request: Request):  # type: ignore[no-untyped-def]
+    pool = getattr(request.app.state, "population_pool", None)
+    if pool is None:
+        raise HTTPException(status_code=503, detail="population_store_unavailable")
+    return pool
+
+
 def _age_pool(request: Request):  # type: ignore[no-untyped-def]
     pool = getattr(request.app.state, "age_pool", None)
     if pool is None:
@@ -89,20 +91,73 @@ async def mirror_specification(command: MirrorSpecificationCommand,
     existing = await store.get_specification(pool, command.home_workspace_id,
                                              command.model_id, command.model_version_id,
                                              command.spec_hash)
-    if existing is not None:
-        if existing["spec_hash"] != command.spec_hash:
-            raise HTTPException(status_code=409, detail="specification_conflict")
-        return {"modelId": command.model_id, "modelVersionId": command.model_version_id,
-                "specHash": command.spec_hash, "reused": True}
     try:
         await store.mirror_specification(
             pool, home_workspace_id=command.home_workspace_id, model_id=command.model_id,
             model_version_id=command.model_version_id, spec_hash=command.spec_hash,
-            specification=command.specification)
+            specification=command.specification, select_current=True)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"modelId": command.model_id, "modelVersionId": command.model_version_id,
-            "specHash": command.spec_hash, "reused": False}
+            "specHash": command.spec_hash, "reused": existing is not None}
+
+
+@router.get("/models/{model_id}/records", status_code=status.HTTP_200_OK)
+async def read_bound_records(model_id: str, request: Request, environment: str = "draft",
+                             limit: int = 25,
+                             concept_id: str | None = Query(default=None, alias="conceptId"),
+                             data_revision_id: str | None = Query(default=None,
+                                                                  alias="dataRevisionId"),
+                             ) -> dict[str, object]:
+    if environment != "draft" or limit < 1 or limit > 50:
+        raise HTTPException(status_code=422, detail="invalid_read_scope")
+    pool = _population_read_pool(request)
+    binding = await store.get_active_binding(pool, model_id, environment)
+    if binding is None:
+        raise HTTPException(status_code=404, detail="active_binding_not_found")
+    revision_id = binding["data_revision_id"]
+    if data_revision_id is not None and data_revision_id != revision_id:
+        raise HTTPException(status_code=409, detail="active_binding_changed")
+    counts = await store.count_revision_rows(pool, revision_id)
+    entities = await store.list_revision_entities(pool, revision_id, limit, concept_id)
+    entity_ids = {entity["entityId"] for entity in entities}
+    relationships = [relationship for relationship in
+                     await store.list_revision_relationships(pool, revision_id)
+                     if relationship["sourceEntityId"] in entity_ids
+                     and relationship["targetEntityId"] in entity_ids]
+    specification = await store.get_revision_specification(pool, revision_id)
+    if specification is None:
+        raise HTTPException(status_code=409, detail="revision_specification_not_found")
+    return {"modelId": model_id, "modelVersionId": binding["model_version_id"],
+            "dataRevisionId": revision_id, "entities": entities,
+            "relationships": relationships, "counts": counts,
+            "specification": specification}
+
+
+@router.get("/models/{model_id}/graph", status_code=status.HTTP_200_OK)
+async def read_bound_graph(model_id: str, request: Request,
+                           environment: str = "draft",
+                           data_revision_id: str | None = Query(default=None,
+                                                                alias="dataRevisionId"),
+                           ) -> dict[str, object]:
+    if environment != "draft":
+        raise HTTPException(status_code=422, detail="invalid_read_scope")
+    pool = _population_read_pool(request)
+    binding = await store.get_active_binding(pool, model_id, environment)
+    if binding is None:
+        raise HTTPException(status_code=404, detail="active_binding_not_found")
+    if data_revision_id is not None and data_revision_id != binding["data_revision_id"]:
+        raise HTTPException(status_code=409, detail="active_binding_changed")
+    try:
+        graph = await read_projection_graph(_age_pool(request), binding["projection_ref"])
+    except PopulationError as exc:
+        raise HTTPException(status_code=409, detail=exc.code) from exc
+    specification = await store.get_revision_specification(pool, binding["data_revision_id"])
+    if specification is None:
+        raise HTTPException(status_code=409, detail="revision_specification_not_found")
+    return {"modelId": model_id, "modelVersionId": binding["model_version_id"],
+            "dataRevisionId": binding["data_revision_id"],
+            "specification": specification, **graph}
 
 
 @router.post("/corrections", status_code=status.HTTP_200_OK)
@@ -152,105 +207,13 @@ async def resolve_review(review_id: str, command: ReviewResolveCommand,
 async def project_revision(revision_id: str, request: Request) -> dict[str, object]:
     """Build and validate the immutable AGE graph before recording it (P6.16)."""
     pool = _population_pool(request)
-    revision = await store.get_data_revision(pool, revision_id)
-    if revision is None:
-        raise HTTPException(status_code=404, detail="revision_not_found")
-    if revision["validation_state"] != "valid":
-        raise HTTPException(status_code=409, detail="revision_not_valid")
-    if is_live_projection_ref(revision["projection_ref"]):
-        return {"revisionId": revision_id, "projectionRef": revision["projection_ref"],
-                "reused": True}
-    age_pool = _age_pool(request)
-    graph = projection_graph_name(revision_id)
-    async with age_pool.acquire() as connection:
-        await connection.fetchval("SELECT pg_advisory_lock(hashtextextended($1, 0))", graph)
-        try:
-            current = await store.get_data_revision(pool, revision_id)
-            if current is None:
-                raise HTTPException(status_code=404, detail="revision_not_found")
-            if is_live_projection_ref(current["projection_ref"]):
-                return {"revisionId": revision_id, "projectionRef": current["projection_ref"],
-                        "reused": True}
-            return await _build_projection(
-                pool, connection, revision_id, graph, current["projection_ref"])
-        finally:
-            await connection.fetchval("SELECT pg_advisory_unlock(hashtextextended($1, 0))", graph)
-
-
-async def _build_projection(pool, connection, revision_id: str, graph: str,
-                            previous_ref: str | None) -> dict[str, object]:  # type: ignore[no-untyped-def]
-    # Validate against true stored counts, not the bounded listing: a prefix
-    # must never be certified as the whole revision. Known ceiling: revisions
-    # with more than 10000 stored relationships (worker cap is 20000) stay
-    # persistable but unprojectable until the listing limit is raised.
-    stored = await store.count_revision_rows(pool, revision_id)
-    entities = await store.list_revision_entities(pool, revision_id)
-    relationships = await store.list_revision_relationships(pool, revision_id)
-    if stored["entities"] != len(entities) or stored["relationships"] != len(relationships):
-        raise HTTPException(status_code=409, detail="projection_too_large")
-    known_ids = {entity["entityId"] for entity in entities}
-    for relationship in relationships:
-        if (relationship["sourceEntityId"] not in known_ids
-                or relationship["targetEntityId"] not in known_ids):
-            raise HTTPException(status_code=409, detail="projection_incoherent")
     try:
-        plan = compile_projection(entities, relationships)
+        return await ensure_revision_projection(pool, _age_pool(request), revision_id)
     except PopulationError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    expected = {"vertices": len(entities), "edges": len(relationships)}
-    try:
-        async with connection.transaction():
-            if await projection_exists(connection, graph):
-                await drop_projection(connection, graph)
-            await execute_projection(connection, graph=graph, plan=plan)
-            actual = await projection_counts(connection, graph)
-            if validate_projection(expected, actual):
-                raise PopulationError("projection_validation_failed")
-    except PopulationError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.warning("AGE projection failed for revision %s: %s", revision_id, type(exc).__name__)
-        raise HTTPException(status_code=503, detail="age_projection_failed") from exc
-    projection_ref = live_projection_ref(graph)
-    try:
-        recorded = await store.set_revision_projection(
-            pool, revision_id, projection_ref, previous_ref)
-    except Exception as exc:
-        logger.warning("Projection persistence failed for revision %s: %s",
-                       revision_id, type(exc).__name__)
-        current = await _revision_after_persistence_error(pool, revision_id)
-        if current is not None and current["projection_ref"] == projection_ref:
-            recorded = True
-        else:
-            if current is not None and current["projection_ref"] == previous_ref:
-                await _discard_projection(connection, graph, revision_id)
-            raise HTTPException(status_code=503, detail="projection_persistence_failed") from exc
-    if not recorded:
-        current = await store.get_data_revision(pool, revision_id)
-        if current is None or current["projection_ref"] != projection_ref:
-            await _discard_projection(connection, graph, revision_id)
-            raise HTTPException(status_code=409, detail="projection_record_conflict")
-    return {"revisionId": revision_id, "projectionRef": projection_ref,
-            "graph": graph, "vertices": expected["vertices"], "edges": expected["edges"],
-            "reused": not recorded}
-
-
-async def _revision_after_persistence_error(pool, revision_id: str):  # type: ignore[no-untyped-def]
-    try:
-        return await store.get_data_revision(pool, revision_id)
-    except Exception as exc:
-        logger.error("Could not reconcile projection persistence for revision %s: %s",
-                     revision_id, type(exc).__name__)
-        return None
-
-
-async def _discard_projection(connection, graph: str, revision_id: str) -> None:  # type: ignore[no-untyped-def]
-    try:
-        if await projection_exists(connection, graph):
-            await drop_projection(connection, graph)
-    except Exception as exc:
-        logger.error("Failed to discard AGE graph for revision %s: %s",
-                     revision_id, type(exc).__name__)
+        status_code = 404 if exc.code == "revision_not_found" else 409
+        raise HTTPException(status_code=status_code, detail=exc.code) from exc
+    except ProjectionUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.post("/revisions/{revision_id}/activate", status_code=status.HTTP_200_OK)
@@ -282,7 +245,7 @@ async def activate_revision(revision_id: str, command: ActivateRevisionCommand,
         pool, model_id=command.model_id, environment=command.environment,
         expected_version=expected_version, model_version_id=command.model_version_id,
         data_revision_id=revision_id, projection_ref=revision["projection_ref"],
-        correction_sequence=current_sequence,
+        correction_sequence=current_sequence, spec_hash=revision["spec_hash"],
         emit_signal=os.environ.get("SEMANTIC_MODEL_REALTIME_ENABLED") == "true")
     if not swapped:
         raise HTTPException(status_code=409, detail="activation_race")

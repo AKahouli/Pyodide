@@ -65,4 +65,62 @@ describe('DocumentSourceMappingDrawer', () => {
     ]) })));
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['semantic-models', 'data-preview', 'model-1'] });
   });
+
+  it('defaults extracted fields to deterministic and saves an AI choice', async () => {
+    api.createSourceMapping.mockResolvedValue({ revision: 1, mappingCount: 1 });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><DocumentSourceMappingDrawer modelId='model-1' target={{
+      workspaceId: 'workspace-1', documentId: 'document-1', documentName: 'One.pdf', assetKind: 'document', conceptId: 'concept-1', mimeType: 'application/pdf', path: 'one.pdf',
+    }} onClose={vi.fn()} /></QueryClientProvider>);
+
+    // Two extracted fields, so two strategy selectors; the first is the contract number.
+    const strategyTriggers = await screen.findAllByRole('combobox', { name: 'mapping.strategyFor' });
+    expect(strategyTriggers).toHaveLength(2);
+
+    fireEvent.click(strategyTriggers[0]);
+    fireEvent.click(await screen.findByRole('option', { name: 'mapping.strategy.ai' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.save' }));
+    await waitFor(() => expect(api.createSourceMapping).toHaveBeenCalledWith('model-1', expect.objectContaining({
+      fieldMappings: [
+        expect.objectContaining({ targetAttribute: 'contract_number', mode: 'extract', extractionStrategy: 'ai' }),
+        expect.objectContaining({ targetAttribute: 'amendment_number', mode: 'extract', extractionStrategy: 'deterministic' }),
+      ],
+    })));
+  });
+
+  it('applies shared extraction and identity settings to more than 50 existing documents', async () => {
+    const assets = Array.from({ length: 102 }, (_, index) => ({
+      workspaceId: 'workspace-1', documentId: `document-${index}`, name: `Doc-${index}.pdf`,
+      kind: 'document' as const, mimeType: 'application/pdf', path: `doc-${index}.pdf`,
+    }));
+    const mappings = assets.map((asset, index) => ({
+      id: `mapping-${index}`, conceptId: 'concept-1', workspaceId: asset.workspaceId,
+      documentId: asset.documentId, documentName: asset.name, sheetName: '', assetKind: 'document' as const,
+      fieldMappings: graph.nodes[0].attributes.map((attribute) => ({ sourceField: null, targetAttribute: attribute.key, mode: 'extract' as const, extractionStrategy: 'deterministic' as const })),
+      identityFields: ['contract_number'], status: 'ready', createdBy: 'user', createdAt: '', updatedAt: '',
+    }));
+    api.listSourceAssets.mockResolvedValue({ assets });
+    api.listSourceMappings.mockResolvedValue(mappings);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const onClose = vi.fn();
+    render(<QueryClientProvider client={client}><DocumentSourceMappingDrawer modelId='model-1' target={{
+      workspaceId: 'workspace-1', documentId: 'document-0', documentName: 'Doc-0.pdf',
+      assetKind: 'document', conceptId: 'concept-1', mapping: mappings[0], bulkEdit: true,
+    }} onClose={onClose} /></QueryClientProvider>);
+
+    expect(await screen.findByRole('checkbox', { name: 'Doc-101.pdf' })).toBeChecked();
+    fireEvent.click(screen.getAllByRole('combobox', { name: 'mapping.strategyFor' })[0]);
+    fireEvent.click(await screen.findByRole('option', { name: 'mapping.strategy.ai' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Amendment number' }));
+    fireEvent.click(screen.getByRole('button', { name: 'dataWorkflow.applyToSources' }));
+
+    await waitFor(() => expect(api.createBulkDocumentSourceMappings).toHaveBeenCalledTimes(3));
+    expect(api.createBulkDocumentSourceMappings.mock.calls.map(([, payload]) => payload.documents.length)).toEqual([50, 50, 2]);
+    for (const [, payload] of api.createBulkDocumentSourceMappings.mock.calls) {
+      expect(payload.identityFields).toEqual(['contract_number', 'amendment_number']);
+      expect(payload.fieldMappings[0]).toEqual(expect.objectContaining({ targetAttribute: 'contract_number', extractionStrategy: 'ai' }));
+    }
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
 });
