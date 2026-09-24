@@ -1,6 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 import { JsonRpcErrorCode, McpError } from '../mcp/runtime-mcp.errors';
-import type { AppRuntimeBinding } from '../schemas/app-runtime-binding.schema';
+import type { RuntimeBindingRecord as AppRuntimeBinding } from '../persistence/runtime-binding.store';
 import { RuntimeBrokerService } from './runtime-broker.service';
 import { RuntimeToolDispatcherService } from './runtime-tool-dispatcher.service';
 import { AppRuntimeConversationNotifierService } from './app-runtime-conversation-notifier.service';

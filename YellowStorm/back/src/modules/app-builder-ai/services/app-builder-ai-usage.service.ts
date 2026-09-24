@@ -1,16 +1,14 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
 import { and, desc, eq, gt, lte, sql } from 'drizzle-orm';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { Model, Types } from 'mongoose';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { newOwnedId } from '@modules/conversation/persistence/owned-id';
-import { User, UserDocument } from '../../user/schemas/user.schema';
+import { USER_STORE, type UserStore } from '../../user/persistence/user.store';
 import { UsageType } from '../../usage/usage-type.enum';
 import { APP_BUILDER_AI_USAGE_SOURCE } from '../constants';
 import { AppBuilderAiOfferService } from './app-builder-ai-offer.service';
-import type { AppBuilderAiOfferDocument } from '../schemas/app-builder-ai-offer.schema';
+import type { AppBuilderAiOfferRecord } from '../persistence/app-builder-ai-offer.store';
 
 export interface AppBuilderAiUsageWindow {
   id: string;
@@ -32,7 +30,7 @@ export interface AppBuilderAiUsageCheck {
   currentUsage: number;
   limit: number;
   resetsAt: Date;
-  offer: AppBuilderAiOfferDocument;
+  offer: AppBuilderAiOfferRecord;
 }
 
 export interface RecordAppBuilderAiUsageParams {
@@ -52,32 +50,27 @@ export interface RecordAppBuilderAiUsageParams {
 export class AppBuilderAiUsageService {
   constructor(
     @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>,
-    @InjectModel(User.name) private readonly users: Model<UserDocument>,
+    @Inject(USER_STORE) private readonly users: UserStore,
     private readonly offers: AppBuilderAiOfferService,
   ) {}
 
-  async ensureUserHasOffer(userId: string): Promise<AppBuilderAiOfferDocument> {
-    const user = await this.users.findById(userId).select('appBuilderAiOfferId').lean().exec();
+  async ensureUserHasOffer(userId: string): Promise<AppBuilderAiOfferRecord> {
+    const user = await this.users.findById(userId);
     if (user?.appBuilderAiOfferId) {
-      const offer = await this.offers.findById(user.appBuilderAiOfferId.toString());
+      const offer = await this.offers.findById(user.appBuilderAiOfferId);
       if (offer && offer.isActive) return offer;
     }
     const def = await this.offers.getDefaultOffer();
-    await this.assignOffer(userId, def._id.toString());
+    await this.assignOffer(userId, def.id);
     return def;
   }
 
   async assignOffer(userId: string, offerId: string): Promise<void> {
     const offer = await this.offers.requireById(offerId);
-    await this.users.updateOne(
-      { _id: new Types.ObjectId(userId) },
-      {
-        $set: {
-          appBuilderAiOfferId: offer._id,
-          appBuilderAiOfferStartedAt: new Date(),
-        },
-      },
-    );
+    await this.users.update(userId, {
+      appBuilderAiOfferId: offer.id,
+      appBuilderAiOfferStartedAt: new Date(),
+    });
   }
 
   async checkLimit(
@@ -112,9 +105,9 @@ export class AppBuilderAiUsageService {
   async peekStatus(
     userId: string,
   ): Promise<(AppBuilderAiUsageCheck & { window: AppBuilderAiUsageWindow }) | null> {
-    const user = await this.users.findById(userId).select('appBuilderAiOfferId').lean().exec();
+    const user = await this.users.findById(userId);
     if (!user?.appBuilderAiOfferId) return null;
-    const offer = await this.offers.findById(user.appBuilderAiOfferId.toString());
+    const offer = await this.offers.findById(user.appBuilderAiOfferId);
     if (!offer || !offer.isActive) return null;
     const window = await this.getOrCreateCurrentWindow(userId, offer);
     const limit = offer.tokenLimit;
@@ -194,7 +187,7 @@ export class AppBuilderAiUsageService {
 
   async getOrCreateCurrentWindow(
     userId: string,
-    offer: AppBuilderAiOfferDocument,
+    offer: AppBuilderAiOfferRecord,
   ): Promise<AppBuilderAiUsageWindow> {
     return this.db.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`ab_ai:${userId}`}))`);
@@ -220,7 +213,7 @@ export class AppBuilderAiUsageService {
     });
   }
 
-  private windowValues(userId: string, offer: AppBuilderAiOfferDocument, now: Date) {
+  private windowValues(userId: string, offer: AppBuilderAiOfferRecord, now: Date) {
     const hours = Math.max(1, offer.windowHours || 24);
     const windowEnd = new Date(now.getTime() + hours * 60 * 60 * 1000);
     return {
@@ -233,7 +226,7 @@ export class AppBuilderAiUsageService {
       outputTokens: 0,
       totalTokens: 0,
       requestCount: 0,
-      offerId: offer._id.toString(),
+      offerId: offer.id,
       offerSlug: offer.slug,
       tokenLimitAtCreation: offer.tokenLimit,
     };

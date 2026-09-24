@@ -62,6 +62,8 @@ export class PgUserStore implements UserStore {
       planId: row.planId,
       planSlug: row.planSlug,
       planStartedAt: row.planStartedAt,
+      appBuilderAiOfferId: row.appBuilderAiOfferId,
+      appBuilderAiOfferStartedAt: row.appBuilderAiOfferStartedAt,
       roleIds: [],
       permissionsVersion: row.permissionsVersion,
       status: row.status as UserRecord['status'],

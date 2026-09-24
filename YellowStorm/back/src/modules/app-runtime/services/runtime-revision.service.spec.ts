@@ -1,24 +1,31 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { getModelToken } from '@nestjs/mongoose';
 import { Test, TestingModule } from '@nestjs/testing';
 import { DocumentService } from '@modules/document/document.service';
 import {
   STARTER_REACT_VITE_V1_FILES,
   STARTER_REACT_VITE_V1_REVISION_ID,
 } from '../constants/starter-react-vite-v1';
-import { AppSourceRevision } from '../schemas/app-source-revision.schema';
+import { RUNTIME_SOURCE_REVISION_STORE, type RuntimeSourceRevisionStore } from '../persistence/runtime-source-revision.store';
 import { RuntimeRevisionService } from './runtime-revision.service';
 
 describe('RuntimeRevisionService', () => {
   let svc: RuntimeRevisionService;
 
-  const findOne = jest.fn();
-  const create = jest.fn();
-  const find = jest.fn();
+  const findByWorkspaceAndRevision = jest.fn();
+  const existsByWorkspaceAndRevision = jest.fn();
+  const createIfNotExists = jest.fn();
+  const listRevisionIds = jest.fn();
   const download = jest.fn();
   const exists = jest.fn();
   const upload = jest.fn();
+
+  const store: RuntimeSourceRevisionStore = {
+    findByWorkspaceAndRevision,
+    existsByWorkspaceAndRevision,
+    createIfNotExists,
+    listRevisionIds,
+  };
 
   const config = {
     get: jest.fn((key: string) => {
@@ -32,13 +39,15 @@ describe('RuntimeRevisionService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
-    findOne.mockReturnValue({
-      lean: () => ({ exec: () => Promise.resolve(null) }),
-    });
-    find.mockReturnValue({
-      lean: () => ({ exec: () => Promise.resolve([]) }),
-    });
-    create.mockResolvedValue({});
+    findByWorkspaceAndRevision.mockResolvedValue(null);
+    existsByWorkspaceAndRevision.mockResolvedValue(false);
+    createIfNotExists.mockImplementation(async (data) => ({
+      id: 'generated_id',
+      ...data,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }));
+    listRevisionIds.mockResolvedValue([]);
     download.mockRejectedValue(new Error('ceph offline'));
     exists.mockResolvedValue(true);
     upload.mockResolvedValue({});
@@ -47,8 +56,8 @@ describe('RuntimeRevisionService', () => {
       providers: [
         RuntimeRevisionService,
         {
-          provide: getModelToken(AppSourceRevision.name),
-          useValue: { findOne, create, find },
+          provide: RUNTIME_SOURCE_REVISION_STORE,
+          useValue: store,
         },
         { provide: DocumentService, useValue: { download, exists, upload } },
         { provide: ConfigService, useValue: config },
@@ -125,7 +134,7 @@ describe('RuntimeRevisionService', () => {
 
   it('ensureStarterRevision upserts a workspace row idempotently', async () => {
     await svc.ensureStarterRevision('sess_1');
-    expect(create).toHaveBeenCalledWith(
+    expect(createIfNotExists).toHaveBeenCalledWith(
       expect.objectContaining({
         workspaceId: 'sess_1',
         revisionId: STARTER_REACT_VITE_V1_REVISION_ID,
@@ -133,28 +142,28 @@ describe('RuntimeRevisionService', () => {
       }),
     );
 
-    findOne.mockReturnValueOnce({
-      lean: () => ({
-        exec: () =>
-          Promise.resolve({
-            workspaceId: 'sess_1',
-            revisionId: STARTER_REACT_VITE_V1_REVISION_ID,
-            parentRevisionId: null,
-            manifestHash: 'abc',
-            manifestObjectKey: 'appbuilder/manifests/_system/starter_react_vite_v1.json',
-            files: [...STARTER_REACT_VITE_V1_FILES],
-          }),
-      }),
+    findByWorkspaceAndRevision.mockResolvedValueOnce({
+      id: 'existing_id',
+      workspaceId: 'sess_1',
+      revisionId: STARTER_REACT_VITE_V1_REVISION_ID,
+      parentRevisionId: null,
+      manifestHash: 'abc',
+      manifestObjectKey: 'appbuilder/manifests/_system/starter_react_vite_v1.json',
+      files: [...STARTER_REACT_VITE_V1_FILES],
+      createdByToolCallId: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
     });
 
-    create.mockClear();
+    createIfNotExists.mockClear();
     const second = await svc.ensureStarterRevision('sess_1');
-    expect(create).not.toHaveBeenCalled();
+    expect(createIfNotExists).not.toHaveBeenCalled();
     expect(second.workspaceId).toBe('sess_1');
   });
 
   it('branchRevision mints an id above every persisted revision and copies the manifest', async () => {
     const rev2Doc = {
+      id: 'some_id',
       workspaceId: 'sess_1',
       revisionId: 'rev_2',
       parentRevisionId: null,
@@ -164,19 +173,15 @@ describe('RuntimeRevisionService', () => {
         { path: 'src/main.jsx', sha256: 'a'.repeat(64), objectKey: 'blobs/aaa', size: 10 },
         { path: 'index.html', sha256: 'b'.repeat(64), objectKey: 'blobs/bbb', size: 5 },
       ],
+      createdByToolCallId: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
     };
-    findOne.mockReturnValue({
-      lean: () => ({ exec: () => Promise.resolve(rev2Doc) }),
-    });
-    find.mockReturnValue({
-      lean: () =>
-        ({ exec: () => Promise.resolve([{ revisionId: 'rev_2' }, { revisionId: 'rev_7' }, { revisionId: 'rev_legacy' }]) } as never),
-    });
+    findByWorkspaceAndRevision.mockResolvedValue(rev2Doc);
+    listRevisionIds.mockResolvedValue(['rev_2', 'rev_7', 'rev_legacy']);
 
     const branch = await svc.branchRevision('sess_1', 'rev_2');
 
-    // rev_7 is the highest numeric revision → the branch lands on rev_8, so the
-    // existing rev_3..rev_7 manifests and finalized rows are never rewritten.
     expect(branch.revisionId).toBe('rev_8');
     expect(branch.parentRevisionId).toBe('rev_2');
     expect(branch.files.map((f) => f.path)).toEqual(['index.html', 'src/main.jsx']);
@@ -186,7 +191,7 @@ describe('RuntimeRevisionService', () => {
       'application/json',
       { generateUniqueName: false, customFileName: 'appbuilder/manifests/sess_1/rev_8.json' },
     );
-    expect(create).toHaveBeenCalledWith(
+    expect(createIfNotExists).toHaveBeenCalledWith(
       expect.objectContaining({
         workspaceId: 'sess_1',
         revisionId: 'rev_8',
@@ -196,6 +201,7 @@ describe('RuntimeRevisionService', () => {
   });
 
   it('branchRevision rejects an unknown source revision', async () => {
+    findByWorkspaceAndRevision.mockResolvedValue(null);
     await expect(svc.branchRevision('sess_1', 'rev_missing')).rejects.toBeInstanceOf(
       NotFoundException,
     );

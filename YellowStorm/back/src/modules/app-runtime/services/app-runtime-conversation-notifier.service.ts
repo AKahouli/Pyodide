@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { ConversationV2StreamService } from '@modules/conversation-v2/services/conversation-v2-stream.service';
-import type { AppRuntimeBinding } from '../schemas/app-runtime-binding.schema';
+import type { RuntimeBindingRecord } from '../persistence/runtime-binding.store';
 import type { FilesTreeNode } from '@modules/conversation-v2/types/conversation-v2.types';
 import { RuntimeFinalizedRevisionService } from './runtime-finalized-revision.service';
 
@@ -49,7 +49,7 @@ export class AppRuntimeConversationNotifierService {
   ) {}
 
   async notifyFinalize(
-    binding: AppRuntimeBinding,
+    binding: RuntimeBindingRecord,
     args: Record<string, unknown>,
     result: Record<string, unknown>,
   ): Promise<void> {

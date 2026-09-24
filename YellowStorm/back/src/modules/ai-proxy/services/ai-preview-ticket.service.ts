@@ -1,14 +1,12 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
 import { randomBytes } from 'crypto';
-import { Model } from 'mongoose';
 import { RuntimeBindingService } from '../../app-runtime/services/runtime-binding.service';
 import { RuntimeTokenService } from '../../app-runtime/services/runtime-token.service';
 import {
-  AiPreviewTicket,
-  AiPreviewTicketDocument,
-} from '../schemas/ai-preview-ticket.schema';
+  AI_PREVIEW_TICKET_STORE,
+  type AiPreviewTicketStore,
+} from '../persistence/ai-preview-ticket.store';
 
 export const AI_PREVIEW_TICKET_PREFIX = 'aiprev_';
 
@@ -41,8 +39,8 @@ export class AiPreviewTicketService {
   private readonly logger = new Logger(AiPreviewTicketService.name);
 
   constructor(
-    @InjectModel(AiPreviewTicket.name)
-    private readonly model: Model<AiPreviewTicketDocument>,
+    @Inject(AI_PREVIEW_TICKET_STORE)
+    private readonly store: AiPreviewTicketStore,
     private readonly bindings: RuntimeBindingService,
     private readonly tokens: RuntimeTokenService,
     private readonly config: ConfigService,
@@ -60,15 +58,9 @@ export class AiPreviewTicketService {
     const ticket = `${AI_PREVIEW_TICKET_PREFIX}${randomBytes(32).toString('base64url')}`;
 
     // Expire prior live tickets for this workspace so rotations stay tight.
-    await this.model.updateMany(
-      {
-        workspaceId: binding.workspaceId,
-        expiresAt: { $gt: new Date() },
-      },
-      { $set: { expiresAt: new Date() } },
-    );
+    await this.store.expireLiveForWorkspace(binding.workspaceId);
 
-    await this.model.create({
+    await this.store.create({
       ticketHash: this.tokens.hash(ticket),
       conversationSessionId,
       workspaceId: binding.workspaceId,
@@ -96,14 +88,10 @@ export class AiPreviewTicketService {
       return null;
     }
 
-    const doc = await this.model
-      .findOne({
-        ticketHash: this.tokens.hash(ticket),
-        purpose: 'ai_preview',
-        expiresAt: { $gt: new Date() },
-      })
-      .lean()
-      .exec();
+    const doc = await this.store.findLiveByHash(
+      this.tokens.hash(ticket),
+      'ai_preview',
+    );
 
     if (!doc) return null;
 

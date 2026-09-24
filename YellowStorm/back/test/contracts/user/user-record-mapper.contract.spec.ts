@@ -33,6 +33,8 @@ const record: UserRecord = {
   planId: '64b000000000000000000002',
   planSlug: 'unlimited',
   planStartedAt: new Date('2026-01-01T00:00:00Z'),
+  appBuilderAiOfferId: null,
+  appBuilderAiOfferStartedAt: null,
   roleIds: ['64b000000000000000000003'],
   permissionsVersion: 1,
   status: 'active',

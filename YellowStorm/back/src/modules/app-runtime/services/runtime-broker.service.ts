@@ -17,7 +17,7 @@ import {
   TOOL_NAME_SET,
   type RuntimeMcpToolName,
 } from '../mcp/runtime-mcp.tools';
-import { AppRuntimeBinding } from '../schemas/app-runtime-binding.schema';
+import type { RuntimeBindingRecord as AppRuntimeBinding } from '../persistence/runtime-binding.store';
 import { RuntimeToolDispatcherService } from './runtime-tool-dispatcher.service';
 import { AppRuntimeConversationNotifierService } from './app-runtime-conversation-notifier.service';
 import { AppDataReleaseBindingService } from '@modules/app-data/services/app-data-release-binding.service';

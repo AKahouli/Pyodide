@@ -1,6 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { Types } from 'mongoose';
 import { ConversationV2Controller } from './conversation-v2.controller';
 import { ConversationV2GrpcClientService } from './services/conversation-v2.grpc-client.service';
 import { ConversationV2SessionService } from './services/conversation-v2-session.service';
@@ -195,9 +194,9 @@ describe('ConversationV2Controller', () => {
   // --- POST /sessions ---
 
   it('POST /sessions creates draft + system workspace + gRPC session, then attaches', async () => {
-    const draftId = new Types.ObjectId();
+    const draftId = 'a'.repeat(24);
     mockWorkspaceService.findIdsByOwner.mockResolvedValueOnce(['w1']);
-    mockSessions.createDraft.mockResolvedValueOnce({ _id: draftId });
+    mockSessions.createDraft.mockResolvedValueOnce({ id: draftId });
     mockWorkspaceService.createSystemWorkspace.mockResolvedValueOnce({ id: 'sysws' });
     mockClient.createSession.mockResolvedValueOnce('ai-1');
     mockSessions.attachAiSession.mockResolvedValueOnce(undefined);
@@ -205,7 +204,7 @@ describe('ConversationV2Controller', () => {
     const result = await controller.createSession({ id: 'u1' } as never);
 
     expect(result).toEqual({
-      sessionId: draftId.toString(),
+      sessionId: draftId,
       workspaceIds: ['w1'],
       systemWorkspaceId: 'sysws',
     });
@@ -215,10 +214,10 @@ describe('ConversationV2Controller', () => {
   });
 
   it('POST /sessions rollback drops the draft before the system workspace', async () => {
-    const draftId = new Types.ObjectId();
+    const draftId = 'a'.repeat(24);
     const calls: string[] = [];
     mockWorkspaceService.findIdsByOwner.mockResolvedValueOnce(['w1']);
-    mockSessions.createDraft.mockResolvedValueOnce({ _id: draftId });
+    mockSessions.createDraft.mockResolvedValueOnce({ id: draftId });
     mockWorkspaceService.createSystemWorkspace.mockResolvedValueOnce({ id: 'sysws' });
     mockClient.createSession.mockRejectedValueOnce(new Error('grpc down'));
     mockSessions.deleteDraft.mockImplementationOnce(async () => {
@@ -257,9 +256,9 @@ describe('ConversationV2Controller', () => {
   // --- GET /sessions/:id ---
 
   it('GET /sessions/:id returns the pointer payload', async () => {
-    const id = new Types.ObjectId();
+    const id = 'a'.repeat(24);
     mockSessions.getById.mockResolvedValueOnce({
-      _id: id,
+      id,
       ownerId: 'u1',
       title: 't',
       status: 'active',
@@ -269,13 +268,13 @@ describe('ConversationV2Controller', () => {
       eventCount: 3,
       systemWorkspaceId: 'sysws',
     });
-    const result = await controller.getSession(id.toString(), {
+    const result = await controller.getSession(id, {
       conversationV2Access: {
         viewerRole: 'owner',
         permissions: ['session.read', 'events.read', 'stream.write'],
       },
     } as never);
-    expect(result.sessionId).toBe(id.toString());
+    expect(result.sessionId).toBe(id);
     expect(result.eventCount).toBe(3);
     expect(result.systemWorkspaceId).toBe('sysws');
     expect(result.viewerRole).toBe('owner');
@@ -723,10 +722,10 @@ describe('ConversationV2Controller', () => {
   // --- GET /share/v2/:token ---
 
   it('GET /share/v2/:token returns the session payload + events for a valid token', async () => {
-    const id = new Types.ObjectId();
+    const id = 'a'.repeat(24);
     mockShare.hashToken.mockReturnValueOnce('hsh');
     mockSessions.getByShareToken.mockResolvedValueOnce({
-      _id: id,
+      id,
       title: 't',
       status: 'active',
       isShared: true,
@@ -735,7 +734,7 @@ describe('ConversationV2Controller', () => {
     });
     mockEventStore.listSince.mockResolvedValueOnce([]);
     const result = await controller.getShared('tok');
-    expect(result.session.sessionId).toBe(id.toString());
+    expect(result.session.sessionId).toBe(id);
     expect(result.events).toEqual([]);
     expect(mockShare.hashToken).toHaveBeenCalledWith('tok');
     expect(mockSessions.getByShareToken).toHaveBeenCalledWith('hsh');

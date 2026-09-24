@@ -1,14 +1,9 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
-import { MongooseModule } from '@nestjs/mongoose';
 import appDataConfig from '@config/app-data.config';
 import { AppRuntimeModule } from '@modules/app-runtime/app-runtime.module';
 import { ConversationV2Module } from '@modules/conversation-v2/conversation-v2.module';
-import {
-  ConversationV2Session,
-  ConversationV2SessionSchema,
-} from '@modules/conversation-v2/schemas/conversation-v2-session.schema';
 import { AppDataMcpController } from './controllers/app-data-mcp.controller';
 import { AppDataOwnerController } from './controllers/app-data-owner.controller';
 import { AppDataHealthController } from './controllers/app-data-health.controller';
@@ -103,9 +98,6 @@ const REMOTE_PROVIDERS = [
     JwtModule.register({}),
     forwardRef(() => AppRuntimeModule),
     forwardRef(() => ConversationV2Module),
-    MongooseModule.forFeature([
-      { name: ConversationV2Session.name, schema: ConversationV2SessionSchema },
-    ]),
   ],
   controllers: APP_DATA_USE_REMOTE ? REMOTE_CONTROLLERS : LOCAL_CONTROLLERS,
   providers: APP_DATA_USE_REMOTE ? REMOTE_PROVIDERS : LOCAL_PROVIDERS,

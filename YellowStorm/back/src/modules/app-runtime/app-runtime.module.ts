@@ -1,6 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { MongooseModule } from '@nestjs/mongoose';
 import { AuthModule } from '@modules/auth/auth.module';
 import { ConversationV2Module } from '@modules/conversation-v2/conversation-v2.module';
 import { AppDataModule } from '@modules/app-data/app-data.module';
@@ -8,26 +7,16 @@ import appRuntimeConfig from '@config/app-runtime.config';
 import { AppRuntimeInternalController } from './controllers/app-runtime-internal.controller';
 import { AppRuntimeMcpController } from './controllers/app-runtime-mcp.controller';
 import { AppRuntimeGateway } from './gateways/app-runtime.gateway';
-import {
-  AppRuntimeBinding,
-  AppRuntimeBindingSchema,
-} from './schemas/app-runtime-binding.schema';
-import {
-  AppRuntimeTicket,
-  AppRuntimeTicketSchema,
-} from './schemas/app-runtime-ticket.schema';
-import {
-  AppRuntimeToolCall,
-  AppRuntimeToolCallSchema,
-} from './schemas/app-runtime-tool-call.schema';
-import {
-  AppSourceRevision,
-  AppSourceRevisionSchema,
-} from './schemas/app-source-revision.schema';
-import {
-  AppFinalizedRevision,
-  AppFinalizedRevisionSchema,
-} from './schemas/app-finalized-revision.schema';
+import { RUNTIME_BINDING_STORE } from './persistence/runtime-binding.store';
+import { PgRuntimeBindingStore } from './persistence/pg-runtime-binding.store';
+import { RUNTIME_TICKET_STORE } from './persistence/runtime-ticket.store';
+import { PgRuntimeTicketStore } from './persistence/pg-runtime-ticket.store';
+import { RUNTIME_TOOL_CALL_STORE } from './persistence/runtime-tool-call.store';
+import { PgRuntimeToolCallStore } from './persistence/pg-runtime-tool-call.store';
+import { RUNTIME_SOURCE_REVISION_STORE } from './persistence/runtime-source-revision.store';
+import { PgRuntimeSourceRevisionStore } from './persistence/pg-runtime-source-revision.store';
+import { RUNTIME_FINALIZED_REVISION_STORE } from './persistence/runtime-finalized-revision.store';
+import { PgRuntimeFinalizedRevisionStore } from './persistence/pg-runtime-finalized-revision.store';
 import { RuntimeBindingService } from './services/runtime-binding.service';
 import { RuntimeBrokerService } from './services/runtime-broker.service';
 import { RuntimeConnectionRegistry } from './services/runtime-connection.registry';
@@ -46,16 +35,14 @@ import { RuntimeFinalizedRevisionService } from './services/runtime-finalized-re
     forwardRef(() => AuthModule),
     forwardRef(() => ConversationV2Module),
     forwardRef(() => AppDataModule),
-    MongooseModule.forFeature([
-      { name: AppRuntimeBinding.name, schema: AppRuntimeBindingSchema },
-      { name: AppRuntimeTicket.name, schema: AppRuntimeTicketSchema },
-      { name: AppRuntimeToolCall.name, schema: AppRuntimeToolCallSchema },
-      { name: AppSourceRevision.name, schema: AppSourceRevisionSchema },
-      { name: AppFinalizedRevision.name, schema: AppFinalizedRevisionSchema },
-    ]),
   ],
   controllers: [AppRuntimeInternalController, AppRuntimeMcpController],
   providers: [
+    { provide: RUNTIME_BINDING_STORE, useClass: PgRuntimeBindingStore },
+    { provide: RUNTIME_TICKET_STORE, useClass: PgRuntimeTicketStore },
+    { provide: RUNTIME_TOOL_CALL_STORE, useClass: PgRuntimeToolCallStore },
+    { provide: RUNTIME_SOURCE_REVISION_STORE, useClass: PgRuntimeSourceRevisionStore },
+    { provide: RUNTIME_FINALIZED_REVISION_STORE, useClass: PgRuntimeFinalizedRevisionStore },
     RuntimeTokenService,
     RuntimeRevisionService,
     RuntimeBindingService,

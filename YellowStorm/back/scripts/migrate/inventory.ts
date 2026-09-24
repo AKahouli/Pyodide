@@ -89,6 +89,19 @@ const IN_SCOPE = [
   'widget_tokens',
   'widget_sessions',
   'widget_messages',
+  // P8 — conversation v2
+  'conversation_v2_sessions',
+  'conversation_v2_events',
+  'conversation_v2_app_shares',
+  // P8 — app builder AI offers
+  'app_builder_ai_offers',
+  // P8 — app runtime
+  'app_runtime_bindings',
+  'app_runtime_tickets',
+  'app_runtime_tool_calls',
+  'app_source_revisions',
+  'app_finalized_revisions',
+  'ai_preview_tickets',
 ];
 
 async function main(): Promise<void> {

@@ -24,7 +24,7 @@ import { FK_SPECS, FK_SPECS_IN_0020, normalizeFkDefinition } from './fk-specs';
 
 require('dotenv').config({ path: path.resolve(__dirname, '..', '..', '.env') });
 
-const APP_SCHEMAS = ['identity', 'authz', 'catalog', 'ops', 'integrations', 'teams', 'channels', 'workspace', 'project', 'conversation', 'governance', 'public'];
+const APP_SCHEMAS = ['identity', 'authz', 'catalog', 'ops', 'integrations', 'teams', 'channels', 'workspace', 'project', 'conversation', 'conversation_v2', 'governance', 'public'];
 
 /** Mirror of PgTtlRegistrationService (kept in sync by its own spec). */
 const TTL_SWEEPS: Array<{ schema: string; table: string; column: string }> = [

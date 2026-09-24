@@ -1,7 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
-import { MongooseModule } from '@nestjs/mongoose';
 
 import { ConversationV2Controller } from './conversation-v2.controller';
 import { ConversationV2StreamController } from './conversation-v2-stream.controller';
@@ -33,23 +32,13 @@ import { UserModule } from '@modules/user/user.module';
 import { NotificationsModule } from '@modules/notifications/notifications.module';
 import { ConversationV2NameGeneratorService } from './services/conversation-v2-name-generator.service';
 import conversationV2Config from '@config/conversation-v2.config';
-import {
-  ConversationV2Session,
-  ConversationV2SessionSchema,
-} from './schemas/conversation-v2-session.schema';
-import {
-  ConversationV2Event,
-  ConversationV2EventSchema,
-} from './schemas/conversation-v2-event.schema';
-import {
-  ConversationV2AppShare,
-  ConversationV2AppShareSchema,
-} from './schemas/conversation-v2-app-share.schema';
+import { ConversationV2PersistenceModule } from './persistence/conversation-v2-persistence.module';
 
 @Module({
   imports: [
     ConfigModule.forFeature(conversationV2Config),
     JwtModule.register({}),
+    ConversationV2PersistenceModule,
     forwardRef(() => AuthModule),
     forwardRef(() => WorkspaceModule),
     forwardRef(() => AppRuntimeModule),
@@ -62,14 +51,37 @@ import {
     SkillModule,
     ConnectorModule,
     EmailModule,
-    MongooseModule.forFeature([
-      { name: ConversationV2Session.name, schema: ConversationV2SessionSchema },
-      { name: ConversationV2Event.name, schema: ConversationV2EventSchema },
-      { name: ConversationV2AppShare.name, schema: ConversationV2AppShareSchema },
-    ]),
   ],
   controllers: [ConversationV2Controller, ConversationV2StreamController],
-  providers: [ConversationV2GrpcClientService, ConversationV2SessionService, SseAuthGuard, ConversationV2PointerWriterService, ConversationV2ShareService, ConversationV2EventStoreService, ConversationV2StreamGatewayService, ConversationV2StreamService, ConversationV2OwnerGuard, ConversationV2SessionAccessGuard, ConversationV2SessionAccessService, ConversationV2NameGeneratorService, ConversationV2DeployService, ConversationV2AppShareService, ConversationV2AppAiFeaturesService],
-  exports: [ConversationV2GrpcClientService, ConversationV2SessionService, ConversationV2PointerWriterService, ConversationV2ShareService, ConversationV2EventStoreService, ConversationV2OwnerGuard, ConversationV2SessionAccessGuard, ConversationV2SessionAccessService, ConversationV2StreamService, ConversationV2AppShareService],
+  providers: [
+    ConversationV2GrpcClientService,
+    ConversationV2SessionService,
+    SseAuthGuard,
+    ConversationV2PointerWriterService,
+    ConversationV2ShareService,
+    ConversationV2EventStoreService,
+    ConversationV2StreamGatewayService,
+    ConversationV2StreamService,
+    ConversationV2OwnerGuard,
+    ConversationV2SessionAccessGuard,
+    ConversationV2SessionAccessService,
+    ConversationV2NameGeneratorService,
+    ConversationV2DeployService,
+    ConversationV2AppShareService,
+    ConversationV2AppAiFeaturesService,
+  ],
+  exports: [
+    ConversationV2PersistenceModule,
+    ConversationV2GrpcClientService,
+    ConversationV2SessionService,
+    ConversationV2PointerWriterService,
+    ConversationV2ShareService,
+    ConversationV2EventStoreService,
+    ConversationV2OwnerGuard,
+    ConversationV2SessionAccessGuard,
+    ConversationV2SessionAccessService,
+    ConversationV2StreamService,
+    ConversationV2AppShareService,
+  ],
 })
 export class ConversationV2Module {}

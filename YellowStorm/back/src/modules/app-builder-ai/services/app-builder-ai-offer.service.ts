@@ -2,40 +2,29 @@ import {
   Injectable,
   Logger,
   OnModuleInit,
+  Inject,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
 import { NotFoundException, ConflictException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { DEFAULT_APP_BUILDER_AI_OFFERS } from '../constants';
 import {
-  AppBuilderAiOffer,
-  AppBuilderAiOfferDocument,
-} from '../schemas/app-builder-ai-offer.schema';
+  APP_BUILDER_AI_OFFER_STORE,
+  type AppBuilderAiOfferRecord,
+  type AppBuilderAiOfferStore,
+  type CreateAppBuilderAiOfferData,
+  type UpdateAppBuilderAiOfferData,
+} from '../persistence/app-builder-ai-offer.store';
 
-export interface CreateAppBuilderAiOfferInput {
-  name: string;
-  slug: string;
-  description?: string;
-  tokenLimit: number;
-  windowHours: number;
-  requestsPerMinute?: number;
-  maxTokensPerRequest?: number;
-  priority?: number;
-  isActive?: boolean;
-  isDefault?: boolean;
-  displayOrder?: number;
-}
-
-export type UpdateAppBuilderAiOfferInput = Partial<CreateAppBuilderAiOfferInput>;
+export type CreateAppBuilderAiOfferInput = CreateAppBuilderAiOfferData;
+export type UpdateAppBuilderAiOfferInput = UpdateAppBuilderAiOfferData;
 
 @Injectable()
 export class AppBuilderAiOfferService implements OnModuleInit {
   private readonly logger = new Logger(AppBuilderAiOfferService.name);
 
   constructor(
-    @InjectModel(AppBuilderAiOffer.name)
-    private readonly model: Model<AppBuilderAiOfferDocument>,
+    @Inject(APP_BUILDER_AI_OFFER_STORE)
+    private readonly store: AppBuilderAiOfferStore,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -43,35 +32,31 @@ export class AppBuilderAiOfferService implements OnModuleInit {
   }
 
   async seedDefaults(): Promise<void> {
+    const existing = await this.store.list(true);
+    if (existing.length > 0) return;
     for (const offer of DEFAULT_APP_BUILDER_AI_OFFERS) {
-      const existing = await this.model.findOne({ slug: offer.slug }).lean().exec();
-      if (existing) continue;
       try {
-        await this.model.create({ ...offer });
+        await this.store.seed({ ...offer });
         this.logger.log(`Seeded App Builder AI offer: ${offer.slug}`);
       } catch (error) {
-        if ((error as { code?: number })?.code !== 11000) {
-          this.logger.warn(
-            `Failed to seed offer ${offer.slug}: ${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
-        }
+        this.logger.warn(
+          `Failed to seed offer ${offer.slug}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
       }
     }
   }
 
-  async list(includeInactive = true): Promise<AppBuilderAiOfferDocument[]> {
-    const filter = includeInactive ? {} : { isActive: true };
-    return this.model.find(filter).sort({ displayOrder: 1, priority: 1 }).exec();
+  async list(includeInactive = true): Promise<AppBuilderAiOfferRecord[]> {
+    return this.store.list(includeInactive);
   }
 
-  async findById(id: string): Promise<AppBuilderAiOfferDocument | null> {
-    if (!Types.ObjectId.isValid(id)) return null;
-    return this.model.findById(id).exec();
+  async findById(id: string): Promise<AppBuilderAiOfferRecord | null> {
+    return this.store.findById(id);
   }
 
-  async requireById(id: string): Promise<AppBuilderAiOfferDocument> {
+  async requireById(id: string): Promise<AppBuilderAiOfferRecord> {
     const offer = await this.findById(id);
     if (!offer) {
       throw new NotFoundException(ErrorCode.NOT_FOUND, 'App Builder AI offer not found');
@@ -79,62 +64,41 @@ export class AppBuilderAiOfferService implements OnModuleInit {
     return offer;
   }
 
-  async getDefaultOffer(): Promise<AppBuilderAiOfferDocument> {
-    const def = await this.model.findOne({ isDefault: true, isActive: true }).exec();
+  async getDefaultOffer(): Promise<AppBuilderAiOfferRecord> {
+    const def = await this.store.findFlaggedDefault();
     if (def) return def;
-    const any = await this.model.findOne({ isActive: true }).sort({ displayOrder: 1 }).exec();
+    const any = await this.store.findFirstActive();
     if (any) return any;
     await this.seedDefaults();
-    const seeded = await this.model.findOne({ isDefault: true }).exec();
+    const seeded = await this.store.findFlaggedDefault();
     if (!seeded) {
       throw new NotFoundException(ErrorCode.NOT_FOUND, 'No App Builder AI offer available');
     }
     return seeded;
   }
 
-  async create(input: CreateAppBuilderAiOfferInput): Promise<AppBuilderAiOfferDocument> {
-    if (input.isDefault) {
-      await this.model.updateMany({ isDefault: true }, { $set: { isDefault: false } });
-    }
-    try {
-      return await this.model.create({
-        ...input,
-        requestsPerMinute: input.requestsPerMinute ?? 60,
-        maxTokensPerRequest: input.maxTokensPerRequest ?? -1,
-        priority: input.priority ?? 0,
-        isActive: input.isActive ?? true,
-        isDefault: input.isDefault ?? false,
-        displayOrder: input.displayOrder ?? 0,
-      });
-    } catch (error) {
-      if ((error as { code?: number })?.code === 11000) {
-        throw new ConflictException(ErrorCode.CONFLICT, 'Offer name or slug already exists');
-      }
-      throw error;
-    }
+  async create(input: CreateAppBuilderAiOfferInput): Promise<AppBuilderAiOfferRecord> {
+    return this.store.insert({
+      ...input,
+      requestsPerMinute: input.requestsPerMinute ?? 60,
+      maxTokensPerRequest: input.maxTokensPerRequest ?? -1,
+      priority: input.priority ?? 0,
+      isActive: input.isActive ?? true,
+      isDefault: input.isDefault ?? false,
+      displayOrder: input.displayOrder ?? 0,
+    });
   }
 
   async update(
     id: string,
     input: UpdateAppBuilderAiOfferInput,
-  ): Promise<AppBuilderAiOfferDocument> {
-    const offer = await this.requireById(id);
-    if (input.isDefault === true) {
-      await this.model.updateMany(
-        { _id: { $ne: offer._id }, isDefault: true },
-        { $set: { isDefault: false } },
-      );
+  ): Promise<AppBuilderAiOfferRecord> {
+    await this.requireById(id);
+    const updated = await this.store.update(id, input);
+    if (!updated) {
+      throw new NotFoundException(ErrorCode.NOT_FOUND, 'App Builder AI offer not found');
     }
-    Object.assign(offer, input);
-    try {
-      await offer.save();
-      return offer;
-    } catch (error) {
-      if ((error as { code?: number })?.code === 11000) {
-        throw new ConflictException(ErrorCode.CONFLICT, 'Offer name or slug already exists');
-      }
-      throw error;
-    }
+    return updated;
   }
 
   async remove(id: string): Promise<void> {
@@ -145,6 +109,6 @@ export class AppBuilderAiOfferService implements OnModuleInit {
         'Cannot delete the default App Builder AI offer',
       );
     }
-    await this.model.deleteOne({ _id: offer._id });
+    await this.store.delete(id);
   }
 }

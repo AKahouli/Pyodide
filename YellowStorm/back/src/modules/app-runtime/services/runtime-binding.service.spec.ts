@@ -1,7 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { getModelToken } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
-import { AppRuntimeBinding } from '../schemas/app-runtime-binding.schema';
+import { RUNTIME_BINDING_STORE, type RuntimeBindingStore } from '../persistence/runtime-binding.store';
 import { RuntimeBindingService } from './runtime-binding.service';
 import { RuntimeRevisionService } from './runtime-revision.service';
 import { RuntimeTokenService } from './runtime-token.service';
@@ -12,19 +11,25 @@ const STARTER = 'starter_react_vite_v1';
 describe('RuntimeBindingService', () => {
   let svc: RuntimeBindingService;
 
-  const findOneAndUpdate = jest.fn();
-  const updateOne = jest.fn();
+  const upsertByWorkspaceId = jest.fn();
+  const findByWorkspaceId = jest.fn();
+  const findByMcpTokenHash = jest.fn();
+  const updateStatus = jest.fn().mockResolvedValue(undefined);
+  const updateHeartbeat = jest.fn().mockResolvedValue(undefined);
+  const updateRevision = jest.fn().mockResolvedValue(undefined);
+
   const ensureStarterRevision = jest.fn().mockResolvedValue({
     revisionId: STARTER,
   });
 
-  const resolvesTo = (doc: unknown) => ({
-    lean: () => ({ exec: () => Promise.resolve(doc) }),
-  });
-
-  const rejectsWith = (error: unknown) => ({
-    lean: () => ({ exec: () => Promise.reject(error) }),
-  });
+  const store: RuntimeBindingStore = {
+    upsertByWorkspaceId,
+    findByWorkspaceId,
+    findByMcpTokenHash,
+    updateStatus,
+    updateHeartbeat,
+    updateRevision,
+  };
 
   const config = {
     get: jest.fn((key: string, fallback?: string) => {
@@ -37,15 +42,14 @@ describe('RuntimeBindingService', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     ensureStarterRevision.mockResolvedValue({ revisionId: STARTER });
-    updateOne.mockReturnValue({ exec: () => Promise.resolve({ modifiedCount: 1 }) });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         RuntimeBindingService,
         RuntimeTokenService,
         {
-          provide: getModelToken(AppRuntimeBinding.name),
-          useValue: { findOneAndUpdate, updateOne },
+          provide: RUNTIME_BINDING_STORE,
+          useValue: store,
         },
         { provide: RuntimeRevisionService, useValue: { ensureStarterRevision } },
         { provide: ConfigService, useValue: config },
@@ -56,13 +60,12 @@ describe('RuntimeBindingService', () => {
   });
 
   it('creates a binding with a generated id, the starter revision and the configured MCP URL', async () => {
-    findOneAndUpdate.mockReturnValueOnce(
-      resolvesTo({
-        bindingId: 'arb_aabbccddeeff',
-        workspaceId: 'sess_1',
-        latestRevisionId: STARTER,
-      }),
-    );
+    upsertByWorkspaceId.mockResolvedValueOnce({
+      bindingId: 'arb_aabbccddeeff',
+      workspaceId: 'sess_1',
+      latestRevisionId: STARTER,
+      mcpTokenHash: 'hash',
+    });
 
     const result = await svc.bind({
       conversationSessionId: 'sess_1',
@@ -79,32 +82,29 @@ describe('RuntimeBindingService', () => {
     expect(result.mcpToken).not.toHaveLength(0);
     expect(ensureStarterRevision).toHaveBeenCalledWith('sess_1');
 
-    const [filter, update, options] = findOneAndUpdate.mock.calls[0];
-    expect(filter).toEqual({ workspaceId: 'sess_1' });
-    expect(update.$setOnInsert.bindingId).toMatch(/^arb_[0-9a-f]{12}$/);
-    expect(update.$setOnInsert.status).toBe('created');
-    expect(update.$setOnInsert.latestRevisionId).toBe(STARTER);
-    expect(update.$set.userId).toBe('user_1');
-    expect(options).toEqual({ upsert: true, new: true, setDefaultsOnInsert: true });
+    const call = upsertByWorkspaceId.mock.calls[0][0];
+    expect(call.workspaceId).toBe('sess_1');
+    expect(call.bindingId).toMatch(/^arb_[0-9a-f]{12}$/);
+    expect(call.status).toBe('created');
+    expect(call.latestRevisionId).toBe(STARTER);
+    expect(call.userId).toBe('user_1');
   });
 
   it('persists only the token hash, never the plaintext', async () => {
-    findOneAndUpdate.mockReturnValueOnce(
-      resolvesTo({
-        bindingId: 'arb_aabbccddeeff',
-        workspaceId: 'sess_1',
-        latestRevisionId: STARTER,
-      }),
-    );
+    upsertByWorkspaceId.mockResolvedValueOnce({
+      bindingId: 'arb_aabbccddeeff',
+      workspaceId: 'sess_1',
+      latestRevisionId: STARTER,
+    });
 
     const result = await svc.bind({
       conversationSessionId: 'sess_1',
       userId: 'user_1',
     });
 
-    const [, update] = findOneAndUpdate.mock.calls[0];
-    expect(update.$set.mcpTokenHash).toMatch(/^[0-9a-f]{64}$/);
-    expect(JSON.stringify(update)).not.toContain(result.mcpToken);
+    const call = upsertByWorkspaceId.mock.calls[0][0];
+    expect(call.mcpTokenHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(JSON.stringify(call)).not.toContain(result.mcpToken);
   });
 
   it('reuses the binding id and revision on re-bind but rotates the token', async () => {
@@ -113,9 +113,9 @@ describe('RuntimeBindingService', () => {
       workspaceId: 'sess_1',
       latestRevisionId: 'rev_7',
     };
-    findOneAndUpdate
-      .mockReturnValueOnce(resolvesTo(existing))
-      .mockReturnValueOnce(resolvesTo(existing));
+    upsertByWorkspaceId
+      .mockResolvedValueOnce(existing)
+      .mockResolvedValueOnce(existing);
 
     const first = await svc.bind({ conversationSessionId: 'sess_1', userId: 'user_1' });
     const second = await svc.bind({ conversationSessionId: 'sess_1', userId: 'user_1' });
@@ -124,67 +124,61 @@ describe('RuntimeBindingService', () => {
     expect(second.latestRevisionId).toBe('rev_7');
     expect(second.mcpToken).not.toBe(first.mcpToken);
 
-    const firstHash = findOneAndUpdate.mock.calls[0][1].$set.mcpTokenHash;
-    const secondHash = findOneAndUpdate.mock.calls[1][1].$set.mcpTokenHash;
+    const firstHash = upsertByWorkspaceId.mock.calls[0][0].mcpTokenHash;
+    const secondHash = upsertByWorkspaceId.mock.calls[1][0].mcpTokenHash;
     expect(secondHash).not.toBe(firstHash);
   });
 
   it('retries once when a concurrent bind wins the insert race', async () => {
-    findOneAndUpdate
-      .mockReturnValueOnce(rejectsWith({ code: 11000 }))
-      .mockReturnValueOnce(
-        resolvesTo({
-          bindingId: 'arb_concurrent1',
-          workspaceId: 'sess_1',
-          latestRevisionId: STARTER,
-        }),
-      );
+    upsertByWorkspaceId
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        bindingId: 'arb_concurrent1',
+        workspaceId: 'sess_1',
+        latestRevisionId: STARTER,
+      });
 
     const result = await svc.bind({
       conversationSessionId: 'sess_1',
       userId: 'user_1',
     });
 
-    expect(findOneAndUpdate).toHaveBeenCalledTimes(2);
+    expect(upsertByWorkspaceId).toHaveBeenCalledTimes(2);
     expect(result.bindingId).toBe('arb_concurrent1');
   });
 
   it('ensureForSession creates a binding without rotating the live MCP token', async () => {
-    findOneAndUpdate.mockReturnValueOnce(
-      resolvesTo({
-        bindingId: 'arb_aabbccddeeff',
-        workspaceId: 'sess_1',
-        latestRevisionId: 'rev_5',
-      }),
-    );
+    upsertByWorkspaceId.mockResolvedValueOnce({
+      bindingId: 'arb_aabbccddeeff',
+      workspaceId: 'sess_1',
+      latestRevisionId: 'rev_5',
+    });
 
     const binding = await svc.ensureForSession('sess_1', 'user_1');
 
     expect(binding.latestRevisionId).toBe('rev_5');
     expect(ensureStarterRevision).toHaveBeenCalledWith('sess_1');
 
-    const [, update] = findOneAndUpdate.mock.calls[0];
-    expect(update.$set.mcpTokenHash).toBeUndefined();
-    // Placeholder hash matches no token, so the binding stays unusable over MCP
-    // until APImanus actually binds it.
-    expect(update.$setOnInsert.mcpTokenHash).toBe('');
+    const call = upsertByWorkspaceId.mock.calls[0][0];
+    expect(call.mcpTokenHash).toBeNull();
   });
 
   it('propagates non-duplicate persistence errors', async () => {
-    findOneAndUpdate.mockReturnValueOnce(rejectsWith(new Error('mongo down')));
+    upsertByWorkspaceId.mockRejectedValueOnce(new Error('pg down'));
 
     await expect(
       svc.bind({ conversationSessionId: 'sess_1', userId: 'user_1' }),
-    ).rejects.toThrow('mongo down');
-    expect(findOneAndUpdate).toHaveBeenCalledTimes(1);
+    ).rejects.toThrow('pg down');
+    expect(upsertByWorkspaceId).toHaveBeenCalledTimes(1);
   });
 
   it('markWaitingForBrowser only transitions from browser_active', async () => {
     await svc.markWaitingForBrowser('sess_1');
 
-    expect(updateOne).toHaveBeenCalledWith(
-      { workspaceId: 'sess_1', status: 'browser_active' },
-      { $set: { status: 'waiting_for_browser' } },
+    expect(updateStatus).toHaveBeenCalledWith(
+      'sess_1',
+      'browser_active',
+      'waiting_for_browser',
     );
   });
 });

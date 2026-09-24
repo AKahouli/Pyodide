@@ -115,6 +115,21 @@ async def init_schema(pool: asyncpg.Pool, schema: str = "public") -> None:
                 created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
                 PRIMARY KEY (session_id, component_id)
             )""")
+        # Rich components of a PLAN STEP (the client's `plan_step_components`
+        # Electric shape) — same idea as message_components but keyed by step, so
+        # the task drawer can show a step's tool calls / reasoning as an activity
+        # card (AssistantActivity), for traceability. One step → many components.
+        await con.execute(f"""
+            CREATE TABLE IF NOT EXISTS {_q(schema,'plan_step_components')} (
+                session_id   TEXT NOT NULL,
+                step_id      TEXT NOT NULL,   -- joins plan_steps(session_id, step_id)
+                component_id TEXT NOT NULL,
+                ordinal      INTEGER NOT NULL DEFAULT 0,
+                type         TEXT NOT NULL,   -- toolActivity | agentActivity | text | …
+                data         JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+                created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY (session_id, component_id)
+            )""")
         await con.execute(
             f'ALTER TABLE {_q(schema,"messages")} ADD COLUMN IF NOT EXISTS turn_id TEXT')
         # Internal (not published to Electric): which step is waiting on which
@@ -322,6 +337,20 @@ class ReadModel:
                 VALUES ($1,$2,$3,$4,$5,$6::jsonb)
                 ON CONFLICT (session_id, component_id) DO NOTHING
             """, session_id, message_id, component_id, ordinal, type, json.dumps(data))
+
+    async def add_step_component(self, session_id: str, step_id: str, component_id: str,
+                                 type: str, data: dict, ordinal: int = 0) -> None:
+        """Attach one rich component to a plan step (the `plan_step_components`
+        shape). Idempotent on (session_id, component_id) — a re-drive/replay
+        re-projects the same tool call, and DO NOTHING keeps the first write."""
+        import json
+        async with self._pool.acquire() as con:
+            await con.execute(f"""
+                INSERT INTO {_q(self._schema,'plan_step_components')}
+                    (session_id,step_id,component_id,ordinal,type,data)
+                VALUES ($1,$2,$3,$4,$5,$6::jsonb)
+                ON CONFLICT (session_id, component_id) DO NOTHING
+            """, session_id, step_id, component_id, ordinal, type, json.dumps(data))
 
     async def close_confirm_choices(self, session_id: str, keep_ids: List[str]) -> None:
         """Mark every `confirm::` approve/decline card in the session as submitted

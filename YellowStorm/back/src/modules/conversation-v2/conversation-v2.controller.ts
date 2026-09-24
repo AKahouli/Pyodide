@@ -16,7 +16,6 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { Types } from 'mongoose';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import * as grpc from '@grpc/grpc-js';
@@ -104,7 +103,7 @@ export class ConversationV2Controller {
    * Fire-and-forget rollback of a half-created session: drop the draft pointer
    * (which references the system workspace) before the workspace itself.
    */
-  private discardDraft(draftId: Types.ObjectId, systemWorkspaceId: string): void {
+  private discardDraft(draftId: string, systemWorkspaceId: string): void {
     void this.sessions
       .deleteDraft(draftId)
       .catch(() => undefined)
@@ -134,7 +133,7 @@ export class ConversationV2Controller {
     }
 
     const draft = await this.sessions.createDraft(user.id, workspaceIds);
-    const draftId = draft._id as Types.ObjectId;
+    const draftId = draft.id;
 
     let systemWorkspaceId: string;
     try {
@@ -144,7 +143,7 @@ export class ConversationV2Controller {
       );
       const ws = await this.workspaceService.createSystemWorkspace(
         user.id,
-        draftId.toString(),
+        draftId,
         allocatedStorage,
       );
       systemWorkspaceId = ws.id;
@@ -170,7 +169,7 @@ export class ConversationV2Controller {
     }
 
     return {
-      sessionId: draftId.toString(),
+      sessionId: draftId,
       workspaceIds,
       systemWorkspaceId,
     };
@@ -280,7 +279,7 @@ export class ConversationV2Controller {
     if (!pointer) throw new NotFoundException('Session not found');
     const access = req.conversationV2Access!;
     return {
-      sessionId: (pointer._id as Types.ObjectId).toString(),
+      sessionId: pointer.id,
       title: pointer.title,
       status: pointer.status,
       isShared: pointer.isShared,
@@ -288,10 +287,8 @@ export class ConversationV2Controller {
       selectedSkillIds: pointer.selectedSkillIds ?? [],
       selectedConnectorIds: pointer.selectedConnectorIds ?? [],
       lastEventAt: pointer.lastEventAt,
-      eventCount: (pointer as unknown as { eventCount?: number }).eventCount ?? 0,
-      systemWorkspaceId:
-        (pointer as unknown as { systemWorkspaceId?: { toString(): string } | string | null })
-          .systemWorkspaceId?.toString() ?? null,
+      eventCount: pointer.eventCount ?? 0,
+      systemWorkspaceId: pointer.systemWorkspaceId ?? null,
       deployStatus: pointer.deployStatus ?? 'idle',
       deployedUrl: pointer.deployedUrl ?? null,
       lastDeployedAt: pointer.lastDeployedAt
@@ -380,8 +377,7 @@ export class ConversationV2Controller {
     void user;
     const pointer = await this.sessions.getById(id);
     if (!pointer) throw new NotFoundException('Session not found');
-    const systemWsId = (pointer as unknown as { systemWorkspaceId?: { toString(): string } | string | null })
-      .systemWorkspaceId?.toString() ?? null;
+    const systemWsId = pointer.systemWorkspaceId ?? null;
     const attachedIds = (pointer.workspaceIds ?? []).filter((wid) => wid !== systemWsId);
     if (attachedIds.length === 0) {
       return {
@@ -433,7 +429,7 @@ export class ConversationV2Controller {
     const ownerId = session.ownerId;
     // Capture the system workspace id, then drop the session reference first
     // so the workspace is never deleted while something still points at it.
-    const wsId = pointer?.systemWorkspaceId?.toString();
+    const wsId = pointer?.systemWorkspaceId ?? null;
     await this.sessions.softDelete(ownerId, id);
     await this.appShares.deleteAllSharesForSession(id);
     if (wsId) {
@@ -658,21 +654,15 @@ export class ConversationV2Controller {
     const hash = this.share.hashToken(token);
     const pointer = await this.sessions.getByShareToken(hash);
     if (!pointer) throw new NotFoundException('Shared session not found');
-    const events = await this.eventStore.listSince(
-      (pointer._id as Types.ObjectId).toString(),
-      0,
-      5000,
-    );
+    const events = await this.eventStore.listSince(pointer.id, 0, 5000);
     return {
       session: {
-        sessionId: (pointer._id as Types.ObjectId).toString(),
+        sessionId: pointer.id,
         title: pointer.title,
         status: pointer.status,
         isShared: pointer.isShared,
         workspaceIds: pointer.workspaceIds ?? [],
-        systemWorkspaceId:
-          (pointer as unknown as { systemWorkspaceId?: { toString(): string } | string | null })
-            .systemWorkspaceId?.toString() ?? null,
+        systemWorkspaceId: pointer.systemWorkspaceId ?? null,
       },
       events,
     };

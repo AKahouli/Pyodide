@@ -1122,6 +1122,11 @@ def create_connector_tools(
                 # send so the recipient gets a formatted message.
                 if _action_key == "send_email" and isinstance(merged_params.get("body"), str) and merged_params["body"].strip():
                     merged_params["body"] = _markdown_to_email_html(merged_params["body"])
+                # Teams renders HTML (chatMessage contentType html), not raw
+                # Markdown — the executor's Markdown showed literal ** and # in the
+                # chat. Convert the message the same way as an email body at send.
+                elif _action_key == "send_teams_message" and isinstance(merged_params.get("message"), str) and merged_params["message"].strip():
+                    merged_params["message"] = _markdown_to_email_html(merged_params["message"])
                 # Run/turn correlation applies to every HTTP MCP transport, not
                 # just streamable_http. There is no flow execution here, so the
                 # ADK invocation id (one per agent turn) is the execution id.

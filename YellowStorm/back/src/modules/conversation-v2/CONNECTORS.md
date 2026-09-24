@@ -103,11 +103,12 @@ The v1 `agent.service` is left **untouched** — no regression risk to v1.
 ## Persistence
 
 `ConversationV2Session` gained a `selectedConnectorIds: string[]` field
-([`schemas/conversation-v2-session.schema.ts`](schemas/conversation-v2-session.schema.ts),
+([`persistence/conversation-v2-session.store.ts`](persistence/conversation-v2-session.store.ts) /
+[`pg-conversation-v2-session.store.ts`](persistence/postgres/pg-conversation-v2-session.store.ts);
 default `[]`).
 
 `ConversationV2SessionService.setSelectedConnectors(id, connectorIds)` overwrites
-the stored selection (`$set`) on every send. It is **re-display only** — no access
+the stored selection on every send. It is **re-display only** — no access
 checks, and an invalid `id` is a no-op. Mirrors `setSelectedSkills`.
 
 ## gRPC Contract
@@ -143,7 +144,7 @@ handling is documented in `APImanus/docs/11_connectors.md`.
 | [`services/conversation-v2-stream.service.ts`](services/conversation-v2-stream.service.ts) | Resolve `connectorIds` → gRPC bindings, persist selection, forward to gRPC |
 | [`conversation-v2.grpc-client.service.ts`](conversation-v2.grpc-client.service.ts) | `chat(...)` sets `request.connectors` |
 | [`services/conversation-v2-session.service.ts`](services/conversation-v2-session.service.ts) | `setSelectedConnectors`; expose `selectedConnectorIds` on `PointerSummary` |
-| [`schemas/conversation-v2-session.schema.ts`](schemas/conversation-v2-session.schema.ts) | New `selectedConnectorIds` prop |
+| [`persistence/postgres/pg-conversation-v2-session.store.ts`](persistence/postgres/pg-conversation-v2-session.store.ts) | `selectedConnectorIds` on session pointer |
 | [`conversation-v2.controller.ts`](conversation-v2.controller.ts) | Return `selectedConnectorIds` on the session pointer |
 | [`dto/send-message.dto.ts`](dto/send-message.dto.ts) | Optional `connectorIds` input (query + body) |
 | [`conversation-v2.module.ts`](conversation-v2.module.ts) | Import `ConnectorModule` |

@@ -31,6 +31,8 @@ export interface UserRecord {
   planId: string | null;
   planSlug: string | null;
   planStartedAt: Date | null;
+  appBuilderAiOfferId: string | null;
+  appBuilderAiOfferStartedAt: Date | null;
   roleIds: string[];
   permissionsVersion: number;
   status: AuthUserStatus;
@@ -94,6 +96,8 @@ export type UserPatch = Partial<{
   planId: string | null;
   planSlug: string | null;
   planStartedAt: Date | null;
+  appBuilderAiOfferId: string | null;
+  appBuilderAiOfferStartedAt: Date | null;
   permissionsVersion: number;
   status: AuthUserStatus;
   registrationApproval: AuthUserRegistrationApproval | null;

@@ -4,6 +4,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { showError } from '@/lib/notifications';
 import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
 import type { MessageContentPart } from '@/components/ai-elements/ai-message-content';
+import { AssistantActivity } from '@/components/ai-elements/assistant-response';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { openFileViewerFromUrlLoader, getMimeTypeFromFilename } from '@/modules/file-viewer';
@@ -21,12 +22,16 @@ interface TaskDetailDrawerProps {
   onDiscuss?: () => void;
 }
 
-/** Renderable component parts from a step's result-content. Artifacts are NOT
- *  included here — the generic 'artifact' part is a static card; the drawer
- *  renders artifacts as clickable cards (TaskArtifactCard) that open the file
- *  viewer, the same way the conversation does. */
+/** Component types shown as an activity card (AssistantActivity — the step's
+ *  tool/reasoning trace, "Voir le processus"), NOT as inline content. Same set
+ *  the conversation thread uses. */
+const ACTIVITY_COMPONENT_TYPES = new Set(['agentActivity', 'toolActivity', 'checkpoint', 'plan', 'task', 'queue']);
+
+/** Renderable component parts from a step's result-content. Activity components
+ *  are excluded (rendered by AssistantActivity instead); artifacts are excluded
+ *  too — the drawer renders those as clickable cards (TaskArtifactCard). */
 export function buildResultParts(content: WorkyTaskResultContent): MessageContentPart[] {
-  return mapComponentsToContentParts(content.components);
+  return mapComponentsToContentParts(content.components.filter((c) => !ACTIVITY_COMPONENT_TYPES.has(c.type)));
 }
 
 /** A generated artifact row — identical to the conversation's ArtifactRow: View
@@ -113,6 +118,17 @@ export function TaskDetailDrawer({ task, onClose, tasks = [], onSelectTask, onDi
   const byStepId = new Map(tasks.filter((item) => item.externalId).map((item) => [item.externalId, item]));
   const prerequisites = (task.dependsOnStepIds ?? []).map((id) => byStepId.get(id)).filter((item): item is WorkyTask => Boolean(item));
   const downstream = tasks.filter((item) => task.externalId && item.dependsOnStepIds?.includes(task.externalId));
+  const activityComponents = (resultContent.data?.components ?? []).filter((c) => ACTIVITY_COMPONENT_TYPES.has(c.type));
+  const activityLabels = {
+    title: tWorky('messages.activity.title'),
+    reasoning: tWorky('messages.activity.reasoning'),
+    status: {
+      running: tWorky('messages.activity.status.running'),
+      completed: tWorky('messages.activity.status.completed'),
+      failed: tWorky('messages.activity.status.failed'),
+      pending: tWorky('messages.activity.status.pending'),
+    },
+  };
 
   return (
     <div
@@ -141,7 +157,8 @@ export function TaskDetailDrawer({ task, onClose, tasks = [], onSelectTask, onDi
           </TabsList>
           <TabsContent value='details' className='space-y-4'>
             <div className='flex flex-wrap items-center gap-2 text-xs text-muted-foreground'><span className='rounded-md bg-muted px-2 py-1 font-medium text-foreground'>{tWorky(`kanban.lanes.${task.lane}` as 'kanban.lanes.running')}</span>{task.assigneeName || task.assigneeKey || tWorky('command.queue.unassigned')}<TaskTimestamp task={task} /></div>
-            <p className='whitespace-pre-wrap text-muted-foreground'>{task.description}</p>
+            {/* await_reply/ask steps carry no description; the awaited-reply text lives in `question` */}
+            <p className='whitespace-pre-wrap text-muted-foreground'>{task.description || task.question || ''}</p>
             {prerequisites.length > 0 ? <div><h3 className='text-xs font-semibold'>{tWorky('taskDetail.dependsOn')}</h3><div className='mt-1 space-y-1'>{prerequisites.map((dependency) => <button key={dependency.id} type='button' onClick={() => onSelectTask?.(dependency)} className='block w-full rounded-md border border-border px-2 py-1.5 text-left text-xs text-foreground hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary' disabled={!onSelectTask}>{dependency.title} · {tWorky(`kanban.lanes.${dependency.lane}` as 'kanban.lanes.running')}</button>)}</div></div> : task.dependsOn.length > 0 ? (
               <div>
                 <h3 className='text-xs font-semibold'>{tWorky('taskDetail.dependsOn')}</h3>
@@ -160,6 +177,9 @@ export function TaskDetailDrawer({ task, onClose, tasks = [], onSelectTask, onDi
             ) : null}
           </TabsContent>
           <TabsContent value='results' className='space-y-3'>
+            {activityComponents.length > 0 ? (
+              <AssistantActivity components={activityComponents} isStreaming={false} labels={activityLabels} />
+            ) : null}
             {richParts.length > 0 || artifacts.length > 0 ? (
               <div className='space-y-3'>
                 {richParts.length > 0 ? (

@@ -1,12 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
 import { randomBytes } from 'crypto';
-import { Model } from 'mongoose';
 import {
-  AppRuntimeBinding,
-  AppRuntimeBindingDocument,
-} from '../schemas/app-runtime-binding.schema';
+  RUNTIME_BINDING_STORE,
+  type RuntimeBindingRecord,
+  type RuntimeBindingStore,
+} from '../persistence/runtime-binding.store';
 import { RuntimeRevisionService } from './runtime-revision.service';
 import { RuntimeTokenService } from './runtime-token.service';
 import { DEFAULT_STARTER_REVISION_ID } from '../constants/starter-revisions';
@@ -34,17 +33,13 @@ export interface MarkBrowserActiveParams {
   lastHeartbeatAt: Date;
 }
 
-function isDuplicateKeyError(error: unknown): boolean {
-  return (error as { code?: number } | null)?.code === 11000;
-}
-
 @Injectable()
 export class RuntimeBindingService {
   private readonly logger = new Logger(RuntimeBindingService.name);
 
   constructor(
-    @InjectModel(AppRuntimeBinding.name)
-    private readonly model: Model<AppRuntimeBindingDocument>,
+    @Inject(RUNTIME_BINDING_STORE)
+    private readonly store: RuntimeBindingStore,
     private readonly tokens: RuntimeTokenService,
     private readonly revisions: RuntimeRevisionService,
     private readonly config: ConfigService,
@@ -84,66 +79,47 @@ export class RuntimeBindingService {
   async ensureForSession(
     conversationSessionId: string,
     userId: string,
-  ): Promise<AppRuntimeBinding> {
+  ): Promise<RuntimeBindingRecord> {
     const binding = await this.upsertWithRetry(conversationSessionId, userId, null);
     await this.revisions.ensureStarterRevision(binding.workspaceId);
     return binding;
   }
 
-  findByWorkspaceId(workspaceId: string): Promise<AppRuntimeBinding | null> {
-    return this.model.findOne({ workspaceId }).lean().exec();
+  findByWorkspaceId(workspaceId: string): Promise<RuntimeBindingRecord | null> {
+    return this.store.findByWorkspaceId(workspaceId);
   }
 
-  findByMcpTokenHash(mcpTokenHash: string): Promise<AppRuntimeBinding | null> {
-    return this.model.findOne({ mcpTokenHash }).lean().exec();
+  findByMcpTokenHash(mcpTokenHash: string): Promise<RuntimeBindingRecord | null> {
+    return this.store.findByMcpTokenHash(mcpTokenHash);
   }
 
   async markBrowserActive(params: MarkBrowserActiveParams): Promise<void> {
-    await this.model
-      .updateOne(
-        { workspaceId: params.workspaceId },
-        {
-          $set: {
-            status: 'browser_active',
-            browserRuntimeId: params.browserRuntimeId,
-            browserCapabilities: params.capabilities,
-            lastHeartbeatAt: params.lastHeartbeatAt,
-          },
-        },
-      )
-      .exec();
+    await this.store.updateStatus(params.workspaceId, null, 'browser_active', {
+      browserRuntimeId: params.browserRuntimeId,
+      browserCapabilities: params.capabilities,
+      lastHeartbeatAt: params.lastHeartbeatAt,
+    });
   }
 
   async markWaitingForBrowser(workspaceId: string): Promise<void> {
-    await this.model
-      .updateOne(
-        { workspaceId, status: 'browser_active' },
-        { $set: { status: 'waiting_for_browser' } },
-      )
-      .exec();
+    await this.store.updateStatus(workspaceId, 'browser_active', 'waiting_for_browser');
   }
 
   async touchHeartbeat(workspaceId: string, at: Date): Promise<void> {
-    await this.model
-      .updateOne({ workspaceId }, { $set: { lastHeartbeatAt: at } })
-      .exec();
+    await this.store.updateHeartbeat(workspaceId, at);
   }
 
   async updateRevision(workspaceId: string, revisionId: string): Promise<void> {
-    await this.model
-      .updateOne({ workspaceId }, { $set: { latestRevisionId: revisionId } })
-      .exec();
+    await this.store.updateRevision(workspaceId, revisionId);
   }
 
   private async upsertWithRetry(
     conversationSessionId: string,
     userId: string,
     mcpTokenHash: string | null,
-  ): Promise<AppRuntimeBinding> {
+  ): Promise<RuntimeBindingRecord> {
     let binding = await this.upsert(conversationSessionId, userId, mcpTokenHash);
     if (!binding) {
-      // Lost an insert race against a concurrent bind for the same session:
-      // the document now exists, so the retry takes the update path.
       binding = await this.upsert(conversationSessionId, userId, mcpTokenHash);
     }
 
@@ -190,38 +166,15 @@ export class RuntimeBindingService {
     conversationSessionId: string,
     userId: string,
     mcpTokenHash: string | null,
-  ): Promise<AppRuntimeBinding | null> {
-    try {
-      return await this.model
-        .findOneAndUpdate(
-          { workspaceId: conversationSessionId },
-          {
-            $set: {
-              conversationSessionId,
-              userId,
-              // A field may not appear in both $set and $setOnInsert.
-              ...(mcpTokenHash === null ? {} : { mcpTokenHash }),
-            },
-            $setOnInsert: {
-              bindingId: `arb_${randomBytes(6).toString('hex')}`,
-              workspaceId: conversationSessionId,
-              status: 'created',
-              // New workspaces start on the Ceph-seeded React/Vite starter.
-              latestRevisionId: this.starterRevisionId,
-              // Empty hash matches no token, so a binding created for a ticket
-              // stays unusable over MCP until APImanus actually binds it.
-              ...(mcpTokenHash === null ? { mcpTokenHash: '' } : {}),
-            },
-          },
-          { upsert: true, new: true, setDefaultsOnInsert: true },
-        )
-        .lean()
-        .exec();
-    } catch (error) {
-      if (isDuplicateKeyError(error)) {
-        return null;
-      }
-      throw error;
-    }
+  ): Promise<RuntimeBindingRecord | null> {
+    return this.store.upsertByWorkspaceId({
+      workspaceId: conversationSessionId,
+      conversationSessionId,
+      userId,
+      mcpTokenHash,
+      bindingId: `arb_${randomBytes(6).toString('hex')}`,
+      status: 'created',
+      latestRevisionId: this.starterRevisionId,
+    });
   }
 }
