@@ -963,8 +963,16 @@ class OrchestratorService:
                        and caller_step_id in o.depends_on
                        and sub_step.id not in o.depends_on
                        and o.status == Status.PENDING]
+            # Re-parent each caller-dependent onto the spawned chain's TAIL — the
+            # "act on reply" step that reads the reply — not the raw await. Hung on
+            # the await, a pre-planned dependent (e.g. the N2 step) runs in PARALLEL
+            # with the act instead of AFTER it. tail == the await when there is no
+            # followup. Only steps that ALREADY depended on the caller are in
+            # `affected`, so unrelated parallel steps stay parallel, and several
+            # dependents each just wait on the tail (still parallel to one another).
+            tail = followup_step.id if followup_step is not None else sub_step.id
             for other in affected:
-                other.depends_on.append(sub_step.id)
+                other.depends_on.append(tail)
             siblings.add(sub_step.id)
             if followup_step is not None:
                 siblings.add(followup_step.id)
