@@ -42,7 +42,7 @@ export class PlaybookFlowMailTriggerOrchestrationService {
       };
     }
 
-    const mailConfig = this.extractMailConfig(flow.triggerConfig?.params);
+    const mailConfig = flow.triggerConfig?.params as unknown as FlowMailTriggerConfig | undefined;
     const filters = this.extractFilters(mailConfig);
 
     const match = this.matcherService.match(filters, event);
@@ -65,14 +65,7 @@ export class PlaybookFlowMailTriggerOrchestrationService {
     };
   }
 
-  private extractMailConfig(params: Record<string, unknown> | undefined): FlowMailTriggerConfig | null {
-    if (!params) return null;
-    const cfg = params['mail'] ?? params['mailTrigger'] ?? null;
-    if (!cfg || typeof cfg !== 'object') return null;
-    return cfg as unknown as FlowMailTriggerConfig;
-  }
-
-  private extractFilters(config: FlowMailTriggerConfig | null): FlowMailTriggerFiltersData {
+  private extractFilters(config: FlowMailTriggerConfig | undefined): FlowMailTriggerFiltersData {
     if (!config?.filters) {
       return { from: [], subjectContains: [], bodyContains: [], hasAttachments: null };
     }

@@ -2339,28 +2339,15 @@ const createPlaybookStore: StateCreator<PlaybookStore> = (set, get) => ({
         } catch (err) {
           set({ isStopping: false });
           const apiError = parseApiError(err);
-          if (apiError.code === 'ERR_1006') {
+          if (apiError.code === 'ERR_1006' && apiError.message === 'Execution already finished') {
+            const finished = await api.getExecution(playbookId, executionId);
+            if (isActiveExecutionStatus(finished.status)) throw err;
             set((state) => {
-              const executionCache = { ...state.executionCache };
-              const cached = executionCache[executionId];
-              if (cached) {
-                executionCache[executionId] = {
-                  ...cached,
-                  status: 'completed',
-                  waitingForHumanInput: false,
-                  interruptPayload: null,
-                  pendingInterrupts: [],
-                  taskResults: cached.taskResults.map((tr) =>
-                    tr.status === 'running' || tr.status === 'interrupted'
-                      ? { ...tr, status: 'completed' as const }
-                      : tr,
-                  ),
-                };
-              }
+              const executionCache = { ...state.executionCache, [executionId]: finished };
               const executingPlaybookIds = state.executingPlaybookIds.filter((pid) => pid !== playbookId);
               const currentExecution =
                 state.currentExecution?.id === executionId
-                  ? executionCache[executionId] ?? state.currentExecution
+                  ? finished
                   : state.currentExecution;
               return {
                 executionCache,

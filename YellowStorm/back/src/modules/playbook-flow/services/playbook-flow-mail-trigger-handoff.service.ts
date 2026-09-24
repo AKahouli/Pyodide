@@ -63,7 +63,12 @@ export class PlaybookFlowMailTriggerHandoffService {
     const execution = await this.executionService.start(
       flowId,
       userId,
-      { triggerContext },
+      {
+        triggerContext,
+        mail_data: triggerContext.mailEvent,
+        mail_attachments: triggerContext.mailEvent.attachments,
+      },
+      `mail:${flowId}:${ledgerEntryId}`,
     );
 
     const updateResult = await this.ledgerModel

@@ -370,12 +370,18 @@ export function usePlaybookCanvas(
       const targetData = targetNode?.data as PlaybookNodeData | undefined;
       const sourcePort = sourceData?.outputPorts?.find((p) => p.id === sourceHandleId);
       const targetPort = targetData?.inputPorts?.find((p) => p.id === targetHandleId);
+      if (connection.source === TRIGGER_NODE_ID && (!sourcePort || !targetPort)) return;
       const typeMatch = sourcePort?.artifactKind === targetPort?.artifactKind;
       const isErrorEdge = routerLabel === '__error__';
       const createsTriggerBinding = connection.source === TRIGGER_NODE_ID && Boolean(targetPort);
       const createsNodeOutputBinding = !isRouterSource && Boolean(sourcePort) && Boolean(targetPort);
 
-      if (createsNodeOutputBinding && hasArtifactKindMismatch(sourcePort?.artifactKind, targetPort?.artifactKind)) {
+      if (createsTriggerBinding && hasArtifactKindMismatch(sourcePort?.artifactKind, targetPort?.artifactKind)) {
+        showWarning(t('canvas.triggerPortMismatch'));
+        return;
+      }
+
+      if (createsNodeOutputBinding && !createsTriggerBinding && hasArtifactKindMismatch(sourcePort?.artifactKind, targetPort?.artifactKind)) {
         setPendingMismatch({
           connection,
           sourcePortName: sourcePort!.name || sourcePort!.id,
@@ -608,11 +614,30 @@ export function usePlaybookCanvas(
       if (!sourceData || !targetData) return false;
 
       const sourceType = getEffectiveNodeType(sourceData);
-      if (start.nodeId === TRIGGER_NODE_ID) return false;
-
       const sourceHandleId = start.handleId ?? 'default';
       const sourcePort = sourceData.outputPorts?.find((p) => p.id === sourceHandleId);
       if (!sourcePort) return false;
+
+      if (start.nodeId === TRIGGER_NODE_ID) {
+        const targetPort = targetData.inputPorts?.find((port) =>
+          port.artifactKind === sourcePort.artifactKind
+          && !dataBindingsRef.current.some((binding) => binding.targetNode === targetNodeId && binding.targetPort === port.id),
+        );
+        if (targetPort) {
+          onConnect({ source: start.nodeId, sourceHandle: sourceHandleId, target: targetNodeId, targetHandle: targetPort.id });
+          return true;
+        }
+
+        const newPort = createCompatibleInputPort(sourcePort.name || sourcePort.id, sourcePort.artifactKind);
+        const updated = nodesRef.current.map((node) => node.id === targetNodeId
+          ? { ...node, data: { ...node.data, inputPorts: [...(targetData.inputPorts ?? []), newPort] } }
+          : node);
+        nodesRef.current = updated;
+        setNodes(updated);
+        deferStoreUpdate(() => updateTasks(nodesToTasks(updated)));
+        onConnect({ source: start.nodeId, sourceHandle: sourceHandleId, target: targetNodeId, targetHandle: newPort.id });
+        return true;
+      }
 
       const currentTasks = nodesToTasks(nodesRef.current);
       const cycleNodes = currentTasks.map((t) => ({
@@ -644,7 +669,7 @@ export function usePlaybookCanvas(
       }
       return true;
     },
-    [commitConditionalEdge, commitEdgeAndBinding, t, updateTasks],
+    [commitConditionalEdge, commitEdgeAndBinding, onConnect, t, updateTasks],
   );
 
   const onConnectEndHandler: OnConnectEnd = useCallback(
@@ -722,6 +747,7 @@ export function usePlaybookCanvas(
       }
 
       autoConnectToNodeBody(start, targetNodeId);
+      connectHandledRef.current = false;
     },
     [autoConnectToNodeBody, connectionDragHoveredId, screenToFlowPosition],
   );

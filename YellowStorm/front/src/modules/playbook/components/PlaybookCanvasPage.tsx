@@ -1612,6 +1612,7 @@ function PlaybookCanvasInner() {
   }), []);
   const edgeTypes = useMemo(() => ({
     animated: makeInsertableEdge(AiEdge.Animated),
+    triggerBinding: AiEdge.Animated,
     'animated-warning': makeInsertableEdge(AiEdge.AnimatedWarning, 16),
     conditional: makeInsertableEdge(ConditionalEdge, 18),
     dataBinding: DataBindingEdge,
@@ -1776,12 +1777,13 @@ function PlaybookCanvasInner() {
   }, [edges, pageMode, recentlyChangedEdgeIds, stepStatusMap]);
 
   const liveEdges = useMemo(() => {
-    if (!playbook || !dataBindingsVisible) {
+    if (!playbook) {
       return styledControlEdges;
     }
 
     const visibleDataBindings = filterMirroredDataLayerEdges(
-      dataBindingsToLayerEdges(playbook.dataBindings ?? [], playbook.tasks ?? []),
+      dataBindingsToLayerEdges(playbook.dataBindings ?? [], playbook.tasks ?? []).filter((edge) =>
+        dataBindingsVisible || (playbook.automatedTriggerType === 'mail' && edge.kind === 'trigger' && edge.source === TRIGGER_NODE_ID)),
       styledControlEdges,
     );
     const dataLayerEdges: Edge[] = visibleDataBindings.map((edge) => ({
@@ -1790,11 +1792,11 @@ function PlaybookCanvasInner() {
         target: edge.target,
         sourceHandle: edge.sourceHandle,
         targetHandle: edge.targetHandle,
-        type: 'dataBinding',
+        type: edge.kind === 'trigger' && edge.status === 'ok' ? 'triggerBinding' : 'dataBinding',
         selectable: false,
         focusable: false,
         deletable: false,
-        animated: false,
+        animated: edge.kind === 'trigger' && edge.status === 'ok',
         zIndex: 0,
         data: {
           layer: 'binding',
