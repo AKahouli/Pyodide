@@ -28,8 +28,9 @@ def test_prepares_full_csv_and_queries_structured_filters(tmp_path: Path):
     assert manifest["datasetId"] == dataset_id(SOURCE, None)
     assert manifest["rowCount"] == 3
     result = query_parquet(output, columns=["id", "name"],
-                           filters=[{"column": "team", "op": "eq", "value": "Core"}], limit=2)
-    assert result["rows"] == [{"id": "001", "name": "Ada"}, {"id": "003", "name": "Eve"}]
+                            filters=[{"column": "team", "op": "eq", "value": "Core"}],
+                            limit=1, offset=1)
+    assert result["rows"] == [{"id": "003", "name": "Eve"}]
 
 
 def test_query_rejects_columns_filters_and_unbounded_limits(tmp_path: Path):
@@ -43,6 +44,8 @@ def test_query_rejects_columns_filters_and_unbounded_limits(tmp_path: Path):
         query_parquet(output, filters=[{"column": "id", "op": "sql", "value": "x"}])
     with pytest.raises(ValueError, match="invalid_query_limit"):
         query_parquet(output, limit=1001)
+    with pytest.raises(ValueError, match="invalid_query_offset"):
+        query_parquet(output, offset=-1)
 
 
 def test_preparation_preserves_columns_beyond_preview_and_is_deterministic(tmp_path: Path):

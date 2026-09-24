@@ -2,7 +2,7 @@ import type { PlaybookState, PlaybookVM } from '../utils/playbookVM';
 import { isLive, neverRun, stateRank, successRate } from '../utils/playbookVM';
 
 /** URL-synced console state (spec §7.1). All of it lives in the query string. */
-export type SegmentId = 'all' | 'live' | 'fav' | 'scheduled' | 'never';
+export type SegmentId = 'all' | 'shared' | 'live' | 'fav' | 'scheduled' | 'never';
 export type ConsoleView = 'table' | 'board' | 'cards';
 export type SortKey = 'name' | 'state' | 'reliability' | 'steps' | 'lastRun';
 export type SortDir = 'asc' | 'desc';
@@ -37,7 +37,7 @@ export const VIEW_STORAGE_KEY = 'ym.playbooks.view';
 export const TIDY_STORAGE_KEY = 'ym.playbooks.tidyDismissedUntil';
 
 export function parseConsoleState(params: URLSearchParams, storedView: ConsoleView | null, playbookCount: number): ConsoleState {
-  const seg = (['all', 'live', 'fav', 'scheduled', 'never'] as const).includes(params.get('seg') as SegmentId)
+  const seg = (['all', 'shared', 'live', 'fav', 'scheduled', 'never'] as const).includes(params.get('seg') as SegmentId)
     ? (params.get('seg') as SegmentId)
     : 'all';
   const rawStates = (params.get('state') ?? '').split(',').filter(Boolean) as PlaybookState[];
@@ -94,6 +94,7 @@ export function serializeConsoleState(state: ConsoleState): URLSearchParams {
 
 export const SEGMENT_PREDICATES: Record<SegmentId, (p: PlaybookVM) => boolean> = {
   all: () => true,
+  shared: (p) => p.isShared,
   live: isLive,
   fav: (p) => p.isFavorite,
   scheduled: (p) => p.trigger.kind !== 'manual',
@@ -101,10 +102,10 @@ export const SEGMENT_PREDICATES: Record<SegmentId, (p: PlaybookVM) => boolean> =
 };
 
 export function segmentCounts(playbooks: PlaybookVM[]): Record<SegmentId, number> {
-  const counts = { all: 0, live: 0, fav: 0, scheduled: 0, never: 0 } as Record<SegmentId, number>;
+  const counts = { all: 0, shared: 0, live: 0, fav: 0, scheduled: 0, never: 0 } as Record<SegmentId, number>;
   for (const p of playbooks) {
     counts.all++;
-    for (const key of ['live', 'fav', 'scheduled', 'never'] as const) {
+    for (const key of ['shared', 'live', 'fav', 'scheduled', 'never'] as const) {
       if (SEGMENT_PREDICATES[key](p)) counts[key]++;
     }
   }

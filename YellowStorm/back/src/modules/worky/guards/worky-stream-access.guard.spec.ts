@@ -2,8 +2,8 @@ import { ExecutionContext, ForbiddenException, NotFoundException } from '@nestjs
 import { Types } from 'mongoose';
 import { WorkyStreamAccessGuard } from './worky-stream-access.guard';
 
-function ctx(user: { id: string } | undefined, id: string): ExecutionContext {
-  const req: { user?: { id: string }; params: { id?: string } } = { user, params: { id } };
+function ctx(user: { id: string } | undefined, id: string, method = 'GET'): ExecutionContext {
+  const req = { user, params: { id }, method };
   return { switchToHttp: () => ({ getRequest: () => req }) } as unknown as ExecutionContext;
 }
 
@@ -28,6 +28,29 @@ describe('WorkyStreamAccessGuard', () => {
     await expect(guard.canActivate(ctx({ id: ownerId }, streamObjectId.toString()))).rejects.toBeInstanceOf(
       ForbiddenException,
     );
+  });
+
+  it('allows read shares on GET but rejects writes', async () => {
+    const streams = makeStreams({
+      ownerUserId: new Types.ObjectId(otherId),
+      shares: [{ userId: new Types.ObjectId(ownerId), permission: 'read' }],
+    });
+    const guard = new WorkyStreamAccessGuard(streams as any);
+    await expect(guard.canActivate(ctx({ id: ownerId }, streamObjectId.toString()))).resolves.toBe(true);
+    await expect(
+      guard.canActivate(ctx({ id: ownerId }, streamObjectId.toString(), 'PATCH')),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('allows write shares on mutations', async () => {
+    const streams = makeStreams({
+      ownerUserId: new Types.ObjectId(otherId),
+      shares: [{ userId: new Types.ObjectId(ownerId), permission: 'write' }],
+    });
+    const guard = new WorkyStreamAccessGuard(streams as any);
+    await expect(
+      guard.canActivate(ctx({ id: ownerId }, streamObjectId.toString(), 'POST')),
+    ).resolves.toBe(true);
   });
 
   it('returns NotFoundException when the stream does not exist', async () => {

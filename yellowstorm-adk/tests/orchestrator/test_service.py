@@ -1378,7 +1378,7 @@ def test_resume_targets_the_card_questionId_across_parallel_gates(monkeypatch):
     single interrupt id made every approval hit whichever gate it pointed at, so
     a second card's approval landed on the first card's gate and mis-applied its
     edits. resume_turn must answer the gate the CARD names (its questionId), and
-    if it has to fall back to a different gate, it must DROP the edits."""
+    refuse a stale target rather than approving another pending send."""
     import unittest.mock as mock
     from google.genai import types
     gateA, gateB = "confirm::adk-AAAA", "confirm::adk-BBBB"
@@ -1416,13 +1416,17 @@ def test_resume_targets_the_card_questionId_across_parallel_gates(monkeypatch):
     assert captured["fc_id"] == "adk-BBBB", f"answered the wrong gate: {captured['fc_id']}"
     assert captured["payload"] == {"subject": "x"}, "edits should ride to the targeted gate"
 
-    # Now B's id has drifted (no longer outstanding); the approval must fall back
-    # to A but DROP B's edits (never apply one send's edits to another).
+    # A stale B card must not approve A after B is no longer pending.
     rm.outstanding_interrupts = AsyncMock(return_value=[(gateA, "sA")])
     captured.clear()
-    asyncio.run(service.resume_turn(session_id="s", user_id="u", answer=answer, model="fake"))
-    assert captured["fc_id"] == "adk-AAAA", "should fall back to the only outstanding gate"
-    assert captured["payload"] is None, "edits for a gone gate must be dropped, not applied to A"
+    with pytest.raises(RuntimeError, match="no longer pending"):
+        asyncio.run(service.resume_turn(session_id="s", user_id="u", answer=answer, model="fake"))
+    assert captured == {}, "a stale approval must not resume another gate"
+
+    # Untargeted chat verdicts may still recover from a stale session default.
+    rm.outstanding_interrupts = AsyncMock(return_value=[(gateB, "sB")])
+    asyncio.run(service.resume_turn(session_id="s", user_id="u", answer="approve", model="fake"))
+    assert captured["fc_id"] == "adk-BBBB"
 
 
 async def test_inject_steps_appends_to_live_plan_with_fresh_ids():

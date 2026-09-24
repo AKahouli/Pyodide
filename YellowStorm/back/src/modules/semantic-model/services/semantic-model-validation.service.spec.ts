@@ -30,6 +30,26 @@ describe('SemanticModelValidationService', () => {
     ]));
   });
 
+  it('names the concept a finding is about', () => {
+    const input = graph();
+    input.nodes[0].recordPolicy = 'expected';
+    expect(service.validate(input)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'expected_records_missing', targetId: 'party', targetLabel: 'Party' }),
+    ]));
+  });
+
+  it('names the relationship a finding is about', () => {
+    const input = graph();
+    input.relations.push({
+      id: 'relation', key: 'participates_in', label: 'Participates in', inverseLabel: '',
+      description: '', sourceNodeTypeId: 'party', targetNodeTypeId: 'missing',
+      cardinality: 'many_to_many', traversable: true, filterable: true, attributes: [],
+    });
+    expect(service.validate(input)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'invalid_relation_endpoint', targetLabel: 'Participates in' }),
+    ]));
+  });
+
   it('blocks relationships whose endpoints do not exist', () => {
     const input = graph();
     input.relations.push({

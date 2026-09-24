@@ -83,6 +83,7 @@ export interface WorkyHumainRef {
 export interface WorkyStream {
   id: string;
   ownerUserId: string;
+  access: 'owner' | 'write' | 'read';
   workspaceId: string;
   /** Legacy: null for streams created after the workspace/agent removal. */
   artifactWorkspaceId: string | null;
@@ -112,6 +113,18 @@ export interface WorkyStream {
   lastActivityAt: string;
 }
 
+export interface WorkyStreamShare {
+  id: string;
+  permission: 'read' | 'write';
+  user: {
+    id: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+  };
+  createdAt: string;
+}
+
 /**
  * Live per-stream task rollup returned on each streams-list row (aggregated
  * from tasks by lane). `progress` is `done / totalTasks` in the range 0..1.
@@ -139,6 +152,7 @@ export interface WorkyStreamQueryParams {
   limit?: number;
   /** Filter by one or more stream statuses (empty/omitted = all). */
   status?: WorkyStreamStatus[];
+  attention?: boolean;
   sort?: WorkyStreamSortField;
   sortDir?: WorkyStreamSortDirection;
   /** ISO date lower/upper bounds on the stream's createdAt. */
@@ -155,7 +169,8 @@ export interface PaginatedStreams {
     limit: number;
     totalPages: number;
     /** status → count within the current search/date scope, ignoring the status filter. */
-    statusCounts: Record<string, number>;
+      statusCounts: Record<string, number>;
+      attentionCount: number;
   };
 }
 

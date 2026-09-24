@@ -165,7 +165,7 @@ export function KnowledgePanel({ canEdit,knowledge,targetNodeId,onClose,onMapDat
               <div className='h-px flex-1 bg-border'/>
               <div className='flex items-center gap-1.5 rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1'>
                 <Share2 className='h-3 w-3 text-blue-400'/>
-                <span className='text-[11px] font-semibold text-blue-400'>Partagés avec moi</span>
+                <span className='text-[11px] font-semibold text-blue-400'>{t('knowledge.sharedWithMe')}</span>
                 <span className='flex h-4 w-4 items-center justify-center rounded-full bg-blue-500/20 text-[10px] font-bold text-blue-400'>{sharedAvailable.length}</span>
               </div>
               <div className='h-px flex-1 bg-border'/>
@@ -176,7 +176,7 @@ export function KnowledgePanel({ canEdit,knowledge,targetNodeId,onClose,onMapDat
               return <div key={workspace.id} className='overflow-hidden rounded-xl border border-blue-500/30 bg-blue-950/30'>
                 <div role='group' aria-label={t('knowledge.dragWorkspace',{name:workspace.name})} draggable={canEdit} onDragStart={(event)=>beginDrag(event,resource)} onDragEnd={()=>knowledge.setDraggedResource(null)} className='flex items-center gap-1 p-2'>
                   <Button size='icon' variant='ghost' className='h-11 w-11 shrink-0' onClick={()=>void toggleWorkspace(workspace.id)} aria-label={open?t('knowledge.collapseWorkspace',{name:workspace.name}):t('knowledge.expandWorkspace',{name:workspace.name})}>{open?<ChevronDown className='h-4 w-4'/>:<ChevronRight className='h-4 w-4'/>}</Button>
-                  <Warehouse className='h-4 w-4 shrink-0 text-blue-400'/><div className='min-w-0 flex-1 px-1'><div className='flex items-center gap-1.5'><p className='truncate text-sm font-medium'>{workspace.name}</p><span className='shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-blue-400 ring-1 ring-blue-500/30'>Partagé</span></div><p className='text-[10px] text-muted-foreground'>{t((workspace.documentCount??0)===1?'knowledge.documentCount_one':'knowledge.documentCount_other',{count:workspace.documentCount??0})}</p></div>{canEdit&&<><GripVertical className='h-4 w-4 text-muted-foreground'/><LinkMenu resource={resource} targetNodeId={targetNodeId} knowledge={knowledge}/></>}
+                  <Warehouse className='h-4 w-4 shrink-0 text-blue-400'/><div className='min-w-0 flex-1 px-1'><div className='flex items-center gap-1.5'><p className='truncate text-sm font-medium'>{workspace.name}</p><span className='shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-blue-400 ring-1 ring-blue-500/30'>{t('knowledge.sharedBadge')}</span></div><p className='text-[10px] text-muted-foreground'>{t((workspace.documentCount??0)===1?'knowledge.documentCount_one':'knowledge.documentCount_other',{count:workspace.documentCount??0})}</p></div>{canEdit&&<><GripVertical className='h-4 w-4 text-muted-foreground'/><LinkMenu resource={resource} targetNodeId={targetNodeId} knowledge={knowledge}/></>}
                 </div>
                 {open&&<div className='border-t border-blue-500/20 bg-blue-950/20 p-2'>{renderDocumentPage(workspace.id)}</div>}
               </div>;

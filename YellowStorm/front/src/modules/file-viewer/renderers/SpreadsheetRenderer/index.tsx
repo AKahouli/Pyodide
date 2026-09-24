@@ -74,7 +74,7 @@ export function SpreadsheetRenderer({ tab, isActive, onReady }: Readonly<Rendere
         if (cancelled) return;
 
         const workbook = new excelModule.Workbook();
-        await workbook.xlsx.load(buffer);
+        await workbook.xlsx.load(buffer, { ignoreNodes: ['tableParts'] });
         if (cancelled) return;
 
         const sheetData = workbook.worksheets.map((worksheet) => buildSheetData(worksheet));

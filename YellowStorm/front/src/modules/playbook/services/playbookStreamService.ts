@@ -37,6 +37,8 @@ const MAX_RECONNECT_DELAY_MS = 60_000;
 const SSE_HEARTBEAT_TIMEOUT_MS = 30_000;
 const STEP_UPDATE_BATCH_MS = 32;
 
+export const PLAYBOOK_SHARED_EVENT = 'yellowstorm:playbook-shared';
+
 // ===== Tab identity =====
 
 const TAB_ID = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -116,6 +118,7 @@ const ZUSTAND_PROJECTION_EVENT_TYPES = new Set<string>([
   'playbook_execution_error',
   'playbook_interrupt',
   'playbook_hitl_interrupt_created',
+  'playbook_shared',
 ]);
 
 // ===== Timer helpers =====
@@ -314,6 +317,7 @@ function handleStoreEvent(eventType: string, eventData: unknown) {
         break;
       case 'playbook_shared':
         store.fetchPlaybooks();
+        window.dispatchEvent(new CustomEvent(PLAYBOOK_SHARED_EVENT, { detail: eventData }));
         break;
     }
 }

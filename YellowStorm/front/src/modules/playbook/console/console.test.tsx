@@ -98,7 +98,9 @@ describe('SegmentTabs', () => {
   it('switches segments and renders counts only when non-zero', async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
-    render(<SegmentTabs counts={{ all: 3, live: 1, fav: 0, scheduled: 0, never: 2 }} active="all" onChange={onChange} />);
+    render(<SegmentTabs counts={{ all: 3, shared: 1, live: 1, fav: 0, scheduled: 0, never: 2 }} active="all" onChange={onChange} />);
+    await user.click(screen.getByRole('tab', { name: /console\.segment\.shared/ }));
+    expect(onChange).toHaveBeenCalledWith('shared');
     await user.click(screen.getByRole('tab', { name: /console\.segment\.live/ }));
     expect(onChange).toHaveBeenCalledWith('live');
     expect(screen.getByRole('tab', { name: /console\.segment\.live/ }).textContent).toMatch(/1/);
