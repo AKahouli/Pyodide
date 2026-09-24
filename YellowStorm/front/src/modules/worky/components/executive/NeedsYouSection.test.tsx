@@ -10,7 +10,7 @@ describe('NeedsYouSection', () => {
   it('shows a pending approval and opens chat for review', async () => {
     const onReviewApproval = vi.fn();
     const model = {
-      plan: null, session: null, health: 'needs_attention' as const, currentWork: [], delegations: [],
+      plan: null, session: null, health: 'needs_attention' as const, currentWork: [], allTasks: [], completedTasks: [], deliveryPaths: [], recentTasks: [], delegations: [],
       summary: { total: 0, completed: 0, active: 0, blocked: 0, remaining: 0, waitingExternal: 0, needsInput: 1 },
       runtimeAsks: [], interactions: [], pendingApprovals: [{ questionId: 'confirm::call-1', component: {
         id: 'choice-1', type: 'choice', data: {

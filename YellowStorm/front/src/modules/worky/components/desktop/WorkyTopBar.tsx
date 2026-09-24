@@ -1,6 +1,6 @@
 import { useState, type JSX } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Zap, ChevronDown, LayoutGrid, Plus, Network } from 'lucide-react';
+import { Zap, ChevronDown, LayoutGrid, Plus, Network, Mic } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import {
   DropdownMenu,
@@ -13,6 +13,8 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useStream, useStreams } from '../../query/hooks';
 import { NewStreamDialog } from '../NewStreamDialog';
+import { AttentionSettingsButton } from '../AttentionSettingsButton';
+import type { AttentionPreferences } from '../../attentionPreferences';
 
 /**
  * Desktop Worky top bar: logo + wordmark and the stream switcher. The switcher
@@ -22,7 +24,7 @@ import { NewStreamDialog } from '../NewStreamDialog';
  * Stream search lives on the landing dashboard only. Budget is shown by
  * `WorkyActivityRail`, so it is not duplicated here.
  */
-export function WorkyTopBar({ streamId, onOpenGraph, graphAvailable }: { streamId: string; onOpenGraph: () => void; graphAvailable: boolean }): JSX.Element {
+export function WorkyTopBar({ streamId, onOpenGraph, graphAvailable, attentionPreferences = { sound: true, focus: true }, onAttentionPreferencesChange = () => {}, attentionCount = 0, onToggleVoice, voiceActive = false }: { streamId: string; onOpenGraph: () => void; graphAvailable: boolean; attentionPreferences?: AttentionPreferences; onAttentionPreferencesChange?: (value: AttentionPreferences) => void; attentionCount?: number; onToggleVoice?: () => void; voiceActive?: boolean }): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const navigate = useNavigate();
   const { data: stream } = useStream(streamId);
@@ -86,7 +88,7 @@ export function WorkyTopBar({ streamId, onOpenGraph, graphAvailable }: { streamI
         </Button>
       </div>
 
-      <Button
+      <div className='ml-auto flex items-center gap-2'><AttentionSettingsButton value={attentionPreferences} onChange={onAttentionPreferencesChange} count={attentionCount} />{onToggleVoice && <Button type='button' size='icon' variant={voiceActive ? 'default' : 'outline'} onClick={onToggleVoice} aria-label={t('nav.voice')} title={t('nav.voice')} className='size-9 shrink-0'><Mic className='size-4' /></Button>}<Button
         type="button"
         size="icon"
         variant="outline"
@@ -95,10 +97,10 @@ export function WorkyTopBar({ streamId, onOpenGraph, graphAvailable }: { streamI
         aria-label={t('graph.openFromHeader')}
         title={t('graph.openFromHeader')}
         data-testid="worky-header-graph"
-        className="ml-auto size-9 shrink-0"
+        className="size-9 shrink-0"
       >
         <Network className="size-4" />
-      </Button>
+      </Button></div>
       <NewStreamDialog open={createOpen} onOpenChange={setCreateOpen} />
     </div>
   );

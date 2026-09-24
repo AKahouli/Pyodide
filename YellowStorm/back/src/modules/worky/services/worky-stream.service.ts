@@ -253,31 +253,35 @@ export class WorkyStreamService implements OnModuleInit {
     if (query.createdTo) createdAt.$lte = new Date(query.createdTo);
     if (Object.keys(createdAt).length > 0) baseFilter.createdAt = createdAt;
 
-    // `filter` adds the active status selection — it bounds the paginated data
-    // and the total count, but intentionally NOT statusCounts.
-    const filter: Record<string, unknown> = { ...baseFilter };
-    if (query.status?.length) filter.status = { $in: query.status };
-
-    const sortSpec = this.buildStreamSortSpec(query.sort, query.sortDir);
-
-    const [total, streams, statusAgg] = await Promise.all([
-      this.streamModel.countDocuments(filter).exec(),
-      this.streamModel
-        .find(filter)
-        .sort(sortSpec)
-        .skip((page - 1) * limit)
-        .limit(limit)
-        .lean()
-        .exec(),
-      this.streamModel
-        .aggregate([{ $match: baseFilter }, { $group: { _id: '$status', count: { $sum: 1 } } }])
-        .exec(),
-    ]);
-
+    // Compute portfolio counts within the user's search and date scope.
+    const statusAgg = await this.streamModel
+      .aggregate([{ $match: baseFilter }, { $group: { _id: '$status', count: { $sum: 1 }, ids: { $push: '$_id' } } }])
+      .exec() as Array<{ _id: string; count: number; ids?: Types.ObjectId[] }>;
     const statusCounts: Record<string, number> = {};
-    for (const row of statusAgg as Array<{ _id: string; count: number }>) {
+    for (const row of statusAgg) {
       if (row._id) statusCounts[row._id] = row.count;
     }
+
+    const scopedIds = statusAgg.flatMap((row) => row.ids ?? []);
+    const blockerAgg = scopedIds.length ? await this.connection.model(WorkyTask.name)
+      .aggregate([
+        { $match: { streamId: { $in: scopedIds }, lane: { $in: ['blocked', 'failed'] } } },
+        { $group: { _id: '$streamId' } },
+      ]).exec() as Array<{ _id: Types.ObjectId }> : [];
+    const attentionStatuses = new Set(['start_validation_failed', 'waiting_for_owner', 'waiting_for_human', 'waiting_for_budget_decision', 'partially_blocked']);
+    const attentionIds = new Set<string>([
+      ...statusAgg.filter((row) => attentionStatuses.has(row._id)).flatMap((row) => row.ids ?? []).map((id) => id.toString()),
+      ...blockerAgg.map((row) => row._id.toString()),
+    ]);
+
+    const filter: Record<string, unknown> = { ...baseFilter };
+    if (query.status?.length) filter.status = { $in: query.status };
+    if (query.attention) filter._id = { $in: [...attentionIds].map((id) => new Types.ObjectId(id)) };
+    const sortSpec = this.buildStreamSortSpec(query.sort, query.sortDir);
+    const [total, streams] = await Promise.all([
+      this.streamModel.countDocuments(filter).exec(),
+      this.streamModel.find(filter).sort(sortSpec).skip((page - 1) * limit).limit(limit).lean().exec(),
+    ]);
 
     const streamIds = (streams as Array<{ _id: Types.ObjectId }>).map((s) => s._id);
     const laneAgg =
@@ -300,7 +304,7 @@ export class WorkyStreamService implements OnModuleInit {
 
     return {
       data,
-      meta: { total, page, limit, totalPages: Math.ceil(total / limit) || 0, statusCounts },
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) || 0, statusCounts, attentionCount: attentionIds.size },
     };
   }
 

@@ -343,10 +343,19 @@ def test_mirror_specification_validates_and_reuses(client: TestClient):
     assert first.json()["reused"] is False
 
     body = _mirror_body()
-    _inject(client, ScriptedPool([{"id": "s1", "spec_hash": body["specHash"]}]))
+    class CapturingPool(ScriptedPool):
+        statements: list[str] = []
+
+        async def fetchrow(self, sql: str, *params):  # type: ignore[no-untyped-def]
+            self.statements.append(sql)
+            return await super().fetchrow(sql, *params)
+
+    reused_pool = CapturingPool([{"id": "s1", "spec_hash": body["specHash"]}, {"id": "s1"}])
+    _inject(client, reused_pool)
     again = client.post("/v1/semantic-model-population/specifications",
                         headers=AUTH, json=body)
     assert again.json()["reused"] is True
+    assert any("selected_at = clock_timestamp()" in sql for sql in reused_pool.statements)
 
     changed = _mirror_body(asset_id="a2")
     _inject(client, ScriptedPool([None, {"id": "s2"}]))

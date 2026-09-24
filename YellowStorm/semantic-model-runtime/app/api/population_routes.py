@@ -91,20 +91,15 @@ async def mirror_specification(command: MirrorSpecificationCommand,
     existing = await store.get_specification(pool, command.home_workspace_id,
                                              command.model_id, command.model_version_id,
                                              command.spec_hash)
-    if existing is not None:
-        if existing["spec_hash"] != command.spec_hash:
-            raise HTTPException(status_code=409, detail="specification_conflict")
-        return {"modelId": command.model_id, "modelVersionId": command.model_version_id,
-                "specHash": command.spec_hash, "reused": True}
     try:
         await store.mirror_specification(
             pool, home_workspace_id=command.home_workspace_id, model_id=command.model_id,
             model_version_id=command.model_version_id, spec_hash=command.spec_hash,
-            specification=command.specification)
+            specification=command.specification, select_current=True)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {"modelId": command.model_id, "modelVersionId": command.model_version_id,
-            "specHash": command.spec_hash, "reused": False}
+            "specHash": command.spec_hash, "reused": existing is not None}
 
 
 @router.get("/models/{model_id}/records", status_code=status.HTTP_200_OK)

@@ -3,6 +3,8 @@ import { ChevronLeft, Network } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import { useStream } from '../../query/hooks';
 import { useStreamAgents } from '../../agents/useStreamAgents';
+import { AttentionSettingsButton } from '../AttentionSettingsButton';
+import type { AttentionPreferences } from '../../attentionPreferences';
 
 /**
  * Mobile app bar: back, the stream title with an "N agents · Status" subtitle,
@@ -13,11 +15,17 @@ export function MobileStreamHeader({
   onBack,
   onOpenGraph,
   graphAvailable,
+  attentionPreferences = { sound: true, focus: true },
+  onAttentionPreferencesChange = () => {},
+  attentionCount = 0,
 }: {
   streamId: string;
   onBack: () => void;
   onOpenGraph: () => void;
   graphAvailable: boolean;
+  attentionPreferences?: AttentionPreferences;
+  onAttentionPreferencesChange?: (value: AttentionPreferences) => void;
+  attentionCount?: number;
 }): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const { data: stream } = useStream(streamId);
@@ -40,6 +48,7 @@ export function MobileStreamHeader({
         <div className="truncate text-lg font-bold text-foreground">{stream?.title ?? ''}</div>
         <div className="truncate text-xs text-muted-foreground">{subtitle}</div>
       </div>
+      <AttentionSettingsButton value={attentionPreferences} onChange={onAttentionPreferencesChange} count={attentionCount} />
       <button
         type="button"
         onClick={onOpenGraph}

@@ -44,6 +44,15 @@ export interface WorkyCurrentWorkItem {
   openPrerequisites: WorkyTask[];
   canceledPrerequisites: number;
   unavailablePrerequisites: number;
+  downstreamCount: number;
+}
+
+export interface WorkyDeliveryPath {
+  task: WorkyTask;
+  total: number;
+  completed: number;
+  blocked: number;
+  nextTask: WorkyTask | null;
 }
 
 export interface WorkyDelegationItem {
@@ -73,6 +82,10 @@ export interface WorkyExecutiveViewModel {
   interactions: WorkyPendingClarification[];
   pendingApprovals: WorkyPendingApproval[];
   currentWork: WorkyCurrentWorkItem[];
+  allTasks: WorkyTask[];
+  completedTasks: WorkyTask[];
+  deliveryPaths: WorkyDeliveryPath[];
+  recentTasks: WorkyTask[];
   delegations: WorkyDelegationItem[];
   summary: WorkyExecutiveSummary;
 }

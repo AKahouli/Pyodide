@@ -28,6 +28,7 @@ vi.mock('../../query/hooks', () => ({
   },
   useCreateStream: () => ({ mutateAsync: q.create, isPending: false }),
   useDeleteStream: () => ({ mutateAsync: q.remove, isPending: false }),
+  useBoard: () => ({ data: undefined }),
 }));
 
 import { StreamsDashboard } from './StreamsDashboard';
@@ -82,21 +83,20 @@ beforeEach(() => {
       limit: 12,
       totalPages: 3,
       statusCounts: { active: 2, waiting_for_owner: 1, completed: 1 },
+      attentionCount: 2,
     },
   };
   q.envelope = envelope;
 });
 
 describe('StreamsDashboard', () => {
-  it('renders a card per stream and KPIs from meta.statusCounts', () => {
+  it('renders a card per stream and a portfolio attention summary', () => {
     renderDashboard();
     expect(screen.getByText('Q3 Expansion')).toBeTruthy();
     expect(screen.getByText('Hiring')).toBeTruthy();
     expect(screen.getByText('Revamp')).toBeTruthy();
     // active group = active(2); attention group = waiting_for_owner(1); total = all counts (4)
-    expect(screen.getByTestId('kpi-active').textContent).toContain('2');
-    expect(screen.getByTestId('kpi-attention').textContent).toContain('1');
-    expect(screen.getByTestId('kpi-total').textContent).toContain('4');
+    expect(screen.getByText('command.portfolio.summary')).toBeTruthy();
   });
 
   it('passes the debounced search term to the streams query', async () => {
@@ -111,6 +111,13 @@ describe('StreamsDashboard', () => {
     renderDashboard();
     fireEvent.click(screen.getByTestId('chip-active'));
     await waitFor(() => expect(q.params.status).toEqual(expect.arrayContaining(['active'])));
+  });
+
+  it('uses the task-aware attention filter and count', async () => {
+    renderDashboard();
+    expect(screen.getByTestId('chip-attention')).toHaveTextContent('(2)');
+    fireEvent.click(screen.getByTestId('chip-attention'));
+    await waitFor(() => expect(q.params).toMatchObject({ attention: true, status: undefined }));
   });
 
   it('advances the page with the Next control', async () => {
@@ -151,7 +158,7 @@ describe('StreamsDashboard', () => {
   it('shows the empty state when there are no streams', () => {
     q.envelope = {
       data: [],
-      meta: { total: 0, page: 1, limit: 12, totalPages: 0, statusCounts: {} },
+      meta: { total: 0, page: 1, limit: 12, totalPages: 0, statusCounts: {}, attentionCount: 0 },
     };
     renderDashboard();
     expect(screen.getByText('dashboard.empty')).toBeTruthy();

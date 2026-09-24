@@ -6,9 +6,8 @@ dist/
 build/
 graphify-out/
 # Environment
-.env
+*.env
 .env.local
-.env.*.local
 
 # IDE
 .idea/
@@ -33,7 +32,7 @@ coverage/
 *.tgz
 .eslintcache
 
-*.env
+
 *.env.*.local
 .env.local
 .env.development.local

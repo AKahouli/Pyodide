@@ -9,8 +9,9 @@ vi.mock('@/modules/localization', () => ({
 }));
 
 const model = {
-  plan: { title: 'Mission', goal: 'A long mission goal' },
+  plan: { title: 'Mission', goal: 'A long mission goal', status: 'running' },
   health: 'at_risk',
+  session: null, runtimeAsks: [], interactions: [], pendingApprovals: [], currentWork: [], allTasks: [], completedTasks: [], deliveryPaths: [], recentTasks: [], delegations: [],
   summary: { completed: 10, total: 22, remaining: 12, active: 0, blocked: 3, waitingExternal: 0, needsInput: 0 },
 } as WorkyExecutiveViewModel;
 

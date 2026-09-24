@@ -32,14 +32,16 @@ def revision_id_for(model_version_id: str, execution_fingerprint: str,
 
 async def mirror_specification(pool: Any, *, home_workspace_id: str, model_id: str,
                                model_version_id: str, spec_hash: str,
-                               specification: dict[str, Any]) -> str:
-    """Insert an immutable snapshot; edited drafts receive a new hash-keyed row."""
+                               specification: dict[str, Any],
+                               select_current: bool = False) -> str:
+    """Store an immutable snapshot; only admission advances its selection time."""
     row = await pool.fetchrow(
-        """
+        f"""
         INSERT INTO semantic_runtime.specifications
           (home_workspace_id, model_id, model_version_id, spec_hash, specification)
         VALUES ($1, $2, $3, $4, $5::jsonb)
-        ON CONFLICT (home_workspace_id, model_id, model_version_id, spec_hash) DO NOTHING
+        ON CONFLICT (home_workspace_id, model_id, model_version_id, spec_hash)
+        {"DO UPDATE SET selected_at = clock_timestamp()" if select_current else "DO NOTHING"}
         RETURNING id::text
         """,
         home_workspace_id, model_id, model_version_id, spec_hash, _json(specification),
@@ -326,7 +328,7 @@ async def _cas_active_binding(connection: Any, *, model_id: str, environment: st
     current_spec = """
         SELECT spec_hash FROM semantic_runtime.specifications
         WHERE model_id = $1 AND model_version_id = $3
-        ORDER BY created_at DESC, id DESC LIMIT 1
+        ORDER BY selected_at DESC, id DESC LIMIT 1
     """
     if expected_version is None:
         return await connection.fetchrow(

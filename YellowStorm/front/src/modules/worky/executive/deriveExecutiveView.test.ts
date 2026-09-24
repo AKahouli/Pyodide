@@ -90,6 +90,17 @@ describe('deriveExecutiveView', () => {
       canceledPrerequisites: 1,
       unavailablePrerequisites: 1,
     });
+    expect(view.currentWork.find((item) => item.task.id === 'b')?.downstreamCount).toBe(1);
+    expect(view.deliveryPaths.find((path) => path.task.id === 'c')).toMatchObject({ total: 4, completed: 1, blocked: 1, nextTask: { id: 'b' } });
+  });
+
+  it('selects a prerequisite before its ready successor and keeps paths with canceled children', () => {
+    const first = task({ id: 'a', externalId: 'step-a', lane: 'ready' });
+    const second = task({ id: 'b', externalId: 'step-b', lane: 'ready', dependsOnStepIds: ['step-a'] });
+    const canceledChild = task({ id: 'c', externalId: 'step-c', lane: 'canceled', dependsOnStepIds: ['step-b'] });
+    const paths = deriveExecutiveView(board([first, second, canceledChild])).deliveryPaths;
+    expect(paths).toHaveLength(1);
+    expect(paths[0]).toMatchObject({ task: { id: 'b' }, nextTask: { id: 'a' } });
   });
 
   it.each([

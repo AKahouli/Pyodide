@@ -35,7 +35,7 @@ import { WorkyMobileStream } from './WorkyMobileStream';
 const asMock = (fn: unknown) => fn as any;
 const model = {
   plan: null, session: null, health: 'planning' as const, runtimeAsks: [], interactions: [], pendingApprovals: [],
-  currentWork: [], delegations: [], summary: { total: 0, completed: 0, active: 0, blocked: 0, remaining: 0, waitingExternal: 0, needsInput: 0 },
+  currentWork: [], allTasks: [], completedTasks: [], deliveryPaths: [], recentTasks: [], delegations: [], summary: { total: 0, completed: 0, active: 0, blocked: 0, remaining: 0, waitingExternal: 0, needsInput: 0 },
 };
 
 beforeEach(() => {

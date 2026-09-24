@@ -69,7 +69,8 @@ export interface IWorkyStreamListResult {
     page: number;
     limit: number;
     totalPages: number;
-    statusCounts: Record<string, number>;
+      statusCounts: Record<string, number>;
+      attentionCount: number;
   };
 }
 

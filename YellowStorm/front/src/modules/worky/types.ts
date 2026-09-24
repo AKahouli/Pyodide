@@ -152,6 +152,7 @@ export interface WorkyStreamQueryParams {
   limit?: number;
   /** Filter by one or more stream statuses (empty/omitted = all). */
   status?: WorkyStreamStatus[];
+  attention?: boolean;
   sort?: WorkyStreamSortField;
   sortDir?: WorkyStreamSortDirection;
   /** ISO date lower/upper bounds on the stream's createdAt. */
@@ -168,7 +169,8 @@ export interface PaginatedStreams {
     limit: number;
     totalPages: number;
     /** status → count within the current search/date scope, ignoring the status filter. */
-    statusCounts: Record<string, number>;
+      statusCounts: Record<string, number>;
+      attentionCount: number;
   };
 }
 

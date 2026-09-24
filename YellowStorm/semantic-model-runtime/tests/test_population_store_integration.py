@@ -28,7 +28,8 @@ async def pool():
                       "008_versioned_specification_mirrors.sql",
                       "009_invalidate_unverified_age_projections.sql",
                       "010_ui_signal_outbox.sql", "015_population_execution_fingerprint.sql",
-                      "016_draft_population_binding.sql"):
+                       "016_draft_population_binding.sql",
+                       "017_current_specification_selection.sql"):
             await connection.execute((ROOT / "migrations" / name).read_text(encoding="utf-8"))
     finally:
         await connection.close()
@@ -178,3 +179,33 @@ async def test_activation_atomically_enqueues_revision_signal(pool: asyncpg.Pool
     assert signal["event_type"] == "data-revision-changed"
     assert payload["dataRevision"] == 1
     assert set(payload) <= {"modelId", "dataRevision", "resource", "status", "reason"}
+
+
+@pytest.mark.asyncio
+async def test_reselecting_an_older_draft_spec_can_activate_without_unfencing_old_workers(pool: asyncpg.Pool):
+    first = "sha256:" + "a" * 64
+    second = "sha256:" + "b" * 64
+    for spec_hash in (first, second):
+        await store.mirror_specification(
+            pool, home_workspace_id="ws1", model_id="m1", model_version_id="v1",
+            spec_hash=spec_hash, specification={"concepts": []}, select_current=True)
+    assert await store.cas_active_binding(
+        pool, model_id="m1", environment="draft", expected_version=None,
+        model_version_id="v1", data_revision_id="dr_b", projection_ref="age:b",
+        correction_sequence=0, spec_hash=second)
+
+    await store.mirror_specification(
+        pool, home_workspace_id="ws1", model_id="m1", model_version_id="v1",
+        spec_hash=first, specification={"concepts": []}, select_current=True)
+    # Worker persistence of an older snapshot cannot change the selected hash.
+    await store.mirror_specification(
+        pool, home_workspace_id="ws1", model_id="m1", model_version_id="v1",
+        spec_hash=second, specification={"concepts": []})
+    assert not await store.cas_active_binding(
+        pool, model_id="m1", environment="draft", expected_version=1,
+        model_version_id="v1", data_revision_id="dr_stale", projection_ref="age:stale",
+        correction_sequence=0, spec_hash=second)
+    assert await store.cas_active_binding(
+        pool, model_id="m1", environment="draft", expected_version=1,
+        model_version_id="v1", data_revision_id="dr_a", projection_ref="age:a",
+        correction_sequence=0, spec_hash=first)

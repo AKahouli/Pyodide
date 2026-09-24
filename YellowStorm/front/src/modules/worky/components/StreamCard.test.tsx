@@ -3,6 +3,8 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import type { WorkyStreamListItem } from '../types';
 import { StreamCard } from './StreamCard';
 
+vi.mock('../query/hooks', () => ({ useBoard: () => ({ data: undefined }) }));
+
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({
     t: (k: string, vars?: Record<string, unknown>) =>

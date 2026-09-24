@@ -64,7 +64,8 @@ export function StreamsDashboard(): JSX.Element {
       search: debouncedSearch || undefined,
       page,
       limit: PAGE_SIZE,
-      status: group ? STREAM_STATUS_GROUPS[group] : undefined,
+      status: group && group !== 'attention' ? STREAM_STATUS_GROUPS[group] : undefined,
+      attention: group === 'attention' ? true : undefined,
       sort,
       sortDir,
       createdFrom: createdFrom || undefined,
@@ -78,22 +79,9 @@ export function StreamsDashboard(): JSX.Element {
 
   const streams = envelope?.data ?? [];
   const statusCounts = envelope?.meta.statusCounts ?? {};
+  const attentionCount = envelope?.meta.attentionCount ?? 0;
   const totalPages = envelope?.meta.totalPages ?? 0;
 
-  const kpiTotal = Object.values(statusCounts).reduce((sum, n) => sum + n, 0);
-  const kpis = [
-    {
-      key: 'active',
-      label: t('dashboard.kpi.active'),
-      value: sumStatusCounts(statusCounts, STREAM_STATUS_GROUPS.active),
-    },
-    { key: 'total', label: t('dashboard.kpi.total'), value: kpiTotal },
-    {
-      key: 'attention',
-      label: t('dashboard.kpi.attention'),
-      value: sumStatusCounts(statusCounts, STREAM_STATUS_GROUPS.attention),
-    },
-  ];
 
   const selectGroup = (next: StreamStatusGroup | null): void => {
     setGroup(next);
@@ -138,18 +126,7 @@ export function StreamsDashboard(): JSX.Element {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        {kpis.map((k) => (
-          <div
-            key={k.key}
-            data-testid={`kpi-${k.key}`}
-            className="rounded-2xl border border-border bg-card p-5"
-          >
-            <div className="text-sm text-muted-foreground">{k.label}</div>
-            <div className="mt-2 text-3xl font-bold text-foreground">{k.value}</div>
-          </div>
-        ))}
-      </div>
+      <p className='text-sm text-muted-foreground'>{t('command.portfolio.summary')}</p>
 
       {/* Filter + sort toolbar */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -180,7 +157,7 @@ export function StreamsDashboard(): JSX.Element {
                   : 'border-border text-muted-foreground hover:bg-accent/40',
               )}
             >
-              {t(`dashboard.filters.${g}`)} ({sumStatusCounts(statusCounts, STREAM_STATUS_GROUPS[g])})
+              {t(`dashboard.filters.${g}`)} {envelope ? `(${g === 'attention' ? attentionCount : sumStatusCounts(statusCounts, STREAM_STATUS_GROUPS[g])})` : ''}
             </button>
           ))}
         </div>
