@@ -148,7 +148,8 @@ export function TaskDetailDrawer({ task, onClose }: TaskDetailDrawerProps): JSX.
             <TabsTrigger value='results'>{tWorky('taskDetail.tabs.results')}</TabsTrigger>
           </TabsList>
           <TabsContent value='details' className='space-y-4'>
-            <p className='whitespace-pre-wrap text-muted-foreground'>{task.description}</p>
+            {/* await_reply/ask steps carry no description; the awaited-reply text lives in `question` */}
+            <p className='whitespace-pre-wrap text-muted-foreground'>{task.description || task.question || ''}</p>
             {task.dependsOn.length > 0 ? (
               <div>
                 <h3 className='text-xs font-semibold'>{tWorky('taskDetail.dependsOn')}</h3>
