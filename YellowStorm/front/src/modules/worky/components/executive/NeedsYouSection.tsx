@@ -21,10 +21,9 @@ export function NeedsYouSection({ streamId, model, onReviewApproval }: { streamI
           return <div key={ask.interruptId} className='min-w-0'><RuntimeAskCard streamId={streamId} ask={ask} />{item && <p className='mt-1 px-1 text-xs text-muted-foreground'>{item.task.assigneeName || item.task.assigneeKey || t('command.queue.unassigned')}{item.downstreamCount ? ` · ${t('command.queue.downstream', { count: item.downstreamCount })}` : ''}</p>}</div>;
         })}
         {model.interactions.map((interaction) => <div key={interaction.id} className='min-w-0'><InteractionCard streamId={streamId} interaction={interaction} />{interaction.blocksTaskIds.length > 0 && <p className='mt-1 px-1 text-xs text-muted-foreground'>{t('command.queue.downstream', { count: interaction.blocksTaskIds.length })}</p>}</div>)}
-        {model.pendingApprovals.map(({ questionId, component }) => <article key={questionId} className='rounded-xl border border-amber-500/25 bg-amber-500/[0.06] p-4'>
-          <p className='text-sm font-medium'>{String(component.data.prompt)}</p>
-          <button type='button' onClick={onReviewApproval} className='mt-3 rounded-md border border-border bg-background px-3 py-2 text-xs font-semibold hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary'>{t('executive.needsYou.reviewInChat')}</button>
-        </article>)}
+        {/* Interactive approve/decline/edit card (pre-merge behaviour), not a
+            passive "review in chat" button — the owner acts on the gate here. */}
+        {model.pendingApprovals.map((approval) => <PendingApprovalCard key={approval.questionId} streamId={streamId} approval={approval} />)}
       </div>
     </section>
   );
