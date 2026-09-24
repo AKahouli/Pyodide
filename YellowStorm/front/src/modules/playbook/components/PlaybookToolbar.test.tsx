@@ -181,12 +181,24 @@ describe('PlaybookToolbar', () => {
 
   it('calls onTriggers from inside the run settings popover', async () => {
     const onTriggers = vi.fn();
-    render(<PlaybookToolbar {...defaultProps} onTriggers={onTriggers} triggersOpen={false} />);
+    render(<PlaybookToolbar {...defaultProps} onTriggers={onTriggers} triggersEnabled={false} />);
     await userEvent.click(screen.getByRole('button', { name: 'toolbar.runSettings' }));
-    const switches = screen.getAllByRole('switch');
-    const triggerSwitch = switches[0];
+    const triggerSwitch = screen.getByRole('switch', { name: 'toolbar.triggers' });
     await userEvent.click(triggerSwitch);
     expect(onTriggers).toHaveBeenCalledOnce();
+  });
+
+  it('shows the saved trigger as enabled after the settings sheet closes', async () => {
+    const onTriggers = vi.fn();
+    const { rerender } = render(<PlaybookToolbar {...defaultProps} onTriggers={onTriggers} triggersEnabled={false} />);
+    await userEvent.click(screen.getByRole('button', { name: 'toolbar.runSettings' }));
+    expect(screen.getByRole('switch', { name: 'toolbar.triggers' })).not.toBeChecked();
+    rerender(<PlaybookToolbar {...defaultProps} onTriggers={onTriggers} triggersEnabled />);
+    expect(screen.getByRole('switch', { name: 'toolbar.triggers' })).toBeChecked();
+    await userEvent.click(screen.getByRole('switch', { name: 'toolbar.triggers' }));
+    expect(onTriggers).toHaveBeenCalledOnce();
+    await userEvent.click(screen.getByRole('button', { name: 'toolbar.runSettings' }));
+    expect(screen.getByRole('switch', { name: 'toolbar.triggers' })).toBeChecked();
   });
 
   it('does not show trigger button in popover when onTriggers is not provided', async () => {

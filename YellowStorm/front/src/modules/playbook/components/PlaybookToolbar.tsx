@@ -72,7 +72,7 @@ interface Props {
   onDownloadAllResults?: () => void;
   canDownloadAllResults?: boolean;
   onTriggers?: () => void;
-  triggersOpen?: boolean;
+  triggersEnabled?: boolean;
   designSettings?: PlaybookDesignSettings;
   onDesignSettingsChange?: (settings: Partial<PlaybookDesignSettings>) => void;
   onOpenFlowSettings?: () => void;
@@ -240,7 +240,7 @@ export function PlaybookToolbar({
   onDownloadAllResults,
   canDownloadAllResults = false,
   onTriggers,
-  triggersOpen = false,
+  triggersEnabled = false,
   designSettings,
   onDesignSettingsChange,
   onOpenFlowSettings,
@@ -286,12 +286,11 @@ export function PlaybookToolbar({
             <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
               <span>{t('toolbar.triggers')}</span>
               <Switch
-                checked={triggersOpen}
-                onCheckedChange={(checked) => {
-                  if (checked) {
-                    setRunSettingsOpen(false);
-                    onTriggers();
-                  }
+                aria-label={t('toolbar.triggers')}
+                checked={triggersEnabled}
+                onCheckedChange={() => {
+                  setRunSettingsOpen(false);
+                  onTriggers();
                 }}
               />
             </div>

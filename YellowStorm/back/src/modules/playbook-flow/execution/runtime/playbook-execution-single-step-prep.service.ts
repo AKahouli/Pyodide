@@ -35,6 +35,13 @@ function isNodeEnabled(node: Pick<FlowNode, 'metadata'>): boolean {
   return node.metadata?.enabled !== false;
 }
 
+function comparableNode(node: Record<string, unknown>): Record<string, unknown> {
+  const metadata = node.metadata as Record<string, unknown> | undefined;
+  if (!metadata) return node;
+  const { positionX, positionY, ...executionMetadata } = metadata;
+  return { ...node, metadata: executionMetadata };
+}
+
 /**
  * Single-step validation, executable snapshot filtering, and upstream seed prep.
  *
@@ -122,21 +129,23 @@ export class PlaybookExecutionSingleStepPrepService {
     }
 
     const enabledNodeIds = new Set(enabledNodes.map((node) => node.id));
+    const reachableNodeIds = this.reachableFromOriginalEntrypoints(nodes, controlEdges, enabledNodeIds);
+    const executableNodes = enabledNodes.filter((node) => reachableNodeIds.has(node.id));
     const executableControlEdges = controlEdges.filter((edge) => {
-      const keep = enabledNodeIds.has(edge.source) && enabledNodeIds.has(edge.target);
+      const keep = reachableNodeIds.has(edge.source) && reachableNodeIds.has(edge.target);
       if (!keep) {
         this.logger.warn(
-          `Dropping control edge ${edge.id} from execution snapshot because it references a disabled node`,
+          `Dropping control edge ${edge.id} from execution snapshot because its branch is disabled`,
         );
       }
       return keep;
     });
     const executableDataBindings = dataBindings.filter((binding) => {
-      const keep = enabledNodeIds.has(binding.targetNode)
-        && (binding.sourceNode ? enabledNodeIds.has(binding.sourceNode) : true);
+      const keep = reachableNodeIds.has(binding.targetNode)
+        && (binding.sourceNode ? reachableNodeIds.has(binding.sourceNode) : true);
       if (!keep) {
         this.logger.warn(
-          `Dropping data binding ${binding.id} from execution snapshot because it references a disabled node`,
+          `Dropping data binding ${binding.id} from execution snapshot because its branch is disabled`,
         );
       }
       return keep;
@@ -144,10 +153,43 @@ export class PlaybookExecutionSingleStepPrepService {
 
     return {
       ...snapshot,
-      nodes: enabledNodes,
+      nodes: executableNodes,
       controlEdges: executableControlEdges,
       dataBindings: executableDataBindings,
     };
+  }
+
+  private reachableFromOriginalEntrypoints(
+    nodes: FlowNode[], controlEdges: ControlEdge[], enabledNodeIds: Set<string>,
+  ): Set<string> {
+    // Filtering disabled nodes must not turn their successors into new START nodes.
+    const originalTargets = new Set(controlEdges.map((edge) => edge.target));
+    const successors = new Map<string, string[]>();
+    for (const edge of controlEdges) {
+      if (!enabledNodeIds.has(edge.source) || !enabledNodeIds.has(edge.target)) continue;
+      successors.set(edge.source, [...(successors.get(edge.source) ?? []), edge.target]);
+    }
+    for (const node of nodes) {
+      const container = (node.metadata?.containerConfig ?? node.metadata?.container_config) as
+        | { parentIteratorId?: string; parent_iterator_id?: string } | undefined;
+      const parentId = container?.parentIteratorId ?? container?.parent_iterator_id;
+      if (!parentId) continue;
+      originalTargets.add(node.id);
+      if (enabledNodeIds.has(parentId) && enabledNodeIds.has(node.id)) {
+        successors.set(parentId, [...(successors.get(parentId) ?? []), node.id]);
+      }
+    }
+    const queue = nodes.filter((node) => enabledNodeIds.has(node.id) && !originalTargets.has(node.id))
+      .map((node) => node.id);
+    const reachable = new Set(queue);
+    for (let index = 0; index < queue.length; index++) {
+      for (const target of successors.get(queue[index]) ?? []) {
+        if (reachable.has(target)) continue;
+        reachable.add(target);
+        queue.push(target);
+      }
+    }
+    return reachable;
   }
 
   async buildSeededTaskOutputsForSingleStep(
@@ -181,7 +223,7 @@ export class PlaybookExecutionSingleStepPrepService {
     const completedExecutions = await this.executionModel.find({
       flowId,
       ownerId,
-      status: 'completed',
+      status: { $in: ['completed', 'failed'] },
     }).select('+snapshot').sort({ createdAt: -1 }).limit(20).lean().exec();
 
     let matchingExecution: Record<string, unknown> | null = null;
@@ -193,7 +235,8 @@ export class PlaybookExecutionSingleStepPrepService {
       const allUpstreamMatch = requiredSourceNodeIds.every((sourceNodeId) => {
         const priorNode = execSnapshotNodes.find((node) => node.id === sourceNodeId);
         const currentNode = currentSnapshotNodes.find((node) => node.id === sourceNodeId);
-        return priorNode && currentNode && JSON.stringify(priorNode) === JSON.stringify(currentNode);
+        return priorNode && currentNode
+          && JSON.stringify(comparableNode(priorNode)) === JSON.stringify(comparableNode(currentNode));
       });
       if (allUpstreamMatch) {
         matchingExecution = exec as unknown as Record<string, unknown>;
@@ -204,7 +247,7 @@ export class PlaybookExecutionSingleStepPrepService {
     if (!matchingExecution) {
       throw new BadRequestException(
         ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
-        `Single-step execution for node ${singleStepTaskId} requires a previous completed execution with matching upstream node snapshots.`,
+        `Single-step execution for node ${singleStepTaskId} requires a previous completed or failed execution with matching upstream node snapshots.`,
       );
     }
 

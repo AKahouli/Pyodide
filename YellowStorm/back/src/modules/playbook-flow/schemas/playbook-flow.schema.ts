@@ -107,7 +107,7 @@ export class IteratorConfig {
 
 @Schema({ _id: false })
 export class HumanApprovalConfig {
-  @Prop({ required: true, type: String })
+  @Prop({ required: false, type: String })
   promptTemplate!: string;
 
   @Prop({ required: false, type: Number })

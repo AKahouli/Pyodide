@@ -895,6 +895,15 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
     const fullSnapshot = this.builderService.buildSnapshot(flow as any);
     const executableSnapshot = this.buildExecutableSnapshot(fullSnapshot, flowId);
+    if (!singleStepTaskId && (fullSnapshot.nodes?.length ?? 0) > 0 && executableSnapshot.nodes.length === 0) {
+      if (idempotencyKey) {
+        await this.idempotencyService.release(ownerId, idempotencyKey);
+      }
+      throw new BadRequestException(
+        ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
+        'No runnable steps remain after disabled branches are excluded.',
+      );
+    }
 
     let snapshot: any;
     let seededTaskOutputs: SeededTaskOutput[] = [];

@@ -4672,7 +4672,7 @@ function PlaybookCanvasInner() {
           onDownloadAllResults={handleDownloadAllResults}
           canDownloadAllResults={Boolean(activeDownloadExecution?.taskResults?.length)}
           onTriggers={() => setTriggersSheetOpen(true)}
-          triggersOpen={triggersSheetOpen}
+          triggersEnabled={playbook.executionSchedule?.enabled === true || playbook.triggers.some((trigger) => trigger.type === 'mail' && trigger.enabled)}
           designSettings={playbook.designSettings}
           onDesignSettingsChange={(settings) => {
             void updatePlaybook(playbook.id, {
