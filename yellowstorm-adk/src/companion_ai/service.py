@@ -699,6 +699,11 @@ class OrchestratorService:
                        if o.id != sub_step.id and o.id not in siblings
                        and caller_step_id in o.depends_on
                        and sub_step.id not in o.depends_on
+                       # Never delay a step a PLANNED await_reply depends on — it
+                       # is that await's SEND; delaying it inverts send->await and
+                       # deadlocks the await (see create_task block below).
+                       and not any(s.kind == "await_reply" and o.id in s.depends_on
+                                   for s in plan.steps)
                        and o.status == Status.PENDING]
             for other in affected:
                 other.depends_on.append(sub_step.id)
@@ -962,6 +967,12 @@ class OrchestratorService:
                        and o.id not in after_ids
                        and caller_step_id in o.depends_on
                        and sub_step.id not in o.depends_on
+                       # A step a PLANNED await_reply depends on is the SEND for
+                       # that await; delaying it behind this spawn inverts
+                       # send->await and parks the await before the send runs
+                       # (deadlock, session 40465b3f). Don't re-parent it.
+                       and not any(s.kind == "await_reply" and o.id in s.depends_on
+                                   for s in plan.steps)
                        and o.status == Status.PENDING]
             # Re-parent each caller-dependent onto the spawned chain's TAIL — the
             # "act on reply" step that reads the reply — not the raw await. Hung on
