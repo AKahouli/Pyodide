@@ -13,7 +13,7 @@ _UPSERT = """
 INSERT INTO semantic_datasource.index_observations
   (workspace_id, asset_id, asset_version_id, document_pk, verification, fingerprint, readiness)
 VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-ON CONFLICT (asset_version_id, document_pk) DO UPDATE
+ON CONFLICT (asset_version_id, COALESCE(document_pk, -1)) DO UPDATE
 SET verification = EXCLUDED.verification, fingerprint = EXCLUDED.fingerprint,
     readiness = EXCLUDED.readiness, observed_at = now()
 RETURNING id::text

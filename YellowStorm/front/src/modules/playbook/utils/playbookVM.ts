@@ -35,7 +35,6 @@ export interface PlaybookVM {
   stepCount: number | null;
   labels: string[];
   isFavorite: boolean;
-  isShared: boolean;
   workspaceId: string;
   trigger: { kind: TriggerKind; label: string; nextRunAt: string | null };
   lastRun: { id: string; outcome: RunOutcome; startedAt: string; durationMs: number | null } | null;
@@ -308,7 +307,6 @@ export function buildPlaybookVM(raw: RawPlaybookListItem, ctx: PlaybookVMContext
     stepCount,
     labels: deriveLabels(raw.name, purpose),
     isFavorite: Boolean(raw.isFavorite),
-    isShared: raw.accessLevel !== undefined && raw.accessLevel !== 'owner',
     workspaceId: raw.workspaces?.[0] ?? '',
     trigger: deriveTrigger(raw),
     lastRun,

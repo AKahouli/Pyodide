@@ -11,8 +11,6 @@ PostgreSQL. No LLM, no formula execution, no raw SQL: rows come from bounded
 from __future__ import annotations
 
 import logging
-import hashlib
-import json
 
 from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
 from app.population.compiler import (canonical_spec_hash, compile_specification,
@@ -29,32 +27,6 @@ MAX_SOURCES_PER_TASK = 25
 MAX_TOTAL_ENTITIES = 10000
 MAX_TOTAL_ASSERTIONS = 50000
 MAX_TOTAL_RELATIONSHIPS = 20000
-POPULATION_ENGINE_VERSION = "r1-mvp-5"
-
-
-def population_execution_fingerprint(spec_hash: str, sources: list[dict],
-                                     relation_bindings: list[dict],
-                                     ai_extraction: dict | None = None) -> str:
-    canonical_sources = [{
-        "conceptId": source["conceptId"],
-        "sourceKind": source["sourceKind"],
-        "source": source["source"],
-        "mappingVersion": source["mappingVersion"],
-        "columnMapping": source.get("columnMapping"),
-        "constantMapping": source.get("constantMapping"),
-        "fieldMappings": source.get("fieldMappings"),
-        "options": source.get("options", {}),
-        "labelField": source.get("labelField"),
-    } for source in sources]
-    # The AI agent's effective model is part of revision identity: changing it in
-    # the agent library must produce a new revision instead of reusing persisted
-    # rows. Always present (null when unused) so both sides hash the same body.
-    body = json.dumps({"specHash": spec_hash, "sources": canonical_sources,
-                       "relationBindings": relation_bindings,
-                       "aiExtraction": ai_extraction,
-                       "populationEngineVersion": POPULATION_ENGINE_VERSION},
-                      sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
 def population_lease_seconds(source_count: int, parser_timeout: int) -> int:
@@ -107,7 +79,6 @@ def run_population_for_payload(command_dump: dict) -> dict:
             return {"ok": False, "errorCode": "invalid_sources"}
         compiled = compile_specification(spec)
         normalized: list[dict] = []
-        mapped_fields: dict[str, set[str]] = {}
         for entry in sources:
             if not isinstance(entry, dict):
                 return {"ok": False, "errorCode": "invalid_sources"}
@@ -136,23 +107,15 @@ def run_population_for_payload(command_dump: dict) -> dict:
                 if any(item.get("mode") == "metadata"
                        and item.get("sourceField") not in metadata_fields for item in active):
                     return {"ok": False, "errorCode": "invalid_document_mapping"}
-                if any(item.get("extractionStrategy") not in (None, "deterministic", "ai")
-                       or (item.get("extractionStrategy") is not None
-                           and item.get("mode") != "extract") for item in active):
-                    return {"ok": False, "errorCode": "invalid_document_mapping"}
                 mapped_attributes = {item["targetAttribute"] for item in active}
                 if len(mapped_attributes) != len(active):
                     return {"ok": False, "errorCode": "duplicate_document_mapping"}
                 mapping = None
             else:
                 mapping = entry.get("columnMapping") or entry.get("column_mapping")
-                constants = entry.get("constantMapping") or entry.get("constant_mapping") or {}
-                if (not isinstance(mapping, dict) or not isinstance(constants, dict)
-                        or (not mapping and not constants)):
+                if not isinstance(mapping, dict) or not mapping:
                     return {"ok": False, "errorCode": "invalid_column_mapping"}
-                if set(mapping.values()) & set(constants):
-                    return {"ok": False, "errorCode": "duplicate_column_mapping"}
-                mapped_attributes = set(mapping.values()) | set(constants)
+                mapped_attributes = set(mapping.values())
             unmapped = [c for c in concept["keyComponents"] if c not in mapped_attributes]
             if unmapped:
                 return {"ok": False, "errorCode": "unmapped_identity"}
@@ -175,46 +138,24 @@ def run_population_for_payload(command_dump: dict) -> dict:
                 "sourceKind": source_kind or "tabular",
                 "options": options if isinstance(options, dict) else {},
                 **({"fieldMappings": active} if source_kind == "document"
-                   else {"columnMapping": dict(mapping), "constantMapping": dict(constants)}),
+                   else {"columnMapping": dict(mapping)}),
                 "labelField": entry.get("labelField") or entry.get("label_field"),
                 "mappingVersion": entry.get("mappingVersion") or entry.get("mapping_version") or "v1",
             })
-            mapped_fields.setdefault(entry.get("conceptId"), set()).update(mapped_attributes)
         bindings = payload.get("relationBindings") or payload.get("relation_bindings") or []
         if not isinstance(bindings, list):
             return {"ok": False, "errorCode": "invalid_relation_bindings"}
-        normalized_bindings = []
         for binding in bindings:
             if not isinstance(binding, dict):
                 return {"ok": False, "errorCode": "invalid_relation_bindings"}
-            relation = compiled["relations"].get(binding.get("relationId"))
-            if relation is None:
+            if compiled["relations"].get(binding.get("relationId")) is None:
                 return {"ok": False, "errorCode": "unknown_relation"}
             reference = binding.get("referenceField") or binding.get("reference_field")
-            target = binding.get("targetField") or binding.get("target_field")
-            target_concept = compiled["concepts"][relation["targetConceptId"]]
-            target_identity = target_concept["keyComponents"]
-            if target is None and len(target_identity) == 1:
-                target = target_identity[0]
-            if (not isinstance(reference, str)
-                    or reference not in mapped_fields.get(relation["sourceConceptId"], set())
-                    or not isinstance(target, str)
-                    or target not in mapped_fields.get(relation["targetConceptId"], set())):
+            if not isinstance(reference, str) or not reference:
                 return {"ok": False, "errorCode": "invalid_relation_bindings"}
-            normalized_bindings.append({"relationId": relation["relationId"],
-                                        "referenceField": reference, "targetField": target})
-        ai_extraction = payload.get("aiExtraction") or payload.get("ai_extraction")
-        if ai_extraction is not None and not isinstance(ai_extraction, dict):
-            return {"ok": False, "errorCode": "invalid_command"}
-        execution_fingerprint = population_execution_fingerprint(
-            expected_hash, normalized, normalized_bindings, ai_extraction)
-        supplied_fingerprint = (payload.get("populationExecutionFingerprint")
-                                or payload.get("population_execution_fingerprint"))
-        if supplied_fingerprint is not None and supplied_fingerprint != execution_fingerprint:
-            return {"ok": False, "errorCode": "execution_fingerprint_mismatch"}
         return {"ok": True, "compiled": compiled, "sources": normalized,
-                "relationBindings": normalized_bindings, "purpose": payload.get("purpose"),
-                "specHash": expected_hash, "executionFingerprint": execution_fingerprint}
+                "relationBindings": bindings, "purpose": payload.get("purpose"),
+                "specHash": expected_hash}
     except Exception:
         return {"ok": False, "errorCode": "invalid_command"}
 
@@ -237,7 +178,6 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     if not validated.get("ok"):
         return validated
     actor = command_dump.get("actorUserId") or command_dump.get("actor_user_id")
-    ai_extraction = (command_dump.get("payload") or {}).get("aiExtraction")
     compiled = validated["compiled"]
     per_concept: dict[str, list[dict]] = {}
     dataset_fingerprints: set[str] = set()
@@ -259,9 +199,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                     connection = owned_pool
                 output = await populate_document(
                     connection, entry, compiled["concepts"][entry["conceptId"]], actor,
-                    metadata_fetch=metadata_fetch,
-                    model_id=str(command_dump.get("modelId") or ""),
-                    ai_extraction=ai_extraction)
+                    metadata_fetch=metadata_fetch)
             finally:
                 if owned_pool is not None:
                     await owned_pool.close()
@@ -281,10 +219,6 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                 data = await (fetch or fetch_workspace_asset)(source, actor)
         except AssetFetchError as exc:
             return {"ok": False, "errorCode": exc.code}
-        try:
-            asset_ref = resolve_asset_ref(source)
-        except ValueError as exc:
-            return {"ok": False, "errorCode": str(exc) or "invalid_source"}
         temp_root = os.environ.get("SEMANTIC_TASK_TEMP_DIR")
         try:
             with tempfile.TemporaryDirectory(prefix="semantic-populate-",
@@ -292,35 +226,9 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                 artifact = Path(directory) / "dataset.parquet"
                 manifest = await asyncio.to_thread(
                     prepare or prepare_dataset_subprocess, source, options, data, artifact)
-                asset_ref["datasetRevisionId"] = manifest.get("datasetId")
                 columns = sorted(set(entry["columnMapping"]) | {SHEET_ROW_KEY})
-                offset = 0
-                while True:
-                    page = await asyncio.to_thread(
-                        query or query_parquet, artifact, columns=columns,
-                        limit=QUERY_ROW_LIMIT, offset=offset)
-                    mapping = entry["columnMapping"]
-                    constants = entry.get("constantMapping", {})
-                    rows = []
-                    for raw in page["rows"]:
-                        renamed: dict = {"_row": raw.get(SHEET_ROW_KEY), **constants}
-                        for source_column, attribute in mapping.items():
-                            if source_column in raw:
-                                renamed[attribute] = raw[source_column]
-                        rows.append(renamed)
-                    concept = compiled["concepts"][entry["conceptId"]]
-                    output = populate_concept_rows(
-                        concept, rows, {"assetRef": asset_ref,
-                                       "mappingVersion": entry["mappingVersion"],
-                                       "labelField": entry.get("labelField"),
-                                       "constantFields": list(constants)})
-                    per_concept.setdefault(entry["conceptId"], []).append(output)
-                    offset += page["returnedRows"]
-                    if page["returnedRows"] < QUERY_ROW_LIMIT:
-                        break
-                    if offset >= MAX_TOTAL_ASSERTIONS:
-                        complete_enumeration = False
-                        break
+                page = await asyncio.to_thread(
+                    query or query_parquet, artifact, columns=columns, limit=QUERY_ROW_LIMIT)
         except ValueError as exc:
             return {"ok": False, "errorCode": str(exc) or "parser_failed"}
         except AssetFetchError as exc:
@@ -328,6 +236,13 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         fingerprint = manifest.get("contentHash") if isinstance(manifest, dict) else None
         if isinstance(fingerprint, str) and fingerprint:
             dataset_fingerprints.add(fingerprint)
+        if page["returnedRows"] >= QUERY_ROW_LIMIT:
+            complete_enumeration = False
+        try:
+            asset_ref = resolve_asset_ref(source)
+        except ValueError as exc:
+            return {"ok": False, "errorCode": str(exc) or "invalid_source"}
+        asset_ref["datasetRevisionId"] = manifest.get("datasetId")
         observations.append({
             "assetRef": {key: asset_ref[key] for key in
                          ("workspaceId", "assetId", "assetVersionId") if key in asset_ref},
@@ -335,6 +250,20 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             "contentHash": manifest.get("contentHash"),
             "sizeBytes": manifest.get("sizeBytes"),
             "rowCount": manifest.get("rowCount")})
+        mapping = entry["columnMapping"]
+        rows = []
+        for raw in page["rows"]:
+            renamed: dict = {"_row": raw.get(SHEET_ROW_KEY)}
+            for source_column, attribute in mapping.items():
+                if source_column in raw:
+                    renamed[attribute] = raw[source_column]
+            rows.append(renamed)
+        concept = compiled["concepts"][entry["conceptId"]]
+        output = populate_concept_rows(
+            concept, rows, {"assetRef": asset_ref,
+                            "mappingVersion": entry["mappingVersion"],
+                            "labelField": entry.get("labelField")})
+        per_concept.setdefault(entry["conceptId"], []).append(output)
 
     counts = {"scanned": 0, "excluded": 0, "queryable": 0, "materialized": 0, "gaps": 0}
     merged_by_concept: dict[str, dict] = {}
@@ -379,13 +308,12 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     relationships: list[dict] = []
     for binding in validated["relationBindings"]:
         relation = compiled["relations"][binding.get("relationId")]
-        reference = binding["referenceField"]
-        target = binding["targetField"]
+        reference = binding.get("referenceField") or binding.get("reference_field")
         matched = match_relationships(
             relation,
             trimmed.get(relation["sourceConceptId"], []),
             trimmed.get(relation["targetConceptId"], []),
-            reference, target)
+            reference)
         relationships.extend(matched["relationships"])
         gaps.extend(matched["gaps"])
     if len(relationships) > MAX_TOTAL_RELATIONSHIPS:
@@ -400,9 +328,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                      "detail": f"per-source enumeration capped at {QUERY_ROW_LIMIT} rows"})
     counts["materialized"] = len(kept)
     counts["gaps"] = len(gaps)
-    return {"ok": True, "specHash": validated["specHash"],
-            "executionFingerprint": validated["executionFingerprint"],
-            "purpose": validated["purpose"],
+    return {"ok": True, "specHash": validated["specHash"], "purpose": validated["purpose"],
             "completeEnumeration": complete_enumeration, "entities": kept,
             "assertions": assertions, "relationships": relationships, "gaps": gaps,
             "counts": counts, "datasetFingerprints": sorted(dataset_fingerprints),
@@ -430,35 +356,6 @@ def summarize_job_result(revision_id: str, outcome: dict, persisted: dict) -> di
     }
 
 
-def is_whole_model_build(command_dump: dict) -> bool:
-    payload = command_dump.get("payload", {})
-    return payload.get("purpose") == "build" and (payload.get("scope") or {}).get("kind") == "model"
-
-
-async def finalize_whole_model_build(pool, command_dump: dict,  # type: ignore[no-untyped-def]
-                                     revision_id: str) -> dict | None:
-    if not is_whole_model_build(command_dump):
-        return None
-    import asyncpg
-    import os
-
-    from app.population.age_projection import finalize_draft_revision
-
-    database_url = os.environ.get("SEMANTIC_AGEGRAPH_DATABASE_URL")
-    if not database_url:
-        raise RuntimeError("age_projection_unavailable")
-    age_pool = await asyncpg.create_pool(
-        database_url, min_size=1, max_size=1, command_timeout=30,
-        server_settings={"application_name": "semantic-model-population-worker-age",
-                         "search_path": 'ag_catalog, "$user", public',
-                         "statement_timeout": "30s", "lock_timeout": "5s",
-                         "idle_in_transaction_session_timeout": "30s"})
-    try:
-        return await finalize_draft_revision(pool, age_pool, revision_id)
-    finally:
-        await age_pool.close()
-
-
 async def persist_population_revision(pool, command_dump: dict, outcome: dict) -> str:
     """Persist a computed population as an inert data revision (P6A, P6.16).
 
@@ -480,8 +377,7 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict) -
     model_version_id = payload.get("modelVersionId") or payload.get("model_version_id", "")
     home_ws = command_dump.get("workspaceId") or command_dump.get("workspace_id", "")
     correction_sequence = await model_correction_sequence(pool, model_id)
-    execution_fingerprint = outcome["executionFingerprint"]
-    revision_id = revision_id_for(model_version_id, execution_fingerprint,
+    revision_id = revision_id_for(model_version_id, outcome["specHash"],
                                   outcome.get("datasetFingerprints", []),
                                   correction_sequence)
     await mirror_specification(pool, home_workspace_id=home_ws, model_id=model_id,
@@ -492,9 +388,8 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict) -
                  "gapKinds": sorted({gap.get("kind") for gap in outcome.get("gaps", [])}),
                  "documents": outcome.get("documentCoverage", [])}
     await create_data_revision(pool, revision_id=revision_id, model_id=model_id,
-                                model_version_id=model_version_id,
-                                spec_hash=outcome["specHash"],
-                                execution_fingerprint=execution_fingerprint,
+                               model_version_id=model_version_id,
+                               spec_hash=outcome["specHash"],
                                source_observations=outcome.get("sourceObservations", []),
                                correction_sequence=correction_sequence,
                                coverage=coverage)
@@ -573,10 +468,6 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             revision_id = await persist_population_revision(pool, lease.payload, outcome)
             persisted = await count_revision_rows(pool, revision_id)
             result = summarize_job_result(revision_id, outcome, persisted)
-            finalized = await finalize_whole_model_build(pool, lease.payload, revision_id)
-            if finalized is not None:
-                result.update({"projectionRef": finalized["projectionRef"],
-                               "boundEnvironment": finalized["environment"]})
         try:
             await repository.complete_task(task_id=task_id, lease_owner=lease_owner,
                                            lease_epoch=lease.lease_epoch,

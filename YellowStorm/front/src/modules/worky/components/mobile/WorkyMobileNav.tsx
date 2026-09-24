@@ -6,19 +6,16 @@ function NavButton({
   icon: Icon,
   label,
   onClick,
-  disabled = false,
 }: {
   icon: typeof Home;
   label: string;
   onClick: () => void;
-  disabled?: boolean;
 }): JSX.Element {
   return (
     <button
       type="button"
       onClick={onClick}
-      disabled={disabled}
-      className="flex min-w-12 flex-col items-center gap-1 text-[10px] font-medium text-muted-foreground transition-colors enabled:hover:text-foreground disabled:opacity-40"
+      className="flex min-w-12 flex-col items-center gap-1 text-[10px] font-medium text-muted-foreground transition-colors hover:text-foreground"
     >
       <Icon className="size-[22px]" />
       {label}
@@ -36,12 +33,10 @@ export function WorkyMobileNav({
   onHome,
   onVoice,
   onChat,
-  canOperate = true,
 }: {
   onHome: () => void;
   onVoice: () => void;
   onChat: () => void;
-  canOperate?: boolean;
 }): JSX.Element {
   const { t } = useModuleTranslation('worky');
 
@@ -52,14 +47,13 @@ export function WorkyMobileNav({
         {/* Reserves the centre column so the raised mic never sits over a label.
             Its width matches the mic, keeping the button exactly centred. */}
         <span className="w-16" aria-hidden />
-        <NavButton icon={MessageCircle} label={t('nav.chat')} onClick={onChat} disabled={!canOperate} />
+        <NavButton icon={MessageCircle} label={t('nav.chat')} onClick={onChat} />
 
         <button
           type="button"
           aria-label={t('nav.voice')}
           onClick={onVoice}
-          disabled={!canOperate}
-          className="absolute -top-4 left-1/2 flex size-16 -translate-x-1/2 items-center justify-center rounded-full border-4 border-background bg-primary text-primary-foreground shadow-lg disabled:opacity-40"
+          className="absolute -top-4 left-1/2 flex size-16 -translate-x-1/2 items-center justify-center rounded-full border-4 border-background bg-primary text-primary-foreground shadow-lg"
         >
           <Mic className="size-7" />
         </button>

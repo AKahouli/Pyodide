@@ -4,14 +4,13 @@ import type { SegmentId } from './consoleState';
 
 const SEGMENT_LABELS: Record<SegmentId, ModuleTranslationKey<'playbook'>> = {
   all: 'console.segment.all',
-  shared: 'console.segment.shared',
   live: 'console.segment.live',
   fav: 'console.segment.fav',
   scheduled: 'console.segment.scheduled',
   never: 'console.segment.never',
 };
 
-const ORDER: SegmentId[] = ['all', 'shared', 'live', 'fav', 'scheduled', 'never'];
+const ORDER: SegmentId[] = ['all', 'live', 'fav', 'scheduled', 'never'];
 
 export function SegmentTabs({
   counts,

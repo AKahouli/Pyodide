@@ -1118,8 +1118,6 @@ export interface PlaybookSummary {
   definitionRevision?: number;
   taskCount: number;
   isFavorite: boolean;
-  accessLevel?: PlaybookPermissionLevel;
-  shareInfo?: PlaybookSharedInfo | null;
   /** True when the playbook has an enabled execution schedule (list API). */
   scheduleEnabled: boolean;
   automatedTriggerType?: 'schedule' | 'mail' | null;
@@ -1196,12 +1194,6 @@ export interface PlaybookShareEntry {
   permission: AssignablePlaybookPermission;
   user: PlaybookShareUser;
   createdAt: string;
-}
-
-export interface PlaybookSharedInfo {
-  shareId: string;
-  permission: AssignablePlaybookPermission;
-  sharedBy: PlaybookShareUser;
 }
 
 export interface PublicReasoningTraceItem {

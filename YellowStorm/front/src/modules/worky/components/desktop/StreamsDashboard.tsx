@@ -17,7 +17,6 @@ import { cn } from '@/lib/utils';
 import { useDeleteStream, useStreams } from '../../query/hooks';
 import { NewStreamDialog } from '../NewStreamDialog';
 import { StreamCard } from '../StreamCard';
-import { ShareStreamDialog } from '../ShareStreamDialog';
 import {
   STREAM_STATUS_GROUPS,
   sumStatusCounts,
@@ -48,7 +47,6 @@ export function StreamsDashboard(): JSX.Element {
   const [createdTo, setCreatedTo] = useState('');
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
-  const [sharing, setSharing] = useState<{ id: string; title: string } | null>(null);
 
   // Debounce the free-text search and reset to page 1 when it settles.
   useEffect(() => {
@@ -64,8 +62,7 @@ export function StreamsDashboard(): JSX.Element {
       search: debouncedSearch || undefined,
       page,
       limit: PAGE_SIZE,
-      status: group && group !== 'attention' ? STREAM_STATUS_GROUPS[group] : undefined,
-      attention: group === 'attention' ? true : undefined,
+      status: group ? STREAM_STATUS_GROUPS[group] : undefined,
       sort,
       sortDir,
       createdFrom: createdFrom || undefined,
@@ -79,9 +76,22 @@ export function StreamsDashboard(): JSX.Element {
 
   const streams = envelope?.data ?? [];
   const statusCounts = envelope?.meta.statusCounts ?? {};
-  const attentionCount = envelope?.meta.attentionCount ?? 0;
   const totalPages = envelope?.meta.totalPages ?? 0;
 
+  const kpiTotal = Object.values(statusCounts).reduce((sum, n) => sum + n, 0);
+  const kpis = [
+    {
+      key: 'active',
+      label: t('dashboard.kpi.active'),
+      value: sumStatusCounts(statusCounts, STREAM_STATUS_GROUPS.active),
+    },
+    { key: 'total', label: t('dashboard.kpi.total'), value: kpiTotal },
+    {
+      key: 'attention',
+      label: t('dashboard.kpi.attention'),
+      value: sumStatusCounts(statusCounts, STREAM_STATUS_GROUPS.attention),
+    },
+  ];
 
   const selectGroup = (next: StreamStatusGroup | null): void => {
     setGroup(next);
@@ -126,7 +136,18 @@ export function StreamsDashboard(): JSX.Element {
         </div>
       </div>
 
-      <p className='text-sm text-muted-foreground'>{t('command.portfolio.summary')}</p>
+      <div className="grid grid-cols-3 gap-4">
+        {kpis.map((k) => (
+          <div
+            key={k.key}
+            data-testid={`kpi-${k.key}`}
+            className="rounded-2xl border border-border bg-card p-5"
+          >
+            <div className="text-sm text-muted-foreground">{k.label}</div>
+            <div className="mt-2 text-3xl font-bold text-foreground">{k.value}</div>
+          </div>
+        ))}
+      </div>
 
       {/* Filter + sort toolbar */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -157,7 +178,7 @@ export function StreamsDashboard(): JSX.Element {
                   : 'border-border text-muted-foreground hover:bg-accent/40',
               )}
             >
-              {t(`dashboard.filters.${g}`)} {envelope ? `(${g === 'attention' ? attentionCount : sumStatusCounts(statusCounts, STREAM_STATUS_GROUPS[g])})` : ''}
+              {t(`dashboard.filters.${g}`)} ({sumStatusCounts(statusCounts, STREAM_STATUS_GROUPS[g])})
             </button>
           ))}
         </div>
@@ -236,7 +257,6 @@ export function StreamsDashboard(): JSX.Element {
               stream={s}
               onOpen={() => navigate(`/worky/${s.id}`)}
               onDelete={() => void onDelete(s)}
-              onShare={() => setSharing({ id: s.id, title: s.title })}
               isDeleting={deleteStream.isPending}
             />
           ))}
@@ -274,14 +294,6 @@ export function StreamsDashboard(): JSX.Element {
       ) : null}
 
       <NewStreamDialog open={createOpen} onOpenChange={setCreateOpen} />
-      {sharing ? (
-        <ShareStreamDialog
-          streamId={sharing.id}
-          title={sharing.title}
-          open
-          onOpenChange={(open) => { if (!open) setSharing(null); }}
-        />
-      ) : null}
     </div>
   );
 }

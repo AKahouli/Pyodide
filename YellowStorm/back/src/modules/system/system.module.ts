@@ -22,7 +22,6 @@ import { ConversationSettingsService } from './conversation-settings.service';
 import { AdminConversationSettingsController } from './controllers/admin-conversation-settings.controller';
 import { FeatureVisibilityService } from './feature-visibility.service';
 import { PlatformCopilotBootstrapService } from './services/platform-copilot-bootstrap.service';
-import { SemanticExtractionAgentBootstrapService } from './services/semantic-extraction-agent.bootstrap';
 import { AppearanceLogoService } from './services/appearance-logo.service';
 import { AppearanceLogoController } from './controllers/appearance-logo.controller';
 import { NavigationSettingsService } from './navigation-settings.service';
@@ -75,7 +74,6 @@ import { PgAppearanceLogoStore } from './persistence/pg-appearance-logo.store';
     FeatureVisibilityService,
     NavigationSettingsService,
     PlatformCopilotBootstrapService,
-    SemanticExtractionAgentBootstrapService,
     {
       provide: APP_GUARD,
       useClass: MaintenanceGuard,

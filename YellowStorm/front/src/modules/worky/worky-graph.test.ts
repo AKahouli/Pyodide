@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildWorkyGraph, traceWorkyDependencies } from './worky-graph';
+import { buildWorkyGraph } from './worky-graph';
 import type { WorkyTask } from './types';
 
 function task(overrides: Partial<WorkyTask>): WorkyTask {
@@ -55,15 +55,5 @@ describe('buildWorkyGraph', () => {
     const legacy = task({ id: 'a' });
     delete (legacy as { dependsOnStepIds?: string[] }).dependsOnStepIds;
     expect(() => buildWorkyGraph([legacy])).not.toThrow();
-  });
-
-  it('traces only the selected upstream or downstream chain through branches', () => {
-    const edges = [
-      { id: 'a-b', source: 'a', target: 'b' },
-      { id: 'b-c', source: 'b', target: 'c' },
-      { id: 'a-d', source: 'a', target: 'd' },
-    ];
-    expect([...traceWorkyDependencies(edges, 'b', 'upstream')].sort()).toEqual(['a', 'b']);
-    expect([...traceWorkyDependencies(edges, 'b', 'downstream')].sort()).toEqual(['b', 'c']);
   });
 });

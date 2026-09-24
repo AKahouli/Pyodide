@@ -1,5 +1,4 @@
 import { FlowNode, ControlEdge, DataBinding, FlowTriggerConfig, FlowSettings, type AdvisorScoringMode } from '../schemas/playbook-flow.schema';
-import type { ISharedPlaybookInfo, PlaybookPermissionLevel } from './playbook-share.interface';
 
 export interface IFlowActiveReplay {
   id: string;
@@ -20,8 +19,6 @@ export interface IFlowResponse {
   definitionRevision: number;
   name: string;
   description?: string;
-  accessLevel?: PlaybookPermissionLevel;
-  shareInfo?: ISharedPlaybookInfo | null;
   executionStatus?: 'queued' | 'running' | 'pending_approval' | 'completed' | 'failed' | 'cancelled' | null;
   lastExecutionAt?: Date | null;
   triggerConfig?: FlowTriggerConfig;

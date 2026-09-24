@@ -45,13 +45,13 @@ export class WorkyTurnKickoffService {
     const turnId = input.turnId ?? randomUUID();
     const context = await this.streams.ensureKickoffContext(input.streamId, input.userId);
     const [agents, connectors, user] = await Promise.all([
-      this.turnContext.resolveWorkyAgentsStrict(context.ownerUserId),
-      this.turnContext.resolveConnectorsStrict(context.ownerUserId),
+      this.turnContext.resolveWorkyAgentsStrict(input.userId),
+      this.turnContext.resolveConnectorsStrict(input.userId),
       input.requester ? Promise.resolve(input.requester) : this.users.findById(input.userId),
     ]);
     return {
       streamId: input.streamId,
-      userId: context.ownerUserId,
+      userId: input.userId,
       content: input.content,
       turnId,
       aiSessionId: context.aiSessionId,

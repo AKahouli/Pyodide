@@ -48,9 +48,8 @@ def test_exact_reference_agrees_with_graph_edges():
     targets = [{"entityId": "e1", "identity": {"customer_id": "c001"}, "attributes": {}}]
     sources = [{"entityId": "e2", "identity": {"x": "1"},
                 "attributes": {"ref": " C001 "}}]
-    relation = {"relationId": "r1", "matchingStrategy": "exact", "cardinality": "many_to_one"}
-    assert len(match_relationships(
-        relation, sources, targets, "ref", "customer_id")["relationships"]) == 1
+    relation = {"relationId": "r1", "matchingStrategy": "exact"}
+    assert len(match_relationships(relation, sources, targets, "ref")["relationships"]) == 1
     projections = build_entity_projections(targets, model_id="m1", revision_id="dr_1")
     found = match_candidates(projections, " C001 ", "exact")
     assert [c["entityId"] for c in found["candidates"]] == ["e1"]

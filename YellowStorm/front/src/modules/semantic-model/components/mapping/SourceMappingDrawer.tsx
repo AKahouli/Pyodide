@@ -28,7 +28,6 @@ export interface SourceMappingTarget {
   path?: string;
   conceptId?: string;
   mapping?: ConceptSourceMapping;
-  bulkEdit?: boolean;
 }
 
 export function sourceMappingTargetFromResource(resource: Extract<KnowledgeResource, { kind: 'document' }>, conceptId?: string): SourceMappingTarget {

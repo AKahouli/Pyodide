@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getStreams, searchUsers } from './api';
+import { getStreams } from './api';
 import apiClient from '@/lib/api/client';
 
 vi.mock('@/lib/api/client', () => ({ default: { get: vi.fn() } }));
@@ -21,19 +21,5 @@ describe('getStreams', () => {
     });
     expect(result.meta.total).toBe(25);
     expect(result.data).toHaveLength(1);
-  });
-});
-
-describe('searchUsers', () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it('queries the shared user directory and unwraps results', async () => {
-    const users = [{ id: 'u1', email: 'member@example.com' }];
-    (apiClient.get as any).mockResolvedValue({ data: { data: users } });
-
-    await expect(searchUsers('member', 8)).resolves.toEqual(users);
-    expect(apiClient.get).toHaveBeenCalledWith('/users/search', {
-      params: { q: 'member', limit: 8 },
-    });
   });
 });

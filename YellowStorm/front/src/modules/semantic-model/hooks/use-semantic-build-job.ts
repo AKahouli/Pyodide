@@ -13,14 +13,14 @@ const BUILD_POLL_INTERVAL_MS = 3_000;
  * (completed / failed) the polling stops automatically and the graph query is
  * invalidated so the canvas refreshes without a page reload.
  */
-export function useSemanticBuildJob(modelId: string | undefined, enabled = true) {
+export function useSemanticBuildJob(modelId: string | undefined) {
   const queryClient = useQueryClient();
   const previousStatusRef = useRef<SemanticBuildJob['status'] | null>(null);
 
   const query = useQuery({
     queryKey: semanticModelBuildQueryKey(modelId),
     queryFn: () => semanticModelApi.getLatestBuild(modelId ?? ''),
-    enabled: Boolean(modelId) && enabled,
+    enabled: Boolean(modelId),
     refetchInterval: (query) => {
       const data = query.state.data as SemanticBuildJob | null | undefined;
       return data?.status === 'running' ? BUILD_POLL_INTERVAL_MS : false;

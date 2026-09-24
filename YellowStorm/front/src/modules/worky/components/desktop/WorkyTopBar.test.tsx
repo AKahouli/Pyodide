@@ -30,11 +30,10 @@ vi.mock('../../query/hooks', () => ({
 
 import { WorkyTopBar } from './WorkyTopBar';
 
-const openGraph = vi.fn();
 const renderTopBar = () =>
   render(
     <MemoryRouter>
-      <WorkyTopBar streamId="s1" onOpenGraph={openGraph} graphAvailable />
+      <WorkyTopBar streamId="s1" />
     </MemoryRouter>,
   );
 
@@ -43,12 +42,6 @@ describe('WorkyTopBar', () => {
     renderTopBar();
     expect(screen.getByText('Worky')).toBeTruthy();
     expect(screen.getByText('Q3 Market Expansion')).toBeTruthy();
-  });
-
-  it('opens the graph from the header in one click', async () => {
-    renderTopBar();
-    await userEvent.click(screen.getByRole('button', { name: 'graph.openFromHeader' }));
-    expect(openGraph).toHaveBeenCalledOnce();
   });
 
   it('does not duplicate search, budget, notifications or profile', () => {

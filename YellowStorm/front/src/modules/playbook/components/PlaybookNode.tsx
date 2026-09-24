@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useState, useCallback, useEffect } from 'react';
 import { type NodeProps, Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
-import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X, Sparkles, Scissors, ClipboardPaste, FastForward, Repeat2, MoreVertical, Plus, CheckCircle2, AlertTriangle, Zap, ClipboardCheck, Square } from 'lucide-react';
+import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X, Sparkles, Scissors, ClipboardPaste, FastForward, Repeat2, MoreVertical, Plus, CheckCircle2, AlertTriangle, Zap, ClipboardCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -403,9 +403,7 @@ function CompactCardBody({
   isEnabled,
   canExecute,
   hasResults,
-  canStop,
   actions,
-  onStop,
   onAddNextStep,
   onViewResults,
   headerBgClass,
@@ -420,9 +418,7 @@ function CompactCardBody({
   isEnabled: boolean;
   canExecute: boolean;
   hasResults: boolean;
-  canStop: boolean;
   actions: NodeContextMenuActions | null;
-  onStop: () => void;
   onAddNextStep: (anchor: { x: number; y: number }) => void;
   onViewResults: () => void;
   headerBgClass: string;
@@ -439,7 +435,7 @@ function CompactCardBody({
   const ReadinessIcon = readinessConfig.icon;
 
   return (
-    <div className={cn('relative flex min-h-full flex-1 flex-col gap-1 px-3 py-2.5 transition-colors duration-300', headerBgClass)}>
+    <div className={cn('relative flex flex-col gap-1 px-3 py-2.5 transition-colors duration-300', headerBgClass)}>
       <div className="flex items-start gap-2">
         <KindIcon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
         <NodeTitle className="min-w-0 flex-1 text-sm font-semibold leading-snug line-clamp-2" title={title}>
@@ -500,46 +496,6 @@ function CompactCardBody({
       )}
       {advisor}
       </div>
-      <div className="nodrag nopan mt-auto flex items-center justify-center gap-2 border-t border-border/50 pt-2">
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 text-muted-foreground hover:text-primary"
-              disabled={!canExecute}
-              aria-label={t('node.executeStep')}
-              onClick={(event) => {
-                event.stopPropagation();
-                actions?.onExecuteStep(id);
-              }}
-            >
-              <Play className="h-3.5 w-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">{t('node.executeStep')}</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 text-muted-foreground hover:text-destructive"
-              disabled={!canStop}
-              aria-label={t('toolbar.stop')}
-              onClick={(event) => {
-                event.stopPropagation();
-                onStop();
-              }}
-            >
-              <Square className="h-3.5 w-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">{t('toolbar.stop')}</TooltipContent>
-        </Tooltip>
-      </div>
       <button
         type="button"
         className="nodrag nopan absolute -bottom-3 right-3 z-20 flex h-6 w-6 items-center justify-center rounded-full border bg-background shadow-sm transition-colors hover:border-primary/60 hover:text-primary"
@@ -587,7 +543,6 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const bindResourceToInputPort = usePlaybookStore((s) => s.bindResourceToInputPort);
   const updateDataBindings = usePlaybookStore((s) => s.updateDataBindings);
   const openPortInspection = usePlaybookStore((s) => s.openPortInspection);
-  const stopExecution = usePlaybookStore((s) => s.stopExecution);
 
   const [isDragOver, setIsDragOver] = useState(false);
   const [dragOverPortId, setDragOverPortId] = useState<string | null>(null);
@@ -601,11 +556,14 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const inputPorts = migratedTask.inputPorts ?? [];
   const outputPorts = migratedTask.outputPorts ?? [];
   const nodeTaskResult = executionTaskResults?.find((result) => result.taskId === id);
+  const resultOutputPortId = nodeTaskResult
+    ? nodeTaskResult.artifacts?.find((artifact) => outputPorts.some((port) => port.id === artifact.portId))?.portId
+      ?? outputPorts[0]?.id
+    : undefined;
   const runtimeSourceHandleId = typeof data.dynamicReasoningRuntimeSourceHandleId === 'string'
     ? data.dynamicReasoningRuntimeSourceHandleId
     : null;
   const hasMultiplePorts = inputPorts.length > 1 || outputPorts.length > 1;
-  const nodeMinHeight = Math.max(80, (Math.max(inputPorts.length, outputPorts.length) + 1) * 32) * 1.5;
 
   const currentPlaybook = usePlaybookStore((s) => s.currentPlaybook);
   const dataBindings = currentPlaybook?.dataBindings ?? [];
@@ -937,11 +895,10 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
       <ContextMenuTrigger asChild>
         <Node
           handles={false}
-          style={{ minHeight: nodeMinHeight }}
           className={cn(
             'group',
             isCompact && '!w-[200px]',
-            useCompactCard && '!w-[240px] flex flex-col',
+            useCompactCard && '!w-[240px]',
             ringClass,
             selectedClass,
             disabledClass,
@@ -1037,6 +994,12 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                 className="absolute right-0 z-10 flex items-center -translate-y-1/2 pointer-events-auto"
                 style={{ top: `${getPortTopPercent(idx, outputPorts.length)}%` }}
               >
+                {useCompactCard && port.id === resultOutputPortId && (
+                  <div className="absolute bottom-[calc(100%+0.375rem)] left-2 z-30">
+                    <NodeOutputPreview compact result={nodeTaskResult} executionId={nodeExecution?.id}
+                      onDetails={() => openExecutionDetailTab('results', id)} />
+                  </div>
+                )}
                 <Handle
                   id={port.id}
                   type="source"
@@ -1068,8 +1031,8 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
             <CompactCardBody
               id={id}
               title={data.title || t('node.untitled')}
-              outputPreview={<NodeOutputPreview compact result={nodeTaskResult}
-                executionId={nodeExecution?.id} onDetails={() => openExecutionDetailTab('results', id)} />}
+              outputPreview={outputPorts.length === 0 ? <NodeOutputPreview compact result={nodeTaskResult}
+                executionId={nodeExecution?.id} onDetails={() => openExecutionDetailTab('results', id)} /> : undefined}
               status={isDesignMode ? undefined : status}
               advisor={((judgeStatus && judgeStatus !== 'idle') || judgeResult) ? (
                 <button
@@ -1102,13 +1065,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
               canExecute={
                 isEnabled && isConfigured && Boolean(actions?.canExecute) && !actions?.isExecuting
               }
-              canStop={Boolean(actions?.isExecuting && nodeExecution?.id)}
               hasResults={Boolean(status && status !== 'pending' && status !== 'running')}
-              onStop={() => {
-                if (nodeExecution?.id && currentPlaybook?.id) {
-                  void stopExecution(currentPlaybook.id, nodeExecution.id);
-                }
-              }}
               onViewResults={() => openExecutionDetailTab('results', id)}
               actions={actions}
               onAddNextStep={(anchor) => nodeDataActions?.onAddNextStep?.(id, anchor)}
@@ -1422,35 +1379,22 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className={cn(
-                        'h-7 w-7 text-muted-foreground',
-                        actions?.isExecuting ? 'hover:text-destructive' : 'hover:text-primary',
-                      )}
-                      aria-label={actions?.isExecuting ? t('toolbar.stop') : t('node.executeStep')}
-                      disabled={actions?.isExecuting
-                        ? !nodeExecution?.id
-                        : !isEnabled || !isConfigured || !actions?.canExecute}
+                      className="h-7 w-7 text-muted-foreground hover:text-primary"
+                      aria-label={t('node.executeStep')}
+                      disabled={!isEnabled || !isConfigured || !actions?.canExecute || actions?.isExecuting}
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (actions?.isExecuting) {
-                          if (nodeExecution?.id && currentPlaybook?.id) {
-                            void stopExecution(currentPlaybook.id, nodeExecution.id);
-                          }
-                          return;
-                        }
                         actions?.onExecuteStep(id);
                       }}
                     >
-                      {actions?.isExecuting ? (
-                        <Square className="h-3.5 w-3.5" />
+                      {isStepRunning ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : (
                         <Play className="h-3.5 w-3.5" />
                       )}
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    {actions?.isExecuting ? t('toolbar.stop') : t('node.executeStep')}
-                  </TooltipContent>
+                  <TooltipContent side="bottom">{t('node.executeStep')}</TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>

@@ -116,16 +116,6 @@ export class WorkyEventService implements OnModuleDestroy {
     }
   }
 
-  disconnectUserFromStream(userId: string, streamId: string): void {
-    const connectionIds = [...(this.streamConnections.get(`${userId}:${streamId}`) ?? [])];
-    for (const connectionId of connectionIds) {
-      const connection = this.connections.get(connectionId);
-      connection?.disconnect$.next();
-      connection?.subject.complete();
-      this.removeConnection(userId, streamId, connectionId);
-    }
-  }
-
   /** Registers a hook called whenever a manager (AI) message is persisted. */
   registerManagerMessageHook(hook: ManagerMessageHook): void {
     this.managerMessageHooks.push(hook);
@@ -145,26 +135,33 @@ export class WorkyEventService implements OnModuleDestroy {
     }
   }
 
-  /** Publish an event to every authorized live subscriber of the stream. */
+  /**
+   * Publish an event to every open pipe for one (userId, streamId) pair.
+   * No-op when the user has no live connection — the REST endpoints remain
+   * the source of truth on reconnect.
+   */
   emit(userId: string, streamId: string, event: Omit<WorkyEvent, 'streamId'>): void {
-    const conns = [...this.connections.values()].filter((conn) => conn.streamId === streamId);
+    const userKey = `${userId}:${streamId}`;
+    const conns = this.streamConnections.get(userKey);
     this.logger.log('[worky-sse] emit', {
       userId,
       streamId,
       type: event.type,
-      connectionCount: conns.length,
+      connectionCount: conns?.size ?? 0,
     });
-    if (conns.length === 0) return;
+    if (!conns || conns.size === 0) return;
     const enriched: WorkyEvent = { ...event, streamId };
-    for (const conn of conns) {
+    for (const connectionId of [...conns]) {
+      const conn = this.connections.get(connectionId);
+      if (!conn) continue;
       try {
         conn.subject.next(enriched);
       } catch (err) {
         this.logger.warn('Failed to push Worky SSE event', {
-          connectionId: conn.connectionId,
+          connectionId,
           error: (err as Error).message,
         });
-        this.removeConnection(conn.userId, streamId, conn.connectionId);
+        this.removeConnection(userId, streamId, connectionId);
       }
     }
   }

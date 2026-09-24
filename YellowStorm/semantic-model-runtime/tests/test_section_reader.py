@@ -65,8 +65,8 @@ def test_structural_closure_includes_descendants_and_reports_missing():
 @pytest.mark.asyncio
 async def test_get_outline_is_bounded_and_flags_truncation():
     conn = FakeConnection(sections=[_section(1, "sec_1", None), _section(2, "sec_2", "1", 1)])
-    outline = await get_outline(conn, document_pk="doc-42")
-    assert outline["documentPk"] == "doc-42"
+    outline = await get_outline(conn, document_pk=42)
+    assert outline["documentPk"] == 42
     assert outline["roots"] == [1]
     assert outline["truncated"] is False
 

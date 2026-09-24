@@ -37,14 +37,6 @@ async def test_exact_search_is_scoped_and_groups_block_hits_by_section():
 
 
 @pytest.mark.asyncio
-async def test_exact_search_accepts_opaque_document_keys():
-    conn = FakeConnection()
-    result = await search_exact(conn, document_pk="doc-42", value="contract number")
-    assert result["documentPk"] == "doc-42"
-    assert conn.calls[0][1][0] == "doc-42"
-
-
-@pytest.mark.asyncio
 async def test_exact_search_flags_joined_row_limit_cut():
     conn = FakeConnection(rows=[_row(i, f"sec_{i}") for i in range(1, 27)])
     result = await search_exact(conn, document_pk=42, value="x", limit=25)

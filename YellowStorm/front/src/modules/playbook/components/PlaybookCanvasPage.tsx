@@ -9,7 +9,6 @@ import { PlaybookStarterPanel } from './PlaybookStarterPanel';
 import '@xyflow/react/dist/style.css';
 
 import { Button } from '@/components/ui/button';
-import { useIsMobile } from '@/hooks/use-mobile';
 import { useSidebar } from '@/components/ui/sidebar';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -674,7 +673,6 @@ function PlaybookCanvasInner() {
   }, [searchParams, selectStep, setSearchParams]);
 
   const reactFlow = useReactFlow();
-  const isMobile = useIsMobile();
   const canvasChromeRef = useRef<HTMLDivElement | null>(null);
   const floatingToolbarRef = useRef<PlaybookCanvasFloatingToolbarHandle | null>(null);
   const canvasViewModeRef = useRef<HTMLDivElement | null>(null);
@@ -682,7 +680,6 @@ function PlaybookCanvasInner() {
   const previousHumanInputKeyRef = useRef<string | null>(null);
   const viewportInitializedPlaybookRef = useRef<string | null>(null);
   const autoLayoutAppliedPlaybookRef = useRef<string | null>(null);
-  const previousIsMobileRef = useRef(isMobile);
   const globalSidebarOpenRef = useRef(setGlobalSidebarOpen);
 
   // ---- Shared next-step picker (creation entry points) ----
@@ -698,9 +695,9 @@ function PlaybookCanvasInner() {
 
   const [compactCards, setCompactCards] = useState<boolean>(() => {
     try {
-      return localStorage.getItem('ys_playbook_compact_cards') === '1';
+      return localStorage.getItem('ys_playbook_compact_cards') !== '0';
     } catch {
-      return false;
+      return true;
     }
   });
 
@@ -795,11 +792,10 @@ function PlaybookCanvasInner() {
     insertTaskOnEdge,
   } = usePlaybookCanvas(triggerNodeActions, { onConnectDropOnEmpty: openPickerFromEmptyDrop });
 
-  const fitCanvasToNodes = useCallback((targetNodes?: Array<{ id: string }>) => {
+  const fitCanvasToNodes = useCallback(() => {
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
         void reactFlow.fitView({
-          nodes: targetNodes,
           padding: 0.24,
           duration: 300,
           maxZoom: 1.1,
@@ -1039,20 +1035,6 @@ function PlaybookCanvasInner() {
 
   const [triggersSheetOpen, setTriggersSheetOpen] = useState(false);
   const [executionPanelCollapsed, setExecutionPanelCollapsed] = useState(true);
-
-  useEffect(() => {
-    if (previousIsMobileRef.current === isMobile) return;
-    previousIsMobileRef.current = isMobile;
-    if (nodes.length === 0) return;
-    const mobileFocusNode = nodes.find((node) => node.selected)
-      ?? nodes.find((node) => node.type !== 'playbookTrigger' && node.type !== 'playbookIteratorContainer');
-    if (isMobile) {
-      setExecutionPanelCollapsed(true);
-      setExecutionPanelOpen(false);
-      setDesignerOpen(false);
-    }
-    fitCanvasToNodes(isMobile && mobileFocusNode ? [mobileFocusNode] : undefined);
-  }, [fitCanvasToNodes, isMobile, nodes, setDesignerOpen, setExecutionPanelOpen]);
   const [flowSettingsOpen, setFlowSettingsOpen] = useState(false);
   const [importWarningOpen, setImportWarningOpen] = useState(false);
   const [pendingImport, setPendingImport] = useState<PlaybookDefinitionExport | null>(null);
@@ -1265,7 +1247,7 @@ function PlaybookCanvasInner() {
         const initialMode = getInitialPlaybookPageMode(latestExecution?.status);
         setPageMode(initialMode);
         setExecutionPanelOpen(initialMode === 'run');
-        setExecutionPanelCollapsed(initialMode !== 'run' || window.matchMedia('(max-width: 767px)').matches);
+        setExecutionPanelCollapsed(initialMode !== 'run');
         if (initialMode === 'run' && latestExecution) {
           viewExecutionInPanel(latestExecution.id);
         }
@@ -1388,10 +1370,10 @@ function PlaybookCanvasInner() {
   }, [id, isGeneratingRoute, loadedPlaybookId, nodes.length, playbookLoading, playbook?.id, reactFlow]);
 
   useEffect(() => {
-    if (!isMobile && executionPanelOpen && pageMode === 'run' && executionPanelCollapsed) {
+    if (executionPanelOpen && pageMode === 'run' && executionPanelCollapsed) {
       setExecutionPanelCollapsed(false);
     }
-  }, [executionPanelOpen, pageMode, executionPanelCollapsed, isMobile]);
+  }, [executionPanelOpen, pageMode, executionPanelCollapsed]);
 
   // Fallback polling while an execution is active or while the run view is
   // recovering from a missed realtime handoff. This keeps both the canvas and

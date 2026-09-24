@@ -50,7 +50,7 @@ export class WorkyMessage extends Document {
 
 export const WorkyMessageSchema = SchemaFactory.createForClass(WorkyMessage);
 
-WorkyMessageSchema.index({ streamId: 1, createdAt: 1, _id: 1 });
+WorkyMessageSchema.index({ streamId: 1, createdAt: 1 });
 
 WorkyMessageSchema.index(
   { streamId: 1, externalId: 1 },

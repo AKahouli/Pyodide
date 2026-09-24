@@ -26,12 +26,10 @@ import type {
   PaginatedStreams,
   WorkyStream,
   WorkyStreamQueryParams,
-  WorkyStreamShare,
   WorkyTask,
   WorkyTaskResult,
   WorkyTaskResultContent,
 } from './types';
-import type { UserSearchResult } from '@/modules/agent/types';
 
 function unwrap<T>(response: { data: ApiResponse<T> }): T {
   return response.data.data;
@@ -69,49 +67,6 @@ export async function updateStream(
   const response = await apiClient.patch<ApiResponse<WorkyStream>>(
     API_ENDPOINTS.worky.streamById(streamId),
     data,
-  );
-  return unwrap(response);
-}
-
-export async function getStreamShares(streamId: string): Promise<WorkyStreamShare[]> {
-  const response = await apiClient.get<ApiResponse<WorkyStreamShare[]>>(
-    API_ENDPOINTS.worky.streamShares(streamId),
-  );
-  return unwrap(response);
-}
-
-export async function createStreamShare(
-  streamId: string,
-  email: string,
-  permission: 'read' | 'write',
-): Promise<WorkyStreamShare> {
-  const response = await apiClient.post<ApiResponse<WorkyStreamShare>>(
-    API_ENDPOINTS.worky.streamShares(streamId),
-    { email, permission },
-  );
-  return unwrap(response);
-}
-
-export async function updateStreamShare(
-  streamId: string,
-  shareId: string,
-  permission: 'read' | 'write',
-): Promise<WorkyStreamShare> {
-  const response = await apiClient.patch<ApiResponse<WorkyStreamShare>>(
-    API_ENDPOINTS.worky.streamShareById(streamId, shareId),
-    { permission },
-  );
-  return unwrap(response);
-}
-
-export async function revokeStreamShare(streamId: string, shareId: string): Promise<void> {
-  await apiClient.delete(API_ENDPOINTS.worky.streamShareById(streamId, shareId));
-}
-
-export async function searchUsers(query: string, limit = 10): Promise<UserSearchResult[]> {
-  const response = await apiClient.get<ApiResponse<UserSearchResult[]>>(
-    API_ENDPOINTS.users.search,
-    { params: { q: query, limit } },
   );
   return unwrap(response);
 }

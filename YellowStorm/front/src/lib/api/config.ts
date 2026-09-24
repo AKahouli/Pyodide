@@ -418,7 +418,6 @@ export const API_ENDPOINTS = {
     sourceResolutionPolicy: (id: string, conceptId: string) => `/semantic-models/${id}/source-resolution-policies/${conceptId}`,
     dataPreview: (id: string) => `/semantic-models/${id}/data-preview`,
     populationRefresh: (id: string) => `/semantic-models/${id}/population/refresh`,
-    populationJob: (id: string, jobId: string) => `/semantic-models/${id}/population/jobs/${jobId}`,
     mappingHealth: (id: string) => `/semantic-models/${id}/mapping-health`,
     readiness: (id: string) => `/semantic-models/${id}/readiness`,
     reviewItems: (id: string) => `/semantic-models/${id}/review-items`,
@@ -732,8 +731,6 @@ export const API_ENDPOINTS = {
   worky: {
     streams: '/worky/streams',
     streamById: (id: string) => `/worky/streams/${id}`,
-    streamShares: (id: string) => `/worky/streams/${id}/shares`,
-    streamShareById: (id: string, shareId: string) => `/worky/streams/${id}/shares/${shareId}`,
     streamEvents: (id: string) => `/worky/streams/${id}/events`,
     streamMessages: (id: string) => `/worky/streams/${id}/messages`,
     streamBoard: (id: string) => `/worky/streams/${id}/board`,

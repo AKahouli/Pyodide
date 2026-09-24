@@ -42,7 +42,7 @@ export function SemanticModelBuildProgressBanner({ modelId, onRetry }: Props) {
   const description =
     job.status === "running" ? t("build.runningDescription") :
     job.status === "completed" ? t("build.completedDescription") :
-    job.error?.includes('Evidence search is unavailable') ? t('build.searchUnavailable') : t("build.failedGeneric");
+    job.error ?? t("build.failedGeneric");
 
   return (
     <div className={`flex flex-col gap-2 border-b px-3 py-2 text-sm ${tone}`}>
@@ -51,7 +51,6 @@ export function SemanticModelBuildProgressBanner({ modelId, onRetry }: Props) {
         <div className="flex-1 min-w-0">
           <div className="font-medium leading-tight">{title}</div>
           <p className="text-xs text-muted-foreground">{description}</p>
-          {job.status === 'failed' && job.error && <details className='mt-1 text-xs text-muted-foreground'><summary className='cursor-pointer'>{t('build.technicalDetails')}</summary><p className='mt-1 max-h-24 overflow-y-auto break-words'>{job.error}</p></details>}
         </div>
         <div className="flex items-center gap-1">
           {job.status === "failed" && onRetry && (
@@ -71,7 +70,7 @@ export function SemanticModelBuildProgressBanner({ modelId, onRetry }: Props) {
           )}
         </div>
       </div>
-      <div className="hidden flex-wrap items-center gap-3 pl-7 sm:flex">
+      <div className="flex flex-wrap items-center gap-3 pl-7">
         {STEP_ORDER.map((step) => (
           <StepChip
             key={step}

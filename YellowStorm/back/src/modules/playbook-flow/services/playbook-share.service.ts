@@ -6,7 +6,6 @@ import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { SharedPlaybook, SharedPlaybookDocument } from '../schemas/shared-playbook.schema';
 import { SharePlaybookDto, UpdatePlaybookSharePermissionDto } from '../dto/share-playbook.dto';
-import { PlaybookFlowStreamEventsService } from './playbook-flow-stream-events.service';
 import {
   AssignablePlaybookPermission,
   IPlaybookShareEntry,
@@ -31,7 +30,6 @@ export class PlaybookShareService {
     @InjectModel(SharedPlaybook.name)
     private readonly sharedPlaybookModel: Model<SharedPlaybookDocument>,
     @Inject(USER_LOOKUP_PORT) private readonly userLookup: UserLookupPort,
-    private readonly streamEvents: PlaybookFlowStreamEventsService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(PlaybookShareService.name);
@@ -51,7 +49,6 @@ export class PlaybookShareService {
         { upsert: true, new: true },
       );
       results.push(this.mapShare(share, user));
-      this.streamEvents.emitPlaybookShared(user._id.toString(), playbookId);
     }
 
     this.logger.log('Playbook shared', {

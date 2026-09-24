@@ -654,7 +654,7 @@ export class PlaybookFlowService implements OnModuleInit {
     const sanitizedGraph = this.graphSanitizer.sanitize({
       nodes: existing.nodes as any,
       controlEdges: existing.controlEdges as any,
-      dataBindings: existing.dataBindings.map((binding) => this.toPlainGraphEntry(binding)) as any,
+      dataBindings: existing.dataBindings as any,
     });
     existing.controlEdges = sanitizedGraph.controlEdges as any;
     existing.dataBindings = sanitizedGraph.dataBindings as any;
@@ -662,7 +662,7 @@ export class PlaybookFlowService implements OnModuleInit {
     this.validatorService.validate(
       existing.nodes as any,
       existing.controlEdges as any,
-      sanitizedGraph.dataBindings as any,
+      existing.dataBindings as any,
       { allowDraftRouters: true, ...validationOptions },
     );
 
@@ -1071,10 +1071,5 @@ export class PlaybookFlowService implements OnModuleInit {
   async cloneShare(flowId: string, ownerId: string, emails: string[]): Promise<{ clone?: IFlowResponse; shared: string[] }> {
     const clone = await this.clone(flowId, ownerId, ' (shared)');
     return { clone, shared: emails };
-  }
-
-  private toPlainGraphEntry<T>(entry: T): T {
-    const maybeDocument = entry as T & { toObject?: () => T };
-    return maybeDocument.toObject ? maybeDocument.toObject() : { ...entry };
   }
 }

@@ -1,7 +1,7 @@
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type { ApiResponse } from '@/lib/api/client';
-import type { AgeGraphEdge, AgeGraphNode, AgeGraphOperation, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, MappingProposalJob, Paginated, PopulationJob, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticBuildApplyMode, SemanticBuildJob, SemanticBuildStatus, SemanticCorpusManifest, SemanticDataPreview, SemanticEvidenceSearchResponse, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMappingProposalResponse, SemanticModelManualInstances, SemanticModelMember,
+import type { AgeGraphEdge, AgeGraphNode, AgeGraphOperation, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, MappingProposalJob, Paginated, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticBuildApplyMode, SemanticBuildJob, SemanticBuildStatus, SemanticCorpusManifest, SemanticDataPreview, SemanticEvidenceSearchResponse, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMappingProposalResponse, SemanticModelManualInstances, SemanticModelMember,
 SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, SemanticReviewItem, SemanticVersion,
 SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
 StructuredSourceAsset, ValidationIssue } from './types';
@@ -89,9 +89,9 @@ export const semanticModelApi = {
       { timeout: 0 },
     ));
   },
-  async getAgeGraph(id: string, dataRevisionId?: string): Promise<{ dataRevisionId?: string; nodes: AgeGraphNode[]; edges: AgeGraphEdge[] }> {
-    return unwrap(await apiClient.get<ApiResponse<{ dataRevisionId?: string; nodes: AgeGraphNode[]; edges: AgeGraphEdge[] }>>(
-      API_ENDPOINTS.semanticModels.ageGraph(id), { params: { dataRevisionId } },
+  async getAgeGraph(id: string): Promise<{ nodes: AgeGraphNode[]; edges: AgeGraphEdge[] }> {
+    return unwrap(await apiClient.get<ApiResponse<{ nodes: AgeGraphNode[]; edges: AgeGraphEdge[] }>>(
+      API_ENDPOINTS.semanticModels.ageGraph(id),
     ));
   },
   async rebuildAgeGraph(id: string): Promise<{ vertexCount: number; edgeCount: number; failedVertexCount: number; failedEdgeCount: number; graphViewerWarning: string | null }> {
@@ -245,7 +245,7 @@ export const semanticModelApi = {
       defaultStrategy: 'primary_then_fallback',
     }));
   },
-  async dataPreview(id: string, options: { conceptId?: string; limit?: number; dataRevisionId?: string } = {}): Promise<SemanticDataPreview> {
+  async dataPreview(id: string, options: { conceptId?: string; limit?: number } = {}): Promise<SemanticDataPreview> {
     return unwrap(await apiClient.post<ApiResponse<SemanticDataPreview>>(API_ENDPOINTS.semanticModels.dataPreview(id), options, { timeout: 0 }));
   },
   async mappingHealth(id: string): Promise<MappingHealthResponse> {
@@ -253,9 +253,6 @@ export const semanticModelApi = {
   },
   async requestPopulationRefresh(id: string, body: { purpose: 'build' | 'refresh'; scope: { kind: 'model' } | { kind: 'mapping'; mappingId: string } }): Promise<PopulationRefreshResponse> {
     return unwrap(await apiClient.post<ApiResponse<PopulationRefreshResponse>>(API_ENDPOINTS.semanticModels.populationRefresh(id), body, { timeout: 0 }));
-  },
-  async getPopulationJob(id: string, jobId: string): Promise<PopulationJob> {
-    return unwrap(await apiClient.get<ApiResponse<PopulationJob>>(API_ENDPOINTS.semanticModels.populationJob(id, jobId)));
   },
   async readiness(id: string): Promise<SemanticReadiness> {
     return unwrap(await apiClient.get<ApiResponse<SemanticReadiness>>(API_ENDPOINTS.semanticModels.readiness(id)));

@@ -8,16 +8,10 @@ export function TaskDetailSheet({
   task,
   open,
   onOpenChange,
-  tasks,
-  onSelectTask,
-  onDiscuss,
 }: {
   task: WorkyTask | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  tasks?: WorkyTask[];
-  onSelectTask?: (task: WorkyTask) => void;
-  onDiscuss?: () => void;
 }): JSX.Element {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -25,7 +19,7 @@ export function TaskDetailSheet({
         <SheetHeader className="sr-only">
           <SheetTitle>{task?.title ?? ''}</SheetTitle>
         </SheetHeader>
-        <TaskDetailDrawer task={task} onClose={() => onOpenChange(false)} tasks={tasks} onSelectTask={onSelectTask} onDiscuss={onDiscuss} />
+        <TaskDetailDrawer task={task} onClose={() => onOpenChange(false)} />
       </SheetContent>
     </Sheet>
   );

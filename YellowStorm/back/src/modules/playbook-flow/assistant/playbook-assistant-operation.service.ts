@@ -345,9 +345,6 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
       throw new ConflictException(ErrorCode.CONFLICT, 'Assistant operation revision does not match the construction base revision');
     }
     if (!this.flowService) throw new ServiceUnavailableException(ErrorCode.SERVICE_UNAVAILABLE, 'Assistant operation commit is unavailable');
-    if (target === 'canonical' && operation.disposition === 'applied' && operation.committedRevision) {
-      return this.flowService.findOneBase(playbookId, ownerId);
-    }
     if (target === 'advisor_preview' && operation.applyTarget === 'new_playbook') {
       if (operation.disposition === 'applied' && operation.createdPlaybookId) {
         return this.flowService.findOneBase(operation.createdPlaybookId, ownerId);

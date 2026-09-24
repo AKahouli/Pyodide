@@ -23,14 +23,14 @@ const RANK_SEP = 120;
  * it instead of discarding it, so the edge renderer (WorkyDependencyEdge)
  * can draw the real routed path.
  */
-export function layoutCompactCanvasNodes(nodes: Node[], edges: Edge[], size = { width: NODE_WIDTH, height: NODE_HEIGHT }): { nodes: Node[]; edges: Edge[] } {
+export function layoutCompactCanvasNodes(nodes: Node[], edges: Edge[]): { nodes: Node[]; edges: Edge[] } {
   if (nodes.length === 0) return { nodes, edges };
 
   const g = new Dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
   g.setGraph({ rankdir: 'LR', nodesep: NODE_SEP, ranksep: RANK_SEP });
 
   for (const node of nodes) {
-    g.setNode(node.id, { width: size.width, height: size.height });
+    g.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
   }
   for (const edge of edges) {
     g.setEdge(edge.source, edge.target);
@@ -43,8 +43,8 @@ export function layoutCompactCanvasNodes(nodes: Node[], edges: Edge[], size = { 
     return {
       ...node,
       position: {
-        x: position.x - size.width / 2,
-        y: position.y - size.height / 2,
+        x: position.x - NODE_WIDTH / 2,
+        y: position.y - NODE_HEIGHT / 2,
       },
     };
   });

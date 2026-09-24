@@ -11,8 +11,6 @@ import { VoiceSession } from '../voice/VoiceSession';
 import { PlanDeltaToast } from '../PlanDeltaToast';
 import type { WorkyExecutiveViewModel } from '../../executive/executiveModel';
 import { WorkyExecutiveView } from '../executive/WorkyExecutiveView';
-import { WorkyGraphDialog } from '../WorkyGraphDialog';
-import type { AttentionPreferences } from '../../attentionPreferences';
 
 /**
  * Single-column mobile layout for a stream: agent-team body, bottom nav with
@@ -27,23 +25,11 @@ export function WorkyMobileStream({
   approvalFor,
   onApprovalClose,
   model,
-  readOnly = false,
-  graphAvailable = false,
-  attention = null,
-  attentionPreferences = { sound: true, focus: true },
-  onAttentionPreferencesChange = () => {},
-  attentionCount = 0,
 }: {
   streamId: string;
   approvalFor: WorkyPendingClarification | null;
   onApprovalClose: () => void;
   model: WorkyExecutiveViewModel;
-  readOnly?: boolean;
-  graphAvailable?: boolean;
-  attention?: { taskId: string; sequence: number } | null;
-  attentionPreferences?: AttentionPreferences;
-  onAttentionPreferencesChange?: (value: AttentionPreferences) => void;
-  attentionCount?: number;
 }): JSX.Element {
   const navigate = useNavigate();
   const activeSheet = useWorkyUiStore((s) => s.activeSheet);
@@ -51,7 +37,6 @@ export function WorkyMobileStream({
   const voiceOpen = useWorkyUiStore((s) => s.voiceOpen);
   const setVoiceOpen = useWorkyUiStore((s) => s.setVoiceOpen);
   const [selectedTask, setSelectedTask] = useState<WorkyTask | null>(null);
-  const [graphOpen, setGraphOpen] = useState(false);
 
   const openTask = (task: WorkyTask): void => {
     setSelectedTask(task);
@@ -63,57 +48,46 @@ export function WorkyMobileStream({
       <MobileStreamHeader
         streamId={streamId}
         onBack={() => navigate('/worky')}
-        onOpenGraph={() => setGraphOpen(true)}
-        graphAvailable={graphAvailable}
-        attentionPreferences={attentionPreferences}
-        onAttentionPreferencesChange={onAttentionPreferencesChange}
-        attentionCount={attentionCount}
       />
       {/* pb keeps the last agent card clear of the nav's raised voice button. */}
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-1 pb-8">
-        <WorkyExecutiveView streamId={streamId} model={model} onTaskClick={openTask} onReviewApproval={() => setActiveSheet('chat')} readOnly={readOnly} attention={attention} focusAttention={attentionPreferences.focus && !graphOpen} />
+        <WorkyExecutiveView streamId={streamId} model={model} onTaskClick={openTask} />
       </div>
 
       <div className="shrink-0">
         <WorkyMobileNav
           onHome={() => navigate('/worky')}
           onVoice={() => setVoiceOpen(true)}
-          onChat={() => { setSelectedTask(null); setActiveSheet('chat'); }}
-          canOperate={!readOnly}
+          onChat={() => setActiveSheet('chat')}
         />
       </div>
 
       <TaskDetailSheet
-        task={model.allTasks.find((task) => task.id === selectedTask?.id) ?? selectedTask}
-        tasks={model.allTasks}
-        onSelectTask={setSelectedTask}
-        onDiscuss={readOnly ? undefined : () => setActiveSheet('chat')}
+        task={selectedTask}
         open={activeSheet === 'task'}
-        onOpenChange={(o) => { setActiveSheet(o ? 'task' : null); if (!o) setSelectedTask(null); }}
+        onOpenChange={(o) => setActiveSheet(o ? 'task' : null)}
       />
-      {!readOnly ? <ManagerChatSheet
+      <ManagerChatSheet
         streamId={streamId}
         open={activeSheet === 'chat'}
         onOpenChange={(o) => setActiveSheet(o ? 'chat' : null)}
         sessionStatus={model.session?.status}
-        contextTask={model.allTasks.find((task) => task.id === selectedTask?.id) ?? selectedTask}
-      /> : null}
-      {!readOnly ? <ApprovalSheet
+      />
+      <ApprovalSheet
         streamId={streamId}
         interaction={approvalFor}
         open={Boolean(approvalFor)}
         onOpenChange={(o) => {
           if (!o) onApprovalClose();
         }}
-      /> : null}
-      {!readOnly ? <VoiceSession
+      />
+      <VoiceSession
         streamId={streamId}
         open={voiceOpen}
         onOpenChange={setVoiceOpen}
         onKeyboard={() => setActiveSheet('chat')}
-      /> : null}
+      />
       <PlanDeltaToast />
-      {graphOpen && <WorkyGraphDialog onClose={() => setGraphOpen(false)} onTaskClick={openTask} attention={attentionPreferences.focus ? attention : null} />}
     </div>
   );
 }

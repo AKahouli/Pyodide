@@ -45,25 +45,19 @@ interface Props {
   onClose: () => void;
   modelId: string;
   canEdit?: boolean;
-  dataRevisionId?: string;
-  onDataRevision?: (revisionId: string) => void;
 }
 
 // Wrap long text into 2 lines to fit inside the circle
-function wrapLines(text: string, maxLen = 14): [string, string | null] {
-  const qualified = text.split(' · ');
-  if (qualified.length === 2 && qualified.every((part) => part.length <= maxLen)) return [qualified[0], qualified[1]];
+function wrapLines(text: string, maxLen = 11): [string, string | null] {
   if (text.length <= maxLen) return [text, null];
-  const mid = Math.max(text.lastIndexOf(' ', maxLen), text.lastIndexOf('-', maxLen - 1));
-  if (mid > 0) return [text.slice(0, mid + (text[mid] === '-' ? 1 : 0)), text.slice(mid + 1).slice(0, maxLen)];
-  return [text.slice(0, maxLen - 1) + '…', null];
+  const mid = text.lastIndexOf(' ', maxLen);
+  if (mid > 0) return [text.slice(0, mid), text.slice(mid + 1).slice(0, maxLen)];
+  return [text.slice(0, maxLen) + '…', null];
 }
 
-export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = false, dataRevisionId, onDataRevision }: Props) {
+export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = false }: Props) {
   const { t } = useModuleTranslation('semantic-model');
   const model = useSemanticModel(open ? modelId : undefined);
-  const runtimeOwned = model.data?.executionOwner === 'runtime';
-  const graphCanEdit = canEdit && !runtimeOwned;
   const queryClient = useQueryClient();
   const markIndexPending = useCallback(() => {
     queryClient.setQueryData(semanticModelQueryKeys.model(modelId), (current: typeof model.data) => current ? { ...current,indexStatus: 'pending' as const,indexError: null } : current);
@@ -79,6 +73,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
   const [modelGraph, setModelGraph] = useState<SemanticGraph | null>(null);
   const [corpus, setCorpus] = useState<SemanticCorpusManifest | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [syncFailed, setSyncFailed] = useState(false);
   const [selectedNode, setSelectedNode] = useState<AgeGraphNode | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<AgeGraphEdge | null>(null);
   const [editorMode, setEditorMode] = useState<'node' | null>(null);
@@ -103,16 +98,16 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setSyncFailed(false);
     setSelectedNode(null);
     setSelectedEdge(null);
     try {
-      const [{ nodes, edges, dataRevisionId: loadedRevisionId }, structure, preparedCorpus] = await Promise.all([
-        semanticModelApi.getAgeGraph(modelId, dataRevisionId),
+      const [{ nodes, edges }, structure, preparedCorpus] = await Promise.all([
+        semanticModelApi.getAgeGraph(modelId),
         semanticModelApi.graph(modelId),
         semanticModelApi.corpus(modelId),
       ]);
       setAgeNodes(nodes);
-      if (loadedRevisionId) onDataRevision?.(loadedRevisionId);
       setAgeEdges(edges);
       setModelGraph(structure);
       setCorpus(preparedCorpus);
@@ -123,7 +118,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
     } finally {
       setLoading(false);
     }
-  }, [dataRevisionId, modelId, onDataRevision]);
+  }, [modelId]);
 
   useEffect(() => {
     if (open && modelId) void load();
@@ -175,18 +170,9 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
     // Data
     const allTypes = [...new Set(ageNodes.map((n) => n.label))];
 
-    const labelCounts = new Map<string, number>();
-    for (const node of ageNodes) {
-      const key = `${node.label}:${String(node.properties.record_label ?? node.id)}`;
-      labelCounts.set(key, (labelCounts.get(key) ?? 0) + 1);
-    }
     const simNodes: SimNode[] = ageNodes.map((n) => ({
       id: n.id,
-      displayLabel: (() => {
-        const label = String(n.properties.record_label ?? n.id);
-        const qualifier = n.properties.effective_date ?? n.properties.amendment_number;
-        return (labelCounts.get(`${n.label}:${label}`) ?? 0) > 1 && qualifier ? `${label} · ${qualifier}` : label;
-      })(),
+      displayLabel: String(n.properties.record_label ?? n.id),
       type: n.label,
       raw: n,
       x: width / 2 + (Math.random() - 0.5) * 300,
@@ -197,7 +183,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
 
     const simLinks: SimLink[] = ageEdges
       .filter((e) => nodeById.has(e.sourceId) && nodeById.has(e.targetId))
-      .map((e) => ({ id: e.id, edgeLabel: modelGraph?.relations.find((relation) => relation.id === e.label || relation.key === e.label)?.label ?? e.label.replaceAll('_', ' '), source: e.sourceId, target: e.targetId }));
+      .map((e) => ({ id: e.id, edgeLabel: e.label, source: e.sourceId, target: e.targetId }));
 
     // Simulation — stays alive for continuous animation
     const sim = d3
@@ -335,7 +321,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
           .attr('font-weight', 700)
           .attr('font-family', 'system-ui, sans-serif')
           .attr('pointer-events', 'none')
-        .text(line2.length > 14 ? line2.slice(0, 13) + '…' : line2);
+          .text(line2.length > 11 ? line2.slice(0, 10) + '…' : line2);
       }
 
       // Type sublabel
@@ -349,7 +335,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
         .text(d.type);
     });
 
-    if (graphCanEdit) {
+    if (canEdit) {
       node
         .append('circle')
         .attr('cx', NODE_R - 2)
@@ -379,7 +365,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
 
     simRef.current = sim;
     return () => { sim.stop(); };
-  }, [ageNodes, ageEdges, graphCanEdit, modelGraph, t]);
+  }, [ageNodes, ageEdges, canEdit, modelGraph, t]);
 
   const apply = useCallback(async (operation: AgeGraphOperation) => {
     setMutationLoading(true);
@@ -390,6 +376,22 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
       setEditorMode(null);
       await load();
     } catch (err: unknown) {
+      setError(parseApiError(err).message);
+    } finally {
+      setMutationLoading(false);
+    }
+  }, [load, markIndexPending, modelId]);
+
+  const synchronize = useCallback(async () => {
+    setMutationLoading(true);
+    setError(null);
+    setSyncFailed(false);
+    try {
+      await semanticModelApi.indexAgeGraph(modelId);
+      markIndexPending();
+      await load();
+    } catch (err: unknown) {
+      setSyncFailed(true);
       setError(parseApiError(err).message);
     } finally {
       setMutationLoading(false);
@@ -415,7 +417,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
         <div className="flex items-center gap-3">
           <h2 className="text-sm font-semibold text-white">{t('graphViewer.title')}</h2>
           <span className={`h-2.5 w-2.5 rounded-full ${model.data?.indexStatus === 'indexed' ? 'bg-emerald-500' : model.data?.indexStatus === 'failed' ? 'bg-red-500' : `bg-amber-500 ${model.data?.indexStatus === 'pending' || model.data?.indexStatus === 'in_progress' ? 'animate-pulse' : ''}`}`} title={model.data?.indexStatus ?? 'not_indexed'} />
-           {graphCanEdit && <span className="text-[10px] text-white/45">{t('graphViewer.mouseRelationHint')}</span>}
+          {canEdit && <span className="text-[10px] text-white/45">{t('graphViewer.mouseRelationHint')}</span>}
         </div>
         <div className="flex items-center gap-3 flex-wrap">
           {allTypes.map((lbl) => (
@@ -428,14 +430,14 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
             variant="ghost"
             size="sm"
             className="text-white/60 hover:text-white hover:bg-white/10 gap-1.5"
-             onClick={() => void load()}
+            onClick={() => void synchronize()}
             disabled={loading || mutationLoading}
             aria-label={t('graphViewer.button')}
             title={t('graphViewer.button')}
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading || mutationLoading ? 'animate-spin' : ''}`} />
           </Button>
-           {graphCanEdit && (
+          {canEdit && (
             <>
               <Button variant="outline" size="sm" className="text-white border-white/20 hover:bg-white/10 gap-1.5" onClick={() => setEditorMode('node')} disabled={mutationLoading}>
                 <Plus className="h-3.5 w-3.5" />{t('graphViewer.addNode')}
@@ -469,7 +471,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
               <Button
                 variant="outline"
                 size="sm"
-                 onClick={() => void load()}
+                onClick={() => void (syncFailed ? synchronize() : load())}
                 className="text-white border-white/20 hover:bg-white/10"
               >
                 {t('graphViewer.retry')}
@@ -482,7 +484,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
             </div>
           )}
           <svg ref={svgRef} className="w-full h-full" />
-           {graphCanEdit && editorMode === 'node' && (
+          {canEdit && editorMode === 'node' && (
             <form
               className="absolute left-4 top-4 z-10 w-80 space-y-3 rounded-xl border border-white/15 bg-[#171725]/95 p-4 shadow-xl"
               onSubmit={(event) => {
@@ -515,7 +517,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
               <div className="flex justify-end gap-2"><Button type="button" variant="ghost" className="text-white/70 hover:bg-white/10 hover:text-white" onClick={() => setEditorMode(null)}>{t('graphViewer.cancel')}</Button><Button type="submit" disabled={mutationLoading}>{t('graphViewer.save')}</Button></div>
             </form>
           )}
-           {graphCanEdit && pendingRelationChoice && pendingRelationChoice.relations.length > 1 && (
+          {canEdit && pendingRelationChoice && pendingRelationChoice.relations.length > 1 && (
             <div className="absolute left-4 top-4 z-10 w-80 space-y-3 rounded-xl border border-white/15 bg-[#171725]/95 p-4 shadow-xl">
               <div className="flex items-center justify-between"><p className="text-sm font-semibold text-white">{t('graphViewer.chooseRelation')}</p><button type="button" className="text-white/50 hover:text-white" onClick={() => setPendingRelationChoice(null)}><X className="h-4 w-4" /></button></div>
               <select value={pendingRelationTypeId} onChange={(event) => setPendingRelationTypeId(event.target.value)} className="h-10 w-full rounded-md border border-white/15 bg-white/5 px-3 text-sm text-white">
@@ -524,7 +526,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
               <div className="flex justify-end gap-2"><Button type="button" variant="ghost" className="text-white/70 hover:bg-white/10 hover:text-white" onClick={() => setPendingRelationChoice(null)}>{t('graphViewer.cancel')}</Button><Button type="button" disabled={mutationLoading || !pendingRelationTypeId} onClick={() => { const relation = pendingRelationChoice.relations.find((item) => item.id === pendingRelationTypeId); if (relation) setPendingRelationChoice({ ...pendingRelationChoice, relations: [relation] }); }}>{t('graphViewer.save')}</Button></div>
             </div>
           )}
-           {graphCanEdit && (selectedNode || selectedEdge) && (
+          {canEdit && (selectedNode || selectedEdge) && (
             <div className="absolute bottom-4 left-4 z-10 flex items-center gap-2 rounded-xl border border-white/15 bg-[#171725]/95 p-2 shadow-xl">
               <span className="max-w-48 truncate px-2 text-xs text-white/70">{selectedNode ? String(selectedNode.properties.record_label ?? selectedNode.id) : selectedEdge?.label}</span>
               <Button size="sm" variant="destructive" disabled={mutationLoading} onClick={() => void apply(selectedNode ? { type: 'node.delete', nodeId: selectedNode.id } : { type: 'edge.delete', edgeId: selectedEdge!.id })}>

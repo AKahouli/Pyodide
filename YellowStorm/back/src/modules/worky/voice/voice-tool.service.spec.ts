@@ -3,8 +3,8 @@ import { VoiceToolService } from './voice-tool.service';
 
 describe('VoiceToolService', () => {
   const planning = { appendOwnerMessage: jest.fn() };
-  const streamSvc = { ensureKickoffContext: jest.fn(), getRuntimeContext: jest.fn(), findById: jest.fn() };
-  const orchestrator = { runTask: jest.fn(), getSession: jest.fn(), stopSession: jest.fn() };
+  const streamSvc = { ensureKickoffContext: jest.fn(), findById: jest.fn() };
+  const orchestrator = { runTask: jest.fn(), getSession: jest.fn() };
   const turnContext = { resolveWorkyAgents: jest.fn(), resolveConnectors: jest.fn() };
   const tasks = { projectForBoard: jest.fn(), findByIdInternal: jest.fn(), getResultContent: jest.fn() };
   const users = { findById: jest.fn() };
@@ -21,7 +21,7 @@ describe('VoiceToolService', () => {
 
   it('dispatch persists the utterance then runs the task with resolved context', async () => {
     planning.appendOwnerMessage.mockResolvedValue({ id: 'm1', content: 'do it', createdAt: 'now' });
-    streamSvc.ensureKickoffContext.mockResolvedValue({ aiSessionId: 'sess-1', ownerUserId: 'owner-1' });
+    streamSvc.ensureKickoffContext.mockResolvedValue({ aiSessionId: 'sess-1' });
     turnContext.resolveWorkyAgents.mockResolvedValue([{ a: 1 }]);
     turnContext.resolveConnectors.mockResolvedValue([{ c: 1 }]);
     orchestrator.runTask.mockResolvedValue({ sessionId: 'sess-1', accepted: true, runId: 'run-9' });
@@ -29,7 +29,7 @@ describe('VoiceToolService', () => {
     const res = await svc.dispatchTask('u1', 's1', 'do it');
 
     expect(planning.appendOwnerMessage).toHaveBeenCalledWith('u1', 's1', { content: 'do it' });
-    expect(orchestrator.runTask).toHaveBeenCalledWith('owner-1', 'sess-1', 'do it', {
+    expect(orchestrator.runTask).toHaveBeenCalledWith('u1', 'sess-1', 'do it', {
       agents: [{ a: 1 }],
       connectors: [{ c: 1 }],
     });
@@ -38,7 +38,7 @@ describe('VoiceToolService', () => {
 
   it('dispatch passes the requester identity so worky knows who it works for', async () => {
     planning.appendOwnerMessage.mockResolvedValue({ id: 'm1' });
-    streamSvc.ensureKickoffContext.mockResolvedValue({ aiSessionId: 'sess-1', ownerUserId: 'owner-1' });
+    streamSvc.ensureKickoffContext.mockResolvedValue({ aiSessionId: 'sess-1' });
     turnContext.resolveWorkyAgents.mockResolvedValue([]);
     turnContext.resolveConnectors.mockResolvedValue([]);
     users.findById.mockResolvedValue({
@@ -49,7 +49,7 @@ describe('VoiceToolService', () => {
 
     await svc.dispatchTask('u1', 's1', 'do it');
 
-    expect(orchestrator.runTask).toHaveBeenCalledWith('owner-1', 'sess-1', 'do it', {
+    expect(orchestrator.runTask).toHaveBeenCalledWith('u1', 'sess-1', 'do it', {
       agents: [],
       connectors: [],
       userName: 'Rabeb Sdiri',
@@ -59,22 +59,13 @@ describe('VoiceToolService', () => {
   });
 
   it('status reads the current session from the orchestrator', async () => {
-    streamSvc.ensureKickoffContext.mockResolvedValue({ aiSessionId: 'sess-2', ownerUserId: 'owner-1' });
+    streamSvc.ensureKickoffContext.mockResolvedValue({ aiSessionId: 'sess-2' });
     orchestrator.getSession.mockResolvedValue({ sessionId: 'sess-2', title: 'T', status: 'running', plan: { steps: 3 } });
 
     const res = await svc.queryStatus('u1', 's2');
 
-    expect(orchestrator.getSession).toHaveBeenCalledWith('owner-1', 'sess-2');
+    expect(orchestrator.getSession).toHaveBeenCalledWith('u1', 'sess-2');
     expect(res).toEqual({ status: 'running', title: 'T', plan: { steps: 3 } });
-  });
-
-  it('does not provision a session when stopping an untouched stream', async () => {
-    streamSvc.getRuntimeContext.mockResolvedValue({ aiSessionId: null, ownerUserId: 'owner-1' });
-
-    await expect(svc.stopSession('u1', 's1')).resolves.toEqual({ stopped: false });
-
-    expect(streamSvc.ensureKickoffContext).not.toHaveBeenCalled();
-    expect(orchestrator.stopSession).not.toHaveBeenCalled();
   });
 
   describe('listTasks', () => {

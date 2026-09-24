@@ -7,7 +7,6 @@ import { ConflictException, ForbiddenException, NotFoundException } from '../../
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { WorkyEventService } from './worky-event.service';
 import { IWorkyTaskSummary } from '../interfaces/worky-execution.interface';
-import { canWriteWorkyStream } from '../worky-stream-access';
 
 @Injectable()
 export class WorkyExecutionService {
@@ -101,10 +100,10 @@ export class WorkyExecutionService {
     }
     const stream = await this.streams
       .findById(task.streamId)
-      .select({ ownerUserId: 1, shares: 1 })
+      .select({ ownerUserId: 1 })
       .lean()
       .exec();
-    if (!stream || !canWriteWorkyStream(stream, userId)) {
+    if (!stream || stream.ownerUserId.toString() !== userId) {
       throw new ForbiddenException(
         ErrorCode.WORKY_STREAM_FORBIDDEN,
         'You do not have access to this Worky task.',

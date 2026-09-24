@@ -65,11 +65,11 @@ export class VoiceToolService {
     await this.planning.appendOwnerMessage(userId, streamId, { content: message });
     const ctx = await this.streamService.ensureKickoffContext(streamId, userId);
     const [agents, connectors, user] = await Promise.all([
-      this.turnContext.resolveWorkyAgents(ctx.ownerUserId),
-      this.turnContext.resolveConnectors(ctx.ownerUserId),
+      this.turnContext.resolveWorkyAgents(userId),
+      this.turnContext.resolveConnectors(userId),
       this.users.findById(userId),
     ]);
-    const res = await this.orchestrator.runTask(ctx.ownerUserId, ctx.aiSessionId, message, {
+    const res = await this.orchestrator.runTask(userId, ctx.aiSessionId, message, {
       agents,
       connectors,
       ...(user ? requesterOpts(asAuthUser(user)) : {}),
@@ -87,16 +87,18 @@ export class VoiceToolService {
    * `:id/stop` endpoint uses.
    */
   async stopSession(userId: string, streamId: string): Promise<{ stopped: boolean }> {
-    const { aiSessionId, ownerUserId } = await this.streamService.getRuntimeContext(streamId, userId);
+    await this.streamService.findById(userId, streamId);
+    const stream = await this.streamService.findByIdInternal(streamId);
+    const aiSessionId = stream?.aiSessionId;
     if (!aiSessionId) return { stopped: false };
-    const res = await this.orchestrator.stopSession(ownerUserId, aiSessionId);
+    const res = await this.orchestrator.stopSession(userId, aiSessionId);
     this.logger.log(`[voice] stopped session=${aiSessionId} stream=${streamId} stopped=${res.stopped}`);
     return res;
   }
 
   async queryStatus(userId: string, streamId: string): Promise<{ status: string; title: string; plan: unknown }> {
     const ctx = await this.streamService.ensureKickoffContext(streamId, userId);
-    const s = await this.orchestrator.getSession(ctx.ownerUserId, ctx.aiSessionId);
+    const s = await this.orchestrator.getSession(userId, ctx.aiSessionId);
     return { status: s.status, title: s.title, plan: s.plan };
   }
 

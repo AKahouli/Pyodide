@@ -3,7 +3,6 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { useModuleTranslation } from '@/modules/localization';
 import { ChatMessageThread } from '../ChatMessageThread';
 import { PromptBar } from '../PromptBar';
-import type { WorkyTask } from '../../types';
 
 /**
  * Near-fullscreen bottom sheet holding the manager chat thread + composer.
@@ -15,13 +14,11 @@ export function ManagerChatSheet({
   open,
   onOpenChange,
   sessionStatus,
-  contextTask,
 }: {
   streamId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   sessionStatus?: string | null;
-  contextTask?: WorkyTask | null;
 }): JSX.Element {
   const { t } = useModuleTranslation('worky');
   return (
@@ -34,7 +31,7 @@ export function ManagerChatSheet({
         <div className="min-h-0 flex-1 overflow-y-auto">
           <ChatMessageThread streamId={streamId} />
         </div>
-        <PromptBar streamId={streamId} sessionStatus={sessionStatus} contextTask={contextTask} />
+        <PromptBar streamId={streamId} sessionStatus={sessionStatus} />
       </SheetContent>
     </Sheet>
   );

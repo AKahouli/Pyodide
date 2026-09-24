@@ -199,11 +199,8 @@ export class SemanticModelController {
   @Get(':modelId/age-graph')
   @ApiOperation({ summary: 'Read the AGE graph for a semantic model — returns all vertices and edges stored in Apache AGE' })
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
-  async getAgeGraph(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Query('dataRevisionId') dataRevisionId?: string) {
-    const owner = await this.executionOwnership.getOwner(modelId);
-    return owner === 'runtime'
-      ? this.populationRefresh.boundGraph(user._id.toString(), modelId, dataRevisionId)
-      : this.mappingProposals.getAgeGraph(user._id.toString(), modelId);
+  getAgeGraph(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
+    return this.mappingProposals.getAgeGraph(user._id.toString(), modelId);
   }
 
   @Post(':modelId/age-graph/rebuild')
@@ -387,12 +384,6 @@ export class SemanticModelController {
     return this.populationRefresh.requestRefresh(user._id.toString(),modelId,dto);
   }
 
-  @Get(':modelId/population/jobs/:jobId')
-  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
-  populationJob(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('jobId') jobId: string) {
-    return this.populationRefresh.getJob(user._id.toString(), modelId, jobId);
-  }
-
   @Get(':modelId/relation-resolution-rules')
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
   listRelationResolutionRules(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
@@ -427,11 +418,8 @@ export class SemanticModelController {
   @Post(':modelId/data-preview')
   @RateLimit({ limit: 5, windowMs: 60_000, keyPrefix: 'semantic-model:data-preview' })
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
-  async dataPreview(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: DataPreviewDto) {
-    const owner = await this.executionOwnership.getOwner(modelId);
-    return owner === 'runtime'
-      ? this.populationRefresh.boundRecords(user._id.toString(), modelId, dto.limit, dto.conceptId, dto.dataRevisionId)
-      : this.crossSource.dataPreview(user._id.toString(), modelId, dto);
+  dataPreview(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: DataPreviewDto) {
+    return this.crossSource.dataPreview(user._id.toString(), modelId, dto);
   }
 
   @Post(':modelId/mapping-health')

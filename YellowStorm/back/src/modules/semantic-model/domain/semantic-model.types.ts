@@ -98,7 +98,5 @@ export interface ValidationIssue {
   severity: 'error' | 'warning';
   targetKind: 'model' | 'node_type' | 'relation_type' | 'record' | 'binding' | 'workspace';
   targetId?: string;
-  /** Business name of the target, so a finding never reads as anonymous. */
-  targetLabel?: string;
   message: string;
 }

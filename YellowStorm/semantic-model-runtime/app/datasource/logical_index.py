@@ -158,7 +158,7 @@ async def resolve_document_candidates(connection: Any, *, workspace_id: Any, fil
     sql += f" ORDER BY id LIMIT {limit}"
     rows = await connection.fetch(sql, *params)
     candidates = [
-        {"documentPk": str(row["id"]), "workspaceId": row["workspace_id"],
+        {"documentPk": row["id"], "workspaceId": row["workspace_id"],
          "fileName": row["file_name"], "uploaderUserId": row["user_id"]}
         for row in rows
     ]
@@ -185,17 +185,16 @@ def build_index_observation(*, asset_ref: dict[str, Any], document_pk: Any,
     verification = asset_ref.get("sourceVersionVerification")
     if verification not in ("verified", "partial", "unknown"):
         raise ReadOnlyIndexError("invalid_source_version_verification")
-    # Deployed logical indexes use opaque varchar keys; older fixtures used
-    # positive integers. Observations persist either representation as text.
-    if document_pk is not None and not (
-            isinstance(document_pk, str) and document_pk.strip()
-            or isinstance(document_pk, int) and not isinstance(document_pk, bool) and document_pk > 0):
+    # documentPk feeds the COALESCE(document_pk, -1) conflict bucket; only a
+    # positive database id or an explicit unresolved None may enter it.
+    if document_pk is not None and (
+            isinstance(document_pk, bool) or not isinstance(document_pk, int) or document_pk <= 0):
         raise ReadOnlyIndexError("invalid_document_pk")
     return {
         "workspaceId": asset_ref["workspaceId"],
         "assetId": asset_ref["assetId"],
         "assetVersionId": asset_ref["assetVersionId"],
-        "documentPk": str(document_pk) if document_pk is not None else None,
+        "documentPk": document_pk,
         "verification": verification,
         "fingerprint": fingerprint,
         "readiness": {name: bool(capabilities.get(name)) for name in

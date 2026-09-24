@@ -41,18 +41,6 @@ export type WorkyCurrentWorkStatus =
 export interface WorkyCurrentWorkItem {
   task: WorkyTask;
   status: WorkyCurrentWorkStatus;
-  openPrerequisites: WorkyTask[];
-  canceledPrerequisites: number;
-  unavailablePrerequisites: number;
-  downstreamCount: number;
-}
-
-export interface WorkyDeliveryPath {
-  task: WorkyTask;
-  total: number;
-  completed: number;
-  blocked: number;
-  nextTask: WorkyTask | null;
 }
 
 export interface WorkyDelegationItem {
@@ -68,8 +56,6 @@ export interface WorkyExecutiveSummary {
   total: number;
   completed: number;
   active: number;
-  blocked: number;
-  remaining: number;
   waitingExternal: number;
   needsInput: number;
 }
@@ -82,10 +68,6 @@ export interface WorkyExecutiveViewModel {
   interactions: WorkyPendingClarification[];
   pendingApprovals: WorkyPendingApproval[];
   currentWork: WorkyCurrentWorkItem[];
-  allTasks: WorkyTask[];
-  completedTasks: WorkyTask[];
-  deliveryPaths: WorkyDeliveryPath[];
-  recentTasks: WorkyTask[];
   delegations: WorkyDelegationItem[];
   summary: WorkyExecutiveSummary;
 }

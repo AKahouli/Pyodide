@@ -6,13 +6,12 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useSendMessage } from '../query/hooks';
 import { useWorkyStore } from '../store';
 import { useWorkyUiStore } from '../uiStore';
-import type { WorkyStreamStatus, WorkyTask } from '../types';
+import type { WorkyStreamStatus } from '../types';
 
 interface PromptBarProps {
   streamId: string;
   status?: WorkyStreamStatus;
   sessionStatus?: string | null;
-  contextTask?: WorkyTask | null;
 }
 
 /**
@@ -28,7 +27,6 @@ export function PromptBar({
   streamId,
   status,
   sessionStatus,
-  contextTask,
 }: PromptBarProps): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const [value, setValue] = useState('');
@@ -80,9 +78,8 @@ export function PromptBar({
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    const draft = value.trim();
-    if (!draft || isDisabled) return;
-    const content = contextTask ? `${t('command.chat.contextPrefix', { task: contextTask.title })}\n${draft}` : draft;
+    const content = value.trim();
+    if (!content || isDisabled) return;
     setStreamError(null);
     clearSendError();
     const turnId = crypto.randomUUID();
@@ -103,7 +100,6 @@ export function PromptBar({
 
   return (
     <footer className='shrink-0 border-t bg-background p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]'>
-      {contextTask && <p className='mb-2 truncate rounded-md bg-primary/10 px-2 py-1 text-xs text-foreground' title={contextTask.title}>{t('command.chat.context', { task: contextTask.title })}</p>}
       {sendError ? (
         <div
           role='alert'

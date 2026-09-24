@@ -7,11 +7,6 @@ export class SemanticModelValidationService {
     const issues: ValidationIssue[] = [];
     const nodeIds = new Set(graph.nodes.map((node) => node.id));
     const recordById = new Map(graph.records.map((record) => [record.id, record]));
-    const labels = new Map<string, string>([
-      ...graph.nodes.map((node) => [node.id, node.label] as const),
-      ...graph.relations.map((relation) => [relation.id, relation.label] as const),
-      ...graph.records.map((record) => [record.id, record.label] as const),
-    ]);
 
     this.findDuplicateKeys(graph.nodes, 'node_type', issues);
     this.findDuplicateKeys(graph.relations, 'relation_type', issues);
@@ -58,10 +53,7 @@ export class SemanticModelValidationService {
         issues.push(this.issue('record_relation_incompatible', 'error', 'record', relation.id, 'The selected records do not match this relationship.'));
       }
     }
-    return issues.map((issue) => {
-      const label = issue.targetId ? labels.get(issue.targetId) : undefined;
-      return label ? { ...issue, targetLabel: label } : issue;
-    });
+    return issues;
   }
 
   private findDuplicateKeys(

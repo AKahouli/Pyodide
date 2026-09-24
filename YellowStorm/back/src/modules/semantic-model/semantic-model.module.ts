@@ -7,8 +7,6 @@ import { UserModule } from '@modules/user';
 import { WorkspaceModule } from '@modules/workspace';
 import { IntegrationEventsModule } from '@modules/integration-events/integration-events.module';
 import { SemanticModelController } from './controllers/semantic-model.controller';
-import { SemanticAttributeExtractionInternalController } from './controllers/semantic-attribute-extraction-internal.controller';
-import { SemanticAttributeExtractionService } from './services/semantic-attribute-extraction.service';
 import { WorkspaceSemanticModelController } from './controllers/workspace-semantic-model.controller';
 import { SemanticDataTokenController } from './controllers/semantic-data-token.controller';
 import { SemanticModelDatabaseService } from './infrastructure/semantic-model-database.service';
@@ -51,7 +49,7 @@ import { SemanticRealtimeSignalService } from './services/semantic-realtime-sign
 
 @Module({
   imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,UserModule,IntegrationEventsModule,forwardRef(() => WorkspaceModule)],
-  controllers: [SemanticModelController,WorkspaceSemanticModelController,SemanticDataTokenController,SemanticAttributeExtractionInternalController],
+  controllers: [SemanticModelController,WorkspaceSemanticModelController,SemanticDataTokenController],
   providers: [
     SemanticModelDatabaseService,SemanticModelRepository,SemanticGraphRepository,SemanticModelOntologyRepository,SemanticAgeGraphRepository,SemanticModelService,
     SemanticGraphCommandService,SemanticModelValidationService,SemanticModelWorkspaceService,
@@ -64,7 +62,6 @@ import { SemanticRealtimeSignalService } from './services/semantic-realtime-sign
     SemanticGraphIndexJobService,
     SemanticGraphIndexWorkerService,
     SemanticModelMappingProposalService,
-    SemanticAttributeExtractionService,
     SemanticModelBuildOrchestratorService,
     SemanticModelShareService,
     SemanticSourceMappingService,

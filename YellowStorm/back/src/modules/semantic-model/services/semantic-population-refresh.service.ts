@@ -11,7 +11,6 @@ import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-d
 import { ModelSpecificationService } from './model-specification.service';
 import { SemanticModelService } from './semantic-model.service';
 import { SemanticRuntimeClientService } from './semantic-runtime-client.service';
-import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
 import { DOCUMENT_MIME_TYPES, STRUCTURED_MIME_PREFIXES } from './semantic-source-mapping.service';
 
 export type PopulationRefreshScope = { kind: 'model' } | { kind: 'mapping'; mappingId: string };
@@ -56,10 +55,6 @@ type RelationRuleRow = Pick<RelationResolutionRule,
 
 const POPULATION_KINDS = new Set(['excel_sheet', 'csv', 'document']);
 const MAX_REFRESH_SOURCES = 25;
-const POPULATION_ENGINE_VERSION = 'r1-mvp-5';
-// Version of the AI extraction contract (prompt + response shape). Must equal the
-// ADK's reported extractorVersion; bump both together.
-const AI_EXTRACTION_CONTRACT_VERSION = 'ai-attribute-v1';
 
 @Injectable()
 export class SemanticPopulationRefreshService {
@@ -71,119 +66,7 @@ export class SemanticPopulationRefreshService {
     private readonly documents: WorkspaceDocumentService,
     private readonly specifications: ModelSpecificationService,
     private readonly runtime: SemanticRuntimeClientService,
-    private readonly aiExtractionAgent: SemanticAttributeExtractionService,
   ) {}
-
-  /**
-   * Identity of the AI extractor actually used, or null when no mapping needs
-   * it. Resolved from the admin-managed default agent so a model change there
-   * changes the revision identity.
-   */
-  private async aiExtractionIdentity(
-    sources: Array<{ fieldMappings?: SourceFieldMapping[] | null }>,
-  ): Promise<{ agentSlug: string; model: string | null; contractVersion: string } | null> {
-    const usesAi = sources.some((source) => (source.fieldMappings ?? [])
-      .some((field) => field.mode === 'extract' && field.extractionStrategy === 'ai'));
-    if (!usesAi) return null;
-    const agent = await this.aiExtractionAgent.resolveAgent();
-    return {
-      agentSlug: agent.slug,
-      model: agent.llmModel ?? null,
-      contractVersion: AI_EXTRACTION_CONTRACT_VERSION,
-    };
-  }
-
-  async getJob(userId: string, modelId: string, jobId: string) {
-    await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
-    const job = await this.runtime.getJob(jobId, userId);
-    if (job.jobType !== 'population.run' || job.modelId !== modelId) {
-      throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'Population job not found');
-    }
-    return job;
-  }
-
-  async boundRecords(userId: string, modelId: string, limit: number, conceptId?: string, dataRevisionId?: string) {
-    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
-    if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
-    const records = await this.runtime.getBoundRecords(model.id, userId, limit, conceptId, dataRevisionId);
-    const entities = records.entities;
-    const entityIds = new Set(entities.map((entity) => entity.entityId));
-    const relationLabels = new Map(records.specification.relations.map((relation) => [relation.relationId, relation.label]));
-    return {
-      dataRevisionId: records.dataRevisionId,
-      concepts: records.specification.concepts
-        .filter((concept) => !conceptId || concept.conceptId === conceptId)
-        .map((concept) => ({
-          id: concept.conceptId,
-          label: concept.label,
-          entities: entities.filter((entity) => entity.conceptId === concept.conceptId).map((entity) => ({
-            id: entity.entityId,
-            conceptId: entity.conceptId,
-            entityKey: entity.entityId,
-            label: entity.label,
-            values: entity.attributes,
-            provenance: {},
-            conflicts: [],
-          })),
-        })),
-      relations: records.relationships
-        .filter((relation) => entityIds.has(relation.sourceEntityId) && entityIds.has(relation.targetEntityId))
-        .map((relation) => ({
-          relationId: relation.relationId,
-          relationLabel: relationLabels.get(relation.relationId) ?? relation.relationId,
-          sourceEntityId: relation.sourceEntityId,
-          targetEntityIds: [relation.targetEntityId],
-          status: 'resolved' as const,
-          sourceValue: null,
-          sourceAttribute: '',
-          targetAttribute: '',
-          targetValues: [],
-          strategy: relation.matchingStrategy ?? 'normalized',
-          partial: false,
-        })),
-      sourceIssues: [],
-      summary: {
-        entities: records.counts.entities,
-        resolvedRelations: records.counts.relationships,
-        unresolvedRelations: 0,
-        ambiguousRelations: 0,
-        conflicts: 0,
-      },
-    };
-  }
-
-  async boundGraph(userId: string, modelId: string, dataRevisionId?: string) {
-    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
-    if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
-    const graph = await this.runtime.getBoundGraph(model.id, userId, dataRevisionId);
-    const conceptById = new Map(graph.specification.concepts.map((concept) => [concept.conceptId, concept]));
-    const relationLabels = new Map(graph.specification.relations.map((relation) => [relation.relationId, relation.label]));
-    return {
-      dataRevisionId: graph.dataRevisionId,
-      nodes: graph.nodes.map((node) => {
-        const concept = conceptById.get(String(node.properties.concept_id ?? node.label));
-        return {
-          ...node,
-          label: concept?.label ?? node.label,
-          properties: {
-            ...node.properties,
-            _meta: {
-              nodeTypeLabel: concept?.label ?? node.label,
-              attributes: (concept?.allowedFields ?? []).map((field) => ({
-                key: field,
-                label: field,
-                value: node.properties[field] ?? null,
-              })),
-            },
-          },
-        };
-      }),
-      edges: graph.edges.map((edge) => ({
-        ...edge,
-        label: relationLabels.get(edge.label) ?? edge.label,
-      })),
-    };
-  }
 
   async requestRefresh(userId: string, modelId: string, input: RequestPopulationRefreshInput) {
     const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
@@ -250,7 +133,7 @@ export class SemanticPopulationRefreshService {
       .map((node) => this.conceptSpec(node, identityRules.get(node.id) ?? []));
     const inScope = new Set(concepts.map((concept) => concept.conceptId));
     const relations: RelationSpec[] = [];
-    const relationBindings: Array<{ relationId: string; referenceField: string; targetField: string }> = [];
+    const relationBindings: Array<{ relationId: string; referenceField: string }> = [];
     for (const relation of relationRows.filter(
       (candidate) => inScope.has(candidate.sourceNodeTypeId) && inScope.has(candidate.targetNodeTypeId),
     )) {
@@ -270,26 +153,14 @@ export class SemanticPopulationRefreshService {
           if ('columnMapping' in source) return Object.values(source.columnMapping).includes(rule.sourceAttribute);
           return source.fieldMappings.some((field) => field.targetAttribute === rule.sourceAttribute);
         });
-        const targetFieldMapped = sources.some((source) => {
-          if (source.conceptId !== relation.targetNodeTypeId) return false;
-          if ('columnMapping' in source) return Object.values(source.columnMapping).includes(rule.targetAttribute);
-          return source.fieldMappings.some((field) => field.targetAttribute === rule.targetAttribute);
-        });
-        const sourceType = nodes.find((node) => node.id === relation.sourceNodeTypeId)
-          ?.attributes.find((attribute) => attribute.key === rule.sourceAttribute)?.type;
-        const targetType = nodes.find((node) => node.id === relation.targetNodeTypeId)
-          ?.attributes.find((attribute) => attribute.key === rule.targetAttribute)?.type;
-        if (!sourceFieldMapped || !targetFieldMapped || !sourceType || sourceType !== targetType) {
+        const targetIdentity = identityRules.get(relation.targetNodeTypeId) ?? [];
+        if (!sourceFieldMapped || targetIdentity.length !== 1 || targetIdentity[0] !== rule.targetAttribute) {
           throw new BadRequestException(
             ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
             `Relation "${relation.key}" cannot be populated by the selected mappings`,
           );
         }
-        relationBindings.push({
-          relationId: relation.id,
-          referenceField: rule.sourceAttribute,
-          targetField: rule.targetAttribute,
-        });
+        relationBindings.push({ relationId: relation.id, referenceField: rule.sourceAttribute });
       }
     }
     if (!concepts.length) {
@@ -323,35 +194,13 @@ export class SemanticPopulationRefreshService {
     });
     const scopeKey = scope.kind === 'model' ? 'model' : `mapping:${scope.mappingId}`;
     relationBindings.sort((left, right) => left.relationId < right.relationId ? -1 : left.relationId > right.relationId ? 1 : 0);
-    const runtimeSources = JSON.parse(JSON.stringify(sources)) as typeof sources;
-    // The AI agent's effective model is part of revision identity, so an admin
-    // changing it produces a new revision instead of reusing persisted rows.
-    const aiExtraction = await this.aiExtractionIdentity(runtimeSources);
-    const populationExecutionFingerprint = this.specifications.hashCanonical({
-      specHash,
-      sources: runtimeSources.map((source) => ({
-        conceptId: source.conceptId,
-        sourceKind: source.sourceKind,
-        source: source.source,
-        mappingVersion: source.mappingVersion,
-        columnMapping: 'columnMapping' in source ? source.columnMapping : null,
-        constantMapping: 'constantMapping' in source ? source.constantMapping : null,
-        fieldMappings: 'fieldMappings' in source ? source.fieldMappings : null,
-        options: 'options' in source ? source.options : {},
-        labelField: 'labelField' in source ? source.labelField ?? null : null,
-      })),
-      relationBindings,
-      aiExtraction,
-      populationEngineVersion: POPULATION_ENGINE_VERSION,
-    });
     const idempotencyKey = createHash('sha256')
       .update(JSON.stringify({
         modelVersionId: model.currentDraftVersionId,
         specHash: snapshot.specHash,
-        populationExecutionFingerprint,
         purpose: input.purpose,
         scope: scopeKey,
-        sources: runtimeSources,
+        sources,
         relationBindings,
       }))
       .digest('hex');
@@ -362,13 +211,10 @@ export class SemanticPopulationRefreshService {
       payload: {
         modelVersionId: model.currentDraftVersionId,
         specHash: snapshot.specHash,
-        populationExecutionFingerprint,
         purpose: input.purpose,
-        scope,
         specification: snapshot,
-        sources: runtimeSources,
+        sources,
         relationBindings,
-        aiExtraction,
       },
     }, idempotencyKey);
     return { ...accepted, skipped };
@@ -474,7 +320,7 @@ export class SemanticPopulationRefreshService {
     }
     const allowedModes = mapping.assetKind === 'document'
       ? new Set(['extract', 'metadata', 'constant'])
-      : new Set(['direct', 'constant']);
+      : new Set(['direct']);
     if (activeMappings.some((field) => !allowedModes.has(field.mode))) {
       throw new BadRequestException(
         ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
@@ -509,25 +355,19 @@ export class SemanticPopulationRefreshService {
     };
     const mappingVersion = mapping.updatedAt instanceof Date ? mapping.updatedAt.toISOString() : String(mapping.updatedAt);
     if (mapping.assetKind === 'document') {
-      const labels = new Map((node.attributes ?? []).map((attribute) => [attribute.key, attribute.label]));
       return {
         sourceKind: 'document' as const,
         conceptId: mapping.conceptId,
         source,
-        fieldMappings: activeMappings.map((field) => field.mode === 'extract' && !field.sourceField
-          ? { ...field, sourceField: labels.get(field.targetAttribute) || field.targetAttribute }
-          : field),
+        fieldMappings: activeMappings,
         mappingVersion,
       };
     }
     const columnMapping: Record<string, string> = {};
-    const constantMapping: Record<string, unknown> = {};
     for (const field of mapping.fieldMappings ?? []) {
       if (field.mode === 'direct' && field.sourceField) columnMapping[field.sourceField] = field.targetAttribute;
-      if (field.mode === 'constant') constantMapping[field.targetAttribute] = field.constantValue;
     }
-    if ((!Object.keys(columnMapping).length && !Object.keys(constantMapping).length)
-      || [...identityFields].some((field) => !mappedAttributes.has(field))) {
+    if (!Object.keys(columnMapping).length || [...identityFields].some((field) => !mappedAttributes.has(field))) {
       throw new BadRequestException(
         ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
         'The mapping must directly map every identity field',
@@ -542,7 +382,6 @@ export class SemanticPopulationRefreshService {
       source,
       options: mapping.sheetName ? { sheetName: mapping.sheetName } : {},
       columnMapping,
-      ...(Object.keys(constantMapping).length ? { constantMapping } : {}),
       ...(labelField ? { labelField } : {}),
       mappingVersion,
     };

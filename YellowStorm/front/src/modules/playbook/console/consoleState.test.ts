@@ -38,10 +38,6 @@ describe('URL state round-trip', () => {
     expect(parsed).toEqual(state);
   });
 
-  it('round-trips the shared segment', () => {
-    expect(parseConsoleState(new URLSearchParams('seg=shared'), null, 10).seg).toBe('shared');
-  });
-
   it('defaults: seg=all, view=table, sort=lastRun desc', () => {
     const parsed = parseConsoleState(new URLSearchParams(), null, 100);
     expect(parsed.seg).toBe('all');
@@ -118,13 +114,12 @@ describe('segmentCounts', () => {
   it('counts each segment', () => {
     const items = [
       vm(raw({ id: 'a', executionStatus: 'running', isFavorite: true })),
-      vm(raw({ id: 'b', executionStatus: null, lastExecutionAt: null, accessLevel: 'read' })),
+      vm(raw({ id: 'b', executionStatus: null, lastExecutionAt: null })),
     ];
     const counts = segmentCounts(items);
     expect(counts.all).toBe(2);
     expect(counts.live).toBe(1);
     expect(counts.fav).toBe(1);
-    expect(counts.shared).toBe(1);
     expect(counts.never).toBe(1);
     expect(counts.scheduled).toBe(0);
   });

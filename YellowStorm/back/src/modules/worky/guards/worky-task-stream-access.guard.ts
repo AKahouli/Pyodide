@@ -16,7 +16,6 @@ import {
   WorkyTaskDocument,
 } from '../schemas/worky-task.schema';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
-import { canWriteWorkyStream, getWorkyStreamAccess } from '../worky-stream-access';
 
 interface RequestShape {
   user?: { id: string };
@@ -24,7 +23,6 @@ interface RequestShape {
     id?: string;
     taskId?: string;
   };
-  method: string;
 }
 
 /**
@@ -57,14 +55,11 @@ export class WorkyTaskStreamAccessGuard implements CanActivate {
     if (!task) throw new NotFoundException('Task not found');
     const stream = await this.streams
       .findById(task.streamId)
-      .select({ ownerUserId: 1, shares: 1 })
+      .select({ ownerUserId: 1 })
       .lean()
       .exec();
     if (!stream) throw new NotFoundException('Stream not found');
-    const allowed = req.method === 'GET'
-      ? Boolean(getWorkyStreamAccess(stream, userId))
-      : canWriteWorkyStream(stream, userId);
-    if (!allowed) {
+    if (stream.ownerUserId.toString() !== userId) {
       throw new ForbiddenException(
         ErrorCode.WORKY_STREAM_FORBIDDEN,
         'You do not have access to this Worky task.',

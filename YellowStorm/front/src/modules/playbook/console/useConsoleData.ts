@@ -3,7 +3,6 @@ import { useShallow } from 'zustand/react/shallow';
 import * as api from '../api';
 import { usePlaybookStore } from '../store';
 import { buildPlaybookVM, markDuplicates, type PlaybookVM, type RawPlaybookListItem } from '../utils/playbookVM';
-import { PLAYBOOK_SHARED_EVENT } from '../services/playbookStreamService';
 
 const LIST_PAGE_SIZE = 100;
 const MAX_LIST_PAGES = 4; // ponytail: load-all ceiling of 400 items; virtualise above this
@@ -122,12 +121,9 @@ export function useConsoleData() {
     const onVisible = () => {
       if (document.visibilityState === 'visible') void loadAll(true);
     };
-    const onShared = () => void loadAll(true);
     document.addEventListener('visibilitychange', onVisible);
-    window.addEventListener(PLAYBOOK_SHARED_EVENT, onShared);
     return () => {
       document.removeEventListener('visibilitychange', onVisible);
-      window.removeEventListener(PLAYBOOK_SHARED_EVENT, onShared);
       if (refreshTimer.current) clearTimeout(refreshTimer.current);
     };
   }, [loadAll]);

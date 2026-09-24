@@ -23,22 +23,6 @@ export class WorkyStreamBudget {
 
 const WorkyStreamBudgetSchema = SchemaFactory.createForClass(WorkyStreamBudget);
 
-@Schema({ timestamps: true })
-export class WorkyStreamShare {
-  _id!: Types.ObjectId;
-
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
-  userId!: Types.ObjectId;
-
-  @Prop({ type: String, enum: ['read', 'write'], required: true })
-  permission!: 'read' | 'write';
-
-  createdAt!: Date;
-  updatedAt!: Date;
-}
-
-const WorkyStreamShareSchema = SchemaFactory.createForClass(WorkyStreamShare);
-
 @Schema({
   timestamps: true,
   collection: 'worky_streams',
@@ -46,9 +30,6 @@ const WorkyStreamShareSchema = SchemaFactory.createForClass(WorkyStreamShare);
 export class WorkyStream extends Document {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true, index: true })
   ownerUserId!: Types.ObjectId;
-
-  @Prop({ type: [WorkyStreamShareSchema], default: [] })
-  shares!: WorkyStreamShare[];
 
   @Prop({ type: Types.ObjectId, ref: 'Workspace', required: true, index: true })
   workspaceId!: Types.ObjectId;
@@ -169,7 +150,6 @@ export const WorkyStreamSchema = SchemaFactory.createForClass(WorkyStream);
 
 WorkyStreamSchema.index({ ownerUserId: 1, createdAt: -1 });
 WorkyStreamSchema.index({ ownerUserId: 1, status: 1 });
-WorkyStreamSchema.index({ 'shares.userId': 1 });
 WorkyStreamSchema.index({ artifactWorkspaceId: 1 });
 WorkyStreamSchema.index({ managerAgentId: 1 });
 

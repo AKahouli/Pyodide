@@ -5,7 +5,7 @@ from copy import deepcopy
 import pytest
 from fastapi.testclient import TestClient
 
-from app.jobs.models import Admission, IdempotencyConflict, PopulationCommand
+from app.jobs.models import Admission, IdempotencyConflict
 from app.main import create_app
 from app.population.compiler import canonical_spec_hash
 
@@ -113,17 +113,6 @@ def test_admission_commits_before_202_and_reuses_same_command(job_client: TestCl
     assert duplicate.status_code == 202
     assert duplicate.json()["reused"] is True
     assert duplicate.json()["jobId"] == "job-1"
-
-
-def test_legacy_relation_binding_serialization_preserves_historical_shape():
-    body = deepcopy(BODY)
-    body["payload"]["relationBindings"] = [{
-        "relationId": "r1", "referenceField": "customer_id"}]
-
-    serialized = PopulationCommand.model_validate(body).model_dump(by_alias=True, mode="json")
-
-    assert serialized["payload"]["relationBindings"] == [{
-        "relationId": "r1", "referenceField": "customer_id"}]
 
 
 def test_population_admission_accepts_document_mapping_and_rejects_mixed_shapes(

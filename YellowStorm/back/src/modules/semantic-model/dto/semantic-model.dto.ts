@@ -342,12 +342,6 @@ export class SourceFieldMappingDto {
   @ApiPropertyOptional()
   @IsOptional()
   constantValue?: unknown;
-
-  // Only meaningful for mode='extract'; ignored otherwise.
-  @ApiPropertyOptional({ enum: ['deterministic', 'ai'] })
-  @IsOptional()
-  @IsIn(['deterministic', 'ai'])
-  extractionStrategy?: 'deterministic' | 'ai';
 }
 
 export class CreateSourceMappingDto {
@@ -586,11 +580,6 @@ export class DataPreviewDto {
   @Min(1)
   @Max(50)
   limit: number = 25;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  dataRevisionId?: string;
 }
 
 export class ListReviewItemsQueryDto {

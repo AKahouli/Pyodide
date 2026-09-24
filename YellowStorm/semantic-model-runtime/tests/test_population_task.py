@@ -25,8 +25,7 @@ def command(spec=None, sources=None, bindings=None, purpose="build",
         "payload": {
             "modelVersionId": "v1",
             "specHash": canonical_spec_hash(spec) if spec_hash is None else spec_hash,
-            "purpose": purpose, "scope": {"kind": "model"},
-            "specification": spec, "sources": sources,
+            "purpose": purpose, "specification": spec, "sources": sources,
             "relationBindings": [] if bindings is None else bindings,
         },
     }
@@ -40,18 +39,6 @@ def test_valid_command_compiles():
     assert validated["purpose"] == "build"
 
 
-def test_legacy_binding_infers_single_target_identity():
-    sources = [{"conceptId": "c2", "source": dict(SOURCE), "options": {},
-                "columnMapping": {"agreement_no": "agreement_no", "parent_ref": "parent_ref",
-                                  "status": "status", "country": "country"},
-                "mappingVersion": "map-v2"}]
-    validated = run_population_for_payload(command(sources=sources, bindings=[{
-        "relationId": "r1", "referenceField": "parent_ref"}]))
-    assert validated["ok"] is True
-    assert validated["relationBindings"] == [{
-        "relationId": "r1", "referenceField": "parent_ref", "targetField": "agreement_no"}]
-
-
 def test_valid_document_command_compiles_without_llm_configuration():
     source = {**SOURCE, "mimeType": "application/pdf", "originalName": "agreement.pdf"}
     validated = run_population_for_payload(command(sources=[{
@@ -63,46 +50,6 @@ def test_valid_document_command_compiles_without_llm_configuration():
     }]))
     assert validated["ok"] is True
     assert validated["sources"][0]["sourceKind"] == "document"
-
-
-def _document_command(field_mappings: list[dict]) -> dict:
-    source = {**SOURCE, "mimeType": "application/pdf", "originalName": "agreement.pdf"}
-    return command(sources=[{
-        "conceptId": "c1", "sourceKind": "document", "source": source,
-        "fieldMappings": field_mappings, "mappingVersion": "map-v1",
-    }])
-
-
-def test_document_command_accepts_an_explicit_extraction_strategy():
-    validated = run_population_for_payload(_document_command([
-        {"sourceField": "Customer ID", "targetAttribute": "customer_id", "mode": "extract",
-         "extractionStrategy": "deterministic"},
-        {"sourceField": "document_name", "targetAttribute": "name", "mode": "metadata"},
-    ]))
-    assert validated["ok"] is True
-    assert validated["sources"][0]["fieldMappings"][0]["extractionStrategy"] == "deterministic"
-
-
-def test_document_command_rejects_unknown_extraction_strategy():
-    validated = run_population_for_payload(_document_command([
-        {"sourceField": "Customer ID", "targetAttribute": "customer_id", "mode": "extract",
-         "extractionStrategy": "magic"},
-    ]))
-    assert validated["errorCode"] == "invalid_document_mapping"
-
-
-def test_document_command_rejects_strategy_on_a_non_extract_mapping():
-    validated = run_population_for_payload(_document_command([
-        {"sourceField": "document_name", "targetAttribute": "name", "mode": "metadata",
-         "extractionStrategy": "ai"},
-    ]))
-    assert validated["errorCode"] == "invalid_document_mapping"
-
-
-def test_validator_rejects_execution_fingerprint_mismatch():
-    payload = command()
-    payload["payload"]["populationExecutionFingerprint"] = "sha256:" + "0" * 64
-    assert run_population_for_payload(payload)["errorCode"] == "execution_fingerprint_mismatch"
 
 
 def test_validator_rejects_before_any_fetch():
@@ -124,13 +71,8 @@ def test_validator_rejects_before_any_fetch():
     unmapped = command(sources=[{"conceptId": "c1", "source": dict(SOURCE),
                                  "columnMapping": {"name": "name"}}])
     assert run_population_for_payload(unmapped)["errorCode"] == "unmapped_identity"
-    bad_binding = command(bindings=[{
-        "relationId": "nope", "referenceField": "x", "targetField": "y"}])
+    bad_binding = command(bindings=[{"relationId": "nope", "referenceField": "x"}])
     assert run_population_for_payload(bad_binding)["errorCode"] == "unknown_relation"
-    non_identity_binding = command(bindings=[{
-        "relationId": "r1", "referenceField": "parent_ref", "targetField": "country"}])
-    assert run_population_for_payload(non_identity_binding)["errorCode"] == \
-        "invalid_relation_bindings"
     missing_filter = command(sources=[{"conceptId": "c2", "source": dict(SOURCE),
                                        "columnMapping": {"agreement_no": "agreement_no",
                                                          "country": "country"}}])
@@ -162,12 +104,12 @@ def fake_prepare(source: dict, options: dict | None, data: bytes, output) -> dic
     return {"datasetId": "ds_0123456789abcdef01234567", "rowCount": 2}
 
 
-def fake_query(path, *, columns=None, filters=None, limit=100, offset=0) -> dict:  # type: ignore[no-untyped-def]
+def fake_query(path, *, columns=None, filters=None, limit=100) -> dict:  # type: ignore[no-untyped-def]
     assert "__sheetRow" in (columns or [])
     return {"columns": columns, "rows": [
         {"__sheetRow": 2, "customer_id": "C-1", "name": "Acme"},
         {"__sheetRow": 3, "customer_id": "C-2", "name": "Globex"},
-    ][offset:offset + limit], "returnedRows": max(0, 2 - offset), "limit": limit, "offset": offset}
+    ], "returnedRows": 2, "limit": limit}
 
 
 @pytest.mark.asyncio
@@ -181,23 +123,6 @@ async def test_task_populates_from_prepared_rows():
     assert {a["attribute"] for a in outcome["assertions"]} == {"name"}
     assert outcome["relationships"] == []
     assert outcome["sourceObservations"][0]["datasetId"] == "ds_0123456789abcdef01234567"
-
-
-@pytest.mark.asyncio
-async def test_task_reads_rows_after_first_page():
-    rows = [{"__sheetRow": index + 2, "customer_id": f"C-{index}", "name": "X"}
-            for index in range(1001)]
-
-    def paged(path, *, columns=None, filters=None, limit=100, offset=0):  # type: ignore[no-untyped-def]
-        page = rows[offset:offset + limit]
-        return {"columns": columns, "rows": page, "returnedRows": len(page),
-                "limit": limit, "offset": offset}
-
-    outcome = await run_population_for_task(command(), fetch=fake_fetch,
-                                            prepare=fake_prepare, query=paged)
-    assert outcome["counts"]["materialized"] == 1001
-    assert any(entity["identity"]["customer_id"] == "c-1000"
-               for entity in outcome["entities"])
 
 
 @pytest.mark.asyncio
@@ -232,16 +157,11 @@ async def test_task_merges_tabular_and_document_sources(monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
-async def test_task_reports_capped_enumeration_and_fetch_failures(monkeypatch: pytest.MonkeyPatch):
-    import app.workers.population_tasks as tasks
-
-    monkeypatch.setattr(tasks, "MAX_TOTAL_ASSERTIONS", 1000)
-
-    def capped(path, *, columns=None, filters=None, limit=100, offset=0) -> dict:  # type: ignore[no-untyped-def]
+async def test_task_reports_capped_enumeration_and_fetch_failures():
+    def capped(path, *, columns=None, filters=None, limit=100) -> dict:  # type: ignore[no-untyped-def]
         rows = [{"__sheetRow": i, "customer_id": f"C-{i}", "name": "X"}
                 for i in range(2, 1002)]
-        return {"columns": columns, "rows": rows, "returnedRows": 1000,
-                "limit": limit, "offset": offset}
+        return {"columns": columns, "rows": rows, "returnedRows": 1000, "limit": limit}
 
     outcome = await run_population_for_task(command(), fetch=fake_fetch,
                                             prepare=fake_prepare, query=capped)
@@ -279,7 +199,6 @@ async def test_persist_population_revision_writes_canonical_rows():
     spec_hash = canonical_spec_hash(base_spec())
     outcome = {
         "specHash": spec_hash,
-        "executionFingerprint": run_population_for_payload(command())["executionFingerprint"],
         "entities": [{"entityId": "crm:aaa", "conceptId": "c1", "namespace": "crm",
                       "identity": {"customer_id": "x"}, "label": "X",
                       "attributes": {"name": "X"}, "provenance": {}}],
@@ -290,8 +209,7 @@ async def test_persist_population_revision_writes_canonical_rows():
         "gaps": [], "counts": {}, "datasetFingerprints": ["sha256:abc"],
     }
     revision = await persist_population_revision(FakePool(), command(), outcome)
-    assert revision == revision_id_for(
-        "v1", outcome["executionFingerprint"], ["sha256:abc"], 0)
+    assert revision == revision_id_for("v1", spec_hash, ["sha256:abc"], 0)
     statements = [sql for _, sql, *_ in calls]
     assert any("semantic_runtime.specifications" in sql for sql in statements)
     assert any("semantic_population.data_revisions" in sql for sql in statements)

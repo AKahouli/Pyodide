@@ -25,23 +25,16 @@ import { MobileStreamHeader } from './MobileStreamHeader';
 
 describe('MobileStreamHeader', () => {
   it('shows the stream title and an "N agents · Status" subtitle', () => {
-    render(<MobileStreamHeader streamId="s1" onBack={() => {}} onOpenGraph={() => {}} graphAvailable />);
+    render(<MobileStreamHeader streamId="s1" onBack={() => {}} />);
     expect(screen.getByText('Q3 Market Expansion')).toBeTruthy();
     expect(screen.getByText('4 agents · Active')).toBeTruthy();
   });
 
   it('wires the back action without duplicating the bottom-nav chat control', async () => {
     const onBack = vi.fn();
-    render(<MobileStreamHeader streamId="s1" onBack={onBack} onOpenGraph={() => {}} graphAvailable />);
+    render(<MobileStreamHeader streamId="s1" onBack={onBack} />);
     await userEvent.click(screen.getByLabelText('header.back'));
     expect(onBack).toHaveBeenCalled();
     expect(screen.queryByLabelText('orchestrator.tabs.chat')).not.toBeInTheDocument();
-  });
-
-  it('opens the graph from the header in one click', async () => {
-    const onOpenGraph = vi.fn();
-    render(<MobileStreamHeader streamId="s1" onBack={() => {}} onOpenGraph={onOpenGraph} graphAvailable />);
-    await userEvent.click(screen.getByRole('button', { name: 'graph.openFromHeader' }));
-    expect(onOpenGraph).toHaveBeenCalledOnce();
   });
 });

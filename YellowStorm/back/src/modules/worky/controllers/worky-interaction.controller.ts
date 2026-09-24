@@ -26,7 +26,6 @@ import {
   PreparedWorkyTurn,
   WorkyTurnKickoffService,
 } from '../services/worky-turn-kickoff.service';
-import { canWriteWorkyStream } from '../worky-stream-access';
 
 export interface RespondInteractionResponse {
   interactionId: string;
@@ -86,7 +85,7 @@ export class WorkyInteractionController {
         'Worky stream not found.',
       );
     }
-    if (!canWriteWorkyStream(stream, user._id.toString())) {
+    if (stream.ownerUserId.toString() !== user._id.toString()) {
       throw new ForbiddenException(
         ErrorCode.WORKY_STREAM_FORBIDDEN,
         'You do not have access to this Worky interaction.',

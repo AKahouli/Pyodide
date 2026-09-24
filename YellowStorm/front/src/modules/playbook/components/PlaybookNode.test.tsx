@@ -1,7 +1,7 @@
 import { forwardRef } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { CanvasDesignContext, CardDensityContext, NodeContextMenuContext, NodeDataActionsContext, PlaybookNode, type NodeContextMenuActions } from './PlaybookNode';
+import { CanvasDesignContext, CardDensityContext, NodeDataActionsContext, PlaybookNode } from './PlaybookNode';
 
 const storeState = vi.hoisted(() => ({
   currentPlaybook: {
@@ -10,12 +10,10 @@ const storeState = vi.hoisted(() => ({
   },
   selectedStepId: null as string | null,
   openExecutionDetailTab: vi.fn(),
-  stopExecution: vi.fn(),
   addInputFileToTask: vi.fn(),
   bindResourceToInputPort: vi.fn(),
   removeInputFileFromTask: vi.fn(),
   currentExecution: {
-    id: 'execution-1',
     taskResults: [
       {
         taskId: 'node-1',
@@ -151,34 +149,13 @@ vi.mock('./PortLabel', () => ({
 }));
 
 describe('PlaybookNode', () => {
-  function createActions(overrides: Partial<NodeContextMenuActions> = {}): NodeContextMenuActions {
-    return {
-      onEdit: vi.fn(),
-      onClone: vi.fn(),
-      onDelete: vi.fn(),
-      onToggleEnabled: vi.fn(),
-      onExecuteStep: vi.fn(),
-      onResumeFromStep: vi.fn(),
-      onRunFromStep: vi.fn(),
-      onSkipStep: vi.fn(),
-      onSaveBaseline: vi.fn(),
-      canExecute: true,
-      isExecuting: false,
-      canResumeFromStep: () => false,
-      canRunFromStep: () => false,
-      canSkipStep: () => false,
-      canSaveBaseline: () => false,
-      ...overrides,
-    };
-  }
-
-  function renderCompact(extra: Record<string, unknown> = {}, design = false, actions: NodeContextMenuActions | null = null) {
-    return render(<NodeContextMenuContext.Provider value={actions}><CardDensityContext.Provider value={true}><CanvasDesignContext.Provider value={design}>
+  function renderCompact(extra: Record<string, unknown> = {}, design = false) {
+    return render(<CardDensityContext.Provider value={true}><CanvasDesignContext.Provider value={design}>
       <PlaybookNode {...({ id: 'node-1', selected: false, data: {
         id: 'node-1', title: 'Extract text', assignedAgentId: 'agent-1', executionOrder: 0,
         inputPorts: [], outputPorts: [], ...extra,
       } } as any)} />
-    </CanvasDesignContext.Provider></CardDensityContext.Provider></NodeContextMenuContext.Provider>);
+    </CanvasDesignContext.Provider></CardDensityContext.Provider>);
   }
 
   it('restores a clickable Advisor score on compact cards', () => {
@@ -206,77 +183,11 @@ describe('PlaybookNode', () => {
     expect(container.querySelector('p[title]')).not.toBeInTheDocument();
   });
 
-  it('places the completed result icon before the contextual menu', () => {
-    const { container } = renderCompact({ outputPorts: [{ id: 'out-1', name: 'Report', artifactKind: 'document' }] });
+  it('anchors the completed result beside the output rail', () => {
+    renderCompact({ outputPorts: [{ id: 'out-1', name: 'Report', artifactKind: 'document' }] });
     const trigger = screen.getByRole('button', { name: 'nodeOutput.open' });
-    const menu = screen.getByRole('button', { name: 'nodeCard.moreActions' });
-    expect(trigger.querySelector('svg')).toBeInTheDocument();
-    expect(trigger.querySelector('span')).toBeNull();
-    expect(trigger.parentElement).toBe(menu.parentElement);
-    expect(Array.from(trigger.parentElement!.children).indexOf(trigger))
-      .toBeLessThan(Array.from(menu.parentElement!.children).indexOf(menu));
-    expect(container.querySelector('.right-0 .absolute')).not.toContainElement(trigger);
-  });
-
-  it('grows the card height to keep multiple ports from overlapping', () => {
-    const { container } = renderCompact({
-      inputPorts: Array.from({ length: 4 }, (_, index) => ({
-        id: `input-${index}`,
-        name: `Input ${index}`,
-        artifactKind: 'text',
-      })),
-      outputPorts: [{ id: 'out-1', name: 'Report', artifactKind: 'document' }],
-    });
-
-    expect(container.firstChild).toHaveStyle({ minHeight: '240px' });
-    expect(container.firstChild).toHaveClass('flex', 'flex-col');
-    expect(screen.getByRole('button', { name: 'node.executeStep' }).parentElement).toHaveClass('mt-auto');
-  });
-
-  it('shows play and stop controls at the bottom of compact cards', () => {
-    const onExecuteStep = vi.fn();
-    const actions = createActions({ onExecuteStep });
-    const { rerender } = renderCompact({}, false, actions);
-
-    fireEvent.click(screen.getByRole('button', { name: 'node.executeStep' }));
-    expect(onExecuteStep).toHaveBeenCalledWith('node-1');
-    expect(screen.getByRole('button', { name: 'toolbar.stop' })).toBeDisabled();
-
-    rerender(<NodeContextMenuContext.Provider value={{ ...actions, canExecute: false, isExecuting: true }}>
-      <CardDensityContext.Provider value={true}><CanvasDesignContext.Provider value={false}>
-        <PlaybookNode {...({ id: 'node-1', selected: false, data: {
-          id: 'node-1', title: 'Extract text', assignedAgentId: 'agent-1', executionOrder: 0,
-          inputPorts: [], outputPorts: [], stepStatus: 'running',
-        } } as any)} />
-      </CanvasDesignContext.Provider></CardDensityContext.Provider>
-    </NodeContextMenuContext.Provider>);
-
-    fireEvent.click(screen.getByRole('button', { name: 'toolbar.stop' }));
-    expect(storeState.stopExecution).toHaveBeenCalledWith('playbook-1', 'execution-1');
-  });
-
-  it('uses the old detailed card action strip with contextual play and stop', () => {
-    const onExecuteStep = vi.fn();
-    const actions = createActions({ onExecuteStep });
-    const nodeProps = { id: 'node-1', selected: false, data: {
-      id: 'node-1', title: 'Extract text', description: 'Extract the source text.', assignedAgentId: 'agent-1',
-      executionOrder: 0, inputPorts: [], outputPorts: [],
-    } } as any;
-    const { rerender } = render(
-      <NodeContextMenuContext.Provider value={actions}><PlaybookNode {...nodeProps} /></NodeContextMenuContext.Provider>,
-    );
-
-    expect(screen.getByText('Extract the source text.')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'node.executeStep' }));
-    expect(onExecuteStep).toHaveBeenCalledWith('node-1');
-
-    rerender(
-      <NodeContextMenuContext.Provider value={{ ...actions, canExecute: false, isExecuting: true }}>
-        <PlaybookNode {...nodeProps} />
-      </NodeContextMenuContext.Provider>,
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'toolbar.stop' }));
-    expect(storeState.stopExecution).toHaveBeenCalledWith('playbook-1', 'execution-1');
+    expect(trigger).toHaveTextContent('nodeOutput.badge');
+    expect(trigger.parentElement).toHaveClass('bottom-[calc(100%+0.375rem)]');
   });
 
   beforeEach(() => {
@@ -286,7 +197,6 @@ describe('PlaybookNode', () => {
       tasks: [],
     };
     storeState.currentExecution = {
-      id: 'execution-1',
       playbookId: 'playbook-1',
       taskResults: [
         {

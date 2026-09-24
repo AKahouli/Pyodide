@@ -16,17 +16,9 @@ const store = vi.hoisted(() => ({
   hydrateActiveExecutions: vi.fn(),
 }));
 
-const features = vi.hoisted(() => ({
-  querySseEnabled: false,
-  querySseMirrorZustandEnabled: false,
-  xstateExecutionEnabled: false,
-}));
-
 vi.mock('../store', () => ({
   usePlaybookStore: { getState: () => store },
 }));
-
-vi.mock('../features', () => ({ playbookFeatures: features }));
 
 vi.mock('../api', () => ({
   getActiveExecutions: vi.fn().mockResolvedValue([]),
@@ -68,8 +60,6 @@ describe('playbookStreamService (BroadcastChannel leader election)', () => {
     vi.clearAllMocks();
     EventSourceMock.instances = [];
     BroadcastChannelMock.instances = [];
-    features.querySseEnabled = false;
-    features.querySseMirrorZustandEnabled = false;
     vi.stubGlobal('EventSource', EventSourceMock as unknown as typeof EventSource);
     vi.stubGlobal('BroadcastChannel', BroadcastChannelMock as unknown as typeof BroadcastChannel);
     localStorage.setItem('token-key', 'abc');
@@ -107,47 +97,6 @@ describe('playbookStreamService (BroadcastChannel leader election)', () => {
     unmount();
     expect(es.close).toHaveBeenCalled();
     expect(bc.close).toHaveBeenCalled();
-  });
-
-  it('notifies the open console when a playbook is shared with the user', () => {
-    features.querySseEnabled = true;
-    const listener = vi.fn();
-    window.addEventListener('yellowstorm:playbook-shared', listener);
-    const { unmount } = renderHook(() => usePlaybookStreamGlobal());
-    act(() => { vi.advanceTimersByTime(250); });
-    EventSourceMock.instances[0].listeners.get('playbook_shared')?.[0]?.({
-      data: JSON.stringify({ playbookId: 'flow-1' }),
-    } as MessageEvent);
-
-    expect(store.fetchPlaybooks).toHaveBeenCalled();
-    expect(listener).toHaveBeenCalled();
-
-    window.removeEventListener('yellowstorm:playbook-shared', listener);
-    unmount();
-  });
-
-  it('notifies a follower console when the leader relays a shared playbook', () => {
-    features.querySseEnabled = true;
-    const listener = vi.fn();
-    window.addEventListener('yellowstorm:playbook-shared', listener);
-    const { unmount } = renderHook(() => usePlaybookStreamGlobal());
-    const bc = BroadcastChannelMock.instances[0];
-    const leaderListener = bc.addEventListener.mock.calls.find((call: any[]) => call[0] === 'message')?.[1];
-    leaderListener?.({ data: { type: 'leader-alive', tabId: 'other' } });
-    act(() => { vi.advanceTimersByTime(250); });
-
-    bc.onmessage?.({
-      data: {
-        type: 'sse-event',
-        payload: JSON.stringify({ type: 'playbook_shared', data: { playbookId: 'flow-1' } }),
-      },
-    } as MessageEvent);
-
-    expect(store.fetchPlaybooks).toHaveBeenCalled();
-    expect(listener).toHaveBeenCalled();
-
-    window.removeEventListener('yellowstorm:playbook-shared', listener);
-    unmount();
   });
 
   it('becomes follower when a leader responds to check', () => {

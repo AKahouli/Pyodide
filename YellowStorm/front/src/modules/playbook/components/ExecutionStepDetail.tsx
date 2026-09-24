@@ -5,6 +5,7 @@ import { ArtifactBadge } from './ArtifactBadge';
 import { AdvisorChangeReviewDialog } from './AdvisorChangeReviewDialog';
 import { AdvisorResultPanel } from './AdvisorResultPanel';
 import { IteratorResultPanel } from './IteratorResultPanel';
+import { StepComponents } from './StepComponents';
 import { PortArtifactPane } from './PortArtifactPane';
 import { PortContentViewer } from './PortContentViewer';
 import { ReplayReportPanel } from './ReplayReportPanel';
@@ -12,7 +13,6 @@ import { ReplayContextMappingCard } from './ReplayContextMappingCard';
 import { ReplayExecutionPlanCard } from './ReplayExecutionPlanCard';
 import { getStepNumberTone } from './ExecutionStepList';
 import { DynamicReasoningTracePanel } from './execution/DynamicReasoningTracePanel';
-import { StepResultContent } from './StepResultContent';
 
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -22,6 +22,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
+import { MessageProvider } from '@/components/ai-elements/message-context';
+import { mapComponentsToContentParts } from '@/modules/conversation/utils';
 import { cn } from '@/lib/utils';
 import { showError, showSuccess } from '@/lib/notifications';
 import type {
@@ -481,6 +484,27 @@ function buildCurrentStepExecution(step: TaskResult) {
     artifacts: step.artifacts || [],
     hitlHistory: step.hitlHistory || [],
   };
+}
+
+function buildResultComponentsWithText(text: string, components: TaskResult['components'], taskId: string) {
+  const trimmedText = text.trim();
+  const remainingComponents = (components || []).filter((component) => {
+    if (component.type !== 'text') return true;
+    return String((component.data as { content?: string })?.content || '').trim() !== trimmedText;
+  });
+
+  return [
+    {
+      id: `playbook-final-text-${taskId}`,
+      type: 'text',
+      data: { content: text },
+    },
+    ...remainingComponents,
+  ];
+}
+
+function isHtmlResultText(text: string): boolean {
+  return /^\s*(?:<!DOCTYPE|<html|<head|<body|<div|<p|<h[1-6]|<style|<script|<table|<article|<section|<header|<footer|<nav|<main|<aside|<form|<ul|<ol|<li|<figure|<figcaption|<blockquote|<details|<summary|<dialog|<template|<canvas|<svg|<math|<pre|<code)/i.test(text);
 }
 
 function getHitlResponseText(entry: HitlHistoryEntry) {
@@ -1182,6 +1206,11 @@ export function ExecutionStepDetail({
 
   const selectedStepExecutionText = getPreferredStepResultText(selectedStepExecution);
   const selectedStepComponents = selectedStepExecution?.components || [];
+  const selectedStepArtifactComponents = selectedStepComponents.filter((component) => component.type === 'artifact');
+  const selectedStepNonArtifactComponents = selectedStepComponents.filter((component) => component.type !== 'artifact');
+  const supplementalStepComponents = selectedStepExecutionText && !isHtmlResultText(selectedStepExecutionText)
+    ? selectedStepArtifactComponents
+    : selectedStepComponents;
   const comparisonCandidates = evaluationHistory.filter((entry) => entry.id !== selectedEvaluation?.id);
   const comparisonEvaluation = comparisonCandidates.find((entry) => entry.id === comparisonEvaluationId) || comparisonCandidates[0] || null;
   const semanticMatchToDisplay = selectedEvaluation?.semanticMatch || step?.semanticMatch || null;
@@ -1451,14 +1480,33 @@ export function ExecutionStepDetail({
                         </div>
                       </div>
                     )}
-                    {(selectedStepExecutionText || selectedStepComponents.length > 0) && (
-                      <StepResultContent
-                        text={selectedStepExecutionText || undefined}
-                        components={selectedStepComponents}
-                        taskId={step.taskId}
-                        executionId={execution?.id}
-                        className="rounded-lg bg-muted/50 p-4"
-                      />
+                    {selectedStepExecutionText && (() => {
+                      const isHtml = isHtmlResultText(selectedStepExecutionText);
+                      const parts = isHtml
+                         ? [{ type: 'webPreview' as const, content: selectedStepExecutionText }]
+                         : mapComponentsToContentParts(buildResultComponentsWithText(
+                             selectedStepExecutionText,
+                             selectedStepNonArtifactComponents,
+                             step.taskId,
+                           ) as never);
+                      return (
+                        <div
+                          data-testid="step-result-markdown"
+                          className={cn(
+                            'rounded-lg bg-muted/50 p-4',
+                            isHtml ? '' : 'text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px]',
+                          )}
+                        >
+                          <MessageProvider fileViewerDisplayMode="floating">
+                            <AIMessageContent parts={parts} />
+                          </MessageProvider>
+                        </div>
+                      );
+                    })()}
+                    {supplementalStepComponents.length > 0 && (
+                      <div className="prose prose-sm max-w-none dark:prose-invert">
+                        <StepComponents components={supplementalStepComponents} taskId={step.taskId} executionId={execution?.id} />
+                      </div>
                     )}
                   </>
                 )}
