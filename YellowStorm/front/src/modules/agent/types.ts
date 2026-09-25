@@ -288,7 +288,7 @@ export interface AgentTelegramIntegration {
   botUsername?: string;
   status?: 'pending' | 'active' | 'error';
   webhookRegistered?: boolean;
-  messageKey?: 'webhook_success' | 'webhook_failed' | 'disabled' | 'saved';
+  messageKey?: 'webhook_success' | 'webhook_failed' | 'polling' | 'disabled' | 'saved';
   errorMessage?: string;
   linkCode?: string;
   linkCodeExpiresAt?: string;

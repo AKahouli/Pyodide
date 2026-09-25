@@ -9,4 +9,11 @@ export default registerAs('telegram', () => ({
   webhookRateLimit: Number.parseInt(process.env.TELEGRAM_WEBHOOK_RATE_LIMIT || '60', 10),
   webhookRateWindowMs: Number.parseInt(process.env.TELEGRAM_WEBHOOK_RATE_WINDOW_MS || '60000', 10),
   maxReplyLength: Number.parseInt(process.env.TELEGRAM_MAX_REPLY_LENGTH || '3900', 10),
+  validationTtlMs: Number.parseInt(process.env.TELEGRAM_VALIDATION_TTL_MS || '1800000', 10),
+  guestInboxEnabled: process.env.TELEGRAM_GUEST_INBOX_ENABLED !== 'false',
+  guestRateLimit: Number.parseInt(process.env.TELEGRAM_GUEST_RATE_LIMIT || '10', 10),
+  guestRateWindowMs: Number.parseInt(process.env.TELEGRAM_GUEST_RATE_WINDOW_MS || '600000', 10),
+  pollingEnabled: process.env.TELEGRAM_POLLING === 'true',
+  pollingIntervalMs: Number.parseInt(process.env.TELEGRAM_POLLING_INTERVAL_MS || '3000', 10),
+  pollingConcurrency: Number.parseInt(process.env.TELEGRAM_POLLING_CONCURRENCY || '5', 10),
 }));
