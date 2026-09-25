@@ -260,6 +260,32 @@ export class PlaybookExecutionHitlResumeService {
       );
     }
 
+    const snapshotNodes = execution.snapshot?.nodes;
+    if (Array.isArray(snapshotNodes) && snapshotNodes.some(
+      (node: { id?: string; kind?: string } | null) => node?.id === payload.taskId && node.kind === 'human_approval',
+    )) {
+      if (payload.interruptId && execution.pendingApproval.interruptId
+        && payload.interruptId !== execution.pendingApproval.interruptId) {
+        throw new ConflictException(ErrorCode.CONFLICT, 'Execution is waiting on a different approval interrupt.');
+      }
+      const decision = payload.action === 'approve' ? 'approved'
+        : payload.action === 'reject' ? 'rejected' : null;
+      if (!decision || (payload.approved !== undefined && payload.approved !== (decision === 'approved'))) {
+        throw new BadRequestException(ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED, 'Approval decision must be approved or rejected.');
+      }
+      return this.resumeApproval(executionId, ownerId, {
+        decision,
+        payload: {
+          ...payload.payload,
+          ...(payload.message ? { message: payload.message } : {}),
+          ...(payload.reason ? { reason: payload.reason } : {}),
+          ...(payload.feedback ? { feedback: payload.feedback } : {}),
+          ...(payload.scope ? { scope: payload.scope } : {}),
+          ...(payload.remember !== undefined ? { remember: payload.remember } : {}),
+        },
+      });
+    }
+
     if (!host.isRuntimeAvailable()) {
       throw new ServiceUnavailableException(
         ErrorCode.PLAYBOOK_FLOW_GRPC_UNAVAILABLE,

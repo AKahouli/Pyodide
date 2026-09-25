@@ -133,6 +133,14 @@ async def emit_events(
                         data.get("payload", {}),
                         int(data.get("iteration", 0)),
                     )
+                elif event_type in (EVENT_APPROVAL_REQUESTED, EVENT_APPROVAL_RESOLVED):
+                    yield _build_event(
+                        event_type,
+                        execution_id,
+                        str(data.get("node_id", "")),
+                        data.get("payload", {}),
+                        int(data.get("iteration", 0)),
+                    )
                 elif event_type in (EVENT_ITERATOR_CHILD_STEP_STARTED, EVENT_ITERATOR_CHILD_STEP_COMPLETED):
                     yield _build_event(
                         event_type,

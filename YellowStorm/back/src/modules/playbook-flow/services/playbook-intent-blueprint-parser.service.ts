@@ -721,11 +721,15 @@ export class PlaybookIntentBlueprintParserService {
     if (defaultLabel && !uniqueLabels.includes(defaultLabel)) {
       this.recordDiagnostic(diagnostics, 'blueprint_router_config_invalid', `${ownerRef}.defaultLabel`);
     }
+    const mode = this.asString(raw.mode);
+    const prompt = this.asString(raw.prompt);
     return {
       outputLabels: uniqueLabels,
       ...(typeof raw.maxIterations === 'number' ? { maxIterations: raw.maxIterations } : typeof raw.max_iterations === 'number' ? { maxIterations: raw.max_iterations } : {}),
       ...(conditions.length ? { conditions } : {}),
       ...(defaultLabel ? { defaultLabel } : {}),
+      ...(mode === 'ai' || mode === 'deterministic' ? { mode } : {}),
+      ...(prompt ? { prompt } : {}),
     };
   }
 

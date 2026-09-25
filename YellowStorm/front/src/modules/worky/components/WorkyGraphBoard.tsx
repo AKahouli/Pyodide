@@ -12,7 +12,6 @@ import { layoutCompactCanvasNodes } from '@/modules/playbook/utils/compact-canva
 import { buildWorkyGraph, traceWorkyDependencies } from '../worky-graph';
 import { WorkyGraphNode } from './WorkyGraphNode';
 import { WorkyDependencyEdge } from './WorkyDependencyEdge';
-import { WorkyGraphInspector } from './WorkyGraphInspector';
 import type { WorkyTask } from '../types';
 
 interface WorkyGraphBoardProps {
@@ -77,8 +76,6 @@ function GraphWorkspace({ nodes: baseNodes, edges: baseEdges, taskById, onTaskCl
   const { t } = useModuleTranslation('worky');
   const flow = useReactFlow();
   const [expanded, setExpanded] = useState(initialFullscreen);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [focus, setFocus] = useState<'all' | 'upstream' | 'downstream'>('all');
   const [query, setQuery] = useState('');
   const [attentionOnly, setAttentionOnly] = useState(false);
   const [hideCompleted, setHideCompleted] = useState(false);
@@ -107,8 +104,7 @@ function GraphWorkspace({ nodes: baseNodes, edges: baseEdges, taskById, onTaskCl
     document.body.style.overflow = 'hidden';
     const onEscape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
-      if (selectedId) setSelectedId(null);
-      else if (onExitFullscreen) onExitFullscreen();
+      if (onExitFullscreen) onExitFullscreen();
       else {
         setExpanded(false);
         if (savedViewport.current) {
@@ -122,7 +118,7 @@ function GraphWorkspace({ nodes: baseNodes, edges: baseEdges, taskById, onTaskCl
       document.body.style.overflow = previousOverflow;
       window.removeEventListener('keydown', onEscape);
     };
-  }, [expanded, selectedId, flow, onExitFullscreen]);
+  }, [expanded, flow, onExitFullscreen]);
 
   useEffect(() => {
     if (!expanded) return;
@@ -139,15 +135,12 @@ function GraphWorkspace({ nodes: baseNodes, edges: baseEdges, taskById, onTaskCl
   useEffect(() => {
     if (!expanded || !attention || handledAttention.current === attention.sequence || !taskById.has(attention.taskId)) return;
     handledAttention.current = attention.sequence;
-    setSelectedId(attention.taskId);
     const timer = window.setTimeout(() => {
       void flow.fitView({ nodes: [{ id: attention.taskId }], duration: 250, padding: 0.3, maxZoom: 1.2 });
     }, 160);
     return () => window.clearTimeout(timer);
   }, [attention, expanded, flow, taskById]);
 
-  const selected = selectedId ? taskById.get(selectedId) ?? null : null;
-  const traced = selectedId && focus !== 'all' ? traceWorkyDependencies(baseEdges, selectedId, focus) : null;
   const owners = [...new Set(baseNodes.map((node) => String(node.data.assigneeName || '')).filter(Boolean))].sort();
   const matching = query.trim() ? baseNodes.filter((node) => {
     const task = taskById.get(node.id);
@@ -159,28 +152,21 @@ function GraphWorkspace({ nodes: baseNodes, edges: baseEdges, taskById, onTaskCl
     data: {
       ...node.data,
       compact,
-      isSelected: node.id === selectedId,
       hiddenPrerequisites: hideCompleted ? [...traceWorkyDependencies(baseEdges, node.id, 'upstream')].filter((id) => id !== node.id && taskById.get(id)?.lane === 'done').length : 0,
       dimmed: Boolean(
-        (traced && !traced.has(node.id)) ||
-        (owner && node.data.assigneeName !== owner) ||
+         (owner && node.data.assigneeName !== owner) ||
         (attentionOnly && !['failed', 'blocked'].includes(String(node.data.status))),
       ),
     },
   }));
   const edges = baseEdges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target)).map((edge) => ({
     ...edge,
-    style: { ...edge.style, stroke: traced && traced.has(edge.source) && traced.has(edge.target) ? 'var(--primary)' : 'var(--muted-foreground)', strokeWidth: traced && traced.has(edge.source) && traced.has(edge.target) ? 2.5 : 1.5, opacity: traced && (!traced.has(edge.source) || !traced.has(edge.target)) ? 0.15 : 0.65 },
+     style: { ...edge.style, stroke: 'var(--muted-foreground)', strokeWidth: 1.5, opacity: 0.65 },
   }));
 
   const focusNodes = (ids: string[]) => {
     interacted.current = true;
     if (ids.length) void flow.fitView({ nodes: ids.map((id) => ({ id })), duration: 250, padding: 0.3, maxZoom: 1.2 });
-  };
-  const select = (id: string) => {
-    if (hideCompleted && baseNodes.find((node) => node.id === id)?.data.status === 'completed') setHideCompleted(false);
-    setSelectedId(id);
-    requestAnimationFrame(() => focusNodes([id]));
   };
   const toggleExpanded = () => {
     if (expanded) {
@@ -216,11 +202,11 @@ function GraphWorkspace({ nodes: baseNodes, edges: baseEdges, taskById, onTaskCl
           <input className='h-9 w-full rounded-md border border-border bg-background pl-8 pr-8 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary' value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t('graph.search')} aria-label={t('graph.search')} />
           {query && <button type='button' className='absolute right-2 top-1/2 -translate-y-1/2' onClick={() => setQuery('')} aria-label={t('graph.clearSearch')}><X className='size-4' /></button>}
           {query && <div className='absolute left-0 right-0 top-10 z-20 max-h-48 overflow-y-auto rounded-md border border-border bg-popover shadow-md'>
-            {matching.length ? matching.slice(0, 12).map((node) => <button type='button' key={node.id} className='block w-full truncate px-3 py-2 text-left text-xs hover:bg-muted focus-visible:bg-muted' onClick={() => { select(node.id); setQuery(''); }}>{String(node.data.title)}</button>) : <p className='px-3 py-2 text-xs text-muted-foreground'>{t('graph.noResults')}</p>}
+            {matching.length ? matching.slice(0, 12).map((node) => <button type='button' key={node.id} className='block w-full truncate px-3 py-2 text-left text-xs hover:bg-muted focus-visible:bg-muted' onClick={() => { const task = taskById.get(node.id); if (task) openTask(task); setQuery(''); }}>{String(node.data.title)}</button>) : <p className='px-3 py-2 text-xs text-muted-foreground'>{t('graph.noResults')}</p>}
           </div>}
         </label>
         <button type='button' className='rounded-md border border-border px-2 py-1.5 text-xs hover:bg-muted' onClick={() => setAttentionOnly(!attentionOnly)} aria-pressed={attentionOnly}>{t('graph.attention')}</button>
-        <button type='button' className='rounded-md border border-border px-2 py-1.5 text-xs hover:bg-muted' onClick={() => { if (!hideCompleted && selected?.lane === 'done') setSelectedId(null); setHideCompleted(!hideCompleted); }} aria-pressed={hideCompleted}>{t('graph.hideCompleted')}</button>
+        <button type='button' className='rounded-md border border-border px-2 py-1.5 text-xs hover:bg-muted' onClick={() => setHideCompleted(!hideCompleted)} aria-pressed={hideCompleted}>{t('graph.hideCompleted')}</button>
         {expanded && <select className='h-8 max-w-40 rounded-md border border-border bg-background px-2 text-xs' value={owner} onChange={(event) => setOwner(event.target.value)} aria-label={t('graph.owner')}><option value=''>{t('graph.allOwners')}</option>{owners.map((name) => <option key={name}>{name}</option>)}</select>}
         <button type='button' autoFocus={Boolean(onExitFullscreen)} className='inline-flex items-center gap-1 rounded-md bg-primary px-2 py-1.5 text-xs text-primary-foreground' onClick={toggleExpanded} aria-label={expanded ? t('graph.exitFullscreen') : t('graph.fullscreen')}>
           {expanded ? <Shrink className='size-4' /> : <Expand className='size-4' />}{expanded ? t('graph.exitFullscreen') : t('graph.fullscreen')}
@@ -228,17 +214,15 @@ function GraphWorkspace({ nodes: baseNodes, edges: baseEdges, taskById, onTaskCl
       </header>
       <div className='flex min-h-0 flex-1'>
         <div ref={canvasRef} className='relative min-w-0 flex-1' onPointerDown={() => { interacted.current = true; }} onWheel={() => { interacted.current = true; }}>
-          <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES} edgeTypes={EDGE_TYPES} fitView minZoom={0.1} nodesDraggable={false} nodesConnectable={false} elementsSelectable panOnScroll proOptions={{ hideAttribution: true }} onNodeClick={(_, node) => select(node.id)}>
+          <ReactFlow nodes={nodes} edges={edges} nodeTypes={NODE_TYPES} edgeTypes={EDGE_TYPES} fitView minZoom={0.1} nodesDraggable={false} nodesConnectable={false} elementsSelectable panOnScroll proOptions={{ hideAttribution: true }} onNodeClick={(_, node) => { const task = taskById.get(node.id); if (task) openTask(task); }}>
             <Background bgColor='var(--sidebar)' />
             <Controls position='bottom-left' />
             {expanded && <MiniMap pannable zoomable nodeColor='var(--muted-foreground)' maskColor='rgba(0,0,0,0.35)' style={{ width: 160, height: 104, backgroundColor: 'var(--card)' }} className='!border !border-border' />}
           </ReactFlow>
           {expanded && <div className='absolute bottom-3 left-16 flex gap-1 rounded-md border border-border bg-card p-1 text-xs shadow-sm'>
             <button type='button' className='rounded px-2 py-1 hover:bg-muted' onClick={() => { focusNodes(nodes.map((node) => node.id)); setPlanChanged(false); }}>{planChanged ? t('graph.planChanged') : t('graph.fitAll')}</button>
-            <button type='button' disabled={!selectedId} className='rounded px-2 py-1 hover:bg-muted disabled:opacity-40' onClick={() => focusNodes(traced ? [...traced] : selectedId ? [selectedId] : [])}>{t('graph.fitSelection')}</button>
           </div>}
         </div>
-        {selected && <WorkyGraphInspector task={selected} edges={baseEdges} taskById={taskById} hideCompleted={hideCompleted} onRevealCompleted={() => setHideCompleted(false)} focus={focus} onFocusChange={setFocus} onSelect={select} onClose={() => { setSelectedId(null); setFocus('all'); }} onOpenTask={() => openTask(selected)} />}
       </div>
     </div>
   );

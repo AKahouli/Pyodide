@@ -27,6 +27,8 @@ export interface FlowNodeTemplateRouterConfig {
     value?: unknown;
   }>;
   defaultLabel?: string | null;
+  mode?: 'ai' | 'deterministic' | null;
+  prompt?: string | null;
 }
 
 export interface FlowNodeTemplateHumanApprovalConfig {

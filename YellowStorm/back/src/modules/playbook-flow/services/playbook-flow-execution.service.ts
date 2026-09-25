@@ -1568,6 +1568,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
               value: toGrpcValue(condition.value),
             })),
             default_label: n.routerConfig.defaultLabel || '',
+            mode: n.routerConfig.mode || '',
+            prompt: n.routerConfig.prompt || '',
           } : undefined,
           iterator_config: n.iteratorConfig ? {
             collection_path: n.iteratorConfig.collectionPath || '',
@@ -2396,6 +2398,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
             path: c.path || '', operator: c.operator || '', value: toGrpcValue(c.value),
           })),
           default_label: n.routerConfig.defaultLabel || '',
+          mode: n.routerConfig.mode || '',
+          prompt: n.routerConfig.prompt || '',
         } : undefined,
         iterator_config: n.iteratorConfig ? {
           collection_path: n.iteratorConfig.collectionPath || '', max_items: n.iteratorConfig.maxItems || 0,
