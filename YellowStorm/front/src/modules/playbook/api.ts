@@ -215,6 +215,8 @@ export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybook
             outputLabels: [...task.routerConfig.outputLabels],
             maxIterations: task.routerConfig.maxIterations,
             defaultLabel: task.routerConfig.defaultLabel,
+            mode: task.routerConfig.mode,
+            prompt: task.routerConfig.prompt,
             conditions: task.routerConfig.conditions?.map((condition) => ({
               label: condition.label,
               sourceNode: condition.sourceNode,

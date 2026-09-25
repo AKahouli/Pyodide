@@ -1,211 +1,100 @@
 # YellowStorm Agent Instructions
 
-These instructions apply to the YellowStorm workspace. The primary `build` agent implements changes; subagents provide bounded planning, discovery, QA, review, and memory support.
+The primary `build` agent runs the whole development loop. Subagents (`explore`, `plan`, `diagnostics`, `verify`, `frontend-qa`, `reviewer`, `maintainer`) are bounded tools that return condensed evidence.
 
 ## Source of Truth
 
-When sources disagree, use this order:
-
-1. Executable code, schemas, protocol definitions, and tests.
-2. Repository guidelines and configuration.
+1. Executable code, schemas, protos, tests.
+2. Guideline files and repository configuration.
 3. The user's current request and confirmed decisions.
-4. Obsidian memory notes.
+4. Obsidian memory (may be stale; verify against code before acting).
 
-when you're working on conversation then must always consider conversation feature (http://localhost:5173/#/conversation) not Conversation v2 feature unless user request it explicitly. 
-when it comes to build an AI logics feature requiring the usage of LLM inference then you must prefer to create a dedicated agent through our YellowStorm ADK (this dedicated agent will be configurable through our agent library)  instead of implementing the logic by using a direct approach like chat completion. 
-Memory is useful context, but it may be stale. Verify important claims against the repository before changing code.
+## Product Rules
+
+- "Conversation" means the feature at `http://localhost:5173/#/conversation`, not Conversation v2, unless the user says v2.
+- Any feature that needs LLM inference is built as a dedicated agent through the YellowStorm ADK (configurable in the agent library), not as a direct chat-completion call.
 
 ## Repository Map
 
-| Area | Path | Stack |
-|---|---|---|
-| Backend | `YellowStorm/back` | NestJS 10, Mongoose, gRPC, Jest |
-| Frontend | `YellowStorm/front` | React 18, Vite, TypeScript, Radix UI, Tailwind, Vitest |
-| Agent runtime | `yellowstorm-adk` | Python 3.12+, LangGraph, Google ADK, Pytest |
+| Area | Path | Stack | Test |
+|---|---|---|---|
+| Backend | `YellowStorm/back` | NestJS 10, Mongoose, Drizzle/PostgreSQL, gRPC | `npm test -- <pattern>` (jest), `npm run lint`, `npm run build` |
+| Frontend | `YellowStorm/front` | React 18, Vite, TypeScript, Radix, Tailwind | `npm test -- <pattern>` (vitest), `npx tsc --noEmit -p .`, `npm run build` |
+| Agent runtime | `yellowstorm-adk` | Python 3.12, LangGraph, Google ADK, requirements.txt | `conda run -n meta pytest <path> -q` |
 
-Package managers:
+Python always runs inside the conda `meta` environment, non-interactively (`conda run -n meta ...`). There is no Poetry project.
 
-- Backend/frontend: npm.
-- Python: Poetry. When the `meta` Conda environment is required, prefer non-interactive execution such as `conda run -n meta poetry run pytest`.
-- Must always use the conda meta environment before executing a python script.
- 
-## Required Guidelines
+## Required Guidelines (read by section only)
 
-Before writing or reviewing code, read the guidelines for the affected area:
-
-| Changed paths | Required reading |
+| Changed paths | File |
 |---|---|
 | `YellowStorm/front/**` | `YellowStorm/front/FRONTEND_GUIDELINES.md` |
 | `YellowStorm/back/**` | `YellowStorm/back/BACKEND_GUIDELINES.md` |
-| Both frontend and backend | Both files and the cross-boundary rules below |
-| Proto, gRPC, or NestJS-to-ADK paths | Cross-boundary rules below |
+| Cross-boundary (REST, gRPC, proto, NestJS to ADK) | Both files: backend section 23 "Frontend to Backend Contract" and section 10 "gRPC", frontend section 6 "API Layer" |
 
-Do not load unrelated guidelines.
+Both files are 500+ lines with numbered sections. Grep the `^## ` headings, then read only the sections that govern the change (for example: DTOs and validation, state management, streaming, testing, naming). Never load a whole guideline file.
 
 ## Context Retrieval
 
-Use vault memory to establish durable feature context, then verify it against live repository sources before changing code.
-- When searching the vault with `obsidian_vault`, use `strategy: "semantic"` instead of the default `"auto"` for better relevance ranking.
-- Tier 0 tasks do not require vault retrieval unless risk or ambiguity appears.
-- Before Tier 2 or Tier 3 implementation, search the vault using task terms, likely feature slugs, modules or source paths, endpoint or contract names, and relevant error terms. Locate and read the owning canonical note when one exists before changing code.
-- For Tier 1 work, retrieve vault context when historical decisions, invariants, pitfalls, or cross-file behavior may affect correctness.
-- Prefer the owning feature, architecture, contract, decision, or convention note. Read `Agent Quick Context` first when present, then follow only directly relevant internal links.
-- Use Timeline notes only to locate canonical notes or recent routing context. Never treat a Timeline entry as the primary implementation specification.
-- After retrieval, inspect the affected code, schemas, protocols, tests, and both sides of changed boundaries. Resolve disagreement using the Source of Truth order above.
+1. Graph first: code-review-graph MCP tools before Grep, Glob, or Read (`semantic_search_nodes_tool`, `query_graph_tool`, `get_impact_radius_tool`, `get_affected_flows_tool`, `get_minimal_context_tool`, `detect_changes_tool`). Load the `crg-navigation` skill for recipes. Fall back to file scanning only when the graph has no answer.
+2. Read only the line ranges the change needs.
+3. Vault memory (`obsidian_vault`, `strategy: "semantic"`) only for Tier 3 work, or when a Tier 2 task depends on historical decisions or invariants that code does not explain. Never for Tier 0 or 1.
+4. Context7 only for external library behavior local code cannot establish.
 
 ## Working Principles
 
-- For requests containing multiple independent tasks, ask whether to complete them end-to-end or proceed one task at a time. Do not ask when the tasks are naturally part of one implementation.
-- State assumptions that affect correctness, scope, safety, or external contracts.
-- Ask only when an unresolved choice would materially change the result.
-- Implement the smallest correct change. Do not add speculative features or abstractions.
-- Keep changes surgical. Do not reformat, rename, or clean up unrelated code.
-- Match established package conventions before introducing a new pattern.
-- Add or update tests for changed behavior and bug fixes when feasible.
-- Comments explain non-obvious intent, invariants, workarounds, or risk. Do not narrate the code.
-- Aim to keep handwritten source files under 300 lines and functions under 50 lines. Treat these as review thresholds, not hard limits. When changed code crosses a threshold, split only along a clear responsibility boundary; otherwise briefly justify retaining the structure. Exclude generated files, migrations, fixtures, and declarative data.
-- Never hardcode secrets. Never print credentials, tokens, or sensitive payloads.
-- Use the project's i18n layer for user-facing frontend text.
+- Implement the smallest correct change. No speculative features, abstractions, or unrelated cleanup.
+- Match the conventions of the package you are in before introducing a pattern.
+- Add or update tests for changed behavior and bug fixes.
+- Comments explain non-obvious intent, invariants, or workarounds only.
+- Files under ~300 lines and functions under ~50 are review thresholds; split along a responsibility boundary or justify briefly.
+- Never hardcode or print secrets. Use the i18n layer for user-facing frontend text.
+- For requests with several independent tasks, ask whether to do them all or one at a time. Otherwise do not ask; state assumptions and proceed.
 
 ## Contracts and Boundaries
 
-For REST, gRPC, queues, database schemas, and other serialized boundaries, verify both sender and receiver:
-
-1. Field names and case conversion.
-2. Field shapes and serialization.
-3. Required, optional, default, and absence semantics.
-4. Compatibility and migration behavior.
-
-For `google.protobuf.Struct` values sent from NestJS, use the repository's `toGrpcStruct()` helper at the sending call site. Verify the current proto rather than relying on a list copied into documentation.
-
-When diagnosing a boundary failure, trace the value across each layer. Use redacted structured diagnostics and remove temporary logging before completion. Do not log full payloads, secrets, or personal data. Rate-limit or aggregate repeated drop events.
+For REST, gRPC, queues, and schemas verify both sender and receiver: field names and case, shapes and serialization, required/optional/default/absence semantics, compatibility and migration. `google.protobuf.Struct` values sent from NestJS use `toGrpcStruct()` at the call site; verify the current proto rather than documentation. When diagnosing a boundary failure trace the value layer by layer with redacted diagnostics, and remove temporary logging before completion.
 
 ## Error Handling
 
-- Never swallow an exception with an empty `catch`.
-- Validate at trust boundaries; avoid redundant validation of typed internal calls.
-- Use the established application/domain error types for the affected package.
-- Preserve terminal routes in workflow graphs and verify that routers cannot loop forever.
+Never swallow exceptions with an empty catch. Validate at trust boundaries only. Use the package's established error types. Keep terminal routes in workflow graphs and make sure routers cannot loop forever.
 
-## Workflow Tiers
+## Workflow Tiers and Gates
 
-### Tier 0 — Trivial
-
-Typo, formatting, comment-only, or non-runtime configuration text.
-
-- Inspect and make the smallest change.
-- Skip subagents unless risk or ambiguity appears.
-- Run a lightweight syntax or formatting check when relevant.
-
-### Tier 1 — Local
-
-Localized behavior change with no contract, schema, authorization, or cross-module impact.
-
-- Inspect the implementation and direct tests/callers.
-- Use `explore` only when ownership or dependencies are unclear.
-- Run focused verification.
-- Use `reviewer` for runtime or behavioral changes.
-
-### Tier 2 — Standard
-
-Multi-file feature, bug fix, frontend behavior, backend service, or meaningful state change.
-
-- Use `plan` for architectural, ambiguous, high-risk, or genuinely multi-step changes. Do not invoke it solely because a straightforward change touches three or more files.
-- Use `explore` for broad dependency tracing.
-- Implement and run focused tests, build, or lint.
-- Use `frontend-qa` for browser-visible changes.
-- Use `reviewer` before completion.
-- Use `maintainer` only when durable memory should change.
-
-### Tier 3 — High Risk
-
-API/schema/proto changes, authentication, permissions, quotas, streaming, database writes, agent runtime, or cross-service behavior.
-
-- Use `plan` before implementation.
-- Reproduce unclear failures before editing production logic.
-- Verify both sides of every changed boundary.
-- Run targeted and integration-level verification where feasible.
-- Use `frontend-qa` when browser-visible.
-- Use `reviewer`; critical and major findings must be resolved.
-- Use `maintainer` after review passes for durable decisions, contracts, invariants, or pitfalls.
-
-## Subagent Routing
-
-| Agent | Invoke when | Do not invoke when |
+| Tier | Scope | Required steps |
 |---|---|---|
-| `explore` | File ownership, call paths, dependencies, or architecture are unclear | Target and callers are already known |
-| `plan` | Three or more files, architectural/high-risk work, ambiguity, or contract changes | Trivial or obvious single-file change |
-| `frontend-qa` | UI, layout, interaction, routing, forms, accessibility, responsive, console, or browser network behavior changed | Type-only or non-visible frontend cleanup |
-| `reviewer` | Non-trivial runtime, behavior, security, persistence, or contract changes | Pure typo, formatting, or comment-only work |
-| `maintainer` | A verified change creates durable architectural, feature, contract, convention, or operational knowledge | The change is obvious from code/git or is purely mechanical |
+| 0 Trivial | typo, formatting, comment, non-runtime config text | edit, lightweight check; no subagents |
+| 1 Local | one behavior change, no contract or cross-module impact | inspect target and direct tests; `verify`; `reviewer` if runtime behavior changed |
+| 2 Standard | multi-file feature, bug fix, UI behavior, service change | `diagnostics` for unclear bugs; `plan` only if ambiguous; implement with tests; `verify`; `frontend-qa` if browser-visible; `reviewer` |
+| 3 High risk | API, schema, proto, auth, permissions, quotas, streaming, DB writes, agent runtime, cross-service | `plan`; reproduce before editing; verify both sides of each boundary; `verify` incl. integration where feasible; `frontend-qa` if browser-visible; `reviewer` (critical and major must be fixed); `maintainer` when tier is Full |
 
-Subagents return evidence and uncertainty; they do not silently expand scope. `plan`, `explore`, `reviewer`, and `frontend-qa` never modify source code. `maintainer` writes only through the Obsidian tools.
+Subagent routing:
+
+| Agent | Use when | Skip when |
+|---|---|---|
+| `explore` | ownership, call paths, or dependencies still unclear after one graph query | target and callers already known |
+| `plan` | Tier 3, ambiguity, several plausible designs, contract changes | obvious change, even if it touches several files |
+| `diagnostics` | bug with an unclear cause; needs reproduction before editing | cause is evident from the report or a failing test |
+| `verify` | any test, build, lint, or type-check run whose output could be long | a single short command you can run yourself |
+| `frontend-qa` | UI, layout, interaction, routing, forms, a11y, console, or network behavior changed | type-only or non-visible frontend change |
+| `reviewer` | non-trivial runtime, behavior, security, persistence, or contract change | Tier 0 |
+| `maintainer` | Full-tier change passed review and created durable knowledge | fact is obvious from code or git |
 
 ## Gate Outcomes
 
-Every blocking agent returns one outcome:
-
-- `PASS`: required checks completed; no blocking findings.
-- `FAIL`: a verified product/code issue blocks completion.
-- `BLOCKED`: the environment, handoff, or evidence is insufficient to run the gate.
-- `SKIPPED`: the gate is not applicable, with a reason.
-
-`FAIL` and `BLOCKED` are different. An unavailable test environment is not a product defect. After two unsuccessful fix/review cycles, summarize the blocker and ask the user for direction instead of looping indefinitely.
+`PASS`, `FAIL` (verified product defect), `BLOCKED` (environment or handoff insufficient; not a defect), `SKIPPED` (not applicable, with reason). After two unsuccessful fix cycles on the same gate, stop and report the blocker with the condensed evidence.
 
 ## Handoffs
 
-When invoking a subagent, provide:
-
-- Task goal and acceptance criteria.
-- Repository root and affected area.
-- Changed files or base revision when applicable.
-- Relevant constraints and known memory context.
-- Verification already performed and its result.
-- Exact question the subagent must answer.
-
-## Verification
-
-Use the narrowest reliable command first:
-
-- Backend/frontend: focused `npm test`, then `npm run build` or `npm run lint` when relevant.
-- Python: focused `poetry run pytest`, using the required environment wrapper when applicable.
-- Cross-boundary work: add integration verification or inspect both runtime sides.
-
-Do not claim a check passed unless it ran successfully. Report unavailable checks explicitly.
+Every subagent call carries: goal, acceptance criteria, repository area, changed files or base revision, verification already run, and the exact question to answer. Subagents never expand scope; only `maintainer` writes, and only through Obsidian tools.
 
 ## Memory Policy
 
-Use Obsidian memory selectively:
+`Full`: new feature, durable decision, architecture or contract change, important invariant or pitfall. `Light`: a non-obvious implementation fact future agents will need. `None`: everything else. Details live in the `obsidian-context` skill.
 
-- `Full`: new feature, durable decision, architecture or contract change, important invariant/pitfall.
-- `Light`: a non-obvious implementation change future agents are likely to need.
-- `None`: typo, formatting, routine refactor, or behavior already clear from code and tests.
+## Completion Report (max 25 lines)
 
-Search before writing. Memory must be factual, concise, timestamped in UTC, and linked only when the link materially helps future work. Vault access always goes through Obsidian tools, never direct filesystem access.
-
-Canonical feature, architecture, contract, decision, and convention notes describe the current system and are the primary context for future coding. Full-tier maintenance must update at least one owning canonical note before any optional Timeline entry. Light-tier maintenance updates an existing owning canonical note and does not update Timeline. Timeline is a concise routing index and must not be the sole output of Full-tier maintenance.
-
-## Completion
-
-The final response states:
-
-- What changed and which files were affected.
-- Verification performed and its outcome.
-- Gate results or why a gate was skipped/blocked.
-- Remaining risks or follow-up work, if any.
-
-<!-- code-review-graph MCP tools -->
-## MCP Tools: code-review-graph
-
-**IMPORTANT: Use the code-review-graph tools before Grep, Glob, or Read when exploring the codebase.** The graph auto-updates through repository hooks and provides structural context that file scanning cannot.
-
-| Task | Use first |
-|---|---|
-| Find code or relationships | `semantic_search_nodes_tool` or `query_graph_tool` |
-| Analyze impact or execution paths | `get_impact_radius_tool` or `get_affected_flows_tool` |
-| Review changes | `detect_changes_tool`, then `get_review_context_tool` when source context is needed |
-| Check test coverage | `query_graph_tool` with `pattern="tests_for"` |
-| Understand architecture | `get_architecture_overview_tool` or `list_communities_tool` |
-| Plan refactoring | `refactor_tool` |
-
-Fall back to Grep, Glob, and Read only when the graph does not provide the required information.
+- What changed, with file paths.
+- Verification run and outcome (never claim a check that did not run).
+- Gate results, or why a gate was skipped or blocked.
+- Remaining risks or follow-ups.

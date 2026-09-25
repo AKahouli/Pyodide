@@ -105,6 +105,18 @@ export class RouterConfigDto {
   @IsOptional()
   @IsString()
   defaultLabel?: string;
+
+  @ApiPropertyOptional({ enum: ['ai', 'deterministic'] })
+  @IsOptional()
+  @IsString()
+  @IsIn(['ai', 'deterministic'])
+  mode?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(20000)
+  prompt?: string;
 }
 
 export class RouterConditionDto {

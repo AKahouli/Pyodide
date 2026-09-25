@@ -94,6 +94,12 @@ export class RouterConfig {
 
   @Prop({ required: false, type: String })
   defaultLabel?: string;
+
+  @Prop({ required: false, type: String })
+  mode?: string;
+
+  @Prop({ required: false, type: String })
+  prompt?: string;
 }
 
 @Schema({ _id: false })

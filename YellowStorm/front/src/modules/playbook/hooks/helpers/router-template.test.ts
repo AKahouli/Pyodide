@@ -8,6 +8,8 @@ describe('cloneRouterConfig', () => {
       outputLabels: ['retry', 'done'],
       maxIterations: 3,
       defaultLabel: 'done',
+      mode: 'ai',
+      prompt: 'Pick a route.',
       conditions: [{
         label: 'done',
         sourceNode: 'step-1',
@@ -22,6 +24,8 @@ describe('cloneRouterConfig', () => {
       outputLabels: ['retry', 'done'],
       maxIterations: 3,
       defaultLabel: 'done',
+      mode: 'ai',
+      prompt: 'Pick a route.',
       conditions: [{
         label: 'done',
         sourceNode: 'step-1',

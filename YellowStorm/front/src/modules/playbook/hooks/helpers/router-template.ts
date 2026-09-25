@@ -6,6 +6,8 @@ export function cloneRouterConfig(routerConfig?: RouterConfig | null): RouterCon
     maxIterations: routerConfig?.maxIterations ?? 3,
     defaultLabel: routerConfig?.defaultLabel,
     conditions: routerConfig?.conditions?.map((condition) => ({ ...condition })),
+    mode: routerConfig?.mode,
+    prompt: routerConfig?.prompt,
   };
 }
 
