@@ -30,8 +30,7 @@ HERE = Path(__file__).resolve().parent
 DATAPLANE = HERE.parent
 REPO = DATAPLANE.parent.parent.parent.parent
 RT = "http://127.0.0.1:4000"
-# Same variable the backend uses (SEMANTIC_DATA_REST_URL in back/.env);
-# defaults to the PostgREST host port from the compose file.
+# PostgREST URL; defaults to the host port from the compose file.
 PGRST = os.environ.get("SEMANTIC_DATA_REST_URL", "http://127.0.0.1:3050")
 EXTERNAL_ID = "yellowmind-semantic"
 TOPIC = "semantic-model:model-verify-1"
