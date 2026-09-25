@@ -116,3 +116,35 @@ export const opsIntegrationEventDeliveries = opsSchema.table(
     check('ops_integration_event_deliveries_attempts', sql`${t.attempts} >= 0`),
   ],
 );
+
+/**
+ * Application logs (roadmap P6): buffered by LogBufferService, read by the admin logs screen, swept by
+ * the TTL sweeper once older than `logging.retentionDays`. `created_at` is the time the entry was
+ * logged (not the flush time), so range filters and ordering follow the log line itself.
+ */
+export const opsLogs = opsSchema.table(
+  'logs',
+  {
+    id: objectId('id').primaryKey(),
+    /** The ISO stamp the logger produced, kept verbatim like Mongo did. */
+    timestamp: text('timestamp').notNull(),
+    level: varchar('level', { length: 8 }).notNull(),
+    context: text('context'),
+    message: text('message').notNull(),
+    data: jsonb('data').$type<Record<string, unknown>>(),
+    traceId: text('trace_id'),
+    requestId: text('request_id'),
+    hostname: text('hostname'),
+    nodeEnv: text('node_env'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('ops_logs_level', sql`${t.level} IN ('ERROR','WARN','INFO','DEBUG','VERBOSE')`),
+    index('idx_logs_created').on(t.createdAt.desc()),
+    index('idx_logs_level_created').on(t.level, t.createdAt.desc()),
+    index('idx_logs_context_created').on(t.context, t.createdAt.desc()),
+    index('idx_logs_request').on(t.requestId).where(sql`${t.requestId} IS NOT NULL`),
+    index('idx_logs_trace').on(t.traceId).where(sql`${t.traceId} IS NOT NULL`),
+  ],
+);
+

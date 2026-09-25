@@ -414,13 +414,12 @@ export const configValidationSchema = Joi.object({
   TELEGRAM_MAX_REPLY_LENGTH: Joi.number().min(64).max(4096).default(3900),
 
   // Logging Persistence
-  LOGGING_MONGODB_URI: Joi.string().optional(),
   LOGGING_BUFFER_SIZE: Joi.number().min(10).max(10000).default(100),
   LOGGING_FLUSH_INTERVAL_MS: Joi.number().min(1000).max(60000).default(5000),
   LOGGING_PERSISTENCE_ENABLED: Joi.boolean().default(true),
   LOGGING_DEFAULT_SAVE: Joi.boolean().default(true),
   LOGGING_DEFAULT_DISPLAY: Joi.boolean().default(true),
-  LOGGING_MAX_POOL_SIZE: Joi.number().min(1).max(10).default(3),
+  LOGGING_RETENTION_DAYS: Joi.number().min(1).max(3650).default(30),
   LOGGING_DISPLAY_ONLY_CONTEXTS: Joi.string().optional(),
 
   // Worky (Chief of Staff)

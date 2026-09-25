@@ -22,9 +22,6 @@ export default registerAs('logging', () => {
     : DEFAULT_DISPLAY_ONLY_CONTEXTS;
 
   return {
-    // MongoDB connection for logging (separate from main app DB)
-    uri: process.env.LOGGING_MONGODB_URI || process.env.MONGODB_URI,
-
     // Buffer configuration
     buffer: {
       maxSize: Number.parseInt(process.env.LOGGING_BUFFER_SIZE || '100', 10),
@@ -42,8 +39,8 @@ export default registerAs('logging', () => {
     // Useful for startup/bootstrap logs that don't need persistence
     displayOnlyContexts,
 
-    // Connection pool settings (smaller pool for logging)
-    maxPoolSize: Number.parseInt(process.env.LOGGING_MAX_POOL_SIZE || '3', 10),
-    minPoolSize: 1,
+    // How long persisted logs are kept (swept hourly from ops.logs). The Mongo TTL index was 30 days by
+    // default; a busy dev environment writes several hundred thousand entries a day and may want fewer.
+    retentionDays: Math.max(1, Number.parseInt(process.env.LOGGING_RETENTION_DAYS || '30', 10) || 30),
   };
 });

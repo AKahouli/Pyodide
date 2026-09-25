@@ -20,7 +20,6 @@ const FORBIDDEN = [
 const ALLOWLIST: Array<[string, string]> = [
   ['modules/playbook-flow/', 'P5 playbook-flow'],
   ['modules/worky/', 'P7 worky'],
-  ['modules/logger/', 'P9 logger'],
   ['modules/database/', 'P9 logger (connection shell)'],
   ['modules/health/', 'health Mongo ping (P9)'],
   ['modules/user/schemas/user.schema.ts', 'legacy UserDocument type until ai-proxy drops it'],
