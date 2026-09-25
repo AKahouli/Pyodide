@@ -1,5 +1,19 @@
+import { model } from 'mongoose';
 import { FlowSchema } from './playbook-flow.schema';
 import { PlaybookFlowService } from '../services/playbook-flow.service';
+
+describe('FlowSchema approval drafts', () => {
+  it('accepts an approval node before its prompt is configured', () => {
+    const FlowModel = model('ApprovalDraftFlow', FlowSchema);
+    const flow = new FlowModel({
+      ownerId: 'owner-1', name: 'Approval draft',
+      nodes: [{ id: 'approval-1', kind: 'human_approval', humanApprovalConfig: { promptTemplate: '', timeoutSeconds: 3600 } }],
+    });
+
+    expect(flow.validateSync()).toBeUndefined();
+    expect(flow.nodes[0].humanApprovalConfig?.promptTemplate).toBe('');
+  });
+});
 
 describe('FlowSchema assistant operation idempotency', () => {
   it('does not default ordinary Flows to an indexed null operation id', () => {

@@ -12,6 +12,7 @@ from src.flow_engine.nodes.human_approval import (
     normalize_approval_resume,
     run_human_approval,
 )
+from src.flow_engine.runtime.events import emit_events
 
 
 def load_fixture(name: str) -> dict:
@@ -20,6 +21,18 @@ def load_fixture(name: str) -> dict:
 
 
 class TestHumanApproval:
+    @pytest.mark.asyncio
+    async def test_approval_request_exposes_prompt_at_grpc_payload_root(self):
+        async def stream():
+            yield {"_mode": "custom", "_data": {
+                "type": "ApprovalRequested", "node_id": "approval-1", "iteration": 0,
+                "payload": {"node_id": "approval-1", "prompt": "Approve?"},
+            }}
+
+        events = [event async for event in emit_events("exec-1", stream())]
+        assert events[0].payload.fields["prompt"].string_value == "Approve?"
+        assert events[0].payload.fields["node_id"].string_value == "approval-1"
+
     def test_human_approval_node_detected(self):
         snapshot = load_fixture("human_approval.json")
         ha_nodes = [n for n in snapshot["nodes"] if n.get("kind") == "human_approval"]

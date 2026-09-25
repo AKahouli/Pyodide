@@ -21,6 +21,8 @@ describe('callGrpcRun router config serialization', () => {
           outputLabels: ['valid', 'invalid'],
           maxIterations: 3,
           defaultLabel: 'invalid',
+          mode: 'ai',
+          prompt: 'Pick valid.',
           conditions: [{
             label: 'valid',
             sourceNode: 'step-1',
@@ -43,6 +45,8 @@ describe('callGrpcRun router config serialization', () => {
             output_labels: ['valid', 'invalid'],
             max_iterations: 3,
             default_label: 'invalid',
+            mode: 'ai',
+            prompt: 'Pick valid.',
             conditions: [expect.objectContaining({
               label: 'valid',
               source_node: 'step-1',

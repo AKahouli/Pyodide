@@ -609,6 +609,52 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
     expect(result.status).toBe('running');
   });
 
+  it.each([
+    ['approve', 'approved'],
+    ['reject', 'rejected'],
+  ])('routes a human approval %s action through ResumeApproval', async (action, decision) => {
+    const execDoc = {
+      id: 'exec-approval-node', _id: 'exec-approval-node', flowId: 'flow-1', ownerId: 'owner-1',
+      status: 'pending_approval',
+      pendingApproval: { nodeId: 'approval-1', iteration: 0, interruptId: 'interrupt-1', prompt: 'Approve?' },
+      snapshot: { nodes: [{ id: 'approval-1', kind: 'human_approval' }] },
+      toJSON: jest.fn().mockReturnValue({ id: 'exec-approval-node', status: 'running' }),
+    };
+    const executionModel = { ...mockExecutionModel(), findById: jest.fn().mockResolvedValue(execDoc) };
+    const ctx = await createE2EService(undefined, { executionModel });
+    const resumeApproval = jest.fn((_req, cb) => cb(null, { resumed: true }));
+    const resumeFromStep = jest.fn();
+    (ctx.service as any).playbookFlowClient.ResumeApproval = resumeApproval;
+    (ctx.service as any).playbookFlowClient.ResumeFromStep = resumeFromStep;
+
+    await ctx.service.resumeFromStep('exec-approval-node', 'owner-1', {
+      taskId: 'approval-1', interruptId: 'interrupt-1', action, scope: 'step_only',
+    });
+
+    expect(resumeApproval).toHaveBeenCalledWith(expect.objectContaining({
+      decision, payload: expect.any(Object),
+    }), expect.any(Function));
+    expect(resumeFromStep).not.toHaveBeenCalled();
+  });
+
+  it('rejects a non-decision action for a human approval node', async () => {
+    const execDoc = {
+      id: 'exec-approval-node', ownerId: 'owner-1', status: 'pending_approval',
+      pendingApproval: { nodeId: 'approval-1', iteration: 0 },
+      snapshot: { nodes: [{ id: 'approval-1', kind: 'human_approval' }] },
+    };
+    const ctx = await createE2EService(undefined, {
+      executionModel: { ...mockExecutionModel(), findById: jest.fn().mockResolvedValue(execDoc) },
+    });
+    const resumeFromStep = jest.fn();
+    (ctx.service as any).playbookFlowClient.ResumeFromStep = resumeFromStep;
+
+    await expect(ctx.service.resumeFromStep('exec-approval-node', 'owner-1', {
+      taskId: 'approval-1', action: 'skip', approved: true,
+    })).rejects.toThrow('Approval decision must be approved or rejected');
+    expect(resumeFromStep).not.toHaveBeenCalled();
+  });
+
   it('keeps pendingApproval when the runtime reports resume=false', async () => {
     const execDoc = {
       id: 'exec-hum-2',

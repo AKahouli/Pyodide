@@ -2399,10 +2399,31 @@ class OrchestratorService:
                     if len(r) > 4000:
                         r = r[:4000] + "\n[…tronqué]"
                     blocks.append(f"— Étape « {dep.title or dep.id} » :\n{r}")
-            if not blocks:
-                return None
-            return ("Résultats des étapes précédentes dont dépend la tienne "
-                    "(sers-t'en, ne les refais pas) :\n\n" + "\n\n".join(blocks))
+            upstream = (
+                "Résultats des étapes précédentes dont dépend la tienne "
+                "(sers-t'en, ne les refais pas) :\n\n" + "\n\n".join(blocks)
+            ) if blocks else None
+
+            # Downstream awareness (CONTEXT ONLY): the steps that depend on this
+            # one. It tells the executor/persona that a reply-wait or a follow-up
+            # is ALREADY planned, so it must not spawn its own create_task — a
+            # runtime await_reply reshapes the graph and breaks replay. It must
+            # NOT perform these steps; another node owns them.
+            dependents = [s for s in plan.steps if step.id in s.depends_on]
+            down = None
+            if dependents:
+                tag = {"await_reply": "attend la réponse",
+                       "ask": "demande à l'utilisateur"}
+                lines = [f"— « {d.title or d.id} » ({tag.get(d.kind, 'étape suivante')})"
+                         for d in dependents]
+                waits = "\nUne étape attend déjà la réponse à ton message : envoie " \
+                        "puis termine, ne crée PAS d'attente toi-même." \
+                        if any(d.kind == "await_reply" for d in dependents) else ""
+                down = ("Étapes qui suivent la tienne (POUR CONTEXTE — ne les fais "
+                        "pas, un autre nœud s'en charge) :\n" + "\n".join(lines) + waits)
+
+            parts = [p for p in (upstream, down) if p]
+            return "\n\n".join(parts) if parts else None
         return ctx
 
     @staticmethod

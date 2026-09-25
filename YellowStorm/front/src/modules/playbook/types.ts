@@ -2953,6 +2953,8 @@ export interface RouterConfig {
   maxIterations: number;
   conditions?: RouterCondition[];
   defaultLabel?: string;
+  mode?: 'ai' | 'deterministic';
+  prompt?: string;
 }
 
 export interface FlowIteratorConfig {

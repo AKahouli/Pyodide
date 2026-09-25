@@ -95,6 +95,86 @@ describe('single-step execution disabled-node safety', () => {
     });
   });
 
+  it('does not promote a disabled branch into a new entrypoint', () => {
+    const prep = new PlaybookExecutionSingleStepPrepService({} as any, {} as any);
+    const snapshot = {
+      nodes: [
+        { id: 'collect', kind: 'step', metadata: { enabled: false } },
+        { id: 'iterate', kind: 'iterator', metadata: {} },
+        { id: 'extract', kind: 'step', metadata: { containerConfig: { parentIteratorId: 'iterate' } } },
+        { id: 'classify', kind: 'step', metadata: { containerConfig: { parentIteratorId: 'iterate' } } },
+        { id: 'aggregate', kind: 'step', metadata: {} },
+        { id: 'report', kind: 'step', metadata: {} },
+        { id: 'copy', kind: 'step', metadata: {} },
+      ],
+      controlEdges: [
+        { id: 'e1', kind: 'sequential', source: 'collect', target: 'iterate' },
+        { id: 'e2', kind: 'sequential', source: 'iterate', target: 'aggregate' },
+        { id: 'e3', kind: 'sequential', source: 'aggregate', target: 'report' },
+        { id: 'e4', kind: 'sequential', source: 'extract', target: 'classify' },
+      ],
+      dataBindings: [{
+        id: 'b1', targetNode: 'iterate', targetPort: 'items',
+        sourceKind: 'node-output', sourceNode: 'collect', sourcePort: 'files',
+      }],
+      settings: {},
+    } as any;
+
+    expect(prep.buildExecutableSnapshot(snapshot, 'flow-1')).toEqual({
+      ...snapshot,
+      nodes: [snapshot.nodes[6]],
+      controlEdges: [],
+      dataBindings: [],
+    });
+  });
+
+  it('retains iterator children when their parent is reachable', () => {
+    const prep = new PlaybookExecutionSingleStepPrepService({} as any, {} as any);
+    const snapshot = {
+      nodes: [
+        { id: 'collect', kind: 'step', metadata: {} },
+        { id: 'iterate', kind: 'iterator', metadata: {} },
+        { id: 'extract', kind: 'step', metadata: { containerConfig: { parentIteratorId: 'iterate' } } },
+        { id: 'classify', kind: 'step', metadata: { containerConfig: { parentIteratorId: 'iterate' } } },
+        { id: 'unrelated', kind: 'step', metadata: { enabled: false } },
+      ],
+      controlEdges: [
+        { id: 'e1', kind: 'sequential', source: 'collect', target: 'iterate' },
+        { id: 'e2', kind: 'sequential', source: 'extract', target: 'classify' },
+      ],
+      dataBindings: [], settings: {},
+    } as any;
+
+    const executable = prep.buildExecutableSnapshot(snapshot, 'flow-1');
+    expect(executable.nodes.map((node: { id: string }) => node.id)).toEqual([
+      'collect', 'iterate', 'extract', 'classify',
+    ]);
+    expect(executable.controlEdges).toEqual(snapshot.controlEdges);
+  });
+
+  it('rejects a playbook with no runnable branch and releases its idempotency key', async () => {
+    const snapshot = {
+      nodes: [
+        { id: 'collect', kind: 'step', metadata: { enabled: false } },
+        { id: 'iterate', kind: 'iterator', metadata: {} },
+      ],
+      controlEdges: [{ id: 'edge', kind: 'sequential', source: 'collect', target: 'iterate' }],
+      dataBindings: [],
+      settings: {},
+    };
+    const { service, idempotencyService } = createExecutionServiceForTests({
+      flowService: { findOneForExecutionStart: jest.fn().mockResolvedValue(snapshot) },
+      builderService: { buildSnapshot: jest.fn().mockReturnValue(snapshot) },
+      graphSanitizerService: createNoopGraphSanitizer(),
+    });
+    idempotencyService.reserve.mockResolvedValue({ type: 'reserved' });
+
+    await expect(service.start('flow-1', 'owner-1', {}, 'request-1')).rejects.toThrow(
+      'No runnable steps remain after disabled branches are excluded.',
+    );
+    expect(idempotencyService.release).toHaveBeenCalledWith('owner-1', 'request-1');
+  });
+
   it('rejects single-step execution for disabled nodes', async () => {
     const { service } = createExecutionServiceForTests({
       flowService: {

@@ -87,7 +87,7 @@ describe('single-step execution dependency safety', () => {
     }).service;
 
     await expect(service.start('flow-1', 'owner-1', {}, undefined, 'task-2')).rejects.toThrow(
-      'Single-step execution for node task-2 requires a previous completed execution with matching upstream node snapshots.',
+      'Single-step execution for node task-2 requires a previous completed or failed execution with matching upstream node snapshots.',
     );
     expect(ExecutionModel).not.toHaveBeenCalled();
   });
@@ -237,7 +237,7 @@ describe('single-step execution dependency safety', () => {
     });
 
     await expect(service.start('flow-1', 'owner-1', {}, undefined, 'task-2')).rejects.toThrow(
-      'Single-step execution for node task-2 requires a previous completed execution with matching upstream node snapshots.',
+      'Single-step execution for node task-2 requires a previous completed or failed execution with matching upstream node snapshots.',
     );
   });
 });

@@ -7,7 +7,7 @@ import { PlaybookFlowOutputContractService } from './playbook-flow-output-contra
 import { createExecutionServiceForTests, createNoopGraphSanitizer } from './playbook-flow-execution.test-support';
 
 describe('single-step execution allowed paths', () => {
-  it('allows single-step execution for flow-dependent nodes when upstream results exist', async () => {
+  it('reuses a completed upstream result from a failed run after a canvas move', async () => {
     const savedExecution = {
       id: 'exec-dependent',
       queuePosition: 0,
@@ -55,7 +55,7 @@ describe('single-step execution allowed paths', () => {
       {
         findOne: jest.fn().mockResolvedValue({
           nodes: [
-            { id: 'task-1', kind: 'step', metadata: {}, output: { ports: [{ id: 'summary' }] } },
+            { id: 'task-1', kind: 'step', metadata: { positionX: 10, positionY: 20 }, output: { ports: [{ id: 'summary' }] } },
             { id: 'task-2', kind: 'step', metadata: {}, input: { ports: [{ id: 'summary' }] } },
           ],
           controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'task-1', target: 'task-2' }],
@@ -76,7 +76,7 @@ describe('single-step execution allowed paths', () => {
         buildSnapshot: jest.fn().mockReturnValue({
           settings: {},
           nodes: [
-            { id: 'task-1', kind: 'step', metadata: {}, output: { ports: [{ id: 'summary' }] } },
+            { id: 'task-1', kind: 'step', metadata: { positionX: 10, positionY: 20 }, output: { ports: [{ id: 'summary' }] } },
             { id: 'task-2', kind: 'step', metadata: {}, input: { ports: [{ id: 'summary' }] } },
           ],
           controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'task-1', target: 'task-2' }],
@@ -120,7 +120,7 @@ describe('single-step execution allowed paths', () => {
                 _id: 'prev-exec-1',
                 snapshot: {
                   nodes: [
-                    { id: 'task-1', kind: 'step', metadata: {}, output: { ports: [{ id: 'summary' }] } },
+                    { id: 'task-1', kind: 'step', metadata: { positionX: 30, positionY: 40 }, output: { ports: [{ id: 'summary' }] } },
                     { id: 'task-2', kind: 'step', metadata: {}, input: { ports: [{ id: 'summary' }] } },
                   ],
                 },
@@ -134,6 +134,12 @@ describe('single-step execution allowed paths', () => {
 
     await service.start('flow-1', 'owner-1', {}, undefined, 'task-2');
 
+    expect((service as any).executionModel.find).toHaveBeenCalledWith({
+      flowId: 'flow-1', ownerId: 'owner-1', status: { $in: ['completed', 'failed'] },
+    });
+    expect((service as any).taskResultModel.find).toHaveBeenCalledWith({
+      executionId: 'prev-exec-1', taskId: { $in: ['task-1'] }, status: 'completed',
+    });
     expect(ExecutionModel).toHaveBeenCalledWith(expect.objectContaining({
       singleStepTaskId: 'task-2',
       snapshot: expect.objectContaining({

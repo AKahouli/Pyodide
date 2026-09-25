@@ -46,6 +46,8 @@ export interface PlaybookIntentBlueprintRouterConfig {
   maxIterations?: number | null;
   conditions?: PlaybookIntentBlueprintRouterCondition[];
   defaultLabel?: string | null;
+  mode?: 'ai' | 'deterministic' | null;
+  prompt?: string | null;
 }
 
 export interface PlaybookIntentBlueprintPrimitiveConfig {

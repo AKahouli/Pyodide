@@ -477,3 +477,80 @@ async def test_run_router_llm_falls_back_to_first_label_on_exception(monkeypatch
         'mode': 'llm-fallback',
         'used_default': True,
     }
+
+
+@pytest.mark.asyncio
+async def test_run_router_ai_mode_ignores_conditions_and_uses_model_id(monkeypatch):
+    emitted = []
+    monkeypatch.setattr('src.flow_engine.nodes.router.get_stream_writer', lambda: emitted.append)
+
+    captured = {}
+
+    async def fake_acompletion(**kwargs):
+        captured.update(kwargs)
+        return _fake_llm_response('valid')
+
+    monkeypatch.setattr('src.flow_engine.nodes.router.litellm.acompletion', fake_acompletion)
+
+    result = await run_router(
+        'router-1',
+        {
+            'model_id': 'azure/gpt-4o-mini',
+            'router_config': {
+                'output_labels': ['invalid', 'valid'],
+                'default_label': 'invalid',
+                'mode': 'ai',
+                'prompt': 'Pick valid.',
+                'conditions': [{
+                    'label': 'invalid',
+                    'source_node': 'step-1',
+                    'source_port': 'result',
+                    'path': 'verdict',
+                    'operator': 'equals',
+                    'value': 'invalid',
+                }],
+            },
+        },
+        make_state({
+            ('step-1', 0): {
+                'outputs': {
+                    'result': {
+                        'content': {'verdict': 'invalid'},
+                    },
+                },
+            },
+        }),
+    )
+
+    assert result['router_decisions'] == {'router-1': 'valid'}
+    decision = _router_decision_event(emitted)
+    assert decision['payload']['mode'] == 'llm'
+    assert captured['model'] == 'azure/gpt-4o-mini'
+
+
+@pytest.mark.asyncio
+async def test_run_router_deterministic_mode_never_calls_llm(monkeypatch):
+    emitted = []
+    monkeypatch.setattr('src.flow_engine.nodes.router.get_stream_writer', lambda: emitted.append)
+
+    async def fail_if_called(*_args, **_kwargs):
+        raise AssertionError('LLM should not be called in deterministic mode')
+
+    monkeypatch.setattr('src.flow_engine.nodes.router.litellm.acompletion', fail_if_called)
+
+    result = await run_router(
+        'router-1',
+        {
+            'router_config': {
+                'output_labels': ['continue', 'stop'],
+                'default_label': 'stop',
+                'mode': 'deterministic',
+            },
+        },
+        make_state({}),
+    )
+
+    assert result['router_decisions'] == {'router-1': 'stop'}
+    decision = _router_decision_event(emitted)
+    assert decision['payload']['mode'] == 'deterministic'
+    assert decision['payload']['used_default'] is True

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Sheet,
@@ -90,6 +90,7 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
   const [automatedTriggerType, setAutomatedTriggerType] = useState<'none' | 'schedule' | 'mail'>('none');
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [mailboxCapabilityLoaded, setMailboxCapabilityLoaded] = useState(false);
+  const wasOpen = useRef(false);
 
   useEffect(() => {
     if (open) {
@@ -99,10 +100,15 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
   }, [open, fetchMailboxCapability]);
 
   useEffect(() => {
-    if (open) {
-      setDraft(schedule?.enabled ? fromExecutionSchedule(schedule) : { enabled: false });
-      setAutomatedTriggerType(schedule?.enabled ? 'schedule' : mailTrigger?.enabled ? 'mail' : 'none');
-      setMailDraft({
+    if (!open) {
+      wasOpen.current = false;
+      return;
+    }
+    if (wasOpen.current) return;
+    wasOpen.current = true;
+    setDraft(schedule?.enabled ? fromExecutionSchedule(schedule) : { enabled: false });
+    setAutomatedTriggerType(schedule?.enabled ? 'schedule' : mailTrigger?.enabled ? 'mail' : 'none');
+    setMailDraft({
         mailboxAppKey: mailTrigger?.config?.mailboxAppKey ?? mailboxCapability?.appKey ?? 'microsoft',
         notificationUrl: mailTrigger?.config?.notificationUrl ?? '',
         autoRenewUntil: mailTrigger?.config?.autoRenewUntil
@@ -120,9 +126,13 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
         subjectContains: mailTrigger?.config?.filters.subjectContains.join('\n') ?? '',
         bodyContains: mailTrigger?.config?.filters.bodyContains.join('\n') ?? '',
         hasAttachments: mailTrigger?.config?.filters.hasAttachments === true,
-      });
-    }
+    });
   }, [open, schedule, mailTrigger, mailboxCapability]);
+
+  useEffect(() => {
+    if (!open || mailTrigger?.config?.mailboxAppKey || !mailboxCapability?.appKey) return;
+    setMailDraft((current) => ({ ...current, mailboxAppKey: mailboxCapability.appKey }));
+  }, [open, mailTrigger?.config?.mailboxAppKey, mailboxCapability?.appKey]);
 
   const setType = (type: ExecutionScheduleType) => {
     setDraft((d) => {
