@@ -295,10 +295,11 @@ describe('pruneUnreachableDataBindings', () => {
 });
 
 describe('getInitialPlaybookPageMode', () => {
-  it('opens completed Playbooks in Monitor and all others in Design', () => {
-    expect(getInitialPlaybookPageMode('completed')).toBe('run');
-    expect(getInitialPlaybookPageMode('running')).toBe('design');
-    expect(getInitialPlaybookPageMode('failed')).toBe('design');
+  it('opens every non-idle execution in Monitor, including runs awaiting approval', () => {
+    for (const status of ['queued', 'pending', 'running', 'pending_approval', 'interrupted', 'failed', 'cancelled', 'completed']) {
+      expect(getInitialPlaybookPageMode(status)).toBe('run');
+    }
+    expect(getInitialPlaybookPageMode('idle')).toBe('design');
     expect(getInitialPlaybookPageMode()).toBe('design');
   });
 });

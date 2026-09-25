@@ -2450,6 +2450,7 @@
   "console.rail.inflight.empty": "Nothing is running.",
   "console.rail.waiting": "Waiting on you",
   "console.rail.waiting.empty": "Nothing waits on you.",
+  "console.rail.waiting.step": "Step awaiting approval",
   "console.rail.broke": "Broke since yesterday",
   "console.rail.broke.empty": "Nothing broke recently.",
   "console.rail.watch": "Watch run",

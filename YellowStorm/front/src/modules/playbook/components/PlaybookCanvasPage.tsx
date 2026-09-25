@@ -370,7 +370,7 @@ export function shouldRenderPlaybookAssistant(
 }
 
 export function getInitialPlaybookPageMode(latestExecutionStatus?: string): PlaybookPageMode {
-  return latestExecutionStatus === 'completed' ? 'run' : 'design';
+  return latestExecutionStatus && latestExecutionStatus !== 'idle' ? 'run' : 'design';
 }
 
 export function canAppendIntentEdge(

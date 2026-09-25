@@ -2443,6 +2443,7 @@
   "console.rail.inflight.empty": "Aucune exécution en cours.",
   "console.rail.waiting": "En attente de vous",
   "console.rail.waiting.empty": "Rien n'attend votre décision.",
+  "console.rail.waiting.step": "Étape en attente d'approbation",
   "console.rail.broke": "Cassés depuis hier",
   "console.rail.broke.empty": "Rien de cassé récemment.",
   "console.rail.watch": "Voir l'exécution",
