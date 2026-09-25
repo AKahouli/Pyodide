@@ -10,5 +10,14 @@
   "69dbf89095975249af6f9ace": "connector credential whose connector 69dbf88f95975249af6f9aab no longer exists (dangling, the FK would reject it) — reject is correct",
   "69d4e270de27a0028dd31eed": "share of agent 69cc041611926f6b4aed4f1b, which no longer exists in Postgres (dangling) — reject is correct",
   "69d4e3dcde27a0028dd33280": "share of agent 69cc041611926f6b4aed4f11, which no longer exists in Postgres (dangling) — reject is correct",
-  "6ab13c68fe5067a78b45746e": "mistral-medium-3-5-backup: written to Mongo by a stale writer after the models cutover; the same model_id already exists in Postgres under a new id (created by the app at 2026-09-21T14:45Z), so nothing to copy"
+  "6ab13c68fe5067a78b45746e": "mistral-medium-3-5-backup: written to Mongo by a stale writer after the models cutover; the same model_id already exists in Postgres under a new id (created by the app at 2026-09-21T14:45Z), so nothing to copy",
+  "6ab3e1728ee3245dd92485cd": "stale-writer duplicate: the same model_id exists in Postgres under id a0bf66c4823d18fd59170330, the Postgres copy is authoritative (created earlier, edited since)",
+  "6ab4e5032c4e20eb9111c03d": "stale-writer duplicate: the same model_id exists in Postgres under id edd0414c50bdce0ea25edb60, the Postgres copy is authoritative (last edited later; Mongo only differs on fields its build lacks)",
+  "6ab4e5032c4e20eb9111c040": "stale-writer duplicate: the same model_id exists in Postgres under id 316608cf60d90ca9d8190c24, the Postgres copy is authoritative (field diff checked: Mongo only carries older-schema defaults, no value absent from Postgres)",
+  "6ab63f27dca46132eb832539": "stale-writer duplicate: the same model_id exists in Postgres under id e8288f883c9dd8d25e7a58a1, the Postgres copy is authoritative (created 23 minutes later, edited since)",
+  "69ea226299cde483de6ecc32": "github connection of the same user re-authorised through the Postgres app (row c1a801064023a1a046875c9c, created 2026-09-23, updated 2026-09-25); the Mongo row is the superseded one, keyed by (user_id, app_key)",
+  "6ab6252dc7dfed6d94195af8": "test Telegram integration for an agent that Postgres has since bound to a different bot (b1f5eb60b923ce95597a08a0, one integration per agent); the Mongo bot is superseded",
+  "6ab625423c5993de357ebc55": "chat binding of the superseded test bot integration 6ab6252dc7dfed6d94195af8 (a chat belongs to its bot, it cannot move to another bot)",
+  "6ab62c203c5993de357f19f9": "chat binding of the superseded test bot integration 6ab6252dc7dfed6d94195af8 (a chat belongs to its bot, it cannot move to another bot)",
+  "6ab62e7a3c5993de357f40ed": "chat binding of the superseded test bot integration 6ab6252dc7dfed6d94195af8 (a chat belongs to its bot, it cannot move to another bot)"
 }

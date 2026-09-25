@@ -542,6 +542,14 @@ The teammates' P8 backfills (migrations 0026–0028) had not run to completion. 
 
 `reconcile-ids --allow=… --strict`: every pair of these modules reads `missing=0`. A separate batched content comparison of all 141,653 events found 0 missing and 0 differing rows. App-runtime units have no content check of their own (only ids); the app-runtime backfill was verified by id set.
 
-**Still open in the same run** (older modules, not part of the above): 76 Mongo ids absent from Postgres — notifications 62, models 4, agent types 1, telegram integrations 2, telegram chat bindings 6, one user app connection. The newest are from 2026-09-25 (a model at 09:30Z, telegram until 08:19Z), so a stale build is still writing to the shared Mongo. Stop it, run a final incremental backfill of those collections, then re-run `reconcile-ids --strict`.
+**Older modules — final incremental backfill (2026-09-25 ~12:00Z).** 76 Mongo ids were absent from Postgres. The idempotent backfills inserted 67 (notifications 62, agent types 1, telegram integrations 1, telegram chat bindings 3). The other 9 were not gaps: each has a Postgres row the live build created under another id, or a superseded parent.
+- 4 models (`Dolphin3-Cyber`, `gpt-6-sol`, `gpt-6-luna`, `ornith-1.5`) and 1 user app connection (the GitHub re-authorisation, keyed by `(user_id, app_key)`): the backfill's `exists` matches the business key, and a field diff showed the Mongo copy holds no value the Postgres row lacks (its differences are older-schema defaults such as `omitTemperature`, `dropParams`, narrower `inputModalities`).
+- 1 telegram integration and its 3 chat bindings: Postgres has since bound a different test bot to the same agent (one integration per agent), and a chat cannot move to another bot.
+
+All 9 went into `allow-reconcile.json` with their reasons, next to the earlier legitimate rejects. `reconcile-ids --allow=scripts/migrate/allow-reconcile.json --since=2026-09-25T11:50:00Z --strict` exits 0: 45 of 45 pairs ok, 21 allowed ids, 0 drift.
+
+**The stale writer is not on the machine that ran the migration.** Clients connected to the shared Mongo and Postgres at 11:57Z: this workstation (two local backends, both already on Postgres for these modules), two other developers' workstations running `YelloStorm:local` builds, and a deployed container (`YelloStorm:aadcdad9e603`, reconnected at 11:38Z). Whoever runs a build older than the Postgres cutover keeps producing Mongo-only rows; at cutover, re-run `reconcile-ids --since=<cutover> --strict` to prove no writer remains.
+
+`2026-10-integrations.ts` `verify` for `user_app_connections` looked rows up by the Mongo `_id` split on `:`, so it reported 17 false "missing in PG" lines; it is now keyed by `(user_id, app_key)` like the rest of the unit.
 
 **Agent evaluation (migration 0031).** 18 datasets, 6 scenarios, 184 evaluations and the settings singleton were backfilled into `agent_evaluation.*` (209 rows, 0 failures, every content checksum equal).
