@@ -48,10 +48,13 @@ export const channelsTelegramChatBindings = channelsSchema.table(
     telegramChatId: varchar('telegram_chat_id', { length: 64 }).notNull(),
     telegramUserId: varchar('telegram_user_id', { length: 64 }),
     conversationId: objectId('conversation_id'),
+    /** 'member' = owner-linked chat, 'guest' = external visitor inbox. */
+    bindingType: varchar('binding_type', { length: 16 }).notNull().default('member'),
     lastMessageAt: timestamp('last_message_at', { withTimezone: true }),
     ...timestamps(),
   },
   (t) => [
+    check('telegram_chat_bindings_type_enum', sql`${t.bindingType} IN ('member','guest')`),
     uniqueIndex('uq_telegram_chat_bindings_chat').on(t.integrationId, t.telegramChatId),
     index('idx_telegram_chat_bindings_user').on(t.userId),
     index('idx_telegram_chat_bindings_agent').on(t.agentId),
@@ -78,6 +81,34 @@ export const channelsTelegramLinkCodes = channelsSchema.table(
     uniqueIndex('uq_telegram_link_codes_hash').on(t.codeHash),
     index('idx_telegram_link_codes_integration').on(t.integrationId, t.consumed),
     index('idx_telegram_link_codes_expires').on(t.expiresAt),
+  ],
+);
+
+/** Owner validation (human-in-the-loop): guest asks, owner answers async. */
+export const channelsTelegramHumanValidations = channelsSchema.table(
+  'telegram_human_validations',
+  {
+    id: objectId('id').primaryKey(),
+    integrationId: objectId('integration_id')
+      .notNull()
+      .references(() => channelsTelegramIntegrations.id, { onDelete: 'cascade' }),
+    agentId: objectId('agent_id').notNull(),
+    conversationId: objectId('conversation_id').notNull(),
+    guestTelegramChatId: varchar('guest_telegram_chat_id', { length: 64 }).notNull().default(''),
+    guestLabel: varchar('guest_label', { length: 200 }),
+    question: text('question').notNull(),
+    choices: text('choices').array().notNull().default([]),
+    status: varchar('status', { length: 16 }).notNull().default('pending'),
+    answer: text('answer'),
+    answeredAt: timestamp('answered_at', { withTimezone: true }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    ownerMessageId: integer('owner_message_id'),
+    ...timestamps(),
+  },
+  (t) => [
+    check('telegram_human_validations_status_enum', sql`${t.status} IN ('pending','answered','expired','failed')`),
+    index('idx_telegram_validations_integration_status').on(t.integrationId, t.status, t.expiresAt),
+    index('idx_telegram_validations_conversation').on(t.conversationId, t.status),
   ],
 );
 

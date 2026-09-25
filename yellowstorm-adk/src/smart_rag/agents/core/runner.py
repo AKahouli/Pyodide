@@ -426,6 +426,7 @@ class AgentRunner:
         pending_tool_components_by_name: Dict[str, List[str]] = {}
         pending_tool_metadata: Dict[str, Dict[str, Any]] = {}
         seen_tool_component_ids: set[str] = set()
+        owner_validation_response: Dict[str, Any] | None = None
         thought_activity_tracker = ThoughtActivityTracker()
         citation_session_state = dict(getattr(session, "state", {}) or {})
 
@@ -817,6 +818,10 @@ class AgentRunner:
 
                         # Name of the tool this response belongs to
                         func_name = part.function_response.name
+                        if func_name == "request_owner_validation":
+                            response = part.function_response.response
+                            if isinstance(response, dict):
+                                owner_validation_response = response
 
                         if q:
                             raw_call_id = getattr(part.function_response, "id", None)
@@ -1063,6 +1068,38 @@ class AgentRunner:
                         execution_summary,
                         generated_files,
                     )
+
+            if owner_validation_response:
+                fallback_text = str(
+                    owner_validation_response.get("detail")
+                    or "I forwarded your request to my owner and will follow up with their answer."
+                )
+                logger.warning(
+                    "[STREAM END] ADK closed after request_owner_validation; sending fallback response"
+                )
+                if q:
+                    await q.put(
+                        self.streaming_formatter.format_streaming_event(
+                            agent_id=agent_id,
+                            agent_name=agent_name,
+                            agent_type=agent_type,
+                            chunk=fallback_text,
+                            message_id=session_id,
+                            content_type="chunk",
+                        )
+                    )
+                recorder.record_chunk(fallback_text)
+                recorder.record_final_result(fallback_text)
+                execution_summary = recorder.get_execution_summary()
+                generated_files = await self._extract_generated_files(
+                    session_helper, user_id, session_id
+                )
+                return (
+                    fallback_text,
+                    mcp_tools_used,
+                    execution_summary,
+                    generated_files,
+                )
 
             raise RuntimeError("Agent stream ended without a final response")
 

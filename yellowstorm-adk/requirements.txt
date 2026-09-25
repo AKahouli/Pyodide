@@ -50,5 +50,5 @@ mcp>=1.24,<2.0.0
 a2a-sdk[http-server]==0.3.26
 semantica==0.6.5
 httpx==0.28.1
-
+greenlet>=3.0.0
 markdown==3.10.3

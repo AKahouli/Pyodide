@@ -128,9 +128,18 @@ describe('PlaybookToolbar', () => {
   });
 
   it('surfaces unconfigured workflow steps as readiness blockers', async () => {
-    render(<PlaybookStatusActions {...defaultStatusProps} canRun={false} unconfiguredTaskCount={2} />);
+    const onUnconfiguredTaskSelect = vi.fn();
+    render(<PlaybookStatusActions {...defaultStatusProps} canRun={false} unconfiguredTasks={[
+      { id: 'task-1', title: 'Prepare report', reasons: ['agent'] },
+      { id: 'task-2', title: 'Review report', reasons: ['agent', 'evaluationExpectation'] },
+    ]} onUnconfiguredTaskSelect={onUnconfiguredTaskSelect} />);
     await userEvent.click(screen.getByText('toolbar.readiness.blockersCount'));
-    expect(screen.getByText('toolbar.readiness.unconfiguredTasks')).toBeInTheDocument();
+    expect(screen.getByText('Prepare report')).toBeInTheDocument();
+    expect(screen.getByText('Review report')).toBeInTheDocument();
+    expect(screen.getAllByText('toolbar.readiness.configuration.agent')).toHaveLength(2);
+    expect(screen.getByText('toolbar.readiness.configuration.evaluationExpectation')).toBeInTheDocument();
+    await userEvent.click(screen.getByText('Review report'));
+    expect(onUnconfiguredTaskSelect).toHaveBeenCalledWith('task-2');
     expect(screen.getByText('toolbar.run').closest('button')).toBeDisabled();
   });
 

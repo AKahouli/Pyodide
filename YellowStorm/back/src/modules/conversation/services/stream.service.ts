@@ -2501,7 +2501,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
    * Runs a single linked agent via gRPC RunSingleAgent (agent_mode=mono on ADK side).
    * Used by single-agent channel replies — no manager orchestration, no SSE gateway.
    */
-  async runSingleAgentStream(params: { userId: string; username: string; conversationId: string; messageId: string; agentId: string; query: string; requestId?: string }): Promise<{ durationMs: number; componentCount: number; chunkCount: number }> {
+  async runSingleAgentStream(params: { userId: string; username: string; conversationId: string; messageId: string; agentId: string; query: string; requestId?: string; agentParamsExtras?: Record<string, string> }): Promise<{ durationMs: number; componentCount: number; chunkCount: number }> {
     if (!this.isGrpcAvailable) {
       throw new ServiceUnavailableException(ErrorCode.CHAT_GRPC_UNAVAILABLE, 'gRPC service is not available for single-agent streaming');
     }
@@ -2516,6 +2516,23 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     }
 
     await this.resolveAgentBrainContexts(grpcAgents);
+
+    if (params.agentParamsExtras && grpcAgents[0]) {
+      const grpcAgent = grpcAgents[0] as unknown as Record<string, unknown>;
+      const existingParams = ((grpcAgent.agent_params as { params?: Record<string, unknown> })?.params) || {};
+      grpcAgent.agent_params = {
+        ...(grpcAgent.agent_params as Record<string, unknown>),
+        params: { ...existingParams, ...params.agentParamsExtras },
+      };
+      // Extra runtime tool resolved by the ADK native registry (e.g. Telegram
+      // owner validation). Not a stored tool — injected per channel only.
+      (grpcAgent.tools as unknown[]) = [...(grpcAgent.tools as unknown[]), {
+        name: params.agentParamsExtras['extraToolName'] || 'request_owner_validation',
+        description:
+          'HARD ROUTING RULE: for every external visitor request, answer directly only when the answer is explicitly available in the conversation or trusted knowledge AND is not time-sensitive. Time-sensitive questions — availability, scheduling, commitments, prices, or anything tied to a specific date, time, or current state — MUST always trigger a fresh request_owner_validation, even if a similar or older answer exists in the conversation; never reuse a past owner answer for a new date, time, or request. Do not infer, invent, reinterpret your identity, or use a generic statement to avoid an unknown answer. If the answer is not explicitly available, you MUST call request_owner_validation with the concrete question and omit choices so your owner can answer freely in text. Private or sensitive information must not be disclosed directly, but privacy alone is not a reason to refuse this owner-validation request. After calling it, tell the visitor the request was forwarded and end your turn; the answer will arrive as a follow-up message. Only skip this tool for requests that must be refused for safety or legal reasons.',
+        disabled: false,
+      }];
+    }
 
     const conversation = await this.conversationService.getConversationDocument(params.conversationId);
     const systemWorkspaceId = conversation.systemWorkspaceId?.toString();

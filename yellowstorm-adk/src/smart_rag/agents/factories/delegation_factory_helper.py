@@ -686,6 +686,9 @@ def create_search_agent_with_tools(
     enhanced_prompt = _append_attachment_context(enhanced_prompt, config)
 
     agent_params = agent_config.get("agent_params") or {}
+    telegram_validation_instruction = agent_params.get("telegram_validation_instruction")
+    if isinstance(telegram_validation_instruction, str) and telegram_validation_instruction.strip():
+        enhanced_prompt = f"{enhanced_prompt}\n\n{telegram_validation_instruction.strip()}"
     enhanced_prompt = _append_run_code_guidance(
         enhanced_prompt,
         tools_config,
