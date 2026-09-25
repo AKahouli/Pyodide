@@ -2037,7 +2037,7 @@
   "routerEditor.modeHint": "L'IA ignore les conditions déterministes et utilise le modèle ci-dessus. Le mode déterministe n'appelle jamais le LLM.",
   "routerEditor.prompt": "Prompt de routage IA",
   "routerEditor.promptPlaceholder": "Classez la demande en bug, fonctionnalité ou question.",
-  "routerEditor.promptHint": "Facultatif. Sans lui, le routeur décide à partir des entrées et des sorties précédentes. Le modèle est celui de l'étape ci-dessus (défaut si vide).",
+  "routerEditor.promptHint": "Consigne facultative ajoutée au prompt système. Les entrées de l'étape et les sorties précédentes sont toujours envoyées au modèle. Le modèle est celui de l'étape ci-dessus (défaut si vide).",
   "routerEditor.conditionsIgnoredInAi": "Les conditions sont ignorées en mode IA.",
   "routerEditor.addCondition": "Ajouter une condition",
   "routerEditor.routeLabel": "Label de route",
