@@ -103,6 +103,21 @@ describeIntegration('PgConversationV2 stores (integration)', () => {
     expect(new Set(rows.map((r) => r.sequence)).size).toBe(8);
   });
 
+  it('append strips U+0000 from the payload, which jsonb would otherwise reject', async () => {
+    const ownerId = oid();
+    const draft = await sessions.createDraft(ownerId, []);
+    sessionIds.push(draft.id);
+
+    const event = wireMessage('evt-nul', 'before\u0000after');
+    (event.payload as unknown as Record<string, unknown>).meta = { 'k\u0000ey': ['a\u0000b', 3] };
+
+    const appended = await events.append(draft.id, event);
+    expect(appended.inserted).toBe(true);
+
+    const [row] = await events.listSince(draft.id, 0, 10);
+    expect(row.payload).toMatchObject({ content: 'beforeafter', meta: { key: ['ab', 3] } });
+  });
+
   it('app share partial uniques upsert by user and email; invite token is unique', async () => {
     const ownerId = oid();
     const recipientUserId = oid();
