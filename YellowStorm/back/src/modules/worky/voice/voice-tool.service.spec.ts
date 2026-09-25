@@ -1,4 +1,4 @@
-import { Types } from 'mongoose';
+import { newObjectId } from '@common/postgres';
 import { VoiceToolService } from './voice-tool.service';
 
 describe('VoiceToolService', () => {
@@ -102,9 +102,9 @@ describe('VoiceToolService', () => {
   });
 
   describe('getTaskDetails', () => {
-    const streamId = new Types.ObjectId().toString();
+    const streamId = newObjectId();
     const baseTask = () => ({
-      streamId: new Types.ObjectId(streamId),
+      streamId: streamId,
       title: 'Research widget',
       description: 'Look into widgets',
       lane: 'done',
@@ -167,7 +167,7 @@ describe('VoiceToolService', () => {
 
     it('rejects a task that belongs to a different stream', async () => {
       const task = baseTask();
-      task.streamId = new Types.ObjectId();
+      task.streamId = newObjectId();
       tasks.findByIdInternal.mockResolvedValue(task);
       await expect(svc.getTaskDetails('u1', streamId, 'tid')).rejects.toThrow();
     });

@@ -1,13 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { Model } from 'mongoose';
 import { LoggerService } from '@modules/logger';
 import { PlaybookFlowMailGraphClientService } from '@modules/playbook-flow/services/playbook-flow-mail-graph-client.service';
-import {
-  WorkyMailSubscription,
-  WorkyMailSubscriptionDocument,
-} from '../schemas/worky-mail-subscription.schema';
+import { WorkyMailRepository } from '../persistence/worky-mail.repository';
 
 const RENEWAL_WINDOW_MINUTES = 20;
 
@@ -20,8 +15,7 @@ const RENEWAL_WINDOW_MINUTES = 20;
 @Injectable()
 export class WorkyMailRenewalService {
   constructor(
-    @InjectModel(WorkyMailSubscription.name)
-    private readonly subscriptionModel: Model<WorkyMailSubscriptionDocument>,
+    private readonly subscriptions: WorkyMailRepository,
     private readonly graphClient: PlaybookFlowMailGraphClientService,
     private readonly logger: LoggerService,
   ) {
@@ -37,10 +31,7 @@ export class WorkyMailRenewalService {
     // that flag is off — the failure is invisible until a reply goes missing.
     // Poll-only mailboxes have no subscription to renew — they are read by the
     // catch-up sweep instead.
-    const due = await this.subscriptionModel
-      .find({ subscriptionId: { $ne: null }, expiresAt: { $ne: null, $lte: cutoff } })
-      .lean()
-      .exec();
+    const due = await this.subscriptions.listExpiring(cutoff);
     if (due.length === 0) return;
 
     this.logger.log('Renewing worky mail subscriptions', { count: due.length });
@@ -53,10 +44,10 @@ export class WorkyMailRenewalService {
           subscription.mailboxAppKey,
           subscription.subscriptionId,
         );
-        await this.subscriptionModel.updateOne(
-          { _id: (subscription as any)._id },
-          { $set: { expiresAt: new Date(renewed.expirationDateTime as string) } },
-        ).exec();
+        await this.subscriptions.setExpiry(
+          subscription.id,
+          new Date(renewed.expirationDateTime as string),
+        );
       } catch (err) {
         this.logger.error('Mail subscription renewal failed', {
           userId: subscription.userId,
@@ -66,7 +57,7 @@ export class WorkyMailRenewalService {
         // Past expiry Graph has dropped it anyway; clear the record so the next
         // turn creates a fresh one instead of renewing a corpse forever.
         if ((subscription.expiresAt?.getTime() ?? 0) <= Date.now()) {
-          await this.subscriptionModel.deleteOne({ _id: (subscription as any)._id }).exec();
+          await this.subscriptions.deleteById(subscription.id);
           this.logger.warn('Dropped an expired mail subscription record', {
             userId: subscription.userId,
           });

@@ -1,19 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
 import { createHash } from 'crypto';
-import {
-  WorkyStream,
-  WorkyStreamDocument,
-} from '../schemas/worky-stream.schema';
-import {
-  WorkyTask,
-  WorkyTaskDocument,
-} from '../schemas/worky-task.schema';
-import {
-  WorkyMailEventLedger,
-  WorkyMailEventLedgerDocument,
-} from '../schemas/worky-mail-event-ledger.schema';
+import { normalizeObjectId } from '@common/postgres';
+import { WorkyStreamRepository } from '../persistence/worky-stream.repository';
+import { WorkyTaskRepository } from '../persistence/worky-task.repository';
+import { WorkyMailRepository } from '../persistence/worky-mail.repository';
+import type { WorkyStreamRecord, WorkyTaskRecord } from '../worky.types';
 import { LoggerService } from '../../logger';
 import { EmailService } from '../../email/email.service';
 import { UserService } from '../../user/user.service';
@@ -56,10 +47,9 @@ interface CandidateUser {
  * The service is also responsible for:
  *   - Auto-granting scoped read access on the stream's artifact
  *     workspace via `workspace-share.service.ts` (canonical §14.2).
- *   - Sending the initial assignment email (dedup'd via
- *     `WorkyMailEventLedger`).
- *   - Scheduling the T-6h reminder + deadline escalation
- *     `WorkyScheduledEvent` rows.
+ *   - Sending the initial assignment email (dedup'd via the
+ *     `worky.mail_event_ledger`).
+ *   - Scheduling the T-6h reminder + deadline escalation timers.
  *   - Applying human Kanban updates (in_progress/feedback/...) and
  *     emitting the matching SSE event so the readiness evaluator
  *     re-derives the dependent DAG branch.
@@ -67,12 +57,9 @@ interface CandidateUser {
 @Injectable()
 export class WorkyHumanAssignmentService {
   constructor(
-    @InjectModel(WorkyStream.name)
-    private readonly streams: Model<WorkyStreamDocument>,
-    @InjectModel(WorkyTask.name)
-    private readonly tasks: Model<WorkyTaskDocument>,
-    @InjectModel(WorkyMailEventLedger.name)
-    private readonly mailLedger: Model<WorkyMailEventLedgerDocument>,
+    private readonly streams: WorkyStreamRepository,
+    private readonly tasks: WorkyTaskRepository,
+    private readonly mail: WorkyMailRepository,
     private readonly emailService: EmailService,
     private readonly userService: UserService,
     private readonly events: WorkyEventService,
@@ -85,32 +72,21 @@ export class WorkyHumanAssignmentService {
 
   /**
    * Resolve a human-assignment hint into a concrete `assigneeId`.
-   * Idempotent: if the task already has a matching `assigneeId` and
-   * `assigneeType='human_agent'`, returns `assigned` without re-running
-   * the lookup or sending a duplicate email.
+   * Idempotent: if the task is already a `human_agent` task assigned to
+   * the person the hint resolves to, returns `assigned` without
+   * updating the task again, sending a duplicate email or scheduling
+   * duplicate reminders.
    */
   async assignFromHint(input: {
     streamId: string;
     taskId: string;
     hint: IPlanDeltaAssigneeHint;
   }): Promise<WorkyAssignHumanResult> {
-    const task = await this.tasks.findById(input.taskId).exec();
+    const task = await this.tasks.findById(input.taskId);
     if (!task) {
       throw new Error(`WorkyHumanAssignmentService: task ${input.taskId} not found`);
     }
-    if (
-      task.assigneeType === 'human_agent' &&
-      task.assigneeId &&
-      task.assigneeId.toString() === task.assigneeId.toString()
-    ) {
-      // Already assigned (idempotent replay)
-      return {
-        status: 'assigned',
-        taskId: input.taskId,
-        assigneeId: task.assigneeId.toString(),
-      };
-    }
-    const stream = await this.streams.findById(input.streamId).exec();
+    const stream = await this.streams.findById(input.streamId);
     if (!stream) {
       throw new Error(`WorkyHumanAssignmentService: stream ${input.streamId} not found`);
     }
@@ -141,25 +117,25 @@ export class WorkyHumanAssignmentService {
       return { status: 'ambiguous', candidates };
     }
     const assignee = candidates[0];
+    if (task.assigneeType === 'human_agent' && task.assigneeId === normalizeObjectId(assignee.id)) {
+      // Already assigned to this person (idempotent replay)
+      return { status: 'assigned', taskId: input.taskId, assigneeId: task.assigneeId };
+    }
     const dueAt = this.parseDueAt(input.hint.dueAt);
 
-    await this.tasks
-      .updateOne(
-        { _id: task._id },
-        {
-          $set: {
-            assigneeType: 'human_agent',
-            assigneeId: new Types.ObjectId(assignee.id),
-            theoreticalDeadlineAt: dueAt,
-          },
-        },
-      )
-      .exec();
+    const assigned = await this.tasks.update(task.id, {
+      assigneeType: 'human_agent',
+      assigneeId: assignee.id,
+      theoreticalDeadlineAt: dueAt,
+    });
+    if (!assigned) {
+      throw new Error(`WorkyHumanAssignmentService: task ${input.taskId} not found`);
+    }
 
-    await this.sendAssignmentEmail(stream, task, assignee);
-    await this.scheduleReminders(stream, task, assignee, dueAt);
+    await this.sendAssignmentEmail(stream, assigned, assignee);
+    await this.scheduleReminders(stream, assigned, assignee, dueAt);
 
-    this.events.emit(stream.ownerUserId.toString(), stream._id.toString(), {
+    this.events.emit(stream.ownerUserId, stream.id, {
       type: 'human_task.assigned',
       emittedAt: Date.now(),
       payload: {
@@ -169,7 +145,7 @@ export class WorkyHumanAssignmentService {
         theoreticalDeadlineAt: dueAt ? dueAt.toISOString() : null,
       },
     });
-    this.events.emit(stream.ownerUserId.toString(), stream._id.toString(), {
+    this.events.emit(stream.ownerUserId, stream.id, {
       type: 'task.updated',
       emittedAt: Date.now(),
       payload: { taskId: input.taskId, assigneeId: assignee.id },
@@ -202,7 +178,7 @@ export class WorkyHumanAssignmentService {
     kind: 'in_progress' | 'feedback' | 'request_changes' | 'blocked' | 'done';
     comment?: string;
   }): Promise<WorkyHumanUpdateResult> {
-    const task = await this.tasks.findById(input.taskId).exec();
+    const task = await this.tasks.findById(input.taskId);
     if (!task) {
       throw new Error(`WorkyHumanAssignmentService: task ${input.taskId} not found`);
     }
@@ -222,22 +198,17 @@ export class WorkyHumanAssignmentService {
       done: { executionState: 'done', lane: 'done' },
     };
     const next = transitions[input.kind];
-    await this.tasks
-      .updateOne(
-        { _id: task._id },
-        { $set: { executionState: next.executionState, lane: next.lane } },
-      )
-      .exec();
+    await this.tasks.update(task.id, { executionState: next.executionState, lane: next.lane });
     const eventType =
       input.kind === 'feedback' || input.kind === 'request_changes'
         ? 'human_task.feedback_submitted'
         : input.kind === 'done'
           ? 'human_task.completed'
           : 'human_task.assigned';
-    const streamId = input.streamId ?? task.streamId.toString();
-    const stream = await this.streams.findById(streamId).exec();
+    const streamId = input.streamId ?? task.streamId;
+    const stream = await this.streams.findById(streamId);
     if (stream) {
-      this.events.emit(stream.ownerUserId.toString(), stream._id.toString(), {
+      this.events.emit(stream.ownerUserId, stream.id, {
         type: eventType,
         emittedAt: Date.now(),
         payload: {
@@ -247,7 +218,7 @@ export class WorkyHumanAssignmentService {
           comment: input.comment ?? null,
         },
       });
-      this.events.emit(stream.ownerUserId.toString(), stream._id.toString(), {
+      this.events.emit(stream.ownerUserId, stream.id, {
         type: 'task.updated',
         emittedAt: Date.now(),
         payload: { taskId: input.taskId, lane: next.lane, executionState: next.executionState },
@@ -332,27 +303,26 @@ export class WorkyHumanAssignmentService {
   }
 
   private async sendAssignmentEmail(
-    stream: WorkyStreamDocument,
-    task: WorkyTaskDocument,
+    stream: WorkyStreamRecord,
+    task: WorkyTaskRecord,
     assignee: CandidateUser,
   ): Promise<void> {
     const dedupKey = this.buildMailDedupKey(
-      stream._id.toString(),
-      task._id.toString(),
+      stream.id,
+      task.id,
       'human_task.assigned',
       assignee.id,
       0,
     );
-    try {
-      await this.mailLedger.create({
-        streamId: stream._id,
-        taskId: task._id,
-        kind: 'human_task.assigned',
-        dedupKey,
-        sentAt: new Date(),
-      });
-    } catch (err) {
-      // Unique-index collision → already sent, skip.
+    // False only when the ledger already holds this mail; a database error propagates
+    // instead of being mistaken for "already sent".
+    const firstSend = await this.mail.recordMail({
+      streamId: stream.id,
+      taskId: task.id,
+      kind: 'human_task.assigned',
+      dedupKey,
+    });
+    if (!firstSend) {
       this.logger.debug('Worky human-assignment: email already sent (ledger hit)', {
         dedupKey,
       });
@@ -368,8 +338,8 @@ export class WorkyHumanAssignmentService {
   }
 
   private async scheduleReminders(
-    stream: WorkyStreamDocument,
-    task: WorkyTaskDocument,
+    stream: WorkyStreamRecord,
+    task: WorkyTaskRecord,
     assignee: CandidateUser,
     dueAt: Date | null,
   ): Promise<void> {
@@ -378,16 +348,16 @@ export class WorkyHumanAssignmentService {
     const now = Date.now();
     if (reminderAt.getTime() > now) {
       await this.scheduler.schedule({
-        streamId: stream._id.toString(),
-        taskId: task._id.toString(),
+        streamId: stream.id,
+        taskId: task.id,
         eventType: 'human_task.reminder',
         fireAt: reminderAt,
       });
     }
     if (dueAt.getTime() > now) {
       await this.scheduler.schedule({
-        streamId: stream._id.toString(),
-        taskId: task._id.toString(),
+        streamId: stream.id,
+        taskId: task.id,
         eventType: 'human_task.deadline',
         fireAt: dueAt,
       });

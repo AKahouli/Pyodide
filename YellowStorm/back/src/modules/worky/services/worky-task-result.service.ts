@@ -1,14 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import {
-  WorkyTaskResult,
-  WorkyTaskResultDocument,
-} from '../schemas/worky-task-result.schema';
-import {
-  WorkyTask,
-  WorkyTaskDocument,
-} from '../schemas/worky-task.schema';
+import { isForeignKeyViolation, isObjectId } from '@common/postgres';
+import { WorkyTaskResultRepository } from '../persistence/worky-task-result.repository';
+import { WorkyTaskRepository } from '../persistence/worky-task.repository';
 import { LoggerService } from '../../logger';
 
 export interface RecordTaskResultInput {
@@ -57,59 +50,56 @@ const SUMMARY_MAX_LENGTH = 5000;
 @Injectable()
 export class WorkyTaskResultService {
   constructor(
-    @InjectModel(WorkyTaskResult.name)
-    private readonly results: Model<WorkyTaskResultDocument>,
-    @InjectModel(WorkyTask.name)
-    private readonly tasks: Model<WorkyTaskDocument>,
+    private readonly results: WorkyTaskResultRepository,
+    private readonly tasks: WorkyTaskRepository,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(WorkyTaskResultService.name);
   }
 
   async record(input: RecordTaskResultInput): Promise<RecordTaskResultResult> {
-    if (!Types.ObjectId.isValid(input.taskId)) {
+    if (!isObjectId(input.taskId)) {
       throw new Error('WorkyTaskResultService.record: invalid taskId');
     }
-    const latest = await this.results
-      .findOne({ taskId: new Types.ObjectId(input.taskId) })
-      .sort({ version: -1 })
-      .select({ version: 1 })
-      .lean()
-      .exec();
-    const nextVersion = (latest?.version ?? 0) + 1;
     const summary = input.summary ?? '';
     const payload = input.payload ? { ...input.payload } : {};
     if (summary.length > SUMMARY_MAX_LENGTH && typeof payload.output !== 'string') {
       payload.output = summary;
     }
-    const created = await this.results.create({
-      taskId: new Types.ObjectId(input.taskId),
-      version: nextVersion,
-      status: input.status,
-      summary: truncateSummary(summary),
-      payload: Object.keys(payload).length > 0 ? payload : null,
-      contentArtifactId:
-        input.contentArtifactId && Types.ObjectId.isValid(input.contentArtifactId)
-          ? new Types.ObjectId(input.contentArtifactId)
-          : null,
-      createdByWorkerId:
-        input.createdByWorkerId && Types.ObjectId.isValid(input.createdByWorkerId)
-          ? new Types.ObjectId(input.createdByWorkerId)
-          : null,
-    });
+    const createdByWorkerId =
+      input.createdByWorkerId && isObjectId(input.createdByWorkerId) ? input.createdByWorkerId : null;
+    // The repository numbers the version and settles a concurrent writer.
+    const created = await this.results
+      .append({
+        taskId: input.taskId,
+        status: input.status,
+        summary: truncateSummary(summary),
+        payload: Object.keys(payload).length > 0 ? payload : null,
+        contentArtifactId:
+          input.contentArtifactId && isObjectId(input.contentArtifactId) ? input.contentArtifactId : null,
+        createdByWorkerId,
+      })
+      .catch((err: unknown) => {
+        // task_results.task_id and created_by_worker_id are foreign keys.
+        if (isForeignKeyViolation(err)) {
+          const worker = createdByWorkerId ? ` or worker ${createdByWorkerId}` : '';
+          throw new Error(`WorkyTaskResultService.record: task ${input.taskId}${worker} not found`);
+        }
+        throw err;
+      });
 
     const transition = await this.mirrorTaskState(input.taskId, input.status);
 
     this.logger.log('Worky task result recorded', {
       taskId: input.taskId,
-      version: nextVersion,
+      version: created.version,
       status: input.status,
       taskTransitionedTo: transition,
     });
     return {
-      taskResultId: (created._id as Types.ObjectId).toString(),
+      taskResultId: created.id,
       taskId: input.taskId,
-      version: nextVersion,
+      version: created.version,
       status: input.status,
       replay: false,
       taskTransitionedTo: transition,
@@ -117,23 +107,19 @@ export class WorkyTaskResultService {
   }
 
   async listForTask(taskId: string): Promise<WorkyTaskResultView[]> {
-    if (!Types.ObjectId.isValid(taskId)) return [];
-    const rows = await this.results
-      .find({ taskId: new Types.ObjectId(taskId) })
-      .sort({ version: -1 })
-      .lean()
-      .exec();
+    if (!isObjectId(taskId)) return [];
+    const rows = await this.results.listForTask(taskId);
     return rows.map((row) => ({
-      id: (row._id as Types.ObjectId).toString(),
+      id: row.id,
       taskId,
       version: row.version,
       status: row.status,
-      summary: row.summary ?? '',
-      payload: (row.payload as Record<string, unknown> | null | undefined) ?? null,
-      contentArtifactId: row.contentArtifactId ? (row.contentArtifactId as Types.ObjectId).toString() : null,
-      createdByWorkerId: row.createdByWorkerId ? (row.createdByWorkerId as Types.ObjectId).toString() : null,
-      createdAt: new Date(row.createdAt).toISOString(),
-      updatedAt: new Date(row.updatedAt).toISOString(),
+      summary: row.summary,
+      payload: row.payload ?? null,
+      contentArtifactId: row.contentArtifactId,
+      createdByWorkerId: row.createdByWorkerId,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
     }));
   }
 
@@ -150,22 +136,9 @@ export class WorkyTaskResultService {
   ): Promise<'done' | 'failed' | 'no_change'> {
     const transition = TERMINAL_LANE_BY_STATUS[status];
     if (!transition) return 'no_change';
-    const completedAt = new Date();
-    const task = await this.tasks
-      .findOne({ _id: new Types.ObjectId(taskId), executionState: { $nin: ['done', 'failed', 'canceled', 'superseded'] } })
-      .select({ startedAt: 1 })
-      .lean()
-      .exec();
-    if (!task) return 'no_change';
-    const startedAt = task.startedAt ? new Date(task.startedAt) : null;
-    const durationMs = startedAt ? Math.max(0, completedAt.getTime() - startedAt.getTime()) : null;
-    const result = await this.tasks
-      .updateOne(
-        { _id: new Types.ObjectId(taskId), executionState: { $nin: ['done', 'failed', 'canceled', 'superseded'] } },
-        { $set: { lane: transition.lane, executionState: transition.executionState, completedAt, durationMs, updatedAt: completedAt } },
-      )
-      .exec();
-    if (result.matchedCount === 0) return 'no_change';
+    // One conditional UPDATE: only a task that is not terminal yet moves, with its duration.
+    const moved = await this.tasks.completeIfOpen(taskId, transition, new Date());
+    if (!moved) return 'no_change';
     return transition.executionState === 'failed' ? 'failed' : 'done';
   }
 }

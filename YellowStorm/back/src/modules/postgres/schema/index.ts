@@ -18,3 +18,4 @@ export * from './app-runtime.schema';
 export * from './agent-evaluation.schema';
 export * from './knowledge-intelligence.schema';
 export * from './classifier.schema';
+export * from './worky.schema';

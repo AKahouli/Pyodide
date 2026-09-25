@@ -1,12 +1,20 @@
+import { newObjectId } from '@common/postgres';
 import { WorkyMailCatchupService } from './worky-mail-catchup.service';
+import type { WorkyMailSubscriptionRecord } from '../worky.types';
 
 const TOKEN = 'YW-abcdefghijklmnop1234';
 
-const SUB = {
-  _id: 'sub-oid',
-  userId: 'u1',
+const SUB: WorkyMailSubscriptionRecord = {
+  id: newObjectId(),
+  userId: newObjectId(),
   mailboxAppKey: 'microsoft',
+  subscriptionId: null,
+  clientState: null,
+  expiresAt: null,
+  notificationUrl: null,
   lastSweptAt: new Date('2026-07-17T10:00:00Z'),
+  createdAt: new Date('2026-07-01T10:00:00Z'),
+  updatedAt: new Date('2026-07-17T10:00:00Z'),
 };
 
 function mail(subject: string, from = 'x@example.com', body = 'Yellow Systems.') {
@@ -22,13 +30,15 @@ function mail(subject: string, from = 'x@example.com', body = 'Yellow Systems.')
   };
 }
 
-function build(messages: Array<Record<string, unknown>>, delivered = true) {
-  const updateOne = jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({}) });
-  const subscriptionModel = {
-    find: jest.fn().mockReturnValue({
-      lean: () => ({ exec: () => Promise.resolve([SUB]) }),
-    }),
-    updateOne,
+function build(
+  messages: Array<Record<string, unknown>>,
+  delivered = true,
+  mailboxes: WorkyMailSubscriptionRecord[] = [SUB],
+) {
+  const setLastSwept = jest.fn().mockResolvedValue(undefined);
+  const subscriptions = {
+    listAll: jest.fn().mockResolvedValue(mailboxes),
+    setLastSwept,
   };
   const graphClient = { listInboxMessagesSince: jest.fn().mockResolvedValue(messages) };
   const orchestrator = {
@@ -45,9 +55,9 @@ function build(messages: Array<Record<string, unknown>>, delivered = true) {
     error: jest.fn(), debug: jest.fn(),
   };
   const service = new WorkyMailCatchupService(
-    subscriptionModel as any, graphClient as any, orchestrator as any, turnContext as any, logger as any,
+    subscriptions as never, graphClient as never, orchestrator as never, turnContext as never, logger as never,
   );
-  return { service, subscriptionModel, graphClient, orchestrator, turnContext, logger, updateOne };
+  return { service, subscriptions, graphClient, orchestrator, turnContext, logger, setLastSwept };
 }
 
 describe('WorkyMailCatchupService', () => {
@@ -129,38 +139,60 @@ describe('WorkyMailCatchupService', () => {
   });
 
   it('sweeps from the last cursor, with overlap rather than trusting clocks', async () => {
-    const { service, graphClient } = build([]);
+    const { service, graphClient, setLastSwept } = build([]);
+    const before = Date.now();
     await service.sweep();
 
     const since = graphClient.listInboxMessagesSince.mock.calls[0][2] as Date;
-    expect(since.getTime()).toBeLessThan(SUB.lastSweptAt.getTime());
+    expect(since.getTime()).toBe(SUB.lastSweptAt!.getTime() - 2 * 60_000);
     expect(graphClient.listInboxMessagesSince).toHaveBeenCalledWith(
-      'u1', 'microsoft', expect.any(Date),
+      SUB.userId, 'microsoft', expect.any(Date),
     );
+    // The cursor moves to the clock read at the start of this sweep.
+    expect(setLastSwept).toHaveBeenCalledWith(SUB.id, expect.any(Date));
+    expect((setLastSwept.mock.calls[0][1] as Date).getTime()).toBeGreaterThanOrEqual(before);
+  });
+
+  it('looks back an hour for a mailbox that was never swept', async () => {
+    const { service, graphClient } = build([], true, [{ ...SUB, lastSweptAt: null }]);
+    const before = Date.now();
+    await service.sweep();
+
+    const since = (graphClient.listInboxMessagesSince.mock.calls[0][2] as Date).getTime();
+    expect(since).toBeGreaterThanOrEqual(before - 62 * 60_000);
+    expect(since).toBeLessThanOrEqual(Date.now() - 62 * 60_000);
   });
 
   it('re-reads the window when a delivery throws, instead of skipping it', async () => {
     // The cursor only moves once the whole window delivered. A sweep that dies
     // half way must not step over the replies it never reached — and replaying
     // costs nothing, since a wait can only be claimed once.
-    const { service, orchestrator, updateOne } = build([mail(`Re: Q [${TOKEN}]`)]);
+    const { service, orchestrator, setLastSwept } = build([mail(`Re: Q [${TOKEN}]`)]);
     orchestrator.deliverMailReply.mockRejectedValueOnce(new Error('grpc down'));
 
     await service.sweep();
-    expect(updateOne).not.toHaveBeenCalled();
+    expect(setLastSwept).not.toHaveBeenCalled();
 
     orchestrator.deliverMailReply.mockResolvedValue({
       delivered: true, sessionId: 's1', stepId: 'wait',
     });
     await service.sweep(); // the retry gets there, and now commits the cursor
-    expect(updateOne).toHaveBeenCalledTimes(1);
+    expect(setLastSwept).toHaveBeenCalledTimes(1);
+    expect(setLastSwept).toHaveBeenCalledWith(SUB.id, expect.any(Date));
     expect(orchestrator.deliverMailReply).toHaveBeenCalledTimes(2);
   });
 
   it('keeps sweeping other mailboxes when one fails', async () => {
-    const { service, graphClient, logger } = build([]);
+    const other: WorkyMailSubscriptionRecord = { ...SUB, id: newObjectId(), userId: newObjectId() };
+    const { service, graphClient, logger, setLastSwept } = build([], true, [SUB, other]);
     graphClient.listInboxMessagesSince.mockRejectedValueOnce(new Error('token expired'));
     await expect(service.sweep()).resolves.toBeUndefined();
-    expect(logger.warn).toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      'Mail catch-up sweep failed for a mailbox',
+      { userId: SUB.userId, error: 'token expired' },
+    );
+    expect(graphClient.listInboxMessagesSince).toHaveBeenCalledTimes(2);
+    expect(setLastSwept).toHaveBeenCalledTimes(1);
+    expect(setLastSwept).toHaveBeenCalledWith(other.id, expect.any(Date));
   });
 });
