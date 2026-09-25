@@ -1,5 +1,5 @@
-import { eq } from 'drizzle-orm';
-import { newObjectId } from '@common/postgres';
+import { eq, inArray } from 'drizzle-orm';
+import { isForeignKeyViolation, newObjectId } from '@common/postgres';
 import * as schema from '@modules/postgres/schema';
 import { describeIntegration, makeTestDb } from '../../../postgres/testing/pg-integration';
 import type { ConversationV2Event } from '../../types/conversation-v2.types';
@@ -14,6 +14,16 @@ describeIntegration('PgConversationV2 stores (integration)', () => {
   const events = new PgConversationV2EventStore(db as never, sessions);
   const shares = new PgConversationV2AppShareStore(db as never);
   const sessionIds: string[] = [];
+  const userIds: string[] = [];
+  const workspaceIds: string[] = [];
+
+  /** The sessions reference their owner (and shares their recipient) with a foreign key: the users are real. */
+  const user = async (): Promise<string> => {
+    const id = oid();
+    await db.insert(schema.identityUsers).values({ id, email: `c2-${id.slice(-8)}@example.com`, passwordHash: 'hash', emailVerified: true, status: 'active' });
+    userIds.push(id);
+    return id;
+  };
 
   const wireMessage = (eventId: string, content = 'hi'): ConversationV2Event =>
     ({
@@ -35,11 +45,13 @@ describeIntegration('PgConversationV2 stores (integration)', () => {
   });
 
   afterAll(async () => {
+    if (workspaceIds.length) await db.delete(schema.workspaces).where(inArray(schema.workspaces.id, workspaceIds));
+    if (userIds.length) await db.delete(schema.identityUsers).where(inArray(schema.identityUsers.id, userIds));
     await close();
   });
 
   it('createDraft → listByOwner → softDelete hides session but keeps events', async () => {
-    const ownerId = oid();
+    const ownerId = await user();
     const draft = await sessions.createDraft(ownerId, []);
     sessionIds.push(draft.id);
 
@@ -64,7 +76,7 @@ describeIntegration('PgConversationV2 stores (integration)', () => {
   });
 
   it('append dedupes by event_id and leaves a wasted sequence slot on conflict', async () => {
-    const ownerId = oid();
+    const ownerId = await user();
     const draft = await sessions.createDraft(ownerId, []);
     sessionIds.push(draft.id);
 
@@ -86,7 +98,7 @@ describeIntegration('PgConversationV2 stores (integration)', () => {
   });
 
   it('concurrent appends assign distinct sequences without unique violations', async () => {
-    const ownerId = oid();
+    const ownerId = await user();
     const draft = await sessions.createDraft(ownerId, []);
     sessionIds.push(draft.id);
 
@@ -104,7 +116,7 @@ describeIntegration('PgConversationV2 stores (integration)', () => {
   });
 
   it('append strips U+0000 from the payload, which jsonb would otherwise reject', async () => {
-    const ownerId = oid();
+    const ownerId = await user();
     const draft = await sessions.createDraft(ownerId, []);
     sessionIds.push(draft.id);
 
@@ -119,8 +131,8 @@ describeIntegration('PgConversationV2 stores (integration)', () => {
   });
 
   it('app share partial uniques upsert by user and email; invite token is unique', async () => {
-    const ownerId = oid();
-    const recipientUserId = oid();
+    const ownerId = await user();
+    const recipientUserId = await user();
     const draft = await sessions.createDraft(ownerId, []);
     sessionIds.push(draft.id);
 
@@ -192,4 +204,45 @@ describeIntegration('PgConversationV2 stores (integration)', () => {
       }),
     ).rejects.toThrow();
   });
+
+  describe('foreign keys (migration 0037)', () => {
+    it('refuses a session whose owner does not exist, and a share to a recipient that does not exist', async () => {
+      const failure = await sessions.createDraft(oid(), []).catch((e: unknown) => e);
+      expect(isForeignKeyViolation(failure)).toBe(true);
+
+      const ownerId = await user();
+      const draft = await sessions.createDraft(ownerId, []);
+      sessionIds.push(draft.id);
+      const shareFailure = await shares
+        .upsertByRecipientUser({
+          sessionId: draft.id,
+          ownerId,
+          recipientUserId: oid(),
+          title: 'x',
+          deployedUrl: 'https://x.test',
+          includeConversation: true,
+          inviteTokenHash: null,
+          inviteExpiresAt: null,
+          inviteConsumedAt: null,
+        })
+        .catch((e: unknown) => e);
+      expect(isForeignKeyViolation(shareFailure)).toBe(true);
+    });
+
+    it('clears system_workspace_id when the system workspace is deleted, and keeps the session', async () => {
+      const ownerId = await user();
+      const workspaceId = oid();
+      await db.insert(schema.workspaces).values({ id: workspaceId, name: `c2 ws ${workspaceId}`, alias: `c2-${workspaceId}`, storagePrefix: `c2-${workspaceId}`, createdBy: ownerId, allocatedStorage: 1 });
+      workspaceIds.push(workspaceId);
+      const draft = await sessions.createDraft(ownerId, []);
+      sessionIds.push(draft.id);
+      await db.update(schema.conversationV2Sessions).set({ systemWorkspaceId: workspaceId }).where(eq(schema.conversationV2Sessions.id, draft.id));
+
+      await db.delete(schema.workspaces).where(eq(schema.workspaces.id, workspaceId));
+
+      const [row] = await db.select().from(schema.conversationV2Sessions).where(eq(schema.conversationV2Sessions.id, draft.id));
+      expect(row.systemWorkspaceId).toBeNull();
+    });
+  });
+
 });

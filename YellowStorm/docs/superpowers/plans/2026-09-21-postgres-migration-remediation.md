@@ -566,3 +566,15 @@ Deploy sequence: the deploy applies 0035; run `npx ts-node scripts/migrate/2026-
 
 `LoggerModule` no longer opens a second Mongo connection (`LOGGING_MONGODB_URI` and `LOGGING_MAX_POOL_SIZE` are gone from the env schema). The Postgres pool needs a `LoggerService`, so the buffer resolves the connection lazily and keeps entries that arrive before it exists (at most 5,000). While porting, two inconsistencies of the old filters were fixed: the in-memory buffer treated the message filter as a raw regex (a bare `(` threw) and the context filter as a raw pattern, while the database path escaped both; both now share one pattern builder, and a leading `^` in a context filter anchors it (the database path used to escape the caret, so it matched nothing).
 
+**Cross-schema foreign keys of conversation-v2 and app-runtime (migration 0037, on `agentstore_test` only until the deploy).** Twelve constraints, defined in `fk-specs.ts` (`FK_SPECS_IN_0037`) and rendered into `drizzle/0037` by `generate-0037.ts`: session owner and system workspace, share owner and recipient, binding user, and the children of a binding (tickets, tool calls, AI preview tickets, source and finalized revisions, cascading) plus their users. Three references were deliberately left out: `bindings.conversation_session_id` and `ai_preview_tickets.conversation_session_id` hold two different id spaces (24-hex session ids for 15 bindings, other ids for the other 535), and `sessions.workspace_ids` is an array.
+
+The migration never fails on dirty data: each constraint is added `NOT VALID` (already enforced for every new write) and validated in the same block only when its orphan check is empty; `fk-0037-migration.spec.ts` runs both branches on the real file. Read-only dry run of the runner against the shared DB: nine constraints have 0 orphans and will validate inside the migration; three have orphans:
+
+| Constraint | Orphans | What they are | `--delete-orphans` does |
+|---|---|---|---|
+| `fk_c2_sessions_system_workspace` | 207 sessions (171 soft-deleted, 36 alive) | the system workspace was deleted | sets the pointer to NULL, the session stays (what `ON DELETE SET NULL` does) |
+| `fk_ar_bindings_user` | 5 bindings | empty starter shells (no tool calls, no tickets, one starter revision) of a deleted user | deletes them, the revision cascades |
+| `fk_c2_sessions_owner` | 1 session (126 events, June 2026) | owned by a user that exists in neither store | deletes the session and its events: a decision for a person, not a script |
+
+Every deletion exports the rows to `scripts/migrate/out/*.json` first and only runs with `--delete-orphans`. Until the three are handled `db:verify` check2 and check8 stay red on those constraints, which is the correct signal. Deploy sequence: the deploy applies 0037, then `npx ts-node scripts/migrate/2026-10-conversation-app-runtime-fk.ts --dry-run`, then `--delete-orphans` after the owner-less session was looked at, then `npm run db:verify`. Four leading indexes were added for `db:verify` check4 (`sessions.system_workspace_id`, `app_shares.owner_id`, `tickets.binding_id`, `tickets.user_id`).
+
