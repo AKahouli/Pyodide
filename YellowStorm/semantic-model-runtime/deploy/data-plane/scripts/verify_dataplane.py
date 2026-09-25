@@ -259,10 +259,12 @@ async def seed_fixture() -> bool:
 
 
 def _runtime_url() -> str:
-    for line in (REPO / "YellowStorm/back/.env").read_text(encoding="utf-8").splitlines():
+    # The semantic runtime owns its own .env; back/.env no longer carries
+    # SEMANTIC_* connection URLs.
+    for line in (REPO / "YellowStorm/semantic-model-runtime/.env").read_text(encoding="utf-8").splitlines():
         if line.startswith("SEMANTIC_RUNTIME_DATABASE_URL="):
             return line.split("=", 1)[1]
-    raise SystemExit("SEMANTIC_RUNTIME_DATABASE_URL missing in back/.env")
+    raise SystemExit("SEMANTIC_RUNTIME_DATABASE_URL missing in semantic-model-runtime/.env")
 
 
 async def drop_fixture() -> None:
