@@ -1,12 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, Optional } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
-import { Model } from 'mongoose';
 import { SystemService } from '@modules/system/system.service';
-import {
-  FlowExecutionLease,
-  FlowExecutionLeaseDocument,
-} from '../schemas/playbook-flow-execution-lease.schema';
+import { ExecutionLeaseRepository, type ExecutionLeaseScopeType } from '../persistence/execution-lease.repository';
 import { PlaybookExecutionSettingsResolverService } from './playbook-execution-settings-resolver.service';
 
 interface LeaseAcquireResult {
@@ -23,7 +18,7 @@ interface LeaseScope {
   key: string;
   limit: number;
   reason: NonNullable<LeaseAcquireResult['reason']>;
-  type: FlowExecutionLease['scopeType'];
+  type: ExecutionLeaseScopeType;
 }
 
 /**
@@ -36,8 +31,7 @@ export class PlaybookFlowExecutionLeaseService implements OnModuleDestroy {
   private readonly heartbeatTimers = new Map<string, NodeJS.Timeout>();
 
   constructor(
-    @InjectModel(FlowExecutionLease.name)
-    private readonly leaseModel: Model<FlowExecutionLeaseDocument>,
+    private readonly leaseRepository: ExecutionLeaseRepository,
     private readonly configService: ConfigService,
     private readonly systemService: SystemService,
     @Optional() private readonly settingsResolver?: PlaybookExecutionSettingsResolverService,
@@ -49,7 +43,7 @@ export class PlaybookFlowExecutionLeaseService implements OnModuleDestroy {
 
   /**
    * Tries to reserve one slot in each concurrency scope for the execution.
-   * Unique indexes on `{scopeKey, slot}` make each individual slot claim atomic.
+   * The unique index on `(scope_key, slot)` makes each individual slot claim atomic.
    */
   async acquire(
     executionId: string,
@@ -80,9 +74,7 @@ export class PlaybookFlowExecutionLeaseService implements OnModuleDestroy {
 
   async refresh(executionId: string): Promise<void> {
     if (!(await this.isEnabled())) return;
-    await this.leaseModel
-      .updateMany({ executionId }, { expiresAt: this.buildExpiryDate() })
-      .exec();
+    await this.leaseRepository.refresh(executionId, this.buildExpiryDate());
   }
 
   async hasActiveLease(executionId: string): Promise<boolean> {
@@ -90,17 +82,13 @@ export class PlaybookFlowExecutionLeaseService implements OnModuleDestroy {
       return false;
     }
 
-    const count = await this.leaseModel.countDocuments({
-      executionId,
-      expiresAt: { $gt: new Date() },
-    });
-    return count > 0;
+    return this.leaseRepository.hasActive(executionId);
   }
 
   async release(executionId: string): Promise<void> {
     this.stopHeartbeat(executionId);
     if (!(await this.isEnabled())) return;
-    await this.leaseModel.deleteMany({ executionId }).exec();
+    await this.leaseRepository.releaseExecution(executionId);
   }
 
   startHeartbeat(executionId: string): void {
@@ -124,7 +112,7 @@ export class PlaybookFlowExecutionLeaseService implements OnModuleDestroy {
 
   async cleanupExpiredLeases(): Promise<void> {
     if (!(await this.isEnabled())) return;
-    await this.leaseModel.deleteMany({ expiresAt: { $lte: new Date() } }).exec();
+    await this.leaseRepository.deleteExpired();
   }
 
   onModuleDestroy(): void {
@@ -165,7 +153,7 @@ export class PlaybookFlowExecutionLeaseService implements OnModuleDestroy {
         key: `execution:provider:${options.providerKey}`,
         limit: effective.maxConcurrentPerProvider,
         reason: 'provider_limit',
-        type: 'provider' as FlowExecutionLease['scopeType'],
+        type: 'provider',
       });
     }
 
@@ -174,7 +162,7 @@ export class PlaybookFlowExecutionLeaseService implements OnModuleDestroy {
         key: `execution:model:${options.modelKey}`,
         limit: effective.maxConcurrentPerModel,
         reason: 'model_limit',
-        type: 'model' as FlowExecutionLease['scopeType'],
+        type: 'model',
       });
     }
 
@@ -187,23 +175,18 @@ export class PlaybookFlowExecutionLeaseService implements OnModuleDestroy {
     flowId: string,
     scope: LeaseScope,
   ): Promise<boolean> {
+    // A slot held by a live lease is refused; one whose lease expired is taken over.
     for (let slot = 0; slot < scope.limit; slot += 1) {
-      try {
-        await this.leaseModel.create({
-          executionId,
-          ownerId,
-          flowId,
-          scopeType: scope.type,
-          scopeKey: scope.key,
-          slot,
-          expiresAt: this.buildExpiryDate(),
-        });
-        return true;
-      } catch (err) {
-        if (!this.isDuplicateKeyError(err)) {
-          throw err;
-        }
-      }
+      const claimed = await this.leaseRepository.claimSlot({
+        executionId,
+        ownerId,
+        flowId,
+        scopeType: scope.type,
+        scopeKey: scope.key,
+        slot,
+        expiresAt: this.buildExpiryDate(),
+      });
+      if (claimed) return true;
     }
     return false;
   }
@@ -218,9 +201,5 @@ export class PlaybookFlowExecutionLeaseService implements OnModuleDestroy {
     if (!timer) return;
     clearInterval(timer);
     this.heartbeatTimers.delete(executionId);
-  }
-
-  private isDuplicateKeyError(err: unknown): boolean {
-    return typeof err === 'object' && err !== null && 'code' in err && (err as { code?: number }).code === 11000;
   }
 }

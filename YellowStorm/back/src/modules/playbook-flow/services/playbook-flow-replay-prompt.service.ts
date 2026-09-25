@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { ResolvedReplayArtifacts } from '../interfaces/playbook-flow-replay-artifact.interface';
-import { FlowReplayOutputContractType, type ReplayMode } from '../schemas/playbook-flow-validated-replay.schema';
+import { FlowReplayOutputContractType, type ReplayMode } from '../models/playbook-flow-validated-replay.model';
 import type { ReplayPlanningSummary } from '../interfaces/playbook-flow-replay-plan.interface';
 
 @Injectable()

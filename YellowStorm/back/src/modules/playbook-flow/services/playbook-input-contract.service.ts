@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { IFlowResponse } from '../interfaces/playbook-flow.interface';
-import type { DataBinding, FlowNodePort } from '../schemas/playbook-flow.schema';
+import type { DataBinding, FlowNodePort } from '../models/playbook-flow.model';
 import {
   isCompleteDataBinding,
   isManagedPlaybookInputPath,

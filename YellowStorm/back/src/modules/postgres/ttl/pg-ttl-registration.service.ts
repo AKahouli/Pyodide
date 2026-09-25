@@ -33,6 +33,10 @@ export class PgTtlRegistrationService implements OnModuleInit {
     this.sweeper.register({ schema: 'integrations', table: 'admin_connector_oauth_states', column: 'expires_at' });
     this.sweeper.register({ schema: 'channels', table: 'telegram_link_codes', column: 'expires_at' });
     this.sweeper.register({ schema: 'workspace', table: 'upload_sessions', column: 'expires_at' });
+    // Playbook-flow rows that expired by TTL in Mongo: execution slots, idempotency records and the short-lived assistant rows.
+    for (const table of ['execution_leases', 'idempotency_records', 'assistant_requests', 'assistant_operations', 'assistant_messages', 'assistant_revisions']) {
+      this.sweeper.register({ schema: 'playbook', table, column: 'expires_at' });
+    }
     // Application logs: retention by age (the Mongo TTL index on logs.createdAt), 30 days unless configured.
     this.sweeper.register({
       schema: 'ops',

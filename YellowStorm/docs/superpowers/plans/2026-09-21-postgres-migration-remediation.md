@@ -607,3 +607,46 @@ Every deletion exports the rows to `scripts/migrate/out/*.json` first and only r
 5. Whoever runs an older build against the shared databases must stop it: it would keep mirroring Electric rows into Mongo.
 
 **Not verified here.** The Electric consumer, the gRPC orchestrator and the mail webhook were exercised through their unit specs and the repository integration specs only; an end-to-end run needs the manager, Electric and a Graph mailbox.
+
+## Appendix F — Playbook-flow (roadmap P5, migration 0040) and the end of Mongo in the runtime (P10), 2026-09-25
+
+**What moved.** The 23 playbook-flow models into 25 tables of the `playbook` schema (`drizzle/0040_playbook.sql`, mirrored by `postgres/schema/playbook.schema.ts`; `playbook.schema.spec.ts` compares the two column by column, index by index and check by check, GIN and expression indexes included). The 24 repositories under `playbook-flow/persistence/` are the only code that touches these tables; the services keep their API and their JSON responses (`id` instead of `_id`/`__v`, which the front end already reads). Graph, snapshot, trace, judge and replay documents are `jsonb` next to promoted columns; the execution state that transitions (status, queue position, timestamps, pending approval, HITL events) is columns, so a transition is one conditional `UPDATE`. The Mongoose schemas became plain types under `playbook-flow/models/` (the ones other code still imports), the rest were deleted, together with the module's `MongooseModule.forFeature` list; `playbook-flow.module.spec.ts` fails if a service asks for a repository the module does not register.
+
+**Foreign keys.** A flow owns its executions, and an execution its task results, router decisions and dynamic-reasoning attempts; a flow also owns its shares, workspace links, HITL memory, mail ledger, output formats, design history and replay/evaluation rows; a deleted workspace takes its `flow_workspaces` rows. Deliberately without a key: the short-lived assistant rows, idempotency records and leases (TTL), and soft references to an execution that may be gone (`output_formats.source_execution_id`, `validated_replays.reference_execution_id`, the mail ledger, replay reports, evaluation rows). Six TTL tables (leases, idempotency, four assistant tables) are registered in the sweeper and in `db:verify`; the assistant attachments are not (Mongo had no TTL on them and the service deletes the stored image before the row).
+
+**What the dev data taught.** The old flow delete removed the flow and its shares only: **635 of the 2,067 executions belong to flows that no longer exist**, and the runs that are not migrated leave 984 task results, 22 router decisions and 10 attempts behind (some of those runs are already gone from Mongo); the deleted flows also leave 9 output formats, 48 design messages and 8 validated replays. The foreign keys reject all of those (nobody can reach them); the backfill reports each with its reason, and all 1,716 ids are in `allow-reconcile.json`. Four groups of collections are legacy and no code reads them: `playbook_executions` (3,365 docs, 523 MB), `playbooks` (264), the non-`_flow_` template/replay/evaluation collections and `playbook_design_messages` (70): not migrated. `flowexecutionleases` is transient and not migrated either. A jsonb column that can hold a top-level string must be read raw (Drizzle parses such a value a second time): only `task_results.output` qualifies.
+
+**Behaviour that changed on purpose** (the work packages' reports have the full lists):
+- Queue and executions: a claim takes a per-owner advisory lock and picks the row with `FOR UPDATE SKIP LOCKED` (8 concurrent claims for 3 slots yield exactly 3), so the "slot over-claimed, revert" net is gone; cancel is one conditional `UPDATE` that also closes pending approvals; the HITL approval claim, its release and the answer are conditional transitions; a runtime event for an execution that no longer exists is a handled no-op instead of an orphan document; a judge evaluation is appended in the same statement as the judge state.
+- Flows: the list sorts on `activityAt` through a lateral join on the latest execution; search is a literal case-insensitive substring (it was an unescaped regex); name sort is byte order (`COLLATE "C"`) with ties broken by id; deleting a flow cascades; a delta autosave can clear `advisorAutopilotTargetScore`/`MaxTurns` (Mongo dropped the `undefined`); workspace ids that are malformed or point to no workspace are dropped on write, and `removeWorkspaceReference` really deletes (the old query compared ObjectIds to strings and never matched).
+- Short-lived rows: on the four TTL tables and the leases every read and conditional write filters `expires_at > now()`, and an insert takes over an expired row with the same key, because the sweep runs hourly where Mongo's monitor ran every minute. Slot claims, idempotency reservations, design-queue claims (advisory lock plus `lock_version`) and replay-version allocation are atomic.
+- Small fixes: `replaceBaselineFromExecution` looked the run up with `findOne({ id })`, which Mongoose 8 never matched, so it always answered 404; the mail-subscription renewal compared an ISO string to a Date and never renewed (it still requires `runtimeEnabled`, which no flow has); the node-template boot step that dropped a Mongo index is gone; over-long template text answers 400 instead of 500; the connector action sync (a transaction over jsonb) no longer bumps `updated_at` or the revision, like the raw update it replaces.
+
+**Mongo out of the runtime (P10).** `DatabaseModule`, `DatabaseConnectionService`, `config/database.config.ts`, `MONGODB_URI` in the config schema and the main.ts log line, `modules/user/schemas/user.schema.ts` (ai-proxy uses `AuthUser`) and the Mongo `database` health check are gone; readiness now depends on Postgres. The no-Mongoose gate has an empty allowlist. `NestFactory.create(AppModule)` followed by `app.init()` against the test database (init hooks included) starts and stops cleanly without a MongoDB connection. The `mongoose` and `@nestjs/mongoose` packages stay in `package.json` because the specs fabricate ObjectIds with them and the backfill scripts read Mongo; removing them is the last step after the cutover.
+
+**Also in this change.** `db:verify` covers the `playbook` schema (FK leading indexes, TTL indexes) and passes on the test database after 0040; `allow-reconcile.json` grew by 1,716 orphan ids; `reconcile-ids` has 18 new pairs.
+
+**Backfill.** Seven runners in dependency order, each with `--dry-run/--verify/--checksum`, idempotent, with mapping specs on fabricated documents: `2026-10-playbook-flows.ts` (flows and shares), `-executions.ts` (executions, task results, router decisions; task results are streamed and compared by per-row SHA-256, never held in memory), `-attempts.ts`, `-idempotency.ts` (only unexpired records), `-templates.ts` (node and prompt templates matched by key, output formats, HITL memory, mail ledger), `-assistant.ts` (unexpired rows; design messages and operations), `-replays.ts`. Ordered rehearsal on `agentstore_test` with the copied dev users and the real dev Mongo, every content checksum equal:
+
+| Table | Mongo | Migrated | Reported (orphans) |
+|---|---|---|---|
+| flows / shares | 668 / 56 | 668 / 56 | 0 |
+| executions | 2,067 | 1,432 | 635 |
+| task results | 3,648 | 2,664 | 984 |
+| router decisions | 114 | 92 | 22 |
+| dynamic attempts | 28 | 18 | 10 |
+| idempotency records | 122 | 122 | 0 |
+| node / prompt templates | 4 / 28 | 4 / 28 | 0 |
+| output formats | 21 | 12 | 9 |
+| mail ledger | 99 | 99 | 0 |
+| design messages | 58 | 10 | 48 |
+| validated replays / run reports | 18 / 3 | 10 / 3 | 8 |
+
+**Deploy sequence** (in addition to the worky one of Appendix E):
+1. Stop every older build against the shared databases (an old build keeps writing flows and executions to Mongo).
+2. The deploy applies 0040.
+3. Run the backfills in this order, each with `--verify --checksum`: flows, executions, attempts, idempotency, templates, assistant, replays. Run the templates one before the new build boots for the first time: the prompt and node seeders insert the built-ins under new ids, and the runner then skips those keys instead of copying the Mongo content over them.
+4. `reconcile-ids --allow=scripts/migrate/allow-reconcile.json --since=<cutover> --strict`; regenerate the orphan entries from the runners' failure lists if new orphans of deleted flows appeared.
+5. Remove `MONGODB_URI` from the environments, then the `mongoose` packages from the dependencies once the specs no longer need them.
+
+**Not verified here.** An end-to-end run against the ADK runtime (start, queue, events, HITL pause, resume), the load gate (`scripts/playbook-flow-load-gate.mjs` needs a token and flow ids), the Graph mail webhook and real assistant traffic. The runtime handlers were exercised through their unit specs, the real-handler integration spec (`playbook-execution-runtime.integration.spec.ts`: two concurrent approvals, stale interrupts, double completion) and the repository integration specs.

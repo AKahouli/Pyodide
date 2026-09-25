@@ -8,7 +8,7 @@ describe('PlaybookFlowExecutionService event handling', () => {
       flushTask: jest.fn(),
       flushExecution: jest.fn(),
     };
-    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests({ tokenBufferService });
+    const { service, taskResultRepository, streamEvents } = createExecutionServiceForTests({ tokenBufferService });
 
     await (service as any).handleRunEvent('exec-1', {
       event_type: 'NodeToken',
@@ -21,7 +21,8 @@ describe('PlaybookFlowExecutionService event handling', () => {
       { executionId: 'exec-1', taskId: 'step-1', iteration: 2 },
       'Hello',
     );
-    expect(taskResultModel.updateOne).not.toHaveBeenCalled();
+    expect(taskResultRepository.appendOutput).not.toHaveBeenCalled();
+    expect(taskResultRepository.upsert).not.toHaveBeenCalled();
     expect(streamEvents.emitStepUpdate).not.toHaveBeenCalled();
   });
 
@@ -32,8 +33,7 @@ describe('PlaybookFlowExecutionService event handling', () => {
       flushTask: jest.fn().mockResolvedValue(undefined),
       flushExecution: jest.fn(),
     };
-    const { service, taskResultModel } = createExecutionServiceForTests({ tokenBufferService });
-    taskResultModel.updateOne.mockResolvedValue(undefined);
+    const { service, taskResultRepository } = createExecutionServiceForTests({ tokenBufferService });
 
     await (service as any).handleRunEvent('exec-1', {
       event_type: 'NodeCompleted',
@@ -47,12 +47,12 @@ describe('PlaybookFlowExecutionService event handling', () => {
       taskId: 'step-1',
       iteration: 1,
     });
-    expect(taskResultModel.updateOne).toHaveBeenCalled();
+    expect(taskResultRepository.upsert).toHaveBeenCalled();
+    expect(tokenBufferService.flushTask.mock.invocationCallOrder[0]).toBeLessThan(taskResultRepository.upsert.mock.invocationCallOrder[0]);
   });
 
   it('streams trace updates while a node is running', async () => {
-    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests();
-    taskResultModel.updateOne.mockResolvedValue(undefined);
+    const { service, taskResultRepository, streamEvents } = createExecutionServiceForTests();
 
     await (service as any).handleRunEvent('exec-1', {
       event_type: 'NodeTraceUpdate',
@@ -65,16 +65,14 @@ describe('PlaybookFlowExecutionService event handling', () => {
       },
     });
 
-    expect(taskResultModel.updateOne).toHaveBeenCalledWith(
+    expect(taskResultRepository.upsert).toHaveBeenCalledWith(
       { executionId: 'exec-1', taskId: 'step-1', iteration: 1 },
       expect.objectContaining({
-        $set: expect.objectContaining({
-          toolTrace: [expect.objectContaining({ callIndex: 0, toolName: 'search', args: { q: 'hello' }, status: 'completed' })],
-          llmPromptTrace: [{ stage: 'initial_request', model: 'gpt-5.4-mini', prompt: 'prompt', generatedOutput: 'answer' }],
-          usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3, model: 'gpt-5.4-mini' },
-        }),
+        toolTrace: [expect.objectContaining({ callIndex: 0, toolName: 'search', args: { q: 'hello' }, status: 'completed' })],
+        llmPromptTrace: [{ stage: 'initial_request', model: 'gpt-5.4-mini', prompt: 'prompt', generatedOutput: 'answer' }],
+        usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3, model: 'gpt-5.4-mini' },
       }),
-      { upsert: true },
+      expect.objectContaining({ startedAt: expect.any(Date) }),
     );
     expect(streamEvents.emitStepUpdate).toHaveBeenCalledWith(
       'exec-1',
@@ -92,9 +90,8 @@ describe('PlaybookFlowExecutionService event handling', () => {
   });
 
   it('preserves sensitive trace text while always removing storage paths', async () => {
-    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests();
+    const { service, taskResultRepository, streamEvents } = createExecutionServiceForTests();
     jest.spyOn((service as any).observabilityService, 'shouldRedactSensitiveText').mockResolvedValue(false);
-    taskResultModel.updateOne.mockResolvedValue(undefined);
     const trace = {
       tool_trace: [{
         tool_name: 'shell',
@@ -112,7 +109,7 @@ describe('PlaybookFlowExecutionService event handling', () => {
       event_type: 'NodeTraceUpdate', node_id: 'step-1', iteration: 0, payload: trace,
     });
 
-    const persistedTrace = taskResultModel.updateOne.mock.calls[0][1].$set;
+    const persistedTrace = taskResultRepository.upsert.mock.calls[0][1];
     expect(persistedTrace.toolTrace[0].args).toEqual({
       authorization: 'Bearer abc',
       command: 'cat /mnt/workspace/cv.docx then [REDACTED]',
@@ -121,12 +118,12 @@ describe('PlaybookFlowExecutionService event handling', () => {
     expect(persistedTrace.llmPromptTrace[0].prompt).toBe('Bearer abc');
     expect(streamEvents.emitStepUpdate.mock.calls[0][3].toolTrace).toEqual(persistedTrace.toolTrace);
 
-    taskResultModel.updateOne.mockClear();
+    taskResultRepository.upsert.mockClear();
     await (service as any).handleRunEvent('exec-1', {
       event_type: 'NodeCompleted', node_id: 'step-1', iteration: 0, payload: { output: 'done', ...trace },
     });
 
-    const completedTrace = taskResultModel.updateOne.mock.calls[0][1].$set;
+    const completedTrace = taskResultRepository.upsert.mock.calls[0][1];
     expect(completedTrace.toolTrace).toEqual(persistedTrace.toolTrace);
     expect(completedTrace.llmPromptTrace[0].prompt).toBe('Bearer abc');
   });
@@ -138,7 +135,7 @@ describe('PlaybookFlowExecutionService event handling', () => {
       flushTask: jest.fn(),
       flushExecution: jest.fn().mockResolvedValue(undefined),
     };
-    const { service, executionModel } = createExecutionServiceForTests({ tokenBufferService });
+    const { service, executionRepository } = createExecutionServiceForTests({ tokenBufferService });
 
     await (service as any).handleRunEvent('exec-1', {
       event_type: 'ExecutionFailed',
@@ -146,15 +143,15 @@ describe('PlaybookFlowExecutionService event handling', () => {
     });
 
     expect(tokenBufferService.flushExecution).toHaveBeenCalledWith('exec-1');
-    expect(executionModel.updateOne).toHaveBeenCalledWith(
-      { _id: 'exec-1', status: { $nin: ['completed', 'failed', 'cancelled'] } },
-      { status: 'failed', error: 'boom', endedAt: expect.any(Date) },
-    );
+    expect(executionRepository.transition).toHaveBeenCalledWith('exec-1', {
+      from: ['queued', 'running', 'pending_approval'],
+      patch: { status: 'failed', error: 'boom', endedAt: expect.any(Date) },
+    });
+    expect(tokenBufferService.flushExecution.mock.invocationCallOrder[0]).toBeLessThan(executionRepository.transition.mock.invocationCallOrder[0]);
   });
 
   it('redacts private paths from failed node persistence and stream events', async () => {
-    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests();
-    taskResultModel.updateOne.mockResolvedValue(undefined);
+    const { service, taskResultRepository, streamEvents } = createExecutionServiceForTests();
 
     await (service as any).handleRunEvent('exec-1', {
       event_type: 'NodeFailed',
@@ -163,10 +160,10 @@ describe('PlaybookFlowExecutionService event handling', () => {
       payload: { error: 'Failed while reading /mnt/workspace/private/report.pdf' },
     });
 
-    expect(taskResultModel.updateOne).toHaveBeenCalledWith(
+    expect(taskResultRepository.upsert).toHaveBeenCalledWith(
       { executionId: 'exec-1', taskId: 'step-1', iteration: 0 },
-      expect.objectContaining({ $set: expect.objectContaining({ error: 'Failed while reading [REDACTED]' }) }),
-      { upsert: true },
+      expect.objectContaining({ status: 'failed', error: 'Failed while reading [REDACTED]' }),
+      expect.objectContaining({ startedAt: expect.any(Date) }),
     );
     expect(streamEvents.emitStepComplete).toHaveBeenCalledWith(
       'exec-1', 'step-1', undefined, 'Failed while reading [REDACTED]', 0,
@@ -174,10 +171,10 @@ describe('PlaybookFlowExecutionService event handling', () => {
   });
 
   it('ignores replayed HITL interrupts that were already answered', async () => {
-    const executionModel = {
-      exists: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ _id: 'exec-1' }) })),
+    const executionRepository = {
+      isInterruptStale: jest.fn().mockResolvedValue(true),
     };
-    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests({ executionModel });
+    const { service, taskResultRepository, streamEvents } = createExecutionServiceForTests({ executionRepository });
 
     await (service as any).handleRunEvent('exec-1', {
       event_type: 'NodeSuspended',
@@ -190,20 +187,13 @@ describe('PlaybookFlowExecutionService event handling', () => {
       },
     });
 
-    expect(executionModel.exists).toHaveBeenCalledWith({
-      _id: 'exec-1',
-      $or: [
-        { status: { $in: ['completed', 'failed', 'cancelled'] } },
-        { hitlEvents: { $elemMatch: { interruptId: 'step-1:clarification:1', status: 'answered' } } },
-      ],
-    });
-    expect(taskResultModel.updateOne).not.toHaveBeenCalled();
+    expect(executionRepository.isInterruptStale).toHaveBeenCalledWith('exec-1', 'step-1:clarification:1');
+    expect(taskResultRepository.upsert).not.toHaveBeenCalled();
     expect(streamEvents.emitInterrupt).not.toHaveBeenCalled();
   });
 
   it('persists enriched node results without collapsing metadata into output', async () => {
-    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests();
-    taskResultModel.updateOne.mockResolvedValue(undefined);
+    const { service, taskResultRepository, streamEvents } = createExecutionServiceForTests();
 
     await (service as any).handleRunEvent('exec-1', {
       event_type: 'NodeCompleted',
@@ -217,19 +207,17 @@ describe('PlaybookFlowExecutionService event handling', () => {
       },
     });
 
-    expect(taskResultModel.updateOne).toHaveBeenCalledWith(
+    expect(taskResultRepository.upsert).toHaveBeenCalledWith(
       { executionId: 'exec-1', taskId: 'step-1', iteration: 0 },
       expect.objectContaining({
-        $set: expect.objectContaining({
-          status: 'completed',
-          output: 'Executive summary',
-          displayText: 'Executive summary',
-          reasoningChain: [{ id: 'step_1', type: 'observation', label: 'Identify', description: 'Picked the answer.' }],
-          artifacts: [{ port_id: 'report', artifact_kind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf' }],
-          components: [{ type: 'text', data: { content: 'Executive summary' } }],
-        }),
+        status: 'completed',
+        output: 'Executive summary',
+        displayText: 'Executive summary',
+        reasoningChain: [{ id: 'step_1', type: 'observation', label: 'Identify', description: 'Picked the answer.' }],
+        artifacts: [{ port_id: 'report', artifact_kind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf' }],
+        components: [{ type: 'text', data: { content: 'Executive summary' } }],
       }),
-      { upsert: true },
+      expect.objectContaining({ startedAt: expect.any(Date) }),
     );
     expect(streamEvents.emitStepComplete).toHaveBeenCalledWith(
       'exec-1',
@@ -246,8 +234,7 @@ describe('PlaybookFlowExecutionService event handling', () => {
   });
 
   it('preserves public source links and redacts signed links in completed SSE', async () => {
-    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests();
-    taskResultModel.updateOne.mockResolvedValue(undefined);
+    const { service, streamEvents } = createExecutionServiceForTests();
 
     await (service as any).handleRunEvent('exec-1', {
       event_type: 'NodeCompleted',
@@ -273,8 +260,7 @@ describe('PlaybookFlowExecutionService event handling', () => {
   });
 
   it('does not fail task completion when public reasoning JSON is malformed', async () => {
-    const { service, taskResultModel } = createExecutionServiceForTests();
-    taskResultModel.updateOne.mockResolvedValue(undefined);
+    const { service, taskResultRepository } = createExecutionServiceForTests();
 
     await (service as any).handleRunEvent('exec-1', {
       event_type: 'NodeCompleted',
@@ -285,31 +271,27 @@ describe('PlaybookFlowExecutionService event handling', () => {
       },
     });
 
-    expect(taskResultModel.updateOne).toHaveBeenCalledWith(
+    expect(taskResultRepository.upsert).toHaveBeenCalledWith(
       { executionId: 'exec-1', taskId: 'step-1', iteration: 0 },
       expect.objectContaining({
-        $set: expect.objectContaining({
-          status: 'completed',
-          output: 'Executive summary',
-          reasoningChain: [],
-          traceMetadata: expect.objectContaining({
-            publicReasoning: expect.objectContaining({ parseError: 'invalid_json' }),
-          }),
+        status: 'completed',
+        output: 'Executive summary',
+        reasoningChain: [],
+        traceMetadata: expect.objectContaining({
+          publicReasoning: expect.objectContaining({ parseError: 'invalid_json' }),
         }),
       }),
-      { upsert: true },
+      expect.objectContaining({ startedAt: expect.any(Date) }),
     );
   });
 
   it('does not emit completed after a reserved router cancellation already won', async () => {
-    const executionModel = {
-      updateOne: jest
-        .fn()
-        .mockReturnValueOnce({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })
-        .mockReturnValueOnce({ exec: jest.fn().mockResolvedValue({ modifiedCount: 0 }) }),
-      findById: jest.fn(() => ({ lean: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }) })),
+    // The cancellation's guarded transition wins; the completion's finds the run terminal.
+    const executionRepository = {
+      transition: jest.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false),
+      findById: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }),
     };
-    const { service, streamEvents } = createExecutionServiceForTests({ executionModel });
+    const { service, streamEvents } = createExecutionServiceForTests({ executionRepository });
 
     await (service as any).handleRunEvent('exec-1', {
       event_type: 'RouterDecision',
@@ -333,11 +315,8 @@ describe('PlaybookFlowExecutionService event handling', () => {
   });
 
   it('marks the execution failed when the runtime completes after a task failure', async () => {
-    const { service, taskResultModel, executionModel, streamEvents } = createExecutionServiceForTests();
-    taskResultModel.findOne.mockReturnValue({
-      sort: jest.fn().mockReturnThis(),
-      lean: jest.fn().mockResolvedValue({ error: 'upstream failed' }),
-    });
+    const { service, taskResultRepository, executionRepository, streamEvents } = createExecutionServiceForTests();
+    taskResultRepository.findLatestFailed.mockResolvedValue({ error: 'upstream failed' });
 
     await (service as any).handleRunEvent('exec-1', {
       event_type: 'ExecutionCompleted',
@@ -346,20 +325,18 @@ describe('PlaybookFlowExecutionService event handling', () => {
       payload: {},
     });
 
-    expect(executionModel.updateOne).toHaveBeenCalledWith(
-      { _id: 'exec-1', status: { $nin: ['completed', 'failed', 'cancelled'] } },
-      { status: 'failed', error: 'upstream failed', endedAt: expect.any(Date) },
-    );
+    expect(taskResultRepository.findLatestFailed).toHaveBeenCalledWith('exec-1');
+    expect(executionRepository.transition).toHaveBeenCalledWith('exec-1', {
+      from: ['queued', 'running', 'pending_approval'],
+      patch: { status: 'failed', error: 'upstream failed', endedAt: expect.any(Date) },
+    });
+    expect(executionRepository.transition).not.toHaveBeenCalledWith('exec-1', expect.objectContaining({ patch: expect.objectContaining({ status: 'completed' }) }));
     expect(streamEvents.emitExecutionComplete).toHaveBeenCalledWith('exec-1', 'failed', 'upstream failed');
   });
 
   it('persists and streams iterator child step starts per iteration turn', async () => {
-    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests();
-    taskResultModel.findOne.mockReturnValue({
-      sort: jest.fn().mockReturnThis(),
-      lean: jest.fn().mockResolvedValue(null),
-    });
-    taskResultModel.updateOne.mockResolvedValue(undefined);
+    const { service, taskResultRepository, streamEvents } = createExecutionServiceForTests();
+    taskResultRepository.find.mockResolvedValue(null);
 
     await (service as any).handleRunEvent('exec-1', {
       event_type: 'IteratorChildStepStarted',
@@ -368,7 +345,8 @@ describe('PlaybookFlowExecutionService event handling', () => {
       payload: { iterationIndex: 0, taskId: 'child-step', taskTitle: 'Process Item', status: 'running' },
     });
 
-    const persisted = taskResultModel.updateOne.mock.calls[0][1].$set.iteratorIterations;
+    const persisted = taskResultRepository.upsert.mock.calls[0][1].iteratorIterations;
+    expect(taskResultRepository.upsert.mock.calls[0][2]).toEqual({ startedAt: expect.any(Date), status: 'running' });
     expect(persisted[0].index).toBe(0);
     expect(persisted[0].status).toBe('running');
     expect(persisted[0].childResults[0]).toEqual(expect.objectContaining({ taskId: 'child-step', status: 'running' }));
@@ -380,16 +358,12 @@ describe('PlaybookFlowExecutionService event handling', () => {
   });
 
   it('persists and streams iterator child step completions per iteration turn', async () => {
-    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests();
-    taskResultModel.findOne.mockReturnValue({
-      sort: jest.fn().mockReturnThis(),
-      lean: jest.fn().mockResolvedValue({
-        iteratorIterations: [
-          { index: 0, status: 'running', output: null, error: null, childResults: [{ taskId: 'child-step', taskTitle: 'Process Item', status: 'running' }] },
-        ],
-      }),
+    const { service, taskResultRepository, streamEvents } = createExecutionServiceForTests();
+    taskResultRepository.find.mockResolvedValue({
+      iteratorIterations: [
+        { index: 0, status: 'running', output: null, error: null, childResults: [{ taskId: 'child-step', taskTitle: 'Process Item', status: 'running' }] },
+      ],
     });
-    taskResultModel.updateOne.mockResolvedValue(undefined);
 
     await (service as any).handleRunEvent('exec-1', {
       event_type: 'IteratorChildStepCompleted',
@@ -398,7 +372,11 @@ describe('PlaybookFlowExecutionService event handling', () => {
       payload: { iterationIndex: 0, taskId: 'child-step', taskTitle: 'Process Item', status: 'completed', output: 'result text' },
     });
 
-    const persisted = taskResultModel.updateOne.mock.calls[0][1].$set.iteratorIterations;
+    expect(taskResultRepository.find).toHaveBeenCalledWith(
+      { executionId: 'exec-1', taskId: 'iter-node', iteration: 0 },
+      { light: true, with: ['iteratorIterations'] },
+    );
+    const persisted = taskResultRepository.upsert.mock.calls[0][1].iteratorIterations;
     expect(persisted).toHaveLength(1);
     expect(persisted[0].status).toBe('completed');
     expect(persisted[0].childResults[0]).toEqual(

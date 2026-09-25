@@ -20,6 +20,12 @@ describe('PgTtlRegistrationService', () => {
       { schema: 'integrations', table: 'admin_connector_oauth_states', column: 'expires_at' },
       { schema: 'channels', table: 'telegram_link_codes', column: 'expires_at' },
       { schema: 'workspace', table: 'upload_sessions', column: 'expires_at' },
+      { schema: 'playbook', table: 'execution_leases', column: 'expires_at' },
+      { schema: 'playbook', table: 'idempotency_records', column: 'expires_at' },
+      { schema: 'playbook', table: 'assistant_requests', column: 'expires_at' },
+      { schema: 'playbook', table: 'assistant_operations', column: 'expires_at' },
+      { schema: 'playbook', table: 'assistant_messages', column: 'expires_at' },
+      { schema: 'playbook', table: 'assistant_revisions', column: 'expires_at' },
       { schema: 'ops', table: 'logs', column: 'created_at', olderThan: '30 days' },
     ]);
   });

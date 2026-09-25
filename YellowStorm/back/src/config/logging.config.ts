@@ -9,7 +9,6 @@ const DEFAULT_DISPLAY_ONLY_CONTEXTS = [
   'RouterExplorer',
   'NestApplication',
   'Bootstrap',
-  'DatabaseModule',
   'LoggerModule',
   'ConfigModule',
 ];

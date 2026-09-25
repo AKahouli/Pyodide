@@ -10,9 +10,24 @@ const OTHER_USER_ID = '507f1f77bcf86cd799439014';
 const FLOW_ID = '507f1f77bcf86cd799439011';
 const MESSAGE_ID = '507f1f77bcf86cd799439013';
 
-function buildService(designMessageModel: Record<string, jest.Mock>, playbookFlowService?: Record<string, jest.Mock>) {
+const messageRecord = (overrides: Record<string, unknown> = {}) => ({
+  id: MESSAGE_ID,
+  flowId: FLOW_ID,
+  createdBy: USER_ID,
+  userQuery: 'Improve it',
+  aiSummary: '',
+  snapshotBefore: { nodes: [], controlEdges: [], dataBindings: [] },
+  status: 'completed',
+  revertedFromMessageId: null,
+  error: null,
+  createdAt: new Date('2026-06-22T08:00:00Z'),
+  updatedAt: new Date('2026-06-22T08:00:00Z'),
+  ...overrides,
+});
+
+function buildService(designMessages: Record<string, jest.Mock>, playbookFlowService?: Record<string, jest.Mock>) {
   return new PlaybookFlowDesignService(
-    designMessageModel as any,
+    designMessages as any,
     (playbookFlowService || { findById: jest.fn().mockResolvedValue({ id: FLOW_ID, ownerId: USER_ID }) }) as any,
     { isAvailable: true, generatePlaybook: jest.fn() } as any,
     { buildWorkspaceContexts: jest.fn().mockResolvedValue([]), resolveAgentBrainContexts: jest.fn().mockResolvedValue(undefined) } as any,
@@ -52,20 +67,8 @@ describe('PlaybookFlowDesignService', () => {
       }),
       updateNodesAndEdges: jest.fn().mockResolvedValue({ id: 'flow-1' }),
     };
-    const designMessageModel = {
-      create: jest.fn().mockResolvedValue({
-        id: '507f1f77bcf86cd799439013',
-        flowId: '507f1f77bcf86cd799439011',
-        createdBy: '507f1f77bcf86cd799439012',
-        userQuery: 'Improve it',
-        aiSummary: 'No structural changes',
-        snapshotBefore: { nodes: [], controlEdges: [], dataBindings: [] },
-        status: 'completed',
-        revertedFromMessageId: null,
-        error: null,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }),
+    const designMessages = {
+      create: jest.fn().mockResolvedValue(messageRecord({ aiSummary: 'No structural changes' })),
     };
     const logger = {
       setContext: jest.fn(),
@@ -79,7 +82,7 @@ describe('PlaybookFlowDesignService', () => {
     const designResultApplier = new PlaybookDesignResultApplierService();
 
     const service = new PlaybookFlowDesignService(
-      designMessageModel as any,
+      designMessages as any,
       playbookFlowService as any,
       grpcService as any,
       { buildWorkspaceContexts: jest.fn().mockResolvedValue([]), resolveAgentBrainContexts: jest.fn().mockResolvedValue(undefined) } as any,
@@ -97,7 +100,7 @@ describe('PlaybookFlowDesignService', () => {
       logger as any,
     );
 
-    await service.designFlow('507f1f77bcf86cd799439012', '507f1f77bcf86cd799439011', 'Improve it');
+    const result = await service.designFlow('507f1f77bcf86cd799439012', '507f1f77bcf86cd799439011', 'Improve it');
 
     const request = grpcService.generatePlaybook.mock.calls[0][0];
     expect(request.existing_playbook.nodes[0]).toMatchObject({
@@ -106,6 +109,46 @@ describe('PlaybookFlowDesignService', () => {
       description: 'Draft a response using the customer context.',
       assigned_agent_id: 'agent-1',
     });
+    expect(designMessages.create).toHaveBeenCalledWith(expect.objectContaining({
+      flowId: FLOW_ID,
+      createdBy: USER_ID,
+      userQuery: 'Improve it',
+      aiSummary: 'No structural changes',
+      status: 'completed',
+      error: null,
+      snapshotBefore: expect.objectContaining({ nodes: [expect.objectContaining({ id: 'node-1' })] }),
+    }));
+    expect(result.message).toEqual(expect.objectContaining({
+      id: MESSAGE_ID, flowId: FLOW_ID, playbookId: FLOW_ID, createdAt: '2026-06-22T08:00:00.000Z', revertedFromMessageId: null,
+    }));
+  });
+
+  it('records a failed design turn when the design service fails', async () => {
+    const create = jest.fn().mockImplementation(async (payload) => messageRecord(payload));
+    const service = new PlaybookFlowDesignService(
+      { create } as any,
+      { findById: jest.fn().mockResolvedValue({ id: FLOW_ID, ownerId: USER_ID, nodes: [{ id: 'node-1' }], controlEdges: [], dataBindings: [], workspaces: [] }) } as any,
+      { isAvailable: true, generatePlaybook: jest.fn().mockRejectedValue(new Error('model timeout')) } as any,
+      { buildWorkspaceContexts: jest.fn().mockResolvedValue([]), resolveAgentBrainContexts: jest.fn().mockResolvedValue(undefined) } as any,
+      { getPromptOverridesPayload: jest.fn().mockResolvedValue({}) } as any,
+      { getAgentsForUser: jest.fn().mockResolvedValue([]), buildGrpcAgentsForPlaybook: jest.fn().mockResolvedValue([]) } as any,
+      { getHttpClient: jest.fn() } as any,
+      { resolveInferenceModel: jest.fn().mockResolvedValue('model-1') } as any,
+      { recordUsage: jest.fn() } as any,
+      designSummaryService as any,
+      designRequestBuilder as any,
+      designResultApplier as any,
+      { setContext: jest.fn(), warn: jest.fn() } as any,
+    );
+
+    const result = await service.designFlow(USER_ID, FLOW_ID, 'Improve it');
+
+    expect(result.flow).toBeNull();
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      flowId: FLOW_ID, createdBy: USER_ID, aiSummary: '', status: 'failed', error: 'model timeout',
+      snapshotBefore: { nodes: [{ id: 'node-1' }], controlEdges: [], dataBindings: [] },
+    }));
+    expect(result.message).toEqual(expect.objectContaining({ status: 'failed', error: 'model timeout' }));
   });
 
   it('persists generated agent assignments in metadata.assignedAgentId', async () => {
@@ -401,30 +444,38 @@ describe('PlaybookFlowDesignService', () => {
   });
 
   it('loads only the current user design messages for the playbook', async () => {
-    const lean = jest.fn().mockResolvedValue([]);
-    const sort = jest.fn().mockReturnValue({ lean });
-    const find = jest.fn().mockReturnValue({ sort });
-    const service = buildService({ find });
+    const listForUser = jest.fn().mockResolvedValue([messageRecord()]);
+    const service = buildService({ listForUser });
 
-    await service.getDesignMessages(FLOW_ID, USER_ID);
+    await expect(service.getDesignMessages(FLOW_ID, USER_ID)).resolves.toEqual([{
+      id: MESSAGE_ID,
+      flowId: FLOW_ID,
+      playbookId: FLOW_ID,
+      userQuery: 'Improve it',
+      aiSummary: '',
+      snapshotBefore: { nodes: [], controlEdges: [], dataBindings: [] },
+      status: 'completed',
+      revertedFromMessageId: null,
+      error: null,
+      createdAt: '2026-06-22T08:00:00.000Z',
+      updatedAt: '2026-06-22T08:00:00.000Z',
+    }]);
+    expect(listForUser).toHaveBeenCalledWith(FLOW_ID, USER_ID);
+  });
 
-    expect(find).toHaveBeenCalledWith({
-      flowId: expect.objectContaining({ _bsontype: 'ObjectId' }),
-      createdBy: expect.objectContaining({ _bsontype: 'ObjectId' }),
-    });
-    const filter = find.mock.calls[0][0];
-    expect(filter.flowId.toString()).toBe(FLOW_ID);
-    expect(filter.createdBy.toString()).toBe(USER_ID);
+  it('does not list another user design messages', async () => {
+    const listForUser = jest.fn();
+    const service = buildService(
+      { listForUser },
+      { findById: jest.fn().mockResolvedValue({ id: FLOW_ID, ownerId: OTHER_USER_ID }) },
+    );
+
+    await expect(service.getDesignMessages(FLOW_ID, USER_ID)).rejects.toThrow();
+    expect(listForUser).not.toHaveBeenCalled();
   });
 
   it('appends a designer sidebar interaction with a current flow snapshot', async () => {
-    const create = jest.fn().mockImplementation((payload) => Promise.resolve({
-      id: MESSAGE_ID,
-      ...payload,
-      revertedFromMessageId: null,
-      createdAt: new Date('2026-06-22T08:00:00Z'),
-      updatedAt: new Date('2026-06-22T08:00:00Z'),
-    }));
+    const create = jest.fn().mockImplementation(async (payload) => messageRecord(payload));
     const service = buildService(
       { create },
       { findById: jest.fn().mockResolvedValue({
@@ -443,6 +494,8 @@ describe('PlaybookFlowDesignService', () => {
 
     expect(result).toEqual(expect.objectContaining({ userQuery: 'Add scoring', aiSummary: 'Assistant processed the request.' }));
     expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      flowId: FLOW_ID,
+      createdBy: USER_ID,
       userQuery: 'Add scoring',
       aiSummary: 'Assistant processed the request.',
       status: 'completed',
@@ -468,37 +521,67 @@ describe('PlaybookFlowDesignService', () => {
   });
 
   it('clears only the current user design messages for the playbook', async () => {
-    const deleteMany = jest.fn().mockResolvedValue({ deletedCount: 2 });
-    const service = buildService({ deleteMany });
+    const deleteForUser = jest.fn().mockResolvedValue(2);
+    const service = buildService({ deleteForUser });
 
     const result = await service.clearDesignMessages(FLOW_ID, USER_ID);
 
     expect(result).toEqual({ deletedCount: 2 });
-    const filter = deleteMany.mock.calls[0][0];
-    expect(filter.flowId.toString()).toBe(FLOW_ID);
-    expect(filter.createdBy.toString()).toBe(USER_ID);
+    expect(deleteForUser).toHaveBeenCalledWith(FLOW_ID, USER_ID);
   });
 
   it('does not clear another user design messages', async () => {
-    const deleteMany = jest.fn();
+    const deleteForUser = jest.fn();
     const service = buildService(
-      { deleteMany },
+      { deleteForUser },
       { findById: jest.fn().mockResolvedValue({ id: FLOW_ID, ownerId: OTHER_USER_ID }) },
     );
 
     await expect(service.clearDesignMessages(FLOW_ID, USER_ID)).rejects.toThrow();
-    expect(deleteMany).not.toHaveBeenCalled();
+    expect(deleteForUser).not.toHaveBeenCalled();
   });
 
   it('requires reverted design messages to belong to the current user', async () => {
-    const findOne = jest.fn().mockResolvedValue(null);
-    const service = buildService({ findOne });
+    const findForUser = jest.fn().mockResolvedValue(null);
+    const service = buildService({ findForUser });
 
     await expect(service.revertToSnapshot(FLOW_ID, MESSAGE_ID, USER_ID)).rejects.toThrow('Design message not found');
 
-    const filter = findOne.mock.calls[0][0];
-    expect(filter._id.toString()).toBe(MESSAGE_ID);
-    expect(filter.flowId.toString()).toBe(FLOW_ID);
-    expect(filter.createdBy.toString()).toBe(USER_ID);
+    expect(findForUser).toHaveBeenCalledWith(MESSAGE_ID, FLOW_ID, USER_ID);
+  });
+
+  it('rejects a malformed design message id', async () => {
+    const findForUser = jest.fn();
+    const service = buildService({ findForUser });
+
+    await expect(service.revertToSnapshot(FLOW_ID, 'not-a-message', USER_ID)).rejects.toThrow('Invalid message ID');
+    expect(findForUser).not.toHaveBeenCalled();
+  });
+
+  it('restores the message snapshot and records the revert with the current graph', async () => {
+    const snapshot = { nodes: [{ id: 'old-node' }], controlEdges: [{ id: 'old-edge' }], dataBindings: [] };
+    const findForUser = jest.fn().mockResolvedValue(messageRecord({ snapshotBefore: snapshot }));
+    const create = jest.fn().mockImplementation(async (payload) => messageRecord({ id: '507f1f77bcf86cd799439015', ...payload }));
+    const updateNodesAndEdges = jest.fn().mockResolvedValue({ id: FLOW_ID });
+    const service = buildService(
+      { findForUser, create },
+      {
+        findById: jest.fn().mockResolvedValue({ id: FLOW_ID, ownerId: USER_ID, nodes: [{ id: 'new-node' }], controlEdges: [], dataBindings: [] }),
+        updateNodesAndEdges,
+      },
+    );
+
+    const result = await service.revertToSnapshot(FLOW_ID, MESSAGE_ID, USER_ID);
+
+    expect(updateNodesAndEdges).toHaveBeenCalledWith(FLOW_ID, snapshot);
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({
+      flowId: FLOW_ID,
+      createdBy: USER_ID,
+      userQuery: `Reverted to snapshot from ${MESSAGE_ID}`,
+      status: 'reverted',
+      revertedFromMessageId: MESSAGE_ID,
+      snapshotBefore: { nodes: [{ id: 'new-node' }], controlEdges: [], dataBindings: [] },
+    }));
+    expect(result.message).toEqual(expect.objectContaining({ status: 'reverted', revertedFromMessageId: MESSAGE_ID }));
   });
 });

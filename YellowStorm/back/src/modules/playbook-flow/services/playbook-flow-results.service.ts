@@ -1,41 +1,37 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { FlowTaskResult, FlowTaskResultDocument } from '../schemas/playbook-flow-task-result.schema';
+import {
+  TaskResultRepository,
+  type TaskResultRecord,
+  type TaskResultStatus,
+} from '../persistence/task-result.repository';
 
 @Injectable()
 export class PlaybookFlowResultsService {
   constructor(
-    @InjectModel(FlowTaskResult.name)
-    private readonly taskResultModel: Model<FlowTaskResultDocument>,
+    private readonly taskResultRepository: TaskResultRepository,
   ) {}
 
+  /** Creates or updates the (execution, task, iteration) result. Null when the execution no longer exists. */
   async upsertResult(
     executionId: string,
     taskId: string,
     iteration: number,
     update: { status?: string; output?: unknown; error?: string; startedAt?: Date; endedAt?: Date },
-  ): Promise<FlowTaskResultDocument> {
-    return this.taskResultModel
-      .findOneAndUpdate(
-        { executionId, taskId, iteration },
-        { $set: update },
-        { upsert: true, new: true },
-      )
-      .exec() as Promise<FlowTaskResultDocument>;
+  ): Promise<TaskResultRecord | null> {
+    const key = { executionId, taskId, iteration };
+    const { status, ...rest } = update;
+    const written = await this.taskResultRepository.upsert(key, {
+      ...rest,
+      ...(status !== undefined ? { status: status as TaskResultStatus } : {}),
+    });
+    return written ? this.taskResultRepository.find(key) : null;
   }
 
-  async getResults(executionId: string): Promise<FlowTaskResultDocument[]> {
-    return this.taskResultModel
-      .find({ executionId })
-      .sort({ taskId: 1, iteration: 1 })
-      .exec();
+  async getResults(executionId: string): Promise<TaskResultRecord[]> {
+    return this.taskResultRepository.listForExecution(executionId);
   }
 
-  async getResultsForTask(executionId: string, taskId: string): Promise<FlowTaskResultDocument[]> {
-    return this.taskResultModel
-      .find({ executionId, taskId })
-      .sort({ iteration: 1 })
-      .exec();
+  async getResultsForTask(executionId: string, taskId: string): Promise<TaskResultRecord[]> {
+    return this.taskResultRepository.listForExecution(executionId, { taskIds: [taskId] });
   }
 }

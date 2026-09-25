@@ -4,7 +4,7 @@ import type {
   FlowTaskJudgeResult,
   FlowTaskPublicReasoningTraceItem,
   FlowTaskToolTraceItem,
-} from '../schemas/playbook-flow-task-result.schema';
+} from '../models/playbook-flow-task-result.model';
 import type {
   ReplayAcceptedExample,
   ReplayContextVariable,
@@ -20,7 +20,7 @@ import {
   type FlowReplayHitlMemorySnapshot,
   normalizeReplayMode,
   type ValidatedReplayBaselineFields,
-} from '../schemas/playbook-flow-validated-replay.schema';
+} from '../models/playbook-flow-validated-replay.model';
 import { PlaybookFlowReplayHashService } from './playbook-flow-replay-hash.service';
 import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
 

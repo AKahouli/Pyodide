@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { mapGrpcResponseToFlow } from '../services/playbook-flow-design-mapper';
-import { ControlEdge, DataBinding, FlowNode } from '../schemas/playbook-flow.schema';
+import { ControlEdge, DataBinding, FlowNode } from '../models/playbook-flow.model';
 
 /**
  * Translates design responses into persisted graph updates while preserving bindings when the model omits them.

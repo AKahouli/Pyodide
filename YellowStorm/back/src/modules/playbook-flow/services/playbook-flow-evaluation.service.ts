@@ -1,17 +1,14 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import { LoggerService } from '@modules/logger';
-import { FlowExecution, FlowExecutionDocument } from '../schemas/playbook-flow-execution.schema';
-import { FlowTaskResult, FlowTaskResultDocument } from '../schemas/playbook-flow-task-result.schema';
+import { ExecutionRepository } from '../persistence/execution.repository';
 import {
-  FlowEvaluationBaseline,
-  FlowEvaluationBaselineDocument,
-} from '../schemas/playbook-flow-evaluation-baseline.schema';
+  EvaluationBaselineRepository,
+  type FlowEvaluationBaselineRecord,
+} from '../persistence/evaluation-baseline.repository';
 import {
-  FlowEvaluationExecution,
-  FlowEvaluationExecutionDocument,
-} from '../schemas/playbook-flow-evaluation-execution.schema';
+  EvaluationExecutionRepository,
+  type FlowEvaluationExecutionRecord,
+} from '../persistence/evaluation-execution.repository';
 
 export interface PersistEvaluationParams {
   flowId: string;
@@ -30,38 +27,30 @@ export interface PersistEvaluationParams {
 @Injectable()
 export class PlaybookFlowEvaluationService {
   constructor(
-    @InjectModel(FlowExecution.name) private readonly executionModel: Model<FlowExecutionDocument>,
-    @InjectModel(FlowTaskResult.name) private readonly taskResultModel: Model<FlowTaskResultDocument>,
-    @InjectModel(FlowEvaluationBaseline.name) private readonly baselineModel: Model<FlowEvaluationBaselineDocument>,
-    @InjectModel(FlowEvaluationExecution.name) private readonly evaluationExecutionModel: Model<FlowEvaluationExecutionDocument>,
+    private readonly executionRepository: ExecutionRepository,
+    private readonly baselineRepository: EvaluationBaselineRepository,
+    private readonly evaluationExecutionRepository: EvaluationExecutionRepository,
     private readonly logger: LoggerService,
   ) { this.logger.setContext('PlaybookFlowEvaluationService'); }
 
-  async getActiveBaseline(flowId: string, taskId: string, iteration?: number): Promise<FlowEvaluationBaselineDocument | null> {
-    const query: Record<string, unknown> = { flowId, taskId, replacedAt: null };
-    if (iteration !== undefined) query.iteration = iteration;
-    return this.baselineModel.findOne(query).sort({ createdAt: -1 }).exec();
+  async getActiveBaseline(flowId: string, taskId: string, iteration?: number): Promise<FlowEvaluationBaselineRecord | null> {
+    return this.baselineRepository.findActive(flowId, taskId, iteration);
   }
 
-  async listEvaluationExecutions(flowId: string, taskId?: string): Promise<FlowEvaluationExecutionDocument[]> {
-    const filter: Record<string, unknown> = { flowId };
-    if (taskId) filter.taskId = taskId;
-    return this.evaluationExecutionModel.find(filter).sort({ createdAt: -1 }).limit(50).exec();
+  async listEvaluationExecutions(flowId: string, taskId?: string): Promise<FlowEvaluationExecutionRecord[]> {
+    return this.evaluationExecutionRepository.listByFlow(flowId, { taskId, limit: 50 });
   }
 
-  async getEvaluationExecution(flowId: string, executionId: string): Promise<FlowEvaluationExecutionDocument[]> {
-    return this.evaluationExecutionModel.find({ flowId, executionId }).sort({ iteration: 1 }).exec();
+  async getEvaluationExecution(flowId: string, executionId: string): Promise<FlowEvaluationExecutionRecord[]> {
+    return this.evaluationExecutionRepository.listForExecution(flowId, executionId);
   }
 
   async removeActiveBaseline(flowId: string, taskId: string): Promise<void> {
-    await this.baselineModel.updateMany(
-      { flowId, taskId, replacedAt: null },
-      { $set: { replacedAt: new Date() } },
-    );
+    await this.baselineRepository.retireActive(flowId, taskId);
   }
 
-  async persistEvaluationExecution(params: PersistEvaluationParams): Promise<FlowEvaluationExecutionDocument> {
-    const [record] = await this.evaluationExecutionModel.create([{
+  async persistEvaluationExecution(params: PersistEvaluationParams): Promise<FlowEvaluationExecutionRecord> {
+    const record = await this.evaluationExecutionRepository.create({
       flowId: params.flowId,
       executionId: params.executionId,
       taskId: params.taskId,
@@ -73,7 +62,8 @@ export class PlaybookFlowEvaluationService {
       verdict: params.verdict,
       summary: params.summary,
       findings: params.findings ?? [],
-    }]);
+    });
+    if (!record) throw new NotFoundException('Flow not found');
     return record;
   }
 
@@ -83,24 +73,20 @@ export class PlaybookFlowEvaluationService {
     iteration: number,
     executionId: string,
     userId: string,
-  ): Promise<FlowEvaluationBaselineDocument> {
-    const execution = await this.executionModel.findOne({ id: executionId }).lean();
+  ): Promise<FlowEvaluationBaselineRecord> {
+    const execution = await this.executionRepository.findById(executionId);
     if (!execution) throw new NotFoundException('Execution not found');
 
-    await this.baselineModel.updateMany(
-      { flowId, taskId, replacedAt: null },
-      { $set: { replacedAt: new Date() } },
-    );
-
-    const [baseline] = await this.baselineModel.create([{
+    // The task's active baselines are retired and the new one inserted in one transaction.
+    const baseline = await this.baselineRepository.replaceActive({
       flowId,
       taskId,
       iteration,
       sourceExecutionId: executionId,
       sourceMode: 'selected_execution',
       createdByUserId: userId,
-    }]);
-
+    });
+    if (!baseline) throw new NotFoundException('Flow not found');
     return baseline;
   }
 
@@ -111,7 +97,7 @@ export class PlaybookFlowEvaluationService {
     executionId: string,
     evaluationExecutionId: string,
     userId: string,
-  ): Promise<FlowEvaluationBaselineDocument> {
+  ): Promise<FlowEvaluationBaselineRecord> {
     return this.replaceBaselineFromExecution(flowId, taskId, iteration, executionId, userId);
   }
 }

@@ -1,46 +1,52 @@
-import { Types } from 'mongoose';
+import { newObjectId } from '@common/postgres';
 import { PlaybookFlowReplayArtifactService } from './playbook-flow-replay-artifact.service';
-import type { FlowValidatedReplayDocument } from '../schemas/playbook-flow-validated-replay.schema';
+import type { FlowValidatedReplayRecord } from '../persistence/validated-replay.repository';
 import { PlaybookFlowReplayHashService } from './playbook-flow-replay-hash.service';
 
-function makeReplay(overrides: Partial<FlowValidatedReplayDocument> = {}): any {
+function makeReplay(overrides: Record<string, unknown> = {}): FlowValidatedReplayRecord {
   return {
-    taskId: overrides.taskId ?? 'task-1',
-    _id: overrides._id ?? 'replay-1',
-    validationVersion: overrides.validationVersion ?? 1,
-    mode: overrides.mode ?? 'strict_replay',
-    referenceOutput: overrides.referenceOutput ?? 'baseline output',
-    outputFormatGuide: overrides.outputFormatGuide ?? null,
-    intentKey: (overrides as any).intentKey ?? null,
-    intentLabel: (overrides as any).intentLabel ?? null,
-    reasoningOutline: (overrides as any).reasoningOutline ?? [],
-    stableReasoningRules: (overrides as any).stableReasoningRules ?? [],
-    contextVariableSchema: (overrides as any).contextVariableSchema ?? [],
-    toolTraceTemplate: (overrides as any).toolTraceTemplate ?? [],
-    driftPolicy: (overrides as any).driftPolicy ?? null,
-    toolCalls: overrides.toolCalls ?? [],
-    reasoningChain: overrides.reasoningChain ?? [],
-    fingerprints: overrides.fingerprints ?? null,
-    behaviorBaseline: overrides.behaviorBaseline ?? null,
-    toolPolicy: overrides.toolPolicy ?? null,
-    outputContract: overrides.outputContract ?? null,
-    referenceNodeSnapshot: overrides.referenceNodeSnapshot ?? null,
-    hitlMemorySnapshots: (overrides as any).hitlMemorySnapshots ?? [],
-    replayConfig: overrides.replayConfig ?? { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: true },
-  };
+    taskId: 'task-1',
+    id: 'replay-1',
+    flowId: 'flow-1',
+    referenceExecutionId: 'exec-1',
+    validationVersion: 1,
+    mode: 'strict_replay',
+    isStale: false,
+    staleReasons: [],
+    referenceOutput: 'baseline output',
+    outputFormatGuide: null,
+    intentKey: null,
+    intentLabel: null,
+    reasoningOutline: [],
+    stableReasoningRules: [],
+    contextVariableSchema: [],
+    toolTraceTemplate: [],
+    driftPolicy: null,
+    toolCalls: [],
+    reasoningChain: [],
+    fingerprints: null,
+    behaviorBaseline: null,
+    toolPolicy: null,
+    outputContract: null,
+    referenceNodeSnapshot: null,
+    hitlMemorySnapshots: [],
+    replayConfig: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: true },
+    ...overrides,
+  } as unknown as FlowValidatedReplayRecord;
 }
 
 describe('PlaybookFlowReplayArtifactService', () => {
   let service: PlaybookFlowReplayArtifactService;
-  let replayModel: { find: jest.Mock; findOne: jest.Mock };
+  let replayRepository: { listActiveForTasks: jest.Mock; findByIdentity: jest.Mock; findActive: jest.Mock };
 
   beforeEach(() => {
-    replayModel = {
-      find: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([]) }) }),
-      findOne: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(null) }) }),
+    replayRepository = {
+      listActiveForTasks: jest.fn().mockResolvedValue([]),
+      findByIdentity: jest.fn().mockResolvedValue(null),
+      findActive: jest.fn().mockResolvedValue(null),
     };
     service = new PlaybookFlowReplayArtifactService(
-      replayModel as any,
+      replayRepository as any,
       { setContext: jest.fn() } as any,
       new PlaybookFlowReplayHashService(),
     );
@@ -49,17 +55,13 @@ describe('PlaybookFlowReplayArtifactService', () => {
   it('returns empty map when no task IDs provided', async () => {
     const result = await service.resolveReplayArtifacts('flow-1', []);
     expect(result.size).toBe(0);
-    expect(replayModel.find).not.toHaveBeenCalled();
+    expect(replayRepository.listActiveForTasks).not.toHaveBeenCalled();
   });
 
   it('returns empty map when no active replays exist', async () => {
     const result = await service.resolveReplayArtifacts('flow-1', ['task-1', 'task-2']);
     expect(result.size).toBe(0);
-    expect(replayModel.find).toHaveBeenCalledWith({
-      flowId: 'flow-1',
-      taskId: { $in: ['task-1', 'task-2'] },
-      status: 'active',
-    });
+    expect(replayRepository.listActiveForTasks).toHaveBeenCalledWith('flow-1', ['task-1', 'task-2']);
   });
 
   it('maps active replays to resolved artifacts keyed by taskId', async () => {
@@ -71,7 +73,7 @@ describe('PlaybookFlowReplayArtifactService', () => {
       reasoningChain: [{ id: 'r1', type: 'analysis', label: 'Assess', description: 'Assessed risk.' }],
       replayConfig: { replayOutputFormat: true, replayToolTrace: false, replayReasoningChain: true },
     });
-    replayModel.find.mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([replay]) }) });
+    replayRepository.listActiveForTasks.mockResolvedValue([replay]);
 
     const result = await service.resolveReplayArtifacts('flow-1', ['task-1']);
 
@@ -79,6 +81,8 @@ describe('PlaybookFlowReplayArtifactService', () => {
     const artifacts = result.get('task-1')!;
     expect(artifacts.taskId).toBe('task-1');
     expect(artifacts.replayId).toBe('replay-1');
+    expect(artifacts.flowId).toBe('flow-1');
+    expect(artifacts.referenceExecutionId).toBe('exec-1');
     expect(artifacts.mode).toBe('replay_strict');
     expect(artifacts.referenceOutput).toBe('ref output');
     expect(artifacts.outputFormatGuide).toBe('format guide');
@@ -92,27 +96,27 @@ describe('PlaybookFlowReplayArtifactService', () => {
 
   it('maps new structured replay metadata', async () => {
     const replay = makeReplay({
-      mode: 'replay_flex' as any,
+      mode: 'replay_flex',
       intentKey: 'facts.verify',
       intentLabel: 'Verify facts',
-      reasoningOutline: [{ stageKey: 'verify', stageType: 'analysis', label: 'Verify', description: 'Verify facts' }] as any,
-      stableReasoningRules: ['Do not skip evidence checks'] as any,
-      contextVariableSchema: [{ key: 'ticker', label: 'Ticker', source: 'input_context', valueType: 'string', required: true }] as any,
-      toolTraceTemplate: [{ stepIndex: 1, toolName: 'search', purpose: 'Find evidence', argumentShape: { ticker: 'string' }, required: true }] as any,
-      driftPolicy: { requireSameIntent: true, requireSameReasoningStages: true, requireSameToolOrder: true, allowAdditionalTools: false, allowArgumentValueChanges: true, enforceOutputContract: true } as any,
-      fingerprints: { inputContextHash: 'abc', nodeSnapshotHash: 'legacy-node-hash' } as any,
-      behaviorBaseline: { decisionInvariants: ['Verify facts'], qualityChecks: [], knownFailureModes: [], behaviorSummary: '' } as any,
-      toolPolicy: { requiredTools: ['search'], forbiddenTools: [], sequencingRules: [], requireSameOrder: false } as any,
-      outputContract: { type: 'freeform', requiredSections: [], forbiddenSections: [], jsonSchema: null, citationPolicy: 'optional' } as any,
+      reasoningOutline: [{ stageKey: 'verify', stageType: 'analysis', label: 'Verify', description: 'Verify facts' }],
+      stableReasoningRules: ['Do not skip evidence checks'],
+      contextVariableSchema: [{ key: 'ticker', label: 'Ticker', source: 'input_context', valueType: 'string', required: true }],
+      toolTraceTemplate: [{ stepIndex: 1, toolName: 'search', purpose: 'Find evidence', argumentShape: { ticker: 'string' }, required: true }],
+      driftPolicy: { requireSameIntent: true, requireSameReasoningStages: true, requireSameToolOrder: true, allowAdditionalTools: false, allowArgumentValueChanges: true, enforceOutputContract: true },
+      fingerprints: { inputContextHash: 'abc', nodeSnapshotHash: 'legacy-node-hash' },
+      behaviorBaseline: { decisionInvariants: ['Verify facts'], qualityChecks: [], knownFailureModes: [], behaviorSummary: '' },
+      toolPolicy: { requiredTools: ['search'], forbiddenTools: [], sequencingRules: [], requireSameOrder: false },
+      outputContract: { type: 'freeform', requiredSections: [], forbiddenSections: [], jsonSchema: null, citationPolicy: 'optional' },
       referenceNodeSnapshot: {
         id: 'step-1',
         metadata: {
           description: 'Verify facts',
           stepReplayMode: 'live',
         },
-      } as any,
+      },
     });
-    replayModel.find.mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([replay]) }) });
+    replayRepository.listActiveForTasks.mockResolvedValue([replay]);
 
     const result = await service.resolveReplayArtifacts('flow-1', ['task-1']);
     const artifacts = result.get('task-1')!;
@@ -132,9 +136,41 @@ describe('PlaybookFlowReplayArtifactService', () => {
     expect(artifacts.outputContract?.type).toBe('freeform');
   });
 
+  it('falls back like a lean read for fields a legacy baseline never stored', async () => {
+    const legacy = {
+      id: 'replay-legacy',
+      flowId: 'flow-1',
+      taskId: 'task-1',
+      referenceExecutionId: 'exec-0',
+      validationVersion: 1,
+      mode: 'strict_replay',
+      isStale: false,
+      referenceOutput: 'old output',
+      toolCalls: [],
+    } as unknown as FlowValidatedReplayRecord;
+    replayRepository.listActiveForTasks.mockResolvedValue([legacy]);
+
+    const artifacts = (await service.resolveReplayArtifacts('flow-1', ['task-1'])).get('task-1')!;
+
+    expect(artifacts).toMatchObject({
+      mode: 'replay_strict',
+      staleReasons: [],
+      intentKey: null,
+      intentLabel: null,
+      reasoningOutline: [],
+      semanticChecklist: [],
+      hitlMemorySnapshots: [],
+      driftPolicy: null,
+      reasoningChain: [],
+      fingerprints: null,
+      outputContract: null,
+      replayConfig: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: true },
+    });
+  });
+
   it('defaults missing replayConfig fields to schema-consistent values', async () => {
-    const replay = makeReplay({ replayConfig: undefined as any });
-    replayModel.find.mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([replay]) }) });
+    const replay = makeReplay({ replayConfig: undefined });
+    replayRepository.listActiveForTasks.mockResolvedValue([replay]);
 
     const result = await service.resolveReplayArtifacts('flow-1', ['task-1']);
     const artifacts = result.get('task-1')!;
@@ -162,8 +198,8 @@ describe('PlaybookFlowReplayArtifactService', () => {
         reusableInReplay: true,
         contextFingerprint: 'hash-1',
       }],
-    } as any);
-    replayModel.find.mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([replay]) }) });
+    });
+    replayRepository.listActiveForTasks.mockResolvedValue([replay]);
 
     const result = await service.resolveReplayArtifacts('flow-1', ['task-1']);
 
@@ -177,8 +213,7 @@ describe('PlaybookFlowReplayArtifactService', () => {
   });
 
   it('handles multiple tasks with mixed replay presence', async () => {
-    const replay = makeReplay({ taskId: 'task-1' });
-    replayModel.find.mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([replay]) }) });
+    replayRepository.listActiveForTasks.mockResolvedValue([makeReplay({ taskId: 'task-1' })]);
 
     const result = await service.resolveReplayArtifacts('flow-1', ['task-1', 'task-2']);
     expect(result.has('task-1')).toBe(true);
@@ -186,33 +221,43 @@ describe('PlaybookFlowReplayArtifactService', () => {
   });
 
   it('resolves a persisted replay artifact by replay identity even when it is no longer active', async () => {
-    const replayId = new Types.ObjectId();
-    const replay = makeReplay({
-      _id: replayId,
-      taskId: 'task-1',
-      validationVersion: 4,
-    });
-    replayModel.findOne.mockReturnValue({
-      lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(replay) }),
-    });
+    const replayId = newObjectId();
+    replayRepository.findByIdentity.mockResolvedValue(makeReplay({ id: replayId, taskId: 'task-1', validationVersion: 4 }));
 
     const result = await service.resolveReplayArtifactByIdentity({
       flowId: 'flow-1',
       taskId: 'task-1',
-      replayId: replayId.toString(),
+      replayId,
       validationVersion: 4,
     });
 
-    expect(replayModel.findOne).toHaveBeenCalledWith({
-      _id: replayId.toString(),
+    expect(replayRepository.findByIdentity).toHaveBeenCalledWith({
+      id: replayId,
       flowId: 'flow-1',
       taskId: 'task-1',
       validationVersion: 4,
     });
     expect(result).toEqual(expect.objectContaining({
       taskId: 'task-1',
-      replayId: replayId.toString(),
+      replayId,
       validationVersion: 4,
     }));
+  });
+
+  it('returns null when no persisted replay matches the identity', async () => {
+    await expect(service.resolveReplayArtifactByIdentity({ flowId: 'flow-1', taskId: 'task-1', replayId: 'replay-9', validationVersion: 2 })).resolves.toBeNull();
+  });
+
+  it('resolves the active replay artifact of one task', async () => {
+    replayRepository.findActive.mockResolvedValue(makeReplay({ taskId: 'task-3', id: 'replay-3' }));
+
+    const result = await service.resolveActiveReplayArtifact('flow-1', 'task-3');
+
+    expect(replayRepository.findActive).toHaveBeenCalledWith('flow-1', 'task-3');
+    expect(result).toEqual(expect.objectContaining({ taskId: 'task-3', replayId: 'replay-3' }));
+  });
+
+  it('returns null when the task has no active replay', async () => {
+    await expect(service.resolveActiveReplayArtifact('flow-1', 'task-3')).resolves.toBeNull();
   });
 });

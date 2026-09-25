@@ -1,9 +1,8 @@
 import { forwardRef, Inject, Injectable, Logger, Optional } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { FlowExecution, FlowExecutionDocument } from '../../schemas/playbook-flow-execution.schema';
-import { FlowTaskResult, FlowTaskResultDocument } from '../../schemas/playbook-flow-task-result.schema';
+import { newObjectId } from '@common/postgres';
 import { FlowCompletedResultPayload } from '../../interfaces/playbook-flow-observability.interface';
+import { ExecutionRepository } from '../../persistence/execution.repository';
+import { TaskResultRepository, type TaskResultPatch } from '../../persistence/task-result.repository';
 import { PlaybookFlowExecutionAdvisorService } from '../../services/advisor/playbook-flow-execution-advisor.service';
 import { PlaybookFlowObservabilityService } from '../../services/observability/playbook-flow-observability.service';
 import { PlaybookFlowStreamEventsService } from '../../services/playbook-flow-stream-events.service';
@@ -12,7 +11,17 @@ import { PlaybookFlowArtifactService } from '../../services/playbook-flow-artifa
 import { PlaybookTokenStreamRedactor, publicPlaybookTaskResult, sanitizePlaybookPublicValue } from '../../utils/playbook-artifact';
 import { PlaybookExecutionReplayRuntimeService } from './playbook-execution-replay-runtime.service';
 
-const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'] as const;
+type Json = Record<string, unknown>;
+
+/** The generated-node columns of a dynamic-reasoning child task, when the event carries them. */
+function runtimeSubgraphFields(payload: Record<string, unknown>): TaskResultPatch {
+  return payload.parent_node_id ? {
+    parentTaskId: String(payload.parent_node_id),
+    runtimeSubgraphId: String(payload.runtime_subgraph_id || ''),
+    generatedLocalNodeId: String(payload.generated_local_node_id || ''),
+    generatedNodeTitle: String(payload.generated_title || ''),
+  } : {};
+}
 
 @Injectable()
 export class PlaybookExecutionNodeEventHandlerService {
@@ -20,10 +29,8 @@ export class PlaybookExecutionNodeEventHandlerService {
   private readonly directStreamRedactor = new PlaybookTokenStreamRedactor();
 
   constructor(
-    @InjectModel(FlowExecution.name)
-    private readonly executionModel: Model<FlowExecutionDocument>,
-    @InjectModel(FlowTaskResult.name)
-    private readonly taskResultModel: Model<FlowTaskResultDocument>,
+    private readonly executionRepository: ExecutionRepository,
+    private readonly taskResultRepository: TaskResultRepository,
     private readonly streamEvents: PlaybookFlowStreamEventsService,
     private readonly observabilityService: PlaybookFlowObservabilityService,
     @Inject(forwardRef(() => PlaybookFlowExecutionAdvisorService))
@@ -41,20 +48,9 @@ export class PlaybookExecutionNodeEventHandlerService {
         this.logger.warn(`Failed to materialize replay report for execution ${executionId} task ${taskNodeId} iteration ${iteration}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-    await this.taskResultModel.updateOne(
+    await this.taskResultRepository.upsert(
       { executionId, taskId: taskNodeId, iteration },
-      {
-        $set: {
-          status: 'running',
-          startedAt: new Date(),
-        },
-        $setOnInsert: {
-          executionId,
-          taskId: taskNodeId,
-          iteration,
-        },
-      },
-      { upsert: true },
+      { status: 'running', startedAt: new Date() },
     );
     this.streamEvents.emitStepStart(executionId, taskNodeId);
   }
@@ -69,20 +65,7 @@ export class PlaybookExecutionNodeEventHandlerService {
       return;
     }
 
-    await this.taskResultModel.updateOne(
-      { executionId, taskId: taskNodeId, iteration },
-      [
-        {
-          $set: {
-            status: 'running',
-            output: {
-              $concat: [{ $ifNull: ['$output', ''] }, token],
-            },
-          },
-        },
-      ],
-      { upsert: true },
-    );
+    await this.taskResultRepository.appendOutput({ executionId, taskId: taskNodeId, iteration }, token);
     const publicToken = this.directStreamRedactor.push(this.tokenKey(executionId, taskNodeId, iteration), token);
     if (publicToken) this.streamEvents.emitStepUpdate(executionId, taskNodeId, publicToken);
   }
@@ -98,29 +81,15 @@ export class PlaybookExecutionNodeEventHandlerService {
       redactSensitiveText,
     ) as ReturnType<PlaybookFlowObservabilityService['extractTraceUpdatePayload']>;
 
-    await this.taskResultModel.updateOne(
+    await this.taskResultRepository.upsert(
       { executionId, taskId: taskNodeId, iteration },
       {
-        $set: {
-          toolTrace: tracePayload.toolTrace,
-          llmPromptTrace: tracePayload.llmPromptTrace,
-          usage: tracePayload.usage,
-          traceMetadata: tracePayload.traceMetadata,
-        },
-        $setOnInsert: {
-          executionId,
-          taskId: taskNodeId,
-          iteration,
-          startedAt: new Date(),
-          ...(payload.parent_node_id ? {
-            parentTaskId: String(payload.parent_node_id),
-            runtimeSubgraphId: String(payload.runtime_subgraph_id || ''),
-            generatedLocalNodeId: String(payload.generated_local_node_id || ''),
-            generatedNodeTitle: String(payload.generated_title || ''),
-          } : {}),
-        },
+        toolTrace: tracePayload.toolTrace as unknown as Json[] | undefined,
+        llmPromptTrace: tracePayload.llmPromptTrace as unknown as Json[] | undefined,
+        usage: tracePayload.usage as unknown as Json | null | undefined,
+        traceMetadata: tracePayload.traceMetadata,
       },
-      { upsert: true },
+      { startedAt: new Date(), ...runtimeSubgraphFields(payload) },
     );
 
     this.streamEvents.emitStepUpdate(executionId, taskNodeId, undefined, {
@@ -151,43 +120,30 @@ export class PlaybookExecutionNodeEventHandlerService {
       ...sanitizedTrace,
     };
 
-    await this.taskResultModel.updateOne(
+    await this.taskResultRepository.upsert(
       { executionId, taskId: taskNodeId, iteration },
       {
-        $set: {
-          status: 'completed',
-          output: resultPayload.output,
-          displayText: resultPayload.displayText,
-          outputs: resultPayload.outputs,
-          artifacts: resultPayload.artifacts,
-          components: resultPayload.components,
-          iteratorIterations: resultPayload.iteratorIterations,
-          toolTrace: resultPayload.toolTrace,
-          reasoningChain: resultPayload.reasoningChain ?? [],
-          llmPromptTrace: resultPayload.llmPromptTrace,
-          usage: resultPayload.usage,
-          semanticMatch: resultPayload.semanticMatch,
-          traceMetadata: resultPayload.traceMetadata,
-          error: null,
-          endedAt: new Date(),
-          ...(payload.parent_node_id ? {
-            parentTaskId: String(payload.parent_node_id),
-            runtimeSubgraphId: String(payload.runtime_subgraph_id || ''),
-            generatedLocalNodeId: String(payload.generated_local_node_id || ''),
-            generatedNodeTitle: String(payload.generated_title || ''),
-          } : {}),
-        },
-        $setOnInsert: {
-          executionId,
-          taskId: taskNodeId,
-          iteration,
-          startedAt: new Date(),
-        },
+        status: 'completed',
+        output: resultPayload.output,
+        displayText: resultPayload.displayText,
+        outputs: resultPayload.outputs,
+        artifacts: resultPayload.artifacts,
+        components: resultPayload.components,
+        iteratorIterations: resultPayload.iteratorIterations,
+        toolTrace: resultPayload.toolTrace as unknown as Json[] | undefined,
+        reasoningChain: (resultPayload.reasoningChain ?? []) as unknown as Json[],
+        llmPromptTrace: resultPayload.llmPromptTrace as unknown as Json[] | undefined,
+        usage: resultPayload.usage as unknown as Json | null | undefined,
+        semanticMatch: resultPayload.semanticMatch as unknown as Json | null | undefined,
+        traceMetadata: resultPayload.traceMetadata,
+        error: null,
+        endedAt: new Date(),
+        ...runtimeSubgraphFields(payload),
       },
-      { upsert: true },
+      { startedAt: new Date() },
     );
     await this.persistReplayDrift(executionId, taskNodeId, iteration, resultPayload);
-    const execDoc = await this.executionModel.findById(executionId, 'ownerId advisorAutopilotEnabled reflectionEnabled advisorScoringMode').lean().exec();
+    const execDoc = await this.executionRepository.findById(executionId);
     const rawPublicResult = { ...resultPayload, taskId: taskNodeId, iteration };
     const publicResultPayload = (this.artifactService
       ? await this.artifactService.projectPublicTaskResult(
@@ -227,43 +183,20 @@ export class PlaybookExecutionNodeEventHandlerService {
   async handleFailed(executionId: string, taskNodeId: string, iteration: number, payload: Record<string, unknown>): Promise<void> {
     await this.flushTokenStream(executionId, taskNodeId, iteration);
     const errorMessage = String(sanitizePlaybookPublicValue(payload.error || 'Node execution failed'));
-    await this.taskResultModel.updateOne(
+    await this.taskResultRepository.upsert(
       { executionId, taskId: taskNodeId, iteration },
-      {
-        $set: {
-          status: 'failed',
-          error: errorMessage,
-          endedAt: new Date(),
-        },
-        $setOnInsert: {
-          executionId,
-          taskId: taskNodeId,
-          iteration,
-          startedAt: new Date(),
-        },
-      },
-      { upsert: true },
+      { status: 'failed', error: errorMessage, endedAt: new Date() },
+      { startedAt: new Date() },
     );
     this.streamEvents.emitStepComplete(executionId, taskNodeId, undefined, errorMessage, iteration);
   }
 
   async handleSkipped(executionId: string, taskNodeId: string, iteration: number): Promise<void> {
     await this.flushTokenStream(executionId, taskNodeId, iteration);
-    await this.taskResultModel.updateOne(
+    await this.taskResultRepository.upsert(
       { executionId, taskId: taskNodeId, iteration },
-      {
-        $set: {
-          status: 'skipped',
-          endedAt: new Date(),
-        },
-        $setOnInsert: {
-          executionId,
-          taskId: taskNodeId,
-          iteration,
-          startedAt: new Date(),
-        },
-      },
-      { upsert: true },
+      { status: 'skipped', endedAt: new Date() },
+      { startedAt: new Date() },
     );
     this.streamEvents.emitStepComplete(executionId, taskNodeId, undefined, undefined, iteration);
   }
@@ -307,9 +240,10 @@ export class PlaybookExecutionNodeEventHandlerService {
     iteration: number,
     child: Awaited<ReturnType<PlaybookExecutionNodeEventHandlerService['sanitizeIteratorChildPayload']>>,
   ): Promise<void> {
-    const doc = await this.taskResultModel
-      .findOne({ executionId, taskId: iteratorNodeId, iteration }, { iteratorIterations: 1 })
-      .lean();
+    const doc = await this.taskResultRepository.find(
+      { executionId, taskId: iteratorNodeId, iteration },
+      { light: true, with: ['iteratorIterations'] },
+    );
     const iterations: Array<Record<string, any>> = [...(doc?.iteratorIterations ?? [])];
     const index = iterations.findIndex((entry) => Number(entry?.index ?? -1) === child.iterationIndex);
     const iterationEntry: Record<string, any> = index >= 0
@@ -338,19 +272,10 @@ export class PlaybookExecutionNodeEventHandlerService {
     if (index >= 0) iterations[index] = iterationEntry;
     else iterations.push(iterationEntry);
 
-    await this.taskResultModel.updateOne(
+    await this.taskResultRepository.upsert(
       { executionId, taskId: iteratorNodeId, iteration },
-      {
-        $set: { iteratorIterations: iterations },
-        $setOnInsert: {
-          executionId,
-          taskId: iteratorNodeId,
-          iteration,
-          startedAt: new Date(),
-          status: 'running',
-        },
-      },
-      { upsert: true },
+      { iteratorIterations: iterations },
+      { startedAt: new Date(), status: 'running' },
     );
   }
 
@@ -394,87 +319,62 @@ export class PlaybookExecutionNodeEventHandlerService {
         ? 'clarification'
         : 'approval_request';
 
-    const staleInterrupt = await this.executionModel.exists({
-      _id: executionId,
-      $or: [
-        { status: { $in: TERMINAL_STATUSES as unknown as string[] } },
-        { hitlEvents: { $elemMatch: { interruptId, status: 'answered' } } },
-      ],
-    }).exec();
+    const staleInterrupt = await this.executionRepository.isInterruptStale(executionId, interruptId);
     if (staleInterrupt) {
       this.logger.warn(`Ignoring stale HITL interrupt ${interruptId || '<none>'} for execution ${executionId}`);
       return;
     }
 
-    await this.taskResultModel.updateOne(
+    await this.taskResultRepository.upsert(
       { executionId, taskId: taskNodeId, iteration },
-      {
-        $set: {
-          status: 'interrupted',
-        },
-        $setOnInsert: {
-          executionId,
-          taskId: taskNodeId,
-          iteration,
-          startedAt: new Date(),
-        },
-      },
-      { upsert: true },
+      { status: 'interrupted' },
+      { startedAt: new Date() },
     );
 
-    const updateResult = await this.executionModel
-      .updateOne(
-        { _id: executionId, status: { $nin: TERMINAL_STATUSES as unknown as string[] } },
-        {
-          $set: {
-            status: 'pending_approval',
-            pendingApproval: {
-              nodeId: taskNodeId,
-              iteration,
-              prompt: interruptMessage,
-              requestedAt: new Date(),
-              interruptType,
-              interruptId,
-              taskTitle: String(payload.task_title || payload.taskTitle || ''),
-              taskDescription,
-              result,
-              payloadJson,
-              resumableActions,
-              ...(blockerRuleId ? { blockerRuleId } : {}),
-              ...(blockerKind ? { blockerKind } : {}),
-              ...(reasonCode ? { reasonCode } : {}),
-              ...(riskLevel ? { riskLevel } : {}),
-              ...(confidence !== undefined ? { confidence } : {}),
-              ...(downstreamNodeIds.length > 0 ? { downstreamNodeIds } : {}),
-              ...(feedbackScopeDefault ? { feedbackScopeDefault } : {}),
-              interruptPayload: payload,
-            },
-          },
-          $push: {
-            hitlEvents: {
-              id: new Types.ObjectId().toString(),
-              nodeId: taskNodeId,
-              iteration,
-              interruptId,
-              type: hitlEventType,
-              blockerRuleId: blockerRuleId || null,
-              blockerKind: blockerKind || null,
-              reasonCode: reasonCode || 'runtime_interrupt',
-              riskLevel: riskLevel || 'medium',
-              prompt: interruptMessage,
-              payload,
-              status: 'pending',
-              response: null,
-              downstreamNodeIds,
-              createdAt: new Date(),
-              respondedAt: null,
-            },
-          },
-        },
-      )
-      .exec();
+    const paused = await this.executionRepository.setPendingApproval(
+      executionId,
+      {
+        nodeId: taskNodeId,
+        iteration,
+        prompt: interruptMessage,
+        requestedAt: new Date(),
+        interruptType,
+        interruptId,
+        taskTitle: String(payload.task_title || payload.taskTitle || ''),
+        taskDescription,
+        result,
+        payloadJson,
+        resumableActions,
+        ...(blockerRuleId ? { blockerRuleId } : {}),
+        ...(blockerKind ? { blockerKind } : {}),
+        ...(reasonCode ? { reasonCode } : {}),
+        ...(riskLevel ? { riskLevel } : {}),
+        ...(confidence !== undefined ? { confidence } : {}),
+        ...(downstreamNodeIds.length > 0 ? { downstreamNodeIds } : {}),
+        ...(feedbackScopeDefault ? { feedbackScopeDefault } : {}),
+        interruptPayload: payload,
+      },
+      {
+        id: newObjectId(),
+        nodeId: taskNodeId,
+        iteration,
+        interruptId,
+        type: hitlEventType,
+        blockerRuleId: blockerRuleId || null,
+        blockerKind: blockerKind || null,
+        reasonCode: reasonCode || 'runtime_interrupt',
+        riskLevel: riskLevel || 'medium',
+        prompt: interruptMessage,
+        payload,
+        status: 'pending',
+        response: null,
+        downstreamNodeIds,
+        createdAt: new Date(),
+        respondedAt: null,
+      },
+    );
 
-    if (!(updateResult as { modifiedCount?: number; upsertedCount?: number }).modifiedCount) {
+    if (!paused) {
       return;
     }
 

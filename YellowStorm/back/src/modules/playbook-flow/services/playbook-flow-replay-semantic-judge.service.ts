@@ -2,7 +2,7 @@ import { Injectable, Optional } from '@nestjs/common';
 import { LiteLLMConnectionService } from '@modules/models/litellm-connection.service';
 import { LoggerService } from '@modules/logger';
 import { PlaybookFlowAdvisorModelService } from './advisor/playbook-flow-advisor-model.service';
-import type { FlowTaskSemanticMatch, FlowTaskSemanticFinding } from '../schemas/playbook-flow-task-result.schema';
+import type { FlowTaskSemanticMatch, FlowTaskSemanticFinding } from '../models/playbook-flow-task-result.model';
 import type { ReplayPlanningSummary } from '../interfaces/playbook-flow-replay-plan.interface';
 
 type FindingSeverity = FlowTaskSemanticFinding['severity'];

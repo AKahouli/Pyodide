@@ -56,6 +56,21 @@ export interface FlowMailTriggerFiltersData {
   hasAttachments: boolean | null;
 }
 
+/** A mail trigger's `triggerConfig.params`, stored on the flow as the client sent them (no cast). */
+export interface FlowMailTriggerParamsData {
+  enabled?: boolean;
+  mailboxAppKey?: string | null;
+  notificationUrl?: string | null;
+  autoRenewUntil?: string | Date | null;
+  attachmentImportEnabled?: boolean;
+  allowedAttachmentExtensions?: string[];
+  runtimeEnabled?: boolean;
+  subscriptionId?: string | null;
+  subscriptionClientState?: string | null;
+  subscriptionExpiresAt?: string | Date | null;
+  filters?: Partial<FlowMailTriggerFiltersData>;
+}
+
 export interface FlowMailEventLedgerEntryData {
   id: string;
   dedupeKey: string;

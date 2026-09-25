@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { ControlEdge, FlowNode } from '../schemas/playbook-flow.schema';
+import { ControlEdge, FlowNode } from '../models/playbook-flow.model';
 
 /**
  * Builds stable gRPC design requests from persisted playbook state and resolved runtime context.

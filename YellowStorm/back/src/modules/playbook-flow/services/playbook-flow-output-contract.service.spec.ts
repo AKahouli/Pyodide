@@ -1,5 +1,5 @@
 import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
-import { FlowReplayOutputContractType } from '../schemas/playbook-flow-validated-replay.schema';
+import { FlowReplayOutputContractType } from '../models/playbook-flow-validated-replay.model';
 
 describe('PlaybookFlowOutputContractService', () => {
   let service: PlaybookFlowOutputContractService;

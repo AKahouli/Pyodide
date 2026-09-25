@@ -1,5 +1,5 @@
+import { newObjectId } from '@common/postgres';
 import { PlaybookAssistantService } from './playbook-assistant.service';
-import { Types } from 'mongoose';
 
 describe('PlaybookAssistantService.runTurn', () => {
   const createService = (overrides: {
@@ -207,16 +207,16 @@ describe('PlaybookAssistantService.runTurn', () => {
     );
   });
 
-  it('normalizes the runtime Mongoose ObjectId into the execution handoff', async () => {
+  it('hands the execution record id over to the execution handoff', async () => {
     const { service, executionService } = createService();
-    const executionId = new Types.ObjectId();
-    executionService.start.mockResolvedValueOnce({ id: executionId });
+    const executionId = newObjectId();
+    executionService.start.mockResolvedValueOnce({ id: ` ${executionId} ` });
 
     await expect(service.startExecution('playbook-1', 'user-1', {})).resolves.toEqual({
-      executionId: executionId.toHexString(),
+      executionId,
       uiTarget: {
         surface: 'playbook.execution.details',
-        params: { playbookId: 'playbook-1', executionId: executionId.toHexString() },
+        params: { playbookId: 'playbook-1', executionId },
         effects: [{ type: 'focusExecutionStatus' }],
       },
     });

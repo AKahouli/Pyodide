@@ -7,7 +7,7 @@ import { AnalyzeTaskOptimizationDto, AnalyzeWorkflowOptimizationDto, ContinuePla
 import { CreatePlaybookFlowDto } from '../dto/create-playbook-flow.dto';
 import { StartPlaybookFlowExecutionDto } from '../dto/start-playbook-flow-execution.dto';
 import type { PlaybookTaskOptimizationResult } from '../interfaces/playbook-assistant.interface';
-import type { PlaybookAssistantRequest } from '../schemas/playbook-assistant-request.schema';
+import type { PlaybookAssistantRequestRecord } from '../persistence/assistant-request.repository';
 import { FlowAccessService } from '../domain/flow-access.service';
 import { PlaybookFlowExecutionAdvisorService } from '../services/advisor/playbook-flow-execution-advisor.service';
 import { PlaybookFlowIntentConstructionService } from '../services/playbook-flow-intent-construction.service';
@@ -27,7 +27,7 @@ import { ConversationService } from '@modules/conversation/services/conversation
 import { MessageService } from '@modules/conversation/services/message.service';
 import { PLATFORM_COPILOT } from '@modules/agent/constants/platform-copilot.constants';
 import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
-import { Types } from 'mongoose';
+import { isObjectId } from '@common/postgres';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
 import { ConversationPlaybookHandoffService } from '@modules/conversation/services/conversation-playbook-handoff.service';
@@ -462,7 +462,7 @@ export class PlaybookAssistantService {
     const continuationId = dto.continuationId?.trim();
     let requestId: string;
     let assessment: Record<string, unknown> & { status?: string; continuationId?: string | null };
-    let request: PlaybookAssistantRequest;
+    let request: PlaybookAssistantRequestRecord;
     if (continuationId) {
       assessment = (await this.continueClarification(continuationId, actor, {
         answers: dto.answers ?? [],
@@ -899,7 +899,6 @@ export class PlaybookAssistantService {
       const record = execution as { id?: unknown; _id?: unknown };
       const identifier = record.id ?? record._id;
       if (typeof identifier === 'string' && identifier.trim()) return identifier.trim();
-      if (identifier instanceof Types.ObjectId) return identifier.toHexString();
     }
     throw new ServiceUnavailableException(ErrorCode.SERVICE_UNAVAILABLE, 'Execution identifier is unavailable');
   }
@@ -1021,7 +1020,7 @@ export class PlaybookAssistantService {
     ].join('\n');
   }
 
-  private async resolveGenerationWorkspaces(request: PlaybookAssistantRequest): Promise<string[]> {
+  private async resolveGenerationWorkspaces(request: PlaybookAssistantRequestRecord): Promise<string[]> {
     const workspaceIds = request.workspaceDefaultIds ?? [];
     if (workspaceIds.length === 0) return [];
     await this.workspaceShareService.assertUserHasAccess(request.ownerId, workspaceIds);
@@ -1047,7 +1046,7 @@ export class PlaybookAssistantService {
       if (!selector || (selector === 'destination_workspace' && answer.resource.kind !== 'workspace')) {
         throw new ConflictException(ErrorCode.CONFLICT, 'Clarification resource does not match the active question');
       }
-      if (!Types.ObjectId.isValid(answer.resource.id)) {
+      if (!isObjectId(answer.resource.id)) {
         throw new ConflictException(ErrorCode.CONFLICT, 'Clarification resource is invalid');
       }
       if (answer.resource.kind === 'workspace') {

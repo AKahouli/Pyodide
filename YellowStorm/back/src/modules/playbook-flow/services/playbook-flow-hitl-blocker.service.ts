@@ -1,16 +1,15 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { newObjectId } from '@common/postgres';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { BadRequestException, NotFoundException } from '@modules/exceptions';
 import { CreateHitlBlockerDto, NormalizeHitlBlockerDto, UpdateHitlBlockerDto } from '../dto/playbook-flow-hitl.dto';
-import { Flow, FlowDocument } from '../schemas/playbook-flow.schema';
-import { HitlBlockerRule } from '../schemas/playbook-flow-hitl.schema';
+import { HitlBlockerRule } from '../models/playbook-flow-hitl.model';
+import { FlowRepository, type FlowRecord } from '../persistence/flow.repository';
 
 /** Owns workflow and node HITL blocker catalog persistence and deterministic normalization defaults. */
 @Injectable()
 export class PlaybookFlowHitlBlockerService {
-  constructor(@InjectModel(Flow.name) private readonly flowModel: Model<FlowDocument>) {}
+  constructor(private readonly flows: FlowRepository) {}
 
   async listBlockers(flowId: string, ownerId: string): Promise<HitlBlockerRule[]> {
     const flow = await this.findOwnedFlow(flowId, ownerId);
@@ -21,8 +20,7 @@ export class PlaybookFlowHitlBlockerService {
     const flow = await this.findOwnedFlow(flowId, ownerId);
     this.assertScopeConsistency(dto.scope ?? 'workflow', dto.nodeId);
     const blocker = this.buildBlocker(dto);
-    flow.hitlBlockers = [...(flow.hitlBlockers ?? []), blocker];
-    await flow.save();
+    await this.saveBlockers(flow, [...(flow.hitlBlockers ?? []), blocker]);
     return blocker;
   }
 
@@ -37,8 +35,7 @@ export class PlaybookFlowHitlBlockerService {
 
     const updated = { ...blockers[index], ...dto, id: blockerId, updatedAt: new Date() } as HitlBlockerRule;
     blockers[index] = updated;
-    flow.hitlBlockers = blockers;
-    await flow.save();
+    await this.saveBlockers(flow, blockers);
     return updated;
   }
 
@@ -49,8 +46,7 @@ export class PlaybookFlowHitlBlockerService {
     if (nextBlockers.length === blockers.length) {
       throw new NotFoundException(ErrorCode.NOT_FOUND, 'HITL blocker not found');
     }
-    flow.hitlBlockers = nextBlockers;
-    await flow.save();
+    await this.saveBlockers(flow, nextBlockers);
     return { deleted: true };
   }
 
@@ -83,7 +79,7 @@ export class PlaybookFlowHitlBlockerService {
   private buildBlocker(dto: CreateHitlBlockerDto): HitlBlockerRule {
     const now = new Date();
     return {
-      id: new Types.ObjectId().toString(),
+      id: newObjectId(),
       scope: dto.scope ?? 'workflow',
       nodeId: dto.nodeId ?? null,
       enabled: dto.enabled ?? true,
@@ -112,9 +108,15 @@ export class PlaybookFlowHitlBlockerService {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Workflow scope cannot include a nodeId.');
     }
   }
-  private async findOwnedFlow(flowId: string, ownerId: string): Promise<FlowDocument> {
-    const flow = await this.flowModel.findOne({ _id: flowId, ownerId });
+  private async findOwnedFlow(flowId: string, ownerId: string): Promise<FlowRecord> {
+    const flow = await this.flows.findOwned(flowId, ownerId);
     if (!flow) throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook not found');
     return flow;
+  }
+
+  /** Overwrites the whole blocker list, as saving the document did. */
+  private async saveBlockers(flow: FlowRecord, blockers: HitlBlockerRule[]): Promise<void> {
+    const saved = await this.flows.updateFields(flow.id, { hitlBlockers: blockers }, { ownerId: flow.ownerId });
+    if (!saved) throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook not found');
   }
 }

@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Min, ValidateNested } from 'class-validator';
-import { FlowReplayValidationMode } from '../schemas/playbook-flow-validated-replay.schema';
+import { FlowReplayValidationMode } from '../models/playbook-flow-validated-replay.model';
 import { FlowReplayConfigDto } from './flow-replay-config.dto';
 
 const VALIDATE_REPLAY_MODES = [

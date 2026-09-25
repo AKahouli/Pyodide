@@ -1,6 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
 
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import {
@@ -9,7 +7,7 @@ import {
   ForbiddenException,
   NotFoundException,
 } from '../../exceptions/exceptions/http.exceptions';
-import { Flow, FlowDocument } from '../schemas/playbook-flow.schema';
+import { FlowRepository, type FlowRecord } from '../persistence/flow.repository';
 import { PlaybookShareService } from '../services/playbook-share.service';
 import type { PlaybookPermissionLevel } from '../interfaces/playbook-share.interface';
 
@@ -20,23 +18,19 @@ import type { PlaybookPermissionLevel } from '../interfaces/playbook-share.inter
  */
 export class FlowAccessService {
   constructor(
-    @InjectModel(Flow.name) private readonly flowModel: Model<FlowDocument>,
+    private readonly flows: FlowRepository,
     private readonly playbookShareService: PlaybookShareService,
   ) {}
 
-  async findById(flowId: string): Promise<FlowDocument> {
-    if (!Types.ObjectId.isValid(flowId)) {
-      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
-    }
-
-    const flow = await this.flowModel.findById(flowId);
+  async findById(flowId: string): Promise<FlowRecord> {
+    const flow = await this.flows.findById(flowId);
     if (!flow) {
       throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
     }
     return flow;
   }
 
-  async findOwnedFlow(flowId: string, ownerId: string): Promise<FlowDocument> {
+  async findOwnedFlow(flowId: string, ownerId: string): Promise<FlowRecord> {
     const flow = await this.findById(flowId);
     if (String(flow.ownerId) !== String(ownerId)) {
       throw new ForbiddenException(ErrorCode.FORBIDDEN, 'You do not have access to this flow');
@@ -44,7 +38,7 @@ export class FlowAccessService {
     return flow;
   }
 
-  async findAccessibleFlow(flowId: string, userId: string, permission: PlaybookPermissionLevel): Promise<FlowDocument> {
+  async findAccessibleFlow(flowId: string, userId: string, permission: PlaybookPermissionLevel): Promise<FlowRecord> {
     const flow = await this.findById(flowId);
     if (String(flow.ownerId) === String(userId)) {
       return flow;

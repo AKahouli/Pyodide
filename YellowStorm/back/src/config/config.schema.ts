@@ -130,7 +130,6 @@ export const configValidationSchema = Joi.object({
   TRUST_PROXY: Joi.string().allow('').default(''),
 
   // MongoDB
-  MONGODB_URI: Joi.string().default('mongodb://localhost:27017/yellostorm'),
   MONGODB_MAX_POOL_SIZE: Joi.number().min(1).max(100).default(10),
   MONGODB_MIN_POOL_SIZE: Joi.number().min(0).max(50).default(2),
   MONGODB_SERVER_SELECTION_TIMEOUT: Joi.number().min(1000).default(5000),
