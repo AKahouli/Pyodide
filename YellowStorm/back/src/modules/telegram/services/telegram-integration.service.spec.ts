@@ -24,11 +24,13 @@ describe('TelegramIntegrationService', () => {
     decrypt: jest.fn((value: string) => value.replace('encrypted:', '')),
   };
 
+  const defaultConfigGet = (key: string, defaultValue?: unknown) => {
+    if (key === 'app.backendUrl') return 'https://api.example.com';
+    return defaultValue;
+  };
+
   const mockConfigService = {
-    get: jest.fn((key: string, defaultValue?: unknown) => {
-      if (key === 'app.backendUrl') return 'https://api.example.com';
-      return defaultValue;
-    }),
+    get: jest.fn(defaultConfigGet),
   };
 
   const mockAgentService = {
@@ -73,6 +75,10 @@ describe('TelegramIntegrationService', () => {
     }).compile();
 
     service = module.get<TelegramIntegrationService>(TelegramIntegrationService);
+  });
+
+  afterEach(() => {
+    mockConfigService.get.mockImplementation(defaultConfigGet);
   });
 
   it('auto-registers webhook and returns link code when enabling integration', async () => {
@@ -145,5 +151,44 @@ describe('TelegramIntegrationService', () => {
     expect(await service.markWebhookUpdate(integration.id, 10)).toBe('processed');
     expect(await service.markWebhookUpdate(integration.id, 10)).toBe('duplicate');
     expect(await service.markWebhookUpdate(integration.id, 11)).toBe('processed');
+  });
+
+  it('re-registers webhooks for enabled integrations on boot in webhook mode', async () => {
+    const first = integrationStore.seed({ agentId: AGENT_ID });
+    const second = integrationStore.seed({ agentId: '507f1f77bcf86cd799439012' });
+
+    await service.syncWebhooksOnBoot();
+
+    expect(mockTelegramApiService.setWebhook).toHaveBeenCalledTimes(2);
+    expect(mockTelegramApiService.setWebhook).toHaveBeenCalledWith(
+      'bot-token',
+      `https://api.example.com/api/v1/integrations/telegram/webhook/${first.id}`,
+      first.webhookSecret,
+    );
+  });
+
+  it('skips webhook boot sync when polling mode is enabled', async () => {
+    integrationStore.seed({ agentId: AGENT_ID });
+    mockConfigService.get.mockImplementation((key: string, defaultValue?: unknown) => {
+      if (key === 'telegram.pollingEnabled') return true;
+      if (key === 'app.backendUrl') return 'https://api.example.com';
+      return defaultValue;
+    });
+
+    await service.syncWebhooksOnBoot();
+
+    expect(mockTelegramApiService.setWebhook).not.toHaveBeenCalled();
+  });
+
+  it('skips webhook boot sync when BACKEND_URL points to loopback', async () => {
+    integrationStore.seed({ agentId: AGENT_ID });
+    mockConfigService.get.mockImplementation((key: string, defaultValue?: unknown) => {
+      if (key === 'app.backendUrl') return 'http://localhost:3000';
+      return defaultValue;
+    });
+
+    await service.syncWebhooksOnBoot();
+
+    expect(mockTelegramApiService.setWebhook).not.toHaveBeenCalled();
   });
 });

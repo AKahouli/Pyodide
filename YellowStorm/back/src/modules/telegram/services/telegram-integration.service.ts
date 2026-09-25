@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { CryptoService } from '@common/services/crypto.service';
@@ -24,7 +24,7 @@ import { TelegramLinkCodeService } from './telegram-link-code.service';
 import { TELEGRAM_INTEGRATION_STORE, type TelegramIntegrationRow, type TelegramIntegrationStore } from '../persistence/telegram.store';
 
 @Injectable()
-export class TelegramIntegrationService {
+export class TelegramIntegrationService implements OnModuleInit {
   constructor(
     @Inject(TELEGRAM_INTEGRATION_STORE)
     private readonly integrationStore: TelegramIntegrationStore,
@@ -36,6 +36,59 @@ export class TelegramIntegrationService {
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(TelegramIntegrationService.name);
+  }
+
+  onModuleInit(): void {
+    // Deployed environments use webhooks (polling is the local fallback).
+    // Re-register on boot so a fresh container picks up existing integrations
+    // without re-saving each one. Fire-and-forget: never block or crash startup
+    // when Telegram is unreachable.
+    void this.syncWebhooksOnBoot();
+  }
+
+  async syncWebhooksOnBoot(): Promise<void> {
+    if (!this.configService.get<boolean>('telegram.enabled', true)) return;
+    if (this.configService.get<boolean>('telegram.pollingEnabled', false)) {
+      this.logger.log('Telegram webhook boot sync skipped: polling mode enabled');
+      return;
+    }
+    const backendUrl = stripTrailingChar(this.configService.get<string>('app.backendUrl', ''), '/');
+    if (!backendUrl) {
+      this.logger.warn('Telegram webhook boot sync skipped: BACKEND_URL missing');
+      return;
+    }
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(backendUrl)) {
+      this.logger.warn('Telegram webhook boot sync skipped: BACKEND_URL points to loopback', {
+        backendUrl,
+      });
+      return;
+    }
+
+    try {
+      const integrations = await this.integrationStore.listEnabled();
+      if (integrations.length === 0) return;
+
+      let registered = 0;
+      for (const integration of integrations) {
+        try {
+          await this.registerWebhook(integration);
+          registered += 1;
+        } catch (error) {
+          this.logger.warn('Telegram webhook boot registration failed for integration', {
+            integrationId: integration.id,
+            error: (error as Error).message,
+          });
+        }
+      }
+      this.logger.log('Telegram webhook boot sync completed', {
+        total: integrations.length,
+        registered,
+      });
+    } catch (error) {
+      this.logger.error('Telegram webhook boot sync crashed', {
+        error: (error as Error).message,
+      });
+    }
   }
 
   async getByAgentForUser(
@@ -232,40 +285,55 @@ export class TelegramIntegrationService {
     });
 
     if (integration.enabled && integration.encryptedBotToken) {
-      try {
-        const webhookUrl = await this.registerWebhook(integration);
-        status = TelegramIntegrationStatus.ACTIVE;
-        errorMessage = null;
-        webhookRegistered = true;
-        messageKey = 'webhook_success';
-
-        this.logger.log('Telegram webhook registered successfully', {
+      if (this.configService.get<boolean>('telegram.pollingEnabled', false)) {
+        this.logger.log('Telegram polling mode enabled, skipping webhook registration', {
           integrationId: integration.id,
           agentId: integration.agentId,
-          webhookUrl,
           botUsername: integration.botUsername,
         });
+        status = TelegramIntegrationStatus.ACTIVE;
+        errorMessage = null;
+        messageKey = 'polling';
 
         const linkCodeResult = await this.linkCodeService.generateForIntegration(integration);
         linkCode = linkCodeResult.code;
         linkCodeExpiresAt = linkCodeResult.expiresAt;
+      } else {
+        try {
+          const webhookUrl = await this.registerWebhook(integration);
+          status = TelegramIntegrationStatus.ACTIVE;
+          errorMessage = null;
+          webhookRegistered = true;
+          messageKey = 'webhook_success';
 
-        this.logger.log('Telegram link code generated for chat binding', {
-          integrationId: integration.id,
-          agentId: integration.agentId,
-          linkCode,
-          expiresAt: linkCodeExpiresAt,
-        });
-      } catch (error) {
-        status = TelegramIntegrationStatus.ERROR;
-        errorMessage = (error as Error).message;
-        messageKey = 'webhook_failed';
-        this.logger.warn('Telegram webhook auto-registration failed during upsert', {
-          integrationId: integration.id,
-          agentId: integration.agentId,
-          botUsername: integration.botUsername,
-          error: (error as Error).message,
-        });
+          this.logger.log('Telegram webhook registered successfully', {
+            integrationId: integration.id,
+            agentId: integration.agentId,
+            webhookUrl,
+            botUsername: integration.botUsername,
+          });
+
+          const linkCodeResult = await this.linkCodeService.generateForIntegration(integration);
+          linkCode = linkCodeResult.code;
+          linkCodeExpiresAt = linkCodeResult.expiresAt;
+
+          this.logger.log('Telegram link code generated for chat binding', {
+            integrationId: integration.id,
+            agentId: integration.agentId,
+            linkCode,
+            expiresAt: linkCodeExpiresAt,
+          });
+        } catch (error) {
+          status = TelegramIntegrationStatus.ERROR;
+          errorMessage = (error as Error).message;
+          messageKey = 'webhook_failed';
+          this.logger.warn('Telegram webhook auto-registration failed during upsert', {
+            integrationId: integration.id,
+            agentId: integration.agentId,
+            botUsername: integration.botUsername,
+            error: (error as Error).message,
+          });
+        }
       }
     } else if (!integration.enabled && integration.encryptedBotToken) {
       this.logger.log('Telegram integration disabled, clearing webhook', {
