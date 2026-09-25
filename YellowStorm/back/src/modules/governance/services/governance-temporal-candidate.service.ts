@@ -26,7 +26,7 @@ export class GovernanceTemporalCandidateService {
   ) {}
 
   async list(actorId: string, programId: string, documentId: string) { await this.documentService.findRecord(actorId, programId, documentId); return this.records.list(documentId); }
-  async status(actorId: string, programId: string, documentId: string) { await this.documentService.findRecord(actorId, programId, documentId); const job = await this.jobs.latestForDocument(documentId); return job ? { id: job._id.toString(), jobType: job.jobType, status: job.status, attempts: job.attempts, error: job.error } : null; }
+  async status(actorId: string, programId: string, documentId: string) { await this.documentService.findRecord(actorId, programId, documentId); const job = await this.jobs.latestForDocument(documentId); return job ? { id: job.id, jobType: job.jobType, status: job.status, attempts: job.attempts, error: job.error } : null; }
 
   async run(actorId: string, programId: string, documentId: string) {
     const governance = await this.documentService.findRecord(actorId, programId, documentId);

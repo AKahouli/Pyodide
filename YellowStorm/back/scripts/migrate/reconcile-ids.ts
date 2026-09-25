@@ -86,6 +86,12 @@ const NEW_MODULE_PAIRS: KeyedPair[] = [
   { mongo: 'scenarios', pg: 'agent_evaluation.scenarios', lowerCase: true },
   { mongo: 'evaluations', pg: 'agent_evaluation.evaluations', lowerCase: true },
   { mongo: 'evaluation_settings', pg: 'agent_evaluation.settings', lowerCase: true },
+  { mongo: 'knowledge_extraction_jobs', pg: 'governance.knowledge_extraction_jobs', lowerCase: true },
+  { mongo: 'temporal_candidate_records', pg: 'governance.temporal_candidate_records', lowerCase: true },
+  { mongo: 'knowledge_alerts', pg: 'governance.knowledge_alerts', lowerCase: true },
+  { mongo: 'knowledge_assessments', pg: 'governance.knowledge_assessments', lowerCase: true },
+  { mongo: 'knowledge_recommendations', pg: 'governance.knowledge_recommendations', lowerCase: true },
+  { mongo: 'metadata_candidates', pg: 'governance.metadata_candidates', lowerCase: true },
 ];
 
 const ALL_PAIRS: KeyedPair[] = [

@@ -16,3 +16,4 @@ export * from './channels.schema';
 export * from './conversation-v2.schema';
 export * from './app-runtime.schema';
 export * from './agent-evaluation.schema';
+export * from './knowledge-intelligence.schema';

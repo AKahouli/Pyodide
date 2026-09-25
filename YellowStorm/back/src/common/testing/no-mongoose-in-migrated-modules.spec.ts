@@ -20,7 +20,6 @@ const FORBIDDEN = [
 const ALLOWLIST: Array<[string, string]> = [
   ['modules/playbook-flow/', 'P5 playbook-flow'],
   ['modules/worky/', 'P7 worky'],
-  ['modules/knowledge-intelligence/', 'P6 knowledge-intelligence'],
   ['modules/classifier/', 'P6 classifier'],
   ['modules/integration-events/', 'P8 integration-events'],
   ['modules/logger/', 'P9 logger'],
