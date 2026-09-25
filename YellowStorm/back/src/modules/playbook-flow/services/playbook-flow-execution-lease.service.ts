@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleDestroy, Optional } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Model } from 'mongoose';
+import { SystemService } from '@modules/system/system.service';
 import {
   FlowExecutionLease,
   FlowExecutionLeaseDocument,
@@ -38,11 +39,12 @@ export class PlaybookFlowExecutionLeaseService implements OnModuleDestroy {
     @InjectModel(FlowExecutionLease.name)
     private readonly leaseModel: Model<FlowExecutionLeaseDocument>,
     private readonly configService: ConfigService,
+    private readonly systemService: SystemService,
     @Optional() private readonly settingsResolver?: PlaybookExecutionSettingsResolverService,
   ) {}
 
-  isEnabled(): boolean {
-    return this.configService.get<boolean>('playbook-flow.executionLeaseEnabled', false);
+  async isEnabled(): Promise<boolean> {
+    return (await this.systemService.getPlaybookSettings()).playbookExecution.executionLeaseEnabled;
   }
 
   /**
@@ -55,7 +57,7 @@ export class PlaybookFlowExecutionLeaseService implements OnModuleDestroy {
     flowId: string,
     options: LeaseAcquireOptions = {},
   ): Promise<LeaseAcquireResult> {
-    if (!this.isEnabled()) {
+    if (!(await this.isEnabled())) {
       return { acquired: true };
     }
 
@@ -77,14 +79,14 @@ export class PlaybookFlowExecutionLeaseService implements OnModuleDestroy {
   }
 
   async refresh(executionId: string): Promise<void> {
-    if (!this.isEnabled()) return;
+    if (!(await this.isEnabled())) return;
     await this.leaseModel
       .updateMany({ executionId }, { expiresAt: this.buildExpiryDate() })
       .exec();
   }
 
   async hasActiveLease(executionId: string): Promise<boolean> {
-    if (!this.isEnabled()) {
+    if (!(await this.isEnabled())) {
       return false;
     }
 
@@ -97,29 +99,31 @@ export class PlaybookFlowExecutionLeaseService implements OnModuleDestroy {
 
   async release(executionId: string): Promise<void> {
     this.stopHeartbeat(executionId);
-    if (!this.isEnabled()) return;
+    if (!(await this.isEnabled())) return;
     await this.leaseModel.deleteMany({ executionId }).exec();
   }
 
   startHeartbeat(executionId: string): void {
-    if (!this.isEnabled()) return;
-    this.stopHeartbeat(executionId);
+    void this.isEnabled().then((enabled) => {
+      if (!enabled) return;
+      this.stopHeartbeat(executionId);
 
-    const intervalMs = this.configService.get<number>('playbook-flow.executionLeaseHeartbeatMs', 30_000);
-    const timer = setInterval(() => {
-      void this.refresh(executionId).catch((err) => {
-        this.logger.error(
-          `Failed to refresh execution lease for ${executionId}`,
-          err instanceof Error ? err.stack : undefined,
-        );
-      });
-    }, intervalMs);
-    timer.unref?.();
-    this.heartbeatTimers.set(executionId, timer);
+      const intervalMs = this.configService.get<number>('playbook-flow.executionLeaseHeartbeatMs', 30_000);
+      const timer = setInterval(() => {
+        void this.refresh(executionId).catch((err) => {
+          this.logger.error(
+            `Failed to refresh execution lease for ${executionId}`,
+            err instanceof Error ? err.stack : undefined,
+          );
+        });
+      }, intervalMs);
+      timer.unref?.();
+      this.heartbeatTimers.set(executionId, timer);
+    });
   }
 
   async cleanupExpiredLeases(): Promise<void> {
-    if (!this.isEnabled()) return;
+    if (!(await this.isEnabled())) return;
     await this.leaseModel.deleteMany({ expiresAt: { $lte: new Date() } }).exec();
   }
 
@@ -130,23 +134,27 @@ export class PlaybookFlowExecutionLeaseService implements OnModuleDestroy {
   }
 
   private async buildScopes(ownerId: string, flowId: string, options: LeaseAcquireOptions): Promise<LeaseScope[]> {
-    const effective = this.settingsResolver ? await this.settingsResolver.resolve() : null;
+    // Resolver (when present) applies per-execution overrides; otherwise the
+    // stored admin settings are the effective values.
+    const effective = this.settingsResolver
+      ? await this.settingsResolver.resolve()
+      : (await this.systemService.getPlaybookSettings()).playbookExecution;
     const scopes: LeaseScope[] = [
       {
         key: 'execution:global',
-        limit: effective?.availableCapacity ?? this.configService.get<number>('playbook-flow.maxConcurrentGlobalExecutions', 50),
+        limit: effective.availableCapacity,
         reason: 'global_limit',
         type: 'global',
       },
       {
         key: `execution:owner:${ownerId}`,
-        limit: effective?.maxConcurrentPerUser ?? this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10),
+        limit: effective.maxConcurrentPerUser,
         reason: 'owner_limit',
         type: 'owner',
       },
       {
         key: `execution:flow:${flowId}`,
-        limit: effective?.maxConcurrentPerFlow ?? this.configService.get<number>('playbook-flow.maxConcurrentPerFlow', 5),
+        limit: effective.maxConcurrentPerFlow,
         reason: 'flow_limit',
         type: 'flow',
       },
@@ -155,7 +163,7 @@ export class PlaybookFlowExecutionLeaseService implements OnModuleDestroy {
     if (options.providerKey) {
       scopes.push({
         key: `execution:provider:${options.providerKey}`,
-        limit: effective?.maxConcurrentPerProvider ?? this.configService.get<number>('playbook-flow.maxConcurrentPerProvider', 25),
+        limit: effective.maxConcurrentPerProvider,
         reason: 'provider_limit',
         type: 'provider' as FlowExecutionLease['scopeType'],
       });
@@ -164,7 +172,7 @@ export class PlaybookFlowExecutionLeaseService implements OnModuleDestroy {
     if (options.modelKey) {
       scopes.push({
         key: `execution:model:${options.modelKey}`,
-        limit: effective?.maxConcurrentPerModel ?? this.configService.get<number>('playbook-flow.maxConcurrentPerModel', 10),
+        limit: effective.maxConcurrentPerModel,
         reason: 'model_limit',
         type: 'model' as FlowExecutionLease['scopeType'],
       });

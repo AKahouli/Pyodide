@@ -19,6 +19,7 @@ import { PlaybookFlowValidatorService } from './playbook-flow-validator.service'
 import { PlaybookFlowStreamEventsService } from './playbook-flow-stream-events.service';
 import { PlaybookFlowExecutionAdvisorService } from './advisor/playbook-flow-execution-advisor.service';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { DEFAULT_PLAYBOOK_EXECUTION_SETTINGS } from '@modules/system/interfaces/playbook-settings.interface';
 import {
   NotFoundException,
   BadRequestException,
@@ -634,7 +635,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   }
 
   private async recoverStaleRunningExecutions(): Promise<void> {
-    if (!this.executionLeaseService?.isEnabled()) return;
+    if (!(await this.executionLeaseService?.isEnabled())) return;
 
     const startupTimeoutMs = this.configService.get<number>('playbook-flow.executionStartupTimeoutMs', 180_000);
     const staleBefore = new Date(Date.now() - startupTimeoutMs);
@@ -672,10 +673,11 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   }
 
   private async executionLeaseServiceHasLease(executionId: string): Promise<boolean> {
-    if (!this.executionLeaseService?.isEnabled()) {
+    const leaseService = this.executionLeaseService;
+    if (!leaseService || !(await leaseService.isEnabled())) {
       return false;
     }
-    return this.executionLeaseService.hasActiveLease(executionId);
+    return leaseService.hasActiveLease(executionId);
   }
 
   private async releaseExecutionLease(executionId: string): Promise<void> {
@@ -841,9 +843,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       ? await this.executionSettingsResolver.resolve(flow.settings)
       : null;
     const maxConcurrent = effectiveExecutionSettings?.maxConcurrentPerUser
-      ?? this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
+      ?? DEFAULT_PLAYBOOK_EXECUTION_SETTINGS.maxConcurrentPerUser;
     const maxDepth = effectiveExecutionSettings?.executionQueueMaxDepth
-      ?? this.configService.get<number>('playbook-flow.executionQueueMaxDepth', 50);
+      ?? DEFAULT_PLAYBOOK_EXECUTION_SETTINGS.executionQueueMaxDepth;
     const recursionLimit = effectiveExecutionSettings
       ? Math.min(flow.settings?.recursionLimit || effectiveExecutionSettings.recursionLimitDefault, effectiveExecutionSettings.recursionLimitMax)
       : flow.settings?.recursionLimit || 25;
@@ -1916,7 +1918,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   private async drainQueue(ownerId: string): Promise<void> {
     const maxConcurrent = this.executionSettingsResolver
       ? (await this.executionSettingsResolver.resolve()).maxConcurrentPerUser
-      : this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
+      : DEFAULT_PLAYBOOK_EXECUTION_SETTINGS.maxConcurrentPerUser;
     if (!this.isRuntimeAvailable()) return;
 
     while (true) {
@@ -2254,9 +2256,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     );
 
     const maxConcurrent = effectiveExecutionSettings?.maxConcurrentPerUser
-      ?? this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
+      ?? DEFAULT_PLAYBOOK_EXECUTION_SETTINGS.maxConcurrentPerUser;
     const maxDepth = effectiveExecutionSettings?.executionQueueMaxDepth
-      ?? this.configService.get<number>('playbook-flow.executionQueueMaxDepth', 50);
+      ?? DEFAULT_PLAYBOOK_EXECUTION_SETTINGS.executionQueueMaxDepth;
     await this.queueService.admit(
       ownerId,
       (newExecution as any).id || (newExecution as any)._id?.toString(),

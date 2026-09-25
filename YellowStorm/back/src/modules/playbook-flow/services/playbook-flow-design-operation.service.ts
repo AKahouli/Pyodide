@@ -1,9 +1,9 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { ConfigService } from '@nestjs/config';
 import { Model, Types } from 'mongoose';
 import { BadRequestException, NotFoundException, ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { SystemService } from '@modules/system/system.service';
 import {
   FlowDesignOperation,
   FlowDesignOperationDocument,
@@ -25,23 +25,23 @@ export class PlaybookFlowDesignOperationService implements OnModuleInit {
   constructor(
     @InjectModel(FlowDesignOperation.name)
     private readonly operationModel: Model<FlowDesignOperationDocument>,
-    private readonly configService: ConfigService,
+    private readonly systemService: SystemService,
     private readonly flowService: PlaybookFlowService,
     private readonly designService: PlaybookFlowDesignService,
   ) {}
 
-  onModuleInit(): void {
-    if (this.isEnabled()) {
+  async onModuleInit(): Promise<void> {
+    if (await this.isEnabled()) {
       this.scheduleDrain();
     }
   }
 
-  isEnabled(): boolean {
-    return this.configService.get<boolean>('playbook-flow.asyncDesignEnabled', false);
+  async isEnabled(): Promise<boolean> {
+    return (await this.systemService.getPlaybookSettings()).playbookExecution.asyncDesignEnabled;
   }
 
   async enqueue(userId: string, flowId: string, query: string, idempotencyKey?: string): Promise<Record<string, unknown>> {
-    if (!this.isEnabled()) {
+    if (!(await this.isEnabled())) {
       throw new ServiceUnavailableException(ErrorCode.SERVICE_UNAVAILABLE, 'Asynchronous design operations are disabled');
     }
     if (!query.trim()) {
@@ -107,14 +107,17 @@ export class PlaybookFlowDesignOperationService implements OnModuleInit {
   }
 
   private scheduleDrain(): void {
-    if (this.dispatchTimer || !this.isEnabled()) return;
-    this.dispatchTimer = setTimeout(() => {
-      this.dispatchTimer = null;
-      this.drain().catch((err) => {
-        this.logger.error('Design operation drain failed', err instanceof Error ? err.stack : undefined);
-      });
-    }, 250);
-    this.dispatchTimer.unref?.();
+    if (this.dispatchTimer) return;
+    void this.isEnabled().then((enabled) => {
+      if (!enabled || this.dispatchTimer) return;
+      this.dispatchTimer = setTimeout(() => {
+        this.dispatchTimer = null;
+        this.drain().catch((err) => {
+          this.logger.error('Design operation drain failed', err instanceof Error ? err.stack : undefined);
+        });
+      }, 250);
+      this.dispatchTimer.unref?.();
+    });
   }
 
   private async drain(): Promise<void> {
@@ -126,15 +129,15 @@ export class PlaybookFlowDesignOperationService implements OnModuleInit {
   }
 
   private async hasCapacity(): Promise<boolean> {
-    const globalLimit = this.configService.get<number>('playbook-flow.maxConcurrentGlobalDesignOperations', 10);
+    const { playbookExecution } = await this.systemService.getPlaybookSettings();
     const activeGlobal = await this.operationModel.countDocuments({ status: { $in: ACTIVE_DESIGN_STATUSES } });
-    return activeGlobal < globalLimit;
+    return activeGlobal < playbookExecution.maxConcurrentGlobalDesignOperations;
   }
 
   private async claimNext(): Promise<FlowDesignOperationDocument | null> {
     const queued = await this.operationModel.find({ status: 'queued' }).sort({ createdAt: 1 }).limit(20).exec();
 
-    const userLimit = this.configService.get<number>('playbook-flow.maxConcurrentUserDesignOperations', 3);
+    const userLimit = (await this.systemService.getPlaybookSettings()).playbookExecution.maxConcurrentUserDesignOperations;
     for (const next of queued) {
       const activeForUser = await this.operationModel.countDocuments({
         ownerId: next.ownerId,

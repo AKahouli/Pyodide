@@ -1,4 +1,5 @@
 import { BadRequestException } from '@modules/exceptions';
+import { DEFAULT_ADMIN_PLAYBOOK_SETTINGS } from '@modules/system/interfaces/playbook-settings.interface';
 import { PlaybookFlowDesignOperationService } from './playbook-flow-design-operation.service';
 
 function createExecMock<T>(value: T) {
@@ -15,10 +16,9 @@ function createService(overrides: Partial<Record<string, any>> = {}) {
     updateOne: jest.fn().mockReturnValue(createExecMock({ modifiedCount: 1 })),
     ...overrides.operationModel,
   };
-  const configService = {
-    get: jest.fn((key: string, fallback: unknown) => {
-      if (key === 'playbook-flow.asyncDesignEnabled') return true;
-      return fallback;
+  const systemService = {
+    getPlaybookSettings: jest.fn().mockResolvedValue({
+      playbookExecution: { ...DEFAULT_ADMIN_PLAYBOOK_SETTINGS.playbookExecution, asyncDesignEnabled: true },
     }),
   };
   const flowService = {
@@ -36,12 +36,12 @@ function createService(overrides: Partial<Record<string, any>> = {}) {
 
   const service = new PlaybookFlowDesignOperationService(
     operationModel as any,
-    configService as any,
+    systemService as any,
     flowService as any,
     designService as any,
   );
 
-  return { service, operationModel, flowService, designService };
+  return { service, operationModel, flowService, designService, systemService };
 }
 
 describe('PlaybookFlowDesignOperationService', () => {
@@ -98,7 +98,9 @@ describe('PlaybookFlowDesignOperationService', () => {
     const { operationModel, flowService, designService } = createService();
     const service = new PlaybookFlowDesignOperationService(
       operationModel as any,
-      { get: jest.fn((key: string, fallback: unknown) => key === 'playbook-flow.asyncDesignEnabled' ? false : fallback) } as any,
+      { getPlaybookSettings: jest.fn().mockResolvedValue({
+        playbookExecution: { ...DEFAULT_ADMIN_PLAYBOOK_SETTINGS.playbookExecution, asyncDesignEnabled: false },
+      }) } as any,
       flowService as any,
       designService as any,
     );

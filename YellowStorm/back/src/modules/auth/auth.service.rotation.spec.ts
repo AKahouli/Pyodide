@@ -62,6 +62,11 @@ describe('AuthService.refreshTokens atomic rotation (F03)', () => {
       {} as never, // usageService
       { getUserPermissions: jest.fn().mockResolvedValue(['p']), getUserRoleNames: jest.fn().mockResolvedValue(['r']) } as never, // authorizationService
       { getLoginSettingsSync: () => ({ accessExpiry: '15m', refreshExpiry: '7d' }) } as never, // systemService
+      { getSettings: jest.fn().mockResolvedValue({
+        throttle: { limit: 100, windowSeconds: 60 },
+        auth: { maxSessionsPerUser: 10 },
+        documentUpload: { maxFileSizeMb: 50, maxFilesPerUpload: 10, allowedMimeTypes: [] },
+      }) } as never, // platformSettings
       {} as never, // workspaceInitializer
       { ensureForUser: jest.fn() } as never, // humainAgentService
     );

@@ -32,6 +32,12 @@ export class PgSystemSettingStore implements SystemSettingStore {
       .where(inArray(schema.catalogSystemSettings.key, keys));
   }
 
+  async listAll(): Promise<SystemSettingRow[]> {
+    return this.q
+      .select({ key: schema.catalogSystemSettings.key, value: schema.catalogSystemSettings.value, updatedAt: schema.catalogSystemSettings.updatedAt })
+      .from(schema.catalogSystemSettings);
+  }
+
   async upsert(key: string, value: unknown): Promise<SystemSettingRow> {
     const [row] = await this.q
       .insert(schema.catalogSystemSettings)

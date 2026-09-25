@@ -126,6 +126,13 @@ export const API_ENDPOINTS = {
     base: '/admin/playbook-settings',
     plannerAgents: '/admin/playbook-settings/planner-agents',
   },
+  adminPlatformSettings: {
+    base: '/admin/platform-settings',
+  },
+  adminSystemSettings: {
+    export: '/admin/system-settings/export',
+    import: '/admin/system-settings/import',
+  },
   adminGuardrails: {
     base: '/admin/guardrails',
   },

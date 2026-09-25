@@ -2,6 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { PlaybookFlowExecutionLeaseService } from './playbook-flow-execution-lease.service';
+import { SystemService } from '@modules/system/system.service';
+import { DEFAULT_ADMIN_PLAYBOOK_SETTINGS } from '@modules/system/interfaces/playbook-settings.interface';
 
 describe('PlaybookFlowExecutionLeaseService', () => {
   let service: PlaybookFlowExecutionLeaseService;
@@ -64,14 +66,24 @@ describe('PlaybookFlowExecutionLeaseService', () => {
           useValue: {
             get: jest.fn((key: string, fallback: unknown) => {
               const values: Record<string, unknown> = {
-                'playbook-flow.executionLeaseEnabled': true,
-                'playbook-flow.maxConcurrentGlobalExecutions': 2,
-                'playbook-flow.maxConcurrentPerUser': 1,
-                'playbook-flow.maxConcurrentPerFlow': 1,
                 'playbook-flow.executionLeaseTtlMs': 60_000,
                 'playbook-flow.executionLeaseHeartbeatMs': 30_000,
               };
               return key in values ? values[key] : fallback;
+            }),
+          },
+        },
+        {
+          provide: SystemService,
+          useValue: {
+            getPlaybookSettings: jest.fn().mockResolvedValue({
+              playbookExecution: {
+                ...DEFAULT_ADMIN_PLAYBOOK_SETTINGS.playbookExecution,
+                executionLeaseEnabled: true,
+                availableCapacity: 2,
+                maxConcurrentPerUser: 1,
+                maxConcurrentPerFlow: 1,
+              },
             }),
           },
         },

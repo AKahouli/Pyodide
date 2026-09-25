@@ -1,7 +1,6 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, UseGuards, Logger, Inject, Res, Headers, DefaultValuePipe, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Param, Body, Query, UseGuards, Logger, Res, Headers, DefaultValuePipe, ParseIntPipe } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
-import { ConfigType } from '@nestjs/config';
 import { PlaybookFlowService } from '../services/playbook-flow.service';
 import { PlaybookFlowDesignService } from '../services/playbook-flow-design.service';
 import { PlaybookFlowDesignOperationService } from '../services/playbook-flow-design-operation.service';
@@ -18,7 +17,7 @@ import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import { RequirePermissions } from '@modules/authorization/decorators/require-permissions.decorator';
 import { PermissionsGuard } from '@modules/authorization/guards/permissions.guard';
 import { Permissions } from '@modules/authorization/constants/permissions';
-import playbookFlowConfig from '@config/playbook-flow.config';
+import { SystemService } from '@modules/system/system.service';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { PlaybookAssistantService } from '../assistant/playbook-assistant.service';
@@ -44,8 +43,7 @@ export class PlaybookFlowController {
     private readonly playbookAssistantService: PlaybookAssistantService,
     private readonly playbookInputContractService: PlaybookInputContractService,
     private readonly artifactService: PlaybookFlowArtifactService,
-    @Inject(playbookFlowConfig.KEY)
-    private readonly playbookFlowSettings: ConfigType<typeof playbookFlowConfig>,
+    private readonly systemService: SystemService,
   ) {}
 
   @Post()
@@ -122,7 +120,7 @@ export class PlaybookFlowController {
     @Param('id') id: string,
     @Body() dto: PatchPlaybookFlowDeltaDto,
   ) {
-    if (!this.playbookFlowSettings.deltaPatchEnabled) {
+    if (!(await this.systemService.getPlaybookSettings()).playbookExecution.deltaPatchEnabled) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Playbook delta patch is disabled.');
     }
 

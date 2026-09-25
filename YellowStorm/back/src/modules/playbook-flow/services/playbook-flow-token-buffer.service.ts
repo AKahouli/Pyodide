@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { FlowTaskResult, FlowTaskResultDocument } from '../schemas/playbook-flow-task-result.schema';
+import { SystemService } from '@modules/system/system.service';
 import { PlaybookFlowStreamEventsService } from './playbook-flow-stream-events.service';
 import { PlaybookTokenStreamRedactor } from '../utils/playbook-artifact';
 
@@ -34,11 +35,12 @@ export class PlaybookFlowTokenBufferService implements OnModuleDestroy {
     @InjectModel(FlowTaskResult.name)
     private readonly taskResultModel: Model<FlowTaskResultDocument>,
     private readonly configService: ConfigService,
+    private readonly systemService: SystemService,
     private readonly streamEvents: PlaybookFlowStreamEventsService,
   ) {}
 
-  isEnabled(): boolean {
-    return this.configService.get<boolean>('playbook-flow.tokenBufferEnabled', false);
+  async isEnabled(): Promise<boolean> {
+    return (await this.systemService.getPlaybookSettings()).playbookExecution.tokenBufferEnabled;
   }
 
   async appendToken(key: TokenBufferKey, token: string): Promise<void> {

@@ -1,18 +1,18 @@
 import { RateLimiterService } from './rate-limiter.service';
-import { ConfigService } from '@nestjs/config';
+import { PlatformSettingsService } from '@modules/system/platform-settings.service';
 
 describe('RateLimiterService', () => {
   let service: RateLimiterService;
   beforeEach(() => {
-    const mockConfigService = {
-      get: jest.fn((key: string, defaultValue: number) => {
-        if (key === 'app.throttleLimit') return 5;
-        if (key === 'app.throttleTtl') return 60; // seconds
-        return defaultValue;
+    const mockPlatformSettings = {
+      getSettings: jest.fn().mockResolvedValue({
+        throttle: { limit: 5, windowSeconds: 60 },
+        auth: { maxSessionsPerUser: 10 },
+        documentUpload: { maxFileSizeMb: 50, maxFilesPerUpload: 10, allowedMimeTypes: [] },
       }),
-    } as unknown as ConfigService;
+    } as unknown as PlatformSettingsService;
 
-    service = new RateLimiterService(mockConfigService);
+    service = new RateLimiterService(mockPlatformSettings);
   });
 
   afterEach(() => {

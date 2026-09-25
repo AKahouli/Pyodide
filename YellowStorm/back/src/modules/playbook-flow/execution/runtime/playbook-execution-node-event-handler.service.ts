@@ -63,8 +63,9 @@ export class PlaybookExecutionNodeEventHandlerService {
     const token = String(payload.token ?? '');
     if (!token) return;
 
-    if (this.tokenBufferService?.isEnabled()) {
-      await this.tokenBufferService.appendToken({ executionId, taskId: taskNodeId, iteration }, token);
+    const tokenBuffer = this.tokenBufferService;
+    if (tokenBuffer && (await tokenBuffer.isEnabled())) {
+      await tokenBuffer.appendToken({ executionId, taskId: taskNodeId, iteration }, token);
       return;
     }
 
@@ -355,8 +356,9 @@ export class PlaybookExecutionNodeEventHandlerService {
 
   private async flushTokenStream(executionId: string, taskNodeId: string, iteration: number): Promise<void> {
     const key = { executionId, taskId: taskNodeId, iteration };
-    if (this.tokenBufferService?.isEnabled()) {
-      await this.tokenBufferService.flushTask(key);
+    const tokenBuffer = this.tokenBufferService;
+    if (tokenBuffer && (await tokenBuffer.isEnabled())) {
+      await tokenBuffer.flushTask(key);
       return;
     }
     const publicToken = this.directStreamRedactor.flush(this.tokenKey(executionId, taskNodeId, iteration));

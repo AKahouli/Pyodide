@@ -1,4 +1,5 @@
 import { PlaybookFlowTokenBufferService } from './playbook-flow-token-buffer.service';
+import { DEFAULT_ADMIN_PLAYBOOK_SETTINGS } from '@modules/system/interfaces/playbook-settings.interface';
 
 function createService(config: Record<string, unknown> = {}) {
   const taskResultModel = {
@@ -10,9 +11,15 @@ function createService(config: Record<string, unknown> = {}) {
   const streamEvents = {
     emitStepUpdate: jest.fn(),
   };
+  const systemService = {
+    getPlaybookSettings: jest.fn().mockResolvedValue({
+      playbookExecution: { ...DEFAULT_ADMIN_PLAYBOOK_SETTINGS.playbookExecution, tokenBufferEnabled: false },
+    }),
+  };
   const service = new PlaybookFlowTokenBufferService(
     taskResultModel as any,
     configService as any,
+    systemService as any,
     streamEvents as any,
   );
 

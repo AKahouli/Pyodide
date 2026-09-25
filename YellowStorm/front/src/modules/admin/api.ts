@@ -1536,3 +1536,61 @@ export async function upsertTeamAutoBuilderConfig(
   return response.data.data;
 }
 
+// Platform Settings API
+
+export interface AdminPlatformSettings {
+  throttle: { limit: number; windowSeconds: number };
+  auth: { maxSessionsPerUser: number };
+  documentUpload: { maxFileSizeMb: number; maxFilesPerUpload: number; allowedMimeTypes: string[] };
+  updatedAt?: string;
+}
+
+export interface UpdateAdminPlatformSettingsRequest {
+  throttle?: Partial<AdminPlatformSettings['throttle']>;
+  auth?: Partial<AdminPlatformSettings['auth']>;
+  documentUpload?: Partial<AdminPlatformSettings['documentUpload']>;
+}
+
+export interface SystemSettingsExport {
+  exportedAt: string;
+  settings: Array<{ key: string; value: unknown }>;
+}
+
+export interface SystemSettingsImportResult {
+  imported: string[];
+  skipped: Array<{ key: string; reason: string }>;
+}
+
+export async function getAdminPlatformSettings(): Promise<AdminPlatformSettings> {
+  const response = await apiClient.get<ApiResponse<AdminPlatformSettings>>(
+    API_ENDPOINTS.adminPlatformSettings.base,
+  );
+  return response.data.data;
+}
+
+export async function updateAdminPlatformSettings(
+  data: UpdateAdminPlatformSettingsRequest,
+): Promise<AdminPlatformSettings> {
+  const response = await apiClient.put<ApiResponse<AdminPlatformSettings>>(
+    API_ENDPOINTS.adminPlatformSettings.base,
+    data,
+  );
+  return response.data.data;
+}
+
+export async function exportSystemSettings(): Promise<SystemSettingsExport> {
+  const response = await apiClient.get<SystemSettingsExport>(
+    API_ENDPOINTS.adminSystemSettings.export,
+  );
+  return response.data;
+}
+
+export async function importSystemSettings(
+  payload: SystemSettingsExport,
+): Promise<SystemSettingsImportResult> {
+  const response = await apiClient.post<ApiResponse<SystemSettingsImportResult>>(
+    API_ENDPOINTS.adminSystemSettings.import,
+    payload,
+  );
+  return response.data.data;
+}

@@ -126,8 +126,6 @@ export const configValidationSchema = Joi.object({
   CORS_ORIGIN: Joi.string().default('http://localhost:5173'),
 
   // Rate Limiting
-  THROTTLE_TTL: Joi.number().default(60),
-  THROTTLE_LIMIT: Joi.number().default(100),
   // Express trust proxy: false|0|empty, hop count, true, or CIDR/name list
   TRUST_PROXY: Joi.string().allow('').default(''),
 
@@ -164,14 +162,11 @@ export const configValidationSchema = Joi.object({
   CEPH_S3_FORCE_PATH_STYLE: Joi.boolean().default(true),
   CEPH_S3_PUBLIC_URL: Joi.string().uri({ allowRelative: false }).optional(),
   CEPH_PUBLIC_URL: Joi.string().uri({ allowRelative: false }).optional(),
-  STORAGE_MAX_FILE_SIZE_MB: Joi.number().min(1).max(500).default(50),
-  STORAGE_MAX_FILES_PER_UPLOAD: Joi.number().min(1).max(50).default(10),
   STORAGE_SAS_EXPIRY_MINUTES: Joi.number().min(1).max(10080).default(60),
   SEMANTIC_DATASET_STORAGE_PREFIX: Joi.string()
     .pattern(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/)
     .default('semantic-model/datasets'),
   SEMANTIC_DATASET_MAX_SIZE_MB: Joi.number().integer().min(1).max(2048).default(200),
-  STORAGE_ALLOWED_MIME_TYPES: Joi.string().optional(),
   STORAGE_HEALTH_CHECK_ENABLED: Joi.boolean().default(true),
   STORAGE_HEALTH_CHECK_INTERVAL_MS: Joi.number().min(10000).max(3600000).default(60000),
   STORAGE_RECONNECT_ENABLED: Joi.boolean().default(true),
@@ -191,8 +186,6 @@ export const configValidationSchema = Joi.object({
 
   // Auth
   AUTH_BCRYPT_ROUNDS: Joi.number().min(10).max(14).default(12),
-  AUTH_EMAIL_VERIFICATION_EXPIRY_HOURS: Joi.number().min(1).max(168).default(24),
-  AUTH_MAX_SESSIONS_PER_USER: Joi.number().min(1).max(50).default(10),
   AUTH_REFRESH_TOKEN_COOKIE_NAME: Joi.string().default('refresh_token'),
   AUTH_COOKIE_SAME_SITE: Joi.string().valid('strict', 'lax', 'none').default('strict'),
   // Refresh rotation receipt (bounded lost-response recovery). Key is base64
@@ -388,11 +381,6 @@ export const configValidationSchema = Joi.object({
   // Playbook Flow
   PLAYBOOK_FLOW_GRPC_URL: Joi.string().default('localhost:50051'),
   PLAYBOOK_FLOW_GRPC_TIMEOUT_MS: Joi.number().min(5000).max(600000).default(300000),
-  PLAYBOOK_MAX_CONCURRENT_PER_USER: Joi.number().min(1).max(100).default(3),
-  PLAYBOOK_EXECUTION_QUEUE_MAX_DEPTH: Joi.number().min(1).max(500).default(50),
-  PLAYBOOK_MAX_PARALLELISM_PER_EXECUTION: Joi.number().min(1).max(20).default(5),
-  PLAYBOOK_RECURSION_LIMIT_DEFAULT: Joi.number().min(1).max(200).default(25),
-  PLAYBOOK_RECURSION_LIMIT_MAX: Joi.number().min(1).max(500).default(50),
   PLAYBOOK_PYTHON_WORKER_POOL_SIZE: Joi.number().min(1).max(100).default(8),
   PLAYBOOK_PYTHON_WORKER_MAX_INFLIGHT: Joi.number().min(1).max(20).default(4),
   PLAYBOOK_MAX_HITL_ROUNDS: Joi.number().min(0).max(100).default(5),
@@ -401,32 +389,20 @@ export const configValidationSchema = Joi.object({
   PLAYBOOK_GRAPH_CACHE_MAX_ENTRIES: Joi.number().min(1).max(10000).default(128),
   PLAYBOOK_GRAPH_CACHE_TTL_SECONDS: Joi.number().min(1).max(86400).default(900),
   PLAYBOOK_IDEMPOTENCY_TTL_HOURS: Joi.number().min(1).max(168).default(24),
-  PLAYBOOK_DELTA_PATCH_ENABLED: Joi.boolean().default(false),
-  PLAYBOOK_BASE_READ_SPLIT_ENABLED: Joi.boolean().default(false),
   PLAYBOOK_SMART_HITL_DEFAULT_ENABLED: Joi.boolean().default(true),
-  PLAYBOOK_TOKEN_BUFFER_ENABLED: Joi.boolean().default(false),
   PLAYBOOK_TOKEN_BUFFER_FLUSH_INTERVAL_MS: Joi.number().min(100).max(5000).default(750),
   PLAYBOOK_TOKEN_BUFFER_MAX_BYTES: Joi.number().min(512).max(65536).default(4096),
   PLAYBOOK_TOKEN_BUFFER_MAX_TASK_BYTES: Joi.number().min(1024).max(1048576).default(65536),
   PLAYBOOK_TOKEN_BUFFER_MAX_ACTIVE_BUFFERS: Joi.number().min(1).max(10000).default(1000),
-  PLAYBOOK_EXECUTION_LEASE_ENABLED: Joi.boolean().default(false),
   PLAYBOOK_EXECUTION_LEASE_TTL_MS: Joi.number().min(1000).max(900000).default(120000),
   PLAYBOOK_EXECUTION_LEASE_HEARTBEAT_MS: Joi.number().min(500).max(300000).default(30000),
   PLAYBOOK_EXECUTION_STARTUP_TIMEOUT_MS: Joi.number().min(1000).max(1800000).default(180000),
   PLAYBOOK_EXECUTION_DISPATCH_INTERVAL_MS: Joi.number().min(100).max(60000).default(1000),
   PLAYBOOK_QUEUE_POSITION_UPDATE_THROTTLE_MS: Joi.number().min(0).max(10000).default(500),
-  PLAYBOOK_MAX_CONCURRENT_GLOBAL_EXECUTIONS: Joi.number().min(1).max(500).default(50),
-  PLAYBOOK_MAX_CONCURRENT_PER_FLOW: Joi.number().min(1).max(100).default(5),
-  PLAYBOOK_MAX_CONCURRENT_PER_PROVIDER: Joi.number().min(1).max(500).default(25),
-  PLAYBOOK_MAX_CONCURRENT_PER_MODEL: Joi.number().min(1).max(500).default(10),
-  PLAYBOOK_DYNAMIC_REASONING_ENABLED: Joi.boolean().default(false),
-  PLAYBOOK_ASYNC_DESIGN_ENABLED: Joi.boolean().default(false),
   PLAYBOOK_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8025/mcp'),
   PLAYBOOK_MCP_INGRESS_TOKEN: Joi.string().allow('').default(''),
   AGENT_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8026/mcp'),
   AGENT_MCP_INGRESS_TOKEN: Joi.string().allow('').default(''),
-  PLAYBOOK_MAX_CONCURRENT_GLOBAL_DESIGN_OPERATIONS: Joi.number().min(1).max(100).default(10),
-  PLAYBOOK_MAX_CONCURRENT_USER_DESIGN_OPERATIONS: Joi.number().min(1).max(50).default(3),
   // Telegram
   TELEGRAM_ENABLED: Joi.boolean().default(true),
   TELEGRAM_API_BASE_URL: Joi.string().uri().default('https://api.telegram.org'),
