@@ -9,7 +9,8 @@ LiteLLM credentials never leave the server — this module only decides *whether
 | Concern | Implementation |
 |---------|----------------|
 | Kill switch | `AppBuilderAiKillSwitchGuard` + system setting |
-| Offers (RPM, max tokens, window) | Mongo `AppBuilderAiOffer` + `AppBuilderAiOfferService` |
+| Offers (RPM, max tokens, window) | Postgres `catalog.app_builder_ai_offers` via `APP_BUILDER_AI_OFFER_STORE` |
+| User ↔ offer link | `identity.users.app_builder_ai_offer_id` via `USER_STORE` |
 | Usage windows | Postgres table via `AppBuilderAiUsageService` (migration `0016`) |
 | Per-request limit | `AppBuilderAiUsageLimitGuard` |
 | Admin CRUD / assign | `AdminAppBuilderAiController` + `AppBuilderAiAdminService` |
@@ -25,7 +26,9 @@ app-builder-ai/
   guards/
     app-builder-ai-kill-switch.guard.ts
     app-builder-ai-usage-limit.guard.ts
-  schemas/app-builder-ai-offer.schema.ts
+  persistence/
+    app-builder-ai-offer.store.ts
+    pg-app-builder-ai-offer.store.ts
   services/
     app-builder-ai-admin.service.ts
     app-builder-ai-offer.service.ts
@@ -48,6 +51,17 @@ Registered from `app.module.ts`. Exported guards/services are imported by `AiPro
 Remote App Data (`APP_DATA_REMOTE=true`): **MS ACL `action=use_ai`** is source of truth. Nest migration `0017` must **not** be applied on the MS control-plane DB.
 
 See `YellowStorm/back/drizzle/MIGRATIONS-APP-BUILDER-AI.md`.
+
+## Postgres cutover (P8)
+
+- DDL: `drizzle/0027_app_builder_ai_offers.sql`
+- Backfill (from `YellowStorm/back`, prefer before Nest boots so seed does not invent new ids):
+
+```bash
+npx ts-node scripts/migrate/2026-10-app-builder-ai-offers.ts
+```
+
+Seed defaults only run when `catalog.app_builder_ai_offers` is empty.
 
 ## Admin API (high level)
 

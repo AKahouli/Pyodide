@@ -650,8 +650,17 @@ def get_settings() -> Settings:
     env_file = ENV_FILES.get(environment)
     if env_file:
         project_root = Path(__file__).parent.parent.parent
-        env_file_path = str(project_root / env_file)
-        settings = Settings(_env_file=env_file_path)  # type: ignore
+        env_file_path = project_root / env_file
+        settings = Settings(_env_file=str(env_file_path))  # type: ignore
+        # pydantic-settings loads .env into the Settings object only, NOT
+        # os.environ. Flags read via os.environ.get() (WORKY_SEND_APPROVAL_GATE,
+        # ORCHESTRATOR_REPLAY_BARRIER_*) would never see the file otherwise.
+        # Mirror it in; a real exported env var still wins (setdefault).
+        if env_file_path.exists():
+            from pydantic_settings.sources import read_env_file
+            for _k, _v in read_env_file(env_file_path, case_sensitive=True).items():
+                if _v is not None:
+                    os.environ.setdefault(_k, _v)
     elif environment == "prod":
         settings = Settings()  # type: ignore
     else:

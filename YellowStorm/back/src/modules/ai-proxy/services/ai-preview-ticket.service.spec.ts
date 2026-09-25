@@ -1,17 +1,17 @@
 import { AiPreviewTicketService } from './ai-preview-ticket.service';
 import { RuntimeBindingService } from '../../app-runtime/services/runtime-binding.service';
 import { RuntimeTokenService } from '../../app-runtime/services/runtime-token.service';
+import { AI_PREVIEW_TICKET_STORE, type AiPreviewTicketStore } from '../persistence/ai-preview-ticket.store';
 
 describe('AiPreviewTicketService', () => {
-  const leanExec = jest.fn();
-  const model = {
-    create: jest.fn().mockResolvedValue({}),
-    updateMany: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
-    findOne: jest.fn(() => ({
-      lean: () => ({
-        exec: leanExec,
-      }),
-    })),
+  const create = jest.fn();
+  const expireLiveForWorkspace = jest.fn();
+  const findLiveByHash = jest.fn();
+
+  const store: AiPreviewTicketStore = {
+    create,
+    expireLiveForWorkspace,
+    findLiveByHash,
   };
 
   const bindings = {
@@ -28,7 +28,7 @@ describe('AiPreviewTicketService', () => {
 
   const createService = () =>
     new AiPreviewTicketService(
-      model as never,
+      store as never,
       bindings,
       tokens,
       config as never,
@@ -36,9 +36,11 @@ describe('AiPreviewTicketService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    model.create.mockResolvedValue({});
-    model.updateMany.mockResolvedValue({ modifiedCount: 0 });
-    leanExec.mockResolvedValue(null);
+    create.mockImplementation((data) =>
+      Promise.resolve({ id: 'generated_id', ...data, createdAt: new Date(), updatedAt: new Date() }),
+    );
+    expireLiveForWorkspace.mockResolvedValue(undefined);
+    findLiveByHash.mockResolvedValue(null);
   });
 
   it('issues an aiprev_ ticket and persists only the hash', async () => {
@@ -50,7 +52,7 @@ describe('AiPreviewTicketService', () => {
 
     expect(result.ticket.startsWith('aiprev_')).toBe(true);
     expect(result.workspaceId).toBe('ws_1');
-    expect(model.create).toHaveBeenCalledWith(
+    expect(create).toHaveBeenCalledWith(
       expect.objectContaining({
         ticketHash: tokens.hash(result.ticket),
         billableUserId: 'owner-1',
@@ -58,7 +60,7 @@ describe('AiPreviewTicketService', () => {
         bindingId: 'arb_test',
       }),
     );
-    expect(JSON.stringify(model.create.mock.calls[0][0])).not.toContain(result.ticket);
+    expect(JSON.stringify(create.mock.calls[0][0])).not.toContain(result.ticket);
   });
 
   it('verifies a live ticket and rejects expired/unknown', async () => {
@@ -68,17 +70,23 @@ describe('AiPreviewTicketService', () => {
       billableUserId: 'owner-1',
     });
 
-    leanExec.mockResolvedValueOnce({
+    findLiveByHash.mockResolvedValueOnce({
+      id: 'gen_id',
       workspaceId: 'ws_1',
       bindingId: 'arb_test',
       conversationSessionId: 'ws_1',
       billableUserId: 'owner-1',
+      ticketHash: tokens.hash(issued.ticket),
+      purpose: 'ai_preview',
+      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: new Date(),
+      updatedAt: new Date(),
     });
 
     const ok = await svc.verify(issued.ticket);
     expect(ok?.billableUserId).toBe('owner-1');
 
-    leanExec.mockResolvedValueOnce(null);
+    findLiveByHash.mockResolvedValueOnce(null);
     expect(await svc.verify(issued.ticket)).toBeNull();
     expect(await svc.verify('not-a-ticket')).toBeNull();
   });

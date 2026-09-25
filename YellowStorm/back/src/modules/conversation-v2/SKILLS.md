@@ -69,11 +69,12 @@ interface PointerSummary {
 ## Persistence
 
 `ConversationV2Session` gained a `selectedSkillIds: string[]` field
-([`schemas/conversation-v2-session.schema.ts`](schemas/conversation-v2-session.schema.ts),
+([`persistence/conversation-v2-session.store.ts`](persistence/conversation-v2-session.store.ts) /
+[`pg-conversation-v2-session.store.ts`](persistence/postgres/pg-conversation-v2-session.store.ts);
 default `[]`).
 
 `ConversationV2SessionService.setSelectedSkills(id, skillIds)` overwrites the
-stored selection (`$set`) on every send. It is **re-display only** — there are no
+stored selection on every send. It is **re-display only** — there are no
 access checks, and an invalid `id` is a no-op.
 
 ## gRPC Contract
@@ -91,7 +92,7 @@ to the ADK as the `repeated Skill skills` field on the chat request
 | --- | --- |
 | [`conversation-v2-stream.service.ts`](services/conversation-v2-stream.service.ts) | Resolve `skillIds` → gRPC skills, persist selection, forward to gRPC |
 | [`services/conversation-v2-session.service.ts`](services/conversation-v2-session.service.ts) | `setSelectedSkills`; expose `selectedSkillIds` on `PointerSummary` |
-| [`schemas/conversation-v2-session.schema.ts`](schemas/conversation-v2-session.schema.ts) | New `selectedSkillIds` prop |
+| [`persistence/postgres/pg-conversation-v2-session.store.ts`](persistence/postgres/pg-conversation-v2-session.store.ts) | `selectedSkillIds` on session pointer |
 | [`conversation-v2.controller.ts`](conversation-v2.controller.ts) | Return `selectedSkillIds` on the session pointer |
 | [`dto/send-message.dto.ts`](dto/send-message.dto.ts) | Optional `skillIds` input |
 | [`../skill/skill.service.ts`](../skill/skill.service.ts) | `findByIdsForGrpc` / `toGrpcSkill` (gRPC mapping) |

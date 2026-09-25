@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 env:
-  IMAGE_NAME: yscrmetachatbot002.azurecr.io/yellowstorm-code-runtime-poc
+  IMAGE_NAME: yscrmetachatbot001.azurecr.io/yellowstorm-code-runtime-poc
 
 jobs:
   build:
@@ -23,7 +23,7 @@ jobs:
         run: echo "tag=0.1.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
       - uses: azure/docker-login@v1
         with:
-          login-server: yscrmetachatbot002.azurecr.io
+          login-server: yscrmetachatbot001.azurecr.io
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
       - name: Build and push

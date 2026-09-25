@@ -45,7 +45,7 @@ The App Builder runtime lives in the sibling module
 
 | Concern | Behaviour |
 |---|---|
-| Sessions | Create / list / get / rename / delete pointers in Mongo |
+| Sessions | Create / list / get / rename / delete pointers in PostgreSQL (`conversation_v2.sessions`) |
 | Chat | Background gRPC `Chat` stream → persist events → SSE to the user |
 | Tools / plan / steps | Forwarded as typed SSE events |
 | App preview | `application_component` carries preview URL **and** Ceph source metadata for Nodepod |
@@ -97,7 +97,7 @@ via Socket.IO, manages source revisions in Ceph, and handles deploy/sharing.
 
 ```
 POST /conversation-v2/sessions
-  → 1. Create session pointer in Mongo (status: active)
+  → 1. Create session pointer in PostgreSQL (status: active)
   → 2. Create system workspace (50MB default)
   → 3. Create gRPC session in ADK (with workspace paths)
   → 4. Attach aiSessionId + systemWorkspaceId to pointer
@@ -159,13 +159,10 @@ found`, `UNIMPLEMENTED` → `501`, otherwise rethrow.
 
 ## Event persistence
 
-Events are stored in `conversation_v2_events` with an auto-incrementing
-`sequence` per session. The sequence is atomically incremented via
-`findOneAndUpdate` on the session pointer (`$inc: { eventSequence: 1 }`).
-
-Idempotence: events carry an `eventId` (client-provided or UUID). Duplicate
-`eventId` appends are silently deduplicated (the sequence slot is wasted but
-the event is not duplicated).
+Events live in PostgreSQL `conversation_v2.events` (append-only). Each
+`append` bumps `sessions.event_sequence` / `event_count` atomically, then
+inserts with `ON CONFLICT (session_id, event_id) DO NOTHING` so retried gRPC
+chunks do not duplicate rows (wasted sequence slots are intentional).
 
 Key fields: `sessionId`, `sequence`, `eventId`, `type`, `emittedAt`, `payload`,
 `modelId` (tagged on first assistant message).
@@ -647,7 +644,7 @@ for that session.
 | `conversation-v2.controller.ts` | REST endpoints: sessions, deploy, revisions, share, VNC |
 | `conversation-v2-stream.controller.ts` | SSE endpoints: global pipe, per-session live-tail, send message |
 | `conversation-v2.module.ts` | NestJS module definition |
-| `services/conversation-v2-session.service.ts` | CRUD for session pointers in Mongo |
+| `services/conversation-v2-session.service.ts` | CRUD for session pointers in PostgreSQL |
 | `services/conversation-v2-session-access.service.ts` | RBAC resolution (owner/viewer, permissions) |
 | `services/conversation-v2-stream.service.ts` | Background gRPC consumption, persist + SSE push |
 | `services/conversation-v2-stream-gateway.service.ts` | Per-user SSE connection registry + fan-out |
@@ -659,6 +656,8 @@ for that session.
 | `services/conversation-v2-app-share.service.ts` | Email share, notification, conversation access |
 | `services/conversation-v2-app-ai-features.service.ts` | Marks session `hasAiFeatures` after successful AI usage |
 | `services/conversation-v2-name-generator.service.ts` | Auto-title from first message |
+| `persistence/conversation-v2-persistence.module.ts` | PG store bindings (`CONVERSATION_V2_*_STORE`) |
+| `persistence/postgres/pg-conversation-v2-*.store.ts` | Drizzle adapters for `conversation_v2.{sessions,events,app_shares}` |
 | `proto/conversation.proto` | gRPC contract (sync with APImanus) |
 | `types/conversation-v2.types.ts` | Event / payload TypeScript types |
 | `utils/event-mapper.ts` | Wire event → SSE frame conversion |

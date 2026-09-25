@@ -228,7 +228,7 @@ describe('ConversationV2StreamService', () => {
 
   it('publishApplicationComponent maps an APImanus workspace id to the YellowStorm pointer', async () => {
     const pointerId = '507f1f77bcf86cd799439011';
-    sessions.findByAiSessionId.mockResolvedValueOnce({ _id: pointerId });
+    sessions.findByAiSessionId.mockResolvedValueOnce({ id: pointerId });
 
     await service.publishApplicationComponent('u1', '72e7924c2cc04f5f', {
       event_id: 'app-1',

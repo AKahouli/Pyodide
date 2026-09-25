@@ -35,6 +35,8 @@ function record(overrides: Partial<UserRecord> = {}): UserRecord {
     planId: null,
     planSlug: null,
     planStartedAt: null,
+    appBuilderAiOfferId: null,
+    appBuilderAiOfferStartedAt: null,
     roleIds: [],
     permissionsVersion: 1,
     status: 'inactive',

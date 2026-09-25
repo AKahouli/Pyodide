@@ -1,14 +1,20 @@
 import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { NeedsYouSection } from './NeedsYouSection';
 import type { WorkyExecutiveViewModel } from '../../executive/executiveModel';
 
 vi.mock('@/modules/localization', () => ({ useModuleTranslation: () => ({ t: (key: string) => key }) }));
+// The interactive card owns its own approve/decline/edit flow (tested in
+// PendingApprovalCard.test.tsx); here we only assert NeedsYouSection routes a
+// pending approval to it — the pre-merge behaviour, not a "review in chat" button.
+vi.mock('./PendingApprovalCard', () => ({
+  PendingApprovalCard: ({ approval }: { approval: { questionId: string } }) => (
+    <div data-testid='pending-approval-card'>{approval.questionId}</div>
+  ),
+}));
 
 describe('NeedsYouSection', () => {
-  it('shows a pending approval and opens chat for review', async () => {
-    const onReviewApproval = vi.fn();
+  it('renders a pending approval as the interactive approval card', () => {
     const model = {
       plan: null, session: null, health: 'needs_attention' as const, currentWork: [], allTasks: [], completedTasks: [], deliveryPaths: [], recentTasks: [], delegations: [],
       summary: { total: 0, completed: 0, active: 0, blocked: 0, remaining: 0, waitingExternal: 0, needsInput: 1 },
@@ -21,9 +27,7 @@ describe('NeedsYouSection', () => {
       } }],
     } as WorkyExecutiveViewModel;
 
-    render(<NeedsYouSection streamId='stream-1' model={model} onReviewApproval={onReviewApproval} />);
-    expect(screen.getByText('Review send')).toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'executive.needsYou.reviewInChat' }));
-    expect(onReviewApproval).toHaveBeenCalledOnce();
+    render(<NeedsYouSection streamId='stream-1' model={model} onReviewApproval={vi.fn()} />);
+    expect(screen.getByTestId('pending-approval-card')).toHaveTextContent('confirm::call-1');
   });
 });

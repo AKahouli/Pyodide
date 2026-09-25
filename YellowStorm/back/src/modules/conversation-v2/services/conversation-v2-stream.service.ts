@@ -6,10 +6,10 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import { Types } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import { Subscription } from 'rxjs';
+import { isObjectId } from '@common/postgres';
 import { ConversationV2GrpcClientService } from './conversation-v2.grpc-client.service';
 import { ConversationV2EventStoreService } from './conversation-v2-event-store.service';
 import { ConversationV2PointerWriterService } from './conversation-v2-pointer-writer.service';
@@ -128,9 +128,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     if (!pointer.aiSessionId) throw new BadRequestException('Session not ready');
 
     const aiSessionId = pointer.aiSessionId;
-    const systemWorkspaceId =
-      (pointer as unknown as { systemWorkspaceId?: { toString(): string } | string | null })
-        .systemWorkspaceId?.toString() ?? null;
+    const systemWorkspaceId = pointer.systemWorkspaceId ?? null;
 
     // Concurrency guards, mirroring v1 StreamService.
     const maxStreams = this.config.get<number>('conversationV2.maxConcurrentStreams') ?? 5;
@@ -458,14 +456,14 @@ export class ConversationV2StreamService implements OnModuleDestroy {
 
   /**
    * Runtime bindings are keyed by APImanus `aiSessionId` (`workspaceId`).
-   * Conversation events are keyed by the YellowStorm pointer `_id`.
+   * Conversation events are keyed by the YellowStorm pointer id.
    */
   private async resolveConversationSessionId(sessionOrWorkspaceId: string): Promise<string> {
     const byAi = await this.sessions.findByAiSessionId(sessionOrWorkspaceId);
-    if (byAi?._id) return byAi._id.toString();
-    if (Types.ObjectId.isValid(sessionOrWorkspaceId)) {
+    if (byAi?.id) return byAi.id;
+    if (isObjectId(sessionOrWorkspaceId)) {
       const byId = await this.sessions.getById(sessionOrWorkspaceId);
-      if (byId?._id) return byId._id.toString();
+      if (byId?.id) return byId.id;
     }
     throw new NotFoundException(`Invalid session id ${sessionOrWorkspaceId}`);
   }

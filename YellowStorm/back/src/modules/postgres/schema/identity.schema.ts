@@ -35,6 +35,9 @@ export const identityUsers = identitySchema.table(
     planId: objectId('plan_id'),
     planSlug: varchar('plan_slug', { length: 50 }),
     planStartedAt: timestamp('plan_started_at', { withTimezone: true }),
+    /** FK → catalog.app_builder_ai_offers (P8). */
+    appBuilderAiOfferId: objectId('app_builder_ai_offer_id'),
+    appBuilderAiOfferStartedAt: timestamp('app_builder_ai_offer_started_at', { withTimezone: true }),
     permissionsVersion: integer('permissions_version').notNull().default(1),
     status: varchar('status', { length: 16 }).notNull().default('active'),
     registrationApproval: varchar('registration_approval', { length: 16 }),
@@ -49,6 +52,9 @@ export const identityUsers = identitySchema.table(
     uniqueIndex('uq_users_email').on(t.email),
     index('idx_users_microsoft_account').on(t.microsoftAccountId).where(sql`${t.microsoftAccountId} IS NOT NULL`),
     index('idx_users_plan').on(t.planId),
+    index('idx_users_app_builder_ai_offer')
+      .on(t.appBuilderAiOfferId)
+      .where(sql`${t.appBuilderAiOfferId} IS NOT NULL`),
     index('idx_users_status').on(t.status),
     index('idx_users_created').on(t.createdAt.desc()),
     index('idx_users_email_verification_token').on(t.emailVerificationToken).where(sql`${t.emailVerificationToken} IS NOT NULL`),

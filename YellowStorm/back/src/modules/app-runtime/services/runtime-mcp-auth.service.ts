@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { AppRuntimeBinding } from '../schemas/app-runtime-binding.schema';
+import type { RuntimeBindingRecord as AppRuntimeBinding } from '../persistence/runtime-binding.store';
 import { RuntimeBindingService } from '../services/runtime-binding.service';
 import { RuntimeTokenService } from '../services/runtime-token.service';
 import { AuthError } from '../mcp/runtime-mcp.errors';
