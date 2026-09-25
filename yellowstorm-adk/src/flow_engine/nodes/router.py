@@ -124,13 +124,17 @@ async def run_router(
             litellm.drop_params = True
 
             labels_str = ", ".join(json.dumps(l) for l in output_labels)
+            # The routing prompt is instructions for the model, so it belongs in the
+            # system message. The user message always carries the context inputs —
+            # previously a configured prompt replaced them and the model went blind.
             system_msg = (
                 f"You are a routing decision engine. "
                 f"Choose exactly one of the following labels: [{labels_str}]. "
-                f"Respond with only the label string, nothing else."
+                + (f"{router_prompt} " if router_prompt else "")
+                + "Respond with only the label string, nothing else."
             )
             router_context = node_inputs if node_inputs is not None else state.get("inputs", {})
-            user_msg = router_prompt or (
+            user_msg = (
                 f"Context: {json.dumps(router_context, default=str)}\n"
                 f"Previous outputs: {json.dumps({str(k): v for k, v in state.get('task_outputs', {}).items()}, default=str)}\n"
                 f"Iteration: {iteration}\n"

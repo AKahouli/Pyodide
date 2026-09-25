@@ -382,8 +382,47 @@ async def test_run_router_uses_llm_when_no_conditions_and_label_matches_exactly(
     assert 'used_default' not in decision['payload']
 
     assert captured['model'] == 'azure/gpt-5.4-mini'
+    system_msg = next(m for m in captured['messages'] if m['role'] == 'system')
     user_msg = next(m for m in captured['messages'] if m['role'] == 'user')
-    assert user_msg['content'] == 'Route based on sentiment.'
+    # Prompt is instructions → system message.
+    assert 'Route based on sentiment.' in system_msg['content']
+    # Context inputs are always delivered, even when a prompt is configured.
+    assert user_msg['content'].startswith('Context: ')
+    assert 'Choose the best label from' in user_msg['content']
+
+
+@pytest.mark.asyncio
+async def test_run_router_injects_context_inputs_when_prompt_configured(monkeypatch):
+    emitted = []
+    monkeypatch.setattr('src.flow_engine.nodes.router.get_stream_writer', lambda: emitted.append)
+
+    captured = {}
+
+    async def fake_acompletion(**kwargs):
+        captured.update(kwargs)
+        return _fake_llm_response('continue')
+
+    monkeypatch.setattr('src.flow_engine.nodes.router.litellm.acompletion', fake_acompletion)
+
+    await run_router(
+        'router-1',
+        {
+            'router_config': {
+                'output_labels': ['continue', 'stop'],
+                'default_label': 'continue',
+                'prompt': 'Route based on sentiment.',
+            },
+        },
+        make_state({}),
+        node_inputs={'message': 'I am furious about this outage'},
+    )
+
+    system_msg = next(m for m in captured['messages'] if m['role'] == 'system')
+    user_msg = next(m for m in captured['messages'] if m['role'] == 'user')
+
+    assert 'Route based on sentiment.' in system_msg['content']
+    assert 'I am furious about this outage' in user_msg['content']
+    assert 'Route based on sentiment.' not in user_msg['content']
 
 
 @pytest.mark.asyncio
