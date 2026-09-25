@@ -1,20 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { isObjectId, normalizeObjectId } from '@common/postgres';
 import {
   WORKSPACE_DOCUMENT_READ_PORT,
   type WorkspaceDocumentReadPort,
   type WorkspaceDocumentRecord,
 } from '../../workspace/ports';
-import {
-  ClassifierFolder,
-  ClassifierFolderDocument,
-} from '../schemas/classifier-folder.schema';
-import {
-  AssignmentSource,
-  ClassifierFileAssignment,
-  ClassifierFileAssignmentDocument,
-} from '../schemas/classifier-file-assignment.schema';
+import { ClassifierAssignmentRepository } from '../persistence/classifier-assignment.repository';
+import { ClassifierFolderRepository } from '../persistence/classifier-folder.repository';
+import { AssignmentSource } from '../classifier.types';
 import { AssignFileDto } from '../dto/assign-file.dto';
 import { ListFilesQueryDto } from '../dto/list-files-query.dto';
 import { IClassifierFileResponse } from '../interfaces/classifier.interface';
@@ -30,10 +23,8 @@ import { ClassifierAccessService } from './classifier-access.service';
 export class ClassifierFileService {
   constructor(
     @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly documentReadPort: WorkspaceDocumentReadPort,
-    @InjectModel(ClassifierFolder.name)
-    private readonly folderModel: Model<ClassifierFolderDocument>,
-    @InjectModel(ClassifierFileAssignment.name)
-    private readonly assignmentModel: Model<ClassifierFileAssignmentDocument>,
+    private readonly folders: ClassifierFolderRepository,
+    private readonly assignments: ClassifierAssignmentRepository,
     private readonly access: ClassifierAccessService,
     private readonly logger: LoggerService,
   ) {
@@ -76,13 +67,8 @@ export class ClassifierFileService {
       })),
     });
 
-    const assignments = await this.assignmentModel
-      .find({ workspaceId: new Types.ObjectId(workspaceId), documentId: { $in: documents.map((d) => new Types.ObjectId(d.id)) } })
-      .lean()
-      .exec();
-
     const assignmentByDoc = new Map(
-      assignments.map((a) => [a.documentId.toString(), a]),
+      (await this.assignments.listByWorkspace(workspaceId)).map((a) => [a.documentId, a]),
     );
 
     const wantsUnclassified = query.unclassified === 'true';
@@ -91,10 +77,9 @@ export class ClassifierFileService {
     return documents
       .map((doc) => {
         const assignment = assignmentByDoc.get(doc.id);
-        const folderId = assignment?.folderId ? assignment.folderId.toString() : null;
         return {
           doc,
-          folderId,
+          folderId: assignment?.folderId ?? null,
           source: assignment?.assignmentSource ?? null,
         };
       })
@@ -114,45 +99,25 @@ export class ClassifierFileService {
   ): Promise<IClassifierFileResponse> {
     await this.access.assertWorkspaceAccess(workspaceId, userId);
 
-    if (!Types.ObjectId.isValid(documentId)) {
+    if (!isObjectId(documentId)) {
       throw new NotFoundException(ErrorCode.CLASSIFIER_FILE_NOT_FOUND);
     }
 
     const document = await this.documentReadPort.findById(documentId);
     if (
       !document ||
-      document.workspaceId !== workspaceId ||
+      document.workspaceId !== normalizeObjectId(workspaceId) ||
       document.isFolder
     ) {
       throw new NotFoundException(ErrorCode.CLASSIFIER_FILE_NOT_FOUND);
     }
 
-    const folderId = dto.folderId ?? null;
+    const folderId = dto.folderId ? normalizeObjectId(dto.folderId) : null;
     if (folderId) {
       await this.assertFolderBelongsToWorkspace(folderId, workspaceId);
     }
 
-    const wsObjectId = new Types.ObjectId(workspaceId);
-    const docObjectId = new Types.ObjectId(documentId);
-
-    const updated = await this.assignmentModel
-      .findOneAndUpdate(
-        { workspaceId: wsObjectId, documentId: docObjectId },
-        {
-          $set: {
-            folderId: folderId ? new Types.ObjectId(folderId) : null,
-            assignmentSource: AssignmentSource.MANUAL,
-            assignedBy: new Types.ObjectId(userId),
-            classificationRunId: null,
-          },
-          $setOnInsert: {
-            workspaceId: wsObjectId,
-            documentId: docObjectId,
-          },
-        },
-        { upsert: true, new: true, lean: true },
-      )
-      .exec();
+    const updated = await this.assignments.upsertManual({ workspaceId, documentId, folderId, assignedBy: userId });
 
     this.logger.log('File assignment updated', {
       workspaceId,
@@ -161,11 +126,7 @@ export class ClassifierFileService {
       userId,
     });
 
-    return this.toResponse(
-      document,
-      updated?.folderId ? updated.folderId.toString() : null,
-      updated?.assignmentSource ?? AssignmentSource.MANUAL,
-    );
+    return this.toResponse(document, updated.folderId, updated.assignmentSource);
   }
 
   /**
@@ -180,46 +141,20 @@ export class ClassifierFileService {
     overwrite: boolean;
     mapping: Array<{ documentId: string; folderId: string }>;
   }): Promise<number> {
-    const wsObjectId = new Types.ObjectId(params.workspaceId);
-    const runObjectId = new Types.ObjectId(params.runId);
-    const userObjectId = new Types.ObjectId(params.triggeredBy);
-
     let updated = 0;
     for (const entry of params.mapping) {
-      if (!Types.ObjectId.isValid(entry.documentId) || !Types.ObjectId.isValid(entry.folderId)) {
+      if (!isObjectId(entry.documentId) || !isObjectId(entry.folderId)) {
         continue;
       }
-      const docObjectId = new Types.ObjectId(entry.documentId);
-      const folderObjectId = new Types.ObjectId(entry.folderId);
-
-      const filter: Record<string, unknown> = {
-        workspaceId: wsObjectId,
-        documentId: docObjectId,
-      };
-      if (!params.overwrite) {
-        filter.folderId = null;
-      }
-
-      const result = await this.assignmentModel
-        .updateOne(
-          filter,
-          {
-            $set: {
-              folderId: folderObjectId,
-              assignmentSource: AssignmentSource.PLAYBOOK,
-              assignedBy: userObjectId,
-              classificationRunId: runObjectId,
-            },
-            $setOnInsert: {
-              workspaceId: wsObjectId,
-              documentId: docObjectId,
-            },
-          },
-          { upsert: !params.overwrite ? false : true },
-        )
-        .exec();
-
-      if (result.modifiedCount > 0 || result.upsertedCount > 0) {
+      const changed = await this.assignments.applyPlaybookResult({
+        workspaceId: params.workspaceId,
+        documentId: entry.documentId,
+        folderId: entry.folderId,
+        runId: params.runId,
+        assignedBy: params.triggeredBy,
+        overwrite: params.overwrite,
+      });
+      if (changed) {
         updated += 1;
       }
     }
@@ -232,12 +167,8 @@ export class ClassifierFileService {
     folderId: string,
     workspaceId: string,
   ): Promise<void> {
-    const folder = await this.folderModel
-      .findById(folderId)
-      .select({ workspaceId: 1 })
-      .lean()
-      .exec();
-    if (!folder || folder.workspaceId.toString() !== workspaceId) {
+    const folder = await this.folders.findById(folderId);
+    if (!folder || folder.workspaceId !== normalizeObjectId(workspaceId)) {
       throw new BadRequestException(ErrorCode.CLASSIFIER_FOLDER_NOT_FOUND);
     }
   }

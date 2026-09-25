@@ -232,6 +232,13 @@
       "when": 1790800000000,
       "tag": "0033_knowledge_intelligence",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1790900000000,
+      "tag": "0034_classifier",
+      "breakpoints": true
     }
   ]
 }

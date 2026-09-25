@@ -553,3 +553,7 @@ All 9 went into `allow-reconcile.json` with their reasons, next to the earlier l
 `2026-10-integrations.ts` `verify` for `user_app_connections` looked rows up by the Mongo `_id` split on `:`, so it reported 17 false "missing in PG" lines; it is now keyed by `(user_id, app_key)` like the rest of the unit.
 
 **Agent evaluation (migration 0031).** 18 datasets, 6 scenarios, 184 evaluations and the settings singleton were backfilled into `agent_evaluation.*` (209 rows, 0 failures, every content checksum equal).
+
+**Classifier (migration 0034, on `agentstore_test` only until the deploy).** Read-only dry run of `2026-10-classifier.units.ts` against the real dev Mongo data and the shared DB's workspace / document / user ids: 37 of 43 folders, 175 of 245 assignments, 2 of 3 rules and 0 of 0 runs are migratable. The other 77 are orphans of parents deleted from both stores (4 workspaces, 68 documents, 1 workspace of a rule; none of them is present in Mongo either), which the new foreign keys correctly refuse. No duplicate folder names, no cycles, no assignment loses its folder.
+
+Deploy sequence for the classifier: the deploy applies 0034, then `npx ts-node scripts/migrate/2026-10-classifier.ts --verify --checksum` (idempotent; the report lists each orphan with its reason), then the 77 orphan ids go into `allow-reconcile.json` and `reconcile-ids --allow=… --strict` must exit 0. Until then `reconcile-ids` reports the four classifier pairs as missing on the shared DB, which is the correct signal that the data has not moved yet.

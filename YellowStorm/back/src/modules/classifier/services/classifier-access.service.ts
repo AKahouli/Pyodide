@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { Types } from 'mongoose';
+import { isObjectId } from '@common/postgres';
 import {
   WORKSPACE_READ_PORT,
   WORKSPACE_SHARE_READ_PORT,
@@ -21,7 +21,7 @@ export class ClassifierAccessService {
   ) {}
 
   async assertWorkspaceAccess(workspaceId: string, userId: string): Promise<void> {
-    if (!Types.ObjectId.isValid(workspaceId)) {
+    if (!isObjectId(workspaceId)) {
       throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND);
     }
 

@@ -1,4 +1,4 @@
-import { isUniqueViolation } from './errors';
+import { isForeignKeyViolation, isUniqueViolation } from './errors';
 
 describe('isUniqueViolation', () => {
   const pgErr = { code: '23505', constraint: 'uq_projects_owner_name' };
@@ -20,5 +20,18 @@ describe('isUniqueViolation', () => {
     expect(isUniqueViolation({ code: '23503' })).toBe(false);
     expect(isUniqueViolation(new Error('boom'))).toBe(false);
     expect(isUniqueViolation(null)).toBe(false);
+  });
+});
+
+describe('isForeignKeyViolation', () => {
+  it('detects a raw pg foreign-key violation and a drizzle-wrapped one', () => {
+    expect(isForeignKeyViolation({ code: '23503', constraint: 'fk' })).toBe(true);
+    expect(isForeignKeyViolation(Object.assign(new Error('Failed query'), { cause: { code: '23503' } }))).toBe(true);
+  });
+
+  it('ignores other errors', () => {
+    expect(isForeignKeyViolation({ code: '23505' })).toBe(false);
+    expect(isForeignKeyViolation(new Error('boom'))).toBe(false);
+    expect(isForeignKeyViolation(undefined)).toBe(false);
   });
 });

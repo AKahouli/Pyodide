@@ -92,6 +92,10 @@ const NEW_MODULE_PAIRS: KeyedPair[] = [
   { mongo: 'knowledge_assessments', pg: 'governance.knowledge_assessments', lowerCase: true },
   { mongo: 'knowledge_recommendations', pg: 'governance.knowledge_recommendations', lowerCase: true },
   { mongo: 'metadata_candidates', pg: 'governance.metadata_candidates', lowerCase: true },
+  { mongo: 'classification_runs', pg: 'classifier.runs', lowerCase: true },
+  { mongo: 'classifier_folders', pg: 'classifier.folders', lowerCase: true },
+  { mongo: 'classifier_file_assignments', pg: 'classifier.file_assignments', lowerCase: true },
+  { mongo: 'classifier_rules', pg: 'classifier.rules', lowerCase: true },
 ];
 
 const ALL_PAIRS: KeyedPair[] = [
