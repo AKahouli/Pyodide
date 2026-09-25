@@ -82,6 +82,10 @@ const NEW_MODULE_PAIRS: KeyedPair[] = [
   { mongo: 'app_finalized_revisions', pg: 'app_runtime.finalized_revisions', lowerCase: true },
   { mongo: 'app_runtime_tool_calls', pg: 'app_runtime.tool_calls', mongoKey: 'toolCallId', pgKey: 'tool_call_id' },
   { mongo: 'app_builder_ai_offers', pg: 'catalog.app_builder_ai_offers', lowerCase: true },
+  { mongo: 'datasets', pg: 'agent_evaluation.datasets', lowerCase: true },
+  { mongo: 'scenarios', pg: 'agent_evaluation.scenarios', lowerCase: true },
+  { mongo: 'evaluations', pg: 'agent_evaluation.evaluations', lowerCase: true },
+  { mongo: 'evaluation_settings', pg: 'agent_evaluation.settings', lowerCase: true },
 ];
 
 const ALL_PAIRS: KeyedPair[] = [
