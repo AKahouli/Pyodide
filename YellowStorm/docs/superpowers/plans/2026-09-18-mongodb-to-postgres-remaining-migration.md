@@ -32,30 +32,29 @@
 | **App-data** | ✅ Own `app_data` schema. One Mongo coupling: `app-data-owner.controller.ts` (+ remote variant) injects `ConversationV2Session`. |
 | **Conversation v1** | ✅ PG-only. `usage.service.ts` now reads plans from `catalog.plans`; users resolve through `USER_LOOKUP_PORT` (Postgres). |
 | **Identity, catalog, integrations, agent ecosystem** | ✅ On Postgres (P1A, P1B, P3, P4). All cross-schema FKs are validated and generated from `scripts/migrate/fk-specs.ts` into `drizzle/0025`; `npm run db:verify` and `reconcile-ids.ts --strict` are the health checks. |
-| **Everything else** | ❌ Still Mongoose — see §1.3 (≈109 collection models across 10 modules). |
+| **Conversation v2, app-runtime, app-builder AI offers** | ✅ On Postgres (P8, migrations 0026–0028). Backfilled and content-verified; see the remediation plan, Appendix C. |
+| **Agent evaluation** | ✅ On Postgres (P6, migration 0031, schema `agent_evaluation`). `evaluation.*` in the shared DB belongs to a different feature. |
+| **WhatsApp** | ✂️ Removed from back, front and ADK (PR #317). Only empty `channels.whatsapp_*` tables remain; drop them with the next migration. |
+| **Everything else** | ❌ Still Mongoose — see §1.3 (playbook-flow, worky, knowledge-intelligence, classifier, integration-events, logger). |
 
 Not affected: **`yellowstorm-adk`, `mcp-*`, `yellowstorm-code-runtime` have no Mongo access** (only comments mention ObjectIds) — they reach data through Nest over gRPC/REST. **Front** has no datastore coupling; it only assumes 24-hex IDs (`isObjectIdLike` in `PlaybookExecutionComparePage.tsx`).
 
-### 1.3 Remaining Mongo surface (updated 2026-09-21, after the identity / catalog / integrations / agent-ecosystem remediation)
+### 1.3 Remaining Mongo surface (updated 2026-09-25, after conversation-v2, app-runtime and agent-evaluation)
 
-Done and verified on Postgres: `agents`, `app-data`, conversation v1, `project`, `workspace`, `workspace-artifact`, `governance`, identity (`user`, `auth`, `auth-provider`, `authorization`, `user-group`), config/catalog (`system`, `models`, `guardrails`, `health` history, `usage` plans, `notifications`, `tool`, `skill`, `agent-type`, `humain-agent`), integrations (`connected-app`, `connector`) and the agent ecosystem (shared agents, `team`, `telegram`, `widget-chat`). The remaining Mongo modules — enforced by `src/common/testing/no-mongoose-in-migrated-modules.spec.ts`, whose allowlist is exactly this table — are:
+Done and verified on Postgres: `agents`, `app-data`, conversation v1, `project`, `workspace`, `workspace-artifact`, `governance`, identity (`user`, `auth`, `auth-provider`, `authorization`, `user-group`), config/catalog (`system`, `models`, `guardrails`, `health` history, `usage` plans, `notifications`, `tool`, `skill`, `agent-type`, `humain-agent`), integrations (`connected-app`, `connector`) the agent ecosystem (shared agents, `team`, `telegram`, `widget-chat`), `conversation-v2`, `app-runtime` (with the app-builder AI offers) and `evaluation`. The remaining Mongo modules — enforced by `src/common/testing/no-mongoose-in-migrated-modules.spec.ts`, whose allowlist is exactly this table — are:
 
 | Module | Mongo collections | Non-spec files with `@InjectModel` | Notes |
 |---|---|---|---|
 | `playbook-flow` | 24 models (+3 subdocument helper files) | 47 | Largest. `$lookup` aggregations in `playbook-flow-artifact.service.ts` and `playbook-flow.service.ts`, a replay-report aggregation, 2 `bulkWrite` (node/prompt templates), leases + idempotency with TTL and duplicate-key semantics, 5 assistant collections (4 with TTL), event appends with `$inc`/`$push`, runtime index management, `FLOW_READ_PORT` (Mongo adapter used by `workspace` and `classifier`) |
-| `worky` | 26 models (25 schema files) | 26 (+1 `@InjectConnection`) | 619-line Electric consumer writing 7 collections + cursors; aggregations in budget / report / stream services; atomic budget `$inc`; cascade delete over 16 collections (`worky-stream.service.ts`); WhatsApp system-bot models (channel deprecated) |
-| `knowledge-intelligence` | 6 (all empty in dev) | 6 | Repositories already sit behind interfaces |
-| `classifier` | 4 | 5 | Reads flows through `FLOW_READ_PORT` |
-| `evaluation` | 4 | 3 | |
-| `conversation-v2` | 3 | 4 (+2 in `app-data` owner controllers) | Event store `$inc` counters; `(session_id, seq)` ordering |
-| `app-runtime` | 5 | 5 | Tickets (TTL), tool calls, source/finalized revisions; 7 unique indexes |
+| `worky` | 23 schema files | 22 | 619-line Electric consumer writing 7 collections + cursors; aggregations in budget / report / stream services; atomic budget `$inc`; cascade delete over 16 collections (`worky-stream.service.ts`) |
+| `knowledge-intelligence` | 6 (all empty in dev) | 6 | Repositories already sit behind interfaces; 13 files import Mongoose |
+| `classifier` | 4 | 5 | Reads flows through `FLOW_READ_PORT`; 11 files import Mongoose |
 | `integration-events` | 1 (outbox) | 2 | **Consumed by already-migrated modules** (`governance`, `workspace`, `indexing`, `semantic-model`) |
 | `logger` | 1 (`logs`, TTL 30 d, separate `logging` connection) | 1 | Aggregation in `log-buffer.service.ts` |
-| `whatsapp` | 3 | 5 | Deprecated by product decision; disabled with `WHATSAPP_ENABLED=false`; cleanup deferred |
 | `connector` (bridge) | — | 1 raw `connection.collection('flows')` | `connector-playbook-binding-sync.service.ts`; replaced in P5 |
 | `database` / `health` | — | — | `DatabaseModule` (`MongooseModule.forRoot`) and the Mongo ping in `health.service.ts`; removed in P10 |
 
-Live TTL indexes still in Mongo: 8 (app-runtime tickets, logger logs, 4 playbook-assistant collections, execution leases, idempotency records). Mongo transactions in wired code: none. `.aggregate()` files: 7 (logger, 3 in playbook-flow, 3 in worky). `bulkWrite`: 2.
+Live TTL indexes still in Mongo: 7 (logger logs, 4 playbook-assistant collections, execution leases, idempotency records). Mongo transactions in wired code: none. `.aggregate()` files: 7 (logger, 3 in playbook-flow, 3 in worky). `bulkWrite`: 2.
 
 ---
 
