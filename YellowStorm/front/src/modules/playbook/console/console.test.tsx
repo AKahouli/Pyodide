@@ -8,6 +8,8 @@ import { SegmentTabs } from './SegmentTabs';
 import { FilterBar } from './FilterBar';
 import { PlaybookDrawer } from './PlaybookDrawer';
 import { BulkActionBar } from './BulkActionBar';
+import { AttentionRail } from './AttentionRail';
+import type { RailActions } from './AttentionRail';
 import { parseConsoleState } from './consoleState';
 import type { PlaybookActions } from './types';
 
@@ -44,6 +46,22 @@ const noopActions = {
   onClone: vi.fn(), onDelete: vi.fn(), onToggleFavorite: vi.fn(), onOpenTriggers: vi.fn(),
   onIntegration: vi.fn(), onWatchRun: vi.fn(),
 } satisfies PlaybookActions;
+
+describe('AttentionRail', () => {
+  it('shows a localized fallback instead of a raw approval step ID', () => {
+    const vm = buildPlaybookVM(raw({ executionStatus: 'pending_approval' }), {
+      liveExecution: {
+        id: 'e1', status: 'pending_approval', playbookId: 'p1', updatedAt: new Date().toISOString(),
+        interruptPayload: { type: 'human_approval', taskId: 'internal-id', taskTitle: '', message: 'Approve?', threadId: 't1' },
+      } as never,
+    });
+    const actions: RailActions = { onWatchRun: vi.fn(), onStop: vi.fn(), onApprove: vi.fn(), onRetry: vi.fn(), onMore: vi.fn() };
+    render(<AttentionRail vms={[vm]} actions={actions} />);
+    const waiting = screen.getByTestId('rail-waiting');
+    expect(within(waiting).getByText('console.rail.waiting.step')).toBeInTheDocument();
+    expect(within(waiting).queryByText('internal-id')).not.toBeInTheDocument();
+  });
+});
 
 describe('PlaybookTable', () => {
   beforeEach(() => vi.clearAllMocks());

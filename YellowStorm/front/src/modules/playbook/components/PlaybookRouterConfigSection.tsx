@@ -3,6 +3,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { useModuleTranslation } from '@/modules/localization';
 
 import { useCurrentPlaybook } from '../store';
@@ -67,11 +68,15 @@ function normalizeRouterConfig(value: RouterConfig): RouterConfig {
   const defaultLabel = value.defaultLabel && labelSet.has(value.defaultLabel)
     ? value.defaultLabel
     : value.outputLabels.find((label) => label !== '__error__') ?? value.outputLabels[0];
+  const mode = value.mode === 'ai' || value.mode === 'deterministic'
+    ? value.mode
+    : conditions.length > 0 ? 'deterministic' : 'ai';
 
   return {
     ...value,
     conditions,
     defaultLabel,
+    mode,
   };
 }
 
@@ -168,8 +173,45 @@ export function PlaybookRouterConfigSection({ value, onChange, disabled, tasks =
     });
   };
 
+  const mode = value.mode === 'ai' || value.mode === 'deterministic'
+    ? value.mode
+    : (value.conditions?.length ?? 0) > 0 ? 'deterministic' : 'ai';
+
   return (
     <div className="space-y-3">
+      <div className="space-y-2">
+        <Label htmlFor="router-mode">{t('routerEditor.mode')}</Label>
+        <select
+          id="router-mode"
+          name="router-mode"
+          value={mode}
+          onChange={(event) => emitChange({ ...value, mode: event.target.value as 'ai' | 'deterministic' })}
+          disabled={disabled}
+          className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+        >
+          <option value="ai">{t('routerEditor.modeAi')}</option>
+          <option value="deterministic">{t('routerEditor.modeDeterministic')}</option>
+        </select>
+        <p className="text-xs text-muted-foreground">{t('routerEditor.modeHint')}</p>
+      </div>
+
+      {mode === 'ai' && (
+        <div className="space-y-2">
+          <Label htmlFor="router-prompt">{t('routerEditor.prompt')}</Label>
+          <Textarea
+            id="router-prompt"
+            name="router-prompt"
+            value={value.prompt ?? ''}
+            onChange={(event) => emitChange({ ...value, prompt: event.target.value || undefined })}
+            disabled={disabled}
+            rows={3}
+            className="resize-y text-xs"
+            placeholder={t('routerEditor.promptPlaceholder')}
+          />
+          <p className="text-xs text-muted-foreground">{t('routerEditor.promptHint')}</p>
+        </div>
+      )}
+
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <Label>{t('routerEditor.outputLabels')}</Label>
@@ -256,6 +298,7 @@ export function PlaybookRouterConfigSection({ value, onChange, disabled, tasks =
           </Button>
         </div>
 
+        {mode === 'ai' && <p className="text-xs text-muted-foreground">{t('routerEditor.conditionsIgnoredInAi')}</p>}
         {(value.conditions ?? []).length === 0 ? (
           <p className="text-xs text-muted-foreground">{t('routerEditor.conditionsEmpty')}</p>
         ) : (

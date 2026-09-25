@@ -602,7 +602,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
       lastSavedDraftRef.current = draft;
       hasUnsavedEditorChangesRef.current = false;
       setEditorSavePending(false);
-    }, 350);
+    }, 1500);
 
     return () => window.clearTimeout(timeoutId);
   }, [open, task, editorSavePending, draft, onSave]);

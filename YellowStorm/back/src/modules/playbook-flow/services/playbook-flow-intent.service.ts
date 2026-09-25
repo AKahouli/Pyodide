@@ -153,6 +153,8 @@ export interface PlaybookIntentTaskDraft {
       value?: unknown;
     }>;
     defaultLabel?: string | null;
+    mode?: 'ai' | 'deterministic' | null;
+    prompt?: string | null;
   } | null;
   humanApprovalConfig?: Record<string, unknown> | null;
   retryPolicy?: { maxRetries: number; delayMs?: number } | null;
@@ -1938,11 +1940,15 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
     }
     const defaultLabel = this.normalizeText(raw.defaultLabel);
     const conditions = this.normalizeRouterConditions(raw.conditions, itemId, outputLabels);
+    const mode = this.normalizeText(raw.mode);
+    const prompt = this.normalizeText(raw.prompt);
     return {
       outputLabels: [...new Set(outputLabels)],
       ...(typeof raw.maxIterations === 'number' ? { maxIterations: raw.maxIterations } : {}),
       ...(defaultLabel ? { defaultLabel } : {}),
       ...(conditions.length ? { conditions } : {}),
+      ...(mode === 'ai' || mode === 'deterministic' ? { mode } : {}),
+      ...(prompt ? { prompt } : {}),
     };
   }
 

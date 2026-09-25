@@ -49,6 +49,12 @@ def test_classifies_config_and_import_failures_as_fatal():
     assert classify_startup_failure(RuntimeError("bad certificate file")) == "fatal"
 
 
+def test_playbook_runtime_stubs_load_before_server_starts():
+    from src.grpc_generated import playbook_flow_pb2_grpc as pf_grpc
+
+    assert callable(pf_grpc.add_PlaybookFlowRuntimeServicer_to_server)
+
+
 def test_classifies_dependency_failures_as_transient():
     assert classify_startup_failure(RuntimeError("connection refused")) == "transient"
     assert classify_startup_failure(TimeoutError()) == "transient"

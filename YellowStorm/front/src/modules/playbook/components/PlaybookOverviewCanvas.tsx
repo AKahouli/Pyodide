@@ -61,7 +61,13 @@ function PlaybookOverviewFlow({
   const { t } = useModuleTranslation('playbook');
   const reactFlow = useReactFlow<OverviewNode, OverviewEdge>();
   const projectedGraph = useMemo(() => projectOverviewGraph(nodes, edges), [nodes, edges]);
-  const [layoutGraph, setLayoutGraph] = useState(projectedGraph);
+  const layoutKey = JSON.stringify([
+    projectedGraph.nodes.map((node) => node.id),
+    projectedGraph.edges.map((edge) => [edge.id, edge.source, edge.target]),
+  ]);
+  const projectedGraphRef = useRef(projectedGraph);
+  projectedGraphRef.current = projectedGraph;
+  const [layout, setLayout] = useState({ key: layoutKey, graph: projectedGraph });
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const layoutRequestRef = useRef(0);
   const executionOpenTimerRef = useRef<number | null>(null);
@@ -74,13 +80,14 @@ function PlaybookOverviewFlow({
 
   useEffect(() => {
     const requestId = ++layoutRequestRef.current;
-    setLayoutGraph(projectedGraph);
+    const graph = projectedGraphRef.current;
+    setLayout({ key: layoutKey, graph });
     let disposed = false;
     void import('elkjs/lib/elk.bundled.js')
-      .then(({ default: ELK }) => layoutOverviewGraph(projectedGraph, new ELK()))
+      .then(({ default: ELK }) => layoutOverviewGraph(graph, new ELK()))
       .then((nextGraph) => {
         if (disposed || requestId !== layoutRequestRef.current) return;
-        setLayoutGraph(nextGraph);
+        setLayout({ key: layoutKey, graph: nextGraph });
         window.requestAnimationFrame(() => {
           void reactFlow.fitView({ padding: 0.16, duration: 300 });
         });
@@ -94,7 +101,20 @@ function PlaybookOverviewFlow({
     return () => {
       disposed = true;
     };
-  }, [projectedGraph, reactFlow]);
+  }, [layoutKey, reactFlow]);
+
+  const layoutGraph = useMemo(() => {
+    if (layout.key !== layoutKey) return projectedGraph;
+    const positions = new Map(layout.graph.nodes.map((node) => [node.id, node.position]));
+    const routes = new Map(layout.graph.edges.map((edge) => [edge.id, edge.data?.routePoints]));
+    return {
+      nodes: projectedGraph.nodes.map((node) => ({ ...node, position: positions.get(node.id) ?? node.position })),
+      edges: projectedGraph.edges.map((edge) => ({
+        ...edge,
+        data: { ...edge.data!, routePoints: routes.get(edge.id) },
+      })),
+    };
+  }, [layout, layoutKey, projectedGraph]);
 
   useEffect(() => {
     if (selectedNodeId && !layoutGraph.nodes.some((node) => node.id === selectedNodeId)) {

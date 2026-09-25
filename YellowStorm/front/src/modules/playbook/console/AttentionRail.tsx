@@ -131,7 +131,7 @@ export function AttentionRail({ vms, actions }: { vms: PlaybookVM[]; actions: Ra
                 </div>
                 {vm.approval && (
                   <>
-                    <p className="text-[11px] font-medium text-wait">{vm.approval.nodeName}</p>
+                    <p className="text-[11px] font-medium text-wait">{vm.approval.nodeName || t('console.rail.waiting.step')}</p>
                     {vm.approval.summary && <p className="line-clamp-2 text-[11px] text-muted-foreground">{vm.approval.summary}</p>}
                   </>
                 )}

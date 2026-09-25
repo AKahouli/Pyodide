@@ -895,6 +895,15 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
     const fullSnapshot = this.builderService.buildSnapshot(flow as any);
     const executableSnapshot = this.buildExecutableSnapshot(fullSnapshot, flowId);
+    if (!singleStepTaskId && (fullSnapshot.nodes?.length ?? 0) > 0 && executableSnapshot.nodes.length === 0) {
+      if (idempotencyKey) {
+        await this.idempotencyService.release(ownerId, idempotencyKey);
+      }
+      throw new BadRequestException(
+        ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
+        'No runnable steps remain after disabled branches are excluded.',
+      );
+    }
 
     let snapshot: any;
     let seededTaskOutputs: SeededTaskOutput[] = [];
@@ -1557,6 +1566,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
               value: toGrpcValue(condition.value),
             })),
             default_label: n.routerConfig.defaultLabel || '',
+            mode: n.routerConfig.mode || '',
+            prompt: n.routerConfig.prompt || '',
           } : undefined,
           iterator_config: n.iteratorConfig ? {
             collection_path: n.iteratorConfig.collectionPath || '',
@@ -2385,6 +2396,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
             path: c.path || '', operator: c.operator || '', value: toGrpcValue(c.value),
           })),
           default_label: n.routerConfig.defaultLabel || '',
+          mode: n.routerConfig.mode || '',
+          prompt: n.routerConfig.prompt || '',
         } : undefined,
         iterator_config: n.iteratorConfig ? {
           collection_path: n.iteratorConfig.collectionPath || '', max_items: n.iteratorConfig.maxItems || 0,
