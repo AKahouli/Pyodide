@@ -36,20 +36,20 @@
 | **Agent evaluation** | ✅ On Postgres (P6, migration 0031, schema `agent_evaluation`). `evaluation.*` in the shared DB belongs to a different feature. |
 | **Knowledge intelligence** | ✅ On Postgres (P6, migration 0033, six `governance.knowledge_*` tables with FKs). The job queue claims with `FOR UPDATE SKIP LOCKED`; governance now reads plain records instead of Mongoose documents. |
 | **Classifier** | ✅ On Postgres (P6, migration 0034, schema `classifier`: folders, file assignments, rules, runs). The folder tree is a self-referencing table (`ON DELETE CASCADE`, `NULLS NOT DISTINCT` name uniqueness); deleting a folder unassigns its files atomically. `playbook_id` has no FK until the flow store leaves Mongo (P5). |
+| **Integration events** | ✅ On Postgres (P6, migration 0035, `ops.integration_events` + `ops.integration_event_deliveries`). A real transactional outbox: `record()` joins the caller's transaction, the dispatcher claims with `FOR UPDATE SKIP LOCKED` and fences every write on its lock owner, and a claim left by a dead dispatcher is taken over after two minutes. |
 | **WhatsApp** | ✂️ Removed from back, front and ADK (PR #317). The empty `channels.whatsapp_*` tables are dropped by migration 0032. |
-| **Everything else** | ❌ Still Mongoose — see §1.3 (playbook-flow, worky, integration-events, logger). |
+| **Everything else** | ❌ Still Mongoose — see §1.3 (playbook-flow, worky, logger). |
 
 Not affected: **`yellowstorm-adk`, `mcp-*`, `yellowstorm-code-runtime` have no Mongo access** (only comments mention ObjectIds) — they reach data through Nest over gRPC/REST. **Front** has no datastore coupling; it only assumes 24-hex IDs (`isObjectIdLike` in `PlaybookExecutionComparePage.tsx`).
 
-### 1.3 Remaining Mongo surface (updated 2026-09-25, after conversation-v2, app-runtime, agent-evaluation, knowledge-intelligence and classifier)
+### 1.3 Remaining Mongo surface (updated 2026-09-25, after conversation-v2, app-runtime, agent-evaluation, knowledge-intelligence, classifier and integration-events)
 
-Done and verified on Postgres: `agents`, `app-data`, conversation v1, `project`, `workspace`, `workspace-artifact`, `governance`, identity (`user`, `auth`, `auth-provider`, `authorization`, `user-group`), config/catalog (`system`, `models`, `guardrails`, `health` history, `usage` plans, `notifications`, `tool`, `skill`, `agent-type`, `humain-agent`), integrations (`connected-app`, `connector`) the agent ecosystem (shared agents, `team`, `telegram`, `widget-chat`), `conversation-v2`, `app-runtime` (with the app-builder AI offers), `evaluation`, `knowledge-intelligence` and `classifier`. The remaining Mongo modules — enforced by `src/common/testing/no-mongoose-in-migrated-modules.spec.ts`, whose allowlist is exactly this table — are:
+Done and verified on Postgres: `agents`, `app-data`, conversation v1, `project`, `workspace`, `workspace-artifact`, `governance`, identity (`user`, `auth`, `auth-provider`, `authorization`, `user-group`), config/catalog (`system`, `models`, `guardrails`, `health` history, `usage` plans, `notifications`, `tool`, `skill`, `agent-type`, `humain-agent`), integrations (`connected-app`, `connector`) the agent ecosystem (shared agents, `team`, `telegram`, `widget-chat`), `conversation-v2`, `app-runtime` (with the app-builder AI offers), `evaluation`, `knowledge-intelligence`, `classifier` and `integration-events`. The remaining Mongo modules — enforced by `src/common/testing/no-mongoose-in-migrated-modules.spec.ts`, whose allowlist is exactly this table — are:
 
 | Module | Mongo collections | Non-spec files with `@InjectModel` | Notes |
 |---|---|---|---|
 | `playbook-flow` | 24 models (+3 subdocument helper files) | 47 | Largest. `$lookup` aggregations in `playbook-flow-artifact.service.ts` and `playbook-flow.service.ts`, a replay-report aggregation, 2 `bulkWrite` (node/prompt templates), leases + idempotency with TTL and duplicate-key semantics, 5 assistant collections (4 with TTL), event appends with `$inc`/`$push`, runtime index management, `FLOW_READ_PORT` (Mongo adapter used by `workspace` and `classifier`) |
 | `worky` | 23 schema files | 22 | 619-line Electric consumer writing 7 collections + cursors; aggregations in budget / report / stream services; atomic budget `$inc`; cascade delete over 16 collections (`worky-stream.service.ts`) |
-| `integration-events` | 1 (outbox) | 2 | **Consumed by already-migrated modules** (`governance`, `workspace`, `indexing`, `semantic-model`) |
 | `logger` | 1 (`logs`, TTL 30 d, separate `logging` connection) | 1 | Aggregation in `log-buffer.service.ts` |
 | `connector` (bridge) | — | 1 raw `connection.collection('flows')` | `connector-playbook-binding-sync.service.ts`; replaced in P5 |
 | `database` / `health` | — | — | `DatabaseModule` (`MongooseModule.forRoot`) and the Mongo ping in `health.service.ts`; removed in P10 |

@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { boolean, doublePrecision, char, check, index, integer, jsonb, pgSchema, text, timestamp, varchar } from 'drizzle-orm/pg-core';
+import { boolean, doublePrecision, char, check, index, integer, jsonb, pgSchema, primaryKey, text, timestamp, uniqueIndex, varchar } from 'drizzle-orm/pg-core';
 // Relative (not @common/*): pulled in by ts-node migration scripts without path aliases.
 import { objectId, timestamps } from '../../../common/postgres/columns';
 
@@ -61,5 +61,58 @@ export const opsHealthHistory = opsSchema.table(
     index('idx_health_history_recorded').on(t.recordedAt.desc()),
     index('idx_health_history_status_recorded').on(t.status, t.recordedAt.desc()),
     index('idx_health_history_expire').on(t.expireAt),
+  ],
+);
+
+/**
+ * Transactional outbox of the integration events (roadmap P6). A row is written in the caller's
+ * transaction, then claimed by the dispatcher with FOR UPDATE SKIP LOCKED; `attempts` counts claims.
+ * Per-handler delivery state lives in `integration_event_deliveries`, not in an embedded array.
+ */
+export const opsIntegrationEvents = opsSchema.table(
+  'integration_events',
+  {
+    id: objectId('id').primaryKey(),
+    eventId: text('event_id').notNull(),
+    eventType: text('event_type').notNull(),
+    aggregateType: text('aggregate_type').notNull(),
+    aggregateId: text('aggregate_id').notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+    status: varchar('status', { length: 16 }).notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    nextAttemptAt: timestamp('next_attempt_at', { withTimezone: true }),
+    lockedAt: timestamp('locked_at', { withTimezone: true }),
+    lockOwner: text('lock_owner'),
+    processedAt: timestamp('processed_at', { withTimezone: true }),
+    lastError: text('last_error'),
+    correlationId: text('correlation_id'),
+    causationId: text('causation_id'),
+    ...timestamps(),
+  },
+  (t) => [
+    check('ops_integration_events_status', sql`${t.status} IN ('pending','processing','completed','failed','dead_letter')`),
+    check('ops_integration_events_attempts', sql`${t.attempts} >= 0`),
+    uniqueIndex('uq_integration_events_event_id').on(t.eventId),
+    index('idx_integration_events_claim').on(t.nextAttemptAt).where(sql`${t.status} IN ('pending','failed')`),
+    index('idx_integration_events_processing').on(t.lockedAt).where(sql`${t.status} = 'processing'`),
+    index('idx_integration_events_aggregate').on(t.aggregateType, t.aggregateId, t.occurredAt),
+  ],
+);
+
+export const opsIntegrationEventDeliveries = opsSchema.table(
+  'integration_event_deliveries',
+  {
+    integrationEventId: objectId('integration_event_id').notNull(),
+    handlerKey: text('handler_key').notNull(),
+    status: varchar('status', { length: 16 }).notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    lastError: text('last_error'),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.integrationEventId, t.handlerKey] }),
+    check('ops_integration_event_deliveries_status', sql`${t.status} IN ('pending','completed','failed')`),
+    check('ops_integration_event_deliveries_attempts', sql`${t.attempts} >= 0`),
   ],
 );

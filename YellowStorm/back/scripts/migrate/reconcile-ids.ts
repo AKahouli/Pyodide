@@ -96,6 +96,7 @@ const NEW_MODULE_PAIRS: KeyedPair[] = [
   { mongo: 'classifier_folders', pg: 'classifier.folders', lowerCase: true },
   { mongo: 'classifier_file_assignments', pg: 'classifier.file_assignments', lowerCase: true },
   { mongo: 'classifier_rules', pg: 'classifier.rules', lowerCase: true },
+  { mongo: 'integration_events', pg: 'ops.integration_events', lowerCase: true },
 ];
 
 const ALL_PAIRS: KeyedPair[] = [
