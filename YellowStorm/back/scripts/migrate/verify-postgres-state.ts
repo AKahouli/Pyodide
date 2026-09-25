@@ -20,7 +20,7 @@
  */
 import * as path from 'path';
 import { Client } from 'pg';
-import { FK_SPECS, FK_SPECS_IN_0020, FK_SPECS_IN_0037, normalizeFkDefinition } from './fk-specs';
+import { FK_SPECS, FK_SPECS_IN_0020, FK_SPECS_IN_0037, FK_SPECS_IN_0041, normalizeFkDefinition } from './fk-specs';
 
 require('dotenv').config({ path: path.resolve(__dirname, '..', '..', '.env') });
 
@@ -140,7 +140,7 @@ async function main(): Promise<void> {
 
   // 8. every fk-specs constraint exists, is validated and has the expected definition
   let fkChecked = 0;
-  for (const spec of [...FK_SPECS, ...FK_SPECS_IN_0020, ...FK_SPECS_IN_0037]) {
+  for (const spec of [...FK_SPECS, ...FK_SPECS_IN_0020, ...FK_SPECS_IN_0037, ...FK_SPECS_IN_0041]) {
     const live = await client.query<{ def: string; valid: boolean }>(
       `SELECT pg_get_constraintdef(c.oid) AS def, c.convalidated AS valid
          FROM pg_constraint c WHERE c.conname = $1 AND c.conrelid = $2::regclass`,

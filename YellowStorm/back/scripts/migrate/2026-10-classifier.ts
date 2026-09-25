@@ -7,7 +7,7 @@
  *   classifier_rules             → classifier.rules
  *
  * The mapping lives in 2026-10-classifier.units.ts. Ids are preserved (lower-cased ObjectId hex).
- * Runs go first (assignments reference them), then folders (parents before children), then the
+ * Run after the playbook backfill: a run points at its playbook with a foreign key. Runs go first (assignments reference them), then folders (parents before children), then the
  * assignments and rules. Rows whose workspace, document or user no longer exists are reported as
  * failures (the foreign keys would reject them), never silently dropped; an assignment whose
  * folder or run is gone keeps its file and loses only that reference. Idempotent:
@@ -62,6 +62,7 @@ async function main(): Promise<void> {
     workspaces: await idSet('SELECT id FROM workspace.workspaces'),
     documents: await idSet('SELECT id FROM workspace.workspace_documents'),
     users: await idSet('SELECT id FROM identity.users'),
+    playbooks: await idSet('SELECT id FROM playbook.flows'),
   };
 
   const common = (table: string, columns: string[]) => ({

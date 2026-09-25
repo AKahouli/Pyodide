@@ -16,8 +16,8 @@ import { objectId, timestamps } from '../../../common/postgres/columns';
 /**
  * Classifier tables (roadmap P6): the folder tree of a workspace, the assignment of each
  * document to a folder, the user's classification rules and the classification runs.
- * Every parent reference is a real foreign key in 0034_classifier.sql; `playbook_id`
- * has none until the flow store leaves Mongo (P5).
+ * Every parent reference is a real foreign key in 0034_classifier.sql; `playbook_id` got its own
+ * (fk_classifier_runs_playbook, 0041) once the flow store moved to Postgres.
  */
 export const classifierSchema = pgSchema('classifier');
 

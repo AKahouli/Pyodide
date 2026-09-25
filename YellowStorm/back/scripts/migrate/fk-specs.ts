@@ -384,9 +384,36 @@ export const INDEXES_IN_0037: string[] = [
   'CREATE INDEX IF NOT EXISTS idx_ar_tickets_user ON app_runtime.tickets (user_id);',
 ];
 
+/**
+ * The classifier run → playbook edge, added once the flow store was on Postgres (roadmap P5). Same
+ * contract as 0037: drizzle/0041 is generated from this list, adds the constraint NOT VALID and validates it
+ * only when the orphan check is empty; the runner validates it after the playbook backfill.
+ */
+export const FK_SPECS_IN_0041: FkSpec[] = [
+  {
+    name: 'fk_classifier_runs_playbook',
+    table: 'classifier.runs',
+    definition: 'FOREIGN KEY (playbook_id) REFERENCES playbook.flows(id) ON DELETE CASCADE',
+    orphanCheck: `SELECT count(*)::int AS n FROM classifier.runs r
+                  WHERE NOT EXISTS (SELECT 1 FROM playbook.flows f WHERE f.id = r.playbook_id)`,
+    // A run of a playbook that no longer exists is history nobody can open; its file assignments keep their folder (SET NULL).
+    cleanup: {
+      exportStem: 'classifier_runs_without_playbook',
+      selectSql: `SELECT r.* FROM classifier.runs r
+                  WHERE NOT EXISTS (SELECT 1 FROM playbook.flows f WHERE f.id = r.playbook_id)`,
+      deleteSql: `DELETE FROM classifier.runs r
+                  WHERE NOT EXISTS (SELECT 1 FROM playbook.flows f WHERE f.id = r.playbook_id)`,
+    },
+  },
+];
+
+export const INDEXES_IN_0041: string[] = [
+  'CREATE INDEX IF NOT EXISTS idx_classifier_runs_playbook ON classifier.runs (playbook_id);',
+];
+
 /** Select specs by name from every FK group; throws on an unknown name. */
 export function fkSpecs(...names: string[]): FkSpec[] {
-  const all = new Map([...FK_SPECS, ...FK_SPECS_IN_0020, ...FK_SPECS_IN_0037].map((spec) => [spec.name, spec]));
+  const all = new Map([...FK_SPECS, ...FK_SPECS_IN_0020, ...FK_SPECS_IN_0037, ...FK_SPECS_IN_0041].map((spec) => [spec.name, spec]));
   return names.map((name) => {
     const spec = all.get(name);
     if (!spec) throw new Error(`Unknown FK spec: ${name}`);

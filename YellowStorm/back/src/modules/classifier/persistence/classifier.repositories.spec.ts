@@ -40,6 +40,8 @@ describeIntegration('classifier repositories (integration)', () => {
     for (const id of [userId, otherUserId]) {
       await db.insert(schema.identityUsers).values({ id, email: `cls-${id.slice(-8)}@example.com`, passwordHash: 'hash', emailVerified: true, status: 'active' });
     }
+    // Runs reference their playbook with a foreign key (0041); the user owns it, so it goes with the user.
+    await db.insert(schema.playbookFlows).values({ id: playbookId, ownerId: userId, name: `cls flow ${playbookId}` });
     for (const id of [workspaceId, otherWorkspaceId]) {
       await db.insert(schema.workspaces).values({ id, name: `cls ws ${id}`, alias: `cls-${id}`, storagePrefix: `cls-${id}`, createdBy: userId, allocatedStorage: 1 });
     }

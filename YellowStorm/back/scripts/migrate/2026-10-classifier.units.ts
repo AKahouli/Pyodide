@@ -16,6 +16,8 @@ export interface ClassifierRefs {
   workspaces: ReadonlySet<string>;
   documents: ReadonlySet<string>;
   users: ReadonlySet<string>;
+  /** playbook.flows: a run points at its playbook with a foreign key (0041). */
+  playbooks: ReadonlySet<string>;
 }
 
 const HEX = /^[0-9a-f]{24}$/;
@@ -126,7 +128,9 @@ export const validateRule = (row: Row, refs: ClassifierRefs): string | null => {
 };
 
 export const validateRun = (row: Row, refs: ClassifierRefs): string | null =>
-  missingWorkspace(row, refs) ?? missingUser(row.triggered_by, 'triggered_by', refs);
+  missingWorkspace(row, refs)
+  ?? missingUser(row.triggered_by, 'triggered_by', refs)
+  ?? (refs.playbooks.has(String(row.playbook_id)) ? null : `dangling playbook_id ${row.playbook_id} (playbook gone from PG; FK would reject)`);
 
 /**
  * Folder tree. The cursor visits folders by `_id`, but a folder can have been moved below a

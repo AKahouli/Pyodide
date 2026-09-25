@@ -42,15 +42,18 @@ describeIntegration('classifier backfill mapping (integration)', () => {
   const goneWorkspaceId = oid(); // never inserted
   const goneDocumentId = oid();
   const goneUserId = oid();
+  const playbookId = oid(); // a real flow: runs reference it with a foreign key (0041)
 
   const refs: ClassifierRefs = {
     workspaces: new Set([workspaceId, otherWorkspaceId]),
     documents: new Set([documentId]),
     users: new Set([userId]),
+    playbooks: new Set([playbookId]),
   };
 
   beforeAll(async () => {
     await db.insert(schema.identityUsers).values({ id: userId, email: `cls-bf-${userId.slice(-8)}@example.com`, passwordHash: 'hash', emailVerified: true, status: 'active' });
+    await db.insert(schema.playbookFlows).values({ id: playbookId, ownerId: userId, name: `cls bf flow ${playbookId}` });
     for (const id of [workspaceId, otherWorkspaceId]) {
       await db.insert(schema.workspaces).values({ id, name: `cls bf ${id}`, alias: `cls-bf-${id}`, storagePrefix: `cls-bf-${id}`, createdBy: userId, allocatedStorage: 1 });
     }
@@ -141,7 +144,7 @@ describeIntegration('classifier backfill mapping (integration)', () => {
       const folder = buildFolder(folderDoc({ name: 'asg-folder' }));
       await insertRow(pool, 'classifier.folders', FOLDER_COLUMNS, folder);
       const run = buildRun({
-        _id: new Types.ObjectId(), workspaceId: objectId(workspaceId), status: 'success', playbookId: new Types.ObjectId(), triggeredBy: objectId(userId),
+        _id: new Types.ObjectId(), workspaceId: objectId(workspaceId), status: 'success', playbookId: objectId(playbookId), triggeredBy: objectId(userId),
         totalFiles: 3, classifiedFiles: 3, createdAt: at('2026-03-02T08:00:00Z'), updatedAt: at('2026-03-02T08:05:00Z'),
       });
       await insertRow(pool, 'classifier.runs', RUN_COLUMNS, run);
@@ -205,7 +208,7 @@ describeIntegration('classifier backfill mapping (integration)', () => {
   describe('runs', () => {
     it('maps every column, inserts and reads back identical', async () => {
       const row = buildRun({
-        _id: new Types.ObjectId(), workspaceId: objectId(workspaceId), status: 'failed', playbookId: new Types.ObjectId(), playbookExecutionId: 'exec-9',
+        _id: new Types.ObjectId(), workspaceId: objectId(workspaceId), status: 'failed', playbookId: objectId(playbookId), playbookExecutionId: 'exec-9',
         hint: 'prefer\u0000 contracts', overwriteExisting: true, totalFiles: 12, classifiedFiles: 5, error: 'timeout',
         startedAt: at('2026-03-04T10:00:00Z'), finishedAt: at('2026-03-04T10:07:00Z'), triggeredBy: objectId(userId),
         createdAt: at('2026-03-04T09:59:00Z'), updatedAt: at('2026-03-04T10:07:00Z'),
@@ -216,10 +219,11 @@ describeIntegration('classifier backfill mapping (integration)', () => {
       sameContent(row, await readBack('classifier.runs', RUN_COLUMNS, row.id));
     });
 
-    it('rejects a run whose workspace or author is gone, and clamps a corrupt counter', () => {
-      const base = { _id: new Types.ObjectId(), workspaceId: objectId(workspaceId), playbookId: new Types.ObjectId(), triggeredBy: objectId(userId) };
+    it('rejects a run whose workspace, author or playbook is gone, and clamps a corrupt counter', () => {
+      const base = { _id: new Types.ObjectId(), workspaceId: objectId(workspaceId), playbookId: objectId(playbookId), triggeredBy: objectId(userId) };
       expect(validateRun(buildRun({ ...base, workspaceId: objectId(goneWorkspaceId) }), refs)).toMatch(/dangling workspace_id/);
       expect(validateRun(buildRun({ ...base, triggeredBy: objectId(goneUserId) }), refs)).toMatch(/dangling triggered_by/);
+      expect(validateRun(buildRun({ ...base, playbookId: new Types.ObjectId() }), refs)).toMatch(/dangling playbook_id/);
       expect(buildRun({ ...base, totalFiles: -4, classifiedFiles: 'x' })).toMatchObject({ total_files: 0, classified_files: 0, status: 'queued' });
     });
   });
