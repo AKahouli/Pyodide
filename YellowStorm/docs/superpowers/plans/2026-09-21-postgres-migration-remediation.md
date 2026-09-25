@@ -651,3 +651,32 @@ Every deletion exports the rows to `scripts/migrate/out/*.json` first and only r
 6. Remove `MONGODB_URI` from the environments, then the `mongoose` packages from the dependencies once the specs no longer need them.
 
 **Not verified here.** An end-to-end run against the ADK runtime (start, queue, events, HITL pause, resume), the load gate (`scripts/playbook-flow-load-gate.mjs` needs a token and flow ids), the Graph mail webhook and real assistant traffic. The runtime handlers were exercised through their unit specs, the real-handler integration spec (`playbook-execution-runtime.integration.spec.ts`: two concurrent approvals, stale interrupts, double completion) and the repository integration specs.
+
+## Appendix G — Deploy-day runbook (migrations 0032–0041), 2026-09-25
+
+Everything from 0032 on exists only on `agentstore_test` until the deploy; the shared `agentstore` has 0031. This puts the per-module sequences of Appendices D, E and F in one order. Run from `YellowStorm/back`; every backfill is idempotent (`ON CONFLICT DO NOTHING`) and takes `--dry-run`, `--verify` and `--checksum`.
+
+**Before**
+1. Stop every build that still writes the shared Mongo or Postgres for these modules: this workstation's old backends, `41.226.51.189` (`DESKTOP-GP5PR3F`), `77.136.67.137` and the container `YelloStorm:aadcdad9e603` (found in Appendix D). Stop the Electric consumers and the integration-event dispatchers on every instance: they would keep writing the stores that are being copied.
+2. If `feat/app-templates` has merged, re-time its migrations 0029/0030 above `1791600000000` (the journal `when` of 0041): `migrate()` skips any migration whose `when` is not above the newest ledger row (R-23), and `db:verify` check1 stays red until then.
+3. Set `LOGGING_RETENTION_DAYS` (2 for dev; the Mongo TTL it replaces was 48 h at about 375k entries a day).
+
+**Deploy**
+4. The deploy applies 0032 (aborts if a `channels.whatsapp_*` table has rows) through 0041. 0037 and 0041 add their foreign keys NOT VALID and validate only what is clean.
+
+**Backfills, in dependency order** (each `npx ts-node scripts/migrate/<file> --verify --checksum`)
+5. Playbook definitions first, because runs and other rows reference flows: `2026-10-playbook-flows.ts`, then `-executions.ts`, `-attempts.ts`, `-idempotency.ts`, `-templates.ts` (before the new build boots: its seeders insert the built-ins under new ids), `-assistant.ts`, `-replays.ts`.
+6. `2026-10-classifier.ts` (needs the flows: a run whose playbook is gone is reported), `2026-10-knowledge-intelligence.ts` (empty), `2026-10-integration-events.ts`, `2026-10-worky.ts`.
+7. Older modules: `reconcile-ids.ts --allow=scripts/migrate/allow-reconcile.json` shows any gap left since the last incremental run (Appendix D); rerun the matching backfill for a module that shows one.
+
+**Foreign keys**
+8. `2026-10-conversation-app-runtime-fk.ts --dry-run`, then decide about the one owner-less session (126 events, owner in neither store), then `--delete-orphans`; `2026-10-classifier-playbook-fk.ts --dry-run`, then `--delete-orphans`. Each deletion exports the rows to `scripts/migrate/out/*.json` first.
+
+**Verify**
+9. `npm run db:verify` (check1 needs step 2 done; check2 and check8 need step 8), then `ANALYZE` (check6 lists the tables that never had statistics, 90 of them on the test database).
+10. Start the new build. `reconcile-ids.ts --allow=scripts/migrate/allow-reconcile.json --since=<cutover> --strict` must exit 0: a missing id after the cutover means something still writes Mongo. The allow list holds the ids that are correctly not migrated (orphans of deleted flows and streams, superseded rows); regenerate the entries from the runners' failure lists if new orphans appeared.
+
+**Afterwards**
+11. Remove `MONGODB_URI` from the environments, then the `mongoose` packages once the specs stop fabricating ObjectIds with them and the backfill scripts are retired; drop the dev Mongo collections when the cutover has held.
+
+**Open decisions:** the owner-less session of step 8; whether the legacy Mongo collections nothing reads (`playbook_executions` 523 MB, `playbooks`, the non-`_flow_` template/replay collections, `worky_idempotency_records`, the `worky_whatsapp_*` and `channels`/WhatsApp leftovers) are dropped or archived.
