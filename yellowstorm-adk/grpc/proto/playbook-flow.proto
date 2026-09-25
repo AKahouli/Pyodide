@@ -156,6 +156,8 @@ message RouterConfig {
   int32 max_iterations = 2;
   repeated RouterCondition conditions = 3;
   string default_label = 4;
+  string mode = 5;
+  string prompt = 6;
 }
 
 message RouterCondition {

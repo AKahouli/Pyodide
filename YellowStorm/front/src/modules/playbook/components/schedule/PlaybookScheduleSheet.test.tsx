@@ -112,6 +112,21 @@ describe('PlaybookScheduleSheet', () => {
     expect(screen.getByRole('textbox', { name: 'triggers.mailConfig.notificationUrl' })).toBeInTheDocument();
   });
 
+  it('keeps a selected mail trigger when mailbox capability or trigger props refresh', async () => {
+    const props = { open: true, onOpenChange: vi.fn(), playbookId: 'p1', schedule: null };
+    const { rerender } = render(<PlaybookScheduleSheet {...props} />);
+    await userEvent.click(screen.getByRole('radio', { name: /triggers.automated.mailTitle/ }));
+    mailboxCapabilityMock.current = {
+      connected: true, mailboxReady: true, missingScopes: [], grantedScopes: ['mail.read'],
+    };
+    rerender(<PlaybookScheduleSheet {...props} mailTrigger={null} />);
+
+    expect(screen.getByRole('radio', { name: /triggers.automated.mailTitle/ })).toBeChecked();
+    await userEvent.click(screen.getByRole('button', { name: 'schedule.save' }));
+    expect(storeMock.upsertPlaybookTriggerMail).toHaveBeenCalledWith('p1', expect.objectContaining({ enabled: true }));
+    expect(storeMock.upsertPlaybookTriggerSchedule).not.toHaveBeenCalled();
+  });
+
   it('saves a disabled automated trigger when none is selected', async () => {
     render(
       <PlaybookScheduleSheet

@@ -370,7 +370,7 @@ export function shouldRenderPlaybookAssistant(
 }
 
 export function getInitialPlaybookPageMode(latestExecutionStatus?: string): PlaybookPageMode {
-  return latestExecutionStatus === 'completed' ? 'run' : 'design';
+  return latestExecutionStatus && latestExecutionStatus !== 'idle' ? 'run' : 'design';
 }
 
 export function canAppendIntentEdge(
@@ -487,16 +487,23 @@ export function buildOverviewResultNodeIds(
     .map((result) => result.taskId));
 }
 
-export function isTaskConfiguredForExecution(task: PlaybookTask): boolean {
-  if (task.enabled === false) return true;
+export function getMissingTaskConfiguration(task: PlaybookTask): Array<'agent' | 'action' | 'iteratorSource' | 'evaluationExpectation'> {
+  if (task.enabled === false) return [];
   const nodeType = getEffectiveNodeType(task);
-  if (nodeType === 'router' || nodeType === 'human_approval') return true;
-  if (nodeType === 'iterator') return Boolean(task.iteratorConfig?.source?.trim());
+  if (nodeType === 'router' || nodeType === 'human_approval') return [];
+  if (nodeType === 'iterator') return task.iteratorConfig?.source?.trim() ? [] : ['iteratorSource'];
   if (nodeType === 'evaluation') {
-    return Boolean(task.assignedAgentId && (task.evaluationConfig?.expectation || task.evaluationConfig?.referenceBaselineId));
+    return [
+      ...(!task.assignedAgentId ? ['agent' as const] : []),
+      ...(!task.evaluationConfig?.expectation && !task.evaluationConfig?.referenceBaselineId ? ['evaluationExpectation' as const] : []),
+    ];
   }
-  if (nodeType === 'action') return Boolean(task.selectedAction);
-  return Boolean(task.assignedAgentId);
+  if (nodeType === 'action') return task.selectedAction ? [] : ['action'];
+  return task.assignedAgentId ? [] : ['agent'];
+}
+
+export function isTaskConfiguredForExecution(task: PlaybookTask): boolean {
+  return getMissingTaskConfiguration(task).length === 0;
 }
 
 export function didCanonicalAssistantCommitSucceed(
@@ -2412,16 +2419,20 @@ function PlaybookCanvasInner() {
     scheduleChangeFeedbackCleanup();
   }, [designerSidebarWidth, reactFlow, scheduleChangeFeedbackCleanup]);
 
-  const handleValidationIssueSelect = useCallback((issue: PlaybookValidationIssue) => {
-    if (!playbook?.tasks.some((task) => task.id === issue.taskId)) return;
+  const handleReadinessTaskSelect = useCallback((taskId: string) => {
+    if (!playbook?.tasks.some((task) => task.id === taskId)) return;
     setNodes((currentNodes) => currentNodes.map((node) => ({
       ...node,
-      selected: node.id === issue.taskId,
+      selected: node.id === taskId,
     })));
-    selectStep(issue.taskId);
+    if (canvasViewMode === 'overview') {
+      handleOpenOverviewNode(taskId);
+      return;
+    }
+    selectStep(taskId);
     const fitIssueNode = () => {
       void reactFlow.fitView({
-        nodes: [{ id: issue.taskId }],
+        nodes: [{ id: taskId }],
         padding: 0.35,
         duration: 650,
         maxZoom: 1.08,
@@ -2435,11 +2446,11 @@ function PlaybookCanvasInner() {
       return;
     }
     if (designerSidebarWidth > 0 && window.matchMedia('(min-width: 640px)').matches) {
-      focusConstructionNode(playbook.tasks, issue.taskId);
+      focusConstructionNode(playbook.tasks, taskId);
       return;
     }
     fitIssueNode();
-  }, [designerSidebarWidth, focusConstructionNode, playbook, reactFlow, selectStep, setDesignerOpen, setExecutionPanelCollapsed, setExecutionPanelOpen, setNodes]);
+  }, [canvasViewMode, designerSidebarWidth, focusConstructionNode, handleOpenOverviewNode, playbook, reactFlow, selectStep, setDesignerOpen, setExecutionPanelCollapsed, setExecutionPanelOpen, setNodes]);
 
   const handleApplyIntentSuggestion = useCallback((
     suggestion: PlaybookIntentSuggestion,
@@ -4526,8 +4537,11 @@ function PlaybookCanvasInner() {
   );
   const hasRunnableContent = playbook.tasks.length > 0 || (playbook.nodes?.length || 0) > 0;
   const hasWorkspace = (playbook.workspaces?.length || 0) > 0;
-  const unconfiguredTaskCount = playbook.tasks.filter((task) => !isTaskConfiguredForExecution(task)).length;
-  const canRun = hasRunnableContent && hasWorkspace && unconfiguredTaskCount === 0 && !hasActiveExecution && !isSaving && !isDirty;
+  const unconfiguredTasks = playbook.tasks.flatMap((task) => {
+    const reasons = getMissingTaskConfiguration(task);
+    return reasons.length ? [{ id: task.id, title: task.title, reasons }] : [];
+  });
+  const canRun = hasRunnableContent && hasWorkspace && unconfiguredTasks.length === 0 && !hasActiveExecution && !isSaving && !isDirty;
   const canRunWithInputs = canRun && canRunPlaybookInputContract(
     isDirty,
     isSaving,
@@ -4645,9 +4659,10 @@ function PlaybookCanvasInner() {
           canRun={canRunWithInputs}
           hasRunnableContent={hasRunnableContent}
           hasWorkspace={hasWorkspace}
-          unconfiguredTaskCount={unconfiguredTaskCount}
+          unconfiguredTasks={unconfiguredTasks}
           validationIssues={validationIssues}
-          onValidationIssueSelect={handleValidationIssueSelect}
+          onValidationIssueSelect={(issue) => handleReadinessTaskSelect(issue.taskId)}
+          onUnconfiguredTaskSelect={handleReadinessTaskSelect}
         />
       </div>
 
@@ -4672,7 +4687,7 @@ function PlaybookCanvasInner() {
           onDownloadAllResults={handleDownloadAllResults}
           canDownloadAllResults={Boolean(activeDownloadExecution?.taskResults?.length)}
           onTriggers={() => setTriggersSheetOpen(true)}
-          triggersOpen={triggersSheetOpen}
+          triggersEnabled={playbook.executionSchedule?.enabled === true || playbook.triggers.some((trigger) => trigger.type === 'mail' && trigger.enabled)}
           designSettings={playbook.designSettings}
           onDesignSettingsChange={(settings) => {
             void updatePlaybook(playbook.id, {

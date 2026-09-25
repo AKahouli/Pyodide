@@ -53,9 +53,10 @@ interface StatusActionsProps {
   canRun: boolean;
   hasRunnableContent: boolean;
   hasWorkspace: boolean;
-  unconfiguredTaskCount?: number;
+  unconfiguredTasks?: Array<{ id: string; title: string; reasons: Array<'agent' | 'action' | 'iteratorSource' | 'evaluationExpectation'> }>;
   validationIssues?: PlaybookValidationIssue[];
   onValidationIssueSelect?: (issue: PlaybookValidationIssue) => void;
+  onUnconfiguredTaskSelect?: (taskId: string) => void;
 }
 
 interface Props {
@@ -72,7 +73,7 @@ interface Props {
   onDownloadAllResults?: () => void;
   canDownloadAllResults?: boolean;
   onTriggers?: () => void;
-  triggersOpen?: boolean;
+  triggersEnabled?: boolean;
   designSettings?: PlaybookDesignSettings;
   onDesignSettingsChange?: (settings: Partial<PlaybookDesignSettings>) => void;
   onOpenFlowSettings?: () => void;
@@ -95,18 +96,18 @@ export function PlaybookStatusActions({
   canRun,
   hasRunnableContent,
   hasWorkspace,
-  unconfiguredTaskCount = 0,
+  unconfiguredTasks = [],
   validationIssues = [],
   onValidationIssueSelect,
+  onUnconfiguredTaskSelect,
 }: StatusActionsProps) {
   const { t } = useModuleTranslation('playbook');
   const [readinessOpen, setReadinessOpen] = useState(false);
   const structuralBlockers = [
     ...(!hasRunnableContent ? [t('toolbar.readiness.missingSteps')] : []),
     ...(!hasWorkspace ? [t('toolbar.readiness.missingWorkspace')] : []),
-    ...(unconfiguredTaskCount > 0 ? [t('toolbar.readiness.unconfiguredTasks', { count: unconfiguredTaskCount })] : []),
   ];
-  const blockerCount = structuralBlockers.length + validationIssues.length;
+  const blockerCount = structuralBlockers.length + unconfiguredTasks.length + validationIssues.length;
   const running = isExecuting || hasActiveExecution;
   const readiness = running
     ? { label: t('toolbar.readiness.running'), icon: Loader2, className: 'border-running/30 bg-running/5 text-running' }
@@ -146,6 +147,26 @@ export function PlaybookStatusActions({
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
                 <span>{blocker}</span>
               </div>
+            ))}
+            {unconfiguredTasks.map((task) => (
+              <button
+                key={task.id}
+                type="button"
+                className="group flex w-full items-start gap-2 rounded-md p-2 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => {
+                  setReadinessOpen(false);
+                  onUnconfiguredTaskSelect?.(task.id);
+                }}
+              >
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">{task.title}</span>
+                  {task.reasons.map((reason) => (
+                    <span key={reason} className="block text-xs text-muted-foreground">{t(`toolbar.readiness.configuration.${reason}`)}</span>
+                  ))}
+                </span>
+                <LocateFixed className="mt-1 h-4 w-4 shrink-0 text-muted-foreground group-hover:text-foreground" aria-hidden="true" />
+              </button>
             ))}
             {validationIssues.map((issue) => (
               <button
@@ -240,7 +261,7 @@ export function PlaybookToolbar({
   onDownloadAllResults,
   canDownloadAllResults = false,
   onTriggers,
-  triggersOpen = false,
+  triggersEnabled = false,
   designSettings,
   onDesignSettingsChange,
   onOpenFlowSettings,
@@ -286,12 +307,11 @@ export function PlaybookToolbar({
             <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
               <span>{t('toolbar.triggers')}</span>
               <Switch
-                checked={triggersOpen}
-                onCheckedChange={(checked) => {
-                  if (checked) {
-                    setRunSettingsOpen(false);
-                    onTriggers();
-                  }
+                aria-label={t('toolbar.triggers')}
+                checked={triggersEnabled}
+                onCheckedChange={() => {
+                  setRunSettingsOpen(false);
+                  onTriggers();
                 }}
               />
             </div>

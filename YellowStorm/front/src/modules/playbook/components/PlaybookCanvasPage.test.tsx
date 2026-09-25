@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { buildIntentEdgeOptions, buildOverviewResultNodeIds, canAppendIntentEdge, canRunPlaybookInputContract, didCanonicalAssistantCommitSucceed, getInitialPlaybookPageMode, getPlaybookInputRevisionSyncAction, getPlaybookInputRevisionSyncRequest, getScopedConstructionDiagnostics, hydrateAssistantOperationHandoff, isPlaybookRouteCurrent, isTaskConfiguredForExecution, loadLatestPlaybookAssistantHistory, pruneUnreachableDataBindings, recoverPlaybookInputConfigurationConflict, remapRouterConditionSourceNodes, replacePlaybookInputBinding, resolveDiagnosticNodeId, resolveIntentNodeSemantics, runPlaybookInputRevisionSync, savePlaybookInputConfiguration, shouldApplyInitialAutoLayout, shouldAutoLayoutAfterConstruction, shouldBlockAssistantNavigation, shouldBlockCanvasMutationShortcut, shouldClearConstructionDiagnostics, shouldConsumeAssistantOperationHandoff, shouldEnableCanvasNodeDragging, shouldPauseAssistantPersistence, shouldRenderPlaybookAssistant, shouldUsePlaybookMcpAssistant, updateScopedConstructionDiagnostics, type PlaybookInputRevisionSyncState } from './PlaybookCanvasPage';
+import { buildIntentEdgeOptions, buildOverviewResultNodeIds, canAppendIntentEdge, canRunPlaybookInputContract, didCanonicalAssistantCommitSucceed, getInitialPlaybookPageMode, getMissingTaskConfiguration, getPlaybookInputRevisionSyncAction, getPlaybookInputRevisionSyncRequest, getScopedConstructionDiagnostics, hydrateAssistantOperationHandoff, isPlaybookRouteCurrent, isTaskConfiguredForExecution, loadLatestPlaybookAssistantHistory, pruneUnreachableDataBindings, recoverPlaybookInputConfigurationConflict, remapRouterConditionSourceNodes, replacePlaybookInputBinding, resolveDiagnosticNodeId, resolveIntentNodeSemantics, runPlaybookInputRevisionSync, savePlaybookInputConfiguration, shouldApplyInitialAutoLayout, shouldAutoLayoutAfterConstruction, shouldBlockAssistantNavigation, shouldBlockCanvasMutationShortcut, shouldClearConstructionDiagnostics, shouldConsumeAssistantOperationHandoff, shouldEnableCanvasNodeDragging, shouldPauseAssistantPersistence, shouldRenderPlaybookAssistant, shouldUsePlaybookMcpAssistant, updateScopedConstructionDiagnostics, type PlaybookInputRevisionSyncState } from './PlaybookCanvasPage';
 import { resolveCanvasNodeSelection } from '../utils/playbook-canvas-selection';
 import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from '../utils/playbook-canvas-status';
 import { makeExecution } from '../test-utils';
@@ -191,6 +191,14 @@ describe('Playbook input dialog guards', () => {
 });
 
 describe('isTaskConfiguredForExecution', () => {
+  it('identifies every missing setting on an enabled step', () => {
+    expect(getMissingTaskConfiguration(makeTask({ assignedAgentId: null }))).toEqual(['agent']);
+    expect(getMissingTaskConfiguration(makeTask({ nodeType: 'action', selectedAction: undefined }))).toEqual(['action']);
+    expect(getMissingTaskConfiguration(makeTask({ nodeType: 'iterator', iteratorConfig: undefined }))).toEqual(['iteratorSource']);
+    expect(getMissingTaskConfiguration(makeTask({ nodeType: 'evaluation', assignedAgentId: null, evaluationConfig: undefined })))
+      .toEqual(['agent', 'evaluationExpectation']);
+    expect(getMissingTaskConfiguration(makeTask({ enabled: false, assignedAgentId: null }))).toEqual([]);
+  });
   it('requires an assigned agent for enabled agent tasks', () => {
     expect(isTaskConfiguredForExecution(makeTask())).toBe(true);
     expect(isTaskConfiguredForExecution(makeTask({ assignedAgentId: undefined }))).toBe(false);
@@ -287,10 +295,11 @@ describe('pruneUnreachableDataBindings', () => {
 });
 
 describe('getInitialPlaybookPageMode', () => {
-  it('opens completed Playbooks in Monitor and all others in Design', () => {
-    expect(getInitialPlaybookPageMode('completed')).toBe('run');
-    expect(getInitialPlaybookPageMode('running')).toBe('design');
-    expect(getInitialPlaybookPageMode('failed')).toBe('design');
+  it('opens every non-idle execution in Monitor, including runs awaiting approval', () => {
+    for (const status of ['queued', 'pending', 'running', 'pending_approval', 'interrupted', 'failed', 'cancelled', 'completed']) {
+      expect(getInitialPlaybookPageMode(status)).toBe('run');
+    }
+    expect(getInitialPlaybookPageMode('idle')).toBe('design');
     expect(getInitialPlaybookPageMode()).toBe('design');
   });
 });

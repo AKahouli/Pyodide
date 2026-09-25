@@ -128,9 +128,18 @@ describe('PlaybookToolbar', () => {
   });
 
   it('surfaces unconfigured workflow steps as readiness blockers', async () => {
-    render(<PlaybookStatusActions {...defaultStatusProps} canRun={false} unconfiguredTaskCount={2} />);
+    const onUnconfiguredTaskSelect = vi.fn();
+    render(<PlaybookStatusActions {...defaultStatusProps} canRun={false} unconfiguredTasks={[
+      { id: 'task-1', title: 'Prepare report', reasons: ['agent'] },
+      { id: 'task-2', title: 'Review report', reasons: ['agent', 'evaluationExpectation'] },
+    ]} onUnconfiguredTaskSelect={onUnconfiguredTaskSelect} />);
     await userEvent.click(screen.getByText('toolbar.readiness.blockersCount'));
-    expect(screen.getByText('toolbar.readiness.unconfiguredTasks')).toBeInTheDocument();
+    expect(screen.getByText('Prepare report')).toBeInTheDocument();
+    expect(screen.getByText('Review report')).toBeInTheDocument();
+    expect(screen.getAllByText('toolbar.readiness.configuration.agent')).toHaveLength(2);
+    expect(screen.getByText('toolbar.readiness.configuration.evaluationExpectation')).toBeInTheDocument();
+    await userEvent.click(screen.getByText('Review report'));
+    expect(onUnconfiguredTaskSelect).toHaveBeenCalledWith('task-2');
     expect(screen.getByText('toolbar.run').closest('button')).toBeDisabled();
   });
 
@@ -181,12 +190,24 @@ describe('PlaybookToolbar', () => {
 
   it('calls onTriggers from inside the run settings popover', async () => {
     const onTriggers = vi.fn();
-    render(<PlaybookToolbar {...defaultProps} onTriggers={onTriggers} triggersOpen={false} />);
+    render(<PlaybookToolbar {...defaultProps} onTriggers={onTriggers} triggersEnabled={false} />);
     await userEvent.click(screen.getByRole('button', { name: 'toolbar.runSettings' }));
-    const switches = screen.getAllByRole('switch');
-    const triggerSwitch = switches[0];
+    const triggerSwitch = screen.getByRole('switch', { name: 'toolbar.triggers' });
     await userEvent.click(triggerSwitch);
     expect(onTriggers).toHaveBeenCalledOnce();
+  });
+
+  it('shows the saved trigger as enabled after the settings sheet closes', async () => {
+    const onTriggers = vi.fn();
+    const { rerender } = render(<PlaybookToolbar {...defaultProps} onTriggers={onTriggers} triggersEnabled={false} />);
+    await userEvent.click(screen.getByRole('button', { name: 'toolbar.runSettings' }));
+    expect(screen.getByRole('switch', { name: 'toolbar.triggers' })).not.toBeChecked();
+    rerender(<PlaybookToolbar {...defaultProps} onTriggers={onTriggers} triggersEnabled />);
+    expect(screen.getByRole('switch', { name: 'toolbar.triggers' })).toBeChecked();
+    await userEvent.click(screen.getByRole('switch', { name: 'toolbar.triggers' }));
+    expect(onTriggers).toHaveBeenCalledOnce();
+    await userEvent.click(screen.getByRole('button', { name: 'toolbar.runSettings' }));
+    expect(screen.getByRole('switch', { name: 'toolbar.triggers' })).toBeChecked();
   });
 
   it('does not show trigger button in popover when onTriggers is not provided', async () => {

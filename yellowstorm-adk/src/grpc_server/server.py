@@ -20,12 +20,8 @@ from src.config.settings import get_settings
 from src.dependencies import get_agent_team_service
 from src.flow_engine.runtime.checkpointer import close_checkpointer, init_checkpointer
 
-try:
-    from src.grpc_generated import playbook_flow_pb2_grpc as pf_grpc
-    from src.flow_engine.grpc_service import PlaybookFlowRuntimeServicer
-except ImportError:
-    pf_grpc = None
-    PlaybookFlowRuntimeServicer = None
+from src.grpc_generated import playbook_flow_pb2_grpc as pf_grpc
+from src.flow_engine.grpc_service import PlaybookFlowRuntimeServicer
 
 logger = get_logger(__name__)
 
@@ -121,11 +117,10 @@ async def start_grpc_server(
     except Exception as e:
         logger.error(f"[gRPC] Failed to register A2AAdminServicer: {e}", exc_info=True)
 
-    if pf_grpc is not None and PlaybookFlowRuntimeServicer is not None:
-        await init_checkpointer()
-        pf_servicer = PlaybookFlowRuntimeServicer()
-        pf_grpc.add_PlaybookFlowRuntimeServicer_to_server(pf_servicer, server)
-        logger.info("[gRPC] PlaybookFlowRuntimeServicer registered")
+    await init_checkpointer()
+    pf_servicer = PlaybookFlowRuntimeServicer()
+    pf_grpc.add_PlaybookFlowRuntimeServicer_to_server(pf_servicer, server)
+    logger.info("[gRPC] PlaybookFlowRuntimeServicer registered")
 
     # Agent Orchestrator (parallel multi-agent) — always registered.
     orchestrator_runtime = None
