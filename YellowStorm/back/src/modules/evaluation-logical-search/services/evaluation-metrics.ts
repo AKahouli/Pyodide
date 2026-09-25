@@ -838,16 +838,17 @@ export function buildSummary(results: EvaluationQueryResult[]): EvaluationRunSum
 }
 
 /**
- * Scope a benchmark to a single query id. An empty/absent id keeps the whole
+ * Scope a benchmark to a set of query ids. An empty/absent list keeps the whole
  * dataset so the default run behavior is unchanged.
  */
 export function selectBenchmarkQueries<T extends { query_id: string }>(
   queries: T[],
-  queryId?: string,
+  queryIds?: string[],
 ): T[] {
-  const target = queryId?.trim();
-  if (!target) {
+  const targets = (queryIds ?? []).map((id) => id.trim()).filter(Boolean);
+  if (targets.length === 0) {
     return queries;
   }
-  return queries.filter((query) => query.query_id === target);
+  const wanted = new Set(targets);
+  return queries.filter((query) => wanted.has(query.query_id));
 }

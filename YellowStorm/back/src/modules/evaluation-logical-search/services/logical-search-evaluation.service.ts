@@ -557,10 +557,10 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     };
   }
 
-  async run(ownerId: string, evaluationId: string, options: { queryId?: string } = {}) {
+  async run(ownerId: string, evaluationId: string, options: { queryIds?: string[] } = {}) {
     const evaluation = await this.getById(ownerId, evaluationId);
-    const targetQueryId = options.queryId?.trim() || undefined;
-    const isTargeted = Boolean(targetQueryId);
+    const targetQueryIds = (options.queryIds ?? []).map((id) => id.trim()).filter(Boolean);
+    const isTargeted = targetQueryIds.length > 0;
     let rescued = false;
     if (evaluation.status === 'running') {
       if (this.activeRuns.has(evaluationId)) {
@@ -589,9 +589,9 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     if (allQueries.length === 0) {
       throw new BadRequestException('Benchmark has no queries.');
     }
-    const queries = selectBenchmarkQueries(allQueries, targetQueryId);
+    const queries = selectBenchmarkQueries(allQueries, targetQueryIds);
     if (queries.length === 0) {
-      throw new BadRequestException(`Unknown query id: ${targetQueryId}`);
+      throw new BadRequestException(`Unknown query id(s): ${targetQueryIds.join(', ')}`);
     }
 
     await this.repository.applyRunStart(evaluationId);

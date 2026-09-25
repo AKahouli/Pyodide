@@ -3,12 +3,15 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { SearchSelect } from '@/components/ui/search-select';
+import { MultiSelect } from '@/components/ui/multi-select';
 import { useModuleTranslation } from '@/modules/localization';
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import { useAgents, useAgentsLoading, useAgentStore } from '@/modules/agent';
 import { evaluationLogicalSearchApi } from '../api';
 import type { LogicalSearchEvaluation, UploadResult, BenchmarkQuery } from '../types';
+
+const HISTORY_PAGE_SIZE = 3;
 
 interface WorkspaceSummary {
   id: string;
@@ -45,7 +48,8 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   // ── History ─────────────────────────────────────────────────
   const [evaluations, setEvaluations] = useState<LogicalSearchEvaluation[]>([]);
   const [selectedEvalId, setSelectedEvalId] = useState<string | null>(null);
-  const [selectedQueryId, setSelectedQueryId] = useState<string>('');
+  const [selectedQueryIds, setSelectedQueryIds] = useState<string[]>([]);
+  const [historyPage, setHistoryPage] = useState(1);
 
   // ── Load agents ─────────────────────────────────────────────
   useEffect(() => { void useAgentStore.getState().fetchAgents(); }, []);
@@ -136,7 +140,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   const handleLaunch = useCallback(async () => {
     const source = evaluations.find((e) => e.id === selectedEvalId);
     if (!source || !selectedAgentId || !selectedEvaluatorAgentId || !selectedWorkspaceId) return;
-    const queryId = selectedQueryId || undefined;
+    const queryIds = selectedQueryIds.length > 0 ? selectedQueryIds : undefined;
     setLaunching(true);
     setLaunchError(null);
     try {
@@ -149,7 +153,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
         workspaceId: selectedWorkspaceId || undefined,
         evaluatorAgentId: selectedEvaluatorAgentId,
       });
-      await evaluationLogicalSearchApi.run(evaluationId, queryId);
+      await evaluationLogicalSearchApi.run(evaluationId, queryIds);
       refreshEvaluations();
     } catch (err) {
       setRunError(err instanceof Error ? err.message : 'Launch failed');
@@ -158,7 +162,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
       setRunningEvalId(null);
       refreshEvaluations();
     }
-  }, [selectedEvalId, selectedAgentId, selectedEvaluatorAgentId, selectedWorkspaceId, evaluations, refreshEvaluations, selectedQueryId]);
+  }, [selectedEvalId, selectedAgentId, selectedEvaluatorAgentId, selectedWorkspaceId, evaluations, refreshEvaluations, selectedQueryIds]);
 
   // Resume a failed evaluation in place: re-runs only the queries that did not
   // complete, keeping the attributes stored at prepare time (agent/workspace/judge).
@@ -259,7 +263,19 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
     return [...byKey.values()].map((e) => ({ value: e.id, label: `${e.name} · ${e.queryCount}` }));
   }, [evaluations]);
 
-  useEffect(() => { setSelectedQueryId(''); }, [selectedEvalId]);
+  // History lists runs only: dataset_ready rows are benchmarks, shown in the dropdown.
+  const historyEvaluations = useMemo(
+    () => evaluations.filter((e) => e.status !== 'dataset_ready'),
+    [evaluations],
+  );
+  const historyPageCount = Math.max(1, Math.ceil(historyEvaluations.length / HISTORY_PAGE_SIZE));
+  const activeHistoryPage = Math.min(historyPage, historyPageCount);
+  const visibleEvaluations = historyEvaluations.slice(
+    (activeHistoryPage - 1) * HISTORY_PAGE_SIZE,
+    activeHistoryPage * HISTORY_PAGE_SIZE,
+  );
+
+  useEffect(() => { setSelectedQueryIds([]); }, [selectedEvalId]);
 
   return (
     <div className='h-full w-full overflow-auto'>
@@ -420,14 +436,11 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
           <CardHeader><CardTitle>{t('targeted.title')}</CardTitle></CardHeader>
           <CardContent className='space-y-2'>
             <p className='text-xs text-muted-foreground'>{t('targeted.help')}</p>
-            <SearchSelect
-              options={[
-                { value: '', label: t('targeted.all') },
-                ...queryOptions.map((q) => ({ value: q.query_id, label: `${q.query_id} — ${q.query.slice(0, 60)}` })),
-              ]}
-              value={selectedQueryId}
-              onValueChange={setSelectedQueryId}
-              placeholder={t('targeted.placeholder')}
+            <MultiSelect
+              options={queryOptions.map((q) => ({ value: q.query_id, label: `${q.query_id} — ${q.query.slice(0, 60)}` }))}
+              value={selectedQueryIds}
+              onValueChange={setSelectedQueryIds}
+              placeholder={t('targeted.all')}
               searchPlaceholder={t('select.search')}
               emptyText={t('select.noResults')}
             />
@@ -442,14 +455,14 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
           <CardContent>
             {runError && <p className='mb-2 text-sm text-destructive'>{runError}</p>}
             {exportError && <p className='mb-2 text-sm text-destructive'>{exportError}</p>}
+            {historyEvaluations.length === 0 && (
+              <p className='text-sm text-muted-foreground'>{t('history.empty')}</p>
+            )}
             <div className='space-y-2'>
-              {evaluations.map((ev) => (
+              {visibleEvaluations.map((ev) => (
                 <div
                   key={ev.id}
-                  className={`flex items-center justify-between rounded-lg border p-3 text-sm cursor-pointer transition-colors ${
-                    selectedEvalId === ev.id ? 'border-primary bg-primary/5' : 'hover:bg-muted/50'
-                  }`}
-                  onClick={() => setSelectedEvalId(ev.id)}
+                  className='flex items-center justify-between rounded-lg border p-3 text-sm'
                 >
                   <div className='min-w-0'>
                     <p className='truncate font-medium'>{ev.name}</p>
@@ -502,6 +515,36 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
                 </div>
               ))}
             </div>
+            {historyPageCount > 1 && (
+              <div className='mt-3 flex items-center justify-center gap-1'>
+                <Button
+                  size='sm'
+                  variant='outline'
+                  disabled={activeHistoryPage === 1}
+                  onClick={() => setHistoryPage(activeHistoryPage - 1)}
+                >
+                  ‹
+                </Button>
+                {Array.from({ length: historyPageCount }, (_, i) => i + 1).map((page) => (
+                  <Button
+                    key={page}
+                    size='sm'
+                    variant={page === activeHistoryPage ? 'default' : 'outline'}
+                    onClick={() => setHistoryPage(page)}
+                  >
+                    {page}
+                  </Button>
+                ))}
+                <Button
+                  size='sm'
+                  variant='outline'
+                  disabled={activeHistoryPage === historyPageCount}
+                  onClick={() => setHistoryPage(activeHistoryPage + 1)}
+                >
+                  ›
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

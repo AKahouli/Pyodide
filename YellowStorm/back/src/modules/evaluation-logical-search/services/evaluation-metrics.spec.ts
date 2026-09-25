@@ -20,15 +20,23 @@ describe('selectBenchmarkQueries', () => {
 
   it('keeps the whole dataset when no query id is given', () => {
     expect(selectBenchmarkQueries(queries)).toHaveLength(3);
-    expect(selectBenchmarkQueries(queries, '  ')).toHaveLength(3);
+    expect(selectBenchmarkQueries(queries, [])).toHaveLength(3);
+    expect(selectBenchmarkQueries(queries, ['  '])).toHaveLength(3);
   });
 
   it('scopes to a single query id', () => {
-    expect(selectBenchmarkQueries(queries, 'Q003')).toEqual([{ query_id: 'Q003', query: 'b' }]);
+    expect(selectBenchmarkQueries(queries, ['Q003'])).toEqual([{ query_id: 'Q003', query: 'b' }]);
+  });
+
+  it('scopes to several query ids', () => {
+    expect(selectBenchmarkQueries(queries, ['Q001', 'Q025'])).toEqual([
+      { query_id: 'Q001', query: 'a' },
+      { query_id: 'Q025', query: 'c' },
+    ]);
   });
 
   it('returns an empty list for an unknown query id', () => {
-    expect(selectBenchmarkQueries(queries, 'Q999')).toEqual([]);
+    expect(selectBenchmarkQueries(queries, ['Q999'])).toEqual([]);
   });
 });
 

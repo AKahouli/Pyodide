@@ -86,9 +86,10 @@ export class LogicalSearchEvaluationController {
   async run(
     @CurrentUser() user: UserDocument,
     @Param('id') id: string,
-    @Body() body: { queryId?: string },
+    @Body() body: { queryIds?: string[]; queryId?: string },
   ) {
-    return this.service.run(user._id.toString(), id, { queryId: body?.queryId });
+    const queryIds = body?.queryIds ?? (body?.queryId ? [body.queryId] : undefined);
+    return this.service.run(user._id.toString(), id, { queryIds });
   }
 
   @Post(':id/stop')
