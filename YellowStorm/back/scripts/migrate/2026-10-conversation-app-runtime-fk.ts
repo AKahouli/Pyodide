@@ -9,8 +9,9 @@
  * without orphans; this script validates the rest once their orphans are handled:
  * `--delete-orphans` exports each dangling set to scripts/migrate/out/*.json first, then clears it
  * (a dangling system_workspace_id is set to NULL, the others are deleted with what hangs off them).
+ * `--keep-orphans=fk_c2_sessions_owner` keeps the owner-less session and its events: that constraint stays NOT VALID.
  *
- * Usage: npx ts-node scripts/migrate/2026-10-conversation-app-runtime-fk.ts [--dry-run] [--delete-orphans] [--drop]
+ * Usage: npx ts-node scripts/migrate/2026-10-conversation-app-runtime-fk.ts [--dry-run] [--delete-orphans [--keep-orphans=<spec>,...]] [--drop]
  */
 import { runFkSpecs } from './fk-helper';
 import { fkSpecs } from './fk-specs';
