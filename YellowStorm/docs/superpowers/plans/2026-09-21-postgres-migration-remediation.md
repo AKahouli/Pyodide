@@ -519,3 +519,29 @@ Live legs need the deployed dev stack (ADK, MCP servers, real OAuth apps, a Tele
 | S11 | Catalog export → import; import with an injected failure persists nothing | PARTIAL PASS (2026-09-22) — Admin → Connectors lists 25 connectors from Postgres; ran a live **Export catalog** ("All connectors and their linked skills"), got a "Catalog exported" success toast. Import (including the injected-failure/rollback leg) was not driven | `catalog-transfer.atomicity.spec.ts`, `catalog-transfer.security.spec.ts` |
 | S12 | Delete an agent (Telegram integration, widget tokens) / a connector (junction rows) | PASS (2026-09-22, user OK'd deletion) — used disposable objects to avoid touching real data: created agent "SMOKE TEST DELETE ME", enabled its embed widget and generated real widget credentials (`widget-2982-...`), attached a throwaway MCP connector to it. (1) Deleted the throwaway connector from Admin → Connectors → "Connector deleted"; reopened the agent's Connectors tab and the attachment was gone (`agent_connectors` row cascade-removed, no orphan, no error). (2) Deleted the agent itself → "Agent deleted", count 72→71, no FK error — consistent with the widget-token row cascading with it. Telegram leg not exercised (excluded) | `channels-concurrency.spec.ts` (agent-delete FK cascades), FK `fk_agent_connectors_connector` validated |
 | S13 | Teams: create, reorder hierarchy, share, resolve execution definition; the 42 backfilled teams open in order | PASS (2026-09-22) — Teams list loads real backfilled teams with correct member counts; opened "Veille Agro" (3 members: Badr, Salma, Karim) and its org-chart canvas, which renders the hierarchy (Badr root, Salma/Karim children) with positions preserved. Create/reorder/share/execution-definition-resolve not separately exercised | `pg-team.store.spec.ts`, `team.service.spec.ts`, `team-share.service.spec.ts` |
+
+## Appendix D — Backfill completion: conversation-v2, app-runtime, evaluation (2026-09-25)
+
+The teammates' P8 backfills (migrations 0026–0028) had not run to completion. `reconcile-ids` now covers these collections and showed the gap; it was closed and verified on 2026-09-25.
+
+**Diagnosis.** Every constraint the backfill could trip was tested against the data (int overflow of `emitted_at`, duplicate `(session, sequence)` or `(session, event_id)`, the tool-call status CHECK, orphaned sessions, share owners and duplicate emails). None explained the gap. The pattern was by date: events were copied only up to mid-July, none of August (76,260) or September (38,510); the app-shares unit never ran; tool calls were copied about half. Mongo had not been written for these collections since 2026-09-23 10:52Z, so a single incremental run could close it without racing a writer.
+
+**Two defects found on the way.**
+- 10 events and 3 tool calls carry U+0000 in a jsonb payload, which Postgres rejects. The live `PgConversationV2EventStore.append` had no guard either: one such event would have failed the whole append. `stripNul` (`common/postgres/json.ts`) now guards the event payload and the tool-call result / error, and both backfills.
+- The `--checksum` read-back of sessions selected 8 of the 24 columns the unit builds, and events omitted `created_at`, so it could never match. Fixed; sessions now match 1249 of 1249.
+
+**Result** (shared `agentstore`, all with 0 failures):
+
+| Unit | Inserted | Mongo | PG after | PG-only (live build) |
+|---|---|---|---|---|
+| sessions | 14 | 1,249 | 1,287 | 38 |
+| events | 116,208 | 141,653 | 145,056 | 3,403 |
+| app shares | 67 | 67 | 67 | 0 |
+| tool calls | 7,413 | 14,194 | 15,011 | 817 |
+| source revisions | 2 | 2,598 | 2,741 | 143 |
+
+`reconcile-ids --allow=… --strict`: every pair of these modules reads `missing=0`. A separate batched content comparison of all 141,653 events found 0 missing and 0 differing rows. App-runtime units have no content check of their own (only ids); the app-runtime backfill was verified by id set.
+
+**Still open in the same run** (older modules, not part of the above): 76 Mongo ids absent from Postgres — notifications 62, models 4, agent types 1, telegram integrations 2, telegram chat bindings 6, one user app connection. The newest are from 2026-09-25 (a model at 09:30Z, telegram until 08:19Z), so a stale build is still writing to the shared Mongo. Stop it, run a final incremental backfill of those collections, then re-run `reconcile-ids --strict`.
+
+**Agent evaluation (migration 0031).** 18 datasets, 6 scenarios, 184 evaluations and the settings singleton were backfilled into `agent_evaluation.*` (209 rows, 0 failures, every content checksum equal).
