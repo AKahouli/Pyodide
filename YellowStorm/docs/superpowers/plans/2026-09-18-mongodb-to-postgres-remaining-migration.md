@@ -118,11 +118,12 @@ flowchart TD
 - **`tool`/`skill`/`agent-type` are already referenced by migrated `agents` junction rows** → moving them (P1B) allows real FKs and removes the "hydrate agentType from Mongo" hop.
 - **`workspace.service.ts` and `classifier` import the `Flow` model** → break with a `FlowReadPort` in P0/P2 so workspace does not wait for P5.
 - **`connector-playbook-binding-sync.service.ts` rewrites `flows[].nodes[].toolBindings` via raw Mongo** → keep as a bridge through P3–P4, rewrite (hard #2) inside P5.
-- **P5 before P6/P7**: governance, classifier, worky and evaluation all reference flow/playbook IDs and executions.
+- **P5 before P6**: governance, classifier and evaluation reference flow/playbook IDs and executions (all three are done; their `playbook_id` columns take a foreign key once the flow store leaves Mongo).
+- **P7 (worky) does not wait for P5** (checked 2026-09-25): nothing outside `worky/` imports it, and it imports only one class from playbook-flow (`PlaybookFlowMailGraphClientService`, a Graph mail client with no data of its own). It never reads flows or executions, so its migration can run first or in parallel; the only later link is an id reference for the P10 foreign keys.
 - **P8, P9 are nearly leaf** → schedule as parallel lanes once P2 (P8) / P1A (P9) land.
 
 **Critical path:** P0 → P1A → P1B → P2 → P3 → P4 → P5 → P6/P7 → P10.
-**Parallel lanes** (2 engineers): after P1B, lane A = P2→P4→P5→P6; lane B = P3→P8→P9→P7 (P7 waits for P5's execution tables).
+**Parallel lanes** (2 engineers): after P1B, lane A = P2→P4→P5→P6; lane B = P3→P8→P9→P7 (P7 is independent of P5, see above).
 
 ---
 
