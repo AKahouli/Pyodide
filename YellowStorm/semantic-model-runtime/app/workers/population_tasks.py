@@ -18,7 +18,7 @@ from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
 from app.population.compiler import (canonical_spec_hash, compile_specification,
                                      filter_fields, validate_specification)
 from app.population.tabular import (match_relationships, merge_concept_results,
-                                    populate_concept_rows)
+                                    normalize_identity_value, populate_concept_rows)
 
 from .celery_app import POPULATION_QUEUES, celery_app
 
@@ -29,6 +29,8 @@ MAX_SOURCES_PER_TASK = 25
 MAX_TOTAL_ENTITIES = 10000
 MAX_TOTAL_ASSERTIONS = 50000
 MAX_TOTAL_RELATIONSHIPS = 20000
+# Carries a manual row's display name; never a model attribute, so never asserted.
+MANUAL_LABEL_FIELD = "__manual_label"
 POPULATION_ENGINE_VERSION = "r1-mvp-5"
 
 
@@ -115,7 +117,7 @@ def run_population_for_payload(command_dump: dict) -> dict:
             if concept is None:
                 return {"ok": False, "errorCode": "unknown_concept"}
             source_kind = entry.get("sourceKind") or entry.get("source_kind")
-            if source_kind not in (None, "tabular", "excel_sheet", "csv", "document"):
+            if source_kind not in (None, "tabular", "excel_sheet", "csv", "document", "manual"):
                 return {"ok": False, "errorCode": "invalid_source_kind"}
             if source_kind == "document":
                 field_mappings = entry.get("fieldMappings") or entry.get("field_mappings")
@@ -154,7 +156,8 @@ def run_population_for_payload(command_dump: dict) -> dict:
                     return {"ok": False, "errorCode": "duplicate_column_mapping"}
                 mapped_attributes = set(mapping.values()) | set(constants)
             unmapped = [c for c in concept["keyComponents"] if c not in mapped_attributes]
-            if unmapped:
+            # Manual rows without a key value keep their own row key as identity.
+            if unmapped and source_kind != "manual":
                 return {"ok": False, "errorCode": "unmapped_identity"}
             if mapping is not None and len(set(mapping.values())) != len(mapping):
                 return {"ok": False, "errorCode": "duplicate_column_mapping"}
@@ -168,6 +171,8 @@ def run_population_for_payload(command_dump: dict) -> dict:
                         return {"ok": False, "errorCode": "unmapped_filter_field"}
             source = entry.get("source")
             if not isinstance(source, dict) or not source.get("assetId"):
+                return {"ok": False, "errorCode": "invalid_sources"}
+            if source_kind == "manual" and not isinstance(source.get("snapshotId"), str):
                 return {"ok": False, "errorCode": "invalid_sources"}
             options = entry.get("options") or {}
             normalized.append({
@@ -220,7 +225,8 @@ def run_population_for_payload(command_dump: dict) -> dict:
 
 
 async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=None,
-                                  query=None, index_connection=None, metadata_fetch=None) -> dict:
+                                  query=None, index_connection=None, metadata_fetch=None,
+                                  manual_pool=None) -> dict:
     """Fetch, prepare, query and populate every mapped source (bounded)."""
     import asyncio
     import os
@@ -245,8 +251,19 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     document_coverage: list[dict] = []
     index_observations: list[dict] = []
     complete_enumeration = True
+    manual_links: list[tuple[str, dict]] = []
     for entry in validated["sources"]:
         source, options = entry["source"], entry["options"]
+        if entry["sourceKind"] == "manual":
+            outcome = await _populate_manual_source(manual_pool, entry,
+                                                    compiled["concepts"][entry["conceptId"]])
+            if not outcome.get("ok"):
+                return outcome
+            per_concept.setdefault(entry["conceptId"], []).append(outcome["output"])
+            observations.append(outcome["observation"])
+            dataset_fingerprints.add(source["snapshotId"])
+            manual_links.extend((source["snapshotId"], link) for link in outcome["links"])
+            continue
         if entry["sourceKind"] == "document":
             from app.datasource.logical_index import create_index_pool
             from app.population.document import populate_document
@@ -388,6 +405,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             reference, target)
         relationships.extend(matched["relationships"])
         gaps.extend(matched["gaps"])
+    relationships.extend(manual_relationships(kept, manual_links, compiled["relations"]))
     if len(relationships) > MAX_TOTAL_RELATIONSHIPS:
         relationships = sorted(relationships,
                                key=lambda item: (item.get("relationId", ""),
@@ -409,6 +427,63 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
              "sourceObservations": observations,
              "documentCoverage": document_coverage, "indexObservations": index_observations,
              "jobState": "completed_with_gaps" if gaps else "completed"}
+
+
+async def _populate_manual_source(pool, entry: dict, concept: dict) -> dict:  # type: ignore[no-untyped-def]
+    """Rows people entered by hand, read from a committed immutable snapshot."""
+    from app.persistence import manual_store
+
+    snapshot_id = entry["source"]["snapshotId"]
+    if pool is None or not await manual_store.is_committed(pool, snapshot_id):
+        return {"ok": False, "errorCode": "manual_snapshot_unavailable"}
+    stored = await manual_store.read_snapshot_rows(pool, snapshot_id, entry["conceptId"])
+    mapping, constants = entry["columnMapping"], entry.get("constantMapping", {})
+    rows = []
+    for item in stored:
+        values = item["values"]
+        label = item["label"] or next((str(v) for v in values.values() if v not in (None, "")), None)
+        row: dict = {"_row": item["rowKey"], MANUAL_LABEL_FIELD: label, **constants}
+        for column, attribute in mapping.items():
+            if column in values:
+                row[attribute] = values[column]
+        for component in concept["keyComponents"]:
+            if normalize_identity_value(row.get(component)) is None:
+                row[component] = item["rowKey"]
+        rows.append(row)
+    asset_ref = {"assetId": entry["source"]["assetId"], "assetVersionId": snapshot_id}
+    output = populate_concept_rows(concept, rows, {
+        "assetRef": asset_ref, "mappingVersion": entry["mappingVersion"],
+        "labelField": MANUAL_LABEL_FIELD, "constantFields": list(constants)})
+    links = await manual_store.read_snapshot_links(pool, snapshot_id)
+    return {"ok": True, "output": output, "links": links,
+            "observation": {"assetRef": asset_ref, "rowCount": len(stored)}}
+
+
+def manual_relationships(entities: list[dict], links: list[tuple[str, dict]],
+                         relations: dict) -> list[dict]:
+    """Explicit links between manual rows, resolved to the entities those rows produced."""
+    if not links:
+        return []
+    by_row: dict[tuple[str, str], str] = {}
+    for entity in entities:
+        for source in entity.get("provenance", {}).get("sources", []):
+            snapshot = (source.get("assetRef") or {}).get("assetVersionId")
+            for row_key in source.get("rowNumbers", []):
+                by_row.setdefault((str(snapshot), str(row_key)), entity["entityId"])
+    seen: set[tuple[str, str, str]] = set()
+    relationships = []
+    for snapshot, link in links:
+        relation = relations.get(link["relationId"])
+        source_id = by_row.get((snapshot, link["sourceRowKey"]))
+        target_id = by_row.get((snapshot, link["targetRowKey"]))
+        if relation is None or source_id is None or target_id is None:
+            continue
+        key = (relation["relationId"], source_id, target_id)
+        if key not in seen:
+            seen.add(key)
+            relationships.append({"relationId": relation["relationId"], "sourceEntityId": source_id,
+                                  "targetEntityId": target_id, "matchingStrategy": "manual"})
+    return relationships
 
 
 def preview_job_result(outcome: dict) -> dict:
@@ -550,7 +625,7 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             except StaleLease:
                 return {"ok": False, "errorCode": "stale_lease"}
             return {"ok": False, "errorCode": "attempts_exhausted"}
-        outcome = await run_population_for_task(lease.payload)
+        outcome = await run_population_for_task(lease.payload, manual_pool=pool)
         if not outcome.get("ok"):
             try:
                 await repository.complete_task(task_id=task_id, lease_owner=lease_owner,

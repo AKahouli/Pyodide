@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import os
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Header, HTTPException, Path, Query, Request, status
 
 from app.jobs.models import (ActivateRevisionCommand, CorrectionCommand, IdempotencyConflict,
+                             ManualBatchCommand, ManualCommitCommand,
                              MirrorSpecificationCommand, PopulationCommand, PublishModelDataCommand,
                              ReviewResolveCommand)
+from app.persistence import manual_store
 from app.persistence import population_store as store
 from app.population.age_projection import (ProjectionUnavailable, ensure_revision_projection,
                                              is_live_projection_ref, read_projection_graph)
@@ -302,3 +304,33 @@ async def read_published_binding(model_id: str, request: Request) -> dict[str, o
     return {"modelId": model_id, "modelVersionId": binding["model_version_id"],
             "dataRevisionId": binding["data_revision_id"],
             "projectionRef": binding["projection_ref"]}
+
+
+_SNAPSHOT_ID = r"^[a-z0-9_-]{8,128}$"
+
+
+@router.post("/manual-sources/{model_id}/snapshots/{snapshot_id}/rows",
+             status_code=status.HTTP_200_OK)
+async def append_manual_rows(model_id: str, command: ManualBatchCommand, request: Request,
+                             snapshot_id: str = Path(pattern=_SNAPSHOT_ID)) -> dict[str, object]:
+    try:
+        await manual_store.append_batch(
+            _population_pool(request), model_id=model_id, snapshot_id=snapshot_id,
+            rows=[row.model_dump(by_alias=True) for row in command.rows],
+            links=[link.model_dump(by_alias=True) for link in command.links])
+    except manual_store.ManualSnapshotError as exc:
+        raise HTTPException(status_code=409, detail=exc.code) from exc
+    return {"snapshotId": snapshot_id, "rows": len(command.rows), "links": len(command.links)}
+
+
+@router.post("/manual-sources/{model_id}/snapshots/{snapshot_id}/commit",
+             status_code=status.HTTP_200_OK)
+async def commit_manual_snapshot(model_id: str, command: ManualCommitCommand, request: Request,
+                                 snapshot_id: str = Path(pattern=_SNAPSHOT_ID)) -> dict[str, object]:
+    try:
+        created = await manual_store.commit_snapshot(
+            _population_pool(request), model_id=model_id, snapshot_id=snapshot_id,
+            row_count=command.row_count, link_count=command.link_count)
+    except manual_store.ManualSnapshotError as exc:
+        raise HTTPException(status_code=409, detail=exc.code) from exc
+    return {"snapshotId": snapshot_id, "reused": not created}
