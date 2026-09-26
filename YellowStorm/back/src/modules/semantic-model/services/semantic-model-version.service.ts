@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { SemanticGraphOperation } from '../domain/semantic-model.types';
@@ -6,6 +6,7 @@ import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-d
 import { SemanticGraphRepository } from '../repositories/semantic-graph.repository';
 import { SemanticModelService } from './semantic-model.service';
 import { SemanticModelValidationService } from './semantic-model-validation.service';
+import { SemanticRuntimeClientService } from './semantic-runtime-client.service';
 
 @Injectable()
 export class SemanticModelVersionService {
@@ -14,7 +15,10 @@ export class SemanticModelVersionService {
     private readonly graphRepository: SemanticGraphRepository,
     private readonly models: SemanticModelService,
     private readonly validation: SemanticModelValidationService,
+    private readonly runtime: SemanticRuntimeClientService,
   ) {}
+
+  private readonly logger = new Logger(SemanticModelVersionService.name);
 
   async list(userId: string, modelId: string) {
     await this.models.requireRole(userId, modelId, ['owner','editor','viewer']);
@@ -29,7 +33,7 @@ export class SemanticModelVersionService {
     const model = await this.models.requireActiveRole(userId, modelId, ['owner','editor']);
     if (!model.currentDraftVersionId) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
     const draftVersionId = model.currentDraftVersionId;
-    return this.database.transaction(async (client) => {
+    const published = await this.database.transaction(async (client) => {
       const modelRevision = await this.models.advanceRevision(client,modelId,expectedRevision);
       const locked = await client.query<{ version_number: number; revision: number }>(
         `SELECT version_number,revision::int FROM semantic_model.versions
@@ -58,6 +62,22 @@ export class SemanticModelVersionService {
       await this.models.audit(client, modelId, draftVersionId, userId, 'version.published', { nextDraftVersionId: draft.rows[0].id });
       return { publishedVersionId: draftVersionId, draftVersionId: draft.rows[0].id, revision: modelRevision };
     });
+    return { ...published, data: await this.publishData(userId, modelId, draftVersionId) };
+  }
+
+  /**
+   * Makes the records built from the published version the ones chat reads. Records built from an
+   * older version, or not built yet, stay unpublished; the structure is published either way.
+   */
+  private async publishData(userId: string, modelId: string, versionId: string): Promise<{ published: boolean; reason?: string }> {
+    try {
+      await this.runtime.publishModelData(modelId, { actorUserId: userId, modelVersionId: versionId });
+      return { published: true };
+    } catch (error) {
+      const reason = error instanceof ConflictException ? String(error.message) : 'runtime_unavailable';
+      this.logger.warn(`Semantic model ${modelId} published without data: ${reason}`);
+      return { published: false, reason };
+    }
   }
 
   async compare(userId: string, modelId: string, leftId: string, rightId: string) {

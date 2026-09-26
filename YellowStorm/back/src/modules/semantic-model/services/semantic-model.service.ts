@@ -10,6 +10,7 @@ import { SemanticAgeGraphRepository } from '../repositories/semantic-age-graph.r
 import { SemanticGraphRepository } from '../repositories/semantic-graph.repository';
 import { SemanticModelRepository, SemanticModelRow } from '../repositories/semantic-model.repository';
 import { SemanticRealtimeSignalService } from './semantic-realtime-signal.service';
+import { RuntimePublishedBinding, SemanticRuntimeClientService } from './semantic-runtime-client.service';
 
 interface CloneIdMaps {
   nodeIds: Map<string, string>;
@@ -43,6 +44,7 @@ export class SemanticModelService {
     private readonly workspaces: WorkspaceService,
     private readonly ageGraph: SemanticAgeGraphRepository,
     private readonly realtimeSignals: SemanticRealtimeSignalService,
+    private readonly runtime: SemanticRuntimeClientService,
   ) {}
 
   list(userId: string, query: SemanticModelQueryDto) {
@@ -55,13 +57,20 @@ export class SemanticModelService {
     return model;
   }
 
+  /** Chat reads only the published data of a model: the runtime graph bound to production. */
   async resolveSearchSchema(userId: string, modelId: string): Promise<string> {
     const model = await this.get(userId, modelId);
     if (model.status === 'archived') throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND);
-    if (model.indexStatus !== 'indexed') {
-      throw new ConflictException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'This semantic model is still being indexed');
+    let binding: RuntimePublishedBinding;
+    try {
+      binding = await this.runtime.getPublishedBinding(model.id, userId);
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw new ConflictException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Publish this semantic model to use it in chat');
+      }
+      throw error;
     }
-    return this.ageGraph.graphNameForModel(model.id);
+    return binding.projectionRef.slice(binding.projectionRef.lastIndexOf(':') + 1);
   }
 
   async create(userId: string, dto: CreateSemanticModelDto): Promise<SemanticModelRow> {

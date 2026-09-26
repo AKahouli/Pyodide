@@ -65,6 +65,13 @@ export interface RuntimeBoundRecords {
   };
 }
 
+export interface RuntimePublishedBinding {
+  modelId: string;
+  modelVersionId: string;
+  dataRevisionId: string;
+  projectionRef: string;
+}
+
 export interface RuntimeBoundGraph {
   modelId: string;
   modelVersionId: string;
@@ -303,6 +310,24 @@ export class SemanticRuntimeClientService {
     return this.post(
       `/v1/semantic-model-population/revisions/${encodeURIComponent(revisionId)}/activate`,
       command,
+    );
+  }
+
+  /** Serves the draft data revision in production for a newly published model version. */
+  async publishModelData(
+    modelId: string,
+    command: { actorUserId: string; modelVersionId: string },
+  ): Promise<{ modelId: string; environment: string; reused: boolean }> {
+    return this.post(
+      `/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/publish`,
+      command,
+    );
+  }
+
+  async getPublishedBinding(modelId: string, actorUserId: string): Promise<RuntimePublishedBinding> {
+    return this.get<RuntimePublishedBinding>(
+      `/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/published`,
+      actorUserId,
     );
   }
 }

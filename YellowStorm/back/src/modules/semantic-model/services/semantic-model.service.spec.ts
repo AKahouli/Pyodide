@@ -1,3 +1,4 @@
+import { NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { SemanticModelService } from './semantic-model.service';
 
@@ -8,12 +9,12 @@ describe('SemanticModelService archived access', () => {
     status: 'archived',
   };
   const repository = { findAccessible: jest.fn() };
-  const ageGraph = { graphNameForModel: jest.fn((id: string) => `sem_${id}`) };
-  const service = new SemanticModelService({} as never, repository as never, {} as never, {} as never, ageGraph as never, {} as never);
+  const runtime = { getPublishedBinding: jest.fn() };
+  const service = new SemanticModelService({} as never, repository as never, {} as never, {} as never, {} as never, {} as never, runtime as never);
 
   beforeEach(() => {
     repository.findAccessible.mockReset();
-    ageGraph.graphNameForModel.mockClear();
+    runtime.getPublishedBinding.mockReset();
   });
 
   it('allows archived models to be inspected', async () => {
@@ -28,10 +29,19 @@ describe('SemanticModelService archived access', () => {
     });
   });
 
-  it.each(['draft', 'published'])('resolves the search schema for an accessible %s model', async (status) => {
-    repository.findAccessible.mockResolvedValue({ ...accessible, status });
-    await expect(service.resolveSearchSchema('user-id', 'model-id')).resolves.toBe('sem_model-id');
-    expect(ageGraph.graphNameForModel).toHaveBeenCalledWith('model-id');
+  it('resolves the search schema to the published runtime graph', async () => {
+    repository.findAccessible.mockResolvedValue({ ...accessible, status: 'published' });
+    runtime.getPublishedBinding.mockResolvedValue({ projectionRef: 'age:v1:pop_dr_1' });
+    await expect(service.resolveSearchSchema('user-id', 'model-id')).resolves.toBe('pop_dr_1');
+    expect(runtime.getPublishedBinding).toHaveBeenCalledWith('model-id', 'user-id');
+  });
+
+  it('keeps unpublished models out of chat', async () => {
+    repository.findAccessible.mockResolvedValue({ ...accessible, status: 'draft' });
+    runtime.getPublishedBinding.mockRejectedValue(new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND));
+    await expect(service.resolveSearchSchema('user-id', 'model-id')).rejects.toMatchObject({
+      code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
+    });
   });
 
   it('rejects archived models for semantic search', async () => {
@@ -78,7 +88,7 @@ describe('SemanticModelService clone', () => {
     const cloneClient = { query: jest.fn().mockResolvedValue({ rows: [] }) };
     database.transaction.mockImplementation(async (work: (client: unknown) => Promise<unknown>) => work(cloneClient));
     const realtimeSignals = { enqueue: jest.fn() };
-    const service = new SemanticModelService(database as never, repository as never, graphRepository as never, {} as never, ageGraph as never, realtimeSignals as never);
+    const service = new SemanticModelService(database as never, repository as never, graphRepository as never, {} as never, ageGraph as never, realtimeSignals as never, {} as never);
 
     const clone = await service.clone('user-id', source.id, 'Source copy');
 
