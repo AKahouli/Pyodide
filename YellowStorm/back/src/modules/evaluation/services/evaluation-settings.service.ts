@@ -1,11 +1,8 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ModelsService } from '@modules/models/models.service';
 import { BadRequestException, ErrorCode } from '@modules/exceptions';
 import { UpdateEvaluationSettingsDto } from '../dto/update-evaluation-settings.dto';
-import {
-  EVALUATION_SETTINGS_STORE,
-  type EvaluationSettingsStore,
-} from '../persistence/evaluation-settings.store';
+import { PgEvaluationSettingsStore } from '../persistence/pg-evaluation-settings.store';
 
 export type EvaluationMode = 'informative' | 'corrective_transparent' | 'corrective_guarded';
 export type CorrectionFailureBehavior = 'publish_with_warning' | 'abstain' | 'require_human_review';
@@ -86,8 +83,7 @@ function normalizeSettings(value?: Partial<AdminEvaluationSettings>): AdminEvalu
 @Injectable()
 export class EvaluationSettingsService {
   constructor(
-    @Inject(EVALUATION_SETTINGS_STORE)
-    private readonly settings: EvaluationSettingsStore,
+    private readonly settings: PgEvaluationSettingsStore,
     private readonly modelsService: ModelsService,
   ) { }
 

@@ -1,7 +1,6 @@
 /**
  * Store port for app_runtime.tickets (P8 Mongo cutover).
  */
-export const RUNTIME_TICKET_STORE = Symbol('RUNTIME_TICKET_STORE');
 
 export interface RuntimeTicketRecord {
   runtimeSessionId: string;

@@ -4,26 +4,12 @@ import { Inject, Injectable } from '@nestjs/common';
 import { CryptoService } from '../../../common/services/crypto.service';
 import { BadRequestException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
-import { SKILL_CATEGORY_STORE, SKILL_STORE, type SkillCategoryStore, type SkillStore } from '../../skill/persistence/skill.store';
+import { SKILL_STORE,   type SkillStore } from '../../skill/persistence/skill.store';
 import type { ConnectorAction, ConnectorDynamicHeader } from '../connector.types';
-import type { ConnectorCredentialRow } from '../persistence/connector.store';
-import {
-  CONNECTED_APP_DEFINITION_STORE,
-  USER_APP_CONNECTION_STORE,
-  type ConnectedAppDefinitionStore,
-  type UserAppConnectionStore,
-} from '../../connected-app/persistence/connected-app.store';
+import type { ConnectorCredentialRow } from '../persistence/connector.store';
 import { ConnectionStatus } from '../../connected-app/connected-app.types';
-import {
-  CONNECTOR_ADMIN_AUTH_STORE,
-  CONNECTOR_CATEGORY_STORE,
-  CONNECTOR_CREDENTIAL_STORE,
-  CONNECTOR_STORE,
-  type ConnectorCategoryStore,
-  type ConnectorCredentialStore,
-  type ConnectorAdminAuthRow,
-  type ConnectorAdminAuthStore,
-  type ConnectorStore,
+import {      
+  type ConnectorAdminAuthRow,        
 } from '../persistence/connector.store';
 import { withTransaction } from '@common/postgres/transaction';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
@@ -40,6 +26,13 @@ import {
   EncryptedCatalogArchive,
 } from '../interfaces/catalog-transfer.interface';
 import { decryptCatalogArchive, encryptCatalogArchive } from '../utils/catalog-archive-crypto.util';
+import { PgSkillCategoryStore } from '../../skill/persistence/pg-skill.store';
+import { PgConnectorAdminAuthStore } from '../persistence/pg-connector.store';
+import { PgConnectorCredentialStore } from '../persistence/pg-connector.store';
+import { PgConnectorCategoryStore } from '../persistence/pg-connector.store';
+import { PgConnectorStore } from '../persistence/pg-connector.store';
+import { PgConnectedAppDefinitionStore } from '../../connected-app/persistence/pg-connected-app.store';
+import { PgUserAppConnectionStore } from '../../connected-app/persistence/pg-connected-app.store';
 
 const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024;
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -47,14 +40,14 @@ const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 @Injectable()
 export class CatalogTransferService {
   constructor(
-    @Inject(CONNECTOR_STORE) private readonly connectorStore: ConnectorStore,
-    @Inject(CONNECTOR_CATEGORY_STORE) private readonly connectorCategoryStore: ConnectorCategoryStore,
-    @Inject(CONNECTOR_CREDENTIAL_STORE) private readonly credentialStore: ConnectorCredentialStore,
-    @Inject(CONNECTOR_ADMIN_AUTH_STORE) private readonly adminAuthStore: ConnectorAdminAuthStore,
+    private readonly connectorStore: PgConnectorStore,
+    private readonly connectorCategoryStore: PgConnectorCategoryStore,
+    private readonly credentialStore: PgConnectorCredentialStore,
+    private readonly adminAuthStore: PgConnectorAdminAuthStore,
     @Inject(SKILL_STORE) private readonly skillStore: SkillStore,
-    @Inject(SKILL_CATEGORY_STORE) private readonly skillCategoryStore: SkillCategoryStore,
-    @Inject(CONNECTED_APP_DEFINITION_STORE) private readonly appDefinitionStore: ConnectedAppDefinitionStore,
-    @Inject(USER_APP_CONNECTION_STORE) private readonly appConnectionStore: UserAppConnectionStore,
+    private readonly skillCategoryStore: PgSkillCategoryStore,
+    private readonly appDefinitionStore: PgConnectedAppDefinitionStore,
+    private readonly appConnectionStore: PgUserAppConnectionStore,
     @Inject(DRIZZLE_DB) private readonly pgDb: NodePgDatabase<typeof schema>,
     private readonly cryptoService: CryptoService,
   ) {}

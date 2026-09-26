@@ -1,11 +1,11 @@
-import { Inject, Injectable } from '@nestjs/common';
-import { USAGE_STORE, type UsageStore } from '@modules/usage/persistence/usage-store';
+import { Injectable } from '@nestjs/common';
 import { GroupByPeriod } from '../dto';
 import type { UsageAnalyticsResponse } from '../interfaces';
+import { PostgresUsageStore } from '../../usage/persistence/postgres-usage-store';
 
 @Injectable()
 export class UsageAnalyticsService {
-  constructor(@Inject(USAGE_STORE) private readonly usageStore: UsageStore) {}
+  constructor(private readonly usageStore: PostgresUsageStore) {}
 
   getUsageAnalytics(
     consentingUserIds: string[],

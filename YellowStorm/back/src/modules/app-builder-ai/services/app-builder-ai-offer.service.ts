@@ -1,19 +1,17 @@
 import {
-  Injectable,
-  Logger,
-  OnModuleInit,
-  Inject,
+  Injectable, 
+  Logger, 
+  OnModuleInit, 
 } from '@nestjs/common';
 import { NotFoundException, ConflictException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { DEFAULT_APP_BUILDER_AI_OFFERS } from '../constants';
 import {
-  APP_BUILDER_AI_OFFER_STORE,
-  type AppBuilderAiOfferRecord,
-  type AppBuilderAiOfferStore,
-  type CreateAppBuilderAiOfferData,
-  type UpdateAppBuilderAiOfferData,
+  type AppBuilderAiOfferRecord,  
+  type CreateAppBuilderAiOfferData,  
+  type UpdateAppBuilderAiOfferData,  
 } from '../persistence/app-builder-ai-offer.store';
+import { PgAppBuilderAiOfferStore } from '../persistence/pg-app-builder-ai-offer.store';
 
 export type CreateAppBuilderAiOfferInput = CreateAppBuilderAiOfferData;
 export type UpdateAppBuilderAiOfferInput = UpdateAppBuilderAiOfferData;
@@ -23,8 +21,7 @@ export class AppBuilderAiOfferService implements OnModuleInit {
   private readonly logger = new Logger(AppBuilderAiOfferService.name);
 
   constructor(
-    @Inject(APP_BUILDER_AI_OFFER_STORE)
-    private readonly store: AppBuilderAiOfferStore,
+    private readonly store: PgAppBuilderAiOfferStore,
   ) {}
 
   async onModuleInit(): Promise<void> {

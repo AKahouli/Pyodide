@@ -129,24 +129,6 @@ export const configValidationSchema = Joi.object({
   // Express trust proxy: false|0|empty, hop count, true, or CIDR/name list
   TRUST_PROXY: Joi.string().allow('').default(''),
 
-  // MongoDB
-  MONGODB_MAX_POOL_SIZE: Joi.number().min(1).max(100).default(10),
-  MONGODB_MIN_POOL_SIZE: Joi.number().min(0).max(50).default(2),
-  MONGODB_SERVER_SELECTION_TIMEOUT: Joi.number().min(1000).default(5000),
-  MONGODB_SOCKET_TIMEOUT: Joi.number().min(1000).default(45000),
-  MONGODB_CONNECT_TIMEOUT: Joi.number().min(1000).default(10000),
-  MONGODB_RETRY_WRITES: Joi.boolean().default(true),
-  MONGODB_RETRY_READS: Joi.boolean().default(true),
-  MONGODB_MAX_IDLE_TIME: Joi.number().min(0).default(60000),
-  MONGODB_HEARTBEAT_FREQUENCY: Joi.number().min(500).default(10000),
-
-  // MongoDB Reconnection
-  MONGODB_RECONNECT_ENABLED: Joi.boolean().default(true),
-  MONGODB_RECONNECT_INITIAL_DELAY: Joi.number().min(100).default(1000),
-  MONGODB_RECONNECT_MAX_DELAY: Joi.number().min(1000).default(30000),
-  MONGODB_RECONNECT_MAX_ATTEMPTS: Joi.number().min(0).default(0),
-  MONGODB_RECONNECT_MULTIPLIER: Joi.number().min(1).max(10).default(2),
-
   // Ceph S3 Storage
   CEPH_S3_ENDPOINT: Joi.string().uri({ allowRelative: false }).optional(),
   CEPH_ENDPOINT: Joi.string().uri({ allowRelative: false }).optional(),

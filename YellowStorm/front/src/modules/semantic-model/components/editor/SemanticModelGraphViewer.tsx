@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import * as d3 from 'd3';
+import * as d3Force from 'd3-force';
+import * as d3Selection from 'd3-selection';
+import * as d3Zoom from 'd3-zoom';
+import * as d3Drag from 'd3-drag';
 import { useQueryClient } from '@tanstack/react-query';
 import { CheckCircle2, FileText, Loader2, Plus, RefreshCw, Trash2, X, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -23,14 +26,14 @@ function labelColor(label: string, allLabels: string[]): string {
   return PALETTE[idx >= 0 ? idx % PALETTE.length : 0];
 }
 
-type SimNode = d3.SimulationNodeDatum & {
+type SimNode = d3Force.SimulationNodeDatum & {
   id: string;
   displayLabel: string;
   type: string;
   raw: AgeGraphNode;
 };
 
-type SimLink = d3.SimulationLinkDatum<SimNode> & {
+type SimLink = d3Force.SimulationLinkDatum<SimNode> & {
   id: string;
   edgeLabel: string;
 };
@@ -71,7 +74,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
   },[model.data,modelId,queryClient]);
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
-  const simRef = useRef<d3.Simulation<SimNode, SimLink> | null>(null);
+  const simRef = useRef<d3Force.Simulation<SimNode, SimLink> | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [ageNodes, setAgeNodes] = useState<AgeGraphNode[]>([]);
@@ -135,7 +138,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
     if (!svgRef.current || !containerRef.current) return;
 
     const svgEl = svgRef.current;
-    const d3svg = d3.select(svgEl);
+    const d3svg = d3Selection.select(svgEl);
     d3svg.selectAll('*').remove();
 
     if (!ageNodes.length) return;
@@ -160,7 +163,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
 
     // Zoom group
     const g = d3svg.append('g');
-    const zoom = d3
+    const zoom = d3Zoom
       .zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.05, 3])
       .on('zoom', (ev) => g.attr('transform', ev.transform.toString()));
@@ -200,15 +203,15 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
       .map((e) => ({ id: e.id, edgeLabel: modelGraph?.relations.find((relation) => relation.id === e.label || relation.key === e.label)?.label ?? e.label.replaceAll('_', ' '), source: e.sourceId, target: e.targetId }));
 
     // Simulation — stays alive for continuous animation
-    const sim = d3
+    const sim = d3Force
       .forceSimulation<SimNode>(simNodes)
       .force(
         'link',
-        d3.forceLink<SimNode, SimLink>(simLinks).id((d) => d.id).distance(170).strength(0.35),
+        d3Force.forceLink<SimNode, SimLink>(simLinks).id((d) => d.id).distance(170).strength(0.35),
       )
-      .force('charge', d3.forceManyBody<SimNode>().strength(-500))
-      .force('center', d3.forceCenter(width / 2, height / 2))
-      .force('collision', d3.forceCollide<SimNode>(NODE_R + 12))
+      .force('charge', d3Force.forceManyBody<SimNode>().strength(-500))
+      .force('center', d3Force.forceCenter(width / 2, height / 2))
+      .force('collision', d3Force.forceCollide<SimNode>(NODE_R + 12))
       .alphaDecay(0.018); // slow decay → longer warm animation
 
     // Links
@@ -249,7 +252,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
       .attr('stroke-dasharray', '6 4')
       .attr('pointer-events', 'none')
       .style('display', 'none');
-    const drag = d3
+    const drag = d3Drag
       .drag<SVGGElement, SimNode>()
       .on('start', (ev, d) => {
         if (!ev.active) sim.alphaTarget(0.3).restart();
@@ -266,7 +269,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
         d.fy = null;
       });
 
-    const linkDrag = d3
+    const linkDrag = d3Drag
       .drag<SVGCircleElement, SimNode>()
       .on('start', (ev, d) => {
         ev.sourceEvent.stopPropagation();
@@ -312,7 +315,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
 
     // Label text (up to 2 lines)
     node.each(function (d) {
-      const g = d3.select(this);
+      const g = d3Selection.select(this);
       const [line1, line2] = wrapLines(d.displayLabel);
       const yOff = line2 ? -7 : 0;
 

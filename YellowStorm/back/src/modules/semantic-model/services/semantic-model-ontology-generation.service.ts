@@ -1,6 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService, ConfigType } from '@nestjs/config';
-import axios from 'axios';
 import semanticModelConfig from '@config/semantic-model.config';
 import { ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
@@ -47,28 +46,29 @@ export class SemanticModelOntologyGenerationService {
     const endpoint = `${adkUrl}/semantic-model/ontologies/generate`;
     this.logger.log(`ADK ontology request → ${endpoint}`);
     try {
-      const { data } = await axios.post<OntologyGenerationResponse>(
-        endpoint,
-        {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
+        body: JSON.stringify({
           modelId,
           businessRequirements: dto.businessRequirements.map((text) => ({ text: text.trim() })),
           graphDesignerCanvas: { name: model.name, ...graph },
-        },
-        {
-          headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
-          // No timeout: ontology generation runs inside the async build orchestrator with heartbeat.
-          timeout: 0,
-        },
-      );
+        }),
+        // No timeout: ontology generation runs inside the async build orchestrator with heartbeat.
+        // (fetch has no deadline unless a signal is set, matching axios `timeout: 0`.)
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status}: ${body || res.statusText}`);
+      }
+      const data = await res.json() as OntologyGenerationResponse;
       if (!data || typeof data.ontologyDefinition !== 'object' || Array.isArray(data.ontologyDefinition)
         || typeof data.ontologyTtl !== 'string' || !data.ontologyTtl.trim()) {
         throw new Error('ADK returned an invalid ontology generation response');
       }
       return this.ontologyArtifacts.upsert(modelId, data.ontologyDefinition, data.ontologyTtl);
     } catch (error) {
-      const detail = axios.isAxiosError(error)
-        ? `HTTP ${error.response?.status ?? 'network'}: ${JSON.stringify(error.response?.data ?? error.message)}`
-        : error instanceof Error ? error.message : String(error);
+      const detail = error instanceof Error ? error.message : String(error);
       this.logger.error(`Semantic ontology generation failed [${endpoint}]: ${detail}`);
       throw new ServiceUnavailableException(
         ErrorCode.SERVICE_UNAVAILABLE,

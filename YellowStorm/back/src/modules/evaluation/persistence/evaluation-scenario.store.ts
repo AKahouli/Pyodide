@@ -1,7 +1,6 @@
 import type { ScenarioInput, ScenarioRecord } from '../evaluation.types';
 
 /** Store port for agent_evaluation.scenarios (roadmap P6). */
-export const EVALUATION_SCENARIO_STORE = Symbol('EVALUATION_SCENARIO_STORE');
 
 export type CreateScenarioData = Required<Pick<ScenarioInput, 'name' | 'agentId' | 'datasetId'>>
   & Pick<ScenarioInput, 'numRuns' | 'mode'>;

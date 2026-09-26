@@ -1,16 +1,16 @@
-import { ForbiddenException, HttpException, Inject, Injectable, NotFoundException, InternalServerErrorException } from '@nestjs/common';
+import { ForbiddenException,  HttpException,  Injectable,  NotFoundException,  InternalServerErrorException } from '@nestjs/common';
 import { isObjectId } from '@common/postgres';
 import { LoggerService } from '../logger';
 import { AgentService } from '../agent/agent.service';
 import { BadRequestException } from '../exceptions/exceptions/http.exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import type { ScenarioInput, ScenarioRecord } from './evaluation.types';
-import { EVALUATION_SCENARIO_STORE, type EvaluationScenarioStore } from './persistence/evaluation-scenario.store';
+import { PgEvaluationScenarioStore } from './persistence/pg-evaluation-scenario.store';
 
 @Injectable()
 export class ScenarioService {
     constructor(
-        @Inject(EVALUATION_SCENARIO_STORE) private readonly scenarios: EvaluationScenarioStore,
+        private readonly scenarios: PgEvaluationScenarioStore,
         private readonly logger: LoggerService,
         private readonly agentService: AgentService,
     ) {

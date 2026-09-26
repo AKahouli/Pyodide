@@ -1,4 +1,3 @@
-export const GOVERNANCE_TRANSACTION = Symbol('GOVERNANCE_TRANSACTION');
 
 /**
  * Runs `fn` atomically: every store call made inside joins the same database

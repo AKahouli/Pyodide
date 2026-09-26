@@ -3,6 +3,7 @@ import { newObjectId } from '@common/postgres/object-id';
 import { AgentShareService } from './agent-share.service';
 import type { AgentShareRow, AgentShareStore } from '../persistence/agent-share.store';
 import type { UserLookupPort, UserSummary } from '@common/ports/user-lookup.port';
+import { PgAgentShareStore } from '../persistence/pg-agent-share.store';
 
 class FakeShareStore implements AgentShareStore {
   rows: AgentShareRow[] = [];
@@ -60,7 +61,7 @@ describe('AgentShareService', () => {
       byEmails: jest.fn(async (emails: string[]) => new Map(users.filter((u) => emails.includes(u.email)).map((u) => [u.email, u]))),
     } as jest.Mocked<UserLookupPort>;
     const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn() };
-    service = new AgentShareService(store, lookup, logger as never);
+    service = new AgentShareService(store as unknown as PgAgentShareStore, lookup, logger as never);
   });
 
   it('resolves all emails in ONE batched byEmails call (normalized + deduped) and one upsert', async () => {

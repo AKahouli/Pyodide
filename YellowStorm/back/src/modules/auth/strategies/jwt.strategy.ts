@@ -4,14 +4,14 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { JwtPayload } from '../interfaces/jwt-payload.interface';
 import { UserService } from '../../user/user.service';
-import { AuthService } from '../auth.service';
-import { SESSION_STORE } from '../persistence/session.store';
+import { AuthService } from '../auth.service';
 import type { SessionStore } from '../persistence/session.store';
 import { toAuthUser } from '../../user/persistence/user-record.mapper';
 import { UnauthorizedException, ServiceUnavailableException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { getAccountAccessDenial } from '../../user/utils/assert-account-accessible';
 import { classifySessionStoreError, isTransientSessionStoreError } from '../utils/session-store-errors';
+import { PgSessionStore } from '../persistence/pg-session.store';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
@@ -20,7 +20,7 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     private readonly userService: UserService,
     @Inject(forwardRef(() => AuthService))
     private readonly authService: AuthService,
-    @Inject(SESSION_STORE) private readonly sessionStore: SessionStore,
+    private readonly sessionStore: PgSessionStore,
   ) {
     const secret = configService.get<string>('jwt.secret');
     if (!secret) {

@@ -1,7 +1,8 @@
-import { Inject, Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NotificationPriority, NotificationStatus, NotificationType } from './notification.types';
-import { NOTIFICATION_STORE, type NotificationRecord, type NotificationStore } from './persistence/notification.store';
+import { type NotificationRecord } from './persistence/notification.store';
+import { PgNotificationStore } from './persistence/pg-notification.store';
 import { toNotificationWire, type NotificationWire } from './persistence/notification.mapper';
 import { NotificationsGateway } from './notifications.gateway';
 import {
@@ -34,7 +35,7 @@ export class NotificationsService implements OnModuleDestroy {
   private readonly maxPayloadSize: number;
 
   constructor(
-    @Inject(NOTIFICATION_STORE) private readonly notificationStore: NotificationStore,
+    private readonly notificationStore: PgNotificationStore,
     private readonly gateway: NotificationsGateway,
     private readonly configService: ConfigService,
     loggerService: LoggerService,

@@ -1,6 +1,5 @@
 import type { WorkspaceShareRecord } from './workspace-records';
 
-export const WORKSPACE_SHARE_READ_PORT = Symbol('WORKSPACE_SHARE_READ_PORT');
 
 export interface WorkspaceShareReadPort {
   findForUser(userId: string): Promise<WorkspaceShareRecord[]>;

@@ -1,19 +1,14 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import AdmZip = require('adm-zip');
 import { ClassifierAssignmentRepository } from '../persistence/classifier-assignment.repository';
-import { ClassifierFolderRepository } from '../persistence/classifier-folder.repository';
-import {
-  WORKSPACE_DOCUMENT_READ_PORT,
-  WORKSPACE_READ_PORT,
-  type WorkspaceDocumentReadPort,
-  type WorkspaceReadPort,
-} from '../../workspace/ports';
+import { ClassifierFolderRepository } from '../persistence/classifier-folder.repository';
 import { DocumentService } from '../../document/document.service';
 import { LoggerService } from '../../logger';
 import { NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { ClassifierAccessService } from './classifier-access.service';
-import { stripTrailingChar } from '@common/utils';
+import { PgWorkspaceReadAdapter } from '../../workspace/persistence/postgres/pg-workspace-read.adapter';
+import { PgWorkspaceDocumentReadAdapter } from '../../workspace/persistence/postgres/pg-workspace-document-read.adapter';
 
 export interface SyncZipResult {
   filename: string;
@@ -26,10 +21,10 @@ export interface SyncZipResult {
 @Injectable()
 export class ClassifierSyncService {
   constructor(
-    @Inject(WORKSPACE_READ_PORT) private readonly workspaceReadPort: WorkspaceReadPort,
+    private readonly workspaceReadPort: PgWorkspaceReadAdapter,
     private readonly folders: ClassifierFolderRepository,
     private readonly assignments: ClassifierAssignmentRepository,
-    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly documentReadPort: WorkspaceDocumentReadPort,
+    private readonly documentReadPort: PgWorkspaceDocumentReadAdapter,
     private readonly documentService: DocumentService,
     private readonly access: ClassifierAccessService,
     private readonly logger: LoggerService,
@@ -165,12 +160,11 @@ export class ClassifierSyncService {
 
   private sanitizeSegment(input: string | undefined): string {
     if (!input) return '';
-    return stripTrailingChar(
-      input
-        .replace(/[\\/:*?"<>|\x00-\x1f]/g, '_')
-        .trim(),
-      '.',
-    ).slice(0, 200);
+    return input
+      .replace(/[\\/:*?"<>|\x00-\x1f]/g, '_')
+      .trim()
+      .replace(/\.+$/, '')
+      .slice(0, 200);
   }
 
   private dedupeFileName(segments: string[], candidate: string, used: Set<string>): string {

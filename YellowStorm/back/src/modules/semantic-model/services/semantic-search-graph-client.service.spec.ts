@@ -1,15 +1,12 @@
-import axios from 'axios';
 import { SemanticSearchGraphClient } from './semantic-search-graph-client.service';
-
-jest.mock('axios');
 
 describe('SemanticSearchGraphClient', () => {
   const ageGraph = { graphNameForModel: jest.fn(() => 'sem_model_id') };
-  const mockedAxios = jest.mocked(axios);
+  let fetchMock: jest.Mock;
 
   beforeEach(() => {
-    jest.clearAllMocks();
-    mockedAxios.post.mockResolvedValue({ data: {} });
+    fetchMock = jest.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
   });
 
   it('indexes the model AGE schema with bearer authentication', async () => {
@@ -20,14 +17,14 @@ describe('SemanticSearchGraphClient', () => {
 
     await service.index('model-id');
 
-    expect(mockedAxios.post).toHaveBeenCalledWith(
-      'http://127.0.0.1:8100/v1/graphs/index',
-      { schema_name: 'sem_model_id' },
-      {
-        headers: { Authorization: 'Bearer secret' },
-        timeout: 300_000,
-      },
-    );
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://127.0.0.1:8100/v1/graphs/index');
+    expect(init.method).toBe('POST');
+    expect(init.headers).toEqual({
+      Authorization: 'Bearer secret',
+      'Content-Type': 'application/json',
+    });
+    expect(JSON.parse(init.body)).toEqual({ schema_name: 'sem_model_id' });
   });
 
   it('rejects indexing when the bearer token is not configured', async () => {
@@ -39,6 +36,6 @@ describe('SemanticSearchGraphClient', () => {
     await expect(service.index('model-id')).rejects.toThrow(
       'SEMANTIC_SEARCH_TOKEN is required to index the semantic graph',
     );
-    expect(mockedAxios.post).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

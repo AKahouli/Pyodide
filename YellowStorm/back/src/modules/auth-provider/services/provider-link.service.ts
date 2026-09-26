@@ -1,19 +1,17 @@
-import { Injectable } from '@nestjs/common';
-import { Inject } from '@nestjs/common';
-import { newObjectId } from '@common/postgres/object-id';
-import { USER_PROVIDER_LINK_STORE, type UserProviderLinkStore } from '../persistence/auth-provider.stores';
+import { Injectable } from '@nestjs/common';
+import { newObjectId } from '@common/postgres/object-id';
 import { UserService } from '@modules/user/user.service';
 import { LoggerService } from '@modules/logger';
 import { BadRequestException, ConflictException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { PgUserProviderLinkStore } from '../persistence/pg-auth-provider.stores';
 
 type UserProviderLinkLean = { id: string; userId: string; providerKey: string; providerUserId: string; providerEmail: string; linkedAt: Date };
 
 @Injectable()
 export class ProviderLinkService {
   constructor(
-    @Inject(USER_PROVIDER_LINK_STORE)
-    private readonly userProviderLinkStore: UserProviderLinkStore,
+    private readonly userProviderLinkStore: PgUserProviderLinkStore,
     private readonly userService: UserService,
     private readonly logger: LoggerService,
   ) {

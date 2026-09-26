@@ -1,12 +1,11 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Injectable,  Logger } from '@nestjs/common';
 import type { ConversationV2EventTypeName } from '../types/conversation-v2-persistence.types';
 import type { ConversationV2Event as WireEvent } from '../types/conversation-v2.types';
 import {
-  CONVERSATION_V2_EVENT_STORE,
-  type AppendResult,
-  type ConversationV2EventRecord,
-  type ConversationV2EventStore,
+  type AppendResult,  
+  type ConversationV2EventRecord,  
 } from '../persistence/conversation-v2-event.store';
+import { PgConversationV2EventStore } from '../persistence/postgres/pg-conversation-v2-event.store';
 
 export type { AppendResult };
 export type PersistedEventRow = ConversationV2EventRecord;
@@ -16,8 +15,7 @@ export class ConversationV2EventStoreService {
   private readonly logger = new Logger(ConversationV2EventStoreService.name);
 
   constructor(
-    @Inject(CONVERSATION_V2_EVENT_STORE)
-    private readonly store: ConversationV2EventStore,
+    private readonly store: PgConversationV2EventStore,
   ) {}
 
   async append(sessionId: string, event: WireEvent): Promise<AppendResult> {

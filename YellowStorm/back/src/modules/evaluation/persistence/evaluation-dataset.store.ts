@@ -1,7 +1,6 @@
 import type { DatasetItem, DatasetRecord } from '../evaluation.types';
 
 /** Store port for agent_evaluation.datasets (roadmap P6). */
-export const EVALUATION_DATASET_STORE = Symbol('EVALUATION_DATASET_STORE');
 
 export interface CreateDatasetData {
   name: string;

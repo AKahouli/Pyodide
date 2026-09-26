@@ -1,12 +1,18 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
+import { BadRequestException } from '../../exceptions/exceptions/http.exceptions';
+import { ErrorCode } from '../../exceptions/constants/error-codes';
 import type { IFlowResponse } from '../interfaces/playbook-flow.interface';
 import type { DataBinding, FlowNodePort } from '../models/playbook-flow.model';
 import {
+  hasRequiredInputValue,
   isCompleteDataBinding,
   isManagedPlaybookInputPath,
   isRouterControlInput,
+  readOwnPath,
 } from '../utils/playbook-managed-input.util';
 import { PlaybookFlowValidatorService } from './playbook-flow-validator.service';
+import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
+import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 
 export type PlaybookInputScope = 'runtime' | 'configuration';
 export type PlaybookInputSourceKind = 'upload' | 'workspace' | 'document' | 'folder' | 'url' | 'manual';
@@ -47,7 +53,120 @@ const CONFIGURATION_TERMS = [
 
 @Injectable()
 export class PlaybookInputContractService {
-  constructor(private readonly validator: PlaybookFlowValidatorService = new PlaybookFlowValidatorService()) {}
+  constructor(
+    private readonly validator: PlaybookFlowValidatorService = new PlaybookFlowValidatorService(),
+    // Optional so the contract stays derivable without workspace providers;
+    // resource preflight then rejects as inaccessible (same as before extraction).
+    @Optional() private readonly workspaceShareService?: WorkspaceShareService,
+    @Optional() private readonly workspaceDocumentService?: WorkspaceDocumentService,
+  ) {}
+
+  /**
+   * Rejects execution when any required input is invalid, unconfigured, missing
+   * at runtime, or points at a resource the owner cannot access.
+   */
+  async preflightRequiredInputs(
+    flow: IFlowResponse,
+    ownerId: string,
+    inputContext: Record<string, unknown>,
+    singleStepTaskId?: string,
+  ): Promise<void> {
+    const contract = this.derive(flow);
+    const inputs = singleStepTaskId
+      ? contract.inputs.filter((input) => input.taskId === singleStepTaskId)
+      : contract.inputs;
+    const invalid = inputs.find((input) => input.readiness === 'invalid');
+    if (invalid) {
+      throw new BadRequestException(
+        ErrorCode.PLAYBOOK_INPUT_BINDING_INVALID,
+        `Playbook input binding is invalid for ${invalid.taskTitle}.${invalid.label}.`,
+      );
+    }
+    const configuration = inputs.find((input) => input.readiness === 'configuration_required');
+    if (configuration) {
+      throw new BadRequestException(
+        ErrorCode.PLAYBOOK_CONFIGURATION_REQUIRED,
+        `Playbook setting ${configuration.label} must be configured before execution.`,
+      );
+    }
+
+    for (const input of inputs.filter((item) => item.readiness === 'configured')) {
+      const binding = flow.dataBindings.find((candidate) => (
+        candidate.targetNode === input.taskId
+        && candidate.targetPort === input.portId
+        && candidate.sourceKind === 'constant'
+      ));
+      if (binding) await this.validateInputResource(ownerId, input, binding.constantValue);
+    }
+
+    for (const input of inputs.filter((item) => item.readiness === 'runtime_required')) {
+      const triggerPath = input.binding.triggerPath;
+      const resolved = triggerPath ? readOwnPath(inputContext, triggerPath) : { found: false };
+      if (!resolved.found || !hasRequiredInputValue(resolved.value)) {
+        throw new BadRequestException(
+          ErrorCode.PLAYBOOK_REQUIRED_INPUT_MISSING,
+          `Required Playbook input ${input.label} is missing.`,
+        );
+      }
+      await this.validateInputResource(ownerId, input, resolved.value);
+    }
+  }
+
+  private async validateInputResource(
+    ownerId: string,
+    input: PlaybookInputDescriptor,
+    value: unknown,
+  ): Promise<void> {
+    const configurationDestination = input.scope === 'configuration';
+    const requiresResource = configurationDestination || input.artifactKind === 'document' || input.artifactKind === 'image';
+    if (!value || typeof value !== 'object') {
+      if (requiresResource) this.throwInputResourceInaccessible(input);
+      return;
+    }
+    const resource = value as Record<string, unknown>;
+    if (resource.kind !== 'workspace' && resource.kind !== 'document' && resource.kind !== 'folder') {
+      if (requiresResource) this.throwInputResourceInaccessible(input);
+      return;
+    }
+    if (configurationDestination && resource.kind !== 'workspace' && resource.kind !== 'folder') {
+      this.throwInputResourceInaccessible(input);
+    }
+    const id = typeof resource.id === 'string' ? resource.id.trim() : '';
+    const workspaceId = typeof resource.workspaceId === 'string' ? resource.workspaceId.trim() : '';
+    if (!id || !workspaceId) this.throwInputResourceInaccessible(input);
+    if (resource.kind === 'workspace' && id !== workspaceId) this.throwInputResourceInaccessible(input);
+    const workspaceShareService = this.workspaceShareService;
+    if (!workspaceShareService) this.throwInputResourceInaccessible(input);
+    const workspaceDocumentService = this.workspaceDocumentService;
+    if ((resource.kind === 'document' || resource.kind === 'folder') && !workspaceDocumentService) {
+      this.throwInputResourceInaccessible(input);
+    }
+
+    try {
+      if (input.scope === 'configuration') {
+        await workspaceShareService.assertUserHasWriteAccess(ownerId, workspaceId);
+      } else {
+        await workspaceShareService.assertUserHasAccess(ownerId, [workspaceId]);
+      }
+      if (resource.kind === 'document' || resource.kind === 'folder') {
+        const documents = await workspaceDocumentService!.findByIds([id]);
+        const document = documents.find((candidate) => candidate.id === id);
+        const expectedFolder = resource.kind === 'folder';
+        if (!document || document.workspaceId !== workspaceId || document.isFolder !== expectedFolder) {
+          this.throwInputResourceInaccessible(input);
+        }
+      }
+    } catch {
+      this.throwInputResourceInaccessible(input);
+    }
+  }
+
+  private throwInputResourceInaccessible(input: PlaybookInputDescriptor): never {
+    throw new BadRequestException(
+      ErrorCode.PLAYBOOK_INPUT_RESOURCE_INACCESSIBLE,
+      `The selected resource for ${input.label} is unavailable or inaccessible.`,
+    );
+  }
 
   derive(flow: Pick<IFlowResponse, 'id' | 'definitionRevision' | 'nodes' | 'controlEdges' | 'dataBindings'>): PlaybookInputContractResponse {
     const inputs: PlaybookInputDescriptor[] = [];

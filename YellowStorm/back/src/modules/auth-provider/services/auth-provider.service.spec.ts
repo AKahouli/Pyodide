@@ -5,7 +5,6 @@ import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';
 import { SystemService } from '@modules/system/system.service';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { AUTH_PROVIDER_STORE, USER_PROVIDER_LINK_STORE } from '../persistence/auth-provider.stores';
 import {
   linkRecord,
   makeProviderStoreFake,
@@ -14,6 +13,8 @@ import {
   type AuthProviderStoreFake,
   type UserProviderLinkStoreFake,
 } from '../persistence/auth-provider-stores.fake';
+import { PgUserProviderLinkStore } from '../persistence/pg-auth-provider.stores';
+import { PgAuthProviderStore } from '../persistence/pg-auth-provider.stores';
 
 describe('AuthProviderService', () => {
   let service: AuthProviderService;
@@ -63,8 +64,8 @@ describe('AuthProviderService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthProviderService,
-        { provide: AUTH_PROVIDER_STORE, useValue: providerStore },
-        { provide: USER_PROVIDER_LINK_STORE, useValue: linkStore },
+        { provide: PgAuthProviderStore, useValue: providerStore },
+        { provide: PgUserProviderLinkStore, useValue: linkStore },
         { provide: CryptoService, useValue: cryptoService },
         { provide: LoggerService, useValue: mockLoggerService },
         { provide: SystemService, useValue: systemService },

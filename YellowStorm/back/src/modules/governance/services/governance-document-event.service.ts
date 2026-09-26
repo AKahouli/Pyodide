@@ -1,14 +1,13 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import {
-  GOVERNANCE_EVENT_STORE,
-  type AppendGovernanceDocumentEventInput,
-  type GovernanceDocumentEventRecord,
-  type GovernanceEventStore,
+  type AppendGovernanceDocumentEventInput,  
+  type GovernanceDocumentEventRecord,  
 } from '../persistence';
+import { PgGovernanceEventStore } from '../persistence/postgres/pg-document-event.store';
 
 @Injectable()
 export class GovernanceDocumentEventService {
-  constructor(@Inject(GOVERNANCE_EVENT_STORE) private readonly eventStore: GovernanceEventStore) {}
+  constructor(private readonly eventStore: PgGovernanceEventStore) {}
 
   async append(input: AppendGovernanceDocumentEventInput): Promise<GovernanceDocumentEventRecord> {
     return this.eventStore.append(input);

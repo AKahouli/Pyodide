@@ -5,6 +5,7 @@ import { PlaybookFlowObservabilityService } from './observability/playbook-flow-
 import { PlaybookFlowPublicReasoningParserService } from './observability/playbook-flow-public-reasoning-parser.service';
 import { PlaybookFlowTraceRedactionService } from './observability/playbook-flow-trace-redaction.service';
 import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
+import { PlaybookInputContractService } from './playbook-input-contract.service';
 
 import {
   createExecutionRepositoryMock,
@@ -12,6 +13,22 @@ import {
   createRouterDecisionRepositoryMock,
   createTaskResultRepositoryMock,
 } from './playbook-flow-execution.test-support';
+
+/** Builds a real input-contract service whose derive() returns the given contract stub. */
+function stubInputContractService(
+  service: PlaybookFlowExecutionService,
+  contract: { inputs: unknown[] },
+  workspaceServices: { workspaceShareService?: unknown; workspaceDocumentService?: unknown } = {},
+): PlaybookInputContractService {
+  const inputContractService = new PlaybookInputContractService(
+    { collectValidationErrors: jest.fn().mockReturnValue([]) } as any,
+    workspaceServices.workspaceShareService as any,
+    workspaceServices.workspaceDocumentService as any,
+  );
+  jest.spyOn(inputContractService, 'derive').mockReturnValue(contract as any);
+  (service as any).inputContractService = inputContractService;
+  return inputContractService;
+}
 
 function structFields(value: Record<string, unknown>): Record<string, unknown> {
   return (toGrpcStruct(value) as { fields: Record<string, unknown> }).fields;
@@ -141,9 +158,9 @@ describe('PlaybookFlowExecutionService start preflight', () => {
       }),
     };
     const { service, idempotencyService } = createExecutionServiceForTests({ flowService, graphSanitizerService });
-    (service as any).inputContractService = {
-      derive: jest.fn().mockReturnValue({
-        inputs: [{
+    const inputContractService = stubInputContractService(service, {
+      inputs: [
+        {
           id: 'step-1:brief',
           taskId: 'step-1',
           taskTitle: 'Draft report',
@@ -155,9 +172,9 @@ describe('PlaybookFlowExecutionService start preflight', () => {
           binding: { kind: 'trigger', triggerPath: 'playbookInputs.brief' },
           acceptedSources: ['manual'],
           readiness: 'runtime_required',
-        }],
-      }),
-    };
+        },
+      ],
+      });
 
     await expect(service.start('flow-1', 'owner-1', {}, 'idem-1'))
       .rejects.toThrow('Required Playbook input Brief is missing.');
@@ -169,9 +186,9 @@ describe('PlaybookFlowExecutionService start preflight', () => {
 
   it('rejects inaccessible document inputs before reserving idempotency', async () => {
     const { service, idempotencyService } = createExecutionServiceForTests();
-    (service as any).inputContractService = {
-      derive: jest.fn().mockReturnValue({
-        inputs: [{
+    stubInputContractService(service, {
+      inputs: [
+        {
           id: 'step-1:document',
           taskId: 'step-1',
           taskTitle: 'Summarize document',
@@ -183,13 +200,13 @@ describe('PlaybookFlowExecutionService start preflight', () => {
           binding: { kind: 'trigger', triggerPath: 'playbookInputs.document' },
           acceptedSources: ['document'],
           readiness: 'runtime_required',
-        }],
-      }),
-    };
-    (service as any).workspaceShareService = {
-      assertUserHasAccess: jest.fn().mockRejectedValue(new Error('forbidden')),
-    };
-    (service as any).workspaceDocumentService = { findByIds: jest.fn() };
+        },
+      ],
+    }, {
+      workspaceShareService: { assertUserHasAccess: jest.fn().mockRejectedValue(new Error('forbidden')) },
+      workspaceDocumentService: { findByIds: jest.fn() },
+    });
+
 
     await expect(service.start('flow-1', 'owner-1', {
       playbookInputs: {
@@ -202,9 +219,9 @@ describe('PlaybookFlowExecutionService start preflight', () => {
 
   it('fails closed when document authorization services are unavailable', async () => {
     const { service } = createExecutionServiceForTests();
-    (service as any).inputContractService = {
-      derive: jest.fn().mockReturnValue({
-        inputs: [{
+    const inputContractService = stubInputContractService(service, {
+      inputs: [
+        {
           id: 'step-1:document',
           taskId: 'step-1',
           taskTitle: 'Summarize document',
@@ -216,9 +233,9 @@ describe('PlaybookFlowExecutionService start preflight', () => {
           binding: { kind: 'trigger', triggerPath: 'playbookInputs.document' },
           acceptedSources: ['document'],
           readiness: 'runtime_required',
-        }],
-      }),
-    };
+        },
+      ],
+      });
 
     await expect(service.start('flow-1', 'owner-1', {
       playbookInputs: {
@@ -254,10 +271,9 @@ describe('PlaybookFlowExecutionService start preflight', () => {
       assertUserHasAccess: jest.fn(),
       assertUserHasWriteAccess: jest.fn().mockRejectedValue(new Error('read only')),
     };
-    (service as any).workspaceShareService = workspaceShareService;
-    (service as any).inputContractService = {
-      derive: jest.fn().mockReturnValue({
-        inputs: [{
+    const inputContractService = stubInputContractService(service, {
+      inputs: [
+        {
           id: 'step-1:destination',
           taskId: 'step-1',
           taskTitle: 'Save report',
@@ -269,9 +285,9 @@ describe('PlaybookFlowExecutionService start preflight', () => {
           binding: { kind: 'constant' },
           acceptedSources: ['workspace'],
           readiness: 'configured',
-        }],
-      }),
-    };
+        },
+      ],
+    }, { workspaceShareService });
 
     await expect(service.start('flow-1', 'owner-1', {}, 'idem-1'))
       .rejects.toThrow('The selected resource for Destination workspace is unavailable or inaccessible.');
@@ -307,17 +323,16 @@ describe('PlaybookFlowExecutionService start preflight', () => {
       assertUserHasAccess: jest.fn(),
       assertUserHasWriteAccess: jest.fn(),
     };
-    (service as any).workspaceShareService = workspaceShareService;
-    (service as any).inputContractService = {
-      derive: jest.fn().mockReturnValue({
-        inputs: [{
+    const inputContractService = stubInputContractService(service, {
+      inputs: [
+        {
           id: 'step-1:destination', taskId: 'step-1', taskTitle: 'Save report',
           portId: 'destination', label: 'Destination workspace', artifactKind: 'data',
           required: true, scope: 'configuration', binding: { kind: 'constant' },
           acceptedSources: ['workspace'], readiness: 'configured',
-        }],
-      }),
-    };
+        },
+      ],
+    }, { workspaceShareService });
 
     await expect(service.start('flow-1', 'owner-1', {}, 'idem-1'))
       .rejects.toThrow('The selected resource for Destination workspace is unavailable or inaccessible.');
@@ -329,10 +344,9 @@ describe('PlaybookFlowExecutionService start preflight', () => {
   it('rejects workspace resources whose id does not match their authorized workspace', async () => {
     const { service, idempotencyService } = createExecutionServiceForTests();
     const workspaceShareService = { assertUserHasAccess: jest.fn() };
-    (service as any).workspaceShareService = workspaceShareService;
-    (service as any).inputContractService = {
-      derive: jest.fn().mockReturnValue({
-        inputs: [{
+    stubInputContractService(service, {
+      inputs: [
+        {
           id: 'step-1:workspace',
           taskId: 'step-1',
           taskTitle: 'Read workspace',
@@ -344,9 +358,9 @@ describe('PlaybookFlowExecutionService start preflight', () => {
           binding: { kind: 'trigger', triggerPath: 'playbookInputs.workspace' },
           acceptedSources: ['workspace'],
           readiness: 'runtime_required',
-        }],
-      }),
-    };
+        },
+      ],
+    }, { workspaceShareService });
 
     await expect(service.start('flow-1', 'owner-1', {
       playbookInputs: {

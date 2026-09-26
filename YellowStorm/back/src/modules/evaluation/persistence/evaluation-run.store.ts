@@ -6,7 +6,6 @@ import type {
 } from '../evaluation.types';
 
 /** Store port for agent_evaluation.evaluations (roadmap P6). */
-export const EVALUATION_RUN_STORE = Symbol('EVALUATION_RUN_STORE');
 
 export interface CreateEvaluationData {
   agentId: string;

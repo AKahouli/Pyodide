@@ -6,7 +6,7 @@ import * as crypto from 'crypto';
 import { UAParser } from 'ua-parser-js';
 import { UserService } from '../user/user.service';
 import { newObjectId } from '@common/postgres';
-import { SESSION_STORE, RotationConflictError as StoreRotationConflict, type NewSession, type RotationBookkeeping, type SessionRecord, type SessionStore } from './persistence/session.store';
+import { RotationConflictError as StoreRotationConflict,   type NewSession,   type RotationBookkeeping,   type SessionRecord} from './persistence/session.store';
 
 import { asAuthUser, type AuthUser } from '@common/auth/auth-user';
 import {
@@ -36,7 +36,7 @@ import {
   isTransientSessionStoreError,
 } from './utils/session-store-errors';
 import { RotationReceiptCrypto } from './utils/rotation-receipt.crypto';
-
+import { PgSessionStore } from './persistence/pg-session.store';
 
 @Injectable()
 export class AuthService {
@@ -55,7 +55,7 @@ export class AuthService {
   private readonly receiptCrypto: RotationReceiptCrypto;
   private readonly receiptWindowSeconds: number;
   constructor(
-    @Inject(SESSION_STORE) private readonly sessionStore: SessionStore,
+    private readonly sessionStore: PgSessionStore,
     private readonly userService: UserService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,

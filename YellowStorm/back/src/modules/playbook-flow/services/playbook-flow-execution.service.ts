@@ -50,6 +50,7 @@ import { PlaybookFlowReplayReportService } from './playbook-flow-replay-report.s
 import { PlaybookFlowReplayDriftService } from './playbook-flow-replay-drift.service';
 import { PlaybookFlowReplayPlanService } from './playbook-flow-replay-plan.service';
 import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
+import { PlaybookExecutionNodeAgentMetadataService } from '../execution/runtime/playbook-execution-node-agent-metadata.service';
 import { PlaybookFlowOutputFormatService } from './playbook-flow-output-format.service';
 import { ModelsService } from '@modules/models/models.service';
 import { WorkspaceService } from '@modules/workspace/workspace.service';
@@ -87,8 +88,7 @@ import { FlowAccessService } from '../domain/flow-access.service';
 import { PlaybookExecutionSettingsResolverService } from './playbook-execution-settings-resolver.service';
 import { publicPlaybookTaskResult, sanitizePlaybookPublicValue } from '../utils/playbook-artifact';
 import { PlaybookFlowArtifactService } from './playbook-flow-artifact.service';
-import { PlaybookInputContractService, type PlaybookInputDescriptor } from './playbook-input-contract.service';
-import { hasRequiredInputValue, readOwnPath } from '../utils/playbook-managed-input.util';
+import { PlaybookInputContractService } from './playbook-input-contract.service';
 
 const RUNTIME_AGENT_METADATA_KEYS = [
   'agent_name',
@@ -146,32 +146,6 @@ function stripRuntimeAgentMetadata(metadata: Record<string, unknown>): Record<st
     delete sanitizedMetadata[key];
   }
   return sanitizedMetadata;
-}
-
-function getConnectorIdsFromRuntimeBindings(bindings: unknown): Set<string> {
-  if (!Array.isArray(bindings)) {
-    return new Set<string>();
-  }
-
-  return new Set(
-    bindings
-      .filter((binding): binding is Record<string, unknown> => !!binding && typeof binding === 'object' && !Array.isArray(binding))
-      .map((binding) => String(binding.connector_id || '').trim())
-      .filter(Boolean),
-  );
-}
-
-function getSkillIdsFromRuntimeSkills(skills: unknown): Set<string> {
-  if (!Array.isArray(skills)) {
-    return new Set<string>();
-  }
-
-  return new Set(
-    skills
-      .filter((skill): skill is Record<string, unknown> => !!skill && typeof skill === 'object' && !Array.isArray(skill))
-      .map((skill) => String(skill.id || '').trim())
-      .filter(Boolean),
-  );
 }
 
 function filterRuntimeHitlBlockers(blockers: unknown): Record<string, unknown>[] {
@@ -287,6 +261,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     @Optional() private readonly inputContractService?: PlaybookInputContractService,
     @Optional() private readonly workspaceShareService?: WorkspaceShareService,
     @Optional() private readonly workspaceDocumentService?: WorkspaceDocumentService,
+    @Optional() private readonly nodeAgentMetadataService?: PlaybookExecutionNodeAgentMetadataService,
   ) {
     this.hitlResumeService?.bindExecutionHost({
       isRuntimeAvailable: () => this.isRuntimeAvailable(),
@@ -366,144 +341,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     // This remains disabled until execution ownership is persisted and validated.
   }
 
-  private async buildNodeRuntimeAgentMetadata(
-    ownerId: string,
-    nodeId: string,
-    baseMetadata: Record<string, unknown>,
-    resolvedAgent?: Record<string, unknown>,
-  ): Promise<Record<string, unknown> | undefined> {
-    if (!resolvedAgent) {
-      return resolvedAgent;
-    }
-
-    const taskToolBindings = Array.isArray(baseMetadata.toolBindings)
-      ? baseMetadata.toolBindings.filter((binding): binding is Record<string, unknown> => (
-        !!binding && typeof binding === 'object' && !Array.isArray(binding)
-      ))
-      : [];
-
-    if (taskToolBindings.length === 0) {
-      return this.mergeNodeRuntimeSkills(ownerId, nodeId, baseMetadata, resolvedAgent);
-    }
-
-    const existingConnectorIds = new Set([
-      ...getConnectorIdsFromRuntimeBindings(resolvedAgent.connector_bindings),
-      ...((Array.isArray(resolvedAgent.connector_ids) ? resolvedAgent.connector_ids : [])
-        .map((connectorId) => String(connectorId || '').trim())
-        .filter(Boolean)),
-    ]);
-
-    const additionalBindings: Record<string, unknown>[] = [];
-    const seenConnectorIds = new Set<string>();
-
-    for (const binding of taskToolBindings) {
-      if (binding.isEnabled === false) {
-        continue;
-      }
-
-      const connectorId = String(binding.connectorId || '').trim();
-      if (!connectorId || existingConnectorIds.has(connectorId) || seenConnectorIds.has(connectorId)) {
-        continue;
-      }
-
-      seenConnectorIds.add(connectorId);
-      additionalBindings.push(binding);
-    }
-
-    if (additionalBindings.length === 0) {
-      return this.mergeNodeRuntimeSkills(ownerId, nodeId, baseMetadata, resolvedAgent);
-    }
-
-    const additionalRuntime = await this.agentService.buildGrpcConnectorRuntimeForPlaybook(ownerId, additionalBindings);
-    if (additionalRuntime.connector_bindings.length === 0) {
-      this.logger.warn('Skipped playbook task connector bindings without runtime actions', {
-        ownerId,
-        nodeId,
-        connectorIds: additionalBindings.map((binding) => String(binding.connectorId || '')).filter(Boolean),
-      });
-      return this.mergeNodeRuntimeSkills(ownerId, nodeId, baseMetadata, resolvedAgent);
-    }
-
-    const mergedConnectorBindings = [
-      ...(Array.isArray(resolvedAgent.connector_bindings) ? resolvedAgent.connector_bindings : []),
-      ...additionalRuntime.connector_bindings,
-    ];
-    const existingSkillIds = getSkillIdsFromRuntimeSkills(resolvedAgent.skills);
-    const additionalConnectorSkills = (Array.isArray(additionalRuntime.skills) ? additionalRuntime.skills : [])
-      .filter((skill): skill is Record<string, unknown> => !!skill && typeof skill === 'object' && !Array.isArray(skill))
-      .filter((skill) => {
-        const skillId = String(skill.id || '').trim();
-        return !!skillId && !existingSkillIds.has(skillId);
-      });
-
-    return this.mergeNodeRuntimeSkills(ownerId, nodeId, baseMetadata, {
-      ...resolvedAgent,
-      agent_tools: [
-        ...(Array.isArray(resolvedAgent.agent_tools) ? resolvedAgent.agent_tools : []),
-        ...additionalRuntime.tools,
-      ],
-      skills: [
-        ...(Array.isArray(resolvedAgent.skills) ? resolvedAgent.skills : []),
-        ...additionalConnectorSkills,
-      ],
-      agent_params: {
-        ...(resolvedAgent.agent_params && typeof resolvedAgent.agent_params === 'object' && !Array.isArray(resolvedAgent.agent_params)
-          ? resolvedAgent.agent_params as Record<string, unknown>
-          : {}),
-        connector_bindings_json: JSON.stringify(mergedConnectorBindings),
-      },
-      connector_bindings: mergedConnectorBindings,
-      connector_ids: [
-        ...existingConnectorIds,
-        ...additionalRuntime.connectorIds,
-      ],
-    });
-  }
-
-  private async mergeNodeRuntimeSkills(
-    ownerId: string,
-    nodeId: string,
-    baseMetadata: Record<string, unknown>,
-    resolvedAgent: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
-    const taskSkillBindings = Array.isArray(baseMetadata.skillBindings)
-      ? baseMetadata.skillBindings.filter((binding): binding is Record<string, unknown> => (
-        !!binding && typeof binding === 'object' && !Array.isArray(binding)
-      ))
-      : [];
-
-    if (taskSkillBindings.length === 0) {
-      return resolvedAgent;
-    }
-
-    const existingSkillIds = getSkillIdsFromRuntimeSkills(resolvedAgent.skills);
-    const additionalSkillIds = [...new Set(taskSkillBindings
-      .filter((binding) => binding.isEnabled !== false)
-      .map((binding) => String(binding.skillId || '').trim())
-      .filter((skillId) => skillId && !existingSkillIds.has(skillId)))];
-
-    if (additionalSkillIds.length === 0) {
-      return resolvedAgent;
-    }
-
-    const additionalSkills = await this.agentService.buildGrpcSkillsForPlaybook(additionalSkillIds);
-    if (additionalSkills.length === 0) {
-      this.logger.warn('Skipped playbook task skill bindings without active runtime skills', {
-        ownerId,
-        nodeId,
-        skillIds: additionalSkillIds,
-      });
-      return resolvedAgent;
-    }
-
-    return {
-      ...resolvedAgent,
-      skills: [
-        ...(Array.isArray(resolvedAgent.skills) ? resolvedAgent.skills : []),
-        ...additionalSkills,
-      ],
-    };
-  }
 
   private cacheSelectedReplayArtifacts(
     executionId: string,
@@ -815,7 +652,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       this.assertSingleStepControlDependenciesSupported(flow.nodes, flow.controlEdges, singleStepTaskId);
     }
 
-    await this.preflightRequiredInputs(flow, ownerId, inputContext ?? {}, singleStepTaskId);
+    await this.requireInputContractService().preflightRequiredInputs(flow, ownerId, inputContext ?? {}, singleStepTaskId);
     if (graphWasSanitized) {
       await this.persistSanitizedExecutionGraph(flowId, flow);
     }
@@ -993,109 +830,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     return sanitizeExecutionForResponse(toExecutionResponse({ ...saved, queuePosition: position }));
   }
 
-  private async preflightRequiredInputs(
-    flow: IFlowResponse,
-    ownerId: string,
-    inputContext: Record<string, unknown>,
-    singleStepTaskId?: string,
-  ): Promise<void> {
-    const contract = (this.inputContractService ?? new PlaybookInputContractService(this.validatorService)).derive(flow);
-    const inputs = singleStepTaskId
-      ? contract.inputs.filter((input) => input.taskId === singleStepTaskId)
-      : contract.inputs;
-    const invalid = inputs.find((input) => input.readiness === 'invalid');
-    if (invalid) {
-      throw new BadRequestException(
-        ErrorCode.PLAYBOOK_INPUT_BINDING_INVALID,
-        `Playbook input binding is invalid for ${invalid.taskTitle}.${invalid.label}.`,
-      );
-    }
-    const configuration = inputs.find((input) => input.readiness === 'configuration_required');
-    if (configuration) {
-      throw new BadRequestException(
-        ErrorCode.PLAYBOOK_CONFIGURATION_REQUIRED,
-        `Playbook setting ${configuration.label} must be configured before execution.`,
-      );
-    }
-
-    for (const input of inputs.filter((item) => item.readiness === 'configured')) {
-      const binding = flow.dataBindings.find((candidate) => (
-        candidate.targetNode === input.taskId
-        && candidate.targetPort === input.portId
-        && candidate.sourceKind === 'constant'
-      ));
-      if (binding) await this.validateInputResource(ownerId, input, binding.constantValue);
-    }
-
-    for (const input of inputs.filter((item) => item.readiness === 'runtime_required')) {
-      const triggerPath = input.binding.triggerPath;
-      const resolved = triggerPath ? readOwnPath(inputContext, triggerPath) : { found: false };
-      if (!resolved.found || !hasRequiredInputValue(resolved.value)) {
-        throw new BadRequestException(
-          ErrorCode.PLAYBOOK_REQUIRED_INPUT_MISSING,
-          `Required Playbook input ${input.label} is missing.`,
-        );
-      }
-      await this.validateInputResource(ownerId, input, resolved.value);
-    }
-  }
-
-  private async validateInputResource(
-    ownerId: string,
-    input: PlaybookInputDescriptor,
-    value: unknown,
-  ): Promise<void> {
-    const configurationDestination = input.scope === 'configuration';
-    const requiresResource = configurationDestination || input.artifactKind === 'document' || input.artifactKind === 'image';
-    if (!value || typeof value !== 'object') {
-      if (requiresResource) this.throwInputResourceInaccessible(input);
-      return;
-    }
-    const resource = value as Record<string, unknown>;
-    if (resource.kind !== 'workspace' && resource.kind !== 'document' && resource.kind !== 'folder') {
-      if (requiresResource) this.throwInputResourceInaccessible(input);
-      return;
-    }
-    if (configurationDestination && resource.kind !== 'workspace' && resource.kind !== 'folder') {
-      this.throwInputResourceInaccessible(input);
-    }
-    const id = typeof resource.id === 'string' ? resource.id.trim() : '';
-    const workspaceId = typeof resource.workspaceId === 'string' ? resource.workspaceId.trim() : '';
-    if (!id || !workspaceId) this.throwInputResourceInaccessible(input);
-    if (resource.kind === 'workspace' && id !== workspaceId) this.throwInputResourceInaccessible(input);
-    const workspaceShareService = this.workspaceShareService;
-    if (!workspaceShareService) this.throwInputResourceInaccessible(input);
-    const workspaceDocumentService = this.workspaceDocumentService;
-    if ((resource.kind === 'document' || resource.kind === 'folder') && !workspaceDocumentService) {
-      this.throwInputResourceInaccessible(input);
-    }
-
-    try {
-      if (input.scope === 'configuration') {
-        await workspaceShareService.assertUserHasWriteAccess(ownerId, workspaceId);
-      } else {
-        await workspaceShareService.assertUserHasAccess(ownerId, [workspaceId]);
-      }
-      if (resource.kind === 'document' || resource.kind === 'folder') {
-        const documents = await workspaceDocumentService!.findByIds([id]);
-        const document = documents.find((candidate) => candidate.id === id);
-        const expectedFolder = resource.kind === 'folder';
-        if (!document || document.workspaceId !== workspaceId || document.isFolder !== expectedFolder) {
-          this.throwInputResourceInaccessible(input);
-        }
-      }
-    } catch {
-      this.throwInputResourceInaccessible(input);
-    }
-  }
-
-  private throwInputResourceInaccessible(input: PlaybookInputDescriptor): never {
-    throw new BadRequestException(
-      ErrorCode.PLAYBOOK_INPUT_RESOURCE_INACCESSIBLE,
-      `The selected resource for ${input.label} is unavailable or inaccessible.`,
-    );
-  }
-
   private assertSingleStepSupported(
     nodes: FlowNode[],
     singleStepTaskId: string,
@@ -1223,6 +957,14 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     return this.fallbackSingleStepPrepService;
   }
 
+  private getNodeAgentMetadataService(): PlaybookExecutionNodeAgentMetadataService {
+    return this.nodeAgentMetadataService ?? new PlaybookExecutionNodeAgentMetadataService(this.agentService);
+  }
+
+  private requireInputContractService(): PlaybookInputContractService {
+    return this.inputContractService ?? new PlaybookInputContractService(this.validatorService);
+  }
+
   private async callGrpcRun(
     executionId: string,
     flowId: string,
@@ -1317,7 +1059,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       const enrichedNodes = await Promise.all(nodeMetadataEntries.map(async ({ n, baseMetadata }) => {
         const assignedAgentId = n.metadata?.assignedAgentId;
         const resolvedAgent = typeof assignedAgentId === 'string' ? agentMap.get(assignedAgentId) : undefined;
-        const runtimeAgentMetadata = await this.buildNodeRuntimeAgentMetadata(normalizedOwnerId, String(n.id || ''), baseMetadata, resolvedAgent);
+        const runtimeAgentMetadata = await this.getNodeAgentMetadataService().buildNodeRuntimeAgentMetadata(normalizedOwnerId, String(n.id || ''), baseMetadata, resolvedAgent);
         const description = typeof n.description === 'string' && n.description.trim()
           ? n.description.trim()
           : typeof n.metadata?.description === 'string' && n.metadata.description.trim()
@@ -2229,7 +1971,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       const assignedAgentId = n.metadata?.assignedAgentId;
       const resolvedAgent = typeof assignedAgentId === 'string' ? agentMap.get(assignedAgentId) : undefined;
       const baseMetadata = stripRuntimeAgentMetadata((n.metadata || {}) as Record<string, unknown>);
-      const runtimeAgentMetadata = await this.buildNodeRuntimeAgentMetadata(normalizedOwnerId, String(n.id || ''), baseMetadata, resolvedAgent);
+      const runtimeAgentMetadata = await this.getNodeAgentMetadataService().buildNodeRuntimeAgentMetadata(normalizedOwnerId, String(n.id || ''), baseMetadata, resolvedAgent);
       return {
         ...n,
         metadata: { ...baseMetadata, ...(runtimeAgentMetadata || {}) },

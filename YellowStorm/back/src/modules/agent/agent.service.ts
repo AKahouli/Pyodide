@@ -1,6 +1,7 @@
 import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { isObjectId, newObjectId } from '@common/postgres/object-id';
+import { deriveAgentSlug } from '@common/utils/slugify';
 import { LoggerService } from '../logger';
 import { IAgentResponse, IAgentForStream, IGrpcAgent, IGrpcCompaction, ISharedAgentInfo } from './interfaces/agent.interface';
 import { AgentShareService } from './services/agent-share.service';
@@ -17,7 +18,7 @@ import {
 } from '../../common/runtime/sandbox-scope';
 import { NotFoundException, ConflictException, ForbiddenException, BadRequestException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
-import { escapeRegex, collapseRepeatedChar, collapseWhitespace, stripLeadingTrailingChar } from '../../common/utils';
+import { escapeRegex } from '../../common/utils';
 import { ToolService } from '../tool/tool.service';
 import { IToolResponse } from '../tool/interfaces/tool.interface';
 import { AgentTypeService } from '../agent-type/agent-type.service';
@@ -1346,21 +1347,7 @@ export class AgentService {
   }
 
   private normalizeSlug(value: string): string {
-    return stripLeadingTrailingChar(
-      collapseRepeatedChar(
-        collapseWhitespace(
-          value
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '')
-            .toLowerCase()
-            .trim(),
-          '-',
-        )
-          .replace(/[^a-z0-9-]/g, '-'),
-        '-',
-      ),
-      '-',
-    );
+    return deriveAgentSlug(value);
   }
 
   private async ensureSlugUniqueness(

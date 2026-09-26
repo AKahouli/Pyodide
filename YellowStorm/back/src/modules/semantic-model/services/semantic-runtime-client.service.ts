@@ -1,6 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
-import axios from 'axios';
 import semanticModelConfig from '@config/semantic-model.config';
 import {
   ConflictException,
@@ -142,22 +141,31 @@ export class SemanticRuntimeClientService {
   ): Promise<T> {
     const base = this.requireWrites();
     try {
-      const { data } = await axios.post<T>(`${base}${path}`, body, {
+      const res = await fetch(`${base}${path}`, {
+        method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'X-Semantic-Service-Key': this.config.runtimeServiceKey,
           ...headers,
         },
-        timeout: this.config.runtimeRequestTimeoutMs,
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(this.config.runtimeRequestTimeoutMs),
       });
-      return data;
+      if (!res.ok) {
+        throw Object.assign(new Error(`HTTP ${res.status}`), {
+          status: res.status,
+          data: await this.readErrorPayload(res),
+        });
+      }
+      return await res.json() as T;
     } catch (error) {
-      if (axios.isAxiosError(error)) {
+      const status = (error as { status?: unknown }).status;
+      if (typeof status === 'number') {
         const detail = this.errorDetail(error);
-        if (error.response?.status === 409) {
+        if (status === 409) {
           throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT, detail);
         }
-        if (error.response?.status === 404) {
+        if (status === 404) {
           throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, detail);
         }
       }
@@ -171,16 +179,22 @@ export class SemanticRuntimeClientService {
   private async get<T>(path: string, actorUserId: string): Promise<T> {
     const base = this.requireRuntime();
     try {
-      const { data } = await axios.get<T>(`${base}${path}`, {
+      const res = await fetch(`${base}${path}`, {
         headers: {
           'X-Semantic-Service-Key': this.config.runtimeServiceKey,
           'X-Actor-User-Id': actorUserId,
         },
-        timeout: this.config.runtimeRequestTimeoutMs,
+        signal: AbortSignal.timeout(this.config.runtimeRequestTimeoutMs),
       });
-      return data;
+      if (!res.ok) {
+        throw Object.assign(new Error(`HTTP ${res.status}`), {
+          status: res.status,
+          data: await this.readErrorPayload(res),
+        });
+      }
+      return await res.json() as T;
     } catch (error) {
-      if (axios.isAxiosError(error) && error.response?.status === 404) {
+      if ((error as { status?: unknown }).status === 404) {
         throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, this.errorDetail(error));
       }
       throw new ServiceUnavailableException(
@@ -190,11 +204,18 @@ export class SemanticRuntimeClientService {
     }
   }
 
-  private errorDetail(error: unknown): string {
-    if (axios.isAxiosError(error)) {
-      const detail = (error.response?.data as { detail?: unknown } | undefined)?.detail;
-      if (typeof detail === 'string' && detail) return detail.slice(0, 200);
+  private async readErrorPayload(res: Response): Promise<unknown> {
+    const text = await res.text().catch(() => '');
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      return text;
     }
+  }
+
+  private errorDetail(error: unknown): string {
+    const detail = ((error as { data?: unknown }).data as { detail?: unknown } | undefined)?.detail;
+    if (typeof detail === 'string' && detail) return detail.slice(0, 200);
     return 'Semantic runtime request failed';
   }
 

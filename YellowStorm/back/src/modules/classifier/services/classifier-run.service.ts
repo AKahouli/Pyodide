@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { isObjectId } from '@common/postgres';
 import { ClassificationRunRepository, type RunStatusPatch } from '../persistence/classification-run.repository';
 import { ClassifierAssignmentRepository } from '../persistence/classifier-assignment.repository';
@@ -13,20 +13,17 @@ import {
 } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { LoggerService } from '../../logger';
-import { FLOW_READ_PORT, type FlowReadPort } from '../../playbook-flow/ports/flow-read.port';
-import {
-  WORKSPACE_DOCUMENT_READ_PORT,
-  type WorkspaceDocumentReadPort,
-} from '../../workspace/ports';
 import { ClassifierAccessService } from './classifier-access.service';
 import { ClassifierRuleService } from './classifier-rule.service';
+import { PgFlowReadAdapter } from '../../playbook-flow/ports/pg-flow-read.adapter';
+import { PgWorkspaceDocumentReadAdapter } from '../../workspace/persistence/postgres/pg-workspace-document-read.adapter';
 
 @Injectable()
 export class ClassifierRunService {
   constructor(
     private readonly runs: ClassificationRunRepository,
-    @Inject(FLOW_READ_PORT) private readonly flowReadPort: FlowReadPort,
-    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly documentReadPort: WorkspaceDocumentReadPort,
+    private readonly flowReadPort: PgFlowReadAdapter,
+    private readonly documentReadPort: PgWorkspaceDocumentReadAdapter,
     private readonly assignments: ClassifierAssignmentRepository,
     private readonly access: ClassifierAccessService,
     private readonly ruleService: ClassifierRuleService,

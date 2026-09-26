@@ -1,8 +1,7 @@
-import { Injectable } from '@nestjs/common';
-import { Inject } from '@nestjs/common';
-import { AUTH_PROVIDER_STORE, type AuthProviderStore } from '../persistence/auth-provider.stores';
+import { Injectable } from '@nestjs/common';
 import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';
+import { PgAuthProviderStore } from '../persistence/pg-auth-provider.stores';
 
 export interface AuthProviderHealthDetail {
   status: 'up' | 'down' | 'degraded';
@@ -24,8 +23,7 @@ export interface ProviderHealthStatus {
 @Injectable()
 export class AuthProviderHealthService {
   constructor(
-    @Inject(AUTH_PROVIDER_STORE)
-    private readonly providerStore: AuthProviderStore,
+    private readonly providerStore: PgAuthProviderStore,
     private readonly cryptoService: CryptoService,
     private readonly logger: LoggerService,
   ) {

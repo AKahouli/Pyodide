@@ -1,15 +1,16 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Injectable,  Logger } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
 import { createHash } from 'crypto';
 import { KnowledgeExtractionOrchestratorService } from '@modules/knowledge-intelligence/services/knowledge-extraction-orchestrator.service';
 import { TemporalCandidateRepositoryService } from '@modules/knowledge-intelligence/services/temporal-candidate-repository.service';
-import type { KnowledgeExtractionJobRecord } from '@modules/knowledge-intelligence/knowledge-intelligence.types';
-import { WORKSPACE_DOCUMENT_READ_PORT, type WorkspaceDocumentReadPort } from '@modules/workspace/ports';
-import { GOVERNANCE_DOCUMENT_STORE, type GovernanceDocumentRecord, type GovernanceDocumentStore } from '../persistence';
+import type { KnowledgeExtractionJobRecord } from '@modules/knowledge-intelligence/knowledge-intelligence.types';
+import { type GovernanceDocumentRecord} from '../persistence';
 import { LogicalSearchEvidenceService } from './logical-search-evidence.service';
 import { TemporalCandidateExtractorService } from './temporal-candidate-extractor.service';
 import { TemporalCandidateValidatorService } from './temporal-candidate-validator.service';
+import { PgWorkspaceDocumentReadAdapter } from '../../workspace/persistence/postgres/pg-workspace-document-read.adapter';
+import { PgGovernanceDocumentStore } from '../persistence/postgres/pg-document.store';
 
 @Injectable()
 export class GovernanceTemporalIntelligenceWorkerService {
@@ -22,8 +23,8 @@ export class GovernanceTemporalIntelligenceWorkerService {
     private readonly search: LogicalSearchEvidenceService,
     private readonly extractor: TemporalCandidateExtractorService,
     private readonly validator: TemporalCandidateValidatorService,
-    @Inject(GOVERNANCE_DOCUMENT_STORE) private readonly documentStore: GovernanceDocumentStore,
-    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly documents: WorkspaceDocumentReadPort,
+    private readonly documentStore: PgGovernanceDocumentStore,
+    private readonly documents: PgWorkspaceDocumentReadAdapter,
   ) {}
 
   @Interval(5_000)

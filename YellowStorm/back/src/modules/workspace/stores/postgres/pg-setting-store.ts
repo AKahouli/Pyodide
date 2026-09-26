@@ -7,13 +7,13 @@ import { escapeLike } from '@common/postgres/like';
 import { newObjectId } from '@common/postgres/object-id';
 import { resolveQueryable } from '@common/postgres/transaction';
 import { settingRowToRecord } from '../../persistence/postgres/pg-workspace-setting-read.adapter';
-import { SETTING_STORE, type SettingStore, type SettingCreateInput, type SettingListParams, type SettingUpdatePatch } from '../setting-store';
+import { type SettingCreateInput, type SettingListParams, type SettingUpdatePatch } from '../setting-store';
 import type { WorkspaceSettingRecord } from '../../ports/workspace-records';
 
 const SETTINGS = schema.workspaceSettings;
 
 @Injectable()
-export class PgSettingStore implements SettingStore {
+export class PgSettingStore {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
 
   private get q() {

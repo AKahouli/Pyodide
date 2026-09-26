@@ -11,7 +11,6 @@ import {
 } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { LoggerService } from '@modules/logger';
-import { stripTrailingChar } from '@common/utils';
 import { isObjectId } from '@common/postgres';
 import { TelegramIntegrationStatus } from '../telegram.types';
 import { UpsertAgentTelegramIntegrationDto } from '../dto/upsert-agent-telegram-integration.dto';
@@ -52,7 +51,7 @@ export class TelegramIntegrationService implements OnModuleInit {
       this.logger.log('Telegram webhook boot sync skipped: polling mode enabled');
       return;
     }
-    const backendUrl = stripTrailingChar(this.configService.get<string>('app.backendUrl', ''), '/');
+    const backendUrl = this.configService.get<string>('app.backendUrl', '').replace(/\/+$/, '');
     if (!backendUrl) {
       this.logger.warn('Telegram webhook boot sync skipped: BACKEND_URL missing');
       return;
@@ -366,7 +365,7 @@ export class TelegramIntegrationService implements OnModuleInit {
 
   private async registerWebhook(integration: TelegramIntegrationRow): Promise<string> {
     const botToken = this.cryptoService.decrypt(integration.encryptedBotToken);
-    const backendUrl = stripTrailingChar(this.configService.get<string>('app.backendUrl', ''), '/');
+    const backendUrl = this.configService.get<string>('app.backendUrl', '').replace(/\/+$/, '');
     if (!backendUrl) {
       this.logger.warn('Telegram webhook registration blocked: BACKEND_URL missing', {
         integrationId: integration.id,

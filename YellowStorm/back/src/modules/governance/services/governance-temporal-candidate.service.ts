@@ -1,23 +1,24 @@
-import { Inject, BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException,  Injectable } from '@nestjs/common';
 import { createHash } from 'crypto';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { KnowledgeExtractionOrchestratorService } from '@modules/knowledge-intelligence/services/knowledge-extraction-orchestrator.service';
 import { TemporalCandidateRepositoryService } from '@modules/knowledge-intelligence/services/temporal-candidate-repository.service';
-import { WorkspaceEvidenceSearchSettingsService } from '@modules/system/workspace-evidence-search-settings.service';
-import { WORKSPACE_DOCUMENT_READ_PORT, type WorkspaceDocumentReadPort } from '@modules/workspace/ports';
+import { WorkspaceEvidenceSearchSettingsService } from '@modules/system/workspace-evidence-search-settings.service';
 import type { TemporalCandidate } from '../domain/temporal-candidate';
 import type { DocumentValidity } from '../domain/document-validity';
-import { GOVERNANCE_DOCUMENT_STORE, type GovernanceDocumentRecord, type GovernanceDocumentStore } from '../persistence';
+import { type GovernanceDocumentRecord} from '../persistence';
 import { GovernanceDocumentService } from './governance-document.service';
 import { GovernanceDocumentEventService } from './governance-document-event.service';
 import { TemporalCandidateValidatorService } from './temporal-candidate-validator.service';
+import { PgWorkspaceDocumentReadAdapter } from '../../workspace/persistence/postgres/pg-workspace-document-read.adapter';
+import { PgGovernanceDocumentStore } from '../persistence/postgres/pg-document.store';
 
 @Injectable()
 export class GovernanceTemporalCandidateService {
   constructor(
     private readonly documentService: GovernanceDocumentService,
-    @Inject(GOVERNANCE_DOCUMENT_STORE) private readonly documentStore: GovernanceDocumentStore,
-    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly workspaceDocuments: WorkspaceDocumentReadPort,
+    private readonly documentStore: PgGovernanceDocumentStore,
+    private readonly workspaceDocuments: PgWorkspaceDocumentReadAdapter,
     private readonly jobs: KnowledgeExtractionOrchestratorService,
     private readonly records: TemporalCandidateRepositoryService,
     private readonly validator: TemporalCandidateValidatorService,

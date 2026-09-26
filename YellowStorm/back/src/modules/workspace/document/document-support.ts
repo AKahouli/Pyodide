@@ -7,7 +7,6 @@ import {
   IndexingStatus,
 } from '../interfaces/document-status.enum';
 import { UploadSessionStatus } from '../interfaces/upload-session-status.enum';
-import { collapseCharSet, stripLeadingTrailingWhitespaceOrDot } from '../../../common/utils';
 import { normalizeWorkspaceUrl } from '../services/url-normalization';
 import type {
   UploadSessionRecord,
@@ -70,11 +69,10 @@ export class WorkspaceDocumentSupport {
    * Sanitize filename for storage
    */
   sanitizeFilename(filename: string): string {
-    const normalized = collapseCharSet(
-      stripLeadingTrailingWhitespaceOrDot(filename.replace(/[/\\:\0]/g, '_')),
-      '_ \t\n\r\f\v',
-      '_',
-    );
+    const normalized = filename
+      .replace(/[/\\:\0]/g, '_')
+      .replace(/^[ \t\n\r\f\v.]+|[ \t\n\r\f\v.]+$/g, '')
+      .replace(/[ _\t\n\r\f\v]+/g, '_');
     return normalized.substring(0, 255);
   }
 

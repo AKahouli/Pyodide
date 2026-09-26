@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+
+import { useDebouncedCallback } from '@/hooks/useDebouncedCallback';
 import type {
   AppBuilderCatalog,
   AppBuilderTab,
@@ -108,7 +110,7 @@ export function useAppBuilderFilters(catalog: AppBuilderCatalog) {
   const aiOnly = searchParams.get('ai') === '1';
 
   const [searchInput, setSearchInputState] = useState(rawSearch);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { schedule, cancel } = useDebouncedCallback();
   const skipNextSyncRef = useRef(false);
 
   useEffect(() => {
@@ -118,12 +120,6 @@ export function useAppBuilderFilters(catalog: AppBuilderCatalog) {
     }
     setSearchInputState(rawSearch);
   }, [rawSearch]);
-
-  useEffect(() => {
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, []);
 
   const applyParam = useCallback(
     (key: string, value: string) => {
@@ -143,13 +139,12 @@ export function useAppBuilderFilters(catalog: AppBuilderCatalog) {
   const setSearchInput = useCallback(
     (value: string) => {
       setSearchInputState(value);
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
+      schedule(() => {
         skipNextSyncRef.current = true;
         applyParam('q', value.trim());
       }, SEARCH_DEBOUNCE_MS);
     },
-    [applyParam],
+    [applyParam, schedule],
   );
 
   const setTab = useCallback(
@@ -191,7 +186,7 @@ export function useAppBuilderFilters(catalog: AppBuilderCatalog) {
   );
 
   const clearAll = useCallback(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
+    cancel();
     setSearchInputState('');
     setSearchParams(
       (prev) => {
@@ -203,7 +198,7 @@ export function useAppBuilderFilters(catalog: AppBuilderCatalog) {
       },
       { replace: true },
     );
-  }, [setSearchParams]);
+  }, [cancel, setSearchParams]);
 
   const filters: AppBuilderFilterState = useMemo(
     () => ({ search: rawSearch, tab, sort, view, aiOnly }),

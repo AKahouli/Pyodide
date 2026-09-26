@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
 import { ConversationService } from '@modules/conversation/services/conversation.service';
 import { MessageService } from '@modules/conversation/services/message.service';
@@ -6,9 +6,12 @@ import { StreamService } from '@modules/conversation/services/stream.service';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { CreateGovernanceDryRunDto, MarkGovernanceDryRunDto } from '../dto';
-import { DEPLOYMENT_STORE, DRY_RUN_STORE, REVISION_STORE, type DeploymentStore, type DryRunStore, type GovernanceDryRunRecord, type RevisionStore } from '../persistence';
+import {      type GovernanceDryRunRecord} from '../persistence';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceAccessService } from './governance-access.service';
+import { PgDryRunStore } from '../persistence/postgres/pg-dry-run.store';
+import { PgRevisionStore } from '../persistence/postgres/pg-revision.store';
+import { PgDeploymentStore } from '../persistence/postgres/pg-deployment.store';
 
 export interface GovernanceDryRunResponse {
   id: string;
@@ -29,9 +32,9 @@ export interface GovernanceDryRunResponse {
 @Injectable()
 export class GovernanceDryRunService {
   constructor(
-    @Inject(DRY_RUN_STORE) private readonly dryRunStore: DryRunStore,
-    @Inject(DEPLOYMENT_STORE) private readonly deploymentStore: DeploymentStore,
-    @Inject(REVISION_STORE) private readonly revisionStore: RevisionStore,
+    private readonly dryRunStore: PgDryRunStore,
+    private readonly deploymentStore: PgDeploymentStore,
+    private readonly revisionStore: PgRevisionStore,
     private readonly programService: GovernanceProgramService,
     private readonly accessService: GovernanceAccessService,
     private readonly conversationService: ConversationService,

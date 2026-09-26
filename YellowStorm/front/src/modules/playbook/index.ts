@@ -14,11 +14,8 @@ export { playbookKeys } from './query/queryKeys';
 export { PlaybookQueryProvider } from './query/queryProvider';
 export { useExecutionActor } from './machines/execution/useExecutionActor';
 export { getExecutionLifecycleFlags } from './machines/execution/executionMachine';
-export { useAutosaveActor } from './machines/autosave/useAutosaveActor';
 export type { ExecutionLifecycleSnapshot } from './machines/execution/useExecutionActor';
 export type { ExecutionLifecycleStatus } from './machines/execution/executionMachine';
-export type { AutosaveActorSnapshot } from './machines/autosave/useAutosaveActor';
-export type { AutosaveStatus } from './machines/autosave/autosaveMachine';
 export {
   useCreatePlaybookMutation,
   useUpdatePlaybookMutation,

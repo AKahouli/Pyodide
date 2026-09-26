@@ -1,8 +1,6 @@
 import type { PlanRecord } from './plan.store';
 import type { RecordUsageData } from '../interfaces/usage.interface';
 
-export const USAGE_STORE = Symbol('USAGE_STORE');
-
 export interface UsageWindowRecord {
   id: string;
   userId: string;

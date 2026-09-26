@@ -1,6 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
-import axios from 'axios';
 import semanticModelConfig from '@config/semantic-model.config';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { ServiceUnavailableException } from '@modules/exceptions';
@@ -25,12 +24,20 @@ export class SemanticSearchGraphClient {
 
     const baseUrl = this.config.semanticSearchUrl.replace(/\/$/, '');
     try {
-      await axios.post(`${baseUrl}/v1/graphs/index`, {
-        schema_name: this.ageGraph.graphNameForModel(modelId),
-      }, {
-        headers: { Authorization: `Bearer ${token}` },
-        timeout: this.config.semanticSearchTimeoutMs,
+      const res = await fetch(`${baseUrl}/v1/graphs/index`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          schema_name: this.ageGraph.graphNameForModel(modelId),
+        }),
+        signal: AbortSignal.timeout(this.config.semanticSearchTimeoutMs),
       });
+      if (!res.ok) {
+        throw new Error(`Semantic graph indexing returned HTTP ${res.status}`);
+      }
     } catch {
       throw new ServiceUnavailableException(
         ErrorCode.SERVICE_UNAVAILABLE,

@@ -64,4 +64,9 @@ $/.scannerwork/
 .scannerwork/
 .scannerwork/
 ops/backup/.env
-$
+.understand-anything/knowledge-graph.json
+docs/architecture/yellowstorm-architecture.html
+docs/architecture/*.visual-check.*
+*.err
+.codex/*.png
+.codex/*/*.png

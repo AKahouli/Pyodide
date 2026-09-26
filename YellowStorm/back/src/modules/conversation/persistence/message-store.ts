@@ -2,7 +2,6 @@ import type { CompleteAIMessageData, CreateAIPlaceholderData, CreateUserMessageD
 import type { FrontendLatencyPatch } from '../interfaces/latency.interface';
 import type { ConversationUsageEventInput, ConversationUsageMetrics } from '../utils/usage-metrics';
 
-export const MESSAGE_STORE = Symbol('MESSAGE_STORE');
 
 export interface AiMessageComponentsRecord {
   id: string;

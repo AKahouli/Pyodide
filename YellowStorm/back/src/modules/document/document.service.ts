@@ -29,13 +29,6 @@ import {
 import { BadRequestException, InternalServerException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { DocumentConnectionService, StorageConnectionStatus } from './document-connection.service';
-import {
-  collapseCharSet,
-  collapseRepeatedChar,
-  stripLeadingTrailingChar,
-  stripLeadingTrailingWhitespaceOrDot,
-  stripTrailingChar,
-} from '@common/utils';
 
 @Injectable()
 export class DocumentService {
@@ -503,7 +496,7 @@ export class DocumentService {
   // ============ Private Methods ============
 
   private getObjectUrl(objectKey: string): string {
-    const base = stripTrailingChar(this.connectionService.getPublicUrl(), '/');
+    const base = this.connectionService.getPublicUrl().replace(/\/+$/, '');
     const bucket = this.getBucket();
     return `${base}/${bucket}/${objectKey}`;
   }
@@ -541,8 +534,8 @@ export class DocumentService {
 
   private sanitizeFileName(fileName: string): string {
     let sanitized = fileName.replaceAll(/[/\\:\0]/g, '_');
-    sanitized = stripLeadingTrailingWhitespaceOrDot(sanitized);
-    sanitized = collapseCharSet(sanitized, '_ \t\n\r\f\v', '_');
+    sanitized = sanitized.replace(/^[ \t\n\r\f\v.]+|[ \t\n\r\f\v.]+$/g, '');
+    sanitized = sanitized.replace(/[ _\t\n\r\f\v]+/g, '_');
 
     if (!sanitized || sanitized === '_') {
       sanitized = `file_${Date.now()}`;
@@ -552,9 +545,9 @@ export class DocumentService {
   }
 
   private sanitizePath(path: string): string {
-    let sanitized = stripLeadingTrailingChar(path, '/');
+    let sanitized = path.replace(/^\/+|\/+$/g, '');
     sanitized = sanitized.replaceAll(/[\0\\]/g, '');
-    sanitized = collapseRepeatedChar(sanitized, '/');
+    sanitized = sanitized.replace(/\/{2,}/g, '/');
     sanitized = sanitized.replaceAll('..', '');
     return sanitized;
   }

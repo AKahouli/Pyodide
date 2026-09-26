@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable,  Logger,  NotFoundException,  ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import axios from 'axios';
@@ -6,8 +6,8 @@ import { AgentService } from '../agent/agent.service';
 import { BadRequestException } from '../exceptions/exceptions/http.exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import type { DatasetItem, DatasetRecord, EvaluationRecord, EvaluationRunMode } from './evaluation.types';
-import { EVALUATION_DATASET_STORE, type EvaluationDatasetStore } from './persistence/evaluation-dataset.store';
-import { EVALUATION_RUN_STORE, type EvaluationRunStore } from './persistence/evaluation-run.store';
+import { PgEvaluationRunStore } from './persistence/pg-evaluation-run.store';
+import { PgEvaluationDatasetStore } from './persistence/pg-evaluation-dataset.store';
 
 @Injectable()
 export class EvaluationService {
@@ -16,10 +16,8 @@ export class EvaluationService {
     private readonly adkApiKey: string;
 
     constructor(
-        @Inject(EVALUATION_RUN_STORE)
-        private readonly evaluations: EvaluationRunStore,
-        @Inject(EVALUATION_DATASET_STORE)
-        private readonly datasets: EvaluationDatasetStore,
+        private readonly evaluations: PgEvaluationRunStore,
+        private readonly datasets: PgEvaluationDatasetStore,
         private readonly agentService: AgentService,
         private readonly configService: ConfigService,
     ) {

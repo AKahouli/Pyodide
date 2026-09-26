@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import {
   AgentGuardrails,
   GuardrailMode,
@@ -6,7 +6,7 @@ import {
   ToolActionReviewConfig,
 } from '@modules/agent/interfaces/agent.interface';
 import { UpdateGuardrailsSettingsDto } from '../dto/guardrails-settings.dto';
-import { GUARDRAILS_SETTINGS_STORE, type GuardrailsSettingsStore } from '../persistence/guardrails-settings.store';
+import { PgGuardrailsSettingsStore } from '../persistence/pg-guardrails-settings.store';
 
 export interface AdminGuardrailsSettings extends AgentGuardrails {
   forceActivation: boolean;
@@ -104,8 +104,7 @@ export function normalizeAdminGuardrailsSettings(value?: RawAdminGuardrailsSetti
 @Injectable()
 export class GuardrailsSettingsService {
   constructor(
-    @Inject(GUARDRAILS_SETTINGS_STORE)
-    private readonly store: GuardrailsSettingsStore,
+    private readonly store: PgGuardrailsSettingsStore,
   ) {}
 
   async getSettings(): Promise<AdminGuardrailsSettings> {

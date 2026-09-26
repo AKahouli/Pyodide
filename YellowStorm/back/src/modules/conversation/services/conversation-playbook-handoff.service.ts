@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { HttpStatus, Inject, Injectable } from '@nestjs/common';
+import { HttpStatus,  Injectable } from '@nestjs/common';
 import {
   AppException,
   BadRequestException,
@@ -16,11 +16,10 @@ import type {
   ResolvedConversationPlaybookHandoffV1,
 } from '../interfaces/conversation-playbook-handoff.interface';
 import {
-  CONVERSATION_PLAYBOOK_HANDOFF_STORE,
-  type ConversationPlaybookHandoffRecord,
-  type ConversationPlaybookHandoffStore,
+  type ConversationPlaybookHandoffRecord,  
 } from '../persistence/conversation-playbook-handoff-store';
 import { newOwnedId } from '../persistence/owned-id';
+import { PostgresConversationPlaybookHandoffStore } from '../persistence/postgres/postgres-conversation-playbook-handoff-store';
 
 const HANDOFF_RETENTION_MS = 24 * 60 * 60 * 1000;
 const SUGGESTED_PROMPT = `Create a reusable Yellowmind Playbook that achieves the business goal from this conversation.
@@ -34,8 +33,7 @@ Do not copy the answer as a fixed result; create the reusable process that can p
 @Injectable()
 export class ConversationPlaybookHandoffService {
   constructor(
-    @Inject(CONVERSATION_PLAYBOOK_HANDOFF_STORE)
-    private readonly handoffStore: ConversationPlaybookHandoffStore,
+    private readonly handoffStore: PostgresConversationPlaybookHandoffStore,
     private readonly branchService: ConversationBranchService,
     private readonly projector: ConversationPlaybookContextProjectorService,
     private readonly conversationService: ConversationService,

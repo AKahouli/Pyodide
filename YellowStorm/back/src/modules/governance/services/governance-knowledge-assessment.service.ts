@@ -1,23 +1,19 @@
 import { createHash } from 'crypto';
-import { Inject, BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException,  Injectable,  Logger,  NotFoundException } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
 import { IndexingService } from '@modules/indexing/indexing.service';
-import { WORKSPACE_DOCUMENT_READ_PORT, type WorkspaceDocumentReadPort, type WorkspaceDocumentRecord } from '@modules/workspace/ports';
+import {  type WorkspaceDocumentRecord } from '@modules/workspace/ports';
 import type { KnowledgeAssessmentContext, KnowledgeAssessmentDimensions, KnowledgeEvaluator } from '@modules/knowledge-intelligence/domain/knowledge-steward';
 import { KnowledgeAssessmentRepositoryService } from '@modules/knowledge-intelligence/services/knowledge-assessment-repository.service';
 import { KnowledgeAlertRepositoryService } from '@modules/knowledge-intelligence/services/knowledge-alert-repository.service';
 import { KnowledgeRecommendationRepositoryService } from '@modules/knowledge-intelligence/services/knowledge-recommendation-repository.service';
 import { MetadataCandidateRepositoryService } from '@modules/knowledge-intelligence/services/metadata-candidate-repository.service';
-import {
-  BINDING_STORE,
-  GOVERNANCE_DOCUMENT_STORE,
-  type BindingStore,
-  type GovernanceBindingRecord,
-  type GovernanceDocumentRecord,
-  type GovernanceDocumentStore,
+import {  
+  type GovernanceBindingRecord,    
+  type GovernanceDocumentRecord,    
 } from '../persistence';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceAccessService } from './governance-access.service';
@@ -31,6 +27,9 @@ import { AvailabilityEvaluator } from './knowledge-evaluators/availability.evalu
 import { IntegrityEvaluator } from './knowledge-evaluators/integrity.evaluator';
 import { SearchQualityEvaluator } from './knowledge-evaluators/search-quality.evaluator';
 import { GovernanceQualityEvaluator } from './knowledge-evaluators/governance-quality.evaluator';
+import { PgWorkspaceDocumentReadAdapter } from '../../workspace/persistence/postgres/pg-workspace-document-read.adapter';
+import { PgBindingStore } from '../persistence/postgres/pg-binding.store';
+import { PgGovernanceDocumentStore } from '../persistence/postgres/pg-document.store';
 
 const ASSESSMENT_VERSION = 'knowledge-health-v2';
 
@@ -41,9 +40,9 @@ export class GovernanceKnowledgeAssessmentService {
   private readonly evaluators: KnowledgeEvaluator[];
 
   constructor(
-    @Inject(GOVERNANCE_DOCUMENT_STORE) private readonly documentStore: GovernanceDocumentStore,
-    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly workspaceDocuments: WorkspaceDocumentReadPort,
-    @Inject(BINDING_STORE) private readonly bindingStore: BindingStore,
+    private readonly documentStore: PgGovernanceDocumentStore,
+    private readonly workspaceDocuments: PgWorkspaceDocumentReadAdapter,
+    private readonly bindingStore: PgBindingStore,
     private readonly programs: GovernanceProgramService,
     private readonly access: GovernanceAccessService,
     private readonly assessments: KnowledgeAssessmentRepositoryService,

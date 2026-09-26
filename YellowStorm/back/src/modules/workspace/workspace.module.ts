@@ -1,12 +1,9 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ConversationPersistenceModule } from '../conversation/persistence/conversation-persistence.module';
-import {
-  WORKSPACE_DOCUMENT_READ_PORT,
-  WORKSPACE_DOCUMENT_WRITE_PORT,
-  WORKSPACE_READ_PORT,
-  WORKSPACE_SETTING_READ_PORT,
-  WORKSPACE_SHARE_READ_PORT,
+import {  
+  WORKSPACE_READ_PORT,   
+  WORKSPACE_SETTING_READ_PORT,   
 } from './ports';
 import { PgWorkspaceReadAdapter } from './persistence/postgres/pg-workspace-read.adapter';
 import { PgWorkspaceDocumentReadAdapter } from './persistence/postgres/pg-workspace-document-read.adapter';
@@ -18,13 +15,7 @@ import { PgDocumentStore } from './stores/postgres/pg-document-store';
 import { PgShareStore } from './stores/postgres/pg-share-store';
 import { PgSettingStore } from './stores/postgres/pg-setting-store';
 import { PgUploadSessionStore } from './stores/postgres/pg-upload-session-store';
-import {
-  WORKSPACE_STORE,
-  DOCUMENT_STORE,
-  SHARE_STORE,
-  SETTING_STORE,
-  UPLOAD_SESSION_STORE,
-} from './stores';
+import { DOCUMENT_STORE, UPLOAD_SESSION_STORE } from './stores';
 import { WorkspaceController } from './workspace.controller';
 import { WorkspaceSettingController } from './workspace-setting.controller';
 import { WorkspaceDocumentController } from './workspace-document.controller';
@@ -118,21 +109,15 @@ import { PostgresModule } from '@modules/postgres/postgres.module';
     PgWorkspaceReadAdapter,
     { provide: WORKSPACE_READ_PORT, useExisting: PgWorkspaceReadAdapter },
     PgWorkspaceDocumentReadAdapter,
-    { provide: WORKSPACE_DOCUMENT_READ_PORT, useExisting: PgWorkspaceDocumentReadAdapter },
     PgWorkspaceDocumentWriteAdapter,
-    { provide: WORKSPACE_DOCUMENT_WRITE_PORT, useExisting: PgWorkspaceDocumentWriteAdapter },
     PgWorkspaceShareReadAdapter,
-    { provide: WORKSPACE_SHARE_READ_PORT, useExisting: PgWorkspaceShareReadAdapter },
     PgWorkspaceSettingReadAdapter,
     { provide: WORKSPACE_SETTING_READ_PORT, useExisting: PgWorkspaceSettingReadAdapter },
     PgWorkspaceStore,
-    { provide: WORKSPACE_STORE, useExisting: PgWorkspaceStore },
     PgDocumentStore,
     { provide: DOCUMENT_STORE, useExisting: PgDocumentStore },
     PgShareStore,
-    { provide: SHARE_STORE, useExisting: PgShareStore },
     PgSettingStore,
-    { provide: SETTING_STORE, useExisting: PgSettingStore },
     PgUploadSessionStore,
     { provide: UPLOAD_SESSION_STORE, useExisting: PgUploadSessionStore },
     // Replaces the Mongo TTL index on upload_sessions (plan D.7); swept hourly by PgTtlSweeper.
@@ -145,26 +130,10 @@ import { PostgresModule } from '@modules/postgres/postgres.module';
       inject: [PgTtlSweeper],
     },
   ],
-  exports: [
-    WorkspaceService,
-    WorkspaceSettingService,
-    WorkspaceDocumentService,
-    WorkspaceDocumentRead,
-    WorkspaceInitializerService,
-    WorkspaceShareService,
-    WorkspaceAccessGuard,
-    WritePermissionGuard,
-    RunCodeSourceScopeService,
-    WORKSPACE_READ_PORT,
-    WORKSPACE_DOCUMENT_READ_PORT,
-    WORKSPACE_DOCUMENT_WRITE_PORT,
-    WORKSPACE_SHARE_READ_PORT,
-    WORKSPACE_SETTING_READ_PORT,
-    // Store tokens are exported so modules that instantiate the workspace
+  exports: [WorkspaceService, WorkspaceSettingService, WorkspaceDocumentService, WorkspaceDocumentRead, WorkspaceInitializerService, WorkspaceShareService, WorkspaceAccessGuard, WritePermissionGuard, RunCodeSourceScopeService, WORKSPACE_READ_PORT, WORKSPACE_SETTING_READ_PORT, // Concrete stores are exported so modules that instantiate the workspace
     // guards directly (e.g. IndexingModule provides WorkspaceOwnerGuard) can
     // resolve the guards' dependencies.
-    WORKSPACE_STORE,
-    SHARE_STORE,
-  ],
+    PgWorkspaceStore, PgShareStore,
+    PgWorkspaceReadAdapter, PgWorkspaceDocumentReadAdapter, PgWorkspaceDocumentWriteAdapter, PgWorkspaceShareReadAdapter, PgWorkspaceSettingReadAdapter],
 })
 export class WorkspaceModule {}

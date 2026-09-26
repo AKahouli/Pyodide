@@ -7,16 +7,14 @@ import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup
 import { UserGroupService } from '@modules/user-group';
 import { CreateGovernanceMembershipDto, UpdateGovernanceMembershipDto } from '../dto';
 import {
-  MEMBERSHIP_STORE,
-  type GovernanceMembershipRecord,
-  type GovernanceGroupLookupPort,
-  type MembershipStore,
-  GROUP_LOOKUP_PORT,
+  type GovernanceMembershipRecord,    
 } from '../persistence';
 import { DuplicateKeyError } from '../persistence/governance-records';
 import type { GovernanceMembershipRole } from '../domain/governance-types';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceScopeService } from './governance-scope.service';
+import { PgMembershipStore } from '../persistence/postgres/pg-membership.store';
+import { PgGroupLookupAdapter } from '../persistence/postgres/pg-group-lookup.adapter';
 
 export interface GovernanceMembershipResponse {
   id: string;
@@ -47,9 +45,9 @@ const rolePermissions: Record<GovernanceMembershipRole, string[]> = {
 @Injectable()
 export class GovernanceMembershipService {
   constructor(
-    @Inject(MEMBERSHIP_STORE) private readonly membershipStore: MembershipStore,
+    private readonly membershipStore: PgMembershipStore,
     @Inject(USER_LOOKUP_PORT) private readonly userLookup: UserLookupPort,
-    @Inject(GROUP_LOOKUP_PORT) private readonly groupLookup: GovernanceGroupLookupPort,
+    private readonly groupLookup: PgGroupLookupAdapter,
     private readonly programService: GovernanceProgramService,
     private readonly scopeService: GovernanceScopeService,
     private readonly userGroupService: UserGroupService,

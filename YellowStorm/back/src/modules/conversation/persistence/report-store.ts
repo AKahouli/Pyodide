@@ -1,6 +1,5 @@
 import type { ReportQueryParams, ReportReason, ReportStatus } from '../interfaces/report.interface';
 
-export const REPORT_STORE = Symbol('REPORT_STORE');
 
 export interface ReportRecord {
   id: string;

@@ -1,6 +1,5 @@
 import type { GovernanceScopeAudience, GovernanceScopeKnowledge, GovernanceScopeRecord } from './governance-records';
 
-export const SCOPE_STORE = Symbol('GOVERNANCE_SCOPE_STORE');
 
 export interface GovernanceScopeCreateInput {
   programId: string;

@@ -9,9 +9,7 @@ import {
   type NewWidgetSession,
   type NewWidgetToken,
   type WidgetMessageInput,
-  type WidgetMessageStore,
   type WidgetSessionRow,
-  type WidgetSessionStore,
   type WidgetTokenRow,
   type WidgetTokenStore,
 } from './widget.store';
@@ -153,7 +151,7 @@ export class PgWidgetTokenStore implements WidgetTokenStore {
   }
 }
 
-export class PgWidgetSessionStore implements WidgetSessionStore {
+export class PgWidgetSessionStore {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
 
   private get q(): PgQueryable<typeof schema> {
@@ -222,7 +220,7 @@ export class PgWidgetSessionStore implements WidgetSessionStore {
 
 }
 
-export class PgWidgetMessageStore implements WidgetMessageStore {
+export class PgWidgetMessageStore {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
 
   async insert(input: WidgetMessageInput): Promise<{ id: string }> {

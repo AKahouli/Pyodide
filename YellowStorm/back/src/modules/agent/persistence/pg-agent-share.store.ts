@@ -5,7 +5,7 @@ import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import { newObjectId } from '@common/postgres';
 import { resolveQueryable, type PgQueryable } from '@common/postgres/transaction';
 import * as schema from '@modules/postgres/schema';
-import { AGENT_SHARE_STORE, type AgentShareRow, type AgentShareStore } from './agent-share.store';
+import { type AgentShareRow,  type AgentShareStore } from './agent-share.store';
 
 type Row = typeof schema.sharedAgents.$inferSelect;
 

@@ -1,10 +1,10 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { newObjectId } from '@common/postgres/object-id';
+import { deriveAgentSlug } from '@common/utils/slugify';
 import { LoggerService } from '../logger';
 import { AgentRepository } from '../agent/repositories/agent.repository';
 import { AgentRoleEmbeddingService } from '../agent/services/agent-role-embedding.service';
-import { AGENT_TYPE_STORE, type AgentTypeStore } from '../agent-type/persistence/agent-type.store';
-import { collapseRepeatedChar, collapseWhitespace, stripLeadingTrailingChar } from '../../common/utils';
+import { PgAgentTypeStore } from '../agent-type/persistence/pg-agent-type.store';
 
 /** Agent-type slug for the per-user "human" agent. Assumed created in the admin panel. */
 const HUMAIN_AGENT_TYPE_SLUG = 'humain';
@@ -18,31 +18,13 @@ export interface HumainAgentInput {
   description?: string;
 }
 
-/** Mirror of the agent schema's slug derivation (kept local to avoid cross-module coupling). */
-function deriveAgentSlug(value: string): string {
-  return stripLeadingTrailingChar(
-    collapseRepeatedChar(
-      collapseWhitespace(
-        value
-          .normalize('NFD')
-          .replace(/[\u0300-\u036f]/g, '')
-          .toLowerCase()
-          .trim(),
-        '-',
-      ).replace(/[^a-z0-9-]/g, '-'),
-      '-',
-    ),
-    '-',
-  );
-}
-
 @Injectable()
 export class HumainAgentService {
   constructor(
     private readonly agentRepository: AgentRepository,
     // Store (not AgentTypeService): keeps the auth -> humain-agent import
     // chain free of the agent/skill service subtree.
-    @Inject(AGENT_TYPE_STORE) private readonly agentTypeStore: AgentTypeStore,
+    private readonly agentTypeStore: PgAgentTypeStore,
     private readonly roleEmbedding: AgentRoleEmbeddingService,
     private readonly logger: LoggerService,
   ) {

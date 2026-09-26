@@ -1,9 +1,7 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { isObjectId, normalizeObjectId } from '@common/postgres';
-import {
-  WORKSPACE_DOCUMENT_READ_PORT,
-  type WorkspaceDocumentReadPort,
-  type WorkspaceDocumentRecord,
+import { 
+  type WorkspaceDocumentRecord,  
 } from '../../workspace/ports';
 import { ClassifierAssignmentRepository } from '../persistence/classifier-assignment.repository';
 import { ClassifierFolderRepository } from '../persistence/classifier-folder.repository';
@@ -18,11 +16,12 @@ import {
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { LoggerService } from '../../logger';
 import { ClassifierAccessService } from './classifier-access.service';
+import { PgWorkspaceDocumentReadAdapter } from '../../workspace/persistence/postgres/pg-workspace-document-read.adapter';
 
 @Injectable()
 export class ClassifierFileService {
   constructor(
-    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly documentReadPort: WorkspaceDocumentReadPort,
+    private readonly documentReadPort: PgWorkspaceDocumentReadAdapter,
     private readonly folders: ClassifierFolderRepository,
     private readonly assignments: ClassifierAssignmentRepository,
     private readonly access: ClassifierAccessService,

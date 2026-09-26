@@ -1,9 +1,10 @@
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
-import { RUNTIME_TICKET_STORE, type RuntimeTicketStore } from '../persistence/runtime-ticket.store';
+import { type RuntimeTicketStore } from '../persistence/runtime-ticket.store';
 import { RuntimeBindingService } from './runtime-binding.service';
 import { RuntimeTicketService } from './runtime-ticket.service';
 import { RuntimeTokenService } from './runtime-token.service';
+import { PgRuntimeTicketStore } from '../persistence/pg-runtime-ticket.store';
 
 describe('RuntimeTicketService', () => {
   let svc: RuntimeTicketService;
@@ -31,7 +32,7 @@ describe('RuntimeTicketService', () => {
         RuntimeTicketService,
         RuntimeTokenService,
         {
-          provide: RUNTIME_TICKET_STORE,
+          provide: PgRuntimeTicketStore,
           useValue: store,
         },
         { provide: RuntimeBindingService, useValue: { ensureForSession } },

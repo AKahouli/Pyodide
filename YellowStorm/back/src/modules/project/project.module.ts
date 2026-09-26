@@ -7,8 +7,6 @@ import { ProjectShareController } from './controllers/project-share.controller';
 import { ProjectService } from './project.service';
 import { ProjectShareService } from './project-share.service';
 import { LoggerModule } from '../logger';
-import { PROJECT_STORE } from './persistence/project-store';
-import { PROJECT_SHARE_STORE } from './persistence/project-share-store';
 import { PostgresProjectStore } from './persistence/postgres/postgres-project-store';
 import { PostgresProjectShareStore } from './persistence/postgres/postgres-project-share-store';
 
@@ -23,8 +21,8 @@ import { PostgresProjectShareStore } from './persistence/postgres/postgres-proje
   providers: [
     ProjectService,
     ProjectShareService,
-    { provide: PROJECT_STORE, useClass: PostgresProjectStore },
-    { provide: PROJECT_SHARE_STORE, useClass: PostgresProjectShareStore },
+    PostgresProjectStore,
+    PostgresProjectShareStore,
   ],
   exports: [ProjectService, ProjectShareService],
 })

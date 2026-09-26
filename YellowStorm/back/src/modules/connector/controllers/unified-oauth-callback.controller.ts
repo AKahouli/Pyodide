@@ -1,28 +1,20 @@
-import { Controller, Get, Inject, Param, Query, Res, Header } from '@nestjs/common';
+import { Controller,  Get,  Param,  Query,  Res,  Header } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiParam, ApiQuery, ApiResponse } from '@nestjs/swagger';
 import { Response } from 'express';
 import { Public } from '@modules/auth/decorators/public.decorator';
 import { RateLimit } from '@modules/rate-limiter';
 import { LoggerService } from '@modules/logger';
-import {
-  CONNECTED_APP_OAUTH_STATE_STORE,
-  type ConnectedAppOauthStateStore,
-} from '../../connected-app/persistence/connected-app.store';
-import {
-  CONNECTOR_ADMIN_OAUTH_STATE_STORE,
-  type ConnectorAdminOauthStateStore,
-} from '../persistence/connector.store';
 import { ConnectedAppOAuthService } from '../../connected-app/services/connected-app-oauth.service';
 import { ConnectorAdminAuthService } from '../services/connector-admin-auth.service';
+import { PgConnectorAdminOauthStateStore } from '../persistence/pg-connector.store';
+import { PgConnectedAppOauthStateStore } from '../../connected-app/persistence/pg-connected-app.store';
 
 @ApiTags('Unified OAuth Callback')
 @Controller('connected-apps')
 export class UnifiedOAuthCallbackController {
   constructor(
-    @Inject(CONNECTED_APP_OAUTH_STATE_STORE)
-    private readonly userOAuthStateStore: ConnectedAppOauthStateStore,
-    @Inject(CONNECTOR_ADMIN_OAUTH_STATE_STORE)
-    private readonly adminOAuthStateStore: ConnectorAdminOauthStateStore,
+    private readonly userOAuthStateStore: PgConnectedAppOauthStateStore,
+    private readonly adminOAuthStateStore: PgConnectorAdminOauthStateStore,
     private readonly userOAuthService: ConnectedAppOAuthService,
     private readonly adminOAuthService: ConnectorAdminAuthService,
     private readonly logger: LoggerService,

@@ -86,6 +86,7 @@ import { PlaybookIntentGraphBindingResolverService } from './services/playbook-i
 import { PlaybookIntentBlueprintParserService } from './services/playbook-intent-blueprint-parser.service';
 import { PlaybookIntentGraphBuilderService } from './services/playbook-intent-graph-builder.service';
 import { PlaybookIntentSuggestionDiagnosticsService } from './services/playbook-intent-suggestion-diagnostics.service';
+import { PlaybookIntentSuggestionNormalizerService } from './services/playbook-intent-suggestion-normalizer.service';
 import { PlaybookFlowPrimitiveRegistryService } from './services/playbook-flow-primitive-registry.service';
 import { PlaybookIntentBlueprintRepairService } from './services/playbook-intent-blueprint-repair.service';
 import { PlaybookIntentBlueprintCompilerService } from './services/playbook-intent-blueprint-compiler.service';
@@ -124,6 +125,7 @@ import { PlaybookExecutionStreamFinalizerService } from './execution/runtime/pla
 import { PlaybookExecutionHitlResumeService } from './execution/runtime/playbook-execution-hitl-resume.service';
 import { PlaybookExecutionSingleStepPrepService } from './execution/runtime/playbook-execution-single-step-prep.service';
 import { PlaybookDynamicReasoningEventHandlerService } from './execution/runtime/playbook-dynamic-reasoning-event-handler.service';
+import { PlaybookExecutionNodeAgentMetadataService } from './execution/runtime/playbook-execution-node-agent-metadata.service';
 import { PlaybookDesignRequestBuilderService } from './design/playbook-design-request-builder.service';
 import { PlaybookDesignResultApplierService } from './design/playbook-design-result-applier.service';
 import { PlaybookDesignSummaryService } from './design/playbook-design-summary.service';
@@ -192,6 +194,7 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     PlaybookExecutionStreamFinalizerService,
     PlaybookExecutionHitlResumeService,
     PlaybookExecutionSingleStepPrepService,
+    PlaybookExecutionNodeAgentMetadataService,
     PlaybookDynamicReasoningEventHandlerService,
     PlaybookDesignRequestBuilderService,
     PlaybookDesignResultApplierService,
@@ -243,6 +246,7 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     PlaybookIntentBlueprintParserService,
     PlaybookIntentGraphBuilderService,
     PlaybookIntentSuggestionDiagnosticsService,
+    PlaybookIntentSuggestionNormalizerService,
     PlaybookIntentBlueprintRepairService,
     PlaybookIntentBlueprintCompilerService,
     PlaybookInputContractService,

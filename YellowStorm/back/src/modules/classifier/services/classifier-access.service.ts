@@ -1,13 +1,9 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { isObjectId } from '@common/postgres';
-import {
-  WORKSPACE_READ_PORT,
-  WORKSPACE_SHARE_READ_PORT,
-  type WorkspaceReadPort,
-  type WorkspaceShareReadPort,
-} from '../../workspace/ports';
 import { ForbiddenException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { PgWorkspaceReadAdapter } from '../../workspace/persistence/postgres/pg-workspace-read.adapter';
+import { PgWorkspaceShareReadAdapter } from '../../workspace/persistence/postgres/pg-workspace-share-read.adapter';
 
 /**
  * Centralized workspace-access check for the classifier module.
@@ -16,8 +12,8 @@ import { ErrorCode } from '../../exceptions/constants/error-codes';
 @Injectable()
 export class ClassifierAccessService {
   constructor(
-    @Inject(WORKSPACE_READ_PORT) private readonly workspaceReadPort: WorkspaceReadPort,
-    @Inject(WORKSPACE_SHARE_READ_PORT) private readonly shareReadPort: WorkspaceShareReadPort,
+    private readonly workspaceReadPort: PgWorkspaceReadAdapter,
+    private readonly shareReadPort: PgWorkspaceShareReadAdapter,
   ) {}
 
   async assertWorkspaceAccess(workspaceId: string, userId: string): Promise<void> {

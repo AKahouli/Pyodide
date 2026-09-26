@@ -5,7 +5,7 @@ import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { newObjectId } from '@common/postgres/object-id';
 import { resolveQueryable } from '@common/postgres/transaction';
-import { PROGRAM_STORE, type GovernanceProgramCreateInput, type GovernanceProgramPatch, type ProgramStore } from '../program-store';
+import { type GovernanceProgramCreateInput,  type GovernanceProgramPatch,  type ProgramStore } from '../program-store';
 import type { GovernanceProgramRecord } from '../governance-records';
 
 const PROGRAMS = schema.governancePrograms;

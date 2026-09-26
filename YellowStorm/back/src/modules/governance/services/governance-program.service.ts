@@ -1,20 +1,15 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConflictException, ForbiddenException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import {
-  BINDING_STORE,
-  GOVERNANCE_DOCUMENT_STORE,
-  MEMBERSHIP_STORE,
-  PROGRAM_STORE,
-  SCOPE_STORE,
-  type BindingStore,
-  type GovernanceDocumentStore,
-  type GovernanceProgramRecord,
-  type MembershipStore,
-  type ProgramStore,
-  type ScopeStore,
+import {        
+  type GovernanceProgramRecord,          
 } from '../persistence';
 import { CreateGovernanceProgramDto, UpdateGovernanceProgramDto } from '../dto';
+import { PgMembershipStore } from '../persistence/postgres/pg-membership.store';
+import { PgBindingStore } from '../persistence/postgres/pg-binding.store';
+import { PgGovernanceDocumentStore } from '../persistence/postgres/pg-document.store';
+import { PgScopeStore } from '../persistence/postgres/pg-scope.store';
+import { PgProgramStore } from '../persistence/postgres/pg-program.store';
 
 export interface GovernanceProgramResponse {
   id: string;
@@ -31,11 +26,11 @@ export interface GovernanceProgramResponse {
 @Injectable()
 export class GovernanceProgramService {
   constructor(
-    @Inject(PROGRAM_STORE) private readonly programStore: ProgramStore,
-    @Inject(SCOPE_STORE) private readonly scopeStore: ScopeStore,
-    @Inject(GOVERNANCE_DOCUMENT_STORE) private readonly documentStore: GovernanceDocumentStore,
-    @Inject(BINDING_STORE) private readonly bindingStore: BindingStore,
-    @Inject(MEMBERSHIP_STORE) private readonly membershipStore: MembershipStore,
+    private readonly programStore: PgProgramStore,
+    private readonly scopeStore: PgScopeStore,
+    private readonly documentStore: PgGovernanceDocumentStore,
+    private readonly bindingStore: PgBindingStore,
+    private readonly membershipStore: PgMembershipStore,
   ) {}
 
   async create(ownerUserId: string, dto: CreateGovernanceProgramDto): Promise<GovernanceProgramResponse> {

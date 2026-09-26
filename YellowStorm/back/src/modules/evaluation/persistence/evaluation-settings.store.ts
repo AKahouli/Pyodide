@@ -4,7 +4,6 @@ import type { AdminEvaluationSettings } from '../services/evaluation-settings.se
  * Store port for agent_evaluation.settings (roadmap P6), the singleton row.
  * Values are the raw persisted columns; the service applies defaults.
  */
-export const EVALUATION_SETTINGS_STORE = Symbol('EVALUATION_SETTINGS_STORE');
 
 export type EvaluationSettingsRow = Partial<AdminEvaluationSettings>;
 

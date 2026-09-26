@@ -1,9 +1,10 @@
 import { Test } from '@nestjs/testing';
 import { Types } from 'mongoose';
 import { AgentTypeService } from './agent-type.service';
-import { AGENT_TYPE_STORE, type AgentTypeRow, type AgentTypeStore } from './persistence/agent-type.store';
+import { type AgentTypeRow,  type AgentTypeStore } from './persistence/agent-type.store';
 import { SkillService } from '../skill/skill.service';
 import { LoggerService } from '../logger';
+import { PgAgentTypeStore } from './persistence/pg-agent-type.store';
 
 function loggerStub() {
   return { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
@@ -18,7 +19,7 @@ describe('AgentTypeService.getManyForHydration', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         AgentTypeService,
-        { provide: AGENT_TYPE_STORE, useValue: store },
+        { provide: PgAgentTypeStore, useValue: store },
         { provide: SkillService, useValue: {} },
         { provide: LoggerService, useValue: loggerStub() },
       ],
@@ -34,7 +35,7 @@ describe('AgentTypeService.getManyForHydration', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         AgentTypeService,
-        { provide: AGENT_TYPE_STORE, useValue: store },
+        { provide: PgAgentTypeStore, useValue: store },
         { provide: SkillService, useValue: {} },
         { provide: LoggerService, useValue: loggerStub() },
       ],
@@ -65,7 +66,7 @@ describe('AgentTypeService.findOrCreateBySlug', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         AgentTypeService,
-        { provide: AGENT_TYPE_STORE, useValue: store },
+        { provide: PgAgentTypeStore, useValue: store },
         { provide: SkillService, useValue: {} },
         { provide: LoggerService, useValue: loggerStub() },
       ],

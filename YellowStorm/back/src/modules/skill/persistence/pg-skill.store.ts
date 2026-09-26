@@ -7,15 +7,14 @@ import { newObjectId } from '@common/postgres';
 import { withTransaction, resolveQueryable, type PgQueryable } from '@common/postgres/transaction';
 import * as schema from '@modules/postgres/schema';
 import {
-  SKILL_CATEGORY_STORE,
-  SKILL_STORE,
-  type NewSkillRow,
-  type SkillCategoryRow,
-  type SkillCategoryStore,
-  type SkillFileRow,
-  type SkillListQuery,
-  type SkillRow,
-  type SkillStore,
+  SKILL_STORE, 
+  type NewSkillRow, 
+  type SkillCategoryRow, 
+  type SkillCategoryStore, 
+  type SkillFileRow, 
+  type SkillListQuery, 
+  type SkillRow, 
+  type SkillStore, 
 } from './skill.store';
 
 type CategoryT = typeof schema.catalogSkillCategories.$inferSelect;

@@ -6,11 +6,10 @@ import { newObjectId } from '@common/postgres';
 import { resolveQueryable, type PgQueryable } from '@common/postgres/transaction';
 import * as schema from '@modules/postgres/schema';
 import {
-  HEALTH_HISTORY_STORE,
-  type HealthHistoryRangeOptions,
-  type HealthHistoryRow,
-  type HealthHistoryStore,
-  type NewHealthHistoryEntry,
+  type HealthHistoryRangeOptions, 
+  type HealthHistoryRow, 
+  type HealthHistoryStore, 
+  type NewHealthHistoryEntry, 
 } from './health-history.store';
 
 type Row = typeof schema.opsHealthHistory.$inferSelect;

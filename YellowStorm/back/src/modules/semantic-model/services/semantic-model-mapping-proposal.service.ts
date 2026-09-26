@@ -1,7 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
-import axios from 'axios';
 import { BadRequestException, ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { SemanticModelMappingJob, SemanticModelMappingPlan, SemanticModelMappingProposalResponse } from '../domain/semantic-model-mapping-proposal.types';
@@ -127,20 +126,29 @@ export class SemanticModelMappingProposalService {
         .map(([key, value]) => ({ key, value })),
     }));
     try {
-      const { data } = await axios.post<SemanticModelMappingPlan>(
-        `${adkUrl}/semantic-model/mappings/generate`,
-        { modelId, graphDesignerCanvas: graph as SemanticGraph, searchTasks, existingEntities, manualInstances },
+      const res = await fetch(`${adkUrl}/semantic-model/mappings/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
+        body: JSON.stringify({ modelId, graphDesignerCanvas: graph as SemanticGraph, searchTasks, existingEntities, manualInstances }),
         // No timeout: mapping is driven by the async build orchestrator with heartbeat.
         // LLM extraction + native search can legitimately take many minutes on large corpora.
-        { headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey }, timeout: 0 },
-      );
+        // (fetch has no deadline unless a signal is set, matching axios `timeout: 0`.)
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        let parsed: unknown = body;
+        try { parsed = JSON.parse(body) as unknown; } catch { /* non-JSON error body */ }
+        const detail = typeof parsed === 'object' ? JSON.stringify(parsed) : String(parsed ?? '');
+        throw Object.assign(new Error(`HTTP ${res.status}: ${detail}`), { status: res.status, data: parsed });
+      }
+      const data = await res.json() as SemanticModelMappingPlan;
       return { modelId, generatedAt: new Date().toISOString(), search: search.summary, plan: data, proposals: [], _evidenceTasks: search.tasks };
     } catch (error) {
-      if (axios.isAxiosError(error)) {
-        const status = error.response?.status;
-        const body = error.response?.data;
-        const detail = typeof body === 'object' ? JSON.stringify(body) : String(body ?? error.message);
-        this.logger.error(`Semantic mapping generation failed for model ${modelId}: HTTP ${status ?? 'timeout'}: ${detail}`);
+      const status = (error as { status?: unknown }).status;
+      if (typeof status === 'number') {
+        const body = (error as { data?: unknown }).data;
+        const detail = typeof body === 'object' ? JSON.stringify(body) : String(body ?? (error as Error).message);
+        this.logger.error(`Semantic mapping generation failed for model ${modelId}: HTTP ${status}: ${detail}`);
         // 422 from the ADK means partial extraction failure — expose the reason to the caller
         if (status === 422) {
           const adkDetail: string = (body as { detail?: string })?.detail ?? detail;

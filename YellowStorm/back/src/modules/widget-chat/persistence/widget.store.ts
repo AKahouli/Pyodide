@@ -1,7 +1,4 @@
 /** Store ports for channels.widget_* (plan 4.12–4.14). */
-export const WIDGET_TOKEN_STORE = Symbol('WIDGET_TOKEN_STORE');
-export const WIDGET_SESSION_STORE = Symbol('WIDGET_SESSION_STORE');
-export const WIDGET_MESSAGE_STORE = Symbol('WIDGET_MESSAGE_STORE');
 
 export interface WidgetTokenRow {
   id: string;

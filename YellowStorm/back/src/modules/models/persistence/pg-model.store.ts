@@ -6,12 +6,11 @@ import { newObjectId } from '@common/postgres';
 import { withTransaction, resolveQueryable, type PgQueryable } from '@common/postgres/transaction';
 import * as schema from '@modules/postgres/schema';
 import {
-  MODEL_STORE,
-  type ModelFindOptions,
-  type ModelPatch,
-  type ModelRow,
-  type ModelStore,
-  type NewModelRow,
+  type ModelFindOptions, 
+  type ModelPatch, 
+  type ModelRow, 
+  type ModelStore, 
+  type NewModelRow, 
 } from './model.store';
 
 type Row = typeof schema.catalogAiModels.$inferSelect;

@@ -12,6 +12,6 @@ import { PgFlowReadAdapter } from './pg-flow-read.adapter';
 @Global()
 @Module({
   providers: [FlowRepository, PgFlowReadAdapter, { provide: FLOW_READ_PORT, useExisting: PgFlowReadAdapter }],
-  exports: [FLOW_READ_PORT],
+  exports: [PgFlowReadAdapter, FLOW_READ_PORT],
 })
 export class FlowReadPortModule {}

@@ -14,7 +14,7 @@ decision into state so downstream routers can route on it.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from langgraph.types import interrupt
 from structlog import get_logger

@@ -1,21 +1,13 @@
-import { Inject, BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { BadRequestException,  ConflictException,  Injectable } from '@nestjs/common';
 import { NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import {
-  WORKSPACE_DOCUMENT_READ_PORT,
-  type WorkspaceDocumentReadPort,
-  type WorkspaceDocumentRecord,
+import { 
+  type WorkspaceDocumentRecord,  
 } from '@modules/workspace/ports';
-import {
-  BINDING_STORE,
-  GOVERNANCE_DOCUMENT_STORE,
-  GOVERNANCE_TRANSACTION,
-  type GovernanceTransactionRunner,
-  type BindingStore,
-  type GovernanceDocumentRecord,
-  type GovernanceDocumentStore,
-  type GovernanceDocumentUpdate,
-  type GovernanceDocumentUpdateGuard,
+import {    
+  type GovernanceDocumentRecord,      
+  type GovernanceDocumentUpdate,      
+  type GovernanceDocumentUpdateGuard,      
 } from '../persistence';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceAccessService } from './governance-access.service';
@@ -23,6 +15,10 @@ import { GovernanceDocumentEventService } from './governance-document-event.serv
 import { DocumentValidityCalculatorService } from './document-validity-calculator.service';
 import { DEFAULT_UNKNOWN_VALIDITY, type DocumentValidity } from '../domain/document-validity';
 import type { UpdateGovernanceDocumentDto } from '../dto/update-governance-document.dto';
+import { PgWorkspaceDocumentReadAdapter } from '../../workspace/persistence/postgres/pg-workspace-document-read.adapter';
+import { PgGovernanceTransactionRunner } from '../persistence/postgres/pg-transaction-runner';
+import { PgBindingStore } from '../persistence/postgres/pg-binding.store';
+import { PgGovernanceDocumentStore } from '../persistence/postgres/pg-document.store';
 
 export interface GovernanceDocumentResponse {
   id: string;
@@ -36,14 +32,14 @@ export interface GovernanceDocumentResponse {
 @Injectable()
 export class GovernanceDocumentService {
   constructor(
-    @Inject(GOVERNANCE_DOCUMENT_STORE) private readonly documentStore: GovernanceDocumentStore,
-    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly workspaceDocuments: WorkspaceDocumentReadPort,
-    @Inject(BINDING_STORE) private readonly bindingStore: BindingStore,
+    private readonly documentStore: PgGovernanceDocumentStore,
+    private readonly workspaceDocuments: PgWorkspaceDocumentReadAdapter,
+    private readonly bindingStore: PgBindingStore,
     private readonly programs: GovernanceProgramService,
     private readonly access: GovernanceAccessService,
     private readonly events: GovernanceDocumentEventService,
     private readonly validityCalculator: DocumentValidityCalculatorService,
-    @Inject(GOVERNANCE_TRANSACTION) private readonly tx: GovernanceTransactionRunner,
+    private readonly tx: PgGovernanceTransactionRunner,
   ) {}
 
   async upsertFromWorkspace(programId: string, documentId: string, actorId: string, integrationEvent?: { id: string; occurredAt: Date }): Promise<GovernanceDocumentRecord> {

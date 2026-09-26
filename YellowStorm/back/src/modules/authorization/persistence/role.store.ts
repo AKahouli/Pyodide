@@ -13,7 +13,6 @@ export interface RoleRecord {
 
 export type RolePatch = Partial<Pick<RoleRecord, 'name' | 'description' | 'permissions' | 'isActive' | 'priority'>>;
 
-export const ROLE_STORE = Symbol('ROLE_STORE');
 
 export interface RoleStore {
   /** All roles, priority desc then name asc (admin list). */

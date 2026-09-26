@@ -1,9 +1,8 @@
 """Route definitions for playbook_dir step execution."""
 
 import asyncio
-import json
 import re
-from typing import Annotated, Any, AsyncGenerator, Dict
+from typing import Annotated, Any, Dict
 
 _SAFE_LOG_TOKEN = re.compile(r"^[A-Za-z0-9_\-.:]{1,200}$")
 from fastapi import APIRouter, Body, status, HTTPException, Depends
@@ -15,30 +14,11 @@ from src.schema.authentification_schema import User
 from src.authentification.get_current_user import get_current_active_user
 from src.smart_rag.playbook_dir.execute_step import execute_playbook_step
 from src.smart_rag.playbook_dir.run_playbook import execute_playbook_with_agent_team
+from src.routers.sse_stream import event_stream
 
 app_settings = get_settings()
 logger = get_logger("api.routers.playbook")
 playbook_router = APIRouter(prefix="/playbook", tags=["playbook"])
-
-
-async def _event_stream(q: asyncio.Queue[dict], bg_task: asyncio.Task, endpoint_name: str) -> AsyncGenerator[str, None]:
-    """Yield events from the queue for streaming responses."""
-
-    first_chunk = True
-    try:
-        while True:
-            chunk = await q.get()
-            if chunk is None:
-                logger.info(f"Stream finished for {endpoint_name}")
-                break
-            if first_chunk:
-                logger.info(f"First chunk emitted for {endpoint_name}")
-                first_chunk = False
-            yield f"data: {json.dumps(chunk)}\n\n"
-    except asyncio.CancelledError:
-        logger.warning("Client disconnected, cancelling background task")
-        bg_task.cancel()
-        raise
 
 
 @playbook_router.post("/index/webhook", include_in_schema=False)
@@ -113,7 +93,7 @@ async def execute_playbook_step_endpoint(
         bg = asyncio.create_task(execute_playbook_step(request, queue))
 
         return StreamingResponse(
-            _event_stream(queue, bg, "execute_playbook_step"),
+            event_stream(queue, bg, "execute_playbook_step"),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -164,7 +144,7 @@ async def execute_playbook_endpoint(
         bg = asyncio.create_task(execute_playbook_with_agent_team(request, queue))
 
         return StreamingResponse(
-            _event_stream(queue, bg, "execute_playbook"),
+            event_stream(queue, bg, "execute_playbook"),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
