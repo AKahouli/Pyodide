@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ConceptSourceMapping, SemanticGraph } from '../../types';
+import type { ConceptSourceMapping, MappingHealthItem, SemanticGraph } from '../../types';
 import type { KnowledgeLinkingController } from '../../hooks/use-knowledge-linking';
 import { useSemanticModelEditorStore } from '../../store';
 import { SemanticModelCanvas } from './SemanticModelCanvas';
@@ -40,7 +40,8 @@ const knowledge = {
   setDraggedResource:vi.fn(),hasBinding:vi.fn(()=>false),link:vi.fn(),remove:vi.fn(),
 } as unknown as KnowledgeLinkingController;
 
-const renderCanvas = (sourceMappings?: ConceptSourceMapping[]) => render(<SemanticModelCanvas canEdit knowledge={knowledge} sourceMappings={sourceMappings} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} />);
+const healthy = (...ids: string[]): MappingHealthItem[] => ids.map((id) => ({ id, conceptId:'contract', conceptLabel:'Contract', documentName:'', state:'healthy', missingFields:[], availableFields:[] } as unknown as MappingHealthItem));
+const renderCanvas = (sourceMappings?: ConceptSourceMapping[], mappingHealth?: MappingHealthItem[]) => render(<SemanticModelCanvas canEdit knowledge={knowledge} sourceMappings={sourceMappings} mappingHealth={mappingHealth} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} />);
 
 function mapping(overrides: Partial<ConceptSourceMapping>): ConceptSourceMapping {
   return {
@@ -70,7 +71,7 @@ describe('SemanticModelCanvas', () => {
 
   it('shows what a concept holds: fields, their type, the matching key and its sources', () => {
     useSemanticModelEditorStore.getState().hydrate(contractGraph);
-    renderCanvas([mapping({}), mapping({ id:'mapping-2', documentName:'master-agreement-0099.pdf' })]);
+    renderCanvas([mapping({}), mapping({ id:'mapping-2', documentName:'master-agreement-0099.pdf' })], healthy('mapping', 'mapping-2'));
 
     expect(screen.getByText('contract number')).toBeInTheDocument();
     expect(screen.getAllByText('attribute.type.text').length).toBe(3);
@@ -87,6 +88,13 @@ describe('SemanticModelCanvas', () => {
     useSemanticModelEditorStore.getState().hydrate(contractGraph);
     renderCanvas([]);
     expect(screen.getByText('editor.status.noSource')).toBeInTheDocument();
+  });
+
+  it('does not call a saved but unchecked source ready', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    renderCanvas([mapping({})]);
+    expect(screen.getByText('editor.status.sourcesNotReady')).toBeInTheDocument();
+    expect(screen.queryByText('editor.status.ready')).not.toBeInTheDocument();
   });
 
   it('flags sources that are not ready yet', () => {

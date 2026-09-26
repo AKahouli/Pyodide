@@ -66,7 +66,7 @@ export function SemanticModelCard({ model }: Readonly<{ model: SemanticModel }>)
                   variant='ghost'
                   size='icon'
                   className='h-7 w-7 text-muted-foreground hover:text-primary'
-                  title='Partager'
+                  title={t('share.action')}
                   onClick={(e) => { e.stopPropagation(); setShareOpen(true); }}
                 >
                   <Share2 className='h-4 w-4' />

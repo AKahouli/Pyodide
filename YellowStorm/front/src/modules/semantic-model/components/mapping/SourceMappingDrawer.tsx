@@ -184,10 +184,11 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose }: Readonly<{ 
                 ))}</SelectContent>
               </Select>
               {profile.isLoading && <div className='flex items-center gap-2 text-xs text-muted-foreground'><Loader2 className='h-3.5 w-3.5 animate-spin' />{t('sourceAnalysis.loading')}</div>}
-              {profile.isError && (
+              {/* An answered profile with no sheets means the analysis has not finished; say so rather than show an empty list. */}
+              {(profile.isError || (profile.data && !profile.data.sheets.length && !sheetName)) && (
                 <div className='flex items-start gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive'>
                   <AlertTriangle className='mt-0.5 h-3.5 w-3.5 shrink-0' />
-                  <span className='min-w-0 flex-1'>{t('sourceAnalysis.required')}</span>
+                  <span className='min-w-0 flex-1'>{t(profile.isError ? 'sourceAnalysis.required' : 'sourceAnalysis.noSheets')}</span>
                   <Button size='sm' variant='ghost' className='h-6 shrink-0 px-2 text-[11px]' disabled={analyze.isPending} onClick={() => analyze.mutate()}>
                     {analyze.isPending ? <Loader2 className='mr-1 h-3 w-3 animate-spin' /> : null}{t('sourceAnalysis.analyze')}
                   </Button>

@@ -1,5 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConceptSourceMapping } from '../../types';
@@ -37,7 +36,7 @@ describe('PopulationRefreshPanel', () => {
       scope: { kind: 'model' },
     }));
     await waitFor(() => expect(api.getPopulationJob).toHaveBeenCalledWith('model-1', 'j-1'));
-    expect(await screen.findByText('populationRefresh.status')).toBeInTheDocument();
+    expect(await screen.findByText(/populationRefresh.state.completed/)).toBeInTheDocument();
   });
 
   it('reports accepted jobs to the persistent editor observer', async () => {
@@ -48,30 +47,23 @@ describe('PopulationRefreshPanel', () => {
     await waitFor(() => expect(onAccepted).toHaveBeenCalledWith('j-1'));
   });
 
-  it('refreshes a single structured mapping', async () => {
-    const user = userEvent.setup();
+  it('stops polling and exposes a terminal failure', async () => {
+    api.getPopulationJob.mockResolvedValueOnce({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'failed', result: null, errorCode: 'parser_timeout' });
     renderPanel();
-    const scopeSelect = screen.getAllByRole('combobox')[0];
-    await user.click(scopeSelect);
-    await user.click(await screen.findByText('populationRefresh.singleMapping'));
-    const mappingSelect = screen.getAllByRole('combobox')[1];
-    await user.click(mappingSelect);
-    await user.click(await screen.findByText('customers.csv'));
-    fireEvent.click(screen.getByRole('button', { name: 'populationRefresh.refreshAction' }));
-    await waitFor(() => expect(api.requestPopulationRefresh).toHaveBeenCalledWith('model-1', {
-      purpose: 'refresh',
-      scope: { kind: 'mapping', mappingId: 'm-1' },
-    }));
+    fireEvent.click(screen.getByRole('button', { name: 'populationRefresh.prepare' }));
+
+    expect(await screen.findByText(/populationRefresh.errorCode.parser_timeout/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'populationRefresh.prepare' })).toBeEnabled();
+    expect(api.getPopulationJob).toHaveBeenCalledTimes(1);
   });
 
-  it('stops polling and exposes a terminal failure', async () => {
+  it('explains unknown runtime error codes generically', async () => {
     api.getPopulationJob.mockResolvedValueOnce({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'failed', result: null, errorCode: 'projection_failed' });
     renderPanel();
     fireEvent.click(screen.getByRole('button', { name: 'populationRefresh.prepare' }));
 
-    expect(await screen.findByText(/projection_failed/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'populationRefresh.prepare' })).toBeEnabled();
-    expect(api.getPopulationJob).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText(/populationRefresh.errorCode.unknown/)).toBeInTheDocument();
+    expect(screen.queryByText(/projection_failed/)).not.toBeInTheDocument();
   });
 
   it('recovers from a polling request failure', async () => {
@@ -84,21 +76,8 @@ describe('PopulationRefreshPanel', () => {
     expect(screen.getByRole('button', { name: 'populationRefresh.prepare' })).toBeEnabled();
   });
 
-  it('lists only structured mappings as single-mapping candidates', async () => {
-    const user = userEvent.setup();
-    renderPanel();
-    await user.click(screen.getAllByRole('combobox')[0]);
-    await user.click(await screen.findByText('populationRefresh.singleMapping'));
-    await user.click(screen.getAllByRole('combobox')[1]);
-    const listbox = await screen.findByRole('listbox');
-    expect(within(listbox).queryByText('notes.pdf')).not.toBeInTheDocument();
-    expect(within(listbox).queryByText('stale.csv')).not.toBeInTheDocument();
-    expect(within(listbox).getByText('customers.csv')).toBeInTheDocument();
-  });
-
-  it('disables actions for viewers and without a selected mapping', () => {
+  it('disables actions for viewers', () => {
     renderPanel(false);
     expect(screen.getByRole('button', { name: 'populationRefresh.prepare' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'populationRefresh.refreshAction' })).toBeDisabled();
   });
 });

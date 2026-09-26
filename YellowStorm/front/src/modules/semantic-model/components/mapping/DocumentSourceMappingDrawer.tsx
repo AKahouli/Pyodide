@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { parseApiError } from '@/lib/api-error';
 import { showError, showSuccess } from '@/lib/notifications';
 import { useFileViewerStore } from '@/modules/file-viewer/store';
 import { useModuleTranslation } from '@/modules/localization';
@@ -90,7 +91,6 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
       }
       return results;
     },
-    onError: (error) => showError(t('mapping.previewError'), { description: error instanceof Error ? error.message : undefined }),
   });
   const save = useMutation({
     mutationFn: async () => {
@@ -201,7 +201,9 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
           </div>
         </div>}
 
-        {concept && <div className='space-y-2'>
+        {concept && !concept.attributes.length && <p className='rounded-xl border border-dashed p-4 text-sm text-muted-foreground'>{t('mapping.noFields', { name: concept.label })}</p>}
+
+        {concept && concept.attributes.length > 0 && <div className='space-y-2'>
           <Label>{t('mapping.documentFields')}</Label>
           <div className='overflow-hidden rounded-xl border'>
             {mappings.map((mapping, index) => <div key={mapping.targetAttribute} className='space-y-2 border-b p-3 last:border-b-0'>
@@ -229,7 +231,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
           </div>
         </div>}
 
-        {concept && <div className='space-y-2'>
+        {concept && concept.attributes.length > 0 && <div className='space-y-2'>
           <Label>{t('mapping.identity')}</Label>
           <div className='space-y-1 rounded-xl border p-2'>
             {activeMappings.map((mapping) => {
@@ -242,13 +244,15 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
           </div>
         </div>}
 
+        {preview.isError && <p role='alert' className='flex gap-1.5 rounded-lg bg-destructive/10 p-3 text-xs text-destructive'><AlertTriangle className='h-3.5 w-3.5 shrink-0' />{isRetiredSearchFailure(preview.error) ? t('mapping.previewUnavailable') : `${t('mapping.previewError')}: ${parseApiError(preview.error).message}`}</p>}
+
         {preview.data?.map(({ asset, result }) => <div key={asset.documentId} className='space-y-2 rounded-xl border p-3'>
           <p className='text-xs font-semibold'>{asset.name}</p>
           {result.warnings.map((warning) => <p key={warning} className='flex gap-1.5 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400'><AlertTriangle className='h-3.5 w-3.5 shrink-0' />{warning}</p>)}
           {result.entities.map((entity) => Object.entries(entity.values).map(([field, value]) => {
             const source = entity.provenance.fields?.[field];
             return <div key={field} className='rounded-lg bg-muted/50 p-2 text-xs'>
-              <div className='flex items-start justify-between gap-2'><div><p className='font-medium'>{field}</p><p>{String(value ?? '')}</p></div>{source?.confidence !== undefined && <span className='text-muted-foreground'>{Math.round(source.confidence * 100)}%</span>}</div>
+              <div className='flex items-start justify-between gap-2'><div><p className='font-medium'>{concept?.attributes.find((attribute) => attribute.key === field)?.label ?? field}</p><p>{String(value ?? '')}</p></div>{source?.confidence !== undefined && <span className='text-muted-foreground'>{Math.round(source.confidence * 100)}%</span>}</div>
               {source?.quote && <button type='button' className='mt-1 flex w-full items-start gap-1 text-left text-[11px] text-primary hover:underline' onClick={() => void useFileViewerStore.getState().openFile(asset.workspaceId, asset.documentId, asset.path, asset.name, asset.mimeType, { page: Number.parseInt(source.page ?? '1', 10) || 1, highlightText: source.quote })}><ExternalLink className='mt-0.5 h-3 w-3 shrink-0' />{source.quote}</button>}
             </div>;
           }))}
@@ -263,4 +267,9 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
       </div>
     </SheetContent>}
   </Sheet>;
+}
+
+/** True when the preview failed because the retired document search service is gone, which the user cannot fix. */
+function isRetiredSearchFailure(error: unknown) {
+  return /native search/i.test(parseApiError(error).message);
 }

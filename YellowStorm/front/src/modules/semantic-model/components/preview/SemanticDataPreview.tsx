@@ -29,9 +29,11 @@ export function SemanticDataPreview({ modelId, dataRevisionId, onDataRevision }:
         || entity.label.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())
         || Object.values(entity.values).some((value) => String(value ?? '').toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))),
     })), [conceptId, preview.data?.concepts, search]);
-  const recordDetail = (entity: { values: Record<string, unknown> }) => entity.values.amendment_number != null
-    ? t('dataPreview.amendmentNumber', { number: String(entity.values.amendment_number) })
-    : entity.values.effective_date != null ? String(entity.values.effective_date) : '';
+  // The second line under a record's name: its first non-key business value, so records sharing a label stay distinguishable.
+  const recordDetail = (entity: { label: string; values: Record<string, unknown> }) => {
+    const value = businessValues(entity.values).find(([, candidate]) => candidate != null && String(candidate) !== '' && String(candidate) !== entity.label)?.[1];
+    return value == null ? '' : String(value);
+  };
   const labels = new Map((preview.data?.concepts ?? []).flatMap((concept) => concept.entities.map((entity) => [entity.id, `${concept.label}: ${entity.label}${recordDetail(entity) ? ` · ${recordDetail(entity)}` : ''}`] as const)));
   const visibleEntities = concepts.flatMap((concept) => concept.entities);
   const selectedEntity = visibleEntities.find((entity) => entity.id === selectedEntityId) ?? visibleEntities[0];
@@ -86,7 +88,7 @@ export function SemanticDataPreview({ modelId, dataRevisionId, onDataRevision }:
           <div className='mt-1 flex items-start justify-between gap-3'><h3 className='text-xl font-semibold'>{selectedEntity.label || t('mapping.unnamedEntity')}</h3>{selectedEntity.conflicts.length > 0 && <span className='rounded-full bg-amber-500/10 px-2 py-1 text-[10px] font-medium text-amber-700'>{t('dataPreview.conflictBadge', { count: selectedEntity.conflicts.length })}</span>}</div>
           {recordDetail(selectedEntity) && <p className='mt-1 text-sm text-muted-foreground'>{recordDetail(selectedEntity)}</p>}
           <h4 className='mt-6 font-semibold'>{t('dataPreview.valuesAndSources')}</h4>
-          <div className='mt-2 divide-y'>{Object.entries(selectedEntity.values).map(([attribute, value]) => {
+          <div className='mt-2 divide-y'>{businessValues(selectedEntity.values).map(([attribute, value]) => {
             const provenance = selectedEntity.provenance[attribute];
             const canOpen = Boolean(provenance?.source.workspaceId && provenance.source.documentId);
             return <div key={attribute} className='grid grid-cols-[minmax(6rem,0.7fr)_1fr] gap-3 py-2 text-sm'><span className='text-muted-foreground'>{readableLabel(attribute)}</span><div className='min-w-0'><p className='break-words'>{String(value ?? '')}</p>{provenance && <button type='button' disabled={!canOpen} className='mt-1 flex max-w-full items-center gap-1 truncate text-left text-[11px] text-primary disabled:cursor-default disabled:text-muted-foreground' onClick={() => canOpen && void useFileViewerStore.getState().openFile(provenance.source.workspaceId!, provenance.source.documentId!, provenance.source.documentPath ?? '', provenance.source.documentName, provenance.source.mimeType ?? '', { page: Number.parseInt(provenance.field?.page ?? '1', 10) || 1, highlightText: provenance.field?.quote })}><ExternalLink className='h-3 w-3 shrink-0' />{provenance.source.documentName}{provenance.source.sheetName ? ` / ${provenance.source.sheetName}` : ''}{provenance.rowNumber ? ` · ${t('dataPreview.row', { row: provenance.rowNumber })}` : ''}{provenance.field?.reference ? ` · ${t('dataPreview.column', { column: provenance.field.reference })}` : ''}</button>}</div></div>;
@@ -97,6 +99,11 @@ export function SemanticDataPreview({ modelId, dataRevisionId, onDataRevision }:
       </div> : <div className='rounded-2xl border border-dashed bg-background p-10 text-center text-sm text-muted-foreground'>{t('dataPreview.empty')}</div>}
     </div>
   </div>;
+}
+
+/** Values a person entered or a source produced; `_`-prefixed keys are bookkeeping the pipeline keeps for itself. */
+function businessValues(values: Record<string, unknown>) {
+  return Object.entries(values).filter(([key]) => !key.startsWith('_'));
 }
 
 function readableLabel(value: string) {

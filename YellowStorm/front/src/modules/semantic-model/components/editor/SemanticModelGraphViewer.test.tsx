@@ -38,7 +38,7 @@ describe('SemanticModelGraphViewer', () => {
     render(<SemanticModelGraphViewer open onClose={vi.fn()} modelId="model-1" canEdit />);
     await waitFor(() => expect(apiMocks.getAgeGraph).toHaveBeenCalledTimes(1));
 
-    await user.click(screen.getByRole('button', { name: 'graphViewer.button' }));
+    await user.click(screen.getByRole('button', { name: 'graphViewer.refresh' }));
 
     expect(apiMocks.indexAgeGraph).not.toHaveBeenCalled();
     await waitFor(() => expect(apiMocks.getAgeGraph).toHaveBeenCalledTimes(2));
@@ -49,7 +49,7 @@ describe('SemanticModelGraphViewer', () => {
     render(<SemanticModelGraphViewer open onClose={vi.fn()} modelId="model-1" canEdit={false} />);
     await waitFor(() => expect(apiMocks.getAgeGraph).toHaveBeenCalledTimes(1));
 
-    await user.click(screen.getByRole('button', { name: 'graphViewer.button' }));
+    await user.click(screen.getByRole('button', { name: 'graphViewer.refresh' }));
 
     expect(apiMocks.indexAgeGraph).not.toHaveBeenCalled();
     await waitFor(() => expect(apiMocks.getAgeGraph).toHaveBeenCalledTimes(2));
@@ -61,7 +61,7 @@ describe('SemanticModelGraphViewer', () => {
     render(<SemanticModelGraphViewer open onClose={vi.fn()} modelId="model-1" canEdit />);
     await waitFor(() => expect(apiMocks.getAgeGraph).toHaveBeenCalledTimes(1));
 
-    await user.click(screen.getByRole('button', { name: 'graphViewer.button' }));
+    await user.click(screen.getByRole('button', { name: 'graphViewer.refresh' }));
 
     await waitFor(() => expect(apiMocks.getAgeGraph).toHaveBeenCalledTimes(2));
     expect(apiMocks.indexAgeGraph).not.toHaveBeenCalled();

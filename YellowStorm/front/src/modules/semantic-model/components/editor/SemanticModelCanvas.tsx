@@ -13,7 +13,7 @@ import { showSuccess, showWarning } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
 import { useSemanticModelEditorStore } from '../../store';
 import { KNOWLEDGE_DRAG_TYPE, parseKnowledgeResource, type KnowledgeDropState, type KnowledgeLinkingController, type KnowledgeResource } from '../../hooks/use-knowledge-linking';
-import type { AttributeDefinition, ConceptSourceMapping, SemanticNodeType, SemanticRecordRelation, SemanticRelationType } from '../../types';
+import type { AttributeDefinition, ConceptSourceMapping, MappingHealthItem, SemanticNodeType, SemanticRecordRelation, SemanticRelationType } from '../../types';
 import { compatibleRecordRelations, nextLinkedConceptPosition, uniqueBusinessKey, type CompatibleRecordRelation } from '../../utils/model-utils';
 
 /** What a concept card says about its data: how many sources feed it, which are usable, and how it recognises a record. */
@@ -185,7 +185,7 @@ const RelationEdge = memo(function RelationEdge({ id,sourceX,sourceY,targetX,tar
 
 const edgeTypes = { relation:RelationEdge };
 
-export function SemanticModelCanvas({ sourceMappings,canEdit,onConnectRequest,knowledge,onOpenKnowledge,onMapStructuredDrop }: Readonly<{ sourceMappings?:ConceptSourceMapping[];canEdit:boolean;onConnectRequest:(connection:{sourceId:string;targetId:string})=>void;knowledge:KnowledgeLinkingController;onOpenKnowledge:(nodeId:string)=>void;onMapStructuredDrop?:(resource:Extract<KnowledgeResource,{kind:'document'}>,nodeId:string)=>void }>) {
+export function SemanticModelCanvas({ sourceMappings,mappingHealth,canEdit,onConnectRequest,knowledge,onOpenKnowledge,onMapStructuredDrop }: Readonly<{ sourceMappings?:ConceptSourceMapping[];mappingHealth?:MappingHealthItem[];canEdit:boolean;onConnectRequest:(connection:{sourceId:string;targetId:string})=>void;knowledge:KnowledgeLinkingController;onOpenKnowledge:(nodeId:string)=>void;onMapStructuredDrop?:(resource:Extract<KnowledgeResource,{kind:'document'}>,nodeId:string)=>void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const isMobile = useIsMobile();
   const graph = useSemanticModelEditorStore((state)=>state.graph);
@@ -280,12 +280,14 @@ export function SemanticModelCanvas({ sourceMappings,canEdit,onConnectRequest,kn
       const summary = byConcept[mapping.conceptId];
       if (!summary) continue;
       summary.sources+=1;
-      if (mapping.status!=='ready') summary.notReady+=1;
+      // A saved mapping is not proof of data: only a source the runtime has checked and found current counts as ready.
+      const health = mappingHealth?.find((item)=>item.id===mapping.id);
+      if (mapping.status!=='ready' || health?.state!=='healthy') summary.notReady+=1;
       if (mapping.documentName) summary.documentNames.push(mapping.documentName);
       for (const field of mapping.identityFields) if (!summary.identityFields.includes(field)) summary.identityFields.push(field);
     }
     return byConcept;
-  },[graph?.nodes,graph?.records,sourceMappings]);
+  },[graph?.nodes,graph?.records,sourceMappings,mappingHealth]);
 
   // Stage 1 — stable node data, no selection state.
   // selectedId is intentionally excluded so clicking a node doesn't rebuild every node object.

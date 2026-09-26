@@ -1,5 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSemanticModelEditorStore } from '../../store';
@@ -46,14 +45,9 @@ describe('SemanticMappingsView', () => {
     for (const select of screen.getAllByRole('combobox')) expect(select).toBeDisabled();
   });
 
-  it('offers only mappings confirmed healthy by the current health result', async () => {
-    const user = userEvent.setup();
+  it('only lets records be created from sources confirmed healthy', () => {
     render(<QueryClientProvider client={new QueryClient()}><SemanticMappingsView modelId='model' canEdit /></QueryClientProvider>);
-    await user.click(screen.getByRole('combobox', { name: 'populationRefresh.scope' }));
-    await user.click(await screen.findByText('populationRefresh.singleMapping'));
-    await user.click(screen.getByRole('combobox', { name: 'populationRefresh.chooseMapping' }));
-    const listbox = await screen.findByRole('listbox');
-    expect(within(listbox).getByText('CRM Production / customers')).toBeInTheDocument();
-    expect(within(listbox).queryByText('customers.xlsx / Customers')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'populationRefresh.prepare' })).toBeEnabled();
+    expect(screen.queryByRole('combobox', { name: 'populationRefresh.scope' })).not.toBeInTheDocument();
   });
 });

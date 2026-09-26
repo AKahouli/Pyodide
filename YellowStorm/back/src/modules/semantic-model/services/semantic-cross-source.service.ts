@@ -44,6 +44,15 @@ interface ReviewDecision {
   resolution: { decision?: string; selectedTargetId?: string; selectedMappingId?: string };
 }
 
+/** The file a generated record was built from, read from its reserved `_source_file_name(s)` values. */
+function generatedSourceName(values: Record<string, unknown>): string | undefined {
+  const single = values._source_file_name;
+  if (typeof single === 'string' && single.trim()) return single;
+  const many = values._source_file_names;
+  if (Array.isArray(many) && typeof many[0] === 'string') return many[0];
+  return undefined;
+}
+
 @Injectable()
 export class SemanticCrossSourceService {
   constructor(
@@ -302,7 +311,8 @@ export class SemanticCrossSourceService {
       conceptId: record.conceptId,
       mappingId: `manual:${record.id}`,
       identityFields: identityByConcept.get(record.conceptId) ?? [],
-      source: { kind: 'manual', documentName: 'Manual Business Record' },
+      // Records built from documents carry their file in reserved values; only records nobody sourced are "added by hand".
+      source: { kind: 'manual', documentName: generatedSourceName(record.values) ?? 'Added by hand' },
       entity: { entityKey: record.id, label: record.label, values: record.values, provenance: {} },
     }));
     return { concepts: concepts.rows, manualEntities, incompleteConceptIds: [...incompleteConceptIds] };

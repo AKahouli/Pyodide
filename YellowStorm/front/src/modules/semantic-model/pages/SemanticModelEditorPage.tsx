@@ -49,7 +49,7 @@ import { PopulationStartedPanel, type PopulationOutcome } from '../components/po
 import { isBuildActive, useSemanticBuildJob } from "../hooks/use-semantic-build-job";
 import { VersionsPanel } from "../components/versions/VersionsPanel";
 import { useKnowledgeLinking } from "../hooks/use-knowledge-linking";
-import { useSemanticGraph, useSemanticModel, useSemanticReadiness, useSourceMappings } from "../query/hooks";
+import { useMappingHealth, useSemanticGraph, useSemanticModel, useSemanticReadiness, useSourceMappings } from "../query/hooks";
 import { semanticModelQueryKeys } from '../query/queryKeys';
 import { isPendingSaveCurrent, isSemanticGraphSaved, selectPendingOperations, useSemanticModelEditorStore } from "../store";
 import type { EditorMode } from "../types";
@@ -71,6 +71,7 @@ export function SemanticModelEditorPage() {
   const readiness = useSemanticReadiness(modelId);
   const knowledge = useKnowledgeLinking(modelId);
   const sourceMappings = useSourceMappings(modelId);
+  const mappingHealth = useMappingHealth(sourceMappings.data?.length ? modelId : undefined);
   const graph = useSemanticModelEditorStore((state) => state.graph);
   const mode = useSemanticModelEditorStore((state) => state.mode);
   const pending = useSemanticModelEditorStore((state) => state.pending);
@@ -397,6 +398,7 @@ export function SemanticModelEditorPage() {
           {mode === 'structure' && structureView === 'list' && <div className='relative flex min-h-0 flex-1 flex-col md:flex-row'><ObjectNavigator /><SemanticModelInspector modelId={modelId!} canEdit={canEdit} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} onMapData={(target) => void openMappingTarget(target)} workspace /></div>}
           {mode === 'structure' && structureView === 'diagram' && <div className='relative min-h-0 flex-1'><SemanticModelCanvas
             sourceMappings={sourceMappings.data}
+            mappingHealth={mappingHealth.data?.items}
             canEdit={canEdit}
             knowledge={knowledge}
             onOpenKnowledge={(nodeId) => openKnowledge(nodeId)}
@@ -417,7 +419,7 @@ export function SemanticModelEditorPage() {
                 onClick={openGraphViewer}
               >
                 <Network className="mr-2 h-4 w-4" />
-                {t("graphViewer.button")}
+                {t('dataWorkflow.dataGraph')}
               </Button>
               <Button
                 size="lg"

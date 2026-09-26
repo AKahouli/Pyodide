@@ -76,7 +76,7 @@ describe('SemanticDataPreview', () => {
   it('keeps values and related records together when switching records', () => {
     render(<SemanticDataPreview modelId='model' />);
     expect(screen.getByText(/works with/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Contoso' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Contoso/ }));
     expect(screen.getByRole('heading', { name: 'Contoso' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /customers\.csv/ })).not.toBeInTheDocument();
     expect(screen.getByText(/works with/)).toBeInTheDocument();

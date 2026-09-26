@@ -56,7 +56,9 @@ describe('SemanticBusinessTrustService', () => {
     }] });
 
     await expect(service.readiness('user', 'model')).resolves.toMatchObject({
-      score: 60,
+      // Sources is the first open step, so only structure earns points even though later areas pass on their own.
+      score: 20,
+      completeAreas: 3,
       areas: [
         { key: 'structure', complete: true },
         { key: 'sources', complete: false, issues: [{ severity: 'blocking' }] },
@@ -69,6 +71,23 @@ describe('SemanticBusinessTrustService', () => {
     expect(sql).toContain('n.version_id=$2');
     expect(sql).toContain('relation.version_id=$2');
     expect(database.query.mock.calls[0][1]).toEqual(['model', 'version']);
+  });
+
+  it('scores a lone concept with no source as the first step only', async () => {
+    const { service, database } = buildService();
+    database.query.mockResolvedValue({ rows: [{ nodeCount: '1', dataConceptCount: '1', sourcedConceptCount: '0', identityCount: '0', relationCount: '0', ruleCount: '0', unhealthyMappingCount: '0', openReviewCount: '0' }] });
+
+    await expect(service.readiness('user', 'model')).resolves.toMatchObject({ status: 'needs_review', score: 20 });
+  });
+
+  it('does not count source health against quality a second time', async () => {
+    const { service, database } = buildService();
+    database.query.mockResolvedValue({ rows: [{ nodeCount: '1', dataConceptCount: '1', sourcedConceptCount: '1', identityCount: '1', relationCount: '0', ruleCount: '0', unhealthyMappingCount: '1', openReviewCount: '0' }] });
+
+    await expect(service.readiness('user', 'model')).resolves.toMatchObject({
+      score: 20,
+      areas: expect.arrayContaining([{ key: 'quality', complete: true, issues: [] }]),
+    });
   });
 
   it('does not advertise an empty model as ready', async () => {

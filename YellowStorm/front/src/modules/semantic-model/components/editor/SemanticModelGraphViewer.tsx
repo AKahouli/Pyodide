@@ -103,6 +103,9 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
     setNodeValues((current) => Object.fromEntries(selectedNodeType.attributes.map((attribute) => [attribute.key, current[attribute.key] ?? ''])));
   }, [selectedNodeType?.id]);
 
+  /** Graph vertices are labelled with the concept key; people read the concept's name. */
+  const conceptLabel = (key: string) => modelGraph?.nodes.find((node) => node.key === key)?.label ?? key.replaceAll('_', ' ');
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -187,7 +190,9 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
       id: n.id,
       displayLabel: (() => {
         const label = String(n.properties.record_label ?? n.id);
-        const qualifier = n.properties.effective_date ?? n.properties.amendment_number;
+        // Same-named records are told apart by their first business attribute (e.g. a date), whatever the concept.
+        const attributes = modelGraph?.nodes.find((node) => node.key === n.label)?.attributes ?? [];
+        const qualifier = attributes.map((attribute) => n.properties[attribute.key]).find((value) => value != null && value !== '' && value !== '__missing__' && String(value) !== label);
         return (labelCounts.get(`${n.label}:${label}`) ?? 0) > 1 && qualifier ? `${label} · ${qualifier}` : label;
       })(),
       type: n.label,
@@ -349,7 +354,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
         .attr('font-size', 8)
         .attr('font-family', 'system-ui, sans-serif')
         .attr('pointer-events', 'none')
-        .text(d.type);
+        .text(conceptLabel(d.type));
     });
 
     if (graphCanEdit) {
@@ -406,6 +411,13 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
     void apply({ type: 'edge.create', relationTypeId: relation.id, sourceId: pendingRelationChoice.sourceId, targetId: pendingRelationChoice.targetId });
   }, [apply, pendingRelationChoice]);
 
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
   const selectedMeta = selectedNode?.properties._meta as NodeMeta | undefined;
   const allTypes = [...new Set(ageNodes.map((n) => n.label))];
 
@@ -424,7 +436,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
           {allTypes.map((lbl) => (
             <div key={lbl} className="flex items-center gap-1.5">
               <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: labelColor(lbl, allTypes) }} />
-              <span className="text-xs text-white/60">{lbl}</span>
+              <span className="text-xs text-white/60">{conceptLabel(lbl)}</span>
             </div>
           ))}
           <Button
@@ -433,8 +445,8 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
             className="text-white/60 hover:text-white hover:bg-white/10 gap-1.5"
              onClick={() => void load()}
             disabled={loading || mutationLoading}
-            aria-label={t('graphViewer.button')}
-            title={t('graphViewer.button')}
+            aria-label={t('graphViewer.refresh')}
+            title={t('graphViewer.refresh')}
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading || mutationLoading ? 'animate-spin' : ''}`} />
           </Button>
@@ -450,6 +462,7 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, canEdit = fal
             size="icon"
             className="text-white/60 hover:text-white hover:bg-white/10"
             onClick={onClose}
+            aria-label={t('graphViewer.close')}
           >
             <X className="h-5 w-5" />
           </Button>
