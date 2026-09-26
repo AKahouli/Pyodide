@@ -37,6 +37,8 @@ const setup = (
   identity: Record<string, string[]> = { 'c-customer': ['customer_id'] },
   relations: unknown[] = [],
   relationRules: unknown[] = [],
+  records: unknown[] = [],
+  recordRelations: unknown[] = [],
 ) => {
   const database = {
     query: jest.fn(async (sql: string, params: unknown[] = []) => {
@@ -55,6 +57,8 @@ const setup = (
         }
         return { rows: mappings };
       }
+      if (sql.includes('FROM semantic_model.records')) return { rows: records };
+      if (sql.includes('FROM semantic_model.record_relations')) return { rows: recordRelations };
       throw new Error(`unexpected query: ${sql}`);
     }),
   };
@@ -71,6 +75,8 @@ const setup = (
   };
   const runtime = {
     mirrorSpecification: jest.fn(async () => ({ reused: false })),
+    appendManualRows: jest.fn(async () => undefined),
+    commitManualSnapshot: jest.fn(async () => ({ reused: false })),
     requestPopulationRun: jest.fn(async () => ({ jobId: 'j-1', status: 'queued', reused: false })),
     getJob: jest.fn(async () => ({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'completed' })),
     getBoundRecords: jest.fn(async () => ({
@@ -520,5 +526,25 @@ describe('SemanticPopulationRefreshService', () => {
     const { service } = setup(mappings);
     await expect(service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } }))
       .rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED });
+  });
+
+  it('sends records typed by hand as a manual source, with their links', async () => {
+    const records = [
+      { id: 'r-1', nodeTypeId: 'c-customer', label: 'Acme', values: { name: 'Acme', _entity_key: 'x' } },
+      { id: 'r-2', nodeTypeId: 'c-customer', label: 'Globex', values: { name: 'Globex' } },
+    ];
+    const links = [{ relationTypeId: 'rel-1', sourceRecordId: 'r-1', targetRecordId: 'r-2' }];
+    const { runtime, service } = setup([], {}, [], [], records, links);
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const [modelId, snapshotId, batch] = runtime.appendManualRows.mock.calls[0] as unknown as [string, string, { rows: Array<{ values: object }>; links: unknown[] }];
+    expect(modelId).toBe('model-1');
+    expect(snapshotId).toMatch(/^m[0-9a-f]{40}$/);
+    expect(batch.rows[0].values).toEqual({ name: 'Acme' });
+    expect(batch.links).toEqual([{ relationId: 'rel-1', sourceRowKey: 'r-1', targetRowKey: 'r-2' }]);
+    expect(runtime.commitManualSnapshot).toHaveBeenCalledWith('model-1', snapshotId, { rowCount: 2, linkCount: 1 });
+    const payload = (runtime.requestPopulationRun.mock.calls[0] as unknown as [{ payload: { sources: Array<Record<string, unknown>>; specification: { concepts: Array<{ identity: object }>; sourceScope: unknown[] } } }])[0].payload;
+    expect(payload.sources).toEqual([expect.objectContaining({ sourceKind: 'manual', conceptId: 'c-customer', source: { workspaceId: 'ws-1', assetId: `manual:${snapshotId}`, snapshotId } })]);
+    expect(payload.specification.sourceScope).toContainEqual({ workspaceId: 'ws-1', assetId: `manual:${snapshotId}` });
+    expect(payload.specification.concepts[0].identity).toEqual({ namespace: 'customer', keyComponents: ['customer_id'] });
   });
 });

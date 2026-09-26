@@ -56,6 +56,7 @@ type RelationRuleRow = Pick<RelationResolutionRule,
 
 const POPULATION_KINDS = new Set(['excel_sheet', 'csv', 'document']);
 const MAX_REFRESH_SOURCES = 25;
+const MANUAL_BATCH_SIZE = 500;
 const POPULATION_ENGINE_VERSION = 'r1-mvp-5';
 // Version of the AI extraction contract (prompt + response shape). Must equal the
 // ADK's reported extractorVersion; bump both together.
@@ -80,9 +81,9 @@ export class SemanticPopulationRefreshService {
    * changes the revision identity.
    */
   private async aiExtractionIdentity(
-    sources: Array<{ fieldMappings?: SourceFieldMapping[] | null }>,
+    sources: object[],
   ): Promise<{ agentSlug: string; model: string | null; contractVersion: string } | null> {
-    const usesAi = sources.some((source) => (source.fieldMappings ?? [])
+    const usesAi = sources.some((source) => ((source as { fieldMappings?: SourceFieldMapping[] | null }).fieldMappings ?? [])
       .some((field) => field.mode === 'extract' && field.extractionStrategy === 'ai'));
     if (!usesAi) return null;
     const agent = await this.aiExtractionAgent.resolveAgent();
@@ -241,13 +242,18 @@ export class SemanticPopulationRefreshService {
         skipped.push({ mappingId: mapping.id, reason: (error as Error).message });
       }
     }
+    const manual = scope.kind === 'model'
+      ? await this.manualSource(model.id, model.currentDraftVersionId, homeWorkspaceId, nodes)
+      : null;
+    if (manual) sources.push(...manual.sources);
     if (!sources.length) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'No usable source in the selected scope');
     }
     const scopedConceptIds = new Set(usableMappings.map((mapping) => mapping.conceptId));
+    const manualOnly = new Set((manual?.sources ?? []).map((source) => source.conceptId).filter((id) => !scopedConceptIds.has(id)));
     const concepts = nodes
-      .filter((node) => scopedConceptIds.has(node.id))
-      .map((node) => this.conceptSpec(node, identityRules.get(node.id) ?? []));
+      .filter((node) => scopedConceptIds.has(node.id) || manualOnly.has(node.id))
+      .map((node) => this.conceptSpec(node, identityRules.get(node.id) ?? [], manualOnly.has(node.id)));
     const inScope = new Set(concepts.map((concept) => concept.conceptId));
     const relations: RelationSpec[] = [];
     const relationBindings: Array<{ relationId: string; referenceField: string; targetField: string }> = [];
@@ -303,7 +309,7 @@ export class SemanticPopulationRefreshService {
       relations,
       sourceScope: [...new Map(
         usableMappings.map((mapping) => [`${mapping.workspaceId}:${mapping.documentId}`, { workspaceId: mapping.workspaceId, assetId: mapping.documentId }]),
-      ).values()],
+      ).values(), ...(manual ? [{ workspaceId: homeWorkspaceId, assetId: manual.assetId }] : [])],
     };
     const issues = this.specifications.validate(draft);
     if (issues.length) {
@@ -374,9 +380,11 @@ export class SemanticPopulationRefreshService {
     return { ...accepted, skipped };
   }
 
-  private conceptSpec(node: NodeTypeRow, identityFields: string[]): ConceptSpec {
+  private conceptSpec(node: NodeTypeRow, identityFields: string[], manualOnly = false): ConceptSpec {
     const knownKeys = new Set((node.attributes ?? []).map((attribute) => attribute.key));
     const keyComponents = identityFields.filter((field) => knownKeys.has(field));
+    // Records typed by hand need no key: the runtime falls back to each record's own id.
+    if (!keyComponents.length && manualOnly && node.attributes?.length) keyComponents.push(node.attributes[0].key);
     if (!keyComponents.length) {
       throw new BadRequestException(
         ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
@@ -391,6 +399,59 @@ export class SemanticPopulationRefreshService {
       populationMode: 'materialized',
       allowedFields: (node.attributes ?? []).map((attribute) => attribute.key),
     };
+  }
+
+  /**
+   * Records entered by hand on the draft (including records migrated from the legacy pipeline) as one
+   * immutable runtime snapshot. The snapshot id hashes its content, so unchanged records reuse it.
+   */
+  private async manualSource(modelId: string, versionId: string, workspaceId: string, nodes: NodeTypeRow[]) {
+    const withFields = new Map(nodes.filter((node) => node.attributes?.length).map((node) => [node.id, node]));
+    const [records, recordRelations] = await Promise.all([
+      this.database.query<{ id: string; nodeTypeId: string; label: string; values: Record<string, unknown> }>(
+        `SELECT id, node_type_id AS "nodeTypeId", label, values FROM semantic_model.records
+         WHERE model_id=$1 AND version_id=$2 AND status='active' ORDER BY id`,
+        [modelId, versionId],
+      ).then((result) => result.rows.filter((row) => withFields.has(row.nodeTypeId))),
+      this.database.query<{ relationTypeId: string; sourceRecordId: string; targetRecordId: string }>(
+        `SELECT relation_type_id AS "relationTypeId", source_record_id AS "sourceRecordId", target_record_id AS "targetRecordId"
+         FROM semantic_model.record_relations WHERE model_id=$1 AND version_id=$2
+         ORDER BY relation_type_id, source_record_id, target_record_id`,
+        [modelId, versionId],
+      ).then((result) => result.rows),
+    ]);
+    if (!records.length) return null;
+    const known = new Set(records.map((record) => record.id));
+    const rows = records.map((record) => ({
+      conceptId: record.nodeTypeId,
+      rowKey: record.id,
+      label: record.label ?? '',
+      values: Object.fromEntries(Object.entries(record.values ?? {}).filter(([key]) => !key.startsWith('_'))),
+    }));
+    const links = recordRelations
+      .filter((link) => known.has(link.sourceRecordId) && known.has(link.targetRecordId))
+      .map((link) => ({ relationId: link.relationTypeId, sourceRowKey: link.sourceRecordId, targetRowKey: link.targetRecordId }));
+    const snapshotId = `m${this.specifications.hashCanonical({ modelId, rows, links }).replace(/^sha256:/, '').slice(0, 40)}`;
+    for (let index = 0; index < Math.max(rows.length, links.length); index += MANUAL_BATCH_SIZE) {
+      await this.runtime.appendManualRows(modelId, snapshotId, {
+        rows: rows.slice(index, index + MANUAL_BATCH_SIZE),
+        links: links.slice(index, index + MANUAL_BATCH_SIZE),
+      });
+    }
+    await this.runtime.commitManualSnapshot(modelId, snapshotId, { rowCount: rows.length, linkCount: links.length });
+    const assetId = `manual:${snapshotId}`;
+    const sources = [...new Set(rows.map((row) => row.conceptId))].map((conceptId) => {
+      const keys = withFields.get(conceptId)!.attributes.map((attribute) => attribute.key);
+      return {
+        sourceKind: 'manual' as const,
+        conceptId,
+        source: { workspaceId, assetId, snapshotId },
+        options: {},
+        columnMapping: Object.fromEntries(keys.map((key) => [key, key])),
+        mappingVersion: snapshotId,
+      };
+    });
+    return { assetId, sources };
   }
 
   private async loadScopeMappings(modelId: string, scope: PopulationRefreshScope): Promise<MappingRow[]> {

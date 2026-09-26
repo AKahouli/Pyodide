@@ -65,6 +65,9 @@ export interface RuntimeBoundRecords {
   };
 }
 
+export interface RuntimeManualRow { conceptId: string; rowKey: string; label: string; values: Record<string, unknown> }
+export interface RuntimeManualLink { relationId: string; sourceRowKey: string; targetRowKey: string }
+
 export interface RuntimePublishedBinding {
   modelId: string;
   modelVersionId: string;
@@ -328,6 +331,20 @@ export class SemanticRuntimeClientService {
     return this.get<RuntimePublishedBinding>(
       `/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/published`,
       actorUserId,
+    );
+  }
+
+  async appendManualRows(modelId: string, snapshotId: string, batch: { rows: RuntimeManualRow[]; links: RuntimeManualLink[] }): Promise<void> {
+    await this.post(
+      `/v1/semantic-model-population/manual-sources/${encodeURIComponent(modelId)}/snapshots/${encodeURIComponent(snapshotId)}/rows`,
+      batch,
+    );
+  }
+
+  async commitManualSnapshot(modelId: string, snapshotId: string, counts: { rowCount: number; linkCount: number }): Promise<{ reused: boolean }> {
+    return this.post(
+      `/v1/semantic-model-population/manual-sources/${encodeURIComponent(modelId)}/snapshots/${encodeURIComponent(snapshotId)}/commit`,
+      counts,
     );
   }
 }
