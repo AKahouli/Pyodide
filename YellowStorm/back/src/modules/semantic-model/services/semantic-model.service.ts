@@ -6,7 +6,6 @@ import { ConflictException, ForbiddenException, NotFoundException } from '@modul
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { CreateSemanticModelDto, SemanticModelQueryDto, UpdateSemanticModelDto } from '../dto';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
-import { SemanticAgeGraphRepository } from '../repositories/semantic-age-graph.repository';
 import { SemanticGraphRepository } from '../repositories/semantic-graph.repository';
 import { SemanticModelRepository, SemanticModelRow } from '../repositories/semantic-model.repository';
 import { SemanticRealtimeSignalService } from './semantic-realtime-signal.service';
@@ -42,7 +41,6 @@ export class SemanticModelService {
     private readonly models: SemanticModelRepository,
     private readonly graph: SemanticGraphRepository,
     private readonly workspaces: WorkspaceService,
-    private readonly ageGraph: SemanticAgeGraphRepository,
     private readonly realtimeSignals: SemanticRealtimeSignalService,
     private readonly runtime: SemanticRuntimeClientService,
   ) {}
@@ -164,7 +162,6 @@ export class SemanticModelService {
         `UPDATE semantic_model.models SET status='archived', archived_at=now(), revision=revision+1, updated_at=now()
          WHERE id=$1 AND revision=$2`, [model.id, expectedRevision]);
       if (!result.rowCount) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT);
-      await client.query('DELETE FROM semantic_model.graph_index_jobs WHERE model_id=$1',[modelId]);
       await this.audit(client, modelId, model.currentDraftVersionId, userId, 'model.archived', {});
     });
   }
@@ -200,20 +197,7 @@ export class SemanticModelService {
         });
         return target;
       });
-      try {
-        await this.ageGraph.dropGraph(clone.id);
-        const ageResult = await this.ageGraph.buildGraph(
-          this.remapCloneGraph(sourceGraph, clone.id, clone.currentDraftVersionId!, ids),
-          clone.id,
-        );
-        if (ageResult.failedVertexCount > 0 || ageResult.failedEdgeCount > 0) {
-          throw new ConflictException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'The cloned graph could not be fully materialized');
-        }
-        return clone;
-      } catch (error) {
-        await this.removeFailedClone(clone.id);
-        throw error;
-      }
+      return clone;
     } catch (error) {
       if (this.isUniqueViolation(error)) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NAME_EXISTS);
       throw error;
@@ -291,40 +275,9 @@ export class SemanticModelService {
     );
   }
 
-  private remapCloneGraph(source: Awaited<ReturnType<SemanticGraphRepository['getGraph']>>, modelId: string, versionId: string, ids: CloneIdMaps): Awaited<ReturnType<SemanticGraphRepository['getGraph']>> {
-    return {
-      modelId,
-      versionId,
-      revision: 0,
-      nodes: source.nodes.map((node) => ({ ...node, id: ids.nodeIds.get(node.id)! })),
-      relations: source.relations.map((relation) => ({
-        ...relation,
-        id: ids.relationIds.get(relation.id)!,
-        sourceNodeTypeId: ids.nodeIds.get(relation.sourceNodeTypeId)!,
-        targetNodeTypeId: ids.nodeIds.get(relation.targetNodeTypeId)!,
-      })),
-      records: source.records.map((record) => ({ ...record, id: ids.recordIds.get(record.id)!, nodeTypeId: ids.nodeIds.get(record.nodeTypeId)!, values: this.remapRecordValues(record.id, record.values, ids) })),
-      recordRelations: source.recordRelations.map((relation) => ({
-        ...relation,
-        id: ids.recordRelationIds.get(relation.id)!,
-        relationTypeId: ids.relationIds.get(relation.relationTypeId)!,
-        sourceRecordId: ids.recordIds.get(relation.sourceRecordId)!,
-        targetRecordId: ids.recordIds.get(relation.targetRecordId)!,
-      })),
-    };
-  }
-
   private remapRecordValues(recordId: string, values: Record<string, unknown>, ids: CloneIdMaps): Record<string, unknown> {
     if (values['_entity_key'] !== recordId) return { ...values };
     return { ...values, _entity_key: ids.recordIds.get(recordId)! };
-  }
-
-  private async removeFailedClone(modelId: string): Promise<void> {
-    try {
-      await this.database.query('DELETE FROM semantic_model.models WHERE id=$1', [modelId]);
-    } catch (cleanupError) {
-      this.logger.error(`Failed to clean up incomplete semantic model clone ${modelId}: ${(cleanupError as Error).message}`);
-    }
   }
 
   async overview(userId: string, modelId: string): Promise<Record<string, unknown>> {

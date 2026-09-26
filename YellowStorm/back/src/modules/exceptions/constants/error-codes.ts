@@ -422,7 +422,6 @@ export enum ErrorCode {
   SEMANTIC_MODEL_VERSION_IMMUTABLE = 'ERR_3708',
   SEMANTIC_MODEL_NO_DRAFT = 'ERR_3709',
   SEMANTIC_MODEL_UNAVAILABLE = 'ERR_3710',
-  SEMANTIC_MODEL_RUNTIME_OWNED = 'ERR_3711',
 }
 
 export const ErrorMessages: Record<ErrorCode, string> = {
@@ -744,7 +743,6 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.SEMANTIC_MODEL_VERSION_IMMUTABLE]: 'Published Semantic Model versions cannot be changed.',
   [ErrorCode.SEMANTIC_MODEL_NO_DRAFT]: 'This Semantic Model has no editable draft.',
   [ErrorCode.SEMANTIC_MODEL_UNAVAILABLE]: 'Semantic Model storage is temporarily unavailable.',
-  [ErrorCode.SEMANTIC_MODEL_RUNTIME_OWNED]: 'This Semantic Model is owned by the semantic runtime.',
 
   [ErrorCode.APP_DATA_DISABLED]: 'App Data is disabled on this instance.',
   [ErrorCode.APP_DATA_REMOTE_UNAVAILABLE]: 'The App Data microservice is unavailable.',
