@@ -138,6 +138,11 @@ const NEW_MODULE_PAIRS: KeyedPair[] = [
   { mongo: 'playbook_flow_replay_run_reports', pg: 'playbook.replay_run_reports', lowerCase: true },
   { mongo: 'playbook_flow_evaluation_baselines', pg: 'playbook.evaluation_baselines', lowerCase: true },
   { mongo: 'playbook_flow_evaluation_executions', pg: 'playbook.evaluation_executions', lowerCase: true },
+  // Conversation v1 history (2026-10-conversation-v1.ts). Postgres also holds the conversations created
+  // natively since the 2026-08-30 cutover (random ids, none in Mongo): they show up as extra, not as drift.
+  { mongo: 'conversations', pg: 'conversation.conversations', lowerCase: true },
+  { mongo: 'messages', pg: 'conversation.messages', lowerCase: true },
+  { mongo: 'reports', pg: 'conversation.reports', lowerCase: true },
 ];
 
 const ALL_PAIRS: KeyedPair[] = [
