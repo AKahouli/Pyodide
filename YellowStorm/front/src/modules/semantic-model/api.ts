@@ -29,6 +29,9 @@ const waitForDatasourceJob = async (modelId: string, jobId: string): Promise<Dat
   throw new Error('Source analysis timed out');
 };
 
+
+/** Publishing always publishes the structure; `data` says whether its records are now what chat reads. */
+export interface PublishResult { publishedVersionId: string; draftVersionId: string; revision: number; data?: { published: boolean; reason?: string } }
 export const semanticModelApi = {
   async list(params: Record<string, string | number | undefined> = {}): Promise<Paginated<SemanticModel>> {
     return unwrap(await apiClient.get<ApiResponse<Paginated<SemanticModel>>>(API_ENDPOINTS.semanticModels.base, { params }));
@@ -155,10 +158,10 @@ export const semanticModelApi = {
   async versions(id: string): Promise<SemanticVersion[]> {
     return unwrap(await apiClient.get<ApiResponse<SemanticVersion[]>>(API_ENDPOINTS.semanticModels.versions(id)));
   },
-  async publish(id: string): Promise<{ publishedVersionId: string; draftVersionId: string; revision: number }> {
+  async publish(id: string): Promise<PublishResult> {
     const model = await semanticModelApi.get(id);
     const graph = await semanticModelApi.graph(id);
-    return unwrap(await apiClient.post<ApiResponse<{ publishedVersionId: string; draftVersionId: string; revision: number }>>(API_ENDPOINTS.semanticModels.publish(id), { expectedRevision: model.revision, expectedGraphRevision: graph.revision }));
+    return unwrap(await apiClient.post<ApiResponse<PublishResult>>(API_ENDPOINTS.semanticModels.publish(id), { expectedRevision: model.revision, expectedGraphRevision: graph.revision }));
   },
   async restore(id: string, versionId: string): Promise<{ draftVersionId: string; revision: number }> {
     const model = await semanticModelApi.get(id);
