@@ -96,3 +96,45 @@ async def get_context(pool: Any, context_id: str) -> dict[str, Any] | None:
         context_id,
     )
     return dict(row) if row else None
+
+
+async def find_published_binding(pool: Any, projection_ref: str) -> dict[str, Any] | None:
+    """The production binding serving this graph; drafts and old revisions have none."""
+    row = await pool.fetchrow(
+        "SELECT model_id, model_version_id, data_revision_id FROM semantic_runtime.active_bindings "
+        "WHERE projection_ref = $1 AND environment = 'production'", projection_ref)
+    return dict(row) if row else None
+
+
+async def search_revision_entities(pool: Any, *, revision_id: str, terms: list[str],
+                                   limit: int) -> list[dict[str, Any]]:
+    patterns = ["%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+                for term in terms]
+    rows = await pool.fetch(
+        "SELECT id, concept_id, label, attributes, provenance FROM semantic_population.entities "
+        "WHERE data_revision_id = $1 AND (label ILIKE ANY($2::text[]) "
+        "OR attributes::text ILIKE ANY($2::text[])) LIMIT $3",
+        revision_id, patterns, limit)
+    return [{**dict(row), "attributes": _decode(row["attributes"]),
+             "provenance": _decode(row["provenance"])} for row in rows]
+
+
+async def revision_relationships(pool: Any, *, revision_id: str,
+                                 entity_ids: list[str]) -> list[dict[str, Any]]:
+    if not entity_ids:
+        return []
+    rows = await pool.fetch(
+        "SELECT r.relation_id, r.source_entity_id, r.target_entity_id, "
+        "s.concept_id AS source_concept_id, s.label AS source_label, "
+        "t.concept_id AS target_concept_id, t.label AS target_label "
+        "FROM semantic_population.relationships r "
+        "JOIN semantic_population.entities s ON s.data_revision_id = r.data_revision_id AND s.id = r.source_entity_id "
+        "JOIN semantic_population.entities t ON t.data_revision_id = r.data_revision_id AND t.id = r.target_entity_id "
+        "WHERE r.data_revision_id = $1 AND r.state = 'accepted' "
+        "AND (r.source_entity_id = ANY($2::text[]) OR r.target_entity_id = ANY($2::text[])) LIMIT 500",
+        revision_id, entity_ids)
+    return [dict(row) for row in rows]
+
+
+def _decode(value: Any) -> Any:
+    return json.loads(value) if isinstance(value, str) else (value or {})
