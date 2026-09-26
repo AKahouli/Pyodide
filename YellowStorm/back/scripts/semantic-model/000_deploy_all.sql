@@ -531,3 +531,17 @@ ALTER TABLE semantic_model.models ADD CONSTRAINT semantic_models_execution_owner
 ALTER TABLE semantic_model.graph_index_jobs DROP CONSTRAINT IF EXISTS graph_index_jobs_status_check;
 ALTER TABLE semantic_model.graph_index_jobs ADD CONSTRAINT graph_index_jobs_status_check CHECK (status IN ('pending','in_progress','indexed','failed','superseded'));
 CREATE INDEX IF NOT EXISTS semantic_models_execution_owner_idx ON semantic_model.models (execution_owner, updated_at DESC);
+
+-- 016 - Every model runs on the semantic runtime (UX phase 1).
+-- Records made by the legacy pipeline stay on the draft and are sent to the
+-- runtime as a manual source on the next build; chat reads a model only
+-- once a version built by the runtime is published.
+UPDATE semantic_model.models
+  SET execution_owner = 'runtime', runtime_claimed_at = COALESCE(runtime_claimed_at, now()),
+      runtime_claimed_by = COALESCE(runtime_claimed_by, 'migration:016'), updated_at = now()
+  WHERE execution_owner = 'legacy';
+ALTER TABLE semantic_model.models ALTER COLUMN execution_owner SET DEFAULT 'runtime';
+
+UPDATE semantic_model.graph_index_jobs
+  SET status = 'superseded', completed_at = now(), last_error = 'Moved to the semantic runtime', updated_at = now()
+  WHERE status IN ('pending', 'in_progress', 'failed');
