@@ -21,7 +21,6 @@ export type SemanticModelStatus = 'draft' | 'published' | 'archived';
 export type SemanticModelMaturity = 'automatic' | 'structured' | 'structured_with_records' | 'operational';
 export type EditorMode = 'structure' | 'records' | 'mappings';
 export type SaveStatus = 'saved' | 'saving' | 'offline' | 'error' | 'conflict';
-export type SemanticModelIndexStatus = 'not_indexed' | 'pending' | 'in_progress' | 'indexed' | 'failed';
 
 export interface SemanticModel {
   id: string;
@@ -44,14 +43,6 @@ export interface SemanticModel {
   brokenBindingCount?: number;
   createdAt: string;
   updatedAt: string;
-  indexStatus: SemanticModelIndexStatus;
-  indexError: string | null;
-  executionOwner?: 'legacy' | 'runtime';
-}
-
-export interface SemanticModelManualInstances {
-  nodeTypeId: string;
-  labels: string[];
 }
 
 export interface AttributeDefinition {
@@ -123,28 +114,6 @@ export interface AgeGraphEdge {
   properties: Record<string, unknown>;
 }
 
-export type AgeGraphOperation =
-  | { type: 'node.create'; nodeTypeId: string; label: string; values: Record<string, unknown> }
-  | { type: 'node.delete'; nodeId: string }
-  | { type: 'edge.create'; relationTypeId: string; sourceId: string; targetId: string }
-  | { type: 'edge.delete'; edgeId: string };
-
-export interface SemanticCorpusDocument {
-  sourceDocumentId: string;
-  workspaceId: string;
-  originalName: string;
-  indexingStatus?: 'none' | 'pending' | 'processing' | 'ready' | 'failed';
-}
-
-export interface SemanticCorpusBinding {
-  target: { kind: string; id: string | null; label: string };
-  documents: SemanticCorpusDocument[];
-}
-
-export interface SemanticCorpusManifest {
-  bindings: SemanticCorpusBinding[];
-}
-
 export interface SemanticGraph {
   modelId: string;
   versionId: string;
@@ -203,110 +172,6 @@ export interface SemanticVersion {
   publishedBy: string | null;
   publishedAt: string | null;
   createdAt: string;
-}
-
-export interface SemanticEvidenceSearchTask {
-  bindingId: string;
-  target: {
-    kind: KnowledgeBinding['targetKind'];
-    id?: string;
-    label: string;
-  };
-  workspaceId: string;
-  text: string;
-  evidence: Array<{
-    source: string;
-    fileName: string;
-    page?: string;
-    quote?: string;
-    workspaceId?: string;
-    reference?: string;
-  }>;
-  toolResults: Array<{ name: string; status: 'completed' | 'failed'; result: unknown }>;
-}
-
-export interface SemanticEvidenceSearchResponse {
-  modelId: string;
-  searchedAt: string;
-  tasks: SemanticEvidenceSearchTask[];
-  summary: {
-    searchedBindingCount: number;
-    candidateDocumentCount: number;
-  };
-}
-
-export interface MappingProposalJob {
-  jobId: string;
-  modelId: string;
-  status: 'running' | 'completed' | 'failed';
-  startedAt: string;
-  completedAt?: string;
-  result?: SemanticModelMappingProposalResponse;
-  error?: string;
-}
-
-export type SemanticBuildStatus = 'running' | 'completed' | 'failed';
-export type SemanticBuildStep = 'ontology' | 'mapping' | 'apply';
-export type SemanticBuildStepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
-export type SemanticBuildApplyMode = 'replace' | 'incremental';
-
-export interface SemanticBuildJob {
-  buildId: string;
-  modelId: string;
-  startedBy: string;
-  status: SemanticBuildStatus;
-  currentStep: SemanticBuildStep | null;
-  ontologyStatus: SemanticBuildStepStatus;
-  mappingStatus: SemanticBuildStepStatus;
-  applyStatus: SemanticBuildStepStatus;
-  applyMode: SemanticBuildApplyMode;
-  mappingJobId: string | null;
-  graphWarning: string | null;
-  error: string | null;
-  startedAt: string;
-  ontologyCompletedAt: string | null;
-  mappingCompletedAt: string | null;
-  applyCompletedAt: string | null;
-  completedAt: string | null;
-  lastHeartbeatAt: string;
-}
-
-export interface SemanticModelMappingProposalResponse {
-  modelId: string;
-  generatedAt: string;
-  search: {
-    searchedBindingCount: number;
-    candidateDocumentCount: number;
-  };
-  plan: {
-    nodes: Array<{
-      id: string;
-      nodeTypeId: string;
-      label: string;
-      attributes: Array<{ key: string; value: string | number | boolean; evidenceReferences: string[] }>;
-      evidenceReferences: string[];
-      confidence: number;
-    }>;
-    edges: Array<{
-      id: string;
-      relationTypeId: string;
-      sourceNodeId: string;
-      targetNodeId: string;
-      evidenceReferences: string[];
-      confidence: number;
-    }>;
-    mergeGroups: Array<{ canonicalNodeId: string; mergedNodeIds: string[]; reason: string }>;
-  };
-  proposals: SemanticModelMappingProposal[];
-}
-
-export interface SemanticModelMappingProposal {
-  id: string;
-  target: { nodeTypeLabel: string; attributeLabel: string };
-  value: string | number | boolean;
-  normalizedValue?: string | number | boolean;
-  normalization: { status: 'valid' | 'invalid'; reason: 'normalized' | 'empty_value' | 'invalid_number' | 'invalid_boolean' | 'invalid_date' | 'invalid_enum' };
-  evidence: { fileName: string; page?: string; quote: string };
 }
 
 export interface Paginated<T> {

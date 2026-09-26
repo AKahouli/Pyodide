@@ -1,7 +1,7 @@
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type { ApiResponse } from '@/lib/api/client';
-import type { AgeGraphEdge, AgeGraphNode, AgeGraphOperation, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, MappingProposalJob, Paginated, PopulationJob, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticBuildApplyMode, SemanticBuildJob, SemanticBuildStatus, SemanticCorpusManifest, SemanticDataPreview, SemanticEvidenceSearchResponse, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMappingProposalResponse, SemanticModelManualInstances, SemanticModelMember,
+import type { AgeGraphEdge, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
 SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, SemanticReviewItem, SemanticVersion,
 SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
 StructuredSourceAsset, ValidationIssue } from './types';
@@ -61,82 +61,9 @@ export const semanticModelApi = {
   async generateOntology(id: string, businessRequirements: string[]): Promise<{ modelId: string; generatedAt: string }> {
     return unwrap(await apiClient.post<ApiResponse<{ modelId: string; generatedAt: string }>>(API_ENDPOINTS.semanticModels.generateOntology(id), { businessRequirements }, { timeout: 0 }));
   },
-  async searchEvidence(id: string): Promise<SemanticEvidenceSearchResponse> {
-    return unwrap(await apiClient.post<ApiResponse<SemanticEvidenceSearchResponse>>(API_ENDPOINTS.semanticModels.evidenceSearch(id), {}, { timeout: 0 }));
-  },
-  async startMappingProposalJob(id: string): Promise<{ jobId: string; status: 'running' }> {
-    return unwrap(await apiClient.post<ApiResponse<{ jobId: string; status: 'running' }>>(
-      API_ENDPOINTS.semanticModels.mappingProposals(id),
-      {},
-      { timeout: 0 },
-    ));
-  },
-  async listMappingProposalJobs(id: string): Promise<MappingProposalJob[]> {
-    return unwrap(await apiClient.get<ApiResponse<MappingProposalJob[]>>(
-      API_ENDPOINTS.semanticModels.mappingProposalJobs(id),
-    ));
-  },
-  async getMappingProposalJob(id: string, jobId: string): Promise<MappingProposalJob> {
-    return unwrap(await apiClient.get<ApiResponse<MappingProposalJob>>(
-      API_ENDPOINTS.semanticModels.mappingProposalJob(id, jobId),
-    ));
-  },
-  async applyMappingPlan(
-    id: string,
-    jobId: string,
-    mode: 'replace' | 'incremental' = 'incremental',
-  ): Promise<{ appliedNodeCount: number; updatedNodeCount: number; deletedNodeCount: number; appliedEdgeCount: number; graphViewerWarning: string | null }> {
-    return unwrap(await apiClient.post<ApiResponse<{ appliedNodeCount: number; updatedNodeCount: number; deletedNodeCount: number; appliedEdgeCount: number; graphViewerWarning: string | null }>>(
-      `${API_ENDPOINTS.semanticModels.mappingPlanApply(id, jobId)}?mode=${mode}`,
-      {},
-      { timeout: 0 },
-    ));
-  },
   async getAgeGraph(id: string, dataRevisionId?: string): Promise<{ dataRevisionId?: string; nodes: AgeGraphNode[]; edges: AgeGraphEdge[] }> {
     return unwrap(await apiClient.get<ApiResponse<{ dataRevisionId?: string; nodes: AgeGraphNode[]; edges: AgeGraphEdge[] }>>(
       API_ENDPOINTS.semanticModels.ageGraph(id), { params: { dataRevisionId } },
-    ));
-  },
-  async rebuildAgeGraph(id: string): Promise<{ vertexCount: number; edgeCount: number; failedVertexCount: number; failedEdgeCount: number; graphViewerWarning: string | null }> {
-    return unwrap(await apiClient.post<ApiResponse<{ vertexCount: number; edgeCount: number; failedVertexCount: number; failedEdgeCount: number; graphViewerWarning: string | null }>>(
-      API_ENDPOINTS.semanticModels.ageGraphRebuild(id),
-      {},
-    ));
-  },
-  async indexAgeGraph(id: string): Promise<{ queued: true }> {
-    return unwrap(await apiClient.post<ApiResponse<{ queued: true }>>(
-      API_ENDPOINTS.semanticModels.ageGraphIndex(id),
-      {},
-    ));
-  },
-  async applyAgeGraphOperations(id: string, operations: AgeGraphOperation[]): Promise<{ appliedNodeCount: number; appliedEdgeCount: number; deletedNodeCount: number; deletedEdgeCount: number; graphViewerWarning: string | null }> {
-    return unwrap(await apiClient.post<ApiResponse<{ appliedNodeCount: number; appliedEdgeCount: number; deletedNodeCount: number; deletedEdgeCount: number; graphViewerWarning: string | null }>>(
-      API_ENDPOINTS.semanticModels.ageGraphOperations(id),
-      { operations },
-    ));
-  },
-  async corpus(id: string): Promise<SemanticCorpusManifest> {
-    return unwrap(await apiClient.get<ApiResponse<SemanticCorpusManifest>>(API_ENDPOINTS.semanticModels.corpus(id)));
-  },
-  async startBuild(
-    id: string,
-    businessRequirements: string[],
-    applyMode: SemanticBuildApplyMode = 'replace',
-    manualInstances: SemanticModelManualInstances[] = [],
-  ): Promise<{ buildId: string; status: SemanticBuildStatus }> {
-    return unwrap(await apiClient.post<ApiResponse<{ buildId: string; status: SemanticBuildStatus }>>(
-      API_ENDPOINTS.semanticModels.builds(id),
-      { businessRequirements, applyMode, manualInstances },
-    ));
-  },
-  async getBuild(id: string, buildId: string): Promise<SemanticBuildJob> {
-    return unwrap(await apiClient.get<ApiResponse<SemanticBuildJob>>(
-      API_ENDPOINTS.semanticModels.build(id, buildId),
-    ));
-  },
-  async getLatestBuild(id: string): Promise<SemanticBuildJob | null> {
-    return unwrap(await apiClient.get<ApiResponse<SemanticBuildJob | null>>(
-      API_ENDPOINTS.semanticModels.latestBuild(id),
     ));
   },
   async bindings(id: string): Promise<KnowledgeBinding[]> {

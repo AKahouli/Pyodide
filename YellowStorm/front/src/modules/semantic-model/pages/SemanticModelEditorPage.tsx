@@ -40,13 +40,11 @@ import { ObjectNavigator } from "../components/editor/ObjectNavigator";
 import { SemanticModelInspector } from "../components/editor/SemanticModelInspector";
 import { SemanticModelGraphViewer } from "../components/editor/SemanticModelGraphViewer";
 import { SemanticModelValidateDialog } from "../components/editor/SemanticModelValidateDialog";
-import { SemanticModelBuildProgressBanner } from "../components/editor/SemanticModelBuildProgressBanner";
 import { SourceMappingDrawer, sourceMappingTargetFromResource, type SourceMappingTarget } from "../components/mapping/SourceMappingDrawer";
 import { SemanticMappingsView } from '../components/mapping/SemanticMappingsView';
 import { SemanticDataPreview } from '../components/preview/SemanticDataPreview';
 import { SemanticTrustPanel } from '../components/review/SemanticTrustPanel';
 import { PopulationStartedPanel, type PopulationOutcome } from '../components/population/PopulationStartedPanel';
-import { isBuildActive, useSemanticBuildJob } from "../hooks/use-semantic-build-job";
 import { VersionsPanel } from "../components/versions/VersionsPanel";
 import { useKnowledgeLinking } from "../hooks/use-knowledge-linking";
 import { useMappingHealth, useSemanticGraph, useSemanticModel, useSemanticReadiness, useSourceMappings } from "../query/hooks";
@@ -154,8 +152,6 @@ export function SemanticModelEditorPage() {
     model.data?.role !== "viewer" &&
     Boolean(model.data?.currentDraftVersionId);
   const canValidate = canEdit && isSemanticGraphSaved({ graph, pending, saveStatus });
-  const buildJob = useSemanticBuildJob(modelId, Boolean(model.data && model.data.executionOwner !== 'runtime'));
-  const buildActive = isBuildActive(buildJob.data);
   useEffect(() => {
     if (
       !graphQuery.data ||
@@ -207,7 +203,6 @@ export function SemanticModelEditorPage() {
           batch.operations,
         );
         if (batch.operations.some((operation) => operation.type !== 'layout.update')) {
-          queryClient.setQueryData(semanticModelQueryKeys.model(modelId), (current: typeof model.data) => current ? { ...current,indexStatus: 'pending' as const,indexError: null } : current);
           void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.all });
         }
         if (saveIsCurrent()) markSaved(result.revision, batch.groupCount);
@@ -359,10 +354,6 @@ export function SemanticModelEditorPage() {
             </button>
           )}
         </div>
-        <div className="flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-[11px]" title={model.data?.indexError ?? undefined}>
-          <span className={`h-2 w-2 rounded-full ${model.data?.indexStatus === 'indexed' ? 'bg-emerald-500' : model.data?.indexStatus === 'failed' ? 'bg-red-500' : `bg-amber-500 ${model.data?.indexStatus === 'pending' || model.data?.indexStatus === 'in_progress' ? 'animate-pulse' : ''}`}`} />
-          {t(model.data?.indexStatus === 'indexed' ? 'indexStatus.indexed' : model.data?.indexStatus === 'failed' ? 'indexStatus.failed' : 'indexStatus.working')}
-        </div>
       </header>
       <div className='flex shrink-0 flex-wrap items-center justify-between gap-2 border-b bg-background px-4 py-2'>
         <Tabs value={mode} onValueChange={(value) => { setMode(value as EditorMode); if (value === 'structure') select(graph.nodes.find((node) => !node.systemKey)?.id ?? null); setTrustOpen(false); }} className='min-w-0 overflow-x-auto'><TabsList className='w-max'>{(['structure', 'mappings', 'records'] as const).map((item) => <TabsTrigger key={item} value={item}>{t(`mode.${item}`)}</TabsTrigger>)}</TabsList></Tabs>
@@ -374,12 +365,6 @@ export function SemanticModelEditorPage() {
           <Button variant='outline' size='sm' onClick={() => { setKnowledgeOpen(false); setVersionsOpen((open) => !open); }}><History className='mr-1.5 h-4 w-4' /><span className='sm:hidden'>{t('workspaceUi.publishShort')}</span><span className='hidden sm:inline'>{t('workspaceUi.publish')}</span></Button>
         </div>
       </div>
-      {modelId && model.data?.executionOwner !== 'runtime' && (
-        <SemanticModelBuildProgressBanner
-          modelId={modelId}
-          onRetry={() => setValidateOpen(true)}
-        />
-      )}
       <main className="relative flex min-h-0 flex-1">
         {versionsOpen && (
           <VersionsPanel
@@ -425,8 +410,8 @@ export function SemanticModelEditorPage() {
                 size="lg"
                 className="shadow-lg"
                 onClick={() => setValidateOpen(true)}
-                disabled={buildActive || !canValidate}
-                title={buildActive ? t("build.alreadyRunning") : !canValidate ? t("save.saving") : undefined}
+                disabled={!canValidate}
+                title={!canValidate ? t("save.saving") : undefined}
               >
                 <Zap className="mr-2 h-4 w-4" />
                 {t("validate.button")}
@@ -482,7 +467,6 @@ export function SemanticModelEditorPage() {
           open={validateOpen}
           onOpenChange={setValidateOpen}
           modelId={modelId}
-          runtimeOwned={model.data?.executionOwner === 'runtime'}
           onPopulationStarted={(outcome) => { setPopulation(outcome); setPopulationJobId(outcome.jobId); setTrustOpen(false); }}
         />
       )}
@@ -493,7 +477,6 @@ export function SemanticModelEditorPage() {
           modelId={modelId}
           dataRevisionId={boundDataRevisionId}
           onDataRevision={setBoundDataRevisionId}
-          canEdit={canEdit}
         />
       )}
       <Dialog open={saveStatus === "conflict"}>

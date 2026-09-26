@@ -3,10 +3,10 @@ import { semanticModelApi } from '../api';
 import { semanticModelQueryKeys } from './queryKeys';
 
 export function useSemanticModels(filters: Record<string, string | number | undefined>) {
-  return useQuery({ queryKey: semanticModelQueryKeys.catalog(filters), queryFn: () => semanticModelApi.list(filters), refetchInterval: (query) => query.state.data?.items.some((model) => model.indexStatus === 'pending' || model.indexStatus === 'in_progress') ? 3000 : false });
+  return useQuery({ queryKey: semanticModelQueryKeys.catalog(filters), queryFn: () => semanticModelApi.list(filters) });
 }
 export function useSemanticModel(id: string | undefined) {
-  return useQuery({ queryKey: semanticModelQueryKeys.model(id ?? 'none'), queryFn: () => semanticModelApi.get(id ?? ''), enabled: Boolean(id), refetchInterval: (query) => ['pending','in_progress'].includes(query.state.data?.indexStatus ?? '') ? 3000 : false });
+  return useQuery({ queryKey: semanticModelQueryKeys.model(id ?? 'none'), queryFn: () => semanticModelApi.get(id ?? ''), enabled: Boolean(id) });
 }
 export function useSemanticGraph(id: string | undefined) {
   return useQuery({ queryKey: semanticModelQueryKeys.graph(id ?? 'none'), queryFn: () => semanticModelApi.graph(id ?? ''), enabled: Boolean(id) });

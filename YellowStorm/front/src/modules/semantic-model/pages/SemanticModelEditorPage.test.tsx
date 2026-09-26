@@ -8,7 +8,6 @@ import { SemanticModelEditorPage } from "./SemanticModelEditorPage";
 
 const apiMocks = vi.hoisted(() => ({
   applyOperations: vi.fn(),
-  rebuildAgeGraph: vi.fn(),
   connectWorkspace: vi.fn(),
   getPopulationJob: vi.fn(),
 }));
@@ -16,7 +15,6 @@ const apiMocks = vi.hoisted(() => ({
 vi.mock("../api", () => ({
   semanticModelApi: {
     applyOperations: apiMocks.applyOperations,
-    rebuildAgeGraph: apiMocks.rebuildAgeGraph,
     connectWorkspace: apiMocks.connectWorkspace,
     getPopulationJob: apiMocks.getPopulationJob,
   },
@@ -77,12 +75,6 @@ vi.mock("../hooks/use-knowledge-linking", () => ({
   }),
 }));
 
-vi.mock("../hooks/use-semantic-build-job", () => ({
-  isBuildActive: () => false,
-  useSemanticBuildJob: () => ({ data: null, start: vi.fn() }),
-  useStartSemanticBuild: () => ({ mutateAsync: vi.fn(), isPending: false }),
-}));
-
 vi.mock("../components/editor/EditorDialogs", () => ({
   AddConceptDialog: () => null,
   AddRecordDialog: () => null,
@@ -126,19 +118,12 @@ describe("SemanticModelEditorPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     apiMocks.applyOperations.mockResolvedValue({ revision: 1 });
-    apiMocks.rebuildAgeGraph.mockResolvedValue({
-      vertexCount: 0,
-      edgeCount: 0,
-      failedVertexCount: 0,
-      failedEdgeCount: 0,
-      graphViewerWarning: null,
-    });
     apiMocks.connectWorkspace.mockResolvedValue(undefined);
     apiMocks.getPopulationJob.mockResolvedValue({ jobId: 'job-1', state: 'completed' });
     useSemanticModelEditorStore.getState().reset();
   });
 
-  it("does not block autosave on a synchronous AGE rebuild", async () => {
+  it("autosaves graph operations", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
     fireEvent.click(await screen.findByRole('button', { name: 'workspaceUi.diagram' }));
@@ -166,7 +151,6 @@ describe("SemanticModelEditorPage", () => {
     });
 
     await waitFor(() => expect(apiMocks.applyOperations).toHaveBeenCalled(), { timeout: 2_000 });
-    expect(apiMocks.rebuildAgeGraph).not.toHaveBeenCalled();
   });
 
   it("rehydrates cached graph data during Strict Mode effect replay", async () => {
