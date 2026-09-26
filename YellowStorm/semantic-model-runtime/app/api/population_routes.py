@@ -12,7 +12,7 @@ import os
 from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 
 from app.jobs.models import (ActivateRevisionCommand, CorrectionCommand, IdempotencyConflict,
-                             MirrorSpecificationCommand, PopulationCommand,
+                             MirrorSpecificationCommand, PopulationCommand, PublishModelDataCommand,
                              ReviewResolveCommand)
 from app.persistence import population_store as store
 from app.population.age_projection import (ProjectionUnavailable, ensure_revision_projection,
@@ -252,3 +252,53 @@ async def activate_revision(revision_id: str, command: ActivateRevisionCommand,
     binding = await store.get_active_binding(pool, command.model_id, command.environment)
     return {"modelId": command.model_id, "environment": command.environment,
             "active": binding}
+
+
+@router.post("/models/{model_id}/publish", status_code=status.HTTP_200_OK)
+async def publish_model_data(model_id: str, command: PublishModelDataCommand,
+                             request: Request) -> dict[str, object]:
+    """Serve the draft data revision in production once its model version is published.
+
+    Only data built from that exact version is promoted; the binding CAS also
+    refuses a revision whose specification is no longer current for it.
+    """
+    pool = _population_pool(request)
+    draft = await store.get_active_binding(pool, model_id, "draft")
+    if draft is None:
+        raise HTTPException(status_code=409, detail="no_draft_data")
+    if draft["model_version_id"] != command.model_version_id:
+        raise HTTPException(status_code=409, detail="draft_data_outdated")
+    revision_id = draft["data_revision_id"]
+    revision = await store.get_data_revision(pool, revision_id)
+    if revision is None:
+        raise HTTPException(status_code=409, detail="no_draft_data")
+    try:
+        projection = await ensure_revision_projection(pool, _age_pool(request), revision_id)
+    except PopulationError as exc:
+        raise HTTPException(status_code=409, detail=exc.code) from exc
+    except ProjectionUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    current = await store.get_active_binding(pool, model_id, "production")
+    if current is not None and current["data_revision_id"] == revision_id             and current["model_version_id"] == command.model_version_id:
+        return {"modelId": model_id, "environment": "production", "active": current, "reused": True}
+    swapped = await store.cas_active_binding(
+        pool, model_id=model_id, environment="production",
+        expected_version=None if current is None else current["version"],
+        model_version_id=command.model_version_id, data_revision_id=revision_id,
+        projection_ref=projection["projectionRef"],
+        correction_sequence=revision["correction_sequence"], spec_hash=revision["spec_hash"],
+        emit_signal=os.environ.get("SEMANTIC_MODEL_REALTIME_ENABLED") == "true")
+    if not swapped:
+        raise HTTPException(status_code=409, detail="draft_data_outdated")
+    binding = await store.get_active_binding(pool, model_id, "production")
+    return {"modelId": model_id, "environment": "production", "active": binding, "reused": False}
+
+
+@router.get("/models/{model_id}/published", status_code=status.HTTP_200_OK)
+async def read_published_binding(model_id: str, request: Request) -> dict[str, object]:
+    binding = await store.get_active_binding(_population_read_pool(request), model_id, "production")
+    if binding is None:
+        raise HTTPException(status_code=404, detail="model_not_published")
+    return {"modelId": model_id, "modelVersionId": binding["model_version_id"],
+            "dataRevisionId": binding["data_revision_id"],
+            "projectionRef": binding["projection_ref"]}

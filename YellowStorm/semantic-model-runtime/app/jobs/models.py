@@ -254,3 +254,12 @@ class IdempotencyConflict(Exception):
 
 class StaleLease(Exception):
     pass
+
+
+class PublishModelDataCommand(BaseModel):
+    """Promote the model's draft data revision to production for a published version."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    actor_user_id: str = Field(alias="actorUserId", min_length=1, max_length=200)
+    model_version_id: str = Field(alias="modelVersionId", min_length=1, max_length=200)

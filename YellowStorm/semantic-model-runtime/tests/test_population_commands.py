@@ -380,3 +380,42 @@ def test_mirror_specification_validates_and_reuses(client: TestClient):
 def test_commands_require_service_key_and_store(client: TestClient):
     assert client.post("/v1/semantic-model-population/corrections",
                        json=CORRECTION).status_code == 401
+
+
+def test_publish_promotes_the_draft_revision_of_the_published_version(client: TestClient):
+    revision = {"id": "dr_1", "model_id": "m1", "spec_hash": "sha256:" + "a" * 64,
+                "validation_state": "valid",
+                "projection_ref": "age:v1:pop_dr_1", "correction_sequence": 0}
+    draft = {"model_id": "m1", "environment": "draft", "model_version_id": "v1",
+             "data_revision_id": "dr_1", "version": 3, "projection_ref": "age:v1:pop_dr_1"}
+    production = {**draft, "environment": "production", "version": 1}
+    body = {"actorUserId": "u1", "modelVersionId": "v1"}
+    _inject(client, ScriptedPool([draft, revision, revision, None, {"version": 1}, production]), FakeAgePool())
+    response = client.post("/v1/semantic-model-population/models/m1/publish", headers=AUTH, json=body)
+    assert response.status_code == 200
+    assert response.json()["active"]["environment"] == "production"
+    assert response.json()["reused"] is False
+
+    _inject(client, ScriptedPool([draft, revision, revision, production]), FakeAgePool())
+    again = client.post("/v1/semantic-model-population/models/m1/publish", headers=AUTH, json=body)
+    assert again.json()["reused"] is True
+
+    _inject(client, ScriptedPool([{**draft, "model_version_id": "v0"}]))
+    outdated = client.post("/v1/semantic-model-population/models/m1/publish", headers=AUTH, json=body)
+    assert outdated.status_code == 409
+    assert outdated.json()["detail"] == "draft_data_outdated"
+
+    _inject(client, ScriptedPool([None]))
+    missing = client.post("/v1/semantic-model-population/models/m1/publish", headers=AUTH, json=body)
+    assert missing.json()["detail"] == "no_draft_data"
+
+
+def test_published_binding_is_readable_and_404_when_unpublished(client: TestClient):
+    production = {"model_id": "m1", "model_version_id": "v1", "data_revision_id": "dr_1",
+                  "projection_ref": "age:v1:pop_dr_1", "version": 1}
+    _inject(client, ScriptedPool([production]))
+    response = client.get("/v1/semantic-model-population/models/m1/published", headers=AUTH)
+    assert response.json()["projectionRef"] == "age:v1:pop_dr_1"
+    _inject(client, ScriptedPool([None]))
+    assert client.get("/v1/semantic-model-population/models/m1/published",
+                      headers=AUTH).status_code == 404
