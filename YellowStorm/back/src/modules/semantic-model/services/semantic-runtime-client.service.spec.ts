@@ -43,6 +43,19 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
     }));
   });
 
+  it('stops a job as its actor and finds the model run still going', async () => {
+    const client = new SemanticRuntimeClientService(config() as any);
+    fetchMock.mockResolvedValueOnce(jsonResponse({ jobId: 'j/1', state: 'cancel_requested' }));
+    await expect(client.cancelJob('j/1', 'u1')).resolves.toMatchObject({ state: 'cancel_requested' });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://runtime:8000/v1/semantic-model-jobs/j%2F1/cancel');
+    expect(init.headers).toEqual(expect.objectContaining({ 'X-Actor-User-Id': 'u1', 'X-Semantic-Service-Key': 'secret' }));
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ job: null }));
+    await expect(client.getActiveJob('m1', 'u1')).resolves.toBeNull();
+    expect(fetchMock.mock.calls[1][0]).toBe('http://runtime:8000/v1/semantic-model-jobs/active?modelId=m1&jobType=population.run');
+  });
+
   it('refuses writes when the runtime is disabled or unconfigured', async () => {
     const disabled = new SemanticRuntimeClientService(config({ runtimeWritesEnabled: false }) as any);
     await expect(disabled.requestPopulationRun(runCommand, 'k')).rejects.toMatchObject({

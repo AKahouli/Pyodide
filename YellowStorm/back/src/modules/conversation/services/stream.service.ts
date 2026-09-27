@@ -2286,6 +2286,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           completedAt: (incoming.completedAt as string) || (existing.completedAt as string) || '',
           durationMs: incoming.durationMs ?? existing.durationMs,
           resultJson: (incoming.resultJson as string) || (existing.resultJson as string) || '',
+          ...((incoming.uiTargets ?? existing.uiTargets) ? { uiTargets: incoming.uiTargets ?? existing.uiTargets } : {}),
           actorId: (incoming.actorId as string) || (existing.actorId as string) || '',
           actorName: (incoming.actorName as string) || (existing.actorName as string) || '',
           primaryInput: (incoming.primaryInput as string) || (existing.primaryInput as string) || '',

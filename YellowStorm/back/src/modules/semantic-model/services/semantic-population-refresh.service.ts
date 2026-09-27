@@ -122,6 +122,23 @@ export class SemanticPopulationRefreshService {
     return job;
   }
 
+  /** The data update of this model still running for this person, or null. */
+  async activeJob(userId: string, modelId: string) {
+    await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    return this.runtime.getActiveJob(modelId, userId);
+  }
+
+  /**
+   * Stop a data update. Nothing it read is kept: the data in use stays as it was before the run.
+   * A run that already ended is returned as it is.
+   */
+  async stopJob(userId: string, modelId: string, jobId: string) {
+    await this.models.requireRole(userId, modelId, ['owner', 'editor']);
+    const job = await this.getJob(userId, modelId, jobId);
+    if (['completed', 'completed_with_gaps', 'failed', 'cancelled', 'superseded'].includes(job.state)) return job;
+    return this.runtime.cancelJob(jobId, userId);
+  }
+
   /**
    * One concept's records in the data in use, a page at a time and optionally searched, with where each
    * value came from. Answers "nothing yet" rather than failing when no data has been generated.

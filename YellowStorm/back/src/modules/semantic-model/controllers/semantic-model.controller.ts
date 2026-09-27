@@ -45,7 +45,7 @@ import { SemanticBusinessTrustService } from '../services/semantic-business-trus
 import { SemanticPopulationRefreshService } from '../services/semantic-population-refresh.service';
 import { SemanticReviewQueueService } from '../services/semantic-review-queue.service';
 import { SemanticModelAssistantService } from '../services/semantic-model-assistant.service';
-import { AssistantChangesQueryDto } from '../dto/semantic-model-assistant.dto';
+import { AssistantChangesQueryDto, SourceSuggestionStatusDto } from '../dto/semantic-model-assistant.dto';
 
 @ApiTags('Semantic Models')
 @ApiBearerAuth()
@@ -310,6 +310,21 @@ export class SemanticModelController {
     return this.populationRefresh.getJob(user._id.toString(), modelId, jobId);
   }
 
+  @Get(':modelId/population/active')
+  @ApiOperation({ summary: 'The data update still running for this model, if any' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  activePopulationJob(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
+    return this.populationRefresh.activeJob(user._id.toString(), modelId).then((job) => ({ job }));
+  }
+
+  @Post(':modelId/population/jobs/:jobId/stop')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Stop a data update; the data in use stays as it was' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  stopPopulationJob(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('jobId') jobId: string) {
+    return this.populationRefresh.stopJob(user._id.toString(), modelId, jobId);
+  }
+
   @Get(':modelId/relation-resolution-rules')
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
   listRelationResolutionRules(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
@@ -459,6 +474,27 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   redoAssistantChange(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('changeId') changeId: string) {
     return this.assistant.redoChange({ userId: user._id.toString() },modelId,changeId);
+  }
+
+  @Get(':modelId/source-suggestions')
+  @ApiOperation({ summary: 'Sources an assistant suggested for the concepts, and whether each was used or skipped' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  sourceSuggestions(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
+    return this.assistant.listSuggestions(user._id.toString(),modelId);
+  }
+
+  @Get(':modelId/source-files')
+  @ApiOperation({ summary: 'Files matching a name across the workspaces the person can open, to choose a source' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  async searchSourceFiles(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Query('search') search = '',@Query('page') page?: string) {
+    await this.models.get(user._id.toString(),modelId);
+    return this.assistant.searchSourceFiles(user._id.toString(),search,Math.max(1,Number(page)||1));
+  }
+
+  @Put(':modelId/source-suggestions/:conceptKey/status')
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  setSourceSuggestionStatus(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('conceptKey') conceptKey: string,@Body() dto: SourceSuggestionStatusDto) {
+    return this.assistant.setSuggestionStatus(user._id.toString(),modelId,conceptKey,dto.status);
   }
 
   // ── Sharing ────────────────────────────────────────────────────────────────

@@ -310,6 +310,20 @@ export class SemanticRuntimeClientService {
     );
   }
 
+  /** The actor's run for the model that has not ended yet, if any. */
+  async getActiveJob(modelId: string, actorUserId: string, jobType = 'population.run'): Promise<RuntimeJob | null> {
+    const params = new URLSearchParams({ modelId, jobType });
+    const { job } = await this.get<{ job: RuntimeJob | null }>(`/v1/semantic-model-jobs/active?${params}`, actorUserId);
+    return job;
+  }
+
+  /** Stop a job: one not started yet ends at once, a running one stops at its next step. */
+  async cancelJob(jobId: string, actorUserId: string): Promise<RuntimeJob> {
+    return this.post<RuntimeJob>(`/v1/semantic-model-jobs/${encodeURIComponent(jobId)}/cancel`, {}, {
+      'X-Actor-User-Id': actorUserId,
+    });
+  }
+
   async searchConceptRecords(modelId: string, conceptId: string, actorUserId: string,
     query: { q?: string; limit: number; offset: number; dataRevisionId?: string }): Promise<RuntimeConceptRecordsPage> {
     const params = new URLSearchParams({ environment: 'draft', limit: String(query.limit), offset: String(query.offset) });

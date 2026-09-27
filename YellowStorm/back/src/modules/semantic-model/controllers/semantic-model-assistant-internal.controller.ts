@@ -11,8 +11,9 @@ import {
   AssistantModelChangesDto,
   AssistantProfileDto,
   AssistantRecordsQueryDto,
+  AssistantSuggestSourcesDto,
 } from '../dto/semantic-model-assistant.dto';
-import { SemanticAssistantActorGuard, assistantActorFrom } from '../guards/semantic-assistant-actor.guard';
+import { SemanticAssistantActorGuard, SemanticAssistantModelGuard, assistantActorFrom } from '../guards/semantic-assistant-actor.guard';
 import { SemanticModelAssistantService } from '../services/semantic-model-assistant.service';
 
 type ActorRequest = { headers: Record<string, string | string[] | undefined> };
@@ -25,12 +26,13 @@ const PUBLISH = [Permissions.SEMANTIC_MODELS_PUBLISH, Permissions.SEMANTIC_MODEL
 /**
  * Trusted service-to-service surface for the semantic model MCP server (mcp-semantic-model). Authenticated
  * with X-Internal-Token plus the identity of the person the agent acts for; that person's permissions and
- * model roles apply to every call, through the same services as the editor.
+ * model roles apply to every call, through the same services as the editor. A model can be named by its id
+ * or by its exact name.
  */
 @ApiTags('Semantic Model Assistant Internal')
 @Public()
 @Controller('internal/semantic-model-assistant')
-@UseGuards(InternalServiceGuard, SemanticAssistantActorGuard, PermissionsGuard)
+@UseGuards(InternalServiceGuard, SemanticAssistantActorGuard, PermissionsGuard, SemanticAssistantModelGuard)
 export class SemanticModelAssistantInternalController {
   constructor(private readonly assistant: SemanticModelAssistantService) {}
 
@@ -117,6 +119,19 @@ export class SemanticModelAssistantInternalController {
     return this.assistant.mapDocuments(assistantActorFrom(request.headers), modelId, dto);
   }
 
+  @Post('models/:modelId/source-suggestions')
+  @ApiOperation({ summary: 'Suggest sources for concepts; nothing is connected until a person picks one' })
+  @RequirePermissions(UPDATE, 'any')
+  suggestSources(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Body() dto: AssistantSuggestSourcesDto) {
+    return this.assistant.suggestSources(assistantActorFrom(request.headers), modelId, dto.suggestions);
+  }
+
+  @Get('models/:modelId/source-suggestions')
+  @RequirePermissions(READ, 'any')
+  listSuggestions(@Req() request: ActorRequest, @Param('modelId') modelId: string) {
+    return this.assistant.listSuggestions(assistantActorFrom(request.headers).userId, modelId);
+  }
+
   @Delete('models/:modelId/sources/:sourceId')
   @RequirePermissions(UPDATE, 'any')
   removeSource(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Param('sourceId') sourceId: string) {
@@ -129,10 +144,31 @@ export class SemanticModelAssistantInternalController {
     return this.assistant.runUpdate(assistantActorFrom(request.headers).userId, modelId);
   }
 
+  @Get('models/:modelId/runs/active')
+  @RequirePermissions(READ, 'any')
+  activeRun(@Req() request: ActorRequest, @Param('modelId') modelId: string) {
+    return this.assistant.runStatus(assistantActorFrom(request.headers).userId, modelId);
+  }
+
   @Get('models/:modelId/runs/:jobId')
   @RequirePermissions(READ, 'any')
   runStatus(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Param('jobId') jobId: string) {
     return this.assistant.runStatus(assistantActorFrom(request.headers).userId, modelId, jobId);
+  }
+
+  @Post('models/:modelId/runs/stop')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Stop the running data update; the data in use stays as it was' })
+  @RequirePermissions(UPDATE, 'any')
+  stopActiveRun(@Req() request: ActorRequest, @Param('modelId') modelId: string) {
+    return this.assistant.stopRun(assistantActorFrom(request.headers).userId, modelId);
+  }
+
+  @Post('models/:modelId/runs/:jobId/stop')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions(UPDATE, 'any')
+  stopRun(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Param('jobId') jobId: string) {
+    return this.assistant.stopRun(assistantActorFrom(request.headers).userId, modelId, jobId);
   }
 
   @Get('models/:modelId/concepts/:concept/records')

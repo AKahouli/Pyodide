@@ -3,6 +3,7 @@ import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { AuthorizationService } from '@modules/authorization';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { SemanticModelAssistantService } from '../services/semantic-model-assistant.service';
 
 type Headers = Record<string, string | string[] | undefined>;
 
@@ -29,6 +30,22 @@ export class SemanticAssistantActorGuard implements CanActivate {
     const roles = await this.authorization.getUserRoles(userId);
     const permissions = await this.authorization.getUserPermissions(roles.map((role) => role.id));
     request.user = { _id: userId, permissions };
+    return true;
+  }
+}
+
+/**
+ * Lets the assistant surface name a model by its id or by its exact name ("Billing & Contract
+ * Management"): a name is turned into the id of the one model with that name the person can see.
+ */
+@Injectable()
+export class SemanticAssistantModelGuard implements CanActivate {
+  constructor(private readonly assistant: SemanticModelAssistantService) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const request = context.switchToHttp().getRequest<{ headers: Headers; params?: Record<string, string> }>();
+    const reference = request.params?.modelId;
+    if (reference) request.params!.modelId = await this.assistant.resolveModelId(String(request.headers['x-yellowstorm-user-id']), reference);
     return true;
   }
 }

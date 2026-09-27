@@ -60,6 +60,7 @@ function sanitizePublicShareMessages(messages: readonly EmbeddedMessage[]): Embe
                   paramsJson: _paramsJson,
                   resultJson: _resultJson,
                   primaryInput: _primaryInput,
+                  uiTargets: _uiTargets,
                   ...displayData
                 } = component.data;
                 return sanitizePublicComponent({ ...component, data: displayData });

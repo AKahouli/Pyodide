@@ -40,7 +40,7 @@ import { SemanticDataGrantRevocationService } from './services/semantic-data-gra
 import { SemanticRealtimeSignalService } from './services/semantic-realtime-signal.service';
 import { SemanticModelAssistantService } from './services/semantic-model-assistant.service';
 import { SemanticModelAssistantInternalController } from './controllers/semantic-model-assistant-internal.controller';
-import { SemanticAssistantActorGuard } from './guards/semantic-assistant-actor.guard';
+import { SemanticAssistantActorGuard, SemanticAssistantModelGuard } from './guards/semantic-assistant-actor.guard';
 
 @Module({
   imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,UserModule,IntegrationEventsModule,forwardRef(() => WorkspaceModule)],
@@ -69,6 +69,7 @@ import { SemanticAssistantActorGuard } from './guards/semantic-assistant-actor.g
     SemanticAccessEventHandler,
     SemanticModelAssistantService,
     SemanticAssistantActorGuard,
+    SemanticAssistantModelGuard,
   ],
   exports: [SemanticModelDatabaseService,SemanticModelProvisioningService,SemanticModelService,SemanticDataGrantRevocationService],
 })

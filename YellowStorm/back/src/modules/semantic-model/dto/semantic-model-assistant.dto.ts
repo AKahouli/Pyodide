@@ -106,3 +106,25 @@ export class AssistantRecordsQueryDto {
 export class AssistantChangesQueryDto {
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(40) since?: string;
 }
+
+export class AssistantSuggestionOptionDto {
+  @ApiProperty() @IsString() @MinLength(1) @MaxLength(200) workspaceId!: string;
+  @ApiPropertyOptional({ type: [String] }) @IsOptional() @IsArray() @ArrayMaxSize(500) @IsString({ each: true }) folderIds?: string[];
+  @ApiPropertyOptional({ type: [String] }) @IsOptional() @IsArray() @ArrayMaxSize(500) @IsString({ each: true }) documentIds?: string[];
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(200) sheetName?: string;
+  @ApiPropertyOptional({ description: 'Why this source fits the concept, in a few words' }) @IsOptional() @IsString() @MaxLength(300) reason?: string;
+}
+
+export class AssistantSourceSuggestionDto {
+  @ApiProperty() @IsString() @MinLength(1) @MaxLength(160) concept!: string;
+  @ApiPropertyOptional({ type: [AssistantSuggestionOptionDto], description: 'Empty: the person chooses the files from the list of their workspaces' }) @IsOptional() @IsArray() @ArrayMaxSize(5) @ValidateNested({ each: true }) @Type(() => AssistantSuggestionOptionDto) options?: AssistantSuggestionOptionDto[];
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(500) note?: string;
+}
+
+export class AssistantSuggestSourcesDto {
+  @ApiProperty({ type: [AssistantSourceSuggestionDto] }) @IsArray() @ArrayMaxSize(30) @ValidateNested({ each: true }) @Type(() => AssistantSourceSuggestionDto) suggestions!: AssistantSourceSuggestionDto[];
+}
+
+export class SourceSuggestionStatusDto {
+  @ApiProperty({ enum: ['pending', 'skipped'] }) @IsIn(['pending', 'skipped']) status!: 'pending' | 'skipped';
+}

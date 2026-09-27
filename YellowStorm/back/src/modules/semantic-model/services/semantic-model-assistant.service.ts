@@ -128,7 +128,61 @@ export interface ChangeSetRow {
   undoneAt: string | null;
 }
 
+/** Where a button in the conversation takes the person: the model's canvas, or its suggested sources. */
+export interface AssistantUiTarget {
+  surface: 'semanticModel.editor' | 'semanticModel.sources';
+  params: { modelId: string; modelName: string };
+}
+
+/** A source the assistant suggests for a concept, as the person asked for it or as it proposes it. */
+export interface SourceSuggestionOptionInput {
+  workspaceId: string;
+  folderIds?: string[];
+  documentIds?: string[];
+  sheetName?: string;
+  reason?: string;
+}
+
+export interface SourceSuggestionInput {
+  concept: string;
+  /** Empty or absent: the person chooses the files from the list of their workspaces. */
+  options?: SourceSuggestionOptionInput[];
+  note?: string;
+}
+
+/** One suggested source, with the names and counts a person needs to judge it. */
+export interface SourceSuggestionOption {
+  workspaceId: string;
+  workspaceName: string;
+  /** workspace: every file; documents: picked folders and files; document / spreadsheet: one file. */
+  kind: 'workspace' | 'documents' | 'document' | 'spreadsheet';
+  folderIds: string[];
+  documentIds: string[];
+  folders: string[];
+  documents: string[];
+  sheetName?: string;
+  mimeType?: string;
+  fileCount: number;
+  stillIndexing: number;
+  reason: string;
+}
+
+interface SuggestionRow {
+  id: string;
+  conceptId: string;
+  conceptKey: string;
+  options: SourceSuggestionOption[];
+  note: string;
+  status: 'pending' | 'skipped';
+  createdAt: string;
+  updatedAt: string;
+}
+
 const MAX_CONCEPTS_PER_CHANGE = 60;
+const MAX_SUGGESTED_CONCEPTS = 30;
+const MAX_OPTIONS_PER_CONCEPT = 5;
+const RUN_ENDED = new Set(['completed', 'completed_with_gaps', 'failed', 'cancelled', 'superseded']);
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CHANGE_SET_COLUMNS = `id, model_id AS "modelId", version_id AS "versionId", actor_user_id AS "actorUserId", agent_id AS "agentId",
   summary, graph_forward AS "graphForward", graph_undo AS "graphUndo", identity_before AS "identityBefore",
   identity_after AS "identityAfter", sources_added AS "sourcesAdded", sources_removed AS "sourcesRemoved",
@@ -176,7 +230,23 @@ export class SemanticModelAssistantService {
 
   async createModel(actor: AssistantActor, name: string, description?: string) {
     const model = await this.models.create(actor.userId, { name, description });
-    return { modelId: model.id, name: model.name, editorPath: this.editorPath(model.id) };
+    return { modelId: model.id, name: model.name, model: this.modelRef(model), editorPath: this.editorPath(model.id), uiTarget: this.uiTarget(model) };
+  }
+
+  /**
+   * The id of a model named by its id or by its exact name, among the models this person can see.
+   * Lets people (and assistants) talk about "the billing model" without ever handling an id.
+   */
+  async resolveModelId(userId: string, reference: string): Promise<string> {
+    const wanted = reference.trim();
+    if (UUID.test(wanted)) return wanted;
+    const { models } = await this.listModels(userId, wanted);
+    const matches = models.filter((model) => normalize(String(model.name ?? '')) === normalize(wanted));
+    if (matches.length === 1) return String(matches[0].id);
+    if (matches.length > 1) {
+      throw new ConflictException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Several models are named "${wanted}"; open the one you mean from the model list`);
+    }
+    throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, `There is no model named "${wanted}"`);
   }
 
   /** The model as a person would describe it: concepts with their fields, relationships and sources, by name. */
@@ -192,6 +262,7 @@ export class SemanticModelAssistantService {
     const freshness = await this.population.freshness(userId, modelId).catch(() => ({ state: 'not_runnable' as const }));
     return {
       model: { id: model.id, name: model.name, description: model.description, status: model.status, role: model.role, editorPath: this.editorPath(model.id) },
+      uiTarget: this.uiTarget(model),
       concepts: concepts.map((node) => ({
         key: node.key, label: node.label, description: node.description, category: node.category, recordPolicy: node.recordPolicy,
         fields: node.attributes.map((field) => ({ key: field.key, label: field.label, type: field.type, required: field.required, ...(field.options?.length ? { options: field.options } : {}) })),
@@ -241,7 +312,7 @@ export class SemanticModelAssistantService {
     const operations = graphDiff(before, plan.after);
     const identityChanged = Object.keys(plan.identity).filter((conceptId) => JSON.stringify(plan.identity[conceptId]) !== JSON.stringify(identityBefore[conceptId] ?? []));
     if (dryRun || (!operations.length && !identityChanged.length)) {
-      return { applied: false, dryRun, summary: plan.summary, operationCount: operations.length, issues };
+      return { applied: false, dryRun, model: this.modelRef(model), summary: plan.summary, operationCount: operations.length, issues };
     }
     if (operations.length) {
       await this.graph.apply(actor.userId, modelId, { expectedRevision: before.revision, operations: operations as unknown as Record<string, unknown>[] });
@@ -254,7 +325,10 @@ export class SemanticModelAssistantService {
       identityBefore: Object.fromEntries(identityChanged.map((conceptId) => [conceptId, identityBefore[conceptId] ?? []])),
       identityAfter: Object.fromEntries(identityChanged.map((conceptId) => [conceptId, plan.identity[conceptId]])),
     });
-    return { applied: true, changeId: changeSet, summary: plan.summary, operationCount: operations.length, issues, editorPath: this.editorPath(model.id) };
+    return {
+      applied: true, changeId: changeSet, model: this.modelRef(model), summary: plan.summary, operationCount: operations.length, issues,
+      editorPath: this.editorPath(model.id), uiTarget: this.uiTarget(model),
+    };
   }
 
   private plan(before: SemanticGraph, identityBefore: Record<string, string[]>, changes: AssistantModelChanges) {
@@ -487,6 +561,42 @@ export class SemanticModelAssistantService {
     };
   }
 
+  /** Files whose name matches, across every workspace the person can open, with where each one sits. */
+  async searchSourceFiles(userId: string, search: string, page = 1) {
+    const term = search.trim();
+    if (term.length < 2) return { files: [], page: 1, totalPages: 1 };
+    const [own, shared] = await Promise.all([
+      this.workspaces.findAllByUser(userId, { page: 1, limit: 100 }),
+      this.workspaceShares.findSharedWithUser(userId, { page: 1, limit: 100 } as never).catch(() => ({ workspaces: [] })),
+    ]);
+    const names = new Map<string, string>();
+    for (const workspace of [...own.workspaces, ...(shared.workspaces as Array<{ id: string; name: string }>)]) names.set(workspace.id, workspace.name);
+    if (!names.size) return { files: [], page: 1, totalPages: 1 };
+    const result = await this.documents.findByMultipleWorkspaces([...names.keys()], { page, limit: 50, search: term, sortBy: 'originalName', sortOrder: 'asc' } as never);
+    const files = result.documents.filter((document) => !document.isFolder);
+    const parents = new Map<string, Promise<string | null>>();
+    const folderName = (workspaceId: string, parentId?: string | null) => {
+      if (!parentId) return Promise.resolve(null);
+      if (!parents.has(parentId)) {
+        parents.set(parentId, this.documents.findById(workspaceId, parentId).then((folder) => folder.folderName || folder.originalName).catch(() => null));
+      }
+      return parents.get(parentId)!;
+    };
+    return {
+      files: await Promise.all(files.map(async (document) => ({
+        id: document.id,
+        name: document.originalName,
+        mimeType: document.mimeType,
+        kind: this.fileKind(document.mimeType),
+        workspaceId: document.workspaceId,
+        workspaceName: names.get(document.workspaceId) ?? '',
+        folderName: await folderName(document.workspaceId, document.parentId),
+      }))),
+      page: result.pagination.page,
+      totalPages: result.pagination.totalPages,
+    };
+  }
+
   /** The sheets, columns and a few rows of a spreadsheet, read on demand the first time. */
   async profileSpreadsheet(actor: AssistantActor, modelId: string, workspaceId: string, documentId: string, sheetName?: string) {
     await this.ensureWorkspaceLinked(actor.userId, modelId, workspaceId);
@@ -616,7 +726,114 @@ export class SemanticModelAssistantService {
       summary: { message: `removed source ${mapping.documentName ?? ''}`.trim(), added: [], changed: [], removed: [`source ${mapping.documentName ?? sourceId}`] },
       sourcesRemoved: [this.snapshot(mapping)],
     });
-    return { removed: true, changeId };
+    return { removed: true, changeId, model: this.modelRef(model) };
+  }
+
+  /**
+   * Suggest sources for concepts without connecting anything. The person sees the suggestions in the
+   * conversation and in the designer, with each workspace's name and how many files it would read,
+   * and picks one (or other files), or skips the concept.
+   */
+  async suggestSources(actor: AssistantActor, modelId: string, items: SourceSuggestionInput[]) {
+    const model = await this.models.requireActiveRole(actor.userId, modelId, ['owner', 'editor']);
+    if (!items.length) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Suggest sources for at least one concept');
+    if (items.length > MAX_SUGGESTED_CONCEPTS) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Suggest sources for at most ${MAX_SUGGESTED_CONCEPTS} concepts at a time`);
+    }
+    const graph = await this.graph.getGraph(actor.userId, modelId) as SemanticGraph;
+    const files = new Map<string, Promise<Awaited<ReturnType<WorkspaceDocumentService['listAllInWorkspace']>>>>();
+    const workspaceFiles = (workspaceId: string) => {
+      if (!files.has(workspaceId)) files.set(workspaceId, this.documents.listAllInWorkspace(workspaceId));
+      return files.get(workspaceId)!;
+    };
+    const planned: Array<{ node: SemanticNodeType; options: SourceSuggestionOption[]; note: string }> = [];
+    for (const item of items) {
+      const node = this.findConcept(graph, item.concept);
+      if (!node || node.systemKey) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `There is no concept "${item.concept}" in this model`);
+      // No option: the person picks the files themselves from the list of their workspaces.
+      if ((item.options ?? []).length > MAX_OPTIONS_PER_CONCEPT) {
+        throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Suggest at most ${MAX_OPTIONS_PER_CONCEPT} sources for ${node.label}`);
+      }
+      const options: SourceSuggestionOption[] = [];
+      for (const option of item.options ?? []) options.push(await this.suggestionOption(actor.userId, option, workspaceFiles));
+      planned.push({ node, options, note: item.note?.trim().slice(0, 500) ?? '' });
+    }
+    for (const { node, options, note } of planned) {
+      await this.database.query(
+        `INSERT INTO semantic_model.assistant_source_suggestions (model_id, concept_id, concept_key, options, note, status, created_by, agent_id, conversation_id)
+         VALUES ($1,$2,$3,$4::jsonb,$5,'pending',$6,$7,$8)
+         ON CONFLICT (model_id, concept_key) DO UPDATE SET concept_id=EXCLUDED.concept_id, options=EXCLUDED.options, note=EXCLUDED.note,
+           status='pending', created_by=EXCLUDED.created_by, agent_id=EXCLUDED.agent_id, conversation_id=EXCLUDED.conversation_id, updated_at=now()`,
+        [model.id, node.id, node.key, JSON.stringify(options), note, actor.userId, actor.agentId ?? null, actor.conversationId ?? null],
+      );
+    }
+    const listed = await this.listSuggestions(actor.userId, modelId);
+    const keys = new Set(planned.map(({ node }) => node.key));
+    return {
+      model: this.modelRef(model),
+      suggestions: listed.suggestions.filter((suggestion) => keys.has(suggestion.conceptKey)),
+      connected: false,
+      uiTarget: this.uiTarget(model, 'semanticModel.sources'),
+    };
+  }
+
+  /** The model's suggested sources, each with whether the concept got a source since or was skipped. */
+  async listSuggestions(userId: string, modelId: string) {
+    const model = await this.models.get(userId, modelId);
+    const [rows, graph, sources] = await Promise.all([
+      this.database.query<SuggestionRow>(
+        `SELECT id, concept_id AS "conceptId", concept_key AS "conceptKey", options, note, status, created_at AS "createdAt", updated_at AS "updatedAt"
+         FROM semantic_model.assistant_source_suggestions WHERE model_id=$1 ORDER BY created_at, concept_key`, [model.id]),
+      this.graph.getGraph(userId, modelId) as Promise<SemanticGraph>,
+      this.listSources(userId, modelId).catch(() => [] as SourceSnapshot[]),
+    ]);
+    const suggestions = rows.rows.flatMap((row) => {
+      const node = graph.nodes.find((item) => item.id === row.conceptId) ?? graph.nodes.find((item) => item.key === row.conceptKey);
+      if (!node) return [];
+      const connected = sources.some((source) => source.conceptId === node.id);
+      return [{
+        conceptId: node.id, conceptKey: row.conceptKey, conceptLabel: node.label, note: row.note, options: row.options,
+        status: connected ? 'connected' as const : row.status, updatedAt: row.updatedAt,
+      }];
+    });
+    return { model: this.modelRef(model), suggestions };
+  }
+
+  /** Skip a concept's suggestion (or bring it back), so it no longer asks for attention. */
+  async setSuggestionStatus(userId: string, modelId: string, conceptKey: string, status: 'pending' | 'skipped') {
+    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    const updated = await this.database.query(
+      'UPDATE semantic_model.assistant_source_suggestions SET status=$3, updated_at=now() WHERE model_id=$1 AND concept_key=$2 RETURNING id',
+      [model.id, conceptKey, status]);
+    if (!updated.rows.length) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'There is no suggested source for this concept');
+    return this.listSuggestions(userId, modelId);
+  }
+
+  private async suggestionOption(userId: string, option: SourceSuggestionOptionInput,
+    workspaceFiles: (workspaceId: string) => ReturnType<WorkspaceDocumentService['listAllInWorkspace']>): Promise<SourceSuggestionOption> {
+    await this.requireWorkspaceAccess(userId, option.workspaceId);
+    const workspace = await this.workspaces.findById(option.workspaceId);
+    const all = await workspaceFiles(option.workspaceId);
+    const byId = new Map(all.map((item) => [item.id, item]));
+    const folderIds = [...new Set(option.folderIds ?? [])];
+    const documentIds = [...new Set(option.documentIds ?? [])];
+    const unknown = [...folderIds, ...documentIds].filter((id) => !byId.has(id));
+    if (unknown.length) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Some picked files or folders are not in ${workspace.name}`);
+    const nameOf = (id: string) => { const item = byId.get(id)!; return item.isFolder ? item.folderName || item.originalName : item.originalName; };
+    const reason = option.reason?.trim().slice(0, 300) ?? '';
+    const base = { workspaceId: option.workspaceId, workspaceName: workspace.name, folderIds, documentIds, reason,
+      folders: folderIds.slice(0, 10).map(nameOf), documents: documentIds.slice(0, 10).map(nameOf) };
+    if (!folderIds.length && documentIds.length === 1) {
+      const document = byId.get(documentIds[0])!;
+      if (STRUCTURED_MIME_PREFIXES.some((prefix) => document.mimeType.startsWith(prefix))) {
+        return { ...base, kind: 'spreadsheet', mimeType: document.mimeType, ...(option.sheetName ? { sheetName: option.sheetName } : {}), fileCount: 1, stillIndexing: 0 };
+      }
+      if (DOCUMENT_MIME_TYPES.has(document.mimeType)) return { ...base, kind: 'document', mimeType: document.mimeType, fileCount: 1, stillIndexing: 0 };
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${document.originalName} is neither a spreadsheet nor a PDF or Word document`);
+    }
+    const selection = folderIds.length || documentIds.length ? { folderIds, documentIds } : null;
+    const covered = await this.sourceMappings.workspaceFiles(option.workspaceId, selection);
+    return { ...base, kind: selection ? 'documents' : 'workspace', fileCount: covered.readable.length, stillIndexing: covered.waiting.length };
   }
 
   private requireMappableConcept(graph: SemanticGraph, reference: string) {
@@ -649,7 +866,7 @@ export class SemanticModelAssistantService {
       summary: { message: `added source: ${message}`, added: [`source ${mapping.documentName ?? ''}`.trim()], changed: [], removed: [] },
       sourcesAdded: [this.snapshot(mapping)],
     }) : undefined;
-    return { sourceId: mapping?.id, name: mapping?.documentName, concept: node.label, changeId };
+    return { sourceId: mapping?.id, name: mapping?.documentName, concept: node.label, changeId, model: this.modelRef(model), uiTarget: this.uiTarget(model) };
   }
 
   private snapshot(mapping: SourceSnapshot): SourceSnapshot {
@@ -681,13 +898,37 @@ export class SemanticModelAssistantService {
   // ── Data ──────────────────────────────────────────────────────────────────
 
   async runUpdate(userId: string, modelId: string) {
+    const model = await this.models.get(userId, modelId);
     const result = await this.population.requestRefresh(userId, modelId, { purpose: 'build', scope: { kind: 'model' } }) as Record<string, unknown>;
-    return { jobId: result.jobId ?? result.id, state: result.state ?? 'queued', sources: result.sourceCount, skipped: result.skipped, stillIndexing: result.waitingFiles };
+    return {
+      jobId: result.jobId ?? result.id, state: result.state ?? result.status ?? 'queued', sources: result.sourceCount, skipped: result.skipped,
+      stillIndexing: result.waitingFiles, model: this.modelRef(model), uiTarget: this.uiTarget(model),
+    };
   }
 
-  async runStatus(userId: string, modelId: string, jobId: string) {
-    const job = await this.population.getJob(userId, modelId, jobId) as unknown as Record<string, unknown>;
-    return { jobId, state: job.state, progress: job.progress ?? null, error: job.error ?? null };
+  async runStatus(userId: string, modelId: string, jobId?: string) {
+    const job = jobId
+      ? await this.population.getJob(userId, modelId, jobId) as unknown as Record<string, unknown>
+      : await this.population.activeJob(userId, modelId) as unknown as Record<string, unknown> | null;
+    if (!job) return { jobId: null, state: 'none', message: 'No data update is running for this model' };
+    return { jobId: job.jobId ?? jobId, state: job.state, progress: job.progress ?? null, error: job.errorCode ?? null };
+  }
+
+  /**
+   * Stop a data update (the one running now when no id is given). Nothing it read is kept: the
+   * data in use stays as it was before the run.
+   */
+  async stopRun(userId: string, modelId: string, jobId?: string) {
+    const target = jobId ?? (await this.population.activeJob(userId, modelId))?.jobId;
+    if (!target) return { stopped: false, state: 'none', message: 'No data update is running for this model' };
+    const job = await this.population.stopJob(userId, modelId, target);
+    const stopping = job.state === 'cancel_requested';
+    return {
+      jobId: target, state: job.state, stopped: job.state === 'cancelled' || stopping,
+      message: job.state === 'cancelled' ? 'The data update was stopped; the data in use did not change'
+        : stopping ? 'The data update is stopping; the data in use will not change'
+        : RUN_ENDED.has(job.state) ? 'This data update had already ended' : 'The data update could not be stopped',
+    };
   }
 
   async searchRecords(userId: string, modelId: string, concept: string, query?: string, limit = 20) {
@@ -704,7 +945,7 @@ export class SemanticModelAssistantService {
     const model = await this.models.get(userId, modelId);
     const graph = await this.graph.getGraph(userId, modelId) as SemanticGraph;
     const result = await this.versions.publish(userId, modelId, model.revision, graph.revision) as Record<string, unknown>;
-    return { published: true, ...result };
+    return { published: true, ...result, model: this.modelRef(model), uiTarget: this.uiTarget(model) };
   }
 
   // ── Change sets ───────────────────────────────────────────────────────────
@@ -735,9 +976,12 @@ export class SemanticModelAssistantService {
     const revision = model.currentDraftVersionId
       ? (await this.database.query<{ revision: number }>('SELECT revision::int FROM semantic_model.versions WHERE id=$1', [model.currentDraftVersionId])).rows[0]?.revision ?? 0
       : 0;
+    // A data update someone started from a conversation shows in an open editor, with Stop.
+    const activeRun = await this.population.activeJob(userId, modelId).catch(() => null);
     return {
       graphRevision: revision,
       now: new Date().toISOString(),
+      activeRun: activeRun ? { jobId: activeRun.jobId, state: activeRun.state } : null,
       changes: rows.rows.map((row) => ({ id: row.id, message: row.summary.message, summary: row.summary, agentId: row.agentId, createdAt: row.createdAt, undoneAt: row.undoneAt })),
     };
   }
@@ -749,7 +993,7 @@ export class SemanticModelAssistantService {
     await this.replay(actor.userId, modelId, change.graphUndo, change.identityBefore, change.sourcesAdded, change.sourcesRemoved, (restored) => { change.sourcesRemoved = restored; });
     await this.database.query(
       'UPDATE semantic_model.assistant_change_sets SET undone_at=now(), sources_removed=$2::jsonb WHERE id=$1', [change.id, JSON.stringify(change.sourcesRemoved)]);
-    return { undone: true, changeId: change.id, message: change.summary.message };
+    return { undone: true, changeId: change.id, message: change.summary.message, modelId };
   }
 
   async redoChange(actor: AssistantActor, modelId: string, changeId?: string) {
@@ -825,5 +1069,14 @@ export class SemanticModelAssistantService {
 
   private editorPath(modelId: string) {
     return `/semantic-models/${modelId}`;
+  }
+
+  private modelRef(model: { id: string; name: string }) {
+    return { id: model.id, name: model.name };
+  }
+
+  /** A button in the conversation that opens the model, named after it. */
+  private uiTarget(model: { id: string; name: string }, surface: AssistantUiTarget['surface'] = 'semanticModel.editor'): AssistantUiTarget {
+    return { surface, params: { modelId: model.id, modelName: model.name } };
   }
 }
