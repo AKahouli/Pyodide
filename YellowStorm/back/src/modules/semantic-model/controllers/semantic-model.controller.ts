@@ -44,6 +44,8 @@ import { SemanticCrossSourceService } from '../services/semantic-cross-source.se
 import { SemanticBusinessTrustService } from '../services/semantic-business-trust.service';
 import { SemanticPopulationRefreshService } from '../services/semantic-population-refresh.service';
 import { SemanticReviewQueueService } from '../services/semantic-review-queue.service';
+import { SemanticModelAssistantService } from '../services/semantic-model-assistant.service';
+import { AssistantChangesQueryDto } from '../dto/semantic-model-assistant.dto';
 
 @ApiTags('Semantic Models')
 @ApiBearerAuth()
@@ -62,6 +64,7 @@ export class SemanticModelController {
     private readonly businessTrust: SemanticBusinessTrustService,
     private readonly populationRefresh: SemanticPopulationRefreshService,
     private readonly reviewQueue: SemanticReviewQueueService,
+    private readonly assistant: SemanticModelAssistantService,
   ) {}
 
   @Get()
@@ -433,6 +436,29 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   restore(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('versionId') versionId: string,@Body() dto: PublishSemanticModelDto) {
     return this.versions.restore(user._id.toString(),modelId,versionId,dto.expectedRevision,dto.expectedGraphRevision);
+  }
+
+  // ── Assistant changes ─────────────────────────────────────────────────────
+
+  @Get(':modelId/assistant/changes')
+  @ApiOperation({ summary: 'Recent changes an assistant made to the model, with the draft graph revision' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  assistantChanges(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Query() query: AssistantChangesQueryDto) {
+    return this.assistant.listChanges(user._id.toString(),modelId,query.since);
+  }
+
+  @Post(':modelId/assistant/changes/:changeId/undo')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  undoAssistantChange(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('changeId') changeId: string) {
+    return this.assistant.undoChange({ userId: user._id.toString() },modelId,changeId);
+  }
+
+  @Post(':modelId/assistant/changes/:changeId/redo')
+  @HttpCode(HttpStatus.OK)
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  redoAssistantChange(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('changeId') changeId: string) {
+    return this.assistant.redoChange({ userId: user._id.toString() },modelId,changeId);
   }
 
   // ── Sharing ────────────────────────────────────────────────────────────────

@@ -378,6 +378,9 @@ export const configValidationSchema = Joi.object({
   PLAYBOOK_MCP_INGRESS_TOKEN: Joi.string().allow('').default(''),
   AGENT_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8026/mcp'),
   AGENT_MCP_INGRESS_TOKEN: Joi.string().allow('').default(''),
+  // Internal MCP servers whose connectors (created by an admin) receive the acting user's identity.
+  SEMANTIC_MODEL_MCP_SERVER_URL: Joi.string().allow('').default('http://localhost:8027/mcp'),
+  TRUSTED_MCP_SERVER_URLS: Joi.string().allow('').default(''),
   // Telegram
   TELEGRAM_ENABLED: Joi.boolean().default(true),
   TELEGRAM_API_BASE_URL: Joi.string().uri().default('https://api.telegram.org'),

@@ -60,6 +60,10 @@ const TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS = new Set([
   PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG,
   AGENT_MCP_CONNECTOR_SLUG,
 ]);
+/** Compare MCP server URLs without case or trailing slash differences. */
+function normalizeMcpServerUrl(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase().replace(/\/+$/, '') : '';
+}
 const PLATFORM_COPILOT_LEGACY_PLAYBOOK_ACTIONS = new Set([
   'assess_playbook_request',
   'continue_playbook_clarification',
@@ -854,7 +858,7 @@ export class AgentService {
         // agent (not just the copilot) — their MCP servers authorize per-call
         // as the acting user.
         for (const binding of connectorBindings) {
-          if (!TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS.has(String(binding.connector_slug || '').toLowerCase())) continue;
+          if (!this.isTrustedIdentityBinding(binding)) continue;
           binding.auth_headers = {
             ...((binding.auth_headers as Record<string, string> | undefined) ?? {}),
             'X-YellowStorm-User-Id': userId,
@@ -1096,7 +1100,7 @@ export class AgentService {
           agent.id,
         );
         for (const binding of connectorBindings) {
-          if (!TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS.has(String(binding.connector_slug || '').toLowerCase())) continue;
+          if (!this.isTrustedIdentityBinding(binding)) continue;
           binding.auth_headers = {
             ...((binding.auth_headers as Record<string, string>) || {}),
             'X-YellowStorm-Agent-Id': agent.id,
@@ -1989,6 +1993,25 @@ export class AgentService {
 
   private async buildConnectorsMap(connectorIds: string[]): Promise<Map<string, IConnectorResponse>> {
     return this.getConnectorRuntime().buildConnectorsMap(connectorIds);
+  }
+
+  /**
+   * Bindings that receive the acting user's identity: the built-in system MCP connectors, and connectors
+   * an admin created that point at a trusted internal MCP server (such as the semantic model MCP), matched
+   * by server URL so a connector pointing anywhere else never receives it.
+   */
+  private isTrustedIdentityBinding(binding: Record<string, unknown>): boolean {
+    if (TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS.has(String(binding.connector_slug || '').toLowerCase())) return true;
+    const url = normalizeMcpServerUrl(binding.mcp_server_url);
+    return Boolean(url) && this.trustedMcpServerUrls().has(url);
+  }
+
+  private trustedMcpServerUrls(): Set<string> {
+    const configured = [
+      this.configService.get<string>('SEMANTIC_MODEL_MCP_SERVER_URL', ''),
+      ...this.configService.get<string>('TRUSTED_MCP_SERVER_URLS', '').split(','),
+    ];
+    return new Set(configured.map(normalizeMcpServerUrl).filter(Boolean));
   }
 
   private async buildConnectorBindings(

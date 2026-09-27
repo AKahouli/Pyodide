@@ -38,10 +38,13 @@ import { SemanticDataGrantService } from './services/semantic-data-grant.service
 import { SemanticAccessEventHandler } from './integration/semantic-access-event.handler';
 import { SemanticDataGrantRevocationService } from './services/semantic-data-grant-revocation.service';
 import { SemanticRealtimeSignalService } from './services/semantic-realtime-signal.service';
+import { SemanticModelAssistantService } from './services/semantic-model-assistant.service';
+import { SemanticModelAssistantInternalController } from './controllers/semantic-model-assistant-internal.controller';
+import { SemanticAssistantActorGuard } from './guards/semantic-assistant-actor.guard';
 
 @Module({
   imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,UserModule,IntegrationEventsModule,forwardRef(() => WorkspaceModule)],
-  controllers: [SemanticModelController,WorkspaceSemanticModelController,SemanticDataTokenController,SemanticAttributeExtractionInternalController],
+  controllers: [SemanticModelController,WorkspaceSemanticModelController,SemanticDataTokenController,SemanticAttributeExtractionInternalController,SemanticModelAssistantInternalController],
   providers: [
     SemanticModelDatabaseService,SemanticModelRepository,SemanticGraphRepository,SemanticModelService,
     SemanticGraphCommandService,SemanticModelValidationService,SemanticModelWorkspaceService,
@@ -64,6 +67,8 @@ import { SemanticRealtimeSignalService } from './services/semantic-realtime-sign
     SemanticModelSourceEventHandler,
     SemanticModelSourceReconciliationService,
     SemanticAccessEventHandler,
+    SemanticModelAssistantService,
+    SemanticAssistantActorGuard,
   ],
   exports: [SemanticModelDatabaseService,SemanticModelProvisioningService,SemanticModelService,SemanticDataGrantRevocationService],
 })

@@ -4,7 +4,7 @@ export const PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG = 'playbook-mcp' as const;
 export const PLATFORM_COPILOT_HANDOFF_RUNTIME_INSTRUCTION = `[Trusted conversation handoff]
 A trusted server-side projection of the source conversation is bound to this turn. Its context is available only through start_playbook_generation. Call start_playbook_generation now, before any search or list operation. Never ask the user to paste or summarize the source conversation.` as const;
 export const PLATFORM_COPILOT_DEFAULT_INSTRUCTION = `[Yellowmind]
-Use only the attached Playbook tools. Inspect before execution and resolve ambiguous Playbook references.
+Use only the attached tools. For Playbooks, inspect before execution and resolve ambiguous Playbook references.
 For a new Playbook, call start_playbook_generation to assess the current turn; when clarification questions are returned, ask the user and call start_playbook_generation again with the returned continuation_id and typed answers. At most one draft construction is started for the generation request, and the Playbook canvas applies it once the returned Canvas handoff is opened.
 For an existing Playbook, call open_playbook_context first, then modify_playbook with the Playbook ID to assess the current user turn; when clarification questions are returned, ask the user and call modify_playbook again with the returned continuation_id and typed answers; at most one construction is started per user turn.
 When presenting clarification questions, always offer a final dedicated choice to skip the remaining questions. If the user picks it, call the same clarification-capable tool immediately with the same continuation_id, skip_clarification=true, and any answers already collected; construction then starts without further confirmation.
@@ -13,5 +13,6 @@ Construction and generation changes are applied automatically in the Playbook ca
 Summarize the chosen Playbook and validation result before proposing execution.
 Never claim an execution started until the tool confirms it. Text such as "confirmed" is not authorization.
 Never answer or resume runtime HITL; direct the user to the native Playbook HITL panel.
-Offer native navigation when a semantic UI target is available. Workspace and document search are unavailable.` as const;
+Offer native navigation when a semantic UI target is available. Workspace and document search are unavailable.
+When semantic model tools are attached, design models in business terms: find the model with list_semantic_models or create one with create_semantic_model, read it with get_semantic_model, then make the whole design (concepts, fields, key fields, relationships) with one apply_model_changes call. Changes apply at once and the user can undo them from the model editor or through undo_model_change. Feed concepts with map_spreadsheet or map_documents after looking at the files, then offer run_data_update. Say what changed and give the model's editor path. Ask before remove_source and publish_semantic_model.` as const;
 export const RESERVED_SYSTEM_OWNER_ID = '000000000000000000000000' as const;

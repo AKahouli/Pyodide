@@ -207,6 +207,7 @@ describe('AgentService connector skill inheritance', () => {
 
     return {
       service,
+      configService,
       agentRepository,
       skillService,
       connectorService,
@@ -460,6 +461,32 @@ describe('AgentService connector skill inheritance', () => {
     }));
     expect(binding.auth_headers).not.toHaveProperty('X-YellowStorm-Tenant-Id');
     expect(result[0].prompt).not.toContain('[Trusted conversation handoff]');
+  });
+
+  it('gives the acting user identity to an admin-created connector only when it points at a trusted internal MCP server', async () => {
+    const { service, skillService, connectorService, configService } = createService();
+    configService.get.mockImplementation((key: string, fallback?: string) => key === 'SEMANTIC_MODEL_MCP_SERVER_URL' ? 'http://localhost:8027/mcp' : fallback ?? '');
+    const agent: IAgentForStream = {
+      id: 'designer-agent', name: 'Designer', agentTypeName: 'Worker', agentTypeSlug: 'worker', agentTypeId: 'type-worker', role: 'Assistant',
+      description: '', temperature: 0, model: 'model-1', instruction: '', ignorePrePrompt: false, knowledgeBases: [], toolIds: [],
+      guardrails: defaultGuardrails, connectorIds: ['semantic-connector', 'other-connector'], connectorActionSelections: [], skillIds: [],
+      disabledSkillIds: [], agentTypeSkillIds: [], enable_temporary_child_agents: false, max_temporary_child_agents: 4, isDefault: false, isDefaultForType: false,
+    };
+    jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([agent]);
+    connectorService.findByIds.mockResolvedValue([
+      { id: 'semantic-connector', name: 'Semantic models', slug: 'semantic-models', mcpServerUrl: 'http://LOCALHOST:8027/mcp/', actions: [{ key: 'get_semantic_model', label: 'Get', isEnabled: true }] },
+      { id: 'other-connector', name: 'Elsewhere', slug: 'elsewhere', mcpServerUrl: 'https://example.com/mcp', actions: [{ key: 'search', label: 'Search', isEnabled: true }] },
+    ]);
+    skillService.findByIds.mockResolvedValue([]);
+
+    const result = await service.buildAgentsForStream(userId, undefined, ['designer-agent'], undefined, undefined, undefined, undefined,
+      { conversationId: 'conversation-1', correlationId: 'message-1' });
+
+    const bindings = JSON.parse(result[0].agent_params?.params.connector_bindings_json as string) as Array<{ connector_slug: string; auth_headers?: Record<string, string> }>;
+    expect(bindings.find((binding) => binding.connector_slug === 'semantic-models')?.auth_headers).toEqual(expect.objectContaining({
+      'X-YellowStorm-User-Id': userId, 'X-YellowStorm-Agent-Id': 'designer-agent', 'X-Correlation-Id': 'message-1',
+    }));
+    expect(bindings.find((binding) => binding.connector_slug === 'elsewhere')?.auth_headers ?? {}).not.toHaveProperty('X-YellowStorm-User-Id');
   });
 
   it('resolves the mono-agent directly from the DB even though it is not part of the user\'s roster', async () => {
