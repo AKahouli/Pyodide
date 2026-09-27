@@ -99,6 +99,8 @@ export interface RuntimeBoundRecords {
   counts: { entities: number; assertions: number; relationships: number };
   /** Records per concept over the whole revision; absent from runtimes that predate it. */
   conceptCounts?: Record<string, number>;
+  /** Fingerprint of the run that built this data; absent from runtimes that predate it. */
+  executionFingerprint?: string | null;
   specification: {
     concepts: Array<{ conceptId: string; label: string; allowedFields: string[] }>;
     relations: Array<{ relationId: string; label: string }>;

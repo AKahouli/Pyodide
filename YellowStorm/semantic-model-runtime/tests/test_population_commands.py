@@ -203,7 +203,7 @@ def test_bound_records_and_graph_share_the_draft_revision(client: TestClient):
                              "column": "name"}}]
     gaps = {"missingValues": [{"conceptId": "c1", "attribute": "city", "missing": 1,
                                "total": 1}], "unresolvedLinks": [], "other": []}
-    revision = {"id": "dr_1", "coverage": json.dumps({"gaps": gaps})}
+    revision = {"id": "dr_1", "coverage": json.dumps({"gaps": gaps}), "execution_fingerprint": "sha256:run"}
     _inject(client, ScriptedPool([binding, counts, [{"concept_id": "c1", "entities": 1}],
                                   [entity], origins, revision,
                                   [relationship], {"specification": specification}]))
@@ -216,6 +216,7 @@ def test_bound_records_and_graph_share_the_draft_revision(client: TestClient):
         "kind": "source", "assetId": "a1", "rowNumber": 4, "column": "name"}
     assert records.json()["gaps"] == gaps
     assert records.json()["conceptCounts"] == {"c1": 1}
+    assert records.json()["executionFingerprint"] == "sha256:run"
 
     graph_rows = [
         [{"record_id": '"crm::1"', "concept_id": '"c1"', "label": '"Acme"',

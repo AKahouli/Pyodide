@@ -90,6 +90,30 @@ export class SemanticSourceMappingService {
     return { assets: assets.flat() };
   }
 
+  async listCanvasPositions(userId: string, modelId: string) {
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    const result = await this.database.query<{ id: string; x: number; y: number }>(
+      'SELECT element_id AS id, x, y FROM semantic_model.canvas_positions WHERE model_id=$1',
+      [model.id],
+    );
+    return { positions: result.rows };
+  }
+
+  /** Layout only: moving a box changes no meaning, so it neither advances the model revision nor needs one. */
+  async saveCanvasPositions(userId: string, modelId: string, positions: Array<{ id: string; x: number; y: number }>) {
+    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    if (positions.length) {
+      await this.database.query(
+        `INSERT INTO semantic_model.canvas_positions (model_id, element_id, x, y)
+         SELECT $1, item.id, item.x, item.y
+         FROM jsonb_to_recordset($2::jsonb) AS item(id text, x double precision, y double precision)
+         ON CONFLICT (model_id, element_id) DO UPDATE SET x=EXCLUDED.x, y=EXCLUDED.y, updated_at=now()`,
+        [model.id, JSON.stringify(positions)],
+      );
+    }
+    return { saved: positions.length };
+  }
+
   async profileAsset(userId: string, modelId: string, workspaceId: string, documentId: string, query: SourceAssetProfileQueryDto) {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     await this.requireLinkedWorkspace(model.id, workspaceId);

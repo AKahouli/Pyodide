@@ -115,6 +115,21 @@ describe('SemanticPopulationRefreshService', () => {
     expect(result.concepts[0]).toMatchObject({ id: 'c-customer', entities: [{ id: 'e-1', values: { name: 'Acme' } }] });
   });
 
+  it('says whether the data in use was built from the model as it is now', async () => {
+    const { runtime, service, models } = setup();
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const planned = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>]>)[0][0].payload.populationExecutionFingerprint;
+    (runtime.getBoundRecords as jest.Mock).mockResolvedValueOnce({ ...(await runtime.getBoundRecords()), executionFingerprint: planned });
+    await expect(service.freshness('u-1', 'model-1')).resolves.toEqual({ state: 'current' });
+    (runtime.getBoundRecords as jest.Mock).mockResolvedValueOnce({ ...(await runtime.getBoundRecords()), executionFingerprint: 'sha256:older' });
+    await expect(service.freshness('u-1', 'model-1')).resolves.toEqual({ state: 'outdated' });
+    runtime.getBoundRecords.mockRejectedValueOnce(new Error('active_binding_not_found'));
+    await expect(service.freshness('u-1', 'model-1')).resolves.toEqual({ state: 'never_run' });
+    // Reading freshness never starts a run or touches the runtime specification.
+    expect(runtime.requestPopulationRun).toHaveBeenCalledTimes(1);
+    expect(models.requireRole).toHaveBeenCalled();
+  });
+
   it('sends business synonyms in the specification only when there are some', async () => {
     const { database, runtime, service } = setup();
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });

@@ -19,6 +19,7 @@ import {
   CreateSourceMappingDto,
   BulkDocumentSourceMappingDto,
   SourceAssetProfileQueryDto,
+  SaveCanvasPositionsDto,
   SourceMappingPreviewDto,
   DataPreviewDto,
   SaveRelationResolutionRuleDto,
@@ -222,6 +223,20 @@ export class SemanticModelController {
     return this.sourceMappings.discoveryJob(user._id.toString(),modelId,jobId);
   }
 
+  @Get(':modelId/canvas-positions')
+  @ApiOperation({ summary: 'Where the source and typed-record boxes sit on the model canvas' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  listCanvasPositions(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
+    return this.sourceMappings.listCanvasPositions(user._id.toString(),modelId);
+  }
+
+  @Put(':modelId/canvas-positions')
+  @ApiOperation({ summary: 'Move source and typed-record boxes on the model canvas' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  saveCanvasPositions(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: SaveCanvasPositionsDto) {
+    return this.sourceMappings.saveCanvasPositions(user._id.toString(),modelId,dto.positions);
+  }
+
   @Get(':modelId/source-mappings')
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
   listSourceMappings(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
@@ -261,6 +276,13 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   requestPopulationRefresh(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: RequestPopulationRefreshDto) {
     return this.populationRefresh.requestRefresh(user._id.toString(),modelId,dto);
+  }
+
+  @Get(':modelId/population/freshness')
+  @ApiOperation({ summary: 'Whether the records in use were built from the model as it is now' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  populationFreshness(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
+    return this.populationRefresh.freshness(user._id.toString(),modelId);
   }
 
   @Get(':modelId/population/jobs/:jobId')

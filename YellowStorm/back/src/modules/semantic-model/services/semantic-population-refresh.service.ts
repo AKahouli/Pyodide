@@ -400,8 +400,14 @@ export class SemanticPopulationRefreshService {
     };
   }
 
-  async requestRefresh(userId: string, modelId: string, input: RequestPopulationRefreshInput) {
-    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+  /**
+   * Everything a run would read, without starting it: the specification and the fingerprint that decides
+   * whether a run is new. A viewer may plan (to learn whether the data is current); only editors may run.
+   */
+  private async planRefresh(userId: string, modelId: string, input: RequestPopulationRefreshInput, access: 'run' | 'read') {
+    const model = access === 'run'
+      ? await this.models.requireActiveRole(userId, modelId, ['owner', 'editor'])
+      : await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
     const scope: PopulationRefreshScope = input.scope.kind === 'mapping'
       ? { kind: 'mapping', mappingId: input.scope.mappingId ?? '' }
@@ -534,13 +540,6 @@ export class SemanticPopulationRefreshService {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'The population specification could not be hashed');
     }
     const { specHash, ...specification } = snapshot;
-    await this.runtime.mirrorSpecification({
-      homeWorkspaceId,
-      modelId: model.id,
-      modelVersionId: model.currentDraftVersionId,
-      specHash,
-      specification,
-    });
     const scopeKey = scope.kind === 'model' ? 'model' : `mapping:${scope.mappingId}`;
     relationBindings.sort((left, right) => left.relationId < right.relationId ? -1 : left.relationId > right.relationId ? 1 : 0);
     const runtimeSources = JSON.parse(JSON.stringify(sources)) as typeof sources;
@@ -563,6 +562,19 @@ export class SemanticPopulationRefreshService {
       relationBindings,
       aiExtraction,
       populationEngineVersion: POPULATION_ENGINE_VERSION,
+    });
+    return { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, aiExtraction, populationExecutionFingerprint, skipped };
+  }
+
+  async requestRefresh(userId: string, modelId: string, input: RequestPopulationRefreshInput) {
+    const { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, aiExtraction, populationExecutionFingerprint, skipped }
+      = await this.planRefresh(userId, modelId, input, 'run');
+    await this.runtime.mirrorSpecification({
+      homeWorkspaceId,
+      modelId: model.id,
+      modelVersionId: model.currentDraftVersionId!,
+      specHash,
+      specification,
     });
     // A new data fix must rebuild even when every source is unchanged.
     const correctionSequence = scope.kind === 'model' && typeof this.runtime.listCorrections === 'function'
@@ -597,6 +609,24 @@ export class SemanticPopulationRefreshService {
       },
     }, idempotencyKey);
     return { ...accepted, skipped };
+  }
+
+  /**
+   * Whether the records in use were built from the model as it is now. Compares the fingerprint a run would
+   * have today (design, mappings and source file versions) with the one of the active data.
+   */
+  async freshness(userId: string, modelId: string): Promise<{ state: 'current' | 'outdated' | 'never_run' | 'not_runnable'; reason?: string }> {
+    let fingerprint: string;
+    try {
+      fingerprint = (await this.planRefresh(userId, modelId, { purpose: 'build', scope: { kind: 'model' } }, 'read')).populationExecutionFingerprint;
+    } catch (error) {
+      if (error instanceof BadRequestException || error instanceof ConflictException) return { state: 'not_runnable', reason: (error as Error).message };
+      throw error;
+    }
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    const active = await this.runtime.getBoundRecords(model.id, userId, 1).catch(() => null);
+    if (!active) return { state: 'never_run' };
+    return { state: active.executionFingerprint === fingerprint ? 'current' : 'outdated' };
   }
 
   private conceptSpec(node: NodeTypeRow, identityFields: string[], manualOnly = false): ConceptSpec {

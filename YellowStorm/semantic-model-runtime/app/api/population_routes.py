@@ -143,6 +143,8 @@ async def read_bound_records(model_id: str, request: Request, environment: str =
     return {"modelId": model_id, "modelVersionId": binding["model_version_id"],
             "dataRevisionId": revision_id, "entities": entities,
             "relationships": relationships, "counts": counts, "conceptCounts": concept_counts,
+            # Lets the caller tell whether this data was built from the model as it is now.
+            "executionFingerprint": (revision or {}).get("execution_fingerprint"),
             "gaps": gaps or {"missingValues": [], "unresolvedLinks": [], "other": []},
             "specification": specification}
 

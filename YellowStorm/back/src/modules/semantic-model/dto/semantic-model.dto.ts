@@ -7,6 +7,7 @@ import {
   IsDefined,
   IsIn,
   IsInt,
+  IsNumber,
   IsObject,
   IsOptional,
   IsString,
@@ -682,4 +683,33 @@ export class RecordCorrectionDto {
   @IsString()
   @MaxLength(500)
   reason?: string;
+}
+
+export class CanvasPositionDto {
+  @ApiProperty({ maxLength: 300 })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(300)
+  id!: string;
+
+  @ApiProperty()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @Min(-1_000_000)
+  @Max(1_000_000)
+  x!: number;
+
+  @ApiProperty()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @Min(-1_000_000)
+  @Max(1_000_000)
+  y!: number;
+}
+
+export class SaveCanvasPositionsDto {
+  @ApiProperty({ type: [CanvasPositionDto] })
+  @IsArray()
+  @ArrayMaxSize(500)
+  @ValidateNested({ each: true })
+  @Type(() => CanvasPositionDto)
+  positions!: CanvasPositionDto[];
 }

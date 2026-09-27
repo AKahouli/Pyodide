@@ -112,6 +112,19 @@ describe('SemanticSourceMappingService boundaries', () => {
     return { service, database, models, documents, runtime };
   };
 
+  it('keeps where source boxes sit on the canvas, for editors only, without touching the model revision', async () => {
+    const { service, database, models } = buildService();
+    database.query.mockResolvedValue({ rows: [] });
+    await expect(service.saveCanvasPositions('user-1', 'model-1', [{ id: 'typed:concept-1', x: 10, y: 20 }])).resolves.toEqual({ saved: 1 });
+    expect(models.requireActiveRole).toHaveBeenCalledWith('user-1', 'model-1', ['owner', 'editor']);
+    const [sql, params] = database.query.mock.calls[0];
+    expect(sql).toContain('ON CONFLICT (model_id, element_id)');
+    expect(sql).not.toContain('revision');
+    expect(JSON.parse(params[1])).toEqual([{ id: 'typed:concept-1', x: 10, y: 20 }]);
+    database.query.mockResolvedValueOnce({ rows: [{ id: 'typed:concept-1', x: 10, y: 20 }] });
+    await expect(service.listCanvasPositions('user-1', 'model-1')).resolves.toEqual({ positions: [{ id: 'typed:concept-1', x: 10, y: 20 }] });
+  });
+
   it('reads a persisted profile without admitting a job on GET', async () => {
     const { service, database, runtime } = buildService('text/csv');
     database.query
