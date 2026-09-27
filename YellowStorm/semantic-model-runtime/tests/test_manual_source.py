@@ -119,9 +119,10 @@ async def test_commit_checks_counts_and_seals_once():
     sealed = {**open_snapshot, "committed_at": "now", "row_count": 2, "link_count": 1}
     assert not await manual_store.commit_snapshot(
         Pool(Connection(sealed)), model_id="m1", snapshot_id=SNAPSHOT, row_count=2, link_count=1)
-    with pytest.raises(manual_store.ManualSnapshotError, match="snapshot_committed"):
-        await manual_store.append_batch(Pool(Connection(sealed)), model_id="m1", snapshot_id=SNAPSHOT,
-                                        rows=[], links=[])
+    resent = Connection(sealed)
+    await manual_store.append_batch(Pool(resent), model_id="m1", snapshot_id=SNAPSHOT,
+                                    rows=[{"conceptId": "c1", "rowKey": "rec-1", "values": {}}], links=[])
+    assert not any("manual_rows" in sql for sql in resent.executed)
 
 
 def test_core_fingerprint_without_constants_is_accepted():

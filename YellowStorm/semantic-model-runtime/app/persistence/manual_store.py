@@ -30,8 +30,9 @@ async def append_batch(pool: Any, *, model_id: str, snapshot_id: str,
                 "WHERE id = $1 FOR UPDATE", snapshot_id)
             if current["model_id"] != model_id:
                 raise ManualSnapshotError("snapshot_model_mismatch")
+            # The id hashes the content, so a sealed snapshot already holds these rows.
             if current["committed_at"] is not None:
-                raise ManualSnapshotError("snapshot_committed")
+                return
             if rows:
                 await connection.executemany(
                     'INSERT INTO semantic_population.manual_rows (snapshot_id, concept_id, row_key, label, "values") '
