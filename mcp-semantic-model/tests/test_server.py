@@ -50,7 +50,7 @@ async def test_registers_the_design_tools_with_the_versioned_envelope():
         "list_semantic_models", "create_semantic_model", "get_semantic_model", "check_semantic_model",
         "apply_model_changes", "list_model_changes", "undo_model_change",
         "list_workspaces", "list_workspace_files", "profile_spreadsheet", "map_spreadsheet", "map_documents", "remove_source",
-        "run_data_update", "get_run_status", "search_records", "publish_semantic_model",
+        "run_data_update", "get_run_status", "stop_data_update", "search_records", "publish_semantic_model", "suggest_sources",
     }
     for tool in tools:
         assert tool.outputSchema["properties"]["schemaVersion"]["const"] == "semantic_model.mcp.v1"
@@ -148,3 +148,46 @@ async def test_backend_errors_become_failure_envelopes(monkeypatch, actor):
         result = result_dict(await client.call_tool("get_semantic_model", {"model_id": "missing"}))
     assert result["ok"] is False
     assert result["error"] == {"code": "ERR_3702", "message": "Semantic model not found", "retryable": False, "category": "not_found"}
+
+
+@pytest.mark.asyncio
+async def test_suggest_sources_sends_options_without_connecting_anything(monkeypatch, actor):
+    backend = Recorder({"model": {"id": "m", "name": "Billing"}, "suggestions": []})
+    monkeypatch.setattr(server, "backend", lambda: backend)
+    async with Client(mcp) as client:
+        result = result_dict(await client.call_tool("suggest_sources", {
+            "model_id": "Billing",
+            "suggestions": '[{"concept": "Contract", "options": [{"source_workspace_id": "ws-1", "folder_ids": ["f-1"], "reason": "signed contracts"},'
+                           ' {"source_workspace_id": "ws-2"}]}]',
+        }))
+    assert result["ok"] is True and result["meta"]["modelName"] == "Billing" and result["meta"]["modelId"] == "m"
+    assert backend.calls == [("POST", "/api/v1/internal/semantic-model-assistant/models/Billing/source-suggestions", "user-1", {
+        "suggestions": [{"concept": "Contract", "options": [
+            {"workspaceId": "ws-1", "folderIds": ["f-1"], "reason": "signed contracts"}, {"workspaceId": "ws-2"},
+        ]}],
+    })]
+
+
+@pytest.mark.asyncio
+async def test_suggest_sources_refuses_an_option_without_a_workspace(monkeypatch, actor):
+    backend = Recorder()
+    monkeypatch.setattr(server, "backend", lambda: backend)
+    async with Client(mcp) as client:
+        result = result_dict(await client.call_tool("suggest_sources", {"model_id": "m", "suggestions": [{"concept": "Contract", "options": [{}]}]}))
+    assert result["ok"] is False and "source_workspace_id" in result["error"]["message"]
+    assert backend.calls == []
+
+
+@pytest.mark.asyncio
+async def test_data_update_can_be_followed_and_stopped_without_an_id(monkeypatch, actor):
+    backend = Recorder()
+    monkeypatch.setattr(server, "backend", lambda: backend)
+    async with Client(mcp) as client:
+        await client.call_tool("get_run_status", {"model_id": "m"})
+        await client.call_tool("stop_data_update", {"model_id": "m"})
+        await client.call_tool("stop_data_update", {"model_id": "m", "job_id": "job 1"})
+    assert [(call[0], call[1]) for call in backend.calls] == [
+        ("GET", "/api/v1/internal/semantic-model-assistant/models/m/runs/active"),
+        ("POST", "/api/v1/internal/semantic-model-assistant/models/m/runs/stop"),
+        ("POST", "/api/v1/internal/semantic-model-assistant/models/m/runs/job%201/stop"),
+    ]

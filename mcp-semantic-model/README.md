@@ -19,17 +19,25 @@ model editor. Nothing here touches a database.
 | | `apply_model_changes` | Add, change and remove concepts, fields, key fields and relationships in one call (`dry_run` previews) |
 | | `list_model_changes` / `undo_model_change` | Changes made by assistants, and undoing them |
 | Sources | `list_workspaces` / `list_workspace_files` | Where the data is |
-| | `profile_spreadsheet` | Sheets, columns and sample rows of a spreadsheet |
+| | `suggest_sources` | Ask the user to choose each concept's source, with optional suggestions; nothing is connected until the user picks |
+| | `profile_spreadsheet` | Sheets, columns and sample rows of a spreadsheet the user chose |
 | | `map_spreadsheet` | Feed a concept from a sheet, column by column |
 | | `map_documents` | Feed a concept from picked documents, folders or a whole workspace |
 | | `remove_source` | Stop a source feeding its concept |
 | Data | `run_data_update` / `get_run_status` | Rebuild the records and graph, and follow it |
+| | `stop_data_update` | Stop a running update; the data in use does not change |
 | | `search_records` | Look at a concept's records |
 | | `publish_semantic_model` | Make the model usable in chat |
 
 Concepts and fields are always named by their business names. Every design change is applied at once and is
 recorded as one change set: the model editor shows it ("Yellowmind: added concept Invoice…") with an Undo
-button, and `undo_model_change` reverses it.
+button, and `undo_model_change` reverses it. A model can be named by its exact name in any `model_id`.
+
+Sources and data stay the user's decision: with `suggest_sources` the assistant lists the concepts that need
+data, with suggestions only when a name plainly matches. The user picks files from a searchable list of all
+their workspaces and files, in the conversation or in the designer. Connecting sources,
+updating data and publishing happen only when the user asks. Results carry a `uiTarget` that the
+conversation shows as a button opening the model, or as the suggested-sources card.
 
 ## Run locally
 

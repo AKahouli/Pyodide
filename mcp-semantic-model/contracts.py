@@ -25,6 +25,7 @@ class SemanticModelMcpErrorV1(TypedDict):
 class SemanticModelMcpMetaV1(TypedDict):
     correlationId: str
     modelId: NotRequired[str]
+    modelName: NotRequired[str]
     changeId: NotRequired[str]
 
 
@@ -58,6 +59,12 @@ def success_result(data: dict[str, Any], correlation_id: str) -> SemanticModelMc
         value = data.get(source)
         if isinstance(value, str):
             meta[source] = value  # type: ignore[literal-required]
+    model = data.get("model")
+    if isinstance(model, dict):
+        if isinstance(model.get("id"), str):
+            meta["modelId"] = model["id"]
+        if isinstance(model.get("name"), str):
+            meta["modelName"] = model["name"]
     return {
         "schemaVersion": "semantic_model.mcp.v1",
         "ok": True,

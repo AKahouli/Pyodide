@@ -18,10 +18,25 @@ INSTRUCTIONS = """Design Yellowmind semantic models in plain business terms.
 A model has concepts (business objects such as Customer, Contract, Invoice) with fields, key fields that
 identify one record, and relationships between concepts. Sources (spreadsheets, documents, workspaces)
 feed concepts with data; a data update reads the sources, and publishing makes the model usable in chat.
-Always refer to concepts and fields by their names. Start with get_semantic_model, design with
-apply_model_changes (one call for the whole design), then feed concepts with map_spreadsheet or
-map_documents, run run_data_update, and publish_semantic_model when the user is happy.
-Every change is applied at once and can be undone with undo_model_change."""
+
+Talk about models, concepts, fields, workspaces and files by their names only: never show ids to the user.
+Any model_id parameter also accepts the model's exact name.
+
+Design: get_semantic_model, then apply_model_changes (one call for the whole design). Design changes are
+applied at once and can be undone with undo_model_change. The conversation shows a button that opens the
+model; tell the user they can continue in the designer at any time.
+
+Sources and data are the user's decision. Never connect a source, start a data update or publish on your
+own initiative: a wrong workspace can hold thousands of documents. Instead:
+- right after the design, call suggest_sources for the concepts that need data. Do not search through
+  workspaces and folders to find sources: add an option only for a workspace or file whose name plainly
+  matches in a single list_workspaces result, and otherwise leave the options empty. The user picks the
+  files from a searchable list of all their workspaces and files, takes a suggestion, or skips the concept;
+- read a spreadsheet with profile_spreadsheet only once the user chose or confirmed that spreadsheet;
+- use map_spreadsheet, map_documents, run_data_update or publish_semantic_model only when the user asks
+  for it in this conversation, or confirms after you named the exact workspace, folders or files;
+- stop_data_update stops a running data update when the user asks; the data in use does not change.
+If the user wants to skip these steps, stop proposing them: they continue in the designer."""
 
 settings = Settings.from_env()
 mcp = FastMCP("Semantic Model MCP", instructions=INSTRUCTIONS)
@@ -142,6 +157,32 @@ def relation_spec(item: Any) -> dict[str, Any]:
     })
 
 
+def suggestion_spec(item: Any) -> dict[str, Any]:
+    if not isinstance(item, dict):
+        raise ValueError("each suggestion must be an object with a concept and options")
+    options = parse_json(item.get("options"), "options", list) or []
+    return compact({
+        "concept": item.get("concept") or item.get("label") or item.get("name"),
+        "note": item.get("note"),
+        "options": [option_spec(option) for option in options],
+    })
+
+
+def option_spec(item: Any) -> dict[str, Any]:
+    if not isinstance(item, dict):
+        raise ValueError("each option must be an object with a source_workspace_id")
+    workspace = item.get("source_workspace_id") or item.get("workspace_id") or item.get("workspaceId")
+    if not isinstance(workspace, str) or not workspace:
+        raise ValueError("each option needs a source_workspace_id")
+    return compact({
+        "workspaceId": workspace,
+        "folderIds": string_list(item.get("folder_ids") or item.get("folderIds"), "folder_ids"),
+        "documentIds": string_list(item.get("document_ids") or item.get("documentIds"), "document_ids"),
+        "sheetName": item.get("sheet_name") or item.get("sheetName"),
+        "reason": item.get("reason"),
+    })
+
+
 def relation_ref(item: Any) -> dict[str, Any]:
     if not isinstance(item, dict):
         raise ValueError("each relationship to remove must be an object with from and to")
@@ -167,13 +208,13 @@ async def health_ready(_request: Request) -> JSONResponse:
 
 @mcp.tool(annotations=READ_ONLY)
 async def list_semantic_models(search: str | None = None) -> SemanticModelMcpResultV1:
-    """List the semantic models the user can open (id, name, status, the user's role). No change is made."""
+    """List the semantic models the user can open (name, status, the user's role; the id is for your calls only). No change is made."""
     return await call(backend().get(with_query(f"{BASE}/models", search=search), require_acting_user_id()))
 
 
 @mcp.tool()
 async def create_semantic_model(name: str, description: str | None = None) -> SemanticModelMcpResultV1:
-    """Create a new, empty semantic model owned by the user and return its model_id. Design it next with apply_model_changes."""
+    """Create a new, empty semantic model owned by the user. Design it next with apply_model_changes. The conversation shows a button that opens it."""
     return await call(backend().post(f"{BASE}/models", require_acting_user_id(), compact({"name": name, "description": description})))
 
 
@@ -250,8 +291,24 @@ async def list_workspace_files(source_workspace_id: str, folder_id: str | None =
 
 
 @mcp.tool()
+async def suggest_sources(model_id: str, suggestions: list[dict[str, Any]] | str) -> SemanticModelMcpResultV1:
+    """Ask the user to choose the source of each concept, WITHOUT connecting anything. The user picks files from a searchable list of all their workspaces and files, takes one of your options (shown with the workspace name and file count), or skips. Options are optional: leave them empty rather than search for sources.
+    suggestions: [{"concept": "Contract", "note": "optional", "options": [] or [{"source_workspace_id": "...", "folder_ids": ["..."], "document_ids": ["..."], "sheet_name": "optional", "reason": "why it fits, in a few words"}]}].
+    An option with no folder_ids and no document_ids means the whole workspace. At most 5 options per concept. Suggesting again for a concept replaces its previous suggestion.
+    The result gives each option's fileCount: if an option covers no readable file, suggest again without it rather than leave it for the user."""
+    try:
+        items = parse_json(suggestions, "suggestions", list)
+        payload = {"suggestions": [suggestion_spec(item) for item in items]}
+    except ValueError as exc:
+        return fail(str(exc))
+    if not payload["suggestions"]:
+        return fail("Suggest sources for at least one concept")
+    return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/source-suggestions", require_acting_user_id(), payload))
+
+
+@mcp.tool()
 async def profile_spreadsheet(model_id: str, source_workspace_id: str, document_id: str, sheet_name: str | None = None) -> SemanticModelMcpResultV1:
-    """Read a spreadsheet's sheets, columns (type, how filled, how unique) and a few sample rows, to design concepts or map columns. Links the workspace to the model if needed."""
+    """Read a spreadsheet's sheets, columns (type, how filled, how unique) and a few sample rows, to design concepts or map columns. Only for a spreadsheet the user chose or confirmed. Links the workspace to the model if needed."""
     payload = compact({"workspaceId": source_workspace_id, "documentId": document_id, "sheetName": sheet_name})
     return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/sources/profile", require_acting_user_id(), payload))
 
@@ -266,7 +323,7 @@ async def map_spreadsheet(
     sheet_name: str | None = None,
     key_fields: list[str] | str | None = None,
 ) -> SemanticModelMcpResultV1:
-    """Feed a concept from a spreadsheet sheet. columns maps each concept field (name or key) to a column name, e.g. {"Customer number": "Cust No", "Country": "Country"}. key_fields: the fields that identify one record. Undoable with undo_model_change."""
+    """Feed a concept from a spreadsheet sheet. Only when the user asked for it or confirmed this exact spreadsheet; otherwise use suggest_sources. columns maps each concept field (name or key) to a column name, e.g. {"Customer number": "Cust No", "Country": "Country"}. key_fields: the fields that identify one record. Undoable with undo_model_change."""
     try:
         payload = compact({
             "concept": concept, "workspaceId": source_workspace_id, "documentId": document_id, "sheetName": sheet_name,
@@ -289,6 +346,7 @@ async def map_documents(
     key_fields: list[str] | str | None = None,
 ) -> SemanticModelMcpResultV1:
     """Feed a concept from PDF/Word documents: picked files (document_ids), picked folders (folder_ids, everything inside, including files added later), or whole_workspace=true. One source covers them all.
+    Only when the user asked for it or confirmed these exact files, folders or workspace; otherwise use suggest_sources.
     fields maps concept fields to how they are read: "ai" (default, AI reads the document; one AI call per file on the first run), "extract" (rule-based), "document_name", "ignore", or {"constant": "value"}. Undoable with undo_model_change."""
     try:
         payload = compact({
@@ -312,14 +370,22 @@ async def remove_source(model_id: str, source_id: str) -> SemanticModelMcpResult
 
 @mcp.tool()
 async def run_data_update(model_id: str) -> SemanticModelMcpResultV1:
-    """Read every source again and rebuild the model's records and graph. Returns a job_id to follow with get_run_status; runs in the background."""
+    """Read every source again and rebuild the model's records and graph, in the background. Only when the user asked for it. Follow it with get_run_status; stop it with stop_data_update."""
     return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/runs", require_acting_user_id()))
 
 
 @mcp.tool(annotations=READ_ONLY)
-async def get_run_status(model_id: str, job_id: str) -> SemanticModelMcpResultV1:
-    """Follow a data update: state (queued, running, completed, completed_with_gaps, failed) and progress (files read, records found, issues). No change is made."""
-    return await call(backend().get(f"{BASE}/models/{path_id(model_id)}/runs/{path_id(job_id)}", require_acting_user_id()))
+async def get_run_status(model_id: str, job_id: str | None = None) -> SemanticModelMcpResultV1:
+    """Follow a data update (the one running now when job_id is omitted): state (queued, running, cancel_requested, completed, completed_with_gaps, failed, cancelled) and progress (files read, records found, issues). No change is made."""
+    path = f"{BASE}/models/{path_id(model_id)}/runs/{path_id(job_id)}" if job_id else f"{BASE}/models/{path_id(model_id)}/runs/active"
+    return await call(backend().get(path, require_acting_user_id()))
+
+
+@mcp.tool()
+async def stop_data_update(model_id: str, job_id: str | None = None) -> SemanticModelMcpResultV1:
+    """Stop a data update (the one running now when job_id is omitted) when the user asks. Nothing it read is kept: the data in use stays as it was before the run."""
+    path = f"{BASE}/models/{path_id(model_id)}/runs/{path_id(job_id)}/stop" if job_id else f"{BASE}/models/{path_id(model_id)}/runs/stop"
+    return await call(backend().post(path, require_acting_user_id()))
 
 
 @mcp.tool(annotations=READ_ONLY)
