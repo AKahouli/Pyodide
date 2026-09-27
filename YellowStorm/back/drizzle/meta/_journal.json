@@ -218,6 +218,13 @@
       "when": 1790400000000,
       "tag": "0029_telegram_evolutions",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1790530000000,
+      "tag": "0030_conversation_v2_templates",
+      "breakpoints": true
     }
   ]
 }
