@@ -5,9 +5,15 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentService } from '@modules/document/document.service';
+import {
+  CONVERSATION_V2_TEMPLATE_STORE,
+  type ConversationV2TemplateStore,
+} from '@modules/conversation-v2/persistence/conversation-v2-template.store';
+import { TEMPLATE_REVISION_PREFIX } from '@modules/conversation-v2/constants/template-catalog.constants';
 import {
   DEFAULT_STARTER_MANIFEST_KEY,
   DEFAULT_STARTER_REVISION_ID,
@@ -52,6 +58,9 @@ export class RuntimeRevisionService {
     private readonly store: RuntimeSourceRevisionStore,
     private readonly documents: DocumentService,
     private readonly config: ConfigService,
+    @Optional()
+    @Inject(CONVERSATION_V2_TEMPLATE_STORE)
+    private readonly templateStore?: ConversationV2TemplateStore,
   ) {}
 
   get starterRevisionId(): string {
@@ -78,6 +87,10 @@ export class RuntimeRevisionService {
   ): Promise<RevisionManifest> {
     if (revisionId === this.starterRevisionId) {
       return this.getStarterManifest();
+    }
+
+    if (revisionId.startsWith(TEMPLATE_REVISION_PREFIX)) {
+      return this.loadTemplateRevision(revisionId);
     }
 
     const doc = await this.store.findByWorkspaceAndRevision(workspaceId, revisionId);
@@ -204,6 +217,10 @@ export class RuntimeRevisionService {
   async revisionExists(workspaceId: string, revisionId: string): Promise<boolean> {
     if (revisionId === this.starterRevisionId) {
       return true;
+    }
+    if (revisionId.startsWith(TEMPLATE_REVISION_PREFIX)) {
+      const template = await this.templateStore?.findByRevisionId(revisionId);
+      return template?.status === 'published' && !!template.manifestObjectKey;
     }
     return this.store.existsByWorkspaceAndRevision(workspaceId, revisionId);
   }
@@ -468,6 +485,35 @@ export class RuntimeRevisionService {
       );
       return null;
     }
+  }
+
+  /**
+   * Resolve a published Conversation V2 template revision. The manifest lives
+   * at the template's DB-recorded key and is stored in the same system folder
+   * as the starter manifest, so the browser loads it through the identical
+   * `…/revisions/:id/files` + `presign` path.
+   */
+  private async loadTemplateRevision(revisionId: string): Promise<RevisionManifest> {
+    const template = await this.templateStore?.findByRevisionId(revisionId);
+    if (!template || template.status !== 'published' || !template.manifestObjectKey) {
+      throw new NotFoundException(`Template revision ${revisionId} not found`);
+    }
+
+    const raw = await this.documents.download(template.manifestObjectKey);
+    const parsed = JSON.parse(raw.toString('utf8')) as CephStarterManifestJson;
+    const files = this.normalizeManifestFiles(parsed.files);
+    if (files.length === 0) {
+      throw new NotFoundException(`Template revision ${revisionId} has no usable files`);
+    }
+
+    return {
+      revisionId: parsed.revisionId || revisionId,
+      workspaceId: '_system',
+      parentRevisionId: parsed.parentRevisionId ?? null,
+      manifestHash: createHash('sha256').update(raw).digest('hex'),
+      manifestObjectKey: template.manifestObjectKey,
+      files,
+    };
   }
 
   private embeddedStarterManifest(): RevisionManifest {

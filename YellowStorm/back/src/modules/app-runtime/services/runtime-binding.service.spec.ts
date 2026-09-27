@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
+import { CONVERSATION_V2_SESSION_STORE } from '@modules/conversation-v2/persistence/conversation-v2-session.store';
 import { RUNTIME_BINDING_STORE, type RuntimeBindingStore } from '../persistence/runtime-binding.store';
 import { RuntimeBindingService } from './runtime-binding.service';
 import { RuntimeRevisionService } from './runtime-revision.service';
@@ -22,6 +23,8 @@ describe('RuntimeBindingService', () => {
     revisionId: STARTER,
   });
 
+  const findByAiSessionId = jest.fn();
+
   const store: RuntimeBindingStore = {
     upsertByWorkspaceId,
     findByWorkspaceId,
@@ -42,6 +45,7 @@ describe('RuntimeBindingService', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     ensureStarterRevision.mockResolvedValue({ revisionId: STARTER });
+    findByAiSessionId.mockResolvedValue(null);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -53,6 +57,7 @@ describe('RuntimeBindingService', () => {
         },
         { provide: RuntimeRevisionService, useValue: { ensureStarterRevision } },
         { provide: ConfigService, useValue: config },
+        { provide: CONVERSATION_V2_SESSION_STORE, useValue: { findByAiSessionId } },
       ],
     }).compile();
 
@@ -161,6 +166,21 @@ describe('RuntimeBindingService', () => {
 
     const call = upsertByWorkspaceId.mock.calls[0][0];
     expect(call.mcpTokenHash).toBeNull();
+  });
+
+  it('seeds the binding revision from the session template revision', async () => {
+    findByAiSessionId.mockResolvedValueOnce({ starterRevisionId: 'template_tpl_1' });
+    upsertByWorkspaceId.mockResolvedValueOnce({
+      bindingId: 'arb_aabbccddeeff',
+      workspaceId: 'sess_1',
+      latestRevisionId: 'template_tpl_1',
+    });
+
+    await svc.bind({ conversationSessionId: 'sess_1', userId: 'user_1' });
+
+    expect(findByAiSessionId).toHaveBeenCalledWith('sess_1');
+    const call = upsertByWorkspaceId.mock.calls[0][0];
+    expect(call.latestRevisionId).toBe('template_tpl_1');
   });
 
   it('propagates non-duplicate persistence errors', async () => {

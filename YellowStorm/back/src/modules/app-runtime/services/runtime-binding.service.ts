@@ -1,6 +1,10 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'crypto';
+import {
+  CONVERSATION_V2_SESSION_STORE,
+  type ConversationV2SessionStore,
+} from '@modules/conversation-v2/persistence/conversation-v2-session.store';
 import {
   RUNTIME_BINDING_STORE,
   type RuntimeBindingRecord,
@@ -43,6 +47,9 @@ export class RuntimeBindingService {
     private readonly tokens: RuntimeTokenService,
     private readonly revisions: RuntimeRevisionService,
     private readonly config: ConfigService,
+    @Optional()
+    @Inject(CONVERSATION_V2_SESSION_STORE)
+    private readonly sessions?: ConversationV2SessionStore,
   ) {}
 
   /**
@@ -54,7 +61,15 @@ export class RuntimeBindingService {
     const { conversationSessionId, userId } = params;
     const { token, hash } = this.tokens.issue();
 
-    const binding = await this.upsertWithRetry(conversationSessionId, userId, hash);
+    // Seed a new binding from the session's template/starter revision so the
+    // browser boots on the same revision the session was created with.
+    const session = await this.sessions?.findByAiSessionId(conversationSessionId);
+    const binding = await this.upsertWithRetry(
+      conversationSessionId,
+      userId,
+      hash,
+      session?.starterRevisionId ?? undefined,
+    );
     await this.revisions.ensureStarterRevision(binding.workspaceId);
 
     this.logger.log(
@@ -80,7 +95,13 @@ export class RuntimeBindingService {
     conversationSessionId: string,
     userId: string,
   ): Promise<RuntimeBindingRecord> {
-    const binding = await this.upsertWithRetry(conversationSessionId, userId, null);
+    const session = await this.sessions?.findByAiSessionId(conversationSessionId);
+    const binding = await this.upsertWithRetry(
+      conversationSessionId,
+      userId,
+      null,
+      session?.starterRevisionId ?? undefined,
+    );
     await this.revisions.ensureStarterRevision(binding.workspaceId);
     return binding;
   }
@@ -117,10 +138,11 @@ export class RuntimeBindingService {
     conversationSessionId: string,
     userId: string,
     mcpTokenHash: string | null,
+    starterRevisionId?: string,
   ): Promise<RuntimeBindingRecord> {
-    let binding = await this.upsert(conversationSessionId, userId, mcpTokenHash);
+    let binding = await this.upsert(conversationSessionId, userId, mcpTokenHash, starterRevisionId);
     if (!binding) {
-      binding = await this.upsert(conversationSessionId, userId, mcpTokenHash);
+      binding = await this.upsert(conversationSessionId, userId, mcpTokenHash, starterRevisionId);
     }
 
     if (!binding) {
@@ -166,6 +188,7 @@ export class RuntimeBindingService {
     conversationSessionId: string,
     userId: string,
     mcpTokenHash: string | null,
+    starterRevisionId?: string,
   ): Promise<RuntimeBindingRecord | null> {
     return this.store.upsertByWorkspaceId({
       workspaceId: conversationSessionId,
@@ -174,7 +197,7 @@ export class RuntimeBindingService {
       mcpTokenHash,
       bindingId: `arb_${randomBytes(6).toString('hex')}`,
       status: 'created',
-      latestRevisionId: this.starterRevisionId,
+      latestRevisionId: starterRevisionId || this.starterRevisionId,
     });
   }
 }

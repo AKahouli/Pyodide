@@ -7,6 +7,10 @@ import {
   STARTER_REACT_VITE_V1_REVISION_ID,
 } from '../constants/starter-react-vite-v1';
 import { RUNTIME_SOURCE_REVISION_STORE, type RuntimeSourceRevisionStore } from '../persistence/runtime-source-revision.store';
+import {
+  CONVERSATION_V2_TEMPLATE_STORE,
+  type ConversationV2TemplateStore,
+} from '@modules/conversation-v2/persistence/conversation-v2-template.store';
 import { RuntimeRevisionService } from './runtime-revision.service';
 
 describe('RuntimeRevisionService', () => {
@@ -26,6 +30,9 @@ describe('RuntimeRevisionService', () => {
     createIfNotExists,
     listRevisionIds,
   };
+
+  const findByRevisionId = jest.fn();
+  const templateStore = { findByRevisionId } as unknown as ConversationV2TemplateStore;
 
   const config = {
     get: jest.fn((key: string) => {
@@ -51,6 +58,7 @@ describe('RuntimeRevisionService', () => {
     download.mockRejectedValue(new Error('ceph offline'));
     exists.mockResolvedValue(true);
     upload.mockResolvedValue({});
+    findByRevisionId.mockResolvedValue(null);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -61,6 +69,7 @@ describe('RuntimeRevisionService', () => {
         },
         { provide: DocumentService, useValue: { download, exists, upload } },
         { provide: ConfigService, useValue: config },
+        { provide: CONVERSATION_V2_TEMPLATE_STORE, useValue: templateStore },
       ],
     }).compile();
 
@@ -205,5 +214,62 @@ describe('RuntimeRevisionService', () => {
     await expect(svc.branchRevision('sess_1', 'rev_missing')).rejects.toBeInstanceOf(
       NotFoundException,
     );
+  });
+
+  it('resolves a published template revision from its Ceph manifest', async () => {
+    findByRevisionId.mockResolvedValueOnce({
+      id: 'tpl_1',
+      revisionId: 'template_tpl_1',
+      status: 'published',
+      manifestObjectKey: 'appbuilder/manifests/_system/template_tpl_1.json',
+    });
+    download.mockResolvedValueOnce(
+      Buffer.from(
+        JSON.stringify({
+          revisionId: 'template_tpl_1',
+          parentRevisionId: null,
+          files: [
+            { path: 'package.json', sha256: 'a'.repeat(64), objectKey: 'blobs/aaa', size: 3 },
+            { path: 'src/App.jsx', sha256: 'b'.repeat(64), objectKey: 'blobs/bbb', size: 4 },
+          ],
+        }),
+        'utf8',
+      ),
+    );
+
+    const revision = await svc.getAuthorizedRevision('sess_1', 'template_tpl_1');
+
+    expect(findByRevisionId).toHaveBeenCalledWith('template_tpl_1');
+    expect(download).toHaveBeenCalledWith('appbuilder/manifests/_system/template_tpl_1.json');
+    expect(revision.revisionId).toBe('template_tpl_1');
+    expect(revision.workspaceId).toBe('_system');
+    expect(revision.files.map((f) => f.path)).toEqual(['package.json', 'src/App.jsx']);
+  });
+
+  it('rejects an unpublished or unknown template revision', async () => {
+    await expect(
+      svc.getAuthorizedRevision('sess_1', 'template_missing'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    findByRevisionId.mockResolvedValueOnce({
+      id: 'tpl_1',
+      revisionId: 'template_tpl_1',
+      status: 'draft',
+      manifestObjectKey: null,
+    });
+    await expect(
+      svc.getAuthorizedRevision('sess_1', 'template_tpl_1'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('revisionExists accepts only a published template revision', async () => {
+    findByRevisionId.mockResolvedValueOnce({
+      id: 'tpl_1',
+      revisionId: 'template_tpl_1',
+      status: 'published',
+      manifestObjectKey: 'appbuilder/manifests/_system/template_tpl_1.json',
+    });
+    expect(await svc.revisionExists('sess_1', 'template_tpl_1')).toBe(true);
+    expect(await svc.revisionExists('sess_1', 'template_unknown')).toBe(false);
   });
 });
