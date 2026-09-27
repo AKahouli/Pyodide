@@ -60,6 +60,9 @@ export const CALL_CLASSIFICATION: Record<SemanticApiCall, ReadKind> = {
   previewSourceMapping: 'evidence-read',
   previewRelationResolutionRule: 'evidence-read',
   dataPreview: 'evidence-read',
+  listCorrections: 'curated-read',
+  recordCorrection: 'command',
+  undoCorrection: 'command',
   mappingHealth: 'evidence-read',
 };
 

@@ -186,12 +186,29 @@ async def record_correction(command: CorrectionCommand, request: Request) -> dic
     current = await store.model_correction_sequence(pool, command.model_id)
     if current != command.expected_correction_sequence:
         raise HTTPException(status_code=409, detail="stale_correction_sequence")
+    if command.action == "revert":
+        target = command.payload.get("sequence")
+        if isinstance(target, bool) or not isinstance(target, int) or target < 1 or target > current:
+            raise HTTPException(status_code=422, detail="invalid_revert_target")
     sequence = await store.record_correction(
         pool, model_id=command.model_id, model_version_id=command.model_version_id,
         actor_user_id=command.actor_user_id, reason=command.reason,
         target_identity=command.target_identity, action=command.action,
         payload=command.payload, data_revision_id=command.data_revision_id)
     return {"sequence": sequence, "modelId": command.model_id, "state": "accepted"}
+
+
+@router.get("/models/{model_id}/corrections", status_code=status.HTTP_200_OK)
+async def list_corrections(model_id: str, request: Request) -> dict[str, object]:
+    """Corrections still in force (undone ones and undos themselves omitted)
+    plus the model's correction watermark for the next write."""
+    from app.population.corrections import corrections_in_force
+
+    pool = _population_read_pool(request)
+    corrections = await store.list_model_corrections(pool, model_id)
+    return {"modelId": model_id,
+            "correctionSequence": await store.model_correction_sequence(pool, model_id),
+            "corrections": corrections_in_force(corrections)}
 
 
 @router.post("/reviews/{review_id}/resolve", status_code=status.HTTP_200_OK)

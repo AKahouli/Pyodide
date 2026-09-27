@@ -12,7 +12,18 @@ const gaps = {
 };
 
 vi.mock('@/modules/file-viewer/store', () => ({ useFileViewerStore: { getState: () => ({ openFile }) } }));
+const recordCorrection = vi.fn();
+const undoCorrection = vi.fn();
+const corrections: Array<Record<string, unknown>> = [];
+vi.mock('../../hooks/use-record-corrections', () => ({
+  useRecordCorrections: () => ({
+    corrections: { data: { corrections } },
+    record: { mutate: recordCorrection, isPending: false },
+    undo: { mutate: undoCorrection, isPending: false },
+  }),
+}));
 vi.mock('../../query/hooks', () => ({
+  useSemanticGraph: () => ({ data: { relations: [{ id: 'partner', key: 'works_with', label: 'works with', inverseLabel: 'works with', sourceNodeTypeId: 'organization', targetNodeTypeId: 'organization' }] } }),
   useSemanticDataPreview: () => ({
     isLoading: false,
     isFetching: false,
@@ -25,7 +36,8 @@ vi.mock('../../query/hooks', () => ({
           values: { id: 'C001', country: 'NL' },
           sources: [{ mappingId: 'crm', source: { documentName: 'CRM Production' } }, { mappingId: 'excel', source: { documentName: 'customers.csv' } }],
           conflicts: [{ attribute: 'country', preferred: 'NL', conflicting: 'FR', preferredMappingId: 'crm', conflictingMappingId: 'excel' }],
-          provenance: { id: { mappingId: 'mapping', source: { kind: 'csv', workspaceId: 'workspace', documentId: 'document', documentName: 'customers.csv', documentPath: '/customers.csv', mimeType: 'text/csv', sheetName: 'CSV' }, rowNumber: 2 } },
+          provenance: { id: { mappingId: 'mapping', source: { kind: 'csv', workspaceId: 'workspace', documentId: 'document', documentName: 'customers.csv', documentPath: '/customers.csv', mimeType: 'text/csv', sheetName: 'CSV' }, rowNumber: 2 },
+            country: { mappingId: '', source: { kind: 'manual', documentName: '' }, correction: { sequence: 7, correctedBy: 'Ada', correctedByYou: false, originalValue: 'FR' } } },
         }, { id: 'organization:c002', conceptId: 'organization', entityKey: 'c002', label: 'Contoso', values: { id: 'C002' }, provenance: { id: { mappingId: '', source: { kind: 'manual', documentName: '' } } }, conflicts: [] }],
       }],
       relations: [{ relationId: 'partner', relationLabel: 'works with', sourceEntityId: 'organization:c001', targetEntityIds: ['organization:c002'], status: 'resolved', sourceAttribute: 'id', sourceValue: 'C001', targetAttribute: 'id', targetValues: ['C002'] }], sourceIssues, gaps,
@@ -38,6 +50,56 @@ describe('SemanticDataPreview', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sourceIssues.length = 0;
+    corrections.length = 0;
+  });
+
+  it('fixes a wrong value and keeps who corrected it with the original value', () => {
+    render(<SemanticDataPreview modelId='model' />);
+    expect(screen.getByText(/corrections.correctedBy/)).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: 'corrections.fixValueOf' })[0]);
+    const input = screen.getByRole('textbox', { name: 'corrections.newValueOf' });
+    fireEvent.change(input, { target: { value: 'C-001' } });
+    fireEvent.click(screen.getByRole('button', { name: /corrections.save/ }));
+    expect(recordCorrection).toHaveBeenCalledWith(
+      { action: 'edit_entity', targetIdentity: { entityId: 'organization:c001' }, payload: { attribute: 'id', value: 'C-001' } },
+      expect.any(Object),
+    );
+    fireEvent.click(screen.getAllByRole('button', { name: /corrections.undo/ })[0]);
+    expect(undoCorrection).toHaveBeenCalledWith(7, expect.any(Object));
+  });
+
+  it('hides a record or a link and adds a missing link', () => {
+    render(<SemanticDataPreview modelId='model' />);
+    fireEvent.click(screen.getByRole('button', { name: /corrections.hideLink/ }));
+    expect(recordCorrection).toHaveBeenLastCalledWith(
+      { action: 'remove_relationship', targetIdentity: { relationId: 'partner', sourceEntityId: 'organization:c001', targetEntityId: 'organization:c002' } },
+      expect.any(Object),
+    );
+    fireEvent.click(screen.getByRole('button', { name: /corrections.hideRecord/ }));
+    fireEvent.click(screen.getAllByRole('button', { name: /corrections.hideRecord/ })[0]);
+    expect(recordCorrection).toHaveBeenLastCalledWith({ action: 'remove_entity', targetIdentity: { entityId: 'organization:c001' } }, expect.any(Object));
+    fireEvent.click(screen.getByRole('button', { name: /corrections.addLink/ }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'corrections.chooseRelationship' }), { target: { value: 'partner|out' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'corrections.chooseRecord' }), { target: { value: 'organization:c002' } });
+    fireEvent.click(screen.getByRole('button', { name: 'corrections.link' }));
+    expect(recordCorrection).toHaveBeenLastCalledWith(
+      { action: 'add_relationship', targetIdentity: { relationId: 'partner', sourceEntityId: 'organization:c001', targetEntityId: 'organization:c002' } },
+      expect.any(Object),
+    );
+  });
+
+  it('lists fixes in force and lets people undo them', () => {
+    corrections.push({ sequence: 3, action: 'remove_entity', targetIdentity: { entityId: 'organization:c002' }, payload: {}, reason: '', createdAt: null, correctedBy: '', correctedByYou: true });
+    render(<SemanticDataPreview modelId='model' />);
+    expect(screen.getByText('corrections.describeHideRecord')).toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: /corrections.undo/ })[0]);
+    expect(undoCorrection).toHaveBeenCalledWith(3, expect.any(Object));
+  });
+
+  it('offers no fixes to people who can only read', () => {
+    render(<SemanticDataPreview modelId='model' canEdit={false} />);
+    expect(screen.queryByRole('button', { name: /corrections.hideRecord/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'corrections.fixValueOf' })).not.toBeInTheDocument();
   });
 
   it('names the source that failed and keeps the technical cause on demand', () => {

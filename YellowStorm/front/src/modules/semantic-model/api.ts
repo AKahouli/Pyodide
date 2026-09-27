@@ -4,7 +4,7 @@ import type { ApiResponse } from '@/lib/api/client';
 import type { AgeGraphEdge, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
 SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, SemanticReviewItem, SemanticVersion,
 SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
-StructuredSourceAsset, ValidationIssue } from './types';
+StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult } from './types';
 import type { SemanticDataTokenResponse } from './data-plane/semantic-api.types';
 
 const unwrap = <T>(response: { data: ApiResponse<T> }): T => response.data.data;
@@ -184,6 +184,15 @@ export const semanticModelApi = {
   },
   async dataPreview(id: string, options: { conceptId?: string; limit?: number; dataRevisionId?: string } = {}): Promise<SemanticDataPreview> {
     return unwrap(await apiClient.post<ApiResponse<SemanticDataPreview>>(API_ENDPOINTS.semanticModels.dataPreview(id), options, { timeout: 0 }));
+  },
+  async listCorrections(id: string): Promise<{ corrections: RecordCorrection[] }> {
+    return unwrap(await apiClient.get<ApiResponse<{ corrections: RecordCorrection[] }>>(API_ENDPOINTS.semanticModels.corrections(id)));
+  },
+  async recordCorrection(id: string, correction: RecordCorrectionInput): Promise<RecordCorrectionResult> {
+    return unwrap(await apiClient.post<ApiResponse<RecordCorrectionResult>>(API_ENDPOINTS.semanticModels.corrections(id), correction, { timeout: 0 }));
+  },
+  async undoCorrection(id: string, sequence: number): Promise<RecordCorrectionResult> {
+    return unwrap(await apiClient.post<ApiResponse<RecordCorrectionResult>>(API_ENDPOINTS.semanticModels.undoCorrection(id, sequence), {}, { timeout: 0 }));
   },
   async mappingHealth(id: string): Promise<MappingHealthResponse> {
     return unwrap(await apiClient.post<ApiResponse<MappingHealthResponse>>(API_ENDPOINTS.semanticModels.mappingHealth(id), {}));

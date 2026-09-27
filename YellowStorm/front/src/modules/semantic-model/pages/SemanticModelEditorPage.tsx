@@ -422,7 +422,7 @@ export function SemanticModelEditorPage() {
             }}
             onMapStructuredDrop={(resource, nodeId) => void openMappingTarget(sourceMappingTargetFromResource(resource, nodeId))}
           /></div>}
-          {mode === 'records' && modelId && <SemanticDataPreview modelId={modelId} dataRevisionId={boundDataRevisionId} onDataRevision={setBoundDataRevisionId} onOpenItem={(id) => { setMode('structure'); select(id); }} />}
+          {mode === 'records' && modelId && <SemanticDataPreview modelId={modelId} dataRevisionId={boundDataRevisionId} onDataRevision={setBoundDataRevisionId} onOpenItem={(id) => { setMode('structure'); select(id); }} canEdit={canEdit} onRebuildStarted={setPopulationJobId} />}
           {mode === 'mappings' && modelId && <SemanticMappingsView modelId={modelId} canEdit={canEdit} onOpenGraph={openGraphViewer} onPopulationAccepted={setPopulationJobId} onRepairMapping={(mapping) => void openMappingTarget({ workspaceId: mapping.workspaceId, documentId: mapping.documentId, documentName: mapping.documentName ?? mapping.documentId, assetKind: mapping.assetKind, mimeType: mapping.mimeType, path: mapping.documentPath, conceptId: mapping.conceptId, mapping })} onBulkEditMappings={(mapping) => void openMappingTarget({ workspaceId: mapping.workspaceId, documentId: mapping.documentId, documentName: mapping.documentName ?? mapping.documentId, assetKind: mapping.assetKind, mimeType: mapping.mimeType, path: mapping.documentPath, conceptId: mapping.conceptId, mapping, bulkEdit: true })} />}
           {!graph.nodes.length && mode === "structure" && structureView === 'diagram' && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
@@ -487,6 +487,8 @@ export function SemanticModelEditorPage() {
           modelId={modelId}
           dataRevisionId={boundDataRevisionId}
           onDataRevision={setBoundDataRevisionId}
+          canEdit={canEdit}
+          onRebuildStarted={setPopulationJobId}
         />
       )}
       <Dialog open={saveStatus === "conflict"}>

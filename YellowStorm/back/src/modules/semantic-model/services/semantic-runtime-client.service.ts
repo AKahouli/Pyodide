@@ -48,6 +48,21 @@ export interface RuntimeValueOrigin {
   column?: string;
   pageNumber?: number;
   sheet?: string;
+  /** Set when a person corrected this value: who, and the value the source gave. */
+  correctedBy?: string | null;
+  originalValue?: unknown;
+  correctionSequence?: number | null;
+}
+
+export interface RuntimeCorrection {
+  sequence: number;
+  modelVersionId: string | null;
+  actorUserId: string | null;
+  reason: string;
+  targetIdentity: Record<string, unknown>;
+  action: string;
+  payload: Record<string, unknown>;
+  createdAt: string | null;
 }
 
 export interface RuntimeRevisionGaps {
@@ -302,6 +317,13 @@ export class SemanticRuntimeClientService {
     command: RuntimeCorrectionCommand,
   ): Promise<{ sequence: number; modelId: string; state: string }> {
     return this.post('/v1/semantic-model-population/corrections', command);
+  }
+
+  async listCorrections(
+    modelId: string,
+    actorUserId: string,
+  ): Promise<{ modelId: string; correctionSequence: number; corrections: RuntimeCorrection[] }> {
+    return this.get(`/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/corrections`, actorUserId);
   }
 
   async resolveReview(

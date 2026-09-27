@@ -163,7 +163,7 @@ class CorrectionCommand(BaseModel):
     model_version_id: str = Field(alias="modelVersionId", min_length=1, max_length=200)
     action: Literal["create_entity", "edit_entity", "remove_entity", "add_relationship",
                     "remove_relationship", "set_override", "reset_override",
-                    "suppress", "unsuppress"]
+                    "suppress", "unsuppress", "revert"]
     target_identity: dict[str, Any] = Field(alias="targetIdentity")
     reason: str = Field(default="", max_length=2000)
     payload: dict[str, Any] = Field(default_factory=dict)

@@ -420,6 +420,8 @@ export interface SemanticDataPreview {
         };
         rowNumber?: number;
         field?: NonNullable<SourceMappingPreviewResponse['entities'][number]['provenance']['fields']>[string];
+        /** Present when a person fixed this value. */
+        correction?: ValueCorrection;
       }>;
       sources?: Array<{ mappingId: string; source: { documentName: string; sheetName?: string } }>;
       conflicts: Array<{ attribute: string; preferred: unknown; conflicting: unknown; preferredMappingId: string; conflictingMappingId: string }>;
@@ -448,4 +450,36 @@ export interface SemanticDataGaps {
   missingValues: Array<{ conceptId: string; conceptLabel: string; attribute: string; attributeLabel: string; missing: number; total: number }>;
   unresolvedLinks: Array<{ relationId: string; relationLabel: string; kind: string; count: number }>;
   other: Array<{ conceptId: string | null; conceptLabel: string | null; kind: string; count: number }>;
+}
+
+export interface ValueCorrection {
+  sequence: number;
+  correctedBy: string;
+  correctedByYou: boolean;
+  originalValue: unknown;
+}
+
+export type RecordCorrectionAction = 'edit_entity' | 'remove_entity' | 'add_relationship' | 'remove_relationship';
+
+export interface RecordCorrectionInput {
+  action: RecordCorrectionAction;
+  targetIdentity: Record<string, string>;
+  payload?: { attribute: string; value: unknown };
+  reason?: string;
+}
+
+export interface RecordCorrection {
+  sequence: number;
+  action: RecordCorrectionAction | string;
+  targetIdentity: Record<string, unknown>;
+  payload: Record<string, unknown>;
+  reason: string;
+  createdAt: string | null;
+  correctedBy: string;
+  correctedByYou: boolean;
+}
+
+export interface RecordCorrectionResult {
+  sequence: number;
+  rebuild: { jobId: string; status: string } | null;
 }

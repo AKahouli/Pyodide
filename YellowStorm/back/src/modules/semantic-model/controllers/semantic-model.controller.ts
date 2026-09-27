@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, ParseIntPipe, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import type { AuthUser } from '@common/auth/auth-user';
@@ -27,6 +27,7 @@ import {
   ListReviewItemsQueryDto,
   ResolveReviewItemDto,
   RequestPopulationRefreshDto,
+  RecordCorrectionDto,
 } from '../dto';
 import { ShareSemanticModelDto, UpdateSemanticModelShareDto } from '../dto/semantic-model-share.dto';
 import { SemanticModelShareService } from '../services/semantic-model-share.service';
@@ -314,6 +315,27 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
   dataPreview(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: DataPreviewDto) {
     return this.populationRefresh.boundRecords(user._id.toString(), modelId, dto.limit, dto.conceptId, dto.dataRevisionId);
+  }
+
+  @Get(':modelId/corrections')
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  listCorrections(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
+    return this.populationRefresh.listCorrections(user._id.toString(), modelId);
+  }
+
+  @Post(':modelId/corrections')
+  @ApiOperation({ summary: 'Fix a value, hide a record or link, or add a missing link; kept across rebuilds' })
+  @RateLimit({ limit: 30, windowMs: 60_000, keyPrefix: 'semantic-model:corrections' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  recordCorrection(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: RecordCorrectionDto) {
+    return this.populationRefresh.recordCorrection(user._id.toString(), modelId, dto);
+  }
+
+  @Post(':modelId/corrections/:sequence/undo')
+  @RateLimit({ limit: 30, windowMs: 60_000, keyPrefix: 'semantic-model:corrections' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  undoCorrection(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('sequence', ParseIntPipe) sequence: number) {
+    return this.populationRefresh.undoCorrection(user._id.toString(), modelId, sequence);
   }
 
   @Post(':modelId/mapping-health')

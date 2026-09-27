@@ -7,6 +7,7 @@ import type { AttributeDefinition } from '../domain/semantic-model.types';
 import type { RelationResolutionRule } from '../domain/semantic-cross-source.types';
 import type { SourceFieldMapping } from '../domain/semantic-source-mapping.types';
 import type { ConceptSpec, RelationSpec } from '../domain/model-specification.types';
+import type { RecordCorrectionDto } from '../dto/semantic-model.dto';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
 import { ModelSpecificationService } from './model-specification.service';
 import { SemanticModelService } from './semantic-model.service';
@@ -126,6 +127,8 @@ export class SemanticPopulationRefreshService {
       ).then((result) => result.rows),
       this.recordSources(model.id, entities.flatMap((entity) => Object.values(entity.origins ?? {}))),
     ]);
+    const correctors = await this.correctorNames(model.id, userId,
+      entities.flatMap((entity) => Object.values(entity.origins ?? {}).map((origin) => origin.correctedBy)));
     const attributeLabel = (concept: string, attribute: string) => nodes.find((node) => node.id === concept)
       ?.attributes?.find((candidate) => candidate.key === attribute)?.label || attribute;
     const entityIds = new Set(entities.map((entity) => entity.entityId));
@@ -146,7 +149,7 @@ export class SemanticPopulationRefreshService {
             label: entity.label,
             values: entity.attributes,
             provenance: Object.fromEntries(Object.entries(entity.origins ?? {})
-              .map(([attribute, origin]) => [attribute, this.valueProvenance(origin, sources)])),
+              .map(([attribute, origin]) => [attribute, this.withCorrection(this.valueProvenance(origin, sources), origin, correctors)])),
             conflicts: [],
           })),
         })),
@@ -187,6 +190,122 @@ export class SemanticPopulationRefreshService {
         unresolvedRelations: gaps.unresolvedLinks.reduce((total, gap) => total + gap.count, 0),
         ambiguousRelations: 0,
         conflicts: 0,
+      },
+    };
+  }
+
+  /** Fixes people made on the data, still in force, newest first, with who made them. */
+  async listCorrections(userId: string, modelId: string) {
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    const listed = await this.runtime.listCorrections(model.id, userId);
+    const names = await this.correctorNames(model.id, userId, listed.corrections.map((correction) => correction.actorUserId));
+    return {
+      corrections: [...listed.corrections].reverse().map((correction) => {
+        const who = correction.actorUserId ? names.get(correction.actorUserId) : undefined;
+        return {
+          sequence: correction.sequence,
+          action: correction.action,
+          targetIdentity: correction.targetIdentity,
+          payload: correction.payload,
+          reason: correction.reason,
+          createdAt: correction.createdAt,
+          correctedBy: who?.name ?? '',
+          correctedByYou: who?.self ?? false,
+        };
+      }),
+    };
+  }
+
+  /**
+   * Records a fix on the data (value, hidden record or link, added link) and rebuilds the draft so it
+   * shows at once. The fix is replayed on every later rebuild, so new source data never undoes it.
+   */
+  async recordCorrection(userId: string, modelId: string, input: RecordCorrectionDto) {
+    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
+    const target = input.targetIdentity ?? {};
+    const text = (value: unknown) => typeof value === 'string' && value.length > 0 && value.length <= 300;
+    const valid = input.action === 'edit_entity' || input.action === 'remove_entity'
+      ? text(target.entityId)
+      : text(target.relationId) && text(target.sourceEntityId) && text(target.targetEntityId);
+    if (!valid || (input.action === 'edit_entity' && !text(input.payload?.attribute))) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'This fix does not point to a record or link');
+    }
+    const { correctionSequence } = await this.runtime.listCorrections(model.id, userId);
+    const recorded = await this.runtime.recordCorrection({
+      actorUserId: userId,
+      modelId: model.id,
+      modelVersionId: model.currentDraftVersionId,
+      action: input.action,
+      targetIdentity: target,
+      payload: input.action === 'edit_entity'
+        ? { attribute: input.payload?.attribute, value: input.payload?.value ?? null }
+        : {},
+      reason: input.reason ?? '',
+      expectedCorrectionSequence: correctionSequence,
+    });
+    return { sequence: recorded.sequence, rebuild: await this.rebuildAfterCorrection(userId, model.id) };
+  }
+
+  /** Undoing is itself recorded, so the history stays complete and rebuilds replay the same result. */
+  async undoCorrection(userId: string, modelId: string, sequence: number) {
+    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
+    const listed = await this.runtime.listCorrections(model.id, userId);
+    const correction = listed.corrections.find((candidate) => candidate.sequence === sequence);
+    if (!correction) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'This fix no longer exists');
+    const recorded = await this.runtime.recordCorrection({
+      actorUserId: userId,
+      modelId: model.id,
+      modelVersionId: model.currentDraftVersionId,
+      action: 'revert',
+      targetIdentity: correction.targetIdentity,
+      payload: { sequence },
+      expectedCorrectionSequence: listed.correctionSequence,
+    });
+    return { sequence: recorded.sequence, rebuild: await this.rebuildAfterCorrection(userId, model.id) };
+  }
+
+  private async rebuildAfterCorrection(userId: string, modelId: string) {
+    try {
+      const accepted = await this.requestRefresh(userId, modelId, { purpose: 'refresh', scope: { kind: 'model' } });
+      return { jobId: String(accepted.jobId), status: String(accepted.status) };
+    } catch (error) {
+      // The fix is kept; it applies on the next successful build.
+      this.logger.warn(`Rebuild after a data fix was not started: ${(error as Error).message}`);
+      return null;
+    }
+  }
+
+  /** Display names of the people behind corrections; the viewer is flagged so the UI can say "you". */
+  private async correctorNames(modelId: string, viewerId: string, userIds: Array<string | null | undefined>) {
+    const ids = [...new Set(userIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
+    const names = new Map<string, { name: string; self: boolean }>();
+    if (!ids.length) return names;
+    const rows = await this.database.query<{ userId: string; email: string | null; firstName: string | null; lastName: string | null }>(
+      `SELECT user_id AS "userId", email, first_name AS "firstName", last_name AS "lastName"
+       FROM semantic_model.memberships WHERE model_id=$1 AND user_id = ANY($2::text[])`,
+      [modelId, ids],
+    ).then((result) => result.rows).catch(() => []);
+    for (const id of ids) {
+      const row = rows.find((candidate) => candidate.userId === id);
+      const name = [row?.firstName, row?.lastName].filter(Boolean).join(' ') || row?.email || '';
+      names.set(id, { name, self: id === viewerId });
+    }
+    return names;
+  }
+
+  private withCorrection<T extends object>(provenance: T, origin: RuntimeValueOrigin,
+    correctors: Map<string, { name: string; self: boolean }>) {
+    if (origin.kind !== 'human' || origin.correctionSequence == null) return provenance;
+    const who = origin.correctedBy ? correctors.get(origin.correctedBy) : undefined;
+    return {
+      ...provenance,
+      correction: {
+        sequence: origin.correctionSequence,
+        correctedBy: who?.name ?? '',
+        correctedByYou: who?.self ?? false,
+        originalValue: origin.originalValue ?? null,
       },
     };
   }
@@ -443,8 +562,13 @@ export class SemanticPopulationRefreshService {
       aiExtraction,
       populationEngineVersion: POPULATION_ENGINE_VERSION,
     });
+    // A new data fix must rebuild even when every source is unchanged.
+    const correctionSequence = scope.kind === 'model' && typeof this.runtime.listCorrections === 'function'
+      ? await this.runtime.listCorrections(model.id, userId).then((listed) => listed.correctionSequence).catch(() => 0)
+      : 0;
     const idempotencyKey = createHash('sha256')
       .update(JSON.stringify({
+        ...(correctionSequence ? { correctionSequence } : {}),
         modelVersionId: model.currentDraftVersionId,
         specHash: snapshot.specHash,
         populationExecutionFingerprint,

@@ -9,6 +9,7 @@ import { parseApiError } from '@/lib/api-error';
 import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../../api';
 import type { AgeGraphEdge, AgeGraphNode, SemanticGraph } from '../../types';
+import { CorrectionNotice, FixValueButton, HideRecordButton, useCorrectionActions } from '../preview/RecordCorrections';
 
 const NODE_R = 42;
 const PALETTE = [
@@ -44,6 +45,8 @@ interface Props {
   modelId: string;
   dataRevisionId?: string;
   onDataRevision?: (revisionId: string) => void;
+  canEdit?: boolean;
+  onRebuildStarted?: (jobId: string) => void;
 }
 
 // Wrap long text into 2 lines to fit inside the circle
@@ -56,7 +59,7 @@ function wrapLines(text: string, maxLen = 14): [string, string | null] {
   return [text.slice(0, maxLen - 1) + '…', null];
 }
 
-export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionId, onDataRevision }: Props) {
+export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionId, onDataRevision, canEdit = false, onRebuildStarted }: Props) {
   const { t } = useModuleTranslation('semantic-model');
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -454,9 +457,29 @@ export function SemanticModelGraphViewer({ open, onClose, modelId, dataRevisionI
                 );
               })}
             </div>
+            {canEdit && <GraphRecordFixes modelId={modelId} entityId={selectedNode.id} attributes={selectedMeta.attributes} onRebuildStarted={onRebuildStarted} />}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Fix a value or hide the selected record straight from the data graph. */
+function GraphRecordFixes({ modelId, entityId, attributes, onRebuildStarted }: Readonly<{ modelId: string; entityId: string; attributes: Array<{ key: string; label: string; value: unknown }>; onRebuildStarted?: (jobId: string) => void }>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const fixes = useCorrectionActions(modelId, onRebuildStarted, false);
+  return (
+    <div className="space-y-2 border-t border-white/10 px-4 py-3 text-white/85">
+      <p className="text-xs font-semibold">{t('corrections.graphTitle')}</p>
+      {attributes.map((attr) => (
+        <div key={attr.key} className="flex items-center justify-between gap-2 text-xs">
+          <span className="truncate text-white/45">{attr.label}</span>
+          <FixValueButton label={attr.label} value={attr.value === '__missing__' ? '' : attr.value} busy={fixes.busy} onSave={(value) => fixes.save({ action: 'edit_entity', targetIdentity: { entityId }, payload: { attribute: attr.key, value } })} />
+        </div>
+      ))}
+      <HideRecordButton busy={fixes.busy} onHide={() => fixes.save({ action: 'remove_entity', targetIdentity: { entityId } })} />
+      <CorrectionNotice actions={fixes} />
     </div>
   );
 }

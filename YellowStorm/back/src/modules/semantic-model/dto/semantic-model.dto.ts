@@ -658,3 +658,28 @@ export class RequestPopulationRefreshDto {
   @Type(() => PopulationRefreshScopeDto)
   scope!: PopulationRefreshScopeDto;
 }
+
+export const RECORD_CORRECTION_ACTIONS = ['edit_entity', 'remove_entity', 'add_relationship', 'remove_relationship'] as const;
+export type RecordCorrectionAction = (typeof RECORD_CORRECTION_ACTIONS)[number];
+
+export class RecordCorrectionDto {
+  @ApiProperty({ enum: RECORD_CORRECTION_ACTIONS })
+  @IsIn(RECORD_CORRECTION_ACTIONS as unknown as string[])
+  action!: RecordCorrectionAction;
+
+  @ApiProperty({ description: 'Record ({ entityId }) or link ({ relationId, sourceEntityId, targetEntityId })' })
+  @IsDefined()
+  @IsObject()
+  targetIdentity!: Record<string, unknown>;
+
+  @ApiPropertyOptional({ description: 'For a value fix: { attribute, value }' })
+  @IsOptional()
+  @IsObject()
+  payload?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ maxLength: 500 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}

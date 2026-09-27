@@ -14,6 +14,7 @@ export const semanticModelQueryKeys = {
   identityRules: (id: string) => ['semantic-models','identity-rules',id] as const,
   sourcePolicies: (id: string) => ['semantic-models','source-policies',id] as const,
   dataPreview: (id: string, limit: number) => ['semantic-models','data-preview',id,limit] as const,
+  corrections: (id: string) => ['semantic-models','corrections',id] as const,
   mappingHealth: (id: string) => ['semantic-models','mapping-health',id] as const,
   readiness: (id: string) => ['semantic-models','readiness',id] as const,
   reviewItems: (id: string, status: 'open' | 'resolved') => ['semantic-models','review-items',id,status] as const,

@@ -599,4 +599,68 @@ describe('SemanticPopulationRefreshService', () => {
     expect(payload.specification.sourceScope).toContainEqual({ workspaceId: 'ws-1', assetId: `manual:${snapshotId}` });
     expect(payload.specification.concepts[0].identity).toEqual({ namespace: 'customer', keyComponents: ['customer_id'] });
   });
+
+  describe('data fixes', () => {
+    const withCorrections = (runtime: Record<string, jest.Mock>, sequence = 3, corrections: unknown[] = []) => {
+      runtime.listCorrections = jest.fn(async () => ({ modelId: 'model-1', correctionSequence: sequence, corrections }));
+      runtime.recordCorrection = jest.fn(async () => ({ sequence: sequence + 1, modelId: 'model-1', state: 'accepted' }));
+    };
+
+    it('records a value fix at the current watermark and rebuilds the draft', async () => {
+      const { runtime, service } = setup();
+      withCorrections(runtime as any);
+      const result = await service.recordCorrection('u-1', 'model-1', {
+        action: 'edit_entity', targetIdentity: { entityId: 'e-1' }, payload: { attribute: 'name', value: 'Acme SA', extra: 1 },
+      });
+      expect((runtime as any).recordCorrection).toHaveBeenCalledWith(expect.objectContaining({
+        action: 'edit_entity', targetIdentity: { entityId: 'e-1' }, payload: { attribute: 'name', value: 'Acme SA' },
+        expectedCorrectionSequence: 3, modelVersionId: 'v-1', actorUserId: 'u-1',
+      }));
+      expect(result).toEqual({ sequence: 4, rebuild: { jobId: 'j-1', status: 'queued' } });
+    });
+
+    it('refuses a fix that points to nothing', async () => {
+      const { runtime, service } = setup();
+      withCorrections(runtime as any);
+      await expect(service.recordCorrection('u-1', 'model-1', { action: 'add_relationship', targetIdentity: { relationId: 'r' } }))
+        .rejects.toThrow('This fix does not point to a record or link');
+      await expect(service.recordCorrection('u-1', 'model-1', { action: 'edit_entity', targetIdentity: { entityId: 'e-1' } }))
+        .rejects.toThrow('This fix does not point to a record or link');
+    });
+
+    it('undoes a fix by recording a revert of it', async () => {
+      const { runtime, service } = setup();
+      withCorrections(runtime as any, 5, [{ sequence: 2, action: 'remove_entity', targetIdentity: { entityId: 'e-1' }, payload: {} }]);
+      await service.undoCorrection('u-1', 'model-1', 2);
+      expect((runtime as any).recordCorrection).toHaveBeenCalledWith(expect.objectContaining({
+        action: 'revert', payload: { sequence: 2 }, expectedCorrectionSequence: 5,
+      }));
+      await expect(service.undoCorrection('u-1', 'model-1', 9)).rejects.toThrow('This fix no longer exists');
+    });
+
+    it('changes the rebuild key when a new fix exists', async () => {
+      const { runtime, service } = setup();
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'refresh', scope: { kind: 'model' } });
+      withCorrections(runtime as any, 1);
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'refresh', scope: { kind: 'model' } });
+      const keys = (runtime.requestPopulationRun.mock.calls as unknown as Array<[unknown, string]>).map((call) => call[1]);
+      expect(keys[0]).not.toEqual(keys[1]);
+    });
+
+    it('shows who corrected a value and what the source said', async () => {
+      const { runtime, service } = setup();
+      runtime.getBoundRecords.mockResolvedValueOnce({
+        dataRevisionId: 'dr-1',
+        entities: [{ entityId: 'e-1', conceptId: 'c-customer', label: 'Acme', attributes: { name: 'Acme SA' }, provenance: {},
+          origins: { name: { kind: 'human', assetId: 'manual:x', correctedBy: 'u-1', originalValue: 'Acme', correctionSequence: 4 } } }],
+        relationships: [],
+        counts: { entities: 1, assertions: 1, relationships: 0 },
+        specification: { concepts: [{ conceptId: 'c-customer', label: 'Customer', allowedFields: ['name'] }], relations: [] },
+      } as any);
+      const result = await service.boundRecords('u-1', 'model-1', 25);
+      expect(result.concepts[0].entities[0].provenance.name).toMatchObject({
+        correction: { sequence: 4, correctedByYou: true, originalValue: 'Acme' },
+      });
+    });
+  });
 });

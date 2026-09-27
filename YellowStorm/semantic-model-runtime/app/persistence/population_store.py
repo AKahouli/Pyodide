@@ -187,6 +187,34 @@ async def model_correction_sequence(pool: Any, model_id: str) -> int:
     return int(value or 0)
 
 
+async def list_model_corrections(pool: Any, model_id: str,
+                                 limit: int = 5000) -> list[dict[str, Any]]:
+    """Every correction of a model in sequence order (undos included)."""
+    rows = await pool.fetch(
+        "SELECT sequence, model_version_id, actor_user_id, reason, target_identity, "
+        "action, payload, created_at FROM semantic_population.corrections "
+        "WHERE model_id = $1 ORDER BY sequence LIMIT $2",
+        model_id, limit,
+    )
+    result = []
+    for row in rows:
+        values = dict(row)
+        target = values.get("target_identity") or {}
+        payload = values.get("payload") or {}
+        created = values.get("created_at")
+        result.append({
+            "sequence": int(values["sequence"]),
+            "modelVersionId": values.get("model_version_id"),
+            "actorUserId": values.get("actor_user_id"),
+            "reason": values.get("reason") or "",
+            "targetIdentity": json.loads(target) if isinstance(target, str) else dict(target),
+            "action": values["action"],
+            "payload": json.loads(payload) if isinstance(payload, str) else dict(payload),
+            "createdAt": created.isoformat() if hasattr(created, "isoformat") else created,
+        })
+    return result
+
+
 async def open_review_item(pool: Any, *, model_id: str, model_version_id: str,
                            data_revision_id: str | None, kind: str, prompt: str,
                            candidates: list[dict[str, Any]],
@@ -426,6 +454,11 @@ def _origin_of(evidence: dict[str, Any], origin: str | None) -> dict[str, Any]:
             "ai" if evidence.get("origin") == "ai" else "source"),
         "assetId": asset_ref.get("assetId"),
     }
+    correction = evidence.get("correction")
+    if isinstance(correction, dict):
+        result["correctedBy"] = correction.get("actorUserId")
+        result["originalValue"] = correction.get("originalValue")
+        result["correctionSequence"] = correction.get("correctionSequence")
     for source, target in (("rowNumber", "rowNumber"), ("column", "column"),
                            ("pageNumber", "pageNumber"), ("sheet", "sheet")):
         if evidence.get(source) is not None:

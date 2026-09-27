@@ -585,12 +585,14 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict) -
     activation swaps the serving binding, so a stored-but-uncompleted task
     leaves serving state untouched.
     """
-    from app.persistence.population_store import (create_data_revision, mirror_specification,
+    from app.persistence.population_store import (create_data_revision, list_model_corrections,
+                                                  mirror_specification,
                                                   model_correction_sequence, revision_id_for,
                                                   set_revision_validation, store_assertions,
                                                   store_entities, store_relationships)
     from app.persistence.search_store import store_entity_projections
     from app.search.projections import build_entity_projections
+    from app.population.corrections import apply_corrections
 
     payload = command_dump.get("payload", {})
     specification = payload.get("specification", {})
@@ -598,6 +600,11 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict) -
     model_version_id = payload.get("modelVersionId") or payload.get("model_version_id", "")
     home_ws = command_dump.get("workspaceId") or command_dump.get("workspace_id", "")
     correction_sequence = await model_correction_sequence(pool, model_id)
+    if correction_sequence:
+        # Human fixes survive rebuilds: replay every correction still in force
+        # on top of the computed rows. The revision records the watermark it
+        # applied so activation can refuse a revision built before a newer fix.
+        outcome = apply_corrections(outcome, await list_model_corrections(pool, model_id))
     execution_fingerprint = outcome["executionFingerprint"]
     revision_id = revision_id_for(model_version_id, execution_fingerprint,
                                   outcome.get("datasetFingerprints", []),
