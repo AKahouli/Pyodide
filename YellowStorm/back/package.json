@@ -91,6 +91,8 @@
     "@nestjs/cli": "^10.4.0",
     "@nestjs/schematics": "^10.1.0",
     "@nestjs/testing": "^10.4.0",
+    "@swc/cli": "^0.5.2",
+    "@swc/core": "^1.16.2",
     "@types/adm-zip": "^0.5.8",
     "@types/bcrypt": "^6.0.0",
     "@types/compression": "^1.8.1",
