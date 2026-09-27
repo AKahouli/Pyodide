@@ -204,7 +204,8 @@ def test_bound_records_and_graph_share_the_draft_revision(client: TestClient):
     gaps = {"missingValues": [{"conceptId": "c1", "attribute": "city", "missing": 1,
                                "total": 1}], "unresolvedLinks": [], "other": []}
     revision = {"id": "dr_1", "coverage": json.dumps({"gaps": gaps})}
-    _inject(client, ScriptedPool([binding, counts, [entity], origins, revision,
+    _inject(client, ScriptedPool([binding, counts, [{"concept_id": "c1", "entities": 1}],
+                                  [entity], origins, revision,
                                   [relationship], {"specification": specification}]))
     records = client.get("/v1/semantic-model-population/models/m1/records?limit=25",
                          headers=AUTH)
@@ -214,6 +215,7 @@ def test_bound_records_and_graph_share_the_draft_revision(client: TestClient):
     assert records.json()["entities"][0]["origins"]["name"] == {
         "kind": "source", "assetId": "a1", "rowNumber": 4, "column": "name"}
     assert records.json()["gaps"] == gaps
+    assert records.json()["conceptCounts"] == {"c1": 1}
 
     graph_rows = [
         [{"record_id": '"crm::1"', "concept_id": '"c1"', "label": '"Acme"',

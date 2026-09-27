@@ -142,6 +142,7 @@ export class SemanticPopulationRefreshService {
         .map((concept) => ({
           id: concept.conceptId,
           label: concept.label,
+          total: records.conceptCounts?.[concept.conceptId],
           entities: entities.filter((entity) => entity.conceptId === concept.conceptId).map((entity) => ({
             id: entity.entityId,
             conceptId: entity.conceptId,

@@ -802,6 +802,8 @@ class PostgresJobRepository:
             WHERE workspace_id=$1 AND asset_id=$2 AND source_fingerprint=$3
               AND options_fingerprint=$4 AND parser_version=$5
               AND source_version IS NOT DISTINCT FROM $6
+              -- "Indexing required" depends on the index, not on the file: read the file again.
+              AND profile->>'status' IS DISTINCT FROM 'indexing_required'
             ORDER BY completed_at DESC LIMIT 1
             """,
             source.get("workspaceId"), source.get("assetId"), source_fingerprint,

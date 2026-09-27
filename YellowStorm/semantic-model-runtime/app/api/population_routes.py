@@ -121,6 +121,8 @@ async def read_bound_records(model_id: str, request: Request, environment: str =
     if data_revision_id is not None and data_revision_id != revision_id:
         raise HTTPException(status_code=409, detail="active_binding_changed")
     counts = await store.count_revision_rows(pool, revision_id)
+    # Records per concept, over the whole revision: the entity list below is only a page of it.
+    concept_counts = await store.count_revision_entities_by_concept(pool, revision_id)
     entities = await store.list_revision_entities(pool, revision_id, limit, concept_id)
     entity_ids = {entity["entityId"] for entity in entities}
     origins = await store.list_entity_origins(pool, revision_id, sorted(entity_ids))
@@ -140,7 +142,7 @@ async def read_bound_records(model_id: str, request: Request, environment: str =
         raise HTTPException(status_code=409, detail="revision_specification_not_found")
     return {"modelId": model_id, "modelVersionId": binding["model_version_id"],
             "dataRevisionId": revision_id, "entities": entities,
-            "relationships": relationships, "counts": counts,
+            "relationships": relationships, "counts": counts, "conceptCounts": concept_counts,
             "gaps": gaps or {"missingValues": [], "unresolvedLinks": [], "other": []},
             "specification": specification}
 

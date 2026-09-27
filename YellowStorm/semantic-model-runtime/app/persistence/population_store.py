@@ -422,6 +422,15 @@ async def count_revision_rows(pool: Any, revision_id: str) -> dict[str, int]:
             "relationships": int(row["relationships"])}
 
 
+async def count_revision_entities_by_concept(pool: Any, revision_id: str) -> dict[str, int]:
+    rows = await pool.fetch(
+        "SELECT concept_id, count(*) AS entities FROM semantic_population.entities "
+        "WHERE data_revision_id = $1 GROUP BY concept_id",
+        revision_id,
+    )
+    return {str(row["concept_id"]): int(row["entities"]) for row in rows}
+
+
 async def list_revision_entities(pool: Any, revision_id: str,
                                  limit: int = 50000,
                                  concept_id: str | None = None) -> list[dict[str, Any]]:

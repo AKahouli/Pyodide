@@ -97,6 +97,8 @@ export interface RuntimeBoundRecords {
     matchingStrategy: string | null;
   }>;
   counts: { entities: number; assertions: number; relationships: number };
+  /** Records per concept over the whole revision; absent from runtimes that predate it. */
+  conceptCounts?: Record<string, number>;
   specification: {
     concepts: Array<{ conceptId: string; label: string; allowedFields: string[] }>;
     relations: Array<{ relationId: string; label: string }>;

@@ -472,7 +472,9 @@ export class SemanticSourceMappingService {
       },
     };
     const key = createHash('sha256').update(JSON.stringify(command)).digest('hex');
-    return this.runtime.requestDatasourceDiscovery(command, `datasource:${key}`);
+    // Bump the version when discovery rules change, so a finished job made under the old rules is not
+    // handed back as-is (v2: spreadsheets no longer wait for indexing).
+    return this.runtime.requestDatasourceDiscovery(command, `datasource:v2:${key}`);
   }
 
   private sheetProfile(profile: Record<string, unknown>) {
@@ -480,16 +482,20 @@ export class SemanticSourceMappingService {
     const rawSheets = Array.isArray(structure.sheets) ? structure.sheets
       : structure.kind === 'csv' ? [{ name: 'CSV', reportedRows: structure.dataRows, reportedColumns: Array.isArray(structure.columns) ? structure.columns.length : 0 }]
       : [];
-    const sheets = rawSheets.map((sheet) => {
-      const value = sheet as Record<string, unknown>;
-      return {
-        name: String(value.name ?? ''),
-        rowCount: Number(value.reportedRows ?? value.rowCount ?? 0),
-        fieldCount: Number(value.reportedColumns ?? value.fieldCount ?? 0),
-      };
-    });
     const selected = typeof structure.selectedSheet === 'string' ? structure.selectedSheet
       : structure.kind === 'csv' ? 'CSV' : undefined;
+    // Workbooks that do not declare their size report no counts; the sheet that was read has measured ones.
+    const measuredRows = typeof structure.dataRows === 'number' ? structure.dataRows : undefined;
+    const measuredFields = Array.isArray(structure.columns) ? structure.columns.length : undefined;
+    const sheets = rawSheets.map((sheet) => {
+      const value = sheet as Record<string, unknown>;
+      const read = value.name === selected;
+      return {
+        name: String(value.name ?? ''),
+        rowCount: Number(value.reportedRows ?? value.rowCount ?? (read ? measuredRows : undefined) ?? 0),
+        fieldCount: Number(value.reportedColumns ?? value.fieldCount ?? (read ? measuredFields : undefined) ?? 0),
+      };
+    });
     return {
       sheets,
       ...(selected ? { sheet: sheets.find((sheet) => sheet.name === selected) } : {}),
