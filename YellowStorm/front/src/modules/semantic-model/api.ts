@@ -147,10 +147,17 @@ export const semanticModelApi = {
     return unwrap(await apiClient.post<ApiResponse<{ revision: number; mappingCount: number }>>(API_ENDPOINTS.semanticModels.bulkDocumentSourceMappings(id), { ...payload, expectedRevision: model.revision }));
   },
   /** One mapping for every readable file of a workspace, or of one of its folders. */
-  async createWorkspaceSourceMapping(id: string, payload: { conceptId: string; workspaceId: string; folderId?: string | null; fieldMappings: SourceMappingDraft['fieldMappings']; identityFields: string[] }): Promise<{ revision: number; fileCount: number; waitingCount: number }> {
+  /** One mapping for many files of a workspace: all of them, or the picked folders and files. `mappingId` changes an existing one. */
+  async createWorkspaceSourceMapping(id: string, payload: { conceptId: string; workspaceId: string; folderIds?: string[]; documentIds?: string[]; mappingId?: string; fieldMappings: SourceMappingDraft['fieldMappings']; identityFields: string[] }): Promise<{ revision: number; fileCount: number; waitingCount: number }> {
     const model = await semanticModelApi.get(id);
-    const { folderId, ...rest } = payload;
-    return unwrap(await apiClient.post<ApiResponse<{ revision: number; fileCount: number; waitingCount: number }>>(API_ENDPOINTS.semanticModels.workspaceSourceMapping(id), { ...rest, ...(folderId ? { folderId } : {}), expectedRevision: model.revision }));
+    const { folderIds, documentIds, mappingId, ...rest } = payload;
+    return unwrap(await apiClient.post<ApiResponse<{ revision: number; fileCount: number; waitingCount: number }>>(API_ENDPOINTS.semanticModels.workspaceSourceMapping(id), {
+      ...rest,
+      ...(folderIds?.length ? { folderIds } : {}),
+      ...(documentIds?.length ? { documentIds } : {}),
+      ...(mappingId ? { mappingId } : {}),
+      expectedRevision: model.revision,
+    }));
   },
   /** A page of one concept's records in the data in use, optionally searched. */
   async conceptRecords(id: string, conceptId: string, query: { q?: string; limit?: number; offset?: number } = {}): Promise<ConceptRecordsPage> {

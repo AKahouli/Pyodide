@@ -30,17 +30,24 @@ export interface SourceMappingTarget {
   conceptId?: string;
   mapping?: ConceptSourceMapping;
   bulkEdit?: boolean;
-  /** Map every readable file of this workspace (or of one of its folders) at once. */
+  /** Map many files of this workspace at once: all of them, or picked folders and files. */
   workspace?: WorkspaceSourceScope;
 }
 
 export interface WorkspaceSourceScope {
   workspaceId: string;
-  folderId?: string | null;
+  /** The name shown for the source ("Legal", or "Legal / Contracts" when opened from a folder). */
   name: string;
+  /** The workspace's own name, for "every file in …". */
+  workspaceName?: string;
+  /** Opened from a folder: that folder starts picked. */
+  folderId?: string | null;
+  /** What is picked to start with; nothing means the whole workspace. */
+  folderIds?: string[];
+  documentIds?: string[];
 }
 
-/** A target that maps every readable file of a workspace, or of a folder in it, with one mapping. */
+/** A target that maps many readable files of a workspace with one mapping. */
 export function sourceMappingTargetFromWorkspace(scope: WorkspaceSourceScope, conceptId?: string): SourceMappingTarget {
   return {
     workspaceId: scope.workspaceId,

@@ -11,7 +11,7 @@ import { parseApiError } from '@/lib/api-error';
 import { showError, showSuccess } from '@/lib/notifications';
 import { useFileViewerStore } from '@/modules/file-viewer/store';
 import { useModuleTranslation } from '@/modules/localization';
-import { getDocuments, getFolderContents } from '@/modules/workspace/api';
+import { getDocument, getDocuments, getFolderContents } from '@/modules/workspace/api';
 import { isMappableDocument, isStructuredDocument } from '../knowledge/KnowledgePanel';
 import { semanticModelApi } from '../../api';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
@@ -19,6 +19,7 @@ import { useSourceMappings } from '../../query/hooks';
 import { useSemanticModelEditorStore } from '../../store';
 import type { SourceExtractionStrategy, SourceFieldMapping, SourceMappingPreviewResponse, StructuredSourceAsset } from '../../types';
 import type { SourceMappingTarget, WorkspaceSourceScope } from './SourceMappingDrawer';
+import { isReadableDocument, WorkspaceFilePicker, type WorkspacePick } from './WorkspaceFilePicker';
 
 type PreviewItem = { asset: StructuredSourceAsset; result: SourceMappingPreviewResponse };
 
@@ -40,24 +41,38 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
     enabled: Boolean(target),
   });
   const documentAssets = useMemo(() => (assetsQuery.data?.assets ?? []).filter((asset) => asset.kind === 'document'), [assetsQuery.data]);
-  // Whole workspace (or folder): one mapping for all its files. Editing a saved one reopens it the same way.
+  // Many files of a workspace with one mapping. Editing a saved one reopens it with what it covers.
   const workspace: WorkspaceSourceScope | undefined = target?.workspace ?? (target?.mapping?.scope === 'workspace'
-    ? { workspaceId: target.mapping.workspaceId, folderId: target.mapping.folderId, name: target.mapping.documentName ?? target.mapping.workspaceId }
+    ? {
+      workspaceId: target.mapping.workspaceId,
+      name: target.mapping.documentName ?? target.mapping.workspaceId,
+      workspaceName: (target.mapping.documentName ?? target.mapping.workspaceId).split(' / ')[0],
+      folderIds: target.mapping.selection?.folderIds ?? (target.mapping.folderId ? [target.mapping.folderId] : []),
+      documentIds: target.mapping.selection?.documentIds ?? [],
+    }
     : undefined);
-  // A couple of its files, to preview what the mapping reads.
+  const editingWorkspaceMapping = target?.mapping?.scope === 'workspace' ? target.mapping.id : undefined;
+  // Every file, or only what is picked in the workspace tree.
+  const [coverage, setCoverage] = useState<{ whole: boolean; pick: WorkspacePick }>({ whole: true, pick: { folderIds: [], documentIds: [] } });
+  const pickCount = coverage.pick.folderIds.length + coverage.pick.documentIds.length;
+  // A couple of the covered files, to preview what the mapping reads.
   const samplesQuery = useQuery({
-    queryKey: ['semantic-models', 'workspace-samples', workspace?.workspaceId, workspace?.folderId ?? null],
-    queryFn: async () => {
-      const page = workspace!.folderId
-        ? await getFolderContents(workspace!.workspaceId, workspace!.folderId, { limit: 50, page: 1 })
+    queryKey: ['semantic-models', 'workspace-samples', workspace?.workspaceId, coverage.whole ? null : coverage.pick],
+    queryFn: async (): Promise<StructuredSourceAsset[]> => {
+      const asset = (document: { id: string; originalName: string; mimeType: string; path?: string }): StructuredSourceAsset => ({
+        workspaceId: workspace!.workspaceId, documentId: document.id, name: document.originalName,
+        kind: 'document', mimeType: document.mimeType, path: document.path ?? '',
+      });
+      if (!coverage.whole && coverage.pick.documentIds.length) {
+        const picked = await Promise.allSettled(coverage.pick.documentIds.slice(0, 2).map((id) => getDocument(workspace!.workspaceId, id)));
+        return picked.flatMap((result) => result.status === 'fulfilled' ? [asset(result.value)] : []);
+      }
+      if (!coverage.whole && !coverage.pick.folderIds.length) return [];
+      const folderId = coverage.whole ? undefined : coverage.pick.folderIds[0];
+      const page = folderId
+        ? await getFolderContents(workspace!.workspaceId, folderId, { limit: 50, page: 1 })
         : await getDocuments(workspace!.workspaceId, { limit: 50, page: 1 });
-      return page.documents
-        .filter((document) => !document.isFolder && isMappableDocument(document.mimeType) && !isStructuredDocument(document.mimeType))
-        .slice(0, 2)
-        .map((document): StructuredSourceAsset => ({
-          workspaceId: workspace!.workspaceId, documentId: document.id, name: document.originalName,
-          kind: 'document', mimeType: document.mimeType, path: document.path ?? '',
-        }));
+      return page.documents.filter((document) => !document.isFolder && isReadableDocument(document.mimeType)).slice(0, 2).map(asset);
     },
     enabled: Boolean(workspace),
   });
@@ -77,6 +92,8 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
     setSelectedDocuments(new Set([target.documentId, ...(target.bulkEdit ? sourceMappings.filter((mapping) => mapping.conceptId === nextConceptId && mapping.assetKind === 'document').map((mapping) => mapping.documentId) : [])]));
     setDocumentSearch('');
     setSavedCount(0);
+    const startPick = { folderIds: [...(workspace?.folderIds ?? []), ...(workspace?.folderId ? [workspace.folderId] : [])], documentIds: workspace?.documentIds ?? [] };
+    setCoverage({ whole: !startPick.folderIds.length && !startPick.documentIds.length, pick: startPick });
     preview.reset();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target?.documentId, target?.mapping?.id, graph?.versionId, sourceMappings.length]);
@@ -121,7 +138,8 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
     mutationFn: () => semanticModelApi.createWorkspaceSourceMapping(modelId, {
       conceptId,
       workspaceId: workspace!.workspaceId,
-      folderId: workspace!.folderId,
+      ...(coverage.whole ? {} : coverage.pick),
+      mappingId: editingWorkspaceMapping,
       fieldMappings: activeMappings,
       identityFields,
     }),
@@ -193,7 +211,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
   });
   const identityValid = identityFields.every((field) => activeMappings.some((mapping) => mapping.targetAttribute === field));
   const saving = save.isPending || saveWorkspace.isPending;
-  const canSave = Boolean(conceptId && (workspace || selectedAssets.length) && activeMappings.length && identityValid) && !saving;
+  const canSave = Boolean(conceptId && (workspace ? coverage.whole || pickCount > 0 : selectedAssets.length) && activeMappings.length && identityValid) && !saving;
   const canPreview = canSave && selectedAssets.length > 0;
   const usesAi = activeMappings.some((mapping) => mapping.mode === 'extract' && mapping.extractionStrategy === 'ai');
 
@@ -216,7 +234,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
   return <Sheet modal={false} open={Boolean(target)} onOpenChange={(open) => { if (!open) onClose(); }}>
     {target && <SheetContent side='right' className='flex w-full flex-col gap-0 p-0 sm:max-w-2xl' onInteractOutside={(event) => event.preventDefault()}>
       <SheetHeader className='border-b p-5'>
-        <SheetTitle>{workspace ? t('mapping.workspaceTitle', { name: workspace.name }) : target.bulkEdit ? t('dataWorkflow.bulkTitle') : target.mapping ? t('mapping.editDocumentTitle') : t('mapping.documentTitle', { name: target.documentName })}</SheetTitle>
+        <SheetTitle>{workspace ? t('mapping.workspaceTitle', { name: workspace.workspaceName ?? workspace.name }) : target.bulkEdit ? t('dataWorkflow.bulkTitle') : target.mapping ? t('mapping.editDocumentTitle') : t('mapping.documentTitle', { name: target.documentName })}</SheetTitle>
         <SheetDescription>{workspace ? t('mapping.workspaceDescription') : target.bulkEdit ? t('dataWorkflow.bulkDescription', { name: target.documentName }) : t('mapping.documentDescription')}</SheetDescription>
       </SheetHeader>
       <div className='min-h-0 flex-1 space-y-5 overflow-y-auto p-5'>
@@ -235,7 +253,9 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
         </div>
 
         {workspace && <div className='space-y-2 rounded-xl border border-teal-500/40 bg-teal-500/5 p-3 text-xs'>
-          <p className='flex items-center gap-1.5 font-medium text-teal-800 dark:text-teal-300'><FolderOpen className='h-4 w-4' />{t('mapping.workspaceScope', { name: workspace.name })}</p>
+          <p className='flex items-center gap-1.5 font-medium text-teal-800 dark:text-teal-300'><FolderOpen className='h-4 w-4' />{t('mapping.coverage')}</p>
+          <WorkspaceFilePicker workspaceId={workspace.workspaceId} name={workspace.workspaceName ?? workspace.name} whole={coverage.whole} pick={coverage.pick}
+            onChange={(next) => { setCoverage(next); preview.reset(); }} />
           <p className='text-muted-foreground'>{t('mapping.workspaceHelp')}</p>
           {usesAi && <p className='flex gap-1.5 text-amber-700 dark:text-amber-400'><AlertTriangle className='h-3.5 w-3.5 shrink-0' />{t('mapping.workspaceAiCost')}</p>}
           {samplesQuery.isSuccess && !selectedAssets.length && <p className='text-muted-foreground'>{t('mapping.workspaceNoSample')}</p>}
@@ -324,7 +344,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
       <div className='flex items-center justify-end gap-2 p-4'>
         <Button variant='outline' onClick={onClose}>{t('action.cancel')}</Button>
         <Button variant='outline' disabled={!canPreview || preview.isPending} onClick={() => preview.mutate()}>{preview.isPending && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}{t('mapping.previewButton')}</Button>
-        <Button disabled={!canSave} onClick={() => (workspace ? saveWorkspace.mutate() : save.mutate())}>{saving && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}{workspace ? t('mapping.workspaceSave') : target.bulkEdit ? selectedAssets.length === 1 ? t('dataWorkflow.applyToOne') : t('dataWorkflow.applyToSources', { count: selectedAssets.length }) : t('mapping.save')}</Button>
+        <Button disabled={!canSave} onClick={() => (workspace ? saveWorkspace.mutate() : save.mutate())}>{saving && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}{workspace ? (editingWorkspaceMapping ? t('mapping.save') : t('mapping.workspaceSave')) : target.bulkEdit ? selectedAssets.length === 1 ? t('dataWorkflow.applyToOne') : t('dataWorkflow.applyToSources', { count: selectedAssets.length }) : t('mapping.save')}</Button>
         {save.isPending && selectedAssets.length > 50 && <span className='text-xs text-muted-foreground'>{t('dataWorkflow.saveProgress', { saved: savedCount, total: selectedAssets.length })}</span>}
       </div>
     </SheetContent>}

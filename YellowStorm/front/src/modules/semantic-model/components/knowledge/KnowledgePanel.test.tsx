@@ -68,7 +68,7 @@ describe('KnowledgePanel', () => {
     fireEvent.click(screen.getByRole('button',{name:'knowledge.expandWorkspace'}));
     await screen.findByText('Contracts');
     fireEvent.click(screen.getAllByRole('button',{name:'knowledge.useAllIn'})[1]);
-    expect(onMapWorkspace).toHaveBeenLastCalledWith({workspaceId:'workspace',folderId:'folder',name:'Credit Risk / Contracts'});
+    expect(onMapWorkspace).toHaveBeenLastCalledWith({workspaceId:'workspace',folderId:'folder',name:'Credit Risk / Contracts',workspaceName:'Credit Risk'});
   });
 
   it('loads later workspace and document pages on demand', async () => {

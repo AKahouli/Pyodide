@@ -249,6 +249,8 @@ export interface ConceptSourceMapping {
   /** 'workspace': one mapping for every readable file of a workspace (or folder), files added later included. */
   scope?: 'document' | 'workspace';
   folderId?: string | null;
+  /** Workspace mappings: the picked folders and files, or null for the whole workspace. */
+  selection?: { folderIds: string[]; documentIds: string[] } | null;
   /** Workspace mappings: files it covers today, and files still being indexed. */
   fileCount?: number;
   waitingCount?: number;

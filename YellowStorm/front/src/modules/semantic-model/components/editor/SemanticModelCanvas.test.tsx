@@ -239,7 +239,7 @@ describe('SemanticModelCanvas', () => {
     const state = useSemanticModelEditorStore.getState();
     expect(state.pending[0].map((operation)=>operation.type)).toEqual(['relation_type.delete','node_type.delete']);
     expect(state.graph?.nodes.map((node)=>node.id)).toEqual(['customer']);
-    act(()=>state.undo());
+    act(()=>{void state.undo();});
     expect(useSemanticModelEditorStore.getState().graph?.relations).toHaveLength(1);
   });
 
@@ -254,7 +254,21 @@ describe('SemanticModelCanvas', () => {
     expect(useSemanticModelEditorStore.getState().graph?.relations).toEqual([]);
   });
 
-  it('asks before removing a source, since that cannot be undone', () => {
+  it('removes the selected concept with the Delete key, but not while typing', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    renderCanvas([]);
+    act(()=>useSemanticModelEditorStore.getState().select('contract'));
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    fireEvent.keyDown(input,{key:'Backspace'});
+    expect(useSemanticModelEditorStore.getState().graph?.nodes).toHaveLength(1);
+    fireEvent.keyDown(window,{key:'Delete'});
+    expect(useSemanticModelEditorStore.getState().graph?.nodes).toEqual([]);
+    expect(showSuccess).toHaveBeenCalledWith('designer.delete.conceptDone', expect.anything());
+    input.remove();
+  });
+
+  it('hands a source removal to the page, which removes it at once with Undo', () => {
     useSemanticModelEditorStore.getState().hydrate(contractGraph);
     const onRemoveSource = vi.fn();
     render(<SemanticModelCanvas canEdit knowledge={knowledge} sourceMappings={[mapping({})]} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} onRemoveSource={onRemoveSource} />);
@@ -352,8 +366,8 @@ describe('SemanticModelCanvas', () => {
     const typed = (flow.props.nodes as Array<{id:string;data:{source:unknown;onRemove?:(source:unknown)=>void}}>).find((node)=>node.id==='typed:contract')!;
     act(()=>typed.data.onRemove!(typed.data.source));
     expect(useSemanticModelEditorStore.getState().graph!.records).toEqual([]);
-    expect(showSuccess).toHaveBeenCalledWith('designer.delete.typedDone_other');
-    act(()=>useSemanticModelEditorStore.getState().undo());
+    expect(showSuccess).toHaveBeenCalledWith('designer.delete.typedDone_other', expect.objectContaining({ action: expect.objectContaining({ label: 'action.undo' }) }));
+    act(()=>{void useSemanticModelEditorStore.getState().undo();});
     expect(useSemanticModelEditorStore.getState().graph!.records).toHaveLength(2);
   });
 });

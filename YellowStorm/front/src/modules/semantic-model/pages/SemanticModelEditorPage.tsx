@@ -37,6 +37,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { showError, showSuccess } from "@/lib/notifications";
 import { parseApiError } from "@/lib/api-error";
 import { useModuleTranslation } from "@/modules/localization";
+import { announceUndoable, isTextEntry } from '../utils/undo-notice';
 import { semanticModelApi } from "../api";
 import {
   AddConceptDialog,
@@ -116,6 +117,7 @@ export function SemanticModelEditorPage() {
   const selectionTick = useSemanticModelEditorStore((state) => state.selectionTick);
   const undoStack = useSemanticModelEditorStore((state) => state.undoStack);
   const redoStack = useSemanticModelEditorStore((state) => state.redoStack);
+  const historyBusy = useSemanticModelEditorStore((state) => state.historyBusy);
   const hydrate = useSemanticModelEditorStore((state) => state.hydrate);
   const setMode = useSemanticModelEditorStore((state) => state.setMode);
   const commit = useSemanticModelEditorStore((state) => state.commit);
@@ -180,28 +182,60 @@ export function SemanticModelEditorPage() {
     setPopulationJobId(undefined);
   }, [populationJob.data]);
   const [mappingTarget, setMappingTarget] = useState<SourceMappingTarget | null>(null);
-  // Removing a source is saved at once and cannot be undone, so it is confirmed first.
-  const [removal, setRemoval] = useState<{ label: string; mappings: ConceptSourceMapping[] } | null>(null);
-  const [removing, setRemoving] = useState(false);
   const adoptRevision = useSemanticModelEditorStore((state) => state.adoptRevision);
-  const removeMappings = async () => {
-    if (!modelId || !removal) return;
-    setRemoving(true);
-    try {
-      for (const mapping of removal.mappings) {
-        const result = await semanticModelApi.deleteSourceMapping(modelId, mapping.id);
-        adoptRevision(result.revision);
+  const pushAction = useSemanticModelEditorStore((state) => state.pushAction);
+  // Removing a source happens at once, without asking: Undo puts it back with the same settings.
+  const removeSource = useCallback(async (label: string, removed: ConceptSourceMapping[]) => {
+    if (!modelId || !removed.length) return;
+    const refresh = () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) }),
+      queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.mappingHealth(modelId) }),
+      queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId) }),
+      queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.freshness(modelId) }),
+    ]);
+    // Put back, a source gets a new id; follow it so Redo removes the right one.
+    let live = removed;
+    const remove = async () => {
+      try {
+        for (const mapping of live) adoptRevision((await semanticModelApi.deleteSourceMapping(modelId, mapping.id)).revision);
+      } finally {
+        void refresh();
       }
-      setRemoval(null);
+    };
+    const restore = async () => {
+      try {
+        for (const mapping of live) {
+          const result = mapping.scope === 'workspace'
+            ? await semanticModelApi.createWorkspaceSourceMapping(modelId, {
+              conceptId: mapping.conceptId, workspaceId: mapping.workspaceId,
+              folderIds: mapping.selection?.folderIds ?? (mapping.folderId ? [mapping.folderId] : []),
+              documentIds: mapping.selection?.documentIds ?? [],
+              fieldMappings: mapping.fieldMappings, identityFields: mapping.identityFields,
+            })
+            : await semanticModelApi.createSourceMapping(modelId, {
+              conceptId: mapping.conceptId, workspaceId: mapping.workspaceId, documentId: mapping.documentId,
+              sheetName: mapping.sheetName, assetKind: mapping.assetKind, fieldMappings: mapping.fieldMappings, identityFields: mapping.identityFields,
+            });
+          adoptRevision(result.revision);
+        }
+        const current = await semanticModelApi.listSourceMappings(modelId);
+        live = live.map((mapping) => current.find((item) => item.conceptId === mapping.conceptId && item.documentId === mapping.documentId && item.sheetName === mapping.sheetName) ?? mapping);
+      } finally {
+        void refresh();
+      }
+    };
+    const reported = (step: () => Promise<void>, message: string) => async () => {
+      try { await step(); } catch (error) { showError(message, { description: parseApiError(error).message }); throw error; }
+    };
+    try {
+      await remove();
     } catch (error) {
       showError(t('designer.delete.sourceError'), { description: parseApiError(error).message });
-    } finally {
-      setRemoving(false);
-      void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) });
-      void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId) });
-      void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.freshness(modelId) });
+      return;
     }
-  };
+    pushAction({ undo: reported(restore, t('designer.undo.restoreError')), redo: reported(remove, t('designer.delete.sourceError')) });
+    announceUndoable(t('designer.delete.sourceDone', { name: label }), t('action.undo'));
+  }, [adoptRevision, modelId, pushAction, queryClient, t]);
   const openMappingTarget = useCallback(async (target: SourceMappingTarget) => {
     if (!modelId) return;
     const linked = knowledge.workspaceLinks.some((item) => item.workspaceId === target.workspaceId && item.enabled);
@@ -323,14 +357,15 @@ export function SemanticModelEditorPage() {
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey)) return;
-      if (useSemanticModelEditorStore.getState().saveInFlight) return;
+      // Typing in a field keeps the field's own undo.
+      if (isTextEntry(event.target) && event.key.toLowerCase() !== "s") return;
       if (event.key.toLowerCase() === "z") {
         event.preventDefault();
-        event.shiftKey ? redo() : undo();
+        void (event.shiftKey ? redo() : undo());
       }
       if (event.key.toLowerCase() === "y") {
         event.preventDefault();
-        redo();
+        void redo();
       }
       if (event.key.toLowerCase() === "s") {
         event.preventDefault();
@@ -475,8 +510,8 @@ export function SemanticModelEditorPage() {
           )}
         </div>
         {canEdit && onCanvas && <div className='hidden items-center sm:flex'>
-          <Button size='icon' variant='ghost' disabled={!undoStack.length} onClick={undo} aria-label={t('action.undo')}><Undo2 className='h-4 w-4' /></Button>
-          <Button size='icon' variant='ghost' disabled={!redoStack.length} onClick={redo} aria-label={t('action.redo')}><Redo2 className='h-4 w-4' /></Button>
+          <Button size='icon' variant='ghost' disabled={!undoStack.length || historyBusy} onClick={() => void undo()} aria-label={t('action.undo')} title={`${t('action.undo')} (Ctrl+Z)`}><Undo2 className='h-4 w-4' /></Button>
+          <Button size='icon' variant='ghost' disabled={!redoStack.length || historyBusy} onClick={() => void redo()} aria-label={t('action.redo')} title={`${t('action.redo')} (Ctrl+Shift+Z)`}><Redo2 className='h-4 w-4' /></Button>
           <Button size='icon' variant='ghost' onClick={autoLayout} aria-label={t('action.autoLayout')}><LayoutDashboard className='h-4 w-4' /></Button>
         </div>}
         <div className="flex-1" />
@@ -556,7 +591,7 @@ export function SemanticModelEditorPage() {
             onMapStructuredDrop={(resource, nodeId) => void openMappingTarget(sourceMappingTargetFromResource(resource, nodeId))}
             onOpenSource={openSource}
             onPaneDrop={dropOnCanvas}
-            onRemoveSource={(source, mapping) => setRemoval({ label: source.label, mappings: mapping ? [mapping] : source.mappings })}
+            onRemoveSource={(source, mapping) => void removeSource(source.label, mapping ? [mapping] : source.mappings)}
             onAddFeed={(source) => { const first = source.mappings[0]; if (first) void openMappingTarget({ ...mappingTarget_(first), mapping: undefined, conceptId: undefined }); }}
             onToggleKey={canEdit ? toggleKey : undefined}
             sourcePositions={sourcePositions}
@@ -674,20 +709,6 @@ export function SemanticModelEditorPage() {
               }
             >
               {t("conflict.keepCopy")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={removal !== null} onOpenChange={(open) => { if (!open && !removing) setRemoval(null); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t('designer.delete.confirmTitle', { name: removal?.label ?? '' })}</DialogTitle>
-            <DialogDescription>{t('designer.delete.confirmDescription')}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" disabled={removing} onClick={() => setRemoval(null)}>{t('action.cancel')}</Button>
-            <Button variant="destructive" disabled={removing} onClick={() => void removeMappings()}>
-              {removing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{t('designer.delete.confirm')}
             </Button>
           </DialogFooter>
         </DialogContent>

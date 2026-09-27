@@ -16,6 +16,7 @@ import { KNOWLEDGE_DRAG_TYPE, parseKnowledgeResource, type KnowledgeDropState, t
 import type { AttributeDefinition, ConceptSourceMapping, MappingHealthItem, SemanticNodeType, SemanticRecordRelation, SemanticRelationType } from '../../types';
 import { businessKey, compatibleRecordRelations, nextLinkedConceptPosition, uniqueBusinessKey, type CompatibleRecordRelation } from '../../utils/model-utils';
 import { conceptDeletion, relationDeletion, typedRecordsDeletion } from '../../utils/graph-deletes';
+import { announceUndoable, isTextEntry } from '../../utils/undo-notice';
 import { ConceptToolbar, InlineRename, SourceToolbar, ToolButton, ToolbarShell } from './CanvasToolbars';
 import { designerFlow, isDesignerSourceId, type DesignerFeed, type DesignerSource } from '../../utils/designer-flow';
 
@@ -324,9 +325,11 @@ export function SemanticModelCanvas({ sourceMappings,identityRules,recordCounts,
   const deleteConcept = (nodeId:string) => {
     const current = useSemanticModelEditorStore.getState().graph;
     if (!current) return;
+    const label = current.nodes.find((node)=>node.id===nodeId)?.label ?? '';
     const deletion = conceptDeletion(current,nodeId);
     commitBatch(deletion.operations,deletion.update);
     if (useSemanticModelEditorStore.getState().selectedId===nodeId) select(null);
+    announceUndoable(t('designer.delete.conceptDone',{name:label}),t('action.undo'));
   };
   // Typed records are part of the model, so removing them is an ordinary edit that Undo brings back.
   const removeTypedRecords = (source:DesignerSource) => {
@@ -336,7 +339,7 @@ export function SemanticModelCanvas({ sourceMappings,identityRules,recordCounts,
     if (!deletion.count) return;
     commitBatch(deletion.operations,deletion.update);
     if (useSemanticModelEditorStore.getState().selectedId===source.id) select(null);
-    showSuccess(t(deletion.count===1?'designer.delete.typedDone_one':'designer.delete.typedDone_other',{count:deletion.count}));
+    announceUndoable(t(deletion.count===1?'designer.delete.typedDone_one':'designer.delete.typedDone_other',{count:deletion.count}),t('action.undo'));
   };
   const renameConcept = (nodeId:string,label:string) => {
     const changes = {label,key:businessKey(label)};
@@ -349,9 +352,11 @@ export function SemanticModelCanvas({ sourceMappings,identityRules,recordCounts,
   const deleteRelation = (relationId:string) => {
     const current = useSemanticModelEditorStore.getState().graph;
     if (!current) return;
+    const label = current.relations.find((relation)=>relation.id===relationId)?.label ?? '';
     const deletion = relationDeletion(current,relationId);
     commitBatch(deletion.operations,deletion.update);
     if (useSemanticModelEditorStore.getState().selectedId===relationId) select(null);
+    announceUndoable(t('designer.delete.relationDone',{name:label}),t('action.undo'));
   };
 
   useEffect(() => {
@@ -445,6 +450,28 @@ export function SemanticModelCanvas({ sourceMappings,identityRules,recordCounts,
   },[graph?.nodes,graph?.records,identityRules,recordCounts,sourceMappings,mappingHealth]);
 
   const flow = useMemo(()=>graph&&mode!=='records'?designerFlow(graph,sourceMappings,mappingHealth,sourcePositions):{sources:[],feeds:[]},[graph,mode,sourceMappings,mappingHealth,sourcePositions]);
+  // Delete or Backspace removes what is selected on the canvas; Undo brings it back.
+  const removeSelectedRef = useRef<()=>boolean>(()=>false);
+  removeSelectedRef.current = () => {
+    const state = useSemanticModelEditorStore.getState();
+    const id = state.selectedId;
+    if (!canEdit||!id||!state.graph||mode==='records') return false;
+    if (state.graph.nodes.some((node)=>node.id===id&&!node.systemKey)) { deleteConcept(id); return true; }
+    if (state.graph.relations.some((relation)=>relation.id===id)) { deleteRelation(id); return true; }
+    const source = flow.sources.find((item)=>item.id===id);
+    if (source?.kind==='typed') { removeTypedRecords(source); return true; }
+    if (source&&onRemoveSource) { onRemoveSource(source); return true; }
+    return false;
+  };
+  useEffect(() => {
+    const keyboard = (event:globalThis.KeyboardEvent) => {
+      if ((event.key!=='Delete'&&event.key!=='Backspace')||event.ctrlKey||event.metaKey||event.altKey||isTextEntry(event.target)) return;
+      if (event.target instanceof HTMLElement&&event.target.closest('[role="dialog"]')) return;
+      if (removeSelectedRef.current()) event.preventDefault();
+    };
+    window.addEventListener('keydown',keyboard);
+    return () => window.removeEventListener('keydown',keyboard);
+  },[]);
 
   const graphId = graph?.versionId;
   // Sources arrive after the model, so fit again once they do; otherwise the source column starts off-screen.
@@ -509,7 +536,7 @@ export function SemanticModelCanvas({ sourceMappings,identityRules,recordCounts,
     onPaneDrop(resource);
   };
   return <div className='h-full w-full' onDragOver={paneDragOver} onDrop={paneDrop}>
-    <ReactFlow nodes={nodes} edges={shownEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} fitView fitViewOptions={{padding:0.15,minZoom:isMobile?1:0.25,maxZoom:1}} minZoom={isMobile?1:0.25} maxZoom={1.6} proOptions={{hideAttribution:true}} nodesConnectable={canEdit} nodesDraggable={canEdit} elevateNodesOnSelect={false} zoomOnDoubleClick={false} onInit={(instance)=>{flowRef.current=instance;}}
+    <ReactFlow nodes={nodes} edges={shownEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} fitView fitViewOptions={{padding:0.15,minZoom:isMobile?1:0.25,maxZoom:1}} minZoom={isMobile?1:0.25} maxZoom={1.6} proOptions={{hideAttribution:true}} deleteKeyCode={null} nodesConnectable={canEdit} nodesDraggable={canEdit} elevateNodesOnSelect={false} zoomOnDoubleClick={false} onInit={(instance)=>{flowRef.current=instance;}}
       onConnect={(connection:Connection)=>{
         if (!connection.source||!connection.target||!graph) return;
         if (mode!=='records'){onConnectRequest({sourceId:connection.source,targetId:connection.target});return;}
