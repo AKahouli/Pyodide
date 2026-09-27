@@ -149,6 +149,9 @@ export function SemanticModelEditorPage() {
       void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId ?? 'none') });
       void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.reviewQueue(modelId ?? 'none') });
     }
+    // Hand the final state to the run panel before we stop following the job, or it spins forever.
+    const finalState = populationJob.data.state;
+    setPopulation((current) => current && current.jobId === populationJobId ? { ...current, status: finalState } : current);
     setPopulationJobId(undefined);
   }, [populationJob.data]);
   const [mappingTarget, setMappingTarget] = useState<SourceMappingTarget | null>(null);
@@ -514,8 +517,7 @@ export function SemanticModelEditorPage() {
           )}
         </section>
         {population && <PopulationStartedPanel
-          // The run keeps going after the panel opens: show the job's live state, not the one it started with.
-          outcome={populationJob.data && population.jobId === populationJobId ? { ...population, status: populationJob.data.state } : population}
+          outcome={population}
           sourceMappings={sourceMappings.data ?? []}
           onClose={() => setPopulation(null)}
           onOpenHealth={() => { setPopulation(null); setTrustOpen(true); }}

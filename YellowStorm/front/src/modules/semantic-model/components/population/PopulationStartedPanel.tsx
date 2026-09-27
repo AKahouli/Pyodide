@@ -34,15 +34,15 @@ export function PopulationStartedPanel({ outcome, sourceMappings, onClose, onOpe
 
   const title = tone === 'failed' ? t('population.failed')
     : tone === 'gaps' ? t('population.finishedWithGaps')
-    : tone === 'done' ? t('population.finished')
+    : tone === 'done' ? t(outcome.reused ? 'population.finished' : 'population.done')
     : outcome.reused ? t('population.alreadyRunning') : t('population.started');
 
   const detail = tone === 'failed' ? t('population.failedHint')
     : tone === 'gaps' ? t('population.gapsHint')
-    : tone === 'done' ? t('population.finishedHint')
+    : tone === 'done' ? t(outcome.reused ? 'population.finishedHint' : 'population.doneHint')
     : t('population.startedHint', { count: readCount });
 
-  return <aside className='flex h-full w-full max-w-md shrink-0 flex-col border-l bg-background'>
+  return <aside className='flex h-full w-full max-w-xs shrink-0 flex-col border-l bg-background'>
     <header className='flex items-start gap-3 border-b px-4 py-3'>
       {tone === 'running' ? <Loader2 className='mt-0.5 h-5 w-5 shrink-0 animate-spin text-primary' />
         : tone === 'failed' ? <XCircle className='mt-0.5 h-5 w-5 shrink-0 text-destructive' />

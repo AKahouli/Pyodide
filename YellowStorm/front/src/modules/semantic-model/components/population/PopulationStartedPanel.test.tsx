@@ -36,6 +36,13 @@ describe('PopulationStartedPanel', () => {
     expect(screen.getByText('population.unknownSource')).toBeInTheDocument();
   });
 
+  it('says a new run has finished once its job completes', () => {
+    render(<PopulationStartedPanel outcome={{ jobId:'job-1', status:'completed', skipped: [], reused: false }} sourceMappings={mappings} onClose={vi.fn()} onOpenHealth={vi.fn()} />);
+
+    expect(screen.getByText('population.done')).toBeInTheDocument();
+    expect(screen.queryByText('population.started')).not.toBeInTheDocument();
+  });
+
   it('reports a run that was already in flight', () => {
     render(<PopulationStartedPanel outcome={{ jobId:'job-1', status:'running', skipped: [], reused: true }} sourceMappings={mappings} onClose={vi.fn()} onOpenHealth={vi.fn()} />);
 
