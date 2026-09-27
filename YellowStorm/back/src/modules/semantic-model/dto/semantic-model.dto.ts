@@ -510,6 +510,27 @@ export class WorkspaceSourceMappingDto {
   @MaxLength(200)
   folderId?: string;
 
+  @ApiPropertyOptional({ type: [String], maxItems: 500, description: 'Picked folders: every file inside, at any depth. With documentIds empty too, the whole workspace.' })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(500)
+  @IsString({ each: true })
+  @MaxLength(200, { each: true })
+  folderIds?: string[];
+
+  @ApiPropertyOptional({ type: [String], maxItems: 500, description: 'Picked single files' })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(500)
+  @IsString({ each: true })
+  @MaxLength(200, { each: true })
+  documentIds?: string[];
+
+  @ApiPropertyOptional({ description: 'Change what an existing workspace mapping covers instead of adding one' })
+  @IsOptional()
+  @IsUUID()
+  mappingId?: string;
+
   @ApiProperty({ type: [SourceFieldMappingDto], maxItems: 100 })
   @IsArray()
   @ArrayMaxSize(100)

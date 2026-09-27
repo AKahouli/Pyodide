@@ -14,7 +14,7 @@ import { SemanticModelService } from './semantic-model.service';
 import { SemanticRuntimeClientService, type RuntimeValueOrigin } from './semantic-runtime-client.service';
 import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
 import { DOCUMENT_MIME_TYPES, STRUCTURED_MIME_PREFIXES } from './semantic-source-mapping.service';
-import { workspaceMappingFiles } from '../domain/workspace-source-scope';
+import { mappingSelection, type WorkspaceSelection, workspaceMappingFiles } from '../domain/workspace-source-scope';
 import type { DocumentResponse as WorkspaceDocumentResponse } from '@modules/workspace/interfaces/workspace-document.interface';
 
 export type PopulationRefreshScope = { kind: 'model' } | { kind: 'mapping'; mappingId: string };
@@ -55,6 +55,7 @@ interface MappingRow {
   updatedAt: Date;
   scope?: 'document' | 'workspace';
   folderId?: string | null;
+  selection?: WorkspaceSelection | null;
 }
 
 interface RecordSource {
@@ -528,7 +529,7 @@ export class SemanticPopulationRefreshService {
         }
         if (mapping.scope === 'workspace') {
           // One source per readable file, resolved now: files added since the last run are included.
-          const files = await this.workspaceFiles(mapping.workspaceId, mapping.folderId);
+          const files = await this.workspaceFiles(mapping.workspaceId, mappingSelection(mapping));
           if (!files.readable.length) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT, 'The workspace has no readable file yet');
           for (const file of files.readable) sources.push(await this.populationSource(mapping, node, file));
           waitingFiles += files.waiting.length;
@@ -814,7 +815,7 @@ export class SemanticPopulationRefreshService {
                 m.status, i.fields AS "identityFields",
                 COALESCE(w.enabled, false) AS "sourceEnabled",
                 m.validated_source_version AS "validatedSourceVersion", m.updated_at AS "updatedAt",
-                m.scope, m.folder_id AS "folderId"
+                m.scope, m.folder_id AS "folderId", m.selection
          FROM semantic_model.source_mappings m
          LEFT JOIN semantic_model.workspace_links w ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id
          LEFT JOIN semantic_model.identity_rules i ON i.model_id=m.model_id AND i.concept_id=m.concept_id
@@ -833,7 +834,7 @@ export class SemanticPopulationRefreshService {
               m.status, i.fields AS "identityFields",
               COALESCE(w.enabled, false) AS "sourceEnabled",
               m.validated_source_version AS "validatedSourceVersion", m.updated_at AS "updatedAt",
-              m.scope, m.folder_id AS "folderId"
+              m.scope, m.folder_id AS "folderId", m.selection
        FROM semantic_model.source_mappings m
        LEFT JOIN semantic_model.workspace_links w ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id
        LEFT JOIN semantic_model.identity_rules i ON i.model_id=m.model_id AND i.concept_id=m.concept_id
@@ -863,9 +864,9 @@ export class SemanticPopulationRefreshService {
   }
 
   /** Readable files of a workspace mapping, listed at run time. */
-  private async workspaceFiles(workspaceId: string, folderId?: string | null) {
+  private async workspaceFiles(workspaceId: string, selection: WorkspaceSelection | null) {
     const all = await this.documents.listAllInWorkspace(workspaceId);
-    return workspaceMappingFiles(all, DOCUMENT_MIME_TYPES, folderId);
+    return workspaceMappingFiles(all, DOCUMENT_MIME_TYPES, selection);
   }
 
   /**

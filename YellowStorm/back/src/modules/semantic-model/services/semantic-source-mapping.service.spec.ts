@@ -128,7 +128,7 @@ describe('SemanticSourceMappingService boundaries', () => {
     const documents = {
       findById: jest.fn().mockResolvedValue({ id: 'folder-1', isFolder: true, folderName: 'Contracts', originalName: 'Contracts' }),
       listAllInWorkspace: jest.fn().mockResolvedValue([
-        { id: 'folder-1', isFolder: true, mimeType: '', parentId: null },
+        { id: 'folder-1', isFolder: true, mimeType: '', parentId: null, folderName: 'Contracts', originalName: 'Contracts' },
         { id: 'a', isFolder: false, mimeType: 'application/pdf', parentId: 'folder-1', indexingStatus: 'ready' },
         { id: 'b', isFolder: false, mimeType: 'application/pdf', parentId: 'folder-1', indexingStatus: 'pending' },
       ]),
@@ -142,7 +142,41 @@ describe('SemanticSourceMappingService boundaries', () => {
     } as never)).resolves.toEqual({ revision: 8, fileCount: 1, waitingCount: 1 });
     const insert = client.query.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO semantic_model.source_mappings')) as unknown as [string, unknown[]];
     expect(insert[0]).toContain("'workspace'");
-    expect(insert[1]).toEqual(expect.arrayContaining(['workspace:ws-1:folder-1', 'folder-1', 'Legal / Contracts']));
+    expect(insert[1]).toEqual(expect.arrayContaining(['workspace:ws-1:folder-1', '{"folderIds":["folder-1"],"documentIds":[]}', 'Legal / Contracts']));
+  });
+
+  it('covers picked folders and files with one mapping, and changes what an existing one covers', async () => {
+    const client = { query: jest.fn(async (_sql: string, _params?: unknown[]) => ({ rows: [], rowCount: 1 })) };
+    const database = { transaction: jest.fn(async (work: (client: unknown) => unknown) => work(client)), query: jest.fn(async (sql: string) => sql.includes('FROM semantic_model.node_types')
+      ? { rows: [{ label: 'Contract', attributes: [{ key: 'number', label: 'Number', type: 'text' }] }] }
+      : { rows: [{ ok: 1 }] }) };
+    const models = { requireActiveRole: jest.fn().mockResolvedValue({ id: 'model-1', currentDraftVersionId: 'version-1' }), advanceRevision: jest.fn().mockResolvedValue(8), audit: jest.fn() };
+    const documents = {
+      listAllInWorkspace: jest.fn().mockResolvedValue([
+        { id: 'f1', isFolder: true, mimeType: '', parentId: null, folderName: 'Contracts', originalName: 'Contracts' },
+        { id: 'f2', isFolder: true, mimeType: '', parentId: null, folderName: 'NDAs', originalName: 'NDAs' },
+        { id: 'a', isFolder: false, mimeType: 'application/pdf', parentId: 'f1', indexingStatus: 'ready', originalName: 'a.pdf' },
+        { id: 'b', isFolder: false, mimeType: 'application/pdf', parentId: 'f2', indexingStatus: 'ready', originalName: 'b.pdf' },
+        { id: 'loose', isFolder: false, mimeType: 'application/pdf', parentId: null, indexingStatus: 'ready', originalName: 'loose.pdf' },
+        { id: 'sheet', isFolder: false, mimeType: 'text/csv', parentId: null, indexingStatus: 'ready', originalName: 'sheet.csv' },
+      ]),
+    };
+    const service = new SemanticSourceMappingService(database as never, models as never, documents as never,
+      {} as never, { preview: jest.fn() } as never, { findById: jest.fn().mockResolvedValue({ name: 'Legal' }) } as never);
+    const dto = { expectedRevision: 7, conceptId: 'concept-1', workspaceId: 'ws-1', folderIds: ['f1'], documentIds: ['loose'],
+      fieldMappings: [{ sourceField: null, targetAttribute: 'number', mode: 'extract' }] };
+    await expect(service.createWorkspace('user-1', 'model-1', dto as never)).resolves.toEqual({ revision: 8, fileCount: 2, waitingCount: 0 });
+    const insert = client.query.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO semantic_model.source_mappings')) as unknown as [string, unknown[]];
+    expect(insert[1]).toEqual(expect.arrayContaining([expect.stringMatching(/^workspace:ws-1:pick-/), '{"folderIds":["f1"],"documentIds":["loose"]}', 'Legal / Contracts, loose.pdf']));
+
+    client.query.mockClear();
+    await service.createWorkspace('user-1', 'model-1', { ...dto, mappingId: '00000000-0000-4000-8000-000000000001' } as never);
+    const update = client.query.mock.calls.find(([sql]) => String(sql).includes('UPDATE semantic_model.source_mappings')) as unknown as [string, unknown[]];
+    expect(update[1][0]).toBe('00000000-0000-4000-8000-000000000001');
+    expect(client.query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO semantic_model.source_mappings'))).toBe(false);
+
+    await expect(service.createWorkspace('user-1', 'model-1', { ...dto, documentIds: ['sheet'] } as never)).rejects.toThrow('sheet.csv cannot be read as a document');
+    await expect(service.createWorkspace('user-1', 'model-1', { ...dto, folderIds: ['a'] } as never)).rejects.toThrow('not a folder');
   });
 
   it('keeps where source boxes sit on the canvas, for editors only, without touching the model revision', async () => {
