@@ -72,4 +72,9 @@ describe('designerFlow', () => {
   it('skips mappings whose concept was deleted', () => {
     expect(designerFlow(graph, [mapping('a', 'gone')]).feeds.filter((feed) => feed.step !== 'typed')).toEqual([]);
   });
+
+  it('keeps a box where someone moved it', () => {
+    const { sources } = designerFlow(graph, [], [], { 'typed:supplier': { x: 900, y: -40 } });
+    expect(sources[0].position).toEqual({ x: 900, y: -40 });
+  });
 });

@@ -66,3 +66,11 @@ export function useVersionComparison(id: string | undefined, left: string | unde
 export function useReviewQueue(id: string | undefined, enabled = true) {
   return useQuery({ queryKey: semanticModelQueryKeys.reviewQueue(id ?? 'none'), queryFn: () => semanticModelApi.reviewQueue(id ?? ''), enabled: Boolean(id) && enabled, retry: false, staleTime: 30_000 });
 }
+
+/** Whether the data in use matches the model as it is now; re-asked whenever the model's queries are refreshed. */
+export function usePopulationFreshness(id: string | undefined, enabled = true) {
+  return useQuery({ queryKey: semanticModelQueryKeys.freshness(id ?? 'none'), queryFn: () => semanticModelApi.populationFreshness(id ?? ''), enabled: Boolean(id) && enabled, staleTime: 5_000 });
+}
+export function useCanvasPositions(id: string | undefined) {
+  return useQuery({ queryKey: semanticModelQueryKeys.canvasPositions(id ?? 'none'), queryFn: () => semanticModelApi.canvasPositions(id ?? ''), enabled: Boolean(id) });
+}

@@ -163,6 +163,7 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose, onSuggestConc
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) }),
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.mappingHealth(modelId) }),
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId) }),
+        client.invalidateQueries({ queryKey: semanticModelQueryKeys.freshness(modelId) }),
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.model(modelId) }),
         client.invalidateQueries({ queryKey: ['semantic-models', 'data-preview', modelId] }),
       ]);

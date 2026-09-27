@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SuggestConceptsDialog, type SuggestionSource } from '../components/editor/SuggestConceptsDialog';
 import { Link, useBlocker, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -54,7 +54,7 @@ import { SemanticTrustPanel } from '../components/review/SemanticTrustPanel';
 import { PopulationStartedPanel, type PopulationOutcome } from '../components/population/PopulationStartedPanel';
 import { VersionsPanel } from "../components/versions/VersionsPanel";
 import { useKnowledgeLinking, type KnowledgeResource } from "../hooks/use-knowledge-linking";
-import { useIdentityRules, useMappingHealth, useSemanticDataPreview, useSemanticGraph, useSemanticModel, useReviewQueue, useSourceMappings } from "../query/hooks";
+import { useCanvasPositions, useIdentityRules, useMappingHealth, usePopulationFreshness, useSemanticVersions, useVersionComparison, useSemanticDataPreview, useSemanticGraph, useSemanticModel, useReviewQueue, useSourceMappings } from "../query/hooks";
 import { semanticModelQueryKeys } from '../query/queryKeys';
 import { isPendingSaveCurrent, isSemanticGraphSaved, selectPendingOperations, useSemanticModelEditorStore } from "../store";
 import type { ConceptSourceMapping } from "../types";
@@ -82,16 +82,32 @@ export function SemanticModelEditorPage() {
   const knowledge = useKnowledgeLinking(modelId);
   const sourceMappings = useSourceMappings(modelId);
   const identityRules = useIdentityRules(modelId);
+  const canvasPositions = useCanvasPositions(modelId);
+  // What publishing would change, so Publish can say when there is something to publish.
+  const versionList = useSemanticVersions(modelId).data ?? [];
+  const draftVersionId = versionList.find((version) => version.status === 'draft')?.id;
+  const publishedVersionId = versionList.find((version) => version.status === 'published')?.id;
+  const publishComparison = useVersionComparison(modelId, publishedVersionId, draftVersionId);
   const mappingHealth = useMappingHealth(sourceMappings.data?.length ? modelId : undefined);
   const graph = useSemanticModelEditorStore((state) => state.graph);
   // Records for the status line; only asked once something can produce them.
+  const freshness = usePopulationFreshness(modelId, Boolean(sourceMappings.data?.length || graph?.records.length));
   const designerRecords = useSemanticDataPreview(modelId, 10, Boolean(sourceMappings.data?.length || graph?.records.length));
+  // Stable between renders: the canvas rebuilds its boxes when these change.
+  const conceptRecordCounts = useMemo(() => {
+    const concepts = designerRecords.data?.concepts;
+    return concepts?.some((concept) => concept.total !== undefined)
+      ? Object.fromEntries(concepts.map((concept) => [concept.id, concept.total ?? concept.entities.length]))
+      : undefined;
+  }, [designerRecords.data]);
+  const sourcePositions = useMemo(() => Object.fromEntries((canvasPositions.data ?? []).map((item) => [item.id, { x: item.x, y: item.y }])), [canvasPositions.data]);
   const mode = useSemanticModelEditorStore((state) => state.mode);
   const pending = useSemanticModelEditorStore((state) => state.pending);
   const saveStatus = useSemanticModelEditorStore((state) => state.saveStatus);
   const saveAttempt = useSemanticModelEditorStore((state) => state.saveAttempt);
   const validation = useSemanticModelEditorStore((state) => state.validation);
   const selectedId = useSemanticModelEditorStore((state) => state.selectedId);
+  const detailsOpen = useSemanticModelEditorStore((state) => state.detailsOpen);
   const select = useSemanticModelEditorStore((state) => state.select);
   const focus = useSemanticModelEditorStore((state) => state.focus);
   const focusRequest = useSemanticModelEditorStore((state) => state.focusRequest);
@@ -149,6 +165,7 @@ export function SemanticModelEditorPage() {
       void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId ?? 'none') });
       void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.reviewQueue(modelId ?? 'none') });
     }
+    void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.freshness(modelId ?? 'none') });
     // Hand the final state to the run panel before we stop following the job, or it spins forever.
     const finalState = populationJob.data.state;
     setPopulation((current) => current && current.jobId === populationJobId ? { ...current, status: finalState } : current);
@@ -174,6 +191,7 @@ export function SemanticModelEditorPage() {
       setRemoving(false);
       void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) });
       void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId) });
+      void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.freshness(modelId) });
     }
   };
   const openMappingTarget = useCallback(async (target: SourceMappingTarget) => {
@@ -220,8 +238,12 @@ export function SemanticModelEditorPage() {
   // Selecting something on the canvas means "show me this", so details take the panel back —
   // unless the selection came from a health finding, which should keep its list in view.
   useEffect(() => {
-    if (selectedId && focusRequest?.id !== selectedId) setTrustOpen(false);
-    if (selectedId) setPopulation(null);
+    if (!selectedId) return;
+    if (focusRequest?.id !== selectedId) setTrustOpen(false);
+    setPopulation(null);
+    // The knowledge list belongs to the concept it was opened for; picking something else closes it.
+    if (knowledgeTargetId !== selectedId) { setKnowledgeOpen(false); setKnowledgeTargetId(null); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusRequest, selectedId]);
 
   useEffect(() => {
@@ -361,10 +383,6 @@ export function SemanticModelEditorPage() {
   const conceptCount = graph.nodes.filter((node) => !node.systemKey).length;
   const hasSources = (sourceMappings.data?.length ?? 0) > 0 || graph.records.length > 0;
   const recordCount = designerRecords.data?.summary.entities;
-  const previewConcepts = designerRecords.data?.concepts;
-  const conceptRecordCounts = previewConcepts?.some((concept) => concept.total !== undefined)
-    ? Object.fromEntries(previewConcepts.map((concept) => [concept.id, concept.total ?? concept.entities.length]))
-    : undefined;
   const reviewCount = reviewQueue.data?.count ?? 0;
   const published = Boolean(model.data?.currentPublishedVersionId);
   const repairMapping = (mappingId: string) => {
@@ -380,7 +398,7 @@ export function SemanticModelEditorPage() {
     if (source.kind === 'typed') {
       // One typed record opens for editing; several open the records list.
       const typed = graph.records.filter((record) => source.id === `typed:${record.nodeTypeId}`);
-      if (typed.length === 1) select(typed[0].id); else setMode('records');
+      if (typed.length === 1) select(typed[0].id, { details: true }); else setMode('records');
       return;
     }
     const chosen = mapping ?? source.mappings[0];
@@ -399,6 +417,30 @@ export function SemanticModelEditorPage() {
     { key: 'suggest', icon: Sparkles, label: t('designer.palette.suggest'), hint: t('designer.palette.suggestHint'), onClick: () => setSuggestSource('pick') },
   ];
   const onCanvas = mode === 'structure';
+  const moveSource = (id: string, position: { x: number; y: number }) => {
+    if (!modelId) return;
+    const key = semanticModelQueryKeys.canvasPositions(modelId);
+    // Show the move at once; the server only records where the box sits.
+    queryClient.setQueryData<Array<{ id: string; x: number; y: number }>>(key, (current = []) => [...current.filter((item) => item.id !== id), { id, ...position }]);
+    semanticModelApi.saveCanvasPositions(modelId, [{ id, ...position }]).catch((error) => {
+      showError(t('save.error'), { description: parseApiError(error).message });
+      void queryClient.invalidateQueries({ queryKey: key });
+    });
+  };
+  const toggleKey = (conceptId: string, field: string) => {
+    if (!modelId) return;
+    const fields = identityRules.data?.find((rule) => rule.conceptId === conceptId)?.fields ?? [];
+    const next = fields.includes(field) ? fields.filter((item) => item !== field) : [...fields, field];
+    semanticModelApi.saveIdentityRule(modelId, conceptId, next).then(() => Promise.all([
+      queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.identityRules(modelId) }),
+      queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) }),
+      queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId) }),
+      queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.freshness(modelId) }),
+    ])).catch((error) => showError(t('canvasTools.keyError'), { description: parseApiError(error).message }));
+  };
+  const freshnessState = freshness.data?.state;
+  const unpublishedChanges = publishComparison.data?.changes.length ?? 0;
+  const hasUnpublished = Boolean(draftVersionId) && (!publishedVersionId || unpublishedChanges > 0);
   return (
     <div className="flex h-[100dvh] w-full min-w-0 max-w-full flex-col overflow-hidden bg-muted/15">
       <header className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-background px-4 py-2">
@@ -425,9 +467,13 @@ export function SemanticModelEditorPage() {
         </div>}
         <div className="flex-1" />
         {/* One line that says where the model stands, instead of steps and percentages. */}
-        <p className="hidden text-xs text-muted-foreground lg:block" aria-live="polite">
+        <p className="hidden whitespace-nowrap text-xs text-muted-foreground lg:block" aria-live="polite">
           {t(published ? 'designer.status.published' : 'designer.status.draft')}
           {recordCount !== undefined && <> · {t('editor.recordCount', { count: recordCount })}</>}
+          {freshnessState && freshnessState !== 'not_runnable' && <> · <span title={t(freshnessState === 'current' ? 'freshness.currentHint' : freshnessState === 'outdated' ? 'freshness.outdatedHint' : 'freshness.neverHint')}
+            className={freshnessState === 'outdated' ? 'font-medium text-amber-700 dark:text-amber-400' : freshnessState === 'current' ? 'text-emerald-700 dark:text-emerald-400' : undefined}>
+            <span className={`inline-block h-1.5 w-1.5 rounded-full align-middle ${freshnessState === 'current' ? 'bg-emerald-500' : freshnessState === 'outdated' ? 'bg-amber-500' : 'bg-muted-foreground/50'}`} aria-hidden />
+            <span className='ml-1 hidden 2xl:inline'>{t(`freshness.${freshnessState}`)}</span><span className='sr-only 2xl:hidden'>{t(`freshness.${freshnessState}`)}</span></span></>}
           {reviewCount > 0 && <> · <span className="text-amber-700 dark:text-amber-400">{t(reviewCount === 1 ? 'designer.status.issues_one' : 'designer.status.issues_other', { count: reviewCount })}</span></>}
         </p>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -445,11 +491,18 @@ export function SemanticModelEditorPage() {
             {reviewCount > 0 && <span className='ml-2 rounded-full bg-amber-500/15 px-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300' aria-label={t('reviewQueue.badge', { count: reviewCount })}>{reviewCount}</span>}
           </Button>
           <Button variant='ghost' size='sm' onClick={() => { setKnowledgeOpen(false); setTrustOpen(false); setVersionsOpen((open) => !open); }} aria-label={t('designer.versions')}><History className='h-4 w-4' /></Button>
-          {canEdit && <Button variant='outline' size='sm' disabled={!canValidate || Boolean(populationJobId)} onClick={() => setValidateOpen(true)}>
+          {canEdit && <Button variant='outline' size='sm' disabled={!canValidate || Boolean(populationJobId)} onClick={() => setValidateOpen(true)}
+            title={freshnessState && freshnessState !== 'not_runnable' ? t(freshnessState === 'current' ? 'freshness.currentHint' : freshnessState === 'outdated' ? 'freshness.outdatedHint' : 'freshness.neverHint') : undefined}
+            // Run says what it would do: generate the first data, bring stale data up to date, or just run again.
+            className={!populationJobId && (freshnessState === 'outdated' || freshnessState === 'never_run') ? 'border-amber-500/60 text-amber-800 hover:bg-amber-500/10 dark:text-amber-300' : undefined}>
             {populationJobId ? <Loader2 className='mr-1.5 h-4 w-4 animate-spin' /> : <Play className='mr-1.5 h-4 w-4' />}
-            {t(populationJobId ? 'designer.running' : 'designer.run')}
+            {populationJobId ? t('designer.running') : freshnessState === 'outdated' ? t('freshness.runToUpdate') : freshnessState === 'never_run' ? t('freshness.generate') : t('designer.run')}
           </Button>}
-          {canEdit && <Button size='sm' onClick={() => { setKnowledgeOpen(false); setTrustOpen(false); setVersionsOpen(true); }}>{t('workspaceUi.publishShort')}</Button>}
+          {canEdit && <Button size='sm' className='relative' onClick={() => { setKnowledgeOpen(false); setTrustOpen(false); setVersionsOpen(true); }}
+            title={hasUnpublished ? (publishedVersionId ? t('publishState.changes', { count: unpublishedChanges }) : t('publishState.never')) : t('publishState.none')}>
+            {t('workspaceUi.publishShort')}
+            {hasUnpublished && <span className='absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border-2 border-background bg-amber-400' aria-label={publishedVersionId ? t('publishState.changes', { count: unpublishedChanges }) : t('publishState.never')} />}
+          </Button>}
         </div>
       </header>
       <main className="relative flex min-h-0 flex-1">
@@ -491,6 +544,9 @@ export function SemanticModelEditorPage() {
             onPaneDrop={dropOnCanvas}
             onRemoveSource={(source, mapping) => setRemoval({ label: source.label, mappings: mapping ? [mapping] : source.mappings })}
             onAddFeed={(source) => { const first = source.mappings[0]; if (first) void openMappingTarget({ ...mappingTarget_(first), mapping: undefined, conceptId: undefined }); }}
+            onToggleKey={canEdit ? toggleKey : undefined}
+            sourcePositions={sourcePositions}
+            onMoveSource={canEdit ? moveSource : undefined}
           /></div>}
           {mode === 'records' && modelId && <SemanticDataPreview modelId={modelId} dataRevisionId={boundDataRevisionId} onDataRevision={setBoundDataRevisionId} onOpenItem={(id) => { setMode('structure'); focus(id); }} canEdit={canEdit} onRebuildStarted={setPopulationJobId} />}
           {mode === 'mappings' && modelId && <SemanticMappingsView modelId={modelId} canEdit={canEdit} onOpenGraph={openGraphViewer} onPopulationAccepted={setPopulationJobId} onRepairMapping={(mapping) => void openMappingTarget(mappingTarget_(mapping))} onBulkEditMappings={(mapping) => void openMappingTarget({ ...mappingTarget_(mapping), bulkEdit: true })} />}
@@ -534,7 +590,7 @@ export function SemanticModelEditorPage() {
           onOpenItem={(id) => { setMode('structure'); focus(id); }}
           onFixValues={() => setMode('records')}
         />}
-        {(onCanvas || knowledgeOpen) && !trustOpen && !population && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} onMapData={(target) => void openMappingTarget(target)} />}
+        {(knowledgeOpen || (onCanvas && detailsOpen)) && !trustOpen && !population && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} onMapData={(target) => void openMappingTarget(target)} />}
         {modelId && <SourceMappingDrawer modelId={modelId} target={mappingTarget} onClose={() => setMappingTarget(null)} onSuggestConcepts={canEdit ? (source) => { setMappingTarget(null); setSuggestSource(source); } : undefined} />}
       </main>
       <AddConceptDialog open={conceptOpen} onOpenChange={setConceptOpen} />

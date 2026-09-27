@@ -12,7 +12,7 @@ import { useSemanticModelEditorStore } from '../../store';
 import type { KnowledgeLinkingController } from '../../hooks/use-knowledge-linking';
 import { type SourceMappingTarget, sourceMappingTargetFromResource } from '../mapping/SourceMappingDrawer';
 import type { AttributeDefinition, SemanticNodeType, SemanticRecord, SemanticRelationType } from '../../types';
-import { businessKey } from '../../utils/model-utils';
+import { businessKey, guessAttributeType } from '../../utils/model-utils';
 import { conceptDeletion, relationDeletion } from '../../utils/graph-deletes';
 import { cardinalityOf, relationSentence, relationSides, type Multiplicity } from '../../utils/relation-sentence';
 import { KnowledgePanel } from '../knowledge/KnowledgePanel';
@@ -251,7 +251,3 @@ export function AliasChips({ values, onChange, placeholder, compact = false }: R
   </div>;
 }
 
-/** A first guess at a new field's type from its name, so "effective date" starts as a date; the user can still change it. */
-function guessAttributeType(label: string): AttributeDefinition['type'] {
-  return /\bdates?\b/i.test(label) ? 'date' : 'text';
-}

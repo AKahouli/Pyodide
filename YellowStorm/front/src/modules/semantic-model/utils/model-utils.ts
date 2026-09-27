@@ -80,3 +80,8 @@ export function layoutStructure(nodes: SemanticNodeType[], relations: SemanticRe
     return [node.id, { x: point.x - 120, y: point.y - 54 }];
   }));
 }
+
+/** A first guess at a new field's type from its name, so "effective date" starts as a date; the user can still change it. */
+export function guessAttributeType(label: string): 'date' | 'text' {
+  return /dates?/i.test(label) ? 'date' : 'text';
+}

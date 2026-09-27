@@ -61,6 +61,10 @@ vi.mock("../query/hooks", () => ({
   useReviewQueue: () => ({ data: { count: 0, items: [] }, isLoading: false, isError: false }),
   useSourceMappings: () => ({ data: [], isLoading: false, isError: false }),
   useIdentityRules: () => ({ data: [], isLoading: false }),
+  useCanvasPositions: () => ({ data: [], isLoading: false }),
+  useSemanticVersions: () => ({ data: [], isLoading: false }),
+  useVersionComparison: () => ({ data: undefined, isLoading: false }),
+  usePopulationFreshness: () => ({ data: undefined, isLoading: false }),
   useSemanticReviewItems: () => ({ data: [], isLoading: false, isError: false }),
 }));
 

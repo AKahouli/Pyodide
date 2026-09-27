@@ -50,7 +50,7 @@ const worst = (tones: DesignerFeed['tone'][]): DesignerFeed['tone'] =>
  * Derive the source boxes and their lines from saved mappings and typed records. Each source is laid out
  * beside the first concept it feeds, so the canvas reads left to right: data in, concepts out.
  */
-export function designerFlow(graph: SemanticGraph, mappings: ConceptSourceMapping[] = [], health: MappingHealthItem[] = []): { sources: DesignerSource[]; feeds: DesignerFeed[] } {
+export function designerFlow(graph: SemanticGraph, mappings: ConceptSourceMapping[] = [], health: MappingHealthItem[] = [], saved: Record<string, { x: number; y: number }> = {}): { sources: DesignerSource[]; feeds: DesignerFeed[] } {
   const concepts = new Map(graph.nodes.map((node) => [node.id, node]));
   const groups = new Map<string, ConceptSourceMapping[]>();
   for (const mapping of mappings) {
@@ -61,8 +61,11 @@ export function designerFlow(graph: SemanticGraph, mappings: ConceptSourceMappin
   // Each source sits next to the concept it feeds, so its line never crosses another concept: left of it
   // when that space is free, otherwise stacked further left, above or below — never on top of another box.
   const occupied = [...concepts.values()].map((node) => ({ x: node.position.x, y: node.position.y, w: CONCEPT_BOX.w, h: CONCEPT_BOX.h }));
+  // Boxes someone moved stay where they were put, and the others are laid out around them.
+  for (const spot of Object.values(saved)) occupied.push({ ...spot, w: SOURCE_BOX.w, h: SOURCE_BOX.h });
   const overlaps = (x: number, y: number) => occupied.some((box) => x < box.x + box.w && x + SOURCE_BOX.w > box.x && y < box.y + box.h && y + SOURCE_BOX.h > box.y);
-  const place = (conceptId: string) => {
+  const place = (conceptId: string, id: string) => {
+    if (saved[id]) return saved[id];
     const { x, y } = concepts.get(conceptId)!.position;
     const candidates = [
       ...[0, 1, -1, 2, -2, 3].map((row) => ({ x: x - SOURCE_COLUMN_OFFSET, y: y + row * SOURCE_ROW_HEIGHT })),
@@ -87,7 +90,7 @@ export function designerFlow(graph: SemanticGraph, mappings: ConceptSourceMappin
       kind: structured ? 'spreadsheet' : 'documents',
       label: first.documentName || first.documentId,
       detail: structured ? first.sheetName : '',
-      position: place(first.conceptId),
+      position: place(first.conceptId, id),
       tone: worst(tones),
       mappings: group,
     });
@@ -110,7 +113,7 @@ export function designerFlow(graph: SemanticGraph, mappings: ConceptSourceMappin
   for (const [conceptId, count] of typedByConcept) {
     if (!concepts.has(conceptId)) continue;
     const id = typedSourceId(conceptId);
-    sources.push({ id, kind: 'typed', label: '', detail: String(count), position: place(conceptId), tone: 'ok', mappings: [] });
+    sources.push({ id, kind: 'typed', label: '', detail: String(count), position: place(conceptId, id), tone: 'ok', mappings: [] });
     feeds.push({ id: `feed:${id}`, sourceId: id, conceptId, step: 'typed', mapped: count, total: count, tone: 'ok' });
   }
   return { sources, feeds };

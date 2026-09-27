@@ -523,3 +523,12 @@ export interface ReviewQueue {
   count: number;
   items: ReviewQueueItem[];
 }
+
+export interface PopulationFreshness {
+  /** current: built from the model as it is now; outdated: the design, a mapping or a source file changed since. */
+  state: 'current' | 'outdated' | 'never_run' | 'not_runnable';
+  reason?: string;
+}
+
+/** Where a source or typed-record box sits on the canvas. */
+export interface DesignerBoxPosition { id: string; x: number; y: number }

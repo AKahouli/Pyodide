@@ -12,8 +12,9 @@ vi.mock('@xyflow/react', () => ({
   Background:() => null,
   Controls:() => null,
   Handle:() => null,
+  NodeToolbar:({isVisible,children}:{isVisible?:boolean;children:ReactNode}) => isVisible ? <>{children}</> : null,
   MarkerType:{ArrowClosed:'arrowclosed'},
-  Position:{Left:'left',Right:'right'},
+  Position:{Left:'left',Right:'right',Top:'top'},
   ReactFlow:(props:Record<string,unknown>) => {
     flow.props=props;
     const nodes = props.nodes as Array<{id:string;type:string;data:Record<string,unknown>;selected?:boolean}>;
@@ -201,7 +202,7 @@ describe('SemanticModelCanvas', () => {
     });
   });
 
-  it('draws each source as a box feeding its concept, and opens its mapping on click', () => {
+  it('draws each source as a box feeding its concept: a click selects it, a double-click opens its mapping', () => {
     useSemanticModelEditorStore.getState().hydrate(contractGraph);
     const onOpenSource = vi.fn();
     const source = mapping({ id:'m1' });
@@ -213,6 +214,11 @@ describe('SemanticModelCanvas', () => {
     const nodes = flow.props.nodes as Array<{id:string}>;
     const onNodeClick = flow.props.onNodeClick as (event:unknown,node:{id:string})=>void;
     act(()=>onNodeClick({target:document.body},{id:feed.source}));
+    expect(onOpenSource).not.toHaveBeenCalled();
+    expect(useSemanticModelEditorStore.getState().selectedId).toBe(feed.source);
+    expect(screen.getByRole('toolbar')).toBeInTheDocument();
+    const onNodeDoubleClick = flow.props.onNodeDoubleClick as (event:unknown,node:{id:string})=>void;
+    act(()=>onNodeDoubleClick({target:document.body},{id:feed.source}));
     expect(onOpenSource).toHaveBeenCalledWith(expect.objectContaining({ kind:'documents' }));
     expect(nodes.some((node)=>node.id===feed.source)).toBe(true);
     const onEdgeClick = flow.props.onEdgeClick as (event:unknown,edge:{id:string})=>void;
@@ -278,5 +284,62 @@ describe('SemanticModelCanvas', () => {
     const event={preventDefault:vi.fn(),stopPropagation:vi.fn(),dataTransfer:{getData:vi.fn()}};
     act(()=>nodes[0].data.onKnowledgeDrop('customer',event));
     expect(knowledge.link).toHaveBeenCalledWith('customer',resource);
+  });
+
+  it('selects a concept on click and shows its actions, without opening the details panel', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    renderCanvas();
+    const onNodeClick = flow.props.onNodeClick as (event:unknown,node:{id:string})=>void;
+    act(()=>onNodeClick({target:document.body},{id:'contract'}));
+    expect(useSemanticModelEditorStore.getState()).toMatchObject({ selectedId:'contract', detailsOpen:false });
+    expect(screen.getByRole('toolbar',{name:'canvasTools.conceptToolbar'})).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'canvasTools.details'}));
+    expect(useSemanticModelEditorStore.getState().detailsOpen).toBe(true);
+  });
+
+  it('renames a concept in place from its toolbar', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    renderCanvas();
+    act(()=>useSemanticModelEditorStore.getState().select('contract'));
+    fireEvent.click(screen.getByRole('button',{name:'canvasTools.rename'}));
+    const box = screen.getByRole('textbox',{name:'canvasTools.rename'});
+    fireEvent.change(box,{target:{value:'Agreement'}});
+    fireEvent.submit(box.closest('form')!);
+    const node = useSemanticModelEditorStore.getState().graph!.nodes.find((item)=>item.id==='contract')!;
+    expect(node).toMatchObject({ label:'Agreement', key:'agreement' });
+  });
+
+  it('adds a field and marks a unique field from the canvas', async () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    const onToggleKey = vi.fn();
+    render(<SemanticModelCanvas canEdit knowledge={knowledge} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} onToggleKey={onToggleKey} />);
+    act(()=>useSemanticModelEditorStore.getState().select('contract'));
+    fireEvent.click(screen.getByRole('button',{name:'canvasTools.fields'}));
+    const input = await screen.findByRole('textbox',{name:'attributes.add'});
+    fireEvent.change(input,{target:{value:'signed on'}});
+    fireEvent.submit(input.closest('form')!);
+    const node = useSemanticModelEditorStore.getState().graph!.nodes.find((item)=>item.id==='contract')!;
+    expect(node.attributes.map((attribute)=>attribute.key)).toContain('signed_on');
+    fireEvent.click(screen.getAllByRole('button',{name:'canvasTools.setKey'})[0]);
+    expect(onToggleKey).toHaveBeenCalled();
+  });
+
+  it('changes how many records each side of a relationship holds from its line', () => {
+    useSemanticModelEditorStore.getState().hydrate({ ...contractGraph, nodes:[...contractGraph.nodes,{ ...contractGraph.nodes[0], id:'customer', key:'customer', label:'Customer', position:{x:0,y:0} }],
+      relations:[{ id:'holds', key:'holds', label:'holds', inverseLabel:'', description:'', sourceNodeTypeId:'customer', targetNodeTypeId:'contract', cardinality:'many_to_many', traversable:true, filterable:true, attributes:[] }] });
+    renderCanvas();
+    const edge = (flow.props.edges as Array<{id:string;data:Record<string,unknown>}>).find((item)=>item.id==='holds')!;
+    act(()=>(edge.data.onCardinality as (id:string,value:string)=>void)('holds','one_to_many'));
+    expect(useSemanticModelEditorStore.getState().graph!.relations[0].cardinality).toBe('one_to_many');
+  });
+
+  it('lets a source box be dragged and reports where it was dropped', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    const onMoveSource = vi.fn();
+    render(<SemanticModelCanvas canEdit knowledge={knowledge} sourceMappings={[mapping({ id:'m1' })]} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} onMoveSource={onMoveSource} sourcePositions={{}} />);
+    const source = (flow.props.nodes as Array<{id:string;draggable?:boolean}>).find((node)=>node.id.startsWith('source:'))!;
+    expect(source.draggable).toBe(true);
+    act(()=>(flow.props.onNodeDragStop as (event:unknown,node:{id:string;position:{x:number;y:number}})=>void)({}, { id:source.id, position:{x:5,y:6} }));
+    expect(onMoveSource).toHaveBeenCalledWith(source.id,{x:5,y:6});
   });
 });

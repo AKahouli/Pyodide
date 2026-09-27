@@ -9,6 +9,8 @@ interface SemanticModelEditorState {
   graph: SemanticGraph | null;
   mode: EditorMode;
   selectedId: string | null;
+  /** Whether the details panel shows the selection. A click only selects; its actions appear on the canvas. */
+  detailsOpen: boolean;
   pending: SemanticOperationGroup[];
   undoStack: HistoryEntry[];
   redoStack: HistoryEntry[];
@@ -20,7 +22,9 @@ interface SemanticModelEditorState {
   saveAttempt: number;
   hydrate: (graph: SemanticGraph) => void;
   setMode: (mode: EditorMode) => void;
-  select: (id: string | null) => void;
+  /** Select an element; `details` also opens its details panel. Selecting nothing closes the panel. */
+  select: (id: string | null, options?: { details?: boolean }) => void;
+  openDetails: (open: boolean) => void;
   /** Select an element and bring it into view on the canvas. */
   focus: (id: string) => void;
   commit: (operation: SemanticGraphOperation, update: (graph: SemanticGraph) => SemanticGraph) => void;
@@ -66,6 +70,7 @@ export const semanticModelEditorInitialState = {
   graph: null,
   mode: 'structure' as EditorMode,
   selectedId: null,
+  detailsOpen: false,
   pending: [] as SemanticOperationGroup[],
   undoStack: [] as HistoryEntry[],
   redoStack: [] as HistoryEntry[],
@@ -98,9 +103,11 @@ export function isPendingSaveCurrent(
 export const useSemanticModelEditorStore = create<SemanticModelEditorState>()(devtools((set) => ({
   ...semanticModelEditorInitialState,
   hydrate: (graph) => set({ ...semanticModelEditorInitialState, graph }),
-  setMode: (mode) => set({ mode, selectedId: null }),
-  select: (selectedId) => set({ selectedId }),
-  focus: (id) => set({ selectedId: id, focusRequest: { id, at: Date.now() } }),
+  setMode: (mode) => set({ mode, selectedId: null, detailsOpen: false }),
+  select: (selectedId, options) => set((state) => ({ selectedId, detailsOpen: selectedId ? Boolean(options?.details) || state.detailsOpen : false })),
+  openDetails: (detailsOpen) => set({ detailsOpen }),
+  // Focusing is a request to look at something in full (a finding, a new element), so it opens its details.
+  focus: (id) => set({ selectedId: id, detailsOpen: true, focusRequest: { id, at: Date.now() } }),
   commit: (operation, update) => set((state) => {
     if (!state.graph) return state;
     const history = { graph: state.graph, pending: state.pending };
