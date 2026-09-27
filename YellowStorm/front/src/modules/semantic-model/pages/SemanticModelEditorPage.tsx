@@ -134,7 +134,8 @@ export function SemanticModelEditorPage() {
     if (!populationJob.data || !POPULATION_TERMINAL_STATES.has(populationJob.data.state)) return;
     if (['completed', 'completed_with_gaps'].includes(populationJob.data.state)) {
       setBoundDataRevisionId(undefined);
-      void queryClient.invalidateQueries({ queryKey: ['semantic-models', 'data-preview', modelId] });
+      // Drop, not just invalidate: cached data would re-pin the replaced revision.
+      queryClient.removeQueries({ queryKey: ['semantic-models', 'data-preview', modelId] });
       void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId ?? 'none') });
       void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.reviewQueue(modelId ?? 'none') });
     }

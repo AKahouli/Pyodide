@@ -44,7 +44,7 @@ interface Props {
   onClose: () => void;
   modelId: string;
   dataRevisionId?: string;
-  onDataRevision?: (revisionId: string) => void;
+  onDataRevision?: (revisionId: string | undefined) => void;
   canEdit?: boolean;
   onRebuildStarted?: (jobId: string) => void;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ExternalLink, Loader2, RefreshCw, Search } from 'lucide-react';
+import { AlertTriangle, ExternalLink, Loader2, RefreshCw, Search, Database } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -11,7 +11,7 @@ import { useSemanticDataPreview, useSemanticGraph } from '../../query/hooks';
 import { AddLinkForm, CorrectionNote, CorrectionNotice, CorrectionsList, FixValueButton, HideRecordButton, useCorrectionActions } from './RecordCorrections';
 import type { SemanticDataGaps, SourcePreviewIssue } from '../../types';
 
-export function SemanticDataPreview({ modelId, dataRevisionId, onDataRevision, onOpenItem, onRebuildStarted, canEdit = true }: Readonly<{ modelId: string; dataRevisionId?: string; onDataRevision?: (revisionId: string) => void; onOpenItem?: (id: string) => void; onRebuildStarted?: (jobId: string) => void; canEdit?: boolean }>) {
+export function SemanticDataPreview({ modelId, dataRevisionId, onDataRevision, onOpenItem, onRebuildStarted, canEdit = true }: Readonly<{ modelId: string; dataRevisionId?: string; onDataRevision?: (revisionId: string | undefined) => void; onOpenItem?: (id: string) => void; onRebuildStarted?: (jobId: string) => void; canEdit?: boolean }>) {
   const { t } = useModuleTranslation('semantic-model');
   const [limit, setLimit] = useState(25);
   const [conceptId, setConceptId] = useState('all');
@@ -56,7 +56,10 @@ export function SemanticDataPreview({ modelId, dataRevisionId, onDataRevision, o
   const relatedRelations = (preview.data?.relations ?? []).filter((relation) => (relation.status === 'resolved' || showUnresolved) && (relation.sourceEntityId === selectedEntity?.id || relation.targetEntityIds.includes(selectedEntity?.id ?? '')));
 
   if (preview.isLoading) return <div className='flex h-full items-center justify-center gap-2 text-sm text-muted-foreground'><Loader2 className='h-5 w-5 animate-spin' />{t('dataPreview.loading')}</div>;
-  if (preview.isError) return <div className='flex h-full items-center justify-center p-6'><div className='max-w-md rounded-2xl border bg-background p-6 text-center'><AlertTriangle className='mx-auto h-6 w-6 text-destructive' /><h2 className='mt-3 font-semibold'>{t('dataPreview.error')}</h2><p className='mt-1 text-sm text-muted-foreground'>{parseApiError(preview.error).message}</p><Button className='mt-4' onClick={() => void preview.refetch()}>{t('action.retry')}</Button></div></div>;
+  // No build has produced records yet: this is a starting point, not an error.
+  if (preview.isError && parseApiError(preview.error).message === 'active_binding_not_found') return <div className='flex h-full items-center justify-center p-6'><div className='max-w-md rounded-2xl border bg-background p-6 text-center'><Database className='mx-auto h-6 w-6 text-muted-foreground' /><h2 className='mt-3 font-semibold'>{t('dataPreview.noRecordsYet')}</h2><p className='mt-1 text-sm text-muted-foreground'>{t('dataPreview.noRecordsYetHint')}</p></div></div>;
+  // A pinned revision may have been replaced by a newer build; retrying reads the current one.
+  if (preview.isError) return <div className='flex h-full items-center justify-center p-6'><div className='max-w-md rounded-2xl border bg-background p-6 text-center'><AlertTriangle className='mx-auto h-6 w-6 text-destructive' /><h2 className='mt-3 font-semibold'>{t('dataPreview.error')}</h2><p className='mt-1 text-sm text-muted-foreground'>{t('dataPreview.errorHint')}</p><Button className='mt-4' onClick={() => { if (dataRevisionId) onDataRevision?.(undefined); else void preview.refetch(); }}>{t('action.retry')}</Button></div></div>;
 
   return <div className='h-full overflow-y-auto bg-muted/20 p-4 sm:p-6'>
     <div className='mx-auto max-w-6xl space-y-5'>
