@@ -401,6 +401,8 @@ export interface SemanticDataPreview {
   concepts: Array<{
     id: string;
     label: string;
+    /** Records of this concept in the whole run; `entities` is only the first page. */
+    total?: number;
     entities: Array<{
       id: string;
       conceptId: string;

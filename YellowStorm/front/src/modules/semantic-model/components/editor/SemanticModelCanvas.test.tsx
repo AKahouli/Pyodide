@@ -82,6 +82,18 @@ describe('SemanticModelCanvas', () => {
     expect(screen.getByText('master-agreement-0099.pdf')).toBeInTheDocument();
   });
 
+  it('shows the key badge for a unique field chosen on the concept, before any source is mapped', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    render(<SemanticModelCanvas canEdit knowledge={knowledge} identityRules={[{ conceptId: contractGraph.nodes[0].id, fields: ['contract_number'] }]} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} />);
+    expect(screen.getByLabelText('editor.matchingKey')).toBeInTheDocument();
+  });
+
+  it('shows how many records the last Run produced for each concept', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    render(<SemanticModelCanvas canEdit knowledge={knowledge} recordCounts={{ [contractGraph.nodes[0].id]: 42 }} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} />);
+    expect(screen.getByText(/editor.recordCount/)).toBeInTheDocument();
+  });
+
   it('brings data into a concept from the + on its left', () => {
     useSemanticModelEditorStore.getState().hydrate(contractGraph);
     const onOpenKnowledge = vi.fn();

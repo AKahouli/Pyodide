@@ -54,7 +54,7 @@ import { SemanticTrustPanel } from '../components/review/SemanticTrustPanel';
 import { PopulationStartedPanel, type PopulationOutcome } from '../components/population/PopulationStartedPanel';
 import { VersionsPanel } from "../components/versions/VersionsPanel";
 import { useKnowledgeLinking, type KnowledgeResource } from "../hooks/use-knowledge-linking";
-import { useMappingHealth, useSemanticDataPreview, useSemanticGraph, useSemanticModel, useReviewQueue, useSourceMappings } from "../query/hooks";
+import { useIdentityRules, useMappingHealth, useSemanticDataPreview, useSemanticGraph, useSemanticModel, useReviewQueue, useSourceMappings } from "../query/hooks";
 import { semanticModelQueryKeys } from '../query/queryKeys';
 import { isPendingSaveCurrent, isSemanticGraphSaved, selectPendingOperations, useSemanticModelEditorStore } from "../store";
 import type { ConceptSourceMapping } from "../types";
@@ -81,6 +81,7 @@ export function SemanticModelEditorPage() {
   const reviewQueue = useReviewQueue(modelId);
   const knowledge = useKnowledgeLinking(modelId);
   const sourceMappings = useSourceMappings(modelId);
+  const identityRules = useIdentityRules(modelId);
   const mappingHealth = useMappingHealth(sourceMappings.data?.length ? modelId : undefined);
   const graph = useSemanticModelEditorStore((state) => state.graph);
   // Records for the status line; only asked once something can produce them.
@@ -357,6 +358,10 @@ export function SemanticModelEditorPage() {
   const conceptCount = graph.nodes.filter((node) => !node.systemKey).length;
   const hasSources = (sourceMappings.data?.length ?? 0) > 0 || graph.records.length > 0;
   const recordCount = designerRecords.data?.summary.entities;
+  const previewConcepts = designerRecords.data?.concepts;
+  const conceptRecordCounts = previewConcepts?.some((concept) => concept.total !== undefined)
+    ? Object.fromEntries(previewConcepts.map((concept) => [concept.id, concept.total ?? concept.entities.length]))
+    : undefined;
   const reviewCount = reviewQueue.data?.count ?? 0;
   const published = Boolean(model.data?.currentPublishedVersionId);
   const repairMapping = (mappingId: string) => {
@@ -468,6 +473,8 @@ export function SemanticModelEditorPage() {
         <section className="relative flex min-w-0 flex-1 flex-col">
           {onCanvas && <div className='relative min-h-0 flex-1'><SemanticModelCanvas
             sourceMappings={sourceMappings.data}
+            identityRules={identityRules.data}
+            recordCounts={conceptRecordCounts}
             mappingHealth={mappingHealth.data?.items}
             canEdit={canEdit}
             knowledge={knowledge}
@@ -507,7 +514,8 @@ export function SemanticModelEditorPage() {
           )}
         </section>
         {population && <PopulationStartedPanel
-          outcome={population}
+          // The run keeps going after the panel opens: show the job's live state, not the one it started with.
+          outcome={populationJob.data && population.jobId === populationJobId ? { ...population, status: populationJob.data.state } : population}
           sourceMappings={sourceMappings.data ?? []}
           onClose={() => setPopulation(null)}
           onOpenHealth={() => { setPopulation(null); setTrustOpen(true); }}

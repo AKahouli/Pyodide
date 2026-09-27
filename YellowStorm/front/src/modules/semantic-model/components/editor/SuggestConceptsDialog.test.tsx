@@ -55,6 +55,7 @@ describe('SuggestConceptsDialog', () => {
     expect(api.saveRelationResolutionRule).toHaveBeenCalledWith('model', expect.objectContaining({
       relationId: graph.relations[0].id, sourceAttribute: 'customer_number', targetAttribute: 'number',
     }));
-    expect(graph.revision).toBe(6);
+    // Mapping and rule commands advance the model revision, not the graph's.
+    expect(graph.revision).not.toBe(6);
   });
 });

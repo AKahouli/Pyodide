@@ -118,9 +118,10 @@ export const useSemanticModelEditorStore = create<SemanticModelEditorState>()(de
     return { graph: state.graph ? { ...state.graph, revision } : null, pending, saveStatus: pending.length ? 'saving' : 'saved', saveInFlight: false };
   }),
   markFailed: (saveStatus) => set({ saveStatus, saveInFlight: false }),
-  adoptRevision: (revision) => set((state) => state.graph && !state.saveInFlight && revision > state.graph.revision
-    ? { graph: { ...state.graph, revision } }
-    : state),
+  // Mapping, identity and other model commands advance the *model* revision; graph saves are checked against the
+  // draft *version* revision, a separate counter. Copying one into the other made the next autosave conflict,
+  // so model revisions are deliberately not adopted into the graph.
+  adoptRevision: () => undefined,
   retrySave: () => set((state) => state.saveStatus === 'error' || state.saveStatus === 'offline'
     ? { saveStatus:'saving',saveAttempt:state.saveAttempt+1 }
     : state),

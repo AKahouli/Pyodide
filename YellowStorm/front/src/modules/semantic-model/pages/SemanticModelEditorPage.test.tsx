@@ -60,6 +60,7 @@ vi.mock("../query/hooks", () => ({
   useSemanticReadiness: () => ({ data: { status: 'not_configured', score: 0, completeAreas: 0, totalAreas: 5, areas: [] }, isLoading: false, isError: false }),
   useReviewQueue: () => ({ data: { count: 0, items: [] }, isLoading: false, isError: false }),
   useSourceMappings: () => ({ data: [], isLoading: false, isError: false }),
+  useIdentityRules: () => ({ data: [], isLoading: false }),
   useSemanticReviewItems: () => ({ data: [], isLoading: false, isError: false }),
 }));
 

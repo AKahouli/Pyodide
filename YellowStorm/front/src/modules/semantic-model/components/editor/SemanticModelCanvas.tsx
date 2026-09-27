@@ -73,7 +73,8 @@ function QuickRecordForm({ nodeId,onClose }: Readonly<{ nodeId:string;onClose:()
   const commit = useSemanticModelEditorStore((state) => state.commit);
   const [label,setLabel] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
-  useEffect(() => { inputRef.current?.focus(); },[]);
+  // Opened from a menu that is still closing: focus once it has let go, or the typing goes nowhere.
+  useEffect(() => { const timer = window.setTimeout(() => inputRef.current?.focus(), 50); return () => window.clearTimeout(timer); },[]);
   const add = (event:FormEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -242,7 +243,11 @@ const FeedEdge = memo(function FeedEdge({ id,sourceX,sourceY,targetX,targetY,sou
 
 const edgeTypes = { relation:RelationEdge, feed:FeedEdge };
 
-export function SemanticModelCanvas({ sourceMappings,mappingHealth,canEdit,onConnectRequest,knowledge,onOpenKnowledge,onMapStructuredDrop,onOpenSource,onPaneDrop,onAddFeed,onRemoveSource }: Readonly<{ sourceMappings?:ConceptSourceMapping[];mappingHealth?:MappingHealthItem[];canEdit:boolean;onConnectRequest:(connection:{sourceId:string;targetId:string})=>void;knowledge:KnowledgeLinkingController;onOpenKnowledge:(nodeId:string)=>void;onMapStructuredDrop?:(resource:Extract<KnowledgeResource,{kind:'document'}>,nodeId:string)=>void;
+export function SemanticModelCanvas({ sourceMappings,identityRules,recordCounts,mappingHealth,canEdit,onConnectRequest,knowledge,onOpenKnowledge,onMapStructuredDrop,onOpenSource,onPaneDrop,onAddFeed,onRemoveSource }: Readonly<{ sourceMappings?:ConceptSourceMapping[];
+  /** Unique fields chosen on the concept itself, so its key badge shows before any source is mapped. */
+  identityRules?:{conceptId:string;fields:string[]}[];
+  /** Records per concept from the last Run; typed records are counted until a Run has happened. */
+  recordCounts?:Record<string,number>;mappingHealth?:MappingHealthItem[];canEdit:boolean;onConnectRequest:(connection:{sourceId:string;targetId:string})=>void;knowledge:KnowledgeLinkingController;onOpenKnowledge:(nodeId:string)=>void;onMapStructuredDrop?:(resource:Extract<KnowledgeResource,{kind:'document'}>,nodeId:string)=>void;
   /** A source box or its line was clicked; the mapping is set when a specific line was chosen. */
   onOpenSource?:(source:DesignerSource,mapping?:ConceptSourceMapping)=>void;
   /** A document from the knowledge panel was dropped on empty canvas, not on a concept. */
@@ -356,6 +361,11 @@ export function SemanticModelCanvas({ sourceMappings,mappingHealth,canEdit,onCon
     const byConcept:Record<string,ConceptDataSummary> = {};
     for (const node of graph?.nodes??[]) byConcept[node.id]={sources:0,notReady:0,identityFields:[],documentNames:[],records:0};
     for (const record of graph?.records??[]) if (byConcept[record.nodeTypeId]) byConcept[record.nodeTypeId].records+=1;
+    for (const [conceptId,count] of Object.entries(recordCounts??{})) if (byConcept[conceptId]) byConcept[conceptId].records=count;
+    for (const rule of identityRules??[]) {
+      const summary = byConcept[rule.conceptId];
+      if (summary) for (const field of rule.fields) if (!summary.identityFields.includes(field)) summary.identityFields.push(field);
+    }
     for (const mapping of sourceMappings??[]) {
       const summary = byConcept[mapping.conceptId];
       if (!summary) continue;
@@ -367,7 +377,7 @@ export function SemanticModelCanvas({ sourceMappings,mappingHealth,canEdit,onCon
       for (const field of mapping.identityFields) if (!summary.identityFields.includes(field)) summary.identityFields.push(field);
     }
     return byConcept;
-  },[graph?.nodes,graph?.records,sourceMappings,mappingHealth]);
+  },[graph?.nodes,graph?.records,identityRules,recordCounts,sourceMappings,mappingHealth]);
 
   const flow = useMemo(()=>graph&&mode!=='records'?designerFlow(graph,sourceMappings,mappingHealth):{sources:[],feeds:[]},[graph,mode,sourceMappings,mappingHealth]);
 

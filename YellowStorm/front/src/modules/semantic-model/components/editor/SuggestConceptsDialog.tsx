@@ -34,10 +34,12 @@ async function loadSamples(modelId: string, source: SuggestionSource): Promise<S
   if (!overview.sheets?.length) overview = await semanticModelApi.analyzeSourceAsset(modelId, source.documentId, source.workspaceId);
   const samples: SheetSample[] = [];
   for (const sheet of (overview.sheets ?? []).slice(0, MAX_SHEETS)) {
-    let profile = await semanticModelApi.profileSourceAsset(modelId, source.documentId, source.workspaceId, sheet.name);
-    if (!profile.fields?.length) profile = await semanticModelApi.analyzeSourceAsset(modelId, source.documentId, source.workspaceId, sheet.name);
-    samples.push({ sheet: sheet.name, fields: profile.fields ?? [], sampleRows: profile.sampleRows ?? [] });
+    // A sheet not read yet answers 404: read it now. One that cannot be read (a notes sheet with no table) is skipped.
+    let profile = await semanticModelApi.profileSourceAsset(modelId, source.documentId, source.workspaceId, sheet.name).catch(() => null);
+    if (!profile?.fields?.length) profile = await semanticModelApi.analyzeSourceAsset(modelId, source.documentId, source.workspaceId, sheet.name).catch(() => null);
+    if (profile?.fields?.length) samples.push({ sheet: sheet.name, fields: profile.fields, sampleRows: profile.sampleRows ?? [] });
   }
+  if (!samples.length) throw new Error('no_readable_sheet');
   return samples;
 }
 

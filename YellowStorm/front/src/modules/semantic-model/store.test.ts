@@ -78,15 +78,10 @@ describe('semantic model editor store', () => {
 });
 
 describe('adoptRevision', () => {
-  it('takes a newer server revision unless a graph save is in flight', () => {
+  it('never copies a model revision into the graph, whose saves are checked against the version revision', () => {
     const store = useSemanticModelEditorStore;
     store.getState().hydrate({ modelId: 'm', versionId: 'v', revision: 3, nodes: [], relations: [], records: [], recordRelations: [] });
-    store.getState().adoptRevision(4);
-    expect(store.getState().graph?.revision).toBe(4);
-    store.getState().adoptRevision(2);
-    expect(store.getState().graph?.revision).toBe(4);
-    store.getState().markSaving();
     store.getState().adoptRevision(9);
-    expect(store.getState().graph?.revision).toBe(4);
+    expect(store.getState().graph?.revision).toBe(3);
   });
 });

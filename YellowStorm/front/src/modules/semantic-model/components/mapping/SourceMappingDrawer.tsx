@@ -91,6 +91,19 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose, onSuggestConc
     onError: (error) => showError(t('sourceAnalysis.error'), { description: parseApiError(error).message }),
   });
 
+  // A spreadsheet is usable as soon as it is uploaded: when it has not been read yet, read it now
+  // instead of asking the user to start an analysis.
+  const readKey = `${target?.documentId ?? ''}|${sheetName}`;
+  const [autoRead, setAutoRead] = useState('');
+  const unread = profile.isError || (profile.data && !profile.data.sheets.length && !sheetName);
+  useEffect(() => {
+    if (!target || !unread || analyze.isPending || autoRead === readKey) return;
+    setAutoRead(readKey);
+    analyze.mutate();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unread, readKey]);
+  const reading = profile.isLoading || analyze.isPending;
+
   const fields = sheetName ? profile.data?.fields ?? [] : [];
 
   // Deterministic first-pass suggestions: normalized name equality, identity = first fully populated unique field.
@@ -184,17 +197,17 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose, onSuggestConc
               <Select value={sheetName} onValueChange={(value) => { setSheetName(value); setMappings([]); setIdentityField(''); preview.reset(); }} disabled={Boolean(target.mapping)}>
                 <SelectTrigger aria-label={t('mapping.sheet')}><SelectValue placeholder={t('mapping.chooseSheet')} /></SelectTrigger>
                 <SelectContent>{(profile.data?.sheets ?? []).map((sheet) => (
-                  <SelectItem key={sheet.name} value={sheet.name}>{sheet.name} · {t('mapping.sheetMeta', { rows: sheet.rowCount, fields: sheet.fieldCount })}</SelectItem>
+                  <SelectItem key={sheet.name} value={sheet.name}>{sheet.name}{sheet.rowCount || sheet.fieldCount ? ` · ${t('mapping.sheetMeta', { rows: sheet.rowCount, fields: sheet.fieldCount })}` : ''}</SelectItem>
                 ))}</SelectContent>
               </Select>
-              {profile.isLoading && <div className='flex items-center gap-2 text-xs text-muted-foreground'><Loader2 className='h-3.5 w-3.5 animate-spin' />{t('sourceAnalysis.loading')}</div>}
-              {/* An answered profile with no sheets means the analysis has not finished; say so rather than show an empty list. */}
-              {(profile.isError || (profile.data && !profile.data.sheets.length && !sheetName)) && (
+              {reading && <div className='flex items-center gap-2 text-xs text-muted-foreground'><Loader2 className='h-3.5 w-3.5 animate-spin' />{t('sourceAnalysis.loading')}</div>}
+              {/* Shown once the file was read and still gave no sheets, or reading it failed. */}
+              {!reading && unread && (analyze.isError || autoRead === readKey) && (
                 <div className='flex items-start gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive'>
                   <AlertTriangle className='mt-0.5 h-3.5 w-3.5 shrink-0' />
-                  <span className='min-w-0 flex-1'>{t(profile.isError ? 'sourceAnalysis.required' : 'sourceAnalysis.noSheets')}</span>
+                  <span className='min-w-0 flex-1'>{t('sourceAnalysis.readFailed')}</span>
                   <Button size='sm' variant='ghost' className='h-6 shrink-0 px-2 text-[11px]' disabled={analyze.isPending} onClick={() => analyze.mutate()}>
-                    {analyze.isPending ? <Loader2 className='mr-1 h-3 w-3 animate-spin' /> : null}{t('sourceAnalysis.analyze')}
+                    {analyze.isPending ? <Loader2 className='mr-1 h-3 w-3 animate-spin' /> : null}{t('sourceAnalysis.retry')}
                   </Button>
                 </div>
               )}
