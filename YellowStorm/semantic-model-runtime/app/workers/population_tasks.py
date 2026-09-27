@@ -131,6 +131,10 @@ class PopulationProgress:
         await self.send(force=True)
 
 
+class RunCancelled(Exception):
+    """The run was asked to stop; it ends without saving what it read."""
+
+
 def source_display_name(entry: dict) -> str:
     if entry.get("sourceKind") == "manual":
         return "Typed records"
@@ -785,12 +789,28 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
                                                lease_epoch=lease.lease_epoch, progress=snapshot,
                                                lease_seconds=PROGRESS_LEASE_SECONDS):
                 raise StaleLease("population lease lost while reporting progress")
+            # Someone asked to stop: end here, before anything read is saved.
+            if await repository.cancel_requested(lease.job_id):
+                raise RunCancelled()
 
         progress = PopulationProgress(report)
         model_id = str(lease.payload.get("modelId") or lease.payload.get("model_id") or "")
-        outcome = await run_population_for_task(
-            lease.payload, manual_pool=pool, progress=progress,
-            extraction_cache=DocumentExtractionCache(pool, model_id) if model_id else None)
+        try:
+            outcome = await run_population_for_task(
+                lease.payload, manual_pool=pool, progress=progress,
+                extraction_cache=DocumentExtractionCache(pool, model_id) if model_id else None)
+            if outcome.get("ok") and outcome.get("purpose") != "preview":
+                # The last chance to stop: after this the new data is saved.
+                await progress.enter("saving")
+            if await repository.cancel_requested(lease.job_id):
+                raise RunCancelled()
+        except RunCancelled:
+            try:
+                await repository.cancel_task(task_id=task_id, lease_owner=lease_owner,
+                                             lease_epoch=lease.lease_epoch)
+            except StaleLease:
+                return {"ok": False, "errorCode": "stale_lease"}
+            return {"ok": False, "errorCode": "cancelled", "jobState": "cancelled"}
         if not outcome.get("ok"):
             try:
                 await repository.complete_task(task_id=task_id, lease_owner=lease_owner,
@@ -804,7 +824,6 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
         if outcome.get("purpose") == "preview":
             result = preview_job_result(outcome)
         else:
-            await progress.enter("saving")
             # Durably persist before acknowledging: the job result carries only
             # a bounded summary while canonical rows live in semantic_population.
             # Counts are re-read from storage so ON CONFLICT skips never inflate

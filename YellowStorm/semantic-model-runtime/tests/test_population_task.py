@@ -394,3 +394,62 @@ def test_summarize_gaps_groups_missing_values_and_links():
         "unresolvedLinks": [{"relationId": "r1", "kind": "unresolved_reference", "count": 2}],
         "other": [{"conceptId": "c1", "kind": "missing_identity", "count": 1}],
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_after_checks", [1, 2])
+async def test_a_run_asked_to_stop_ends_as_stopped_without_saving(monkeypatch: pytest.MonkeyPatch, stop_after_checks: int):
+    """Stopped while reading (first progress report) or just before saving: nothing is saved."""
+    from datetime import datetime, timezone
+
+    import asyncpg
+
+    import app.workers.population_tasks as tasks
+    from app.jobs.models import Lease
+    from app.persistence.postgres_jobs import PostgresJobRepository
+
+    lease = Lease(task_id=7, job_id="job-1", task_name="populate", payload=command(),
+                  lease_epoch=1, lease_owner="worker", lease_expires_at=datetime.now(timezone.utc))
+    calls: dict[str, int] = {"checks": 0, "cancel": 0, "complete": 0, "requeue": 0, "persist": 0}
+
+    class Pool:
+        async def close(self):
+            return None
+
+    async def create_pool(*_args, **_kwargs):
+        return Pool()
+
+    async def claim(*_args, **_kwargs):
+        return lease
+
+    async def checkpoint(*_args, **_kwargs):
+        return True
+
+    async def cancel_requested(_self, job_id):
+        assert job_id == "job-1"
+        calls["checks"] += 1
+        return calls["checks"] >= stop_after_checks
+
+    async def count(name):
+        async def record(*_args, **_kwargs):
+            calls[name] += 1
+            return {"jobId": "job-1", "state": "cancelled"}
+        return record
+
+    async def run(_payload, *, progress, **_kwargs):
+        await progress.begin(1)
+        return {"ok": True, "purpose": "build", "jobState": "completed"}
+
+    monkeypatch.setenv("SEMANTIC_RUNTIME_DATABASE_URL", "postgresql://test")
+    monkeypatch.setattr(asyncpg, "create_pool", create_pool)
+    monkeypatch.setattr(PostgresJobRepository, "claim_task", claim)
+    monkeypatch.setattr(PostgresJobRepository, "checkpoint", checkpoint)
+    monkeypatch.setattr(PostgresJobRepository, "cancel_requested", cancel_requested)
+    for name, method in (("cancel", "cancel_task"), ("complete", "complete_task"), ("requeue", "requeue_task")):
+        monkeypatch.setattr(PostgresJobRepository, method, await count(name))
+    monkeypatch.setattr(tasks, "persist_population_revision", await count("persist"))
+    monkeypatch.setattr(tasks, "run_population_for_task", run)
+
+    assert await tasks._run_task(7, "worker") == {"ok": False, "errorCode": "cancelled", "jobState": "cancelled"}
+    assert calls["checks"] == stop_after_checks
+    assert (calls["cancel"], calls["complete"], calls["requeue"], calls["persist"]) == (1, 0, 0, 0)
