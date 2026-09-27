@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 import { Background, BaseEdge, Controls, EdgeLabelRenderer, Handle, MarkerType, Position, ReactFlow, getBezierPath, type Connection, type Edge, type EdgeProps, type Node, type NodeProps, type ReactFlowInstance } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { BookOpen, Briefcase, Check, FileStack, FileText, KeyRound, Keyboard, Library, Plus, Sheet, Table2, Tag, Warehouse, X } from 'lucide-react';
+import { BookOpen, Briefcase, Check, FileStack, FileText, KeyRound, Keyboard, Library, Plus, Sheet, Tag, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -52,7 +52,6 @@ function stopNodeEvent(event: MouseEvent | PointerEvent | FormEvent): void {
   event.stopPropagation();
 }
 
-const MAX_CARD_FIELDS = 4;
 
 /** One badge answering "can this concept produce data?", from its sources and its record policy. */
 function conceptStatus(data: BusinessNodeData, t: (key: string, options?: Record<string, unknown>) => string) {
@@ -124,40 +123,38 @@ const BusinessNode = memo(function BusinessNode({ data,selected,isConnectable }:
   </div>;
   const dropLabel=data.dropState?t(`knowledge.dropState.${data.dropState}`):null;
   const attributes=data.attributes??[];
-  const fields=attributes.slice(0,MAX_CARD_FIELDS);
-  const hiddenFieldCount=attributes.length-fields.length;
   const status=conceptStatus(data,t as (key: string, options?: Record<string, unknown>) => string);
-  return <div className={cn('relative w-60 rounded-2xl border bg-card shadow-sm transition-colors',selected?'border-primary ring-4 ring-primary/10':'border-border/80 hover:border-primary/40',data.protected&&'border-sky-400/60 bg-sky-50/70 dark:bg-sky-950/20',data.dropState==='valid'&&'border-primary ring-4 ring-primary/20',data.dropState==='already-linked'&&'border-emerald-500 ring-4 ring-emerald-500/15',data.dropState==='busy'&&'border-amber-500 ring-4 ring-amber-500/15')}
+  const records=data.summary?.records??0;
+  const subtitle=[t(attributes.length===1?'designer.fieldCount_one':'designer.fieldCount_other',{count:attributes.length}),records>0?t('editor.recordCount',{count:records}):null].filter(Boolean).join(' · ');
+  const hasKey=(data.summary?.identityFields.length??0)>0;
+  return <div className='relative flex w-48 flex-col items-center'
     onDragEnter={(event)=>{if(!data.onKnowledgeDragEnter)return;event.preventDefault();event.stopPropagation();data.onKnowledgeDragEnter(data.nodeId);}}
     onDragOver={(event)=>{if(!data.onKnowledgeDrop)return;event.preventDefault();event.stopPropagation();event.dataTransfer.dropEffect=data.dropState==='valid'?'copy':'none';}}
     onDragLeave={(event)=>{if(event.currentTarget.contains(event.relatedTarget as globalThis.Node|null))return;data.onKnowledgeDragLeave?.(data.nodeId);}}
     onDrop={(event)=>data.onKnowledgeDrop?.(data.nodeId,event)}>
     <span className='sr-only' aria-live='polite'>{dropLabel}</span>
-    {dropLabel&&<div className={cn('pointer-events-none absolute inset-x-3 -top-3 z-20 rounded-full px-3 py-1 text-center text-[10px] font-semibold shadow',data.dropState==='valid'&&'bg-primary text-primary-foreground',data.dropState==='already-linked'&&'bg-emerald-600 text-white',data.dropState==='busy'&&'bg-amber-500 text-amber-950')}>{dropLabel}</div>}
-    {/* Handles stay mounted even when connecting is off: React Flow anchors edges to them, so hiding them hides the relationships. */}
-    <Handle type='target' position={Position.Left} isConnectable={isConnectable} className={cn('!border-2 !border-background !bg-primary',isConnectable?'!h-4 !w-4':'!h-1 !w-1 !border-0 !opacity-0')} aria-label={t('relation.connectTo')} title={t('relation.connectTo')} />
-    <div className='flex items-start gap-3 p-4 pb-3'><div className={cn('rounded-xl p-2',data.protected?'bg-sky-500/10 text-sky-600':'bg-primary/10 text-primary')}><Icon className='h-5 w-5' /></div><div className='min-w-0 flex-1'><div className='flex items-center gap-2'><p className='truncate font-semibold'>{data.label}</p>{data.protected&&<Badge variant='outline' className='text-[10px]'>{t('editor.system')}</Badge>}</div><p className='mt-1 line-clamp-2 text-xs text-muted-foreground'>{data.description||t('editor.noDescription')}</p></div>{status&&<span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold',status.tone==='ok'&&'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',status.tone==='warn'&&'bg-amber-500/10 text-amber-700 dark:text-amber-400')}>{status.label}</span>}</div>
-    {fields.length>0&&<dl className='space-y-1 px-4 pb-3'>{fields.map((field)=><div key={field.key} className='flex items-center gap-2'>
-      {data.summary?.identityFields.includes(field.key)
-        ? <KeyRound className='h-3 w-3 shrink-0 text-amber-600 dark:text-amber-400' aria-label={t('editor.matchingKey')} />
-        : <span className='h-3 w-3 shrink-0' />}
-      <dt className='min-w-0 flex-1 truncate text-xs text-muted-foreground'>{field.label||field.key}</dt>
-      <dd className='shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground'>{t(`attribute.type.${field.type}`)}</dd>
-    </div>)}{hiddenFieldCount>0&&<p className='pl-5 text-[11px] text-muted-foreground'>{t('editor.moreFields',{count:hiddenFieldCount})}</p>}</dl>}
-    {Boolean(data.summary&&(data.summary.sources>0||data.summary.records>0))&&<div className='flex flex-wrap items-center gap-x-3 gap-y-1 border-t px-4 py-2 text-[11px] text-muted-foreground'>
-      {(data.summary?.sources??0)>0&&<span className='flex min-w-0 items-center gap-1.5' title={data.summary?.documentNames.join(', ')}><FileStack className='h-3.5 w-3.5 shrink-0' /><span className='truncate'>{t('editor.sourceCount',{count:data.summary?.sources??0})}</span></span>}
-      {(data.summary?.records??0)>0&&<span className='flex items-center gap-1.5'><Table2 className='h-3.5 w-3.5 shrink-0' />{t('editor.recordCount',{count:data.summary?.records??0})}</span>}
-    </div>}
-    {((data.knowledgeCounts?.workspaces??0)>0||(data.knowledgeCounts?.documents??0)>0)&&<div className='nodrag nopan nowheel flex flex-wrap gap-1 border-t px-3 py-2' onClick={stopNodeEvent}>{(data.knowledgeCounts?.workspaces??0)>0&&<Button size='sm' variant='ghost' className='h-11 gap-1 px-2 text-[10px]' onClick={(event)=>runClickAction(event,()=>data.onOpenKnowledge?.(data.nodeId))} aria-label={t((data.knowledgeCounts?.workspaces??0)===1?'knowledge.workspaceCount_one':'knowledge.workspaceCount_other',{count:data.knowledgeCounts?.workspaces??0})}><Warehouse className='h-3.5 w-3.5'/>{data.knowledgeCounts?.workspaces}</Button>}{(data.knowledgeCounts?.documents??0)>0&&<Button size='sm' variant='ghost' className='h-11 gap-1 px-2 text-[10px]' onClick={(event)=>runClickAction(event,()=>data.onOpenKnowledge?.(data.nodeId))} aria-label={t((data.knowledgeCounts?.documents??0)===1?'knowledge.documentCount_one':'knowledge.documentCount_other',{count:data.knowledgeCounts?.documents??0})}><BookOpen className='h-3.5 w-3.5'/>{data.knowledgeCounts?.documents}</Button>}</div>}
-    {data.quickActions&&<div className='nodrag nopan nowheel flex items-center justify-end border-t px-3 py-2' onClick={stopNodeEvent}>
-      <DropdownMenu><DropdownMenuTrigger asChild><Button size='sm' variant='ghost' className='h-11 px-3'><Plus className='mr-1.5 h-4 w-4'/>{t('action.add')}</Button></DropdownMenuTrigger><DropdownMenuContent align='end'>
-        {!data.protected&&<DropdownMenuItem className='min-h-11' onSelect={()=>{if(data.recordPolicy==='none'){showWarning(t('records.disabled'));return;}setRecordInputOpen(true);}}>{t('records.quickAdd')}</DropdownMenuItem>}
-        {!data.protected&&<DropdownMenuItem className='min-h-11' onSelect={()=>data.onQuickConcept?.(data.nodeId)}>{t('concept.quickAdd')}</DropdownMenuItem>}
-        <DropdownMenuItem className='min-h-11' onSelect={()=>data.onOpenKnowledge?.(data.nodeId)}><Library className='h-4 w-4'/>{t('knowledge.addSource')}</DropdownMenuItem>
+    {dropLabel&&<div className={cn('pointer-events-none absolute -top-8 z-20 whitespace-nowrap rounded-full px-3 py-1 text-center text-[10px] font-semibold shadow',data.dropState==='valid'&&'bg-primary text-primary-foreground',data.dropState==='already-linked'&&'bg-emerald-600 text-white',data.dropState==='busy'&&'bg-amber-500 text-amber-950')}>{dropLabel}</div>}
+    {/* The + on the left brings data in; the one on the right adds what comes next. */}
+    {data.quickActions&&!data.protected&&<button type='button' className='nodrag nopan absolute left-0 top-[36px] z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 border-teal-500/60 bg-background text-teal-600 opacity-70 transition hover:scale-110 hover:opacity-100 dark:text-teal-400' onClick={(event)=>runClickAction(event,()=>data.onOpenKnowledge?.(data.nodeId))} aria-label={t('designer.plus.source',{name:data.label})} title={t('designer.plus.source',{name:data.label})}><Plus className='h-4 w-4' /></button>}
+    <div className={cn('relative flex h-24 w-24 items-center justify-center rounded-full transition-shadow',data.protected?'bg-sky-500 text-white':'bg-primary text-primary-foreground',selected?'ring-8 ring-primary/30':'ring-8 ring-primary/10 hover:ring-primary/20',data.dropState==='valid'&&'ring-primary/40',data.dropState==='already-linked'&&'ring-emerald-500/40',data.dropState==='busy'&&'ring-amber-500/40')}>
+      <Handle type='target' position={Position.Left} isConnectable={isConnectable} className={cn('!border-2 !border-background !bg-primary',isConnectable?'!h-3.5 !w-3.5':'!h-1 !w-1 !border-0 !opacity-0')} aria-label={t('relation.connectTo')} title={t('relation.connectTo')} />
+      <Icon className='h-10 w-10' />
+      {hasKey&&<span className='absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full border-2 border-background bg-amber-400 text-amber-950' role='img' aria-label={t('editor.matchingKey')} title={t('editor.matchingKey')}><KeyRound className='h-3.5 w-3.5' /></span>}
+      <Handle type='source' position={Position.Right} isConnectable={isConnectable} className={cn('!border-2 !border-background !bg-primary',isConnectable?'!h-3.5 !w-3.5':'!h-1 !w-1 !border-0 !opacity-0')} aria-label={t('relation.connectFrom')} title={t('relation.connectFrom')} />
+    </div>
+    {data.quickActions&&<div className='nodrag nopan nowheel absolute right-0 top-[36px] z-10' onClick={stopNodeEvent}>
+      <DropdownMenu><DropdownMenuTrigger asChild><button type='button' className='flex h-7 w-7 items-center justify-center rounded-full border-2 border-primary/60 bg-background text-primary opacity-70 transition hover:scale-110 hover:opacity-100' aria-label={t('designer.plus.next',{name:data.label})} title={t('designer.plus.next',{name:data.label})}><Plus className='h-4 w-4' /></button></DropdownMenuTrigger><DropdownMenuContent align='start'>
+        {!data.protected&&<DropdownMenuItem className='min-h-11' onSelect={()=>data.onQuickConcept?.(data.nodeId)}><Briefcase className='h-4 w-4'/>{t('concept.quickAdd')}</DropdownMenuItem>}
+        <DropdownMenuItem className='min-h-11' onSelect={()=>data.onOpenKnowledge?.(data.nodeId)}><Library className='h-4 w-4'/>{t('designer.plus.mapSource')}</DropdownMenuItem>
+        {!data.protected&&<DropdownMenuItem className='min-h-11' onSelect={()=>{if(data.recordPolicy==='none'){showWarning(t('records.disabled'));return;}setRecordInputOpen(true);}}><Keyboard className='h-4 w-4'/>{t('records.quickAdd')}</DropdownMenuItem>}
       </DropdownMenuContent></DropdownMenu>
-      {recordInputOpen&&<div className='absolute left-3 right-3 top-full z-20 rounded-xl border bg-card p-3 shadow-xl'><QuickRecordForm nodeId={data.nodeId} onClose={()=>setRecordInputOpen(false)} /></div>}
     </div>}
-    <Handle type='source' position={Position.Right} isConnectable={isConnectable} className={cn('!border-2 !border-background !bg-primary',isConnectable?'!h-4 !w-4':'!h-1 !w-1 !border-0 !opacity-0')} aria-label={t('relation.connectFrom')} title={t('relation.connectFrom')} />
+    <div className='mt-3 w-full text-center'>
+      <p className='truncate font-semibold' title={data.label}>{data.label}{data.protected&&<Badge variant='outline' className='ml-1.5 align-middle text-[10px]'>{t('editor.system')}</Badge>}</p>
+      <p className='truncate text-[11px] text-muted-foreground' title={data.description}>{data.category==='record'?data.description:subtitle}</p>
+      {status&&<span className={cn('mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold',status.tone==='ok'&&'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',status.tone==='warn'&&'bg-amber-500/10 text-amber-700 dark:text-amber-400')}>{status.label}</span>}
+    </div>
+    {recordInputOpen&&<div className='absolute left-0 right-0 top-full z-20 mt-2 rounded-xl border bg-card p-3 shadow-xl'><QuickRecordForm nodeId={data.nodeId} onClose={()=>setRecordInputOpen(false)} /></div>}
   </div>;
 });
 
@@ -167,22 +164,23 @@ const TONE_CLASS = {
   idle:'bg-muted text-muted-foreground',
 } as const;
 
-type SourceNodeData = Record<string, unknown> & { source: DesignerSource };
+type SourceNodeData = Record<string, unknown> & { source: DesignerSource; onAddFeed?: (source: DesignerSource) => void };
 
-/** A data source on the canvas; clicking it opens its mapping in the side panel. */
+/** A data source on the canvas; clicking it opens its mapping, and its + feeds another concept. */
 const SourceNode = memo(function SourceNode({ data,selected }: NodeProps<Node<SourceNodeData>>) {
   const { t } = useModuleTranslation('semantic-model');
   const { source } = data;
   const Icon = source.kind==='typed' ? Keyboard : source.kind==='spreadsheet' ? Sheet : FileText;
   const title = source.kind==='typed' ? t('designer.typedRecords') : source.label;
   const detail = source.kind==='typed' ? t('editor.recordCount',{count:Number(source.detail)}) : source.detail || t(`designer.kind.${source.kind}`);
-  return <div className={cn('w-56 rounded-2xl border-2 bg-card shadow-sm transition-colors',selected?'border-primary ring-4 ring-primary/10':'border-teal-500/40 hover:border-teal-500/70')}>
-    <div className='flex items-center gap-3 p-3'>
-      <div className='rounded-xl bg-teal-500/10 p-2 text-teal-700 dark:text-teal-400'><Icon className='h-5 w-5' /></div>
-      <div className='min-w-0 flex-1'><p className='truncate text-sm font-semibold' title={title}>{title}</p><p className='truncate text-[11px] text-muted-foreground'>{detail}</p></div>
-      {source.tone!=='idle'&&<span className={cn('h-2.5 w-2.5 shrink-0 rounded-full',source.tone==='ok'?'bg-emerald-500':'bg-amber-500')} role='img' aria-label={t(`designer.tone.${source.tone}`)} />}
+  return <div className='relative flex w-44 flex-col items-center'>
+    <div className={cn('relative flex h-20 w-20 items-center justify-center rounded-full bg-teal-600 text-white transition-shadow',selected?'ring-8 ring-teal-500/40':'ring-8 ring-teal-500/15 hover:ring-teal-500/30')}>
+      <Icon className='h-9 w-9' />
+      {source.tone!=='idle'&&<span className={cn('absolute -right-0.5 -top-0.5 h-4 w-4 rounded-full border-2 border-background',source.tone==='ok'?'bg-emerald-500':'bg-amber-500')} role='img' aria-label={t(`designer.tone.${source.tone}`)} />}
+      <Handle type='source' position={Position.Right} isConnectable={false} className='!h-2 !w-2 !border-0 !bg-teal-500' />
     </div>
-    <Handle type='source' position={Position.Right} isConnectable={false} className='!h-2 !w-2 !border-0 !bg-teal-500' />
+    {data.onAddFeed&&source.kind!=='typed'&&<button type='button' className='nodrag nopan absolute right-2 top-[26px] z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 border-teal-500/60 bg-background text-teal-600 opacity-70 transition hover:scale-110 hover:opacity-100 dark:text-teal-400' onClick={(event)=>{event.stopPropagation();data.onAddFeed?.(source);}} aria-label={t('designer.plus.feed',{name:title})} title={t('designer.plus.feed',{name:title})}><Plus className='h-4 w-4' /></button>}
+    <div className='mt-3 w-full text-center'><p className='truncate text-sm font-semibold' title={title}>{title}</p><p className='truncate text-[11px] text-muted-foreground'>{detail}</p></div>
   </div>;
 });
 
@@ -201,7 +199,7 @@ const RelationEdge = memo(function RelationEdge({ id,sourceX,sourceY,targetX,tar
   const label = String(data?.label??'');
   const cardinality = CARDINALITY_SHORT[String(data?.cardinality??'')] ?? '';
   return <>
-    <BaseEdge id={id} path={path} markerEnd={markerEnd} style={{strokeWidth:selected?3:2,stroke:selected?EDGE_COLOR_SELECTED:EDGE_COLOR}} />
+    <BaseEdge id={id} path={path} markerEnd={markerEnd} style={{strokeWidth:selected?9:7,strokeDasharray:'0 14',strokeLinecap:'round',stroke:selected?EDGE_COLOR_SELECTED:EDGE_COLOR}} />
     <EdgeLabelRenderer>
       <div style={{transform:`translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`}} className='pointer-events-none absolute flex flex-col items-center gap-0.5'>
         {label&&<span className={cn('max-w-40 truncate rounded-full border bg-background px-2 py-0.5 text-[11px] font-medium shadow-sm',selected?'border-primary text-primary':'border-border text-foreground')}>{label}</span>}
@@ -219,7 +217,7 @@ const FeedEdge = memo(function FeedEdge({ id,sourceX,sourceY,targetX,targetY,sou
   if (!feed) return null;
   const label = feed.step==='typed' ? t('designer.step.typed') : feed.step==='extract' ? t('designer.step.extract') : t('designer.step.map',{mapped:feed.mapped,total:feed.total});
   return <>
-    <BaseEdge id={id} path={path} style={{strokeWidth:selected?3:2,strokeDasharray:'6 4',stroke:selected?EDGE_COLOR_SELECTED:'color-mix(in oklab, rgb(20 184 166) 70%, transparent)'}} />
+    <BaseEdge id={id} path={path} style={{strokeWidth:selected?9:7,strokeDasharray:'0 14',strokeLinecap:'round',stroke:selected?EDGE_COLOR_SELECTED:'color-mix(in oklab, rgb(20 184 166) 55%, transparent)'}} />
     <EdgeLabelRenderer>
       <div style={{transform:`translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`}} className='pointer-events-none absolute'>
         <span className={cn('rounded-full border bg-background px-2 py-0.5 text-[11px] font-medium shadow-sm',TONE_CLASS[feed.tone],selected&&'border-primary')}>{label}</span>
@@ -230,11 +228,13 @@ const FeedEdge = memo(function FeedEdge({ id,sourceX,sourceY,targetX,targetY,sou
 
 const edgeTypes = { relation:RelationEdge, feed:FeedEdge };
 
-export function SemanticModelCanvas({ sourceMappings,mappingHealth,canEdit,onConnectRequest,knowledge,onOpenKnowledge,onMapStructuredDrop,onOpenSource,onPaneDrop }: Readonly<{ sourceMappings?:ConceptSourceMapping[];mappingHealth?:MappingHealthItem[];canEdit:boolean;onConnectRequest:(connection:{sourceId:string;targetId:string})=>void;knowledge:KnowledgeLinkingController;onOpenKnowledge:(nodeId:string)=>void;onMapStructuredDrop?:(resource:Extract<KnowledgeResource,{kind:'document'}>,nodeId:string)=>void;
+export function SemanticModelCanvas({ sourceMappings,mappingHealth,canEdit,onConnectRequest,knowledge,onOpenKnowledge,onMapStructuredDrop,onOpenSource,onPaneDrop,onAddFeed }: Readonly<{ sourceMappings?:ConceptSourceMapping[];mappingHealth?:MappingHealthItem[];canEdit:boolean;onConnectRequest:(connection:{sourceId:string;targetId:string})=>void;knowledge:KnowledgeLinkingController;onOpenKnowledge:(nodeId:string)=>void;onMapStructuredDrop?:(resource:Extract<KnowledgeResource,{kind:'document'}>,nodeId:string)=>void;
   /** A source box or its line was clicked; the mapping is set when a specific line was chosen. */
   onOpenSource?:(source:DesignerSource,mapping?:ConceptSourceMapping)=>void;
   /** A document from the knowledge panel was dropped on empty canvas, not on a concept. */
-  onPaneDrop?:(resource:KnowledgeResource)=>void }>) {
+  onPaneDrop?:(resource:KnowledgeResource)=>void;
+  /** The + on a source: map the same file onto another concept. */
+  onAddFeed?:(source:DesignerSource)=>void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const isMobile = useIsMobile();
   const graph = useSemanticModelEditorStore((state)=>state.graph);
@@ -349,11 +349,11 @@ export function SemanticModelCanvas({ sourceMappings,mappingHealth,canEdit,onCon
     if (!graph) return [];
     if (mode==='records') return graph.records.map((record)=>({id:record.id,type:'business',position:record.position,data:{nodeId:record.id,label:record.label,description:String(record.values.description??''),category:'record',protected:false}}));
     const modelNodes = graph.nodes.map((node)=>({id:node.id,type:'business',position:node.position,draggable:canEdit&&!node.systemKey,data:{nodeId:node.id,label:node.label,description:node.description,category:node.category,protected:Boolean(node.systemKey),recordPolicy:node.recordPolicy,attributes:node.attributes,summary:summaries[node.id],quickActions:canEdit,onQuickConcept:beginQuickConcept,onOpenKnowledge,knowledgeCounts:knowledge.countsByNode[node.id]??{workspaces:0,documents:0},dropState:dropStateFor(node.id),onKnowledgeDragEnter:canEdit&&knowledge.draggedResource?setDropNodeId:undefined,onKnowledgeDragLeave:canEdit?((nodeId:string)=>setDropNodeId((current)=>current===nodeId?null:current)):undefined,onKnowledgeDrop:canEdit?dropKnowledge:undefined}}));
-    const sourceNodes = flow.sources.map((source)=>({id:source.id,type:'source',position:source.position,draggable:false,connectable:false,data:{source}}));
+    const sourceNodes = flow.sources.map((source)=>({id:source.id,type:'source',position:source.position,draggable:false,connectable:false,data:{source,onAddFeed:canEdit?onAddFeed:undefined}}));
     const withSources = [...sourceNodes,...modelNodes] as unknown as Node<BusinessNodeData>[];
     if (!quickConcept) return withSources;
     return [...withSources,{id:quickConcept.id,type:'business',position:quickConcept.position,draggable:false,selectable:false,focusable:false,data:{nodeId:quickConcept.id,label:'',description:'',category:'business_object',protected:false,draft:true,onDraftSubmit:submitQuickConcept,onDraftCancel:()=>setQuickConcept(null)}}];
-  },[canEdit,dropNodeId,flow,graph,knowledge.bindings,knowledge.countsByNode,knowledge.draggedResource,knowledge.isBusy,mode,onOpenKnowledge,quickConcept,summaries]);
+  },[canEdit,dropNodeId,flow,onAddFeed,graph,knowledge.bindings,knowledge.countsByNode,knowledge.draggedResource,knowledge.isBusy,mode,onOpenKnowledge,quickConcept,summaries]);
   // Stage 2 — apply selection cheaply; reuses same object refs for unaffected nodes so memo on BusinessNode holds.
   const nodes = useMemo<Node<BusinessNodeData>[]>(()=>
     baseNodes.map((node)=>node.selected===(node.id===selectedId)?node:{...node,selected:node.id===selectedId})

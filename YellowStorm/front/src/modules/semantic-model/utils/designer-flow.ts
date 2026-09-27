@@ -26,7 +26,7 @@ export interface DesignerFeed {
 }
 
 export const SOURCE_COLUMN_OFFSET = 340;
-const SOURCE_ROW_HEIGHT = 104;
+const SOURCE_ROW_HEIGHT = 150;
 
 export const typedSourceId = (conceptId: string) => `typed:${conceptId}`;
 export const feedId = (mappingId: string) => `feed:${mappingId}`;

@@ -69,19 +69,33 @@ const contractGraph: SemanticGraph = {
 describe('SemanticModelCanvas', () => {
   beforeEach(() => {useSemanticModelEditorStore.getState().hydrate(graph);vi.clearAllMocks();knowledge.draggedResource=null;knowledge.isBusy=false;knowledge.countsByNode={};});
 
-  it('shows what a concept holds: fields, their type, the matching key and its sources', () => {
+  it('shows a concept as a round step: its name, field count, matching key and status', () => {
     useSemanticModelEditorStore.getState().hydrate(contractGraph);
-    renderCanvas([mapping({}), mapping({ id:'mapping-2', documentName:'master-agreement-0099.pdf' })], healthy('mapping', 'mapping-2'));
+    renderCanvas([mapping({}), mapping({ id:'mapping-2', documentId:'document-2', documentName:'master-agreement-0099.pdf' })], healthy('mapping', 'mapping-2'));
 
-    expect(screen.getByText('contract number')).toBeInTheDocument();
-    expect(screen.getAllByText('attribute.type.text').length).toBe(3);
-    expect(screen.getByText('attribute.type.date')).toBeInTheDocument();
-    // Only the first four fields fit on a card; the rest are counted.
-    expect(screen.queryByText('status')).not.toBeInTheDocument();
-    expect(screen.getByText('editor.moreFields')).toBeInTheDocument();
+    expect(screen.getByText('Contract')).toBeInTheDocument();
+    expect(screen.getByText('designer.fieldCount_other')).toBeInTheDocument();
     expect(screen.getByLabelText('editor.matchingKey')).toBeInTheDocument();
-    expect(screen.getByText('editor.sourceCount')).toBeInTheDocument();
     expect(screen.getByText('editor.status.ready')).toBeInTheDocument();
+    // Both documents appear as their own source steps.
+    expect(screen.getByText('master-agreement-0041.pdf')).toBeInTheDocument();
+    expect(screen.getByText('master-agreement-0099.pdf')).toBeInTheDocument();
+  });
+
+  it('brings data into a concept from the + on its left', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    const onOpenKnowledge = vi.fn();
+    render(<SemanticModelCanvas canEdit knowledge={knowledge} onOpenKnowledge={onOpenKnowledge} onConnectRequest={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button',{name:'designer.plus.source'}));
+    expect(onOpenKnowledge).toHaveBeenCalledWith('contract');
+  });
+
+  it('feeds another concept from the + on a source', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    const onAddFeed = vi.fn();
+    render(<SemanticModelCanvas canEdit knowledge={knowledge} sourceMappings={[mapping({})]} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} onAddFeed={onAddFeed} />);
+    fireEvent.click(screen.getByRole('button',{name:'designer.plus.feed'}));
+    expect(onAddFeed).toHaveBeenCalledWith(expect.objectContaining({ label:'master-agreement-0041.pdf' }));
   });
 
   it('flags a concept that expects data but has no source', () => {
@@ -129,7 +143,7 @@ describe('SemanticModelCanvas', () => {
   it('creates a record inline for its concept', () => {
     useSemanticModelEditorStore.getState().hydrate({...graph,nodes:[{...graph.nodes[0],id:'customer',label:'Customer',systemKey:null,recordPolicy:'optional'}]});
     renderCanvas();
-    fireEvent.click(screen.getByRole('button',{name:'action.add'}));
+    fireEvent.click(screen.getByRole('button',{name:'designer.plus.next'}));
     fireEvent.click(screen.getByRole('menuitem',{name:'records.quickAdd'}));
     const input = screen.getByRole('textbox',{name:'records.quickName'});
     fireEvent.change(input,{target:{value:'Acme'}});
@@ -140,7 +154,7 @@ describe('SemanticModelCanvas', () => {
   it('creates a linked optional-record concept as one operation group', async () => {
     useSemanticModelEditorStore.getState().hydrate({...graph,nodes:[{...graph.nodes[0],id:'customer',label:'Customer',systemKey:null,recordPolicy:'optional'}]});
     renderCanvas();
-    fireEvent.click(screen.getByRole('button',{name:'action.add'}));
+    fireEvent.click(screen.getByRole('button',{name:'designer.plus.next'}));
     fireEvent.click(screen.getByRole('menuitem',{name:'concept.quickAdd'}));
     const input = screen.getByRole('textbox',{name:'concept.quickName'});
     await waitFor(()=>expect(input).toHaveFocus());

@@ -450,22 +450,28 @@ export function SemanticModelEditorPage() {
             onMapStructuredDrop={(resource, nodeId) => void openMappingTarget(sourceMappingTargetFromResource(resource, nodeId))}
             onOpenSource={openSource}
             onPaneDrop={dropOnCanvas}
+            onAddFeed={(source) => { const first = source.mappings[0]; if (first) void openMappingTarget({ ...mappingTarget_(first), mapping: undefined, conceptId: undefined }); }}
           /></div>}
           {mode === 'records' && modelId && <SemanticDataPreview modelId={modelId} dataRevisionId={boundDataRevisionId} onDataRevision={setBoundDataRevisionId} onOpenItem={(id) => { setMode('structure'); focus(id); }} canEdit={canEdit} onRebuildStarted={setPopulationJobId} />}
           {mode === 'mappings' && modelId && <SemanticMappingsView modelId={modelId} canEdit={canEdit} onOpenGraph={openGraphViewer} onPopulationAccepted={setPopulationJobId} onRepairMapping={(mapping) => void openMappingTarget(mappingTarget_(mapping))} onBulkEditMappings={(mapping) => void openMappingTarget({ ...mappingTarget_(mapping), bulkEdit: true })} />}
           {onCanvas && conceptCount === 0 && !hasSources && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
-              <div className="pointer-events-auto max-w-md rounded-3xl border-2 border-dashed bg-background/95 p-7 text-center shadow-sm">
-                <Workflow className="mx-auto h-8 w-8 text-primary" />
-                <h2 className="mt-3 font-semibold">{t("designer.empty.title")}</h2>
+              {/* Like the first step of a scenario: one big +, and the choices it opens. */}
+              <div className="pointer-events-auto flex max-w-sm flex-col items-center text-center">
+                {canEdit ? <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button type="button" className="flex h-28 w-28 items-center justify-center rounded-full border-4 border-dashed border-primary/50 bg-background text-primary transition hover:scale-105 hover:border-primary" aria-label={t('designer.empty.start')}>
+                      <Plus className="h-12 w-12" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="center">
+                    <DropdownMenuItem className="min-h-11" onSelect={() => openKnowledge()}><Sheet className="h-4 w-4" />{t('designer.palette.source')}</DropdownMenuItem>
+                    <DropdownMenuItem className="min-h-11" onSelect={() => setConceptOpen(true)}><Box className="h-4 w-4" />{t('designer.palette.concept')}</DropdownMenuItem>
+                    <DropdownMenuItem className="min-h-11" onSelect={() => setSuggestSource('pick')}><Sparkles className="h-4 w-4" />{t('suggest.open')}</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu> : <Workflow className="h-10 w-10 text-primary" />}
+                <h2 className="mt-4 font-semibold">{t("designer.empty.title")}</h2>
                 <p className="mt-1 text-sm text-muted-foreground">{t("designer.empty.description")}</p>
-                {canEdit && (
-                  <div className="mt-5 flex flex-wrap justify-center gap-2">
-                    <Button onClick={() => openKnowledge()}><Sheet className="mr-2 h-4 w-4" />{t('designer.palette.source')}</Button>
-                    <Button variant="outline" onClick={() => setConceptOpen(true)}><Box className="mr-2 h-4 w-4" />{t('designer.palette.concept')}</Button>
-                    <Button variant="ghost" onClick={() => setSuggestSource('pick')}><Sparkles className="mr-2 h-4 w-4" />{t("suggest.open")}</Button>
-                  </div>
-                )}
               </div>
             </div>
           )}

@@ -177,6 +177,7 @@ describe("SemanticModelEditorPage", () => {
     expect(await screen.findByText("semantic-model-canvas")).toBeInTheDocument();
     expect(screen.getByText('designer.status.draft')).toBeInTheDocument();
     expect(screen.getByText('designer.empty.title')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'designer.empty.start' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /reviewQueue.button/ })).not.toHaveTextContent('%');
     expect(screen.queryByRole('navigation', { name: 'journey.title' })).not.toBeInTheDocument();
   });
