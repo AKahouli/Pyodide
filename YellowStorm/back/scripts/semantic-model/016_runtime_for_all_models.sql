@@ -8,6 +8,5 @@ UPDATE semantic_model.models
   WHERE execution_owner = 'legacy';
 ALTER TABLE semantic_model.models ALTER COLUMN execution_owner SET DEFAULT 'runtime';
 
-UPDATE semantic_model.graph_index_jobs
-  SET status = 'superseded', completed_at = now(), last_error = 'Moved to the semantic runtime', updated_at = now()
-  WHERE status IN ('pending', 'in_progress', 'failed');
+-- One line: the migration runner splits statements on a semicolon at end of line.
+DO $$ BEGIN IF to_regclass('semantic_model.graph_index_jobs') IS NOT NULL THEN UPDATE semantic_model.graph_index_jobs SET status = 'superseded', completed_at = now(), last_error = 'Moved to the semantic runtime', updated_at = now() WHERE status IN ('pending', 'in_progress', 'failed'); END IF; END $$;
