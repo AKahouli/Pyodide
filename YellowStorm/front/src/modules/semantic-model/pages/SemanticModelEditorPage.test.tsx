@@ -42,6 +42,7 @@ vi.mock("react-router-dom", async () => {
 });
 
 vi.mock("../query/hooks", () => ({
+  useSemanticDataPreview: () => ({ data: undefined, isLoading: false }),
   useMappingHealth: () => ({ data: undefined, isLoading: false }),
   useSemanticModel: () => ({
     data: {
