@@ -59,6 +59,18 @@ describe('KnowledgePanel', () => {
     expect(knowledge.link).not.toHaveBeenCalled();
   });
 
+  it('uses every file of a workspace or of a folder with one mapping', async () => {
+    workspaceApi.getDocuments.mockResolvedValue({documents:[{id:'folder',originalName:'Contracts',folderName:'Contracts',isFolder:true}],pagination:{page:1,totalPages:1}});
+    const onMapWorkspace=vi.fn();
+    render(<KnowledgePanel canEdit knowledge={knowledge} targetNodeId='customer' onMapWorkspace={onMapWorkspace} />);
+    fireEvent.click(await screen.findByRole('button',{name:'knowledge.useAllIn'}));
+    expect(onMapWorkspace).toHaveBeenLastCalledWith({workspaceId:'workspace',name:'Credit Risk'});
+    fireEvent.click(screen.getByRole('button',{name:'knowledge.expandWorkspace'}));
+    await screen.findByText('Contracts');
+    fireEvent.click(screen.getAllByRole('button',{name:'knowledge.useAllIn'})[1]);
+    expect(onMapWorkspace).toHaveBeenLastCalledWith({workspaceId:'workspace',folderId:'folder',name:'Credit Risk / Contracts'});
+  });
+
   it('loads later workspace and document pages on demand', async () => {
     workspaceApi.getWorkspaces.mockImplementation(async({page=1}:{page?:number})=>page===1
       ? {workspaces:[{id:'workspace',name:'Credit Risk',documentCount:51}],pagination:{page:1,totalPages:2}}

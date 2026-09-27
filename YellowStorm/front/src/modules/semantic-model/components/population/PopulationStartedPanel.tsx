@@ -1,7 +1,8 @@
 import { AlertTriangle, CheckCircle2, FileStack, Loader2, X, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useModuleTranslation } from '@/modules/localization';
-import type { ConceptSourceMapping } from '../../types';
+import type { ConceptSourceMapping, PopulationProgress } from '../../types';
+import { RunProgress } from './RunProgress';
 
 export interface PopulationOutcome {
   jobId: string;
@@ -9,6 +10,10 @@ export interface PopulationOutcome {
   status: string;
   skipped: Array<{ mappingId: string; reason: string }>;
   reused: boolean;
+  /** Files the run reads (a workspace source counts each of its files). */
+  sourceCount?: number;
+  /** Last progress reported by the run, kept once it ends so the summary stays on screen. */
+  progress?: Partial<PopulationProgress>;
 }
 
 type Tone = 'running' | 'done' | 'gaps' | 'failed';
@@ -21,15 +26,19 @@ type Tone = 'running' | 'done' | 'gaps' | 'failed';
  * failed, so this panel reports the job's actual state. Claiming "reading…" for a run that
  * ended hours ago would leave someone waiting for records that are never coming.
  */
-export function PopulationStartedPanel({ outcome, sourceMappings, onClose, onOpenHealth }: Readonly<{
+export function PopulationStartedPanel({ outcome, sourceMappings, progress, conceptLabels, onClose, onOpenHealth }: Readonly<{
   outcome: PopulationOutcome;
   sourceMappings: ConceptSourceMapping[];
+  /** Live progress of the run, when it reports some. */
+  progress?: Partial<PopulationProgress>;
+  conceptLabels?: Record<string, string>;
   onClose: () => void;
   onOpenHealth: () => void;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
   const names = new Map(sourceMappings.map((mapping) => [mapping.id, mapping.documentName] as const));
-  const readCount = Math.max(0, sourceMappings.length - outcome.skipped.length);
+  const shownProgress = progress ?? outcome.progress;
+  const readCount = shownProgress?.total || outcome.sourceCount || Math.max(0, sourceMappings.length - outcome.skipped.length);
   const tone = toneOf(outcome.status);
 
   const title = tone === 'failed' ? t('population.failed')
@@ -57,7 +66,8 @@ export function PopulationStartedPanel({ outcome, sourceMappings, onClose, onOpe
       </Button>
     </header>
 
-    <div className='min-h-0 flex-1 overflow-y-auto px-4 py-3'>
+    <div className='min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3'>
+      {shownProgress && (shownProgress.total ?? 0) > 0 && <RunProgress progress={shownProgress} running={tone === 'running'} conceptLabels={conceptLabels} />}
       {/* A reused terminal job means this click changed nothing — say so rather than implying progress. */}
       {outcome.reused && tone !== 'running' && <p className='mb-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-400'>
         {t('population.reusedNotice')}

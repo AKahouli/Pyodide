@@ -11,7 +11,7 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   modelId: string;
   /** Called when a population run was accepted by the runtime, with the sources it skipped. */
-  onPopulationStarted?: (result: { jobId: string; status: string; skipped: Array<{ mappingId: string; reason: string }>; reused: boolean }) => void;
+  onPopulationStarted?: (result: { jobId: string; status: string; skipped: Array<{ mappingId: string; reason: string }>; reused: boolean; sourceCount?: number }) => void;
 }
 
 /**
@@ -25,7 +25,7 @@ export function SemanticModelValidateDialog({ open, onOpenChange, modelId, onPop
   const handleRead = async () => {
     try {
       const result = await populate.mutateAsync({ kind: "model" });
-      onPopulationStarted?.({ jobId: result.jobId, status: result.status, skipped: result.skipped, reused: result.reused });
+      onPopulationStarted?.({ jobId: result.jobId, status: result.status, skipped: result.skipped, reused: result.reused, sourceCount: result.sourceCount });
       onOpenChange(false);
     } catch (error) {
       showError(t("population.startError"), { description: parseApiError(error).message });

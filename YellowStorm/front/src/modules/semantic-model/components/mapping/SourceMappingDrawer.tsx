@@ -30,6 +30,26 @@ export interface SourceMappingTarget {
   conceptId?: string;
   mapping?: ConceptSourceMapping;
   bulkEdit?: boolean;
+  /** Map every readable file of this workspace (or of one of its folders) at once. */
+  workspace?: WorkspaceSourceScope;
+}
+
+export interface WorkspaceSourceScope {
+  workspaceId: string;
+  folderId?: string | null;
+  name: string;
+}
+
+/** A target that maps every readable file of a workspace, or of a folder in it, with one mapping. */
+export function sourceMappingTargetFromWorkspace(scope: WorkspaceSourceScope, conceptId?: string): SourceMappingTarget {
+  return {
+    workspaceId: scope.workspaceId,
+    documentId: `workspace:${scope.workspaceId}:${scope.folderId || 'all'}`,
+    documentName: scope.name,
+    assetKind: 'document',
+    conceptId,
+    workspace: scope,
+  };
 }
 
 export function sourceMappingTargetFromResource(resource: Extract<KnowledgeResource, { kind: 'document' }>, conceptId?: string): SourceMappingTarget {

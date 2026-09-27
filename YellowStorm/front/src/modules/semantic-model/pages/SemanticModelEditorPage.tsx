@@ -45,6 +45,7 @@ import {
 } from "../components/editor/EditorDialogs";
 import { SemanticModelCanvas } from "../components/editor/SemanticModelCanvas";
 import { SemanticModelInspector } from "../components/editor/SemanticModelInspector";
+import { ConceptRecordsPanel } from "../components/records/ConceptRecordsPanel";
 import { SemanticModelGraphViewer } from "../components/editor/SemanticModelGraphViewer";
 import { SemanticModelValidateDialog } from "../components/editor/SemanticModelValidateDialog";
 import { SourceMappingDrawer, sourceMappingTargetFromResource, type SourceMappingTarget } from "../components/mapping/SourceMappingDrawer";
@@ -100,6 +101,7 @@ export function SemanticModelEditorPage() {
       ? Object.fromEntries(concepts.map((concept) => [concept.id, concept.total ?? concept.entities.length]))
       : undefined;
   }, [designerRecords.data]);
+  const conceptLabels = useMemo(() => Object.fromEntries((graph?.nodes ?? []).map((node) => [node.id, node.label])), [graph?.nodes]);
   const sourcePositions = useMemo(() => Object.fromEntries((canvasPositions.data ?? []).map((item) => [item.id, { x: item.x, y: item.y }])), [canvasPositions.data]);
   const mode = useSemanticModelEditorStore((state) => state.mode);
   const pending = useSemanticModelEditorStore((state) => state.pending);
@@ -140,6 +142,8 @@ export function SemanticModelEditorPage() {
   const [checking, setChecking] = useState(false);
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const [knowledgeTargetId, setKnowledgeTargetId] = useState<string | null>(null);
+  // The concept whose records are shown in the table under the canvas.
+  const [recordsConceptId, setRecordsConceptId] = useState<string | null>(null);
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [validateOpen, setValidateOpen] = useState(false);
   const [graphViewerOpen, setGraphViewerOpen] = useState(false);
@@ -152,7 +156,8 @@ export function SemanticModelEditorPage() {
     queryKey: ['semantic-models', 'population-job', modelId, populationJobId],
     queryFn: () => semanticModelApi.getPopulationJob(modelId!, populationJobId!),
     enabled: Boolean(modelId && populationJobId),
-    refetchInterval: (query) => POPULATION_TERMINAL_STATES.has(query.state.data?.state ?? '') ? false : 2000,
+    // Every second while it runs, so its progress reads as live.
+    refetchInterval: (query) => POPULATION_TERMINAL_STATES.has(query.state.data?.state ?? '') ? false : 1000,
     // Keep following a run while the tab is in the background, so the result is there on return.
     refetchIntervalInBackground: true,
     retry: false,
@@ -169,7 +174,9 @@ export function SemanticModelEditorPage() {
     void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.freshness(modelId ?? 'none') });
     // Hand the final state to the run panel before we stop following the job, or it spins forever.
     const finalState = populationJob.data.state;
-    setPopulation((current) => current && current.jobId === populationJobId ? { ...current, status: finalState } : current);
+    const finalProgress = populationJob.data.progress;
+    setPopulation((current) => current && current.jobId === populationJobId
+      ? { ...current, status: finalState, progress: finalProgress ?? current.progress } : current);
     setPopulationJobId(undefined);
   }, [populationJob.data]);
   const [mappingTarget, setMappingTarget] = useState<SourceMappingTarget | null>(null);
@@ -244,6 +251,8 @@ export function SemanticModelEditorPage() {
     setPopulation(null);
     // The knowledge list belongs to the concept it was opened for; picking something else closes it.
     if (knowledgeTargetId !== selectedId) { setKnowledgeOpen(false); setKnowledgeTargetId(null); }
+    // An open records table follows the concept being looked at.
+    if (recordsConceptId && graph?.nodes.some((node) => node.id === selectedId && !node.systemKey)) setRecordsConceptId(selectedId);
   // Every click counts, including one on what is already selected, so the panel never stays on an earlier choice.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusRequest, selectedId, selectionTick]);
@@ -344,6 +353,7 @@ export function SemanticModelEditorPage() {
       })),
     }));
   };
+  const browseRecords = useCallback((conceptId: string) => setRecordsConceptId(conceptId), []);
   const openKnowledge = (targetId:string|null=null) => {
     if (Date.now()-knowledgeClosedAtRef.current<700) return;
     setKnowledgeTargetId(targetId);
@@ -551,7 +561,14 @@ export function SemanticModelEditorPage() {
             onToggleKey={canEdit ? toggleKey : undefined}
             sourcePositions={sourcePositions}
             onMoveSource={canEdit ? moveSource : undefined}
+            onBrowseRecords={browseRecords}
           /></div>}
+          {onCanvas && modelId && recordsConceptId && graph.nodes.some((node) => node.id === recordsConceptId) && <ConceptRecordsPanel
+            modelId={modelId}
+            conceptId={recordsConceptId}
+            onClose={() => setRecordsConceptId(null)}
+            onOpenSource={(mapping) => void openMappingTarget(mappingTarget_(mapping))}
+          />}
           {mode === 'records' && modelId && <SemanticDataPreview modelId={modelId} dataRevisionId={boundDataRevisionId} onDataRevision={setBoundDataRevisionId} onOpenItem={(id) => { setMode('structure'); focus(id); }} canEdit={canEdit} onRebuildStarted={setPopulationJobId} />}
           {mode === 'mappings' && modelId && <SemanticMappingsView modelId={modelId} canEdit={canEdit} onOpenGraph={openGraphViewer} onPopulationAccepted={setPopulationJobId} onRepairMapping={(mapping) => void openMappingTarget(mappingTarget_(mapping))} onBulkEditMappings={(mapping) => void openMappingTarget({ ...mappingTarget_(mapping), bulkEdit: true })} />}
           {onCanvas && conceptCount === 0 && !hasSources && (
@@ -579,6 +596,8 @@ export function SemanticModelEditorPage() {
         {population && <PopulationStartedPanel
           outcome={population}
           sourceMappings={sourceMappings.data ?? []}
+          progress={populationJob.data?.jobId === population.jobId ? populationJob.data?.progress : undefined}
+          conceptLabels={conceptLabels}
           onClose={() => setPopulation(null)}
           onOpenHealth={() => { setPopulation(null); setTrustOpen(true); }}
         />}
@@ -594,7 +613,7 @@ export function SemanticModelEditorPage() {
           onOpenItem={(id) => { setMode('structure'); focus(id); }}
           onFixValues={() => setMode('records')}
         />}
-        {(knowledgeOpen || (onCanvas && detailsOpen)) && !trustOpen && !population && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} onMapData={(target) => void openMappingTarget(target)} />}
+        {(knowledgeOpen || (onCanvas && detailsOpen)) && !trustOpen && !population && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} onBrowseRecords={browseRecords} recordCounts={conceptRecordCounts} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} onMapData={(target) => void openMappingTarget(target)} />}
         {modelId && <SourceMappingDrawer modelId={modelId} target={mappingTarget} onClose={() => setMappingTarget(null)} onSuggestConcepts={canEdit ? (source) => { setMappingTarget(null); setSuggestSource(source); } : undefined} />}
       </main>
       <AddConceptDialog open={conceptOpen} onOpenChange={setConceptOpen} />

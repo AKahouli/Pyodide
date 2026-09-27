@@ -77,4 +77,13 @@ describe('designerFlow', () => {
     const { sources } = designerFlow(graph, [], [], { 'typed:supplier': { x: 900, y: -40 } });
     expect(sources[0].position).toEqual({ x: 900, y: -40 });
   });
+
+  it('shows a whole-workspace mapping as one box that says how many files it covers', () => {
+    const { sources, feeds } = designerFlow(graph, [mapping('w', 'contract', {
+      scope: 'workspace', documentId: 'workspace:w:all', documentName: 'Legal', sheetName: '', assetKind: 'document', fileCount: 1200,
+    })]);
+    const box = sources.find((source) => source.kind === 'workspace')!;
+    expect(box).toMatchObject({ label: 'Legal', detail: '1200' });
+    expect(feeds.find((feed) => feed.sourceId === box.id)).toMatchObject({ step: 'extract', conceptId: 'contract' });
+  });
 });

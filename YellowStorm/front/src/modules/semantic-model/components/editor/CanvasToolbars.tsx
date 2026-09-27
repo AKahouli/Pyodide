@@ -96,6 +96,7 @@ export interface ConceptToolbarActions {
   onBringData?: () => void;
   onLinkConcept?: () => void;
   onAddRecord?: () => void;
+  onBrowseRecords?: () => void;
   onDetails: () => void;
   onDelete?: () => void;
 }
@@ -116,6 +117,7 @@ export function ConceptToolbar({ conceptId, label, attributes, keyFields, onTogg
     {actions.onAddRecord && <ToolButton tone='data' label={t('records.quickAdd')} onClick={actions.onAddRecord}><Keyboard className='h-4 w-4' /></ToolButton>}
     {actions.onLinkConcept && <ToolButton label={t('concept.quickAdd')} onClick={actions.onLinkConcept}><Briefcase className='h-4 w-4' /></ToolButton>}
     <ToolbarDivider />
+    {actions.onBrowseRecords && <ToolButton label={t('records.table.browse')} onClick={actions.onBrowseRecords}><Table2 className='h-4 w-4' /></ToolButton>}
     <ToolButton label={t('canvasTools.details')} onClick={actions.onDetails}><PanelRight className='h-4 w-4' /></ToolButton>
     {actions.onDelete && <ToolButton tone='danger' label={t('designer.delete.concept', { name: label })} onClick={actions.onDelete}><Trash2 className='h-4 w-4' /></ToolButton>}
   </ToolbarShell>;

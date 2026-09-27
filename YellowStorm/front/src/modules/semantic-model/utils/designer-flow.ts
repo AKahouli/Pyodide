@@ -1,9 +1,12 @@
 import type { ConceptSourceMapping, MappingHealthItem, SemanticGraph } from '../types';
 
-/** A box on the designer canvas that feeds data into concepts: a spreadsheet, a set of documents, or records typed by hand. */
+/**
+ * A box on the designer canvas that feeds data into concepts: a spreadsheet, a set of documents, every file of
+ * a workspace (or folder), or records typed by hand.
+ */
 export interface DesignerSource {
   id: string;
-  kind: 'spreadsheet' | 'documents' | 'typed';
+  kind: 'spreadsheet' | 'documents' | 'workspace' | 'typed';
   label: string;
   /** Rows, sheets or record count, whatever best describes what the box holds. */
   detail: string;
@@ -85,11 +88,13 @@ export function designerFlow(graph: SemanticGraph, mappings: ConceptSourceMappin
     const first = group[0];
     const tones = group.map((mapping) => mappingTone(mapping, health.find((item) => item.id === mapping.id)));
     const structured = first.assetKind !== 'document';
+    const wholeWorkspace = first.scope === 'workspace';
     sources.push({
       id,
-      kind: structured ? 'spreadsheet' : 'documents',
+      kind: wholeWorkspace ? 'workspace' : structured ? 'spreadsheet' : 'documents',
       label: first.documentName || first.documentId,
-      detail: structured ? first.sheetName : '',
+      // A workspace box says how many files it covers: the canvas turns the number into words.
+      detail: wholeWorkspace ? String(first.fileCount ?? 0) : structured ? first.sheetName : '',
       position: place(first.conceptId, id),
       tone: worst(tones),
       mappings: group,

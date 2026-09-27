@@ -11,9 +11,12 @@ const api = vi.hoisted(() => ({
   previewSourceMapping: vi.fn(),
   createSourceMapping: vi.fn(),
   createBulkDocumentSourceMappings: vi.fn(),
+  createWorkspaceSourceMapping: vi.fn(),
 }));
+const workspaceApi = vi.hoisted(() => ({ getDocuments: vi.fn(), getFolderContents: vi.fn() }));
 
 vi.mock('../../api', () => ({ semanticModelApi: api }));
+vi.mock('@/modules/workspace/api', () => workspaceApi);
 
 const graph: SemanticGraph = {
   modelId: 'model-1', versionId: 'version-1', revision: 0, relations: [], records: [], recordRelations: [],
@@ -122,5 +125,36 @@ describe('DocumentSourceMappingDrawer', () => {
       expect(payload.fieldMappings[0]).toEqual(expect.objectContaining({ targetAttribute: 'contract_number', extractionStrategy: 'ai' }));
     }
     await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it('maps every file of a folder at once, previewing a couple of them', async () => {
+    workspaceApi.getFolderContents.mockResolvedValue({ documents: [
+      { id: 'sub', originalName: 'Archive', isFolder: true, mimeType: '' },
+      { id: 'a', originalName: 'A.pdf', isFolder: false, mimeType: 'application/pdf', path: 'a.pdf' },
+      { id: 'sheet', originalName: 'List.xlsx', isFolder: false, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+      { id: 'b', originalName: 'B.docx', isFolder: false, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+      { id: 'c', originalName: 'C.pdf', isFolder: false, mimeType: 'application/pdf' },
+    ], pagination: { page: 1, totalPages: 1 } });
+    api.createWorkspaceSourceMapping.mockResolvedValue({ revision: 4, fileCount: 120, waitingCount: 3 });
+    const onClose = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><DocumentSourceMappingDrawer modelId='model-1' target={{
+      workspaceId: 'workspace-1', documentId: 'workspace:workspace-1:folder-1', documentName: 'Legal / Contracts', assetKind: 'document', conceptId: 'concept-1',
+      workspace: { workspaceId: 'workspace-1', folderId: 'folder-1', name: 'Legal / Contracts' },
+    }} onClose={onClose} /></QueryClientProvider>);
+
+    expect(await screen.findByText('mapping.workspaceScope')).toBeInTheDocument();
+    // No per-document picker: the whole folder is the source.
+    expect(screen.queryByText('mapping.bulkDocuments')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'mapping.previewButton' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.previewButton' }));
+    await waitFor(() => expect(api.previewSourceMapping).toHaveBeenCalledTimes(2));
+    expect(api.previewSourceMapping.mock.calls.map(([, draft]) => draft.documentId)).toEqual(['a', 'b']);
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.workspaceSave' }));
+    await waitFor(() => expect(api.createWorkspaceSourceMapping).toHaveBeenCalledWith('model-1', expect.objectContaining({
+      conceptId: 'concept-1', workspaceId: 'workspace-1', folderId: 'folder-1',
+    })));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(api.createBulkDocumentSourceMappings).not.toHaveBeenCalled();
   });
 });

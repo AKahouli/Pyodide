@@ -246,6 +246,12 @@ export interface ConceptSourceMapping {
   identityFields: string[];
   validatedSourceVersion?: string | null;
   validatedAt?: string | null;
+  /** 'workspace': one mapping for every readable file of a workspace (or folder), files added later included. */
+  scope?: 'document' | 'workspace';
+  folderId?: string | null;
+  /** Workspace mappings: files it covers today, and files still being indexed. */
+  fileCount?: number;
+  waitingCount?: number;
 }
 
 export type MappingHealthState = 'healthy' | 'changed' | 'unavailable' | 'broken' | 'checking';
@@ -273,6 +279,10 @@ export interface PopulationRefreshResponse {
   progressUrl: string;
   reused: boolean;
   skipped: Array<{ mappingId: string; reason: string }>;
+  /** Files the run reads, workspace sources expanded. */
+  sourceCount?: number;
+  /** Files of a workspace source still being indexed; they are read by a later run. */
+  waitingFiles?: number;
 }
 
 export interface PopulationJob {
@@ -280,8 +290,33 @@ export interface PopulationJob {
   jobType: string;
   modelId: string | null;
   state: string;
+  /** What the run has done so far; reported about once a second while it reads sources. */
+  progress?: Partial<PopulationProgress>;
   result: Record<string, unknown> | null;
   errorCode: string | null;
+}
+
+export interface PopulationProgress {
+  phase: 'starting' | 'reading' | 'linking' | 'saving';
+  total: number;
+  done: number;
+  /** Files whose earlier result was reused because nothing about them changed. */
+  reused: number;
+  records: number;
+  gaps: number;
+  current: { name: string; conceptId?: string; kind?: string } | null;
+  recent: Array<{ name: string; conceptId?: string; status: string; records: number; reused: boolean }>;
+  startedAt: string;
+}
+
+/** A page of one concept's records in the data in use. */
+export interface ConceptRecordsPage {
+  dataRevisionId: string | null;
+  total: number;
+  offset: number;
+  limit: number;
+  /** `identity` holds the normalized matching key: key fields are not repeated among the values. */
+  records: Array<SemanticDataPreview['concepts'][number]['entities'][number] & { identity?: Record<string, unknown> }>;
 }
 
 export interface SemanticReadiness {
