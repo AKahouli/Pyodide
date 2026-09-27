@@ -7,13 +7,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useModuleTranslation } from '@/modules/localization';
 import { useSemanticModelEditorStore } from '../../store';
 import type { KnowledgeLinkingController } from '../../hooks/use-knowledge-linking';
 import { type SourceMappingTarget, sourceMappingTargetFromResource } from '../mapping/SourceMappingDrawer';
 import type { AttributeDefinition, SemanticNodeType, SemanticRecord, SemanticRelationType } from '../../types';
 import { businessKey } from '../../utils/model-utils';
+import { cardinalityOf, relationSentence, relationSides, type Multiplicity } from '../../utils/relation-sentence';
 import { KnowledgePanel } from '../knowledge/KnowledgePanel';
 import { semanticModelApi } from '../../api';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -71,7 +71,7 @@ function NodeForm({ modelId, node: item,locked,canEdit,onMapData }: Readonly<{ m
     <Field label={t('field.description')}><Textarea value={item.description} disabled={locked||!canEdit} placeholder={t('concept.descriptionPlaceholder')} onChange={(event) => update({ description:event.target.value })} /></Field></div>
     {!locked&&canEdit && <section className='space-y-3 border-t pt-5'><AttributeEditor attributes={item.attributes} onChange={(attributes) => update({ attributes })} /></section>}
     {!locked&&modelId && <section className='space-y-3 border-t pt-5'><IdentitySection modelId={modelId} node={item} canEdit={canEdit} /></section>}
-    <section className='space-y-3 border-t pt-5'><h3 className='font-semibold'>{t('workspaceUi.relationships')}</h3>{(graph?.relations.filter((relation) => relation.sourceNodeTypeId === item.id || relation.targetNodeTypeId === item.id) ?? []).map((relation) => { const other = graph?.nodes.find((node) => node.id === (relation.sourceNodeTypeId === item.id ? relation.targetNodeTypeId : relation.sourceNodeTypeId)); return <button key={relation.id} type='button' onClick={() => select(relation.id)} className='block w-full rounded-xl bg-muted/50 p-3 text-left text-sm hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary'>{relation.sourceNodeTypeId === item.id ? `${item.label} ${relation.label} ${other?.label ?? ''}` : `${other?.label ?? ''} ${relation.label} ${item.label}`}</button>; })}{!graph?.relations.some((relation) => relation.sourceNodeTypeId === item.id || relation.targetNodeTypeId === item.id) && <p className='text-sm text-muted-foreground'>{t('workspaceUi.noRelationships')}</p>}</section>
+    <section className='space-y-3 border-t pt-5'><h3 className='font-semibold'>{t('workspaceUi.relationships')}</h3>{(graph?.relations.filter((relation) => relation.sourceNodeTypeId === item.id || relation.targetNodeTypeId === item.id) ?? []).map((relation) => { const other = graph?.nodes.find((node) => node.id === (relation.sourceNodeTypeId === item.id ? relation.targetNodeTypeId : relation.sourceNodeTypeId)); const labels = relation.sourceNodeTypeId === item.id ? { source: item.label, target: other?.label ?? '' } : { source: other?.label ?? '', target: item.label }; return <button key={relation.id} type='button' onClick={() => select(relation.id)} className='block w-full rounded-xl bg-muted/50 p-3 text-left text-sm hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary'>{relationSentence(relation, labels, item.id, t as (key: string, options?: Record<string, unknown>) => string)}</button>; })}{!graph?.relations.some((relation) => relation.sourceNodeTypeId === item.id || relation.targetNodeTypeId === item.id) && <p className='text-sm text-muted-foreground'>{t('workspaceUi.noRelationships')}</p>}</section>
     {!locked&&canEdit && <section className='border-t pt-5'><SourceMappingsSection modelId={modelId} conceptId={item.id} onMapData={onMapData} /></section>}
     <details className='border-t pt-5'><summary className='cursor-pointer text-sm font-semibold'>{t('workspaceUi.advanced')}</summary><div className='mt-4 space-y-4'>
     <Field label={t('field.category')}><Select value={item.category} disabled={locked||!canEdit} onValueChange={(category: SemanticNodeType['category']) => update({ category })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value='business_object'>{t('category.business_object')}</SelectItem><SelectItem value='classification'>{t('category.classification')}</SelectItem></SelectContent></Select></Field>
@@ -175,12 +175,44 @@ function RelationForm({ modelId,relation: item,canEdit }: Readonly<{ modelId: st
     commitBatch(operations,(current)=>({...current,relations:current.relations.filter((candidate)=>candidate.id!==item.id),recordRelations:current.recordRelations.filter((candidate)=>!recordRelationIds.includes(candidate.id))}));
     select(null);
   };
-  if (!canEdit) return <div className='space-y-4'><ReadOnlyField label={t('field.label')} value={item.label} />{item.inverseLabel&&<ReadOnlyField label={t('field.inverseLabel')} value={item.inverseLabel} />}{item.description&&<ReadOnlyField label={t('field.description')} value={item.description} />}<ReadOnlyField label={t('field.cardinality')} value={t(`cardinality.${item.cardinality}`)} /></div>;
-  return <Tabs defaultValue='overview' className='space-y-4'>
-    <TabsList className='grid w-full grid-cols-2'><TabsTrigger value='overview'>{t('relationMatching.overview')}</TabsTrigger><TabsTrigger value='matching'>{t('relationMatching.matching')}</TabsTrigger></TabsList>
-    <TabsContent value='overview' className='space-y-5'><Field label={t('field.label')}><Input value={item.label} disabled={!canEdit} onChange={(event) => update({label:event.target.value,key:businessKey(event.target.value)})} /></Field><Field label={t('field.inverseLabel')}><Input value={item.inverseLabel} disabled={!canEdit} onChange={(event) => update({inverseLabel:event.target.value})} /></Field><Field label={t('field.description')}><Textarea value={item.description} disabled={!canEdit} onChange={(event) => update({description:event.target.value})} /></Field><Field label={t('field.cardinality')}><Select value={item.cardinality} disabled={!canEdit} onValueChange={(cardinality: SemanticRelationType['cardinality']) => update({cardinality})}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(['one_to_one','one_to_many','many_to_one','many_to_many'] as const).map((value) => <SelectItem key={value} value={value}>{t(`cardinality.${value}`)}</SelectItem>)}</SelectContent></Select></Field><div className='flex items-center justify-between'><Label>{t('field.traversable')}</Label><Switch checked={item.traversable} disabled={!canEdit} onCheckedChange={(traversable) => update({traversable})} /></div>{canEdit&&<><Separator /><Button variant='destructive' className='w-full' onClick={deleteRelation}><Trash2 className='mr-2 h-4 w-4' />{t('inspector.deleteRelationship')}</Button></>}</TabsContent>
-    <TabsContent value='matching'><RelationMatchingPanel modelId={modelId} relation={item} /></TabsContent>
-  </Tabs>;
+  const source = graph?.nodes.find((candidate) => candidate.id === item.sourceNodeTypeId);
+  const target = graph?.nodes.find((candidate) => candidate.id === item.targetNodeTypeId);
+  const labels = { source: source?.label ?? '', target: target?.label ?? '' };
+  const translate = t as (key: string, options?: Record<string, unknown>) => string;
+  if (!canEdit) return <div className='space-y-4'><div className='space-y-1 rounded-xl bg-muted/50 p-3 text-sm'><p>{relationSentence(item, labels, item.sourceNodeTypeId, translate)}</p>{item.sourceNodeTypeId !== item.targetNodeTypeId && <p>{relationSentence(item, labels, item.targetNodeTypeId, translate)}</p>}</div>{item.description&&<ReadOnlyField label={t('field.description')} value={item.description} />}</div>;
+  return <div className='space-y-6'>
+    <RelationSentenceEditor relation={item} labels={labels} onChange={update} />
+    <section className='space-y-3 border-t pt-5'><div><h3 className='font-semibold'>{t('relationSentence.linkTitle')}</h3><p className='text-xs text-muted-foreground'>{t('relationSentence.linkHelp')}</p></div><RelationMatchingPanel modelId={modelId} relation={item} /></section>
+    <details className='border-t pt-5'><summary className='cursor-pointer text-sm font-semibold'>{t('workspaceUi.advanced')}</summary><div className='mt-4 space-y-4'>
+      <Field label={t('field.description')}><Textarea value={item.description} onChange={(event) => update({description:event.target.value})} /></Field>
+      <div className='flex items-center justify-between'><Label>{t('field.traversable')}</Label><Switch checked={item.traversable} onCheckedChange={(traversable) => update({traversable})} /></div>
+      <Separator /><Button variant='destructive' className='w-full' onClick={deleteRelation}><Trash2 className='mr-2 h-4 w-4' />{t('inspector.deleteRelationship')}</Button>
+    </div></details>
+  </div>;
+}
+
+/** "Each Contract [belongs to] [one] Customer" and its reverse, editing the label, inverse label and cardinality together. */
+function RelationSentenceEditor({ relation, labels, onChange }: Readonly<{ relation: SemanticRelationType; labels: { source: string; target: string }; onChange: (changes: Partial<Omit<SemanticRelationType,'id'>>) => void }>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const { forward, reverse } = relationSides(relation.cardinality);
+  const multiplicity = (value: Multiplicity, onValue: (next: Multiplicity) => void, label: string) => <Select value={value} onValueChange={(next: Multiplicity) => onValue(next)}>
+    <SelectTrigger className='h-9 w-28' aria-label={label}><SelectValue /></SelectTrigger>
+    <SelectContent><SelectItem value='one'>{t('relationSentence.one')}</SelectItem><SelectItem value='many'>{t('relationSentence.many')}</SelectItem></SelectContent>
+  </Select>;
+  const row = (subject: string, object: string, verb: React.ReactNode, count: React.ReactNode) => <div className='flex flex-wrap items-center gap-2 text-sm'>
+    <span>{t('relationSentence.each')}</span><span className='font-medium'>{subject}</span>{verb}{count}<span className='font-medium'>{object}</span>
+  </div>;
+  return <section className='space-y-3'>
+    <div><h3 className='font-semibold'>{t('relationSentence.title')}</h3><p className='text-xs text-muted-foreground'>{t('relationSentence.help')}</p></div>
+    <div className='space-y-3 rounded-xl bg-muted/40 p-3'>
+      {row(labels.source, labels.target,
+        <Input className='h-9 w-40' value={relation.label} placeholder={t('relationSentence.verbPlaceholder')} aria-label={t('relationSentence.verbFor', { subject: labels.source, object: labels.target })} onChange={(event) => onChange({ label: event.target.value, key: businessKey(event.target.value) })} />,
+        multiplicity(forward, (next) => onChange({ cardinality: cardinalityOf(reverse, next) }), t('relationSentence.howManyFor', { subject: labels.source, object: labels.target })))}
+      {row(labels.target, labels.source,
+        <Input className='h-9 w-40' value={relation.inverseLabel} placeholder={t('relationSentence.inversePlaceholder')} aria-label={t('relationSentence.verbFor', { subject: labels.target, object: labels.source })} onChange={(event) => onChange({ inverseLabel: event.target.value })} />,
+        multiplicity(reverse, (next) => onChange({ cardinality: cardinalityOf(next, forward) }), t('relationSentence.howManyFor', { subject: labels.target, object: labels.source })))}
+    </div>
+  </section>;
 }
 
 function RecordForm({ record: item,canEdit }: Readonly<{ record: SemanticRecord; canEdit: boolean }>) {

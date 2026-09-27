@@ -9,6 +9,7 @@ import { SemanticModelInspector } from './SemanticModelInspector';
 vi.mock('../knowledge/KnowledgePanel',()=>({KnowledgePanel:()=> <div>knowledge-tray</div>}));
 const hookState = vi.hoisted(() => ({ mappings: [] as Array<Record<string, unknown>>, rules: [] as Array<{ conceptId: string; fields: string[] }> }));
 const saveIdentityRule = vi.hoisted(() => vi.fn(async () => ({ revision: 1, conceptId: 'customer', fields: [] })));
+vi.mock('../mapping/RelationMatchingPanel',()=>({RelationMatchingPanel:()=> <div>relation-matching</div>}));
 vi.mock('../../query/hooks',()=>({useSourceMappings:()=>({data:hookState.mappings,isLoading:false}),useIdentityRules:()=>({data:hookState.rules,isLoading:false})}));
 vi.mock('../../api',()=>({semanticModelApi:{saveIdentityRule}}));
 
@@ -76,6 +77,21 @@ describe('SemanticModelInspector', () => {
     hookState.mappings=[{ id: 'm', conceptId: 'customer', identityFields: [] }];
     renderInspector(true);
     expect(screen.getByRole('alert')).toHaveTextContent('identity.missing');
+  });
+
+  it('edits a relationship as two sentences that set its cardinality', () => {
+    useSemanticModelEditorStore.getState().hydrate({
+      ...graph,
+      nodes:[graph.nodes[0],{...graph.nodes[0],id:'contract',key:'contract',label:'Contract'}],
+      relations:[{id:'belongs',key:'belongs_to',label:'belongs to',inverseLabel:'has',description:'',sourceNodeTypeId:'contract',targetNodeTypeId:'customer',cardinality:'many_to_one',traversable:true,filterable:true,attributes:[]}],
+    });
+    useSemanticModelEditorStore.getState().select('belongs');
+    renderInspector(true);
+    expect(screen.getByDisplayValue('belongs to')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('has')).toBeInTheDocument();
+    expect(screen.getByText('relation-matching')).toBeInTheDocument();
+    fireEvent.change(screen.getByDisplayValue('has'), { target: { value: 'owns' } });
+    expect(useSemanticModelEditorStore.getState().graph?.relations[0].inverseLabel).toBe('owns');
   });
 
   it('keeps the knowledge tray out of the empty details state', () => {
