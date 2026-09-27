@@ -15,6 +15,7 @@ import { VmUnavailableException } from './exceptions/vm-unavailable.exception';
 import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
 import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
 import { ConversationV2AppAiFeaturesService } from './services/conversation-v2-app-ai-features.service';
+import { ConversationV2TemplateService } from './services/conversation-v2-template.service';
 import { ConversationV2SessionAccessGuard } from './guards/conversation-v2-session-access.guard';
 import { ConversationV2OwnerGuard } from './guards/conversation-v2-owner.guard';
 import type { ConversationV2ResolvedSession } from './services/conversation-v2-session-access.service';
@@ -129,6 +130,7 @@ describe('ConversationV2Controller', () => {
     detectAndPersist: jest.fn().mockResolvedValue(false),
     markHasAiFeatures: jest.fn().mockResolvedValue(undefined),
   };
+  const mockTemplates = { requirePublished: jest.fn() };
 
   const emptyRevisionCatalog = {
     lastDeployedRevisionId: null,
@@ -158,6 +160,7 @@ describe('ConversationV2Controller', () => {
         { provide: RuntimeBindingService, useValue: mockRuntimeBindings },
         { provide: RuntimeFinalizedRevisionService, useValue: mockFinalizedRevisions },
         { provide: ConversationV2AppAiFeaturesService, useValue: mockAppAiFeatures },
+        { provide: ConversationV2TemplateService, useValue: mockTemplates },
       ],
     })
       .overrideGuard(ConversationV2SessionAccessGuard)

@@ -4,6 +4,9 @@ import { JwtModule } from '@nestjs/jwt';
 
 import { ConversationV2Controller } from './conversation-v2.controller';
 import { ConversationV2StreamController } from './conversation-v2-stream.controller';
+import { AdminTemplateCategoryController } from './admin-template-category.controller';
+import { AdminTemplateController } from './admin-template.controller';
+import { TemplateCatalogController } from './template-catalog.controller';
 import { ConversationV2GrpcClientService } from './services/conversation-v2.grpc-client.service';
 import { ConversationV2SessionService } from './services/conversation-v2-session.service';
 import { ConversationV2PointerWriterService } from './services/conversation-v2-pointer-writer.service';
@@ -14,11 +17,15 @@ import { ConversationV2StreamService } from './services/conversation-v2-stream.s
 import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
 import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
 import { ConversationV2AppAiFeaturesService } from './services/conversation-v2-app-ai-features.service';
+import { ConversationV2TemplatePublishService } from './services/conversation-v2-template-publish.service';
+import { ConversationV2TemplateCategoryService } from './services/conversation-v2-template-category.service';
+import { ConversationV2TemplateService } from './services/conversation-v2-template.service';
 import { ConversationV2OwnerGuard } from './guards/conversation-v2-owner.guard';
 import { ConversationV2SessionAccessGuard } from './guards/conversation-v2-session-access.guard';
 import { ConversationV2SessionAccessService } from './services/conversation-v2-session-access.service';
 import { SseAuthGuard } from '@modules/conversation/guards/stream-auth.guard';
 import { AuthModule } from '@modules/auth/auth.module';
+import { AuthorizationModule } from '@modules/authorization/authorization.module';
 import { AppRuntimeModule } from '@modules/app-runtime/app-runtime.module';
 import { AiProxyModule } from '@modules/ai-proxy/ai-proxy.module';
 import { AppDataModule } from '@modules/app-data/app-data.module';
@@ -51,8 +58,15 @@ import { ConversationV2PersistenceModule } from './persistence/conversation-v2-p
     SkillModule,
     ConnectorModule,
     EmailModule,
+    AuthorizationModule,
   ],
-  controllers: [ConversationV2Controller, ConversationV2StreamController],
+  controllers: [
+    ConversationV2Controller,
+    ConversationV2StreamController,
+    AdminTemplateCategoryController,
+    AdminTemplateController,
+    TemplateCatalogController,
+  ],
   providers: [
     ConversationV2GrpcClientService,
     ConversationV2SessionService,
@@ -69,6 +83,9 @@ import { ConversationV2PersistenceModule } from './persistence/conversation-v2-p
     ConversationV2DeployService,
     ConversationV2AppShareService,
     ConversationV2AppAiFeaturesService,
+    ConversationV2TemplatePublishService,
+    ConversationV2TemplateCategoryService,
+    ConversationV2TemplateService,
   ],
   exports: [
     ConversationV2PersistenceModule,
@@ -82,6 +99,8 @@ import { ConversationV2PersistenceModule } from './persistence/conversation-v2-p
     ConversationV2SessionAccessService,
     ConversationV2StreamService,
     ConversationV2AppShareService,
+    ConversationV2TemplateCategoryService,
+    ConversationV2TemplateService,
   ],
 })
 export class ConversationV2Module {}

@@ -56,6 +56,7 @@ import { ConversationV2EventStoreService, PersistedEventRow } from './services/c
 import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
 import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
 import { ConversationV2AppAiFeaturesService } from './services/conversation-v2-app-ai-features.service';
+import { ConversationV2TemplateService } from './services/conversation-v2-template.service';
 import { normalizeAppSourceCephPrefix } from './utils/normalize-app-source-ceph-prefix';
 import { RuntimeTicketService } from '@modules/app-runtime/services/runtime-ticket.service';
 import { AiPreviewTicketService } from '@modules/ai-proxy/services/ai-preview-ticket.service';
@@ -97,6 +98,7 @@ export class ConversationV2Controller {
     private readonly runtimeBindings: RuntimeBindingService,
     private readonly finalizedRevisions: RuntimeFinalizedRevisionService,
     private readonly appAiFeatures: ConversationV2AppAiFeaturesService,
+    private readonly templates: ConversationV2TemplateService,
   ) {}
 
   /**
@@ -132,7 +134,15 @@ export class ConversationV2Controller {
       await this.workspaceShare.assertUserHasAccess(user.id, workspaceIds);
     }
 
-    const draft = await this.sessions.createDraft(user.id, workspaceIds);
+    // Optional template seed: the session (and therefore the browser runtime
+    // binding) boots on the template's published revision.
+    let starterRevisionId: string | undefined;
+    if (body.templateId) {
+      const template = await this.templates.requirePublished(body.templateId);
+      starterRevisionId = template.revisionId ?? undefined;
+    }
+
+    const draft = await this.sessions.createDraft(user.id, workspaceIds, starterRevisionId);
     const draftId = draft.id;
 
     let systemWorkspaceId: string;
