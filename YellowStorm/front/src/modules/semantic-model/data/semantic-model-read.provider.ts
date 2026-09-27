@@ -18,6 +18,7 @@ export const CALL_CLASSIFICATION: Record<SemanticApiCall, ReadKind> = {
   workspaceDefault: 'curated-read',
   workspaceModels: 'curated-read',
   versions: 'curated-read',
+  compareVersions: 'curated-read',
   bindings: 'curated-read',
   workspaces: 'curated-read',
   listShares: 'curated-read',

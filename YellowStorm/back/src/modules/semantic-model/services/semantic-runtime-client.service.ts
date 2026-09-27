@@ -54,6 +54,12 @@ export interface RuntimeValueOrigin {
   correctionSequence?: number | null;
 }
 
+export interface RuntimeDataSummary {
+  modelId: string;
+  draft: { modelVersionId: string; records: number; links: number } | null;
+  production: { modelVersionId: string; records: number; links: number } | null;
+}
+
 export interface RuntimeCorrection {
   sequence: number;
   modelVersionId: string | null;
@@ -317,6 +323,10 @@ export class SemanticRuntimeClientService {
     command: RuntimeCorrectionCommand,
   ): Promise<{ sequence: number; modelId: string; state: string }> {
     return this.post('/v1/semantic-model-population/corrections', command);
+  }
+
+  async getDataSummary(modelId: string, actorUserId: string): Promise<RuntimeDataSummary> {
+    return this.get(`/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/data-summary`, actorUserId);
   }
 
   async listCorrections(

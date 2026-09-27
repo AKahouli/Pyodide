@@ -430,3 +430,42 @@ def test_published_binding_is_readable_and_404_when_unpublished(client: TestClie
     _inject(client, ScriptedPool([None]))
     assert client.get("/v1/semantic-model-population/models/m1/published",
                       headers=AUTH).status_code == 404
+
+
+def test_data_summary_counts_draft_and_published_records(client: TestClient):
+    draft = {"model_id": "m1", "model_version_id": "v2", "data_revision_id": "dr_2", "version": 1}
+    counts = {"entities": 12, "assertions": 30, "relationships": 4}
+    _inject(client, ScriptedPool([draft, counts, None]))
+    response = client.get("/v1/semantic-model-population/models/m1/data-summary", headers=AUTH)
+    assert response.status_code == 200
+    assert response.json() == {"modelId": "m1", "production": None,
+                               "draft": {"modelVersionId": "v2", "records": 12, "links": 4}}
+
+
+def test_corrections_list_hides_undone_fixes(client: TestClient):
+    rows = [
+        {"sequence": 1, "model_version_id": "v1", "actor_user_id": "u1", "reason": "",
+         "target_identity": {"entityId": "e1"}, "action": "remove_entity", "payload": {},
+         "created_at": None},
+        {"sequence": 2, "model_version_id": "v1", "actor_user_id": "u1", "reason": "",
+         "target_identity": {"entityId": "e2"}, "action": "remove_entity", "payload": {},
+         "created_at": None},
+        {"sequence": 3, "model_version_id": "v1", "actor_user_id": "u1", "reason": "",
+         "target_identity": {"entityId": "e1"}, "action": "revert", "payload": {"sequence": 1},
+         "created_at": None},
+    ]
+    _inject(client, ScriptedPool([rows, 3]))
+    response = client.get("/v1/semantic-model-population/models/m1/corrections", headers=AUTH)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["correctionSequence"] == 3
+    assert [item["sequence"] for item in body["corrections"]] == [2]
+
+
+def test_revert_must_name_an_existing_correction(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("SEMANTIC_MODEL_RUNTIME_WRITES_ENABLED", "true")
+    body = {**CORRECTION, "action": "revert", "payload": {"sequence": 9}}
+    _inject(client, ScriptedPool([2]))
+    response = client.post("/v1/semantic-model-population/corrections", headers=AUTH, json=body)
+    assert response.status_code == 422
+    assert response.json()["detail"] == "invalid_revert_target"

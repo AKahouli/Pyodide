@@ -40,3 +40,66 @@ describe('SemanticModelVersionService publish', () => {
     await expect(service.publish('u1', 'm1', 7, 3)).resolves.toMatchObject({ data: { published: false, reason: 'runtime_unavailable' } });
   });
 });
+
+describe('SemanticModelVersionService compare', () => {
+  const field = (key: string, label: string, extra: Record<string, unknown> = {}) => ({ key, label, type: 'text', required: false, ...extra });
+  const before = {
+    nodes: [
+      { id: 'n1', key: 'customer', label: 'Customer', attributes: [field('name', 'Name'), field('vat', 'VAT'), field('city', 'City')] },
+      { id: 'n2', key: 'contract', label: 'Contract', attributes: [] },
+      { id: 'n3', key: 'old', label: 'Old thing', attributes: [] },
+    ],
+    relations: [
+      { id: 'r1', key: 'holds', label: 'holds', sourceNodeTypeId: 'n1', targetNodeTypeId: 'n2', cardinality: 'one_to_many' },
+      { id: 'r2', key: 'gone', label: 'gone', sourceNodeTypeId: 'n1', targetNodeTypeId: 'n3', cardinality: 'one_to_one' },
+    ],
+    records: [], recordRelations: [],
+  };
+  const after = {
+    nodes: [
+      { id: 'n1', key: 'customer', label: 'Client', attributes: [field('name', 'Legal name'), field('vat', 'VAT', { type: 'number', required: true }), field('email', 'Email')] },
+      { id: 'n2', key: 'contract', label: 'Contract', attributes: [] },
+      { id: 'n4', key: 'invoice', label: 'Invoice', attributes: [] },
+    ],
+    relations: [
+      { id: 'r1', key: 'holds', label: 'signs', sourceNodeTypeId: 'n1', targetNodeTypeId: 'n2', cardinality: 'many_to_many' },
+      { id: 'r3', key: 'bills', label: 'bills', sourceNodeTypeId: 'n4', targetNodeTypeId: 'n1', cardinality: 'many_to_one' },
+    ],
+    records: [], recordRelations: [],
+  };
+  const database = { query: jest.fn(async () => ({ rowCount: 2, rows: [{ id: 'left', revision: 1 }, { id: 'right', revision: 2 }] })) };
+  const graphRepository = { getGraph: jest.fn(async (_m: string, id: string) => (id === 'left' ? before : after)) };
+  const models = { requireRole: jest.fn(async () => ({ id: 'm1' })) };
+  const runtime = { getDataSummary: jest.fn() };
+  const service = new SemanticModelVersionService(
+    database as never, graphRepository as never, models as never, {} as never, runtime as never);
+
+  it('describes renames by id, field and cardinality changes in business terms', async () => {
+    runtime.getDataSummary.mockResolvedValueOnce({
+      modelId: 'm1', draft: { modelVersionId: 'right', records: 120, links: 3 }, production: { modelVersionId: 'left', records: 100, links: 2 },
+    });
+    const result = await service.compare('u1', 'm1', 'left', 'right');
+    expect(result.changes).toEqual(expect.arrayContaining([
+      { kind: 'concept_renamed', from: 'Customer', to: 'Client' },
+      { kind: 'concept_added', concept: 'Invoice' },
+      { kind: 'concept_removed', concept: 'Old thing' },
+      { kind: 'field_renamed', concept: 'Client', from: 'Name', to: 'Legal name' },
+      { kind: 'field_type_changed', concept: 'Client', field: 'VAT', from: 'text', to: 'number' },
+      { kind: 'field_required_changed', concept: 'Client', field: 'VAT', required: true },
+      { kind: 'field_added', concept: 'Client', field: 'Email' },
+      { kind: 'field_removed', concept: 'Client', field: 'City' },
+      { kind: 'relation_renamed', from: 'holds', to: 'signs', source: 'Client', target: 'Contract' },
+      { kind: 'relation_cardinality_changed', relation: 'signs', source: 'Client', target: 'Contract', from: 'one_to_many', to: 'many_to_many' },
+      { kind: 'relation_added', relation: 'bills', source: 'Invoice', target: 'Client' },
+      { kind: 'relation_removed', relation: 'gone', source: 'Client', target: 'Old thing' },
+    ]));
+    expect(result.changes).not.toContainEqual(expect.objectContaining({ kind: 'concept_added', concept: 'Client' }));
+    expect(result.records).toEqual({ before: 100, after: 120, change: 20 });
+  });
+
+  it('leaves record counts unknown when the runtime cannot say', async () => {
+    runtime.getDataSummary.mockRejectedValueOnce(new Error('down'));
+    const result = await service.compare('u1', 'm1', 'left', 'right');
+    expect(result.records).toEqual({ before: null, after: null, change: null });
+  });
+});

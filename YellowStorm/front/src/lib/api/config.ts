@@ -393,6 +393,7 @@ export const API_ENDPOINTS = {
     workspace: (id: string, workspaceId: string) => `/semantic-models/${id}/workspaces/${workspaceId}`,
     versions: (id: string) => `/semantic-models/${id}/versions`,
     publish: (id: string) => `/semantic-models/${id}/versions/publish`,
+    compareVersions: (id: string) => `/semantic-models/${id}/versions/compare`,
     restore: (id: string, versionId: string) => `/semantic-models/${id}/versions/${versionId}/restore`,
     workspaceDefault: (workspaceId: string) => `/workspaces/${workspaceId}/semantic-model`,
     workspaceModels: (workspaceId: string) => `/workspaces/${workspaceId}/semantic-models`,

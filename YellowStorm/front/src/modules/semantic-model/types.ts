@@ -483,3 +483,20 @@ export interface RecordCorrectionResult {
   sequence: number;
   rebuild: { jobId: string; status: string } | null;
 }
+
+export type VersionChange =
+  | { kind: 'concept_added' | 'concept_removed'; concept: string }
+  | { kind: 'concept_renamed'; from: string; to: string }
+  | { kind: 'field_added' | 'field_removed'; concept: string; field: string }
+  | { kind: 'field_renamed'; concept: string; from: string; to: string }
+  | { kind: 'field_type_changed'; concept: string; field: string; from: string; to: string }
+  | { kind: 'field_required_changed'; concept: string; field: string; required: boolean }
+  | { kind: 'relation_added' | 'relation_removed'; relation: string; source: string; target: string }
+  | { kind: 'relation_renamed'; from: string; to: string; source: string; target: string }
+  | { kind: 'relation_cardinality_changed'; relation: string; source: string; target: string; from: string; to: string };
+
+export interface VersionComparison {
+  changes: VersionChange[];
+  /** Prepared records on each side, when known. */
+  records: { before: number | null; after: number | null; change: number | null };
+}

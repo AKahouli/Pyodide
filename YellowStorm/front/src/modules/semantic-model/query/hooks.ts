@@ -58,3 +58,11 @@ export function useSemanticReadiness(id: string | undefined) {
 export function useSemanticReviewItems(id: string | undefined, status: 'open' | 'resolved' = 'open', enabled = true) {
   return useQuery({ queryKey: semanticModelQueryKeys.reviewItems(id ?? 'none', status), queryFn: () => semanticModelApi.reviewItems(id ?? '', status), enabled: Boolean(id) && enabled });
 }
+export function useVersionComparison(id: string | undefined, left: string | undefined, right: string | undefined) {
+  return useQuery({
+    queryKey: ['semantic-models', 'version-compare', id ?? 'none', left ?? 'none', right ?? 'none'],
+    queryFn: () => semanticModelApi.compareVersions(id ?? '', left ?? '', right ?? ''),
+    enabled: Boolean(id && left && right && left !== right),
+    retry: false,
+  });
+}

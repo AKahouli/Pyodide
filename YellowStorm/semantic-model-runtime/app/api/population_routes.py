@@ -322,6 +322,25 @@ async def publish_model_data(model_id: str, command: PublishModelDataCommand,
     return {"modelId": model_id, "environment": "production", "active": binding, "reused": False}
 
 
+@router.get("/models/{model_id}/data-summary", status_code=status.HTTP_200_OK)
+async def read_data_summary(model_id: str, request: Request) -> dict[str, object]:
+    """Record counts of the draft and published data, keyed by the model
+    version each was built from, so version comparisons can say how many
+    records a publish adds or removes."""
+    pool = _population_read_pool(request)
+    result: dict[str, object] = {"modelId": model_id}
+    for environment in ("draft", "production"):
+        binding = await store.get_active_binding(pool, model_id, environment)
+        if binding is None:
+            result[environment] = None
+            continue
+        counts = await store.count_revision_rows(pool, binding["data_revision_id"])
+        result[environment] = {"modelVersionId": binding["model_version_id"],
+                               "records": counts["entities"],
+                               "links": counts["relationships"]}
+    return result
+
+
 @router.get("/models/{model_id}/published", status_code=status.HTTP_200_OK)
 async def read_published_binding(model_id: str, request: Request) -> dict[str, object]:
     binding = await store.get_active_binding(_population_read_pool(request), model_id, "production")

@@ -4,7 +4,7 @@ import type { ApiResponse } from '@/lib/api/client';
 import type { AgeGraphEdge, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
 SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, SemanticReviewItem, SemanticVersion,
 SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
-StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult } from './types';
+StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison } from './types';
 import type { SemanticDataTokenResponse } from './data-plane/semantic-api.types';
 
 const unwrap = <T>(response: { data: ApiResponse<T> }): T => response.data.data;
@@ -81,6 +81,9 @@ export const semanticModelApi = {
   async disconnectWorkspace(id: string, workspaceId: string): Promise<void> { const model = await semanticModelApi.get(id); await apiClient.delete(API_ENDPOINTS.semanticModels.workspace(id, workspaceId), { data: { expectedRevision: model.revision } }); },
   async versions(id: string): Promise<SemanticVersion[]> {
     return unwrap(await apiClient.get<ApiResponse<SemanticVersion[]>>(API_ENDPOINTS.semanticModels.versions(id)));
+  },
+  async compareVersions(id: string, left: string, right: string): Promise<VersionComparison> {
+    return unwrap(await apiClient.get<ApiResponse<VersionComparison>>(API_ENDPOINTS.semanticModels.compareVersions(id), { params: { left, right } }));
   },
   async publish(id: string): Promise<PublishResult> {
     const model = await semanticModelApi.get(id);
