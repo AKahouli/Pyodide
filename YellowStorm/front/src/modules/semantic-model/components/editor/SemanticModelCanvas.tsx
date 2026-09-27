@@ -83,6 +83,8 @@ function QuickRecordForm({ nodeId,onClose }: Readonly<{ nodeId:string;onClose:()
     commit({type:'record.create',entity},(current) => ({...current,records:[...current.records,entity]}));
     showSuccess(t('records.added'));
     onClose();
+    // Open the new record so its field values can be filled in right away.
+    useSemanticModelEditorStore.getState().select(entity.id);
   };
   return <form className='nodrag nopan nowheel mt-3 flex gap-2 border-t pt-3' onSubmit={add} onClick={stopNodeEvent}>
     <Input ref={inputRef} className='h-9 min-w-0' value={label} onChange={(event)=>setLabel(event.target.value)} placeholder={t('records.quickPlaceholder')} aria-label={t('records.quickName')} onKeyDown={(event)=>{if(event.key==='Escape'){event.preventDefault();onClose();}}} />
@@ -146,7 +148,7 @@ const BusinessNode = memo(function BusinessNode({ data,selected,isConnectable }:
       <Handle type='source' position={Position.Right} isConnectable={isConnectable} className={cn('!border-2 !border-background !bg-primary',isConnectable?'!h-3.5 !w-3.5':'!h-1 !w-1 !border-0 !opacity-0')} aria-label={t('relation.connectFrom')} title={t('relation.connectFrom')} />
     </div>
     {data.quickActions&&<div className='nodrag nopan nowheel absolute right-0 top-[36px] z-10' onClick={stopNodeEvent}>
-      <DropdownMenu><DropdownMenuTrigger asChild><button type='button' className='flex h-7 w-7 items-center justify-center rounded-full border-2 border-primary/60 bg-background text-primary opacity-70 transition hover:scale-110 hover:opacity-100' aria-label={t('designer.plus.next',{name:data.label})} title={t('designer.plus.next',{name:data.label})}><Plus className='h-4 w-4' /></button></DropdownMenuTrigger><DropdownMenuContent align='start'>
+      <DropdownMenu><DropdownMenuTrigger asChild><button type='button' className='flex h-7 w-7 items-center justify-center rounded-full border-2 border-primary/60 bg-background text-primary opacity-70 transition hover:scale-110 hover:opacity-100' aria-label={t('designer.plus.next',{name:data.label})} title={t('designer.plus.next',{name:data.label})}><Plus className='h-4 w-4' /></button></DropdownMenuTrigger><DropdownMenuContent align='start' onCloseAutoFocus={(event)=>event.preventDefault()}>
         {!data.protected&&<DropdownMenuItem className='min-h-11' onSelect={()=>data.onQuickConcept?.(data.nodeId)}><Briefcase className='h-4 w-4'/>{t('concept.quickAdd')}</DropdownMenuItem>}
         <DropdownMenuItem className='min-h-11' onSelect={()=>data.onOpenKnowledge?.(data.nodeId)}><Library className='h-4 w-4'/>{t('designer.plus.mapSource')}</DropdownMenuItem>
         {!data.protected&&<DropdownMenuItem className='min-h-11' onSelect={()=>{if(data.recordPolicy==='none'){showWarning(t('records.disabled'));return;}setRecordInputOpen(true);}}><Keyboard className='h-4 w-4'/>{t('records.quickAdd')}</DropdownMenuItem>}
@@ -211,7 +213,7 @@ const RelationEdge = memo(function RelationEdge({ id,sourceX,sourceY,targetX,tar
   return <>
     <BaseEdge id={id} path={path} markerEnd={markerEnd} style={{strokeWidth:selected?9:7,strokeDasharray:'0 14',strokeLinecap:'round',stroke:selected?EDGE_COLOR_SELECTED:EDGE_COLOR}} />
     <EdgeLabelRenderer>
-      <div style={{transform:`translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`}} className='group pointer-events-auto absolute flex flex-col items-center gap-0.5 p-2'>
+      <div style={{transform:`translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`}} className='nodrag nopan group pointer-events-auto absolute flex cursor-pointer flex-col items-center gap-0.5 p-2' onClick={()=>useSemanticModelEditorStore.getState().select(id)}>
         {typeof data?.onDelete==='function'&&<HoverDelete visible={selected} label={String(data?.deleteLabel??'')} className='-right-3 -top-2' onDelete={()=>(data.onDelete as (id:string)=>void)(id)} />}
         {label&&<span className={cn('max-w-40 truncate rounded-full border bg-background px-2 py-0.5 text-[11px] font-medium shadow-sm',selected?'border-primary text-primary':'border-border text-foreground')}>{label}</span>}
         {cardinality&&<span className='text-[10px] font-medium text-muted-foreground'>{cardinality}</span>}
@@ -230,7 +232,7 @@ const FeedEdge = memo(function FeedEdge({ id,sourceX,sourceY,targetX,targetY,sou
   return <>
     <BaseEdge id={id} path={path} style={{strokeWidth:selected?9:7,strokeDasharray:'0 14',strokeLinecap:'round',stroke:selected?EDGE_COLOR_SELECTED:'color-mix(in oklab, rgb(20 184 166) 55%, transparent)'}} />
     <EdgeLabelRenderer>
-      <div style={{transform:`translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`}} className='group pointer-events-auto absolute p-2'>
+      <div style={{transform:`translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`}} className='nodrag nopan group pointer-events-auto absolute cursor-pointer p-2' onClick={()=>(data?.onOpen as ((feed:DesignerFeed)=>void)|undefined)?.(feed)}>
         {feed.mapping&&typeof data?.onRemove==='function'&&<HoverDelete visible={selected} label={t('designer.delete.feed')} className='-right-3 -top-2' onDelete={()=>(data.onRemove as (feed:DesignerFeed)=>void)(feed)} />}
         <span className={cn('rounded-full border bg-background px-2 py-0.5 text-[11px] font-medium shadow-sm',TONE_CLASS[feed.tone],selected&&'border-primary')}>{label}</span>
       </div>
@@ -255,6 +257,7 @@ export function SemanticModelCanvas({ sourceMappings,mappingHealth,canEdit,onCon
   const mode = useSemanticModelEditorStore((state)=>state.mode);
   const selectedId = useSemanticModelEditorStore((state)=>state.selectedId);
   const select = useSemanticModelEditorStore((state)=>state.select);
+  const focus = useSemanticModelEditorStore((state)=>state.focus);
   const commit = useSemanticModelEditorStore((state)=>state.commit);
   const commitBatch = useSemanticModelEditorStore((state)=>state.commitBatch);
   const flowRef = useRef<ReactFlowInstance<Node<BusinessNodeData>,Edge>|null>(null);
@@ -308,6 +311,8 @@ export function SemanticModelCanvas({ sourceMappings,mappingHealth,canEdit,onCon
     if (!graph) return;
     const source = graph.nodes.find((node)=>node.id===sourceId);
     if (!source) return;
+    // Close the side panel so the new step's name box is not hidden behind it.
+    select(null);
     setQuickConcept({id:crypto.randomUUID(),sourceId,position:nextLinkedConceptPosition(source.position,graph.nodes)});
   };
   const submitQuickConcept = (label:string) => {
@@ -317,7 +322,7 @@ export function SemanticModelCanvas({ sourceMappings,mappingHealth,canEdit,onCon
     commitBatch([{type:'node_type.create',entity:node},{type:'relation_type.create',entity:relation}],(current)=>({...current,nodes:[...current.nodes,node],relations:[...current.relations,relation]}));
     setQuickConcept(null);
     // Carry on where the + left off: the new concept's details open in the side panel.
-    select(node.id);
+    focus(node.id);
   };
   const addRecordRelation = (option:CompatibleRecordRelation) => {
     if (!graph) return;
@@ -400,13 +405,14 @@ export function SemanticModelCanvas({ sourceMappings,mappingHealth,canEdit,onCon
   };
   const edges = useMemo<Edge[]>(()=>{
     if (!graph) return [];
-    const marker = {type:MarkerType.ArrowClosed,width:18,height:18,color:EDGE_COLOR};
+    const marker = {type:MarkerType.ArrowClosed,width:5,height:5,color:EDGE_COLOR};
     if (mode==='records') return graph.recordRelations.map((relation)=>({id:relation.id,source:relation.sourceRecordId,target:relation.targetRecordId,type:'relation',markerEnd:marker,data:{label:graph.relations.find((type)=>type.id===relation.relationTypeId)?.label??''}}));
+    const openFeed = (feed:DesignerFeed)=>{const source=flow.sources.find((item)=>item.id===feed.sourceId);if(source)onOpenSource?.(source,feed.mapping);};
     const removeFeed = canEdit&&onRemoveSource ? (feed:DesignerFeed)=>{const source=flow.sources.find((item)=>item.id===feed.sourceId);if(source)onRemoveSource(source,feed.mapping);} : undefined;
-    const feedEdges:Edge[] = flow.feeds.map((feed)=>({id:feed.id,source:feed.sourceId,target:feed.conceptId,type:'feed',data:{feed,onRemove:removeFeed}}));
+    const feedEdges:Edge[] = flow.feeds.map((feed)=>({id:feed.id,source:feed.sourceId,target:feed.conceptId,type:'feed',data:{feed,onRemove:removeFeed,onOpen:openFeed}}));
     const modelEdges:Edge[] = [...feedEdges,...graph.relations.map((relation)=>({id:relation.id,source:relation.sourceNodeTypeId,target:relation.targetNodeTypeId,type:'relation',animated:false,markerEnd:marker,data:{label:relation.label,cardinality:relation.cardinality,onDelete:canEdit?deleteRelation:undefined,deleteLabel:t('designer.delete.relation',{name:relation.label})}}))];
     return quickConcept?[...modelEdges,{id:`quick-${quickConcept.id}`,source:quickConcept.sourceId,target:quickConcept.id,label:t('relation.defaultWording'),animated:true,style:{strokeDasharray:'5 5',stroke:EDGE_COLOR_SELECTED,strokeWidth:2}}]:modelEdges;
-  },[canEdit,flow,graph,mode,onRemoveSource,quickConcept,t]);
+  },[canEdit,flow,graph,mode,onOpenSource,onRemoveSource,quickConcept,t]);
 
   const paneDragOver = (event:DragEvent<HTMLDivElement>) => {
     if (!canEdit||!onPaneDrop||!event.dataTransfer.types.includes(KNOWLEDGE_DRAG_TYPE)) return;

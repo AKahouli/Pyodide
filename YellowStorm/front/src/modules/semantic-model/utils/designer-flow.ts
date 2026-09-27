@@ -25,8 +25,11 @@ export interface DesignerFeed {
   mapping?: ConceptSourceMapping;
 }
 
-export const SOURCE_COLUMN_OFFSET = 340;
+export const SOURCE_COLUMN_OFFSET = 260;
 const SOURCE_ROW_HEIGHT = 150;
+// Rendered sizes of the round steps with their labels, used to keep boxes apart.
+const CONCEPT_BOX = { w: 192, h: 180 };
+const SOURCE_BOX = { w: 176, h: 140 };
 
 export const typedSourceId = (conceptId: string) => `typed:${conceptId}`;
 export const feedId = (mappingId: string) => `feed:${mappingId}`;
@@ -44,8 +47,8 @@ const worst = (tones: DesignerFeed['tone'][]): DesignerFeed['tone'] =>
   tones.includes('warn') ? 'warn' : tones.length && tones.every((tone) => tone === 'ok') ? 'ok' : 'idle';
 
 /**
- * Derive the source boxes and their lines from saved mappings and typed records. Sources are laid out
- * in a column to the left of the first concept they feed, so the canvas reads left to right: data in, concepts out.
+ * Derive the source boxes and their lines from saved mappings and typed records. Each source is laid out
+ * beside the first concept it feeds, so the canvas reads left to right: data in, concepts out.
  */
 export function designerFlow(graph: SemanticGraph, mappings: ConceptSourceMapping[] = [], health: MappingHealthItem[] = []): { sources: DesignerSource[]; feeds: DesignerFeed[] } {
   const concepts = new Map(graph.nodes.map((node) => [node.id, node]));
@@ -55,15 +58,21 @@ export function designerFlow(graph: SemanticGraph, mappings: ConceptSourceMappin
     const key = `source:${mapping.workspaceId}:${mapping.documentId}:${mapping.sheetName ?? ''}`;
     groups.set(key, [...(groups.get(key) ?? []), mapping]);
   }
-  // One column left of every concept, so a source never sits on top of one; each box lines up with
-  // the concept it feeds when there is room, otherwise it stacks below the previous box.
-  const conceptList = [...concepts.values()];
-  const columnX = Math.min(...conceptList.map((node) => node.position.x)) - SOURCE_COLUMN_OFFSET;
-  let nextFreeY = -Infinity;
+  // Each source sits next to the concept it feeds, so its line never crosses another concept: left of it
+  // when that space is free, otherwise stacked further left, above or below — never on top of another box.
+  const occupied = [...concepts.values()].map((node) => ({ x: node.position.x, y: node.position.y, w: CONCEPT_BOX.w, h: CONCEPT_BOX.h }));
+  const overlaps = (x: number, y: number) => occupied.some((box) => x < box.x + box.w && x + SOURCE_BOX.w > box.x && y < box.y + box.h && y + SOURCE_BOX.h > box.y);
   const place = (conceptId: string) => {
-    const y = Math.max(concepts.get(conceptId)!.position.y, nextFreeY);
-    nextFreeY = y + SOURCE_ROW_HEIGHT;
-    return { x: columnX, y };
+    const { x, y } = concepts.get(conceptId)!.position;
+    const candidates = [
+      ...[0, 1, -1, 2, -2, 3].map((row) => ({ x: x - SOURCE_COLUMN_OFFSET, y: y + row * SOURCE_ROW_HEIGHT })),
+      ...[1, 2, 3].map((row) => ({ x, y: y - row * SOURCE_ROW_HEIGHT - 40 })),
+      ...[1, 2, 3].map((row) => ({ x, y: y + CONCEPT_BOX.h + (row - 1) * SOURCE_ROW_HEIGHT + 40 })),
+    ];
+    const spot = candidates.find((candidate) => !overlaps(candidate.x, candidate.y))
+      ?? { x: x - SOURCE_COLUMN_OFFSET * 2, y: y + occupied.length * 10 };
+    occupied.push({ ...spot, w: SOURCE_BOX.w, h: SOURCE_BOX.h });
+    return spot;
   };
   const sources: DesignerSource[] = [];
   const feeds: DesignerFeed[] = [];

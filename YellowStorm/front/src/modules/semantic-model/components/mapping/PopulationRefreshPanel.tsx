@@ -35,6 +35,7 @@ export function PopulationRefreshPanel({ modelId, mappings, canEdit, onAccepted,
     queryFn: () => semanticModelApi.getPopulationJob(modelId, lastJob!.jobId),
     enabled: Boolean(lastJob?.jobId),
     refetchInterval: (query) => TERMINAL_STATES.has(query.state.data?.state ?? '') ? false : 2000,
+    refetchIntervalInBackground: true,
     retry: false,
   });
   const run = useMutation({

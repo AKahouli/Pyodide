@@ -28,7 +28,7 @@ const mapping = (id: string, conceptId: string, overrides: Partial<ConceptSource
 const health = (id: string, state: MappingHealthItem['state']) => ({ id, state } as MappingHealthItem);
 
 describe('designerFlow', () => {
-  it('groups mappings of one sheet into one source box, in a column left of every concept', () => {
+  it('groups mappings of one sheet into one source box, beside the concept it feeds', () => {
     const { sources, feeds } = designerFlow(graph, [mapping('a', 'supplier'), mapping('b', 'contract')], [health('a', 'healthy'), health('b', 'healthy')]);
     const sheet = sources.find((source) => source.kind === 'spreadsheet')!;
     expect(sheet).toMatchObject({ label: 'suppliers.xlsx', detail: 'Sheet1', tone: 'ok', position: { x: 400 - SOURCE_COLUMN_OFFSET, y: 100 } });
@@ -54,6 +54,19 @@ describe('designerFlow', () => {
     expect(sources.every((source) => source.position.x === 400 - SOURCE_COLUMN_OFFSET)).toBe(true);
     expect(feeds.find((feed) => feed.sourceId === typed.id)).toMatchObject({ step: 'typed', conceptId: 'supplier' });
     expect(feeds[0].step).toBe('extract');
+  });
+
+  it('never puts a source on top of a concept, even between two concepts in a row', () => {
+    const row: SemanticGraph = { ...graph, records: [], nodes: [concept('customer', 0, []), concept('contract', 300, ['number'])] };
+    const { sources } = designerFlow(row, [mapping('a', 'contract', { assetKind: 'document' }), mapping('b', 'contract', { documentId: 'other', assetKind: 'document' })]);
+    for (const source of sources) {
+      for (const node of row.nodes) {
+        const apart = source.position.x + 176 <= node.position.x || source.position.x >= node.position.x + 192
+          || source.position.y + 140 <= node.position.y || source.position.y >= node.position.y + 180;
+        expect(apart).toBe(true);
+      }
+    }
+    expect(sources[0].position.y).not.toBe(sources[1].position.y);
   });
 
   it('skips mappings whose concept was deleted', () => {

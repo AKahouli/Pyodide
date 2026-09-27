@@ -135,6 +135,8 @@ export function SemanticModelEditorPage() {
     queryFn: () => semanticModelApi.getPopulationJob(modelId!, populationJobId!),
     enabled: Boolean(modelId && populationJobId),
     refetchInterval: (query) => POPULATION_TERMINAL_STATES.has(query.state.data?.state ?? '') ? false : 2000,
+    // Keep following a run while the tab is in the background, so the result is there on return.
+    refetchIntervalInBackground: true,
     retry: false,
   });
   useEffect(() => {
@@ -215,6 +217,7 @@ export function SemanticModelEditorPage() {
   // unless the selection came from a health finding, which should keep its list in view.
   useEffect(() => {
     if (selectedId && focusRequest?.id !== selectedId) setTrustOpen(false);
+    if (selectedId) setPopulation(null);
   }, [focusRequest, selectedId]);
 
   useEffect(() => {
@@ -366,7 +369,12 @@ export function SemanticModelEditorPage() {
   };
   const closeSidePanels = () => { setTrustOpen(false); setVersionsOpen(false); setPopulation(null); };
   const openSource = (source: DesignerSource, mapping?: ConceptSourceMapping) => {
-    if (source.kind === 'typed') { setMode('records'); return; }
+    if (source.kind === 'typed') {
+      // One typed record opens for editing; several open the records list.
+      const typed = graph.records.filter((record) => source.id === `typed:${record.nodeTypeId}`);
+      if (typed.length === 1) select(typed[0].id); else setMode('records');
+      return;
+    }
     const chosen = mapping ?? source.mappings[0];
     if (chosen) void openMappingTarget(mappingTarget_(chosen));
   };
@@ -418,7 +426,7 @@ export function SemanticModelEditorPage() {
           {!onCanvas && <Button size='sm' variant='outline' onClick={() => setMode('structure')}><Workflow className='mr-1.5 h-4 w-4' />{t('designer.backToCanvas')}</Button>}
           {onCanvas && <DropdownMenu>
             <DropdownMenuTrigger asChild><Button size='sm' variant='ghost'><Table2 className='mr-1.5 h-4 w-4' />{t('designer.data')}<ChevronDown className='ml-1 h-3.5 w-3.5' /></Button></DropdownMenuTrigger>
-            <DropdownMenuContent align='end'>
+            <DropdownMenuContent align='end' onCloseAutoFocus={(event) => event.preventDefault()}>
               <DropdownMenuItem onSelect={() => setMode('records')}><Table2 className='h-4 w-4' />{t('mode.records')}</DropdownMenuItem>
               <DropdownMenuItem onSelect={openGraphViewer}><Network className='h-4 w-4' />{t('dataWorkflow.dataGraph')}</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => setMode('mappings')}><ListChecks className='h-4 w-4' />{t('designer.sourceList')}</DropdownMenuItem>
@@ -486,7 +494,7 @@ export function SemanticModelEditorPage() {
                       <Plus className="h-12 w-12" />
                     </button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="center">
+                  <DropdownMenuContent align="center" onCloseAutoFocus={(event) => event.preventDefault()}>
                     <DropdownMenuItem className="min-h-11" onSelect={() => openKnowledge()}><Sheet className="h-4 w-4" />{t('designer.palette.source')}</DropdownMenuItem>
                     <DropdownMenuItem className="min-h-11" onSelect={() => setConceptOpen(true)}><Box className="h-4 w-4" />{t('designer.palette.concept')}</DropdownMenuItem>
                     <DropdownMenuItem className="min-h-11" onSelect={() => setSuggestSource('pick')}><Sparkles className="h-4 w-4" />{t('suggest.open')}</DropdownMenuItem>
