@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { AlertTriangle, KeyRound, Loader2, LockKeyhole, Plus, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -22,6 +22,7 @@ import { semanticModelQueryKeys } from '../../query/queryKeys';
 import { useIdentityRules, useSourceMappings } from '../../query/hooks';
 import { parseApiError } from '@/lib/api-error';
 import { showError } from '@/lib/notifications';
+import { cn } from '@/lib/utils';
 import { RelationMatchingPanel } from '../mapping/RelationMatchingPanel';
 
 export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowledgeOpen,knowledgeTargetId,onKnowledgeClose,onMapData,workspace = false }: Readonly<{ modelId?:string;canEdit:boolean;knowledge:KnowledgeLinkingController;knowledgeOpen:boolean;knowledgeTargetId:string|null;onKnowledgeClose:()=>void;onMapData?:(target:SourceMappingTarget)=>void;workspace?:boolean }>) {
@@ -32,15 +33,79 @@ export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowled
   const node = graph?.nodes.find((item) => item.id === selectedId);
   const relation = graph?.relations.find((item) => item.id === selectedId);
   const record = graph?.records.find((item) => item.id === selectedId);
-  if (knowledgeOpen) return <aside className={workspace ? 'absolute inset-y-0 right-0 z-30 w-[min(26rem,100%)] border-l bg-background shadow-xl' : 'absolute inset-y-0 right-0 z-30 w-[min(22rem,calc(100%-1rem))] border-l bg-background/95 shadow-2xl backdrop-blur xl:static xl:w-80 xl:shadow-none'}><KnowledgePanel canEdit={canEdit} knowledge={knowledge} targetNodeId={knowledgeTargetId} onClose={onKnowledgeClose} onMapData={(resource)=>onMapData?.(sourceMappingTargetFromResource(resource, knowledgeTargetId ?? undefined))}/></aside>;
+  const knowledgePanel = <KnowledgePanel canEdit={canEdit} knowledge={knowledge} targetNodeId={knowledgeTargetId} onClose={onKnowledgeClose} onMapData={(resource)=>onMapData?.(sourceMappingTargetFromResource(resource, knowledgeTargetId ?? undefined))}/>;
+  if (knowledgeOpen) return workspace
+    ? <aside className='absolute inset-y-0 right-0 z-30 w-[min(26rem,100%)] border-l bg-background shadow-xl'>{knowledgePanel}</aside>
+    : <ResizableSidePanel className='z-30 bg-background/95 shadow-2xl backdrop-blur xl:shadow-none'>{knowledgePanel}</ResizableSidePanel>;
   if (!selectedId||(!node&&!relation&&!record)) return workspace ? <div className='flex flex-1 items-center justify-center bg-muted/20 p-6'><div className='max-w-sm text-center'><h2 className='text-lg font-semibold'>{t('inspector.emptyTitle')}</h2><p className='mt-2 text-sm text-muted-foreground'>{t('workspaceUi.chooseObject')}</p></div></div> : null;
-  return <aside className={workspace ? 'min-w-0 flex-1 overflow-y-auto bg-background px-5 pt-6 pb-28 sm:px-8' : 'absolute inset-y-0 right-0 z-20 w-[min(26rem,calc(100%-1rem))] overflow-y-auto border-l bg-background p-5 pb-28 shadow-xl xl:static xl:shadow-none'}>
+  const content = <>
     <div className={workspace ? 'mx-auto max-w-2xl' : undefined}>
     <div className='mb-6 flex items-center justify-between'><h2 className={workspace ? 'text-xl font-semibold' : 'font-semibold'}>{node?.label ?? relation?.label ?? record?.label}</h2>{!workspace && <Button size='icon' variant='ghost' onClick={() => select(null)} aria-label={t('action.close')}><X className='h-4 w-4' /></Button>}</div>
     {node && <NodeForm modelId={modelId} node={node} locked={Boolean(node.systemKey)} canEdit={canEdit} onMapData={onMapData} />}
     {relation && <RelationForm modelId={modelId} relation={relation} canEdit={canEdit} />}
     {record && <RecordForm record={record} canEdit={canEdit} />}
     </div>
+  </>;
+  return workspace
+    ? <aside className='min-w-0 flex-1 overflow-y-auto bg-background px-5 pt-6 pb-28 sm:px-8'>{content}</aside>
+    : <ResizableSidePanel className='z-20 bg-background shadow-xl xl:shadow-none' bodyClassName='p-5 pb-28'>{content}</ResizableSidePanel>;
+}
+
+const PANEL_WIDTH_KEY = 'semantic-model.side-panel-width';
+const PANEL_MIN = 320;
+const PANEL_DEFAULT = 416;
+const panelMax = () => Math.max(PANEL_MIN, Math.round(window.innerWidth * 0.7));
+const clampPanel = (width: number) => Math.min(panelMax(), Math.max(PANEL_MIN, Math.round(width)));
+function storedPanelWidth(): number {
+  try { const saved = Number(window.localStorage.getItem(PANEL_WIDTH_KEY)); return saved ? clampPanel(saved) : PANEL_DEFAULT; } catch { return PANEL_DEFAULT; }
+}
+function savePanelWidth(width: number) {
+  try { window.localStorage.setItem(PANEL_WIDTH_KEY, String(width)); } catch { /* the width is a convenience; it is fine not to keep it */ }
+}
+
+/** The side panel on the right of the canvas. Its left edge drags to make it wider or narrower; the width is remembered. */
+export function ResizableSidePanel({ children, className, bodyClassName }: Readonly<{ children: ReactNode; className?: string; bodyClassName?: string }>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const [width, setWidth] = useState(storedPanelWidth);
+  const [resizing, setResizing] = useState(false);
+  const widthRef = useRef(width);
+  const apply = (next: number) => { widthRef.current = next; setWidth(next); };
+  const startResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = widthRef.current;
+    setResizing(true);
+    const move = (moveEvent: PointerEvent) => apply(clampPanel(startWidth + startX - moveEvent.clientX));
+    const stop = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
+      setResizing(false);
+      savePanelWidth(widthRef.current);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop);
+    window.addEventListener('pointercancel', stop);
+  };
+  const resizeWithKeys = (event: KeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 64 : 16;
+    const next = event.key === 'ArrowLeft' ? widthRef.current + step : event.key === 'ArrowRight' ? widthRef.current - step : null;
+    if (next === null) return;
+    event.preventDefault();
+    apply(clampPanel(next));
+    savePanelWidth(widthRef.current);
+  };
+  const reset = () => { apply(clampPanel(PANEL_DEFAULT)); savePanelWidth(widthRef.current); };
+  return <aside style={{ width: `min(${width}px, calc(100% - 1rem))` }}
+    className={cn('absolute inset-y-0 right-0 flex shrink-0 border-l xl:relative', resizing && 'select-none', className)}>
+    <div role='separator' aria-orientation='vertical' aria-label={t('inspector.resize')} title={t('inspector.resizeHint')}
+      aria-valuenow={width} aria-valuemin={PANEL_MIN} aria-valuemax={panelMax()} tabIndex={0}
+      onPointerDown={startResize} onKeyDown={resizeWithKeys} onDoubleClick={reset}
+      className={cn('group absolute inset-y-0 -left-1.5 z-10 flex w-3 cursor-col-resize justify-center focus-visible:outline-none')}>
+      <span className={cn('h-full w-0.5 transition-colors group-hover:bg-primary/60 group-focus-visible:bg-primary', resizing && 'bg-primary')} />
+    </div>
+    <div className={cn('min-h-0 min-w-0 flex-1 overflow-y-auto', bodyClassName)}>{children}</div>
   </aside>;
 }
 

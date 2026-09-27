@@ -10,6 +10,14 @@ const graph: SemanticGraph = {
 describe('semantic model editor store', () => {
   beforeEach(() => useSemanticModelEditorStore.getState().reset());
 
+  it('counts a click on what is already selected, so panels can follow it', () => {
+    const { select } = useSemanticModelEditorStore.getState();
+    select('customer');
+    const before = useSemanticModelEditorStore.getState().selectionTick;
+    select('customer');
+    expect(useSemanticModelEditorStore.getState().selectionTick).toBe(before + 1);
+  });
+
   it('tracks an operation and restores it through undo and redo', () => {
     const node = { id: 'node', key: 'party', label: 'Party', description: '', category: 'business_object' as const, recordPolicy: 'none' as const, systemKey: null, aliases: [], attributes: [], position: { x: 0, y: 0 } };
     useSemanticModelEditorStore.getState().hydrate(graph);

@@ -42,3 +42,21 @@ export function relationDeletion(graph: SemanticGraph, relationId: string): Grap
     }),
   };
 }
+
+/** Delete the records typed by hand for a concept, and the links made with them. */
+export function typedRecordsDeletion(graph: SemanticGraph, conceptId: string): GraphDeletion & { count: number } {
+  const recordIds = new Set(graph.records.filter((record) => record.nodeTypeId === conceptId).map((record) => record.id));
+  const recordRelationIds = new Set(graph.recordRelations.filter((link) => recordIds.has(link.sourceRecordId) || recordIds.has(link.targetRecordId)).map((link) => link.id));
+  return {
+    count: recordIds.size,
+    operations: [
+      ...[...recordRelationIds].map((id) => ({ type: 'record_relation.delete' as const, id })),
+      ...[...recordIds].map((id) => ({ type: 'record.delete' as const, id })),
+    ],
+    update: (current) => ({
+      ...current,
+      records: current.records.filter((record) => !recordIds.has(record.id)),
+      recordRelations: current.recordRelations.filter((link) => !recordRelationIds.has(link.id)),
+    }),
+  };
+}

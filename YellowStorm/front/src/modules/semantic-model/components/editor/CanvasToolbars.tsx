@@ -121,7 +121,7 @@ export function ConceptToolbar({ conceptId, label, attributes, keyFields, onTogg
   </ToolbarShell>;
 }
 
-/** Actions for a source box: its mapping, another concept to feed, removal. Typed records open their list instead. */
+/** Actions for a source box: its mapping, another concept to feed, removal. Typed records open their list instead, and removing them deletes them. */
 export function SourceToolbar({ label, typed, onOpen, onAddFeed, onAddRecord, onRemove }: Readonly<{
   label: string; typed: boolean; onOpen?: () => void; onAddFeed?: () => void; onAddRecord?: () => void; onRemove?: () => void;
 }>) {
@@ -132,6 +132,6 @@ export function SourceToolbar({ label, typed, onOpen, onAddFeed, onAddRecord, on
       : <ToolButton tone='data' label={t('canvasTools.editMapping')} onClick={onOpen}><Settings2 className='h-4 w-4' /></ToolButton>}
     {typed && onAddRecord && <ToolButton tone='data' label={t('records.quickAdd')} onClick={onAddRecord}><Plus className='h-4 w-4' /></ToolButton>}
     {!typed && onAddFeed && <ToolButton label={t('designer.plus.feed', { name: label })} onClick={onAddFeed}><Plus className='h-4 w-4' /></ToolButton>}
-    {onRemove && <><ToolbarDivider /><ToolButton tone='danger' label={t('designer.delete.source', { name: label })} onClick={onRemove}><Trash2 className='h-4 w-4' /></ToolButton></>}
+    {onRemove && <><ToolbarDivider /><ToolButton tone='danger' label={typed ? t('designer.delete.typed') : t('designer.delete.source', { name: label })} onClick={onRemove}><Trash2 className='h-4 w-4' /></ToolButton></>}
   </ToolbarShell>;
 }

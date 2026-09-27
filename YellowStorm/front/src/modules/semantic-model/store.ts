@@ -17,6 +17,8 @@ interface SemanticModelEditorState {
   validation: ValidationIssue[];
   /** Last request to bring an element into view; `at` makes repeat requests for the same id distinct. */
   focusRequest: { id: string; at: number } | null;
+  /** Counts every selection, even of what is already selected, so panels can follow each click. */
+  selectionTick: number;
   saveStatus: SaveStatus;
   saveInFlight: boolean;
   saveAttempt: number;
@@ -76,6 +78,7 @@ export const semanticModelEditorInitialState = {
   redoStack: [] as HistoryEntry[],
   validation: [] as ValidationIssue[],
   focusRequest: null as { id: string; at: number } | null,
+  selectionTick: 0,
   saveStatus: 'saved' as SaveStatus,
   saveInFlight: false,
   saveAttempt: 0,
@@ -104,10 +107,10 @@ export const useSemanticModelEditorStore = create<SemanticModelEditorState>()(de
   ...semanticModelEditorInitialState,
   hydrate: (graph) => set({ ...semanticModelEditorInitialState, graph }),
   setMode: (mode) => set({ mode, selectedId: null, detailsOpen: false }),
-  select: (selectedId, options) => set((state) => ({ selectedId, detailsOpen: selectedId ? Boolean(options?.details) || state.detailsOpen : false })),
+  select: (selectedId, options) => set((state) => ({ selectedId, detailsOpen: selectedId ? Boolean(options?.details) || state.detailsOpen : false, selectionTick: state.selectionTick + 1 })),
   openDetails: (detailsOpen) => set({ detailsOpen }),
   // Focusing is a request to look at something in full (a finding, a new element), so it opens its details.
-  focus: (id) => set({ selectedId: id, detailsOpen: true, focusRequest: { id, at: Date.now() } }),
+  focus: (id) => set((state) => ({ selectedId: id, detailsOpen: true, focusRequest: { id, at: Date.now() }, selectionTick: state.selectionTick + 1 })),
   commit: (operation, update) => set((state) => {
     if (!state.graph) return state;
     const history = { graph: state.graph, pending: state.pending };

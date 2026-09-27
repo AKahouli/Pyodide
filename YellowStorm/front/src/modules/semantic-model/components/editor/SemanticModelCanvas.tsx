@@ -15,7 +15,7 @@ import { useSemanticModelEditorStore } from '../../store';
 import { KNOWLEDGE_DRAG_TYPE, parseKnowledgeResource, type KnowledgeDropState, type KnowledgeLinkingController, type KnowledgeResource } from '../../hooks/use-knowledge-linking';
 import type { AttributeDefinition, ConceptSourceMapping, MappingHealthItem, SemanticNodeType, SemanticRecordRelation, SemanticRelationType } from '../../types';
 import { businessKey, compatibleRecordRelations, nextLinkedConceptPosition, uniqueBusinessKey, type CompatibleRecordRelation } from '../../utils/model-utils';
-import { conceptDeletion, relationDeletion } from '../../utils/graph-deletes';
+import { conceptDeletion, relationDeletion, typedRecordsDeletion } from '../../utils/graph-deletes';
 import { ConceptToolbar, InlineRename, SourceToolbar, ToolButton, ToolbarShell } from './CanvasToolbars';
 import { designerFlow, isDesignerSourceId, type DesignerFeed, type DesignerSource } from '../../utils/designer-flow';
 
@@ -204,11 +204,11 @@ const SourceNode = memo(function SourceNode({ data,selected }: NodeProps<Node<So
   return <div className='group relative flex w-44 flex-col items-center'>
     <NodeToolbar isVisible={Boolean(selected)} position={Position.Top} offset={14}>
       <SourceToolbar label={title} typed={source.kind==='typed'} onOpen={data.onOpen?()=>data.onOpen?.(source):undefined} onAddFeed={data.onAddFeed?()=>data.onAddFeed?.(source):undefined}
-        onAddRecord={data.canAddRecord?()=>setRecordInputOpen(true):undefined} onRemove={data.onRemove&&source.kind!=='typed'?()=>data.onRemove?.(source):undefined} />
+        onAddRecord={data.canAddRecord?()=>setRecordInputOpen(true):undefined} onRemove={data.onRemove?()=>data.onRemove?.(source):undefined} />
     </NodeToolbar>
     <div className={cn('relative flex h-20 w-20 items-center justify-center rounded-full bg-teal-600 text-white transition-shadow',selected?'ring-8 ring-teal-500/40':'ring-8 ring-teal-500/15 hover:ring-teal-500/30')}>
       <Icon className='h-9 w-9' />
-      {data.onRemove&&source.kind!=='typed'&&!selected&&<HoverDelete label={t('designer.delete.source',{name:title})} className='-left-1 -top-1' onDelete={()=>data.onRemove?.(source)} />}
+      {data.onRemove&&!selected&&<HoverDelete label={source.kind==='typed'?t('designer.delete.typed'):t('designer.delete.source',{name:title})} className='-left-1 -top-1' onDelete={()=>data.onRemove?.(source)} />}
       {source.tone!=='idle'&&<span className={cn('absolute -right-0.5 -top-0.5 h-4 w-4 rounded-full border-2 border-background',source.tone==='ok'?'bg-emerald-500':'bg-amber-500')} role='img' aria-label={t(`designer.tone.${source.tone}`)} />}
       <Handle type='source' position={Position.Right} isConnectable={false} className='!h-2 !w-2 !border-0 !bg-teal-500' />
     </div>
@@ -323,6 +323,16 @@ export function SemanticModelCanvas({ sourceMappings,identityRules,recordCounts,
     commitBatch(deletion.operations,deletion.update);
     if (useSemanticModelEditorStore.getState().selectedId===nodeId) select(null);
   };
+  // Typed records are part of the model, so removing them is an ordinary edit that Undo brings back.
+  const removeTypedRecords = (source:DesignerSource) => {
+    const current = useSemanticModelEditorStore.getState().graph;
+    if (!current) return;
+    const deletion = typedRecordsDeletion(current,source.id.slice('typed:'.length));
+    if (!deletion.count) return;
+    commitBatch(deletion.operations,deletion.update);
+    if (useSemanticModelEditorStore.getState().selectedId===source.id) select(null);
+    showSuccess(t(deletion.count===1?'designer.delete.typedDone_one':'designer.delete.typedDone_other',{count:deletion.count}));
+  };
   const renameConcept = (nodeId:string,label:string) => {
     const changes = {label,key:businessKey(label)};
     commit({type:'node_type.update',id:nodeId,changes},(current)=>({...current,nodes:current.nodes.map((node)=>node.id===nodeId?{...node,...changes}:node)}));
@@ -392,7 +402,7 @@ export function SemanticModelCanvas({ sourceMappings,identityRules,recordCounts,
   const dropStateFor = (nodeId:string):KnowledgeDropState|undefined => {
     if (dropNodeId!==nodeId||!knowledge.draggedResource) return undefined;
     if (knowledge.isBusy) return 'busy';
-    return knowledge.hasBinding(nodeId,knowledge.draggedResource)?'already-linked':'valid';
+    return 'valid';
   };
   const dropKnowledge = (nodeId:string,event:DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -401,12 +411,9 @@ export function SemanticModelCanvas({ sourceMappings,identityRules,recordCounts,
     setDropNodeId(null);
     knowledge.setDraggedResource(null);
     if (!resource||knowledge.isBusy) return;
-    if (resource.kind==='document'&&resource.mappable&&onMapStructuredDrop) {
-      onMapStructuredDrop(resource,nodeId);
-      return;
-    }
-    if (knowledge.hasBinding(nodeId,resource)) return;
-    void knowledge.link(nodeId,resource);
+    // Only a file that can be read feeds a concept; anything else would do nothing when data is generated.
+    if (resource.kind==='document'&&resource.mappable&&onMapStructuredDrop) onMapStructuredDrop(resource,nodeId);
+    else showWarning(t('knowledge.notReadableDrop',{name:resource.name}));
   };
 
   // What each concept can say about its data, so a card is readable without opening the details panel.
@@ -449,7 +456,7 @@ export function SemanticModelCanvas({ sourceMappings,identityRules,recordCounts,
     if (!graph) return [];
     if (mode==='records') return graph.records.map((record)=>({id:record.id,type:'business',position:record.position,data:{nodeId:record.id,label:record.label,description:String(record.values.description??''),category:'record',protected:false}}));
     const modelNodes = graph.nodes.map((node)=>({id:node.id,type:'business',position:node.position,draggable:canEdit&&!node.systemKey,data:{nodeId:node.id,label:node.label,description:node.description,category:node.category,protected:Boolean(node.systemKey),recordPolicy:node.recordPolicy,attributes:node.attributes,summary:summaries[node.id],quickActions:canEdit,onQuickConcept:beginQuickConcept,onOpenKnowledge,knowledgeCounts:knowledge.countsByNode[node.id]??{workspaces:0,documents:0},dropState:dropStateFor(node.id),onKnowledgeDragEnter:canEdit&&knowledge.draggedResource?setDropNodeId:undefined,onKnowledgeDragLeave:canEdit?((nodeId:string)=>setDropNodeId((current)=>current===nodeId?null:current)):undefined,onKnowledgeDrop:canEdit?dropKnowledge:undefined,onDelete:canEdit&&!node.systemKey?deleteConcept:undefined,keyFields:keyFieldsByConcept[node.id]??[],onToggleKey:canEdit?onToggleKey:undefined,onRename:canEdit&&!node.systemKey?renameConcept:undefined,onDetails:openDetails}}));
-    const sourceNodes = flow.sources.map((source)=>({id:source.id,type:'source',position:source.position,draggable:canEdit&&Boolean(onMoveSource),connectable:false,data:{source,onAddFeed:canEdit?onAddFeed:undefined,onRemove:canEdit&&onRemoveSource?(item:DesignerSource)=>onRemoveSource(item):undefined,onOpen:onOpenSource?(item:DesignerSource)=>onOpenSource(item):undefined,canAddRecord:canEdit}}));
+    const sourceNodes = flow.sources.map((source)=>({id:source.id,type:'source',position:source.position,draggable:canEdit&&Boolean(onMoveSource),connectable:false,data:{source,onAddFeed:canEdit?onAddFeed:undefined,onRemove:!canEdit?undefined:source.kind==='typed'?removeTypedRecords:onRemoveSource?(item:DesignerSource)=>onRemoveSource(item):undefined,onOpen:onOpenSource?(item:DesignerSource)=>onOpenSource(item):undefined,canAddRecord:canEdit}}));
     const withSources = [...sourceNodes,...modelNodes] as unknown as Node<BusinessNodeData>[];
     if (!quickConcept) return withSources;
     return [...withSources,{id:quickConcept.id,type:'business',position:quickConcept.position,draggable:false,selectable:false,focusable:false,data:{nodeId:quickConcept.id,label:'',description:'',category:'business_object',protected:false,draft:true,onDraftSubmit:submitQuickConcept,onDraftCancel:()=>setQuickConcept(null)}}];

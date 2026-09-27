@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConceptSourceMapping, MappingHealthItem, SemanticGraph } from '../../types';
 import type { KnowledgeLinkingController } from '../../hooks/use-knowledge-linking';
 import { useSemanticModelEditorStore } from '../../store';
+import { showSuccess, showWarning } from '@/lib/notifications';
 import { SemanticModelCanvas } from './SemanticModelCanvas';
 
 const flow = vi.hoisted(() => ({ props:{} as Record<string,unknown> }));
@@ -275,7 +276,7 @@ describe('SemanticModelCanvas', () => {
     expect(useSemanticModelEditorStore.getState().pending[0][0]).toMatchObject({type:'layout.update',positions:[{id:'contract',position:{x:50,y:60}}]});
   });
 
-  it('links a dragged workspace directly from a concept card', () => {
+  it('turns a workspace dropped on a concept away instead of linking it, since it would bring no data', () => {
     useSemanticModelEditorStore.getState().hydrate({...graph,nodes:[{...graph.nodes[0],id:'customer',label:'Customer',systemKey:null}]});
     const resource={kind:'workspace' as const,workspaceId:'workspace',name:'Credit Risk'};
     knowledge.draggedResource=resource;
@@ -283,7 +284,8 @@ describe('SemanticModelCanvas', () => {
     const nodes=flow.props.nodes as Array<{id:string;data:{onKnowledgeDrop:(id:string,event:unknown)=>void}}>;
     const event={preventDefault:vi.fn(),stopPropagation:vi.fn(),dataTransfer:{getData:vi.fn()}};
     act(()=>nodes[0].data.onKnowledgeDrop('customer',event));
-    expect(knowledge.link).toHaveBeenCalledWith('customer',resource);
+    expect(knowledge.link).not.toHaveBeenCalled();
+    expect(showWarning).toHaveBeenCalledWith('knowledge.notReadableDrop');
   });
 
   it('selects a concept on click and shows its actions, without opening the details panel', () => {
@@ -341,5 +343,17 @@ describe('SemanticModelCanvas', () => {
     expect(source.draggable).toBe(true);
     act(()=>(flow.props.onNodeDragStop as (event:unknown,node:{id:string;position:{x:number;y:number}})=>void)({}, { id:source.id, position:{x:5,y:6} }));
     expect(onMoveSource).toHaveBeenCalledWith(source.id,{x:5,y:6});
+  });
+
+  it('removes the typed records of a concept from their box, as an edit Undo brings back', () => {
+    const record = (id:string) => ({ id, nodeTypeId:'contract', label:id, values:{}, status:'active' as const, position:{x:0,y:0} });
+    useSemanticModelEditorStore.getState().hydrate({ ...contractGraph, records:[record('r1'),record('r2')] });
+    renderCanvas();
+    const typed = (flow.props.nodes as Array<{id:string;data:{source:unknown;onRemove?:(source:unknown)=>void}}>).find((node)=>node.id==='typed:contract')!;
+    act(()=>typed.data.onRemove!(typed.data.source));
+    expect(useSemanticModelEditorStore.getState().graph!.records).toEqual([]);
+    expect(showSuccess).toHaveBeenCalledWith('designer.delete.typedDone_other');
+    act(()=>useSemanticModelEditorStore.getState().undo());
+    expect(useSemanticModelEditorStore.getState().graph!.records).toHaveLength(2);
   });
 });

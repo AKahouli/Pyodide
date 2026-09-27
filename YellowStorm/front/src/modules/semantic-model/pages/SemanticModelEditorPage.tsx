@@ -111,6 +111,7 @@ export function SemanticModelEditorPage() {
   const select = useSemanticModelEditorStore((state) => state.select);
   const focus = useSemanticModelEditorStore((state) => state.focus);
   const focusRequest = useSemanticModelEditorStore((state) => state.focusRequest);
+  const selectionTick = useSemanticModelEditorStore((state) => state.selectionTick);
   const undoStack = useSemanticModelEditorStore((state) => state.undoStack);
   const redoStack = useSemanticModelEditorStore((state) => state.redoStack);
   const hydrate = useSemanticModelEditorStore((state) => state.hydrate);
@@ -243,8 +244,9 @@ export function SemanticModelEditorPage() {
     setPopulation(null);
     // The knowledge list belongs to the concept it was opened for; picking something else closes it.
     if (knowledgeTargetId !== selectedId) { setKnowledgeOpen(false); setKnowledgeTargetId(null); }
+  // Every click counts, including one on what is already selected, so the panel never stays on an earlier choice.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusRequest, selectedId]);
+  }, [focusRequest, selectedId, selectionTick]);
 
   useEffect(() => {
     if (!modelId || !graph || !pending.length || savingRef.current) return;
@@ -346,6 +348,8 @@ export function SemanticModelEditorPage() {
     if (Date.now()-knowledgeClosedAtRef.current<700) return;
     setKnowledgeTargetId(targetId);
     setKnowledgeOpen(true);
+    // The concept being fed is the one highlighted, so clicking another one moves on from it.
+    if (targetId) select(targetId);
   };
   const closeKnowledge = () => {
     knowledgeClosedAtRef.current=Date.now();
