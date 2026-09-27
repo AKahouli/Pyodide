@@ -617,6 +617,11 @@ describe('SemanticPopulationRefreshService', () => {
         expectedCorrectionSequence: 3, modelVersionId: 'v-1', actorUserId: 'u-1',
       }));
       expect(result).toEqual({ sequence: 4, rebuild: { jobId: 'j-1', status: 'queued' } });
+      // Only a whole-model build replaces the draft people explore.
+      expect(runtime.requestPopulationRun).toHaveBeenCalledWith(
+        expect.objectContaining({ payload: expect.objectContaining({ purpose: 'build', scope: { kind: 'model' } }) }),
+        expect.any(String),
+      );
     });
 
     it('refuses a fix that points to nothing', async () => {

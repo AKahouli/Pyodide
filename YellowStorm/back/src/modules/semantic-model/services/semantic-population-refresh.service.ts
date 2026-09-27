@@ -268,7 +268,8 @@ export class SemanticPopulationRefreshService {
 
   private async rebuildAfterCorrection(userId: string, modelId: string) {
     try {
-      const accepted = await this.requestRefresh(userId, modelId, { purpose: 'refresh', scope: { kind: 'model' } });
+      // Only a whole-model build becomes the draft people explore, so a fix must rebuild, not refresh.
+      const accepted = await this.requestRefresh(userId, modelId, { purpose: 'build', scope: { kind: 'model' } });
       return { jobId: String(accepted.jobId), status: String(accepted.status) };
     } catch (error) {
       // The fix is kept; it applies on the next successful build.
