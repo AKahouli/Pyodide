@@ -175,6 +175,26 @@ describe('SemanticModelCanvas', () => {
     });
   });
 
+  it('draws each source as a box feeding its concept, and opens its mapping on click', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    const onOpenSource = vi.fn();
+    const source = mapping({ id:'m1' });
+    render(<SemanticModelCanvas canEdit knowledge={knowledge} sourceMappings={[source]} mappingHealth={healthy('m1')} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} onOpenSource={onOpenSource} />);
+    expect(screen.getByText('master-agreement-0041.pdf')).toBeInTheDocument();
+    const edges = flow.props.edges as Array<{id:string;type:string;source:string;target:string}>;
+    const feed = edges.find((edge)=>edge.type==='feed')!;
+    expect(feed.target).toBe('contract');
+    const nodes = flow.props.nodes as Array<{id:string}>;
+    const onNodeClick = flow.props.onNodeClick as (event:unknown,node:{id:string})=>void;
+    act(()=>onNodeClick({target:document.body},{id:feed.source}));
+    expect(onOpenSource).toHaveBeenCalledWith(expect.objectContaining({ kind:'documents' }));
+    expect(nodes.some((node)=>node.id===feed.source)).toBe(true);
+    const onEdgeClick = flow.props.onEdgeClick as (event:unknown,edge:{id:string})=>void;
+    act(()=>onEdgeClick({}, {id:feed.id}));
+    expect(onOpenSource).toHaveBeenLastCalledWith(expect.objectContaining({ kind:'documents' }), source);
+    expect(useSemanticModelEditorStore.getState().selectedId).toBeNull();
+  });
+
   it('links a dragged workspace directly from a concept card', () => {
     useSemanticModelEditorStore.getState().hydrate({...graph,nodes:[{...graph.nodes[0],id:'customer',label:'Customer',systemKey:null}]});
     const resource={kind:'workspace' as const,workspaceId:'workspace',name:'Credit Risk'};

@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 import { Background, BaseEdge, Controls, EdgeLabelRenderer, Handle, MarkerType, Position, ReactFlow, getBezierPath, type Connection, type Edge, type EdgeProps, type Node, type NodeProps, type ReactFlowInstance } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { BookOpen, Briefcase, Check, FileStack, KeyRound, Library, Plus, Table2, Tag, Warehouse, X } from 'lucide-react';
+import { BookOpen, Briefcase, Check, FileStack, FileText, KeyRound, Keyboard, Library, Plus, Sheet, Table2, Tag, Warehouse, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -15,6 +15,7 @@ import { useSemanticModelEditorStore } from '../../store';
 import { KNOWLEDGE_DRAG_TYPE, parseKnowledgeResource, type KnowledgeDropState, type KnowledgeLinkingController, type KnowledgeResource } from '../../hooks/use-knowledge-linking';
 import type { AttributeDefinition, ConceptSourceMapping, MappingHealthItem, SemanticNodeType, SemanticRecordRelation, SemanticRelationType } from '../../types';
 import { compatibleRecordRelations, nextLinkedConceptPosition, uniqueBusinessKey, type CompatibleRecordRelation } from '../../utils/model-utils';
+import { designerFlow, isDesignerSourceId, type DesignerFeed, type DesignerSource } from '../../utils/designer-flow';
 
 /** What a concept card says about its data: how many sources feed it, which are usable, and how it recognises a record. */
 export interface ConceptDataSummary {
@@ -160,7 +161,32 @@ const BusinessNode = memo(function BusinessNode({ data,selected,isConnectable }:
   </div>;
 });
 
-const nodeTypes = { business:BusinessNode };
+const TONE_CLASS = {
+  ok:'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+  warn:'bg-amber-500/10 text-amber-700 dark:text-amber-400',
+  idle:'bg-muted text-muted-foreground',
+} as const;
+
+type SourceNodeData = Record<string, unknown> & { source: DesignerSource };
+
+/** A data source on the canvas; clicking it opens its mapping in the side panel. */
+const SourceNode = memo(function SourceNode({ data,selected }: NodeProps<Node<SourceNodeData>>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const { source } = data;
+  const Icon = source.kind==='typed' ? Keyboard : source.kind==='spreadsheet' ? Sheet : FileText;
+  const title = source.kind==='typed' ? t('designer.typedRecords') : source.label;
+  const detail = source.kind==='typed' ? t('editor.recordCount',{count:Number(source.detail)}) : source.detail || t(`designer.kind.${source.kind}`);
+  return <div className={cn('w-56 rounded-2xl border-2 bg-card shadow-sm transition-colors',selected?'border-primary ring-4 ring-primary/10':'border-teal-500/40 hover:border-teal-500/70')}>
+    <div className='flex items-center gap-3 p-3'>
+      <div className='rounded-xl bg-teal-500/10 p-2 text-teal-700 dark:text-teal-400'><Icon className='h-5 w-5' /></div>
+      <div className='min-w-0 flex-1'><p className='truncate text-sm font-semibold' title={title}>{title}</p><p className='truncate text-[11px] text-muted-foreground'>{detail}</p></div>
+      {source.tone!=='idle'&&<span className={cn('h-2.5 w-2.5 shrink-0 rounded-full',source.tone==='ok'?'bg-emerald-500':'bg-amber-500')} role='img' aria-label={t(`designer.tone.${source.tone}`)} />}
+    </div>
+    <Handle type='source' position={Position.Right} isConnectable={false} className='!h-2 !w-2 !border-0 !bg-teal-500' />
+  </div>;
+});
+
+const nodeTypes = { business:BusinessNode, source:SourceNode };
 
 const CARDINALITY_SHORT: Record<string,string> = { one_to_one:'1 → 1', one_to_many:'1 → n', many_to_one:'n → 1', many_to_many:'n → n' };
 
@@ -185,9 +211,30 @@ const RelationEdge = memo(function RelationEdge({ id,sourceX,sourceY,targetX,tar
   </>;
 });
 
-const edgeTypes = { relation:RelationEdge };
+/** Data flowing from a source into a concept; the chip in the middle is the mapping step. */
+const FeedEdge = memo(function FeedEdge({ id,sourceX,sourceY,targetX,targetY,sourcePosition,targetPosition,selected,data }: EdgeProps) {
+  const { t } = useModuleTranslation('semantic-model');
+  const [path,labelX,labelY] = getBezierPath({ sourceX,sourceY,sourcePosition,targetX,targetY,targetPosition });
+  const feed = data?.feed as DesignerFeed|undefined;
+  if (!feed) return null;
+  const label = feed.step==='typed' ? t('designer.step.typed') : feed.step==='extract' ? t('designer.step.extract') : t('designer.step.map',{mapped:feed.mapped,total:feed.total});
+  return <>
+    <BaseEdge id={id} path={path} style={{strokeWidth:selected?3:2,strokeDasharray:'6 4',stroke:selected?EDGE_COLOR_SELECTED:'color-mix(in oklab, rgb(20 184 166) 70%, transparent)'}} />
+    <EdgeLabelRenderer>
+      <div style={{transform:`translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`}} className='pointer-events-none absolute'>
+        <span className={cn('rounded-full border bg-background px-2 py-0.5 text-[11px] font-medium shadow-sm',TONE_CLASS[feed.tone],selected&&'border-primary')}>{label}</span>
+      </div>
+    </EdgeLabelRenderer>
+  </>;
+});
 
-export function SemanticModelCanvas({ sourceMappings,mappingHealth,canEdit,onConnectRequest,knowledge,onOpenKnowledge,onMapStructuredDrop }: Readonly<{ sourceMappings?:ConceptSourceMapping[];mappingHealth?:MappingHealthItem[];canEdit:boolean;onConnectRequest:(connection:{sourceId:string;targetId:string})=>void;knowledge:KnowledgeLinkingController;onOpenKnowledge:(nodeId:string)=>void;onMapStructuredDrop?:(resource:Extract<KnowledgeResource,{kind:'document'}>,nodeId:string)=>void }>) {
+const edgeTypes = { relation:RelationEdge, feed:FeedEdge };
+
+export function SemanticModelCanvas({ sourceMappings,mappingHealth,canEdit,onConnectRequest,knowledge,onOpenKnowledge,onMapStructuredDrop,onOpenSource,onPaneDrop }: Readonly<{ sourceMappings?:ConceptSourceMapping[];mappingHealth?:MappingHealthItem[];canEdit:boolean;onConnectRequest:(connection:{sourceId:string;targetId:string})=>void;knowledge:KnowledgeLinkingController;onOpenKnowledge:(nodeId:string)=>void;onMapStructuredDrop?:(resource:Extract<KnowledgeResource,{kind:'document'}>,nodeId:string)=>void;
+  /** A source box or its line was clicked; the mapping is set when a specific line was chosen. */
+  onOpenSource?:(source:DesignerSource,mapping?:ConceptSourceMapping)=>void;
+  /** A document from the knowledge panel was dropped on empty canvas, not on a concept. */
+  onPaneDrop?:(resource:KnowledgeResource)=>void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const isMobile = useIsMobile();
   const graph = useSemanticModelEditorStore((state)=>state.graph);
@@ -206,12 +253,6 @@ export function SemanticModelCanvas({ sourceMappings,mappingHealth,canEdit,onCon
     const timer = window.setTimeout(() => void flowRef.current?.fitView({nodes:[{id:quickConcept.sourceId},{id:quickConcept.id}],padding:0.3,maxZoom:1,duration:200}),0);
     return () => window.clearTimeout(timer);
   },[quickConcept?.id]);
-  const graphId = graph?.versionId;
-  useEffect(() => {
-    if (!graphId) return;
-    const timer = window.setTimeout(() => void flowRef.current?.fitView({padding:0.25,maxZoom:1,duration:300}),100);
-    return () => window.clearTimeout(timer);
-  },[graphId]);
   const focusRequest = useSemanticModelEditorStore((state)=>state.focusRequest);
   useEffect(() => {
     if (!focusRequest) return;
@@ -291,15 +332,28 @@ export function SemanticModelCanvas({ sourceMappings,mappingHealth,canEdit,onCon
     return byConcept;
   },[graph?.nodes,graph?.records,sourceMappings,mappingHealth]);
 
+  const flow = useMemo(()=>graph&&mode!=='records'?designerFlow(graph,sourceMappings,mappingHealth):{sources:[],feeds:[]},[graph,mode,sourceMappings,mappingHealth]);
+
+  const graphId = graph?.versionId;
+  // Sources arrive after the model, so fit again once they do; otherwise the source column starts off-screen.
+  const sourceCount = flow.sources.length;
+  useEffect(() => {
+    if (!graphId) return;
+    const timer = window.setTimeout(() => void flowRef.current?.fitView({padding:0.25,maxZoom:1,duration:300}),100);
+    return () => window.clearTimeout(timer);
+  },[graphId,sourceCount]);
+
   // Stage 1 — stable node data, no selection state.
   // selectedId is intentionally excluded so clicking a node doesn't rebuild every node object.
   const baseNodes = useMemo<Node<BusinessNodeData>[]>(()=>{
     if (!graph) return [];
     if (mode==='records') return graph.records.map((record)=>({id:record.id,type:'business',position:record.position,data:{nodeId:record.id,label:record.label,description:String(record.values.description??''),category:'record',protected:false}}));
     const modelNodes = graph.nodes.map((node)=>({id:node.id,type:'business',position:node.position,draggable:canEdit&&!node.systemKey,data:{nodeId:node.id,label:node.label,description:node.description,category:node.category,protected:Boolean(node.systemKey),recordPolicy:node.recordPolicy,attributes:node.attributes,summary:summaries[node.id],quickActions:canEdit,onQuickConcept:beginQuickConcept,onOpenKnowledge,knowledgeCounts:knowledge.countsByNode[node.id]??{workspaces:0,documents:0},dropState:dropStateFor(node.id),onKnowledgeDragEnter:canEdit&&knowledge.draggedResource?setDropNodeId:undefined,onKnowledgeDragLeave:canEdit?((nodeId:string)=>setDropNodeId((current)=>current===nodeId?null:current)):undefined,onKnowledgeDrop:canEdit?dropKnowledge:undefined}}));
-    if (!quickConcept) return modelNodes;
-    return [...modelNodes,{id:quickConcept.id,type:'business',position:quickConcept.position,draggable:false,selectable:false,focusable:false,data:{nodeId:quickConcept.id,label:'',description:'',category:'business_object',protected:false,draft:true,onDraftSubmit:submitQuickConcept,onDraftCancel:()=>setQuickConcept(null)}}];
-  },[canEdit,dropNodeId,graph,knowledge.bindings,knowledge.countsByNode,knowledge.draggedResource,knowledge.isBusy,mode,onOpenKnowledge,quickConcept,summaries]);
+    const sourceNodes = flow.sources.map((source)=>({id:source.id,type:'source',position:source.position,draggable:false,connectable:false,data:{source}}));
+    const withSources = [...sourceNodes,...modelNodes] as unknown as Node<BusinessNodeData>[];
+    if (!quickConcept) return withSources;
+    return [...withSources,{id:quickConcept.id,type:'business',position:quickConcept.position,draggable:false,selectable:false,focusable:false,data:{nodeId:quickConcept.id,label:'',description:'',category:'business_object',protected:false,draft:true,onDraftSubmit:submitQuickConcept,onDraftCancel:()=>setQuickConcept(null)}}];
+  },[canEdit,dropNodeId,flow,graph,knowledge.bindings,knowledge.countsByNode,knowledge.draggedResource,knowledge.isBusy,mode,onOpenKnowledge,quickConcept,summaries]);
   // Stage 2 — apply selection cheaply; reuses same object refs for unaffected nodes so memo on BusinessNode holds.
   const nodes = useMemo<Node<BusinessNodeData>[]>(()=>
     baseNodes.map((node)=>node.selected===(node.id===selectedId)?node:{...node,selected:node.id===selectedId})
@@ -308,11 +362,25 @@ export function SemanticModelCanvas({ sourceMappings,mappingHealth,canEdit,onCon
     if (!graph) return [];
     const marker = {type:MarkerType.ArrowClosed,width:18,height:18,color:EDGE_COLOR};
     if (mode==='records') return graph.recordRelations.map((relation)=>({id:relation.id,source:relation.sourceRecordId,target:relation.targetRecordId,type:'relation',markerEnd:marker,data:{label:graph.relations.find((type)=>type.id===relation.relationTypeId)?.label??''}}));
-    const modelEdges = graph.relations.map((relation)=>({id:relation.id,source:relation.sourceNodeTypeId,target:relation.targetNodeTypeId,type:'relation',animated:false,markerEnd:marker,data:{label:relation.label,cardinality:relation.cardinality}}));
+    const feedEdges:Edge[] = flow.feeds.map((feed)=>({id:feed.id,source:feed.sourceId,target:feed.conceptId,type:'feed',data:{feed}}));
+    const modelEdges:Edge[] = [...feedEdges,...graph.relations.map((relation)=>({id:relation.id,source:relation.sourceNodeTypeId,target:relation.targetNodeTypeId,type:'relation',animated:false,markerEnd:marker,data:{label:relation.label,cardinality:relation.cardinality}}))];
     return quickConcept?[...modelEdges,{id:`quick-${quickConcept.id}`,source:quickConcept.sourceId,target:quickConcept.id,label:t('relation.defaultWording'),animated:true,style:{strokeDasharray:'5 5',stroke:EDGE_COLOR_SELECTED,strokeWidth:2}}]:modelEdges;
-  },[graph,mode,quickConcept,t]);
+  },[flow,graph,mode,quickConcept,t]);
 
-  return <>
+  const paneDragOver = (event:DragEvent<HTMLDivElement>) => {
+    if (!canEdit||!onPaneDrop||!event.dataTransfer.types.includes(KNOWLEDGE_DRAG_TYPE)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect='copy';
+  };
+  const paneDrop = (event:DragEvent<HTMLDivElement>) => {
+    if (!canEdit||!onPaneDrop) return;
+    const resource=knowledge.draggedResource??parseKnowledgeResource(event.dataTransfer.getData(KNOWLEDGE_DRAG_TYPE));
+    if (!resource) return;
+    event.preventDefault();
+    knowledge.setDraggedResource(null);
+    onPaneDrop(resource);
+  };
+  return <div className='h-full w-full' onDragOver={paneDragOver} onDrop={paneDrop}>
     <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} fitView fitViewOptions={{padding:0.15,minZoom:isMobile?1:0.25,maxZoom:1}} minZoom={isMobile?1:0.25} maxZoom={1.6} proOptions={{hideAttribution:true}} nodesConnectable={canEdit} nodesDraggable={canEdit} elevateNodesOnSelect={false} onInit={(instance)=>{flowRef.current=instance;}}
       onConnect={(connection:Connection)=>{
         if (!connection.source||!connection.target||!graph) return;
@@ -322,9 +390,10 @@ export function SemanticModelCanvas({ sourceMappings,mappingHealth,canEdit,onCon
         if (options.length===1){addRecordRelation(options[0]);return;}
         setRecordOptions(options);
       }}
-      onNodeClick={(event,node)=>{if((event.target as Element).closest('.nodrag')||node.id===quickConcept?.id)return;select(node.id);}} onEdgeClick={(_,edge)=>select(edge.id)} onPaneClick={()=>select(null)}
-      onNodeDragStop={(_,node)=>{if(!graph||node.id===quickConcept?.id)return;const isRecord=mode==='records';if(!isRecord&&graph.nodes.some((item)=>item.id===node.id&&item.systemKey))return;commit({type:'layout.update',positions:[{id:node.id,position:node.position}]},(current)=>isRecord?{...current,records:current.records.map((item)=>item.id===node.id?{...item,position:node.position}:item)}:{...current,nodes:current.nodes.map((item)=>item.id===node.id?{...item,position:node.position}:item)});}}
+      onNodeClick={(event,node)=>{if((event.target as Element).closest('.nodrag')||node.id===quickConcept?.id)return;if(isDesignerSourceId(node.id)){const source=flow.sources.find((item)=>item.id===node.id);if(source)onOpenSource?.(source);return;}select(node.id);}}
+      onEdgeClick={(_,edge)=>{const feed=flow.feeds.find((item)=>item.id===edge.id);if(feed){const source=flow.sources.find((item)=>item.id===feed.sourceId);if(source)onOpenSource?.(source,feed.mapping);return;}select(edge.id);}} onPaneClick={()=>select(null)}
+      onNodeDragStop={(_,node)=>{if(!graph||node.id===quickConcept?.id||isDesignerSourceId(node.id))return;const isRecord=mode==='records';if(!isRecord&&graph.nodes.some((item)=>item.id===node.id&&item.systemKey))return;commit({type:'layout.update',positions:[{id:node.id,position:node.position}]},(current)=>isRecord?{...current,records:current.records.map((item)=>item.id===node.id?{...item,position:node.position}:item)}:{...current,nodes:current.nodes.map((item)=>item.id===node.id?{...item,position:node.position}:item)});}}
     ><Background gap={24} size={1} color='hsl(var(--muted-foreground) / 0.18)' /><Controls showInteractive={false} /></ReactFlow>
     <Dialog open={recordOptions.length>0} onOpenChange={(open)=>{if(!open)setRecordOptions([]);}}><DialogContent><DialogHeader><DialogTitle>{t('records.chooseRelationship')}</DialogTitle><DialogDescription>{t('records.chooseRelationshipHelp')}</DialogDescription></DialogHeader><div className='grid gap-2'>{recordOptions.map((option)=><Button key={option.relation.id} variant='outline' className='h-auto justify-start py-3 text-left' onClick={()=>addRecordRelation(option)}>{option.relation.label}</Button>)}</div></DialogContent></Dialog>
-  </>;
+  </div>;
 }
