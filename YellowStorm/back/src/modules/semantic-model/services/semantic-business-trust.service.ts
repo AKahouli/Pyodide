@@ -41,6 +41,10 @@ interface ReadinessCounts {
   ruleCount: string;
   unhealthyMappingCount: string;
   openReviewCount: string;
+  /** First data-bearing concept without an identity, so the readiness step can open it. */
+  missingIdentityConceptId?: string | null;
+  /** First relationship between data-bearing concepts without a way to link records. */
+  unmatchedRelationId?: string | null;
 }
 
 /** Restricts relation counts to links between data-bearing business concepts; system and classification-only ends need no matching rule. */
@@ -160,7 +164,9 @@ export class SemanticBusinessTrustService {
           (review.kind='ambiguous_relation' AND EXISTS (SELECT 1 FROM semantic_model.relation_types relation WHERE relation.version_id=$2 AND relation.id::text=review.target_id)) OR
           (review.kind='source_conflict' AND EXISTS (SELECT 1 FROM semantic_model.node_types node WHERE node.version_id=$2 AND node.id::text=review.details->>'conceptId')) OR
           (review.kind='broken_mapping' AND EXISTS (SELECT 1 FROM semantic_model.source_mappings mapping JOIN semantic_model.node_types node ON node.id=mapping.concept_id AND node.version_id=$2 WHERE mapping.id::text=review.target_id))
-        ))::text AS "openReviewCount"`,
+        ))::text AS "openReviewCount",
+        (SELECT n.id::text FROM semantic_model.node_types n WHERE n.model_id=$1 AND n.version_id=$2 AND n.system_key IS NULL AND n.record_policy<>'none' AND NOT EXISTS (SELECT 1 FROM semantic_model.identity_rules i WHERE i.model_id=$1 AND i.concept_id=n.id) ORDER BY n.created_at LIMIT 1) AS "missingIdentityConceptId",
+        (SELECT relation.id::text FROM semantic_model.relation_types relation ${DATA_RELATION_JOIN} WHERE relation.model_id=$1 AND relation.version_id=$2 AND NOT EXISTS (SELECT 1 FROM semantic_model.relation_resolution_rules rule WHERE rule.model_id=$1 AND rule.relation_id=relation.id) ORDER BY relation.created_at LIMIT 1) AS "unmatchedRelationId"`,
       [model.id, model.currentDraftVersionId],
     );
     const counts = result.rows[0];
@@ -169,8 +175,8 @@ export class SemanticBusinessTrustService {
     const areas = [
       this.area('structure', configured, 'Add at least one business concept.'),
       this.area('sources', configured && number(counts.dataConceptCount) <= number(counts.sourcedConceptCount) && !number(counts.unhealthyMappingCount), 'Map every data-bearing concept to an available source.'),
-      this.area('identity', configured && number(counts.dataConceptCount) <= number(counts.identityCount), 'Define an identity rule for every data-bearing concept.'),
-      this.area('relationships', configured && number(counts.relationCount) <= number(counts.ruleCount), 'Configure matching for every relationship.'),
+      this.area('identity', configured && number(counts.dataConceptCount) <= number(counts.identityCount), 'Define an identity rule for every data-bearing concept.', counts.missingIdentityConceptId),
+      this.area('relationships', configured && number(counts.relationCount) <= number(counts.ruleCount), 'Configure matching for every relationship.', counts.unmatchedRelationId),
       // Source health already counts under `sources`; quality is only about decisions left open.
       this.area('quality', configured && !number(counts.openReviewCount), 'Resolve open reviews.'),
     ];
@@ -182,8 +188,11 @@ export class SemanticBusinessTrustService {
     return { status: configured ? completeAreas === areas.length ? 'ready' : 'needs_review' : 'not_configured', score: progress * 20, completeAreas, totalAreas: areas.length, areas };
   }
 
-  private area(key: string, complete: boolean, message: string) {
-    return { key, complete, issues: complete ? [] : [{ severity: key === 'quality' ? 'review' : 'blocking', message }] };
+  private area(key: string, complete: boolean, message: string, targetId?: string | null) {
+    return {
+      key, complete, issues: complete ? [] : [{ severity: key === 'quality' ? 'review' : 'blocking', message }],
+      ...(!complete && targetId ? { targetId } : {}),
+    };
   }
 
   private validateResolution(item: { kind: string; details: Record<string, unknown> }, dto: ResolveReviewItemDto): void {

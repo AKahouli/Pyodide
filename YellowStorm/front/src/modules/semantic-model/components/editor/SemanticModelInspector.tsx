@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, Loader2, LockKeyhole, Plus, Trash2, X } from 'lucide-react';
+import { AlertTriangle, KeyRound, Loader2, LockKeyhole, Plus, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -16,9 +16,9 @@ import type { AttributeDefinition, SemanticNodeType, SemanticRecord, SemanticRel
 import { businessKey } from '../../utils/model-utils';
 import { KnowledgePanel } from '../knowledge/KnowledgePanel';
 import { semanticModelApi } from '../../api';
-import { useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
-import { useSourceMappings } from '../../query/hooks';
+import { useIdentityRules, useSourceMappings } from '../../query/hooks';
 import { parseApiError } from '@/lib/api-error';
 import { showError } from '@/lib/notifications';
 import { RelationMatchingPanel } from '../mapping/RelationMatchingPanel';
@@ -70,6 +70,7 @@ function NodeForm({ modelId, node: item,locked,canEdit,onMapData }: Readonly<{ m
     <Field label={t('field.label')}><Input value={item.label} disabled={locked||!canEdit} onChange={(event) => update({ label:event.target.value,key:businessKey(event.target.value) })} /></Field>
     <Field label={t('field.description')}><Textarea value={item.description} disabled={locked||!canEdit} placeholder={t('concept.descriptionPlaceholder')} onChange={(event) => update({ description:event.target.value })} /></Field></div>
     {!locked&&canEdit && <section className='space-y-3 border-t pt-5'><AttributeEditor attributes={item.attributes} onChange={(attributes) => update({ attributes })} /></section>}
+    {!locked&&modelId && <section className='space-y-3 border-t pt-5'><IdentitySection modelId={modelId} node={item} canEdit={canEdit} /></section>}
     <section className='space-y-3 border-t pt-5'><h3 className='font-semibold'>{t('workspaceUi.relationships')}</h3>{(graph?.relations.filter((relation) => relation.sourceNodeTypeId === item.id || relation.targetNodeTypeId === item.id) ?? []).map((relation) => { const other = graph?.nodes.find((node) => node.id === (relation.sourceNodeTypeId === item.id ? relation.targetNodeTypeId : relation.sourceNodeTypeId)); return <button key={relation.id} type='button' onClick={() => select(relation.id)} className='block w-full rounded-xl bg-muted/50 p-3 text-left text-sm hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary'>{relation.sourceNodeTypeId === item.id ? `${item.label} ${relation.label} ${other?.label ?? ''}` : `${other?.label ?? ''} ${relation.label} ${item.label}`}</button>; })}{!graph?.relations.some((relation) => relation.sourceNodeTypeId === item.id || relation.targetNodeTypeId === item.id) && <p className='text-sm text-muted-foreground'>{t('workspaceUi.noRelationships')}</p>}</section>
     {!locked&&canEdit && <section className='border-t pt-5'><SourceMappingsSection modelId={modelId} conceptId={item.id} onMapData={onMapData} /></section>}
     <details className='border-t pt-5'><summary className='cursor-pointer text-sm font-semibold'>{t('workspaceUi.advanced')}</summary><div className='mt-4 space-y-4'>
@@ -77,6 +78,43 @@ function NodeForm({ modelId, node: item,locked,canEdit,onMapData }: Readonly<{ m
     <Field label={t('field.recordPolicy')}><Select value={item.recordPolicy} disabled={locked||!canEdit} onValueChange={(recordPolicy: SemanticNodeType['recordPolicy']) => update({ recordPolicy })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(['none','optional','expected'] as const).map((policy) => <SelectItem key={policy} value={policy}>{t(`recordPolicy.${policy}`)}</SelectItem>)}</SelectContent></Select></Field>
     {!locked&&canEdit && <><Separator /><Button variant='destructive' onClick={deleteNode}><Trash2 className='mr-2 h-4 w-4' />{t('inspector.deleteConcept')}</Button></>}
     </div></details>
+  </div>;
+}
+
+/** "What makes each <concept> unique?": the identity rule, chosen on the concept itself. */
+export function IdentitySection({ modelId, node, canEdit }: Readonly<{ modelId: string; node: SemanticNodeType; canEdit: boolean }>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const client = useQueryClient();
+  const rules = useIdentityRules(modelId);
+  const mappings = useSourceMappings(modelId);
+  const fields = rules.data?.find((rule) => rule.conceptId === node.id)?.fields ?? [];
+  const mapped = (mappings.data ?? []).some((mapping) => mapping.conceptId === node.id);
+  const save = useMutation({
+    mutationFn: (next: string[]) => semanticModelApi.saveIdentityRule(modelId, node.id, next),
+    onSuccess: async () => {
+      await Promise.all([
+        client.invalidateQueries({ queryKey: semanticModelQueryKeys.identityRules(modelId) }),
+        client.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) }),
+        client.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId) }),
+        client.invalidateQueries({ queryKey: semanticModelQueryKeys.model(modelId) }),
+      ]);
+    },
+    onError: (error) => showError(t('identity.saveError'), { description: parseApiError(error).message }),
+  });
+  const toggle = (key: string) => save.mutate(fields.includes(key) ? fields.filter((field) => field !== key) : [...fields, key]);
+  return <div className='space-y-2'>
+    <h3 className='font-semibold'>{t('identity.title', { name: node.label })}</h3>
+    <p className='text-xs text-muted-foreground'>{t('identity.help', { name: node.label })}</p>
+    {mapped && !fields.length && !rules.isLoading && <p role='alert' className='flex gap-2 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400'><AlertTriangle className='h-4 w-4 shrink-0' />{t('identity.missing', { name: node.label })}</p>}
+    {node.attributes.length === 0 ? <p className='rounded-xl bg-muted/50 p-3 text-xs text-muted-foreground'>{t('identity.noFields')}</p>
+      : <div className='flex flex-wrap gap-2'>{node.attributes.map((attribute) => {
+        const active = fields.includes(attribute.key);
+        return <button key={attribute.key} type='button' aria-pressed={active} disabled={!canEdit || save.isPending || rules.isLoading}
+          onClick={() => toggle(attribute.key)}
+          className={`flex min-h-9 items-center gap-1.5 rounded-full border px-3 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-default ${active ? 'border-amber-500/60 bg-amber-500/10 font-medium text-amber-800 dark:text-amber-300' : 'hover:bg-muted'}`}>
+          {active && <KeyRound className='h-3 w-3' />}{attribute.label || attribute.key}
+        </button>;
+      })}{save.isPending && <Loader2 className='h-4 w-4 animate-spin self-center' />}</div>}
   </div>;
 }
 

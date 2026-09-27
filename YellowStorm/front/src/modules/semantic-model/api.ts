@@ -161,6 +161,16 @@ export const semanticModelApi = {
   async previewRelationResolutionRule(id: string, ruleId: string, limit = 25): Promise<RelationResolutionPreview> {
     return unwrap(await apiClient.post<ApiResponse<RelationResolutionPreview>>(API_ENDPOINTS.semanticModels.relationResolutionPreview(id, ruleId), { limit }, { timeout: 0 }));
   },
+  async listIdentityRules(id: string): Promise<Array<{ conceptId: string; fields: string[] }>> {
+    return unwrap(await apiClient.get<ApiResponse<Array<{ conceptId: string; fields: string[] }>>>(API_ENDPOINTS.semanticModels.identityRules(id)));
+  },
+  async saveIdentityRule(id: string, conceptId: string, fields: string[]): Promise<{ revision: number; conceptId: string; fields: string[] }> {
+    const model = await semanticModelApi.get(id);
+    return unwrap(await apiClient.put<ApiResponse<{ revision: number; conceptId: string; fields: string[] }>>(API_ENDPOINTS.semanticModels.identityRule(id, conceptId), {
+      expectedRevision: model.revision,
+      fields,
+    }));
+  },
   async listSourceResolutionPolicies(id: string): Promise<SourceResolutionPolicy[]> {
     return unwrap(await apiClient.get<ApiResponse<SourceResolutionPolicy[]>>(API_ENDPOINTS.semanticModels.sourceResolutionPolicies(id)));
   },

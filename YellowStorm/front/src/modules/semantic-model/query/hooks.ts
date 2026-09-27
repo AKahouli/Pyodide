@@ -33,6 +33,10 @@ export function useSourceMappings(id: string | undefined) {
 export function useRelationResolutionRules(id: string | undefined) {
   return useQuery({ queryKey: semanticModelQueryKeys.relationRules(id ?? 'none'), queryFn: () => semanticModelApi.listRelationResolutionRules(id ?? ''), enabled: Boolean(id) });
 }
+export function useIdentityRules(id: string | undefined) {
+  return useQuery({ queryKey: semanticModelQueryKeys.identityRules(id ?? 'none'), queryFn: () => semanticModelApi.listIdentityRules(id ?? ''), enabled: Boolean(id) });
+}
+
 export function useSourceResolutionPolicies(id: string | undefined) {
   return useQuery({ queryKey: semanticModelQueryKeys.sourcePolicies(id ?? 'none'), queryFn: () => semanticModelApi.listSourceResolutionPolicies(id ?? ''), enabled: Boolean(id) });
 }

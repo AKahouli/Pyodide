@@ -57,6 +57,8 @@ const MAX_CARD_FIELDS = 4;
 function conceptStatus(data: BusinessNodeData, t: (key: string, options?: Record<string, unknown>) => string) {
   const summary = data.summary;
   if (!summary || data.category === 'record' || data.protected) return null;
+  // A mapped concept without a unique field silently yields no records, so say so on the card.
+  if (summary.sources > 0 && summary.identityFields.length === 0) return { tone: 'warn' as const, label: t('editor.status.noKey') };
   if (summary.notReady > 0) return { tone: 'warn' as const, label: t('editor.status.sourcesNotReady', { count: summary.notReady }) };
   if (summary.sources > 0) return { tone: 'ok' as const, label: t('editor.status.ready') };
   if (data.recordPolicy === 'expected' && summary.records === 0) return { tone: 'warn' as const, label: t('editor.status.noSource') };

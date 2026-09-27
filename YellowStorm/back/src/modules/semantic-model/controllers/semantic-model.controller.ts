@@ -22,6 +22,7 @@ import {
   SourceMappingPreviewDto,
   DataPreviewDto,
   SaveRelationResolutionRuleDto,
+  SaveIdentityRuleDto,
   SaveSourceResolutionPolicyDto,
   ListReviewItemsQueryDto,
   ResolveReviewItemDto,
@@ -282,6 +283,18 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   previewRelationResolutionRule(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('ruleId') ruleId: string,@Body() dto: DataPreviewDto) {
     return this.crossSource.previewRule(user._id.toString(), modelId, ruleId, dto.limit);
+  }
+
+  @Get(':modelId/identity-rules')
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  listIdentityRules(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
+    return this.crossSource.listIdentityRules(user._id.toString(), modelId);
+  }
+
+  @Put(':modelId/identity-rules/:conceptId')
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  saveIdentityRule(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('conceptId') conceptId: string,@Body() dto: SaveIdentityRuleDto) {
+    return this.crossSource.saveIdentityRule(user._id.toString(), modelId, conceptId, dto);
   }
 
   @Get(':modelId/source-resolution-policies')

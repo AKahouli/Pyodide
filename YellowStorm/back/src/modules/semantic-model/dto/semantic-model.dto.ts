@@ -542,6 +542,22 @@ export class SourcePriorityDto {
   rank!: number;
 }
 
+export class SaveIdentityRuleDto {
+  @ApiProperty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  expectedRevision!: number;
+
+  @ApiProperty({ type: [String], maxItems: 10, description: 'Concept fields that together make each record unique; empty clears the rule' })
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsString({ each: true })
+  @MinLength(1, { each: true })
+  @MaxLength(200, { each: true })
+  fields!: string[];
+}
+
 export class SaveSourceResolutionPolicyDto {
   @ApiProperty()
   @Type(() => Number)

@@ -291,6 +291,8 @@ export interface SemanticReadiness {
     key: 'structure' | 'sources' | 'identity' | 'relationships' | 'quality';
     complete: boolean;
     issues: Array<{ severity: 'blocking' | 'review'; message: string }>;
+    /** The concept or relationship to open to complete this step, when there is one. */
+    targetId?: string;
   }>;
 }
 
