@@ -70,3 +70,5 @@ docs/architecture/*.visual-check.*
 *.err
 .codex/*.png
 .codex/*/*.png
+docs/architecture/yellowstorm-architecture.json
+.understand-anything/
