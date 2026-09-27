@@ -56,6 +56,7 @@ import { SemanticTrustPanel } from '../components/review/SemanticTrustPanel';
 import { PopulationStartedPanel, type PopulationOutcome } from '../components/population/PopulationStartedPanel';
 import { VersionsPanel } from "../components/versions/VersionsPanel";
 import { useKnowledgeLinking, type KnowledgeResource } from "../hooks/use-knowledge-linking";
+import { useAssistantSync } from "../hooks/use-assistant-sync";
 import { useCanvasPositions, useIdentityRules, useMappingHealth, usePopulationFreshness, useSemanticVersions, useVersionComparison, useSemanticDataPreview, useSemanticGraph, useSemanticModel, useReviewQueue, useSourceMappings } from "../query/hooks";
 import { semanticModelQueryKeys } from '../query/queryKeys';
 import { isPendingSaveCurrent, isSemanticGraphSaved, selectPendingOperations, useSemanticModelEditorStore } from "../store";
@@ -252,6 +253,9 @@ export function SemanticModelEditorPage() {
     }
   }, [knowledge.workspaceLinks, modelId, queryClient, t]);
   const savingRef = useRef(false);
+  // A save refused because the model changed meanwhile is replayed once on the new revision.
+  const conflictRetryRef = useRef(0);
+  useAssistantSync(modelId);
   const hydratedVersionRef = useRef<string | null>(null);
   const knowledgeClosedAtRef = useRef(0);
   const blocker = useBlocker(pending.length > 0);
@@ -316,10 +320,26 @@ export function SemanticModelEditorPage() {
         if (batch.operations.some((operation) => operation.type !== 'layout.update')) {
           void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.all });
         }
-        if (saveIsCurrent()) markSaved(result.revision, batch.groupCount);
+        if (saveIsCurrent()) {
+          conflictRetryRef.current = 0;
+          markSaved(result.revision, batch.groupCount);
+        }
       } catch (error) {
         if (saveIsCurrent()) {
           const apiError = parseApiError(error);
+          if (apiError.code === "ERR_3703" && conflictRetryRef.current < 1) {
+            // Someone else (an assistant, often) saved first: replay these edits on their version and save again.
+            conflictRetryRef.current += 1;
+            markFailed("error");
+            try {
+              useSemanticModelEditorStore.getState().rebase(await semanticModelApi.graph(modelId));
+              savingRef.current = false;
+              retrySave();
+              return;
+            } catch {
+              // Fall through to the conflict dialog.
+            }
+          }
           markFailed(apiError.code === "ERR_3703" ? "conflict" : "error");
           showError(t("save.error"), { description: `[${apiError.code}] ${apiError.message}` });
         }

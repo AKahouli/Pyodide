@@ -5,9 +5,10 @@ import { useSemanticModelEditorStore } from '../store';
  * Say that something was removed, with an Undo button for that step. The button only undoes it while it
  * is still the latest step, so a later change is never undone by mistake.
  */
-export function announceUndoable(message: string, undoLabel: string) {
+export function announceUndoable(message: string, undoLabel: string, duration?: number) {
   const step = useSemanticModelEditorStore.getState().undoStack.at(-1);
   showSuccess(message, {
+    duration,
     action: {
       label: undoLabel,
       onClick: () => {

@@ -42,6 +42,11 @@ interface SemanticModelEditorState {
   commit: (operation: SemanticGraphOperation, update: (graph: SemanticGraph) => SemanticGraph) => void;
   commitBatch: (operations: SemanticOperationGroup, update: (graph: SemanticGraph) => SemanticGraph) => void;
   replaceGraph: (graph: SemanticGraph) => void;
+  /**
+   * Take the server's graph after someone else changed it (an assistant, for example) and replay the
+   * edits still waiting to be saved on top of it, so they save against the new revision.
+   */
+  rebase: (server: SemanticGraph) => void;
   /** Record a change saved through another command, so Undo and Redo can reverse and repeat it. */
   pushAction: (entry: Omit<Extract<HistoryEntry, { kind: 'action' }>, 'kind'>) => void;
   markSaving: () => void;
@@ -176,6 +181,10 @@ export const useSemanticModelEditorStore = create<SemanticModelEditorState>()(de
     return { graph: after, pending: [...state.pending, operations], undoStack: [...state.undoStack.slice(1 - HISTORY_LIMIT), step], redoStack: [], saveStatus: 'saving' };
   }),
   replaceGraph: (graph) => set({ graph }),
+  rebase: (server) => set((state) => {
+    if (!state.graph || state.graph.versionId !== server.versionId) return state;
+    return { graph: { ...applyGraphOperations(server, state.pending.flat()), revision: server.revision } };
+  }),
   pushAction: (entry) => set((state) => ({ undoStack: [...state.undoStack.slice(1 - HISTORY_LIMIT), { kind: 'action', ...entry }], redoStack: [] })),
   markSaving: () => set({ saveStatus: 'saving', saveInFlight: true }),
   markSaved: (revision, savedGroupCount) => set((state) => {

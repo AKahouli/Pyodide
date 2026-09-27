@@ -228,6 +228,22 @@ export interface SourceFieldMapping {
   extractionStrategy?: SourceExtractionStrategy;
 }
 
+/** A change an assistant (an agent using the semantic model MCP) made to the model. */
+export interface AssistantChange {
+  id: string;
+  message: string;
+  agentId: string | null;
+  createdAt: string;
+  undoneAt: string | null;
+}
+
+export interface AssistantChangesPage {
+  graphRevision: number;
+  /** Server time of the answer, to ask only for what happens after it. */
+  now: string;
+  changes: AssistantChange[];
+}
+
 export interface ConceptSourceMapping {
   id: string;
   conceptId: string;

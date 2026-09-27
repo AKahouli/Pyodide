@@ -1,7 +1,7 @@
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type { ApiResponse } from '@/lib/api/client';
-import type { AgeGraphEdge, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
+import type { AgeGraphEdge, AssistantChangesPage, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
 SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, PopulationFreshness, DesignerBoxPosition, SemanticReviewItem, SemanticVersion,
 SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
 StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison, ReviewQueue, ConceptRecordsPage } from './types';
@@ -158,6 +158,16 @@ export const semanticModelApi = {
       ...(mappingId ? { mappingId } : {}),
       expectedRevision: model.revision,
     }));
+  },
+  /** Changes assistants made to the model since a moment, with the draft's graph revision. */
+  async assistantChanges(id: string, since?: string): Promise<AssistantChangesPage> {
+    return unwrap(await apiClient.get<ApiResponse<AssistantChangesPage>>(API_ENDPOINTS.semanticModels.assistantChanges(id), { params: since ? { since } : {} }));
+  },
+  async undoAssistantChange(id: string, changeId: string): Promise<{ undone: boolean }> {
+    return unwrap(await apiClient.post<ApiResponse<{ undone: boolean }>>(API_ENDPOINTS.semanticModels.assistantChange(id, changeId, 'undo'), {}, { timeout: 0 }));
+  },
+  async redoAssistantChange(id: string, changeId: string): Promise<{ redone: boolean }> {
+    return unwrap(await apiClient.post<ApiResponse<{ redone: boolean }>>(API_ENDPOINTS.semanticModels.assistantChange(id, changeId, 'redo'), {}, { timeout: 0 }));
   },
   /** A page of one concept's records in the data in use, optionally searched. */
   async conceptRecords(id: string, conceptId: string, query: { q?: string; limit?: number; offset?: number } = {}): Promise<ConceptRecordsPage> {
