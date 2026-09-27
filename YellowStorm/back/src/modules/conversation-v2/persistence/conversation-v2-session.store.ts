@@ -28,6 +28,8 @@ export interface ConversationV2SessionRecord {
   eventSequence: number;
   eventCount: number;
   systemWorkspaceId: string | null;
+  /** Revision the browser runtime boots on (template `template_<id>` or system starter). */
+  starterRevisionId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -58,7 +60,11 @@ export interface ConversationV2SessionPointerPatch {
  * Callers never touch Drizzle / Mongoose directly.
  */
 export interface ConversationV2SessionStore {
-  createDraft(ownerId: string, workspaceIds: string[]): Promise<ConversationV2SessionRecord>;
+  createDraft(
+    ownerId: string,
+    workspaceIds: string[],
+    starterRevisionId?: string,
+  ): Promise<ConversationV2SessionRecord>;
   attachAiSession(id: string, aiSessionId: string, systemWorkspaceId: string): Promise<void>;
   deleteDraft(id: string): Promise<void>;
   findById(id: string, options?: { includeDeleted?: boolean }): Promise<ConversationV2SessionRecord | null>;

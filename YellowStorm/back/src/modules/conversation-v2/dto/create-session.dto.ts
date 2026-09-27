@@ -13,4 +13,12 @@ export class CreateSessionDto {
   @ArrayMaxSize(20)
   @IsMongoId({ each: true })
   workspaceIds?: string[];
+
+  @ApiPropertyOptional({
+    description:
+      'Published app template to seed the session revision from. When set, the browser runtime boots on the template manifest.',
+  })
+  @IsOptional()
+  @IsMongoId()
+  templateId?: string;
 }
