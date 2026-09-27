@@ -334,3 +334,20 @@ def test_lease_covers_sources_within_bounds():
     assert population_lease_seconds(1, 30) == 300
     assert population_lease_seconds(25, 300) == 1800
     assert 300 <= population_lease_seconds(3, 30) <= 1800
+
+
+def test_summarize_gaps_groups_missing_values_and_links():
+    from app.workers.population_tasks import summarize_gaps
+
+    specification = {"concepts": [{"conceptId": "c1", "allowedFields": ["id", "city", "name"],
+                                   "identity": {"keyComponents": ["id"]}}]}
+    outcome = {"entities": [{"conceptId": "c1", "attributes": {"name": "A"}},
+                            {"conceptId": "c1", "attributes": {"name": "B", "city": "Paris"}}],
+               "gaps": [{"kind": "unresolved_reference", "relationId": "r1"},
+                        {"kind": "unresolved_reference", "relationId": "r1"},
+                        {"kind": "missing_identity", "conceptId": "c1"}]}
+    assert summarize_gaps(outcome, specification) == {
+        "missingValues": [{"conceptId": "c1", "attribute": "city", "missing": 1, "total": 2}],
+        "unresolvedLinks": [{"relationId": "r1", "kind": "unresolved_reference", "count": 2}],
+        "other": [{"conceptId": "c1", "kind": "missing_identity", "count": 1}],
+    }

@@ -534,6 +534,49 @@ async def finalize_whole_model_build(pool, command_dump: dict,  # type: ignore[n
         await age_pool.close()
 
 
+MAX_GAP_GROUPS = 200
+
+
+def summarize_gaps(outcome: dict, specification: dict) -> dict:
+    """Readable gaps of a population: missing values per concept attribute,
+    links that could not be resolved, and the other gap kinds grouped by
+    concept. Bounded so a large population keeps a small coverage row."""
+    entities = outcome.get("entities", [])
+    missing_values = []
+    for concept in specification.get("concepts", []):
+        concept_id = concept.get("conceptId")
+        members = [e for e in entities if e.get("conceptId") == concept_id]
+        if not members:
+            continue
+        keys = set((concept.get("identity") or {}).get("keyComponents") or [])
+        for attribute in sorted(concept.get("allowedFields", [])):
+            if attribute in keys:
+                continue
+            missing = sum(1 for e in members
+                          if (e.get("attributes") or {}).get(attribute) in (None, ""))
+            if missing:
+                missing_values.append({"conceptId": concept_id, "attribute": attribute,
+                                       "missing": missing, "total": len(members)})
+    links: dict[tuple, int] = {}
+    other: dict[tuple, int] = {}
+    for gap in outcome.get("gaps", []):
+        kind = gap.get("kind")
+        if gap.get("relationId") is not None:
+            key = (gap["relationId"], kind)
+            links[key] = links.get(key, 0) + 1
+        else:
+            key = (gap.get("conceptId"), kind)
+            other[key] = other.get(key, 0) + 1
+    return {
+        "missingValues": missing_values[:MAX_GAP_GROUPS],
+        "unresolvedLinks": [{"relationId": r, "kind": k, "count": c}
+                            for (r, k), c in sorted(links.items())][:MAX_GAP_GROUPS],
+        "other": [{"conceptId": cid, "kind": k, "count": c}
+                  for (cid, k), c in sorted(other.items(), key=lambda i: (str(i[0][0]), i[0][1]))
+                  ][:MAX_GAP_GROUPS],
+    }
+
+
 async def persist_population_revision(pool, command_dump: dict, outcome: dict) -> str:
     """Persist a computed population as an inert data revision (P6A, P6.16).
 
@@ -565,7 +608,8 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict) -
     coverage = {"counts": outcome.get("counts", {}),
                  "completeEnumeration": outcome.get("completeEnumeration", False),
                  "gapKinds": sorted({gap.get("kind") for gap in outcome.get("gaps", [])}),
-                 "documents": outcome.get("documentCoverage", [])}
+                 "documents": outcome.get("documentCoverage", []),
+                 "gaps": summarize_gaps(outcome, specification)}
     await create_data_revision(pool, revision_id=revision_id, model_id=model_id,
                                 model_version_id=model_version_id,
                                 spec_hash=outcome["specHash"],

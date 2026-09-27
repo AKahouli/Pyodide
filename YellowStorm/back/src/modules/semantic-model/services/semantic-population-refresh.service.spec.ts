@@ -115,6 +115,42 @@ describe('SemanticPopulationRefreshService', () => {
     expect(result.concepts[0]).toMatchObject({ id: 'c-customer', entities: [{ id: 'e-1', values: { name: 'Acme' } }] });
   });
 
+  it('explains where each value came from and what is missing', async () => {
+    const { runtime, service } = setup();
+    runtime.getBoundRecords.mockResolvedValueOnce({
+      dataRevisionId: 'dr-1',
+      entities: [{
+        entityId: 'e-1', conceptId: 'c-customer', label: 'Acme', attributes: { name: 'Acme', customer_id: '7' }, provenance: {},
+        origins: {
+          name: { kind: 'source', assetId: 'd-1', rowNumber: 4, column: 'name' },
+          customer_id: { kind: 'source', assetId: 'manual:snap-1', rowNumber: 'r1', column: 'customer_id' },
+        },
+      }],
+      relationships: [],
+      counts: { entities: 1, assertions: 2, relationships: 0 },
+      gaps: {
+        missingValues: [{ conceptId: 'c-customer', attribute: 'name', missing: 2, total: 5 }],
+        unresolvedLinks: [{ relationId: 'r-1', kind: 'unresolved_reference', count: 3 }],
+        other: [],
+      },
+      specification: {
+        concepts: [{ conceptId: 'c-customer', label: 'Customer', allowedFields: ['customer_id', 'name'] }],
+        relations: [{ relationId: 'r-1', label: 'belongs to' }],
+      },
+    } as never);
+    const result = await service.boundRecords('u-1', 'model-1', 25);
+    const entity = result.concepts[0].entities[0];
+    expect(entity.provenance.name).toMatchObject({
+      mappingId: 'm-1', rowNumber: 4,
+      source: { documentId: 'd-1', documentName: 'a.xlsx', sheetName: 'Sheet1' },
+      field: { method: 'direct_mapping', reference: 'name' },
+    });
+    expect(entity.provenance.customer_id).toEqual({ mappingId: '', source: { kind: 'manual', documentName: '' } });
+    expect(result.gaps.missingValues[0]).toMatchObject({ conceptLabel: 'Customer', attributeLabel: 'Name', missing: 2 });
+    expect(result.gaps.unresolvedLinks[0]).toMatchObject({ relationLabel: 'belongs to', count: 3 });
+    expect(result.summary.unresolvedRelations).toBe(3);
+  });
+
   it('assembles, mirrors and runs a whole-model refresh', async () => {
     const { database, runtime, service } = setup();
     const result = await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });

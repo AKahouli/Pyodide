@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 fastapi = pytest.importorskip("fastapi")
@@ -196,13 +198,22 @@ def test_bound_records_and_graph_share_the_draft_revision(client: TestClient):
     specification = {"concepts": [{"conceptId": "c1", "label": "Customer",
                                     "allowedFields": ["name"]}],
                      "relations": [{"relationId": "r1", "label": "knows"}]}
-    _inject(client, ScriptedPool([binding, counts, [entity], [relationship],
-                                  {"specification": specification}]))
+    origins = [{"entity_id": "crm::1", "attribute": "name", "origin": "source",
+                "evidence": {"assetRef": {"assetId": "a1"}, "rowNumber": 4,
+                             "column": "name"}}]
+    gaps = {"missingValues": [{"conceptId": "c1", "attribute": "city", "missing": 1,
+                               "total": 1}], "unresolvedLinks": [], "other": []}
+    revision = {"id": "dr_1", "coverage": json.dumps({"gaps": gaps})}
+    _inject(client, ScriptedPool([binding, counts, [entity], origins, revision,
+                                  [relationship], {"specification": specification}]))
     records = client.get("/v1/semantic-model-population/models/m1/records?limit=25",
                          headers=AUTH)
     assert records.status_code == 200
     assert records.json()["dataRevisionId"] == "dr_1"
     assert records.json()["entities"][0]["entityId"] == "crm::1"
+    assert records.json()["entities"][0]["origins"]["name"] == {
+        "kind": "source", "assetId": "a1", "rowNumber": 4, "column": "name"}
+    assert records.json()["gaps"] == gaps
 
     graph_rows = [
         [{"record_id": '"crm::1"', "concept_id": '"c1"', "label": '"Acme"',

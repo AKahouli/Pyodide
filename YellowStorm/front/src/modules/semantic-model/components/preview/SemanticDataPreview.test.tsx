@@ -5,6 +5,11 @@ import { SemanticDataPreview } from './SemanticDataPreview';
 const openFile = vi.fn();
 const refetch = vi.fn();
 const sourceIssues: Array<Record<string, unknown>> = [];
+const gaps = {
+  missingValues: [{ conceptId: 'organization', conceptLabel: 'Organization', attribute: 'country', attributeLabel: 'Country', missing: 1, total: 2 }],
+  unresolvedLinks: [{ relationId: 'partner', relationLabel: 'works with', kind: 'unresolved_reference', count: 3 }],
+  other: [],
+};
 
 vi.mock('@/modules/file-viewer/store', () => ({ useFileViewerStore: { getState: () => ({ openFile }) } }));
 vi.mock('../../query/hooks', () => ({
@@ -21,9 +26,9 @@ vi.mock('../../query/hooks', () => ({
           sources: [{ mappingId: 'crm', source: { documentName: 'CRM Production' } }, { mappingId: 'excel', source: { documentName: 'customers.csv' } }],
           conflicts: [{ attribute: 'country', preferred: 'NL', conflicting: 'FR', preferredMappingId: 'crm', conflictingMappingId: 'excel' }],
           provenance: { id: { mappingId: 'mapping', source: { kind: 'csv', workspaceId: 'workspace', documentId: 'document', documentName: 'customers.csv', documentPath: '/customers.csv', mimeType: 'text/csv', sheetName: 'CSV' }, rowNumber: 2 } },
-        }, { id: 'organization:c002', conceptId: 'organization', entityKey: 'c002', label: 'Contoso', values: { id: 'C002' }, provenance: {}, conflicts: [] }],
+        }, { id: 'organization:c002', conceptId: 'organization', entityKey: 'c002', label: 'Contoso', values: { id: 'C002' }, provenance: { id: { mappingId: '', source: { kind: 'manual', documentName: '' } } }, conflicts: [] }],
       }],
-      relations: [{ relationId: 'partner', relationLabel: 'works with', sourceEntityId: 'organization:c001', targetEntityIds: ['organization:c002'], status: 'resolved', sourceAttribute: 'id', sourceValue: 'C001', targetAttribute: 'id', targetValues: ['C002'] }], sourceIssues,
+      relations: [{ relationId: 'partner', relationLabel: 'works with', sourceEntityId: 'organization:c001', targetEntityIds: ['organization:c002'], status: 'resolved', sourceAttribute: 'id', sourceValue: 'C001', targetAttribute: 'id', targetValues: ['C002'] }], sourceIssues, gaps,
       summary: { entities: 2, resolvedRelations: 1, unresolvedRelations: 0, ambiguousRelations: 0, conflicts: 0 },
     },
   }),
@@ -80,5 +85,23 @@ describe('SemanticDataPreview', () => {
     expect(screen.getByRole('heading', { name: 'Contoso' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /customers\.csv/ })).not.toBeInTheDocument();
     expect(screen.getByText(/works with/)).toBeInTheDocument();
+  });
+
+  it('says which values were typed by hand', () => {
+    render(<SemanticDataPreview modelId='model' />);
+    fireEvent.click(screen.getByRole('button', { name: /^Contoso/ }));
+    expect(screen.getByText('dataPreview.typedByHand')).toBeInTheDocument();
+  });
+
+  it('lists what is missing with a way to fix it', () => {
+    const onOpenItem = vi.fn();
+    render(<SemanticDataPreview modelId='model' onOpenItem={onOpenItem} />);
+    expect(screen.getByText('dataPreview.gapsTitle')).toBeInTheDocument();
+    expect(screen.getByText('dataPreview.gapMissingValue')).toBeInTheDocument();
+    expect(screen.getByText('dataPreview.gapUnresolvedLink')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'dataPreview.gapFixRelationship' }));
+    expect(onOpenItem).toHaveBeenCalledWith('partner');
+    fireEvent.click(screen.getByRole('button', { name: 'dataPreview.gapFixConcept' }));
+    expect(onOpenItem).toHaveBeenCalledWith('organization');
   });
 });

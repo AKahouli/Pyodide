@@ -8,9 +8,9 @@ import { parseApiError } from '@/lib/api-error';
 import { useFileViewerStore } from '@/modules/file-viewer/store';
 import { useModuleTranslation } from '@/modules/localization';
 import { useSemanticDataPreview } from '../../query/hooks';
-import type { SourcePreviewIssue } from '../../types';
+import type { SemanticDataGaps, SourcePreviewIssue } from '../../types';
 
-export function SemanticDataPreview({ modelId, dataRevisionId, onDataRevision }: Readonly<{ modelId: string; dataRevisionId?: string; onDataRevision?: (revisionId: string) => void }>) {
+export function SemanticDataPreview({ modelId, dataRevisionId, onDataRevision, onOpenItem }: Readonly<{ modelId: string; dataRevisionId?: string; onDataRevision?: (revisionId: string) => void; onOpenItem?: (id: string) => void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const [limit, setLimit] = useState(25);
   const [conceptId, setConceptId] = useState('all');
@@ -80,6 +80,7 @@ export function SemanticDataPreview({ modelId, dataRevisionId, onDataRevision }:
           </div>
         </div>
       </section>}
+      {preview.data?.gaps && <GapsPanel gaps={preview.data.gaps} onOpenItem={onOpenItem} />}
       {selectedEntity ? <div className='grid gap-4 min-[900px]:grid-cols-[15rem_minmax(0,1fr)]'>
         <select className='h-11 w-full rounded-lg border bg-background px-3 text-sm min-[900px]:hidden' value={selectedEntity.id} onChange={(event) => setSelectedEntityId(event.target.value)} aria-label={t('dataPreview.chooseRecord')}>{concepts.filter((concept) => concept.entities.length > 0).map((concept) => <optgroup key={concept.id} label={concept.label}>{concept.entities.map((entity) => <option key={entity.id} value={entity.id}>{concept.label}: {entity.label || t('mapping.unnamedEntity')}{recordDetail(entity) ? ` · ${recordDetail(entity)}` : ''}</option>)}</optgroup>)}</select>
         <nav className='hidden space-y-4 rounded-2xl border bg-background p-3 min-[900px]:block' aria-label={t('dataPreview.entities')}>{concepts.filter((concept) => concept.entities.length > 0).map((concept) => <section key={concept.id}><h3 className='px-2 py-1 text-xs font-semibold text-muted-foreground'>{concept.label} · {concept.entities.length}</h3><div className='space-y-1'>{concept.entities.map((entity) => <button key={entity.id} type='button' onClick={() => setSelectedEntityId(entity.id)} aria-current={selectedEntity.id === entity.id ? 'true' : undefined} className={`w-full rounded-lg px-3 py-2 text-left text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${selectedEntity.id === entity.id ? 'bg-primary/10 font-medium' : 'hover:bg-muted'}`}><span className='block truncate'>{entity.label || t('mapping.unnamedEntity')}</span>{recordDetail(entity) && <span className='block text-xs text-muted-foreground'>{recordDetail(entity)}</span>}</button>)}</div></section>)}</nav>
@@ -91,7 +92,8 @@ export function SemanticDataPreview({ modelId, dataRevisionId, onDataRevision }:
           <div className='mt-2 divide-y'>{businessValues(selectedEntity.values).map(([attribute, value]) => {
             const provenance = selectedEntity.provenance[attribute];
             const canOpen = Boolean(provenance?.source.workspaceId && provenance.source.documentId);
-            return <div key={attribute} className='grid grid-cols-[minmax(6rem,0.7fr)_1fr] gap-3 py-2 text-sm'><span className='text-muted-foreground'>{readableLabel(attribute)}</span><div className='min-w-0'><p className='break-words'>{String(value ?? '')}</p>{provenance && <button type='button' disabled={!canOpen} className='mt-1 flex max-w-full items-center gap-1 truncate text-left text-[11px] text-primary disabled:cursor-default disabled:text-muted-foreground' onClick={() => canOpen && void useFileViewerStore.getState().openFile(provenance.source.workspaceId!, provenance.source.documentId!, provenance.source.documentPath ?? '', provenance.source.documentName, provenance.source.mimeType ?? '', { page: Number.parseInt(provenance.field?.page ?? '1', 10) || 1, highlightText: provenance.field?.quote })}><ExternalLink className='h-3 w-3 shrink-0' />{provenance.source.documentName}{provenance.source.sheetName ? ` / ${provenance.source.sheetName}` : ''}{provenance.rowNumber ? ` · ${t('dataPreview.row', { row: provenance.rowNumber })}` : ''}{provenance.field?.reference ? ` · ${t('dataPreview.column', { column: provenance.field.reference })}` : ''}</button>}</div></div>;
+            const typedByHand = provenance?.source.kind === 'manual';
+            return <div key={attribute} className='grid grid-cols-[minmax(6rem,0.7fr)_1fr] gap-3 py-2 text-sm'><span className='text-muted-foreground'>{readableLabel(attribute)}</span><div className='min-w-0'><p className='break-words'>{String(value ?? '')}</p>{typedByHand && <p className='mt-1 text-[11px] text-muted-foreground'>{t('dataPreview.typedByHand')}</p>}{provenance && !typedByHand && <button type='button' disabled={!canOpen} className='mt-1 flex max-w-full items-center gap-1 truncate text-left text-[11px] text-primary disabled:cursor-default disabled:text-muted-foreground' onClick={() => canOpen && void useFileViewerStore.getState().openFile(provenance.source.workspaceId!, provenance.source.documentId!, provenance.source.documentPath ?? '', provenance.source.documentName, provenance.source.mimeType ?? '', { page: Number.parseInt(provenance.field?.page ?? '1', 10) || 1, highlightText: provenance.field?.quote })}><ExternalLink className='h-3 w-3 shrink-0' />{provenance.source.documentName}{provenance.source.sheetName ? ` / ${provenance.source.sheetName}` : ''}{provenance.rowNumber ? ` · ${t('dataPreview.row', { row: provenance.rowNumber })}` : ''}{provenance.field?.reference ? ` · ${t('dataPreview.column', { column: provenance.field.reference })}` : ''}{provenance.field?.page ? ` · ${t('dataPreview.page', { page: provenance.field.page })}` : ''}</button>}</div></div>;
           })}</div>
           {selectedEntity.conflicts.length > 0 && <div className='mt-5 space-y-2 border-t pt-4'><h4 className='font-semibold text-amber-700 dark:text-amber-400'>{t('dataPreview.conflictDetails')}</h4>{selectedEntity.conflicts.map((conflict, index) => <div key={`${conflict.attribute}-${conflict.conflictingMappingId}-${index}`} className='rounded-lg bg-amber-500/10 p-3 text-xs'><p className='font-medium'>{conflict.attribute}</p><p className='mt-1 break-words'>{String(conflict.preferred ?? '')} <span className='text-muted-foreground'>· {selectedEntity.sources?.find((source) => source.mappingId === conflict.preferredMappingId)?.source.documentName ?? conflict.preferredMappingId}</span></p><p className='mt-1 break-words'>{String(conflict.conflicting ?? '')} <span className='text-muted-foreground'>· {selectedEntity.sources?.find((source) => source.mappingId === conflict.conflictingMappingId)?.source.documentName ?? conflict.conflictingMappingId}</span></p></div>)}</div>}
           <section className='mt-6 border-t pt-5'><h4 className='font-semibold'>{t('dataPreview.relationships')}</h4><div className='mt-3 space-y-2'>{relatedRelations.map((relation, index) => <div key={`${relation.relationId}-${relation.sourceEntityId}-${index}`} className={`rounded-lg p-3 text-xs ${relation.status === 'resolved' ? 'bg-emerald-500/10' : 'bg-amber-500/10'}`}><p><span className='font-medium'>{labels.get(relation.sourceEntityId) ?? relation.sourceEntityId}</span><span className='mx-1 text-muted-foreground'>→ {readableLabel(relation.relationLabel).toLocaleLowerCase()} →</span><span className='font-medium'>{relation.targetEntityIds.map((id) => labels.get(id) ?? id).join(', ') || t(`relationMatching.status.${relation.status}`)}</span></p><details className='mt-2'><summary className='cursor-pointer text-muted-foreground'>{t('dataPreview.matchingEvidence')}</summary><p className='mt-1 text-muted-foreground'>{readableLabel(relation.sourceAttribute)} = {String(relation.sourceValue ?? '')}{relation.targetValues.length ? ` · ${readableLabel(relation.targetAttribute)} = ${relation.targetValues.map(String).join(', ')}` : ''}</p></details></div>)}{relatedRelations.length === 0 && <p className='text-sm text-muted-foreground'>{t('dataPreview.noRelationships')}</p>}</div></section>
@@ -121,6 +123,36 @@ function groupSourceIssues(issues: SourcePreviewIssue[]) {
     groups.set(key, group);
   }
   return [...groups.values()];
+}
+
+/** The prepared records' gaps, in plain words, each with a way to fix it. */
+function GapsPanel({ gaps, onOpenItem }: Readonly<{ gaps: SemanticDataGaps; onOpenItem?: (id: string) => void }>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const rows = [
+    ...gaps.missingValues.map((gap) => ({
+      key: `value-${gap.conceptId}-${gap.attribute}`, targetId: gap.conceptId,
+      text: t('dataPreview.gapMissingValue', { missing: gap.missing, total: gap.total, concept: gap.conceptLabel, field: gap.attributeLabel }),
+      action: t('dataPreview.gapFixConcept', { concept: gap.conceptLabel }),
+    })),
+    ...gaps.unresolvedLinks.map((gap) => ({
+      key: `link-${gap.relationId}-${gap.kind}`, targetId: gap.relationId,
+      text: t('dataPreview.gapUnresolvedLink', { count: gap.count, relationship: gap.relationLabel }),
+      action: t('dataPreview.gapFixRelationship'),
+    })),
+    ...gaps.other.map((gap) => ({
+      key: `other-${gap.conceptId ?? 'model'}-${gap.kind}`, targetId: gap.conceptId,
+      text: gap.conceptLabel ? t('dataPreview.gapOther', { count: gap.count, concept: gap.conceptLabel }) : t('dataPreview.gapOtherModel', { count: gap.count }),
+      action: gap.conceptLabel ? t('dataPreview.gapFixConcept', { concept: gap.conceptLabel }) : null,
+    })),
+  ];
+  return <section className={`rounded-2xl border p-4 ${rows.length ? 'border-amber-500/30 bg-amber-500/5' : 'bg-background'}`} aria-label={t('dataPreview.gapsTitle')}>
+    <h3 className='text-sm font-semibold'>{t('dataPreview.gapsTitle')}</h3>
+    {rows.length === 0 ? <p className='mt-1 text-sm text-muted-foreground'>{t('dataPreview.gapsNone')}</p>
+      : <ul className='mt-2 space-y-2'>{rows.map((row) => <li key={row.key} className='flex flex-col gap-1 text-sm sm:flex-row sm:items-center sm:justify-between'>
+        <span className='break-words'>{row.text}</span>
+        {row.action && row.targetId && onOpenItem && <Button variant='link' size='sm' className='h-auto p-0' onClick={() => onOpenItem(row.targetId!)}>{row.action}</Button>}
+      </li>)}</ul>}
+  </section>;
 }
 
 function Summary({ value, label, good = false, warn = false }: Readonly<{ value: number; label: string; good?: boolean; warn?: boolean }>) {

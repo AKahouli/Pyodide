@@ -418,6 +418,40 @@ async def list_revision_entities(pool: Any, revision_id: str,
     return result
 
 
+def _origin_of(evidence: dict[str, Any], origin: str | None) -> dict[str, Any]:
+    asset_ref = evidence.get("assetRef") or {}
+    result: dict[str, Any] = {
+        "kind": "human" if origin == "human" else (
+            "metadata" if evidence.get("origin") == "metadata" else
+            "ai" if evidence.get("origin") == "ai" else "source"),
+        "assetId": asset_ref.get("assetId"),
+    }
+    for source, target in (("rowNumber", "rowNumber"), ("column", "column"),
+                           ("pageNumber", "pageNumber"), ("sheet", "sheet")):
+        if evidence.get(source) is not None:
+            result[target] = evidence[source]
+    return result
+
+
+async def list_entity_origins(pool: Any, revision_id: str,
+                              entity_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Where each attribute value of the given entities came from."""
+    if not entity_ids:
+        return {}
+    rows = await pool.fetch(
+        "SELECT entity_id, attribute, origin, evidence FROM semantic_population.assertions "
+        "WHERE data_revision_id = $1 AND entity_id = ANY($2::text[])",
+        revision_id, list(entity_ids),
+    )
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        evidence = row["evidence"]
+        evidence = json.loads(evidence) if isinstance(evidence, str) else dict(evidence or {})
+        result.setdefault(row["entity_id"], {})[row["attribute"]] = _origin_of(
+            evidence, row["origin"])
+    return result
+
+
 async def list_revision_relationships(pool: Any, revision_id: str,
                                       limit: int = 20000) -> list[dict[str, Any]]:
     rows = await pool.fetch(

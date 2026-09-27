@@ -41,6 +41,21 @@ export interface RuntimeJob {
   errorCode: string | null;
 }
 
+export interface RuntimeValueOrigin {
+  kind: 'source' | 'human' | 'metadata' | 'ai';
+  assetId?: string | null;
+  rowNumber?: number | string;
+  column?: string;
+  pageNumber?: number;
+  sheet?: string;
+}
+
+export interface RuntimeRevisionGaps {
+  missingValues: Array<{ conceptId: string; attribute: string; missing: number; total: number }>;
+  unresolvedLinks: Array<{ relationId: string; kind: string; count: number }>;
+  other: Array<{ conceptId: string | null; kind: string; count: number }>;
+}
+
 export interface RuntimeBoundRecords {
   modelId: string;
   modelVersionId: string;
@@ -51,7 +66,9 @@ export interface RuntimeBoundRecords {
     label: string;
     attributes: Record<string, unknown>;
     provenance: Record<string, unknown>;
+    origins?: Record<string, RuntimeValueOrigin>;
   }>;
+  gaps?: RuntimeRevisionGaps;
   relationships: Array<{
     relationId: string;
     sourceEntityId: string;

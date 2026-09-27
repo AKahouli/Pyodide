@@ -10,7 +10,7 @@ import type { ConceptSpec, RelationSpec } from '../domain/model-specification.ty
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
 import { ModelSpecificationService } from './model-specification.service';
 import { SemanticModelService } from './semantic-model.service';
-import { SemanticRuntimeClientService } from './semantic-runtime-client.service';
+import { SemanticRuntimeClientService, type RuntimeValueOrigin } from './semantic-runtime-client.service';
 import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
 import { DOCUMENT_MIME_TYPES, STRUCTURED_MIME_PREFIXES } from './semantic-source-mapping.service';
 
@@ -51,7 +51,17 @@ interface MappingRow {
   updatedAt: Date;
 }
 
-type RelationRuleRow = Pick<RelationResolutionRule,
+interface RecordSource {
+  mappingId: string;
+  workspaceId: string;
+  documentId: string;
+  documentName: string;
+  mimeType?: string;
+  sheetName?: string;
+  kind: string;
+}
+
+type RelationRuleRow =Pick<RelationResolutionRule,
   'relationId' | 'sourceAttribute' | 'targetAttribute' | 'strategy'>;
 
 const POPULATION_KINDS = new Set(['excel_sheet', 'csv', 'document']);
@@ -108,8 +118,19 @@ export class SemanticPopulationRefreshService {
     if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
     const records = await this.runtime.getBoundRecords(model.id, userId, limit, conceptId, dataRevisionId);
     const entities = records.entities;
+    const [nodes, sources] = await Promise.all([
+      this.database.query<NodeTypeRow>(
+        'SELECT id, key, label, attributes FROM semantic_model.node_types WHERE version_id=$1',
+        [model.currentDraftVersionId],
+      ).then((result) => result.rows),
+      this.recordSources(model.id, entities.flatMap((entity) => Object.values(entity.origins ?? {}))),
+    ]);
+    const attributeLabel = (concept: string, attribute: string) => nodes.find((node) => node.id === concept)
+      ?.attributes?.find((candidate) => candidate.key === attribute)?.label || attribute;
     const entityIds = new Set(entities.map((entity) => entity.entityId));
     const relationLabels = new Map(records.specification.relations.map((relation) => [relation.relationId, relation.label]));
+    const conceptLabels = new Map(records.specification.concepts.map((concept) => [concept.conceptId, concept.label]));
+    const gaps = records.gaps ?? { missingValues: [], unresolvedLinks: [], other: [] };
     return {
       dataRevisionId: records.dataRevisionId,
       concepts: records.specification.concepts
@@ -123,7 +144,8 @@ export class SemanticPopulationRefreshService {
             entityKey: entity.entityId,
             label: entity.label,
             values: entity.attributes,
-            provenance: {},
+            provenance: Object.fromEntries(Object.entries(entity.origins ?? {})
+              .map(([attribute, origin]) => [attribute, this.valueProvenance(origin, sources)])),
             conflicts: [],
           })),
         })),
@@ -143,12 +165,82 @@ export class SemanticPopulationRefreshService {
           partial: false,
         })),
       sourceIssues: [],
+      gaps: {
+        missingValues: gaps.missingValues.map((gap) => ({
+          ...gap,
+          conceptLabel: conceptLabels.get(gap.conceptId) ?? gap.conceptId,
+          attributeLabel: attributeLabel(gap.conceptId, gap.attribute),
+        })),
+        unresolvedLinks: gaps.unresolvedLinks.map((gap) => ({
+          ...gap,
+          relationLabel: relationLabels.get(gap.relationId) ?? gap.relationId,
+        })),
+        other: gaps.other.map((gap) => ({
+          ...gap,
+          conceptLabel: gap.conceptId ? conceptLabels.get(gap.conceptId) ?? null : null,
+        })),
+      },
       summary: {
         entities: records.counts.entities,
         resolvedRelations: records.counts.relationships,
-        unresolvedRelations: 0,
+        unresolvedRelations: gaps.unresolvedLinks.reduce((total, gap) => total + gap.count, 0),
         ambiguousRelations: 0,
         conflicts: 0,
+      },
+    };
+  }
+
+  /** Files behind record values; typed-by-hand values (manual snapshot) have no file. */
+  private async recordSources(modelId: string, origins: RuntimeValueOrigin[]) {
+    const assetIds = [...new Set(origins.map((origin) => origin.assetId)
+      .filter((assetId): assetId is string => typeof assetId === 'string' && !assetId.startsWith('manual:')))];
+    const sources = new Map<string, RecordSource>();
+    if (!assetIds.length) return sources;
+    const mappings = await this.database.query<Pick<MappingRow, 'id' | 'workspaceId' | 'documentId' | 'sheetName' | 'assetKind'>>(
+      `SELECT id, workspace_id AS "workspaceId", document_id AS "documentId", sheet_name AS "sheetName",
+              asset_kind AS "assetKind"
+       FROM semantic_model.source_mappings WHERE model_id=$1 AND document_id = ANY($2::text[])
+       ORDER BY id`,
+      [modelId, assetIds],
+    );
+    for (const mapping of mappings.rows) {
+      if (sources.has(mapping.documentId)) continue;
+      const document = await this.documents.findById(mapping.workspaceId, mapping.documentId).catch(() => null);
+      sources.set(mapping.documentId, {
+        mappingId: mapping.id,
+        workspaceId: mapping.workspaceId,
+        documentId: mapping.documentId,
+        documentName: document?.originalName ?? '',
+        mimeType: document?.mimeType,
+        sheetName: mapping.assetKind === 'excel_sheet' ? mapping.sheetName || undefined : undefined,
+        kind: mapping.assetKind,
+      });
+    }
+    return sources;
+  }
+
+  private valueProvenance(origin: RuntimeValueOrigin, sources: Map<string, RecordSource>) {
+    const manual = typeof origin.assetId === 'string' && origin.assetId.startsWith('manual:');
+    const source = origin.assetId && !manual ? sources.get(origin.assetId) : undefined;
+    if (manual || !source) return { mappingId: '', source: { kind: 'manual' as const, documentName: '' } };
+    const method = origin.kind === 'metadata' ? 'document_metadata' as const
+      : origin.kind === 'ai' ? 'semantic_extraction' as const
+        : origin.kind === 'human' ? 'fixed_value' as const : 'direct_mapping' as const;
+    return {
+      mappingId: source.mappingId,
+      source: {
+        kind: source.kind,
+        workspaceId: source.workspaceId,
+        documentId: source.documentId,
+        documentName: source.documentName,
+        mimeType: source.mimeType,
+        sheetName: origin.sheet ?? source.sheetName,
+      },
+      ...(typeof origin.rowNumber === 'number' ? { rowNumber: origin.rowNumber } : {}),
+      field: {
+        method,
+        ...(origin.column && method === 'direct_mapping' ? { reference: origin.column } : {}),
+        ...(origin.pageNumber != null ? { page: String(origin.pageNumber) } : {}),
       },
     };
   }

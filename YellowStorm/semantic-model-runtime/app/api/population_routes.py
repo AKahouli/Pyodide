@@ -1,5 +1,4 @@
 """Population API group. Heavy work lives in workers, never here.
-
 Run admission (P2.1) plus the Phase 6 human-control commands (P6.8-P6.16):
 corrections record durably with optimistic concurrency, review resolution is
 fenced on the open state, and revision activation compare-and-swaps the
@@ -7,6 +6,7 @@ serving tuple. None of these write AGE or projections directly."""
 
 from __future__ import annotations
 
+import json
 import os
 
 from fastapi import APIRouter, Header, HTTPException, Path, Query, Request, status
@@ -123,6 +123,14 @@ async def read_bound_records(model_id: str, request: Request, environment: str =
     counts = await store.count_revision_rows(pool, revision_id)
     entities = await store.list_revision_entities(pool, revision_id, limit, concept_id)
     entity_ids = {entity["entityId"] for entity in entities}
+    origins = await store.list_entity_origins(pool, revision_id, sorted(entity_ids))
+    for entity in entities:
+        entity["origins"] = origins.get(entity["entityId"], {})
+    revision = await store.get_data_revision(pool, revision_id)
+    coverage = (revision or {}).get("coverage") or {}
+    if isinstance(coverage, str):
+        coverage = json.loads(coverage)
+    gaps = coverage.get("gaps") if isinstance(coverage, dict) else None
     relationships = [relationship for relationship in
                      await store.list_revision_relationships(pool, revision_id)
                      if relationship["sourceEntityId"] in entity_ids
@@ -133,6 +141,7 @@ async def read_bound_records(model_id: str, request: Request, environment: str =
     return {"modelId": model_id, "modelVersionId": binding["model_version_id"],
             "dataRevisionId": revision_id, "entities": entities,
             "relationships": relationships, "counts": counts,
+            "gaps": gaps or {"missingValues": [], "unresolvedLinks": [], "other": []},
             "specification": specification}
 
 

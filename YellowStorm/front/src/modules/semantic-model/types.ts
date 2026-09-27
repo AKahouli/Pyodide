@@ -435,5 +435,13 @@ export interface SemanticDataPreview {
     partial: boolean;
   }>;
   sourceIssues: SourcePreviewIssue[];
+  /** What the prepared records are missing; absent on records prepared before gaps were kept. */
+  gaps?: SemanticDataGaps;
   summary: { entities: number; resolvedRelations: number; unresolvedRelations: number; ambiguousRelations: number; conflicts: number };
+}
+
+export interface SemanticDataGaps {
+  missingValues: Array<{ conceptId: string; conceptLabel: string; attribute: string; attributeLabel: string; missing: number; total: number }>;
+  unresolvedLinks: Array<{ relationId: string; relationLabel: string; kind: string; count: number }>;
+  other: Array<{ conceptId: string | null; conceptLabel: string | null; kind: string; count: number }>;
 }
