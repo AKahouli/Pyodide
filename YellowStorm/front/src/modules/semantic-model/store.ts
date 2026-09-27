@@ -29,6 +29,8 @@ interface SemanticModelEditorState {
   markSaving: () => void;
   markSaved: (revision: number, savedGroupCount: number) => void;
   markFailed: (status: Extract<SaveStatus, 'offline' | 'error' | 'conflict'>) => void;
+  /** Take the model revision returned by a direct command (identity, mapping, matching) so the next graph save does not conflict. */
+  adoptRevision: (revision: number) => void;
   retrySave: () => void;
   setValidation: (issues: ValidationIssue[]) => void;
   undo: () => void;
@@ -44,6 +46,20 @@ export function isSemanticGraphSaved(
     && state.pending.length === 0
     && state.graph !== null
     && (expectedRevision === undefined || state.graph.revision === expectedRevision);
+}
+
+/** Resolves once every pending graph change has reached the server; rejects on a failed save or after `timeoutMs`. */
+export function waitForGraphSave(timeoutMs = 30000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let unsubscribe = () => {};
+    const timer = setTimeout(() => { unsubscribe(); reject(new Error('save_timeout')); }, timeoutMs);
+    const check = (state: SemanticModelEditorState) => {
+      if (isSemanticGraphSaved(state)) { clearTimeout(timer); unsubscribe(); resolve(); }
+      else if (['error', 'conflict', 'offline'].includes(state.saveStatus)) { clearTimeout(timer); unsubscribe(); reject(new Error(state.saveStatus)); }
+    };
+    unsubscribe = useSemanticModelEditorStore.subscribe(check);
+    check(useSemanticModelEditorStore.getState());
+  });
 }
 
 export const semanticModelEditorInitialState = {
@@ -102,6 +118,9 @@ export const useSemanticModelEditorStore = create<SemanticModelEditorState>()(de
     return { graph: state.graph ? { ...state.graph, revision } : null, pending, saveStatus: pending.length ? 'saving' : 'saved', saveInFlight: false };
   }),
   markFailed: (saveStatus) => set({ saveStatus, saveInFlight: false }),
+  adoptRevision: (revision) => set((state) => state.graph && !state.saveInFlight && revision > state.graph.revision
+    ? { graph: { ...state.graph, revision } }
+    : state),
   retrySave: () => set((state) => state.saveStatus === 'error' || state.saveStatus === 'offline'
     ? { saveStatus:'saving',saveAttempt:state.saveAttempt+1 }
     : state),

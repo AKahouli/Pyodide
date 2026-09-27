@@ -76,3 +76,17 @@ describe('semantic model editor store', () => {
     expect(isSemanticGraphSaved({ graph, pending: [], saveStatus: 'saved' }, graph.revision + 1)).toBe(false);
   });
 });
+
+describe('adoptRevision', () => {
+  it('takes a newer server revision unless a graph save is in flight', () => {
+    const store = useSemanticModelEditorStore;
+    store.getState().hydrate({ modelId: 'm', versionId: 'v', revision: 3, nodes: [], relations: [], records: [], recordRelations: [] });
+    store.getState().adoptRevision(4);
+    expect(store.getState().graph?.revision).toBe(4);
+    store.getState().adoptRevision(2);
+    expect(store.getState().graph?.revision).toBe(4);
+    store.getState().markSaving();
+    store.getState().adoptRevision(9);
+    expect(store.getState().graph?.revision).toBe(4);
+  });
+});

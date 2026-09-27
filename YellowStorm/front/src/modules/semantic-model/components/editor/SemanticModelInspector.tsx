@@ -92,7 +92,8 @@ export function IdentitySection({ modelId, node, canEdit }: Readonly<{ modelId: 
   const mapped = (mappings.data ?? []).some((mapping) => mapping.conceptId === node.id);
   const save = useMutation({
     mutationFn: (next: string[]) => semanticModelApi.saveIdentityRule(modelId, node.id, next),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      useSemanticModelEditorStore.getState().adoptRevision(result.revision);
       await Promise.all([
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.identityRules(modelId) }),
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) }),

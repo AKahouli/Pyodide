@@ -18,6 +18,7 @@ import { useSemanticModelEditorStore } from '../../store';
 import type { KnowledgeResource } from '../../hooks/use-knowledge-linking';
 import type { ConceptSourceMapping, SourceFieldMapping, SheetProfile } from '../../types';
 import { DocumentSourceMappingDrawer } from './DocumentSourceMappingDrawer';
+import type { SuggestionSource } from '../editor/SuggestConceptsDialog';
 
 export interface SourceMappingTarget {
   workspaceId: string;
@@ -45,12 +46,12 @@ export function sourceMappingTargetFromResource(resource: Extract<KnowledgeResou
 
 const normalizeName = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-export function SourceMappingDrawer(props: Readonly<{ modelId: string; target: SourceMappingTarget | null; onClose: () => void }>) {
+export function SourceMappingDrawer({ onSuggestConcepts, ...props }: Readonly<{ modelId: string; target: SourceMappingTarget | null; onClose: () => void; onSuggestConcepts?: (source: SuggestionSource) => void }>) {
   if (props.target?.assetKind === 'document') return <DocumentSourceMappingDrawer {...props} />;
-  return <StructuredSourceMappingDrawer {...props} />;
+  return <StructuredSourceMappingDrawer {...props} onSuggestConcepts={onSuggestConcepts} />;
 }
 
-function StructuredSourceMappingDrawer({ modelId, target, onClose }: Readonly<{ modelId: string; target: SourceMappingTarget | null; onClose: () => void }>) {
+function StructuredSourceMappingDrawer({ modelId, target, onClose, onSuggestConcepts }: Readonly<{ modelId: string; target: SourceMappingTarget | null; onClose: () => void; onSuggestConcepts?: (source: SuggestionSource) => void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const client = useQueryClient();
   const graph = useSemanticModelEditorStore((state) => state.graph);
@@ -166,6 +167,7 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose }: Readonly<{ 
           <SheetHeader className='border-b p-5'>
             <SheetTitle>{target.mapping ? t('mapping.editTitle') : t('mapping.title', { name: target.documentName })}</SheetTitle>
             <SheetDescription>{t('mapping.description')}</SheetDescription>
+            {onSuggestConcepts && !target.mapping && (target.assetKind === 'excel_sheet' || target.assetKind === 'csv') && <Button size='sm' variant='outline' className='mt-2 w-fit' onClick={() => onSuggestConcepts({ workspaceId: target.workspaceId, documentId: target.documentId, documentName: target.documentName, assetKind: target.assetKind as SuggestionSource['assetKind'] })}><Sparkles className='mr-2 h-4 w-4' />{t('suggest.openFromFile')}</Button>}
           </SheetHeader>
           <div className='min-h-0 flex-1 space-y-5 overflow-y-auto p-5'>
             <div className='space-y-2'>

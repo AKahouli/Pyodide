@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { SuggestConceptsDialog, type SuggestionSource } from '../components/editor/SuggestConceptsDialog';
 import { Link, useBlocker, useNavigate, useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -13,6 +14,7 @@ import {
   Plus,
   Redo2,
   Save,
+  Sparkles,
   Undo2,
   Zap,
 } from "lucide-react";
@@ -95,6 +97,8 @@ export function SemanticModelEditorPage() {
   const redo = useSemanticModelEditorStore((state) => state.redo);
   const reset = useSemanticModelEditorStore((state) => state.reset);
   const [conceptOpen, setConceptOpen] = useState(false);
+  // null = closed; a source = suggest from that file; 'pick' = let the user choose a spreadsheet.
+  const [suggestSource, setSuggestSource] = useState<SuggestionSource | 'pick' | null>(null);
   const [relationOpen, setRelationOpen] = useState(false);
   const [relationConnection, setRelationConnection] = useState<{
     sourceId: string;
@@ -427,10 +431,16 @@ export function SemanticModelEditorPage() {
                   {t("editor.emptyDescription")}
                 </p>
                 {canEdit && (
-                  <Button className="mt-5" onClick={() => setConceptOpen(true)}>
-                    <Plus className="mr-2 h-4 w-4" />
-                    {t("concept.add")}
-                  </Button>
+                  <div className="mt-5 flex flex-col gap-2">
+                    <Button onClick={() => setConceptOpen(true)}>
+                      <Plus className="mr-2 h-4 w-4" />
+                      {t("concept.add")}
+                    </Button>
+                    <Button variant="outline" onClick={() => setSuggestSource('pick')}>
+                      <Sparkles className="mr-2 h-4 w-4" />
+                      {t("suggest.open")}
+                    </Button>
+                  </div>
                 )}
               </div>
             </div>
@@ -453,9 +463,10 @@ export function SemanticModelEditorPage() {
         />}
         {mode === 'structure' && structureView === 'diagram' && !trustOpen && !population && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} onMapData={(target) => void openMappingTarget(target)} />}
         {mode === 'mappings' && knowledgeOpen && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} onMapData={(target) => void openMappingTarget(target)} />}
-        {modelId && <SourceMappingDrawer modelId={modelId} target={mappingTarget} onClose={() => setMappingTarget(null)} />}
+        {modelId && <SourceMappingDrawer modelId={modelId} target={mappingTarget} onClose={() => setMappingTarget(null)} onSuggestConcepts={canEdit ? (source) => { setMappingTarget(null); setSuggestSource(source); } : undefined} />}
       </main>
       <AddConceptDialog open={conceptOpen} onOpenChange={setConceptOpen} />
+      {modelId && canEdit && <SuggestConceptsDialog modelId={modelId} open={suggestSource !== null} onOpenChange={(open) => { if (!open) setSuggestSource(null); }} source={suggestSource === 'pick' ? null : suggestSource} />}
       <AddRelationDialog
         open={relationOpen}
         onOpenChange={setRelationOpen}
