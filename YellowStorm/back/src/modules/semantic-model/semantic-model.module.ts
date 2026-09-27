@@ -27,6 +27,7 @@ import { SemanticModelShareService } from './services/semantic-model-share.servi
 import { DocumentExtractionConceptResolver } from './services/document-extraction-concept.resolver';
 import { SemanticCrossSourceService } from './services/semantic-cross-source.service';
 import { SemanticBusinessTrustService } from './services/semantic-business-trust.service';
+import { SemanticReviewQueueService } from './services/semantic-review-queue.service';
 import { ModelSpecificationService } from './services/model-specification.service';
 import { SemanticDataTokenService } from './services/semantic-data-token.service';
 import { SemanticRuntimeClientService } from './services/semantic-runtime-client.service';
@@ -52,6 +53,7 @@ import { SemanticRealtimeSignalService } from './services/semantic-realtime-sign
     DocumentExtractionConceptResolver,
     SemanticCrossSourceService,
     SemanticBusinessTrustService,
+    SemanticReviewQueueService,
     ModelSpecificationService,
     SemanticDataTokenService,
     SemanticDataGrantService,

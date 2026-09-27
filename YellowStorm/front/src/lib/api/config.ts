@@ -421,6 +421,7 @@ export const API_ENDPOINTS = {
     mappingHealth: (id: string) => `/semantic-models/${id}/mapping-health`,
     readiness: (id: string) => `/semantic-models/${id}/readiness`,
     reviewItems: (id: string) => `/semantic-models/${id}/review-items`,
+    reviewQueue: (id: string) => `/semantic-models/${id}/review-queue`,
     resolveReviewItem: (id: string, reviewItemId: string) => `/semantic-models/${id}/review-items/${reviewItemId}/resolve`,
     dataToken: (id: string) => `/semantic-models/${id}/data-token`,
   },

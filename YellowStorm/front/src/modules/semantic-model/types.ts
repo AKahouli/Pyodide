@@ -500,3 +500,24 @@ export interface VersionComparison {
   /** Prepared records on each side, when known. */
   records: { before: number | null; after: number | null; change: number | null };
 }
+
+export type ReviewQueueAction =
+  | { kind: 'choose_match'; reviewItemId: string; options: Array<{ value: string; label: string }>; select: 'target' | 'source' }
+  | { kind: 'repair_mapping'; mappingId: string }
+  | { kind: 'choose_unique_field'; conceptId: string }
+  | { kind: 'set_up_link'; relationId: string }
+  | { kind: 'fix_values'; conceptId: string };
+
+export interface ReviewQueueItem {
+  key: string;
+  group: 'decisions' | 'sources' | 'identity' | 'links' | 'data';
+  priority: 1 | 2 | 3;
+  kind: string;
+  params: Record<string, string | number>;
+  action: ReviewQueueAction;
+}
+
+export interface ReviewQueue {
+  count: number;
+  items: ReviewQueueItem[];
+}

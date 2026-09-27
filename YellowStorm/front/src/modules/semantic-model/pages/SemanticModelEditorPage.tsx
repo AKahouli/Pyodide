@@ -48,7 +48,7 @@ import { SemanticTrustPanel } from '../components/review/SemanticTrustPanel';
 import { PopulationStartedPanel, type PopulationOutcome } from '../components/population/PopulationStartedPanel';
 import { VersionsPanel } from "../components/versions/VersionsPanel";
 import { useKnowledgeLinking } from "../hooks/use-knowledge-linking";
-import { useMappingHealth, useSemanticDataPreview, useSemanticGraph, useSemanticModel, useSemanticReadiness, useSourceMappings } from "../query/hooks";
+import { useMappingHealth, useSemanticDataPreview, useSemanticGraph, useSemanticModel, useReviewQueue, useSemanticReadiness, useSourceMappings } from "../query/hooks";
 import { ModelJourney, journeyState, type JourneyAction } from "../components/editor/ModelJourney";
 import { semanticModelQueryKeys } from '../query/queryKeys';
 import { isPendingSaveCurrent, isSemanticGraphSaved, selectPendingOperations, useSemanticModelEditorStore } from "../store";
@@ -69,6 +69,7 @@ export function SemanticModelEditorPage() {
   const model = useSemanticModel(modelId);
   const graphQuery = useSemanticGraph(modelId);
   const readiness = useSemanticReadiness(modelId);
+  const reviewQueue = useReviewQueue(modelId);
   // Whether records exist for the draft; only asked once sources, keys and links are in place.
   const journeySourcesReady = ['sources', 'identity', 'relationships'].every((key) => readiness.data?.areas.find((area) => area.key === key)?.complete);
   const journeyRecords = useSemanticDataPreview(modelId, 10, journeySourcesReady);
@@ -135,6 +136,7 @@ export function SemanticModelEditorPage() {
       setBoundDataRevisionId(undefined);
       void queryClient.invalidateQueries({ queryKey: ['semantic-models', 'data-preview', modelId] });
       void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId ?? 'none') });
+      void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.reviewQueue(modelId ?? 'none') });
     }
     setPopulationJobId(undefined);
   }, [populationJob.data]);
@@ -343,6 +345,12 @@ export function SemanticModelEditorPage() {
     else setVersionsOpen(true);
   };
   const readinessScore = readiness.data?.status === 'not_configured' ? undefined : readiness.data?.score;
+  const reviewCount = reviewQueue.data?.count ?? 0;
+  const repairMapping = (mappingId: string) => {
+    const mapping = sourceMappings.data?.find((candidate) => candidate.id === mappingId);
+    if (!mapping) { setMode('mappings'); return; }
+    void openMappingTarget({ workspaceId: mapping.workspaceId, documentId: mapping.documentId, documentName: mapping.documentName ?? mapping.documentId, assetKind: mapping.assetKind, mimeType: mapping.mimeType, path: mapping.documentPath, conceptId: mapping.conceptId, mapping });
+  };
   const openGraphViewer = () => {
     setGraphViewerOpen(true);
   };
@@ -390,7 +398,9 @@ export function SemanticModelEditorPage() {
           {mode === 'mappings' && canEdit && <Button size='sm' variant='outline' onClick={() => openKnowledge()}><BookOpen className='mr-1.5 h-4 w-4' /><span className='sm:hidden'>{t('workspaceUi.addSourceShort')}</span><span className='hidden sm:inline'>{t('knowledge.addSource')}</span></Button>}
           {mode === 'records' && canEdit && <Button size='sm' variant='outline' onClick={() => setRecordOpen(true)}><Plus className='mr-1.5 h-4 w-4' /><span className='sm:hidden'>{t('workspaceUi.addRecordShort')}</span><span className='hidden sm:inline'>{t('records.add')}</span></Button>}
           <Button variant='outline' size='sm' onClick={openGraphViewer}><Network className='mr-1.5 h-4 w-4' />{t('dataWorkflow.dataGraph')}</Button>
-          <Button variant='outline' size='sm' onClick={() => { setKnowledgeOpen(false); setTrustOpen(true); setVersionsOpen(false); }}>{t('workspaceUi.review')}<span className='ml-2 text-muted-foreground'>{readinessScore === undefined ? '—' : `${readinessScore}%`}</span></Button>
+          <Button variant='outline' size='sm' onClick={() => { setKnowledgeOpen(false); setTrustOpen(true); setVersionsOpen(false); }}>{t('reviewQueue.button')}{reviewCount > 0
+            ? <span className='ml-2 rounded-full bg-amber-500/15 px-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300' aria-label={t('reviewQueue.badge', { count: reviewCount })}>{reviewCount}</span>
+            : <span className='ml-2 text-muted-foreground'>{readinessScore === undefined ? '—' : `${readinessScore}%`}</span>}</Button>
           <Button variant='outline' size='sm' onClick={() => { setKnowledgeOpen(false); setVersionsOpen((open) => !open); }}><History className='mr-1.5 h-4 w-4' /><span className='sm:hidden'>{t('workspaceUi.publishShort')}</span><span className='hidden sm:inline'>{t('workspaceUi.publish')}</span></Button>
         </div>
       </div>
@@ -459,6 +469,9 @@ export function SemanticModelEditorPage() {
           checking={checking}
           onRunCheck={() => void validate()}
           onClose={() => setTrustOpen(false)}
+          onRepairMapping={(mappingId) => { setTrustOpen(false); repairMapping(mappingId); }}
+          onOpenItem={(id) => { setMode('structure'); focus(id); }}
+          onFixValues={() => setMode('records')}
         />}
         {mode === 'structure' && structureView === 'diagram' && !trustOpen && !population && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} onMapData={(target) => void openMappingTarget(target)} />}
         {mode === 'mappings' && knowledgeOpen && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} onMapData={(target) => void openMappingTarget(target)} />}

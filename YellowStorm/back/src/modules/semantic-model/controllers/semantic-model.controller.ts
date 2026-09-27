@@ -40,6 +40,7 @@ import { SemanticSourceMappingService } from '../services/semantic-source-mappin
 import { SemanticCrossSourceService } from '../services/semantic-cross-source.service';
 import { SemanticBusinessTrustService } from '../services/semantic-business-trust.service';
 import { SemanticPopulationRefreshService } from '../services/semantic-population-refresh.service';
+import { SemanticReviewQueueService } from '../services/semantic-review-queue.service';
 
 @ApiTags('Semantic Models')
 @ApiBearerAuth()
@@ -57,6 +58,7 @@ export class SemanticModelController {
     private readonly crossSource: SemanticCrossSourceService,
     private readonly businessTrust: SemanticBusinessTrustService,
     private readonly populationRefresh: SemanticPopulationRefreshService,
+    private readonly reviewQueue: SemanticReviewQueueService,
   ) {}
 
   @Get()
@@ -349,6 +351,13 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
   readiness(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
     return this.businessTrust.readiness(user._id.toString(), modelId);
+  }
+
+  @Get(':modelId/review-queue')
+  @ApiOperation({ summary: 'Everything that needs a person, grouped and prioritised, each with the action that resolves it' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  reviewQueueList(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
+    return this.reviewQueue.reviewQueue(user._id.toString(), modelId);
   }
 
   @Get(':modelId/review-items')

@@ -58,6 +58,7 @@ vi.mock("../query/hooks", () => ({
   }),
   useSemanticGraph: () => ({ data: graph, isLoading: false, isError: false }),
   useSemanticReadiness: () => ({ data: { status: 'not_configured', score: 0, completeAreas: 0, totalAreas: 5, areas: [] }, isLoading: false, isError: false }),
+  useReviewQueue: () => ({ data: { count: 0, items: [] }, isLoading: false, isError: false }),
   useSourceMappings: () => ({ data: [], isLoading: false, isError: false }),
   useSemanticReviewItems: () => ({ data: [], isLoading: false, isError: false }),
 }));
@@ -173,7 +174,7 @@ describe("SemanticModelEditorPage", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
 
-    const review = await screen.findByRole('button', { name: /workspaceUi\.review/ });
+    const review = await screen.findByRole('button', { name: /reviewQueue.button/ });
     expect(review).toHaveTextContent('—');
     expect(screen.queryByText(/% ready/i)).not.toBeInTheDocument();
   });
@@ -182,7 +183,7 @@ describe("SemanticModelEditorPage", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
 
-    fireEvent.click(await screen.findByRole('button', { name: /workspaceUi\.review/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /reviewQueue.button/ }));
 
     expect(await screen.findByText('trust.title')).toBeInTheDocument();
   });

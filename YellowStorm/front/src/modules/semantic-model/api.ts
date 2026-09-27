@@ -4,7 +4,7 @@ import type { ApiResponse } from '@/lib/api/client';
 import type { AgeGraphEdge, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
 SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, SemanticReviewItem, SemanticVersion,
 SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
-StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison } from './types';
+StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison, ReviewQueue } from './types';
 import type { SemanticDataTokenResponse } from './data-plane/semantic-api.types';
 
 const unwrap = <T>(response: { data: ApiResponse<T> }): T => response.data.data;
@@ -208,6 +208,9 @@ export const semanticModelApi = {
   },
   async readiness(id: string): Promise<SemanticReadiness> {
     return unwrap(await apiClient.get<ApiResponse<SemanticReadiness>>(API_ENDPOINTS.semanticModels.readiness(id)));
+  },
+  async reviewQueue(id: string): Promise<ReviewQueue> {
+    return unwrap(await apiClient.get<ApiResponse<ReviewQueue>>(API_ENDPOINTS.semanticModels.reviewQueue(id)));
   },
   async reviewItems(id: string, status: 'open' | 'resolved' = 'open'): Promise<SemanticReviewItem[]> {
     return unwrap(await apiClient.get<ApiResponse<SemanticReviewItem[]>>(API_ENDPOINTS.semanticModels.reviewItems(id), { params: { status } }));
