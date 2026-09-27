@@ -14,7 +14,8 @@ from pydantic import BaseModel, Field
 from app.persistence import population_store
 from app.persistence import search_store as store
 from app.search.fused import (MAX_RESULTS, SearchError, graph_projection_ref,
-                              matching_concepts, query_terms, rank_results, retrieval_scope)
+                              matching_concepts, name_results, query_terms, rank_results,
+                              retrieval_scope)
 
 router = APIRouter(prefix="/v1/graphs", tags=["graph-search"])
 CANDIDATE_LIMIT = 400
@@ -56,7 +57,8 @@ async def fused_search(body: FusedSearchBody, request: Request) -> dict[str, Any
     relationships = await store.revision_relationships(
         pool, revision_id=revision_id, entity_ids=[e["id"] for e in entities]) \
         if body.include_supporting_data else []
-    response["results"] = rank_results(entities, relationships, terms, MAX_RESULTS, concepts)
+    response["results"] = name_results(
+        rank_results(entities, relationships, terms, MAX_RESULTS, concepts), specification)
     scope = retrieval_scope(response["results"])
     if scope:
         response["retrieval_scope"] = scope

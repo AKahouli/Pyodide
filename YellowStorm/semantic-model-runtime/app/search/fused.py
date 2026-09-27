@@ -127,6 +127,19 @@ def rank_results(entities: list[dict[str, Any]], relationships: list[dict[str, A
     } for score, e in scored[:limit]]
 
 
+def name_results(results: list[dict[str, Any]], specification: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Business names for concepts and relations: the chat agent cannot read internal ids."""
+    concepts = {c.get("conceptId"): c.get("label") for c in (specification or {}).get("concepts", [])}
+    relations = {r.get("relationId"): r.get("label") or r.get("key")
+                 for r in (specification or {}).get("relations", [])}
+    for result in results:
+        result["concept"] = concepts.get(result["concept"]) or result["concept"]
+        for rel in result["relationships"]:
+            rel["concept"] = concepts.get(rel["concept"]) or rel["concept"]
+            rel["relation"] = relations.get(rel["relation"]) or rel["relation"]
+    return results
+
+
 def retrieval_scope(results: list[dict[str, Any]]) -> dict[str, list[str]] | None:
     names: list[str] = []
     for result in results:

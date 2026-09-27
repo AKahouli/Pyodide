@@ -112,3 +112,15 @@ def test_fused_search_finds_concept_records_by_synonym(monkeypatch):
     assert {r["entityId"] for r in response.json()["results"]} == {"c1", "z9"}
     entity_call = next(params for sql, params in pool.calls if "ILIKE" in sql)
     assert entity_call[3] == ["customer"]
+
+
+def test_name_results_uses_business_names():
+    from app.search.fused import name_results
+
+    results = rank_results(ENTITIES, RELS, ["acme"])
+    spec = {"concepts": [{"conceptId": "customer", "label": "Customer"},
+                         {"conceptId": "contract", "label": "Contract"}],
+            "relations": [{"relationId": "signs", "label": "signs"}]}
+    named = name_results(results, spec)
+    assert named[0]["concept"] == "Customer"
+    assert named[0]["relationships"][0]["concept"] == "Contract"
