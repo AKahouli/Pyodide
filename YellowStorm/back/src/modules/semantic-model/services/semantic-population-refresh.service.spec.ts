@@ -115,6 +115,22 @@ describe('SemanticPopulationRefreshService', () => {
     expect(result.concepts[0]).toMatchObject({ id: 'c-customer', entities: [{ id: 'e-1', values: { name: 'Acme' } }] });
   });
 
+  it('sends business synonyms in the specification only when there are some', async () => {
+    const { database, runtime, service } = setup();
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const plain = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>]>)[0][0];
+    expect(plain.payload.specification.concepts[0]).not.toHaveProperty('aliases');
+    expect(plain.payload.specification.concepts[0]).not.toHaveProperty('fieldAliases');
+    const query = database.query.getMockImplementation()!;
+    database.query.mockImplementation(async (sql: string, params: unknown[] = []) => sql.includes('FROM semantic_model.node_types')
+      ? { rows: [{ ...NODES[0], aliases: [' Client ', 'Client', ''], attributes: [NODES[0].attributes[0], { ...NODES[0].attributes[1], aliases: ['Company name'] }] }, NODES[1]] }
+      : query(sql, params));
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const aliased = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>]>)[1][0];
+    expect(aliased.payload.specification.concepts[0]).toMatchObject({ aliases: ['Client'], fieldAliases: { name: ['Company name'] } });
+    expect(aliased.payload.specification.specHash).not.toBe(plain.payload.specification.specHash);
+  });
+
   it('explains where each value came from and what is missing', async () => {
     const { runtime, service } = setup();
     runtime.getBoundRecords.mockResolvedValueOnce({

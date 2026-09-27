@@ -52,6 +52,8 @@ export interface AttributeDefinition {
   required: boolean;
   description?: string;
   options?: string[];
+  /** Business synonyms for this field. */
+  aliases?: string[];
 }
 
 export interface CanvasPosition { x: number; y: number }

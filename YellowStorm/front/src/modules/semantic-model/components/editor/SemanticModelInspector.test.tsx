@@ -94,6 +94,16 @@ describe('SemanticModelInspector', () => {
     expect(useSemanticModelEditorStore.getState().graph?.relations[0].inverseLabel).toBe('owns');
   });
 
+  it('adds and removes business synonyms on a concept', () => {
+    renderInspector(true);
+    const input = screen.getByRole('textbox', { name: 'aliases.placeholder' });
+    fireEvent.change(input, { target: { value: 'Client' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(useSemanticModelEditorStore.getState().graph?.nodes[0].aliases).toEqual(['Client']);
+    fireEvent.click(screen.getByRole('button', { name: 'aliases.remove' }));
+    expect(useSemanticModelEditorStore.getState().graph?.nodes[0].aliases).toEqual([]);
+  });
+
   it('keeps the knowledge tray out of the empty details state', () => {
     useSemanticModelEditorStore.getState().select(null);
     renderInspector(true);

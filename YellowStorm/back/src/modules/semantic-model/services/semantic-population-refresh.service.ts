@@ -25,6 +25,7 @@ interface NodeTypeRow {
   id: string;
   key: string;
   label: string;
+  aliases?: string[];
   attributes: AttributeDefinition[];
 }
 
@@ -286,7 +287,7 @@ export class SemanticPopulationRefreshService {
       : { kind: 'model' };
     const [nodes, relationRows, identityRules, relationRules, links] = await Promise.all([
       this.database.query<NodeTypeRow>(
-        'SELECT id, key, label, attributes FROM semantic_model.node_types WHERE version_id=$1',
+        'SELECT id, key, label, aliases, attributes FROM semantic_model.node_types WHERE version_id=$1',
         [model.currentDraftVersionId],
       ).then((result) => result.rows),
       this.database.query<RelationTypeRow>(
@@ -490,6 +491,20 @@ export class SemanticPopulationRefreshService {
       identity: { namespace: node.key, keyComponents },
       populationMode: 'materialized',
       allowedFields: (node.attributes ?? []).map((attribute) => attribute.key),
+      ...this.conceptAliases(node),
+    };
+  }
+
+  /** Synonyms go into the spec only when present, so a model without any keeps its specification hash. */
+  private conceptAliases(node: NodeTypeRow): Pick<ConceptSpec, 'aliases' | 'fieldAliases'> {
+    const clean = (values: string[] | undefined) => [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))];
+    const aliases = clean(node.aliases);
+    const fieldAliases = Object.fromEntries((node.attributes ?? [])
+      .map((attribute) => [attribute.key, clean(attribute.aliases)] as const)
+      .filter(([, values]) => values.length));
+    return {
+      ...(aliases.length ? { aliases } : {}),
+      ...(Object.keys(fieldAliases).length ? { fieldAliases } : {}),
     };
   }
 

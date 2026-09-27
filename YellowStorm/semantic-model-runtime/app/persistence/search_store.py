@@ -107,14 +107,15 @@ async def find_published_binding(pool: Any, projection_ref: str) -> dict[str, An
 
 
 async def search_revision_entities(pool: Any, *, revision_id: str, terms: list[str],
-                                   limit: int) -> list[dict[str, Any]]:
+                                   limit: int,
+                                   concept_ids: list[str] | None = None) -> list[dict[str, Any]]:
     patterns = ["%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
                 for term in terms]
     rows = await pool.fetch(
         "SELECT id, concept_id, label, attributes, provenance FROM semantic_population.entities "
         "WHERE data_revision_id = $1 AND (label ILIKE ANY($2::text[]) "
-        "OR attributes::text ILIKE ANY($2::text[])) LIMIT $3",
-        revision_id, patterns, limit)
+        "OR attributes::text ILIKE ANY($2::text[]) OR concept_id = ANY($4::text[])) LIMIT $3",
+        revision_id, patterns, limit, list(concept_ids or []))
     return [{**dict(row), "attributes": _decode(row["attributes"]),
              "provenance": _decode(row["provenance"])} for row in rows]
 

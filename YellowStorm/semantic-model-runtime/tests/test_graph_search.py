@@ -6,8 +6,11 @@ fastapi = pytest.importorskip("fastapi")
 TestClient = pytest.importorskip("starlette.testclient", reason="starlette TestClient required").TestClient
 
 from app.main import create_app  # noqa: E402
-from app.search.fused import graph_projection_ref, query_terms, rank_results, SearchError  # noqa: E402
+from app.search.fused import (graph_projection_ref, matching_concepts, query_terms,  # noqa: E402
+                              rank_results, SearchError)
 
+SPECIFICATION = {"concepts": [{"conceptId": "customer", "label": "Customer", "aliases": ["Client"]},
+                              {"conceptId": "contract", "label": "Contract"}]}
 BINDING = {"model_id": "m1", "model_version_id": "v2", "data_revision_id": "dr_1"}
 ENTITIES = [
     {"id": "c1", "concept_id": "customer", "label": "Acme Corp", "attributes": {"city": "Lyon", "_entity_key": "x"},
@@ -28,6 +31,8 @@ class FakePool:
 
     async def fetchrow(self, sql: str, *params):  # type: ignore[no-untyped-def]
         self.calls.append((sql, params))
+        if "specification" in sql:
+            return {"specification": SPECIFICATION}
         return self.binding
 
     async def fetch(self, sql: str, *params):  # type: ignore[no-untyped-def]
@@ -87,3 +92,23 @@ def test_bearer_is_only_accepted_on_graph_routes(monkeypatch):
         other = client.get("/v1/semantic-model-jobs/j1", headers={"Authorization": "Bearer test-key"})
     assert denied.status_code == 401
     assert other.status_code == 401
+
+
+def test_concept_synonyms_match_the_query():
+    assert matching_concepts(SPECIFICATION, ["clients"]) == {"customer"}
+    assert matching_concepts(SPECIFICATION, ["customer", "lyon"]) == {"customer"}
+    assert matching_concepts(SPECIFICATION, ["acme"]) == set()
+    assert matching_concepts(None, ["clients"]) == set()
+    results = rank_results(ENTITIES, [], ["clients"], concepts={"customer"})
+    assert {r["entityId"] for r in results} == {"c1", "z9"}
+
+
+def test_fused_search_finds_concept_records_by_synonym(monkeypatch):
+    pool = FakePool()
+    with make_client(monkeypatch, pool) as client:
+        response = client.post("/v1/graphs/search/fused", headers={"Authorization": "Bearer test-key"},
+                               json={"schema_name": "pop_dr_1", "query": "clients"})
+    assert response.status_code == 200
+    assert {r["entityId"] for r in response.json()["results"]} == {"c1", "z9"}
+    entity_call = next(params for sql, params in pool.calls if "ILIKE" in sql)
+    assert entity_call[3] == ["customer"]

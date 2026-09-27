@@ -48,7 +48,30 @@ def _text(value: Any) -> str:
     return "" if value is None else str(value).lower()
 
 
-def score_entity(entity: dict[str, Any], terms: list[str]) -> float:
+def _term_names(term: str) -> set[str]:
+    """A query word and its singular, so "clients" also names the concept "Client"."""
+    names = {term}
+    if len(term) > 3 and term.endswith("s"):
+        names.add(term[:-1])
+    return names
+
+
+def matching_concepts(specification: dict[str, Any] | None, terms: list[str]) -> set[str]:
+    """Concepts whose business name or one of its synonyms is a word of the query."""
+    words = set().union(*(_term_names(term) for term in terms)) if terms else set()
+    phrase = " " + " ".join(terms) + " "
+    matches: set[str] = set()
+    for concept in (specification or {}).get("concepts", []):
+        names = [concept.get("label"), *(concept.get("aliases") or [])]
+        for name in (_text(n).strip() for n in names if n):
+            if name and (name in words or (" " in name and f" {name} " in phrase)):
+                matches.add(concept.get("conceptId"))
+                break
+    return matches
+
+
+def score_entity(entity: dict[str, Any], terms: list[str],
+                 concepts: set[str] | frozenset[str] = frozenset()) -> float:
     label = _text(entity.get("label"))
     values = [_text(v) for k, v in (entity.get("attributes") or {}).items()
               if not str(k).startswith("_")]
@@ -62,6 +85,8 @@ def score_entity(entity: dict[str, Any], terms: list[str]) -> float:
             score += 2
         elif any(term in value for value in values):
             score += 1
+    if entity.get("concept_id") in concepts:
+        score += 2
     return score
 
 
@@ -79,8 +104,9 @@ def _source_names(provenance: Any) -> list[str]:
 
 
 def rank_results(entities: list[dict[str, Any]], relationships: list[dict[str, Any]],
-                 terms: list[str], limit: int = MAX_RESULTS) -> list[dict[str, Any]]:
-    scored = [(score_entity(e, terms), e) for e in entities]
+                 terms: list[str], limit: int = MAX_RESULTS,
+                 concepts: set[str] | frozenset[str] = frozenset()) -> list[dict[str, Any]]:
+    scored = [(score_entity(e, terms, concepts), e) for e in entities]
     scored = [(s, e) for s, e in scored if s > 0]
     scored.sort(key=lambda pair: (-pair[0], _text(pair[1].get("label"))))
     by_entity: dict[str, list[dict[str, Any]]] = {}
