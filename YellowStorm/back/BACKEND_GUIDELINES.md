@@ -2,6 +2,9 @@
 
 > **Golden rule:** before inventing a pattern, look at a sibling module (`auth`, `conversation`, `conversation-v2`, `playbook-flow`, `worky`, `workspace`). If a convention already exists, follow it.
 
+> **Index — agents: grep `^## `, then read only the section(s) the change needs. Never load this whole file (~48 KB).**
+> 1 Stack · 2 Project Structure · 3 Module Anatomy · 4 Bootstrap · 5 Configuration · 6 Validation & DTOs · 7 HTTP API Contract · 8 Auth · 9 Mongoose & Schemas · 10 gRPC & Microservices · 11 Errors & Exceptions · 12 Interceptors/Pipes/Guards/Filters · 13 Request Context & Logging · 14 Rate Limiting · 15 Real-time & SSE · 16 Scheduling · 17 Email · 18 File Storage · 19 Health Checks · 20 Testing · 21 TS Conventions · 22 Naming · 23 Frontend↔Backend Contract · 24 Advanced Patterns · 25 Pre-PR Checklist · 26 Anti-Patterns
+
 ---
 
 ## 1. Stack
