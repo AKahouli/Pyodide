@@ -33,6 +33,7 @@ function sessionRecord(
     eventSequence: 0,
     eventCount: 0,
     systemWorkspaceId: null,
+    starterRevisionId: null,
     createdAt: new Date(0),
     updatedAt: new Date(0),
     ...overrides,
@@ -230,7 +231,7 @@ describe('ConversationV2SessionService', () => {
     const doc = await svc.createDraft('u1', ['ws-a']);
 
     expect(doc.id).toBe(fakeId);
-    expect(store.createDraft).toHaveBeenCalledWith('u1', ['ws-a']);
+    expect(store.createDraft).toHaveBeenCalledWith('u1', ['ws-a'], undefined);
   });
 
   it('attachAiSession only patches docs whose aiSessionId is still null', async () => {
