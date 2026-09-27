@@ -149,6 +149,27 @@ export function SemanticModelEditorPage() {
     setPopulationJobId(undefined);
   }, [populationJob.data]);
   const [mappingTarget, setMappingTarget] = useState<SourceMappingTarget | null>(null);
+  // Removing a source is saved at once and cannot be undone, so it is confirmed first.
+  const [removal, setRemoval] = useState<{ label: string; mappings: ConceptSourceMapping[] } | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const adoptRevision = useSemanticModelEditorStore((state) => state.adoptRevision);
+  const removeMappings = async () => {
+    if (!modelId || !removal) return;
+    setRemoving(true);
+    try {
+      for (const mapping of removal.mappings) {
+        const result = await semanticModelApi.deleteSourceMapping(modelId, mapping.id);
+        adoptRevision(result.revision);
+      }
+      setRemoval(null);
+    } catch (error) {
+      showError(t('designer.delete.sourceError'), { description: parseApiError(error).message });
+    } finally {
+      setRemoving(false);
+      void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) });
+      void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId) });
+    }
+  };
   const openMappingTarget = useCallback(async (target: SourceMappingTarget) => {
     if (!modelId) return;
     const linked = knowledge.workspaceLinks.some((item) => item.workspaceId === target.workspaceId && item.enabled);
@@ -450,6 +471,7 @@ export function SemanticModelEditorPage() {
             onMapStructuredDrop={(resource, nodeId) => void openMappingTarget(sourceMappingTargetFromResource(resource, nodeId))}
             onOpenSource={openSource}
             onPaneDrop={dropOnCanvas}
+            onRemoveSource={(source, mapping) => setRemoval({ label: source.label, mappings: mapping ? [mapping] : source.mappings })}
             onAddFeed={(source) => { const first = source.mappings[0]; if (first) void openMappingTarget({ ...mappingTarget_(first), mapping: undefined, conceptId: undefined }); }}
           /></div>}
           {mode === 'records' && modelId && <SemanticDataPreview modelId={modelId} dataRevisionId={boundDataRevisionId} onDataRevision={setBoundDataRevisionId} onOpenItem={(id) => { setMode('structure'); focus(id); }} canEdit={canEdit} onRebuildStarted={setPopulationJobId} />}
@@ -555,6 +577,20 @@ export function SemanticModelEditorPage() {
               }
             >
               {t("conflict.keepCopy")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={removal !== null} onOpenChange={(open) => { if (!open && !removing) setRemoval(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('designer.delete.confirmTitle', { name: removal?.label ?? '' })}</DialogTitle>
+            <DialogDescription>{t('designer.delete.confirmDescription')}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" disabled={removing} onClick={() => setRemoval(null)}>{t('action.cancel')}</Button>
+            <Button variant="destructive" disabled={removing} onClick={() => void removeMappings()}>
+              {removing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{t('designer.delete.confirm')}
             </Button>
           </DialogFooter>
         </DialogContent>

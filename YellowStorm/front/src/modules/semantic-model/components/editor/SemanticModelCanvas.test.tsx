@@ -209,6 +209,54 @@ describe('SemanticModelCanvas', () => {
     expect(useSemanticModelEditorStore.getState().selectedId).toBeNull();
   });
 
+  it('deletes a concept from its hover button, with its relationships, as one undoable change', () => {
+    useSemanticModelEditorStore.getState().hydrate({
+      ...contractGraph,
+      nodes:[...contractGraph.nodes,{...contractGraph.nodes[0],id:'customer',key:'customer',label:'Customer',attributes:[]}],
+      relations:[{id:'signs',key:'signs',label:'signs',inverseLabel:'',description:'',sourceNodeTypeId:'customer',targetNodeTypeId:'contract',cardinality:'one_to_many',traversable:true,filterable:true,attributes:[]}],
+    });
+    renderCanvas([]);
+    fireEvent.click(screen.getAllByRole('button',{name:'designer.delete.concept'})[0]);
+    const state = useSemanticModelEditorStore.getState();
+    expect(state.pending[0].map((operation)=>operation.type)).toEqual(['relation_type.delete','node_type.delete']);
+    expect(state.graph?.nodes.map((node)=>node.id)).toEqual(['customer']);
+    act(()=>state.undo());
+    expect(useSemanticModelEditorStore.getState().graph?.relations).toHaveLength(1);
+  });
+
+  it('deletes a relationship from its line', () => {
+    useSemanticModelEditorStore.getState().hydrate({
+      ...contractGraph,
+      relations:[{id:'renews',key:'renews',label:'renews',inverseLabel:'',description:'',sourceNodeTypeId:'contract',targetNodeTypeId:'contract',cardinality:'one_to_many',traversable:true,filterable:true,attributes:[]}],
+    });
+    renderCanvas([]);
+    const edges = flow.props.edges as Array<{id:string;data:{onDelete:(id:string)=>void}}>;
+    act(()=>edges[0].data.onDelete('renews'));
+    expect(useSemanticModelEditorStore.getState().graph?.relations).toEqual([]);
+  });
+
+  it('asks before removing a source, since that cannot be undone', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    const onRemoveSource = vi.fn();
+    render(<SemanticModelCanvas canEdit knowledge={knowledge} sourceMappings={[mapping({})]} onOpenKnowledge={vi.fn()} onConnectRequest={vi.fn()} onRemoveSource={onRemoveSource} />);
+    fireEvent.click(screen.getByRole('button',{name:'designer.delete.source'}));
+    expect(onRemoveSource).toHaveBeenCalledWith(expect.objectContaining({ label:'master-agreement-0041.pdf' }));
+    expect(useSemanticModelEditorStore.getState().pending).toEqual([]);
+  });
+
+  it('moves a node live while dragging and saves its place only on drop', () => {
+    useSemanticModelEditorStore.getState().hydrate(contractGraph);
+    renderCanvas([]);
+    const onNodesChange = flow.props.onNodesChange as (changes:unknown[])=>void;
+    act(()=>onNodesChange([{type:'position',id:'contract',position:{x:50,y:60},dragging:true}]));
+    const moved = (flow.props.nodes as Array<{id:string;position:{x:number;y:number}}>).find((node)=>node.id==='contract');
+    expect(moved?.position).toEqual({x:50,y:60});
+    expect(useSemanticModelEditorStore.getState().pending).toEqual([]);
+    const onNodeDragStop = flow.props.onNodeDragStop as (event:unknown,node:unknown)=>void;
+    act(()=>onNodeDragStop({}, {id:'contract',position:{x:50,y:60}}));
+    expect(useSemanticModelEditorStore.getState().pending[0][0]).toMatchObject({type:'layout.update',positions:[{id:'contract',position:{x:50,y:60}}]});
+  });
+
   it('links a dragged workspace directly from a concept card', () => {
     useSemanticModelEditorStore.getState().hydrate({...graph,nodes:[{...graph.nodes[0],id:'customer',label:'Customer',systemKey:null}]});
     const resource={kind:'workspace' as const,workspaceId:'workspace',name:'Credit Risk'};

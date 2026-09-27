@@ -162,7 +162,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
     setMappings(mappings.map((mapping, itemIndex) => itemIndex === index ? { ...mapping, extractionStrategy: strategy } : mapping));
   };
 
-  return <Sheet open={Boolean(target)} onOpenChange={(open) => { if (!open) onClose(); }}>
+  return <Sheet modal={false} open={Boolean(target)} onOpenChange={(open) => { if (!open) onClose(); }}>
     {target && <SheetContent side='right' className='flex w-full flex-col gap-0 p-0 sm:max-w-2xl'>
       <SheetHeader className='border-b p-5'>
         <SheetTitle>{target.bulkEdit ? t('dataWorkflow.bulkTitle') : target.mapping ? t('mapping.editDocumentTitle') : t('mapping.documentTitle', { name: target.documentName })}</SheetTitle>

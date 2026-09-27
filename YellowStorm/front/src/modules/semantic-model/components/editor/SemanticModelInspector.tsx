@@ -13,6 +13,7 @@ import type { KnowledgeLinkingController } from '../../hooks/use-knowledge-linki
 import { type SourceMappingTarget, sourceMappingTargetFromResource } from '../mapping/SourceMappingDrawer';
 import type { AttributeDefinition, SemanticNodeType, SemanticRecord, SemanticRelationType } from '../../types';
 import { businessKey } from '../../utils/model-utils';
+import { conceptDeletion, relationDeletion } from '../../utils/graph-deletes';
 import { cardinalityOf, relationSentence, relationSides, type Multiplicity } from '../../utils/relation-sentence';
 import { KnowledgePanel } from '../knowledge/KnowledgePanel';
 import { semanticModelApi } from '../../api';
@@ -52,16 +53,8 @@ function NodeForm({ modelId, node: item,locked,canEdit,onMapData }: Readonly<{ m
   const update = (changes: Partial<Omit<SemanticNodeType,'id'|'systemKey'>>) => commit({ type:'node_type.update',id:item.id,changes }, (current) => ({ ...current,nodes:current.nodes.map((candidate) => candidate.id === item.id ? {...candidate,...changes} : candidate) }));
   const deleteNode = () => {
     if (!graph) return;
-    const relationIds = new Set(graph.relations.filter((candidate)=>candidate.sourceNodeTypeId===item.id||candidate.targetNodeTypeId===item.id).map((candidate)=>candidate.id));
-    const recordIds = new Set(graph.records.filter((candidate)=>candidate.nodeTypeId===item.id).map((candidate)=>candidate.id));
-    const recordRelationIds = new Set(graph.recordRelations.filter((candidate)=>relationIds.has(candidate.relationTypeId)||recordIds.has(candidate.sourceRecordId)||recordIds.has(candidate.targetRecordId)).map((candidate)=>candidate.id));
-    const operations = [
-      ...[...recordRelationIds].map((id)=>({type:'record_relation.delete' as const,id})),
-      ...[...recordIds].map((id)=>({type:'record.delete' as const,id})),
-      ...[...relationIds].map((id)=>({type:'relation_type.delete' as const,id})),
-      {type:'node_type.delete' as const,id:item.id},
-    ];
-    commitBatch(operations,(current)=>({...current,nodes:current.nodes.filter((candidate)=>candidate.id!==item.id),relations:current.relations.filter((candidate)=>!relationIds.has(candidate.id)),records:current.records.filter((candidate)=>!recordIds.has(candidate.id)),recordRelations:current.recordRelations.filter((candidate)=>!recordRelationIds.has(candidate.id))}));
+    const deletion = conceptDeletion(graph, item.id);
+    commitBatch(deletion.operations, deletion.update);
     select(null);
   };
   if (!canEdit) return <div className='space-y-4'><ReadOnlyField label={t('field.label')} value={item.label} /><ReadOnlyField label={t('field.description')} value={item.description||t('editor.noDescription')} /><ReadOnlyField label={t('field.category')} value={t(`category.${item.category}`)} /><ReadOnlyField label={t('field.recordPolicy')} value={t(`recordPolicy.${item.recordPolicy}`)} />{item.attributes.length>0&&<ReadOnlyField label={t('attributes.title')} value={item.attributes.map((attribute)=>attribute.label).join(', ')} />}</div>;
@@ -173,9 +166,8 @@ function RelationForm({ modelId,relation: item,canEdit }: Readonly<{ modelId: st
   const update = (changes: Partial<Omit<SemanticRelationType,'id'>>) => commit({ type:'relation_type.update',id:item.id,changes }, (current) => ({ ...current,relations:current.relations.map((candidate) => candidate.id === item.id ? {...candidate,...changes} : candidate) }));
   const deleteRelation = () => {
     if (!graph) return;
-    const recordRelationIds = graph.recordRelations.filter((candidate)=>candidate.relationTypeId===item.id).map((candidate)=>candidate.id);
-    const operations = [...recordRelationIds.map((id)=>({type:'record_relation.delete' as const,id})),{type:'relation_type.delete' as const,id:item.id}];
-    commitBatch(operations,(current)=>({...current,relations:current.relations.filter((candidate)=>candidate.id!==item.id),recordRelations:current.recordRelations.filter((candidate)=>!recordRelationIds.includes(candidate.id))}));
+    const deletion = relationDeletion(graph, item.id);
+    commitBatch(deletion.operations, deletion.update);
     select(null);
   };
   const source = graph?.nodes.find((candidate) => candidate.id === item.sourceNodeTypeId);
