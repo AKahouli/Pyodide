@@ -111,11 +111,11 @@ export class SemanticBusinessTrustService {
               m.asset_kind AS "assetKind",m.field_mappings AS "fieldMappings",m.status,
               m.created_by AS "createdBy",m.created_at AS "createdAt",m.updated_at AS "updatedAt",
               COALESCE(w.enabled,false) AS "sourceEnabled",m.validated_source_version AS "validatedSourceVersion",
-              m.validated_at AS "validatedAt",COALESCE(p.profile->'metadata'->>'originalName',m.document_id) AS "documentName",
-              COALESCE(h.state,'checking') AS state,h.source_fingerprint AS "currentSourceVersion",
+              m.validated_at AS "validatedAt",COALESCE(m.source_label,p.profile->'metadata'->>'originalName',m.document_id) AS "documentName",
+              (CASE WHEN m.scope='workspace' THEN 'healthy' ELSE COALESCE(h.state,'checking') END) AS state,h.source_fingerprint AS "currentSourceVersion",
               COALESCE(h.missing_fields,'[]'::jsonb) AS "missingFields",
               COALESCE(h.available_fields,'[]'::jsonb) AS "availableFields",
-              CASE COALESCE(h.state,'checking')
+              CASE (CASE WHEN m.scope='workspace' THEN 'healthy' ELSE COALESCE(h.state,'checking') END)
                 WHEN 'changed' THEN 'The source changed since this mapping was validated.'
                 WHEN 'broken' THEN 'One or more mapped fields no longer exist.'
                 WHEN 'unavailable' THEN 'The mapped source is unavailable.'
@@ -159,7 +159,7 @@ export class SemanticBusinessTrustService {
         (SELECT count(*) FROM semantic_model.identity_rules i JOIN semantic_model.node_types n ON n.id=i.concept_id AND n.version_id=$2 WHERE i.model_id=$1 AND n.system_key IS NULL AND n.record_policy<>'none')::text AS "identityCount",
         (SELECT count(*) FROM semantic_model.relation_types relation ${DATA_RELATION_JOIN} WHERE relation.model_id=$1 AND relation.version_id=$2)::text AS "relationCount",
         (SELECT count(*) FROM semantic_model.relation_resolution_rules rule JOIN semantic_model.relation_types relation ON relation.id=rule.relation_id AND relation.version_id=$2 ${DATA_RELATION_JOIN} WHERE rule.model_id=$1)::text AS "ruleCount",
-        (SELECT count(*) FROM semantic_model.source_mappings m JOIN semantic_model.node_types n ON n.id=m.concept_id AND n.version_id=$2 LEFT JOIN semantic_model.workspace_links w ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id LEFT JOIN semantic_datasource.mapping_health h ON h.model_id=m.model_id AND h.mapping_id=m.id WHERE m.model_id=$1 AND (m.status<>'ready' OR NOT COALESCE(w.enabled,false) OR COALESCE(h.state,'checking')<>'healthy'))::text AS "unhealthyMappingCount",
+        (SELECT count(*) FROM semantic_model.source_mappings m JOIN semantic_model.node_types n ON n.id=m.concept_id AND n.version_id=$2 LEFT JOIN semantic_model.workspace_links w ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id LEFT JOIN semantic_datasource.mapping_health h ON h.model_id=m.model_id AND h.mapping_id=m.id WHERE m.model_id=$1 AND (m.status<>'ready' OR NOT COALESCE(w.enabled,false) OR (CASE WHEN m.scope='workspace' THEN 'healthy' ELSE COALESCE(h.state,'checking') END)<>'healthy'))::text AS "unhealthyMappingCount",
         (SELECT count(*) FROM semantic_model.review_items review WHERE review.model_id=$1 AND review.status='open' AND (
           (review.kind='ambiguous_relation' AND EXISTS (SELECT 1 FROM semantic_model.relation_types relation WHERE relation.version_id=$2 AND relation.id::text=review.target_id)) OR
           (review.kind='source_conflict' AND EXISTS (SELECT 1 FROM semantic_model.node_types node WHERE node.version_id=$2 AND node.id::text=review.details->>'conceptId')) OR

@@ -17,6 +17,9 @@ from app.datasource.section_reader import (MAX_CLOSURE_SECTIONS, SectionReadErro
 
 from .tabular import populate_concept_rows
 
+# Bump when the way a document is read changes, so cached results are not reused.
+DOCUMENT_EXTRACTION_VERSION = "document-v1"
+
 EXTRACTOR_VERSION = "label-value-v4"
 MAX_FIELD_VALUE_CHARS = 500
 RECORD_ROW_MIN_LABELS = 2
@@ -252,8 +255,14 @@ async def populate_document(
     connection: Any, entry: dict[str, Any], concept: dict[str, Any], actor_user_id: str,
     *, metadata_fetch: Callable[[dict[str, Any], str], Awaitable[dict[str, Any]]] | None = None,
     model_id: str = "", ai_extraction: dict[str, Any] | None = None,
+    cache: Any | None = None,
 ) -> dict[str, Any]:
-    """Reauthorize, correlate, retrieve, and deterministically populate one mapped document."""
+    """Reauthorize, correlate, retrieve, and deterministically populate one mapped document.
+
+    With a ``cache``, a document whose content, mapping, concept and extractor are unchanged
+    reuses its previous result (marked ``reused``). Access and index correlation are still
+    checked every time; only reading and extraction are skipped.
+    """
     source = entry["source"]
     asset_ref = resolve_asset_ref(source)
     try:
@@ -282,6 +291,21 @@ async def populate_document(
         result = _gap(entry, status, f"logical index correlation is {resolution['resolution']}", asset_ref)
         result["indexObservation"] = observation
         return result
+
+    cache_key = None
+    if cache is not None:
+        from app.persistence.extraction_cache import extraction_cache_key
+        cache_key = extraction_cache_key({
+            "engine": DOCUMENT_EXTRACTION_VERSION, "modelId": model_id, "concept": concept,
+            "conceptId": entry["conceptId"], "fieldMappings": entry["fieldMappings"],
+            "mappingVersion": entry["mappingVersion"], "labelField": entry.get("labelField"),
+            "assetRef": asset_ref, "contentHash": current.get("contentHash"),
+            "documentPk": candidate["documentPk"], "aiExtraction": ai_extraction})
+        cached = await cache.get(cache_key)
+        if cached is not None:
+            cached["indexObservation"] = observation
+            cached["reused"] = True
+            return cached
 
     values: dict[str, Any] = {}
     evidence_by_field: dict[str, dict[str, Any]] = {}
@@ -397,6 +421,11 @@ async def populate_document(
                                          "sizeBytes": current.get("sizeBytes"),
                                          "indexResolution": resolution["resolution"]},
                    "indexObservation": observation})
+    # A failed call to the extraction agent is worth retrying next run; anything else is what this
+    # document yields until it, its mapping or the extractor changes.
+    if cache_key is not None and not any(gap["kind"] == "ai_extraction_unavailable" for gap in output["gaps"]):
+        await cache.put(cache_key, concept_id=entry["conceptId"],
+                        asset_id=str(asset_ref.get("assetId") or ""), output=output)
     return output
 
 

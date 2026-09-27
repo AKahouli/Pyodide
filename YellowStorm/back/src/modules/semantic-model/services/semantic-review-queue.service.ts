@@ -145,7 +145,7 @@ export class SemanticReviewQueueService {
     const names = new Map<string, string>();
     if (!mappingIds.length) return names;
     const result = await this.database.query<{ id: string; name: string }>(
-      `SELECT m.id::text AS id, COALESCE(p.profile->'metadata'->>'originalName', '') AS name
+      `SELECT m.id::text AS id, COALESCE(m.source_label, p.profile->'metadata'->>'originalName', '') AS name
        FROM semantic_model.source_mappings m
        LEFT JOIN LATERAL (SELECT profile FROM semantic_datasource.discovery_profiles
          WHERE workspace_id=m.workspace_id AND asset_id=m.document_id ORDER BY completed_at DESC LIMIT 1) p ON true

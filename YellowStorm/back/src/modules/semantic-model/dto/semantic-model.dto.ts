@@ -485,6 +485,78 @@ export class BulkDocumentSourceMappingDto {
   identityFields?: string[];
 }
 
+/** One document mapping applied to every readable file of a workspace, or of one of its folders. */
+export class WorkspaceSourceMappingDto {
+  @ApiProperty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  expectedRevision!: number;
+
+  @ApiProperty()
+  @IsUUID()
+  conceptId!: string;
+
+  @ApiProperty()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  workspaceId!: string;
+
+  @ApiPropertyOptional({ description: 'Only files inside this folder (at any depth)' })
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  folderId?: string;
+
+  @ApiProperty({ type: [SourceFieldMappingDto], maxItems: 100 })
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => SourceFieldMappingDto)
+  fieldMappings!: SourceFieldMappingDto[];
+
+  @ApiPropertyOptional({ type: [String], maxItems: 5 })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsString({ each: true })
+  @MaxLength(200, { each: true })
+  identityFields?: string[];
+}
+
+/** A page of one concept's records, optionally narrowed by a search. */
+export class ConceptRecordsQueryDto {
+  @ApiPropertyOptional({ maxLength: 200 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  q?: string;
+
+  @ApiPropertyOptional({ default: 50, maximum: 200 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  limit?: number;
+
+  @ApiPropertyOptional({ default: 0 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(1_000_000)
+  offset?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  dataRevisionId?: string;
+}
+
 export class SourceAssetProfileQueryDto {
   @ApiProperty()
   @IsString()

@@ -14,6 +14,8 @@ import { SemanticModelService } from './semantic-model.service';
 import { SemanticRuntimeClientService, type RuntimeValueOrigin } from './semantic-runtime-client.service';
 import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
 import { DOCUMENT_MIME_TYPES, STRUCTURED_MIME_PREFIXES } from './semantic-source-mapping.service';
+import { workspaceMappingFiles } from '../domain/workspace-source-scope';
+import type { DocumentResponse as WorkspaceDocumentResponse } from '@modules/workspace/interfaces/workspace-document.interface';
 
 export type PopulationRefreshScope = { kind: 'model' } | { kind: 'mapping'; mappingId: string };
 
@@ -51,6 +53,8 @@ interface MappingRow {
   sourceEnabled: boolean;
   validatedSourceVersion: string | null;
   updatedAt: Date;
+  scope?: 'document' | 'workspace';
+  folderId?: string | null;
 }
 
 interface RecordSource {
@@ -68,6 +72,8 @@ type RelationRuleRow =Pick<RelationResolutionRule,
 
 const POPULATION_KINDS = new Set(['excel_sheet', 'csv', 'document']);
 const MAX_REFRESH_SOURCES = 25;
+/** Files one run may read, workspace mappings expanded; matches the runtime's per-task limit. */
+const MAX_RUN_SOURCES = 5000;
 const MANUAL_BATCH_SIZE = 500;
 const POPULATION_ENGINE_VERSION = 'r1-mvp-5';
 // Version of the AI extraction contract (prompt + response shape). Must equal the
@@ -113,6 +119,46 @@ export class SemanticPopulationRefreshService {
       throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'Population job not found');
     }
     return job;
+  }
+
+  /**
+   * One concept's records in the data in use, a page at a time and optionally searched, with where each
+   * value came from. Answers "nothing yet" rather than failing when no data has been generated.
+   */
+  async conceptRecords(userId: string, modelId: string, conceptId: string,
+    query: { q?: string; limit?: number; offset?: number; dataRevisionId?: string }) {
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
+    const limit = query.limit ?? 50;
+    const offset = query.offset ?? 0;
+    let page;
+    try {
+      page = await this.runtime.searchConceptRecords(model.id, conceptId, userId,
+        { q: query.q?.trim() || undefined, limit, offset, dataRevisionId: query.dataRevisionId });
+    } catch (error) {
+      if ((error as { status?: number }).status === 404) return { dataRevisionId: null, total: 0, offset, limit, records: [] };
+      throw error;
+    }
+    const sources = await this.recordSources(model.id, page.entities.flatMap((entity) => Object.values(entity.origins ?? {})));
+    const correctors = await this.correctorNames(model.id, userId,
+      page.entities.flatMap((entity) => Object.values(entity.origins ?? {}).map((origin) => origin.correctedBy)));
+    return {
+      dataRevisionId: page.dataRevisionId,
+      total: page.total,
+      offset: page.offset,
+      limit: page.limit,
+      records: page.entities.map((entity) => ({
+        id: entity.entityId,
+        conceptId: entity.conceptId,
+        entityKey: entity.entityId,
+        label: entity.label,
+        values: entity.attributes,
+        identity: entity.identity ?? {},
+        provenance: Object.fromEntries(Object.entries(entity.origins ?? {})
+          .map(([attribute, origin]) => [attribute, this.withCorrection(this.valueProvenance(origin, sources), origin, correctors)])),
+        conflicts: [],
+      })),
+    };
   }
 
   async boundRecords(userId: string, modelId: string, limit: number, conceptId?: string, dataRevisionId?: string) {
@@ -338,6 +384,30 @@ export class SemanticPopulationRefreshService {
         kind: mapping.assetKind,
       });
     }
+    // Files read through a workspace mapping have no mapping row of their own: name them from the file.
+    const unmatched = assetIds.filter((assetId) => !sources.has(assetId));
+    if (unmatched.length) {
+      const workspaceMappings = await this.database.query<{ id: string; workspaceId: string }>(
+        `SELECT id, workspace_id AS "workspaceId" FROM semantic_model.source_mappings
+         WHERE model_id=$1 AND scope='workspace' ORDER BY id`,
+        [modelId],
+      ).then((result) => result.rows).catch(() => [] as Array<{ id: string; workspaceId: string }>);
+      if (workspaceMappings.length) {
+        const files = await this.documents.findByIds(unmatched).catch(() => []);
+        for (const file of files) {
+          const mapping = workspaceMappings.find((candidate) => candidate.workspaceId === file.workspaceId);
+          if (!mapping) continue;
+          sources.set(file.id, {
+            mappingId: mapping.id,
+            workspaceId: file.workspaceId,
+            documentId: file.id,
+            documentName: file.originalName,
+            mimeType: file.mimeType,
+            kind: 'document',
+          });
+        }
+      }
+    }
     return sources;
   }
 
@@ -446,6 +516,7 @@ export class SemanticPopulationRefreshService {
     const sources = [];
     const usableMappings: MappingRow[] = [];
     const skipped: Array<{ mappingId: string; reason: string }> = [];
+    let waitingFiles = 0;
     for (const mapping of [...mappings].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0)) {
       try {
         const node = nodes.find((candidate) => candidate.id === mapping.conceptId);
@@ -455,7 +526,15 @@ export class SemanticPopulationRefreshService {
             'The mapped concept is not present in the current draft',
           );
         }
-        sources.push(await this.populationSource(mapping, node));
+        if (mapping.scope === 'workspace') {
+          // One source per readable file, resolved now: files added since the last run are included.
+          const files = await this.workspaceFiles(mapping.workspaceId, mapping.folderId);
+          if (!files.readable.length) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT, 'The workspace has no readable file yet');
+          for (const file of files.readable) sources.push(await this.populationSource(mapping, node, file));
+          waitingFiles += files.waiting.length;
+        } else {
+          sources.push(await this.populationSource(mapping, node));
+        }
         usableMappings.push(mapping);
       } catch (error) {
         if (scope.kind === 'mapping') throw error;
@@ -468,6 +547,12 @@ export class SemanticPopulationRefreshService {
     if (manual) sources.push(...manual.sources);
     if (!sources.length) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'No usable source in the selected scope');
+    }
+    if (sources.length > MAX_RUN_SOURCES) {
+      throw new BadRequestException(
+        ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+        `A run can read at most ${MAX_RUN_SOURCES} files; map a folder instead of the whole workspace`,
+      );
     }
     const scopedConceptIds = new Set(usableMappings.map((mapping) => mapping.conceptId));
     const manualOnly = new Set((manual?.sources ?? []).map((source) => source.conceptId).filter((id) => !scopedConceptIds.has(id)));
@@ -563,11 +648,11 @@ export class SemanticPopulationRefreshService {
       aiExtraction,
       populationEngineVersion: POPULATION_ENGINE_VERSION,
     });
-    return { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, aiExtraction, populationExecutionFingerprint, skipped };
+    return { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, aiExtraction, populationExecutionFingerprint, skipped, waitingFiles };
   }
 
   async requestRefresh(userId: string, modelId: string, input: RequestPopulationRefreshInput) {
-    const { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, aiExtraction, populationExecutionFingerprint, skipped }
+    const { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, aiExtraction, populationExecutionFingerprint, skipped, waitingFiles }
       = await this.planRefresh(userId, modelId, input, 'run');
     await this.runtime.mirrorSpecification({
       homeWorkspaceId,
@@ -608,7 +693,7 @@ export class SemanticPopulationRefreshService {
         aiExtraction,
       },
     }, idempotencyKey);
-    return { ...accepted, skipped };
+    return { ...accepted, skipped, sourceCount: runtimeSources.length, waitingFiles };
   }
 
   /**
@@ -728,7 +813,8 @@ export class SemanticPopulationRefreshService {
                 m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings",
                 m.status, i.fields AS "identityFields",
                 COALESCE(w.enabled, false) AS "sourceEnabled",
-                m.validated_source_version AS "validatedSourceVersion", m.updated_at AS "updatedAt"
+                m.validated_source_version AS "validatedSourceVersion", m.updated_at AS "updatedAt",
+                m.scope, m.folder_id AS "folderId"
          FROM semantic_model.source_mappings m
          LEFT JOIN semantic_model.workspace_links w ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id
          LEFT JOIN semantic_model.identity_rules i ON i.model_id=m.model_id AND i.concept_id=m.concept_id
@@ -746,7 +832,8 @@ export class SemanticPopulationRefreshService {
               m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings",
               m.status, i.fields AS "identityFields",
               COALESCE(w.enabled, false) AS "sourceEnabled",
-              m.validated_source_version AS "validatedSourceVersion", m.updated_at AS "updatedAt"
+              m.validated_source_version AS "validatedSourceVersion", m.updated_at AS "updatedAt",
+              m.scope, m.folder_id AS "folderId"
        FROM semantic_model.source_mappings m
        LEFT JOIN semantic_model.workspace_links w ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id
        LEFT JOIN semantic_model.identity_rules i ON i.model_id=m.model_id AND i.concept_id=m.concept_id
@@ -775,14 +862,24 @@ export class SemanticPopulationRefreshService {
     }
   }
 
-  private async populationSource(mapping: MappingRow, node: NodeTypeRow) {
+  /** Readable files of a workspace mapping, listed at run time. */
+  private async workspaceFiles(workspaceId: string, folderId?: string | null) {
+    const all = await this.documents.listAllInWorkspace(workspaceId);
+    return workspaceMappingFiles(all, DOCUMENT_MIME_TYPES, folderId);
+  }
+
+  /**
+   * The runtime source for a mapping. A workspace mapping passes each file it covers: those files were
+   * listed a moment ago, so they are read as they are now rather than checked against a saved version.
+   */
+  private async populationSource(mapping: MappingRow, node: NodeTypeRow, file?: WorkspaceDocumentResponse) {
     this.assertUsable(mapping);
-    const document = await this.documents.findById(mapping.workspaceId, mapping.documentId);
+    const document = file ?? await this.documents.findById(mapping.workspaceId, mapping.documentId);
     const currentSourceVersion = document.contentHash || `${document.updatedAt}:${document.size}`;
     const currentKind = STRUCTURED_MIME_PREFIXES.some((prefix) => document.mimeType.startsWith(prefix))
       ? document.mimeType.includes('csv') ? 'csv' : 'excel_sheet'
       : DOCUMENT_MIME_TYPES.has(document.mimeType) ? 'document' : null;
-    if (currentSourceVersion !== mapping.validatedSourceVersion || currentKind !== mapping.assetKind) {
+    if ((!file && currentSourceVersion !== mapping.validatedSourceVersion) || currentKind !== mapping.assetKind) {
       throw new ConflictException(
         ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT,
         'The mapped source changed since this mapping was validated',
@@ -821,8 +918,8 @@ export class SemanticPopulationRefreshService {
     }
     const source = {
       workspaceId: mapping.workspaceId,
-      assetId: mapping.documentId,
-      assetVersionId: mapping.validatedSourceVersion ?? undefined,
+      assetId: file ? file.id : mapping.documentId,
+      assetVersionId: file ? currentSourceVersion : mapping.validatedSourceVersion ?? undefined,
       originalName: document.originalName,
       uploaderUserId: document.createdBy,
       mimeType: document.mimeType,

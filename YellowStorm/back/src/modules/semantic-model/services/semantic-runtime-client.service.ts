@@ -37,6 +37,8 @@ export interface RuntimeJob {
   jobType: string;
   modelId: string | null;
   state: string;
+  /** What a running job has done so far (population runs report it source by source). */
+  progress?: Record<string, unknown>;
   result: Record<string, unknown> | null;
   errorCode: string | null;
 }
@@ -77,6 +79,16 @@ export interface RuntimeRevisionGaps {
   other: Array<{ conceptId: string | null; kind: string; count: number }>;
 }
 
+export interface RuntimeConceptRecordsPage {
+  modelId: string;
+  conceptId: string;
+  dataRevisionId: string;
+  total: number;
+  offset: number;
+  limit: number;
+  entities: RuntimeBoundRecords['entities'];
+}
+
 export interface RuntimeBoundRecords {
   modelId: string;
   modelVersionId: string;
@@ -88,6 +100,8 @@ export interface RuntimeBoundRecords {
     attributes: Record<string, unknown>;
     provenance: Record<string, unknown>;
     origins?: Record<string, RuntimeValueOrigin>;
+    /** Normalized matching key; key fields are not repeated among the attributes. */
+    identity?: Record<string, unknown>;
   }>;
   gaps?: RuntimeRevisionGaps;
   relationships: Array<{
@@ -292,6 +306,17 @@ export class SemanticRuntimeClientService {
   async getJob(jobId: string, actorUserId: string): Promise<RuntimeJob> {
     return this.get<RuntimeJob>(
       `/v1/semantic-model-jobs/${encodeURIComponent(jobId)}`,
+      actorUserId,
+    );
+  }
+
+  async searchConceptRecords(modelId: string, conceptId: string, actorUserId: string,
+    query: { q?: string; limit: number; offset: number; dataRevisionId?: string }): Promise<RuntimeConceptRecordsPage> {
+    const params = new URLSearchParams({ environment: 'draft', limit: String(query.limit), offset: String(query.offset) });
+    if (query.q) params.set('q', query.q);
+    if (query.dataRevisionId) params.set('dataRevisionId', query.dataRevisionId);
+    return this.get<RuntimeConceptRecordsPage>(
+      `/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/concepts/${encodeURIComponent(conceptId)}/records?${params}`,
       actorUserId,
     );
   }

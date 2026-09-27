@@ -18,6 +18,8 @@ import {
   UpdateSemanticModelDto,
   CreateSourceMappingDto,
   BulkDocumentSourceMappingDto,
+  WorkspaceSourceMappingDto,
+  ConceptRecordsQueryDto,
   SourceAssetProfileQueryDto,
   SaveCanvasPositionsDto,
   SourceMappingPreviewDto,
@@ -247,6 +249,20 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   createSourceMapping(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: CreateSourceMappingDto) {
     return this.sourceMappings.create(user._id.toString(),modelId,dto);
+  }
+
+  @Post(':modelId/source-mappings/workspace')
+  @ApiOperation({ summary: 'Map every readable file of a workspace, or of one of its folders, with one document mapping' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  createWorkspaceSourceMapping(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: WorkspaceSourceMappingDto) {
+    return this.sourceMappings.createWorkspace(user._id.toString(),modelId,dto);
+  }
+
+  @Get(':modelId/concepts/:conceptId/records')
+  @ApiOperation({ summary: 'Browse one concept\'s records in the data in use, searchable and paged' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  listConceptRecords(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('conceptId') conceptId: string,@Query() query: ConceptRecordsQueryDto) {
+    return this.populationRefresh.conceptRecords(user._id.toString(),modelId,conceptId,query);
   }
 
   @Post(':modelId/source-mappings/bulk-documents')

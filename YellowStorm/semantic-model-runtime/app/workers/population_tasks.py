@@ -25,7 +25,11 @@ from .celery_app import POPULATION_QUEUES, celery_app
 logger = logging.getLogger(__name__)
 ASSET_FETCH_WALL_SECONDS = 35
 QUERY_ROW_LIMIT = 1000
-MAX_SOURCES_PER_TASK = 25
+# A workspace mapping expands to one source per document, so a run can read thousands of files.
+MAX_SOURCES_PER_TASK = 5000
+# How long each progress report keeps the lease alive: a long run stays owned while it reports.
+PROGRESS_LEASE_SECONDS = 900
+PROGRESS_RECENT = 8
 MAX_TOTAL_ENTITIES = 10000
 MAX_TOTAL_ASSERTIONS = 50000
 MAX_TOTAL_RELATIONSHIPS = 20000
@@ -64,6 +68,76 @@ def population_lease_seconds(source_count: int, parser_timeout: int) -> int:
     """Cover fetch, prepare, query and completion for every mapped source."""
     units = max(1, min(source_count, MAX_SOURCES_PER_TASK))
     return min(1800, max(300, units * (parser_timeout + 60)))
+
+
+class PopulationProgress:
+    """What a run has done so far, reported (at most about once a second) to whoever watches the job."""
+
+    def __init__(self, report=None, *, min_interval: float = 1.0):  # type: ignore[no-untyped-def]
+        import time
+        from datetime import datetime, timezone
+
+        self._report = report
+        self._min_interval = min_interval
+        self._last_sent = float("-inf")
+        self._clock = time.monotonic
+        self.started_at = datetime.now(timezone.utc).isoformat()
+        self.phase = "starting"
+        self.total = 0
+        self.done = 0
+        self.reused = 0
+        self.records = 0
+        self.gaps = 0
+        self.current: dict | None = None
+        self.recent: list[dict] = []
+
+    def snapshot(self) -> dict:
+        return {"phase": self.phase, "total": self.total, "done": self.done, "reused": self.reused,
+                "records": self.records, "gaps": self.gaps, "current": self.current,
+                "recent": list(self.recent), "startedAt": self.started_at}
+
+    async def send(self, *, force: bool = False) -> None:
+        if self._report is None:
+            return
+        now = self._clock()
+        if not force and now - self._last_sent < self._min_interval:
+            return
+        self._last_sent = now
+        await self._report(self.snapshot())
+
+    async def begin(self, total: int) -> None:
+        self.phase, self.total = "reading", total
+        await self.send(force=True)
+
+    async def reading(self, entry: dict) -> None:
+        self.current = {"name": source_display_name(entry), "conceptId": entry.get("conceptId"),
+                        "kind": entry.get("sourceKind")}
+        await self.send()
+
+    async def read(self, entry: dict, *, records: int, gaps: int, status: str,
+                   reused: bool = False) -> None:
+        self.done += 1
+        self.current = None
+        self.reused += 1 if reused else 0
+        self.records += records
+        self.gaps += gaps
+        self.recent = [{"name": source_display_name(entry), "conceptId": entry.get("conceptId"),
+                        "status": status, "records": records, "reused": reused},
+                       *self.recent][:PROGRESS_RECENT]
+        await self.send(force=self.done == self.total)
+
+    async def enter(self, phase: str) -> None:
+        self.phase, self.current = phase, None
+        await self.send(force=True)
+
+
+def source_display_name(entry: dict) -> str:
+    if entry.get("sourceKind") == "manual":
+        return "Typed records"
+    source = entry.get("source") or {}
+    name = source.get("originalName") or source.get("assetId") or "source"
+    sheet = (entry.get("options") or {}).get("sheetName")
+    return f"{name} · {sheet}" if sheet else str(name)
 
 
 def attempts_exhausted(attempt_count: int, max_attempts: int) -> bool:
@@ -227,8 +301,9 @@ def run_population_for_payload(command_dump: dict) -> dict:
 
 async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=None,
                                   query=None, index_connection=None, metadata_fetch=None,
-                                  manual_pool=None) -> dict:
-    """Fetch, prepare, query and populate every mapped source (bounded)."""
+                                  manual_pool=None, progress: PopulationProgress | None = None,
+                                  extraction_cache=None) -> dict:
+    """Fetch, prepare, query and populate every mapped source (bounded), reporting progress."""
     import asyncio
     import os
     import tempfile
@@ -253,106 +328,131 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     index_observations: list[dict] = []
     complete_enumeration = True
     manual_links: list[tuple[str, dict]] = []
-    for entry in validated["sources"]:
-        source, options = entry["source"], entry["options"]
-        if entry["sourceKind"] == "manual":
-            outcome = await _populate_manual_source(manual_pool, entry,
-                                                    compiled["concepts"][entry["conceptId"]])
-            if not outcome.get("ok"):
-                return outcome
-            per_concept.setdefault(entry["conceptId"], []).append(outcome["output"])
-            observations.append(outcome["observation"])
-            dataset_fingerprints.add(source["snapshotId"])
-            manual_links.extend((source["snapshotId"], link) for link in outcome["links"])
-            continue
-        if entry["sourceKind"] == "document":
-            from app.datasource.logical_index import create_index_pool
-            from app.population.document import populate_document
+    progress = progress or PopulationProgress()
+    await progress.begin(len(validated["sources"]))
+    # One index connection for the whole run, opened on the first document: a workspace can hold
+    # thousands of them.
+    index_pool: dict = {"connection": index_connection, "owned": None}
 
-            owned_pool = None
-            connection = index_connection
-            try:
-                if connection is None:
-                    owned_pool = await create_index_pool()
-                    connection = owned_pool
+    async def document_connection():  # type: ignore[no-untyped-def]
+        if index_pool["connection"] is None:
+            from app.datasource.logical_index import create_index_pool
+            index_pool["owned"] = index_pool["connection"] = await create_index_pool()
+        return index_pool["connection"]
+
+    async def read_sources() -> dict | None:
+        """Read every source in turn; an error result stops the run."""
+        nonlocal complete_enumeration
+        for entry in validated["sources"]:
+            source, options = entry["source"], entry["options"]
+            await progress.reading(entry)
+            if entry["sourceKind"] == "manual":
+                outcome = await _populate_manual_source(manual_pool, entry,
+                                                        compiled["concepts"][entry["conceptId"]])
+                if not outcome.get("ok"):
+                    return outcome
+                per_concept.setdefault(entry["conceptId"], []).append(outcome["output"])
+                observations.append(outcome["observation"])
+                dataset_fingerprints.add(source["snapshotId"])
+                manual_links.extend((source["snapshotId"], link) for link in outcome["links"])
+                await progress.read(entry, records=len(outcome["output"]["entities"]),
+                                    gaps=len(outcome["output"]["gaps"]), status="read")
+                continue
+            if entry["sourceKind"] == "document":
+                from app.population.document import populate_document
+
                 output = await populate_document(
-                    connection, entry, compiled["concepts"][entry["conceptId"]], actor,
+                    await document_connection(), entry, compiled["concepts"][entry["conceptId"]], actor,
                     metadata_fetch=metadata_fetch,
                     model_id=str(command_dump.get("modelId") or ""),
-                    ai_extraction=ai_extraction)
-            finally:
-                if owned_pool is not None:
-                    await owned_pool.close()
-            per_concept.setdefault(entry["conceptId"], []).append(output)
-            document_coverage.append(output["coverage"])
-            observations.append(output["sourceObservation"])
-            if output.get("indexObservation"):
-                index_observations.append(output["indexObservation"])
-            fingerprint = output["sourceObservation"]["assetRef"].get("assetVersionId")
+                    ai_extraction=ai_extraction, cache=extraction_cache)
+                reused = bool(output.pop("reused", False))
+                per_concept.setdefault(entry["conceptId"], []).append(output)
+                document_coverage.append(output["coverage"])
+                observations.append(output["sourceObservation"])
+                if output.get("indexObservation"):
+                    index_observations.append(output["indexObservation"])
+                fingerprint = output["sourceObservation"]["assetRef"].get("assetVersionId")
+                if isinstance(fingerprint, str) and fingerprint:
+                    dataset_fingerprints.add(fingerprint)
+                if output["coverage"]["status"] == "budget_exhausted":
+                    complete_enumeration = False
+                await progress.read(entry, records=len(output["entities"]), gaps=len(output["gaps"]),
+                                    status=output["coverage"]["status"], reused=reused)
+                continue
+            try:
+                async with asyncio.timeout(ASSET_FETCH_WALL_SECONDS):
+                    data = await (fetch or fetch_workspace_asset)(source, actor)
+            except AssetFetchError as exc:
+                return {"ok": False, "errorCode": exc.code}
+            try:
+                asset_ref = resolve_asset_ref(source)
+            except ValueError as exc:
+                return {"ok": False, "errorCode": str(exc) or "invalid_source"}
+            temp_root = os.environ.get("SEMANTIC_TASK_TEMP_DIR")
+            records = gaps = 0
+            try:
+                with tempfile.TemporaryDirectory(prefix="semantic-populate-",
+                                                 dir=temp_root) as directory:
+                    artifact = Path(directory) / "dataset.parquet"
+                    manifest = await asyncio.to_thread(
+                        prepare or prepare_dataset_subprocess, source, options, data, artifact)
+                    asset_ref["datasetRevisionId"] = manifest.get("datasetId")
+                    columns = sorted(set(entry["columnMapping"]) | {SHEET_ROW_KEY})
+                    offset = 0
+                    while True:
+                        page = await asyncio.to_thread(
+                            query or query_parquet, artifact, columns=columns,
+                            limit=QUERY_ROW_LIMIT, offset=offset)
+                        mapping = entry["columnMapping"]
+                        constants = entry.get("constantMapping", {})
+                        rows = []
+                        for raw in page["rows"]:
+                            renamed: dict = {"_row": raw.get(SHEET_ROW_KEY), **constants}
+                            for source_column, attribute in mapping.items():
+                                if source_column in raw:
+                                    renamed[attribute] = raw[source_column]
+                            rows.append(renamed)
+                        concept = compiled["concepts"][entry["conceptId"]]
+                        output = populate_concept_rows(
+                            concept, rows, {"assetRef": asset_ref,
+                                           "mappingVersion": entry["mappingVersion"],
+                                           "labelField": entry.get("labelField"),
+                                           "constantFields": list(constants)})
+                        per_concept.setdefault(entry["conceptId"], []).append(output)
+                        records += len(output["entities"])
+                        gaps += len(output["gaps"])
+                        offset += page["returnedRows"]
+                        if page["returnedRows"] < QUERY_ROW_LIMIT:
+                            break
+                        if offset >= MAX_TOTAL_ASSERTIONS:
+                            complete_enumeration = False
+                            break
+            except ValueError as exc:
+                return {"ok": False, "errorCode": str(exc) or "parser_failed"}
+            except AssetFetchError as exc:
+                return {"ok": False, "errorCode": exc.code}
+            fingerprint = manifest.get("contentHash") if isinstance(manifest, dict) else None
             if isinstance(fingerprint, str) and fingerprint:
                 dataset_fingerprints.add(fingerprint)
-            if output["coverage"]["status"] == "budget_exhausted":
-                complete_enumeration = False
-            continue
-        try:
-            async with asyncio.timeout(ASSET_FETCH_WALL_SECONDS):
-                data = await (fetch or fetch_workspace_asset)(source, actor)
-        except AssetFetchError as exc:
-            return {"ok": False, "errorCode": exc.code}
-        try:
-            asset_ref = resolve_asset_ref(source)
-        except ValueError as exc:
-            return {"ok": False, "errorCode": str(exc) or "invalid_source"}
-        temp_root = os.environ.get("SEMANTIC_TASK_TEMP_DIR")
-        try:
-            with tempfile.TemporaryDirectory(prefix="semantic-populate-",
-                                             dir=temp_root) as directory:
-                artifact = Path(directory) / "dataset.parquet"
-                manifest = await asyncio.to_thread(
-                    prepare or prepare_dataset_subprocess, source, options, data, artifact)
-                asset_ref["datasetRevisionId"] = manifest.get("datasetId")
-                columns = sorted(set(entry["columnMapping"]) | {SHEET_ROW_KEY})
-                offset = 0
-                while True:
-                    page = await asyncio.to_thread(
-                        query or query_parquet, artifact, columns=columns,
-                        limit=QUERY_ROW_LIMIT, offset=offset)
-                    mapping = entry["columnMapping"]
-                    constants = entry.get("constantMapping", {})
-                    rows = []
-                    for raw in page["rows"]:
-                        renamed: dict = {"_row": raw.get(SHEET_ROW_KEY), **constants}
-                        for source_column, attribute in mapping.items():
-                            if source_column in raw:
-                                renamed[attribute] = raw[source_column]
-                        rows.append(renamed)
-                    concept = compiled["concepts"][entry["conceptId"]]
-                    output = populate_concept_rows(
-                        concept, rows, {"assetRef": asset_ref,
-                                       "mappingVersion": entry["mappingVersion"],
-                                       "labelField": entry.get("labelField"),
-                                       "constantFields": list(constants)})
-                    per_concept.setdefault(entry["conceptId"], []).append(output)
-                    offset += page["returnedRows"]
-                    if page["returnedRows"] < QUERY_ROW_LIMIT:
-                        break
-                    if offset >= MAX_TOTAL_ASSERTIONS:
-                        complete_enumeration = False
-                        break
-        except ValueError as exc:
-            return {"ok": False, "errorCode": str(exc) or "parser_failed"}
-        except AssetFetchError as exc:
-            return {"ok": False, "errorCode": exc.code}
-        fingerprint = manifest.get("contentHash") if isinstance(manifest, dict) else None
-        if isinstance(fingerprint, str) and fingerprint:
-            dataset_fingerprints.add(fingerprint)
-        observations.append({
-            "assetRef": {key: asset_ref[key] for key in
-                         ("workspaceId", "assetId", "assetVersionId") if key in asset_ref},
-            "datasetId": manifest.get("datasetId"),
-            "contentHash": manifest.get("contentHash"),
-            "sizeBytes": manifest.get("sizeBytes"),
-            "rowCount": manifest.get("rowCount")})
+            observations.append({
+                "assetRef": {key: asset_ref[key] for key in
+                             ("workspaceId", "assetId", "assetVersionId") if key in asset_ref},
+                "datasetId": manifest.get("datasetId"),
+                "contentHash": manifest.get("contentHash"),
+                "sizeBytes": manifest.get("sizeBytes"),
+                "rowCount": manifest.get("rowCount")})
+            await progress.read(entry, records=records, gaps=gaps, status="read")
+        return None
+
+    try:
+        failure = await read_sources()
+    finally:
+        if index_pool["owned"] is not None:
+            await index_pool["owned"].close()
+    if failure is not None:
+        return failure
+    await progress.enter("linking")
 
     counts = {"scanned": 0, "excluded": 0, "queryable": 0, "materialized": 0, "gaps": 0}
     merged_by_concept: dict[str, dict] = {}
@@ -677,7 +777,20 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             except StaleLease:
                 return {"ok": False, "errorCode": "stale_lease"}
             return {"ok": False, "errorCode": "attempts_exhausted"}
-        outcome = await run_population_for_task(lease.payload, manual_pool=pool)
+        from app.persistence.extraction_cache import DocumentExtractionCache
+
+        async def report(snapshot: dict) -> None:
+            # Each report also renews the lease, so a run over thousands of files stays owned.
+            if not await repository.checkpoint(task_id=task_id, lease_owner=lease_owner,
+                                               lease_epoch=lease.lease_epoch, progress=snapshot,
+                                               lease_seconds=PROGRESS_LEASE_SECONDS):
+                raise StaleLease("population lease lost while reporting progress")
+
+        progress = PopulationProgress(report)
+        model_id = str(lease.payload.get("modelId") or lease.payload.get("model_id") or "")
+        outcome = await run_population_for_task(
+            lease.payload, manual_pool=pool, progress=progress,
+            extraction_cache=DocumentExtractionCache(pool, model_id) if model_id else None)
         if not outcome.get("ok"):
             try:
                 await repository.complete_task(task_id=task_id, lease_owner=lease_owner,
@@ -691,6 +804,7 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
         if outcome.get("purpose") == "preview":
             result = preview_job_result(outcome)
         else:
+            await progress.enter("saving")
             # Durably persist before acknowledging: the job result carries only
             # a bounded summary while canonical rows live in semantic_population.
             # Counts are re-read from storage so ON CONFLICT skips never inflate

@@ -182,6 +182,59 @@ describe('SemanticPopulationRefreshService', () => {
     expect(result.summary.unresolvedRelations).toBe(3);
   });
 
+  it('reads every readable file of a workspace mapping, and sees a new file as a change', async () => {
+    const file = (id: string, overrides: Record<string, unknown> = {}) => ({
+      id, workspaceId: 'ws-1', originalName: `${id}.pdf`, mimeType: 'application/pdf', isFolder: false, parentId: 'folder-1',
+      contentHash: `sha256:${id}`, updatedAt: '2026-01-01', uploadedAt: '2026-01-01', size: 10, createdBy: 'u-9', indexingStatus: 'ready',
+      ...overrides,
+    });
+    const workspace = MAPPING({
+      scope: 'workspace', folderId: 'folder-1', documentId: 'workspace:ws-1:folder-1', sheetName: '', assetKind: 'document',
+      validatedSourceVersion: null,
+      fieldMappings: [
+        { sourceField: 'Customer Id', targetAttribute: 'customer_id', mode: 'extract' },
+        { sourceField: 'document_name', targetAttribute: 'name', mode: 'metadata' },
+      ],
+    });
+    const { documents, runtime, service } = setup([workspace]);
+    const listing = [
+      file('b'), file('a'),
+      file('pending', { indexingStatus: 'processing' }),
+      file('elsewhere', { parentId: 'other-folder' }),
+      file('sheet', { mimeType: 'text/csv' }),
+      { id: 'folder-1', isFolder: true, mimeType: '', parentId: null },
+    ];
+    (documents as any).listAllInWorkspace = jest.fn(async () => listing);
+    const accepted = await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const first = (runtime.requestPopulationRun.mock.calls[0] as any)[0].payload;
+    expect(first.sources.map((source: any) => source.source.assetId)).toEqual(['a', 'b']);
+    expect(first.sources[0]).toMatchObject({ sourceKind: 'document', source: { assetVersionId: 'sha256:a', originalName: 'a.pdf' } });
+    expect(first.specification.sourceScope).toEqual([{ workspaceId: 'ws-1', assetId: 'workspace:ws-1:folder-1' }]);
+    expect(accepted).toMatchObject({ sourceCount: 2, waitingFiles: 1 });
+    expect(documents.findById).not.toHaveBeenCalled();
+
+    listing.push(file('c'));
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const second = (runtime.requestPopulationRun.mock.calls[1] as any)[0].payload;
+    expect(second.sources).toHaveLength(3);
+    expect(second.populationExecutionFingerprint).not.toBe(first.populationExecutionFingerprint);
+  });
+
+  it('pages and searches the records of one concept, and answers nothing yet before any data exists', async () => {
+    const { runtime, service } = setup();
+    (runtime as any).searchConceptRecords = jest.fn(async () => ({
+      modelId: 'model-1', conceptId: 'c-customer', dataRevisionId: 'dr-1', total: 120, offset: 40, limit: 20,
+      entities: [{ entityId: 'e-1', conceptId: 'c-customer', label: 'Acme', attributes: { name: 'Acme' }, provenance: {}, origins: {} }],
+    }));
+    await expect(service.conceptRecords('u-1', 'model-1', 'c-customer', { q: '  acme ', limit: 20, offset: 40 })).resolves.toMatchObject({
+      dataRevisionId: 'dr-1', total: 120, offset: 40, records: [{ id: 'e-1', label: 'Acme', values: { name: 'Acme' } }],
+    });
+    expect((runtime as any).searchConceptRecords).toHaveBeenCalledWith('model-1', 'c-customer', 'u-1',
+      { q: 'acme', limit: 20, offset: 40, dataRevisionId: undefined });
+    (runtime as any).searchConceptRecords.mockRejectedValueOnce(Object.assign(new Error('HTTP 404'), { status: 404 }));
+    await expect(service.conceptRecords('u-1', 'model-1', 'c-customer', {})).resolves.toMatchObject({ total: 0, records: [] });
+  });
+
   it('assembles, mirrors and runs a whole-model refresh', async () => {
     const { database, runtime, service } = setup();
     const result = await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });

@@ -139,7 +139,9 @@ class PostgresJobRepository:
                           CASE WHEN $3 THEN 'unavailable' ELSE 'checking' END,
                           jsonb_build_array(jsonb_build_object('code', 'source_observation_changed'))
                         FROM semantic_model.source_mappings m
+                        -- A workspace key names a whole workspace, never one file that could change.
                         WHERE m.workspace_id=$1 AND m.document_id=$2
+                          AND m.document_id NOT LIKE 'workspace:%'
                         ON CONFLICT (model_id, mapping_id) DO UPDATE SET
                           state=EXCLUDED.state, missing_fields='[]'::jsonb,
                           available_fields='[]'::jsonb,
@@ -155,7 +157,7 @@ class PostgresJobRepository:
                         """
                         SELECT DISTINCT model_id::text
                         FROM semantic_model.source_mappings
-                        WHERE workspace_id = $1 AND document_id = $2
+                        WHERE workspace_id = $1 AND (document_id = $2 OR scope = 'workspace')
                         """,
                         workspace_id, asset_id,
                     )

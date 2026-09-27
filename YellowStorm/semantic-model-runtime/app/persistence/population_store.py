@@ -455,6 +455,52 @@ async def list_revision_entities(pool: Any, revision_id: str,
     return result
 
 
+async def search_revision_entities(pool: Any, revision_id: str, concept_id: str, *,
+                                   query: str | None = None, limit: int = 50,
+                                   offset: int = 0) -> tuple[int, list[dict[str, Any]]]:
+    """A page of one concept's records, optionally narrowed to those whose name or values contain ``query``."""
+    pattern = None
+    if query and query.strip():
+        escaped = query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+    where = ("data_revision_id = $1 AND concept_id = $2 "
+             "AND ($3::text IS NULL OR label ILIKE $3 OR attributes::text ILIKE $3 "
+             "OR identity_key ILIKE $3)")
+    total = await pool.fetchval(
+        f"SELECT count(*) FROM semantic_population.entities WHERE {where}",
+        revision_id, concept_id, pattern)
+    rows = await pool.fetch(
+        "SELECT id, concept_id, namespace, label, attributes, provenance, identity_key "
+        f"FROM semantic_population.entities WHERE {where} "
+        "ORDER BY lower(label), id LIMIT $4 OFFSET $5",
+        revision_id, concept_id, pattern, limit, offset)
+    entities = []
+    for row in rows:
+        values = dict(row)
+        entities.append({
+            "entityId": values["id"], "conceptId": values["concept_id"],
+            "namespace": values["namespace"], "label": values["label"],
+            "attributes": json.loads(values["attributes"])
+            if isinstance(values["attributes"], str) else dict(values["attributes"]),
+            "provenance": json.loads(values.get("provenance") or "{}")
+            if isinstance(values.get("provenance"), str)
+            else dict(values.get("provenance") or {}),
+            # The matching key, normalized; key fields are not repeated among the attributes.
+            "identity": _json_object(values.get("identity_key")),
+        })
+    return int(total or 0), entities
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return dict(value) if isinstance(value, dict) else {}
+
+
 def _origin_of(evidence: dict[str, Any], origin: str | None) -> dict[str, Any]:
     asset_ref = evidence.get("assetRef") or {}
     result: dict[str, Any] = {

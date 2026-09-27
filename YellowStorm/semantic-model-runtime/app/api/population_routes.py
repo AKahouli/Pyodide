@@ -104,6 +104,34 @@ async def mirror_specification(command: MirrorSpecificationCommand,
             "specHash": command.spec_hash, "reused": existing is not None}
 
 
+@router.get("/models/{model_id}/concepts/{concept_id}/records", status_code=status.HTTP_200_OK)
+async def search_concept_records(model_id: str, concept_id: str, request: Request,
+                                 environment: str = "draft", q: str | None = None,
+                                 limit: int = 50, offset: int = 0,
+                                 data_revision_id: str | None = Query(default=None,
+                                                                      alias="dataRevisionId"),
+                                 ) -> dict[str, object]:
+    """Browse one concept's records in the data in use: searchable, a page at a time."""
+    if (environment != "draft" or limit < 1 or limit > 200 or offset < 0 or offset > 1_000_000
+            or (q is not None and len(q) > 200)):
+        raise HTTPException(status_code=422, detail="invalid_read_scope")
+    pool = _population_read_pool(request)
+    binding = await store.get_active_binding(pool, model_id, environment)
+    if binding is None:
+        raise HTTPException(status_code=404, detail="active_binding_not_found")
+    revision_id = binding["data_revision_id"]
+    if data_revision_id is not None and data_revision_id != revision_id:
+        raise HTTPException(status_code=409, detail="active_binding_changed")
+    total, entities = await store.search_revision_entities(
+        pool, revision_id, concept_id, query=q, limit=limit, offset=offset)
+    origins = await store.list_entity_origins(pool, revision_id,
+                                              sorted(entity["entityId"] for entity in entities))
+    for entity in entities:
+        entity["origins"] = origins.get(entity["entityId"], {})
+    return {"modelId": model_id, "conceptId": concept_id, "dataRevisionId": revision_id,
+            "total": total, "offset": offset, "limit": limit, "entities": entities}
+
+
 @router.get("/models/{model_id}/records", status_code=status.HTTP_200_OK)
 async def read_bound_records(model_id: str, request: Request, environment: str = "draft",
                              limit: int = 25,

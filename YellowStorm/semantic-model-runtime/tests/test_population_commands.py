@@ -241,6 +241,43 @@ def test_bound_records_and_graph_share_the_draft_revision(client: TestClient):
     assert stale.json()["detail"] == "active_binding_changed"
 
 
+class RecordingPool(ScriptedPool):
+    def __init__(self, script: list) -> None:
+        super().__init__(script)
+        self.calls: list[tuple] = []
+
+    async def fetchval(self, sql: str, *params):  # type: ignore[no-untyped-def]
+        self.calls.append((sql, params))
+        return await super().fetchval(sql, *params)
+
+    async def fetch(self, sql: str, *params):  # type: ignore[no-untyped-def]
+        self.calls.append((sql, params))
+        return await super().fetch(sql, *params)
+
+
+def test_concept_records_are_searched_a_page_at_a_time(client: TestClient):
+    binding = {"model_id": "m1", "model_version_id": "v1", "data_revision_id": "dr_1"}
+    entity = {"id": "crm::1", "concept_id": "c1", "namespace": "crm", "label": "Acme 50%",
+              "attributes": {"name": "Acme"}, "provenance": {}}
+    origins = [{"entity_id": "crm::1", "attribute": "name", "origin": "source",
+                "evidence": {"assetRef": {"assetId": "a1"}, "rowNumber": 4}}]
+    pool = RecordingPool([binding, 120, [entity], origins])
+    _inject(client, pool)
+    response = client.get(
+        "/v1/semantic-model-population/models/m1/concepts/c1/records?q=50%25&limit=20&offset=40",
+        headers=AUTH)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 120 and body["offset"] == 40 and body["limit"] == 20
+    assert body["entities"][0]["origins"]["name"]["rowNumber"] == 4
+    count_params = next(params for sql, params in pool.calls if "count(*)" in sql)
+    assert count_params == ("dr_1", "c1", r"%50\%%")
+    page_params = next(params for sql, params in pool.calls if "OFFSET" in sql)
+    assert page_params[-2:] == (20, 40)
+    assert client.get("/v1/semantic-model-population/models/m1/concepts/c1/records?limit=500",
+                      headers=AUTH).status_code == 422
+
+
 def test_project_rejects_truncated_listing(client: TestClient):
     revision = {"id": "dr_9", "model_id": "m1", "validation_state": "valid",
                 "projection_ref": None, "correction_sequence": 0}

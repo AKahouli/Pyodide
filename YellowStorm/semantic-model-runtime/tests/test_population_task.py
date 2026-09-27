@@ -232,6 +232,48 @@ async def test_task_merges_tabular_and_document_sources(monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
+async def test_task_reports_progress_source_by_source(monkeypatch: pytest.MonkeyPatch):
+    import app.population.document as document
+    from app.workers.population_tasks import PopulationProgress
+
+    async def populate(_connection, entry, _concept, _actor, **kwargs):
+        assert kwargs["cache"] == "cache"
+        return {"entities": [{"entityId": "crm:doc", "conceptId": entry["conceptId"],
+                              "namespace": "crm", "identity": {"customer_id": "c-3"},
+                              "label": "C-3", "attributes": {}, "provenance": {"sources": []}}],
+                "assertions": [], "gaps": [], "reused": True,
+                "counts": {"scanned": 1, "excluded": 0, "queryable": 0, "materialized": 1, "gaps": 0},
+                "coverage": {"assetRef": {}, "status": "processed_complete"},
+                "sourceObservation": {"assetRef": {"assetVersionId": "sha256:doc"}},
+                "indexObservation": None}
+
+    monkeypatch.setattr(document, "populate_document", populate)
+    sources = command()["payload"]["sources"] + [{
+        "conceptId": "c1", "sourceKind": "document",
+        "source": {**SOURCE, "mimeType": "application/pdf", "originalName": "agreement.pdf"},
+        "fieldMappings": [{"sourceField": "Customer ID", "targetAttribute": "customer_id", "mode": "extract"}],
+        "mappingVersion": "map-v1",
+    }]
+    reports: list[dict] = []
+
+    async def report(snapshot: dict) -> None:
+        reports.append(snapshot)
+
+    outcome = await run_population_for_task(
+        command(sources=sources), fetch=fake_fetch, prepare=fake_prepare, query=fake_query,
+        index_connection=object(), progress=PopulationProgress(report, min_interval=0),
+        extraction_cache="cache")
+    assert outcome["ok"] is True
+    assert reports[0] == {**reports[0], "phase": "reading", "total": 2, "done": 0}
+    finished = [item for item in reports if item["done"] == 2][0]
+    assert finished["reused"] == 1 and finished["records"] == 3
+    assert [item["name"] for item in finished["recent"]] == ["agreement.pdf", SOURCE["assetId"]]
+    assert finished["recent"][0]["reused"] is True
+    assert reports[-1]["phase"] == "linking"
+    assert "reused" not in outcome["entities"][0]
+
+
+@pytest.mark.asyncio
 async def test_task_reports_capped_enumeration_and_fetch_failures(monkeypatch: pytest.MonkeyPatch):
     import app.workers.population_tasks as tasks
 
@@ -333,6 +375,7 @@ def test_job_summary_uses_storage_counts_not_submitted_rows():
 def test_lease_covers_sources_within_bounds():
     assert population_lease_seconds(1, 30) == 300
     assert population_lease_seconds(25, 300) == 1800
+    assert population_lease_seconds(5000, 300) == 1800
     assert 300 <= population_lease_seconds(3, 30) <= 1800
 
 
