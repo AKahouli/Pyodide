@@ -156,7 +156,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
             ? <EditableUserMessage message={message} conversationId={conversationId} />
           : isUser
             ? <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} footerActions={<UserMessageActions message={message} isLastUserMessage={isLastUserMessage} className='mt-0' />} />
-            : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} answerComponents={activeComponents} isStreaming={false} justCompleted={justCompleted} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} agentId={message.agentIds?.[0] ?? null} onOpenAgentEditor={(agentId) => void handleOpenAgentEditor(agentId)} />}
+            : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} answerComponents={activeComponents} isStreaming={false} justCompleted={justCompleted} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} agentId={message.agentIds?.[0] ?? null} onOpenAgentEditor={(agentId) => void handleOpenAgentEditor(agentId)} showUiTargets />}
       </MessageProvider>
       {!isUser && autoReliabilityEnabled && (hasToolCall || hasRerunnableAnswer) && <MessageReliabilityCard conversationId={conversationId} messageId={message.id} evaluation={getAnswerEvaluation(message, displayedVersion)} originalEvaluation={message.reliabilityEvaluation} correctionWorkflow={message.correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={setDisplayedVersion} />}
       {!isUser && <CreateEditAgentDialog open={isAgentEditorOpen} onOpenChange={setIsAgentEditorOpen} agent={agentEditorAgent} onSave={handleSaveAgent} saving={isSavingAgent} />}
@@ -309,7 +309,7 @@ export function ConversationContent() {
           {(showStreamingActivity || (isActiveStream && streamingComponents.length > 0)) && (
             <div className='group/msg animate-in fade-in-0 duration-300' id={`message-${streamingMessageId || 'streaming'}`}>
               <MessageProvider isStreaming={true} isLastAiMessage={true}>
-                <ConversationAssistantBubble conversationId={currentConversationId || ''} messageId={streamingMessageId || 'streaming'} components={streamingComponents} isStreaming showWorking={showStreamingActivity && streamingComponents.length === 0} choiceInteractions={choiceInteractions} onComponentAction={handleStreamingAction} onSubmitQuestions={handleStreamingQuestions} />
+                <ConversationAssistantBubble conversationId={currentConversationId || ''} messageId={streamingMessageId || 'streaming'} components={streamingComponents} isStreaming showWorking={showStreamingActivity && streamingComponents.length === 0} choiceInteractions={choiceInteractions} onComponentAction={handleStreamingAction} onSubmitQuestions={handleStreamingQuestions} showUiTargets />
               </MessageProvider>
             </div>
           )}

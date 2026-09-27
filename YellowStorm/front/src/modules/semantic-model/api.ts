@@ -1,7 +1,7 @@
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type { ApiResponse } from '@/lib/api/client';
-import type { AgeGraphEdge, AssistantChangesPage, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
+import type { AgeGraphEdge, AssistantChangesPage, SourceSuggestionsPage, SourceFileMatches, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
 SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, PopulationFreshness, DesignerBoxPosition, SemanticReviewItem, SemanticVersion,
 SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
 StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison, ReviewQueue, ConceptRecordsPage } from './types';
@@ -234,6 +234,21 @@ export const semanticModelApi = {
   },
   async getPopulationJob(id: string, jobId: string): Promise<PopulationJob> {
     return unwrap(await apiClient.get<ApiResponse<PopulationJob>>(API_ENDPOINTS.semanticModels.populationJob(id, jobId)));
+  },
+  /** Stop a data update; nothing it read is kept, the data in use stays as it was. */
+  async stopPopulationJob(id: string, jobId: string): Promise<PopulationJob> {
+    return unwrap(await apiClient.post<ApiResponse<PopulationJob>>(API_ENDPOINTS.semanticModels.populationJobStop(id, jobId), {}));
+  },
+  /** Sources an assistant suggested for the concepts, with whether each was used or skipped. */
+  async sourceSuggestions(id: string): Promise<SourceSuggestionsPage> {
+    return unwrap(await apiClient.get<ApiResponse<SourceSuggestionsPage>>(API_ENDPOINTS.semanticModels.sourceSuggestions(id)));
+  },
+  async setSourceSuggestionStatus(id: string, conceptKey: string, status: 'pending' | 'skipped'): Promise<SourceSuggestionsPage> {
+    return unwrap(await apiClient.put<ApiResponse<SourceSuggestionsPage>>(API_ENDPOINTS.semanticModels.sourceSuggestionStatus(id, conceptKey), { status }));
+  },
+  /** Files matching a name across every workspace the person can open. */
+  async searchSourceFiles(id: string, search: string, page = 1): Promise<SourceFileMatches> {
+    return unwrap(await apiClient.get<ApiResponse<SourceFileMatches>>(API_ENDPOINTS.semanticModels.sourceFiles(id), { params: { search, page } }));
   },
   /** Whether the records in use were built from the model as it is now. */
   async populationFreshness(id: string): Promise<PopulationFreshness> {

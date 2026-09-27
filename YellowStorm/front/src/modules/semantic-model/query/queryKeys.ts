@@ -17,6 +17,7 @@ export const semanticModelQueryKeys = {
   corrections: (id: string) => ['semantic-models','corrections',id] as const,
   mappingHealth: (id: string) => ['semantic-models','mapping-health',id] as const,
   freshness: (id: string) => ['semantic-models','freshness',id] as const,
+  sourceSuggestions: (id: string) => ['semantic-models','source-suggestions',id] as const,
   canvasPositions: (id: string) => ['semantic-models','canvas-positions',id] as const,
   readiness: (id: string) => ['semantic-models','readiness',id] as const,
   reviewQueue: (id: string) => ['semantic-models','review-queue',id] as const,

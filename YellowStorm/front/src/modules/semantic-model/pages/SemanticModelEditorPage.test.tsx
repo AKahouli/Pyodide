@@ -30,6 +30,8 @@ const graph: SemanticGraph = {
   recordRelations: [],
 };
 
+const searchParams = new URLSearchParams();
+const setSearchParams = vi.fn();
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
   return {
@@ -38,6 +40,7 @@ vi.mock("react-router-dom", async () => {
     useBlocker: () => ({ state: "unblocked" }),
     useNavigate: () => vi.fn(),
     useParams: () => ({ modelId: "model-1" }),
+    useSearchParams: () => [searchParams, setSearchParams],
   };
 });
 

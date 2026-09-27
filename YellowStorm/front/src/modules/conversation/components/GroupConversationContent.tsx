@@ -154,7 +154,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
                 <div className="flex justify-start min-w-0">
                   {isUser
                     ? <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} className='[&>div:first-child]:w-auto [&>div:first-child]:min-w-0' />
-                    : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} isStreaming={false} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} />}
+                    : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} isStreaming={false} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} showUiTargets />}
                 </div>
               </>
             )}
@@ -331,7 +331,7 @@ export function GroupConversationContent() {
                   <div className="grid w-full gap-x-2 md:gap-x-3 gap-y-1 grid-cols-[auto_1fr]">
                     <MessageAvatar message={{ id: streamingMessageId || 'streaming', conversationType: 'ai' } as Message} currentConversation={currentConversation} />
                     <div className="flex justify-start min-w-0">
-                      <ConversationAssistantBubble conversationId={currentConversationId || ''} messageId={streamingMessageId || 'streaming'} components={streamingComponents} isStreaming showWorking={showStreamingActivity && streamingComponents.length === 0} choiceInteractions={choiceInteractions} onComponentAction={handleStreamingAction} onSubmitQuestions={handleStreamingQuestions} />
+                      <ConversationAssistantBubble conversationId={currentConversationId || ''} messageId={streamingMessageId || 'streaming'} components={streamingComponents} isStreaming showWorking={showStreamingActivity && streamingComponents.length === 0} choiceInteractions={choiceInteractions} onComponentAction={handleStreamingAction} onSubmitQuestions={handleStreamingQuestions} showUiTargets />
                     </div>
                   </div>
               </MessageProvider>

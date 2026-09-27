@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, FileStack, Loader2, X, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, StopCircle, FileStack, Loader2, X, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ConceptSourceMapping, PopulationProgress } from '../../types';
@@ -16,7 +16,7 @@ export interface PopulationOutcome {
   progress?: Partial<PopulationProgress>;
 }
 
-type Tone = 'running' | 'done' | 'gaps' | 'failed';
+type Tone = 'running' | 'stopping' | 'stopped' | 'done' | 'gaps' | 'failed';
 
 /**
  * What happened when the reader was asked to read the sources.
@@ -26,7 +26,7 @@ type Tone = 'running' | 'done' | 'gaps' | 'failed';
  * failed, so this panel reports the job's actual state. Claiming "reading…" for a run that
  * ended hours ago would leave someone waiting for records that are never coming.
  */
-export function PopulationStartedPanel({ outcome, sourceMappings, progress, conceptLabels, onClose, onOpenHealth }: Readonly<{
+export function PopulationStartedPanel({ outcome, sourceMappings, progress, conceptLabels, onClose, onOpenHealth, onStop, stopping = false }: Readonly<{
   outcome: PopulationOutcome;
   sourceMappings: ConceptSourceMapping[];
   /** Live progress of the run, when it reports some. */
@@ -34,6 +34,9 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
   conceptLabels?: Record<string, string>;
   onClose: () => void;
   onOpenHealth: () => void;
+  /** Stop the run; nothing it read is kept. Absent when the person cannot stop it. */
+  onStop?: () => void;
+  stopping?: boolean;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
   const names = new Map(sourceMappings.map((mapping) => [mapping.id, mapping.documentName] as const));
@@ -41,19 +44,24 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
   const readCount = shownProgress?.total || outcome.sourceCount || Math.max(0, sourceMappings.length - outcome.skipped.length);
   const tone = toneOf(outcome.status);
 
-  const title = tone === 'failed' ? t('population.failed')
+  const title = tone === 'stopped' ? t('runStop.stopped')
+    : tone === 'stopping' ? t('runStop.stopping')
+    : tone === 'failed' ? t('population.failed')
     : tone === 'gaps' ? t('population.finishedWithGaps')
     : tone === 'done' ? t(outcome.reused ? 'population.finished' : 'population.done')
     : outcome.reused ? t('population.alreadyRunning') : t('population.started');
 
-  const detail = tone === 'failed' ? t('population.failedHint')
+  const detail = tone === 'stopped' ? t('runStop.stoppedHint')
+    : tone === 'stopping' ? t('runStop.stoppingHint')
+    : tone === 'failed' ? t('population.failedHint')
     : tone === 'gaps' ? t('population.gapsHint')
     : tone === 'done' ? t(outcome.reused ? 'population.finishedHint' : 'population.doneHint')
     : t('population.startedHint', { count: readCount });
 
   return <aside className='flex h-full w-full max-w-xs shrink-0 flex-col border-l bg-background'>
     <header className='flex items-start gap-3 border-b px-4 py-3'>
-      {tone === 'running' ? <Loader2 className='mt-0.5 h-5 w-5 shrink-0 animate-spin text-primary' />
+      {tone === 'running' || tone === 'stopping' ? <Loader2 className='mt-0.5 h-5 w-5 shrink-0 animate-spin text-primary' />
+        : tone === 'stopped' ? <StopCircle className='mt-0.5 h-5 w-5 shrink-0 text-muted-foreground' />
         : tone === 'failed' ? <XCircle className='mt-0.5 h-5 w-5 shrink-0 text-destructive' />
         : tone === 'gaps' ? <AlertTriangle className='mt-0.5 h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400' />
         : <CheckCircle2 className='mt-0.5 h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400' />}
@@ -67,7 +75,11 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
     </header>
 
     <div className='min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3'>
-      {shownProgress && (shownProgress.total ?? 0) > 0 && <RunProgress progress={shownProgress} running={tone === 'running'} conceptLabels={conceptLabels} />}
+      {tone === 'running' && onStop && <Button variant='outline' size='sm' className='w-full' disabled={stopping} onClick={onStop}>
+        {stopping ? <Loader2 className='mr-1.5 h-4 w-4 animate-spin' /> : <StopCircle className='mr-1.5 h-4 w-4' />}
+        {stopping ? t('runStop.stopping') : t('runStop.stop')}
+      </Button>}
+      {shownProgress && (shownProgress.total ?? 0) > 0 && <RunProgress progress={shownProgress} running={tone === 'running' || tone === 'stopping'} conceptLabels={conceptLabels} />}
       {/* A reused terminal job means this click changed nothing — say so rather than implying progress. */}
       {outcome.reused && tone !== 'running' && <p className='mb-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-400'>
         {t('population.reusedNotice')}
@@ -99,7 +111,9 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
 
 /** Runtime job states, mapped to what a business user needs to know. */
 function toneOf(status: string): Tone {
-  if (status === 'failed' || status === 'cancelled' || status === 'superseded') return 'failed';
+  if (status === 'cancelled') return 'stopped';
+  if (status === 'cancel_requested') return 'stopping';
+  if (status === 'failed' || status === 'superseded') return 'failed';
   if (status === 'completed_with_gaps') return 'gaps';
   if (status === 'completed') return 'done';
   return 'running';

@@ -7,6 +7,8 @@ const paramsSchema = z.object({
   executionId: z.string().min(1).max(200).optional(),
   taskId: z.string().min(1).max(200).optional(),
   operationId: z.string().min(1).max(200).optional(),
+  modelId: z.string().min(1).max(200).optional(),
+  modelName: z.string().min(1).max(300).optional(),
 }).strict();
 
 const targetSchema = z.object({
@@ -17,6 +19,8 @@ const targetSchema = z.object({
     'playbook.validation',
     'playbook.execution.details',
     'playbook.execution.task',
+    'semanticModel.editor',
+    'semanticModel.sources',
   ]),
   params: paramsSchema,
   effects: z.array(z.discriminatedUnion('type', [
@@ -68,6 +72,13 @@ export function executePlatformCopilotUiTarget(input: {
       route = `/playbooks/${encodeURIComponent(playbookId)}/executions/${encodeURIComponent(executionId)}${suffix}`;
       break;
     }
+    case 'semanticModel.editor':
+    case 'semanticModel.sources': {
+      const modelId = target.params.modelId;
+      if (!modelId) return { ok: false, reason: 'missing_parameter' };
+      route = `/semantic-models/${encodeURIComponent(modelId)}${target.surface === 'semanticModel.sources' ? '?sources=1' : ''}`;
+      break;
+    }
   }
   if (target.effects?.length) {
     const [path, rawQuery = ''] = route.split('?');
@@ -116,7 +127,7 @@ export function dedupePlatformCopilotUiTargets(targets: PlatformCopilotUiTarget[
 }
 
 export function getPlatformCopilotUiTargetIdentity(target: PlatformCopilotUiTarget): string {
-  const { playbookId = '', executionId = '', taskId = '', operationId = '' } = target.params;
+  const { playbookId = '', executionId = '', taskId = '', operationId = '', modelId = '' } = target.params;
   switch (target.surface) {
     case 'playbook.list':
       return JSON.stringify([target.surface, target.effects ?? []]);
@@ -129,5 +140,8 @@ export function getPlatformCopilotUiTargetIdentity(target: PlatformCopilotUiTarg
       return JSON.stringify([target.surface, playbookId, executionId, target.effects ?? []]);
     case 'playbook.execution.task':
       return JSON.stringify([target.surface, playbookId, executionId, taskId, target.effects ?? []]);
+    case 'semanticModel.editor':
+    case 'semanticModel.sources':
+      return JSON.stringify([target.surface, modelId]);
   }
 }

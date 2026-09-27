@@ -241,7 +241,59 @@ export interface AssistantChangesPage {
   graphRevision: number;
   /** Server time of the answer, to ask only for what happens after it. */
   now: string;
+  /** A data update running for this model (started here, from a conversation, or elsewhere). */
+  activeRun?: { jobId: string; state: string } | null;
   changes: AssistantChange[];
+}
+
+/** A source an assistant suggested for a concept. Nothing is connected until someone picks it. */
+export interface SourceSuggestionOption {
+  workspaceId: string;
+  workspaceName: string;
+  /** workspace: every file; documents: picked folders and files; document / spreadsheet: one file. */
+  kind: 'workspace' | 'documents' | 'document' | 'spreadsheet';
+  folderIds: string[];
+  documentIds: string[];
+  folders: string[];
+  documents: string[];
+  sheetName?: string;
+  mimeType?: string;
+  fileCount: number;
+  stillIndexing: number;
+  reason: string;
+}
+
+/** A file found by name across the person's workspaces, to choose as a source. */
+export interface SourceFileMatch {
+  id: string;
+  name: string;
+  mimeType: string;
+  kind: 'spreadsheet' | 'document' | 'other';
+  workspaceId: string;
+  workspaceName: string;
+  folderName: string | null;
+}
+
+export interface SourceFileMatches {
+  files: SourceFileMatch[];
+  page: number;
+  totalPages: number;
+}
+
+export interface SourceSuggestion {
+  conceptId: string;
+  conceptKey: string;
+  conceptLabel: string;
+  note: string;
+  options: SourceSuggestionOption[];
+  /** connected: the concept got a source since (from this suggestion or not). */
+  status: 'pending' | 'skipped' | 'connected';
+  updatedAt: string;
+}
+
+export interface SourceSuggestionsPage {
+  model: { id: string; name: string };
+  suggestions: SourceSuggestion[];
 }
 
 export interface ConceptSourceMapping {

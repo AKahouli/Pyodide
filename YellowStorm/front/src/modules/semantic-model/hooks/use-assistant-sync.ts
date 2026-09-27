@@ -15,7 +15,7 @@ export const ASSISTANT_SYNC_INTERVAL_MS = 4000;
 /**
  * Keep an open editor in step with changes an assistant makes to the model. Each new change reloads the
  * model (edits not yet saved are replayed on top), is announced with an Undo button, and becomes a step
- * of the editor's Undo/Redo history.
+ * of the editor's Undo/Redo history. Also says when a data update is running, so it can be followed and stopped.
  */
 export function useAssistantSync(modelId: string | undefined) {
   const { t } = useModuleTranslation('semantic-model');
@@ -51,7 +51,7 @@ export function useAssistantSync(modelId: string | undefined) {
     useSemanticModelEditorStore.getState().rebase(server);
     for (const key of [
       semanticModelQueryKeys.sourceMappings(modelId), semanticModelQueryKeys.identityRules(modelId), semanticModelQueryKeys.mappingHealth(modelId),
-      semanticModelQueryKeys.freshness(modelId), semanticModelQueryKeys.readiness(modelId),
+      semanticModelQueryKeys.freshness(modelId), semanticModelQueryKeys.readiness(modelId), semanticModelQueryKeys.sourceSuggestions(modelId),
     ]) void queryClient.invalidateQueries({ queryKey: key });
     return true;
   }, [modelId, queryClient]);
@@ -87,5 +87,6 @@ export function useAssistantSync(modelId: string | undefined) {
     [...fresh].reverse().filter((change) => !change.undoneAt).forEach(announce);
   }, [announce, modelId, query.data, reload]);
 
-  return { reload };
+  // A data update running for the model, wherever it was started (here, or from a conversation).
+  return { reload, activeRun: query.data?.activeRun ?? null };
 }

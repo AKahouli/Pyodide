@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Activity, ArrowUpRight, Bot, History, Library, ListChecks, MessageSquarePlus, Send, ShieldCheck, Sparkles, Workflow, X } from 'lucide-react';
+import { Bot, History, MessageSquarePlus, Send, Sparkles, Workflow, X } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useStickToBottomContext } from 'use-stick-to-bottom';
 import { Badge } from '@/components/ui/badge';
@@ -17,7 +17,8 @@ import { getUserMessageDisplayText } from '@/modules/conversation/utils';
 import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
 import type { Message as ConversationMessage, MessageComponent } from '@/modules/conversation/types';
 import { ConversationAssistantBubble } from '@/modules/conversation/components/activity/ConversationAssistantBubble';
-import { dedupePlatformCopilotUiTargets, executePlatformCopilotUiTarget, findUiTargets, getPlatformCopilotUiTargetIdentity } from './action-bus';
+import { executePlatformCopilotUiTarget, getPlatformCopilotUiTargetIdentity } from './action-bus';
+import { UiTargetAction, collectUiTargets } from './UiTargetActions';
 import type { PlatformCopilotPageContext, PlatformCopilotUiTarget } from './types';
 import { PlatformCopilotHistoryDialog } from './PlatformCopilotHistoryDialog';
 import { usePlatformCopilotConversation } from './usePlatformCopilotConversation';
@@ -351,27 +352,16 @@ export function PlatformCopilotMascot() {
     return () => { cancelled = true; };
   }, [messages, open, pageContext.surface, routePlaybookId]);
 
-  const renderAction = (target: PlatformCopilotUiTarget) => {
-    const presentation = getTargetPresentation(target.surface);
-    const Icon = presentation.icon;
-    return (
-      <Button
-        type='button'
-        key={getPlatformCopilotUiTargetIdentity(target)}
-        variant='ghost'
-        className='group/action h-auto min-h-11 w-full justify-between gap-3 rounded-lg border bg-background px-3 py-2 text-left shadow-sm hover:border-primary/40 hover:bg-accent'
-        onClick={() => executePlatformCopilotUiTarget({ target, pageContext, navigate, confirmNavigation: () => window.confirm(t('navigation.unsaved')) })}>
-        <span className='flex min-w-0 items-center gap-3'>
-          <span className='grid size-8 shrink-0 place-items-center rounded-md bg-muted text-muted-foreground group-hover/action:text-foreground'><Icon className='size-4' /></span>
-          <span className='min-w-0'>
-            <span className='block truncate text-sm font-medium'>{t(presentation.labelKey)}</span>
-            <span className='block truncate text-xs font-normal text-muted-foreground'>{t(presentation.descriptionKey)}</span>
-          </span>
-        </span>
-        <ArrowUpRight className='size-4 shrink-0 text-muted-foreground group-hover/action:text-foreground' />
-      </Button>
-    );
-  };
+  const renderAction = (target: PlatformCopilotUiTarget) => (
+    <UiTargetAction
+      key={getPlatformCopilotUiTargetIdentity(target)}
+      target={target}
+      onOpen={() => executePlatformCopilotUiTarget({ target, pageContext, navigate, confirmNavigation: () => window.confirm(t('navigation.unsaved')) })}
+      onNavigate={(route) => {
+        if (pageContext.hasUnsavedChanges && !window.confirm(t('navigation.unsaved'))) return;
+        navigate(route);
+      }} />
+  );
 
   const panel = (
     <>
@@ -440,8 +430,9 @@ export function PlatformCopilotMascot() {
               </div>
               {(() => {
                 const visibleTargets = (message.targets ?? []).filter(
-                  (target) => pageContext.surface !== 'playbook.editor'
-                    || !shouldAutoConsumeCanvasHandoff(target, routePlaybookId, Boolean(pageContext.hasUnsavedChanges)),
+                  (target) => (pageContext.surface !== 'playbook.editor'
+                    || !shouldAutoConsumeCanvasHandoff(target, routePlaybookId, Boolean(pageContext.hasUnsavedChanges)))
+                    && !isOpenModelTarget(target, location.pathname),
                 );
                 return visibleTargets.length > 0 ? (
                   <div className='mt-3 space-y-2'>
@@ -575,16 +566,10 @@ function getContextLabelKey(pageContext: PlatformCopilotPageContext): 'context.e
   return 'context.platform';
 }
 
-function getTargetPresentation(surface: PlatformCopilotUiTarget['surface']) {
-  const presentations = {
-    'playbook.list': { icon: Library, labelKey: 'navigation.playbooks', descriptionKey: 'navigation.playbooksDescription' },
-    'playbook.editor': { icon: Workflow, labelKey: 'navigation.canvas', descriptionKey: 'navigation.canvasDescription' },
-    'playbook.editor.assistant': { icon: Sparkles, labelKey: 'navigation.canvasAssistant', descriptionKey: 'navigation.canvasAssistantDescription' },
-    'playbook.validation': { icon: ShieldCheck, labelKey: 'navigation.validation', descriptionKey: 'navigation.validationDescription' },
-    'playbook.execution.details': { icon: Activity, labelKey: 'navigation.execution', descriptionKey: 'navigation.executionDescription' },
-    'playbook.execution.task': { icon: ListChecks, labelKey: 'navigation.executionTask', descriptionKey: 'navigation.executionTaskDescription' },
-  } as const;
-  return presentations[surface];
+/** "Open <model>" says nothing new while that model is already open. */
+export function isOpenModelTarget(target: PlatformCopilotUiTarget, pathname: string): boolean {
+  return target.surface === 'semanticModel.editor' && Boolean(target.params.modelId)
+    && pathname === `/semantic-models/${encodeURIComponent(target.params.modelId!)}`;
 }
 
 // Canvas handoff buttons are only useful when the impacted Playbook canvas is not already open.
@@ -617,7 +602,7 @@ function toDisplayMessage(message: ConversationMessage, isStreaming = false): Me
     text: message.conversationType === 'user' ? getUserMessageDisplayText(message) : '',
     components,
     isStreaming,
-    targets: dedupePlatformCopilotUiTargets(components.flatMap((component) => findUiTargets(getToolResult(component)))),
+    targets: collectUiTargets(components),
   };
   if (displayMessage.role === 'assistant'
     && !displayMessage.text
@@ -629,7 +614,3 @@ function toDisplayMessage(message: ConversationMessage, isStreaming = false): Me
   return displayMessage;
 }
 
-function getToolResult(component: MessageComponent): unknown {
-  if (component.type !== 'toolActivity') return undefined;
-  return component.data.resultJson;
-}

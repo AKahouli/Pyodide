@@ -72,4 +72,24 @@ describe('PopulationStartedPanel', () => {
 
     expect(onOpenHealth).toHaveBeenCalled();
   });
+
+  it('offers Stop while the run goes on, then says it stopped without changing the data', () => {
+    const onStop = vi.fn();
+    const { rerender } = render(<PopulationStartedPanel outcome={{ jobId: 'job-1', status: 'running', skipped: [], reused: false }} sourceMappings={mappings} onClose={vi.fn()} onOpenHealth={vi.fn()} onStop={onStop} />);
+    fireEvent.click(screen.getByRole('button', { name: 'runStop.stop' }));
+    expect(onStop).toHaveBeenCalled();
+
+    rerender(<PopulationStartedPanel outcome={{ jobId: 'job-1', status: 'cancel_requested', skipped: [], reused: false }} sourceMappings={mappings} onClose={vi.fn()} onOpenHealth={vi.fn()} onStop={onStop} />);
+    expect(screen.getByText('runStop.stoppingHint')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'runStop.stop' })).not.toBeInTheDocument();
+
+    rerender(<PopulationStartedPanel outcome={{ jobId: 'job-1', status: 'cancelled', skipped: [], reused: false }} sourceMappings={mappings} onClose={vi.fn()} onOpenHealth={vi.fn()} onStop={onStop} />);
+    expect(screen.getByText('runStop.stopped')).toBeInTheDocument();
+    expect(screen.getByText('runStop.stoppedHint')).toBeInTheDocument();
+  });
+
+  it('has no Stop for someone who cannot stop the run', () => {
+    render(<PopulationStartedPanel outcome={{ jobId: 'job-1', status: 'running', skipped: [], reused: false }} sourceMappings={mappings} onClose={vi.fn()} onOpenHealth={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'runStop.stop' })).not.toBeInTheDocument();
+  });
 });

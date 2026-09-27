@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SuggestConceptsDialog, type SuggestionSource } from '../components/editor/SuggestConceptsDialog';
-import { Link, useBlocker, useNavigate, useParams } from "react-router-dom";
+import { Link, useBlocker, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -23,6 +23,7 @@ import {
   Table2,
   Undo2,
   Workflow,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -49,7 +50,10 @@ import { SemanticModelInspector } from "../components/editor/SemanticModelInspec
 import { ConceptRecordsPanel } from "../components/records/ConceptRecordsPanel";
 import { SemanticModelGraphViewer } from "../components/editor/SemanticModelGraphViewer";
 import { SemanticModelValidateDialog } from "../components/editor/SemanticModelValidateDialog";
-import { SourceMappingDrawer, sourceMappingTargetFromResource, type SourceMappingTarget } from "../components/mapping/SourceMappingDrawer";
+import { SourceMappingDrawer, sourceMappingTargetFromResource, sourceMappingTargetFromWorkspace, type SourceMappingTarget } from "../components/mapping/SourceMappingDrawer";
+import { SourceSuggestionsList, takeChosenSource, useSourceSuggestions } from '../components/assistant/SourceSuggestions';
+import { SourceChooserDialog } from '../components/assistant/SourceChooser';
+import type { SourceSuggestion, SourceSuggestionOption } from "../types";
 import { SemanticMappingsView } from '../components/mapping/SemanticMappingsView';
 import { SemanticDataPreview } from '../components/preview/SemanticDataPreview';
 import { SemanticTrustPanel } from '../components/review/SemanticTrustPanel';
@@ -154,6 +158,13 @@ export function SemanticModelEditorPage() {
   const [populationJobId, setPopulationJobId] = useState<string>();
   const [trustOpen, setTrustOpen] = useState(false);
   const [population, setPopulation] = useState<PopulationOutcome | null>(null);
+  const [stoppingRun, setStoppingRun] = useState(false);
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  const [choosingFor, setChoosingFor] = useState<SourceSuggestion | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const sourceSuggestions = useSourceSuggestions(modelId);
+  const suggestionList = sourceSuggestions.data?.suggestions ?? [];
+  const pendingSuggestions = suggestionList.filter((suggestion) => suggestion.status === 'pending').length;
   useEffect(() => setBoundDataRevisionId(undefined), [modelId]);
   const populationJob = useQuery({
     queryKey: ['semantic-models', 'population-job', modelId, populationJobId],
@@ -255,7 +266,22 @@ export function SemanticModelEditorPage() {
   const savingRef = useRef(false);
   // A save refused because the model changed meanwhile is replayed once on the new revision.
   const conflictRetryRef = useRef(0);
-  useAssistantSync(modelId);
+  const { activeRun } = useAssistantSync(modelId);
+  // A data update started from a conversation (or another tab) shows here once, with Stop.
+  const adoptedRunsRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (!activeRun || adoptedRunsRef.current.has(activeRun.jobId) || populationJobId === activeRun.jobId) return;
+    adoptedRunsRef.current.add(activeRun.jobId);
+    setPopulationJobId(activeRun.jobId);
+    setTrustOpen(false);
+    setSuggestionsOpen(false);
+    setPopulation((current) => current?.jobId === activeRun.jobId ? current : { jobId: activeRun.jobId, status: activeRun.state, skipped: [], reused: false });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRun?.jobId]);
+  // A source saved for a concept answers its suggestion.
+  useEffect(() => {
+    if (modelId) void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceSuggestions(modelId) });
+  }, [modelId, queryClient, sourceMappings.data]);
   const hydratedVersionRef = useRef<string | null>(null);
   const knowledgeClosedAtRef = useRef(0);
   const blocker = useBlocker(pending.length > 0);
@@ -421,6 +447,69 @@ export function SemanticModelEditorPage() {
     setKnowledgeOpen(false);
     setKnowledgeTargetId(null);
   };
+  const stopRun = async () => {
+    if (!modelId || !population) return;
+    setStoppingRun(true);
+    try {
+      const job = await semanticModelApi.stopPopulationJob(modelId, population.jobId);
+      setPopulation((current) => current && current.jobId === job.jobId ? { ...current, status: job.state } : current);
+      void populationJob.refetch();
+    } catch (error) {
+      showError(t('runStop.error'), { description: parseApiError(error).message });
+    } finally {
+      setStoppingRun(false);
+    }
+  };
+  const openSuggestions = () => { setKnowledgeOpen(false); setTrustOpen(false); setPopulation(null); setVersionsOpen(false); setSuggestionsOpen(true); };
+  const suggestionConcept = (suggestion: SourceSuggestion) =>
+    graph?.nodes.find((node) => node.id === suggestion.conceptId) ?? graph?.nodes.find((node) => node.key === suggestion.conceptKey);
+  // Using a suggestion opens the source picker with its files already picked: the person checks, then saves.
+  const useSuggestion = (suggestion: SourceSuggestion, index: number) => openSourceOption(suggestion, suggestion.options[index]);
+  const openSourceOption = (suggestion: SourceSuggestion, option: SourceSuggestionOption | undefined) => {
+    const node = suggestionConcept(suggestion);
+    if (!node || !option) { showError(t('assistantSources.openFailed')); return; }
+    const single = option.kind === 'spreadsheet' || option.kind === 'document';
+    const target: SourceMappingTarget = single
+      ? {
+        workspaceId: option.workspaceId, documentId: option.documentIds[0], documentName: option.documents[0] ?? '', conceptId: node.id, mimeType: option.mimeType,
+        assetKind: option.kind === 'document' ? 'document' : option.mimeType?.includes('csv') ? 'csv' : 'excel_sheet',
+      }
+      : sourceMappingTargetFromWorkspace({
+        workspaceId: option.workspaceId, workspaceName: option.workspaceName, folderIds: option.folderIds, documentIds: option.documentIds,
+        name: option.kind === 'workspace' ? option.workspaceName : `${option.workspaceName} / ${[...option.folders, ...option.documents].join(', ')}`,
+      }, node.id);
+    select(node.id);
+    void openMappingTarget(target);
+  };
+  // Choosing other files opens the list of every workspace, searchable, in front of everything else.
+  const browseForSuggestion = (suggestion: SourceSuggestion) => {
+    if (!suggestionConcept(suggestion)) { showError(t('assistantSources.openFailed')); return; }
+    setChoosingFor(suggestion);
+  };
+
+  const wantedSuggestion = searchParams.get('suggestion');
+  const wantsSuggestions = searchParams.get('sources') === '1';
+  // Wait for this model's graph: right after navigating, the previous model's graph is still loaded.
+  const graphReady = Boolean(graph && graph.modelId === modelId);
+  useEffect(() => {
+    if (!graphReady || (!wantedSuggestion && !wantsSuggestions)) return;
+    if (wantedSuggestion && !sourceSuggestions.data && !sourceSuggestions.isError) return;
+    const option = Number(searchParams.get('option') ?? 0);
+    const browse = searchParams.get('browse') === '1';
+    const chosen = searchParams.get('choice') === '1' && modelId && wantedSuggestion ? takeChosenSource(modelId, wantedSuggestion) : undefined;
+    setSearchParams((params) => {
+      for (const key of ['suggestion', 'option', 'browse', 'sources', 'choice']) params.delete(key);
+      return params;
+    }, { replace: true });
+    if (!wantedSuggestion) { openSuggestions(); return; }
+    const suggestion = sourceSuggestions.data?.suggestions.find((item) => item.conceptKey === wantedSuggestion);
+    if (!suggestion) { showError(t('assistantSources.openFailed')); return; }
+    if (chosen) openSourceOption(suggestion, chosen);
+    // A choice made in a conversation is gone after a reload: choose again here.
+    else if (browse || searchParams.get('choice') === '1') browseForSuggestion(suggestion);
+    else useSuggestion(suggestion, option);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [graphReady, wantedSuggestion, wantsSuggestions, sourceSuggestions.data, sourceSuggestions.isError]);
 
   if (model.isLoading || graphQuery.isLoading || !graph)
     return (
@@ -462,7 +551,7 @@ export function SemanticModelEditorPage() {
   const openGraphViewer = () => {
     setGraphViewerOpen(true);
   };
-  const closeSidePanels = () => { setTrustOpen(false); setVersionsOpen(false); setPopulation(null); };
+  const closeSidePanels = () => { setTrustOpen(false); setVersionsOpen(false); setPopulation(null); setSuggestionsOpen(false); };
   const openSource = (source: DesignerSource, mapping?: ConceptSourceMapping) => {
     if (source.kind === 'typed') {
       // One typed record opens for editing; several open the records list.
@@ -555,12 +644,20 @@ export function SemanticModelEditorPage() {
               <DropdownMenuItem onSelect={() => setMode('mappings')}><ListChecks className='h-4 w-4' />{t('designer.sourceList')}</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>}
-          <Button variant='ghost' size='sm' onClick={() => { setKnowledgeOpen(false); setPopulation(null); setVersionsOpen(false); setTrustOpen((open) => !open); }}>
+          {suggestionList.length > 0 && <Button variant='ghost' size='sm' onClick={() => (suggestionsOpen ? setSuggestionsOpen(false) : openSuggestions())}>
+            {t('assistantSources.toolbar')}
+            {pendingSuggestions > 0 && <span className='ml-2 rounded-full bg-primary/15 px-1.5 text-[11px] font-semibold text-primary' aria-label={t('assistantSources.pending', { count: pendingSuggestions })}>{pendingSuggestions}</span>}
+          </Button>}
+          <Button variant='ghost' size='sm' onClick={() => { setKnowledgeOpen(false); setPopulation(null); setVersionsOpen(false); setSuggestionsOpen(false); setTrustOpen((open) => !open); }}>
             {t('reviewQueue.button')}
             {reviewCount > 0 && <span className='ml-2 rounded-full bg-amber-500/15 px-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300' aria-label={t('reviewQueue.badge', { count: reviewCount })}>{reviewCount}</span>}
           </Button>
           <Button variant='ghost' size='sm' onClick={() => { setKnowledgeOpen(false); setTrustOpen(false); setVersionsOpen((open) => !open); }} aria-label={t('designer.versions')}><History className='h-4 w-4' /></Button>
-          {canEdit && <Button variant='outline' size='sm' disabled={!canValidate || Boolean(populationJobId)} onClick={() => setValidateOpen(true)}
+          {canEdit && <Button variant='outline' size='sm' disabled={!populationJobId && !canValidate}
+            // While a run goes on, the button shows it (with Stop) instead of starting another one.
+            onClick={() => populationJobId
+              ? (setTrustOpen(false), setSuggestionsOpen(false), setPopulation((current) => current ?? { jobId: populationJobId, status: populationJob.data?.state ?? 'running', skipped: [], reused: false }))
+              : setValidateOpen(true)}
             title={freshnessState && freshnessState !== 'not_runnable' ? t(freshnessState === 'current' ? 'freshness.currentHint' : freshnessState === 'outdated' ? 'freshness.outdatedHint' : 'freshness.neverHint') : undefined}
             // Run says what it would do: generate the first data, bring stale data up to date, or just run again.
             className={!populationJobId && (freshnessState === 'outdated' || freshnessState === 'never_run') ? 'border-amber-500/60 text-amber-800 hover:bg-amber-500/10 dark:text-amber-300' : undefined}>
@@ -655,7 +752,25 @@ export function SemanticModelEditorPage() {
           conceptLabels={conceptLabels}
           onClose={() => setPopulation(null)}
           onOpenHealth={() => { setPopulation(null); setTrustOpen(true); }}
+          onStop={canEdit ? () => void stopRun() : undefined}
+          stopping={stoppingRun}
         />}
+        {modelId && <SourceChooserDialog open={Boolean(choosingFor)} modelId={modelId} conceptLabel={choosingFor?.conceptLabel ?? ''} onClose={() => setChoosingFor(null)}
+          onChoose={(option) => { const suggestion = choosingFor; setChoosingFor(null); if (suggestion) openSourceOption(suggestion, option); }} />}
+        {suggestionsOpen && modelId && !population && !trustOpen && <aside className='flex h-full w-full max-w-sm shrink-0 flex-col border-l bg-background' aria-label={t('assistantSources.panelTitle')}>
+          <header className='flex items-start gap-3 border-b px-4 py-3'>
+            <div className='min-w-0 flex-1'>
+              <h2 className='font-semibold'>{t('assistantSources.panelTitle')}</h2>
+              <p className='mt-1 text-xs text-muted-foreground'>{t('assistantSources.hint')}</p>
+            </div>
+            <Button variant='ghost' size='icon' className='h-8 w-8 shrink-0' onClick={() => setSuggestionsOpen(false)} aria-label={t('action.close')}><X className='h-4 w-4' /></Button>
+          </header>
+          <div className='min-h-0 flex-1 overflow-y-auto px-4 py-3'>
+            {suggestionList.length
+              ? <SourceSuggestionsList modelId={modelId} suggestions={suggestionList} canEdit={canEdit} onUse={useSuggestion} onBrowse={browseForSuggestion} />
+              : <p className='text-sm text-muted-foreground'>{t('assistantSources.empty')}</p>}
+          </div>
+        </aside>}
         {trustOpen && modelId && !population && <SemanticTrustPanel
           modelId={modelId}
           canEdit={canEdit && pending.length === 0}
@@ -668,7 +783,7 @@ export function SemanticModelEditorPage() {
           onOpenItem={(id) => { setMode('structure'); focus(id); }}
           onFixValues={() => setMode('records')}
         />}
-        {(knowledgeOpen || (onCanvas && detailsOpen)) && !trustOpen && !population && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} onBrowseRecords={browseRecords} recordCounts={conceptRecordCounts} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} onMapData={(target) => void openMappingTarget(target)} />}
+        {(knowledgeOpen || (onCanvas && detailsOpen)) && !trustOpen && !population && !suggestionsOpen && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} onBrowseRecords={browseRecords} recordCounts={conceptRecordCounts} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} onMapData={(target) => void openMappingTarget(target)} />}
         {modelId && <SourceMappingDrawer modelId={modelId} target={mappingTarget} onClose={() => setMappingTarget(null)} onSuggestConcepts={canEdit ? (source) => { setMappingTarget(null); setSuggestSource(source); } : undefined} />}
       </main>
       <AddConceptDialog open={conceptOpen} onOpenChange={setConceptOpen} />

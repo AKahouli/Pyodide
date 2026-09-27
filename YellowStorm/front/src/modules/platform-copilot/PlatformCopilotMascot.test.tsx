@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { PLATFORM_COPILOT_PANEL_WIDTH_STORAGE_KEY, PlatformCopilotMascot, shouldAutoConsumeExecutionHandoff } from './PlatformCopilotMascot';
+import { PLATFORM_COPILOT_PANEL_WIDTH_STORAGE_KEY, PlatformCopilotMascot, isOpenModelTarget, shouldAutoConsumeExecutionHandoff } from './PlatformCopilotMascot';
 import { mockNavigate } from '@/test/setup';
 import { usePlatformCopilotPanelStore } from './platformCopilotPanelStore';
 
@@ -790,5 +790,14 @@ describe('PlatformCopilotMascot', () => {
     renderMascot('/playbooks/p1');
 
     expect(screen.getByRole('button', { name: 'Open Yellowmind' })).toBeInTheDocument();
+  });
+});
+
+describe('isOpenModelTarget', () => {
+  it('hides the button of the model already open, not of another one', () => {
+    const target = { surface: 'semanticModel.editor' as const, params: { modelId: 'm-1', modelName: 'Billing' } };
+    expect(isOpenModelTarget(target, '/semantic-models/m-1')).toBe(true);
+    expect(isOpenModelTarget(target, '/semantic-models/m-2')).toBe(false);
+    expect(isOpenModelTarget({ ...target, surface: 'semanticModel.sources' }, '/semantic-models/m-1')).toBe(false);
   });
 });
