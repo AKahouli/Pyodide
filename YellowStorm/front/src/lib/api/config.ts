@@ -386,7 +386,6 @@ export const API_ENDPOINTS = {
     graph: (id: string) => `/semantic-models/${id}/graph`,
     operations: (id: string) => `/semantic-models/${id}/graph/operations`,
     validate: (id: string) => `/semantic-models/${id}/graph/validate`,
-    generateOntology: (id: string) => `/semantic-models/${id}/ontology/generate`,
     ageGraph: (id: string) => `/semantic-models/${id}/age-graph`,
     bindings: (id: string) => `/semantic-models/${id}/bindings`,
     binding: (id: string, bindingId: string) => `/semantic-models/${id}/bindings/${bindingId}`,

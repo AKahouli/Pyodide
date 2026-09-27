@@ -35,7 +35,6 @@ export const CALL_CLASSIFICATION: Record<SemanticApiCall, ReadKind> = {
   clone: 'command',
   applyOperations: 'command',
   validate: 'command',
-  generateOntology: 'command',
   createBinding: 'command',
   deleteBinding: 'command',
   connectWorkspace: 'command',

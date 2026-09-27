@@ -22,7 +22,6 @@ function config(
     nativeSearchBatchUrl: 'http://localhost:8045/search_native/batch',
     nativeSearchAuthToken: 'test-token',
     nativeSearchLogQuery: false,
-    ontologyTimeoutMs: 0,
     documentExtractionAgentId: '',
     documentExtractionTimeoutMs: 180000,
     ...overrides,

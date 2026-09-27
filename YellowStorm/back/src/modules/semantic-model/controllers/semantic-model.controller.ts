@@ -9,7 +9,6 @@ import {
   ConnectWorkspaceDto,
   CreateBindingDto,
   CreateSemanticModelDto,
-  GenerateSemanticModelOntologyDto,
   GraphOperationsDto,
   ExpectedModelRevisionDto,
   PublishSemanticModelDto,
@@ -36,7 +35,6 @@ import { SemanticModelService } from '../services/semantic-model.service';
 import { SemanticModelVersionService } from '../services/semantic-model-version.service';
 import { SemanticModelWorkspaceService } from '../services/semantic-model-workspace.service';
 import { SemanticSourceMappingService } from '../services/semantic-source-mapping.service';
-import { SemanticModelOntologyGenerationService } from '../services/semantic-model-ontology-generation.service';
 import { SemanticCrossSourceService } from '../services/semantic-cross-source.service';
 import { SemanticBusinessTrustService } from '../services/semantic-business-trust.service';
 import { SemanticPopulationRefreshService } from '../services/semantic-population-refresh.service';
@@ -52,7 +50,6 @@ export class SemanticModelController {
     private readonly workspaces: SemanticModelWorkspaceService,
     private readonly bindings: SemanticKnowledgeBindingService,
     private readonly versions: SemanticModelVersionService,
-    private readonly ontologyGeneration: SemanticModelOntologyGenerationService,
     private readonly shares: SemanticModelShareService,
     private readonly sourceMappings: SemanticSourceMappingService,
     private readonly crossSource: SemanticCrossSourceService,
@@ -120,13 +117,6 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   async validate(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
     return this.graph.validate(user._id.toString(),modelId);
-  }
-
-  @Post(':modelId/ontology/generate')
-  @ApiOperation({ summary: 'Generate local Semantica ontology artifacts from the current designer canvas' })
-  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
-  generateOntology(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: GenerateSemanticModelOntologyDto) {
-    return this.ontologyGeneration.generate(user._id.toString(), modelId, dto);
   }
 
   @Get(':modelId/age-graph')

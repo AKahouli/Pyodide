@@ -172,7 +172,7 @@ export class SemanticModelService {
     if (!versionId) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
     const revisionResult = await this.database.query<{ revision: number }>('SELECT revision::int FROM semantic_model.versions WHERE id=$1', [versionId]);
     const sourceGraph = await this.graph.getGraph(source.id, versionId, revisionResult.rows[0]?.revision ?? 0);
-    const [links, bindings, ontology] = await Promise.all([
+    const [links, bindings] = await Promise.all([
       this.database.query<{ workspaceId: string }>(
         'SELECT workspace_id AS "workspaceId" FROM semantic_model.workspace_links WHERE model_id=$1 AND enabled', [source.id]),
       this.database.query<SemanticBindingRow>(
@@ -180,9 +180,6 @@ export class SemanticModelService {
                 workspace_id AS "workspaceId", document_id AS "documentId", inclusion_mode AS "inclusionMode",
                 retrieval_mode AS "retrievalMode", priority, enabled, protected, availability
          FROM semantic_model.knowledge_bindings WHERE model_id=$1`, [source.id]),
-      this.database.query<{ ontologyDefinition: Record<string, unknown>; ontologyTtl: string }>(
-        `SELECT ontology_definition AS "ontologyDefinition", ontology_ttl AS "ontologyTtl"
-         FROM semantic_model.ontology_artifacts WHERE model_id=$1`, [source.id]),
     ]);
     const ids = this.createCloneIdMaps(sourceGraph);
     try {
@@ -190,7 +187,6 @@ export class SemanticModelService {
         const target = await this.createCloneModel(client, userId, name, source.description, links.rows.map((item) => item.workspaceId));
         await this.copyCloneGraph(client, target.id, target.currentDraftVersionId!, sourceGraph, ids);
         await this.copyCloneBindings(client, target.id, userId, bindings.rows, ids);
-        await this.copyCloneOntology(client, target.id, ontology.rows[0]);
         await this.audit(client, target.id, target.currentDraftVersionId, userId, 'model.cloned', {
           sourceModelId: source.id,
           sourceVersionId: versionId,
@@ -264,15 +260,6 @@ export class SemanticModelService {
           binding.inclusionMode, binding.retrievalMode, binding.priority, binding.enabled, binding.protected, binding.availability, createdBy],
       );
     }
-  }
-
-  private async copyCloneOntology(client: PoolClient, modelId: string, ontology?: { ontologyDefinition: Record<string, unknown>; ontologyTtl: string }): Promise<void> {
-    if (!ontology) return;
-    await client.query(
-      `INSERT INTO semantic_model.ontology_artifacts(model_id,ontology_definition,ontology_ttl)
-       VALUES ($1,$2::jsonb,$3)`,
-      [modelId, JSON.stringify(ontology.ontologyDefinition), ontology.ontologyTtl],
-    );
   }
 
   private remapRecordValues(recordId: string, values: Record<string, unknown>, ids: CloneIdMaps): Record<string, unknown> {

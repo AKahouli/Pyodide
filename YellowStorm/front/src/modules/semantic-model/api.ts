@@ -58,9 +58,6 @@ export const semanticModelApi = {
   async validate(id: string): Promise<{ issues: ValidationIssue[] }> {
     return unwrap(await apiClient.post<ApiResponse<{ issues: ValidationIssue[] }>>(API_ENDPOINTS.semanticModels.validate(id)));
   },
-  async generateOntology(id: string, businessRequirements: string[]): Promise<{ modelId: string; generatedAt: string }> {
-    return unwrap(await apiClient.post<ApiResponse<{ modelId: string; generatedAt: string }>>(API_ENDPOINTS.semanticModels.generateOntology(id), { businessRequirements }, { timeout: 0 }));
-  },
   async getAgeGraph(id: string, dataRevisionId?: string): Promise<{ dataRevisionId?: string; nodes: AgeGraphNode[]; edges: AgeGraphEdge[] }> {
     return unwrap(await apiClient.get<ApiResponse<{ dataRevisionId?: string; nodes: AgeGraphNode[]; edges: AgeGraphEdge[] }>>(
       API_ENDPOINTS.semanticModels.ageGraph(id), { params: { dataRevisionId } },

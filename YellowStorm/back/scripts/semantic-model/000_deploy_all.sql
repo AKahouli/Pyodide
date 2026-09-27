@@ -555,3 +555,9 @@ UPDATE semantic_model.graph_index_jobs
 DROP TABLE IF EXISTS semantic_model.graph_index_jobs;
 DROP TABLE IF EXISTS semantic_model.build_runs;
 DROP TABLE IF EXISTS semantic_model.mapping_runs;
+
+-- 018 - Drop the ontology artifacts table.
+-- Ontology generation (POST :id/ontology/generate) was the only writer and
+-- model cloning the only other reader; both are gone. The semantic runtime
+-- works from the population specification instead.
+DROP TABLE IF EXISTS semantic_model.ontology_artifacts;

@@ -256,17 +256,6 @@ export class PublishSemanticModelDto extends ExpectedModelRevisionDto {
   expectedGraphRevision!: number;
 }
 
-export class GenerateSemanticModelOntologyDto {
-  @ApiProperty({ type: [String], maxItems: 50, required: false, default: [] })
-  @IsArray()
-  @ArrayMinSize(0)
-  @ArrayMaxSize(50)
-  @IsString({ each: true })
-  @MinLength(1, { each: true })
-  @MaxLength(4000, { each: true })
-  businessRequirements: string[] = [];
-}
-
 export class SemanticModelManualInstancesDto {
   @ApiProperty()
   @IsUUID()

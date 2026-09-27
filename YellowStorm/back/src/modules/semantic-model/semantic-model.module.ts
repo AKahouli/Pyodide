@@ -14,12 +14,10 @@ import { SemanticDataTokenController } from './controllers/semantic-data-token.c
 import { SemanticModelDatabaseService } from './infrastructure/semantic-model-database.service';
 import { SemanticGraphRepository } from './repositories/semantic-graph.repository';
 import { SemanticModelRepository } from './repositories/semantic-model.repository';
-import { SemanticModelOntologyRepository } from './repositories/semantic-model-ontology.repository';
 import { SemanticGraphCommandService } from './services/semantic-graph-command.service';
 import { SemanticKnowledgeBindingService } from './services/semantic-knowledge-binding.service';
 import { SemanticModelProvisioningService } from './services/semantic-model-provisioning.service';
 import { SemanticModelService } from './services/semantic-model.service';
-import { SemanticModelOntologyGenerationService } from './services/semantic-model-ontology-generation.service';
 import { SemanticModelNativeSearchClient } from './services/semantic-model-native-search-client.service';
 import { SemanticModelValidationService } from './services/semantic-model-validation.service';
 import { SemanticModelVersionService } from './services/semantic-model-version.service';
@@ -44,10 +42,9 @@ import { SemanticRealtimeSignalService } from './services/semantic-realtime-sign
   imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,UserModule,IntegrationEventsModule,forwardRef(() => WorkspaceModule)],
   controllers: [SemanticModelController,WorkspaceSemanticModelController,SemanticDataTokenController,SemanticAttributeExtractionInternalController],
   providers: [
-    SemanticModelDatabaseService,SemanticModelRepository,SemanticGraphRepository,SemanticModelOntologyRepository,SemanticModelService,
+    SemanticModelDatabaseService,SemanticModelRepository,SemanticGraphRepository,SemanticModelService,
     SemanticGraphCommandService,SemanticModelValidationService,SemanticModelWorkspaceService,
     SemanticKnowledgeBindingService,SemanticModelVersionService,SemanticModelProvisioningService,
-    SemanticModelOntologyGenerationService,
     SemanticModelNativeSearchClient,
     SemanticAttributeExtractionService,
     SemanticModelShareService,
