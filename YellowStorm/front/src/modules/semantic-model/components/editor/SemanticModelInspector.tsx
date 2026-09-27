@@ -127,7 +127,8 @@ function SourceMappingsSection({ modelId,conceptId,onMapData }: Readonly<{ model
   const mappings = (mappingsQuery.data ?? []).filter((mapping) => mapping.conceptId === conceptId);
   const remove = async (mappingId: string) => {
     try {
-      await semanticModelApi.deleteSourceMapping(modelId, mappingId);
+      const result = await semanticModelApi.deleteSourceMapping(modelId, mappingId);
+      useSemanticModelEditorStore.getState().adoptRevision(result.revision);
       await Promise.all([
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) }),
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.model(modelId) }),

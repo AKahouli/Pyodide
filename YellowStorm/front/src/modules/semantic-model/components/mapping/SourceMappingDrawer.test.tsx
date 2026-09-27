@@ -37,4 +37,11 @@ describe('SourceMappingDrawer repair', () => {
     await waitFor(() => expect(api.createSourceMapping).toHaveBeenCalled());
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['semantic-models', 'data-preview', 'model-1'] });
   });
+
+  it('adopts the revision the mapping command produced so the next autosave does not conflict', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><SourceMappingDrawer modelId='model-1' target={{ workspaceId: mapping.workspaceId, documentId: mapping.documentId, documentName: mapping.documentName!, assetKind: mapping.assetKind, conceptId: mapping.conceptId, mapping }} onClose={vi.fn()} /></QueryClientProvider>);
+    fireEvent.click(await screen.findByRole('button', { name: 'mapping.save' }));
+    await waitFor(() => expect(useSemanticModelEditorStore.getState().graph?.revision).toBe(2));
+  });
 });

@@ -8,6 +8,7 @@ import { semanticModelApi } from '../../api';
 import { useReviewQueue } from '../../query/hooks';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
 import type { ReviewQueueItem } from '../../types';
+import { useSemanticModelEditorStore } from '../../store';
 
 export interface ReviewQueueHandlers {
   /** Opens the source mapping so it can be repaired. */
@@ -32,7 +33,8 @@ export function ReviewQueueList({ modelId, canEdit, onRepairMapping, onOpenItem,
       decision: 'accepted',
       ...(select === 'target' ? { selectedTargetId: value } : { selectedMappingId: value }),
     }),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      useSemanticModelEditorStore.getState().adoptRevision(result.revision);
       await Promise.all([
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.reviewQueue(modelId) }),
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.model(modelId) }),

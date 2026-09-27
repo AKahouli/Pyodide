@@ -95,7 +95,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
   const save = useMutation({
     mutationFn: async () => {
       setSavedCount(0);
-      if (selectedAssets.length === 1) return semanticModelApi.createSourceMapping(modelId, {
+      if (selectedAssets.length === 1) return (await semanticModelApi.createSourceMapping(modelId, {
         conceptId,
         workspaceId: selectedAssets[0].workspaceId,
         documentId: selectedAssets[0].documentId,
@@ -103,24 +103,28 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
         assetKind: 'document',
         fieldMappings: activeMappings,
         identityFields,
-      });
+      })).revision;
+      let revision: number | undefined;
       for (let start = 0; start < selectedAssets.length; start += 50) {
         const batch = selectedAssets.slice(start, start + 50);
         try {
-          await semanticModelApi.createBulkDocumentSourceMappings(modelId, {
+          revision = (await semanticModelApi.createBulkDocumentSourceMappings(modelId, {
             conceptId,
             documents: batch.map((asset) => ({ workspaceId: asset.workspaceId, documentId: asset.documentId })),
             fieldMappings: activeMappings,
             identityFields,
-          });
+          })).revision;
         } catch (error) {
           if (start) throw new Error(t('dataWorkflow.partialSaved', { count: start }), { cause: error });
           throw error;
         }
         setSavedCount(start + batch.length);
       }
+      return revision;
     },
-    onSuccess: async () => {
+    onSuccess: async (revision) => {
+      // Mapping commands advance the model revision; adopt it so the next autosave does not conflict.
+      if (revision !== undefined) useSemanticModelEditorStore.getState().adoptRevision(revision);
       await Promise.all([
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) }),
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.mappingHealth(modelId) }),

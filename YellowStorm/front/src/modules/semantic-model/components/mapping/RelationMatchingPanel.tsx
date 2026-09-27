@@ -44,6 +44,7 @@ export function RelationMatchingPanel({ modelId, relation }: Readonly<{ modelId:
     }),
     onSuccess: async (result) => {
       setRuleId(result.id);
+      useSemanticModelEditorStore.getState().adoptRevision(result.revision);
       await Promise.all([
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.relationRules(modelId) }),
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.model(modelId) }),

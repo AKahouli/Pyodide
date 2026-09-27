@@ -100,7 +100,8 @@ function ConceptMappings({ modelId, concept, mappings, policy, canEdit, onBulkEd
   const documentMappings = mappings.filter((mapping) => mapping.assetKind === 'document');
   const save = useMutation({
     mutationFn: (mappingId: string) => semanticModelApi.saveSourceResolutionPolicy(modelId, concept.id, [mappingId, ...mappings.filter((mapping) => mapping.id !== mappingId).map((mapping) => mapping.id)].map((id, index) => ({ mappingId: id, rank: index + 1 }))),
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      useSemanticModelEditorStore.getState().adoptRevision(result.revision);
       await Promise.all([
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.sourcePolicies(modelId) }),
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.model(modelId) }),

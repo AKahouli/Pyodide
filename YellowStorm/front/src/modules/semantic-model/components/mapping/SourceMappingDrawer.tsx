@@ -143,7 +143,9 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose, onSuggestConc
       });
       return result;
     },
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      // The mapping command advanced the model revision; adopt it so the next autosave does not conflict.
+      useSemanticModelEditorStore.getState().adoptRevision(result.revision);
       await Promise.all([
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) }),
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.mappingHealth(modelId) }),
