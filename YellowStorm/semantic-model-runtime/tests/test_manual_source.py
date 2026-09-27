@@ -122,3 +122,15 @@ async def test_commit_checks_counts_and_seals_once():
     with pytest.raises(manual_store.ManualSnapshotError, match="snapshot_committed"):
         await manual_store.append_batch(Pool(Connection(sealed)), model_id="m1", snapshot_id=SNAPSHOT,
                                         rows=[], links=[])
+
+
+def test_core_fingerprint_without_constants_is_accepted():
+    """The core omits an empty constantMapping; the runtime must hash it the same way."""
+    from app.workers.population_tasks import population_execution_fingerprint
+
+    payload = manual_command()
+    source = payload["payload"]["sources"][0]
+    core_view = [{**source, "sourceKind": "manual"}]
+    payload["payload"]["populationExecutionFingerprint"] = population_execution_fingerprint(
+        payload["payload"]["specHash"], core_view, [])
+    assert run_population_for_payload(payload)["ok"] is True
