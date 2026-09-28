@@ -5,45 +5,46 @@
 const isDev = process.env.NODE_ENV === 'development';
 
 /**
- * Literal placeholder that `env.sh` rewrites at container start. Declared once, as a plain
- * literal, so the sed in env.sh finds exactly one occurrence in the built bundle.
+ * Literal placeholder that `env.sh` rewrites at container start. Kept as one plain literal
+ * so the sed in env.sh finds it in the built bundle. Whether it was rewritten is detected by
+ * shape (`isHttpUrl`), never by comparing it to a second copy of the same string: the
+ * bundler folds a copy into an identical literal and sed would rewrite both sides, making
+ * the comparison permanently true and the runtime value unreachable.
  */
 const API_URL_INJECTED = 'MY_APP_VITE_API_URL';
 
-/**
- * The same string, assembled at runtime so env.sh's sed cannot rewrite it. Comparing the
- * two tells us whether the literal above reached the browser untouched.
- */
-const API_URL_UNRESOLVED = 'MY_APP_' + 'VITE_API_URL';
-
 const LOOPBACK_BASE_URL = /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::|\/|$)/i;
+
+function isHttpUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
+}
 
 /**
  * Resolve the public backend URL the browser must call.
  *
- * Runtime injection wins over the build-time value deliberately: once `VITE_API_URL` is
+ * A runtime-injected URL wins over the build-time one deliberately: once `VITE_API_URL` is
  * inlined the placeholder is gone from the bundle, so a wrong build arg would otherwise be
  * unrecoverable without rebuilding the image. Reading the injected value first lets a bad
  * image be fixed by setting `MY_APP_VITE_API_URL` on the container and restarting it.
  */
 export function resolveApiBaseUrl(
   injected: string = API_URL_INJECTED,
-  buildTimeUrl: string | undefined = import.meta.env.VITE_API_URL,
+  buildTimeUrl: string = import.meta.env.VITE_API_URL ?? '',
   dev: boolean = isDev,
 ): string {
   const injectedValue = injected.trim();
-  if (injectedValue !== API_URL_UNRESOLVED) {
+  if (isHttpUrl(injectedValue)) {
     return injectedValue;
   }
 
-  const buildTimeValue = buildTimeUrl?.trim();
-  if (buildTimeValue) {
+  const buildTimeValue = buildTimeUrl.trim();
+  if (isHttpUrl(buildTimeValue)) {
     return buildTimeValue;
   }
 
   // Unconfigured production keeps the placeholder visible so the network tab names the
   // missing container variable instead of showing a plausible-looking URL.
-  return dev ? 'http://localhost:3000/api/v1' : API_URL_UNRESOLVED;
+  return dev ? 'http://localhost:3000/api/v1' : API_URL_INJECTED;
 }
 
 const baseURL = resolveApiBaseUrl();
@@ -53,8 +54,8 @@ if (import.meta.env.PROD && LOOPBACK_BASE_URL.test(baseURL)) {
   // auth-provider list ("no authentication methods available") rather than as an error.
   console.error(
     `[api-config] Production bundle is calling a loopback API URL (${baseURL}); the browser `
-      + 'cannot reach the backend. Set MY_APP_VITE_API_URL on the container, or rebuild the '
-      + 'image with --build-arg VITE_API_URL=<public backend URL>.',
+      + 'cannot reach the backend. Set the API URL variable on the container, or rebuild the '
+      + 'image with a build-arg pointing at the public backend URL.',
   );
 }
 
@@ -71,10 +72,6 @@ export const API_CONFIG = {
  * sed /etc/nginx/conf.d/default.conf (Permission denied → container exit).
  */
 const SOCKET_BASE_INJECTED = 'MY_APP_SOCKET_BASE_URL';
-
-function isHttpUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
-}
 
 /** Origin for Socket.IO (app-runtime, browser-session). */
 export function getSocketBaseUrl(): string {
