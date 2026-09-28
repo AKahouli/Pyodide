@@ -1,6 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { CONVERSATION_V2_SESSION_STORE } from '@modules/conversation-v2/persistence/conversation-v2-session.store';
+import { PgConversationV2SessionStore } from '@modules/conversation-v2/persistence/postgres/pg-conversation-v2-session.store';
 import { type RuntimeBindingStore } from '../persistence/runtime-binding.store';
 import { RuntimeBindingService } from './runtime-binding.service';
 import { RuntimeRevisionService } from './runtime-revision.service';
@@ -58,7 +58,7 @@ describe('RuntimeBindingService', () => {
         },
         { provide: RuntimeRevisionService, useValue: { ensureWorkspaceRevision } },
         { provide: ConfigService, useValue: config },
-        { provide: CONVERSATION_V2_SESSION_STORE, useValue: { findByAiSessionId } },
+        { provide: PgConversationV2SessionStore, useValue: { findByAiSessionId } },
       ],
     }).compile();
 

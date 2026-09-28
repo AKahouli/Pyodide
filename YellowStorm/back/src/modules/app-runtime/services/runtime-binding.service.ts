@@ -1,10 +1,7 @@
-import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'crypto';
-import {
-  CONVERSATION_V2_SESSION_STORE,
-  type ConversationV2SessionStore,
-} from '@modules/conversation-v2/persistence/conversation-v2-session.store';
+import { PgConversationV2SessionStore } from '@modules/conversation-v2/persistence/postgres/pg-conversation-v2-session.store';
 import { type RuntimeBindingRecord } from '../persistence/runtime-binding.store';
 import { RuntimeRevisionService } from './runtime-revision.service';
 import { RuntimeTokenService } from './runtime-token.service';
@@ -43,9 +40,7 @@ export class RuntimeBindingService {
     private readonly tokens: RuntimeTokenService,
     private readonly revisions: RuntimeRevisionService,
     private readonly config: ConfigService,
-    @Optional()
-    @Inject(CONVERSATION_V2_SESSION_STORE)
-    private readonly sessions?: ConversationV2SessionStore,
+    @Optional() private readonly sessions?: PgConversationV2SessionStore,
   ) {}
 
   /**
