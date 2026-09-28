@@ -130,7 +130,10 @@ describe('ConversationV2Controller', () => {
     detectAndPersist: jest.fn().mockResolvedValue(false),
     markHasAiFeatures: jest.fn().mockResolvedValue(undefined),
   };
-  const mockTemplates = { requirePublished: jest.fn() };
+  const mockTemplates = {
+    requirePublished: jest.fn(),
+    requireUsableForUser: jest.fn(),
+  };
 
   const emptyRevisionCatalog = {
     lastDeployedRevisionId: null,

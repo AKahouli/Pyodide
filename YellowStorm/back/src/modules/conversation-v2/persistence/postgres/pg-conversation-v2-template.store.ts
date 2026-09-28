@@ -8,6 +8,7 @@ import * as schema from '@modules/postgres/schema';
 import type {
   ConversationV2TemplateCategoryRow,
   ConversationV2TemplateCategoryStore,
+  ConversationV2TemplateRevisionRow,
   ConversationV2TemplateRow,
   ConversationV2TemplateStatus,
   ConversationV2TemplateStore,
@@ -15,6 +16,7 @@ import type {
 
 type CategoryRow = typeof schema.conversationV2TemplateCategories.$inferSelect;
 type TemplateRow = typeof schema.conversationV2Templates.$inferSelect;
+type RevisionRow = typeof schema.conversationV2TemplateRevisions.$inferSelect;
 
 function toCategory(row: CategoryRow): ConversationV2TemplateCategoryRow {
   return {
@@ -36,6 +38,21 @@ function toTemplate(row: TemplateRow): ConversationV2TemplateRow {
     coverImage: row.coverImage,
     revisionId: row.revisionId ?? null,
     manifestObjectKey: row.manifestObjectKey ?? null,
+    status: row.status as ConversationV2TemplateStatus,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function toRevision(row: RevisionRow): ConversationV2TemplateRevisionRow {
+  return {
+    id: row.id,
+    templateId: row.templateId,
+    revisionId: row.revisionId,
+    manifestObjectKey: row.manifestObjectKey,
+    manifestHash: row.manifestHash,
+    files: Array.isArray(row.files) ? row.files : [],
+    fileCount: row.fileCount ?? (Array.isArray(row.files) ? row.files.length : 0),
     status: row.status as ConversationV2TemplateStatus,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -249,19 +266,28 @@ export class PgConversationV2TemplateStore implements ConversationV2TemplateStor
     return row ? toTemplate(row) : null;
   }
 
-  async setPublished(
+  async setRevision(
     id: string,
     binding: { revisionId: string; manifestObjectKey: string },
   ): Promise<ConversationV2TemplateRow | null> {
-    // Bind the Ceph manifest and flip the template to published.
+    // Bind the Ceph manifest to a draft template without publishing it.
     const [row] = await this.q
       .update(schema.conversationV2Templates)
       .set({
         revisionId: binding.revisionId,
         manifestObjectKey: binding.manifestObjectKey,
-        status: 'published',
         updatedAt: new Date(),
       })
+      .where(eq(schema.conversationV2Templates.id, id))
+      .returning();
+    return row ? toTemplate(row) : null;
+  }
+
+  async markPublished(id: string): Promise<ConversationV2TemplateRow | null> {
+    // NodePod validation confirmed — expose the template to users.
+    const [row] = await this.q
+      .update(schema.conversationV2Templates)
+      .set({ status: 'published', updatedAt: new Date() })
       .where(eq(schema.conversationV2Templates.id, id))
       .returning();
     return row ? toTemplate(row) : null;
@@ -274,5 +300,71 @@ export class PgConversationV2TemplateStore implements ConversationV2TemplateStor
       .where(eq(schema.conversationV2Templates.id, id))
       .returning();
     return row ? toTemplate(row) : null;
+  }
+
+  async upsertRevision(row: {
+    templateId: string;
+    revisionId: string;
+    manifestObjectKey: string;
+    manifestHash: string;
+    files: Array<{ path: string; sha256: string; objectKey: string; size: number }>;
+  }): Promise<ConversationV2TemplateRevisionRow> {
+    // One authoritative row per revision id; re-publish replaces files/status.
+    const [upserted] = await this.q
+      .insert(schema.conversationV2TemplateRevisions)
+      .values({
+        id: newObjectId(),
+        templateId: row.templateId,
+        revisionId: row.revisionId,
+        manifestObjectKey: row.manifestObjectKey,
+        manifestHash: row.manifestHash,
+        files: row.files,
+        fileCount: row.files.length,
+        status: 'draft',
+      })
+      .onConflictDoUpdate({
+        target: schema.conversationV2TemplateRevisions.revisionId,
+        set: {
+          templateId: row.templateId,
+          manifestObjectKey: row.manifestObjectKey,
+          manifestHash: row.manifestHash,
+          files: row.files,
+          fileCount: row.files.length,
+          status: 'draft',
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+    return toRevision(upserted);
+  }
+
+  async findRevisionByRevisionId(
+    revisionId: string,
+  ): Promise<ConversationV2TemplateRevisionRow | null> {
+    // Revision-id lookup used at runtime resolution time.
+    const [row] = await this.q
+      .select()
+      .from(schema.conversationV2TemplateRevisions)
+      .where(eq(schema.conversationV2TemplateRevisions.revisionId, revisionId))
+      .limit(1);
+    return row ? toRevision(row) : null;
+  }
+
+  async markRevisionsPublished(templateId: string): Promise<void> {
+    // Validation confirmed: publish every revision row of the template.
+    await this.q
+      .update(schema.conversationV2TemplateRevisions)
+      .set({ status: 'published', updatedAt: new Date() })
+      .where(eq(schema.conversationV2TemplateRevisions.templateId, templateId));
+  }
+
+  async listRevisionsByTemplate(templateId: string): Promise<ConversationV2TemplateRevisionRow[]> {
+    // Revision history for a template, newest first.
+    const rows = await this.q
+      .select()
+      .from(schema.conversationV2TemplateRevisions)
+      .where(eq(schema.conversationV2TemplateRevisions.templateId, templateId))
+      .orderBy(desc(schema.conversationV2TemplateRevisions.createdAt));
+    return rows.map(toRevision);
   }
 }

@@ -19,7 +19,7 @@ describe('RuntimeBindingService', () => {
   const updateHeartbeat = jest.fn().mockResolvedValue(undefined);
   const updateRevision = jest.fn().mockResolvedValue(undefined);
 
-  const ensureStarterRevision = jest.fn().mockResolvedValue({
+  const ensureWorkspaceRevision = jest.fn().mockResolvedValue({
     revisionId: STARTER,
   });
 
@@ -44,7 +44,7 @@ describe('RuntimeBindingService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
-    ensureStarterRevision.mockResolvedValue({ revisionId: STARTER });
+    ensureWorkspaceRevision.mockResolvedValue({ revisionId: STARTER });
     findByAiSessionId.mockResolvedValue(null);
 
     const module: TestingModule = await Test.createTestingModule({
@@ -55,7 +55,7 @@ describe('RuntimeBindingService', () => {
           provide: RUNTIME_BINDING_STORE,
           useValue: store,
         },
-        { provide: RuntimeRevisionService, useValue: { ensureStarterRevision } },
+        { provide: RuntimeRevisionService, useValue: { ensureWorkspaceRevision } },
         { provide: ConfigService, useValue: config },
         { provide: CONVERSATION_V2_SESSION_STORE, useValue: { findByAiSessionId } },
       ],
@@ -85,7 +85,7 @@ describe('RuntimeBindingService', () => {
       mcpToken: expect.any(String),
     });
     expect(result.mcpToken).not.toHaveLength(0);
-    expect(ensureStarterRevision).toHaveBeenCalledWith('sess_1');
+    expect(ensureWorkspaceRevision).toHaveBeenCalledWith('sess_1', STARTER);
 
     const call = upsertByWorkspaceId.mock.calls[0][0];
     expect(call.workspaceId).toBe('sess_1');
@@ -162,7 +162,7 @@ describe('RuntimeBindingService', () => {
     const binding = await svc.ensureForSession('sess_1', 'user_1');
 
     expect(binding.latestRevisionId).toBe('rev_5');
-    expect(ensureStarterRevision).toHaveBeenCalledWith('sess_1');
+    expect(ensureWorkspaceRevision).toHaveBeenCalledWith('sess_1', 'rev_5');
 
     const call = upsertByWorkspaceId.mock.calls[0][0];
     expect(call.mcpTokenHash).toBeNull();
@@ -181,6 +181,7 @@ describe('RuntimeBindingService', () => {
     expect(findByAiSessionId).toHaveBeenCalledWith('sess_1');
     const call = upsertByWorkspaceId.mock.calls[0][0];
     expect(call.latestRevisionId).toBe('template_tpl_1');
+    expect(ensureWorkspaceRevision).toHaveBeenCalledWith('sess_1', 'template_tpl_1');
   });
 
   it('propagates non-duplicate persistence errors', async () => {

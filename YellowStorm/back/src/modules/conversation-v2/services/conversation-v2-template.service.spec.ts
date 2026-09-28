@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, NotFoundException } from '@modu
 import { DocumentService } from '@modules/document/document.service';
 import { ConversationV2TemplateService, type MulterFile } from './conversation-v2-template.service';
 
+const TPL_ID = 'a'.repeat(24);
 const ZIP: MulterFile = {
   originalname: 'template.zip',
   mimetype: 'application/zip',
@@ -16,7 +17,7 @@ const COVER: MulterFile = {
 };
 
 const draftRow = {
-  id: 'tpl_1',
+  id: TPL_ID,
   categoryId: 'c1',
   title: 'Landing',
   description: '',
@@ -38,7 +39,11 @@ describe('ConversationV2TemplateService', () => {
     listAll: jest.fn(),
     insert: jest.fn(),
     update: jest.fn(),
-    setPublished: jest.fn(),
+    setRevision: jest.fn(),
+    markPublished: jest.fn(),
+    upsertRevision: jest.fn(),
+    markRevisionsPublished: jest.fn(),
+    listRevisionsByTemplate: jest.fn(),
     delete: jest.fn(),
   };
   const categories = { findById: jest.fn(), findAll: jest.fn() };
@@ -54,11 +59,22 @@ describe('ConversationV2TemplateService', () => {
     templates.findByCategoryAndTitle.mockResolvedValue(null);
     templates.insert.mockResolvedValue(draftRow);
     templates.update.mockImplementation(async (_id, patch) => ({ ...draftRow, ...patch }));
+    templates.setRevision.mockImplementation(async (_id, binding) => ({
+      ...draftRow,
+      ...binding,
+    }));
     publish.publish.mockResolvedValue({
-      revisionId: 'template_tpl_1',
-      manifestObjectKey: 'appbuilder/manifests/_system/template_tpl_1.json',
+      revisionId: `template_${TPL_ID}`,
+      manifestObjectKey: `appbuilder/manifests/_system/template_${TPL_ID}.json`,
+      manifestHash: 'manifest-hash',
       fileCount: 2,
+      files: [
+        { path: 'package.json', sha256: 'a'.repeat(64), objectKey: 'blobs/a', size: 5 },
+        { path: 'src/App.jsx', sha256: 'b'.repeat(64), objectKey: 'blobs/b', size: 10 },
+      ],
     });
+    templates.upsertRevision.mockResolvedValue({});
+    templates.markRevisionsPublished.mockResolvedValue(undefined);
     publish.removeTemplateArtifacts.mockResolvedValue(undefined);
     documents.upload.mockResolvedValue({});
     documents.generateSasUrl.mockResolvedValue('https://ceph/signed');
@@ -71,35 +87,36 @@ describe('ConversationV2TemplateService', () => {
     );
   });
 
-  it('creates, uploads the cover and publishes the ZIP to Ceph', async () => {
-    templates.setPublished.mockResolvedValueOnce({
+  it('creates a draft, uploads the cover and publishes the ZIP to Ceph', async () => {
+    templates.setRevision.mockResolvedValueOnce({
       ...draftRow,
-      coverImage: 'appbuilder/templates/tpl_1/cover.png',
-      revisionId: 'template_tpl_1',
-      manifestObjectKey: 'appbuilder/manifests/_system/template_tpl_1.json',
-      status: 'published',
+      coverImage: `appbuilder/templates/${TPL_ID}/cover.png`,
+      revisionId: `template_${TPL_ID}`,
+      manifestObjectKey: `appbuilder/manifests/_system/template_${TPL_ID}.json`,
     });
 
     const result = await svc.create({ categoryId: 'c1', title: 'Landing' }, ZIP, COVER);
 
-    expect(documents.upload).toHaveBeenCalledWith(
-      COVER.buffer,
-      'cover.png',
-      'image/png',
-      {
-        generateUniqueName: false,
-        customFileName: 'appbuilder/templates/tpl_1/cover.png',
-      },
-    );
-    expect(publish.publish).toHaveBeenCalledWith('tpl_1', ZIP.buffer);
-    expect(templates.setPublished).toHaveBeenCalledWith('tpl_1', {
-      revisionId: 'template_tpl_1',
-      manifestObjectKey: 'appbuilder/manifests/_system/template_tpl_1.json',
+    expect(documents.upload).toHaveBeenCalledWith(COVER.buffer, 'cover.png', 'image/png', {
+      generateUniqueName: false,
+      customFileName: `appbuilder/templates/${TPL_ID}/cover.png`,
+    });
+    expect(publish.publish).toHaveBeenCalledWith(TPL_ID, ZIP.buffer);
+    expect(templates.setRevision).toHaveBeenCalledWith(TPL_ID, {
+      revisionId: `template_${TPL_ID}`,
+      manifestObjectKey: `appbuilder/manifests/_system/template_${TPL_ID}.json`,
+    });
+    expect(templates.upsertRevision).toHaveBeenCalledWith({
+      templateId: TPL_ID,
+      revisionId: `template_${TPL_ID}`,
+      manifestObjectKey: `appbuilder/manifests/_system/template_${TPL_ID}.json`,
+      manifestHash: 'manifest-hash',
+      files: expect.arrayContaining([expect.objectContaining({ path: 'package.json' })]),
     });
     expect(result).toMatchObject({
-      id: 'tpl_1',
-      status: 'published',
-      revisionId: 'template_tpl_1',
+      id: TPL_ID,
+      status: 'draft',
+      revisionId: `template_${TPL_ID}`,
       coverImage: 'https://ceph/signed',
       categoryName: 'Guides',
     });
@@ -113,9 +130,9 @@ describe('ConversationV2TemplateService', () => {
   });
 
   it('rejects a missing or oversized source ZIP/cover', async () => {
-    await expect(svc.create({ categoryId: 'c1', title: 'X' }, undefined, COVER)).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    await expect(
+      svc.create({ categoryId: 'c1', title: 'X' }, undefined, COVER),
+    ).rejects.toBeInstanceOf(BadRequestException);
     await expect(
       svc.create({ categoryId: 'c1', title: 'X' }, ZIP, { ...COVER, mimetype: 'text/plain' }),
     ).rejects.toBeInstanceOf(BadRequestException);
@@ -123,14 +140,43 @@ describe('ConversationV2TemplateService', () => {
 
   it('requirePublished rejects a draft template', async () => {
     templates.findById.mockResolvedValueOnce(draftRow);
-    await expect(svc.requirePublished('tpl_1')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(svc.requirePublished(TPL_ID)).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('requireUsableForUser allows a super admin to use a draft', async () => {
+    templates.findById.mockResolvedValueOnce({ ...draftRow, revisionId: `template_${TPL_ID}` });
+    await expect(svc.requireUsableForUser(TPL_ID, true)).resolves.toMatchObject({
+      revisionId: `template_${TPL_ID}`,
+    });
+
+    templates.findById.mockResolvedValueOnce(draftRow);
+    await expect(svc.requireUsableForUser(TPL_ID, false)).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('validate flips a revision-bound draft to published', async () => {
+    templates.findById.mockResolvedValueOnce({
+      ...draftRow,
+      revisionId: `template_${TPL_ID}`,
+      manifestObjectKey: `appbuilder/manifests/_system/template_${TPL_ID}.json`,
+    });
+    templates.markPublished.mockResolvedValueOnce({
+      ...draftRow,
+      revisionId: `template_${TPL_ID}`,
+      manifestObjectKey: `appbuilder/manifests/_system/template_${TPL_ID}.json`,
+      status: 'published',
+    });
+
+    const result = await svc.validate(TPL_ID);
+    expect(templates.markPublished).toHaveBeenCalledWith(TPL_ID);
+    expect(templates.markRevisionsPublished).toHaveBeenCalledWith(TPL_ID);
+    expect(result.status).toBe('published');
   });
 
   it('deletes the row and cleans its Ceph artifacts', async () => {
     const row = { ...draftRow, coverImage: 'cover' };
     templates.delete.mockResolvedValueOnce(row);
 
-    await svc.delete('tpl_1');
+    await svc.delete(TPL_ID);
 
     expect(publish.removeTemplateArtifacts).toHaveBeenCalledWith([row]);
   });

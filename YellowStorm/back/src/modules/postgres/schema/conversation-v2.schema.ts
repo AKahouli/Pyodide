@@ -184,3 +184,33 @@ export const conversationV2Templates = conversationV2Schema.table(
     index('idx_c2_templates_category').on(t.categoryId),
   ],
 );
+
+/**
+ * Dedicated template manifest/revision persistence. Mirror of the App Builder
+ * runtime `source_revisions` shape, scoped to templates: keeps the Ceph
+ * manifest binding plus the manifest's files list for fast, DB-only
+ * resolution in `RuntimeRevisionService`. One row per publish event;
+ * extensible to a revision history per template.
+ */
+export const conversationV2TemplateRevisions = conversationV2Schema.table(
+  'template_revisions',
+  {
+    id: objectId('id').primaryKey(),
+    templateId: objectId('template_id')
+      .notNull()
+      .references(() => conversationV2Templates.id, { onDelete: 'cascade' }),
+    revisionId: text('revision_id').notNull(),
+    manifestObjectKey: text('manifest_object_key').notNull(),
+    manifestHash: varchar('manifest_hash', { length: 64 }).notNull(),
+    files: jsonb('files').$type<Array<{ path: string; sha256: string; objectKey: string; size: number }>>().notNull(),
+    fileCount: integer('file_count').notNull().default(0),
+    status: varchar('status', { length: 16 }).notNull().default('draft'),
+    ...timestamps(),
+  },
+  (t) => [
+    check('c2_tpl_revisions_status_enum', sql`${t.status} IN ('draft','published')`),
+    check('c2_tpl_revisions_file_count_nonneg', sql`${t.fileCount} >= 0`),
+    uniqueIndex('uq_c2_tpl_revisions_revision').on(t.revisionId),
+    index('idx_c2_tpl_revisions_template').on(t.templateId),
+  ],
+);

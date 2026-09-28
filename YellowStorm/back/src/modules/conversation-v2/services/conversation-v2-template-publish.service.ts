@@ -11,7 +11,10 @@ import type { ConversationV2TemplateRow } from '../persistence/conversation-v2-t
 export interface PublishedTemplateRevision {
   revisionId: string;
   manifestObjectKey: string;
+  manifestHash: string;
   fileCount: number;
+  /** Manifest file list, also persisted to `conversation_v2.template_revisions`. */
+  files: TemplateManifestFile[];
 }
 
 interface TemplateManifestFile {
@@ -20,6 +23,9 @@ interface TemplateManifestFile {
   objectKey: string;
   size: number;
 }
+
+/** Ceph round trips per template file are the publish bottleneck; bound the fan-out. */
+const BLOB_UPLOAD_CONCURRENCY = 8;
 
 /**
  * Publishes a template ZIP to Ceph using the exact starter-v6 layout:
@@ -38,19 +44,27 @@ export class ConversationV2TemplatePublishService {
     const files = extractTemplateArchive(zip);
     const manifestFiles: TemplateManifestFile[] = [];
 
-    for (const file of files) {
-      const sha256 = createHash('sha256').update(file.data).digest('hex');
-      const objectKey = blobObjectKey(sha256);
-      // Blobs are content-addressed and shared across revisions: reuse when present.
-      if (!(await this.documents.exists(objectKey))) {
-        await this.documents.upload(
-          file.data,
-          file.path.split('/').pop() || 'file',
-          'text/plain',
-          { generateUniqueName: false, customFileName: objectKey },
-        );
-      }
-      manifestFiles.push({ path: file.path, sha256, objectKey, size: file.data.length });
+    // Blob uploads dominate publish latency (one exists + one put per file), so
+    // they run in bounded parallel batches; order stays ZIP order.
+    for (let start = 0; start < files.length; start += BLOB_UPLOAD_CONCURRENCY) {
+      const batch = files.slice(start, start + BLOB_UPLOAD_CONCURRENCY);
+      const entries = await Promise.all(
+        batch.map(async (file): Promise<TemplateManifestFile> => {
+          const sha256 = createHash('sha256').update(file.data).digest('hex');
+          const objectKey = blobObjectKey(sha256);
+          // Blobs are content-addressed and shared across revisions: reuse when present.
+          if (!(await this.documents.exists(objectKey))) {
+            await this.documents.upload(
+              file.data,
+              file.path.split('/').pop() || 'file',
+              'text/plain',
+              { generateUniqueName: false, customFileName: objectKey },
+            );
+          }
+          return { path: file.path, sha256, objectKey, size: file.data.length };
+        }),
+      );
+      manifestFiles.push(...entries);
     }
 
     const manifestObjectKey = templateManifestKey(revisionId);
@@ -71,7 +85,13 @@ export class ConversationV2TemplatePublishService {
       `Published template revision templateId=${templateId} revisionId=${revisionId} files=${manifestFiles.length}`,
     );
 
-    return { revisionId, manifestObjectKey, fileCount: manifestFiles.length };
+    return {
+      revisionId,
+      manifestObjectKey,
+      manifestHash: createHash('sha256').update(manifest).digest('hex'),
+      fileCount: manifestFiles.length,
+      files: manifestFiles,
+    };
   }
 
   /**

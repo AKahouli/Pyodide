@@ -32,7 +32,11 @@ describe('RuntimeRevisionService', () => {
   };
 
   const findByRevisionId = jest.fn();
-  const templateStore = { findByRevisionId } as unknown as ConversationV2TemplateStore;
+  const findRevisionByRevisionId = jest.fn();
+  const templateStore = {
+    findByRevisionId,
+    findRevisionByRevisionId,
+  } as unknown as ConversationV2TemplateStore;
 
   const config = {
     get: jest.fn((key: string) => {
@@ -59,6 +63,7 @@ describe('RuntimeRevisionService', () => {
     exists.mockResolvedValue(true);
     upload.mockResolvedValue({});
     findByRevisionId.mockResolvedValue(null);
+    findRevisionByRevisionId.mockResolvedValue(null);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -170,6 +175,31 @@ describe('RuntimeRevisionService', () => {
     expect(second.workspaceId).toBe('sess_1');
   });
 
+  it('seeds the workspace with the bound template manifest instead of the starter', async () => {
+    const files = [
+      { path: 'package.json', sha256: 'a'.repeat(64), objectKey: 'blobs/template', size: 5 },
+    ];
+    findRevisionByRevisionId.mockResolvedValueOnce({
+      revisionId: 'template_tpl_1',
+      manifestObjectKey: 'appbuilder/manifests/_system/template_tpl_1.json',
+      manifestHash: 'template-hash',
+      files,
+    });
+
+    const revision = await svc.ensureWorkspaceRevision('sess_1', 'template_tpl_1');
+
+    expect(revision.revisionId).toBe('template_tpl_1');
+    expect(createIfNotExists).toHaveBeenCalledWith({
+      revisionId: 'template_tpl_1',
+      workspaceId: 'sess_1',
+      parentRevisionId: null,
+      manifestHash: 'template-hash',
+      manifestObjectKey: 'appbuilder/manifests/_system/template_tpl_1.json',
+      files,
+      createdByToolCallId: null,
+    });
+  });
+
   it('branchRevision mints an id above every persisted revision and copies the manifest', async () => {
     const rev2Doc = {
       id: 'some_id',
@@ -244,6 +274,25 @@ describe('RuntimeRevisionService', () => {
     expect(revision.revisionId).toBe('template_tpl_1');
     expect(revision.workspaceId).toBe('_system');
     expect(revision.files.map((f) => f.path)).toEqual(['package.json', 'src/App.jsx']);
+  });
+
+  it('resolves a template revision from the database without downloading Ceph', async () => {
+    const files = [
+      { path: 'package.json', sha256: 'a'.repeat(64), objectKey: 'blobs/db', size: 3 },
+    ];
+    findRevisionByRevisionId.mockResolvedValueOnce({
+      revisionId: 'template_tpl_1',
+      manifestObjectKey: 'appbuilder/manifests/_system/template_tpl_1.json',
+      manifestHash: 'db-hash',
+      files,
+    });
+
+    const revision = await svc.getAuthorizedRevision('sess_1', 'template_tpl_1');
+
+    expect(revision.manifestHash).toBe('db-hash');
+    expect(revision.files).toEqual(files);
+    expect(download).not.toHaveBeenCalled();
+    expect(findByRevisionId).not.toHaveBeenCalled();
   });
 
   it('rejects an unpublished or unknown template revision', async () => {

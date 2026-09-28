@@ -35,6 +35,7 @@ import { ConversationV2SessionAccessGuard } from './guards/conversation-v2-sessi
 import { RequireConversationSessionPermission } from './decorators/require-conversation-session-permission.decorator';
 import { CurrentConversationSession } from './decorators/current-conversation-session.decorator';
 import { ConversationV2SessionPermissions } from './constants/conversation-v2-session-permissions';
+import { Permissions } from '@modules/authorization/constants/permissions';
 import type { ConversationV2SessionPermission } from './constants/conversation-v2-session-permissions';
 import type { ConversationV2ResolvedSession } from './services/conversation-v2-session-access.service';
 import { CreateSessionDto } from './dto/create-session.dto';
@@ -66,7 +67,7 @@ import { RuntimeBindingService } from '@modules/app-runtime/services/runtime-bin
 import { RuntimeFinalizedRevisionService } from '@modules/app-runtime/services/runtime-finalized-revision.service';
 import type { RuntimeTicketResult } from '@modules/app-runtime/types/app-runtime-protocol';
 
-interface AuthUser { id: string; }
+interface AuthUser { id: string; permissions?: string[]; }
 
 interface ConversationV2Request {
   conversationV2Access?: {
@@ -135,10 +136,12 @@ export class ConversationV2Controller {
     }
 
     // Optional template seed: the session (and therefore the browser runtime
-    // binding) boots on the template's published revision.
+    // binding) boots on the template's published revision. Super admins may
+    // also seed a draft template to run the NodePod validation.
     let starterRevisionId: string | undefined;
     if (body.templateId) {
-      const template = await this.templates.requirePublished(body.templateId);
+      const isSuperAdmin = user.permissions?.includes(Permissions.SUPER_ADMIN) ?? false;
+      const template = await this.templates.requireUsableForUser(body.templateId, isSuperAdmin);
       starterRevisionId = template.revisionId ?? undefined;
     }
 

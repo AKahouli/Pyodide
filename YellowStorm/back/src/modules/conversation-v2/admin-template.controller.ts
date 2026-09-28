@@ -207,6 +207,29 @@ export class AdminTemplateController {
     return template;
   }
 
+  @Post(':id/validate')
+  @RequirePermissions(Permissions.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Confirm a template after NodePod validation (draft → published)' })
+  @ApiParam({ name: 'id', description: 'Template ID' })
+  async validate(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthUser,
+    @Req() req: Request,
+  ): Promise<ITemplateResponse> {
+    const template = await this.templates.validate(id);
+    this.auditLogService.logSuccess({
+      actorId: user._id.toString(),
+      actorEmail: user.email,
+      action: 'conversation_v2_templates.validate',
+      targetId: id,
+      targetType: 'ConversationV2Template',
+      metadata: { revisionId: template.revisionId },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    return template;
+  }
+
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @RequirePermissions(Permissions.SUPER_ADMIN)

@@ -21,11 +21,22 @@ describe('ConversationV2DeployService', () => {
     patchRevisionWithFiles: jest.fn().mockResolvedValue(undefined),
     getAuthorizedRevision: jest.fn().mockResolvedValue({
       files: [
-        { path: 'src/lib/app-base.ts' },
+        { path: 'src/lib/app-base.js' },
+        { path: 'src/AppRouter.jsx' },
         { path: 'src/main.jsx' },
+        { path: 'vite.config.js' },
       ],
     }),
-    readRevisionFileText: jest.fn().mockResolvedValue("import { AppRouter } from './AppRouter';"),
+    readRevisionFileText: jest.fn().mockImplementation(async (_workspaceId, _revisionId, path) => {
+      if (path.endsWith('app-base.js')) return 'export function resolveRouterBasename() {}';
+      if (path.endsWith('vite.config.js')) {
+        return "base: process.env.VITE_APP_BASE || '/',";
+      }
+      if (path.endsWith('AppRouter.jsx')) {
+        return '<BrowserRouter basename={resolveRouterBasename()}>;';
+      }
+      return "import AppRouter from './AppRouter';";
+    }),
   };
   let service: ConversationV2DeployService;
 
@@ -42,6 +53,7 @@ describe('ConversationV2DeployService', () => {
     configValues['conversationV2.appBuilderDeployStatusPollIntervalMs'] = 15_000;
     delete configValues['app.backendUrl'];
     delete configValues['app.nodeEnv'];
+    delete configValues['appRuntime.publicBaseUrl'];
     delete process.env.ALLOW_LOCALHOST_DEPLOY_API;
     service = new ConversationV2DeployService(
       config as unknown as ConfigService,
@@ -191,19 +203,11 @@ describe('ConversationV2DeployService', () => {
     });
   });
 
-  it('refuses to bake localhost BACKEND_URL into deployed apps', async () => {
+  it('uses an existing public runtime base when BACKEND_URL is loopback', async () => {
     configValues['app.backendUrl'] = 'http://localhost:3000';
     configValues['app.nodeEnv'] = 'production';
+    configValues['appRuntime.publicBaseUrl'] = 'https://api.yellowsys.org';
     delete process.env.ALLOW_LOCALHOST_DEPLOY_API;
-
-    await expect(service.deploy('2e65d5fa87a0499f', 'rev_15')).rejects.toThrow(
-      /BACKEND_URL must be a public URL/,
-    );
-  });
-
-  it('allows localhost BACKEND_URL in development with a warning', async () => {
-    configValues['app.backendUrl'] = 'http://localhost:3000';
-    configValues['app.nodeEnv'] = 'development';
     jest.spyOn(global, 'fetch').mockResolvedValueOnce(
       jsonResponse({
         status: 'ready',
@@ -212,15 +216,93 @@ describe('ConversationV2DeployService', () => {
       }),
     );
 
-    await expect(service.deploy('2e65d5fa87a0499f', 'rev_15')).resolves.toEqual({
-      appId: '2e65d5fa87a0499f',
-      url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
-      revisionId: undefined,
+    await expect(service.deploy('2e65d5fa87a0499f', 'rev_15')).resolves.toMatchObject({
       runtimeEnv: {
-        VITE_APP_BASE: '/apps/2e65d5fa87a0499f/',
-        VITE_YM_API_BASE_URL: 'http://localhost:3000/api/v1',
+        VITE_YM_API_BASE_URL: 'https://api.yellowsys.org/api/v1',
       },
     });
+  });
+
+  it('does not inject a loopback API URL into apps without an AI client', async () => {
+    configValues['app.backendUrl'] = 'http://localhost:3000';
+    configValues['app.nodeEnv'] = 'development';
+    const fetchMock = jest.spyOn(global, 'fetch');
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        status: 'ready',
+        app_id: '2e65d5fa87a0499f',
+        url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+      }),
+    );
+
+    await expect(service.deploy('2e65d5fa87a0499f', 'rev_15')).resolves.toMatchObject({
+      runtimeEnv: { VITE_APP_BASE: '/apps/2e65d5fa87a0499f/' },
+    });
+    const launchBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(launchBody.runtimeEnv).not.toContain('localhost');
+  });
+
+  it('requires a public API base before deploying an app with the AI client', async () => {
+    configValues['app.backendUrl'] = 'http://localhost:3000';
+    revisions.getAuthorizedRevision.mockResolvedValueOnce({
+      files: [
+        { path: 'src/lib/app-base.js' },
+        { path: 'src/AppRouter.jsx' },
+        { path: 'src/main.jsx' },
+        { path: 'src/lib/yellowmind-ai.js' },
+        { path: 'vite.config.js' },
+      ],
+    });
+
+    await expect(service.deploy('2e65d5fa87a0499f', 'rev_15')).rejects.toThrow(
+      /Set BACKEND_URL to the browser-reachable YellowStorm API origin/,
+    );
+  });
+
+  it('rejects an auth client that builds auth URLs from the platform API base', async () => {
+    revisions.getAuthorizedRevision.mockResolvedValueOnce({
+      files: [
+        { path: 'src/lib/app-base.js' },
+        { path: 'src/AppRouter.jsx' },
+        { path: 'src/main.jsx' },
+        { path: 'src/lib/yellowmind-auth.js' },
+        { path: 'vite.config.js' },
+      ],
+    });
+    const readSource = revisions.readRevisionFileText.getMockImplementation()!;
+    revisions.readRevisionFileText.mockImplementation(async (workspaceId, id, path) => {
+      if (path.endsWith('yellowmind-auth.js')) {
+        return "const API_BASE = import.meta.env.VITE_YM_API_BASE_URL; fetch(`${API_BASE}/auth/register`);";
+      }
+      return readSource(workspaceId, id, path);
+    });
+
+    await expect(service.deploy('2e65d5fa87a0499f', 'rev_15')).rejects.toThrow(
+      /App authentication must use the App Data auth client/,
+    );
+  });
+
+  it('rejects auth-enabled apps when App Data was not provisioned for PROD', async () => {
+    revisions.getAuthorizedRevision.mockResolvedValueOnce({
+      files: [
+        { path: 'src/lib/app-base.js' },
+        { path: 'src/AppRouter.jsx' },
+        { path: 'src/main.jsx' },
+        { path: 'src/lib/yellowmind-auth.js' },
+        { path: 'vite.config.js' },
+      ],
+    });
+    const readSource = revisions.readRevisionFileText.getMockImplementation()!;
+    revisions.readRevisionFileText.mockImplementation(async (workspaceId, id, path) => {
+      if (path.endsWith('yellowmind-auth.js')) {
+        return "const url = import.meta.env.VITE_YM_APP_DATA_URL; fetch(`${url}/auth/register`);";
+      }
+      return readSource(workspaceId, id, path);
+    });
+
+    await expect(service.deploy('2e65d5fa87a0499f', 'rev_15')).rejects.toThrow(
+      /App Data is not provisioned for this workspace/,
+    );
   });
 
   it('rejects with a timeout error when the app-builder does not answer in time', async () => {
@@ -242,7 +324,9 @@ describe('ConversationV2DeployService', () => {
       .mockImplementation(() => Promise.resolve(jsonResponse({ status: 'deploying' })));
 
     const deployment = service.deploy('2e65d5fa87a0499f', 'rev_15');
-    const rejection = expect(deployment).rejects.toThrow('Deployment service timed out');
+    const rejection = expect(deployment).rejects.toThrow(
+      /Deployment service timed out .*lastStatus=deploying/,
+    );
     await jest.advanceTimersByTimeAsync(180_000);
 
     await rejection;
@@ -268,6 +352,35 @@ describe('ConversationV2DeployService', () => {
   it('resolves deployed app base path for Vite subpath routing', () => {
     expect(service.resolveDeployAppBasePath('2cacade0981746b5')).toBe(
       '/apps/2cacade0981746b5/',
+    );
+  });
+
+  it('explains the required Vite and router changes when template base-path support is missing', async () => {
+    revisions.getAuthorizedRevision.mockResolvedValueOnce({ files: [{ path: 'src/main.jsx' }] });
+    const fetchMock = jest.spyOn(global, 'fetch');
+
+    await expect(service.deploy('2e65d5fa87a0499f', 'template_tpl_1')).rejects.toThrow(
+      /VITE_APP_BASE.*src\/lib\/app-base\.js or \.ts.*resolveRouterBasename/,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('accepts JavaScript base-path helpers wired into the Vite build and BrowserRouter', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValueOnce(
+      jsonResponse({
+        status: 'ready',
+        app_id: '2e65d5fa87a0499f',
+        url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+      }),
+    );
+
+    await expect(service.deploy('2e65d5fa87a0499f', 'template_tpl_1')).resolves.toMatchObject({
+      url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+    });
+    expect(revisions.readRevisionFileText).toHaveBeenCalledWith(
+      '2e65d5fa87a0499f',
+      'template_tpl_1',
+      'src/lib/app-base.js',
     );
   });
 

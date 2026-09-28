@@ -110,7 +110,7 @@ export class ConversationV2DeployService {
 
     let deployRevisionId = revisionId;
     await this.assertRevisionSupportsSubpath(aiSessionId, revisionId);
-    await this.assertRevisionSupportsAuth(aiSessionId, revisionId);
+    await this.assertRevisionSupportsAuth(aiSessionId, revisionId, productionEnv);
     try {
       deployRevisionId = await this.injectEnvProduction(aiSessionId, revisionId, productionEnv);
     } catch (err) {
@@ -190,6 +190,7 @@ export class ConversationV2DeployService {
   private async pollUntilReady(context: DeploymentContext): Promise<DeployResponse> {
     const { baseUrl, token, aiSessionId, launchAppId, deadline, statusPollIntervalMs } =
       context;
+    let lastStatus: string | null = null;
     while (Date.now() < deadline) {
       const statusBody = await this.requestAppBuilder({
         baseUrl,
@@ -199,6 +200,7 @@ export class ConversationV2DeployService {
         deadline,
       });
       const status = this.extractString(statusBody, 'status');
+      lastStatus = status;
       if (this.isReady(status)) {
         return { ...this.extractDeployment(statusBody, launchAppId), runtimeEnv: context.runtimeEnv };
       }
@@ -206,9 +208,16 @@ export class ConversationV2DeployService {
         this.logger.warn(`App-builder returned unsupported deployment status: ${status ?? 'none'}`);
         throw new ServiceUnavailableException('Deployment failed with an invalid status');
       }
-      await this.waitForNextPoll(statusPollIntervalMs, deadline);
+      await this.waitForNextPoll(
+        statusPollIntervalMs,
+        deadline,
+        `session=${aiSessionId} appId=${launchAppId} lastStatus=${lastStatus ?? 'none'}`,
+      );
     }
-    return this.throwTimeout(context.deployTimeoutMs);
+    return this.throwTimeout(
+      context.deployTimeoutMs,
+      `session=${aiSessionId} appId=${launchAppId} lastStatus=${lastStatus ?? 'none'}`,
+    );
   }
 
   private async requestAppBuilder(request: AppBuilderRequest): Promise<unknown> {
@@ -288,48 +297,43 @@ export class ConversationV2DeployService {
     return typeof value === 'string' && value.trim() ? value : null;
   }
 
-  private async waitForNextPoll(delayMs: number, deadline: number): Promise<void> {
+  private async waitForNextPoll(
+    delayMs: number,
+    deadline: number,
+    timeoutDetails?: string,
+  ): Promise<void> {
     const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) return this.throwTimeout();
+    if (remainingMs <= 0) return this.throwTimeout(undefined, timeoutDetails);
     await new Promise((resolve) => setTimeout(resolve, Math.min(delayMs, remainingMs)));
-    if (Date.now() >= deadline) return this.throwTimeout();
+    if (Date.now() >= deadline) return this.throwTimeout(undefined, timeoutDetails);
   }
 
-  private throwTimeout(deployTimeoutMs?: number): never {
+  private throwTimeout(deployTimeoutMs?: number, details?: string): never {
     const timeoutMs =
       deployTimeoutMs ?? this.config.get<number>('conversationV2.appBuilderDeployTimeoutMs') ?? 0;
-    this.logger.error(`App-builder deployment timed out after ${timeoutMs / 1000}s`);
-    throw new ServiceUnavailableException('Deployment service timed out');
+    this.logger.error(
+      `App-builder deployment timed out after ${timeoutMs / 1000}s${details ? ` (${details})` : ''}`,
+    );
+    throw new ServiceUnavailableException(
+      details ? `Deployment service timed out (${details})` : 'Deployment service timed out',
+    );
   }
 
   /**
    * Public API origin baked into deployed apps as VITE_YM_API_BASE_URL.
    * Loopback defaults are unreachable from apps.yellowsys.org browsers.
-   * Allowed in non-production (local POC) with a warning; production must set
-   * a public BACKEND_URL (or ALLOW_LOCALHOST_DEPLOY_API=true as escape hatch).
+   * Prefer BACKEND_URL, then the existing public runtime base URL.
    */
   private resolveDeployBackendUrl(): string {
-    const raw = (this.config.get<string>('app.backendUrl') || '').trim().replace(/\/$/, '');
-    if (!raw) return '';
-    if (this.isLoopbackUrl(raw)) {
-      const nodeEnv = (this.config.get<string>('app.nodeEnv') || process.env.NODE_ENV || '').toLowerCase();
-      const allowLocalhost =
-        process.env.ALLOW_LOCALHOST_DEPLOY_API === 'true'
-        || nodeEnv === 'development'
-        || nodeEnv === 'test';
-      if (!allowLocalhost) {
-        this.logger.error(
-          `Refusing to deploy with loopback BACKEND_URL=${raw}. Set BACKEND_URL to a browser-reachable public API origin.`,
-        );
-        throw new ServiceUnavailableException(
-          'BACKEND_URL must be a public URL reachable from the browser (not localhost). Set BACKEND_URL and redeploy.',
-        );
-      }
-      this.logger.warn(
-        `Deploying with loopback BACKEND_URL=${raw} (${nodeEnv || 'dev'}). Deployed apps on remote hosts cannot call this API — set BACKEND_URL to a public origin for real deploys.`,
-      );
+    const candidates = [
+      this.config.get<string>('app.backendUrl'),
+      this.config.get<string>('appRuntime.publicBaseUrl'),
+    ];
+    for (const candidate of candidates) {
+      const url = candidate?.trim().replace(/\/$/, '');
+      if (url && !this.isLoopbackUrl(url)) return url;
     }
-    return raw;
+    return '';
   }
 
   private isLoopbackUrl(url: string): boolean {
@@ -375,12 +379,38 @@ export class ConversationV2DeployService {
     revisionId: string,
   ): Promise<void> {
     const revision = await this.revisions.getAuthorizedRevision(workspaceId, revisionId);
-    const hasAppBase = revision.files.some(
-      (file) => file.path === 'src/lib/app-base.ts' || file.path.endsWith('/app-base.ts'),
+    const baseHelper = revision.files.find(
+      (file) => /^(.+\/)?app-base\.(js|ts)$/.test(file.path),
     );
-    if (!hasAppBase) {
+    const viteConfig = revision.files.find(
+      (file) => /^(.+\/)?vite\.config\.(js|ts|mjs|mts|cjs|cts)$/.test(file.path),
+    );
+    const routerEntries = revision.files.filter(
+      (file) => /^src\/(main|AppRouter)\.(js|jsx|ts|tsx)$/.test(file.path),
+    );
+    if (!baseHelper || !viteConfig || routerEntries.length === 0) {
       throw new ServiceUnavailableException(
-        'This app cannot be deployed under /apps/{sessionId}/. Regenerate it with the current starter, then deploy again.',
+        'This template is missing deployment base-path support. Configure Vite with base: process.env.VITE_APP_BASE || \'/\', add src/lib/app-base.js or .ts, and pass resolveRouterBasename() to BrowserRouter. Do not bypass this check with an unused stub; apply the helper to the app router, then deploy again.',
+      );
+    }
+
+    const [helperSource, viteSource, ...routerSources] = await Promise.all([
+      this.revisions.readRevisionFileText(workspaceId, revisionId, baseHelper.path),
+      this.revisions.readRevisionFileText(workspaceId, revisionId, viteConfig.path),
+      ...routerEntries.map((file) =>
+        this.revisions.readRevisionFileText(workspaceId, revisionId, file.path),
+      ),
+    ]);
+    const helperExportsBasename = helperSource?.includes('resolveRouterBasename') ?? false;
+    const viteUsesDeployBase = /base\s*:\s*process\.env\.VITE_APP_BASE\s*\|\|/.test(
+      viteSource ?? '',
+    );
+    const routerUsesBasename = routerSources.some(
+      (source) => source?.includes('BrowserRouter') && source.includes('resolveRouterBasename'),
+    );
+    if (!helperExportsBasename || !viteUsesDeployBase || !routerUsesBasename) {
+      throw new ServiceUnavailableException(
+        'This template has incomplete deployment base-path support. Export resolveRouterBasename() from app-base.js/.ts, wire it into BrowserRouter, and configure Vite base from process.env.VITE_APP_BASE || \'/\'.',
       );
     }
   }
@@ -389,6 +419,7 @@ export class ConversationV2DeployService {
   private async assertRevisionSupportsAuth(
     workspaceId: string,
     revisionId: string,
+    runtimeEnv: Record<string, string>,
   ): Promise<void> {
     const revision = await this.revisions.getAuthorizedRevision(workspaceId, revisionId);
     const mainEntry = revision.files.find(
@@ -404,6 +435,39 @@ export class ConversationV2DeployService {
     if (!mainSource?.includes('AppRouter')) {
       throw new ServiceUnavailableException(
         'This app revision does not mount AppRouter in src/main.jsx. Restore the starter entry point (AppRouter with /login and /register), then deploy again.',
+      );
+    }
+
+    const authClient = revision.files.find((file) =>
+      /^src\/lib\/yellowmind-auth\.(js|jsx|ts|tsx)$/.test(file.path),
+    );
+    if (authClient) {
+      const authSource = await this.revisions.readRevisionFileText(
+        workspaceId,
+        revisionId,
+        authClient.path,
+      );
+      if (
+        !authSource?.includes('VITE_YM_APP_DATA_URL') ||
+        authSource.includes('VITE_YM_API_BASE_URL')
+      ) {
+        throw new ServiceUnavailableException(
+          'App authentication must use the App Data auth client and VITE_YM_APP_DATA_URL, not VITE_YM_API_BASE_URL. Restore the Starter V6 yellowmind-auth client, then deploy again.',
+        );
+      }
+      if (!runtimeEnv.VITE_YM_APP_DATA_URL || !runtimeEnv.VITE_YM_APP_DATA_ID) {
+        throw new ServiceUnavailableException(
+          'App Data is not provisioned for this workspace. Provision App Data before deploying its login/register routes.',
+        );
+      }
+    }
+
+    const hasAiClient = revision.files.some((file) =>
+      /^src\/lib\/yellowmind-ai\.(js|jsx|ts|tsx)$/.test(file.path),
+    );
+    if (hasAiClient && !runtimeEnv.VITE_YM_API_BASE_URL) {
+      throw new ServiceUnavailableException(
+        'This app uses the AI client but no public API base is configured. Set BACKEND_URL to the browser-reachable YellowStorm API origin, then deploy again.',
       );
     }
   }

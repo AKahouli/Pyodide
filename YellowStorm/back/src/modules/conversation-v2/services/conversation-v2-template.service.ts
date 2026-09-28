@@ -70,10 +70,18 @@ export class ConversationV2TemplateService {
       const coverKey = await this.uploadCover(row.id, cover!);
       const published = await this.publish.publish(row.id, zip!.buffer);
       await this.templates.update(row.id, { coverImage: coverKey });
-      const bound = await this.templates.setPublished(row.id, {
+      const bound = await this.templates.setRevision(row.id, {
         revisionId: published.revisionId,
         manifestObjectKey: published.manifestObjectKey,
       });
+      await this.templates.upsertRevision({
+        templateId: row.id,
+        revisionId: published.revisionId,
+        manifestObjectKey: published.manifestObjectKey,
+        manifestHash: published.manifestHash,
+        files: published.files,
+      });
+      // Draft until a NodePod validation run confirms it.
       return this.toResponse(bound!, category.name);
     } catch (error) {
       await this.templates.delete(row.id).catch(() => undefined);
@@ -113,6 +121,38 @@ export class ConversationV2TemplateService {
       throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_PUBLISHED);
     }
     return row;
+  }
+
+  /**
+   * Usable template revision for starting a session. Users may only use
+   * published templates; super admins may use their own drafts to run the
+   * NodePod validation.
+   */
+  async requireUsableForUser(
+    id: string,
+    isSuperAdmin: boolean,
+  ): Promise<ConversationV2TemplateRow> {
+    const row = await this.requireTemplate(id);
+    if (!isSuperAdmin && (row.status !== 'published' || !row.revisionId)) {
+      throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_PUBLISHED);
+    }
+    if (!row.revisionId) {
+      throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_PUBLISHED);
+    }
+    return row;
+  }
+
+  /** Confirm a template after its NodePod validation succeeded (draft → published). */
+  async validate(id: string): Promise<ITemplateResponse> {
+    const current = await this.requireTemplate(id);
+    if (!current.revisionId || !current.manifestObjectKey) {
+      throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_PUBLISHED);
+    }
+    const updated = await this.templates.markPublished(id);
+    if (!updated) throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_PUBLISHED);
+    await this.templates.markRevisionsPublished(id);
+    const category = await this.categories.findById(updated.categoryId);
+    return this.toResponse(updated, category?.name ?? '');
   }
 
   async update(id: string, dto: UpdateTemplateDto): Promise<ITemplateResponse> {
@@ -158,16 +198,23 @@ export class ConversationV2TemplateService {
     return this.toResponse(updated, category?.name ?? '');
   }
 
-  /** Replace the source ZIP and re-publish the same revision id. */
+  /** Replace the source ZIP and re-bind the same revision id (status unchanged). */
   async replaceSource(id: string, zip: MulterFile | undefined): Promise<ITemplateResponse> {
     await this.requireTemplate(id);
     this.assertZip(zip);
     const published = await this.publish.publish(id, zip!.buffer);
-    const updated = await this.templates.setPublished(id, {
+    const updated = await this.templates.setRevision(id, {
       revisionId: published.revisionId,
       manifestObjectKey: published.manifestObjectKey,
     });
     if (!updated) throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_FOUND);
+    await this.templates.upsertRevision({
+      templateId: id,
+      revisionId: published.revisionId,
+      manifestObjectKey: published.manifestObjectKey,
+      manifestHash: published.manifestHash,
+      files: published.files,
+    });
     const category = await this.categories.findById(updated.categoryId);
     return this.toResponse(updated, category?.name ?? '');
   }

@@ -41,6 +41,9 @@ describe('ConversationV2TemplatePublishService', () => {
       'appbuilder/manifests/_system/template_tpl_1.json',
     );
     expect(result.fileCount).toBe(2);
+    expect(result.manifestHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(result.files).toHaveLength(2);
+    expect(result.files.map((file) => file.path)).toEqual(['package.json', 'src/App.jsx']);
 
     const sha = createHash('sha256').update('app').digest('hex');
     expect(upload).toHaveBeenCalledWith(
@@ -66,6 +69,30 @@ describe('ConversationV2TemplatePublishService', () => {
 
     const blobUploads = upload.mock.calls.filter((call) => call[2] === 'text/plain');
     expect(blobUploads).toHaveLength(0);
+  });
+
+  it('uploads blobs in bounded parallel batches and keeps ZIP order', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    exists.mockImplementation(async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight -= 1;
+      return false;
+    });
+
+    const entries: Record<string, string> = {};
+    for (let i = 0; i < 20; i += 1) {
+      entries[`src/file${String(i).padStart(2, '0')}.js`] = `content-${i}`;
+    }
+    const result = await svc.publish('tpl_4', buildZip(entries));
+
+    expect(result.fileCount).toBe(20);
+    expect(result.files.map((file) => file.path)).toEqual(Object.keys(entries));
+    expect(upload).toHaveBeenCalledTimes(21); // 20 blobs + manifest
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(8);
   });
 
   it('removes cover and manifest artifacts without touching blobs', async () => {

@@ -75,13 +75,14 @@ describe('ConversationV2TemplateCategoryService', () => {
   });
 
   it('cascades a delete and cleans the templates Ceph artifacts', async () => {
-    findById.mockResolvedValueOnce({ id: 'c1', name: 'A', slug: 'a', icon: '' });
+    const catId = 'b'.repeat(24);
+    findById.mockResolvedValueOnce({ id: catId, name: 'A', slug: 'a', icon: '' });
     findByCategoryId.mockResolvedValueOnce([{ id: 't1', coverImage: 'cover' }]);
     deleteCategory.mockResolvedValueOnce(true);
 
-    await svc.delete('c1');
+    await svc.delete(catId);
 
-    expect(deleteCategory).toHaveBeenCalledWith('c1');
+    expect(deleteCategory).toHaveBeenCalledWith(catId);
     expect(removeTemplateArtifacts).toHaveBeenCalledWith([{ id: 't1', coverImage: 'cover' }]);
   });
 

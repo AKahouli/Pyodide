@@ -34,6 +34,20 @@ export interface ConversationV2TemplateRow {
   updatedAt: Date;
 }
 
+/** One published template revision's manifest metadata (`template_revisions`). */
+export interface ConversationV2TemplateRevisionRow {
+  id: string;
+  templateId: string;
+  revisionId: string;
+  manifestObjectKey: string;
+  manifestHash: string;
+  files: Array<{ path: string; sha256: string; objectKey: string; size: number }>;
+  fileCount: number;
+  status: ConversationV2TemplateStatus;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface ConversationV2TemplateCategoryStore {
   findById(id: string): Promise<ConversationV2TemplateCategoryRow | null>;
   findBySlug(slug: string): Promise<ConversationV2TemplateCategoryRow | null>;
@@ -71,10 +85,28 @@ export interface ConversationV2TemplateStore {
     id: string,
     patch: { categoryId?: string; title?: string; description?: string; coverImage?: string },
   ): Promise<ConversationV2TemplateRow | null>;
-  /** Mark a template published with its Ceph manifest binding. */
-  setPublished(
+  /** Bind the Ceph revision to a still-draft template (pending validation). */
+  setRevision(
     id: string,
     binding: { revisionId: string; manifestObjectKey: string },
   ): Promise<ConversationV2TemplateRow | null>;
+  /** Mark a template published after NodePod validation confirmed it. */
+  markPublished(id: string): Promise<ConversationV2TemplateRow | null>;
   delete(id: string): Promise<ConversationV2TemplateRow | null>;
+
+  /** Insert-or-replace the revision row keyed by `revisionId` (one publish event). */
+  upsertRevision(row: {
+    templateId: string;
+    revisionId: string;
+    manifestObjectKey: string;
+    manifestHash: string;
+    files: Array<{ path: string; sha256: string; objectKey: string; size: number }>;
+  }): Promise<ConversationV2TemplateRevisionRow>;
+  /** RuntimeRevisionService resolves `template_<id>` back to its manifest metadata. */
+  findRevisionByRevisionId(
+    revisionId: string,
+  ): Promise<ConversationV2TemplateRevisionRow | null>;
+  /** Flip every revision row of the template to published (validation confirmed). */
+  markRevisionsPublished(templateId: string): Promise<void>;
+  listRevisionsByTemplate(templateId: string): Promise<ConversationV2TemplateRevisionRow[]>;
 }

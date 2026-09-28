@@ -70,7 +70,10 @@ export class RuntimeBindingService {
       hash,
       session?.starterRevisionId ?? undefined,
     );
-    await this.revisions.ensureStarterRevision(binding.workspaceId);
+    await this.revisions.ensureWorkspaceRevision(
+      binding.workspaceId,
+      binding.latestRevisionId,
+    );
 
     this.logger.log(
       `App runtime bound bindingId=${binding.bindingId} workspaceId=${binding.workspaceId} userId=${userId} revisionId=${binding.latestRevisionId}`,
@@ -102,7 +105,10 @@ export class RuntimeBindingService {
       null,
       session?.starterRevisionId ?? undefined,
     );
-    await this.revisions.ensureStarterRevision(binding.workspaceId);
+    await this.revisions.ensureWorkspaceRevision(
+      binding.workspaceId,
+      binding.latestRevisionId,
+    );
     return binding;
   }
 

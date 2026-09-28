@@ -124,15 +124,12 @@ export class RuntimeRevisionService {
     return raw.toString('utf8');
   }
 
-  /**
-   * Ensure the workspace has a row for the starter revision (idempotent).
-   * Binding still points `latestRevisionId` at the shared starter id; this
-   * records the file list for later workspace-local children.
-   */
-  async ensureStarterRevision(workspaceId: string): Promise<RevisionManifest> {
-    const starter = await this.getStarterManifest();
-    const existing = await this.store.findByWorkspaceAndRevision(workspaceId, starter.revisionId);
-
+  /** Ensure the workspace has a local row for its initial revision. */
+  async ensureWorkspaceRevision(
+    workspaceId: string,
+    revisionId: string,
+  ): Promise<RevisionManifest> {
+    const existing = await this.store.findByWorkspaceAndRevision(workspaceId, revisionId);
     if (existing) {
       return {
         revisionId: existing.revisionId,
@@ -144,17 +141,22 @@ export class RuntimeRevisionService {
       };
     }
 
+    const revision = await this.getAuthorizedRevision(workspaceId, revisionId);
     const created = await this.store.createIfNotExists({
-      revisionId: starter.revisionId,
+      revisionId: revision.revisionId,
       workspaceId,
-      parentRevisionId: null,
-      manifestHash: starter.manifestHash,
-      manifestObjectKey: starter.manifestObjectKey,
-      files: starter.files,
+      parentRevisionId: revision.parentRevisionId,
+      manifestHash: revision.manifestHash,
+      manifestObjectKey: revision.manifestObjectKey,
+      files: revision.files,
       createdByToolCallId: null,
     });
 
-    return { ...starter, workspaceId: created.workspaceId };
+    return { ...revision, workspaceId: created.workspaceId };
+  }
+
+  async ensureStarterRevision(workspaceId: string): Promise<RevisionManifest> {
+    return this.ensureWorkspaceRevision(workspaceId, this.starterRevisionId);
   }
 
   async listFiles(
@@ -219,6 +221,9 @@ export class RuntimeRevisionService {
       return true;
     }
     if (revisionId.startsWith(TEMPLATE_REVISION_PREFIX)) {
+      if (await this.store.existsByWorkspaceAndRevision(workspaceId, revisionId)) {
+        return true;
+      }
       const template = await this.templateStore?.findByRevisionId(revisionId);
       return template?.status === 'published' && !!template.manifestObjectKey;
     }
@@ -491,11 +496,27 @@ export class RuntimeRevisionService {
    * Resolve a published Conversation V2 template revision. The manifest lives
    * at the template's DB-recorded key and is stored in the same system folder
    * as the starter manifest, so the browser loads it through the identical
-   * `…/revisions/:id/files` + `presign` path.
+   * `…/revisions/:id/files` + `presign` path. The `template_revisions` row is
+   * the DB-first source of truth; the Ceph manifest remains a fallback for
+   * templates published before that table existed.
    */
   private async loadTemplateRevision(revisionId: string): Promise<RevisionManifest> {
+    const revisionRow = await this.templateStore?.findRevisionByRevisionId(revisionId);
+    if (revisionRow) {
+      return {
+        revisionId: revisionRow.revisionId,
+        workspaceId: '_system',
+        parentRevisionId: null,
+        manifestHash: revisionRow.manifestHash,
+        manifestObjectKey: revisionRow.manifestObjectKey,
+        files: revisionRow.files,
+      };
+    }
+
     const template = await this.templateStore?.findByRevisionId(revisionId);
-    if (!template || template.status !== 'published' || !template.manifestObjectKey) {
+    // Draft templates are loadable so a super-admin can run the NodePod
+    // validation; user-facing use is gated to published elsewhere.
+    if (!template || !template.manifestObjectKey) {
       throw new NotFoundException(`Template revision ${revisionId} not found`);
     }
 
