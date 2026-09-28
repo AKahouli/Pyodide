@@ -125,6 +125,8 @@ export class LogicalSearchEvaluationRepository {
   }
 
   async applyResult(evaluationId: string, result: EvaluationQueryResult) {
+    const tokenInt = (value: number | undefined): number | null =>
+      typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : null;
     const values = {
       evaluationId,
       queryId: result.query_id,
@@ -147,6 +149,13 @@ export class LogicalSearchEvaluationRepository {
       retrievedFiles: result.retrieved_files,
       toolCalls: result.tool_calls ?? null,
       tokenUsage: result.token_usage ?? null,
+      targetPromptTokens: tokenInt(result.target_token_usage?.prompt_tokens),
+      targetCompletionTokens: tokenInt(result.target_token_usage?.completion_tokens),
+      targetTotalTokens: tokenInt(result.target_token_usage?.total_tokens),
+      judgePromptTokens: tokenInt(result.judge_token_usage?.prompt_tokens),
+      judgeCompletionTokens: tokenInt(result.judge_token_usage?.completion_tokens),
+      judgeTotalTokens: tokenInt(result.judge_token_usage?.total_tokens),
+      globalTotalTokens: tokenInt(result.token_usage?.total_tokens),
       error: result.error ?? null,
       createdAt: new Date(),
       updatedAt: new Date(),
