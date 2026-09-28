@@ -52,10 +52,13 @@ function envelopeToAgentEvent(env: PersistedEventEnvelope): AgentEvent {
 }
 
 export const conversationV2Api = {
-  async createSession(workspaceIds: string[] = []): Promise<CreateSessionResponse> {
+  async createSession(
+    workspaceIds: string[] = [],
+    templateId?: string,
+  ): Promise<CreateSessionResponse> {
     const res = await apiClient.post<ApiResponse<CreateSessionResponse>>(
       '/conversation-v2/sessions',
-      { workspaceIds },
+      { workspaceIds, ...(templateId ? { templateId } : {}) },
     );
     return res.data.data;
   },

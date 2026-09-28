@@ -3,10 +3,18 @@ import type {
   AppEndUserGrants,
   AppEndUserSummary,
   AppBuilderCatalog,
+  AppTemplate,
   ListAppBuilderAppsResponse,
+  TemplateCategory,
 } from './types';
 
 export type { AppEndUserGrants, AppEndUserSummary };
+
+/**
+ * Publishing a template ZIP hashes and uploads every file to Ceph one blob at a
+ * time, so a large template legitimately outlives the 30 s default HTTP budget.
+ */
+const TEMPLATE_ZIP_TIMEOUT_MS = 300_000;
 
 export const appBuilderApi = {
   /** Owned deployed, shared, and draft apps for the current user. */
@@ -36,5 +44,123 @@ export const appBuilderApi = {
       grants,
     );
     return res.data.data.user;
+  },
+};
+
+/** Read-only template gallery (categories + published templates). */
+export const templateCatalogApi = {
+  async listCategories(): Promise<TemplateCategory[]> {
+    const res = await apiClient.get<ApiResponse<TemplateCategory[]>>(
+      '/conversation-v2/template-catalog/categories',
+    );
+    return res.data.data;
+  },
+  async listTemplates(categoryId?: string): Promise<AppTemplate[]> {
+    const res = await apiClient.get<ApiResponse<AppTemplate[]>>(
+      '/conversation-v2/template-catalog/templates',
+      { params: categoryId ? { categoryId } : undefined },
+    );
+    return res.data.data;
+  },
+  async getTemplate(id: string): Promise<AppTemplate> {
+    const res = await apiClient.get<ApiResponse<AppTemplate>>(
+      `/conversation-v2/template-catalog/templates/${id}`,
+    );
+    return res.data.data;
+  },
+};
+
+/** Super-admin-only catalog management. */
+export const adminTemplateApi = {
+  listCategories: () => templateCatalogApi.listCategories(),
+  async createCategory(input: {
+    name: string;
+    slug?: string;
+    icon?: string;
+  }): Promise<TemplateCategory> {
+    const res = await apiClient.post<ApiResponse<TemplateCategory>>(
+      '/admin/conversation-v2/template-categories',
+      input,
+    );
+    return res.data.data;
+  },
+  async updateCategory(
+    id: string,
+    input: { name?: string; slug?: string; icon?: string },
+  ): Promise<TemplateCategory> {
+    const res = await apiClient.patch<ApiResponse<TemplateCategory>>(
+      `/admin/conversation-v2/template-categories/${id}`,
+      input,
+    );
+    return res.data.data;
+  },
+  async deleteCategory(id: string): Promise<void> {
+    await apiClient.delete(`/admin/conversation-v2/template-categories/${id}`);
+  },
+  listTemplates: () => adminTemplateApi.fetchAllTemplates(),
+  async fetchAllTemplates(): Promise<AppTemplate[]> {
+    const res = await apiClient.get<ApiResponse<AppTemplate[]>>(
+      '/admin/conversation-v2/templates',
+    );
+    return res.data.data;
+  },
+  async createTemplate(input: {
+    categoryId: string;
+    title: string;
+    description?: string;
+    zip: File;
+    cover: File;
+  }): Promise<AppTemplate> {
+    const form = new FormData();
+    form.append('categoryId', input.categoryId);
+    form.append('title', input.title);
+    if (input.description) form.append('description', input.description);
+    form.append('zip', input.zip);
+    form.append('cover', input.cover);
+    const res = await apiClient.post<ApiResponse<AppTemplate>>(
+      '/admin/conversation-v2/templates',
+      form,
+      { timeout: TEMPLATE_ZIP_TIMEOUT_MS },
+    );
+    return res.data.data;
+  },
+  async updateTemplate(
+    id: string,
+    input: { categoryId?: string; title?: string; description?: string },
+  ): Promise<AppTemplate> {
+    const res = await apiClient.patch<ApiResponse<AppTemplate>>(
+      `/admin/conversation-v2/templates/${id}`,
+      input,
+    );
+    return res.data.data;
+  },
+  async replaceCover(id: string, cover: File): Promise<AppTemplate> {
+    const form = new FormData();
+    form.append('cover', cover);
+    const res = await apiClient.put<ApiResponse<AppTemplate>>(
+      `/admin/conversation-v2/templates/${id}/cover`,
+      form,
+    );
+    return res.data.data;
+  },
+  async replaceSource(id: string, zip: File): Promise<AppTemplate> {
+    const form = new FormData();
+    form.append('zip', zip);
+    const res = await apiClient.put<ApiResponse<AppTemplate>>(
+      `/admin/conversation-v2/templates/${id}/source`,
+      form,
+      { timeout: TEMPLATE_ZIP_TIMEOUT_MS },
+    );
+    return res.data.data;
+  },
+  async deleteTemplate(id: string): Promise<void> {
+    await apiClient.delete(`/admin/conversation-v2/templates/${id}`);
+  },
+  /** Flip a draft template to published after NodePod validation succeeds. */
+  async validate(id: string): Promise<AppTemplate> {
+    const res = await apiClient.post<ApiResponse<AppTemplate>>(
+      `/admin/conversation-v2/templates/${id}/validate`,
+    );
+    return res.data.data;
   },
 };

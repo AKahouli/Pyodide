@@ -59,7 +59,7 @@ describe('startConversationV2AgentSession', () => {
       source: 'app-builder',
     });
 
-    expect(createSessionMock).toHaveBeenCalledWith(['ws-1']);
+    expect(createSessionMock).toHaveBeenCalledWith(['ws-1'], undefined);
     expect(prependMock).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: 'session-new', workspaceIds: ['ws-1'] }),
     );
@@ -73,5 +73,18 @@ describe('startConversationV2AgentSession', () => {
         source: 'app-builder',
       },
     });
+  });
+
+  it('passes the selected templateId to createSession', async () => {
+    await startConversationV2AgentSession({
+      text: 'Customize',
+      workspaceIds: [],
+      modelId: null,
+      navigate,
+      source: 'app-builder',
+      templateId: 'tpl-1',
+    });
+
+    expect(createSessionMock).toHaveBeenCalledWith([], 'tpl-1');
   });
 });

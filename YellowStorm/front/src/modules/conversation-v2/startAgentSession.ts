@@ -13,6 +13,8 @@ export interface StartAgentSessionParams {
   navigate: NavigateFunction;
   /** Where the session was started — used for transition UX on the session page. */
   source?: AgentSessionSource;
+  /** Published app template to seed the session revision from (App Market → Use). */
+  templateId?: string;
 }
 
 /**
@@ -25,6 +27,7 @@ export async function startConversationV2AgentSession({
   modelId,
   navigate,
   source = 'new-conversation',
+  templateId,
 }: StartAgentSessionParams): Promise<string> {
   const trimmed = text.trim();
   if (!trimmed) {
@@ -32,7 +35,7 @@ export async function startConversationV2AgentSession({
   }
 
   const { sessionId, workspaceIds: sessionWorkspaceIds } =
-    await conversationV2Api.createSession(workspaceIds);
+    await conversationV2Api.createSession(workspaceIds, templateId);
 
   useConversationV2PointersStore.getState().prepend({
     sessionId,

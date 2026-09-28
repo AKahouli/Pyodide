@@ -8,12 +8,36 @@ import { emptyRevisionCatalog } from '../test-fixtures';
 const listAppsMock = vi.hoisted(() => vi.fn());
 const removeAppMock = vi.hoisted(() => vi.fn());
 const navigateMock = vi.hoisted(() => vi.fn());
+const listCategoriesMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../api', () => ({
   appBuilderApi: {
     listApps: listAppsMock,
     removeApp: removeAppMock,
   },
+  templateCatalogApi: {
+    listCategories: listCategoriesMock,
+    listTemplates: vi.fn(async () => []),
+    getTemplate: vi.fn(),
+  },
+  adminTemplateApi: {
+    listCategories: listCategoriesMock,
+    createCategory: vi.fn(),
+    updateCategory: vi.fn(),
+    deleteCategory: vi.fn(),
+    fetchAllTemplates: vi.fn(async () => []),
+    listTemplates: vi.fn(async () => []),
+    createTemplate: vi.fn(),
+    updateTemplate: vi.fn(),
+    replaceCover: vi.fn(),
+    replaceSource: vi.fn(),
+    deleteTemplate: vi.fn(),
+    validate: vi.fn(),
+  },
+}));
+
+vi.mock('@/modules/admin/hooks/usePermissions', () => ({
+  usePermissions: () => ({ hasPermission: () => false }),
 }));
 
 vi.mock('@/lib/notifications', () => ({
@@ -91,6 +115,7 @@ async function selectStatus(label: RegExp) {
 describe('AppBuilderPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    listCategoriesMock.mockResolvedValue([]);
     useAppBuilderStore.setState(initialState);
   });
 

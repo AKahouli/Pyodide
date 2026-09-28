@@ -65,3 +65,29 @@ export interface AppEndUserSummary {
   grants: AppEndUserGrants;
   createdAt: string;
 }
+
+export type TemplateStatus = 'draft' | 'published';
+
+export interface TemplateCategory {
+  id: string;
+  name: string;
+  slug: string;
+  icon: string;
+  templateCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AppTemplate {
+  id: string;
+  categoryId: string;
+  categoryName: string;
+  title: string;
+  description: string;
+  /** Presigned read URL for the Ceph cover object ('' when none). */
+  coverImage: string;
+  status: TemplateStatus;
+  revisionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
