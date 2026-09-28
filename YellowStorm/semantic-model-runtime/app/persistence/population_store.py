@@ -435,7 +435,7 @@ async def list_revision_entities(pool: Any, revision_id: str,
                                  limit: int = 50000,
                                  concept_id: str | None = None) -> list[dict[str, Any]]:
     rows = await pool.fetch(
-        "SELECT id, concept_id, namespace, label, attributes, provenance "
+        "SELECT id, concept_id, namespace, label, attributes, provenance, identity_key "
         "FROM semantic_population.entities WHERE data_revision_id = $1 "
         "AND ($3::text IS NULL OR concept_id = $3) ORDER BY id LIMIT $2",
         revision_id, limit, concept_id,
@@ -451,6 +451,7 @@ async def list_revision_entities(pool: Any, revision_id: str,
             "provenance": json.loads(values.get("provenance") or "{}")
             if isinstance(values.get("provenance"), str)
             else dict(values.get("provenance") or {}),
+            "identity": _json_object(values.get("identity_key")),
         })
     return result
 

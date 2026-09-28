@@ -401,10 +401,10 @@ async def populate_document(
     complete = bool(read is None or read["coverage"]["directBlocksComplete"])
     if read is not None and not complete:
         output["gaps"].append({"kind": "budget_exhausted", "conceptId": entry["conceptId"],
-                               "rowNumber": None, "detail": "section evidence exceeded the read budget"})
+                               "rowNumber": None, "scope": "read", "detail": "section evidence exceeded the read budget"})
     if search_truncated:
         output["gaps"].append({"kind": "budget_exhausted", "conceptId": entry["conceptId"],
-                               "rowNumber": None, "detail": "candidate search exceeded the retrieval budget"})
+                               "rowNumber": None, "scope": "retrieval", "detail": "candidate search exceeded the retrieval budget"})
         complete = False
     output["counts"]["gaps"] = len(output["gaps"])
     if any(gap["kind"] == "missing_identity" for gap in output["gaps"]):

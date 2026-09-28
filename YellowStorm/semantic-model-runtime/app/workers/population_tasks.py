@@ -17,6 +17,7 @@ import json
 from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
 from app.population.compiler import (canonical_spec_hash, compile_specification,
                                      filter_fields, validate_specification)
+from app.population.serving_policy import blocking_gap_kinds, serving_decision
 from app.population.tabular import (match_relationships, merge_concept_results,
                                     normalize_identity_value, populate_concept_rows)
 
@@ -379,7 +380,10 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                 fingerprint = output["sourceObservation"]["assetRef"].get("assetVersionId")
                 if isinstance(fingerprint, str) and fingerprint:
                     dataset_fingerprints.add(fingerprint)
-                if output["coverage"]["status"] == "budget_exhausted":
+                # Only a retrieval cut can leave documents unread; a read cut inside one
+                # document leaves some of its fields unresolved, not records missing.
+                if any(gap.get("kind") == "budget_exhausted" and gap.get("scope") == "retrieval"
+                       for gap in output["gaps"]):
                     complete_enumeration = False
                 await progress.read(entry, records=len(output["entities"]), gaps=len(output["gaps"]),
                                     status=output["coverage"]["status"], reused=reused)
@@ -615,6 +619,14 @@ def is_whole_model_build(command_dump: dict) -> bool:
     return payload.get("purpose") == "build" and (payload.get("scope") or {}).get("kind") == "model"
 
 
+async def has_draft_binding(pool, command_dump: dict) -> bool:  # type: ignore[no-untyped-def]
+    """Whether the model already serves a draft graph that a partial result could replace."""
+    from app.persistence.population_store import get_active_binding
+
+    model_id = str(command_dump.get("modelId") or command_dump.get("model_id") or "")
+    return bool(model_id) and await get_active_binding(pool, model_id, "draft") is not None
+
+
 async def finalize_whole_model_build(pool, command_dump: dict,  # type: ignore[no-untyped-def]
                                      revision_id: str) -> dict | None:
     if not is_whole_model_build(command_dump):
@@ -833,10 +845,18 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             revision_id = await persist_population_revision(pool, lease.payload, outcome)
             persisted = await count_revision_rows(pool, revision_id)
             result = summarize_job_result(revision_id, outcome, persisted)
-            finalized = await finalize_whole_model_build(pool, lease.payload, revision_id)
-            if finalized is not None:
-                result.update({"projectionRef": finalized["projectionRef"],
-                               "boundEnvironment": finalized["environment"]})
+            # A result missing data it should have is kept for diagnosis but does not
+            # replace a graph already in use (see serving_policy).
+            blocking = blocking_gap_kinds(outcome.get("gaps", []))
+            decision = "activate"
+            if blocking and is_whole_model_build(lease.payload):
+                decision = serving_decision(blocking, await has_draft_binding(pool, lease.payload))
+            result.update({"blockingGapKinds": blocking, "servingDecision": decision})
+            if decision == "activate":
+                finalized = await finalize_whole_model_build(pool, lease.payload, revision_id)
+                if finalized is not None:
+                    result.update({"projectionRef": finalized["projectionRef"],
+                                   "boundEnvironment": finalized["environment"]})
         try:
             await repository.complete_task(task_id=task_id, lease_owner=lease_owner,
                                            lease_epoch=lease.lease_epoch,

@@ -453,3 +453,98 @@ async def test_a_run_asked_to_stop_ends_as_stopped_without_saving(monkeypatch: p
     assert await tasks._run_task(7, "worker") == {"ok": False, "errorCode": "cancelled", "jobState": "cancelled"}
     assert calls["checks"] == stop_after_checks
     assert (calls["cancel"], calls["complete"], calls["requeue"], calls["persist"]) == (1, 0, 0, 0)
+
+
+def test_only_gaps_that_lose_data_block_serving():
+    from app.population.serving_policy import blocking_gap_kinds, serving_decision
+
+    assert blocking_gap_kinds([{"kind": "unresolved_reference"}, {"kind": "conflicting_values"},
+                               {"kind": "unresolved_document_field"}, {"kind": "ai_extraction_unresolved"},
+                               {"kind": "budget_exhausted", "scope": "read"}]) == []
+    assert blocking_gap_kinds([{"kind": "enumeration_capped"}, {"kind": "source_unavailable"},
+                               {"kind": "budget_exhausted", "scope": "retrieval"},
+                               {"kind": "enumeration_capped"}]) == ["budget_exhausted", "enumeration_capped", "source_unavailable"]
+    assert serving_decision([], has_current_draft=True) == "activate"
+    assert serving_decision(["source_unavailable"], has_current_draft=True) == "keep_previous"
+    # Nothing to protect yet: the partial graph is better than none.
+    assert serving_decision(["source_unavailable"], has_current_draft=False) == "activate"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("gaps", "has_draft", "decision", "finalized"), [
+    ([], True, "activate", 1),
+    ([{"kind": "unresolved_reference"}], True, "activate", 1),
+    ([{"kind": "source_unavailable"}], True, "keep_previous", 0),
+    ([{"kind": "source_unavailable"}], False, "activate", 1),
+])
+async def test_a_partial_run_keeps_the_graph_in_use(monkeypatch: pytest.MonkeyPatch, gaps, has_draft, decision, finalized):
+    """The revision is always saved; only a result not missing data replaces an existing draft graph."""
+    from datetime import datetime, timezone
+
+    import asyncpg
+
+    import app.workers.population_tasks as tasks
+    from app.jobs.models import Lease
+    from app.persistence import population_store
+    from app.persistence.postgres_jobs import PostgresJobRepository
+
+    lease = Lease(task_id=7, job_id="job-1", task_name="populate", payload=command(),
+                  lease_epoch=1, lease_owner="worker", lease_expires_at=datetime.now(timezone.utc))
+    calls = {"persist": 0, "finalize": 0}
+    completed: dict = {}
+
+    class Pool:
+        async def close(self):
+            return None
+
+    async def create_pool(*_args, **_kwargs):
+        return Pool()
+
+    async def claim(*_args, **_kwargs):
+        return lease
+
+    async def not_cancelled(*_args, **_kwargs):
+        return False
+
+    async def checkpoint(*_args, **_kwargs):
+        return True
+
+    async def complete(_self, **kwargs):
+        completed.update(kwargs)
+
+    async def run(_payload, *, progress, **_kwargs):
+        return {"ok": True, "purpose": "build", "gaps": gaps,
+                "jobState": "completed_with_gaps" if gaps else "completed"}
+
+    async def persist(*_args, **_kwargs):
+        calls["persist"] += 1
+        return "rev-2"
+
+    async def counts(*_args, **_kwargs):
+        return {"entities": 1, "assertions": 1, "relationships": 0}
+
+    async def finalize(*_args, **_kwargs):
+        calls["finalize"] += 1
+        return {"projectionRef": "pop_rev-2", "environment": "draft"}
+
+    async def binding(_pool, model_id, environment="production"):
+        assert (model_id, environment) == ("m1", "draft")
+        return {"version": 3} if has_draft else None
+
+    monkeypatch.setenv("SEMANTIC_RUNTIME_DATABASE_URL", "postgresql://test")
+    monkeypatch.setattr(asyncpg, "create_pool", create_pool)
+    monkeypatch.setattr(PostgresJobRepository, "claim_task", claim)
+    monkeypatch.setattr(PostgresJobRepository, "checkpoint", checkpoint)
+    monkeypatch.setattr(PostgresJobRepository, "cancel_requested", not_cancelled)
+    monkeypatch.setattr(PostgresJobRepository, "complete_task", complete)
+    monkeypatch.setattr(tasks, "run_population_for_task", run)
+    monkeypatch.setattr(tasks, "persist_population_revision", persist)
+    monkeypatch.setattr(population_store, "count_revision_rows", counts)
+    monkeypatch.setattr(population_store, "get_active_binding", binding)
+    monkeypatch.setattr(tasks, "finalize_whole_model_build", finalize)
+
+    await tasks._run_task(7, "worker")
+    assert calls == {"persist": 1, "finalize": finalized}
+    assert completed["result"]["servingDecision"] == decision
+    assert completed["result"]["dataRevisionId"] == "rev-2"
+    assert ("boundEnvironment" in completed["result"]) is bool(finalized)

@@ -91,11 +91,16 @@ def compile_projection(entities: list[dict[str, Any]],
     """Compile canonical rows to a plan of vertices and edges (P6.17-P6.18)."""
     vertices = []
     for entity in entities:
-        properties = {"record_id": entity["entityId"], "concept_id": entity.get("conceptId", ""),
-                      "label": entity.get("label", "")}
-        for key, value in (entity.get("attributes") or {}).items():
-            if isinstance(key, str) and key:
-                properties[_safe_key(key)] = value
+        properties: dict[str, Any] = {}
+        # Key fields live in the identity, not the attributes; the graph shows them as
+        # properties too, so a Customer node shows its customer number.
+        for values in (entity.get("identity"), entity.get("attributes")):
+            for key, value in (values or {}).items():
+                if isinstance(key, str) and key:
+                    properties[_safe_key(key)] = value
+        # Set last: a field named like these never replaces the node's own id or label.
+        properties.update({"record_id": entity["entityId"], "concept_id": entity.get("conceptId", ""),
+                           "label": entity.get("label", "")})
         vertices.append(properties)
     edges = []
     for relationship in relationships:
