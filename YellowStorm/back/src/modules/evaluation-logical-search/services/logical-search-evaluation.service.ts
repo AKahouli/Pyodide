@@ -10,6 +10,7 @@ import { AgentService } from '../../agent/agent.service';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { NotFoundException } from '../../exceptions/exceptions/http.exceptions';
 import { LogicalSearchEvaluationRepository } from '../repositories/logical-search-evaluation.repository';
+import type { EvaluationListScope } from '../repositories/logical-search-evaluation.repository';
 import { parseBenchmarkWorkbook } from './xlsx-benchmark-parser';
 import {
   buildQueryResult,
@@ -204,9 +205,11 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     if (!Array.isArray(queries) || queries.length === 0) {
       throw new BadRequestException('Benchmark has no queries to reuse.');
     }
+    // Each launch clones the benchmark; a timestamped name keeps runs distinct
+    // in the history instead of showing N identical rows.
     const created = await this.repository.create({
       ownerId,
-      name: source.name,
+      name: `${source.name} · ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`,
       sourceFileName: source.sourceFileName,
       queryCount: queries.length,
       queries: { queries },
@@ -219,8 +222,25 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     };
   }
 
-  async listByOwner(ownerId: string) {
-    return this.repository.listByOwner(ownerId);
+  async listByOwner(
+    ownerId: string,
+    opts: { limit?: number; offset?: number; scope?: EvaluationListScope } = {},
+  ) {
+    const limit = Math.min(Math.max(opts.limit ?? 50, 1), 100);
+    const offset = Math.max(opts.offset ?? 0, 0);
+    const [items, total] = await Promise.all([
+      this.repository.listByOwner(ownerId, { limit, offset, scope: opts.scope }),
+      this.repository.countByOwner(ownerId, opts.scope),
+    ]);
+    return { items, total };
+  }
+
+  async remove(ownerId: string, id: string) {
+    await this.getById(ownerId, id);
+    await this.repository.deleteById(id);
+    // Best-effort: the run output lives on disk next to the DB row.
+    await rm(join(process.cwd(), 'uploads', 'eval', id), { force: true, recursive: true }).catch(() => undefined);
+    return { id, deleted: true };
   }
 
   /**

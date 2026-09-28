@@ -1,9 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, lt } from 'drizzle-orm';
+import { and, count, desc, eq, lt, ne } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '../../postgres/postgres.constants';
 import { evaluationRuns, evaluationResults } from '../../postgres/schema';
 import type { EvaluationQueryResult } from '../services/evaluation-metrics';
+
+export type EvaluationListScope = 'runs' | 'benchmarks';
 
 export interface CreateEvaluationInput {
   ownerId: string;
@@ -13,8 +15,7 @@ export interface CreateEvaluationInput {
   queries: { queries: unknown[] };
 }
 
-export interface LinkExecutionInput {
-  id: string;
+export interface LinkExecutionInput {  id: string;
   agentId: string | null;
   flowId: string | null;
   workspaceId: string | null;
@@ -55,13 +56,36 @@ export class LogicalSearchEvaluationRepository {
     return row ?? null;
   }
 
-  async listByOwner(ownerId: string, limit = 50) {
+  private scopeFilter(ownerId: string, scope?: EvaluationListScope) {
+    const owner = eq(evaluationRuns.ownerId, ownerId);
+    if (scope === 'runs') return and(owner, ne(evaluationRuns.status, 'dataset_ready'));
+    if (scope === 'benchmarks') return and(owner, eq(evaluationRuns.status, 'dataset_ready'));
+    return owner;
+  }
+
+  async listByOwner(
+    ownerId: string,
+    opts: { limit?: number; offset?: number; scope?: EvaluationListScope } = {},
+  ) {
     return this.db
       .select()
       .from(evaluationRuns)
-      .where(eq(evaluationRuns.ownerId, ownerId))
+      .where(this.scopeFilter(ownerId, opts.scope))
       .orderBy(desc(evaluationRuns.createdAt))
-      .limit(limit);
+      .limit(opts.limit ?? 50)
+      .offset(opts.offset ?? 0);
+  }
+
+  async countByOwner(ownerId: string, scope?: EvaluationListScope) {
+    const [row] = await this.db
+      .select({ value: count() })
+      .from(evaluationRuns)
+      .where(this.scopeFilter(ownerId, scope));
+    return row?.value ?? 0;
+  }
+
+  async deleteById(id: string) {
+    await this.db.delete(evaluationRuns).where(eq(evaluationRuns.id, id));
   }
 
   async applyPrepare(input: LinkExecutionInput) {

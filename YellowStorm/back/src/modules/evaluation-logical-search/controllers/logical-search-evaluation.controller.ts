@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, Post, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Post, Query, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
@@ -35,9 +35,24 @@ export class LogicalSearchEvaluationController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'List logical search evaluations for the current user' })
-  async list(@CurrentUser() user: UserDocument) {
-    return this.service.listByOwner(user._id.toString());
+  @ApiOperation({ summary: 'List logical search evaluations for the current user (paginated)' })
+  async list(
+    @CurrentUser() user: UserDocument,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+    @Query('scope') scope?: string,
+  ) {
+    return this.service.listByOwner(user._id.toString(), {
+      limit: limit !== undefined ? Number(limit) : undefined,
+      offset: offset !== undefined ? Number(offset) : undefined,
+      scope: scope === 'runs' || scope === 'benchmarks' ? scope : undefined,
+    });
+  }
+
+  @Delete(':id')
+  @ApiOperation({ summary: 'Delete an evaluation and its per-question results' })
+  async remove(@CurrentUser() user: UserDocument, @Param('id') id: string) {
+    return this.service.remove(user._id.toString(), id);
   }
 
   @Get(':id')

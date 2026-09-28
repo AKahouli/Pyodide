@@ -49,6 +49,8 @@
     "stop": "Stop",
     "stopping": "Stopping…",
     "export": "Export results",
+    "delete": "Delete",
+    "deleting": "Deleting…",
     "done": "Ready to evaluate",
     "newEval": "New evaluation"
   },
@@ -64,7 +66,8 @@
     "empty": "No evaluations yet",
     "createdAt": "Created",
     "queries": "{{count}} queries",
-    "view": "View"
+    "view": "View",
+    "confirmDelete": "Delete evaluation \"{{name}}\" and its results? This cannot be undone."
   },
   "adhoc": {
     "title": "Direct configuration",
@@ -79,7 +82,11 @@
     "evaluatorAgentPlaceholder": "Select evaluator agent…",
     "launch": "Launch evaluation",
     "launching": "Launching…",
-    "target": "Target evaluation: {{name}}"
+    "target": "Target evaluation: {{name}}",
+    "stage": {
+      "preparing": "Preparing evaluator inputs…",
+      "running": "Running queries…"
+    }
   },
   "targeted": {
     "title": "Target questions",

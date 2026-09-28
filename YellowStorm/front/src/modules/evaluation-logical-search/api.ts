@@ -39,22 +39,33 @@ function parseFilenameFromContentDisposition(header?: string): string | null {
 }
 
 export const evaluationLogicalSearchApi = {
-  async upload(file: File): Promise<UploadResult> {
+  async upload(file: File, onProgress?: (percent: number) => void): Promise<UploadResult> {
     const formData = new FormData();
     formData.append('file', file);
     const res = await apiClient.post<{ data: UploadResult }>(
       `${API_ENDPOINTS.logicalSearchEvaluation.base}/upload`,
       formData,
+      {
+        onUploadProgress: onProgress
+          ? (event) => {
+              if (event.total) onProgress(Math.round((event.loaded / event.total) * 100));
+            }
+          : undefined,
+      },
     );
     return res.data.data;
   },
 
-  async list(): Promise<LogicalSearchEvaluation[]> {
-    const res = await apiClient.get<{ data: LogicalSearchEvaluation[] }>(
+  async list(params?: { limit?: number; offset?: number; scope?: 'runs' | 'benchmarks' }): Promise<{ items: LogicalSearchEvaluation[]; total: number }> {
+    const res = await apiClient.get<{ data: { items: LogicalSearchEvaluation[]; total: number } }>(
       API_ENDPOINTS.logicalSearchEvaluation.base,
-      { timeout: 180000 },
+      { params, timeout: 180000 },
     );
     return res.data.data;
+  },
+
+  async remove(id: string): Promise<void> {
+    await apiClient.delete(`${API_ENDPOINTS.logicalSearchEvaluation.base}/${id}`);
   },
 
   async getById(id: string): Promise<LogicalSearchEvaluation> {
@@ -83,6 +94,9 @@ export const evaluationLogicalSearchApi = {
     const res = await apiClient.post<{ data: EvaluationRunResult }>(
       `${API_ENDPOINTS.logicalSearchEvaluation.base}/${id}/run`,
       queryIds && queryIds.length > 0 ? { queryIds } : {},
+      // The run request stays open for the whole evaluation; the default 30s
+      // client timeout would abort long benchmarks and mark them failed.
+      { timeout: 1800000 },
     );
     return res.data.data;
   },

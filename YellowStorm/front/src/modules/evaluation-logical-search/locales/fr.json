@@ -49,6 +49,8 @@
     "stop": "Arrêter",
     "stopping": "Arrêt…",
     "export": "Exporter les résultats",
+    "delete": "Supprimer",
+    "deleting": "Suppression…",
     "done": "Prêt pour l'évaluation",
     "newEval": "Nouvelle évaluation"
   },
@@ -64,7 +66,8 @@
     "empty": "Aucune évaluation pour le moment",
     "createdAt": "Créé",
     "queries": "{{count}} questions",
-    "view": "Voir"
+    "view": "Voir",
+    "confirmDelete": "Supprimer l'évaluation « {{name}} » et ses résultats ? Action irréversible."
   },
   "adhoc": {
     "title": "Configuration directe",
@@ -79,7 +82,11 @@
     "evaluatorAgentPlaceholder": "Sélectionner l'agent évaluateur…",
     "launch": "Lancer l'évaluation",
     "launching": "Lancement…",
-    "target": "Évaluation cible : {{name}}"
+    "target": "Évaluation cible : {{name}}",
+    "stage": {
+      "preparing": "Préparation des entrées de l'évaluateur…",
+      "running": "Exécution des questions…"
+    }
   },
   "targeted": {
     "title": "Cibler des questions",

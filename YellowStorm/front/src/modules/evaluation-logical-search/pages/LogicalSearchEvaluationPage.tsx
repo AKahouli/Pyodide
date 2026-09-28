@@ -36,19 +36,24 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
   const [launching, setLaunching] = useState(false);
+  const [launchStage, setLaunchStage] = useState<'preparing' | 'running' | null>(null);
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [runningEvalId, setRunningEvalId] = useState<string | null>(null);
   const [stoppingEvalId, setStoppingEvalId] = useState<string | null>(null);
+  const [deletingEvalId, setDeletingEvalId] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
   const [evalProgress, setEvalProgress] = useState<Record<string, { done: number; total: number; currentQuery: string }>>({});
 
   // ── History ─────────────────────────────────────────────────
-  const [evaluations, setEvaluations] = useState<LogicalSearchEvaluation[]>([]);
+  const [benchmarks, setBenchmarks] = useState<LogicalSearchEvaluation[]>([]);
+  const [runs, setRuns] = useState<LogicalSearchEvaluation[]>([]);
+  const [runsTotal, setRunsTotal] = useState(0);
   const [selectedEvalId, setSelectedEvalId] = useState<string | null>(null);
   const [selectedQueryIds, setSelectedQueryIds] = useState<string[]>([]);
   const [historyPage, setHistoryPage] = useState(1);
@@ -86,28 +91,40 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
     return () => { cancelled = true; };
   }, []);
 
-  // ── Load previous evaluations ────────────────────────────────
-  const refreshEvaluations = useCallback(() => {
-    evaluationLogicalSearchApi.list().then(setEvaluations).catch(() => setEvaluations([]));
-  }, []);
-  useEffect(() => { refreshEvaluations(); }, [refreshEvaluations]);
+  // ── Load benchmarks and the current page of runs ─────────────
+  const refreshLists = useCallback(() => {
+    const offset = (historyPage - 1) * HISTORY_PAGE_SIZE;
+    Promise.all([
+      evaluationLogicalSearchApi.list({ scope: 'benchmarks', limit: 100 }),
+      evaluationLogicalSearchApi.list({ scope: 'runs', limit: HISTORY_PAGE_SIZE, offset }),
+    ])
+      .then(([benchmarkRes, runRes]) => {
+        setBenchmarks(benchmarkRes.items);
+        setRuns(runRes.items);
+        setRunsTotal(runRes.total);
+      })
+      .catch(() => { setBenchmarks([]); setRuns([]); setRunsTotal(0); });
+  }, [historyPage]);
+  useEffect(() => { refreshLists(); }, [refreshLists]);
 
   const submitFile = useCallback(async (file: File) => {
     if (!file) return;
     setUploading(true);
     setUploadError(null);
+    setUploadProgress(0);
     try {
-      const result = await evaluationLogicalSearchApi.upload(file);
+      const result = await evaluationLogicalSearchApi.upload(file, setUploadProgress);
       setUploadResult(result);
       setSelectedEvalId(result.evaluationId);
-      refreshEvaluations();
+      refreshLists();
     } catch (err) {
       setUploadError(parseApiError(err).message);
     } finally {
       setUploading(false);
+      setUploadProgress(null);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
-  }, [refreshEvaluations]);
+  }, [refreshLists]);
 
   const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -146,10 +163,11 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   }, []);
 
   const handleLaunch = useCallback(async () => {
-    const source = evaluations.find((e) => e.id === selectedEvalId);
+    const source = benchmarks.find((e) => e.id === selectedEvalId) ?? runs.find((e) => e.id === selectedEvalId);
     if (!source || !selectedAgentId || !selectedEvaluatorAgentId || !selectedWorkspaceId) return;
     const queryIds = selectedQueryIds.length > 0 ? selectedQueryIds : undefined;
     setLaunching(true);
+    setLaunchStage('preparing');
     setLaunchError(null);
     try {
       // Launching always creates a new evaluation seeded from the selected
@@ -161,16 +179,18 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
         workspaceId: selectedWorkspaceId || undefined,
         evaluatorAgentId: selectedEvaluatorAgentId,
       });
+      setLaunchStage('running');
       await evaluationLogicalSearchApi.run(evaluationId, queryIds);
-      refreshEvaluations();
+      refreshLists();
     } catch (err) {
       setRunError(parseApiError(err).message);
     } finally {
       setLaunching(false);
+      setLaunchStage(null);
       setRunningEvalId(null);
-      refreshEvaluations();
+      refreshLists();
     }
-  }, [selectedEvalId, selectedAgentId, selectedEvaluatorAgentId, selectedWorkspaceId, evaluations, refreshEvaluations, selectedQueryIds]);
+  }, [selectedEvalId, selectedAgentId, selectedEvaluatorAgentId, selectedWorkspaceId, benchmarks, runs, refreshLists, selectedQueryIds]);
 
   // Resume a failed evaluation in place: re-runs only the queries that did not
   // complete, keeping the attributes stored at prepare time (agent/workspace/judge).
@@ -183,9 +203,9 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
       setRunError(parseApiError(err).message);
     } finally {
       setRunningEvalId(null);
-      refreshEvaluations();
+      refreshLists();
     }
-  }, [refreshEvaluations]);
+  }, [refreshLists]);
 
   const handleStop = useCallback(async (id: string) => {
     setStoppingEvalId(id);
@@ -196,9 +216,9 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
       setRunError(parseApiError(err).message);
     } finally {
       setStoppingEvalId(null);
-      refreshEvaluations();
+      refreshLists();
     }
-  }, [refreshEvaluations]);
+  }, [refreshLists]);
 
   const handleExport = useCallback(async (id: string) => {
     setExportError(null);
@@ -240,10 +260,28 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
     setResultsError(null);
   }, []);
 
+  const handleDelete = useCallback(async (id: string) => {
+    const target = runs.find((e) => e.id === id) ?? benchmarks.find((e) => e.id === id);
+    if (!window.confirm(t('history.confirmDelete', { name: target?.name ?? '' }))) return;
+    setDeletingEvalId(id);
+    setRunError(null);
+    try {
+      await evaluationLogicalSearchApi.remove(id);
+      if (openResultsId === id) closeResults();
+      if (selectedEvalId === id) setSelectedEvalId(null);
+      setHistoryPage(1);
+      refreshLists();
+    } catch (err) {
+      setRunError(parseApiError(err).message);
+    } finally {
+      setDeletingEvalId(null);
+    }
+  }, [runs, benchmarks, t, openResultsId, closeResults, selectedEvalId, refreshLists]);
+
   const refreshProgress = useCallback(() => {
     let cancelled = false;
     Promise.all(
-      evaluations
+      runs
         .filter((e) => e.status === 'running')
         .map((e) => evaluationLogicalSearchApi.progress(e.id)),
     )
@@ -259,53 +297,42 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
       })
       .catch(() => { if (!cancelled) setEvalProgress({}); });
     return () => { cancelled = true; };
-  }, [evaluations]);
+  }, [runs]);
 
   // Poll while a run request is in flight or any evaluation is still running.
   useEffect(() => {
-    const running = runningEvalId !== null || evaluations.some((e) => e.status === 'running');
+    const running = runningEvalId !== null || runs.some((e) => e.status === 'running');
     if (!running) return;
     const interval = window.setInterval(() => {
-      void refreshEvaluations();
+      void refreshLists();
       void refreshProgress();
       if (openResultsId) void loadResults(openResultsId);
     }, 2500);
     return () => window.clearInterval(interval);
-  }, [runningEvalId, evaluations, refreshEvaluations, refreshProgress, openResultsId, loadResults]);
+  }, [runningEvalId, runs, refreshLists, refreshProgress, openResultsId, loadResults]);
 
   // ── Derived ─────────────────────────────────────────────────
   const previewRows: BenchmarkQuery[] = useMemo(() => uploadResult?.preview ?? [], [uploadResult]);
   const activeEvaluation = useMemo(
-    () => evaluations.find((e) => e.id === selectedEvalId) ?? null,
-    [evaluations, selectedEvalId],
+    () => benchmarks.find((e) => e.id === selectedEvalId) ?? runs.find((e) => e.id === selectedEvalId) ?? null,
+    [benchmarks, runs, selectedEvalId],
   );
   const queryOptions = useMemo(() => activeEvaluation?.queries?.queries ?? [], [activeEvaluation]);
   const launchEvalName = useMemo(() => activeEvaluation?.name ?? '', [activeEvaluation]);
-  // Same file imported several times yields duplicate rows: keep one entry per
-  // source file, preferring the never-run (dataset_ready) benchmark.
+  // Benchmarks are the never-run (dataset_ready) datasets; one entry per file.
   const benchmarkOptions = useMemo(() => {
     const byKey = new Map<string, LogicalSearchEvaluation>();
-    for (const e of evaluations) {
+    for (const e of benchmarks) {
       const key = e.sourceFileName || e.name;
-      const prev = byKey.get(key);
-      if (!prev || (prev.status !== 'dataset_ready' && e.status === 'dataset_ready')) {
-        byKey.set(key, e);
-      }
+      if (!byKey.has(key)) byKey.set(key, e);
     }
     return [...byKey.values()].map((e) => ({ value: e.id, label: `${e.name} · ${e.queryCount}` }));
-  }, [evaluations]);
+  }, [benchmarks]);
 
-  // History lists runs only: dataset_ready rows are benchmarks, shown in the dropdown.
-  const historyEvaluations = useMemo(
-    () => evaluations.filter((e) => e.status !== 'dataset_ready'),
-    [evaluations],
-  );
-  const historyPageCount = Math.max(1, Math.ceil(historyEvaluations.length / HISTORY_PAGE_SIZE));
+  // History is server-paginated: `runs` already holds the current page.
+  const historyPageCount = Math.max(1, Math.ceil(runsTotal / HISTORY_PAGE_SIZE));
   const activeHistoryPage = Math.min(historyPage, historyPageCount);
-  const visibleEvaluations = historyEvaluations.slice(
-    (activeHistoryPage - 1) * HISTORY_PAGE_SIZE,
-    activeHistoryPage * HISTORY_PAGE_SIZE,
-  );
+  const visibleEvaluations = runs;
 
   useEffect(() => { setSelectedQueryIds([]); }, [selectedEvalId]);
 
@@ -333,8 +360,8 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
             <input ref={fileInputRef} type='file' accept='.xlsx,.csv' className='hidden' onChange={handleFileChange} />
             {uploading && (
               <>
-                <Progress value={50} className='w-full' />
-                <span className='text-xs text-muted-foreground'>{t('upload.uploading')}</span>
+                <Progress value={uploadProgress ?? 0} className='w-full' />
+                <span className='text-xs text-muted-foreground'>{t('upload.uploading')} {uploadProgress ?? 0}%</span>
               </>
             )}
           </label>
@@ -384,7 +411,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
       )}
 
       {/* ── Ad-hoc Configuration ─────────────────────────────── */}
-      {evaluations.length > 0 && (
+      {benchmarks.length > 0 && (
         <Card>
           <CardHeader><CardTitle>{t('adhoc.title')}</CardTitle></CardHeader>
           <CardContent className='space-y-4'>
@@ -470,6 +497,9 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
             >
               {launching ? t('adhoc.launching') : t('adhoc.launch')}
             </Button>
+            {launching && launchStage && (
+              <p className='text-xs text-primary'>{t(`adhoc.stage.${launchStage}`)}</p>
+            )}
             <p className='text-xs text-muted-foreground'>
               {t('adhoc.target', { name: launchEvalName })}
             </p>
@@ -478,13 +508,13 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
       )}
 
       {/* ── History ──────────────────────────────────────────── */}
-      {evaluations.length > 0 && (
+      {runsTotal > 0 && (
         <Card>
           <CardHeader><CardTitle>{t('history.title')}</CardTitle></CardHeader>
           <CardContent>
             {runError && <p className='mb-2 text-sm text-destructive'>{runError}</p>}
             {exportError && <p className='mb-2 text-sm text-destructive'>{exportError}</p>}
-            {historyEvaluations.length === 0 && (
+            {runs.length === 0 && (
               <p className='text-sm text-muted-foreground'>{t('history.empty')}</p>
             )}
             <div className='space-y-2'>
@@ -496,12 +526,18 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
                   <div className='min-w-0'>
                     <p className='truncate font-medium'>{ev.name}</p>
                     <p className='text-xs text-muted-foreground'>
-                      {t('history.createdAt')}: {new Date(ev.createdAt).toLocaleDateString()} · {t('history.queries', { count: ev.queryCount })}
+                      {t('history.createdAt')}: {new Date(ev.createdAt).toLocaleString()} · {t('history.queries', { count: ev.queryCount })}
                     </p>
                     {ev.status === 'running' && evalProgress[ev.id] && (
-                      <p className='mt-1 truncate text-xs text-primary'>
-                        {evalProgress[ev.id].done}/{evalProgress[ev.id].total} · {evalProgress[ev.id].currentQuery}
-                      </p>
+                      <>
+                        <Progress
+                          className='mt-1 h-1.5 max-w-xs'
+                          value={Math.round((evalProgress[ev.id].done / Math.max(1, evalProgress[ev.id].total)) * 100)}
+                        />
+                        <p className='mt-1 truncate text-xs text-primary'>
+                          {evalProgress[ev.id].done}/{evalProgress[ev.id].total} · {evalProgress[ev.id].currentQuery}
+                        </p>
+                      </>
                     )}
                   </div>
                   <div className='flex shrink-0 items-center gap-2'>
@@ -547,6 +583,14 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
                         {t('actions.export')}
                       </Button>
                     )}
+                    <Button
+                      size='sm'
+                      variant='ghost'
+                      onClick={(e) => { e.stopPropagation(); void handleDelete(ev.id); }}
+                      disabled={deletingEvalId !== null}
+                    >
+                      {deletingEvalId === ev.id ? t('actions.deleting') : t('actions.delete')}
+                    </Button>
                   </div>
                 </div>
               ))}
@@ -587,7 +631,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
 
       {openResultsId && (
         <EvaluationResultsPanel
-          evaluationName={evaluations.find((e) => e.id === openResultsId)?.name ?? ''}
+          evaluationName={[...benchmarks, ...runs].find((e) => e.id === openResultsId)?.name ?? ''}
           data={resultsData}
           loading={resultsLoading}
           error={resultsError}
