@@ -55,6 +55,26 @@ describe('evaluation export util', () => {
     expect(payload.queries[0].toolCalls[0].output_summary).toHaveLength(fullOutput.length);
   });
 
+  it('exposes target and judge token usage separately in the JSON payload', () => {
+    const results = [
+      {
+        query_id: 'Q1',
+        status: 'completed',
+        error: null,
+        token_usage: { total_tokens: 300, prompt_tokens: 280, completion_tokens: 20 },
+        target_token_usage: { total_tokens: 200, prompt_tokens: 190, completion_tokens: 10 },
+        judge_token_usage: { total_tokens: 100, prompt_tokens: 90, completion_tokens: 10 },
+        tool_calls: [],
+      },
+    ];
+
+    const payload = buildExecutionLogsExport('eval-1', results as never);
+
+    expect(payload.queries[0].targetTokenUsage?.total_tokens).toBe(200);
+    expect(payload.queries[0].judgeTokenUsage?.total_tokens).toBe(100);
+    expect(payload.queries[0].tokenUsage?.total_tokens).toBe(300);
+  });
+
   describe('parseToolOutput', () => {
     it('decodes a JSON string wrapped in a text field into structured data', () => {
       const raw = JSON.stringify({ text: JSON.stringify([{ section_id: 28616, block_ids: [1, 2] }]) });

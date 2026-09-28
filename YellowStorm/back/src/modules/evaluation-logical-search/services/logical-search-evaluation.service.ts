@@ -715,6 +715,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
                 error: targetRun.error,
                 toolCalls: targetRun.toolCalls,
                 tokenUsage: targetRun.tokenUsage,
+                targetTokenUsage: targetRun.tokenUsage,
               });
               this.logger.log(`[${queryId}] ${targetRun.status} (target failed; judge skipped)`);
               persist({ index, queryId, queryText });
@@ -748,6 +749,8 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
               error: judgeRun.error ?? targetRun.error,
               toolCalls: targetRun.toolCalls,
               tokenUsage: mergedTokenUsage,
+              targetTokenUsage: targetRun.tokenUsage,
+              judgeTokenUsage: judgeRun.tokenUsage,
               judgeScore: judgeRun.judgeScore,
               judgeFaithfulnessScore: judgeRun.judgeFaithfulnessScore,
               judgeReasoning: judgeRun.judgeReasoning,
@@ -909,6 +912,9 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       'Answer Exact Match', 'Judge Score', 'Judge Faithfulness', 'Judge Reasoning',
       'Status', 'Duration (ms)', 'Target Duration (ms)', 'Judge Duration (ms)', 'Error',
       'Execution Logs / Tool Calls', 'Token Usage',
+      'Target Prompt Tokens', 'Target Completion Tokens', 'Target Total Tokens',
+      'Judge Prompt Tokens', 'Judge Completion Tokens', 'Judge Total Tokens',
+      'Global Total Tokens',
     ] as const;
 
     const detailsSheetData = results.map((r) => {
@@ -960,6 +966,13 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
         'Error': r.error ?? '',
         'Execution Logs / Tool Calls': toolCallsText,
         'Token Usage': tokenUsageText,
+        'Target Prompt Tokens': r.target_token_usage?.prompt_tokens ?? '',
+        'Target Completion Tokens': r.target_token_usage?.completion_tokens ?? '',
+        'Target Total Tokens': r.target_token_usage?.total_tokens ?? '',
+        'Judge Prompt Tokens': r.judge_token_usage?.prompt_tokens ?? '',
+        'Judge Completion Tokens': r.judge_token_usage?.completion_tokens ?? '',
+        'Judge Total Tokens': r.judge_token_usage?.total_tokens ?? '',
+        'Global Total Tokens': r.token_usage?.total_tokens ?? '',
       };
     }).map(truncateExportRow);
 

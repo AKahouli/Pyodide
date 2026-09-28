@@ -693,6 +693,13 @@ export function buildRetrievalMetrics(
 // Per-query + summary builders
 // ----------------------------------------------------------------
 
+export interface EvaluationTokenUsage {
+  total_tokens?: number;
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  [key: string]: unknown;
+}
+
 export interface EvaluationQueryResult {
   query_id: string;
   query: string;
@@ -710,12 +717,11 @@ export interface EvaluationQueryResult {
   retrieved_pages: number[];
   retrieved_sources: FilePagePair[];
   tool_calls?: ToolCall[];
-  token_usage?: {
-    total_tokens?: number;
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    [key: string]: unknown;
-  };
+  // `token_usage` is the global total (target + judge); the split fields let the
+  // export attribute consumption to each node.
+  token_usage?: EvaluationTokenUsage;
+  target_token_usage?: EvaluationTokenUsage;
+  judge_token_usage?: EvaluationTokenUsage;
   judge_score?: number;
   judge_faithfulness_score?: number;
   judge_reasoning?: string;
@@ -734,12 +740,9 @@ export function buildQueryResult(input: {
   judgeDurationMs?: number;
   error?: string | null;
   toolCalls: { nodeId: string; iteration: number; trace: unknown[] }[];
-  tokenUsage?: {
-    total_tokens?: number;
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    [key: string]: unknown;
-  };
+  tokenUsage?: EvaluationTokenUsage;
+  targetTokenUsage?: EvaluationTokenUsage;
+  judgeTokenUsage?: EvaluationTokenUsage;
   judgeScore?: number;
   judgeFaithfulnessScore?: number;
   judgeReasoning?: string;
@@ -775,6 +778,8 @@ export function buildQueryResult(input: {
     retrieved_sources: retrieval.retrieved_sources,
     tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
     token_usage: input.tokenUsage,
+    target_token_usage: input.targetTokenUsage,
+    judge_token_usage: input.judgeTokenUsage,
     judge_score: input.judgeScore,
     judge_faithfulness_score: input.judgeFaithfulnessScore,
     judge_reasoning: input.judgeReasoning,

@@ -153,4 +153,25 @@ describe('buildQueryResult', () => {
     expect(result.metrics.answer.token_recall).toBeGreaterThanOrEqual(0);
     expect(result.metrics.retrieval.expected_files).toEqual(['a.pdf']);
   });
+
+  it('keeps target and judge token usage separate from the global total', () => {
+    const result = buildQueryResult({
+      queryId: 'Q001',
+      query: 'question',
+      expectedAnswer: 'reponse attendue',
+      requiredFile: ['a.pdf'],
+      page: [1],
+      generatedAnswer: 'reponse produite',
+      status: 'completed',
+      durationMs: 123,
+      toolCalls: [],
+      tokenUsage: { total_tokens: 300, prompt_tokens: 280, completion_tokens: 20 },
+      targetTokenUsage: { total_tokens: 200, prompt_tokens: 190, completion_tokens: 10 },
+      judgeTokenUsage: { total_tokens: 100, prompt_tokens: 90, completion_tokens: 10 },
+    });
+
+    expect(result.token_usage?.total_tokens).toBe(300);
+    expect(result.target_token_usage).toEqual({ total_tokens: 200, prompt_tokens: 190, completion_tokens: 10 });
+    expect(result.judge_token_usage).toEqual({ total_tokens: 100, prompt_tokens: 90, completion_tokens: 10 });
+  });
 });

@@ -33,6 +33,8 @@ export interface EvaluationExecutionLogsExport {
     status: string;
     error: string | null;
     tokenUsage: EvaluationQueryResult['token_usage'] | null;
+    targetTokenUsage: EvaluationQueryResult['target_token_usage'] | null;
+    judgeTokenUsage: EvaluationQueryResult['judge_token_usage'] | null;
     toolCalls: NonNullable<EvaluationQueryResult['tool_calls']>;
   }>;
 }
@@ -92,6 +94,8 @@ export function buildExecutionLogsExport(
       status: result.status,
       error: result.error ?? null,
       tokenUsage: result.token_usage ?? null,
+      targetTokenUsage: result.target_token_usage ?? null,
+      judgeTokenUsage: result.judge_token_usage ?? null,
       toolCalls: (result.tool_calls ?? []).map((call) => ({
         ...call,
         args: parseToolOutput(call.args),
