@@ -49,9 +49,16 @@ export function resolveApiBaseUrl(
 
 const baseURL = resolveApiBaseUrl();
 
-if (import.meta.env.PROD && LOOPBACK_BASE_URL.test(baseURL)) {
-  // nginx serves index.html for unknown paths, so a wrong baseURL surfaces as an empty
-  // auth-provider list ("no authentication methods available") rather than as an error.
+// Both failure modes are silent from the outside: nginx answers any unknown path with
+// index.html and a 200, so a wrong baseURL surfaces as an empty auth-provider list
+// ("no authentication methods available") rather than as an error. Log it instead.
+if (import.meta.env.PROD && !isHttpUrl(baseURL)) {
+  console.error(
+    `[api-config] No backend URL configured: the ${API_URL_INJECTED} placeholder was not `
+      + `replaced, so the app will call <frontend-origin>/${API_URL_INJECTED}/... and nginx will `
+      + 'answer with the SPA HTML. Set the API URL variable on the container and restart.',
+  );
+} else if (import.meta.env.PROD && LOOPBACK_BASE_URL.test(baseURL)) {
   console.error(
     `[api-config] Production bundle is calling a loopback API URL (${baseURL}); the browser `
       + 'cannot reach the backend. Set the API URL variable on the container, or rebuild the '
