@@ -6,6 +6,12 @@ from auth import PlatformActorContext, actor_context
 from server import mcp
 
 
+class NoNameMatch:
+    """Name lookups find nothing, so an id is passed on as given."""
+    async def get(self, path, user_id):
+        return {"items": []}
+
+
 def result_dict(response):
     if response.structured_content is not None:
         return response.structured_content
@@ -87,7 +93,7 @@ async def test_tool_enums_are_google_adk_compatible_strings():
 
 @pytest.mark.asyncio
 async def test_create_playbook_allows_omitting_workspace_ids(monkeypatch):
-    class BackendStub:
+    class BackendStub(NoNameMatch):
         async def post(self, path, user_id, payload):
             assert path == "/api/v1/internal/playbook-assistant/playbooks"
             assert user_id == "user-1"
@@ -115,7 +121,7 @@ async def test_create_playbook_allows_omitting_workspace_ids(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_start_playbook_execution_preserves_the_canvas_handoff(monkeypatch):
-    class BackendStub:
+    class BackendStub(NoNameMatch):
         async def post(self, path, user_id, payload, idempotency_key=None):
             assert path == "/api/v1/internal/playbook-assistant/playbooks/playbook%2F1/executions"
             assert user_id == "user-1"
@@ -150,7 +156,7 @@ async def test_start_playbook_execution_preserves_the_canvas_handoff(monkeypatch
 
 @pytest.mark.asyncio
 async def test_generation_uses_the_current_trusted_turn_without_a_request_id(monkeypatch):
-    class BackendStub:
+    class BackendStub(NoNameMatch):
         async def post(self, path, user_id, payload):
             assert path == "/api/v1/internal/playbook-assistant/generation"
             assert user_id == "user-1"
@@ -160,7 +166,7 @@ async def test_generation_uses_the_current_trusted_turn_without_a_request_id(mon
                 "answers": [],
                 "skip": False,
             }
-            return {"operationId": "operation-1", "playbookId": "playbook-1"}
+            return {"operationId": "operation-1", "playbookId": "playbook-1", "playbookName": "Lead generation"}
 
     monkeypatch.setattr(server, "backend", lambda: BackendStub())
     token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "ai-message-1"))
@@ -177,13 +183,13 @@ async def test_generation_uses_the_current_trusted_turn_without_a_request_id(mon
     assert result["data"]["publicationStatus"] == "draft"
     assert result["data"]["uiTarget"] == {
         "surface": "playbook.editor.assistant",
-        "params": {"playbookId": "playbook-1", "operationId": "operation-1"},
+        "params": {"playbookId": "playbook-1", "operationId": "operation-1", "playbookName": "Lead generation"},
     }
 
 
 @pytest.mark.asyncio
 async def test_generation_returns_clarification_without_a_canvas_handoff(monkeypatch):
-    class BackendStub:
+    class BackendStub(NoNameMatch):
         async def post(self, path, user_id, payload):
             assert path == "/api/v1/internal/playbook-assistant/generation"
             assert user_id == "user-1"
@@ -210,7 +216,7 @@ async def test_generation_returns_clarification_without_a_canvas_handoff(monkeyp
 
 @pytest.mark.asyncio
 async def test_generation_continues_with_typed_resource_answers(monkeypatch):
-    class BackendStub:
+    class BackendStub(NoNameMatch):
         async def post(self, path, user_id, payload):
             assert path == "/api/v1/internal/playbook-assistant/generation"
             assert user_id == "user-1"
@@ -240,7 +246,7 @@ async def test_generation_continues_with_typed_resource_answers(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_modify_playbook_uses_the_current_trusted_turn_and_hands_off_to_canvas(monkeypatch):
-    class BackendStub:
+    class BackendStub(NoNameMatch):
         async def post(self, path, user_id, payload):
             assert path == "/api/v1/internal/playbook-assistant/playbooks/playbook%2F1/current-turn/modification"
             assert user_id == "user-1"
@@ -275,7 +281,7 @@ async def test_modify_playbook_uses_the_current_trusted_turn_and_hands_off_to_ca
 async def test_modify_playbook_accepts_json_encoded_string_answers(monkeypatch):
     received = {}
 
-    class BackendStub:
+    class BackendStub(NoNameMatch):
         async def post(self, path, user_id, payload):
             received["payload"] = payload
             return {"requestId": "request-1", "status": "ready"}
@@ -303,7 +309,7 @@ async def test_modify_playbook_accepts_json_encoded_string_answers(monkeypatch):
 async def test_modify_playbook_forwards_skip_clarification(monkeypatch):
     received = {}
 
-    class BackendStub:
+    class BackendStub(NoNameMatch):
         async def post(self, path, user_id, payload):
             received["payload"] = payload
             return {"requestId": "request-1", "status": "ready"}
@@ -328,7 +334,7 @@ async def test_modify_playbook_forwards_skip_clarification(monkeypatch):
 async def test_continue_clarification_forwards_skip_clarification(monkeypatch):
     received = {}
 
-    class BackendStub:
+    class BackendStub(NoNameMatch):
         async def post(self, path, user_id, payload):
             received["payload"] = payload
             return {"requestId": "request-1", "status": "ready_to_construct"}
@@ -353,7 +359,7 @@ async def test_continue_clarification_forwards_skip_clarification(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_continue_clarification_rejects_malformed_string_answers(monkeypatch):
-    class BackendStub:
+    class BackendStub(NoNameMatch):
         async def post(self, path, user_id, payload):
             raise AssertionError("backend must not be called for malformed answers")
 
@@ -372,7 +378,7 @@ async def test_continue_clarification_rejects_malformed_string_answers(monkeypat
 
 @pytest.mark.asyncio
 async def test_advisor_construction_returns_canvas_owned_preview_handoff(monkeypatch):
-    class BackendStub:
+    class BackendStub(NoNameMatch):
         async def post(self, path, user_id, payload):
             assert path.endswith("/advisor-remediation-constructions")
             assert user_id == "user-1"
@@ -397,14 +403,14 @@ async def test_advisor_construction_returns_canvas_owned_preview_handoff(monkeyp
     assert result["schemaVersion"] == "playbook.mcp.v1"
     assert result["data"]["uiTarget"] == {
         "surface": "playbook.editor.assistant",
-        "params": {"playbookId": "playbook/1", "operationId": "operation/1", "preview": "advisor"},
+        "params": {"playbookId": "playbook/1", "operationId": "operation/1"},
     }
     assert result["data"]["eventStreamOwner"] == "playbook_canvas"
 
 
 @pytest.mark.asyncio
 async def test_playbook_construction_returns_browser_safe_canvas_handoff(monkeypatch):
-    class BackendStub:
+    class BackendStub(NoNameMatch):
         async def post(self, path, user_id, payload):
             assert path.endswith("/requests/request%2F1/constructions")
             assert user_id == "user-1"
@@ -429,3 +435,85 @@ async def test_playbook_construction_returns_browser_safe_canvas_handoff(monkeyp
     }
     assert result["data"]["eventStreamOwner"] == "playbook_canvas"
     assert "mcpEventStreamPath" not in result["data"]
+
+
+@pytest.mark.asyncio
+async def test_playbook_tools_accept_the_exact_playbook_name(monkeypatch):
+    calls = []
+
+    class BackendStub:
+        async def get(self, path, user_id):
+            calls.append(path)
+            if path.startswith("/api/v1/internal/playbook-assistant/playbooks?"):
+                assert "query=Invoice+triage" in path
+                return {"items": [
+                    {"playbookId": "65f000000000000000000001", "name": "Invoice triage"},
+                    {"playbookId": "65f000000000000000000002", "name": "Invoice triage v2"},
+                ]}
+            return {"workflow": "summary"}
+
+    monkeypatch.setattr(server, "backend", lambda: BackendStub())
+    token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "correlation-1"))
+    try:
+        async with Client(mcp) as client:
+            await client.call_tool("get_playbook_summary", {"playbook_id": "Invoice triage"})
+            await client.call_tool("get_playbook_summary", {"playbook_id": "65f0000000000000000000ff"})
+    finally:
+        actor_context.reset(token)
+
+    assert calls[1] == "/api/v1/internal/playbook-assistant/playbooks/65f000000000000000000001/summary"
+    # An id is used as given, without a lookup.
+    assert calls[2:] == ["/api/v1/internal/playbook-assistant/playbooks/65f0000000000000000000ff/summary"]
+
+
+@pytest.mark.asyncio
+async def test_task_tools_accept_the_exact_task_name(monkeypatch):
+    calls = []
+    playbook = "65f000000000000000000001"
+    tasks = {"workflow": {"tasks": [
+        {"id": "task-screen", "label": "Screen CVs"},
+        {"id": "task-rank", "label": "Rank candidates"},
+        {"id": "task-rank-2", "label": "rank candidates"},
+    ]}}
+
+    class BackendStub:
+        async def get(self, path, user_id):
+            calls.append(path)
+            if path.endswith("/summary"):
+                return tasks
+            if path == "/api/v1/internal/playbook-assistant/executions/execution-1":
+                return {"flowId": playbook}
+            return {"task": "details"}
+
+        async def post(self, path, user_id, payload):
+            calls.append((path, payload))
+            return {"executionId": "execution-2"}
+
+    monkeypatch.setattr(server, "backend", lambda: BackendStub())
+    token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "correlation-1"))
+    try:
+        async with Client(mcp) as client:
+            await client.call_tool("get_task_details", {"playbook_id": playbook, "task_id": "screen cvs"})
+            # Two tasks share the name: the value is passed on and the backend says it is unknown.
+            await client.call_tool("get_task_details", {"playbook_id": playbook, "task_id": "Rank candidates"})
+            await client.call_tool("run_playbook_from_step", {"execution_id": "execution-1", "task_id": "Screen CVs"})
+    finally:
+        actor_context.reset(token)
+
+    assert f"/api/v1/internal/playbook-assistant/playbooks/{playbook}/tasks/task-screen" in calls
+    assert f"/api/v1/internal/playbook-assistant/playbooks/{playbook}/tasks/Rank%20candidates" in calls
+    assert ("/api/v1/internal/playbook-assistant/executions/execution-1/run-from-step", {"taskId": "task-screen", "iteration": None}) in calls
+
+
+@pytest.mark.asyncio
+async def test_tells_the_assistant_about_names_sources_and_runs_and_marks_reads_and_removals():
+    async with Client(mcp) as client:
+        tools = {tool.name: tool for tool in await client.list_tools()}
+        instructions = client.initialize_result.instructions
+    assert "never show ids" in instructions
+    assert "sources card" in instructions
+    assert "Runs are the user's decision" in instructions
+    assert tools["search_playbooks"].annotations.readOnlyHint is True
+    assert tools["get_execution_diagnostics"].annotations.readOnlyHint is True
+    assert tools["delete_playbook_execution"].annotations.destructiveHint is True
+    assert tools["cancel_playbook_execution"].annotations.destructiveHint is True

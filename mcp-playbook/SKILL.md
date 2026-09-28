@@ -15,6 +15,7 @@ Use the Playbook MCP tools whenever the user wants to find, understand, create, 
 ## Core Rules
 
 - Treat MCP results as the source of truth. Never invent Playbook, task, execution, request, continuation, or operation IDs.
+- Talk to the user about Playbooks, tasks, executions, workspaces and files by their names; never show IDs. Any `playbook_id` argument also accepts the Playbook's exact name, and any `task_id` argument the task's exact name (a name two tasks share is not resolved).
 - Use only Playbook MCP tools that are available in the current runtime. Connector action selection may intentionally expose only part of the inventory.
 - Do not pass tenant, user, agent, conversation, correlation, authorization, or internal request identity as tool arguments. The platform supplies trusted identity outside the model-visible schema.
 - Prefer read tools before mutation when the target or current revision is uncertain.
@@ -39,7 +40,7 @@ Use the Playbook MCP tools whenever the user wants to find, understand, create, 
 
 1. Gather the user's workflow goal and an optional name from the conversation.
 2. Call `start_playbook_generation`. It assesses the trusted current conversation turn; do not ask for or invent an internal request ID.
-3. If the result needs clarification, ask the returned questions exactly as provided and call `start_playbook_generation` again with the returned `continuation_id` and typed `answers`. Use the same answer shapes documented below for modification, including resource answers.
+3. If the result needs clarification, ask the returned questions exactly as provided and call `start_playbook_generation` again with the returned `continuation_id` and typed `answers`. Use the same answer shapes documented below for modification. Questions with a `resourceSelector` are answered by the user in the sources card (see Sources below).
 4. If the user explicitly asks to skip remaining generation questions, set `skip_clarification` to `true` and include any answers already collected.
 5. No draft exists while clarification is pending. Once ready, the tool starts at most one operation-owned draft construction.
 6. Treat the ready result as a draft operation, not a published Playbook.
@@ -64,16 +65,21 @@ For a normal conversational change request, use `modify_playbook`:
 {"questionId":"q1","text":"the user's answer"}
 ```
 
-```json
-{"questionId":"q1","resource":{"kind":"workspace","id":"a returned resource ID"}}
-```
-
-Use `kind: "workspace"` or `kind: "document"` according to the returned `resourceSelector` and the resource the user selects. Never invent a resource ID.
+Questions with a `resourceSelector` are answered by the user in the sources card (see Sources below): leave them out of `answers`.
 
 5. If the user explicitly asks to skip remaining questions, set `skip_clarification` to `true` and include any answers already collected.
 6. When the result is ready, return its canvas `uiTarget`. The operation is a canvas-owned preview or construction; do not claim that changes are already committed.
 
 Use `assess_playbook_request`, `continue_playbook_clarification`, and `start_playbook_construction` only when the runtime has supplied the trusted request or continuation IDs required by that flow. Start at most one construction for a request.
+
+### Sources
+
+Workspaces and files are the user's decision, and the user picks them:
+
+- A clarification question with a `resourceSelector` asks for a source (`workspace_or_document`) or a destination (`destination_workspace`). The result then carries a `playbook.sources` `uiTarget`: the conversation shows a card where the user chooses from a searchable list of all their workspaces and files, or skips the question so the Playbook asks for it when it runs.
+- Never search workspaces or documents for these questions and never ask the user for names or IDs. Ask only the other questions with `present_choices`, and say the sources are chosen in the card.
+- When the user says they chose or skipped, call the same tool with the `continuation_id` and the other answers: the picks are joined automatically, and a chosen workspace becomes a fixed input of the tasks that read it.
+- If the result says a source is still missing, ask the user to choose it in the card or to skip it.
 
 ### Optimize
 
@@ -85,7 +91,8 @@ Use `assess_playbook_request`, `continue_playbook_clarification`, and `start_pla
 
 ### Execute Or Diagnose
 
-- Before `start_playbook_execution`, resolve the exact Playbook and summarize what will run. Respect any confirmation required by the host application.
+- Start, re-execute or run from a step only when the user asks in this conversation, or confirms after you named the Playbook and its inputs. Before `start_playbook_execution`, resolve the exact Playbook and summarize what will run.
+- Stop a running execution with `cancel_playbook_execution` when the user asks. Ask before `delete_playbook_execution`.
 - Reuse a runtime-provided idempotency key when one is available. Never invent a new key to retry an uncertain start result.
 - Use `list_recent_executions` for cross-Playbook discovery and `list_playbook_executions` for one Playbook.
 - Use `get_playbook_execution` for current status and outputs, and `get_execution_diagnostics` for deterministic redacted diagnostics.
