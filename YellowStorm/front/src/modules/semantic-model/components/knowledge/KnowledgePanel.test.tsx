@@ -41,16 +41,34 @@ describe('KnowledgePanel', () => {
     expect(screen.queryByRole('button',{name:'knowledge.remove'})).not.toBeInTheDocument();
   });
 
-  it('offers drag and click linking from the same workspace row', async () => {
-    render(<KnowledgePanel canEdit knowledge={knowledge} targetNodeId='customer' />);
+  it('uses a readable file as a source, and offers no link that would bring no data', async () => {
+    workspaceApi.getDocuments.mockResolvedValue({documents:[
+      {id:'sheet',originalName:'customers.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',isFolder:false},
+      {id:'logo',originalName:'logo.png',mimeType:'image/png',isFolder:false},
+    ],pagination:{page:1,totalPages:1}});
+    const onMapData=vi.fn();
+    render(<KnowledgePanel canEdit knowledge={knowledge} targetNodeId='customer' onMapData={onMapData} />);
     await screen.findAllByText('Credit Risk');
-    const row=screen.getAllByText('Credit Risk').map((item)=>item.closest('[draggable="true"]')).find(Boolean);
-    const setData=vi.fn();
-    expect(row).not.toBeNull();
-    row&&fireEvent.dragStart(row,{dataTransfer:{effectAllowed:'',setData}});
-    expect(setData).toHaveBeenCalledWith('application/x-yellowstorm-knowledge',expect.stringContaining('workspace'));
-    fireEvent.click(screen.getByRole('button',{name:'knowledge.link'}));
-    expect(knowledge.link).toHaveBeenCalledWith('customer',expect.objectContaining({kind:'workspace',workspaceId:'workspace'}));
+    expect(screen.getAllByText('Credit Risk').some((item)=>item.closest('[draggable="true"]'))).toBe(false);
+    fireEvent.click(screen.getByRole('button',{name:'knowledge.expandWorkspace'}));
+    fireEvent.click(await screen.findByRole('button',{name:'knowledge.useFile'}));
+    expect(onMapData).toHaveBeenCalledWith(expect.objectContaining({kind:'document',documentId:'sheet'}));
+    expect(screen.getByText('knowledge.notReadable')).toBeInTheDocument();
+    expect(screen.getByText('logo.png').closest('[draggable="true"]')).toBeNull();
+    expect(screen.queryByRole('button',{name:'knowledge.link'})).not.toBeInTheDocument();
+    expect(knowledge.link).not.toHaveBeenCalled();
+  });
+
+  it('uses every file of a workspace or of a folder with one mapping', async () => {
+    workspaceApi.getDocuments.mockResolvedValue({documents:[{id:'folder',originalName:'Contracts',folderName:'Contracts',isFolder:true}],pagination:{page:1,totalPages:1}});
+    const onMapWorkspace=vi.fn();
+    render(<KnowledgePanel canEdit knowledge={knowledge} targetNodeId='customer' onMapWorkspace={onMapWorkspace} />);
+    fireEvent.click(await screen.findByRole('button',{name:'knowledge.useAllIn'}));
+    expect(onMapWorkspace).toHaveBeenLastCalledWith({workspaceId:'workspace',name:'Credit Risk'});
+    fireEvent.click(screen.getByRole('button',{name:'knowledge.expandWorkspace'}));
+    await screen.findByText('Contracts');
+    fireEvent.click(screen.getAllByRole('button',{name:'knowledge.useAllIn'})[1]);
+    expect(onMapWorkspace).toHaveBeenLastCalledWith({workspaceId:'workspace',folderId:'folder',name:'Credit Risk / Contracts',workspaceName:'Credit Risk'});
   });
 
   it('loads later workspace and document pages on demand', async () => {

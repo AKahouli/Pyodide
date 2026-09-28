@@ -5,7 +5,7 @@ import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { newObjectId } from '@common/postgres/object-id';
 import { resolveQueryable } from '@common/postgres/transaction';
-import { GOVERNANCE_EVENT_STORE, type AppendGovernanceDocumentEventInput, type GovernanceEventStore } from '../document-event-store';
+import { type AppendGovernanceDocumentEventInput,  type GovernanceEventStore } from '../document-event-store';
 import type { GovernanceDocumentEventRecord } from '../governance-records';
 
 const EVENTS = schema.governanceDocumentEvents;

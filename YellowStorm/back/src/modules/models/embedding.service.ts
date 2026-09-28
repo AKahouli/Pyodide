@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import axios from 'axios';
 import { LoggerService } from '../logger';
 
 /**
@@ -33,12 +32,17 @@ export class EmbeddingService {
       const dimensions = this.config.get<number>('litellm.embeddingDimension')!;
       const timeout = this.config.get<number>('litellm.timeoutMs', 10000);
       const apiKey = this.config.get<string>('litellm.apiKey') || '';
-      const res = await axios.post(
-        `${base}${endpoint}`,
-        { model, input: text },
-        { headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {}, timeout },
-      );
-      const vec = res.data?.data?.[0]?.embedding;
+      const res = await fetch(`${base}${endpoint}`, {
+        method: 'POST',
+        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
+        body: JSON.stringify({ model, input: text }),
+        signal: timeout > 0 ? AbortSignal.timeout(timeout) : undefined,
+      });
+      if (!res.ok) {
+        throw new Error(`LiteLLM embeddings returned HTTP ${res.status}`);
+      }
+      const payload = (await res.json()) as { data?: Array<{ embedding?: unknown }> };
+      const vec = payload?.data?.[0]?.embedding;
       if (!Array.isArray(vec) || vec.length !== dimensions || !vec.every((value) => typeof value === 'number' && Number.isFinite(value))) {
         this.logger.error('Embedding response has an invalid vector shape', {
           expectedDimensions: dimensions,

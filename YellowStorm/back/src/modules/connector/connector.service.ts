@@ -2,7 +2,6 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '../logger';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
-import { stripLeadingTrailingChar } from '../../common/utils';
 import {
   SandboxRuntimeContext,
   CODE_INTERPRETER_CONNECTOR_SLUG,
@@ -12,12 +11,8 @@ import { BadRequestException, ConflictException, NotFoundException } from '../ex
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { CreateConnectorDto, QueryConnectorDto, UpdateConnectorDto } from './dto';
 import { ConnectorAction, ConnectorDynamicHeader, ConnectorActionResultKind, ConnectorCitationMode, DynamicHeaderSource } from './connector.types';
-import {
-  CONNECTOR_CATEGORY_STORE,
-  CONNECTOR_STORE,
-  type ConnectorCategoryStore,
-  type ConnectorRow,
-  type ConnectorStore,
+import {  
+  type ConnectorRow,    
 } from './persistence/connector.store';
 import {
   IConnectorResponse,
@@ -33,6 +28,8 @@ import {
   AGENT_MCP_CONNECTOR_SLUG,
   AGENT_MCP_RUNTIME_AUTH_SECRET_KEY,
 } from './constants/agent-mcp.constants';
+import { PgConnectorCategoryStore } from './persistence/pg-connector.store';
+import { PgConnectorStore } from './persistence/pg-connector.store';
 
 @Injectable()
 export class ConnectorService {
@@ -41,10 +38,8 @@ export class ConnectorService {
   private static readonly CONNECTOR_ACTION_DESCRIPTION_MAX_LENGTH = 1024;
 
   constructor(
-    @Inject(CONNECTOR_STORE)
-    private readonly connectorStore: ConnectorStore,
-    @Inject(CONNECTOR_CATEGORY_STORE)
-    private readonly connectorCategoryStore: ConnectorCategoryStore,
+    private readonly connectorStore: PgConnectorStore,
+    private readonly connectorCategoryStore: PgConnectorCategoryStore,
     private readonly logger: LoggerService,
     private readonly connectedAppTokenService: ConnectedAppTokenService,
     @Inject('ConnectorAuthService')
@@ -564,12 +559,11 @@ export class ConnectorService {
   }
 
   private slugify(text: string): string {
-    return stripLeadingTrailingChar(
-      text
-        .toLowerCase()
-        .replaceAll(/[^a-z0-9]+/g, '-'),
-      '-',
-    ).slice(0, 64);
+    return text
+      .toLowerCase()
+      .replaceAll(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 64);
   }
 
   private buildMcpRequestInit(serverConfig?: Record<string, unknown>): RequestInit | undefined {

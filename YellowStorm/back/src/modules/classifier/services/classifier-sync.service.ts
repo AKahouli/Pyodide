@@ -1,24 +1,14 @@
-import { Inject, Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Injectable } from '@nestjs/common';
 import AdmZip = require('adm-zip');
-import { ClassifierFolder, ClassifierFolderDocument } from '../schemas/classifier-folder.schema';
-import {
-  ClassifierFileAssignment,
-  ClassifierFileAssignmentDocument,
-} from '../schemas/classifier-file-assignment.schema';
-import {
-  WORKSPACE_DOCUMENT_READ_PORT,
-  WORKSPACE_READ_PORT,
-  type WorkspaceDocumentReadPort,
-  type WorkspaceReadPort,
-} from '../../workspace/ports';
+import { ClassifierAssignmentRepository } from '../persistence/classifier-assignment.repository';
+import { ClassifierFolderRepository } from '../persistence/classifier-folder.repository';
 import { DocumentService } from '../../document/document.service';
 import { LoggerService } from '../../logger';
 import { NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { ClassifierAccessService } from './classifier-access.service';
-import { stripTrailingChar } from '@common/utils';
+import { PgWorkspaceReadAdapter } from '../../workspace/persistence/postgres/pg-workspace-read.adapter';
+import { PgWorkspaceDocumentReadAdapter } from '../../workspace/persistence/postgres/pg-workspace-document-read.adapter';
 
 export interface SyncZipResult {
   filename: string;
@@ -31,12 +21,10 @@ export interface SyncZipResult {
 @Injectable()
 export class ClassifierSyncService {
   constructor(
-    @Inject(WORKSPACE_READ_PORT) private readonly workspaceReadPort: WorkspaceReadPort,
-    @InjectModel(ClassifierFolder.name)
-    private readonly folderModel: Model<ClassifierFolderDocument>,
-    @InjectModel(ClassifierFileAssignment.name)
-    private readonly assignmentModel: Model<ClassifierFileAssignmentDocument>,
-    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly documentReadPort: WorkspaceDocumentReadPort,
+    private readonly workspaceReadPort: PgWorkspaceReadAdapter,
+    private readonly folders: ClassifierFolderRepository,
+    private readonly assignments: ClassifierAssignmentRepository,
+    private readonly documentReadPort: PgWorkspaceDocumentReadAdapter,
     private readonly documentService: DocumentService,
     private readonly access: ClassifierAccessService,
     private readonly logger: LoggerService,
@@ -52,27 +40,16 @@ export class ClassifierSyncService {
       throw new NotFoundException(ErrorCode.WORKSPACE_NOT_FOUND);
     }
 
-    const wsObjectId = new Types.ObjectId(workspaceId);
-
     const [folders, documents, assignments] = await Promise.all([
-      this.folderModel
-        .find({ workspaceId: wsObjectId })
-        .select({ _id: 1, name: 1, parentId: 1 })
-        .lean()
-        .exec(),
+      this.folders.listByWorkspace(workspaceId),
       this.documentReadPort.find({ workspaceId, isFolder: false }),
-      this.assignmentModel
-        .find({ workspaceId: wsObjectId })
-        .select({ documentId: 1, folderId: 1 })
-        .lean()
-        .exec(),
+      this.assignments.listByWorkspace(workspaceId),
     ]);
 
     const folderPathById = this.buildFolderPathMap(folders);
-    const folderIdByDocId = new Map<string, string | null>();
-    assignments.forEach((a) => {
-      folderIdByDocId.set(a.documentId.toString(), a.folderId ? a.folderId.toString() : null);
-    });
+    const folderIdByDocId = new Map<string, string | null>(
+      assignments.map((a) => [a.documentId, a.folderId]),
+    );
 
     const rootName = this.sanitizeSegment(workspace.name) || 'workspace';
     const zip = new AdmZip();
@@ -152,17 +129,13 @@ export class ClassifierSyncService {
   // ───────── helpers ─────────
 
   private buildFolderPathMap(
-    folders: Array<{
-      _id: Types.ObjectId;
-      name: string;
-      parentId: Types.ObjectId | null;
-    }>,
+    folders: Array<{ id: string; name: string; parentId: string | null }>,
   ): Map<string, string[]> {
     const byId = new Map<string, { name: string; parentId: string | null }>();
     folders.forEach((f) => {
-      byId.set(f._id.toString(), {
+      byId.set(f.id, {
         name: this.sanitizeSegment(f.name) || 'dossier',
-        parentId: f.parentId ? f.parentId.toString() : null,
+        parentId: f.parentId,
       });
     });
 
@@ -187,12 +160,11 @@ export class ClassifierSyncService {
 
   private sanitizeSegment(input: string | undefined): string {
     if (!input) return '';
-    return stripTrailingChar(
-      input
-        .replace(/[\\/:*?"<>|\x00-\x1f]/g, '_')
-        .trim(),
-      '.',
-    ).slice(0, 200);
+    return input
+      .replace(/[\\/:*?"<>|\x00-\x1f]/g, '_')
+      .trim()
+      .replace(/\.+$/, '')
+      .slice(0, 200);
   }
 
   private dedupeFileName(segments: string[], candidate: string, used: Set<string>): string {

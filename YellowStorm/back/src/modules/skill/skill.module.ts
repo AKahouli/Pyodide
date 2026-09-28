@@ -7,7 +7,6 @@ import { AuthorizationModule } from '../authorization/authorization.module';
 import { AdminSkillController } from './admin-skill.controller';
 import { SKILL_STORE } from './persistence/skill.store';
 import { PgSkillStore } from './persistence/pg-skill.store';
-import { SKILL_CATEGORY_STORE } from './persistence/skill.store';
 import { PgSkillCategoryStore } from './persistence/pg-skill.store';
 
 @Module({
@@ -16,7 +15,7 @@ import { PgSkillCategoryStore } from './persistence/pg-skill.store';
   providers: [
     // Skills cutover (plan 1B.4.2): catalog.skills / skill_categories / skill_files.
     { provide: SKILL_STORE, useClass: PgSkillStore },
-    { provide: SKILL_CATEGORY_STORE, useClass: PgSkillCategoryStore },
+    PgSkillCategoryStore,
     SkillService,
     SkillCategoryService,
   ],

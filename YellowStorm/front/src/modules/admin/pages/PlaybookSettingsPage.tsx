@@ -48,6 +48,13 @@ const DEFAULT_PLAYBOOK_EXECUTION_SETTINGS = {
   graphCacheEnabled: false,
   graphCacheMaxEntries: 128,
   graphCacheTtlSeconds: 900,
+  asyncDesignEnabled: false,
+  deltaPatchEnabled: true,
+  tokenBufferEnabled: false,
+  executionLeaseEnabled: false,
+  dynamicReasoningEnabled: true,
+  maxConcurrentGlobalDesignOperations: 10,
+  maxConcurrentUserDesignOperations: 3,
   dynamicReasoning: { plannerAgentId: null, maxWorkNodes: 6, maxParallelism: 3, maxDepth: 1, maxRepairAttempts: 1 },
 };
 
@@ -68,6 +75,8 @@ const EXECUTION_FIELD_KEYS = [
   'maxSandboxCallsPerStep',
   'graphCacheMaxEntries',
   'graphCacheTtlSeconds',
+  'maxConcurrentGlobalDesignOperations',
+  'maxConcurrentUserDesignOperations',
 ] as const;
 
 const RUNTIME_TOOLTIP_KEYS = [
@@ -76,6 +85,14 @@ const RUNTIME_TOOLTIP_KEYS = [
   'pythonWorkerMaxInflight', 'maxToolIterations', 'graphCacheEnabled',
   'maxSandboxCallsPerStep',
   'graphCacheMaxEntries', 'graphCacheTtlSeconds',
+] as const;
+
+const EXECUTION_TOGGLE_KEYS = [
+  'asyncDesignEnabled',
+  'deltaPatchEnabled',
+  'tokenBufferEnabled',
+  'executionLeaseEnabled',
+  'dynamicReasoningEnabled',
 ] as const;
 
 type RuntimeTooltipKey = (typeof RUNTIME_TOOLTIP_KEYS)[number];
@@ -92,6 +109,8 @@ const EXECUTION_FIELD_MAX: Partial<Record<(typeof EXECUTION_FIELD_KEYS)[number],
   maxSandboxCallsPerStep: 100,
   graphCacheMaxEntries: 10000,
   graphCacheTtlSeconds: 86400,
+  maxConcurrentGlobalDesignOperations: 500,
+  maxConcurrentUserDesignOperations: 500,
 };
 
 const DYNAMIC_REASONING_FIELD_KEYS = ['maxWorkNodes', 'maxParallelism', 'maxDepth', 'maxRepairAttempts'] as const;
@@ -392,6 +411,21 @@ export function PlaybookSettingsPage() {
               }))}
             />
           </div>
+          {EXECUTION_TOGGLE_KEYS.map((key) => (
+            <div key={key} className="flex items-center justify-between gap-4 rounded-md border border-border/60 p-4">
+              <Label htmlFor={`execution-${key}`}>
+                <FieldLabel fieldKey={key}>{t(`playbookSettings.execution.fields.${key}.label`)}</FieldLabel>
+              </Label>
+              <Switch
+                id={`execution-${key}`}
+                checked={settings.playbookExecution[key]}
+                onCheckedChange={(checked) => setSettings((previous) => ({
+                  ...previous,
+                  playbookExecution: { ...previous.playbookExecution, [key]: checked },
+                }))}
+              />
+            </div>
+          ))}
           <div className="space-y-3 rounded-md border border-border/60 p-4">
             <div>
               <h3 className="text-sm font-semibold">{t('playbookSettings.execution.dynamicReasoning.title')}</h3>

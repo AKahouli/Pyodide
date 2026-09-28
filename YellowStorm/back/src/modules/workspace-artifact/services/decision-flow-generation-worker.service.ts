@@ -8,11 +8,8 @@ import { LoggerService } from '../../logger';
 import { DECISION_FLOW_LIMITS } from '../constants/decision-flow.constants';
 import { DEFAULT_DECISION_FLOW_GENERATION_OPTIONS, WorkspaceArtifactStatus } from '../interfaces/workspace-artifact.interface';
 import type { DecisionFlowGenerationOptions } from '../interfaces/workspace-artifact.interface';
-import {
-  WORKSPACE_ARTIFACT_STORE,
-  type ArtifactLeaseClaim,
-  type WorkspaceArtifactStore,
-} from '../persistence/workspace-artifact-store';
+import { type ArtifactLeaseClaim } from '../persistence/workspace-artifact-store';
+import { PostgresWorkspaceArtifactStore } from '../persistence/postgres/postgres-workspace-artifact-store';
 import { DecisionFlowOutputParserService } from './decision-flow-output-parser.service';
 import { DecisionFlowValidatorService } from './decision-flow-validator.service';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
@@ -30,7 +27,7 @@ interface PdfTextPage {
 export class DecisionFlowGenerationWorkerService {
   private running = false;
   constructor(
-    @Inject(WORKSPACE_ARTIFACT_STORE) private readonly artifacts: WorkspaceArtifactStore,
+    private readonly artifacts: PostgresWorkspaceArtifactStore,
     private readonly documents: WorkspaceDocumentService,
     private readonly documentStorage: DocumentService,
     private readonly tasks: AgentTaskExecutionService,

@@ -2,8 +2,8 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AuthProviderHealthService } from './auth-provider-health.service';
 import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';
-import { AUTH_PROVIDER_STORE } from '../persistence/auth-provider.stores';
 import { makeProviderStoreFake, providerRecord, type AuthProviderStoreFake } from '../persistence/auth-provider-stores.fake';
+import { PgAuthProviderStore } from '../persistence/pg-auth-provider.stores';
 
 describe('AuthProviderHealthService', () => {
   let service: AuthProviderHealthService;
@@ -42,7 +42,7 @@ describe('AuthProviderHealthService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthProviderHealthService,
-        { provide: AUTH_PROVIDER_STORE, useValue: providerStore },
+        { provide: PgAuthProviderStore, useValue: providerStore },
         { provide: CryptoService, useValue: cryptoService },
         { provide: LoggerService, useValue: mockLoggerService },
       ],

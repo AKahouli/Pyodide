@@ -12,7 +12,7 @@ import { Permissions } from '@modules/authorization/constants/permissions';
 import { StartPlaybookFlowExecutionDto } from '../dto/start-playbook-flow-execution.dto';
 import { ResumePlaybookFlowApprovalDto } from '../dto/resume-playbook-flow-approval.dto';
 import { RequestPlaybookArtifactAccessDto } from '../dto/request-playbook-artifact-access.dto';
-import type { AdvisorScoringMode } from '../schemas/playbook-flow.schema';
+import type { AdvisorScoringMode } from '../models/playbook-flow.model';
 
 @ApiTags('Playbook Flow Executions')
 @ApiBearerAuth()

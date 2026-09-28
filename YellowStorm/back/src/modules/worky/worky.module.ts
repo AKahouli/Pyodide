@@ -1,6 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { MongooseModule } from '@nestjs/mongoose';
 import { WorkyStreamService } from './services/worky-stream.service';
 import { WorkyElectricConsumerService } from './services/worky-electric-consumer.service';
 import { WorkyEventService } from './services/worky-event.service';
@@ -38,58 +37,6 @@ import { WorkyTaskController } from './controllers/worky-task.controller';
 import { WorkyGovernanceAdminController } from './controllers/admin/worky-governance-admin.controller';
 import { WorkyStreamAccessGuard } from './guards/worky-stream-access.guard';
 import { WorkyTaskStreamAccessGuard } from './guards/worky-task-stream-access.guard';
-import {
-  WorkyStream,
-  WorkyStreamSchema,
-} from './schemas/worky-stream.schema';
-import {
-  WorkyTask,
-  WorkyTaskSchema,
-} from './schemas/worky-task.schema';
-import {
-  WorkyMessage,
-  WorkyMessageSchema,
-} from './schemas/worky-message.schema';
-import {
-  WorkyPlanVersion,
-  WorkyPlanVersionSchema,
-} from './schemas/worky-plan-version.schema';
-import {
-  WorkyPlanDelta,
-  WorkyPlanDeltaSchema,
-} from './schemas/worky-plan-delta.schema';
-import {
-  WorkyInteraction,
-  WorkyInteractionSchema,
-} from './schemas/worky-interaction.schema';
-import {
-  WorkyEphemeralWorker,
-  WorkyEphemeralWorkerSchema,
-} from './schemas/worky-ephemeral-worker.schema';
-import {
-  WorkyTaskResult,
-  WorkyTaskResultSchema,
-} from './schemas/worky-task-result.schema';
-import {
-  WorkyCostEvent,
-  WorkyCostEventSchema,
-} from './schemas/worky-cost-event.schema';
-import {
-  WorkyTrace,
-  WorkyTraceSchema,
-} from './schemas/worky-trace.schema';
-import {
-  WorkyBudgetReservation,
-  WorkyBudgetReservationSchema,
-} from './schemas/worky-budget-reservation.schema';
-import {
-  WorkyMailEventLedger,
-  WorkyMailEventLedgerSchema,
-} from './schemas/worky-mail-event-ledger.schema';
-import {
-  WorkyMailSubscription,
-  WorkyMailSubscriptionSchema,
-} from './schemas/worky-mail-subscription.schema';
 import { WorkyMailSubscriptionService } from './services/worky-mail-subscription.service';
 import { WorkyTurnContextService } from './services/worky-turn-context.service';
 import { WorkyTurnKickoffService } from './services/worky-turn-kickoff.service';
@@ -99,51 +46,10 @@ import { WorkyMailCatchupService } from './services/worky-mail-catchup.service';
 import { WorkyTeamsCatchupService } from './services/worky-teams-catchup.service';
 import { WorkyMailWebhookController } from './controllers/worky-mail-webhook.controller';
 import { ConnectedAppModule } from '@modules/connected-app/connected-app.module';
+import { WORKY_REPOSITORIES } from './persistence';
 // Stateless Graph client, reused rather than reimplemented; worky provides the
 // class directly instead of importing the whole PlaybookFlowModule for one service.
 import { PlaybookFlowMailGraphClientService } from '@modules/playbook-flow/services/playbook-flow-mail-graph-client.service';
-import {
-  WorkyGovernancePolicy,
-  WorkyGovernancePolicySchema,
-} from './schemas/worky-governance-policy.schema';
-import {
-  WorkyScheduledEvent,
-  WorkyScheduledEventSchema,
-} from './schemas/worky-scheduled-event.schema';
-import {
-  WorkyExecutionReport,
-  WorkyExecutionReportSchema,
-} from './schemas/worky-execution-report.schema';
-import {
-  WorkyAuditEvent,
-  WorkyAuditEventSchema,
-} from './schemas/worky-audit-event.schema';
-import {
-  WorkyMemoryProposal,
-  WorkyMemoryProposalSchema,
-  WorkyMemoryEntry,
-  WorkyMemoryEntrySchema,
-} from './schemas/worky-memory.schema';
-import {
-  WorkyElectricCursor,
-  WorkyElectricCursorSchema,
-} from './schemas/worky-electric-cursor.schema';
-import {
-  WorkyPlanProjection,
-  WorkyPlanProjectionSchema,
-} from './schemas/worky-plan-projection.schema';
-import {
-  WorkyMessageComponent,
-  WorkyMessageComponentSchema,
-} from './schemas/worky-message-component.schema';
-import {
-  WorkyPlanStepComponent,
-  WorkyPlanStepComponentSchema,
-} from './schemas/worky-plan-step-component.schema';
-import {
-  WorkyPlanStepArtifact,
-  WorkyPlanStepArtifactSchema,
-} from './schemas/worky-plan-step-artifact.schema';
 import workyConfig from '../../config/worky.config';
 import workyOrchestratorConfig from '../../config/worky-orchestrator.config';
 import workyOrchestratorSecurityConfig from '../../config/grpc-security-worky-orchestrator.config';
@@ -172,32 +78,6 @@ import { ConnectorModule } from '../connector/connector.module';
     ModelsModule,
     ConnectorModule,
     ConnectedAppModule,
-    MongooseModule.forFeature([
-      { name: WorkyStream.name, schema: WorkyStreamSchema },
-      { name: WorkyTask.name, schema: WorkyTaskSchema },
-      { name: WorkyMessage.name, schema: WorkyMessageSchema },
-      { name: WorkyMailSubscription.name, schema: WorkyMailSubscriptionSchema },
-      { name: WorkyPlanVersion.name, schema: WorkyPlanVersionSchema },
-      { name: WorkyPlanDelta.name, schema: WorkyPlanDeltaSchema },
-      { name: WorkyInteraction.name, schema: WorkyInteractionSchema },
-      { name: WorkyEphemeralWorker.name, schema: WorkyEphemeralWorkerSchema },
-      { name: WorkyTaskResult.name, schema: WorkyTaskResultSchema },
-      { name: WorkyCostEvent.name, schema: WorkyCostEventSchema },
-      { name: WorkyTrace.name, schema: WorkyTraceSchema },
-      { name: WorkyBudgetReservation.name, schema: WorkyBudgetReservationSchema },
-      { name: WorkyMailEventLedger.name, schema: WorkyMailEventLedgerSchema },
-      { name: WorkyGovernancePolicy.name, schema: WorkyGovernancePolicySchema },
-      { name: WorkyScheduledEvent.name, schema: WorkyScheduledEventSchema },
-      { name: WorkyExecutionReport.name, schema: WorkyExecutionReportSchema },
-      { name: WorkyAuditEvent.name, schema: WorkyAuditEventSchema },
-      { name: WorkyMemoryProposal.name, schema: WorkyMemoryProposalSchema },
-      { name: WorkyMemoryEntry.name, schema: WorkyMemoryEntrySchema },
-      { name: WorkyElectricCursor.name, schema: WorkyElectricCursorSchema },
-      { name: WorkyPlanProjection.name, schema: WorkyPlanProjectionSchema },
-      { name: WorkyMessageComponent.name, schema: WorkyMessageComponentSchema },
-      { name: WorkyPlanStepComponent.name, schema: WorkyPlanStepComponentSchema },
-      { name: WorkyPlanStepArtifact.name, schema: WorkyPlanStepArtifactSchema },
-    ]),
   ],
   controllers: [
     WorkyStreamController,
@@ -215,6 +95,7 @@ import { ConnectorModule } from '../connector/connector.module';
     WorkyTraceController,
   ],
   providers: [
+    ...WORKY_REPOSITORIES,
     WorkyStreamService,
     WorkyElectricConsumerService,
     WorkyEventService,

@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import axios from 'axios';
 import { AgentRepository } from '@modules/agent/repositories/agent.repository';
 import { SEMANTIC_EXTRACTION_AGENT_NAME } from '@modules/agent/constants/semantic-extraction.constants';
 import { ServiceUnavailableException } from '@modules/exceptions';
@@ -97,13 +96,25 @@ export class SemanticAttributeExtractionService {
       );
     }
     try {
-      const { data } = await axios.post<AttributeExtractionResult>(
-        `${adkUrl}/semantic-model/attributes/extract`,
-        { ...request, model: bound.model },
+      const res = await fetch(`${adkUrl}/semantic-model/attributes/extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
+        body: JSON.stringify({ ...request, model: bound.model }),
         // Bounded below the runtime's 300s budget so a stalled ADK cannot pin
         // backend sockets: the runtime always receives a definite failure.
-        { headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey }, timeout: ADK_TIMEOUT_MS },
-      );
+        signal: AbortSignal.timeout(ADK_TIMEOUT_MS),
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        let parsed: unknown = body;
+        try { parsed = JSON.parse(body) as unknown; } catch { /* non-JSON error body */ }
+        const detail = typeof parsed === 'object' ? JSON.stringify(parsed) : String(parsed);
+        throw new ServiceUnavailableException(
+          ErrorCode.SERVICE_UNAVAILABLE,
+          `Attribute extraction failed (HTTP ${res.status}): ${detail}`,
+        );
+      }
+      const data = await res.json() as AttributeExtractionResult;
       if (data?.extractorVersion !== bound.contractVersion) {
         throw new ServiceUnavailableException(
           ErrorCode.SERVICE_UNAVAILABLE,
@@ -113,15 +124,10 @@ export class SemanticAttributeExtractionService {
       return data;
     } catch (error) {
       if (error instanceof ServiceUnavailableException) throw error;
-      const status = axios.isAxiosError(error) ? error.response?.status : undefined;
-      const detail = axios.isAxiosError(error)
-        ? (typeof error.response?.data === 'object'
-          ? JSON.stringify(error.response?.data)
-          : String(error.response?.data ?? error.message))
-        : error instanceof Error ? error.message : String(error);
+      const detail = error instanceof Error ? error.message : String(error);
       throw new ServiceUnavailableException(
         ErrorCode.SERVICE_UNAVAILABLE,
-        `Attribute extraction failed${status ? ` (HTTP ${status})` : ''}: ${detail}`,
+        `Attribute extraction failed: ${detail}`,
       );
     }
   }

@@ -1,6 +1,6 @@
 import { PlaybookFlowReplayPromptService } from './playbook-flow-replay-prompt.service';
 import type { ResolvedReplayArtifacts } from '../interfaces/playbook-flow-replay-artifact.interface';
-import { FlowReplayOutputContractType } from '../schemas/playbook-flow-validated-replay.schema';
+import { FlowReplayOutputContractType } from '../models/playbook-flow-validated-replay.model';
 
 function makeArtifacts(overrides: Partial<ResolvedReplayArtifacts> = {}): ResolvedReplayArtifacts {
   return {

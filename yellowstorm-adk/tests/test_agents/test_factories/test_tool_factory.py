@@ -14,9 +14,9 @@ def tool_factory():
 
 
 class TestToolFactory:
-  @patch("src.smart_rag.agents.factories.tool_factory.SearchToolkit")
-  @patch("src.smart_rag.agents.factories.tool_factory.construct_json")
-  @patch("src.smart_rag.agents.factories.tool_factory.generate_brain_tree_schema")
+  @patch("src.smart_rag.agents.factories.base_factory.SearchToolkit")
+  @patch("src.smart_rag.agents.factories.base_factory.construct_json")
+  @patch("src.smart_rag.agents.factories.base_factory.generate_brain_tree_schema")
   def test_create_tools_for_agent_with_search(
       self, mock_brain_schema, mock_construct_json, mock_toolkit_cls, tool_factory
   ):
@@ -46,7 +46,7 @@ class TestToolFactory:
     mock_construct_json.assert_called_once()
     mock_toolkit_cls.assert_called_once()
 
-  @patch("src.smart_rag.agents.factories.tool_factory.SearchToolkit")
+  @patch("src.smart_rag.agents.factories.base_factory.SearchToolkit")
   def test_create_tools_for_agent_standalone_web_search(
       self, mock_toolkit_cls, tool_factory
   ):
@@ -110,8 +110,8 @@ class TestToolFactory:
     assert len(tools) == 1
     assert tools[0].__name__ == "save_file_to_workspace"
 
-  @patch("src.smart_rag.agents.factories.tool_factory.SearchToolkit")
-  @patch("src.smart_rag.agents.factories.tool_factory.in_memory_construct_json")
+  @patch("src.smart_rag.agents.factories.base_factory.SearchToolkit")
+  @patch("src.smart_rag.agents.factories.base_factory.in_memory_construct_json")
   def test_create_in_memory_tools_success(
       self, mock_in_memory_construct, mock_toolkit_cls, tool_factory
   ):
@@ -140,7 +140,7 @@ class TestToolFactory:
     mock_in_memory_construct.assert_called_once()
     mock_toolkit.set_in_memory_documents.assert_called_once()
 
-  @patch("src.smart_rag.agents.factories.tool_factory.in_memory_construct_json")
+  @patch("src.smart_rag.agents.factories.base_factory.in_memory_construct_json")
   def test_create_in_memory_tools_no_schema_returns_empty(
       self, mock_in_memory_construct, tool_factory
   ):
@@ -157,7 +157,7 @@ class TestToolFactory:
     assert tools == []
     assert toolkit is None
 
-  @patch("src.smart_rag.agents.factories.tool_factory.in_memory_construct_json")
+  @patch("src.smart_rag.agents.factories.base_factory.in_memory_construct_json")
   def test_create_in_memory_tools_handles_exception(
       self, mock_in_memory_construct, tool_factory
   ):

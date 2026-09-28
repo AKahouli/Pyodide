@@ -55,8 +55,6 @@ export class RotationConflictError extends Error {
   }
 }
 
-export const SESSION_STORE = Symbol('SESSION_STORE');
-
 export interface SessionStore {
   create(init: NewSession): Promise<SessionRecord>;
   findById(id: string): Promise<SessionRecord | null>;

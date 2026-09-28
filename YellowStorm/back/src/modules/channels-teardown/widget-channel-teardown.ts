@@ -1,7 +1,7 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { LoggerService } from '@modules/logger';
-import { WIDGET_TOKEN_STORE, type WidgetTokenStore } from '@modules/widget-chat/persistence/widget.store';
 import type { ChannelTeardown } from './channels-teardown.token';
+import { PgWidgetTokenStore } from '../widget-chat/persistence/pg-widget.store';
 
 /**
  * Widget agent teardown (plan 4.6): deactivates the agent's tokens. Rows are
@@ -12,8 +12,7 @@ import type { ChannelTeardown } from './channels-teardown.token';
 @Injectable()
 export class WidgetChannelTeardown implements ChannelTeardown {
   constructor(
-    @Inject(WIDGET_TOKEN_STORE)
-    private readonly widgetTokenStore: WidgetTokenStore,
+    private readonly widgetTokenStore: PgWidgetTokenStore,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(WidgetChannelTeardown.name);

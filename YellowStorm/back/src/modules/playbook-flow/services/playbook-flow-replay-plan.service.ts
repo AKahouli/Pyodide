@@ -6,7 +6,7 @@ import type {
   ReplayPlanToolStep,
   ReplayPlanningSummary,
 } from '../interfaces/playbook-flow-replay-plan.interface';
-import type { FlowReplayToolCall } from '../schemas/playbook-flow-validated-replay.schema';
+import type { FlowReplayToolCall } from '../models/playbook-flow-validated-replay.model';
 import type { ReplaySemanticChecklistItem, ReplayToolTraceTemplateItem } from '../interfaces/playbook-flow-replay-template.interface';
 
 @Injectable()

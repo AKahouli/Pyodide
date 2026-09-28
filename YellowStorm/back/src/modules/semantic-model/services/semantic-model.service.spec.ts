@@ -1,19 +1,20 @@
+import { NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { SemanticModelService } from './semantic-model.service';
 
 describe('SemanticModelService archived access', () => {
   const accessible = {
     id: 'model-id',
-    role: 'owner', indexStatus: 'indexed', indexError: null,
+    role: 'owner',
     status: 'archived',
   };
   const repository = { findAccessible: jest.fn() };
-  const ageGraph = { graphNameForModel: jest.fn((id: string) => `sem_${id}`) };
-  const service = new SemanticModelService({} as never, repository as never, {} as never, {} as never, ageGraph as never, {} as never);
+  const runtime = { getPublishedBinding: jest.fn() };
+  const service = new SemanticModelService({} as never, repository as never, {} as never, {} as never, {} as never, runtime as never);
 
   beforeEach(() => {
     repository.findAccessible.mockReset();
-    ageGraph.graphNameForModel.mockClear();
+    runtime.getPublishedBinding.mockReset();
   });
 
   it('allows archived models to be inspected', async () => {
@@ -28,10 +29,19 @@ describe('SemanticModelService archived access', () => {
     });
   });
 
-  it.each(['draft', 'published'])('resolves the search schema for an accessible %s model', async (status) => {
-    repository.findAccessible.mockResolvedValue({ ...accessible, status });
-    await expect(service.resolveSearchSchema('user-id', 'model-id')).resolves.toBe('sem_model-id');
-    expect(ageGraph.graphNameForModel).toHaveBeenCalledWith('model-id');
+  it('resolves the search schema to the published runtime graph', async () => {
+    repository.findAccessible.mockResolvedValue({ ...accessible, status: 'published' });
+    runtime.getPublishedBinding.mockResolvedValue({ projectionRef: 'age:v1:pop_dr_1' });
+    await expect(service.resolveSearchSchema('user-id', 'model-id')).resolves.toBe('pop_dr_1');
+    expect(runtime.getPublishedBinding).toHaveBeenCalledWith('model-id', 'user-id');
+  });
+
+  it('keeps unpublished models out of chat', async () => {
+    repository.findAccessible.mockResolvedValue({ ...accessible, status: 'draft' });
+    runtime.getPublishedBinding.mockRejectedValue(new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND));
+    await expect(service.resolveSearchSchema('user-id', 'model-id')).rejects.toMatchObject({
+      code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
+    });
   });
 
   it('rejects archived models for semantic search', async () => {
@@ -43,14 +53,12 @@ describe('SemanticModelService archived access', () => {
 });
 
 describe('SemanticModelService clone', () => {
-  it('creates an independent graph with remapped relations, bindings, and AGE projection', async () => {
+  it('creates an independent graph with remapped relations and bindings', async () => {
     const repository = { findAccessible: jest.fn(), create: jest.fn() };
     const database = { query: jest.fn(), transaction: jest.fn() };
     const graphRepository = { getGraph: jest.fn(), apply: jest.fn() };
-    const ageGraph = { dropGraph: jest.fn(), buildGraph: jest.fn() };
     const source = {
       id: 'source-model', role: 'owner', status: 'draft', description: 'Source',
-      executionOwner: 'runtime',
       currentDraftVersionId: 'source-version', currentPublishedVersionId: null,
     };
     const sourceGraph = {
@@ -67,9 +75,8 @@ describe('SemanticModelService clone', () => {
       recordRelations: [{ id: 'record-relation', relationTypeId: 'relation-ab', sourceRecordId: 'record-a', targetRecordId: 'record-b', values: {} }],
     };
     repository.findAccessible.mockResolvedValue(source);
-    repository.create.mockResolvedValue({ id: 'clone-model', currentDraftVersionId: 'clone-version', description: 'Source', status: 'draft', role: 'owner', executionOwner: 'legacy' });
+    repository.create.mockResolvedValue({ id: 'clone-model', currentDraftVersionId: 'clone-version', description: 'Source', status: 'draft', role: 'owner' });
     graphRepository.getGraph.mockResolvedValue(sourceGraph);
-    ageGraph.buildGraph.mockResolvedValue({ vertexCount: 2, edgeCount: 1, failedVertexCount: 0, failedEdgeCount: 0 });
     database.query
       .mockResolvedValueOnce({ rows: [{ revision: 4 }] })
       .mockResolvedValueOnce({ rows: [{ workspaceId: 'workspace-1' }] })
@@ -78,18 +85,14 @@ describe('SemanticModelService clone', () => {
     const cloneClient = { query: jest.fn().mockResolvedValue({ rows: [] }) };
     database.transaction.mockImplementation(async (work: (client: unknown) => Promise<unknown>) => work(cloneClient));
     const realtimeSignals = { enqueue: jest.fn() };
-    const service = new SemanticModelService(database as never, repository as never, graphRepository as never, {} as never, ageGraph as never, realtimeSignals as never);
+    const service = new SemanticModelService(database as never, repository as never, graphRepository as never, {} as never, realtimeSignals as never, {} as never);
 
     const clone = await service.clone('user-id', source.id, 'Source copy');
 
     expect(clone.id).toBe('clone-model');
-    expect(clone.executionOwner).toBe('legacy');
-    expect(cloneClient.query).not.toHaveBeenCalledWith(expect.stringContaining("execution_owner='runtime'"), expect.anything());
     expect(repository.create).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ ownerUserId: 'user-id', name: 'Source copy' }));
     expect(graphRepository.apply).toHaveBeenCalledTimes(6);
     expect(graphRepository.apply.mock.calls[2][3].entity.sourceNodeTypeId).not.toBe('node-a');
     expect(graphRepository.apply.mock.calls[5][3].entity.sourceRecordId).not.toBe('record-a');
-    expect(ageGraph.buildGraph).toHaveBeenCalledWith(expect.objectContaining({ modelId: 'clone-model', versionId: 'clone-version' }), 'clone-model');
-    expect(ageGraph.buildGraph.mock.calls[0][0].recordRelations[0].id).toBe(graphRepository.apply.mock.calls[5][3].entity.id);
   });
 });

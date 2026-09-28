@@ -4,5 +4,4 @@ export const playbookFeatures = {
   querySseEnabled: import.meta.env.VITE_PLAYBOOK_QUERY_SSE_ENABLED === 'true',
   querySseMirrorZustandEnabled: import.meta.env.VITE_PLAYBOOK_QUERY_SSE_MIRROR_ZUSTAND === 'true',
   xstateExecutionEnabled: import.meta.env.VITE_PLAYBOOK_XSTATE_EXECUTION_ENABLED === 'true',
-  xstateAutosaveEnabled: import.meta.env.VITE_PLAYBOOK_XSTATE_AUTOSAVE_ENABLED === 'true',
 } as const;

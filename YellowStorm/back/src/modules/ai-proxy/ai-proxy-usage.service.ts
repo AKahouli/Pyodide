@@ -1,4 +1,4 @@
-import { Injectable, Optional, Inject } from '@nestjs/common';
+import { Injectable,  Optional} from '@nestjs/common';
 import { Request } from 'express';
 import { LoggerService } from '../logger';
 import { ModelsService } from '../models/models.service';
@@ -6,10 +6,7 @@ import { UsageService, UsageType } from '../usage';
 import { AppBuilderAiUsageService } from '../app-builder-ai/services/app-builder-ai-usage.service';
 import { AppDataCatalogService } from '../app-data/services/app-data-catalog.service';
 import { AppDataClientService } from '../app-data/services/app-data-client.service';
-import {
-  CONVERSATION_V2_SESSION_STORE,
-  type ConversationV2SessionStore,
-} from '../conversation-v2/persistence/conversation-v2-session.store';
+import { PgConversationV2SessionStore } from '../conversation-v2/persistence/postgres/pg-conversation-v2-session.store';
 import { AI_PROXY_CHAT_ENDPOINT } from './constants/ai-proxy.constants';
 import {
   AiProxyModelPricing,
@@ -47,8 +44,7 @@ export class AiProxyUsageService {
     private readonly logger: LoggerService,
     @Optional() private readonly appBuilderAiUsage?: AppBuilderAiUsageService,
     @Optional()
-    @Inject(CONVERSATION_V2_SESSION_STORE)
-    private readonly sessions?: ConversationV2SessionStore,
+        private readonly sessions?: PgConversationV2SessionStore,
     @Optional() private readonly appDataCatalog?: AppDataCatalogService,
     @Optional() private readonly appDataClient?: AppDataClientService,
   ) {}

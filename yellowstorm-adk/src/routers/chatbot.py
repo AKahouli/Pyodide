@@ -1,12 +1,10 @@
 """Route definitions for chatbot interactions."""
 
 import asyncio
-import json
 import uuid
-from typing import Annotated, Dict, Any, List, Optional
+from typing import Annotated
 from fastapi import APIRouter, status, HTTPException, Depends
 from starlette.responses import StreamingResponse
-from typing import AsyncGenerator
 from src.config.settings import get_settings
 from src.logger.logging import get_logger
 from src.middleware.context_binding import bind_from_request_model
@@ -33,7 +31,6 @@ from src.schema.chatbot_schema import (
     ConfigAgentsWithSkillsRequest,
     ClearAgentMemoryRequest,
     ChatCompletionRequest,
-    AgentSuggestion,
 )
 from src.smart_rag.core import ChatRAGService, AgentTeamService, SkillsService
 from src.smart_rag.core.single_agent_service import SingleAgentService
@@ -49,32 +46,11 @@ from src.dependencies import (
     get_skills_service,
     get_memory_service,
 )
+from src.routers.sse_stream import event_stream
 
 app_settings = get_settings()
 logger = get_logger("api.routers.chatbot")
 chatbot_router = APIRouter(prefix="/chatbots", tags=["chatbots"])
-
-
-async def _event_stream(
-    q: asyncio.Queue[dict], bg_task: asyncio.Task, endpoint_name: str, user_id: str
-) -> AsyncGenerator[str, None]:
-    """Yield events from the queue for streaming responses."""
-
-    first_chunk = True
-    try:
-        while True:
-            chunk = await q.get()
-            if chunk is None:
-                logger.info(f"Stream finished for {endpoint_name}")
-                break
-            if first_chunk:
-                logger.info(f"First chunk emitted for {endpoint_name}")
-                first_chunk = False
-            yield f"data: {json.dumps(chunk)}\n\n"
-    except asyncio.CancelledError:
-        logger.warning("Client disconnected, cancelling background task")
-        bg_task.cancel()
-        raise
 
 
 @chatbot_router.post(
@@ -153,7 +129,7 @@ async def chat_with_adk_endpoint(
     try:
         bg = asyncio.create_task(service.process_chat_request(user_request, queue))
         return StreamingResponse(
-            _event_stream(queue, bg, "chatWithADK", user_request.user_id),
+            event_stream(queue, bg, "chatWithADK"),
             media_type="text/event-stream",
         )
     except Exception as e:
@@ -209,7 +185,7 @@ async def run_agent_team_endpoint(
     try:
         bg = asyncio.create_task(service.process_team_request(user_request, queue))
         return StreamingResponse(
-            _event_stream(queue, bg, "run_agent_team", user_request.user_id),
+            event_stream(queue, bg, "run_agent_team"),
             media_type="text/event-stream",
         )
     except Exception as exc:
@@ -261,7 +237,7 @@ async def run_single_agent_endpoint(
     try:
         bg = asyncio.create_task(service.execute_single_agent(user_request, queue))
         return StreamingResponse(
-            _event_stream(queue, bg, "run_single_agent", user_request.user_id),
+            event_stream(queue, bg, "run_single_agent"),
             media_type="text/event-stream",
         )
     except Exception as exc:

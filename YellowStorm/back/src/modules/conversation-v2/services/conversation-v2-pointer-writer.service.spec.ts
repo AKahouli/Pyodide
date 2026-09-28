@@ -1,10 +1,10 @@
 import { Test } from '@nestjs/testing';
 import { ConversationV2PointerWriterService } from './conversation-v2-pointer-writer.service';
 import {
-  CONVERSATION_V2_SESSION_STORE,
-  type ConversationV2SessionStore,
+  type ConversationV2SessionStore, 
 } from '../persistence/conversation-v2-session.store';
 import type { ConversationV2Event } from '../types/conversation-v2.types';
+import { PgConversationV2SessionStore } from '../persistence/postgres/pg-conversation-v2-session.store';
 
 describe('ConversationV2PointerWriterService', () => {
   let svc: ConversationV2PointerWriterService;
@@ -17,7 +17,7 @@ describe('ConversationV2PointerWriterService', () => {
       providers: [
         ConversationV2PointerWriterService,
         {
-          provide: CONVERSATION_V2_SESSION_STORE,
+          provide: PgConversationV2SessionStore,
           useValue: { applyPointerPatch },
         },
       ],

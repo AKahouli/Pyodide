@@ -1,8 +1,9 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { isObjectId } from '@common/postgres';
 import { ConflictException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
-import { TOOL_CATEGORY_STORE, type ToolCategoryRow, type ToolCategoryStore } from './persistence/tool.store';
+import { type ToolCategoryRow } from './persistence/tool.store';
+import { PgToolCategoryStore } from './persistence/pg-tool.store';
 import { CreateToolCategoryDto } from './dto/create-tool-category.dto';
 import { UpdateToolCategoryDto } from './dto/update-tool-category.dto';
 import { IToolCategoryResponse } from './interfaces/tool.interface';
@@ -10,8 +11,7 @@ import { IToolCategoryResponse } from './interfaces/tool.interface';
 @Injectable()
 export class ToolCategoryService {
   constructor(
-    @Inject(TOOL_CATEGORY_STORE)
-    private readonly categoryStore: ToolCategoryStore,
+    private readonly categoryStore: PgToolCategoryStore,
   ) {}
 
   async create(dto: CreateToolCategoryDto): Promise<IToolCategoryResponse> {

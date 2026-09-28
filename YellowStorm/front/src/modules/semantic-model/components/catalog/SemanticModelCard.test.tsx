@@ -32,7 +32,6 @@ const model = {
   status: 'draft',
   role: 'owner' as const,
   revision: 3,
-  indexStatus: 'indexed',
   workspaceCount: 1,
   nodeCount: 0,
   relationCount: 0,

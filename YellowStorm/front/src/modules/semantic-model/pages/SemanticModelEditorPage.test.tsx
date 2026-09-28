@@ -8,7 +8,6 @@ import { SemanticModelEditorPage } from "./SemanticModelEditorPage";
 
 const apiMocks = vi.hoisted(() => ({
   applyOperations: vi.fn(),
-  rebuildAgeGraph: vi.fn(),
   connectWorkspace: vi.fn(),
   getPopulationJob: vi.fn(),
 }));
@@ -16,7 +15,6 @@ const apiMocks = vi.hoisted(() => ({
 vi.mock("../api", () => ({
   semanticModelApi: {
     applyOperations: apiMocks.applyOperations,
-    rebuildAgeGraph: apiMocks.rebuildAgeGraph,
     connectWorkspace: apiMocks.connectWorkspace,
     getPopulationJob: apiMocks.getPopulationJob,
   },
@@ -32,6 +30,8 @@ const graph: SemanticGraph = {
   recordRelations: [],
 };
 
+const searchParams = new URLSearchParams();
+const setSearchParams = vi.fn();
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
   return {
@@ -40,10 +40,13 @@ vi.mock("react-router-dom", async () => {
     useBlocker: () => ({ state: "unblocked" }),
     useNavigate: () => vi.fn(),
     useParams: () => ({ modelId: "model-1" }),
+    useSearchParams: () => [searchParams, setSearchParams],
   };
 });
 
 vi.mock("../query/hooks", () => ({
+  useSemanticDataPreview: () => ({ data: undefined, isLoading: false }),
+  useMappingHealth: () => ({ data: undefined, isLoading: false }),
   useSemanticModel: () => ({
     data: {
       id: "model-1",
@@ -58,7 +61,13 @@ vi.mock("../query/hooks", () => ({
   }),
   useSemanticGraph: () => ({ data: graph, isLoading: false, isError: false }),
   useSemanticReadiness: () => ({ data: { status: 'not_configured', score: 0, completeAreas: 0, totalAreas: 5, areas: [] }, isLoading: false, isError: false }),
+  useReviewQueue: () => ({ data: { count: 0, items: [] }, isLoading: false, isError: false }),
   useSourceMappings: () => ({ data: [], isLoading: false, isError: false }),
+  useIdentityRules: () => ({ data: [], isLoading: false }),
+  useCanvasPositions: () => ({ data: [], isLoading: false }),
+  useSemanticVersions: () => ({ data: [], isLoading: false }),
+  useVersionComparison: () => ({ data: undefined, isLoading: false }),
+  usePopulationFreshness: () => ({ data: undefined, isLoading: false }),
   useSemanticReviewItems: () => ({ data: [], isLoading: false, isError: false }),
 }));
 
@@ -76,21 +85,17 @@ vi.mock("../hooks/use-knowledge-linking", () => ({
   }),
 }));
 
-vi.mock("../hooks/use-semantic-build-job", () => ({
-  isBuildActive: () => false,
-  useSemanticBuildJob: () => ({ data: null, start: vi.fn() }),
-  useStartSemanticBuild: () => ({ mutateAsync: vi.fn(), isPending: false }),
-}));
-
 vi.mock("../components/editor/EditorDialogs", () => ({
   AddConceptDialog: () => null,
   AddRecordDialog: () => null,
   AddRelationDialog: () => null,
 }));
 vi.mock("../components/editor/SemanticModelCanvas", () => ({
-  SemanticModelCanvas: ({ onMapStructuredDrop }: { onMapStructuredDrop?: (resource: Record<string, unknown>, nodeId: string) => void }) => <div>
+  SemanticModelCanvas: ({ onMapStructuredDrop, onPaneDrop, onOpenSource }: { onMapStructuredDrop?: (resource: Record<string, unknown>, nodeId: string) => void; onPaneDrop?: (resource: Record<string, unknown>) => void; onOpenSource?: (source: Record<string, unknown>) => void }) => <div>
     semantic-model-canvas
     <button onClick={() => onMapStructuredDrop?.({ kind: 'document', workspaceId: 'workspace-1', documentId: 'document-1', name: 'customers.xlsx', structured: true, mappable: true }, 'customer')}>map-source</button>
+    <button onClick={() => onPaneDrop?.({ kind: 'document', workspaceId: 'workspace-1', documentId: 'document-2', name: 'suppliers.xlsx', structured: true, mappable: true })}>drop-on-pane</button>
+    <button onClick={() => onOpenSource?.({ id: 'typed:customer', kind: 'typed', mappings: [] })}>open-typed</button>
   </div>,
 }));
 vi.mock("../components/editor/SemanticModelInspector", () => ({
@@ -125,22 +130,14 @@ describe("SemanticModelEditorPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     apiMocks.applyOperations.mockResolvedValue({ revision: 1 });
-    apiMocks.rebuildAgeGraph.mockResolvedValue({
-      vertexCount: 0,
-      edgeCount: 0,
-      failedVertexCount: 0,
-      failedEdgeCount: 0,
-      graphViewerWarning: null,
-    });
     apiMocks.connectWorkspace.mockResolvedValue(undefined);
     apiMocks.getPopulationJob.mockResolvedValue({ jobId: 'job-1', state: 'completed' });
     useSemanticModelEditorStore.getState().reset();
   });
 
-  it("does not block autosave on a synchronous AGE rebuild", async () => {
+  it("autosaves graph operations", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
-    fireEvent.click(await screen.findByRole('button', { name: 'workspaceUi.diagram' }));
     await screen.findByText("semantic-model-canvas");
 
     act(() => {
@@ -165,7 +162,6 @@ describe("SemanticModelEditorPage", () => {
     });
 
     await waitFor(() => expect(apiMocks.applyOperations).toHaveBeenCalled(), { timeout: 2_000 });
-    expect(apiMocks.rebuildAgeGraph).not.toHaveBeenCalled();
   });
 
   it("rehydrates cached graph data during Strict Mode effect replay", async () => {
@@ -178,25 +174,47 @@ describe("SemanticModelEditorPage", () => {
       </QueryClientProvider>,
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: 'workspaceUi.diagram' }));
     expect(await screen.findByText("semantic-model-canvas")).toBeInTheDocument();
     expect(screen.queryByText("editor.loading")).not.toBeInTheDocument();
   });
 
-  it("shows an empty model as not configured instead of ready", async () => {
+  it("opens on the canvas with a draft status and no percentage", async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
 
-    const review = await screen.findByRole('button', { name: /workspaceUi\.review/ });
-    expect(review).toHaveTextContent('—');
-    expect(screen.queryByText(/% ready/i)).not.toBeInTheDocument();
+    expect(await screen.findByText("semantic-model-canvas")).toBeInTheDocument();
+    expect(screen.getByText('designer.status.draft')).toBeInTheDocument();
+    expect(screen.getByText('designer.empty.title')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'designer.empty.start' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /reviewQueue.button/ })).not.toHaveTextContent('%');
+    expect(screen.queryByRole('navigation', { name: 'journey.title' })).not.toBeInTheDocument();
+  });
+
+  it('maps a file dropped on empty canvas without a concept chosen', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'drop-on-pane' }));
+
+    expect(await screen.findByText('suppliers.xlsx')).toBeInTheDocument();
+  });
+
+  it('opens the records for a typed-records source', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'open-typed' }));
+
+    expect(await screen.findByText('revision:none')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /designer.backToCanvas/ }));
+    expect(await screen.findByText('semantic-model-canvas')).toBeInTheDocument();
   });
 
   it('opens model health from the review action', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
 
-    fireEvent.click(await screen.findByRole('button', { name: /workspaceUi\.review/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /reviewQueue.button/ }));
 
     expect(await screen.findByText('trust.title')).toBeInTheDocument();
   });
@@ -205,7 +223,6 @@ describe("SemanticModelEditorPage", () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
     render(<QueryClientProvider client={queryClient}><SemanticModelEditorPage /></QueryClientProvider>);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'workspaceUi.diagram' }));
     fireEvent.click(await screen.findByRole('button', { name: 'map-source' }));
 
     await waitFor(() => expect(apiMocks.connectWorkspace).toHaveBeenCalledWith('model-1', 'workspace-1', false));

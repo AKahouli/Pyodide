@@ -1,6 +1,7 @@
 import { UsageService } from './usage.service';
 import type { PlanRecord } from './persistence/plan.store';
 import type { UsageStore, UsageWindowRecord } from './persistence/usage-store';
+import { PostgresUsageStore } from './persistence/postgres-usage-store';
 
 describe('UsageService PostgreSQL persistence', () => {
   const plan: PlanRecord = {
@@ -58,7 +59,7 @@ describe('UsageService PostgreSQL persistence', () => {
     warn: jest.fn(),
     log: jest.fn(),
   };
-  const service = new UsageService(planStore as never, usageStore, logger as never);
+  const service = new UsageService(planStore as never, usageStore as unknown as PostgresUsageStore, logger as never);
 
   beforeEach(() => jest.clearAllMocks());
 

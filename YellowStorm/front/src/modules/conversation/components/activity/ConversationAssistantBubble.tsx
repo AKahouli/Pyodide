@@ -17,6 +17,7 @@ import type { ChoiceComponentAction } from '@/components/ai-elements/choice/Choi
 import { useConversationUiStore } from '../../uiStore';
 import { ResizableActivityPane } from './ResizableActivityPane';
 import { statusIcon, ToolRow } from './ToolActivityDetails';
+import { ConversationUiTargets, collectUiTargets } from '@/modules/platform-copilot/UiTargetActions';
 
 interface NarrativeProps {
   conversationId: string;
@@ -36,6 +37,8 @@ interface NarrativeProps {
   /** Agent that produced this message; when set with `onOpenAgentEditor`, the header bot icon opens the agent editor. */
   agentId?: string | null;
   onOpenAgentEditor?: (agentId: string) => void;
+  /** Show the buttons the tools asked for ("Open Billing & Contract Management") under the answer. */
+  showUiTargets?: boolean;
 }
 
 /** Grace period between answer completion and the animated pane collapse. */
@@ -489,7 +492,8 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
     }
   });
   if (!activityNodes.length && props.showWorking) activityNodes.push(<div key='working' className='flex items-center gap-2 text-sm text-muted-foreground'><Loader2 className='size-4 animate-spin text-primary' />{t('stream.activity.usingTools')}</div>);
-  if (!activityNodes.length && !artifactNodes.length && !answerNodes.length) return null;
+  const uiTargets = props.showUiTargets ? collectUiTargets(source) : [];
+  if (!activityNodes.length && !artifactNodes.length && !answerNodes.length && !uiTargets.length) return null;
   const actorName = activityComponents.reduce<string>((name, component) => {
     if (component.type !== 'toolActivity') return name;
     const safeName = sanitizeActivityActorName((component.data as ToolActivityData).actorName);
@@ -606,6 +610,7 @@ export function ConversationAssistantBubble(props: Readonly<NarrativeProps>) {
       )}
       {artifactNodes.length > 0 && <div data-artifacts className={cn('space-y-2', activityNodes.length > 0 && 'mt-4 border-t pt-4')}>{artifactNodes}</div>}
       {answerNodes.length > 0 && <div data-answer-content className={cn('space-y-2', activityNodes.length > 0 && 'mt-4 border-t pt-4')}>{answerNodes}</div>}
+      {uiTargets.length > 0 && <div className={cn((activityNodes.length > 0 || answerNodes.length > 0) && 'mt-4')}><ConversationUiTargets targets={uiTargets} /></div>}
     </div>
   );
 }

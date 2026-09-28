@@ -1,8 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
-import {
-  USER_APP_CONNECTION_STORE,
-  type UserAppConnectionStore,
-} from '../persistence/connected-app.store';
+import { Injectable } from '@nestjs/common';
 import { ConnectionStatus } from '../connected-app.types';
 import { ConnectedAppDefinitionService } from './connected-app-definition.service';
 import { LoggerService } from '@modules/logger';
@@ -10,12 +6,12 @@ import {
   ConnectedAppWithStatus,
   UserConnectionResponse,
 } from '../interfaces/connected-app.interface';
+import { PgUserAppConnectionStore } from '../persistence/pg-connected-app.store';
 
 @Injectable()
 export class ConnectedAppUserService {
   constructor(
-    @Inject(USER_APP_CONNECTION_STORE)
-    private readonly connectionStore: UserAppConnectionStore,
+    private readonly connectionStore: PgUserAppConnectionStore,
     private readonly definitionService: ConnectedAppDefinitionService,
     private readonly logger: LoggerService,
   ) {

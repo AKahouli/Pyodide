@@ -189,6 +189,9 @@ def test_discovery_statuses_match_fixtures():
     assert unindexed["status"] == "indexing_required"
     assert any(w["code"] == "indexing_required" for w in unindexed["warnings"])
     assert unindexed["coverage"] == {"sampled": False, "completeProfileDone": False}
+    # A spreadsheet is read from the file itself: failed or missing indexing never blocks it.
+    for indexing in (None, "none", "pending", "failed"):
+        assert discover({**XLSX, "indexingStatus": indexing})["status"] == "ready"
 
 
 def test_discovery_terminal_statuses():

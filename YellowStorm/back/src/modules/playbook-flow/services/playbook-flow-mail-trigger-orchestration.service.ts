@@ -1,26 +1,21 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { Flow, FlowDocument } from '../schemas/playbook-flow.schema';
-import {
-  FlowMailEventLedger,
-  FlowMailEventLedgerDocument,
-} from '../schemas/playbook-flow-mail-event-ledger.schema';
-import { FlowMailTriggerConfig } from '../schemas/playbook-flow-trigger.schema';
 import {
   FlowMailTriggerEvaluationResultData,
   FlowNormalizedMailEventData,
   FlowMailTriggerFiltersData,
+  FlowMailTriggerParamsData,
 } from '../interfaces/playbook-flow-mail.interface';
 import { NotFoundException } from '@nestjs/common';
 import { PlaybookFlowMailEventIngestionService } from './playbook-flow-mail-event-ingestion.service';
 import { PlaybookFlowMailTriggerMatcherService } from './playbook-flow-mail-trigger-matcher.service';
+import { FlowRepository } from '../persistence/flow.repository';
+import { MailEventLedgerRepository } from '../persistence/mail-event-ledger.repository';
 
 @Injectable()
 export class PlaybookFlowMailTriggerOrchestrationService {
   constructor(
-    @InjectModel(Flow.name) private readonly flowModel: Model<FlowDocument>,
-    @InjectModel(FlowMailEventLedger.name) private readonly ledgerModel: Model<FlowMailEventLedgerDocument>,
+    private readonly flows: FlowRepository,
+    private readonly ledger: MailEventLedgerRepository,
     private readonly ingestionService: PlaybookFlowMailEventIngestionService,
     private readonly matcherService: PlaybookFlowMailTriggerMatcherService,
   ) {}
@@ -29,7 +24,7 @@ export class PlaybookFlowMailTriggerOrchestrationService {
     flowId: string,
     event: FlowNormalizedMailEventData,
   ): Promise<FlowMailTriggerEvaluationResultData> {
-    const flow = await this.flowModel.findById(flowId).select('triggerConfig').lean().exec();
+    const flow = await this.flows.findById(flowId);
     if (!flow) throw new NotFoundException('Flow not found');
 
     const ingestion = await this.ingestionService.ingest(flowId, event);
@@ -42,18 +37,13 @@ export class PlaybookFlowMailTriggerOrchestrationService {
       };
     }
 
-    const mailConfig = flow.triggerConfig?.params as unknown as FlowMailTriggerConfig | undefined;
+    const mailConfig = flow.triggerConfig?.params as FlowMailTriggerParamsData | undefined;
     const filters = this.extractFilters(mailConfig);
 
     const match = this.matcherService.match(filters, event);
     const finalStatus = match.matched ? 'matched' : 'ignored';
 
-    await this.ledgerModel
-      .updateOne(
-        { id: ingestion.entry.id },
-        { $set: { status: finalStatus, error: match.matched ? null : match.reasons.join(',') } },
-      )
-      .exec();
+    await this.ledger.setStatus(ingestion.entry.id, finalStatus, match.matched ? null : match.reasons.join(','));
 
     return {
       ingestion: {
@@ -65,7 +55,7 @@ export class PlaybookFlowMailTriggerOrchestrationService {
     };
   }
 
-  private extractFilters(config: FlowMailTriggerConfig | undefined): FlowMailTriggerFiltersData {
+  private extractFilters(config: FlowMailTriggerParamsData | undefined): FlowMailTriggerFiltersData {
     if (!config?.filters) {
       return { from: [], subjectContains: [], bodyContains: [], hasAttachments: null };
     }

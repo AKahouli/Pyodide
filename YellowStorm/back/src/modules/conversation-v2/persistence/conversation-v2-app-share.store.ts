@@ -1,4 +1,3 @@
-export const CONVERSATION_V2_APP_SHARE_STORE = Symbol('CONVERSATION_V2_APP_SHARE_STORE');
 
 export interface ConversationV2AppShareRecord {
   id: string;

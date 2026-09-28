@@ -1,15 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { NotFoundException } from '@modules/exceptions';
-import { FlowExecution, FlowExecutionDocument } from '../schemas/playbook-flow-execution.schema';
+import { ExecutionRepository, type ExecutionRecord } from '../persistence/execution.repository';
 
 /** Reads per-execution HITL audit and pending interrupt state for run-mode UI and replay consumers. */
 @Injectable()
 export class PlaybookFlowHitlContextService {
   constructor(
-    @InjectModel(FlowExecution.name) private readonly executionModel: Model<FlowExecutionDocument>,
+    private readonly executionRepository: ExecutionRepository,
   ) {}
 
   async listExecutionEvents(executionId: string, ownerId: string): Promise<unknown[]> {
@@ -29,8 +27,8 @@ export class PlaybookFlowHitlContextService {
     return { flowId: execution.flowId, blockerId: pending.blockerRuleId };
   }
 
-  private async findOwnedExecution(executionId: string, ownerId: string): Promise<FlowExecutionDocument> {
-    const execution = await this.executionModel.findOne({ _id: executionId, ownerId });
+  private async findOwnedExecution(executionId: string, ownerId: string): Promise<ExecutionRecord> {
+    const execution = await this.executionRepository.findOwned(executionId, ownerId);
     if (!execution) throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND, 'Execution not found');
     return execution;
   }

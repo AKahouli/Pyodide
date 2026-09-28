@@ -14,6 +14,7 @@ import { ConversationAssistantBubble } from './activity/ConversationAssistantBub
 import { OutlineAnchorScroller } from './outline/OutlineAnchorScroller';
 import { MessageAttachments } from './MessageAttachments';
 import { MessageReliabilityCard } from './MessageReliabilityCard';
+import { TopLoadTrigger, getScrollContainer } from './TopLoadTrigger';
 import { rerunReliabilityEvaluation } from '../api';
 import { showError } from '@/lib/notifications';
 import { CreateEditAgentDialog, useAgentStore, type Agent, type UserAgentFormValues } from '@/modules/agent';
@@ -23,53 +24,6 @@ import { getAnswerComponents, getAnswerEvaluation, getDefaultAnswerVersion } fro
 import { useModuleTranslation } from '@/modules/localization';
 import type { ChoiceInteractionMetadata, DisplayedAnswerVersion, Message } from '../types';
 import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
-
-/** Find the scrollable ancestor element */
-function getScrollContainer(element: HTMLElement | null): HTMLElement | null {
-  let current = element?.parentElement;
-  while (current) {
-    const { overflowY } = getComputedStyle(current);
-    if (overflowY === 'auto' || overflowY === 'scroll') {
-      return current;
-    }
-    current = current.parentElement;
-  }
-  return null;
-}
-
-/** Invisible trigger at top - loads more when scrolled into view */
-function TopLoadTrigger({ onTrigger, disabled }: Readonly<{ onTrigger: () => void; disabled: boolean }>) {
-  const ref = useRef<HTMLDivElement>(null);
-  const initializedRef = useRef(false);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || disabled) return;
-
-    // Delay to prevent firing immediately on initial render
-    const timeoutId = setTimeout(() => {
-      initializedRef.current = true;
-    }, 100);
-
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (initializedRef.current && entry.isIntersecting) {
-          onTrigger();
-        }
-      },
-      { rootMargin: '200px 0px 0px 0px' },
-    );
-
-    observer.observe(el);
-    return () => {
-      clearTimeout(timeoutId);
-      observer.disconnect();
-      initializedRef.current = false;
-    };
-  }, [onTrigger, disabled]);
-
-  return <div ref={ref} className='h-px' aria-hidden='true' />;
-}
 
 const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isLastAiMessage, isLastUserMessage, conversationId, choiceInteractions, latencyInstrumentationEnabled, justCompleted }: { message: Message; isLastAiMessage: boolean; isLastUserMessage: boolean; conversationId: string; choiceInteractions: Map<string, ChoiceInteractionMetadata>; latencyInstrumentationEnabled?: boolean; justCompleted?: boolean }) {
   const { t } = useModuleTranslation('conversation');
@@ -202,7 +156,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ message, isL
             ? <EditableUserMessage message={message} conversationId={conversationId} />
           : isUser
             ? <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} footerActions={<UserMessageActions message={message} isLastUserMessage={isLastUserMessage} className='mt-0' />} />
-            : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} answerComponents={activeComponents} isStreaming={false} justCompleted={justCompleted} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} agentId={message.agentIds?.[0] ?? null} onOpenAgentEditor={(agentId) => void handleOpenAgentEditor(agentId)} />}
+            : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} answerComponents={activeComponents} isStreaming={false} justCompleted={justCompleted} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} agentId={message.agentIds?.[0] ?? null} onOpenAgentEditor={(agentId) => void handleOpenAgentEditor(agentId)} showUiTargets />}
       </MessageProvider>
       {!isUser && autoReliabilityEnabled && (hasToolCall || hasRerunnableAnswer) && <MessageReliabilityCard conversationId={conversationId} messageId={message.id} evaluation={getAnswerEvaluation(message, displayedVersion)} originalEvaluation={message.reliabilityEvaluation} correctionWorkflow={message.correctionWorkflow} displayedVersion={displayedVersion} onVersionChange={setDisplayedVersion} />}
       {!isUser && <CreateEditAgentDialog open={isAgentEditorOpen} onOpenChange={setIsAgentEditorOpen} agent={agentEditorAgent} onSave={handleSaveAgent} saving={isSavingAgent} />}
@@ -355,7 +309,7 @@ export function ConversationContent() {
           {(showStreamingActivity || (isActiveStream && streamingComponents.length > 0)) && (
             <div className='group/msg animate-in fade-in-0 duration-300' id={`message-${streamingMessageId || 'streaming'}`}>
               <MessageProvider isStreaming={true} isLastAiMessage={true}>
-                <ConversationAssistantBubble conversationId={currentConversationId || ''} messageId={streamingMessageId || 'streaming'} components={streamingComponents} isStreaming showWorking={showStreamingActivity && streamingComponents.length === 0} choiceInteractions={choiceInteractions} onComponentAction={handleStreamingAction} onSubmitQuestions={handleStreamingQuestions} />
+                <ConversationAssistantBubble conversationId={currentConversationId || ''} messageId={streamingMessageId || 'streaming'} components={streamingComponents} isStreaming showWorking={showStreamingActivity && streamingComponents.length === 0} choiceInteractions={choiceInteractions} onComponentAction={handleStreamingAction} onSubmitQuestions={handleStreamingQuestions} showUiTargets />
               </MessageProvider>
             </div>
           )}

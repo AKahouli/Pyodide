@@ -1,20 +1,10 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import {
-  FlowExecution,
-  FlowExecutionDocument,
-} from '../../schemas/playbook-flow-execution.schema';
-import {
-  FlowTaskResult,
-  FlowTaskResultDocument,
-} from '../../schemas/playbook-flow-task-result.schema';
+import { EXECUTION_OPEN_STATUSES, ExecutionRepository } from '../../persistence/execution.repository';
+import { TaskResultRepository } from '../../persistence/task-result.repository';
 import { PlaybookFlowStreamEventsService } from '../../services/playbook-flow-stream-events.service';
 import { PlaybookFlowExecutionLeaseService } from '../../services/playbook-flow-execution-lease.service';
 import { PlaybookFlowTokenBufferService } from '../../services/playbook-flow-token-buffer.service';
 import { sanitizePlaybookPublicValue } from '../../utils/playbook-artifact';
-
-const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'] as const;
 
 /**
  * Finalizes runtime streams after gRPC completion so execution status updates,
@@ -25,10 +15,8 @@ export class PlaybookExecutionStreamFinalizerService {
   private readonly logger = new Logger(PlaybookExecutionStreamFinalizerService.name);
 
   constructor(
-    @InjectModel(FlowExecution.name)
-    private readonly executionModel: Model<FlowExecutionDocument>,
-    @InjectModel(FlowTaskResult.name)
-    private readonly taskResultModel: Model<FlowTaskResultDocument>,
+    private readonly executionRepository: ExecutionRepository,
+    private readonly taskResultRepository: TaskResultRepository,
     private readonly streamEvents: PlaybookFlowStreamEventsService,
     @Optional() private readonly tokenBufferService?: PlaybookFlowTokenBufferService,
     @Optional() private readonly executionLeaseService?: PlaybookFlowExecutionLeaseService,
@@ -36,38 +24,31 @@ export class PlaybookExecutionStreamFinalizerService {
 
   async finalizeErroredStream(executionId: string, errorMessage: string): Promise<void> {
     const publicErrorMessage = String(sanitizePlaybookPublicValue(errorMessage));
-    await this.executionModel
-      .findByIdAndUpdate(executionId, {
-        status: 'failed',
-        endedAt: new Date(),
-        error: publicErrorMessage,
-      })
-      .exec();
+    await this.executionRepository.update(executionId, {
+      status: 'failed',
+      endedAt: new Date(),
+      error: publicErrorMessage,
+    });
     await this.tokenBufferService?.flushExecution(executionId);
     await this.executionLeaseService?.release(executionId);
     this.streamEvents.emitExecutionComplete(executionId, 'failed', publicErrorMessage);
   }
 
   async finalizeEndedStream(executionId: string): Promise<boolean> {
-    const execution = await this.executionModel.findById(executionId).lean();
-    const status = String((execution as Record<string, unknown> | null)?.status || '');
+    const execution = await this.executionRepository.findById(executionId);
+    const status = String(execution?.status || '');
     if (!this.shouldFinalize(status)) {
       return false;
     }
 
-    const failedTask = await this.taskResultModel
-      .findOne({ executionId, status: 'failed' })
-      .sort({ endedAt: -1 })
-      .lean();
+    const failedTask = await this.taskResultRepository.findLatestFailed(executionId);
     if (failedTask) {
       const errorMessage = String(sanitizePlaybookPublicValue(failedTask.error || 'Execution failed'));
-      const failedResult = await this.executionModel
-        .updateOne(
-          { _id: executionId, status: { $nin: TERMINAL_STATUSES as unknown as string[] } },
-          { status: 'failed', error: errorMessage, endedAt: new Date() },
-        )
-        .exec();
-      if ((failedResult as { modifiedCount?: number }).modifiedCount) {
+      const failed = await this.executionRepository.transition(executionId, {
+        from: EXECUTION_OPEN_STATUSES,
+        patch: { status: 'failed', error: errorMessage, endedAt: new Date() },
+      });
+      if (failed) {
         await this.executionLeaseService?.release(executionId);
         this.streamEvents.emitExecutionComplete(executionId, 'failed', errorMessage);
         return true;
@@ -77,13 +58,11 @@ export class PlaybookExecutionStreamFinalizerService {
       return false;
     }
 
-    const completedResult = await this.executionModel
-      .updateOne(
-        { _id: executionId, status: { $in: ['queued', 'running'] } },
-        { status: 'completed', endedAt: new Date() },
-      )
-      .exec();
-    if (!(completedResult as { modifiedCount?: number }).modifiedCount) {
+    const completed = await this.executionRepository.transition(executionId, {
+      from: ['queued', 'running'],
+      patch: { status: 'completed', endedAt: new Date() },
+    });
+    if (!completed) {
       return false;
     }
 

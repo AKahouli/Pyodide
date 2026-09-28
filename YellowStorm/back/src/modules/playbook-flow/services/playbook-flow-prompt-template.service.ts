@@ -1,14 +1,27 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { FlowPromptTemplate, FlowPromptTemplateDocument } from '../schemas/playbook-flow-prompt-template.schema';
 import {
   FlowPromptTemplateListResponse,
   FlowPromptTemplateImportPayload,
   FlowPromptTemplateResponse,
   UpsertFlowPromptTemplateRequest,
 } from '../interfaces/playbook-flow-prompt-template.interface';
+import { PromptTemplateRepository, type PromptTemplateRecord } from '../persistence/prompt-template.repository';
+import { TEMPLATE_MAX_LENGTHS } from '../persistence/template-cast';
 import { DEFAULT_FLOW_PROMPTS } from './playbook-flow-prompt-seed';
+
+/**
+ * The varchar columns refuse what Mongoose's `maxlength` only checked on insert (edits and imports
+ * stored any length): an over-long value is a 400 instead of a database error.
+ */
+function assertLengths(fields: { key?: string; title?: string; category?: string; description?: string }): void {
+  for (const field of ['key', 'title', 'category', 'description'] as const) {
+    const value = fields[field];
+    const max = TEMPLATE_MAX_LENGTHS[field];
+    if (typeof value === 'string' && value.trim().length > max) {
+      throw new BadRequestException(`${field} must be at most ${max} characters`);
+    }
+  }
+}
 
 @Injectable()
 export class PlaybookFlowPromptTemplateService {
@@ -17,19 +30,16 @@ export class PlaybookFlowPromptTemplateService {
   private cachedAt = 0;
   private static readonly CACHE_TTL_MS = 30_000;
 
-  constructor(
-    @InjectModel(FlowPromptTemplate.name)
-    private readonly promptModel: Model<FlowPromptTemplateDocument>,
-  ) {}
+  constructor(private readonly prompts: PromptTemplateRepository) {}
 
-  private toResponse(doc: FlowPromptTemplateDocument | FlowPromptTemplate): FlowPromptTemplateResponse {
+  private toResponse(record: PromptTemplateRecord): FlowPromptTemplateResponse {
     return {
-      id: (doc as any)._id.toString(), key: doc.key, title: doc.title,
-      category: doc.category, description: doc.description,
-      systemTemplate: doc.systemTemplate || '', userTemplate: doc.userTemplate || '',
-      enabled: doc.enabled, version: doc.version, isBuiltIn: doc.isBuiltIn,
-      createdAt: doc.createdAt?.toISOString?.() || new Date().toISOString(),
-      updatedAt: doc.updatedAt?.toISOString?.() || new Date().toISOString(),
+      id: record.id, key: record.key, title: record.title,
+      category: record.category, description: record.description ?? undefined,
+      systemTemplate: record.systemTemplate || '', userTemplate: record.userTemplate || '',
+      enabled: record.enabled, version: record.version, isBuiltIn: record.isBuiltIn,
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
     };
   }
 
@@ -37,33 +47,28 @@ export class PlaybookFlowPromptTemplateService {
     this.cachedPayload = null; this.cachedItems = null; this.cachedAt = 0;
   }
 
+  /**
+   * Seeds the built-in prompts into an empty catalogue, and moves a built-in prompt to a newer seed
+   * version. A prompt that is no longer built in, or already at the seed's version, is never touched.
+   */
   private async seedDefaultsIfNeeded(): Promise<void> {
     const keys = DEFAULT_FLOW_PROMPTS.map((item) => item.key);
-    const existing = await this.promptModel.find({ key: { $in: keys } }).select('key version isBuiltIn').lean().exec();
-    const totalCount = await this.promptModel.estimatedDocumentCount().exec();
+    const existing = await this.prompts.findVersions(keys);
+    const empty = await this.prompts.isEmpty();
     const existingByKey = new Map(existing.map((item) => [item.key, item]));
-    const existingKeys = new Set(existing.map((item) => item.key));
-    const missing = totalCount === 0 ? DEFAULT_FLOW_PROMPTS.filter((item) => !existingKeys.has(item.key)) : [];
+    const missing = empty ? DEFAULT_FLOW_PROMPTS.filter((item) => !existingByKey.has(item.key)) : [];
 
     if (missing.length) {
-      await this.promptModel.insertMany(
-        missing.map((item) => ({ ...item, createdBy: null, updatedBy: null })),
-        { ordered: false },
-      );
+      await this.prompts.insertMissing(missing.map((item) => ({ ...item, createdBy: null, updatedBy: null })));
     }
 
     const builtInUpdates = DEFAULT_FLOW_PROMPTS.filter((item) => {
-      const ex = existingByKey.get(item.key) as { version?: number; isBuiltIn?: boolean } | undefined;
+      const ex = existingByKey.get(item.key);
       return ex?.isBuiltIn === true && (ex.version || 1) < item.version;
     });
 
     if (builtInUpdates.length) {
-      await Promise.all(builtInUpdates.map((item) =>
-        this.promptModel.updateOne(
-          { key: item.key, isBuiltIn: true, version: { $lt: item.version } },
-          { $set: { ...item, updatedBy: null } },
-        ).exec(),
-      ));
+      await Promise.all(builtInUpdates.map((item) => this.prompts.upgradeBuiltIn(item)));
     }
 
     if (missing.length || builtInUpdates.length) this.invalidateCache();
@@ -75,16 +80,16 @@ export class PlaybookFlowPromptTemplateService {
     if (this.cachedItems && now - this.cachedAt < PlaybookFlowPromptTemplateService.CACHE_TTL_MS) {
       return { items: this.cachedItems };
     }
-    const docs = await this.promptModel.find({}).sort({ category: 1, title: 1 }).exec();
-    const items = docs.map((doc) => this.toResponse(doc));
+    const records = await this.prompts.list();
+    const items = records.map((record) => this.toResponse(record));
     this.cachedItems = items; this.cachedAt = now;
     return { items };
   }
 
   async findByKey(key: string): Promise<FlowPromptTemplateResponse | null> {
     await this.seedDefaultsIfNeeded();
-    const doc = await this.promptModel.findOne({ key }).exec();
-    return doc ? this.toResponse(doc) : null;
+    const record = await this.prompts.findByKey(key);
+    return record ? this.toResponse(record) : null;
   }
 
   async upsert(key: string, dto: UpsertFlowPromptTemplateRequest, userId: string): Promise<FlowPromptTemplateResponse> {
@@ -92,22 +97,13 @@ export class PlaybookFlowPromptTemplateService {
     const normalizedKey = String(key || '').trim();
     if (!normalizedKey) throw new Error('Prompt key is required');
 
-    const existing = await this.promptModel.findOne({ key: normalizedKey }).exec();
-    const nextVersion = (existing?.version || 0) + 1;
-    const payload = {
-      key: normalizedKey, title: dto.title.trim(), category: dto.category.trim(),
+    const edit = {
+      title: dto.title.trim(), category: dto.category.trim(),
       description: dto.description?.trim() || '',
-      systemTemplate: dto.systemTemplate ?? existing?.systemTemplate ?? '',
-      userTemplate: dto.userTemplate ?? existing?.userTemplate ?? '',
-      enabled: dto.enabled ?? existing?.enabled ?? true,
-      version: nextVersion, isBuiltIn: existing?.isBuiltIn ?? false,
-      updatedBy: new Types.ObjectId(userId),
-      createdBy: existing?.createdBy ?? new Types.ObjectId(userId),
+      systemTemplate: dto.systemTemplate, userTemplate: dto.userTemplate, enabled: dto.enabled,
     };
-
-    const updated = await this.promptModel.findOneAndUpdate(
-      { key: normalizedKey }, { $set: payload }, { new: true, upsert: true },
-    ).exec();
+    assertLengths({ key: normalizedKey, ...edit });
+    const updated = await this.prompts.upsertByKey(normalizedKey, edit, userId);
 
     this.invalidateCache();
     return this.toResponse(updated);
@@ -119,9 +115,9 @@ export class PlaybookFlowPromptTemplateService {
     if (this.cachedPayload && now - this.cachedAt < PlaybookFlowPromptTemplateService.CACHE_TTL_MS) {
       return this.cachedPayload;
     }
-    const docs = await this.promptModel.find({ enabled: true }).exec();
-    const payload = docs.reduce<Record<string, string>>((acc, doc) => {
-      acc[doc.key] = JSON.stringify(this.toResponse(doc));
+    const records = await this.prompts.list({ enabledOnly: true });
+    const payload = records.reduce<Record<string, string>>((acc, record) => {
+      acc[record.key] = JSON.stringify(this.toResponse(record));
       return acc;
     }, {});
     this.cachedPayload = payload; this.cachedAt = now;
@@ -129,10 +125,10 @@ export class PlaybookFlowPromptTemplateService {
   }
 
   async remove(key: string): Promise<boolean> {
-    const existing = await this.promptModel.findOne({ key }).exec();
+    const existing = await this.prompts.findByKey(key);
     if (!existing) return false;
     if (existing.isBuiltIn) throw new Error('Cannot delete built-in prompt templates');
-    await this.promptModel.deleteOne({ key }).exec();
+    await this.prompts.deleteByKey(key);
     this.invalidateCache();
     return true;
   }
@@ -142,8 +138,7 @@ export class PlaybookFlowPromptTemplateService {
     if (keys.some((key) => !key)) throw new BadRequestException('Import contains an empty prompt key');
     if (new Set(keys).size !== keys.length) throw new BadRequestException('Import contains duplicate prompt keys');
 
-    const userObjectId = new Types.ObjectId(userId);
-    const docs = payload.items.map((item) => ({
+    const items = payload.items.map((item) => ({
       key: item.key.trim(),
       title: item.title.trim(),
       category: item.category.trim(),
@@ -153,23 +148,15 @@ export class PlaybookFlowPromptTemplateService {
       enabled: item.enabled ?? true,
       version: 1,
       isBuiltIn: item.isBuiltIn ?? false,
-      createdBy: userObjectId,
-      updatedBy: userObjectId,
+      createdBy: userId,
+      updatedBy: userId,
     }));
+    items.forEach(assertLengths);
 
-    if (docs.length) {
-      await this.promptModel.bulkWrite(docs.map((doc) => ({
-        updateOne: {
-          filter: { key: doc.key },
-          update: { $set: doc },
-          upsert: true,
-        },
-      })), { ordered: true });
-    }
-    await this.promptModel.deleteMany({ key: { $nin: keys } }).exec();
+    await this.prompts.replaceAll(items);
     this.invalidateCache();
-    const importedDocs = await this.promptModel.find({}).sort({ category: 1, title: 1 }).exec();
-    return { items: importedDocs.map((doc) => this.toResponse(doc)) };
+    const imported = await this.prompts.list();
+    return { items: imported.map((record) => this.toResponse(record)) };
   }
 
   async resetCache(): Promise<void> { this.invalidateCache(); }

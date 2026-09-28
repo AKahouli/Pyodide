@@ -1,15 +1,9 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { newObjectId } from '@common/postgres/object-id';
 import { asAuthUser } from '@common/auth/auth-user';
 import * as crypto from 'crypto';
 import { AuthProviderService } from './auth-provider.service';
-import {
-  OAUTH_STATE_STORE,
-  PROVIDER_LINK_TOKEN_STORE,
-  type OAuthStateStore,
-  type ProviderLinkTokenStore,
-} from '../persistence/auth-provider.stores';
 import { ProviderLinkService } from './provider-link.service';
 import { AuthService } from '@modules/auth/auth.service';
 import { UserService } from '@modules/user/user.service';
@@ -22,6 +16,8 @@ import { assertAccountAccessible } from '@modules/user/utils/assert-account-acce
 import { BadRequestException, UnauthorizedException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { OAuthCallbackResult, OAuthUserInfo } from '../interfaces/auth-provider.interface';
+import { PgProviderLinkTokenStore } from '../persistence/pg-auth-provider.stores';
+import { PgOAuthStateStore } from '../persistence/pg-auth-provider.stores';
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const TEMP_TOKEN_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -34,8 +30,8 @@ export class OAuthFlowService {
   private readonly appName: string;
 
   constructor(
-    @Inject(OAUTH_STATE_STORE) private readonly oauthStateStore: OAuthStateStore,
-    @Inject(PROVIDER_LINK_TOKEN_STORE) private readonly providerLinkTokenStore: ProviderLinkTokenStore,
+    private readonly oauthStateStore: PgOAuthStateStore,
+    private readonly providerLinkTokenStore: PgProviderLinkTokenStore,
     private readonly authProviderService: AuthProviderService,
     private readonly providerLinkService: ProviderLinkService,
     private readonly authService: AuthService,

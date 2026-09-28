@@ -1,8 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { FlowTaskResult, FlowTaskResultDocument } from '../schemas/playbook-flow-task-result.schema';
+import { TaskResultRepository } from '../persistence/task-result.repository';
+import { SystemService } from '@modules/system/system.service';
 import { PlaybookFlowStreamEventsService } from './playbook-flow-stream-events.service';
 import { PlaybookTokenStreamRedactor } from '../utils/playbook-artifact';
 
@@ -21,7 +20,7 @@ type TokenBufferEntry = TokenBufferKey & {
 
 /**
  * Buffers streaming node tokens in memory so token-heavy executions do not write
- * to MongoDB once per token while preserving immediate SSE updates for the UI.
+ * to the database once per token while preserving immediate SSE updates for the UI.
  */
 @Injectable()
 export class PlaybookFlowTokenBufferService implements OnModuleDestroy {
@@ -31,14 +30,14 @@ export class PlaybookFlowTokenBufferService implements OnModuleDestroy {
   private readonly publicTokenKeys = new Map<string, TokenBufferKey>();
 
   constructor(
-    @InjectModel(FlowTaskResult.name)
-    private readonly taskResultModel: Model<FlowTaskResultDocument>,
+    private readonly taskResultRepository: TaskResultRepository,
     private readonly configService: ConfigService,
+    private readonly systemService: SystemService,
     private readonly streamEvents: PlaybookFlowStreamEventsService,
   ) {}
 
-  isEnabled(): boolean {
-    return this.configService.get<boolean>('playbook-flow.tokenBufferEnabled', false);
+  async isEnabled(): Promise<boolean> {
+    return (await this.systemService.getPlaybookSettings()).playbookExecution.tokenBufferEnabled;
   }
 
   async appendToken(key: TokenBufferKey, token: string): Promise<void> {
@@ -150,19 +149,9 @@ export class PlaybookFlowTokenBufferService implements OnModuleDestroy {
   }
 
   private async flushToken(key: TokenBufferKey, token: string): Promise<void> {
-    await this.taskResultModel.updateOne(
+    await this.taskResultRepository.appendOutput(
       { executionId: key.executionId, taskId: key.taskId, iteration: key.iteration },
-      [
-        {
-          $set: {
-            status: 'running',
-            output: {
-              $concat: [{ $ifNull: ['$output', ''] }, token],
-            },
-          },
-        },
-      ],
-      { upsert: true },
+      token,
     );
   }
 

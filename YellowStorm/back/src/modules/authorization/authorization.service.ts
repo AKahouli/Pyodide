@@ -1,6 +1,6 @@
 import { Inject, Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import { LoggerService } from '../logger';
-import { ROLE_STORE, type RoleRecord, type RoleStore } from './persistence/role.store';
+import { type RoleRecord} from './persistence/role.store';
 import { USER_STORE, type UserStore } from '../user/persistence/user.store';
 import {
   NotFoundException,
@@ -13,6 +13,7 @@ import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { RoleResponse, DEFAULT_ROLES } from './interfaces/role.interface';
 import { validatePermissions } from './constants/permissions';
+import { PgRoleStore } from './persistence/pg-role.store';
 
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -23,7 +24,7 @@ export class AuthorizationService implements OnApplicationBootstrap {
   private cacheLastUpdated: Date = new Date(0);
 
   constructor(
-    @Inject(ROLE_STORE) private readonly roleStore: RoleStore,
+    private readonly roleStore: PgRoleStore,
     @Inject(USER_STORE) private readonly userStore: UserStore,
     private readonly logger: LoggerService,
   ) {

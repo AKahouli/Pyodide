@@ -2,7 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { BadRequestException, ConflictException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { PatchPlaybookFlowDeltaDto } from '../dto/patch-playbook-flow-delta.dto';
-import { DataBinding, FlowDocument, FlowNode, ControlEdge } from '../schemas/playbook-flow.schema';
+import type { DataBinding, FlowNode, ControlEdge } from '../models/playbook-flow.model';
+import type { FlowRecord } from '../persistence/flow.repository';
 import { FlowWorkspacePolicyService } from './flow-workspace-policy.service';
 import { FlowGraphSanitizerService } from './flow-graph-sanitizer.service';
 
@@ -29,7 +30,10 @@ export class FlowDeltaPatchService {
     private readonly graphSanitizer: FlowGraphSanitizerService,
   ) {}
 
-  buildPatchedGraph(flow: FlowDocument, dto: PatchPlaybookFlowDeltaDto): FlowDeltaPatchResult {
+  buildPatchedGraph(
+    flow: Pick<FlowRecord, 'nodes' | 'controlEdges' | 'dataBindings' | 'workspaces'>,
+    dto: PatchPlaybookFlowDeltaDto,
+  ): FlowDeltaPatchResult {
     const fields = dto.patch.fields;
     const nodeUpserts = dto.patch.nodes?.upserts ?? [];
     const nodeDeleteIds = dto.patch.nodes?.deleteIds ?? [];
@@ -63,14 +67,13 @@ export class FlowDeltaPatchService {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Delta patch is empty.');
     }
 
-    const plainNodes = (flow.nodes as FlowNode[]).map((node) => this.toPlainFlowNode(node));
     const candidateNodesById = new Map(
-      plainNodes.map((node) => [
+      flow.nodes.map((node) => [
         node.id,
         { ...node, metadata: { ...(node.metadata ?? {}) } } as FlowNode,
       ]),
     );
-    const candidateNodeOrder = plainNodes.map((node) => node.id);
+    const candidateNodeOrder = flow.nodes.map((node) => node.id);
 
     for (const deleteId of nodeDeleteIds) {
       if (!candidateNodesById.delete(deleteId)) {
@@ -111,8 +114,8 @@ export class FlowDeltaPatchService {
       .filter((node): node is FlowNode => Boolean(node));
     const sanitizedGraph = this.graphSanitizer.sanitize({
       nodes,
-      controlEdges: (controlEdgesPatch ?? flow.controlEdges.map((edge) => this.toPlainGraphEntry<ControlEdge>(edge))) as ControlEdge[],
-      dataBindings: (dataBindingsPatch ?? flow.dataBindings.map((binding) => this.toPlainGraphEntry<DataBinding>(binding))) as DataBinding[],
+      controlEdges: (controlEdgesPatch ?? flow.controlEdges.map((edge) => ({ ...edge }))) as ControlEdge[],
+      dataBindings: (dataBindingsPatch ?? flow.dataBindings.map((binding) => ({ ...binding }))) as DataBinding[],
     });
 
     const normalizedWorkspaces = this.workspacePolicy.normalizeWorkspaces(fields?.workspaces ?? flow.workspaces);
@@ -129,19 +132,5 @@ export class FlowDeltaPatchService {
       dataBindingChanges: dataBindingsPatch?.length ?? 0,
       positionUpdates: positionUpdates.length,
     };
-  }
-
-  private toPlainFlowNode(node: FlowNode): FlowNode {
-    const maybeDocument = node as FlowNode & { toObject?: () => FlowNode };
-    // Mongoose subdocuments do not expose schema paths through object spread.
-    return maybeDocument.toObject ? maybeDocument.toObject() : { ...node };
-  }
-
-  private toPlainGraphEntry<T>(entry: T): T {
-    const maybeDocument = entry as T & { toObject?: () => T };
-    // Mongoose subdocuments expose schema fields through prototype getters, so
-    // own-property checks (e.g. isCompleteDataBinding on constantValue) fail
-    // unless the entry is converted to a plain object first.
-    return maybeDocument.toObject ? maybeDocument.toObject() : { ...entry };
   }
 }

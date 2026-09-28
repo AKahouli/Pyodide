@@ -4,50 +4,45 @@ import { PlaybookFlowObservabilityService } from './observability/playbook-flow-
 import { PlaybookFlowPublicReasoningParserService } from './observability/playbook-flow-public-reasoning-parser.service';
 import { PlaybookFlowTraceRedactionService } from './observability/playbook-flow-trace-redaction.service';
 import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
-import { createExecutionServiceForTests, createNoopGraphSanitizer } from './playbook-flow-execution.test-support';
+import { createExecutionRepositoryMock, createTaskResultRepositoryMock } from './playbook-flow-execution.test-support';
 
 describe('single-step execution allowed paths', () => {
   it('reuses a completed upstream result from a failed run after a canvas move', async () => {
-    const savedExecution = {
-      id: 'exec-dependent',
-      queuePosition: 0,
-      save: jest.fn().mockResolvedValue(undefined),
-      toJSON: jest.fn().mockReturnValue({ id: 'exec-dependent' }),
-    };
-    savedExecution.save = jest.fn().mockResolvedValue(savedExecution);
-    const ExecutionModel = jest.fn(() => savedExecution) as any;
-    ExecutionModel.findByIdAndDelete = jest.fn();
+    const executionRepository = createExecutionRepositoryMock({
+      listRecentCompletedWithSnapshot: jest.fn().mockResolvedValue([{
+        id: 'prev-exec-1',
+        snapshot: {
+          nodes: [
+            { id: 'task-1', kind: 'step', metadata: { positionX: 30, positionY: 40 }, output: { ports: [{ id: 'summary' }] } },
+            { id: 'task-2', kind: 'step', metadata: {}, input: { ports: [{ id: 'summary' }] } },
+          ],
+        },
+      }]),
+    });
+    const taskResultRepository = createTaskResultRepositoryMock({
+      listForExecution: jest.fn().mockResolvedValue([
+        {
+          taskId: 'task-1',
+          iteration: 0,
+          output: {
+            outputs: {
+              summary: { content: 'seeded summary' },
+            },
+          },
+          displayText: 'seeded summary',
+          outputs: {
+            summary: { content: 'seeded summary' },
+          },
+          artifacts: [{ port_id: 'summary', artifact_kind: 'text', content: 'seeded summary' }],
+          components: [],
+          traceMetadata: {},
+        },
+      ]),
+    });
     const service = new PlaybookFlowExecutionService(
-      ExecutionModel,
-      {
-        updateOne: jest.fn(),
-        deleteMany: jest.fn(),
-        find: jest.fn(() => ({
-          sort: jest.fn().mockReturnValue({
-            lean: jest.fn().mockReturnValue({
-              exec: jest.fn().mockResolvedValue([
-                {
-                  taskId: 'task-1',
-                  iteration: 0,
-                  output: {
-                    outputs: {
-                      summary: { content: 'seeded summary' },
-                    },
-                  },
-                  displayText: 'seeded summary',
-                  outputs: {
-                    summary: { content: 'seeded summary' },
-                  },
-                  artifacts: [{ port_id: 'summary', artifact_kind: 'text', content: 'seeded summary' }],
-                  components: [],
-                  traceMetadata: {},
-                },
-              ]),
-            }),
-          }),
-        })),
-      } as any,
-      { create: jest.fn(), deleteMany: jest.fn() } as any,
+      executionRepository as any,
+      taskResultRepository as any,
+      { create: jest.fn(), listForExecution: jest.fn() } as any,
       { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
       { init: jest.fn(), isAvailable: jest.fn().mockReturnValue(false) } as any,
       { admit: jest.fn().mockResolvedValue(1), release: jest.fn(), refreshPositions: jest.fn().mockResolvedValue([]) } as any,
@@ -107,40 +102,19 @@ describe('single-step execution allowed paths', () => {
     );
 
     (service as any).singleStepPrepService = new PlaybookExecutionSingleStepPrepService(
-      (service as any).executionModel,
-      (service as any).taskResultModel,
+      executionRepository as any,
+      taskResultRepository as any,
     );
-
-    (service as any).executionModel.find = jest.fn().mockReturnValue({
-      select: jest.fn().mockReturnValue({
-        sort: jest.fn().mockReturnValue({
-          limit: jest.fn().mockReturnValue({
-            lean: jest.fn().mockReturnValue({
-              exec: jest.fn().mockResolvedValue([{
-                _id: 'prev-exec-1',
-                snapshot: {
-                  nodes: [
-                    { id: 'task-1', kind: 'step', metadata: { positionX: 30, positionY: 40 }, output: { ports: [{ id: 'summary' }] } },
-                    { id: 'task-2', kind: 'step', metadata: {}, input: { ports: [{ id: 'summary' }] } },
-                  ],
-                },
-              }]),
-            }),
-          }),
-        }),
-      }),
-    });
     jest.spyOn(service as any, 'drainQueue').mockResolvedValue(undefined);
 
     await service.start('flow-1', 'owner-1', {}, undefined, 'task-2');
 
-    expect((service as any).executionModel.find).toHaveBeenCalledWith({
-      flowId: 'flow-1', ownerId: 'owner-1', status: { $in: ['completed', 'failed'] },
+    // The owner's latest completed or failed runs of the flow, then the upstream task's completed results.
+    expect(executionRepository.listRecentCompletedWithSnapshot).toHaveBeenCalledWith('flow-1', 'owner-1', 20);
+    expect(taskResultRepository.listForExecution).toHaveBeenCalledWith('prev-exec-1', {
+      taskIds: ['task-1'], statuses: ['completed'], order: 'latest',
     });
-    expect((service as any).taskResultModel.find).toHaveBeenCalledWith({
-      executionId: 'prev-exec-1', taskId: { $in: ['task-1'] }, status: 'completed',
-    });
-    expect(ExecutionModel).toHaveBeenCalledWith(expect.objectContaining({
+    expect(executionRepository.insert).toHaveBeenCalledWith(expect.objectContaining({
       singleStepTaskId: 'task-2',
       snapshot: expect.objectContaining({
         nodes: [{ id: 'task-2', kind: 'step', metadata: {}, input: { ports: [{ id: 'summary' }] } }],
@@ -171,20 +145,13 @@ describe('single-step execution allowed paths', () => {
   });
 
   it('allows single-step execution for standalone step nodes', async () => {
-    const savedExecution = {
-      id: 'exec-standalone',
-      queuePosition: 0,
-      save: jest.fn().mockResolvedValue(undefined),
-      toJSON: jest.fn().mockReturnValue({ id: 'exec-standalone' }),
-    };
-    savedExecution.save = jest.fn().mockResolvedValue(savedExecution);
-    const ExecutionModel = jest.fn(() => savedExecution) as any;
-    ExecutionModel.findByIdAndDelete = jest.fn();
+    const executionRepository = createExecutionRepositoryMock();
+    const taskResultRepository = createTaskResultRepositoryMock();
 
     const service = new PlaybookFlowExecutionService(
-      ExecutionModel,
-      { updateOne: jest.fn(), deleteMany: jest.fn() } as any,
-      { create: jest.fn(), deleteMany: jest.fn() } as any,
+      executionRepository as any,
+      taskResultRepository as any,
+      { create: jest.fn(), listForExecution: jest.fn() } as any,
       { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
       { init: jest.fn(), isAvailable: jest.fn().mockReturnValue(false) } as any,
       { admit: jest.fn().mockResolvedValue(1), release: jest.fn(), refreshPositions: jest.fn().mockResolvedValue([]) } as any,
@@ -226,14 +193,14 @@ describe('single-step execution allowed paths', () => {
       { validateModelActive: jest.fn().mockResolvedValue({ valid: true, model: null, inactive: false }) } as any,
     );
     (service as any).singleStepPrepService = new PlaybookExecutionSingleStepPrepService(
-      (service as any).executionModel,
-      (service as any).taskResultModel,
+      executionRepository as any,
+      taskResultRepository as any,
     );
     jest.spyOn(service as any, 'drainQueue').mockResolvedValue(undefined);
 
     await service.start('flow-1', 'owner-1', {}, undefined, 'task-1');
 
-    expect(ExecutionModel).toHaveBeenCalledWith(expect.objectContaining({
+    expect(executionRepository.insert).toHaveBeenCalledWith(expect.objectContaining({
       singleStepTaskId: 'task-1',
       snapshot: expect.objectContaining({
         nodes: [{ id: 'task-1', kind: 'step' }],

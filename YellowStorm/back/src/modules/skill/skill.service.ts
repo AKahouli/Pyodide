@@ -4,21 +4,21 @@ import * as yaml from 'js-yaml';
 import { LoggerService } from '../logger';
 import { isObjectId } from '@common/postgres';
 import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
-import { stripTrailingChar, MULTIPART_SKILL_IMPORT_MAX_BYTES } from '../../common/utils';
+import { MULTIPART_SKILL_IMPORT_MAX_BYTES } from '../../common/utils';
 import { BadRequestException, ConflictException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { CreateSkillDto, QuerySkillDto, UpdateSkillDto } from './dto';
 import { SkillFileKind } from './skill.types';
-import { SKILL_CATEGORY_STORE, SKILL_STORE, type SkillCategoryStore, type SkillRow, type SkillStore } from './persistence/skill.store';
+import { SKILL_STORE,   type SkillRow,   type SkillStore } from './persistence/skill.store';
 import { ISkillResponse, IGrpcSkill } from './interfaces/skill.interface';
+import { PgSkillCategoryStore } from './persistence/pg-skill.store';
 
 @Injectable()
 export class SkillService {
   constructor(
     @Inject(SKILL_STORE)
     private readonly skillStore: SkillStore,
-    @Inject(SKILL_CATEGORY_STORE)
-    private readonly categoryStore: SkillCategoryStore,
+    private readonly categoryStore: PgSkillCategoryStore,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(SkillService.name);
@@ -228,10 +228,9 @@ export class SkillService {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'The uploaded zip does not contain a SKILL.md file.');
     }
 
-    const skillRoot = stripTrailingChar(
-      skillEntry.entryName.replace(/(^|\/)SKILL\.md$/i, ''),
-      '/',
-    );
+    const skillRoot = skillEntry.entryName
+      .replace(/(^|\/)SKILL\.md$/i, '')
+      .replace(/\/+$/, '');
     const parsed = this.parseSkillPackage({
       skillMdContent: zip.readAsText(skillEntry, 'utf8'),
       packageName: file.originalname,

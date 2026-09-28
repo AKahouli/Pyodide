@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import * as d3 from 'd3';
+import * as d3Force from 'd3-force';
+import * as d3Selection from 'd3-selection';
+import * as d3Zoom from 'd3-zoom';
+import * as d3Drag from 'd3-drag';
+import 'd3-transition';
 import { Loader2, RefreshCw, X, FileText, Network, Tag, GitBranch, Quote, Layers } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from '@/components/ui/sheet';
 import { Button } from '@/components/ui/button';
@@ -13,7 +17,7 @@ interface Props {
   workspaceId: string | null;
 }
 
-interface GraphNode extends d3.SimulationNodeDatum {
+interface GraphNode extends d3Force.SimulationNodeDatum {
   id: string;
   type: 'document' | 'concept';
   label: string;
@@ -27,7 +31,7 @@ interface GraphNode extends d3.SimulationNodeDatum {
   docFreq?: number;
 }
 
-interface GraphLink extends d3.SimulationLinkDatum<GraphNode> {
+interface GraphLink extends d3Force.SimulationLinkDatum<GraphNode> {
   weight: number;
   linkType: 'explicit' | 'shared_concept' | 'concept_link';
   rel_type?: string;
@@ -114,7 +118,7 @@ export function CommunityGraphPanel({ open, onOpenChange, workspaceId }: Props) 
   const [error, setError] = useState<string | null>(null);
   const [showConcepts, setShowConcepts] = useState(false);
   const [detail, setDetail] = useState<DetailData | null>(null);
-  const simulationRef = useRef<d3.Simulation<GraphNode, GraphLink> | null>(null);
+  const simulationRef = useRef<d3Force.Simulation<GraphNode, GraphLink> | null>(null);
 
   const loadGraph = useCallback(async () => {
     if (!workspaceId) return;
@@ -159,11 +163,11 @@ export function CommunityGraphPanel({ open, onOpenChange, workspaceId }: Props) 
       simulationRef.current.stop();
     }
 
-    const svg = d3.select(svgRef.current);
+    const svg = d3Selection.select(svgRef.current);
     svg.selectAll('*').remove();
 
     const g = svg.append('g');
-    const zoom = d3.zoom<SVGSVGElement, unknown>()
+    const zoom = d3Zoom.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.15, 6])
       .on('zoom', (event) => g.attr('transform', event.transform));
     svg.call(zoom);
@@ -215,18 +219,18 @@ export function CommunityGraphPanel({ open, onOpenChange, workspaceId }: Props) 
       });
     }
 
-    const sim = d3.forceSimulation<GraphNode>(nodes)
+    const sim = d3Force.forceSimulation<GraphNode>(nodes)
       .velocityDecay(0.65)
       .alphaDecay(0.04)
-      .force('link', d3.forceLink<GraphNode, GraphLink>(links)
+      .force('link', d3Force.forceLink<GraphNode, GraphLink>(links)
         .id((d) => d.id)
         .distance((d) => d.linkType === 'concept_link' ? 70 : d.linkType === 'shared_concept' ? 120 : 140)
         .strength(0.5))
-      .force('charge', d3.forceManyBody<GraphNode>().strength((d) => d.type === 'concept' ? -60 : -550).distanceMax(500))
-      .force('center', d3.forceCenter(width / 2, height / 2).strength(0.06))
-      .force('x', d3.forceX(width / 2).strength(0.04))
-      .force('y', d3.forceY(height / 2).strength(0.04))
-      .force('collision', d3.forceCollide<GraphNode>().radius((d) => d.type === 'concept' ? 18 : 42).strength(0.9));
+      .force('charge', d3Force.forceManyBody<GraphNode>().strength((d) => d.type === 'concept' ? -60 : -550).distanceMax(500))
+      .force('center', d3Force.forceCenter(width / 2, height / 2).strength(0.06))
+      .force('x', d3Force.forceX(width / 2).strength(0.04))
+      .force('y', d3Force.forceY(height / 2).strength(0.04))
+      .force('collision', d3Force.forceCollide<GraphNode>().radius((d) => d.type === 'concept' ? 18 : 42).strength(0.9));
 
     simulationRef.current = sim;
 
@@ -251,7 +255,7 @@ export function CommunityGraphPanel({ open, onOpenChange, workspaceId }: Props) 
     const node = g.append('g').selectAll('g').data(nodes).join('g')
       .style('cursor', 'pointer')
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .call(d3.drag<SVGGElement, GraphNode, GraphNode>()
+      .call(d3Drag.drag<SVGGElement, GraphNode, GraphNode>()
         .on('start', (event, d) => { if (!event.active) sim.alphaTarget(0.15).restart(); d.fx = d.x; d.fy = d.y; })
         .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
         .on('end', (event, d) => { if (!event.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }) as any);
@@ -272,14 +276,14 @@ export function CommunityGraphPanel({ open, onOpenChange, workspaceId }: Props) 
     docNodes.append('text').text((d) => d.label).attr('dy', 34)
       .attr('text-anchor', 'middle').attr('fill', '#374151').attr('font-size', '9.5px')
       .attr('font-weight', '600').attr('pointer-events', 'none')
-      .each(function () { const t = d3.select(this); const txt = t.text(); if (txt.length > 30) t.text(txt.slice(0, 28) + '…'); });
+      .each(function () { const t = d3Selection.select(this); const txt = t.text(); if (txt.length > 30) t.text(txt.slice(0, 28) + '…'); });
     node.filter((d) => d.type === 'concept').append('text').text((d) => d.label).attr('dy', 16)
       .attr('text-anchor', 'middle').attr('fill', '#4b5563').attr('font-size', '8.5px').attr('pointer-events', 'none');
 
     // Hover effect
     node.style('transition', 'opacity 0.2s')
-      .on('mouseenter', function () { d3.select(this).select('circle:nth-child(2)').attr('r', 22).attr('opacity', 1); })
-      .on('mouseleave', function () { d3.select(this).select('circle:nth-child(2)').attr('r', 18).attr('opacity', 0.92); });
+      .on('mouseenter', function () { d3Selection.select(this).select('circle:nth-child(2)').attr('r', 22).attr('opacity', 1); })
+      .on('mouseleave', function () { d3Selection.select(this).select('circle:nth-child(2)').attr('r', 18).attr('opacity', 0.92); });
 
     node.on('click', (_event, d) => {
       _event.stopPropagation();
@@ -327,7 +331,7 @@ export function CommunityGraphPanel({ open, onOpenChange, workspaceId }: Props) 
     });
 
     sim.alpha(1).restart();
-    svg.transition().duration(600).call(zoom.transform, d3.zoomIdentity.translate(width / 2, height / 2).scale(0.7));
+    svg.transition().duration(600).call(zoom.transform, d3Zoom.zoomIdentity.translate(width / 2, height / 2).scale(0.7));
   }, [data, showConcepts, ccMap]);
 
   useEffect(() => {
@@ -338,7 +342,7 @@ export function CommunityGraphPanel({ open, onOpenChange, workspaceId }: Props) 
     const handleResize = () => {
       if (svgRef.current && containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
-        d3.select(svgRef.current).attr('width', rect.width).attr('height', rect.height);
+        d3Selection.select(svgRef.current).attr('width', rect.width).attr('height', rect.height);
       }
     };
     window.addEventListener('resize', handleResize);

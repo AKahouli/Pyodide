@@ -572,7 +572,7 @@ class TestEventStreamHelper:
     @pytest.mark.asyncio
     async def test_event_stream_normal_flow(self):
         """Test normal event streaming flow."""
-        from src.routers.playbook import _event_stream
+        from src.routers.sse_stream import event_stream as _event_stream
 
         queue = asyncio.Queue()
 
@@ -608,7 +608,7 @@ class TestEventStreamHelper:
     @pytest.mark.asyncio
     async def test_event_stream_empty_queue(self):
         """Test event stream with immediately closed queue."""
-        from src.routers.playbook import _event_stream
+        from src.routers.sse_stream import event_stream as _event_stream
 
         queue = asyncio.Queue()
 
@@ -631,7 +631,7 @@ class TestEventStreamHelper:
     @pytest.mark.asyncio
     async def test_event_stream_cancellation(self):
         """Test event stream handles cancellation correctly."""
-        from src.routers.playbook import _event_stream
+        from src.routers.sse_stream import event_stream as _event_stream
 
         queue = asyncio.Queue()
 
@@ -666,9 +666,9 @@ class TestEventStreamHelper:
     @pytest.mark.asyncio
     async def test_event_stream_logging(self):
         """Test that event stream logs appropriately."""
-        from src.routers.playbook import _event_stream
+        from src.routers.sse_stream import event_stream as _event_stream
 
-        with patch('src.routers.playbook.logger') as mock_logger:
+        with patch('src.routers.sse_stream.logger') as mock_logger:
             queue = asyncio.Queue()
 
             async def bg_task():
@@ -694,7 +694,7 @@ class TestEventStreamHelper:
     @pytest.mark.asyncio
     async def test_event_stream_json_formatting(self):
         """Test that events are properly formatted as JSON."""
-        from src.routers.playbook import _event_stream
+        from src.routers.sse_stream import event_stream as _event_stream
 
         queue = asyncio.Queue()
 

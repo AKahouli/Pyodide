@@ -1,10 +1,12 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
 import { ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { AgentRepository } from '@modules/agent/repositories/agent.repository';
-import { DEPLOYMENT_STORE, REVISION_STORE, SCOPE_STORE, type DeploymentStore, type RevisionStore, type ScopeStore } from '../persistence';
+import { AgentRepository } from '@modules/agent/repositories/agent.repository';
 import { GovernanceScopeAudienceService } from './governance-scope-audience.service';
+import { PgRevisionStore } from '../persistence/postgres/pg-revision.store';
+import { PgDeploymentStore } from '../persistence/postgres/pg-deployment.store';
+import { PgScopeStore } from '../persistence/postgres/pg-scope.store';
 
 export interface AvailableGovernedScope {
   scopeId: string;
@@ -25,9 +27,9 @@ export interface AvailableGovernedScope {
 @Injectable()
 export class GovernanceConsumerScopeService {
   constructor(
-    @Inject(SCOPE_STORE) private readonly scopeStore: ScopeStore,
-    @Inject(DEPLOYMENT_STORE) private readonly deploymentStore: DeploymentStore,
-    @Inject(REVISION_STORE) private readonly revisionStore: RevisionStore,
+    private readonly scopeStore: PgScopeStore,
+    private readonly deploymentStore: PgDeploymentStore,
+    private readonly revisionStore: PgRevisionStore,
     private readonly agentRepository: AgentRepository,
     private readonly audienceService: GovernanceScopeAudienceService,
     private readonly featureVisibility: FeatureVisibilityService,

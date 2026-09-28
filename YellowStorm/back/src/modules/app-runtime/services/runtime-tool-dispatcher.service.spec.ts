@@ -1,11 +1,12 @@
 import { ConfigService } from '@nestjs/config';
 import type { Socket } from 'socket.io';
 import { AppRuntimeErrorCodes } from '../constants/app-runtime-error-codes';
-import { RUNTIME_TOOL_CALL_STORE, type RuntimeToolCallStore } from '../persistence/runtime-tool-call.store';
+import { type RuntimeToolCallStore } from '../persistence/runtime-tool-call.store';
 import type { ToolInvokeEnvelope } from '../types/app-runtime-protocol';
 import { RuntimeBindingService } from './runtime-binding.service';
 import { RuntimeConnectionRegistry } from './runtime-connection.registry';
 import { RuntimeToolDispatcherService } from './runtime-tool-dispatcher.service';
+import { PgRuntimeToolCallStore } from '../persistence/pg-runtime-tool-call.store';
 
 const CONFIG = {
   'appRuntime.heartbeatTimeoutMs': 45_000,
@@ -104,7 +105,7 @@ describe('RuntimeToolDispatcherService', () => {
     registry = new RuntimeConnectionRegistry(config);
 
     dispatcher = new RuntimeToolDispatcherService(
-      store as unknown as RuntimeToolCallStore,
+      store as unknown as PgRuntimeToolCallStore,
       {
         findByWorkspaceId,
         markWaitingForBrowser,

@@ -1,4 +1,3 @@
-export * from './decorators';
 export * from './dto';
 export * from './services';
 export * from './utils';

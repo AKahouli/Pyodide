@@ -11,6 +11,8 @@ export type PlaybookUiTarget = {
     playbookId?: string;
     executionId?: string;
     taskId?: string;
+    /** Shown on the button ("Open CV screening"), never an id. */
+    playbookName?: string;
   };
   effects?: Array<
     | { type: 'highlightTask'; taskId: string }

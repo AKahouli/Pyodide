@@ -1,7 +1,8 @@
-import { Inject, Injectable, OnApplicationBootstrap } from '@nestjs/common';
+import { Injectable,  OnApplicationBootstrap } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PlanTier } from './schemas/plan.schema';
-import { PLAN_STORE, type PlanRecord, type PlanStore } from './persistence/plan.store';
+import { type PlanRecord } from './persistence/plan.store';
+import { PgPlanStore } from './persistence/pg-plan.store';
 import {
   PlanResponse,
   CreatePlanData,
@@ -21,11 +22,10 @@ import {
   ConflictException,
 } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
-import {
-  USAGE_STORE,
-  type UsageStore,
-  type UsageWindowRecord,
+import { 
+  type UsageWindowRecord,  
 } from './persistence/usage-store';
+import { PostgresUsageStore } from './persistence/postgres-usage-store';
 
 const USAGE_LOG_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const USAGE_LOG_CLEANUP_BATCH_SIZE = 1000;
@@ -37,8 +37,8 @@ export class UsageService implements OnApplicationBootstrap {
   private defaultPlanCachedAt = 0;
 
   constructor(
-    @Inject(PLAN_STORE) private readonly planStore: PlanStore,
-    @Inject(USAGE_STORE) private readonly usageStore: UsageStore,
+    private readonly planStore: PgPlanStore,
+    private readonly usageStore: PostgresUsageStore,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('UsageService');

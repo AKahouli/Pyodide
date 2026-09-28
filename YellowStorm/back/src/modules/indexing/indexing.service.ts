@@ -1,19 +1,10 @@
 import { Injectable, Inject, Optional, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
-import axios from 'axios';
 import { DocumentStatus, IndexingStatus } from '../workspace/interfaces/document-status.enum';
-import {
-  WORKSPACE_DOCUMENT_READ_PORT,
-  WORKSPACE_DOCUMENT_WRITE_PORT,
-  WORKSPACE_READ_PORT,
-  WORKSPACE_SETTING_READ_PORT,
-  type IndexingStatePatch,
-  type WorkspaceDocumentReadPort,
-  type WorkspaceDocumentWritePort,
-  type WorkspaceDocumentRecord,
-  type WorkspaceReadPort,
-  type WorkspaceSettingReadPort,
+import {      
+  type IndexingStatePatch,        
+  type WorkspaceDocumentRecord,        
 } from '../workspace/ports';
 import { IndexingClientService } from './indexing-client.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -29,6 +20,10 @@ import { IntegrationEventOutboxService } from '../integration-events/services/in
 import { FeatureVisibilityService } from '../system/feature-visibility.service';
 import { WorkspaceIntegrationEvents } from '../integration-events/contracts';
 import { randomUUID } from 'crypto';
+import { PgWorkspaceSettingReadAdapter } from '../workspace/persistence/postgres/pg-workspace-setting-read.adapter';
+import { PgWorkspaceReadAdapter } from '../workspace/persistence/postgres/pg-workspace-read.adapter';
+import { PgWorkspaceDocumentWriteAdapter } from '../workspace/persistence/postgres/pg-workspace-document-write.adapter';
+import { PgWorkspaceDocumentReadAdapter } from '../workspace/persistence/postgres/pg-workspace-document-read.adapter';
 
 @Injectable()
 export class IndexingService {
@@ -38,14 +33,10 @@ export class IndexingService {
   private isProcessing = false;
 
   constructor(
-    @Inject(WORKSPACE_DOCUMENT_READ_PORT)
-    private readonly documentReadPort: WorkspaceDocumentReadPort,
-    @Inject(WORKSPACE_DOCUMENT_WRITE_PORT)
-    private readonly documentWritePort: WorkspaceDocumentWritePort,
-    @Inject(WORKSPACE_READ_PORT)
-    private readonly workspaceReadPort: WorkspaceReadPort,
-    @Inject(WORKSPACE_SETTING_READ_PORT)
-    private readonly workspaceSettingReadPort: WorkspaceSettingReadPort,
+    private readonly documentReadPort: PgWorkspaceDocumentReadAdapter,
+    private readonly documentWritePort: PgWorkspaceDocumentWriteAdapter,
+    private readonly workspaceReadPort: PgWorkspaceReadAdapter,
+    private readonly workspaceSettingReadPort: PgWorkspaceSettingReadAdapter,
     @Inject(forwardRef(() => IndexingClientService))
     private readonly indexingClient: IndexingClientService,
     @Inject(forwardRef(() => NotificationsService))
@@ -625,14 +616,17 @@ export class IndexingService {
   async getCommunityGraphData(workspaceId: string): Promise<unknown> {
     const url = this.configService.get<string>('indexing.communityGraphUrl', 'http://localhost:8000');
     const apiKey = this.configService.get<string>('indexing.communityGraphApiKey', '');
-    const response = await axios.get(`${url}/api/graph-data`, {
+    const params = new URLSearchParams({ workspace_id: workspaceId });
+    const res = await fetch(`${url}/api/graph-data?${params.toString()}`, {
       headers: {
         Authorization: `Bearer ${apiKey}`,
       },
-      params: { workspace_id: workspaceId },
-      timeout: 30000,
+      signal: AbortSignal.timeout(30000),
     });
-    return response.data;
+    if (!res.ok) {
+      throw new Error(`Community graph API returned HTTP ${res.status}`);
+    }
+    return await res.json() as unknown;
   }
 
   /**

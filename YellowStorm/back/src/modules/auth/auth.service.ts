@@ -6,7 +6,7 @@ import * as crypto from 'crypto';
 import { UAParser } from 'ua-parser-js';
 import { UserService } from '../user/user.service';
 import { newObjectId } from '@common/postgres';
-import { SESSION_STORE, RotationConflictError as StoreRotationConflict, type NewSession, type RotationBookkeeping, type SessionRecord, type SessionStore } from './persistence/session.store';
+import { RotationConflictError as StoreRotationConflict,   type NewSession,   type RotationBookkeeping,   type SessionRecord} from './persistence/session.store';
 
 import { asAuthUser, type AuthUser } from '@common/auth/auth-user';
 import {
@@ -18,6 +18,7 @@ import { EmailService, EmailTemplateRenderer, EmailTemplate } from '../email';
 import { UsageService } from '../usage';
 import { AuthorizationService } from '../authorization/authorization.service';
 import { SystemService } from '../system/system.service';
+import { PlatformSettingsService } from '@modules/system/platform-settings.service';
 import {
   DEFAULT_ACCESS_EXPIRY_MS,
   DEFAULT_REFRESH_EXPIRY_MS,
@@ -35,7 +36,7 @@ import {
   isTransientSessionStoreError,
 } from './utils/session-store-errors';
 import { RotationReceiptCrypto } from './utils/rotation-receipt.crypto';
-
+import { PgSessionStore } from './persistence/pg-session.store';
 
 @Injectable()
 export class AuthService {
@@ -48,14 +49,13 @@ export class AuthService {
   private static readonly STANDALONE_CLAIM_GRACE_MS = 30_000;
 
   private readonly bcryptRounds: number;
-  private readonly maxSessionsPerUser: number;
   private readonly appName: string;
   private readonly frontendUrl: string;
   private readonly passwordResetExpiryHours: number;
   private readonly receiptCrypto: RotationReceiptCrypto;
   private readonly receiptWindowSeconds: number;
   constructor(
-    @Inject(SESSION_STORE) private readonly sessionStore: SessionStore,
+    private readonly sessionStore: PgSessionStore,
     private readonly userService: UserService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
@@ -67,13 +67,13 @@ export class AuthService {
     @Inject(forwardRef(() => AuthorizationService))
     private readonly authorizationService: AuthorizationService,
     private readonly systemService: SystemService,
+    private readonly platformSettings: PlatformSettingsService,
     @Inject(forwardRef(() => WorkspaceInitializerService))
     private readonly workspaceInitializer: WorkspaceInitializerService,
     private readonly humainAgentService: HumainAgentService,
   ) {
     this.logger.setContext(AuthService.name);
     this.bcryptRounds = this.configService.get<number>('auth.bcryptRounds', 12);
-    this.maxSessionsPerUser = this.configService.get<number>('auth.maxSessionsPerUser', 10);
     this.appName = this.configService.get<string>('app.name', 'YelloStorm');
     this.frontendUrl = this.configService.get<string>('app.frontendUrl', 'http://localhost:5173');
     this.passwordResetExpiryHours = this.configService.get<number>('auth.passwordResetExpiry', 1);
@@ -766,9 +766,10 @@ export class AuthService {
    * sessions so the one about to be created fits under the cap.
    */
   private async enforceSessionLimit(userId: string): Promise<void> {
+    const { auth } = await this.platformSettings.getSettings();
     const invalidated = await this.sessionStore.invalidateOldestBeyond(
       userId,
-      this.maxSessionsPerUser - 1,
+      auth.maxSessionsPerUser - 1,
     );
 
     if (invalidated > 0) {

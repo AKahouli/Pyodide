@@ -242,6 +242,10 @@ export class WorkspaceDocumentService {
     return this.read.generateReadUrl(path, options);
   }
 
+  listAllInWorkspace(workspaceId: string): Promise<DocumentResponse[]> {
+    return this.read.listAllInWorkspace(workspaceId);
+  }
+
   findAllByWorkspace(workspaceId: string, params: DocumentQueryParams): Promise<PaginatedDocuments> {
     return this.read.findAllByWorkspace(workspaceId, params);
   }

@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { LoggerService } from '@modules/logger';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID, createHash } from 'node:crypto';
@@ -11,15 +11,8 @@ import { DocumentService } from '@modules/document/document.service';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { WorkspaceService } from '@modules/workspace/workspace.service';
 import { WidgetSseStreamRegistry } from './widget-sse-stream.registry';
-import {
-  WIDGET_MESSAGE_STORE,
-  WIDGET_SESSION_STORE,
-  WIDGET_TOKEN_STORE,
-  type WidgetMessageStore,
-  type WidgetSessionStore,
-  type WidgetTokenRow,
-  type WidgetTokenStore,
-} from '../persistence/widget.store';
+import { type WidgetTokenRow } from '../persistence/widget.store';
+import { PgWidgetMessageStore, PgWidgetSessionStore, PgWidgetTokenStore } from '../persistence/pg-widget.store';
 import { AgentService } from '@modules/agent/agent.service';
 import { ModelsService } from '@modules/models/models.service';
 import { AgentWidgetSettings, IGrpcAgent } from '@modules/agent/interfaces/agent.interface';
@@ -50,9 +43,9 @@ export class WidgetChatService {
   private readonly sseRegistry = new WidgetSseStreamRegistry();
 
   constructor(
-    @Inject(WIDGET_TOKEN_STORE) private readonly widgetTokenStore: WidgetTokenStore,
-    @Inject(WIDGET_SESSION_STORE) private readonly widgetSessionStore: WidgetSessionStore,
-    @Inject(WIDGET_MESSAGE_STORE) private readonly widgetMessageStore: WidgetMessageStore,
+    private readonly widgetTokenStore: PgWidgetTokenStore,
+    private readonly widgetSessionStore: PgWidgetSessionStore,
+    private readonly widgetMessageStore: PgWidgetMessageStore,
     private readonly agentService: AgentService,
     private readonly modelsService: ModelsService,
     private readonly streamService: StreamService,

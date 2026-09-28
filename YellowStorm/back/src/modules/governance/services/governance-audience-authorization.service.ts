@@ -1,13 +1,13 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
 import { ForbiddenException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { UserGroupService } from '@modules/user-group';
-import { SCOPE_STORE, type ScopeStore } from '../persistence';
+import { PgScopeStore } from '../persistence/postgres/pg-scope.store';
 
 @Injectable()
 export class GovernanceAudienceAuthorizationService {
-  constructor(@Inject(SCOPE_STORE) private readonly scopeStore: ScopeStore, private readonly userGroupService: UserGroupService, private readonly features: FeatureVisibilityService) {}
+  constructor(private readonly scopeStore: PgScopeStore, private readonly userGroupService: UserGroupService, private readonly features: FeatureVisibilityService) {}
 
   async isUserAuthorized(userId: string, scopeId: string): Promise<boolean> {
     if (!this.features.isEnabled('governanceScopeAudience')) return false;

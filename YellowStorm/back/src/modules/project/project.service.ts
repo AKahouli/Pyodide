@@ -3,7 +3,8 @@ import {
   CONVERSATION_STORE,
   type ConversationStore,
 } from '../conversation/persistence/conversation-store';
-import { PROJECT_STORE, type ProjectPatch, type ProjectRecord, type ProjectStore } from './persistence/project-store';
+import { type ProjectPatch, type ProjectRecord } from './persistence/project-store';
+import { PostgresProjectStore } from './persistence/postgres/postgres-project-store';
 import { ProjectShareService } from './project-share.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
@@ -18,8 +19,7 @@ import { normalizeObjectId } from '@common/postgres/object-id';
 @Injectable()
 export class ProjectService {
   constructor(
-    @Inject(PROJECT_STORE)
-    private readonly projectStore: ProjectStore,
+    private readonly projectStore: PostgresProjectStore,
     @Inject(CONVERSATION_STORE)
     private readonly conversationStore: ConversationStore,
     private readonly projectShareService: ProjectShareService,

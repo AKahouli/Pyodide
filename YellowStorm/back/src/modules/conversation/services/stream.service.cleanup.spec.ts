@@ -78,6 +78,7 @@ describe('StreamService.startStream exception-safe cleanup (F04)', () => {
       conversationSettings as never,
       {} as never, // semanticModelService
       executionStore as never,
+      {} as never, // conversationNameService
     );
     // Bypass gRPC client init; the lease claim happens after this check.
     (service as unknown as { isGrpcAvailable: boolean }).isGrpcAvailable = true;

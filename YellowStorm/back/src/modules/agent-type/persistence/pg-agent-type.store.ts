@@ -7,12 +7,11 @@ import { newObjectId } from '@common/postgres';
 import { withTransaction, resolveQueryable, type PgQueryable } from '@common/postgres/transaction';
 import * as schema from '@modules/postgres/schema';
 import {
-  AGENT_TYPE_STORE,
-  type AgentTypeListQuery,
-  type AgentTypePromptRow,
-  type AgentTypeRow,
-  type AgentTypeStore,
-  type NewAgentTypeRow,
+  type AgentTypeListQuery, 
+  type AgentTypePromptRow, 
+  type AgentTypeRow, 
+  type AgentTypeStore, 
+  type NewAgentTypeRow, 
 } from './agent-type.store';
 
 type TypeT = typeof schema.catalogAgentTypes.$inferSelect;

@@ -4,18 +4,13 @@ from pydantic import BaseModel
 
 
 class MockSettings(BaseModel):
-    TEMP_FOLDER: str = "./mock_tmp"
     HOST: str = "localhost"
     PORT: int = 8009
-    SSL_KEYFILE: Optional[str] = None
-    SSL_CERTFILE: Optional[str] = None
     LOG_CONFIG_PATH: str = "./src/logger/mock_uvicorn_disable_logging.json"
     TIMEOUT_KEEP_ALIVE: int = 5
     UVICORN_WORKERS: int = 1
 
     # Azure Storage
-    AZURE_STORAGE_ACCOUNT: str = "mock_storage_account"
-    AZURE_STORAGE_ACCOUNT_KEY: str = "mock_storage_key"
     AZURE_DATALAKE_CONNECTION_STRING: str = "DefaultEndpointsProtocol=https;AccountName=mock_account;AccountKey=mock_key;EndpointSuffix=core.windows.net"
     AZURE_DATALAKE_FILE_SYSTEM_NAME: str = "mock_file_system"
     DATABASE_URL: str = "sqlite+aiosqlite:///./test.db"
@@ -26,23 +21,17 @@ class MockSettings(BaseModel):
     lINKUP_API_KEY: str = "mock_lookup_api_key"
     WEB_SEARCH_PROMPT: str = "mock_web_search_prompt"
     API_URL: str = "https://mock_api_url"
-    API_ADK_URL: str = "https://mock_api_adk_url"
     LITELLM_API_BASE_URL: str = "https://mock_litellm_api_base_url"
     LITELLM_API_SECRET_KEY: str = "mock_litellm_api_secret_key"
     ATTRIBUT_EXTRACT_MODEL: str = "gpt-4.1"
     MICROSANDBOX_MCP_URL: Optional[str] = "https://mock_microsandbox_mcp_url"
     MICROSANDBOX_DOCUMENT_SERVER_URL: Optional[str] = "https://mock_microsandbox_document_server_url"
     MICROSANDBOX_DOCKER_IMAGE: Optional[str] = "mock_microsandbox_docker_image"
-    MAX_CONCURRENCY: int = 10
-    MAX_QUEUE_LENGTH: int = 100
     APPLICATION_INSIGHTS_LOG: bool = False
     DD_TRACE_ENABLED: bool = False
     APPLICATIONINSIGHTS_CONNECTION_STRING: Optional[str] = None
     APPLICATION_INSIGHTS_LOG_CONFIG_PATH: str = "./src/logger/mock_app_insight_logging.json"
 
-    # Authentication to get token
-    AUTH_USERNAME: str = "mock_user"
-    AUTH_PASSWORD: str = "mock_password"
     # Redis
     ENABLE_REDIS_SSL: bool = False
     REDIS_HOST: str = "localhost"
@@ -50,11 +39,6 @@ class MockSettings(BaseModel):
     REDIS_DB: int = 0
     REDIS_USER: Optional[str] = None
     REDIS_PASSWORD: Optional[str] = None
-    # Celery Configuration
-    CELERY_BROKER_URL: Optional[str] = None
-    CELERY_RESULT_BACKEND: Optional[str] = None
-    CELERY_WORKER_CONCURRENCY: int = 4
-    SECRET_KEY: str = "mock_secret"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     ADK_API_KEY: str = "mock_adk_api_key"

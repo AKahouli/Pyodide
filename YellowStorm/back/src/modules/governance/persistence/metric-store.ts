@@ -1,6 +1,5 @@
 import type { GovernanceMetricRecord } from './governance-records';
 
-export const METRIC_STORE = Symbol('GOVERNANCE_METRIC_STORE');
 
 /** Read-mostly store for governance_metrics (ingested counters are copied, never recomputed). */
 export interface MetricStore {

@@ -5,7 +5,7 @@ import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { newObjectId } from '@common/postgres/object-id';
 import { resolveQueryable, withTransaction } from '@common/postgres/transaction';
-import { BINDING_STORE, type BindingStore, type GovernanceBindingCreateInput, type GovernanceBindingPatch } from '../binding-store';
+import { type BindingStore,  type GovernanceBindingCreateInput,  type GovernanceBindingPatch } from '../binding-store';
 import { DuplicateKeyError, type GovernanceBindingRecord } from '../governance-records';
 
 const BINDINGS = schema.governanceWorkspaceBindings;
@@ -208,12 +208,12 @@ export class PgBindingStore implements BindingStore {
              OR (b.visibility = 'multi_scope'
                  AND NOT EXISTS (SELECT 1 FROM governance.governance_binding_scopes bs WHERE bs.binding_id = b.id AND bs.scope_id NOT IN ${scopeIds}))
            )`);
-      // Remaining multi_scope bindings simply drop the scopes…
+      // Remaining multi_scope bindings simply drop the scopesï¿½
       await tx.execute(sql`
         DELETE FROM governance.governance_binding_scopes bs
          USING governance.governance_workspace_bindings b
          WHERE bs.binding_id = b.id AND b.program_id = ${programId} AND bs.scope_id IN ${scopeIds}`);
-      // …and single-scope leftovers are downgraded to scope_specific.
+      // ï¿½and single-scope leftovers are downgraded to scope_specific.
       await tx.execute(sql`
         UPDATE governance.governance_workspace_bindings b
            SET visibility = 'scope_specific', updated_at = now()

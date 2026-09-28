@@ -9,16 +9,14 @@ Classes:
 """
 
 import json
-from typing import Optional, List, Any, Dict
+from typing import Optional, List
 from src.config.settings import get_settings
 import re2 as re
 
-from src.schema.chatbot_schema import RunAgentTeamRequest
 from src.logger.logging import get_logger
 from src.smart_rag.agents.core.document_helpers import DocumentHelpers
 from src.smart_rag.tools.utilities.tool_utils import extract_tool_names
 from src.smart_rag.engines.multi_agent.config import FUNCTION_NAME_PATTERN, DEFAULT_AGENT_NAME
-from src.smart_rag.tools import build_tree
 
 logger = get_logger("api.routers.agentic_rag.AgentHelper")
 settings = get_settings()

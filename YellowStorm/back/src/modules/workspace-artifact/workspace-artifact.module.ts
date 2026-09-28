@@ -7,12 +7,8 @@ import { DecisionFlowValidatorService } from './services/decision-flow-validator
 import { DecisionFlowOutputParserService } from './services/decision-flow-output-parser.service';
 import { DecisionFlowGenerationWorkerService } from './services/decision-flow-generation-worker.service';
 import { WorkspaceArtifactService } from './services/workspace-artifact.service';
-import { WORKSPACE_ARTIFACT_STORE } from './persistence/workspace-artifact-store';
 import { PostgresWorkspaceArtifactStore } from './persistence/postgres/postgres-workspace-artifact-store';
-import {
-  WORKSPACE_ARTIFACT_CLEANUP_PORT,
-  WorkspaceArtifactCleanupAdapter,
-} from './ports/workspace-artifact-cleanup.adapter';
+import { WorkspaceArtifactCleanupAdapter } from './ports/workspace-artifact-cleanup.adapter';
 
 // Global so WorkspaceModule can inject WORKSPACE_ARTIFACT_CLEANUP_PORT without
 // importing this module — a workspace→artifact import edge would create a
@@ -32,10 +28,8 @@ import {
     DecisionFlowOutputParserService,
     DecisionFlowGenerationWorkerService,
     PostgresWorkspaceArtifactStore,
-    { provide: WORKSPACE_ARTIFACT_STORE, useExisting: PostgresWorkspaceArtifactStore },
     WorkspaceArtifactCleanupAdapter,
-    { provide: WORKSPACE_ARTIFACT_CLEANUP_PORT, useExisting: WorkspaceArtifactCleanupAdapter },
   ],
-  exports: [WorkspaceArtifactService, DecisionFlowValidatorService, WORKSPACE_ARTIFACT_CLEANUP_PORT],
+  exports: [WorkspaceArtifactService, DecisionFlowValidatorService, WorkspaceArtifactCleanupAdapter],
 })
 export class WorkspaceArtifactModule {}

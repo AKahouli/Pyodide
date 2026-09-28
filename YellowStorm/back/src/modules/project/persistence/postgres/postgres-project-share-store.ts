@@ -6,11 +6,11 @@ import * as schema from '@modules/postgres/schema';
 import { countOver, pageOf } from '@common/postgres/pagination';
 import { newObjectId } from '@common/postgres/object-id';
 import { resolveQueryable } from '@common/postgres/transaction';
-import type { PageRequest, ProjectShareCreateInput, ProjectShareStore } from '../project-share-store';
+import type { PageRequest, ProjectShareCreateInput } from '../project-share-store';
 import { projectShareRowToRecord, type ProjectShareRecord } from '../project-record.mapper';
 
 @Injectable()
-export class PostgresProjectShareStore implements ProjectShareStore {
+export class PostgresProjectShareStore {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
 
   private get q() {

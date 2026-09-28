@@ -83,3 +83,31 @@ def test_xlsx_preparation_preserves_columns_beyond_preview(tmp_path: Path):
 
     assert manifest["columns"][-1] == "column_51"
     assert query_parquet(output, columns=["column_51"])["rows"] == [{"column_51": "value_51"}]
+
+
+def test_prepares_a_workbook_that_does_not_declare_its_dimension(tmp_path: Path):
+    """Some tools write sheets without <dimension>; read-only openpyxl then reports no max_column."""
+    import re
+    import zipfile
+
+    openpyxl = pytest.importorskip("openpyxl")
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Customers"
+    sheet.append(["customer_id", "name"])
+    sheet.append(["C041", "Acme"])
+    written = BytesIO()
+    workbook.save(written)
+    stripped = BytesIO()
+    with zipfile.ZipFile(BytesIO(written.getvalue())) as source, zipfile.ZipFile(stripped, "w") as target:
+        for item in source.infolist():
+            content = source.read(item.filename)
+            if item.filename.startswith("xl/worksheets/"):
+                content = re.sub(rb"<dimension[^>]*/>", b"", content)
+            target.writestr(item, content)
+    body = stripped.getvalue()
+    xlsx = {**SOURCE, "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "sizeBytes": len(body)}
+    manifest = prepare_parquet(xlsx, None, body, tmp_path / "dataset.parquet")
+    assert manifest["rowCount"] == 1
+    assert manifest["columns"] == ["__sheetRow", "customer_id", "name"]

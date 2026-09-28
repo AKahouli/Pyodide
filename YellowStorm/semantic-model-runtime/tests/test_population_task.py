@@ -232,6 +232,48 @@ async def test_task_merges_tabular_and_document_sources(monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
+async def test_task_reports_progress_source_by_source(monkeypatch: pytest.MonkeyPatch):
+    import app.population.document as document
+    from app.workers.population_tasks import PopulationProgress
+
+    async def populate(_connection, entry, _concept, _actor, **kwargs):
+        assert kwargs["cache"] == "cache"
+        return {"entities": [{"entityId": "crm:doc", "conceptId": entry["conceptId"],
+                              "namespace": "crm", "identity": {"customer_id": "c-3"},
+                              "label": "C-3", "attributes": {}, "provenance": {"sources": []}}],
+                "assertions": [], "gaps": [], "reused": True,
+                "counts": {"scanned": 1, "excluded": 0, "queryable": 0, "materialized": 1, "gaps": 0},
+                "coverage": {"assetRef": {}, "status": "processed_complete"},
+                "sourceObservation": {"assetRef": {"assetVersionId": "sha256:doc"}},
+                "indexObservation": None}
+
+    monkeypatch.setattr(document, "populate_document", populate)
+    sources = command()["payload"]["sources"] + [{
+        "conceptId": "c1", "sourceKind": "document",
+        "source": {**SOURCE, "mimeType": "application/pdf", "originalName": "agreement.pdf"},
+        "fieldMappings": [{"sourceField": "Customer ID", "targetAttribute": "customer_id", "mode": "extract"}],
+        "mappingVersion": "map-v1",
+    }]
+    reports: list[dict] = []
+
+    async def report(snapshot: dict) -> None:
+        reports.append(snapshot)
+
+    outcome = await run_population_for_task(
+        command(sources=sources), fetch=fake_fetch, prepare=fake_prepare, query=fake_query,
+        index_connection=object(), progress=PopulationProgress(report, min_interval=0),
+        extraction_cache="cache")
+    assert outcome["ok"] is True
+    assert reports[0] == {**reports[0], "phase": "reading", "total": 2, "done": 0}
+    finished = [item for item in reports if item["done"] == 2][0]
+    assert finished["reused"] == 1 and finished["records"] == 3
+    assert [item["name"] for item in finished["recent"]] == ["agreement.pdf", SOURCE["assetId"]]
+    assert finished["recent"][0]["reused"] is True
+    assert reports[-1]["phase"] == "linking"
+    assert "reused" not in outcome["entities"][0]
+
+
+@pytest.mark.asyncio
 async def test_task_reports_capped_enumeration_and_fetch_failures(monkeypatch: pytest.MonkeyPatch):
     import app.workers.population_tasks as tasks
 
@@ -333,4 +375,176 @@ def test_job_summary_uses_storage_counts_not_submitted_rows():
 def test_lease_covers_sources_within_bounds():
     assert population_lease_seconds(1, 30) == 300
     assert population_lease_seconds(25, 300) == 1800
+    assert population_lease_seconds(5000, 300) == 1800
     assert 300 <= population_lease_seconds(3, 30) <= 1800
+
+
+def test_summarize_gaps_groups_missing_values_and_links():
+    from app.workers.population_tasks import summarize_gaps
+
+    specification = {"concepts": [{"conceptId": "c1", "allowedFields": ["id", "city", "name"],
+                                   "identity": {"keyComponents": ["id"]}}]}
+    outcome = {"entities": [{"conceptId": "c1", "attributes": {"name": "A"}},
+                            {"conceptId": "c1", "attributes": {"name": "B", "city": "Paris"}}],
+               "gaps": [{"kind": "unresolved_reference", "relationId": "r1"},
+                        {"kind": "unresolved_reference", "relationId": "r1"},
+                        {"kind": "missing_identity", "conceptId": "c1"}]}
+    assert summarize_gaps(outcome, specification) == {
+        "missingValues": [{"conceptId": "c1", "attribute": "city", "missing": 1, "total": 2}],
+        "unresolvedLinks": [{"relationId": "r1", "kind": "unresolved_reference", "count": 2}],
+        "other": [{"conceptId": "c1", "kind": "missing_identity", "count": 1}],
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_after_checks", [1, 2])
+async def test_a_run_asked_to_stop_ends_as_stopped_without_saving(monkeypatch: pytest.MonkeyPatch, stop_after_checks: int):
+    """Stopped while reading (first progress report) or just before saving: nothing is saved."""
+    from datetime import datetime, timezone
+
+    import asyncpg
+
+    import app.workers.population_tasks as tasks
+    from app.jobs.models import Lease
+    from app.persistence.postgres_jobs import PostgresJobRepository
+
+    lease = Lease(task_id=7, job_id="job-1", task_name="populate", payload=command(),
+                  lease_epoch=1, lease_owner="worker", lease_expires_at=datetime.now(timezone.utc))
+    calls: dict[str, int] = {"checks": 0, "cancel": 0, "complete": 0, "requeue": 0, "persist": 0}
+
+    class Pool:
+        async def close(self):
+            return None
+
+    async def create_pool(*_args, **_kwargs):
+        return Pool()
+
+    async def claim(*_args, **_kwargs):
+        return lease
+
+    async def checkpoint(*_args, **_kwargs):
+        return True
+
+    async def cancel_requested(_self, job_id):
+        assert job_id == "job-1"
+        calls["checks"] += 1
+        return calls["checks"] >= stop_after_checks
+
+    async def count(name):
+        async def record(*_args, **_kwargs):
+            calls[name] += 1
+            return {"jobId": "job-1", "state": "cancelled"}
+        return record
+
+    async def run(_payload, *, progress, **_kwargs):
+        await progress.begin(1)
+        return {"ok": True, "purpose": "build", "jobState": "completed"}
+
+    monkeypatch.setenv("SEMANTIC_RUNTIME_DATABASE_URL", "postgresql://test")
+    monkeypatch.setattr(asyncpg, "create_pool", create_pool)
+    monkeypatch.setattr(PostgresJobRepository, "claim_task", claim)
+    monkeypatch.setattr(PostgresJobRepository, "checkpoint", checkpoint)
+    monkeypatch.setattr(PostgresJobRepository, "cancel_requested", cancel_requested)
+    for name, method in (("cancel", "cancel_task"), ("complete", "complete_task"), ("requeue", "requeue_task")):
+        monkeypatch.setattr(PostgresJobRepository, method, await count(name))
+    monkeypatch.setattr(tasks, "persist_population_revision", await count("persist"))
+    monkeypatch.setattr(tasks, "run_population_for_task", run)
+
+    assert await tasks._run_task(7, "worker") == {"ok": False, "errorCode": "cancelled", "jobState": "cancelled"}
+    assert calls["checks"] == stop_after_checks
+    assert (calls["cancel"], calls["complete"], calls["requeue"], calls["persist"]) == (1, 0, 0, 0)
+
+
+def test_only_gaps_that_lose_data_block_serving():
+    from app.population.serving_policy import blocking_gap_kinds, serving_decision
+
+    assert blocking_gap_kinds([{"kind": "unresolved_reference"}, {"kind": "conflicting_values"},
+                               {"kind": "unresolved_document_field"}, {"kind": "ai_extraction_unresolved"},
+                               {"kind": "budget_exhausted", "scope": "read"}]) == []
+    assert blocking_gap_kinds([{"kind": "enumeration_capped"}, {"kind": "source_unavailable"},
+                               {"kind": "budget_exhausted", "scope": "retrieval"},
+                               {"kind": "enumeration_capped"}]) == ["budget_exhausted", "enumeration_capped", "source_unavailable"]
+    assert serving_decision([], has_current_draft=True) == "activate"
+    assert serving_decision(["source_unavailable"], has_current_draft=True) == "keep_previous"
+    # Nothing to protect yet: the partial graph is better than none.
+    assert serving_decision(["source_unavailable"], has_current_draft=False) == "activate"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("gaps", "has_draft", "decision", "finalized"), [
+    ([], True, "activate", 1),
+    ([{"kind": "unresolved_reference"}], True, "activate", 1),
+    ([{"kind": "source_unavailable"}], True, "keep_previous", 0),
+    ([{"kind": "source_unavailable"}], False, "activate", 1),
+])
+async def test_a_partial_run_keeps_the_graph_in_use(monkeypatch: pytest.MonkeyPatch, gaps, has_draft, decision, finalized):
+    """The revision is always saved; only a result not missing data replaces an existing draft graph."""
+    from datetime import datetime, timezone
+
+    import asyncpg
+
+    import app.workers.population_tasks as tasks
+    from app.jobs.models import Lease
+    from app.persistence import population_store
+    from app.persistence.postgres_jobs import PostgresJobRepository
+
+    lease = Lease(task_id=7, job_id="job-1", task_name="populate", payload=command(),
+                  lease_epoch=1, lease_owner="worker", lease_expires_at=datetime.now(timezone.utc))
+    calls = {"persist": 0, "finalize": 0}
+    completed: dict = {}
+
+    class Pool:
+        async def close(self):
+            return None
+
+    async def create_pool(*_args, **_kwargs):
+        return Pool()
+
+    async def claim(*_args, **_kwargs):
+        return lease
+
+    async def not_cancelled(*_args, **_kwargs):
+        return False
+
+    async def checkpoint(*_args, **_kwargs):
+        return True
+
+    async def complete(_self, **kwargs):
+        completed.update(kwargs)
+
+    async def run(_payload, *, progress, **_kwargs):
+        return {"ok": True, "purpose": "build", "gaps": gaps,
+                "jobState": "completed_with_gaps" if gaps else "completed"}
+
+    async def persist(*_args, **_kwargs):
+        calls["persist"] += 1
+        return "rev-2"
+
+    async def counts(*_args, **_kwargs):
+        return {"entities": 1, "assertions": 1, "relationships": 0}
+
+    async def finalize(*_args, **_kwargs):
+        calls["finalize"] += 1
+        return {"projectionRef": "pop_rev-2", "environment": "draft"}
+
+    async def binding(_pool, model_id, environment="production"):
+        assert (model_id, environment) == ("m1", "draft")
+        return {"version": 3} if has_draft else None
+
+    monkeypatch.setenv("SEMANTIC_RUNTIME_DATABASE_URL", "postgresql://test")
+    monkeypatch.setattr(asyncpg, "create_pool", create_pool)
+    monkeypatch.setattr(PostgresJobRepository, "claim_task", claim)
+    monkeypatch.setattr(PostgresJobRepository, "checkpoint", checkpoint)
+    monkeypatch.setattr(PostgresJobRepository, "cancel_requested", not_cancelled)
+    monkeypatch.setattr(PostgresJobRepository, "complete_task", complete)
+    monkeypatch.setattr(tasks, "run_population_for_task", run)
+    monkeypatch.setattr(tasks, "persist_population_revision", persist)
+    monkeypatch.setattr(population_store, "count_revision_rows", counts)
+    monkeypatch.setattr(population_store, "get_active_binding", binding)
+    monkeypatch.setattr(tasks, "finalize_whole_model_build", finalize)
+
+    await tasks._run_task(7, "worker")
+    assert calls == {"persist": 1, "finalize": finalized}
+    assert completed["result"]["servingDecision"] == decision
+    assert completed["result"]["dataRevisionId"] == "rev-2"
+    assert ("boundEnvironment" in completed["result"]) is bool(finalized)

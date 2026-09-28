@@ -13,6 +13,7 @@ import { BranchNavigation } from './BranchNavigation';
 import { ConversationAssistantBubble } from './activity/ConversationAssistantBubble';
 import { MessageAttachments } from './MessageAttachments';
 import { MentionMessageJump } from './MentionMessageJump';
+import { TopLoadTrigger, getScrollContainer } from './TopLoadTrigger';
 import type { ChoiceInteractionMetadata, Message } from '../types';
 import { ParentMessagePreview } from './ParentMessagePreview';
 import { MessageAvatar } from './MessageAvatar';
@@ -20,55 +21,7 @@ import { cn } from '@/lib/utils';
 import { buildChoiceInteractionIndex } from '../choice-interactions';
 import type { ChoiceComponentAction } from '@/components/ai-elements/choice/ChoicePartRenderer';
 
-/** Find the scrollable ancestor element */
-function getScrollContainer(element: HTMLElement | null): HTMLElement | null {
-  let current = element?.parentElement;
-  while (current) {
-    const { overflowY } = getComputedStyle(current);
-    if (overflowY === 'auto' || overflowY === 'scroll') {
-      return current;
-    }
-    current = current.parentElement;
-  }
-  return null;
-}
-
-/** Invisible trigger at top - loads more when scrolled into view */
-function TopLoadTrigger({ onTrigger, disabled }: Readonly<{ onTrigger: () => void; disabled: boolean }>) {
-  const ref = useRef<HTMLDivElement>(null);
-  const initializedRef = useRef(false);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || disabled) return;
-
-    // Delay to prevent firing immediately on initial render
-    const timeoutId = setTimeout(() => {
-      initializedRef.current = true;
-    }, 100);
-
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (initializedRef.current && entry.isIntersecting) {
-          onTrigger();
-        }
-      },
-      { rootMargin: '200px 0px 0px 0px' },
-    );
-
-    observer.observe(el);
-    return () => {
-      clearTimeout(timeoutId);
-      observer.disconnect();
-      initializedRef.current = false;
-    };
-  }, [onTrigger, disabled]);
-
-  return <div ref={ref} className='h-px' aria-hidden='true' />;
-}
-
-
-const MemoizedMessageBubble = memo(function MemoizedMessageBubble({ 
+const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
   message, 
   isLastAiMessage, 
   isLastUserMessage, 
@@ -201,7 +154,7 @@ const MemoizedMessageBubble = memo(function MemoizedMessageBubble({
                 <div className="flex justify-start min-w-0">
                   {isUser
                     ? <ChatMessageBubble message={chatMessage} isStreaming={isStreaming} className='[&>div:first-child]:w-auto [&>div:first-child]:min-w-0' />
-                    : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} isStreaming={false} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} />}
+                    : <ConversationAssistantBubble conversationId={conversationId} messageId={message.id} components={message.components || []} isStreaming={false} choiceInteractions={choiceInteractions} onComponentAction={handleComponentAction} onSubmitQuestions={handleSubmitQuestions} onRetry={handleRetry} showUiTargets />}
                 </div>
               </>
             )}
@@ -378,7 +331,7 @@ export function GroupConversationContent() {
                   <div className="grid w-full gap-x-2 md:gap-x-3 gap-y-1 grid-cols-[auto_1fr]">
                     <MessageAvatar message={{ id: streamingMessageId || 'streaming', conversationType: 'ai' } as Message} currentConversation={currentConversation} />
                     <div className="flex justify-start min-w-0">
-                      <ConversationAssistantBubble conversationId={currentConversationId || ''} messageId={streamingMessageId || 'streaming'} components={streamingComponents} isStreaming showWorking={showStreamingActivity && streamingComponents.length === 0} choiceInteractions={choiceInteractions} onComponentAction={handleStreamingAction} onSubmitQuestions={handleStreamingQuestions} />
+                      <ConversationAssistantBubble conversationId={currentConversationId || ''} messageId={streamingMessageId || 'streaming'} components={streamingComponents} isStreaming showWorking={showStreamingActivity && streamingComponents.length === 0} choiceInteractions={choiceInteractions} onComponentAction={handleStreamingAction} onSubmitQuestions={handleStreamingQuestions} showUiTargets />
                     </div>
                   </div>
               </MessageProvider>

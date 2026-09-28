@@ -2,7 +2,6 @@ param([int]$Port = 8010)
 
 $ErrorActionPreference = 'Stop'
 $runtimeRoot = Split-Path -Parent $PSScriptRoot
-$backendEnv = Join-Path $runtimeRoot '..\back\.env'
 
 function Import-DotEnv([string]$Path) {
   foreach ($line in [System.IO.File]::ReadAllLines((Resolve-Path $Path))) {
@@ -12,14 +11,12 @@ function Import-DotEnv([string]$Path) {
   }
 }
 
+# The semantic runtime is self-sufficient: everything it needs — including
+# YELLOWSTORM_BACKEND_URL and YELLOWSTORM_INTERNAL_SERVICE_TOKEN — comes from
+# its own .env. No back/.env dependency.
 Import-DotEnv (Join-Path $runtimeRoot '.env')
-$backendLines = [System.IO.File]::ReadAllLines((Resolve-Path $backendEnv))
-$secretLine = @($backendLines | Where-Object { $_ -match '^\s*INTERNAL_SERVICE_SECRET\s*=' })
-if (-not $secretLine.Count) { throw 'INTERNAL_SERVICE_SECRET is missing from back/.env' }
-
-$env:YELLOWSTORM_BACKEND_URL = 'http://127.0.0.1:3000'
-$env:YELLOWSTORM_INTERNAL_SERVICE_TOKEN = ($secretLine[0] -split '=', 2)[1].Trim().Trim('"')
-if (-not $env:YELLOWSTORM_INTERNAL_SERVICE_TOKEN) { throw 'INTERNAL_SERVICE_SECRET is empty' }
+if (-not $env:YELLOWSTORM_INTERNAL_SERVICE_TOKEN) { throw 'YELLOWSTORM_INTERNAL_SERVICE_TOKEN is missing or empty in semantic-model-runtime/.env' }
+if (-not $env:YELLOWSTORM_BACKEND_URL) { throw 'YELLOWSTORM_BACKEND_URL is missing or empty in semantic-model-runtime/.env' }
 
 $workers = @()
 Push-Location $runtimeRoot

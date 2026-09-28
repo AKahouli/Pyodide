@@ -1,6 +1,5 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { LoggerService } from '../../logger';
-import { AUDIT_LOG_STORE, type AuditLogStore } from '../persistence/audit-log.store';
 import {
   CreateAuditLogParams,
   AuditLogQueryParams,
@@ -8,11 +7,12 @@ import {
 } from '../interfaces/audit-log.interface';
 import type { AuditLogRecord } from '../persistence/audit-log.store';
 import { escapeRegex } from '../../../common/utils';
+import { PgAuditLogStore } from '../persistence/pg-role.store';
 
 @Injectable()
 export class AuditLogService {
   constructor(
-    @Inject(AUDIT_LOG_STORE) private readonly auditLogStore: AuditLogStore,
+    private readonly auditLogStore: PgAuditLogStore,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(AuditLogService.name);

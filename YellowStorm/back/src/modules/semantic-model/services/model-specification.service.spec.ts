@@ -130,4 +130,32 @@ describe('ModelSpecificationService (P1)', () => {
     expect(JSON.stringify(snap)).not.toContain('recordRelations');
     expect(snap.relations).toHaveLength(1);
   });
+
+  it('hashes synonyms exactly like the runtime (golden vector shared with test_population_compiler.py)', () => {
+    const snap = svc.buildSnapshot({
+      modelId: 'm1', modelVersionId: 'v1', homeWorkspaceId: 'ws',
+      concepts: [
+        {
+          conceptId: 'c1', key: 'customer', label: 'Customer',
+          identity: { namespace: 'crm', keyComponents: ['customer_id'] },
+          populationMode: 'materialized', allowedFields: ['customer_id', 'name', 'country'],
+          aliases: ['Client', 'Société'], fieldAliases: { name: ['Raison sociale'] },
+        },
+        {
+          conceptId: 'c2', key: 'agreement', label: 'Agreement',
+          identity: { namespace: 'contracts', keyComponents: ['agreement_no'] },
+          populationMode: 'filtered_materialized',
+          eligibility: { field: 'status', op: 'eq', value: 'signed' },
+          materialization: { field: 'country', op: 'eq', value: 'FR' },
+          allowedFields: ['agreement_no', 'customer_ref', 'parent_ref', 'status', 'country'],
+        },
+      ],
+      relations: [{
+        relationId: 'r1', key: 'amends', label: 'amends', sourceConceptId: 'c2', targetConceptId: 'c2',
+        cardinality: 'many_to_one', matchingStrategy: 'normalized',
+      }],
+      sourceScope: [{ workspaceId: 'ws', assetId: 'a1' }],
+    });
+    expect(snap.specHash).toBe('sha256:436ade99c32bc6c2aac536ac2d1602281cd30bd8ced68c7c3cd033b5cd244267');
+  });
 });

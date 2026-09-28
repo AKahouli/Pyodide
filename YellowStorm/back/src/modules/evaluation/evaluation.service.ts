@@ -1,13 +1,13 @@
-import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Injectable,  Logger,  NotFoundException,  ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import axios from 'axios';
-import { Evaluation, EvaluationDocument } from './schemas/evaluation.schema';
-import { Dataset, DatasetDocument } from './schemas/dataset.schema';
 import { AgentService } from '../agent/agent.service';
+import { BadRequestException } from '../exceptions/exceptions/http.exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
+import type { DatasetItem, DatasetRecord, EvaluationRecord, EvaluationRunMode } from './evaluation.types';
+import { PgEvaluationRunStore } from './persistence/pg-evaluation-run.store';
+import { PgEvaluationDatasetStore } from './persistence/pg-evaluation-dataset.store';
 
 @Injectable()
 export class EvaluationService {
@@ -16,10 +16,8 @@ export class EvaluationService {
     private readonly adkApiKey: string;
 
     constructor(
-        @InjectModel(Evaluation.name)
-        private readonly evaluationModel: Model<EvaluationDocument>,
-        @InjectModel(Dataset.name)
-        private readonly datasetModel: Model<DatasetDocument>,
+        private readonly evaluations: PgEvaluationRunStore,
+        private readonly datasets: PgEvaluationDatasetStore,
         private readonly agentService: AgentService,
         private readonly configService: ConfigService,
     ) {
@@ -31,30 +29,53 @@ export class EvaluationService {
     // Dataset Methods
     // ==========================================
 
-    async createDataset(userId: string, name: string, items: any[]): Promise<Dataset> {
-        const dataset = await this.datasetModel.create({
-            name,
-            items,
-            createdBy: new Types.ObjectId(userId),
+    async createDataset(userId: string, name: string, items: unknown[]): Promise<DatasetRecord> {
+        const cleanName = typeof name === 'string' ? name.trim() : '';
+        if (!cleanName) throw new BadRequestException('Dataset name is required');
+        return this.datasets.create({
+            name: cleanName,
+            items: this.normalizeDatasetItems(items),
+            createdBy: userId,
         });
-        return dataset;
     }
 
-    async findAllDatasets(userId: string): Promise<Dataset[]> {
-        return this.datasetModel.find({ createdBy: new Types.ObjectId(userId) }).exec();
+    async findAllDatasets(userId: string): Promise<DatasetRecord[]> {
+        return this.datasets.findByCreator(userId);
     }
 
-    async findDatasetById(id: string): Promise<Dataset> {
+    async findDatasetById(id: string): Promise<DatasetRecord> {
         if (!id || id === 'undefined' || id === '') {
             throw new NotFoundException('Dataset ID is missing or invalid');
         }
-        const dataset = await this.datasetModel.findById(id).exec();
+        const dataset = await this.datasets.findById(id);
         if (!dataset) throw new NotFoundException(ErrorCode.NOT_FOUND);
         return dataset;
     }
 
     async deleteDataset(id: string): Promise<void> {
-        await this.datasetModel.findByIdAndDelete(id).exec();
+        await this.datasets.deleteById(id);
+    }
+
+    /** A dataset item needs both a question and a reference answer (the former Mongoose `required` + `trim`). */
+    private normalizeDatasetItems(items: unknown): DatasetItem[] {
+        if (items == null) return [];
+        if (!Array.isArray(items)) throw new BadRequestException('Dataset items must be an array');
+        return items.map((raw: unknown, index) => {
+            const item = (raw ?? {}) as Record<string, unknown>;
+            const question = typeof item.question === 'string' ? item.question.trim() : '';
+            const referenceAnswer = typeof item.reference_answer === 'string' ? item.reference_answer.trim() : '';
+            if (!question || !referenceAnswer) {
+                throw new BadRequestException(`Dataset item ${String(index + 1)} needs a question and a reference_answer`);
+            }
+            return { question, reference_answer: referenceAnswer };
+        });
+    }
+
+    /** Mongoose defaulted a missing mode to non_strict and rejected anything but the two values. */
+    private parseMode(mode: string | null | undefined): EvaluationRunMode {
+        if (mode === undefined || mode === null || mode === '') return 'non_strict';
+        if (mode === 'strict' || mode === 'non_strict') return mode;
+        throw new BadRequestException(`Invalid evaluation mode "${mode}"`);
     }
 
     // ==========================================
@@ -73,23 +94,23 @@ export class EvaluationService {
         numRuns: number,
         mode: string,
         scenarioName: string,
-    ): Promise<Evaluation> {
+    ): Promise<EvaluationRecord> {
+        const cleanScenarioName = typeof scenarioName === 'string' ? scenarioName.trim() : '';
+        if (!cleanScenarioName) throw new BadRequestException('Scenario name is required');
+        const runMode = this.parseMode(mode);
+
         await this.assertCanManageAgent(userId, permissions, agentId);
 
         await this.findDatasetById(datasetId);
 
-        const evaluation = await this.evaluationModel.create({
-            agentId: new Types.ObjectId(agentId),
-            scenarioName,
-            datasetId: new Types.ObjectId(datasetId),
-            mode,
-            status: 'processing',
-            createdBy: new Types.ObjectId(userId),
-            numRuns: numRuns || 1,
-            completedRuns: 0,
+        return this.evaluations.create({
+            agentId,
+            scenarioName: cleanScenarioName,
+            datasetId,
+            mode: runMode,
+            createdBy: userId,
+            numRuns: Math.max(1, Math.trunc(Number(numRuns)) || 1),
         });
-
-        return evaluation;
     }
 
     /**
@@ -111,7 +132,7 @@ export class EvaluationService {
     ): Promise<{ results: any[]; runIndex: number }> {
         const agent = await this.assertCanManageAgent(userId, permissions, agentId);
         const evaluation = await this.findEvaluationById(evaluationId);
-        if (evaluation.agentId.toString() !== agentId) {
+        if (evaluation.agentId !== agentId.toLowerCase()) {
             throw new ForbiddenException(ErrorCode.CUSTOM_AGENT_FORBIDDEN);
         }
 
@@ -162,10 +183,7 @@ export class EvaluationService {
 
         // Persist results to DB
         if (runResults.length > 0) {
-            await this.evaluationModel.findByIdAndUpdate(evaluationId, {
-                $push: { results: { $each: runResults } },
-                $inc: { completedRuns: 1 },
-            });
+            await this.evaluations.appendRunResults(evaluationId, runResults);
         }
 
         return { results: runResults, runIndex };
@@ -265,41 +283,41 @@ export class EvaluationService {
     /**
      * Marks an evaluation as completed or failed.
      */
-    async finalizeEvaluation(userId: string, permissions: string[], evaluationId: string, status: 'completed' | 'failed', error?: string): Promise<Evaluation> {
-        const evaluation = await this.evaluationModel.findById(evaluationId).exec();
+    async finalizeEvaluation(userId: string, permissions: string[], evaluationId: string, status: 'completed' | 'failed', error?: string): Promise<EvaluationRecord> {
+        if (status !== 'completed' && status !== 'failed') {
+            throw new BadRequestException(`Invalid evaluation status "${String(status)}"`);
+        }
+        const evaluation = await this.evaluations.findById(evaluationId);
         if (!evaluation) throw new NotFoundException(ErrorCode.NOT_FOUND);
-        await this.assertCanManageAgent(userId, permissions, evaluation.agentId.toString());
+        await this.assertCanManageAgent(userId, permissions, evaluation.agentId);
 
-        const update: any = { status };
-        if (error) update.error = error;
-
-        const updated = await this.evaluationModel.findByIdAndUpdate(evaluationId, update, { new: true }).exec();
+        const updated = await this.evaluations.finalize(evaluationId, status, error);
         if (!updated) throw new NotFoundException(ErrorCode.NOT_FOUND);
         return updated;
     }
 
-    async findEvaluationsByAgent(userId: string, agentId: string): Promise<Evaluation[]> {
+    async findEvaluationsByAgent(userId: string, agentId: string): Promise<EvaluationRecord[]> {
         await this.agentService.findUserAgentById(userId, agentId);
-        return this.evaluationModel.find({ agentId: new Types.ObjectId(agentId) }).sort({ createdAt: -1 }).exec();
+        return this.evaluations.findByAgent(agentId);
     }
 
-    async findEvaluationById(id: string): Promise<Evaluation> {
-        const evaluation = await this.evaluationModel.findById(id).exec();
+    async findEvaluationById(id: string): Promise<EvaluationRecord> {
+        const evaluation = await this.evaluations.findById(id);
         if (!evaluation) throw new NotFoundException(ErrorCode.NOT_FOUND);
         return evaluation;
     }
 
-    async findEvaluationByIdForUser(userId: string, id: string): Promise<Evaluation> {
+    async findEvaluationByIdForUser(userId: string, id: string): Promise<EvaluationRecord> {
         const evaluation = await this.findEvaluationById(id);
-        await this.agentService.findUserAgentById(userId, evaluation.agentId.toString());
+        await this.agentService.findUserAgentById(userId, evaluation.agentId);
         return evaluation;
     }
 
     async deleteEvaluation(userId: string, permissions: string[], id: string): Promise<void> {
-        const evaluation = await this.evaluationModel.findById(id).exec();
+        const evaluation = await this.evaluations.findById(id);
         if (!evaluation) throw new NotFoundException(ErrorCode.NOT_FOUND);
-        await this.assertCanManageAgent(userId, permissions, evaluation.agentId.toString());
-        await this.evaluationModel.findByIdAndDelete(id).exec();
+        await this.assertCanManageAgent(userId, permissions, evaluation.agentId);
+        await this.evaluations.deleteById(id);
     }
 
     private async assertCanManageAgent(userId: string, permissions: string[], agentId: string) {

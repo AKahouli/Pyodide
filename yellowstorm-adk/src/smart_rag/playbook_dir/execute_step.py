@@ -3,7 +3,6 @@
 import asyncio
 import uuid
 from typing import Optional, List, Dict, Any
-from google.genai import types
 from google.adk.agents.run_config import StreamingMode, RunConfig
 from google.adk import Agent
 from sqlalchemy.exc import SQLAlchemyError
@@ -40,11 +39,8 @@ from src.smart_rag.infrastructure.session.citation_manager import (
 # Constants
 DEFAULT_MODEL = 'gpt-5.4-mini'
 DEFAULT_TEMPERATURE = 0.7
-DEFAULT_TOP_K = 3
 MAX_LLM_CALLS = 50
 LOG_INTERVAL = 10  # Log every N events during injection
-SESSION_PREFIX = "session-"
-TEMP_SESSION_PREFIX = "temp-execution-"
 AGENT_MODE_PREFIX = "Agent_mode_"
 
 logger = get_logger("api.smart_rag.playbook_dir.execute_step")

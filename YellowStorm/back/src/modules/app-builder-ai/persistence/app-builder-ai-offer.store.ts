@@ -1,7 +1,6 @@
 /**
  * Store port for catalog.app_builder_ai_offers (P8 Mongo cutover).
  */
-export const APP_BUILDER_AI_OFFER_STORE = Symbol('APP_BUILDER_AI_OFFER_STORE');
 
 export interface AppBuilderAiOfferRecord {
   id: string;

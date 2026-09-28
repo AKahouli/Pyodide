@@ -1,14 +1,10 @@
 import { randomBytes } from 'crypto';
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import { LoggerService } from '@modules/logger';
 import { PlaybookFlowMailGraphClientService } from '@modules/playbook-flow/services/playbook-flow-mail-graph-client.service';
 import { ConnectedAppTokenService } from '@modules/connected-app/services/connected-app-token.service';
-import {
-  WorkyMailSubscription,
-  WorkyMailSubscriptionDocument,
-} from '../schemas/worky-mail-subscription.schema';
+import { WorkyMailRepository } from '../persistence/worky-mail.repository';
+import type { WorkyMailSubscriptionRecord } from '../worky.types';
 
 /** Re-subscribe this far before expiry rather than racing the deadline. */
 const RENEWAL_WINDOW_MS = 15 * 60 * 1000;
@@ -25,8 +21,7 @@ const RENEWAL_WINDOW_MS = 15 * 60 * 1000;
 @Injectable()
 export class WorkyMailSubscriptionService {
   constructor(
-    @InjectModel(WorkyMailSubscription.name)
-    private readonly subscriptionModel: Model<WorkyMailSubscriptionDocument>,
+    private readonly subscriptions: WorkyMailRepository,
     private readonly graphClient: PlaybookFlowMailGraphClientService,
     private readonly tokenService: ConnectedAppTokenService,
     private readonly logger: LoggerService,
@@ -62,7 +57,7 @@ export class WorkyMailSubscriptionService {
    * which the wait's own expiry already covers.
    */
   async ensureForUser(userId: string): Promise<void> {
-    const existing = await this.subscriptionModel.findOne({ userId }).lean().exec();
+    const existing = await this.subscriptions.findByUser(userId);
     const notificationUrl = this.notificationUrl;
     const live =
       existing?.subscriptionId &&
@@ -99,11 +94,9 @@ export class WorkyMailSubscriptionService {
       // Nothing live to protect — record the mailbox so the sweep can read it.
       const { appKey } = await this.tokenService.getM365ValidToken(
         userId, existing?.mailboxAppKey ?? 'microsoft');
-      await this.subscriptionModel.updateOne(
-        { userId, mailboxAppKey: appKey },
-        { $set: { subscriptionId: null, clientState: null, expiresAt: null, notificationUrl: null } },
-        { upsert: true },
-      );
+      await this.subscriptions.upsertMailbox(userId, appKey, {
+        subscriptionId: null, clientState: null, expiresAt: null, notificationUrl: null,
+      });
       this.logger.log(
         'Worky mail: polling this mailbox (set WORKY_MAIL_NOTIFICATION_URL for instant replies)',
         { userId, appKey },
@@ -140,18 +133,12 @@ export class WorkyMailSubscriptionService {
       clientState,
     );
 
-    await this.subscriptionModel.updateOne(
-      { userId, mailboxAppKey: resolvedAppKey },
-      {
-        $set: {
-          subscriptionId: subscription.id as string,
-          clientState,
-          expiresAt: new Date(subscription.expirationDateTime as string),
-          notificationUrl,
-        },
-      },
-      { upsert: true },
-    );
+    await this.subscriptions.upsertMailbox(userId, resolvedAppKey, {
+      subscriptionId: subscription.id as string,
+      clientState,
+      expiresAt: new Date(subscription.expirationDateTime as string),
+      notificationUrl,
+    });
     this.logger.log('Worky mail subscription ready', {
       userId,
       resolvedAppKey,
@@ -160,15 +147,14 @@ export class WorkyMailSubscriptionService {
   }
 
   /** The subscription a notification claims to come from, or null if it is lying. */
-  async findByClientState(clientState: string): Promise<WorkyMailSubscription | null> {
+  async findByClientState(clientState: string): Promise<WorkyMailSubscriptionRecord | null> {
     if (!clientState) return null;
-    return this.subscriptionModel.findOne({ clientState }).lean().exec() as
-      Promise<WorkyMailSubscription | null>;
+    return this.subscriptions.findByClientState(clientState);
   }
 
   /** Drop a user's subscription — nothing of theirs is waiting on a reply. */
   async releaseForUser(userId: string): Promise<void> {
-    const existing = await this.subscriptionModel.findOne({ userId }).lean().exec();
+    const existing = await this.subscriptions.findByUser(userId);
     if (!existing) return;
     try {
       // Nothing to delete for a poll-only mailbox — there is no subscription.
@@ -183,7 +169,7 @@ export class WorkyMailSubscriptionService {
         userId, error: (err as Error).message,
       });
     }
-    await this.subscriptionModel.deleteOne({ _id: (existing as any)._id }).exec();
+    await this.subscriptions.deleteById(existing.id);
     this.logger.log('Worky mail subscription released', { userId });
   }
 }

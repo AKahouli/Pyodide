@@ -1,28 +1,31 @@
 import { Injectable, Optional } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import { LoggerService } from '@modules/logger';
-import { FlowExecution, FlowExecutionDocument } from '../schemas/playbook-flow-execution.schema';
-import { FlowHitlMemory, FlowHitlMemoryDocument } from '../schemas/playbook-flow-hitl-memory.schema';
-import {
-  type FlowReplaySignalStatus,
-  type FlowReplayRunReportDocument,
-  type ReplaySignalEvaluationStatus,
-} from '../schemas/playbook-flow-replay-run-report.schema';
-import type { ReplayMode } from '../schemas/playbook-flow-validated-replay.schema';
+import { ExecutionRepository } from '../persistence/execution.repository';
+import { HitlMemoryRepository } from '../persistence/hitl-memory.repository';
+import type {
+  FlowReplayRunReportRecord,
+  NewReplayRunReport,
+  ReplayRunReportLookupFilter,
+} from '../persistence/replay-run-report.repository';
+import type {
+  FlowReplayHitlSummary,
+  FlowReplaySignalStatus,
+  ReplaySignalEvaluationStatus,
+} from '../interfaces/playbook-flow-replay-run-report.interface';
+import type {
+  FlowReplayHitlMemorySnapshot,
+  FlowReplayToolCall,
+  ReplayMode,
+} from '../interfaces/playbook-flow-validated-replay.interface';
 import type {
   ReplayPlanToolStep,
   ReplayPlanningSummary,
   ReplayToolEnforcementAssessment,
 } from '../interfaces/playbook-flow-replay-plan.interface';
 import type {
-  FlowReplayToolCall,
-  FlowReplayHitlMemorySnapshot,
-} from '../schemas/playbook-flow-validated-replay.schema';
-import type {
   FlowTaskPublicReasoningTraceItem,
   FlowTaskSemanticMatch,
-} from '../schemas/playbook-flow-task-result.schema';
+} from '../models/playbook-flow-task-result.model';
 import type { FlowToolTraceItem } from '../interfaces/playbook-flow-observability.interface';
 import type {
   ReplayDriftPolicy,
@@ -154,22 +157,19 @@ export class PlaybookFlowReplayDriftService {
   private readonly replaySemanticEvaluator = new PlaybookFlowReplaySemanticEvaluatorService();
 
   constructor(
-    @InjectModel(FlowExecution.name)
-    private readonly executionModel: Model<FlowExecutionDocument>,
+    private readonly executionRepository: ExecutionRepository,
     private readonly replayReportService: PlaybookFlowReplayReportService,
     private readonly outputContractService: PlaybookFlowOutputContractService,
     private readonly replayPlanService: PlaybookFlowReplayPlanService,
     private readonly logger: LoggerService,
     @Optional() private readonly semanticJudge?: PlaybookFlowReplaySemanticJudgeService,
-    @Optional()
-    @InjectModel(FlowHitlMemory.name)
-    private readonly hitlMemoryModel?: Model<FlowHitlMemoryDocument>,
+    @Optional() private readonly hitlMemoryRepository?: HitlMemoryRepository,
     @Optional() private readonly streamEvents?: PlaybookFlowStreamEventsService,
   ) {
     this.logger.setContext('PlaybookFlowReplayDriftService');
   }
 
-  async createPreRunReport(params: CreateReplayPreRunReportInput): Promise<FlowReplayRunReportDocument> {
+  async createPreRunReport(params: CreateReplayPreRunReportInput): Promise<FlowReplayRunReportRecord> {
     const iteration = params.iteration ?? 0;
     const hitlSummary = await this.buildReplayHitlSummary({
       referenceExecutionId: params.referenceExecutionId,
@@ -214,7 +214,7 @@ export class PlaybookFlowReplayDriftService {
       flowId: params.flowId,
       taskId: params.taskId,
       hitlSummary,
-      reportId: String((report as unknown as { _id?: string })._id ?? ''),
+      reportId: report.id,
       executionMode: params.mode,
     });
     return report;
@@ -260,7 +260,7 @@ export class PlaybookFlowReplayDriftService {
         { executionId: params.executionId, taskId: params.taskId },
         params.iteration ?? 0,
       );
-      if (latestReport?._id) {
+      if (latestReport?.id) {
         const hitlSummary = await this.buildReplayHitlSummary({
           referenceExecutionId: params.replayArtifacts.referenceExecutionId,
           executionId: params.executionId,
@@ -268,7 +268,7 @@ export class PlaybookFlowReplayDriftService {
           flowId: params.replayArtifacts.flowId ?? String(latestReport.flowId ?? ''),
           hitlMemorySnapshots: params.replayArtifacts.hitlMemorySnapshots,
         });
-        await this.replayReportService.updateReport(latestReport._id as string, {
+        await this.replayReportService.updateReport(String(latestReport.id), {
           verdict: 'unknown',
           overallScore: null,
           verdictReasons: ['evaluation_pending'],
@@ -280,7 +280,7 @@ export class PlaybookFlowReplayDriftService {
           flowId: String(params.replayArtifacts.flowId ?? latestReport.flowId ?? ''),
           taskId: params.taskId,
           hitlSummary,
-          reportId: String(latestReport._id),
+          reportId: String(latestReport.id),
           executionMode: String(latestReport.mode ?? params.replayArtifacts.mode),
         });
       }
@@ -350,7 +350,7 @@ export class PlaybookFlowReplayDriftService {
     semanticMatch: FlowTaskSemanticMatch,
   ): Promise<void> {
     const latestReport = await this.ensureIterationReport({ executionId, taskId }, iteration);
-    if (!latestReport?._id) {
+    if (!latestReport?.id) {
       return;
     }
 
@@ -373,7 +373,7 @@ export class PlaybookFlowReplayDriftService {
       blockedBy: asStringArray(latestReport.blockedBy),
     });
 
-    await this.replayReportService.updateReport(latestReport._id, {
+    await this.replayReportService.updateReport(String(latestReport.id), {
       semanticMatch,
       verdict: outcome.verdict,
       overallScore: outcome.overallScore,
@@ -388,7 +388,7 @@ export class PlaybookFlowReplayDriftService {
         flowId: String(latestReport.flowId ?? ''),
         taskId,
         hitlSummary: latestHitlSummary,
-        reportId: String(latestReport._id ?? ''),
+        reportId: String(latestReport.id ?? ''),
         executionMode: String(latestReport.mode ?? 'replay'),
       });
     }
@@ -404,7 +404,7 @@ export class PlaybookFlowReplayDriftService {
       },
       params.iteration ?? 0,
     );
-    if (!latestReport?._id) {
+    if (!latestReport?.id) {
       return;
     }
 
@@ -459,7 +459,7 @@ export class PlaybookFlowReplayDriftService {
       hitlMemorySnapshots: params.hitlMemorySnapshots,
     });
 
-    await this.replayReportService.updateReport(latestReport._id, {
+    await this.replayReportService.updateReport(String(latestReport.id), {
       outputContractEvaluated: params.outputContractEvaluated,
       outputContractPassed: params.outputContractPassed,
       structuralDriftScore: params.structuralDriftScore,
@@ -494,7 +494,7 @@ export class PlaybookFlowReplayDriftService {
       flowId: String(latestReport.flowId ?? ''),
       taskId: params.taskId,
       hitlSummary,
-      reportId: String(latestReport._id ?? ''),
+      reportId: String(latestReport.id ?? ''),
       executionMode: String(latestReport.mode ?? 'replay'),
     });
   }
@@ -528,7 +528,7 @@ export class PlaybookFlowReplayDriftService {
     executionId: string,
     taskId: string,
   ): Promise<ReplayPlanningSummary | null> {
-    const execution = await this.executionModel.findById(executionId, 'replayPlanningByTask').lean().exec();
+    const execution = await this.executionRepository.findById(executionId);
     const replayPlanningByTask = execution?.replayPlanningByTask;
     if (!replayPlanningByTask || typeof replayPlanningByTask !== 'object') {
       return null;
@@ -820,16 +820,16 @@ export class PlaybookFlowReplayDriftService {
   }
 
   private async ensureIterationReport(
-    baseFilter: Record<string, unknown>,
+    baseFilter: Omit<ReplayRunReportLookupFilter, 'iteration'>,
     iteration: number,
   ): Promise<Record<string, unknown> | null> {
     const exactReport = await this.replayReportService.findLatestReportRecord({ ...baseFilter, iteration });
-    if (exactReport?._id || iteration === 0) {
+    if (exactReport?.id || iteration === 0) {
       return exactReport;
     }
 
     const sourceReport = await this.replayReportService.findLatestReportRecord(baseFilter);
-    if (!sourceReport?._id) {
+    if (!sourceReport?.id) {
       return null;
     }
 
@@ -861,16 +861,12 @@ export class PlaybookFlowReplayDriftService {
       toolCallComparisons: [],
       instantiatedSemanticChecklist: sourceReport.instantiatedSemanticChecklist ?? [],
     };
-    delete clone._id;
     delete clone.id;
-    delete clone.__v;
     delete clone.createdAt;
     delete clone.updatedAt;
 
-    const createdReport = await this.replayReportService.createReport(clone);
-    return typeof createdReport?.toJSON === 'function'
-      ? (createdReport.toJSON() as Record<string, unknown>)
-      : (createdReport as unknown as Record<string, unknown>);
+    const createdReport = await this.replayReportService.createReport(clone as unknown as NewReplayRunReport);
+    return createdReport as unknown as Record<string, unknown>;
   }
 
   private async buildReplayHitlSummary(params: {
@@ -879,7 +875,7 @@ export class PlaybookFlowReplayDriftService {
     taskId: string;
     flowId: string;
     hitlMemorySnapshots?: FlowReplayHitlMemorySnapshot[];
-  }): Promise<Record<string, unknown>> {
+  }): Promise<FlowReplayHitlSummary> {
     const [baselineEvents, runtimeEvents] = await Promise.all([
       this.findHitlEventsForTask(params.referenceExecutionId, params.taskId),
       this.findHitlEventsForTask(params.executionId, params.taskId),
@@ -913,23 +909,18 @@ export class PlaybookFlowReplayDriftService {
     taskId: string;
     referenceExecutionId: string;
   }): Promise<number> {
-    if (!this.hitlMemoryModel || !params.referenceExecutionId) {
+    if (!this.hitlMemoryRepository || !params.referenceExecutionId) {
       return 0;
     }
 
-    return this.hitlMemoryModel.countDocuments({
-      flowId: params.flowId,
-      status: 'active',
-      createdFromExecutionId: params.referenceExecutionId,
-      $or: [{ nodeId: params.taskId }, { nodeId: null }, { nodeId: { $exists: false } }],
-    }).exec();
+    return this.hitlMemoryRepository.countActiveFromExecution(params.flowId, params.taskId, params.referenceExecutionId);
   }
 
   private async findHitlEventsForTask(executionId: string, taskId: string): Promise<Array<{ type?: string }>> {
     if (!executionId) return [];
-    const execution = await this.executionModel.findById(executionId, 'hitlEvents').lean().exec();
+    const execution = await this.executionRepository.findById(executionId);
     const events = Array.isArray(execution?.hitlEvents) ? execution.hitlEvents : [];
-    return events.filter((event: { nodeId?: string; status?: string }) => event.nodeId === taskId && event.status === 'answered');
+    return events.filter((event) => event.nodeId === taskId && event.status === 'answered');
   }
 
   private buildHitlReplayFindings(

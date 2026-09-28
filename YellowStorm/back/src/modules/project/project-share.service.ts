@@ -6,12 +6,10 @@ import { isObjectId, normalizeObjectId } from '@common/postgres/object-id';
 import { isUniqueViolation } from '@common/postgres/errors';
 import { withTransaction } from '@common/postgres/transaction';
 import { USER_LOOKUP_PORT, type UserLookupPort, type UserSummary } from '@common/ports/user-lookup.port';
-import { PROJECT_STORE, type ProjectRecord, type ProjectStore } from './persistence/project-store';
-import {
-  PROJECT_SHARE_STORE,
-  type ProjectShareRecord,
-  type ProjectShareStore,
-} from './persistence/project-share-store';
+import { type ProjectRecord } from './persistence/project-store';
+import { PostgresProjectStore } from './persistence/postgres/postgres-project-store';
+import { type ProjectShareRecord } from './persistence/project-share-store';
+import { PostgresProjectShareStore } from './persistence/postgres/postgres-project-share-store';
 import {
   IPaginatedProjectShares,
   IPaginatedSharedProjects,
@@ -48,10 +46,8 @@ interface ShareIntent {
 @Injectable()
 export class ProjectShareService {
   constructor(
-    @Inject(PROJECT_STORE)
-    private readonly projectStore: ProjectStore,
-    @Inject(PROJECT_SHARE_STORE)
-    private readonly shareStore: ProjectShareStore,
+    private readonly projectStore: PostgresProjectStore,
+    private readonly shareStore: PostgresProjectShareStore,
     @Inject(CONVERSATION_STORE)
     private readonly conversationStore: ConversationStore,
     @Inject(USER_LOOKUP_PORT)

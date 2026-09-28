@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
+import { useDebouncedCallback } from '@/hooks/useDebouncedCallback';
 import { usePersonalAgents, useDefaultAgents, useSharedAgents } from '../store';
 import type { Agent } from '../types';
 
@@ -90,7 +91,7 @@ export function useAgentHubFilters(): UseAgentHubFiltersResult {
   const view: ViewMode = isViewMode(viewParam) ? viewParam : 'grid';
 
   const [searchInput, setSearchInputState] = useState(rawSearch);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { schedule, cancel } = useDebouncedCallback();
   const skipNextSyncRef = useRef(false);
 
   useEffect(() => {
@@ -100,12 +101,6 @@ export function useAgentHubFilters(): UseAgentHubFiltersResult {
     }
     setSearchInputState(rawSearch);
   }, [rawSearch]);
-
-  useEffect(() => {
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, []);
 
   const applyParam = useCallback(
     (key: string, value: string) => {
@@ -125,13 +120,12 @@ export function useAgentHubFilters(): UseAgentHubFiltersResult {
   const setSearchInput = useCallback(
     (value: string) => {
       setSearchInputState(value);
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      debounceRef.current = setTimeout(() => {
+      schedule(() => {
         skipNextSyncRef.current = true;
         applyParam('q', value.trim());
       }, SEARCH_DEBOUNCE_MS);
     },
-    [applyParam],
+    [applyParam, schedule],
   );
 
   const setType = useCallback((value: string) => applyParam('type', value), [applyParam]);
@@ -152,7 +146,7 @@ export function useAgentHubFilters(): UseAgentHubFiltersResult {
   );
 
   const clearAll = useCallback(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
+    cancel();
     setSearchInputState('');
     setSearchParams(
       (prev) => {
@@ -165,7 +159,7 @@ export function useAgentHubFilters(): UseAgentHubFiltersResult {
       },
       { replace: true },
     );
-  }, [setSearchParams]);
+  }, [cancel, setSearchParams]);
 
   const filters: AgentHubFilters = useMemo(
     () => ({ search: rawSearch, type, owner, sort, view }),

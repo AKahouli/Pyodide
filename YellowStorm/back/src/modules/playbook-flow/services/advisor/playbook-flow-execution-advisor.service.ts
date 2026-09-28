@@ -1,14 +1,12 @@
 import { forwardRef, Inject, Injectable, Logger } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import {
   BadRequestException,
   NotFoundException,
 } from '@modules/exceptions/exceptions/http.exceptions';
-import { FlowExecution, FlowExecutionDocument } from '../../schemas/playbook-flow-execution.schema';
-import { FlowTaskResult, FlowTaskResultDocument } from '../../schemas/playbook-flow-task-result.schema';
-import { FlowOutputFormat, FlowOutputFormatDocument, OutputFormatStatus } from '../../schemas/playbook-flow-output-format.schema';
+import { ExecutionRepository } from '../../persistence/execution.repository';
+import { OutputFormatRepository } from '../../persistence/output-format.repository';
+import { TaskResultRepository, type TaskResultRecord } from '../../persistence/task-result.repository';
 import { PlaybookFlowStreamEventsService } from '../playbook-flow-stream-events.service';
 import { PlaybookFlowExecutionAdvisorMapper } from './playbook-flow-execution-advisor.mapper';
 import { PlaybookFlowHeuristicAdvisorEvaluatorService } from './playbook-flow-heuristic-advisor-evaluator.service';
@@ -25,7 +23,7 @@ import type {
 } from '../../interfaces/playbook-flow-execution-advisor.interface';
 import type { RunFlowExecutionAdvisorDto } from '../../dto/run-flow-execution-advisor.dto';
 import type { PreviewAdvisorRemediationDto } from '../../dto/preview-advisor-remediation.dto';
-import type { AdvisorScoringMode, FlowNode } from '../../schemas/playbook-flow.schema';
+import type { AdvisorScoringMode, FlowNode } from '../../models/playbook-flow.model';
 
 export interface AdvisorRemediationPreviewResponse {
   suggestion: PlaybookFlowIntentResponse['suggestions'][number];
@@ -46,12 +44,9 @@ export class PlaybookFlowExecutionAdvisorService {
   private readonly logger = new Logger(PlaybookFlowExecutionAdvisorService.name);
 
   constructor(
-    @InjectModel(FlowExecution.name)
-    private readonly executionModel: Model<FlowExecutionDocument>,
-    @InjectModel(FlowTaskResult.name)
-    private readonly taskResultModel: Model<FlowTaskResultDocument>,
-    @InjectModel(FlowOutputFormat.name)
-    private readonly outputFormatModel: Model<FlowOutputFormatDocument>,
+    private readonly executionRepository: ExecutionRepository,
+    private readonly taskResultRepository: TaskResultRepository,
+    private readonly outputFormatRepository: OutputFormatRepository,
     private readonly streamEvents: PlaybookFlowStreamEventsService,
     private readonly mapper: PlaybookFlowExecutionAdvisorMapper,
     private readonly heuristicEvaluator: PlaybookFlowHeuristicAdvisorEvaluatorService,
@@ -62,19 +57,20 @@ export class PlaybookFlowExecutionAdvisorService {
   ) {}
 
   async getRemediations(executionId: string, ownerId: string, taskId?: string): Promise<AdvisorRemediationItem[]> {
-    const execution = await this.executionModel.findById(executionId).lean().exec();
+    const execution = await this.executionRepository.findById(executionId);
     if (!execution || String(execution.ownerId) !== String(ownerId)) {
       throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND, 'Execution not found');
     }
 
-    const filter: Record<string, unknown> = { executionId };
-    if (taskId) filter.taskId = taskId;
-
-    const taskResults = await this.taskResultModel.find(filter).lean().exec();
+    const taskResults = await this.taskResultRepository.listForExecution(executionId, {
+      ...(taskId ? { taskIds: [taskId] } : {}),
+      light: true,
+      with: ['judgeResult'],
+    });
     const items: AdvisorRemediationItem[] = [];
 
     for (const tr of taskResults) {
-      const judgeResult = (tr as any).judgeResult as FlowExecutionJudgeResult | null | undefined;
+      const judgeResult = tr.judgeResult as unknown as FlowExecutionJudgeResult | null | undefined;
       if (!judgeResult) continue;
 
       const scope = taskId ? 'task' as const : 'playbook' as const;
@@ -147,7 +143,7 @@ export class PlaybookFlowExecutionAdvisorService {
     ownerId: string,
     dto: PreviewAdvisorRemediationDto,
   ): Promise<AdvisorRemediationPreviewResponse> {
-    const execution = await this.executionModel.findById(dto.executionId).lean().exec();
+    const execution = await this.executionRepository.findById(dto.executionId);
     if (!execution || String(execution.ownerId) !== String(ownerId) || String(execution.flowId) !== String(flowId)) {
       throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND, 'Execution not found');
     }
@@ -187,7 +183,7 @@ export class PlaybookFlowExecutionAdvisorService {
     ownerId: string,
     dto?: RunFlowExecutionAdvisorDto,
   ): Promise<FlowExecutionAdvisorTaskResponse> {
-    const execution = await this.executionModel.findById(executionId).select('+snapshot').lean().exec();
+    const execution = await this.executionRepository.findById(executionId, { withSnapshot: true });
     if (!execution || String(execution.ownerId) !== String(ownerId)) {
       throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND, 'Execution not found');
     }
@@ -199,15 +195,9 @@ export class PlaybookFlowExecutionAdvisorService {
       throw new NotFoundException(ErrorCode.PLAYBOOK_TASK_NOT_FOUND, 'Playbook task not found');
     }
 
-    const query: Record<string, unknown> = { executionId, taskId };
-    if (typeof dto?.iteration === 'number') {
-      query.iteration = dto.iteration;
-    }
-
-    const taskResult = await this.taskResultModel
-      .findOne(query)
-      .sort(typeof dto?.iteration === 'number' ? {} : { iteration: -1 })
-      .exec();
+    const taskResult = typeof dto?.iteration === 'number'
+      ? await this.taskResultRepository.find({ executionId, taskId, iteration: dto.iteration })
+      : await this.taskResultRepository.findLatestForTask(executionId, taskId);
     if (!taskResult) {
       throw new NotFoundException(ErrorCode.PLAYBOOK_TASK_NOT_FOUND, 'Task result not found');
     }
@@ -230,9 +220,7 @@ export class PlaybookFlowExecutionAdvisorService {
     const nextAttemptNumber = existingHistory.length + 1;
     const scoringMode = dto?.advisorScoringMode ?? executionScoringMode;
 
-    taskResult.judgeStatus = 'evaluating';
-    taskResult.judgeError = null;
-    await taskResult.save();
+    await this.taskResultRepository.updateJudge(taskResult.id, { judgeStatus: 'evaluating', judgeError: null });
     this.streamEvents.emitStepJudgeStarted(ownerId, executionId, taskId, taskResult.iteration, scoringMode);
 
     const expectedResult = this.resolveExpectedResult(node);
@@ -262,12 +250,13 @@ export class PlaybookFlowExecutionAdvisorService {
       });
       const historyEntry = this.mapper.buildHistoryEntry(evaluation, nextAttemptNumber);
 
-      taskResult.judgeStatus = 'evaluated';
-      taskResult.judgeResult = evaluation.judgeResult as any;
-      taskResult.judgeScoringMode = evaluation.scoringMode;
-      taskResult.judgeError = null;
-      taskResult.judgeHistory = [...existingHistory, historyEntry] as any;
-      await taskResult.save();
+      // Appended in the same statement as the judge state, so a concurrent evaluation cannot drop it.
+      await this.taskResultRepository.pushJudgeHistory(taskResult.id, historyEntry as unknown as Record<string, unknown>, {
+        judgeStatus: 'evaluated',
+        judgeResult: evaluation.judgeResult as unknown as Record<string, unknown>,
+        judgeScoringMode: evaluation.scoringMode,
+        judgeError: null,
+      });
 
       this.streamEvents.emitStepJudgeUpdated(ownerId, executionId, taskId, {
         judgeStatus: 'evaluated',
@@ -282,8 +271,8 @@ export class PlaybookFlowExecutionAdvisorService {
         taskId,
         iteration: taskResult.iteration,
         taskStatus: taskResult.status,
-        taskOutput: taskResult.output,
-        taskError: taskResult.error,
+        taskOutput: taskResult.output ?? undefined,
+        taskError: taskResult.error ?? undefined,
         judgeStatus: 'evaluated',
         judgeScoringMode: evaluation.scoringMode,
         judgeResult: evaluation.judgeResult,
@@ -293,9 +282,7 @@ export class PlaybookFlowExecutionAdvisorService {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Advisor evaluation failed';
       this.logger.warn(`Advisor evaluation failed for ${executionId}:${taskId}: ${message}`);
-      taskResult.judgeStatus = 'failed';
-      taskResult.judgeError = message;
-      await taskResult.save();
+      await this.taskResultRepository.updateJudge(taskResult.id, { judgeStatus: 'failed', judgeError: message });
 
       this.streamEvents.emitStepJudgeUpdated(ownerId, executionId, taskId, {
         judgeStatus: 'failed',
@@ -308,8 +295,8 @@ export class PlaybookFlowExecutionAdvisorService {
         taskId,
         iteration: taskResult.iteration,
         taskStatus: taskResult.status,
-        taskOutput: taskResult.output,
-        taskError: taskResult.error,
+        taskOutput: taskResult.output ?? undefined,
+        taskError: taskResult.error ?? undefined,
         judgeStatus: 'failed',
         judgeScoringMode: taskResult.judgeScoringMode ?? scoringMode,
         judgeResult: null,
@@ -409,11 +396,7 @@ export class PlaybookFlowExecutionAdvisorService {
   }
 
   private async loadOutputFormatGuide(flowId: string, taskId: string): Promise<string | null> {
-    const template = await this.outputFormatModel.findOne({
-      flowId: new Types.ObjectId(flowId),
-      nodeId: taskId,
-      status: OutputFormatStatus.ACTIVE,
-    }).lean().exec();
+    const template = await this.outputFormatRepository.findActive(flowId, taskId);
     return typeof template?.formatGuide === 'string' && template.formatGuide.trim().length > 0
       ? template.formatGuide
       : null;
@@ -424,7 +407,7 @@ export class PlaybookFlowExecutionAdvisorService {
     ownerId: string;
     flowId: string;
     node: FlowNode;
-    taskResult: FlowTaskResultDocument;
+    taskResult: TaskResultRecord;
     expectedResult: string | null;
     outputFormatGuide: string | null;
     baselineOutput: string | null;

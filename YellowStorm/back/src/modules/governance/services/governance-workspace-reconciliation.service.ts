@@ -1,18 +1,15 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { NotFoundException } from '@modules/exceptions';
-import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { WORKSPACE_DOCUMENT_READ_PORT, type WorkspaceDocumentReadPort } from '@modules/workspace/ports';
-import {
-  BINDING_STORE,
-  GOVERNANCE_DOCUMENT_STORE,
-  RECONCILIATION_RUN_STORE,
-  type BindingStore,
-  type GovernanceBindingRecord,
-  type GovernanceDocumentStore,
-  type GovernanceReconciliationRunRecord,
-  type ReconciliationRunStore,
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import {    
+  type GovernanceBindingRecord,      
+  type GovernanceReconciliationRunRecord,      
 } from '../persistence';
 import { GovernanceDocumentService } from './governance-document.service';
+import { PgWorkspaceDocumentReadAdapter } from '../../workspace/persistence/postgres/pg-workspace-document-read.adapter';
+import { PgReconciliationRunStore } from '../persistence/postgres/pg-reconciliation-run.store';
+import { PgBindingStore } from '../persistence/postgres/pg-binding.store';
+import { PgGovernanceDocumentStore } from '../persistence/postgres/pg-document.store';
 
 export interface GovernanceDocumentReconciliationResult {
   bindingId: string;
@@ -33,10 +30,10 @@ const LEASE_MS = 5 * 60 * 1000;
 @Injectable()
 export class GovernanceWorkspaceReconciliationService {
   constructor(
-    @Inject(BINDING_STORE) private readonly bindingStore: BindingStore,
-    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly workspaceDocuments: WorkspaceDocumentReadPort,
-    @Inject(GOVERNANCE_DOCUMENT_STORE) private readonly documentStore: GovernanceDocumentStore,
-    @Inject(RECONCILIATION_RUN_STORE) private readonly runStore: ReconciliationRunStore,
+    private readonly bindingStore: PgBindingStore,
+    private readonly workspaceDocuments: PgWorkspaceDocumentReadAdapter,
+    private readonly documentStore: PgGovernanceDocumentStore,
+    private readonly runStore: PgReconciliationRunStore,
     private readonly documents: GovernanceDocumentService,
   ) {}
 

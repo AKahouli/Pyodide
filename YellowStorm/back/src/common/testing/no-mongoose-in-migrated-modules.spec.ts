@@ -2,10 +2,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 /**
- * F.3 / remediation 4.7: enforceable no-Mongoose gate for every module that
- * has been migrated to Postgres. Scans all non-spec .ts files under src/ and
- * fails on any Mongoose usage. Allowlisted paths carry the phase that removes
- * them — later phases shrink this list to zero.
+ * F.3 / remediation 4.7: enforceable no-Mongoose gate. Scans all non-spec .ts
+ * files under src/ and fails on any Mongoose usage. The allowlist shrank to
+ * zero with P5/P10: the application no longer opens a MongoDB connection (the
+ * Mongoose-based specs and the one-off backfill scripts are the only users).
  */
 const FORBIDDEN = [
   '@InjectModel(',
@@ -16,20 +16,8 @@ const FORBIDDEN = [
   '.populate(',
 ];
 
-/** Still Mongo-backed BY PLAN: [path substring, removing phase]. */
-const ALLOWLIST: Array<[string, string]> = [
-  ['modules/playbook-flow/', 'P5 playbook-flow'],
-  ['modules/worky/', 'P7 worky'],
-  ['modules/knowledge-intelligence/', 'P6 knowledge-intelligence'],
-  ['modules/classifier/', 'P6 classifier'],
-  ['modules/evaluation/', 'P6 evaluation'],
-  ['modules/integration-events/', 'P8 integration-events'],
-  ['modules/logger/', 'P9 logger'],
-  ['modules/database/', 'P9 logger (connection shell)'],
-  ['modules/health/', 'health Mongo ping (P9)'],
-  ['modules/user/schemas/user.schema.ts', 'legacy UserDocument type until ai-proxy drops it'],
-  ['modules/connector/services/connector-playbook-binding-sync.service.ts', 'bridge — removed with P5'],
-];
+/** Still Mongo-backed BY PLAN: [path substring, removing phase]. Empty: the runtime no longer needs MongoDB. */
+const ALLOWLIST: Array<[string, string]> = [];
 
 function walk(dir: string, out: string[]): string[] {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {

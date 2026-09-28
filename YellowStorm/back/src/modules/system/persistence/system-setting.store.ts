@@ -14,6 +14,8 @@ export interface SystemSettingRow {
 export interface SystemSettingStore {
   get(key: string): Promise<SystemSettingRow | null>;
   getMany(keys: string[]): Promise<SystemSettingRow[]>;
+  /** Returns every stored setting row (used by the admin export/import). */
+  listAll(): Promise<SystemSettingRow[]>;
   upsert(key: string, value: unknown): Promise<SystemSettingRow>;
   delete(key: string): Promise<void>;
 }

@@ -1,11 +1,11 @@
 import { Injectable, Optional } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import {
-  FlowExecution,
-  FlowExecutionDocument,
-} from '../../schemas/playbook-flow-execution.schema';
-import { FlowHitlMemory, FlowHitlMemoryDocument } from '../../schemas/playbook-flow-hitl-memory.schema';
+  ExecutionRepository,
+  toExecutionJson,
+  type ExecutionRecord,
+  type PendingApprovalMatch,
+} from '../../persistence/execution.repository';
+import { HitlMemoryRepository } from '../../persistence/hitl-memory.repository';
 import { PlaybookFlowStreamEventsService } from '../../services/playbook-flow-stream-events.service';
 import { FlowAccessService } from '../../domain/flow-access.service';
 import { toGrpcStruct } from '../grpc/grpc-struct.mapper';
@@ -38,6 +38,11 @@ export interface PlaybookExecutionHitlResumeHost {
   scheduleDurableResume(ownerId: string): void;
 }
 
+/** The response of a resume: the run as read before the resume, with the fields the resume changed. */
+function executionResponse(execution: ExecutionRecord, changes: Partial<ExecutionRecord> = {}): IFlowExecutionResponse {
+  return toExecutionJson({ ...execution, ...changes }) as unknown as IFlowExecutionResponse;
+}
+
 /**
  * HITL interrupt resume and durable restart.
  *
@@ -50,12 +55,9 @@ export class PlaybookExecutionHitlResumeService {
   private host?: PlaybookExecutionHitlResumeHost;
 
   constructor(
-    @InjectModel(FlowExecution.name)
-    private readonly executionModel: Model<FlowExecutionDocument>,
+    private readonly executionRepository: ExecutionRepository,
     private readonly streamEvents: PlaybookFlowStreamEventsService,
-    @Optional()
-    @InjectModel(FlowHitlMemory.name)
-    private readonly hitlMemoryModel?: Model<FlowHitlMemoryDocument>,
+    @Optional() private readonly hitlMemoryRepository?: HitlMemoryRepository,
     @Optional() private readonly accessService?: FlowAccessService,
   ) {}
 
@@ -95,27 +97,25 @@ export class PlaybookExecutionHitlResumeService {
 
     const pendingApproval = execution.pendingApproval;
     const interruptId = pendingApproval?.interruptId ?? '';
-    const claimFilter: Record<string, unknown> = {
-      _id: executionId,
-      status: 'pending_approval',
-      'pendingApproval.nodeId': pendingApproval?.nodeId,
-      'pendingApproval.iteration': pendingApproval?.iteration ?? 0,
+    // The claim holds only while the run still waits on this exact approval.
+    const claimedApproval: PendingApprovalMatch = {
+      nodeId: pendingApproval?.nodeId ?? '',
+      iteration: pendingApproval?.iteration ?? 0,
+      ...(interruptId ? { interruptId } : {}),
     };
-    if (interruptId) claimFilter['pendingApproval.interruptId'] = interruptId;
+    const releaseClaim = () => this.executionRepository.transition(executionId, {
+      from: ['running'],
+      pendingApproval: claimedApproval,
+      patch: { status: 'pending_approval' },
+    });
 
-    const claim = await this.executionModel.updateOne(
-      claimFilter,
-      { $set: { status: 'running' } },
-    ).exec();
-    if (!(claim as { modifiedCount?: number }).modifiedCount) {
-      const latestExecution = await this.executionModel.findById(executionId);
-      if (!latestExecution) {
-        throw new NotFoundException(
-          ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
-          'Execution not found',
-        );
-      }
-      return latestExecution.toJSON() as unknown as IFlowExecutionResponse;
+    const claimed = await this.executionRepository.transition(executionId, {
+      from: ['pending_approval'],
+      pendingApproval: claimedApproval,
+      patch: { status: 'running' },
+    });
+    if (!claimed) {
+      return this.latestExecutionResponse(executionId);
     }
 
     let resumed: boolean;
@@ -137,10 +137,7 @@ export class PlaybookExecutionHitlResumeService {
         );
       });
     } catch (error) {
-      await this.executionModel.updateOne(
-        { ...claimFilter, status: 'running' },
-        { $set: { status: 'pending_approval' } },
-      ).exec();
+      await releaseClaim();
       throw error;
     }
 
@@ -158,42 +155,26 @@ export class PlaybookExecutionHitlResumeService {
       if (restarted) {
         return restarted;
       }
-      await this.executionModel.updateOne(
-        { ...claimFilter, status: 'running' },
-        { $set: { status: 'pending_approval' } },
-      ).exec();
+      await releaseClaim();
       throw new ConflictException(
         ErrorCode.CONFLICT,
         'Execution could not be resumed because the runtime no longer has the pending approval state.',
       );
     }
 
-    const resumeUpdate = await this.executionModel.updateOne(
-      { ...claimFilter, status: 'running' },
-      {
-        $set: {
-          status: 'running',
-          pendingApproval: null,
-          'hitlEvents.$[event].status': 'answered',
-          'hitlEvents.$[event].response': {
-            action: payload.decision,
-            ...(payload.payload ?? {}),
-          },
-          'hitlEvents.$[event].respondedAt': new Date(),
-        },
+    const answered = await this.executionRepository.answerHitlEvent(executionId, {
+      from: ['running'],
+      pendingApproval: claimedApproval,
+      interruptId,
+      response: {
+        action: payload.decision,
+        ...(payload.payload ?? {}),
       },
-      { arrayFilters: [{ 'event.interruptId': interruptId }] },
-    ).exec();
+      patch: { status: 'running', pendingApproval: null },
+    });
 
-    if (!(resumeUpdate as { modifiedCount?: number }).modifiedCount) {
-      const latestExecution = await this.executionModel.findById(executionId);
-      if (!latestExecution) {
-        throw new NotFoundException(
-          ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
-          'Execution not found',
-        );
-      }
-      return latestExecution.toJSON() as unknown as IFlowExecutionResponse;
+    if (!answered) {
+      return this.latestExecutionResponse(executionId);
     }
 
     const resolvedApproval = pendingApproval;
@@ -217,15 +198,13 @@ export class PlaybookExecutionHitlResumeService {
       },
       riskLevel: resolvedApproval?.riskLevel,
     });
-    execution.pendingApproval = null;
-    execution.status = 'running';
     this.streamEvents.emitHitlInterruptResolved(executionId, resolvedApproval?.interruptId ?? '', {
       action: payload.decision,
       taskId: resolvedApproval?.nodeId,
       scope: typeof payload.payload?.scope === 'string' ? payload.payload.scope : undefined,
       remember: payload.payload?.remember === true ? true : undefined,
     });
-    return execution.toJSON() as unknown as IFlowExecutionResponse;
+    return executionResponse(execution, { pendingApproval: null, status: 'running' });
   }
 
   async resumeFromStep(
@@ -354,37 +333,23 @@ export class PlaybookExecutionHitlResumeService {
       );
     }
 
-    const resumeUpdate = await this.executionModel.updateOne(
-      { _id: executionId, status: 'pending_approval' },
-      {
-        $set: {
-          status: 'running',
-          pendingApproval: null,
-          'hitlEvents.$[event].status': 'answered',
-          'hitlEvents.$[event].response': {
-            action: payload.action ?? 'reply',
-            message: payload.message ?? null,
-            approved: payload.approved ?? null,
-            reason: payload.reason ?? null,
-            feedback: payload.feedback ?? null,
-            scope: payload.scope ?? execution.pendingApproval.feedbackScopeDefault ?? 'step_only',
-            remember: payload.remember ?? false,
-          },
-          'hitlEvents.$[event].respondedAt': new Date(),
-        },
+    const answered = await this.executionRepository.answerHitlEvent(executionId, {
+      from: ['pending_approval'],
+      interruptId: payload.interruptId || execution.pendingApproval.interruptId || '',
+      response: {
+        action: payload.action ?? 'reply',
+        message: payload.message ?? null,
+        approved: payload.approved ?? null,
+        reason: payload.reason ?? null,
+        feedback: payload.feedback ?? null,
+        scope: payload.scope ?? execution.pendingApproval.feedbackScopeDefault ?? 'step_only',
+        remember: payload.remember ?? false,
       },
-      { arrayFilters: [{ 'event.interruptId': payload.interruptId || execution.pendingApproval.interruptId || '' }] },
-    ).exec();
+      patch: { status: 'running', pendingApproval: null },
+    });
 
-    if (!(resumeUpdate as { modifiedCount?: number }).modifiedCount) {
-      const latestExecution = await this.executionModel.findById(executionId);
-      if (!latestExecution) {
-        throw new NotFoundException(
-          ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
-          'Execution not found',
-        );
-      }
-      return latestExecution.toJSON() as unknown as IFlowExecutionResponse;
+    if (!answered) {
+      return this.latestExecutionResponse(executionId);
     }
 
     const resolvedApproval = execution.pendingApproval;
@@ -406,15 +371,13 @@ export class PlaybookExecutionHitlResumeService {
       },
       riskLevel: resolvedApproval?.riskLevel,
     });
-    execution.pendingApproval = null;
-    execution.status = 'running';
     this.streamEvents.emitHitlInterruptResolved(executionId, payload.interruptId || resolvedApproval?.interruptId || '', {
       action: payload.action ?? 'reply',
       taskId: payload.taskId,
       scope: payload.scope,
       remember: payload.remember,
     });
-    return execution.toJSON() as unknown as IFlowExecutionResponse;
+    return executionResponse(execution, { pendingApproval: null, status: 'running' });
   }
 
   private requireHost(): PlaybookExecutionHitlResumeHost {
@@ -431,18 +394,24 @@ export class PlaybookExecutionHitlResumeService {
     return this.accessService;
   }
 
-  private async findExecutionWithSnapshot(executionId: string): Promise<FlowExecutionDocument | null> {
-    const queryOrDocument = this.executionModel.findById(executionId) as unknown as {
-      select?: (fields: string) => Promise<FlowExecutionDocument | null>;
-    } | Promise<FlowExecutionDocument | null>;
-    if ('select' in queryOrDocument && typeof queryOrDocument.select === 'function') {
-      return queryOrDocument.select('+snapshot');
+  private findExecutionWithSnapshot(executionId: string): Promise<ExecutionRecord | null> {
+    return this.executionRepository.findById(executionId, { withSnapshot: true });
+  }
+
+  /** A lost race: another request already moved the run on; answer with its current state. */
+  private async latestExecutionResponse(executionId: string): Promise<IFlowExecutionResponse> {
+    const latestExecution = await this.executionRepository.findById(executionId);
+    if (!latestExecution) {
+      throw new NotFoundException(
+        ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
+        'Execution not found',
+      );
     }
-    return queryOrDocument as Promise<FlowExecutionDocument | null>;
+    return executionResponse(latestExecution);
   }
 
   private async restartDurableApprovalResume(params: {
-    execution: FlowExecutionDocument;
+    execution: ExecutionRecord;
     executionId: string;
     ownerId: string;
     resumePayload: Record<string, unknown>;
@@ -486,13 +455,11 @@ export class PlaybookExecutionHitlResumeService {
       scope: typeof params.response.scope === 'string' ? params.response.scope : undefined,
       remember: params.response.remember === true ? true : undefined,
     });
-    params.execution.pendingApproval = null;
-    params.execution.status = 'queued';
-    return params.execution.toJSON() as unknown as IFlowExecutionResponse;
+    return executionResponse(params.execution, { pendingApproval: null, status: 'queued' });
   }
 
   private async restartDurableStepResume(params: {
-    execution: FlowExecutionDocument;
+    execution: ExecutionRecord;
     executionId: string;
     ownerId: string;
     taskId: string;
@@ -538,37 +505,31 @@ export class PlaybookExecutionHitlResumeService {
       scope: typeof params.response.scope === 'string' ? params.response.scope : undefined,
       remember: params.response.remember === true ? true : undefined,
     });
-    params.execution.pendingApproval = null;
-    params.execution.status = 'queued';
-    return params.execution.toJSON() as unknown as IFlowExecutionResponse;
+    return executionResponse(params.execution, { pendingApproval: null, status: 'queued' });
   }
 
-  private async persistDurableResume(
-    execution: FlowExecutionDocument,
+  /** Re-queues the run with the human answer in its input so the runtime restarts it from the snapshot. */
+  private persistDurableResume(
+    execution: ExecutionRecord,
     executionId: string,
     interruptId: string,
     resumePayload: Record<string, unknown>,
     response: Record<string, unknown>,
   ): Promise<boolean> {
-    const resumeUpdate = await this.executionModel.updateOne(
-      { _id: executionId, status: { $in: ['running', 'pending_approval'] } },
-      {
-        $set: {
-          status: 'queued',
-          queuePosition: 0,
-          pendingApproval: null,
-          inputContext: {
-            ...(execution.inputContext ?? {}),
-            __playbook_resume: resumePayload,
-          },
-          'hitlEvents.$[event].status': 'answered',
-          'hitlEvents.$[event].response': response,
-          'hitlEvents.$[event].respondedAt': new Date(),
+    return this.executionRepository.answerHitlEvent(executionId, {
+      from: ['running', 'pending_approval'],
+      interruptId,
+      response,
+      patch: {
+        status: 'queued',
+        queuePosition: 0,
+        pendingApproval: null,
+        inputContext: {
+          ...(execution.inputContext ?? {}),
+          __playbook_resume: resumePayload,
         },
       },
-      { arrayFilters: [{ 'event.interruptId': interruptId }] },
-    ).exec();
-    return Boolean((resumeUpdate as { modifiedCount?: number }).modifiedCount);
+    });
   }
 
   private async createFutureHitlMemoryIfRequested(params: {
@@ -589,7 +550,7 @@ export class PlaybookExecutionHitlResumeService {
     };
     riskLevel?: string;
   }): Promise<void> {
-    if (!this.hitlMemoryModel || !params.response.remember) {
+    if (!this.hitlMemoryRepository || !params.response.remember) {
       return;
     }
     if (params.response.scope !== 'future_node_runs' && params.response.scope !== 'future_workflow_runs') {
@@ -601,7 +562,7 @@ export class PlaybookExecutionHitlResumeService {
       return;
     }
 
-    await this.hitlMemoryModel.create({
+    await this.hitlMemoryRepository.create({
       ownerId: params.ownerId,
       flowId: params.flowId,
       nodeId: params.response.scope === 'future_node_runs' ? params.taskId : null,

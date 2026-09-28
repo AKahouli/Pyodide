@@ -1,7 +1,6 @@
 /**
  * Store port for app_runtime.ai_preview_tickets (P8 Mongo cutover).
  */
-export const AI_PREVIEW_TICKET_STORE = Symbol('AI_PREVIEW_TICKET_STORE');
 
 export interface AiPreviewTicketRecord {
   id: string;

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useDebouncedCallback } from '@/hooks/useDebouncedCallback';
 import { fetchComposerSuggestions } from '../api';
 import { parseComposerSuggestionsContent } from '../utils/parseComposerSuggestions';
 
@@ -24,14 +25,11 @@ export function useComposerSuggestions({ draftText, enabled, debounceMs = DEFAUL
   const [suggestion, setSuggestion] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState(false);
-  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { schedule, cancel } = useDebouncedCallback();
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
-      debounceTimerRef.current = null;
-    }
+    cancel();
     abortRef.current?.abort();
 
     if (!enabled) {
@@ -49,8 +47,7 @@ export function useComposerSuggestions({ draftText, enabled, debounceMs = DEFAUL
       return;
     }
 
-    debounceTimerRef.current = setTimeout(() => {
-      debounceTimerRef.current = null;
+    schedule(() => {
       const ac = new AbortController();
       abortRef.current = ac;
       setSuggestion(null);
@@ -90,13 +87,10 @@ export function useComposerSuggestions({ draftText, enabled, debounceMs = DEFAUL
     }, debounceMs);
 
     return () => {
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current);
-        debounceTimerRef.current = null;
-      }
+      cancel();
       abortRef.current?.abort();
     };
-  }, [draftText, enabled, debounceMs, minLength]);
+  }, [draftText, enabled, debounceMs, minLength, schedule, cancel]);
 
   return { suggestion, loading, fetchError };
 }

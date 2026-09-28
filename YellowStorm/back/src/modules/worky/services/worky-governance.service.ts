@@ -1,14 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import {
-  WorkyStream,
-  WorkyStreamDocument,
-} from '../schemas/worky-stream.schema';
-import {
-  WorkyGovernancePolicy,
-  WorkyGovernancePolicyDocument,
-} from '../schemas/worky-governance-policy.schema';
+import { isObjectId } from '@common/postgres';
+import { WorkyStreamRepository } from '../persistence/worky-stream.repository';
+import { WorkyGovernanceRepository } from '../persistence/worky-governance.repository';
+import type { WorkyGovernancePolicyRecord, WorkyStreamRecord } from '../worky.types';
 import { LoggerService } from '../../logger';
 import {
   BadRequestException,
@@ -55,7 +49,7 @@ export interface UpsertWorkyGovernancePolicyInput {
  *      the stream is carrying an override `level` that is **at least as
  *      strict as** `maxOwnerRelaxLevel` (canonical §5.3, the "owner
  *      bounded" rule). The LLM can never set `off` via override.
- *   2. **Workspace policy** — the `WorkyGovernancePolicy` for the
+ *   2. **Workspace policy** — the governance policy of the
  *      stream's workspace, indexed by `category`; falls back to
  *      `defaultLevel` for unlisted categories.
  *   3. **Default** — `off` for normal categories; `approval` for the
@@ -63,15 +57,13 @@ export interface UpsertWorkyGovernancePolicyInput {
  *      `customer_facing_release`, `external_comms`, `budget_overrun`,
  *      `cancel_human_task`).
  *
- * Every resolution (including `off`) writes one `WorkyAuditEvent`.
+ * Every resolution (including `off`) writes one audit event.
  */
 @Injectable()
 export class WorkyGovernanceService {
   constructor(
-    @InjectModel(WorkyStream.name)
-    private readonly streams: Model<WorkyStreamDocument>,
-    @InjectModel(WorkyGovernancePolicy.name)
-    private readonly policies: Model<WorkyGovernancePolicyDocument>,
+    private readonly streams: WorkyStreamRepository,
+    private readonly policies: WorkyGovernanceRepository,
     private readonly events: WorkyEventService,
     private readonly audit: WorkyAuditService,
     private readonly logger: LoggerService,
@@ -89,14 +81,14 @@ export class WorkyGovernanceService {
     category: string,
     streamOverrideLevel: string | null,
   ): Promise<IGovernanceResolveResult> {
-    if (!Types.ObjectId.isValid(streamId)) {
+    if (!isObjectId(streamId)) {
       throw new NotFoundException(ErrorCode.WORKY_STREAM_NOT_FOUND, 'Worky stream not found.');
     }
-    const stream = await this.streams.findById(streamId).lean().exec();
+    const stream = await this.streams.findById(streamId);
     if (!stream) {
       throw new NotFoundException(ErrorCode.WORKY_STREAM_NOT_FOUND, 'Worky stream not found.');
     }
-    const policy = await this.findPolicy(stream.workspaceId.toString());
+    const policy = await this.findPolicy(stream.workspaceId);
     const defaultLevel = this.defaultForCategory(category);
     const categoryRule = (policy?.categories ?? []).find(
       (c) => String(c.category) === category,
@@ -160,30 +152,21 @@ export class WorkyGovernanceService {
   async upsertWorkspacePolicy(
     actorUserId: string,
     input: UpsertWorkyGovernancePolicyInput,
-  ): Promise<WorkyGovernancePolicyDocument> {
-    if (!Types.ObjectId.isValid(input.workspaceId)) {
+  ): Promise<WorkyGovernancePolicyRecord> {
+    if (!isObjectId(input.workspaceId)) {
       throw new BadRequestException(
         ErrorCode.VALIDATION_ERROR,
         'Invalid workspaceId.',
       );
     }
     const categories = input.categories.filter((c) => WORKY_GOVERNANCE_LEVELS.includes(c.level));
-    const doc = await this.policies
-      .findOneAndUpdate(
-        { workspaceId: new Types.ObjectId(input.workspaceId), scope: 'workspace' },
-        {
-          $set: {
-            workspaceId: new Types.ObjectId(input.workspaceId),
-            scope: 'workspace',
-            defaultLevel: input.defaultLevel,
-            categories,
-            allowStreamOwnerOverride: input.allowStreamOwnerOverride,
-            maxOwnerRelaxLevel: input.maxOwnerRelaxLevel,
-          },
-        },
-        { upsert: true, new: true, setDefaultsOnInsert: true },
-      )
-      .exec();
+    const policy = await this.policies.upsertWorkspacePolicy({
+      workspaceId: input.workspaceId,
+      defaultLevel: input.defaultLevel,
+      categories,
+      allowStreamOwnerOverride: input.allowStreamOwnerOverride,
+      maxOwnerRelaxLevel: input.maxOwnerRelaxLevel,
+    });
     await this.audit.append({
       streamId: input.workspaceId,
       actorUserId,
@@ -197,15 +180,12 @@ export class WorkyGovernanceService {
         maxOwnerRelaxLevel: input.maxOwnerRelaxLevel,
       },
     });
-    return doc as WorkyGovernancePolicyDocument;
+    return policy;
   }
 
-  async findPolicy(workspaceId: string): Promise<WorkyGovernancePolicyDocument | null> {
-    if (!Types.ObjectId.isValid(workspaceId)) return null;
-    return this.policies
-      .findOne({ workspaceId: new Types.ObjectId(workspaceId), scope: 'workspace' })
-      .lean()
-      .exec() as Promise<WorkyGovernancePolicyDocument | null>;
+  async findPolicy(workspaceId: string): Promise<WorkyGovernancePolicyRecord | null> {
+    if (!isObjectId(workspaceId)) return null;
+    return this.policies.findWorkspacePolicy(workspaceId);
   }
 
   private defaultForCategory(category: string): WorkyGovernanceLevel {
@@ -220,22 +200,22 @@ export class WorkyGovernanceService {
   }
 
   private async auditResolution(
-    stream: { _id: Types.ObjectId; ownerUserId: Types.ObjectId; workspaceId: Types.ObjectId },
+    stream: WorkyStreamRecord,
     result: IGovernanceResolveResult,
   ): Promise<void> {
     await this.audit.append({
-      streamId: stream._id.toString(),
+      streamId: stream.id,
       actorUserId: null,
       action: 'governance.evaluated',
       targetType: 'stream',
-      targetId: stream._id.toString(),
+      targetId: stream.id,
       details: {
         category: result.category,
         resolvedLevel: result.resolvedLevel,
         source: result.source,
       },
     });
-    this.events.emit(stream.ownerUserId.toString(), stream._id.toString(), {
+    this.events.emit(stream.ownerUserId, stream.id, {
       type: 'governance.evaluated',
       emittedAt: Date.now(),
       payload: {

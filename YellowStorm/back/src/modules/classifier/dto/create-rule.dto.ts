@@ -1,6 +1,6 @@
 import { IsBoolean, IsEnum, IsMongoId, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ClassifierRuleScope } from '../schemas/classifier-rule.schema';
+import { ClassifierRuleScope } from '../classifier.types';
 
 export class CreateRuleDto {
   @ApiProperty({ enum: ClassifierRuleScope, description: 'Rule scope: global (all workspaces) or local (single workspace)' })

@@ -28,6 +28,18 @@ async def list_events(
     return {"items": events, "continuation": events[-1]["eventId"] if len(events) == limit else None}
 
 
+@router.get("/active")
+async def get_active_job(
+    request: Request,
+    model_id: str = Query(alias="modelId", min_length=1, max_length=200),
+    job_type: str = Query(default="population.run", alias="jobType", max_length=100),
+    actor_user_id: str = Header(alias="X-Actor-User-Id", min_length=1, max_length=200),
+) -> dict[str, object]:
+    job = await _service(request).repository.find_active_job(
+        actor_user_id=actor_user_id, model_id=model_id, job_type=job_type)
+    return {"job": job}
+
+
 @router.get("/{job_id}")
 async def get_job(
     job_id: str,
@@ -42,5 +54,12 @@ async def get_job(
 
 
 @router.post("/{job_id}/cancel")
-def cancel_job(job_id: str) -> dict[str, object]:
-    raise HTTPException(status_code=503, detail="cancellation_not_implemented")
+async def cancel_job(
+    job_id: str,
+    request: Request,
+    actor_user_id: str = Header(alias="X-Actor-User-Id", min_length=1, max_length=200),
+) -> dict[str, object]:
+    job = await _service(request).repository.request_cancel(job_id, actor_user_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job_not_found")
+    return job

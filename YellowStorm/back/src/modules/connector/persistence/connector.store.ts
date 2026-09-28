@@ -1,11 +1,6 @@
 import type { ConnectorAction, ConnectorDynamicHeader } from '../connector.types';
 
 /** Store ports for the integrations connector tables (plan step 3.4–3.6). */
-export const CONNECTOR_STORE = Symbol('CONNECTOR_STORE');
-export const CONNECTOR_CATEGORY_STORE = Symbol('CONNECTOR_CATEGORY_STORE');
-export const CONNECTOR_CREDENTIAL_STORE = Symbol('CONNECTOR_CREDENTIAL_STORE');
-export const CONNECTOR_ADMIN_AUTH_STORE = Symbol('CONNECTOR_ADMIN_AUTH_STORE');
-export const CONNECTOR_ADMIN_OAUTH_STATE_STORE = Symbol('CONNECTOR_ADMIN_OAUTH_STATE_STORE');
 
 export interface ConnectorRow {
   id: string;

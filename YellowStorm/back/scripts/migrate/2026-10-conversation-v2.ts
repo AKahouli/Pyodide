@@ -12,6 +12,7 @@ import mongoose from 'mongoose';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import { Pool } from 'pg';
+import { stripNul } from '../../src/common/postgres/json';
 import { runBackfill, BackfillError, type MongoDoc } from './harness';
 
 dotenv.config({ path: path.resolve(__dirname, '..', '..', '.env') });
@@ -48,10 +49,10 @@ const toHexIdArray = (v: unknown): string[] => {
     .filter((x) => isObjectId(x));
 };
 
-/** Strip BSON / undefined so jsonb accepts the value. */
+/** Strip BSON / undefined / U+0000 so jsonb accepts the value. */
 const jsonSafe = (v: unknown): Record<string, unknown> => {
   try {
-    return JSON.parse(JSON.stringify(v ?? {})) as Record<string, unknown>;
+    return stripNul(JSON.parse(JSON.stringify(v ?? {})) as Record<string, unknown>);
   } catch {
     return {};
   }
@@ -183,7 +184,11 @@ async function main(): Promise<void> {
       pgIds: async () => (await pool.query('SELECT id FROM conversation_v2.sessions')).rows.map((r) => r.id),
       checksumRows: async (ids) => {
         const r = await pool.query(
-          `SELECT id, owner_id, ai_session_id, title, status, event_sequence, event_count, is_shared
+          `SELECT id, owner_id, ai_session_id, title, status, last_event_at, is_shared, share_token_hash,
+                  deleted_at, deploy_status, deployed_url, deployed_app_title, last_deployed_at,
+                  last_deployed_revision_id, has_ai_features, ai_features_checked_revision_id,
+                  workspace_ids, selected_skill_ids, selected_connector_ids, event_sequence, event_count,
+                  system_workspace_id, created_at, updated_at
            FROM conversation_v2.sessions WHERE id = ANY($1::char(24)[])`,
           [ids],
         );
@@ -263,7 +268,7 @@ async function main(): Promise<void> {
       },
       checksumRows: async (ids) => {
         const r = await pool.query(
-          `SELECT id, session_id, sequence, event_id, type, emitted_at, payload, model_id
+          `SELECT id, session_id, sequence, event_id, type, emitted_at, payload, model_id, created_at
            FROM conversation_v2.events WHERE id = ANY($1::char(24)[])`,
           [ids],
         );
