@@ -91,6 +91,12 @@ export class LogicalSearchEvaluationController {
     return this.service.getProgress(user._id.toString(), id);
   }
 
+  @Get(':id/results')
+  @ApiOperation({ summary: 'Get the aggregated summary and per-question results of an evaluation' })
+  async results(@CurrentUser() user: UserDocument, @Param('id') id: string) {
+    return this.service.getResults(user._id.toString(), id);
+  }
+
   @Get(':id/export')
   @ApiOperation({ summary: 'Download the evaluation results as a ZIP (XLSX + raw execution logs JSON)' })
   async export(

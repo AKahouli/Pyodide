@@ -729,6 +729,25 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     }
   }
 
+  async getResults(ownerId: string, evaluationId: string) {
+    const evaluation = await this.getById(ownerId, evaluationId);
+    const runDir = join(process.cwd(), 'uploads', 'eval', evaluationId);
+    let results: EvaluationQueryResult[] = [];
+    let summary: EvaluationRunSummary | null = null;
+    try {
+      const parsed = await readJson<EvaluationQueryResult[]>(join(runDir, 'results.json'));
+      results = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      results = [];
+    }
+    try {
+      summary = await readJson<EvaluationRunSummary>(join(runDir, 'summary.json'));
+    } catch {
+      summary = null;
+    }
+    return { evaluationId, status: evaluation.status, queryCount: results.length, summary, results };
+  }
+
   async exportArchive(
     ownerId: string,
     evaluationId: string,

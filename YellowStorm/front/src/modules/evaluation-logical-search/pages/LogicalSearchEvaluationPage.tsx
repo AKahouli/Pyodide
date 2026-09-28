@@ -5,11 +5,13 @@ import { Progress } from '@/components/ui/progress';
 import { SearchSelect } from '@/components/ui/search-select';
 import { MultiSelect } from '@/components/ui/multi-select';
 import { useModuleTranslation } from '@/modules/localization';
+import { parseApiError } from '@/lib/api-error';
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import { useAgents, useAgentsLoading, useAgentStore } from '@/modules/agent';
 import { evaluationLogicalSearchApi } from '../api';
-import type { LogicalSearchEvaluation, UploadResult, BenchmarkQuery } from '../types';
+import { EvaluationResultsPanel } from '../components/EvaluationResultsPanel';
+import type { LogicalSearchEvaluation, UploadResult, BenchmarkQuery, EvaluationResultsResponse } from '../types';
 
 const HISTORY_PAGE_SIZE = 3;
 
@@ -50,6 +52,12 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   const [selectedEvalId, setSelectedEvalId] = useState<string | null>(null);
   const [selectedQueryIds, setSelectedQueryIds] = useState<string[]>([]);
   const [historyPage, setHistoryPage] = useState(1);
+
+  // ── Results viewer ──────────────────────────────────────────
+  const [openResultsId, setOpenResultsId] = useState<string | null>(null);
+  const [resultsData, setResultsData] = useState<EvaluationResultsResponse | null>(null);
+  const [resultsLoading, setResultsLoading] = useState(false);
+  const [resultsError, setResultsError] = useState<string | null>(null);
 
   // ── Load agents ─────────────────────────────────────────────
   useEffect(() => { void useAgentStore.getState().fetchAgents(); }, []);
@@ -94,7 +102,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
       setSelectedEvalId(result.evaluationId);
       refreshEvaluations();
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : 'Upload failed');
+      setUploadError(parseApiError(err).message);
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -156,7 +164,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
       await evaluationLogicalSearchApi.run(evaluationId, queryIds);
       refreshEvaluations();
     } catch (err) {
-      setRunError(err instanceof Error ? err.message : 'Launch failed');
+      setRunError(parseApiError(err).message);
     } finally {
       setLaunching(false);
       setRunningEvalId(null);
@@ -172,7 +180,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
     try {
       await evaluationLogicalSearchApi.run(id);
     } catch (err) {
-      setRunError(err instanceof Error ? err.message : 'Resume failed');
+      setRunError(parseApiError(err).message);
     } finally {
       setRunningEvalId(null);
       refreshEvaluations();
@@ -185,7 +193,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
     try {
       await evaluationLogicalSearchApi.stop(id);
     } catch (err) {
-      setRunError(err instanceof Error ? err.message : 'Stop failed');
+      setRunError(parseApiError(err).message);
     } finally {
       setStoppingEvalId(null);
       refreshEvaluations();
@@ -205,8 +213,31 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
     } catch (err) {
-      setExportError(err instanceof Error ? err.message : 'Export failed');
+      setExportError(parseApiError(err).message);
     }
+  }, []);
+
+  const loadResults = useCallback(async (id: string) => {
+    setResultsLoading(true);
+    setResultsError(null);
+    try {
+      setResultsData(await evaluationLogicalSearchApi.results(id));
+    } catch (err) {
+      setResultsError(parseApiError(err).message);
+    } finally {
+      setResultsLoading(false);
+    }
+  }, [t]);
+
+  const openResults = useCallback((id: string) => {
+    setOpenResultsId(id);
+    void loadResults(id);
+  }, [loadResults]);
+
+  const closeResults = useCallback(() => {
+    setOpenResultsId(null);
+    setResultsData(null);
+    setResultsError(null);
   }, []);
 
   const refreshProgress = useCallback(() => {
@@ -237,9 +268,10 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
     const interval = window.setInterval(() => {
       void refreshEvaluations();
       void refreshProgress();
+      if (openResultsId) void loadResults(openResultsId);
     }, 2500);
     return () => window.clearInterval(interval);
-  }, [runningEvalId, evaluations, refreshEvaluations, refreshProgress]);
+  }, [runningEvalId, evaluations, refreshEvaluations, refreshProgress, openResultsId, loadResults]);
 
   // ── Derived ─────────────────────────────────────────────────
   const previewRows: BenchmarkQuery[] = useMemo(() => uploadResult?.preview ?? [], [uploadResult]);
@@ -280,7 +312,8 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   return (
     <div className='h-full w-full overflow-auto'>
       <div className='mx-auto max-w-4xl space-y-6 p-6'>
-      <h1 className='text-2xl font-bold'>{t('upload.title')}</h1>
+      <h1 className='text-2xl font-bold'>{t('page.title')}</h1>
+      <p className='text-sm text-muted-foreground'>{t('page.subtitle')}</p>
 
       {/* ── Upload ─────────────────────────────────────────── */}
       <Card>
@@ -379,13 +412,13 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
                 options={agents.map((a) => ({ value: a.id, label: a.name }))}
                 value={selectedAgentId}
                 onValueChange={setSelectedAgentId}
-                placeholder={agentsLoading ? 'Loading…' : t('adhoc.agentPlaceholder')}
+                placeholder={agentsLoading ? t('common.loading') : t('adhoc.agentPlaceholder')}
                 searchPlaceholder={t('select.search')}
                 emptyText={t('select.noResults')}
               />
             </div>
 
-            {/* Workspace (optional) */}
+            {/* Workspace (required) */}
             <div className='space-y-1'>
               <label className='text-sm font-medium'>
                 {t('adhoc.workspace')} <span className='text-destructive'>*</span>
@@ -394,7 +427,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
                 options={workspaces.map((w) => ({ value: w.id, label: w.name }))}
                 value={selectedWorkspaceId}
                 onValueChange={setSelectedWorkspaceId}
-                placeholder={workspacesLoading ? 'Loading…' : t('adhoc.workspacePlaceholder')}
+                placeholder={workspacesLoading ? t('common.loading') : t('adhoc.workspacePlaceholder')}
                 searchPlaceholder={t('select.search')}
                 emptyText={t('select.noResults')}
               />
@@ -409,10 +442,24 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
                 options={agents.map((a) => ({ value: a.id, label: a.name }))}
                 value={selectedEvaluatorAgentId}
                 onValueChange={setSelectedEvaluatorAgentId}
-                placeholder={agentsLoading ? 'Loading…' : t('adhoc.evaluatorAgentPlaceholder')}
+                placeholder={agentsLoading ? t('common.loading') : t('adhoc.evaluatorAgentPlaceholder')}
                 searchPlaceholder={t('select.search')}
                 emptyText={t('select.noResults')}
               />
+            </div>
+
+            {/* Target questions (optional) */}
+            <div className='space-y-1'>
+              <label className='text-sm font-medium'>{t('targeted.title')}</label>
+              <MultiSelect
+                options={queryOptions.map((q) => ({ value: q.query_id, label: `${q.query_id} — ${q.query.slice(0, 60)}` }))}
+                value={selectedQueryIds}
+                onValueChange={setSelectedQueryIds}
+                placeholder={t('targeted.all')}
+                searchPlaceholder={t('select.search')}
+                emptyText={t('select.noResults')}
+              />
+              <p className='text-xs text-muted-foreground'>{t('targeted.help')}</p>
             </div>
 
             {launchError && <p className='text-sm text-destructive'>{launchError}</p>}
@@ -426,24 +473,6 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
             <p className='text-xs text-muted-foreground'>
               {t('adhoc.target', { name: launchEvalName })}
             </p>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ── Targeted run ─────────────────────────────────────── */}
-      {evaluations.length > 0 && (
-        <Card>
-          <CardHeader><CardTitle>{t('targeted.title')}</CardTitle></CardHeader>
-          <CardContent className='space-y-2'>
-            <p className='text-xs text-muted-foreground'>{t('targeted.help')}</p>
-            <MultiSelect
-              options={queryOptions.map((q) => ({ value: q.query_id, label: `${q.query_id} — ${q.query.slice(0, 60)}` }))}
-              value={selectedQueryIds}
-              onValueChange={setSelectedQueryIds}
-              placeholder={t('targeted.all')}
-              searchPlaceholder={t('select.search')}
-              emptyText={t('select.noResults')}
-            />
           </CardContent>
         </Card>
       )}
@@ -483,6 +512,13 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
                     }`}>
                       {t(`status.${ev.status}` as any) ?? ev.status}
                     </span>
+                    <Button
+                      size='sm'
+                      variant='outline'
+                      onClick={(e) => { e.stopPropagation(); openResults(ev.id); }}
+                    >
+                      {t('history.view')}
+                    </Button>
                     {ev.status === 'running' && (
                       <Button
                         size='sm'
@@ -547,6 +583,16 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
             )}
           </CardContent>
         </Card>
+      )}
+
+      {openResultsId && (
+        <EvaluationResultsPanel
+          evaluationName={evaluations.find((e) => e.id === openResultsId)?.name ?? ''}
+          data={resultsData}
+          loading={resultsLoading}
+          error={resultsError}
+          onClose={closeResults}
+        />
       )}
       </div>
     </div>

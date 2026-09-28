@@ -1,6 +1,6 @@
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
-import type { LogicalSearchEvaluation, UploadResult, PrepareResult, AdhocConfig } from './types';
+import type { LogicalSearchEvaluation, UploadResult, PrepareResult, AdhocConfig, EvaluationResultsResponse } from './types';
 
 export interface EvaluationRunResult {
   status: 'prepared' | 'running' | 'completed' | 'failed';
@@ -97,6 +97,14 @@ export const evaluationLogicalSearchApi = {
   async progress(id: string): Promise<EvaluationProgressResult> {
     const res = await apiClient.get<{ data: EvaluationProgressResult }>(
       `${API_ENDPOINTS.logicalSearchEvaluation.base}/${id}/progress`,
+    );
+    return res.data.data;
+  },
+
+  async results(id: string): Promise<EvaluationResultsResponse> {
+    const res = await apiClient.get<{ data: EvaluationResultsResponse }>(
+      `${API_ENDPOINTS.logicalSearchEvaluation.base}/${id}/results`,
+      { timeout: 180000 },
     );
     return res.data.data;
   },

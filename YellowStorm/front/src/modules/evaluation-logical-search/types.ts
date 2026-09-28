@@ -102,5 +102,33 @@ export interface EvaluationQueryResult {
   retrieved_pages: number[];
   retrieved_sources: { file: string; page: number }[];
   judge_score?: number;
+  judge_faithfulness_score?: number;
   judge_reasoning?: string;
+  token_usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number };
+}
+
+export interface EvaluationRunSummary {
+  query_count: number;
+  completed_queries: number;
+  failed_queries: number;
+  mean_answer_correctness: number;
+  mean_answer_f1: number;
+  mean_semantic_similarity: number;
+  mean_fact_recall: number;
+  mean_fact_precision: number;
+  mean_answer_quality: number;
+  answer_exact_match_rate: number;
+  mean_file_recall: number;
+  mean_file_precision: number;
+  mean_page_hit: number;
+  retrieval_success_rate: number;
+  retrieval_exact_match_rate: number;
+}
+
+export interface EvaluationResultsResponse {
+  evaluationId: string;
+  status: LogicalSearchEvaluation['status'];
+  queryCount: number;
+  summary: EvaluationRunSummary | null;
+  results: EvaluationQueryResult[];
 }

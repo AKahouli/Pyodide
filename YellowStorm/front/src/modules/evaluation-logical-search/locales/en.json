@@ -2,6 +2,13 @@
   "button": {
     "label": "Logical Search Eval"
   },
+  "page": {
+    "title": "Logical Search Evaluation",
+    "subtitle": "Import a benchmark dataset, run it against an agent, then review the scores."
+  },
+  "common": {
+    "loading": "Loading…"
+  },
   "upload": {
     "title": "Import benchmark dataset",
     "dropzone": "Drag & drop your Excel/CSV file here, or browse",
@@ -78,5 +85,39 @@
     "title": "Target questions",
     "help": "Leave empty to run every question. Select one or several questions to run only those; the results and export contain just the selected questions.",
     "all": "All questions"
+  },
+  "results": {
+    "title": "Results · {{name}}",
+    "close": "Close",
+    "loading": "Loading results…",
+    "empty": "No results yet. Run the evaluation first.",
+    "error": "Could not load results",
+    "kpi": {
+      "correctness": "Correctness",
+      "f1": "Answer F1",
+      "semantic": "Semantic similarity",
+      "factRecall": "Fact recall",
+      "fileRecall": "File recall",
+      "retrievalSuccess": "Retrieval success",
+      "exactMatch": "Exact match",
+      "completed": "Completed"
+    },
+    "table": {
+      "id": "ID",
+      "question": "Question",
+      "status": "Status",
+      "score": "Judge score",
+      "fileRecall": "File recall",
+      "duration": "Duration",
+      "tokens": "Tokens"
+    },
+    "detail": {
+      "expectedAnswer": "Expected answer",
+      "generatedAnswer": "Generated answer",
+      "expectedFiles": "Expected files",
+      "retrievedFiles": "Retrieved files",
+      "judgeReasoning": "Judge reasoning",
+      "error": "Error"
+    }
   }
 }
