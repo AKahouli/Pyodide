@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ConceptSourceMapping } from '../../types';
-import { PopulationStartedPanel } from './PopulationStartedPanel';
+import { PopulationStartedPanel, populationServing } from './PopulationStartedPanel';
 
 const mappings = [
   { id: 'mapping-1', documentName: 'master-agreement-0041.pdf' },
@@ -91,5 +91,23 @@ describe('PopulationStartedPanel', () => {
   it('has no Stop for someone who cannot stop the run', () => {
     render(<PopulationStartedPanel outcome={{ jobId: 'job-1', status: 'running', skipped: [], reused: false }} sourceMappings={mappings} onClose={vi.fn()} onOpenHealth={vi.fn()} />);
     expect(screen.queryByRole('button', { name: 'runStop.stop' })).not.toBeInTheDocument();
+  });
+
+  it('says the graph in use was kept when the run is missing data, and why', () => {
+    render(<PopulationStartedPanel outcome={{ jobId: 'job-1', status: 'completed_with_gaps', skipped: [], reused: false }} sourceMappings={mappings} onClose={vi.fn()} onOpenHealth={vi.fn()}
+      serving={populationServing({ servingDecision: 'keep_previous', blockingGapKinds: ['source_unavailable', 'something_new'] })} />);
+    expect(screen.getByText('runServing.kept')).toBeInTheDocument();
+    expect(screen.getByText('runServing.kind_source_unavailable')).toBeInTheDocument();
+    expect(screen.getByText('runServing.kind_other')).toBeInTheDocument();
+  });
+
+  it('says a first graph is incomplete, and says nothing for a complete run', () => {
+    const { rerender } = render(<PopulationStartedPanel outcome={{ jobId: 'job-1', status: 'completed_with_gaps', skipped: [], reused: false }} sourceMappings={mappings} onClose={vi.fn()} onOpenHealth={vi.fn()}
+      serving={populationServing({ servingDecision: 'activate', blockingGapKinds: ['enumeration_capped'] })} />);
+    expect(screen.getByText('runServing.firstIncomplete')).toBeInTheDocument();
+    rerender(<PopulationStartedPanel outcome={{ jobId: 'job-1', status: 'completed', skipped: [], reused: false }} sourceMappings={mappings} onClose={vi.fn()} onOpenHealth={vi.fn()}
+      serving={populationServing({ servingDecision: 'activate', blockingGapKinds: [] })} />);
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(populationServing({ dataRevisionId: 'r' })).toBeUndefined();
   });
 });

@@ -1,5 +1,5 @@
 import { ModelSpecificationService } from './model-specification.service';
-import { SemanticPopulationRefreshService } from './semantic-population-refresh.service';
+import { graphPropertyKey, SemanticPopulationRefreshService } from './semantic-population-refresh.service';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 
 const NODES = [
@@ -101,6 +101,12 @@ const setup = (
 };
 
 describe('SemanticPopulationRefreshService', () => {
+  it('finds a field in the graph under the name the runtime stores it with', () => {
+    expect(graphPropertyKey('customer_id')).toBe('customer_id');
+    expect(graphPropertyKey('customer-id')).toBe('customer_id');
+    expect(graphPropertyKey('9lives')).toBe('_9lives');
+  });
+
   it('returns only matching population jobs', async () => {
     const { runtime, service } = setup();
     await expect(service.getJob('u-1', 'model-1', 'j-1')).resolves.toMatchObject({ state: 'completed' });

@@ -911,7 +911,13 @@ export class SemanticModelAssistantService {
       ? await this.population.getJob(userId, modelId, jobId) as unknown as Record<string, unknown>
       : await this.population.activeJob(userId, modelId) as unknown as Record<string, unknown> | null;
     if (!job) return { jobId: null, state: 'none', message: 'No data update is running for this model' };
-    return { jobId: job.jobId ?? jobId, state: job.state, progress: job.progress ?? null, error: job.errorCode ?? null };
+    const result = (job.result ?? null) as Record<string, unknown> | null;
+    const kept = result?.servingDecision === 'keep_previous';
+    return {
+      jobId: job.jobId ?? jobId, state: job.state, progress: job.progress ?? null, error: job.errorCode ?? null,
+      ...(Array.isArray(result?.blockingGapKinds) && result.blockingGapKinds.length ? { missingData: result.blockingGapKinds } : {}),
+      ...(kept ? { dataInUseKept: true, message: 'This run is missing data, so the records and graph in use were kept' } : {}),
+    };
   }
 
   /**

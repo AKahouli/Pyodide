@@ -475,7 +475,7 @@ export class SemanticPopulationRefreshService {
               attributes: (concept?.allowedFields ?? []).map((field) => ({
                 key: field,
                 label: field,
-                value: node.properties[field] ?? null,
+                value: node.properties[field] ?? node.properties[graphPropertyKey(field)] ?? null,
               })),
             },
           },
@@ -986,4 +986,10 @@ export class SemanticPopulationRefreshService {
       mappingVersion,
     };
   }
+}
+
+/** The name the graph stores a field under: the runtime replaces characters it cannot use in a property name. */
+export function graphPropertyKey(field: string): string {
+  const safe = field.replace(/[^a-zA-Z0-9_]/g, '_');
+  return /^[0-9]/.test(safe) ? `_${safe}` : safe;
 }

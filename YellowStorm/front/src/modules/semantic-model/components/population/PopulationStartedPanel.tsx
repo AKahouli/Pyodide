@@ -26,7 +26,23 @@ type Tone = 'running' | 'stopping' | 'stopped' | 'done' | 'gaps' | 'failed';
  * failed, so this panel reports the job's actual state. Claiming "reading…" for a run that
  * ended hours ago would leave someone waiting for records that are never coming.
  */
-export function PopulationStartedPanel({ outcome, sourceMappings, progress, conceptLabels, onClose, onOpenHealth, onStop, stopping = false }: Readonly<{
+/** Whether the run's result replaced the graph in use, from the runtime's job result. */
+export interface PopulationServing {
+  decision: 'activate' | 'keep_previous';
+  /** What the result is missing (source not read, a cap reached…); empty when complete. */
+  blocking: string[];
+}
+
+export function populationServing(result: Record<string, unknown> | null | undefined): PopulationServing | undefined {
+  const decision = result?.servingDecision;
+  if (decision !== 'activate' && decision !== 'keep_previous') return undefined;
+  const blocking = Array.isArray(result?.blockingGapKinds) ? result.blockingGapKinds.filter((kind): kind is string => typeof kind === 'string') : [];
+  return { decision, blocking };
+}
+
+const KNOWN_BLOCKING = new Set(['source_unavailable', 'index_unavailable', 'index_ambiguous', 'enumeration_capped', 'materialization_cap', 'assertion_cap', 'relationship_cap', 'budget_exhausted']);
+
+export function PopulationStartedPanel({ outcome, sourceMappings, progress, conceptLabels, onClose, onOpenHealth, onStop, stopping = false, serving }: Readonly<{
   outcome: PopulationOutcome;
   sourceMappings: ConceptSourceMapping[];
   /** Live progress of the run, when it reports some. */
@@ -37,6 +53,7 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
   /** Stop the run; nothing it read is kept. Absent when the person cannot stop it. */
   onStop?: () => void;
   stopping?: boolean;
+  serving?: PopulationServing;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
   const names = new Map(sourceMappings.map((mapping) => [mapping.id, mapping.documentName] as const));
@@ -80,6 +97,14 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
         {stopping ? t('runStop.stopping') : t('runStop.stop')}
       </Button>}
       {shownProgress && (shownProgress.total ?? 0) > 0 && <RunProgress progress={shownProgress} running={tone === 'running' || tone === 'stopping'} conceptLabels={conceptLabels} />}
+      {/* A result missing data never replaces the graph in use; the first graph of a model is shown anyway. */}
+      {serving && serving.blocking.length > 0 && tone !== 'running' && <section role='status' className='rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-800 dark:text-amber-300'>
+        <p className='font-semibold'>{t(serving.decision === 'keep_previous' ? 'runServing.kept' : 'runServing.firstIncomplete')}</p>
+        <p className='mt-1'>{t(serving.decision === 'keep_previous' ? 'runServing.keptHint' : 'runServing.firstIncompleteHint')}</p>
+        <ul className='mt-2 list-disc space-y-0.5 pl-4'>
+          {serving.blocking.map((kind) => <li key={kind}>{t((KNOWN_BLOCKING.has(kind) ? `runServing.kind_${kind}` : 'runServing.kind_other') as 'runServing.kind_other')}</li>)}
+        </ul>
+      </section>}
       {/* A reused terminal job means this click changed nothing — say so rather than implying progress. */}
       {outcome.reused && tone !== 'running' && <p className='mb-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-400'>
         {t('population.reusedNotice')}

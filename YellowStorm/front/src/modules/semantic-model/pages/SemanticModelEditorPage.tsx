@@ -57,7 +57,7 @@ import type { SourceSuggestion, SourceSuggestionOption } from "../types";
 import { SemanticMappingsView } from '../components/mapping/SemanticMappingsView';
 import { SemanticDataPreview } from '../components/preview/SemanticDataPreview';
 import { SemanticTrustPanel } from '../components/review/SemanticTrustPanel';
-import { PopulationStartedPanel, type PopulationOutcome } from '../components/population/PopulationStartedPanel';
+import { PopulationStartedPanel, populationServing, type PopulationOutcome } from '../components/population/PopulationStartedPanel';
 import { VersionsPanel } from "../components/versions/VersionsPanel";
 import { useKnowledgeLinking, type KnowledgeResource } from "../hooks/use-knowledge-linking";
 import { useAssistantSync } from "../hooks/use-assistant-sync";
@@ -754,6 +754,7 @@ export function SemanticModelEditorPage() {
           onOpenHealth={() => { setPopulation(null); setTrustOpen(true); }}
           onStop={canEdit ? () => void stopRun() : undefined}
           stopping={stoppingRun}
+          serving={populationJob.data?.jobId === population.jobId ? populationServing(populationJob.data?.result) : undefined}
         />}
         {modelId && <SourceChooserDialog open={Boolean(choosingFor)} modelId={modelId} conceptLabel={choosingFor?.conceptLabel ?? ''} onClose={() => setChoosingFor(null)}
           onChoose={(option) => { const suggestion = choosingFor; setChoosingFor(null); if (suggestion) openSourceOption(suggestion, option); }} />}
