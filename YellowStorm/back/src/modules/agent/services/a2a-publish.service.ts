@@ -2,7 +2,6 @@ import { isObjectId } from '@common/postgres/object-id';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '../../logger';
-import { stripTrailingChar } from '@common/utils';
 import { AgentRepository } from '../repositories/agent.repository';
 import { AgentRecord } from '../repositories/agent-record.mapper';
 import { AgentService } from '../agent.service';
@@ -46,7 +45,7 @@ export class A2APublishService {
    * an absolute, reachable URL. Falls back to the relative path if unset.
    */
   private toAbsoluteCardUrl(cardPath: string): string {
-    const base = stripTrailingChar(this.config.get<string>('a2aAdmin.apiAdkUrl', ''), '/');
+    const base = this.config.get<string>('a2aAdmin.apiAdkUrl', '').replace(/\/+$/, '');
     if (!base || !cardPath) return cardPath;
     return `${base}${cardPath}`;
   }

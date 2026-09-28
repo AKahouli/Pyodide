@@ -1,23 +1,19 @@
 import { createHash } from 'crypto';
-import { Inject, BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException,  Injectable,  Logger,  NotFoundException } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
 import { IndexingService } from '@modules/indexing/indexing.service';
-import { WORKSPACE_DOCUMENT_READ_PORT, type WorkspaceDocumentReadPort, type WorkspaceDocumentRecord } from '@modules/workspace/ports';
+import {  type WorkspaceDocumentRecord } from '@modules/workspace/ports';
 import type { KnowledgeAssessmentContext, KnowledgeAssessmentDimensions, KnowledgeEvaluator } from '@modules/knowledge-intelligence/domain/knowledge-steward';
 import { KnowledgeAssessmentRepositoryService } from '@modules/knowledge-intelligence/services/knowledge-assessment-repository.service';
 import { KnowledgeAlertRepositoryService } from '@modules/knowledge-intelligence/services/knowledge-alert-repository.service';
 import { KnowledgeRecommendationRepositoryService } from '@modules/knowledge-intelligence/services/knowledge-recommendation-repository.service';
 import { MetadataCandidateRepositoryService } from '@modules/knowledge-intelligence/services/metadata-candidate-repository.service';
-import {
-  BINDING_STORE,
-  GOVERNANCE_DOCUMENT_STORE,
-  type BindingStore,
-  type GovernanceBindingRecord,
-  type GovernanceDocumentRecord,
-  type GovernanceDocumentStore,
+import {  
+  type GovernanceBindingRecord,    
+  type GovernanceDocumentRecord,    
 } from '../persistence';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceAccessService } from './governance-access.service';
@@ -31,6 +27,9 @@ import { AvailabilityEvaluator } from './knowledge-evaluators/availability.evalu
 import { IntegrityEvaluator } from './knowledge-evaluators/integrity.evaluator';
 import { SearchQualityEvaluator } from './knowledge-evaluators/search-quality.evaluator';
 import { GovernanceQualityEvaluator } from './knowledge-evaluators/governance-quality.evaluator';
+import { PgWorkspaceDocumentReadAdapter } from '../../workspace/persistence/postgres/pg-workspace-document-read.adapter';
+import { PgBindingStore } from '../persistence/postgres/pg-binding.store';
+import { PgGovernanceDocumentStore } from '../persistence/postgres/pg-document.store';
 
 const ASSESSMENT_VERSION = 'knowledge-health-v2';
 
@@ -41,9 +40,9 @@ export class GovernanceKnowledgeAssessmentService {
   private readonly evaluators: KnowledgeEvaluator[];
 
   constructor(
-    @Inject(GOVERNANCE_DOCUMENT_STORE) private readonly documentStore: GovernanceDocumentStore,
-    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly workspaceDocuments: WorkspaceDocumentReadPort,
-    @Inject(BINDING_STORE) private readonly bindingStore: BindingStore,
+    private readonly documentStore: PgGovernanceDocumentStore,
+    private readonly workspaceDocuments: PgWorkspaceDocumentReadAdapter,
+    private readonly bindingStore: PgBindingStore,
     private readonly programs: GovernanceProgramService,
     private readonly access: GovernanceAccessService,
     private readonly assessments: KnowledgeAssessmentRepositoryService,
@@ -89,12 +88,12 @@ export class GovernanceKnowledgeAssessmentService {
     return { assessed: capped.length };
   }
 
-  async healthSummary(actorId: string, programId: string, scopeId?: string) { this.assertEnabled(); const scopeIds = await this.authorizedScopeIds(actorId, programId, scopeId); const records = await this.assessments.latestByProgram(programId, scopeId ? [scopeId] : scopeIds); const byStatus = { healthy: 0, warning: 0, critical: 0 }; for (const record of records) byStatus[record.status] += 1; return { totalDocuments: records.length, averageHealthScore: records.length ? Math.round(records.reduce((sum, item) => sum + item.overallHealthScore, 0) / records.length) : 0, byStatus, assessments: records.map((record) => this.serialize(record.toObject())) }; }
-  async listAlerts(actorId: string, programId: string, query: { scopeId?: string; status?: 'open' | 'acknowledged' | 'resolved' | 'ignored'; category?: 'validity' | 'freshness' | 'availability' | 'integrity' | 'governance' | 'search_quality' | 'impact'; severity?: 'critical' | 'high' | 'medium' | 'low' }) { this.assertEnabled(); const scopeIds = await this.authorizedScopeIds(actorId, programId, query.scopeId); return (await this.alerts.list(programId, { ...query, scopeIds: query.scopeId ? [query.scopeId] : scopeIds })).map((item) => this.serialize(item.toObject())); }
-  async listRecommendations(actorId: string, programId: string, query: { scopeId?: string; status?: 'proposed' | 'accepted' | 'rejected' | 'applied' | 'superseded'; priority?: 'critical' | 'high' | 'medium' | 'low' }) { this.assertEnabled(); const scopeIds = await this.authorizedScopeIds(actorId, programId, query.scopeId); return (await this.recommendations.list(programId, { ...query, scopeIds: query.scopeId ? [query.scopeId] : scopeIds })).map((item) => this.serialize(item.toObject())); }
-  async listMetadataCandidates(actorId: string, programId: string, scopeId?: string, status?: 'proposed' | 'accepted' | 'rejected' | 'superseded') { this.assertEnabled(); const scopeIds = await this.authorizedScopeIds(actorId, programId, scopeId); return (await this.metadataCandidates.list(programId, scopeId ? [scopeId] : scopeIds, status)).map((item) => this.serialize(item.toObject())); }
-  async acknowledgeAlert(actorId: string, actorEmail: string, programId: string, alertId: string) { const scopes = await this.authorizedScopeIds(actorId, programId); const result = await this.alerts.acknowledge(programId, alertId, actorId, scopes); if (!result) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Only an accessible open alert can be acknowledged.'); this.audit.logSuccess({ actorId, actorEmail, action: 'governance.knowledge.alert_acknowledged', targetType: 'knowledge_alert', targetId: alertId }); return this.serialize(result.toObject()); }
-  async decideRecommendation(actorId: string, actorEmail: string, programId: string, id: string, action: 'accept' | 'reject', reason?: string) { const scopes = await this.authorizedScopeIds(actorId, programId); const result = await this.recommendations.decide(programId, id, actorId, action, scopes, reason); if (!result) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Only an accessible proposed recommendation can be decided.'); this.audit.logSuccess({ actorId, actorEmail, action: `governance.knowledge.recommendation_${action}ed`, targetType: 'knowledge_recommendation', targetId: id }); return this.serialize(result.toObject()); }
+  async healthSummary(actorId: string, programId: string, scopeId?: string) { this.assertEnabled(); const scopeIds = await this.authorizedScopeIds(actorId, programId, scopeId); const records = await this.assessments.latestByProgram(programId, scopeId ? [scopeId] : scopeIds); const byStatus = { healthy: 0, warning: 0, critical: 0 }; for (const record of records) byStatus[record.status] += 1; return { totalDocuments: records.length, averageHealthScore: records.length ? Math.round(records.reduce((sum, item) => sum + item.overallHealthScore, 0) / records.length) : 0, byStatus, assessments: records.map((record) => this.serialize(record)) }; }
+  async listAlerts(actorId: string, programId: string, query: { scopeId?: string; status?: 'open' | 'acknowledged' | 'resolved' | 'ignored'; category?: 'validity' | 'freshness' | 'availability' | 'integrity' | 'governance' | 'search_quality' | 'impact'; severity?: 'critical' | 'high' | 'medium' | 'low' }) { this.assertEnabled(); const scopeIds = await this.authorizedScopeIds(actorId, programId, query.scopeId); return (await this.alerts.list(programId, { ...query, scopeIds: query.scopeId ? [query.scopeId] : scopeIds })).map((item) => this.serialize(item)); }
+  async listRecommendations(actorId: string, programId: string, query: { scopeId?: string; status?: 'proposed' | 'accepted' | 'rejected' | 'applied' | 'superseded'; priority?: 'critical' | 'high' | 'medium' | 'low' }) { this.assertEnabled(); const scopeIds = await this.authorizedScopeIds(actorId, programId, query.scopeId); return (await this.recommendations.list(programId, { ...query, scopeIds: query.scopeId ? [query.scopeId] : scopeIds })).map((item) => this.serialize(item)); }
+  async listMetadataCandidates(actorId: string, programId: string, scopeId?: string, status?: 'proposed' | 'accepted' | 'rejected' | 'superseded') { this.assertEnabled(); const scopeIds = await this.authorizedScopeIds(actorId, programId, scopeId); return (await this.metadataCandidates.list(programId, scopeId ? [scopeId] : scopeIds, status)).map((item) => this.serialize(item)); }
+  async acknowledgeAlert(actorId: string, actorEmail: string, programId: string, alertId: string) { const scopes = await this.authorizedScopeIds(actorId, programId); const result = await this.alerts.acknowledge(programId, alertId, actorId, scopes); if (!result) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Only an accessible open alert can be acknowledged.'); this.audit.logSuccess({ actorId, actorEmail, action: 'governance.knowledge.alert_acknowledged', targetType: 'knowledge_alert', targetId: alertId }); return this.serialize(result); }
+  async decideRecommendation(actorId: string, actorEmail: string, programId: string, id: string, action: 'accept' | 'reject', reason?: string) { const scopes = await this.authorizedScopeIds(actorId, programId); const result = await this.recommendations.decide(programId, id, actorId, action, scopes, reason); if (!result) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Only an accessible proposed recommendation can be decided.'); this.audit.logSuccess({ actorId, actorEmail, action: `governance.knowledge.recommendation_${action}ed`, targetType: 'knowledge_recommendation', targetId: id }); return this.serialize(result); }
 
   async applyRecommendation(actorId: string, actorEmail: string, programId: string, id: string) {
     const scopes = await this.authorizedScopeIds(actorId, programId);
@@ -109,13 +108,13 @@ export class GovernanceKnowledgeAssessmentService {
       const applied = await this.recommendations.markApplied(id, actorId, recommendation.applicationToken);
       if (!applied) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'The recommendation changed while it was being applied.');
       this.audit.logSuccess({ actorId, actorEmail, action: 'governance.knowledge.recommendation_applied', targetType: 'knowledge_recommendation', targetId: id });
-      return this.serialize(applied.toObject());
+      return this.serialize(applied);
     } catch (error) { await this.recommendations.releaseApplication(id, recommendation.applicationToken); throw error; }
   }
 
   async decideMetadataCandidate(actorId: string, actorEmail: string, programId: string, id: string, action: 'accept' | 'reject', acceptedValue?: unknown, reason?: string) {
     const scopes = await this.authorizedScopeIds(actorId, programId);
-    const candidate = (await this.metadataCandidates.list(programId, scopes, 'proposed')).find((item) => item._id.toString() === id);
+    const candidate = (await this.metadataCandidates.list(programId, scopes, 'proposed')).find((item) => item.id === id);
     if (!candidate) throw new NotFoundException(ErrorCode.NOT_FOUND, 'Metadata candidate not found.');
     const value = acceptedValue ?? candidate.proposedValue;
     if (action === 'accept') {
@@ -125,7 +124,7 @@ export class GovernanceKnowledgeAssessmentService {
     }
     const result = await this.metadataCandidates.decide(programId, id, actorId, action, scopes, action === 'accept' ? value : undefined, reason);
     if (!result) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'The metadata candidate changed while it was being decided.');
-    return this.serialize(result.toObject());
+    return this.serialize(result);
   }
 
   private async assess(record: GovernanceDocumentRecord, bindingInput?: GovernanceBindingRecord): Promise<void> {
@@ -142,7 +141,7 @@ export class GovernanceKnowledgeAssessmentService {
     const inputHash = createHash('sha256').update(this.stableStringify({ document: context.document, governance: context.governance, binding: context.binding, assessmentVersion: ASSESSMENT_VERSION })).digest('hex');
     await this.assessments.upsert({ programId: record.programId, scopeIds: context.binding.scopeIds, documentId: context.document.id, assessmentVersion: ASSESSMENT_VERSION, inputHash, assessedAt: context.now, dimensions, overallHealthScore, status, summary: `Knowledge health is ${status} with a score of ${overallHealthScore}.` });
     const alerts = await this.alerts.synchronize(document.id, this.alertEngine.build(context, dimensions).map((item) => ({ ...item, programId: record.programId })), context.now);
-    await this.recommendations.synchronize(document.id, this.recommendationEngine.build(context, dimensions).map((item) => ({ ...item, programId: record.programId, alertIds: alerts.map((alert) => alert._id.toString()) })));
+    await this.recommendations.synchronize(document.id, this.recommendationEngine.build(context, dimensions).map((item) => ({ ...item, programId: record.programId, alertIds: alerts.map((alert) => alert.id) })));
     await this.metadataCandidates.synchronize(document.id, this.metadataEngine.build(record.programId, context));
     await this.events.append({ programId: record.programId, governanceDocumentId: record.id, documentId: document.id, eventType: 'knowledge.assessed', deduplicationKey: `knowledge-assessed:${inputHash}`, metadata: { assessmentVersion: ASSESSMENT_VERSION, overallHealthScore, status } });
   }

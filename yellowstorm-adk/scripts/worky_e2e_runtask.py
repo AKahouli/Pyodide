@@ -69,7 +69,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import grpc
-import psycopg2
+import psycopg
 
 from src.grpc_generated import companion_ai_pb2 as pb
 from src.grpc_generated import companion_ai_pb2_grpc as pb_grpc
@@ -114,7 +114,7 @@ def _agents():
     """Planner + executor pulled from the SAME agentstore the backend reads (model
     + instruction), with each agent's captured connector bindings attached to
     agent_params.connector_bindings_json — exactly the shape RunTask expects."""
-    with psycopg2.connect(**AGENTSTORE) as c:
+    with psycopg.connect(**AGENTSTORE) as c:
         cur = c.cursor()
         cur.execute("select agent_type_slug, name, llm_model, instruction from agents "
                     "where agent_type_slug in ('worky-planner','worky-executer') and is_active")

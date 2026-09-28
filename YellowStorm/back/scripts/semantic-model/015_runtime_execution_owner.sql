@@ -9,9 +9,9 @@ ALTER TABLE semantic_model.models
   ADD CONSTRAINT semantic_models_execution_owner_check
   CHECK (execution_owner IN ('legacy', 'runtime'));
 
-ALTER TABLE semantic_model.graph_index_jobs
+ALTER TABLE IF EXISTS semantic_model.graph_index_jobs
   DROP CONSTRAINT IF EXISTS graph_index_jobs_status_check;
-ALTER TABLE semantic_model.graph_index_jobs
+ALTER TABLE IF EXISTS semantic_model.graph_index_jobs
   ADD CONSTRAINT graph_index_jobs_status_check
   CHECK (status IN ('pending', 'in_progress', 'indexed', 'failed', 'superseded'));
 

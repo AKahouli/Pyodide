@@ -1,4 +1,5 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleInit, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PgTtlSweeper } from './pg-ttl-sweeper.service';
 
 /**
@@ -11,7 +12,10 @@ import { PgTtlSweeper } from './pg-ttl-sweeper.service';
  */
 @Injectable()
 export class PgTtlRegistrationService implements OnModuleInit {
-  constructor(private readonly sweeper: PgTtlSweeper) {}
+  constructor(
+    private readonly sweeper: PgTtlSweeper,
+    @Optional() private readonly config?: ConfigService,
+  ) {}
 
   onModuleInit(): void {
     this.sweeper.register({ schema: 'identity', table: 'sessions', column: 'expires_at' });
@@ -29,5 +33,16 @@ export class PgTtlRegistrationService implements OnModuleInit {
     this.sweeper.register({ schema: 'integrations', table: 'admin_connector_oauth_states', column: 'expires_at' });
     this.sweeper.register({ schema: 'channels', table: 'telegram_link_codes', column: 'expires_at' });
     this.sweeper.register({ schema: 'workspace', table: 'upload_sessions', column: 'expires_at' });
+    // Playbook-flow rows that expired by TTL in Mongo: execution slots, idempotency records and the short-lived assistant rows.
+    for (const table of ['execution_leases', 'idempotency_records', 'assistant_requests', 'assistant_operations', 'assistant_messages', 'assistant_revisions']) {
+      this.sweeper.register({ schema: 'playbook', table, column: 'expires_at' });
+    }
+    // Application logs: retention by age (the Mongo TTL index on logs.createdAt), 30 days unless configured.
+    this.sweeper.register({
+      schema: 'ops',
+      table: 'logs',
+      column: 'created_at',
+      olderThan: `${String(this.config?.get<number>('logging.retentionDays', 30) ?? 30)} days`,
+    });
   }
 }

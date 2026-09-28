@@ -1,6 +1,5 @@
 import type { GovernanceDryRunRecord } from './governance-records';
 
-export const DRY_RUN_STORE = Symbol('GOVERNANCE_DRY_RUN_STORE');
 
 export interface GovernanceDryRunCreateInput {
   programId: string;

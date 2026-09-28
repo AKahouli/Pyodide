@@ -1,25 +1,20 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { Flow, FlowDocument } from '../schemas/playbook-flow.schema';
-import {
-  FlowMailEventLedger,
-  FlowMailEventLedgerDocument,
-} from '../schemas/playbook-flow-mail-event-ledger.schema';
 import { PlaybookFlowMailGraphClientService } from './playbook-flow-mail-graph-client.service';
 import { PlaybookFlowMailTriggerOrchestrationService } from './playbook-flow-mail-trigger-orchestration.service';
 import { PlaybookFlowMailTriggerHandoffService } from './playbook-flow-mail-trigger-handoff.service';
 import { FlowNormalizedMailEventData, FlowMailMessageAttachmentData } from '../interfaces/playbook-flow-mail.interface';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { LoggerService } from '@modules/logger';
+import { FlowRepository, type FlowTriggerRef } from '../persistence/flow.repository';
+import { MailEventLedgerRepository } from '../persistence/mail-event-ledger.repository';
 
 const MAX_ATTACHMENT_SIZE = 10 * 1024 * 1024;
 
 @Injectable()
 export class PlaybookFlowMailWebhookService {
   constructor(
-    @InjectModel(Flow.name) private readonly flowModel: Model<FlowDocument>,
-    @InjectModel(FlowMailEventLedger.name) private readonly ledgerModel: Model<FlowMailEventLedgerDocument>,
+    private readonly flows: FlowRepository,
+    private readonly ledger: MailEventLedgerRepository,
     private readonly graphClient: PlaybookFlowMailGraphClientService,
     private readonly orchestrationService: PlaybookFlowMailTriggerOrchestrationService,
     private readonly handoffService: PlaybookFlowMailTriggerHandoffService,
@@ -52,10 +47,10 @@ export class PlaybookFlowMailWebhookService {
         );
 
         const normalizedEvent = this.normalizeMessage(flow, graphMessage);
-        const evaluation = await this.orchestrationService.ingestAndEvaluate(flow._id.toString(), normalizedEvent);
+        const evaluation = await this.orchestrationService.ingestAndEvaluate(flow.id, normalizedEvent);
 
         this.logger.log('Mail trigger evaluation complete', {
-          flowId: flow._id.toString(),
+          flowId: flow.id,
           finalStatus: evaluation.finalStatus,
           matched: evaluation.match.matched,
           reasons: evaluation.match.reasons,
@@ -67,7 +62,7 @@ export class PlaybookFlowMailWebhookService {
           graphMessage.hasAttachments === true &&
           this.isAttachmentImportEnabled(flow)
         ) {
-          const workspaceId = flow.workspaces?.[0]?.toString?.() ?? null;
+          const workspaceId = flow.workspaces?.[0] ?? null;
           const attachments = await this.importAttachments(
             flow.ownerId,
             this.getMailboxAppKey(flow),
@@ -76,20 +71,18 @@ export class PlaybookFlowMailWebhookService {
             this.getAllowedExtensions(flow),
           );
 
-          await this.ledgerModel
-            .updateOne({ id: evaluation.ingestion.entry.id }, { $set: { attachments } })
-            .exec();
+          await this.ledger.setAttachments(evaluation.ingestion.entry.id, attachments);
         }
 
         const handoff = evaluation.finalStatus === 'matched'
           ? await this.handoffService.handoffMatchedEvent(
-            flow._id.toString(),
+            flow.id,
             flow.ownerId,
             evaluation.ingestion.entry.id,
           )
           : { executionId: null, handedOff: false, skippedReason: 'not-matched' as const };
 
-        results.push({ subscriptionId, flowId: flow._id.toString(), evaluation, handoff });
+        results.push({ subscriptionId, flowId: flow.id, evaluation, handoff });
       } catch (err) {
         this.logger.error('Mail notification processing failed', {
           subscriptionId,
@@ -101,23 +94,17 @@ export class PlaybookFlowMailWebhookService {
     return { processed: results.length, results };
   }
 
-  private async findFlowBySubscription(subscriptionId: string, clientState: string): Promise<FlowDocument | null> {
-    const query = {
-      'triggerConfig.kind': 'mail',
-      'triggerConfig.params.enabled': true,
-      'triggerConfig.params.subscriptionId': subscriptionId,
-      'triggerConfig.params.subscriptionClientState': clientState,
-    };
-    const flow = await this.flowModel
-      .findOne(query)
-      .select('_id ownerId triggerConfig workspaces')
-      .lean()
-      .exec();
+  private async findFlowBySubscription(subscriptionId: string, clientState: string): Promise<FlowTriggerRef | null> {
+    const [flow] = await this.flows.listByTrigger('mail', {
+      enabled: true,
+      subscriptionId,
+      subscriptionClientState: clientState,
+    });
 
     if (!flow) return null;
     const params = flow.triggerConfig?.params ?? {};
     if (params['subscriptionId'] !== subscriptionId || params['subscriptionClientState'] !== clientState) return null;
-    return flow as FlowDocument;
+    return flow;
   }
 
   private getMailboxAppKey(flow: any): string {

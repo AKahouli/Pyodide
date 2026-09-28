@@ -1,7 +1,6 @@
 /**
  * Store port for app_runtime.tool_calls (P8 Mongo cutover).
  */
-export const RUNTIME_TOOL_CALL_STORE = Symbol('RUNTIME_TOOL_CALL_STORE');
 
 export type ToolCallStatus = 'pending' | 'running' | 'succeeded' | 'failed';
 

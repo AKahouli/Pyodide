@@ -1,28 +1,23 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { CreateGovernanceDeploymentDto, CreateGovernanceRevisionDto, PublishGovernanceDeploymentDto, UpdateGovernanceDeploymentDto, UpdateGovernanceRevisionDto } from '../dto';
-import {
-  BINDING_STORE,
-  DEPLOYMENT_STORE,
-  DRY_RUN_STORE,
-  PUBLICATION_ATTEMPT_STORE,
-  REVISION_STORE,
-  type BindingStore,
-  type DeploymentStore,
-  type DryRunStore,
-  type GovernanceDeploymentRecord,
-  type GovernanceRevisionRecord,
-  type PublicationAttemptStore,
-  type RevisionStore,
-  GOVERNANCE_TRANSACTION, PASSTHROUGH_TRANSACTION, type GovernanceTransactionRunner
-} from '../persistence';
+import {          
+  type GovernanceDeploymentRecord,           
+  type GovernanceRevisionRecord,           
+  type RevisionStore,            PASSTHROUGH_TRANSACTION} from '../persistence';
 import type { GovernancePublicationAttemptStatus } from '../domain/governance-types';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceScopeService } from './governance-scope.service';
 import { GovernanceAccessService } from './governance-access.service';
 import { GovernanceDraftPreparationService } from './governance-draft-preparation.service';
+import { PgGovernanceTransactionRunner } from '../persistence/postgres/pg-transaction-runner';
+import { PgPublicationAttemptStore } from '../persistence/postgres/pg-publication-attempt.store';
+import { PgDryRunStore } from '../persistence/postgres/pg-dry-run.store';
+import { PgRevisionStore } from '../persistence/postgres/pg-revision.store';
+import { PgDeploymentStore } from '../persistence/postgres/pg-deployment.store';
+import { PgBindingStore } from '../persistence/postgres/pg-binding.store';
 
 export interface GovernanceDeploymentResponse { id: string; programId: string; scopeId: string; name: string; status: string; currentDraftRevisionId?: string; currentPublishedRevisionId?: string; channels: Record<string, unknown>; createdAt: string; updatedAt: string }
 export interface GovernanceRevisionResponse { id: string; deploymentId: string; revisionNumber: number; status: string; agentId: string; allowedAgentIds: string[]; workspaceIds: string[]; workspaceBindingSnapshot: Record<string, unknown>; configurationFingerprint?: string; scopeSnapshot: Record<string, unknown>; audienceSnapshot: Record<string, unknown>; previousAudienceSnapshot: Record<string, unknown>; createdBy: string; publishedBy?: string; publishedAt?: string; createdAt: string; updatedAt: string }
@@ -32,17 +27,17 @@ export interface GovernanceReadinessCheck { key: string; label: string; status: 
 @Injectable()
 export class GovernanceDeploymentService {
   constructor(
-    @Inject(DEPLOYMENT_STORE) private readonly deploymentStore: DeploymentStore,
-    @Inject(REVISION_STORE) private readonly revisionStore: RevisionStore,
-    @Inject(DRY_RUN_STORE) private readonly dryRunStore: DryRunStore,
-    @Inject(BINDING_STORE) private readonly bindingStore: BindingStore,
-    @Inject(PUBLICATION_ATTEMPT_STORE) private readonly attemptStore: PublicationAttemptStore,
+    private readonly deploymentStore: PgDeploymentStore,
+    private readonly revisionStore: PgRevisionStore,
+    private readonly dryRunStore: PgDryRunStore,
+    private readonly bindingStore: PgBindingStore,
+    private readonly attemptStore: PgPublicationAttemptStore,
     private readonly programService: GovernanceProgramService,
     private readonly scopeService: GovernanceScopeService,
     private readonly accessService: GovernanceAccessService,
     private readonly auditLogService: AuditLogService,
     private readonly draftPreparationService: GovernanceDraftPreparationService,
-    @Inject(GOVERNANCE_TRANSACTION) private readonly tx: GovernanceTransactionRunner = PASSTHROUGH_TRANSACTION,
+    private readonly tx: PgGovernanceTransactionRunner = PASSTHROUGH_TRANSACTION as unknown as PgGovernanceTransactionRunner,
   ) {}
 
   async create(actorId: string, actorEmail: string, programId: string, dto: CreateGovernanceDeploymentDto): Promise<GovernanceDeploymentResponse> {

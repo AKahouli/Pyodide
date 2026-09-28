@@ -37,21 +37,14 @@ describe('PlaybookFlowExecutionService replay drift handling', () => {
         replayConfig: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false },
       }]])),
     };
-    const executionModel = {
-      findById: jest.fn(() => ({
-        lean: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue({ flowId: 'flow-1', ownerId: 'owner-1' }),
-        }),
-      })),
-      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
-      findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
+    const executionRepository = {
+      findById: jest.fn().mockResolvedValue({ flowId: 'flow-1', ownerId: 'owner-1' }),
     };
-    const { service, taskResultModel } = createExecutionServiceForTests({
+    const { service } = createExecutionServiceForTests({
       replayArtifactService,
       replayReportService,
-      executionModel,
+      executionRepository,
     });
-    taskResultModel.updateOne.mockResolvedValue(undefined);
     (service as any).cacheSelectedReplayArtifacts('exec-1', 'step-1', {
       taskId: 'step-1',
       replayId: 'replay-1',
@@ -113,10 +106,9 @@ describe('PlaybookFlowExecutionService replay drift handling', () => {
       createPreRunReport: jest.fn().mockResolvedValue(undefined),
       updateStructuralDrift: jest.fn().mockResolvedValue(undefined),
     };
-    const { service, taskResultModel } = createExecutionServiceForTests({
+    const { service } = createExecutionServiceForTests({
       replayReportService,
     });
-    taskResultModel.updateOne.mockResolvedValue(undefined);
     (service as any).cacheSelectedReplayArtifacts('exec-1', 'step-1', {
       taskId: 'step-1',
       replayId: 'replay-1',
@@ -171,10 +163,9 @@ describe('PlaybookFlowExecutionService replay drift handling', () => {
       createPreRunReport: jest.fn().mockResolvedValue(undefined),
       updateStructuralDrift: jest.fn().mockResolvedValue(undefined),
     };
-    const { service, taskResultModel } = createExecutionServiceForTests({
+    const { service } = createExecutionServiceForTests({
       replayReportService,
     });
-    taskResultModel.updateOne.mockResolvedValue(undefined);
     (service as any).cacheSelectedReplayArtifacts('exec-1', 'step-1', {
       taskId: 'step-1',
       replayId: 'replay-1',
@@ -242,10 +233,9 @@ describe('PlaybookFlowExecutionService replay drift handling', () => {
       createPreRunReport: jest.fn().mockResolvedValue(undefined),
       updateStructuralDrift: jest.fn().mockResolvedValue(undefined),
     };
-    const { service, taskResultModel } = createExecutionServiceForTests({
+    const { service } = createExecutionServiceForTests({
       replayReportService,
     });
-    taskResultModel.updateOne.mockResolvedValue(undefined);
     (service as any).cacheSelectedReplayArtifacts('exec-1', 'step-1', {
       taskId: 'step-1',
       replayId: 'replay-1',
@@ -302,10 +292,9 @@ describe('PlaybookFlowExecutionService replay drift handling', () => {
       createPreRunReport: jest.fn().mockResolvedValue(undefined),
       updateStructuralDrift: jest.fn().mockResolvedValue(undefined),
     };
-    const { service, taskResultModel } = createExecutionServiceForTests({
+    const { service } = createExecutionServiceForTests({
       replayReportService,
     });
-    taskResultModel.updateOne.mockResolvedValue(undefined);
     (service as any).cacheSelectedReplayArtifacts('exec-1', 'step-1', {
       taskId: 'step-1',
       replayId: 'replay-1',
@@ -362,10 +351,9 @@ describe('PlaybookFlowExecutionService replay drift handling', () => {
       createPreRunReport: jest.fn().mockResolvedValue(undefined),
       updateStructuralDrift: jest.fn().mockResolvedValue(undefined),
     };
-    const { service, taskResultModel } = createExecutionServiceForTests({
+    const { service } = createExecutionServiceForTests({
       replayReportService,
     });
-    taskResultModel.updateOne.mockResolvedValue(undefined);
     (service as any).cacheSelectedReplayArtifacts('exec-1', 'step-1', {
       taskId: 'step-1',
       replayId: 'replay-1',

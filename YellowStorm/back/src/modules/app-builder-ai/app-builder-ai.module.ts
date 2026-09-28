@@ -11,8 +11,7 @@ import { AppBuilderAiUsageService } from './services/app-builder-ai-usage.servic
 import { AppBuilderAiAdminService } from './services/app-builder-ai-admin.service';
 import { AppBuilderAiKillSwitchGuard } from './guards/app-builder-ai-kill-switch.guard';
 import { AppBuilderAiUsageLimitGuard } from './guards/app-builder-ai-usage-limit.guard';
-import { AdminAppBuilderAiController } from './controllers/admin-app-builder-ai.controller';
-import { APP_BUILDER_AI_OFFER_STORE } from './persistence/app-builder-ai-offer.store';
+import { AdminAppBuilderAiController } from './controllers/admin-app-builder-ai.controller';
 import { PgAppBuilderAiOfferStore } from './persistence/pg-app-builder-ai-offer.store';
 
 @Module({
@@ -27,7 +26,6 @@ import { PgAppBuilderAiOfferStore } from './persistence/pg-app-builder-ai-offer.
   controllers: [AdminAppBuilderAiController],
   providers: [
     PgAppBuilderAiOfferStore,
-    { provide: APP_BUILDER_AI_OFFER_STORE, useExisting: PgAppBuilderAiOfferStore },
     AppBuilderAiSettingsService,
     AppBuilderAiOfferService,
     AppBuilderAiUsageService,

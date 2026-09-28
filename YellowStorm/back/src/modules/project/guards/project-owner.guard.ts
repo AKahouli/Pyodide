@@ -1,6 +1,7 @@
-import { Inject, Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
 import { Request } from 'express';
-import { PROJECT_STORE, type ProjectRecord, type ProjectStore } from '../persistence/project-store';
+import { type ProjectRecord } from '../persistence/project-store';
+import { PostgresProjectStore } from '../persistence/postgres/postgres-project-store';
 import { isObjectId, normalizeObjectId } from '@common/postgres/object-id';
 import { ForbiddenException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
@@ -17,7 +18,7 @@ interface RequestWithProject extends Request {
  */
 @Injectable()
 export class ProjectOwnerGuard implements CanActivate {
-  constructor(@Inject(PROJECT_STORE) private readonly projectStore: ProjectStore) {}
+  constructor(private readonly projectStore: PostgresProjectStore) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<RequestWithProject>();

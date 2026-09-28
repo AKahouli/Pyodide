@@ -2,6 +2,7 @@ import { Inject } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
+import { stripNul } from '@common/postgres/json';
 import { resolveQueryable, type PgQueryable } from '@common/postgres/transaction';
 import * as schema from '@modules/postgres/schema';
 import {
@@ -92,7 +93,7 @@ export class PgRuntimeToolCallStore implements RuntimeToolCallStore {
       .update(schema.appRuntimeToolCalls)
       .set({
         status: 'succeeded',
-        result,
+        result: stripNul(result),
         error: null,
         resultingRevisionId,
         durationMs,
@@ -110,7 +111,7 @@ export class PgRuntimeToolCallStore implements RuntimeToolCallStore {
       .update(schema.appRuntimeToolCalls)
       .set({
         status: 'failed',
-        error,
+        error: stripNul(error),
         durationMs,
         updatedAt: new Date(),
       })

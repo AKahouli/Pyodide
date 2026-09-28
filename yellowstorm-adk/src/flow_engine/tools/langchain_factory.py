@@ -8,18 +8,16 @@ infrastructure as RunAgentTeam (SearchToolkit, build_tree, etc.).
 import copy
 import json
 import re
-from typing import Dict, Any, List, Optional, Tuple, Type
+from typing import Dict, Any, List, Optional, Tuple
 
 from src.flow_engine.agent_runtime.tool_context import last_mcp_actual_args as _last_mcp_actual_args
 
-import httpx
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field, create_model
 from structlog import get_logger
 
 from src.connector_tool_name import build_connector_tool_name
 from src.run_workspace import run_workspace_path, with_run_workspace_path
-from src.config.settings import get_settings
 from src.flow_engine.runtime.artifact_routing import (
     infer_artifact_kind,
     semantic_match_output_port,
@@ -52,85 +50,6 @@ from src.smart_rag.tools.utilities.connector_tools import (
 )
 
 logger = get_logger(__name__)
-
-# ---------------------------------------------------------------------------
-# Workspace name resolver (brain_id ObjectId → actual workspace name)
-# ---------------------------------------------------------------------------
-
-_WORKSPACE_NAME_CACHE: Dict[str, str] = {}
-_OBJECT_ID_RE = re.compile(r"^[0-9a-f]{24}$", re.IGNORECASE)
-
-
-def _looks_like_object_id(value: str) -> bool:
-    return bool(_OBJECT_ID_RE.match(value or ""))
-
-
-async def _resolve_workspace_names(ids: List[str]) -> Dict[str, str]:
-    """Resolve MongoDB ObjectIds to workspace names via the internal backend endpoint.
-
-    Results are cached in-process for the lifetime of the worker.
-    Unknown or failed IDs fall back to the original ID string.
-    """
-    settings = get_settings()
-    raw_api_url = (getattr(settings, "API_URL", "") or "").rstrip("/")
-    token = getattr(settings, "INTERNAL_SERVICE_SECRET", "") or ""
-
-    if not raw_api_url or not token:
-        return {}
-
-    # Ensure the base URL includes the /api prefix used by NestJS
-    if raw_api_url.endswith("/api") or raw_api_url.endswith("/api/v1"):
-        api_base = raw_api_url.rsplit("/v1", 1)[0] if raw_api_url.endswith("/api/v1") else raw_api_url
-    else:
-        api_base = f"{raw_api_url}/api"
-
-    unresolved = [i for i in ids if i not in _WORKSPACE_NAME_CACHE and _looks_like_object_id(i)]
-    if unresolved:
-        resolve_url = f"{api_base}/workspaces/internal/resolve-names"
-        logger.info(
-            "workspace_name_resolve_calling url=%s ids=%s",
-            resolve_url,
-            unresolved,
-        )
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.post(
-                    resolve_url,
-                    json={"ids": unresolved},
-                    headers={"X-Internal-Token": token, "Content-Type": "application/json"},
-                )
-                logger.info(
-                    "workspace_name_resolve_response status=%s url=%s",
-                    resp.status_code,
-                    resolve_url,
-                )
-                if resp.status_code == 200:
-                    body = resp.json()
-                    # Unwrap NestJS standard envelope {"success": true, "data": {...}, "meta": {...}}
-                    if isinstance(body, dict) and "data" in body and isinstance(body["data"], dict):
-                        data = body["data"]
-                    elif isinstance(body, dict):
-                        data = body
-                    else:
-                        data = {}
-                    if data:
-                        _WORKSPACE_NAME_CACHE.update({k: v for k, v in data.items() if v})
-                        logger.info(
-                            "workspace_names_resolved count=%s mapping=%s",
-                            len(data),
-                            data,
-                        )
-                else:
-                    logger.warning(
-                        "workspace_name_resolve_failed status=%s url=%s body=%s",
-                        resp.status_code,
-                        resolve_url,
-                        resp.text[:200],
-                    )
-        except Exception as exc:
-            logger.warning("workspace_name_resolve_error error=%s", str(exc))
-
-    return {i: _WORKSPACE_NAME_CACHE.get(i, i) for i in ids}
 
 
 def _log_payload(value: Any) -> str:

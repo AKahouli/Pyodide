@@ -38,13 +38,6 @@ export default registerAs('semanticModel', () => ({
     || `${process.env.SEMANTIC_MODEL_NATIVE_SEARCH_URL || 'http://localhost:8045/search_native'}/batch`,
   nativeSearchAuthToken: process.env.SEMANTIC_MODEL_NATIVE_SEARCH_AUTH_TOKEN || '',
   nativeSearchLogQuery: process.env.SEMANTIC_MODEL_NATIVE_SEARCH_LOG_QUERY === 'true',
-  semanticSearchUrl: process.env.SEMANTIC_SEARCH_URL || 'http://127.0.0.1:8100',
-  semanticSearchToken: process.env.SEMANTIC_SEARCH_TOKEN || '',
-  semanticSearchTimeoutMs: Number.parseInt(process.env.SEMANTIC_SEARCH_TIMEOUT_SECONDS || '300', 10) * 1000,
-  evidenceSearchTimeoutMs: Number.parseInt(process.env.SEMANTIC_MODEL_EVIDENCE_SEARCH_TIMEOUT_MS || '180000', 10),
-  evidenceSearchConcurrency: Math.max(1, Number.parseInt(process.env.SEMANTIC_MODEL_EVIDENCE_SEARCH_CONCURRENCY || '4', 10)),
-  ontologyTimeoutMs: Number.parseInt(process.env.SEMANTIC_MODEL_ONTOLOGY_TIMEOUT_MS || '0', 10),
-  mappingTimeoutMs: Number.parseInt(process.env.SEMANTIC_MODEL_MAPPING_TIMEOUT_MS || '0', 10),
   documentExtractionAgentId: process.env.SEMANTIC_MODEL_DOCUMENT_EXTRACTION_AGENT_ID || '',
   documentExtractionTimeoutMs: Number.parseInt(process.env.SEMANTIC_MODEL_DOCUMENT_EXTRACTION_TIMEOUT_MS || '180000', 10),
 }));

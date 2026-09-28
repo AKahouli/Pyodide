@@ -1,11 +1,11 @@
-import { Inject, Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable,  OnModuleDestroy,  OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { LoggerService } from '../../logger';
-import { ConversationExecutionStore, CONVERSATION_EXECUTION_STORE } from '../persistence/conversation-execution-store';
+import { LoggerService } from '../../logger';
 import { ConversationService } from './conversation.service';
 import { MessageService } from './message.service';
 import { StreamGatewayService } from './stream-gateway.service';
+import { PostgresConversationExecutionStore } from '../persistence/postgres/postgres-conversation-execution-store';
 
 export const RECOVERY_BATCH_LIMIT = 100;
 
@@ -41,8 +41,7 @@ export class ConversationRecoveryService implements OnModuleInit, OnModuleDestro
     private readonly streamGateway: StreamGatewayService,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
-    @Inject(CONVERSATION_EXECUTION_STORE)
-    private readonly executionStore: ConversationExecutionStore,
+    private readonly executionStore: PostgresConversationExecutionStore,
   ) {
     this.logger.setContext(ConversationRecoveryService.name);
     this.enabled = this.configService.get<boolean>('conversation.recoveryEnabled', true);

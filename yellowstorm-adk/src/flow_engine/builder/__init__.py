@@ -11,7 +11,7 @@ from typing import Any, Optional
 from langgraph.graph import START, StateGraph
 from structlog import get_logger
 
-from src.flow_engine.builder.sequential import add_sequential_edges
+from src.flow_engine.builder.sequential import add_sequential_edges, suppressed_mirror_edges
 from src.flow_engine.builder.conditional import add_conditional_edges
 from src.flow_engine.builder.iterator import add_iterator_edges, compute_iterator_children
 from src.flow_engine.builder.guards import build_nearest_router_map, build_cycle_node_set, wrap_node_for_iteration, wrap_node_for_error_routing
@@ -80,7 +80,8 @@ def compose(
         all_exit_targets.update(exits)
 
     _add_start_edges(graph, raw_edges, raw_nodes, skip_ids=iterator_children, known_targets=all_exit_targets)
-    add_sequential_edges(graph, raw_edges, raw_nodes, skip_ids=iterator_children)
+    suppressed_mirrors = suppressed_mirror_edges(raw_edges, data_bindings)
+    add_sequential_edges(graph, raw_edges, raw_nodes, skip_ids=iterator_children, suppressed=suppressed_mirrors)
     add_conditional_edges(graph, raw_edges, raw_nodes, skip_ids=iterator_children)
 
     add_iterator_edges(
@@ -147,6 +148,23 @@ def _add_start_edges(
     targets = {e["target"] for e in raw_edges if e.get("target") in node_ids and e.get("source", "") not in skip_ids}
     targets.update(known_targets)
     entrypoints = node_ids - targets
+    if not entrypoints:
+        # ponytail: pure cycle (e.g. router feedback loop with no outside entry).
+        # Fall back to the loop head: nodes with no incoming *sequential* edge.
+        # Deterministic; last resort is sorted order so compile never fails
+        # for lack of START.
+        sequential_targets = {
+            e["target"]
+            for e in raw_edges
+            if e.get("kind") == "sequential"
+            and e.get("target") in node_ids
+            and e.get("source", "") not in skip_ids
+        }
+        fallback = sorted(node_ids - sequential_targets - known_targets)
+        if not fallback:
+            fallback = sorted(node_ids - known_targets) or sorted(node_ids)
+        entrypoints = {fallback[0]}
+        logger.info("[builder] No entrypoint found (cycle); using fallback", entrypoint=fallback[0])
     for ep in sorted(entrypoints):
         graph.add_edge(START, ep)
     if entrypoints:

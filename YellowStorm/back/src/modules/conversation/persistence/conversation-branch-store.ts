@@ -1,7 +1,6 @@
 import type { ConversationRecord } from './conversation-store';
 import type { MessageRecord } from './message-store';
 
-export const CONVERSATION_BRANCH_STORE = Symbol('CONVERSATION_BRANCH_STORE');
 
 export interface BranchStateRecord {
   id: string;

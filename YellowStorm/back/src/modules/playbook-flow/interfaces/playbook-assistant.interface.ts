@@ -1,4 +1,4 @@
-import type { ControlEdge, DataBinding, FlowNode } from '../schemas/playbook-flow.schema';
+import type { ControlEdge, DataBinding, FlowNode } from '../models/playbook-flow.model';
 import type { PlaybookIntentSuggestion } from '../services/playbook-flow-intent.service';
 
 export interface PlaybookAssistantDiagnostic {

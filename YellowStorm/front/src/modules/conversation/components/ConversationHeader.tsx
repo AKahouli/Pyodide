@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -14,7 +16,7 @@ import { showError, showInfo, showSuccess } from '@/lib/notifications';
 import { RenameDialog } from './RenameDialog';
 import { DeleteConversationDialog } from './DeleteConversationDialog';
 import { ShareDialog } from './ShareDialog';
-import { ConversationPdfExport } from './ConversationPdfExport';
+import { PdfExportPortal } from './PdfExportPortal';
 import { CreateGroupConversationDialog } from './CreateGroupConversationDialog';
 import { useModuleTranslation } from '@/modules/localization';
 
@@ -251,14 +253,23 @@ export function ConversationHeader() {
       {!isGoverned && <ShareDialog open={shareOpen} onOpenChange={setShareOpen} conversationId={conversation.id} conversationTitle={conversation.title} />}
 
       {pdfBlocks && (
-        <ConversationPdfExport
-          blocks={pdfBlocks}
+        <PdfExportPortal
           title={exportTitle}
+          contentKey={JSON.stringify(pdfBlocks)}
           onFinish={(ok) => {
             setPdfBlocks(null);
             if (!ok) showError(t('toasts.message.exportError'));
           }}
-        />
+        >
+          {pdfBlocks.map((block, index) => (
+            <div key={`${block.role}-${index}`} data-export-block>
+              <h3 style={{ color: '#6b7280', fontSize: '12px', margin: '24px 0 8px', textTransform: 'uppercase' }}>
+                {block.label}{block.timestamp ? ` · ${block.timestamp}` : ''}
+              </h3>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.markdown}</ReactMarkdown>
+            </div>
+          ))}
+        </PdfExportPortal>
       )}
 
       <CreateGroupConversationDialog open={groupDialogOpen} onOpenChange={setGroupDialogOpen} mode='manage' />

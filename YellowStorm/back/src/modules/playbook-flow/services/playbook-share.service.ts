@@ -1,10 +1,8 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
 import { LoggerService } from '@modules/logger';
 import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { SharedPlaybook, SharedPlaybookDocument } from '../schemas/shared-playbook.schema';
+import { SharedPlaybookRepository, type SharedPlaybookRecord } from '../persistence/shared-playbook.repository';
 import { SharePlaybookDto, UpdatePlaybookSharePermissionDto } from '../dto/share-playbook.dto';
 import { PlaybookFlowStreamEventsService } from './playbook-flow-stream-events.service';
 import {
@@ -28,8 +26,7 @@ function toPopulated(summary?: { id: string; email: string; firstName: string; l
 @Injectable()
 export class PlaybookShareService {
   constructor(
-    @InjectModel(SharedPlaybook.name)
-    private readonly sharedPlaybookModel: Model<SharedPlaybookDocument>,
+    private readonly shares: SharedPlaybookRepository,
     @Inject(USER_LOOKUP_PORT) private readonly userLookup: UserLookupPort,
     private readonly streamEvents: PlaybookFlowStreamEventsService,
     private readonly logger: LoggerService,
@@ -42,14 +39,7 @@ export class PlaybookShareService {
     const results: IPlaybookShareEntry[] = [];
 
     for (const user of recipients) {
-      const share = await this.sharedPlaybookModel.findOneAndUpdate(
-        { playbookId: new Types.ObjectId(playbookId), sharedWith: user._id },
-        {
-          $set: { permission: dto.permission, sharedBy: new Types.ObjectId(ownerId) },
-          $setOnInsert: { playbookId: new Types.ObjectId(playbookId), sharedWith: user._id },
-        },
-        { upsert: true, new: true },
-      );
+      const share = await this.shares.upsert(playbookId, user._id, ownerId, dto.permission);
       results.push(this.mapShare(share, user));
       this.streamEvents.emitPlaybookShared(user._id.toString(), playbookId);
     }
@@ -65,13 +55,10 @@ export class PlaybookShareService {
   }
 
   async getPlaybookShares(playbookId: string): Promise<IPlaybookShareEntry[]> {
-    const shares = await this.sharedPlaybookModel
-      .find({ playbookId: new Types.ObjectId(playbookId) })
-      .sort({ createdAt: -1 })
-      .exec();
+    const shares = await this.shares.listForPlaybook(playbookId);
 
-    const users = await this.userLookup.byIds(shares.map((share) => String(share.sharedWith)));
-    return shares.map((share) => this.mapShare(share, toPopulated(users.get(String(share.sharedWith)))!));
+    const users = await this.userLookup.byIds(shares.map((share) => share.sharedWith));
+    return shares.map((share) => this.mapShare(share, toPopulated(users.get(share.sharedWith))!));
   }
 
   async updateSharePermission(
@@ -79,75 +66,45 @@ export class PlaybookShareService {
     shareId: string,
     dto: UpdatePlaybookSharePermissionDto,
   ): Promise<IPlaybookShareEntry> {
-    if (!Types.ObjectId.isValid(shareId)) {
-      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook share not found');
-    }
-
-    const share = await this.sharedPlaybookModel
-      .findOneAndUpdate(
-        { _id: new Types.ObjectId(shareId), playbookId: new Types.ObjectId(playbookId) },
-        { $set: { permission: dto.permission } },
-        { new: true },
-      )
-      .exec();
-
+    const share = await this.shares.updatePermission(playbookId, shareId, dto.permission);
     if (!share) {
       throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook share not found');
     }
 
-    const users = await this.userLookup.byIds([String(share.sharedWith)]);
+    const users = await this.userLookup.byIds([share.sharedWith]);
     this.logger.log('Playbook share permission updated', { playbookId, shareId, permission: dto.permission });
-    return this.mapShare(share, toPopulated(users.get(String(share.sharedWith)))!);
+    return this.mapShare(share, toPopulated(users.get(share.sharedWith))!);
   }
 
   async removeShare(playbookId: string, shareId: string): Promise<void> {
-    if (!Types.ObjectId.isValid(shareId)) {
-      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook share not found');
-    }
-
-    const share = await this.sharedPlaybookModel
-      .findOneAndDelete({ _id: new Types.ObjectId(shareId), playbookId: new Types.ObjectId(playbookId) })
-      .lean()
-      .exec();
+    const share = await this.shares.delete(playbookId, shareId);
     if (!share) {
       throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook share not found');
     }
   }
 
   async removeAllSharesForPlaybook(playbookId: string): Promise<void> {
-    await this.sharedPlaybookModel.deleteMany({ playbookId: new Types.ObjectId(playbookId) }).exec();
+    await this.shares.deleteAllForPlaybook(playbookId);
   }
 
   async getSharePermission(userId: string, playbookId: string): Promise<AssignablePlaybookPermission | null> {
-    const share = await this.sharedPlaybookModel
-      .findOne({ playbookId: new Types.ObjectId(playbookId), sharedWith: new Types.ObjectId(userId) })
-      .lean()
-      .exec();
-    return share ? share.permission : null;
+    return this.shares.findPermission(userId, playbookId);
   }
 
   async getSharedPlaybookIdsForUser(userId: string): Promise<string[]> {
-    const shares = await this.sharedPlaybookModel
-      .find({ sharedWith: new Types.ObjectId(userId) })
-      .select('playbookId')
-      .lean()
-      .exec();
-    return shares.map((share) => share.playbookId.toString());
+    return this.shares.listPlaybookIdsSharedWith(userId);
   }
 
   async getShareInfoMapForUser(userId: string): Promise<Map<string, ISharedPlaybookInfo>> {
-    const shares = await this.sharedPlaybookModel
-      .find({ sharedWith: new Types.ObjectId(userId) })
-      .lean()
-      .exec();
+    const shares = await this.shares.listSharedWith(userId);
 
-    const users = await this.userLookup.byIds(shares.map((share) => String(share.sharedBy)));
+    const users = await this.userLookup.byIds(shares.map((share) => share.sharedBy));
 
     const shareMap = new Map<string, ISharedPlaybookInfo>();
     for (const share of shares) {
-      const sharedBy = toPopulated(users.get(String(share.sharedBy)))!;
-      shareMap.set(share.playbookId.toString(), {
-        shareId: share._id.toString(),
+      const sharedBy = toPopulated(users.get(share.sharedBy))!;
+      shareMap.set(share.playbookId, {
+        shareId: share.id,
         permission: share.permission,
         sharedBy: this.mapUser(sharedBy),
       });
@@ -177,9 +134,9 @@ export class PlaybookShareService {
     return recipients as unknown as PopulatedUser[];
   }
 
-  private mapShare(share: SharedPlaybookDocument, user: PopulatedUser): IPlaybookShareEntry {
+  private mapShare(share: SharedPlaybookRecord, user: PopulatedUser): IPlaybookShareEntry {
     return {
-      shareId: share._id.toString(),
+      shareId: share.id,
       permission: share.permission,
       user: this.mapUser(user),
       createdAt: share.createdAt,

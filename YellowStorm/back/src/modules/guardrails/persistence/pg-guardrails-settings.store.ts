@@ -5,7 +5,7 @@ import { newObjectId } from '@common/postgres';
 import { resolveQueryable, type PgQueryable } from '@common/postgres/transaction';
 import * as schema from '@modules/postgres/schema';
 import type { AdminGuardrailsSettings } from '../services/guardrails-settings.service';
-import { GUARDRAILS_SETTINGS_STORE, type GuardrailsSettingsRow, type GuardrailsSettingsStore } from './guardrails-settings.store';
+import { type GuardrailsSettingsRow,  type GuardrailsSettingsStore } from './guardrails-settings.store';
 
 /** PostgreSQL catalog.guardrails_settings implementation of GuardrailsSettingsStore (plan 1B.2.3). */
 export class PgGuardrailsSettingsStore implements GuardrailsSettingsStore {

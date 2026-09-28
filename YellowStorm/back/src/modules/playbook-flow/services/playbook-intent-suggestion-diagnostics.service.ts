@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { PlaybookIntentDiagnostic, PlaybookIntentDiagnosticResolutionCode } from '../interfaces/playbook-flow-intent-diagnostic.interface';
-import type { ControlEdge, DataBinding, FlowNode } from '../schemas/playbook-flow.schema';
+import type { ControlEdge, DataBinding, FlowNode } from '../models/playbook-flow.model';
 import { PlaybookFlowValidatorService } from './playbook-flow-validator.service';
 import type { PlaybookIntentSuggestion, PlaybookIntentTaskDraft, PlaybookIntentWorkflowChange } from './playbook-flow-intent.service';
 

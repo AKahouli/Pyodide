@@ -14,14 +14,11 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(extra="ignore", case_sensitive=False)
 
-    TEMP_FOLDER: str = "./tmp"
     HOST: str = "localhost"
     PORT: int = Field(
         default=8001,
         validation_alias=AliasChoices("PORT", "ADK_PORT"),
     )
-    SSL_KEYFILE: Optional[str] = None
-    SSL_CERTFILE: Optional[str] = None
     LOG_CONFIG_PATH: str = "./src/logger/uvicorn_disable_logging.json"
     TIMEOUT_KEEP_ALIVE: int = 5
     UVICORN_WORKERS: int = 1
@@ -33,8 +30,6 @@ class Settings(BaseSettings):
     EMBEDDING_DIMS: int = 2560
 
     # Azure Storage
-    AZURE_STORAGE_ACCOUNT: str
-    AZURE_STORAGE_ACCOUNT_KEY: str
     AZURE_DATALAKE_CONNECTION_STRING: str
     AZURE_DATALAKE_FILE_SYSTEM_NAME: str
     CEPH_ENDPOINT: Optional[str] = Field(
@@ -61,7 +56,6 @@ class Settings(BaseSettings):
     lINKUP_API_KEY: str
     WEB_SEARCH_PROMPT: str
     API_URL: str
-    API_ADK_URL: str
     INTERNAL_SERVICE_SECRET: Optional[str] = None
     LITELLM_API_BASE_URL: str
     LITELLM_API_SECRET_KEY: str
@@ -82,21 +76,15 @@ class Settings(BaseSettings):
     # Cap the LLM response length. Prevents runaway 10k+ token generations that
     # eat wall-clock time without adding value. Set to 0 to disable the cap.
     SEMANTIC_MODEL_LLM_MAX_TOKENS: int = 32000
-    EXCEL_MCP_URL: str
     MICROSANDBOX_MCP_URL: Optional[str] = None
     MICROSANDBOX_DOCUMENT_SERVER_URL: Optional[str] = None
     MICROSANDBOX_DOCKER_IMAGE: Optional[str] = None
-    MAX_CONCURRENCY: int = 50
-    MAX_QUEUE_LENGTH: int = 500
     APPLICATION_INSIGHTS_LOG: bool = False
     DD_TRACE_ENABLED: bool = False
     APPLICATIONINSIGHTS_CONNECTION_STRING: Optional[str] = None
     APPLICATION_INSIGHTS_LOG_CONFIG_PATH: str = "./src/logger/app_insight_logging.json"
     GOOGLE_API_USE_CLIENT_CERTIFICATE: bool = False
 
-    # Authentication to get token
-    AUTH_USERNAME: str
-    AUTH_PASSWORD: str
     # Redis
     ENABLE_REDIS_SSL: bool = False
     REDIS_HOST: str
@@ -104,11 +92,6 @@ class Settings(BaseSettings):
     REDIS_DB: int = 0
     REDIS_USER: Optional[str] = None
     REDIS_PASSWORD: Optional[str] = None
-    # Celery Configuration
-    CELERY_BROKER_URL: Optional[str] = None
-    CELERY_RESULT_BACKEND: Optional[str] = None
-    CELERY_WORKER_CONCURRENCY: int = 4
-    SECRET_KEY: str
     ADK_API_KEY: str
     VECTORSTORE_API_KEY: str
     # Ollama
@@ -220,23 +203,6 @@ class Settings(BaseSettings):
     BASE64_LIST_ENABLED_BRAIN_IDS: List[str] = [
         "67c99ad236081d40c152c23d"
     ]  # Brain IDs that enable base64 list processing
-    ADK_ENABLE_PROGRESSIVE_SSE_STREAMING: bool = False
-
-    @field_validator("AZURE_STORAGE_ACCOUNT", mode="before")
-    @classmethod
-    def validate_azure_storage_account(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("AZURE_STORAGE_ACCOUNT is required and cannot be empty")
-        return v
-
-    @field_validator("AZURE_STORAGE_ACCOUNT_KEY", mode="before")
-    @classmethod
-    def validate_azure_storage_account_key(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError(
-                "AZURE_STORAGE_ACCOUNT_KEY is required and cannot be empty"
-            )
-        return v
 
     @field_validator("AZURE_DATALAKE_CONNECTION_STRING", mode="before")
     @classmethod
@@ -433,20 +399,6 @@ class Settings(BaseSettings):
             )
         return self
 
-    @field_validator("AUTH_USERNAME", mode="before")
-    @classmethod
-    def validate_auth_username(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("AUTH_USERNAME is required and cannot be empty")
-        return v
-
-    @field_validator("AUTH_PASSWORD", mode="before")
-    @classmethod
-    def validate_auth_password(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("AUTH_PASSWORD is required and cannot be empty")
-        return v
-
     @field_validator("REDIS_HOST", mode="before")
     @classmethod
     def validate_redis_host(cls, v):
@@ -466,13 +418,6 @@ class Settings(BaseSettings):
             return port
         except (ValueError, TypeError):
             raise ValueError("REDIS_PORT must be a valid 4-digit integer")
-
-    @field_validator("SECRET_KEY", mode="before")
-    @classmethod
-    def validate_secret_key(cls, v):
-        if not v or v.strip() == "":
-            raise ValueError("SECRET_KEY is required and cannot be empty")
-        return v
 
     def get_effective_pool_size(self) -> int:
         """Get the effective pool size, auto-scaled if needed.

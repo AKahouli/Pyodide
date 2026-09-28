@@ -1,14 +1,13 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { WorkyStream, WorkyStreamDocument } from '../schemas/worky-stream.schema';
-import { WorkyTask, WorkyTaskDocument } from '../schemas/worky-task.schema';
-import { WorkyPlanVersion, WorkyPlanVersionDocument } from '../schemas/worky-plan-version.schema';
-import { WorkyPlanDelta, WorkyPlanDeltaDocument } from '../schemas/worky-plan-delta.schema';
-import {
-  WorkyInteraction,
-  WorkyInteractionDocument,
-} from '../schemas/worky-interaction.schema';
+import { Inject, Injectable } from '@nestjs/common';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { isObjectId, normalizeObjectId, withTransaction } from '@common/postgres';
+import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
+import * as schema from '@modules/postgres/schema';
+import { WorkyStreamRepository } from '../persistence/worky-stream.repository';
+import { WorkyTaskRepository, type WorkyTaskPatch } from '../persistence/worky-task.repository';
+import { WorkyPlanRepository } from '../persistence/worky-plan.repository';
+import { WorkyInteractionRepository } from '../persistence/worky-interaction.repository';
+import type { WorkyStreamRecord } from '../worky.types';
 import { LoggerService } from '../../logger';
 import {
   BadRequestException,
@@ -16,7 +15,11 @@ import {
 } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { PlanDeltaBodyDto } from '../dto/plan-delta-body.dto';
-import { IPlanDeltaApplyResult, IPlanDeltaBody } from '../interfaces/plan-delta.interface';
+import {
+  IPlanDeltaApplyResult,
+  IPlanDeltaBody,
+  IPlanDeltaCreateTask,
+} from '../interfaces/plan-delta.interface';
 import { WorkyHumanAssignmentService } from './worky-human-assignment.service';
 import { WorkyGovernanceService } from './worky-governance.service';
 import { WorkyEventService } from './worky-event.service';
@@ -63,13 +66,15 @@ export interface IPlanDeltaReplanResult {
  *   3. Graph validate (no cycles, all `dependsOn` refs exist in the stream).
  *   4. Governance classification — the `actionCategory` tag is persisted on
  *      the task itself; enforcement is out of Part 2 scope.
- *   5. Atomic apply (best-effort linearization via the version increment).
- *   6. Versioning — create a `WorkyPlanVersion` and link the delta.
+ *   5. Atomic apply — every write of one delta runs in one transaction.
+ *   6. Versioning — create a plan version row and link the delta.
  *
- * The `findOneAndUpdate` on `currentPlanVersion` is the linearization
- * point: a concurrent caller that raced to this point will see
- * `null` and get a `stale_base_version` 409. The delta is then persisted
- * with `status='rejected'` so a future audit can see it was attempted.
+ * The conditional version increment (`advancePlanVersion`) is the
+ * linearization point: a concurrent caller that raced to this point gets a
+ * `stale_base_version` 409 and its transaction writes nothing.
+ *
+ * The human-assignment hook sends mail and schedules timers, which a
+ * rollback could not take back, so it runs after the commit.
  *
  * Cancel operations set `lane='canceled'`; create / update use the lane
  * supplied by the runtime. System lanes (`failed|canceled|...`) are not
@@ -78,16 +83,11 @@ export interface IPlanDeltaReplanResult {
 @Injectable()
 export class WorkyPlanDeltaService {
   constructor(
-    @InjectModel(WorkyStream.name)
-    private readonly streams: Model<WorkyStreamDocument>,
-    @InjectModel(WorkyTask.name)
-    private readonly tasks: Model<WorkyTaskDocument>,
-    @InjectModel(WorkyPlanVersion.name)
-    private readonly planVersions: Model<WorkyPlanVersionDocument>,
-    @InjectModel(WorkyPlanDelta.name)
-    private readonly planDeltas: Model<WorkyPlanDeltaDocument>,
-    @InjectModel(WorkyInteraction.name)
-    private readonly interactions: Model<WorkyInteractionDocument>,
+    @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>,
+    private readonly streams: WorkyStreamRepository,
+    private readonly tasks: WorkyTaskRepository,
+    private readonly plans: WorkyPlanRepository,
+    private readonly interactions: WorkyInteractionRepository,
     private readonly humanAssignment: WorkyHumanAssignmentService,
     private readonly governance: WorkyGovernanceService,
     private readonly events: WorkyEventService,
@@ -111,7 +111,7 @@ export class WorkyPlanDeltaService {
    * returned (canonical §17.4).
    */
   async applyReplan(input: PlanDeltaReplanInput): Promise<IPlanDeltaReplanResult> {
-    const stream = await this.streams.findById(input.streamId).exec();
+    const stream = await this.streams.findById(input.streamId);
     if (!stream) {
       throw new BadRequestException(
         ErrorCode.WORKY_STREAM_NOT_FOUND,
@@ -131,58 +131,58 @@ export class WorkyPlanDeltaService {
       );
     }
     const body = this.normalizeBody(input.body);
-    const guard = await this.evaluateReplanGuard(stream._id.toString(), body, input.applyMode);
+    const guard = await this.evaluateReplanGuard(stream.id, body, input.applyMode);
     if (guard.requiresApproval) {
-      const delta = await this.planDeltas.create({
-        streamId: stream._id,
-        basePlanVersion: input.basePlanVersion,
-        resultPlanVersion: stream.currentPlanVersion,
-        phase: 'replan',
-        triggerEventId: input.triggerEventId,
-        status: 'pending_approval',
-        applyMode: input.applyMode,
-        reason: input.reason,
-        createdBy: new Types.ObjectId(input.createdBy),
-        body: this.bodyToWire(body),
+      const { delta, interaction } = await withTransaction(this.db, async () => {
+        const delta = await this.plans.createDelta({
+          streamId: stream.id,
+          basePlanVersion: input.basePlanVersion,
+          resultPlanVersion: stream.currentPlanVersion,
+          phase: 'replan',
+          triggerEventId: input.triggerEventId,
+          status: 'pending_approval',
+          applyMode: input.applyMode,
+          reason: input.reason,
+          createdBy: input.createdBy,
+          body: this.bodyToWire(body),
+        });
+        const interaction = await this.interactions.create({
+          streamId: stream.id,
+          taskId: null,
+          type: 'replan_review',
+          targetUserId: stream.ownerUserId,
+          question: `A dynamic replan was triggered${input.reason ? ` (${input.reason})` : ''}. Touches categories: ${guard.blockingCategories.join(', ')}. Approve to apply.`,
+          options: ['approve', 'reject'],
+          blockingScope: 'stream',
+          blocksTaskIds: [],
+          metadata: { planDeltaId: delta.id },
+        });
+        return { delta, interaction };
       });
-      const interaction = await this.interactions.create({
-        streamId: stream._id,
-        taskId: null,
-        type: 'replan_review',
-        targetUserId: stream.ownerUserId,
-        question: `A dynamic replan was triggered${input.reason ? ` (${input.reason})` : ''}. Touches categories: ${guard.blockingCategories.join(', ')}. Approve to apply.`,
-        options: ['approve', 'reject'],
-        status: 'pending',
-        blockingScope: 'stream',
-        blocksTaskIds: [],
-        respondedAt: null,
-        response: null,
-        metadata: { planDeltaId: (delta._id as Types.ObjectId).toString() },
-      });
-      this.events.emit(stream.ownerUserId.toString(), stream._id.toString(), {
+      this.events.emit(stream.ownerUserId, stream.id, {
         type: 'replan.approval_required',
         emittedAt: Date.now(),
         payload: {
-          planDeltaId: (delta._id as Types.ObjectId).toString(),
+          planDeltaId: delta.id,
           blockingCategories: guard.blockingCategories,
           reason: input.reason,
         },
       });
-      this.events.emit(stream.ownerUserId.toString(), stream._id.toString(), {
+      this.events.emit(stream.ownerUserId, stream.id, {
         type: 'replan.required',
         emittedAt: Date.now(),
         payload: {
-          planDeltaId: (delta._id as Types.ObjectId).toString(),
+          planDeltaId: delta.id,
           reason: input.reason,
           mode: input.applyMode,
         },
       });
       return {
         status: 'pending_approval',
-        planDeltaId: (delta._id as Types.ObjectId).toString(),
+        planDeltaId: delta.id,
         blockingCategories: guard.blockingCategories,
         reason: input.reason,
-        interactionId: (interaction._id as Types.ObjectId).toString(),
+        interactionId: interaction.id,
       };
     }
     const result = await this.applyInternal({
@@ -190,7 +190,7 @@ export class WorkyPlanDeltaService {
       phase: 'replan',
       applyMode: 'auto',
     });
-    this.events.emit(stream.ownerUserId.toString(), stream._id.toString(), {
+    this.events.emit(stream.ownerUserId, stream.id, {
       type: 'replan.applied',
       emittedAt: Date.now(),
       payload: {
@@ -220,10 +220,7 @@ export class WorkyPlanDeltaService {
     planDeltaId: string;
     approvedBy: string;
   }): Promise<IPlanDeltaReplanResult> {
-    const delta = await this.planDeltas
-      .findById(input.planDeltaId)
-      .lean()
-      .exec();
+    const delta = await this.plans.findDeltaById(input.planDeltaId);
     if (!delta) {
       throw new BadRequestException(
         ErrorCode.WORKY_INVALID_PLAN_DELTA,
@@ -234,7 +231,7 @@ export class WorkyPlanDeltaService {
       return {
         status: 'auto_applied',
         planDeltaId: input.planDeltaId,
-        resultPlanVersion: (delta.resultPlanVersion as number | undefined) ?? 0,
+        resultPlanVersion: delta.resultPlanVersion ?? 0,
       };
     }
     if (delta.status !== 'pending_approval') {
@@ -243,36 +240,22 @@ export class WorkyPlanDeltaService {
         planDeltaId: input.planDeltaId,
       };
     }
-    const wireBody = delta.body as Record<string, unknown>;
     const result = await this.applyInternal({
-      streamId: (delta.streamId as Types.ObjectId).toString(),
-      basePlanVersion: delta.basePlanVersion as number,
-      triggerEventId: (delta.triggerEventId as string | undefined) ?? `approved-${input.planDeltaId}`,
-      body: wireBody as unknown as PlanDeltaBodyDto,
+      streamId: delta.streamId,
+      basePlanVersion: delta.basePlanVersion,
+      triggerEventId: delta.triggerEventId,
+      body: delta.body as unknown as PlanDeltaBodyDto,
       createdBy: input.approvedBy,
       phase: 'replan',
       applyMode: 'pending_approval',
     });
-    await this.planDeltas
-      .updateOne(
-        { _id: new Types.ObjectId(input.planDeltaId), status: 'pending_approval' },
-        {
-          $set: {
-            status: 'applied',
-            resultPlanVersion: result.resultPlanVersion,
-            appliedAt: new Date(),
-            approvedBy: new Types.ObjectId(input.approvedBy),
-          },
-        },
-      )
-      .exec();
-    const streamForEvent = await this.streams
-      .findById(delta.streamId)
-      .select({ ownerUserId: 1 })
-      .lean()
-      .exec();
-    const ownerUserId = streamForEvent?.ownerUserId.toString() ?? '';
-    this.events.emit(ownerUserId, (delta.streamId as Types.ObjectId).toString(), {
+    await this.plans.markApplied(input.planDeltaId, {
+      resultPlanVersion: result.resultPlanVersion,
+      approvedBy: input.approvedBy,
+    });
+    const streamForEvent = await this.streams.findById(delta.streamId);
+    const ownerUserId = streamForEvent?.ownerUserId ?? '';
+    this.events.emit(ownerUserId, delta.streamId, {
       type: 'replan.applied',
       emittedAt: Date.now(),
       payload: {
@@ -296,7 +279,7 @@ export class WorkyPlanDeltaService {
       applyMode: 'auto' | 'manual' | 'pending_approval';
     },
   ): Promise<IPlanDeltaApplyResult> {
-    const stream = await this.streams.findById(input.streamId).exec();
+    const stream = await this.streams.findById(input.streamId);
     if (!stream) {
       throw new BadRequestException(
         ErrorCode.WORKY_STREAM_NOT_FOUND,
@@ -322,13 +305,7 @@ export class WorkyPlanDeltaService {
     }
 
     // Graph validation
-    const existingTasks = await this.tasks
-      .find({ streamId: stream._id })
-      .select({ _id: 1, title: 1 })
-      .lean()
-      .exec();
-    const existingIds = new Set(existingTasks.map((t) => (t._id as Types.ObjectId).toString()));
-    const clientIdMap = new Map<string, Types.ObjectId>();
+    const existingIds = new Set(await this.tasks.listIdsByStream(stream.id));
     const resolution = this.resolveClientTaskIds(body, existingIds);
     if (resolution.cycle) {
       throw new BadRequestException(
@@ -349,208 +326,198 @@ export class WorkyPlanDeltaService {
       );
     }
 
-    // Linearize on the version increment
     const nextVersion = stream.currentPlanVersion + 1;
-    const linearized = await this.streams
-      .findOneAndUpdate(
-        { _id: stream._id, currentPlanVersion: stream.currentPlanVersion },
-        { $inc: { currentPlanVersion: 1 }, $set: { lastActivityAt: new Date() } },
-        { new: true },
-      )
-      .exec();
-    if (!linearized) {
-      throw new ConflictException(
-        ErrorCode.WORKY_STALE_PLAN_VERSION,
-        'A concurrent plan-delta was applied; refetch the latest plan and retry.',
-      );
-    }
+    const applied = await withTransaction(this.db, async () => {
+      // Linearize on the version increment
+      const linearized = await this.streams.advancePlanVersion(stream.id, stream.currentPlanVersion);
+      if (!linearized) {
+        throw new ConflictException(
+          ErrorCode.WORKY_STALE_PLAN_VERSION,
+          'A concurrent plan-delta was applied; refetch the latest plan and retry.',
+        );
+      }
 
-    // Apply
-    const createdTaskIds: string[] = [];
-    const updatedTaskIds: string[] = [];
-    const cancelledTaskIds: string[] = [];
-    for (const c of body.create_tasks ?? []) {
-      const created = await this.tasks.create({
-        streamId: stream._id,
-        title: c.title,
-        description: c.description ?? '',
-        lane: c.lane,
-        planningStatus: c.planningStatus ?? 'confirmed',
-        executionState: 'not_started',
-        controlState: 'active',
-        priority: c.priority ?? 'medium',
-        assigneeType: c.assigneeType ?? 'ephemeral_ai_agent',
-        assigneeId: null,
-        dependsOn: (c.dependsOn ?? []).map((ref) => this.resolveRef(ref, clientIdMap)),
-        requiredTools: c.requiredTools ?? [],
-        actionCategory: c.actionCategory,
-        acceptanceCriteria: c.acceptanceCriteria ?? [],
-        budget: {
-          estimateUsd: c.budgetEstimateUsd ?? 0,
-          actualUsd: 0,
+      // Apply
+      const clientIdMap = new Map<string, string>();
+      const createdTaskIds: string[] = [];
+      const updatedTaskIds: string[] = [];
+      const cancelledTaskIds: string[] = [];
+      for (const c of body.create_tasks ?? []) {
+        const created = await this.tasks.create({
+          streamId: stream.id,
+          title: c.title,
+          description: c.description ?? '',
+          lane: c.lane,
+          planningStatus: c.planningStatus ?? 'confirmed',
+          priority: c.priority ?? 'medium',
+          assigneeType: c.assigneeType ?? 'ephemeral_ai_agent',
+          dependsOn: (c.dependsOn ?? []).map((ref) => this.resolveRef(ref, clientIdMap)),
+          requiredTools: c.requiredTools ?? [],
+          actionCategory: c.actionCategory,
+          acceptanceCriteria: c.acceptanceCriteria ?? [],
+          budgetEstimateUsd: c.budgetEstimateUsd ?? 0,
           tokensEstimate: c.tokensEstimate ?? 0,
-          tokensActual: 0,
-        },
-        waitConditions: [],
-      });
-      const id = (created._id as Types.ObjectId).toString();
-      if (c.clientTaskId) clientIdMap.set(c.clientTaskId, created._id as Types.ObjectId);
-      createdTaskIds.push(id);
-    }
-    // Human assignment hook (Part 4 §3.1). For each created task with
-    // `assigneeType='human_agent'` and an `assigneeHint`, resolve the
-    // workspace user. Unique match → set `assigneeId`, send email,
-    // schedule reminders, share workspace. Ambiguous / no match → roll
-    // the task back to `unassigned` and raise a clarification.
-    const humanClarificationBlocks: Array<{ taskId: string; title: string }> = [];
-    for (let i = 0; i < (body.create_tasks ?? []).length; i += 1) {
-      const c = (body.create_tasks ?? [])[i];
-      const taskId = createdTaskIds[i];
-      if (c.assigneeType !== 'human_agent' || !c.assigneeHint || !taskId) continue;
-      const result = await this.humanAssignment.assignFromHint({
-        streamId: input.streamId,
-        taskId,
-        hint: c.assigneeHint,
-      });
-      if (result.status === 'unresolved' || result.status === 'ambiguous') {
-        // Roll the task back to `unassigned` so it doesn't sit with a
-        // misleading `human_agent` type while the owner resolves.
-        await this.tasks
-          .updateOne(
-            { _id: new Types.ObjectId(taskId) },
-            { $set: { assigneeType: 'unassigned', assigneeId: null, theoreticalDeadlineAt: null } },
-          )
-          .exec();
-        humanClarificationBlocks.push({ taskId, title: c.title });
+        });
+        if (c.clientTaskId) clientIdMap.set(c.clientTaskId, created.id);
+        createdTaskIds.push(created.id);
       }
-    }
-    for (const block of humanClarificationBlocks) {
-      await this.interactions.create({
-        streamId: stream._id,
-        taskId: new Types.ObjectId(block.taskId),
-        type: 'assignment_disambiguation',
-        targetUserId: stream.ownerUserId,
-        question: `Who should be assigned to "${block.title}"? Please clarify or invite the user.`,
-        options: [],
-        status: 'pending',
-        blockingScope: 'task',
-        blocksTaskIds: [new Types.ObjectId(block.taskId)],
-        respondedAt: null,
-        response: null,
-      });
-    }
-    for (const u of body.update_tasks ?? []) {
-      const ref = this.resolveRef(u.taskId, clientIdMap);
-      const update: Record<string, unknown> = {};
-      if (u.title !== undefined) update.title = u.title;
-      if (u.description !== undefined) update.description = u.description;
-      if (u.lane !== undefined) update.lane = u.lane;
-      if (u.priority !== undefined) update.priority = u.priority;
-      if (u.assigneeType !== undefined) update.assigneeType = u.assigneeType;
-      if (u.actionCategory !== undefined) update.actionCategory = u.actionCategory;
-      if (u.acceptanceCriteria !== undefined) update.acceptanceCriteria = u.acceptanceCriteria;
-      if (u.dependsOn !== undefined) {
-        update.dependsOn = u.dependsOn.map((ref2) => this.resolveRef(ref2, clientIdMap));
-      }
-      if (Object.keys(update).length === 0) continue;
-      const updated = await this.tasks
-        .findOneAndUpdate({ _id: ref, streamId: stream._id }, { $set: update }, { new: true })
-        .exec();
-      if (updated) updatedTaskIds.push((updated._id as Types.ObjectId).toString());
-    }
-    for (const c of body.cancel_tasks ?? []) {
-      const ref = this.resolveRef(c.taskId, clientIdMap);
-      const cancelled = await this.tasks
-        .findOneAndUpdate(
-          { _id: ref, streamId: stream._id },
-          { $set: { lane: 'canceled', controlState: 'stopped', executionState: 'canceled' } },
-          { new: true },
-        )
-        .exec();
-      if (cancelled) cancelledTaskIds.push((cancelled._id as Types.ObjectId).toString());
-    }
-
-    // Clarifications: persist as `WorkyInteraction` rows so the board
-    // projection can mark the referenced tasks as `blocked`. The
-    // `blocksTaskIds` are resolved from the `clientTaskId` mapping
-    // populated above.
-    const clarificationIds: string[] = [];
-    for (const c of body.clarification_requests ?? []) {
-      const blocks: Types.ObjectId[] = [];
-      for (const ref of c.blocksTaskClientIds ?? []) {
-        try {
-          blocks.push(this.resolveRef(ref, clientIdMap));
-        } catch {
-          // missing refs are dropped — the spec doesn't require us to
-          // reject the whole delta over a dangling block.
+      for (const u of body.update_tasks ?? []) {
+        const ref = this.resolveRef(u.taskId, clientIdMap);
+        const update: WorkyTaskPatch = {};
+        if (u.title !== undefined) update.title = u.title;
+        if (u.description !== undefined) update.description = u.description;
+        if (u.lane !== undefined) update.lane = u.lane;
+        if (u.priority !== undefined) update.priority = u.priority;
+        if (u.assigneeType !== undefined) update.assigneeType = u.assigneeType;
+        if (u.actionCategory !== undefined) update.actionCategory = u.actionCategory;
+        if (u.acceptanceCriteria !== undefined) update.acceptanceCriteria = u.acceptanceCriteria;
+        if (u.dependsOn !== undefined) {
+          update.dependsOn = u.dependsOn.map((ref2) => this.resolveRef(ref2, clientIdMap));
         }
+        if (Object.keys(update).length === 0) continue;
+        const updated = await this.tasks.updateInStream(ref, stream.id, update);
+        if (updated) updatedTaskIds.push(updated.id);
       }
-      for (const id of c.blocksTaskIds ?? []) {
-        if (Types.ObjectId.isValid(id)) blocks.push(new Types.ObjectId(id));
+      for (const c of body.cancel_tasks ?? []) {
+        const ref = this.resolveRef(c.taskId, clientIdMap);
+        const cancelled = await this.tasks.updateInStream(ref, stream.id, {
+          lane: 'canceled',
+          controlState: 'stopped',
+          executionState: 'canceled',
+        });
+        if (cancelled) cancelledTaskIds.push(cancelled.id);
       }
-      const created = await this.interactions.create({
-        streamId: stream._id,
-        taskId: blocks[0] ?? null,
-        type: c.type ?? 'clarification',
-        targetUserId: stream.ownerUserId,
-        question: c.question,
-        options: c.options ?? [],
-        status: 'pending',
-        blockingScope: 'task',
-        blocksTaskIds: blocks,
-        respondedAt: null,
-        response: null,
-      });
-      clarificationIds.push((created._id as Types.ObjectId).toString());
-    }
 
-    // Persist the delta
-    const delta = await this.planDeltas.create({
-      streamId: stream._id,
-      basePlanVersion: input.basePlanVersion,
-      resultPlanVersion: nextVersion,
-      phase: input.phase,
-      triggerEventId: input.triggerEventId,
-      status: 'applied',
-      applyMode: input.applyMode ?? 'auto',
-      reason: '',
-      createdBy: new Types.ObjectId(input.createdBy),
-      body: this.bodyToWire(body),
+      // Clarifications: persist as interaction rows so the board
+      // projection can mark the referenced tasks as `blocked`. The
+      // `blocksTaskIds` are resolved from the `clientTaskId` mapping
+      // populated above.
+      const streamTaskIds = new Set([...existingIds, ...createdTaskIds]);
+      const clarificationIds: string[] = [];
+      for (const c of body.clarification_requests ?? []) {
+        const blocks: string[] = [];
+        for (const ref of c.blocksTaskClientIds ?? []) {
+          try {
+            blocks.push(this.resolveRef(ref, clientIdMap));
+          } catch {
+            // missing refs are dropped — the spec doesn't require us to
+            // reject the whole delta over a dangling block.
+          }
+        }
+        for (const id of c.blocksTaskIds ?? []) {
+          if (isObjectId(id)) blocks.push(normalizeObjectId(id));
+        }
+        const created = await this.interactions.create({
+          streamId: stream.id,
+          // task_id is a foreign key (blocksTaskIds is not): the first blocked task of this stream.
+          taskId: blocks.find((id) => streamTaskIds.has(id)) ?? null,
+          type: c.type ?? 'clarification',
+          targetUserId: stream.ownerUserId,
+          question: c.question,
+          options: c.options ?? [],
+          blockingScope: 'task',
+          blocksTaskIds: blocks,
+        });
+        clarificationIds.push(created.id);
+      }
+
+      // Persist the delta
+      const delta = await this.plans.createDelta({
+        streamId: stream.id,
+        basePlanVersion: input.basePlanVersion,
+        resultPlanVersion: nextVersion,
+        phase: input.phase,
+        triggerEventId: input.triggerEventId,
+        status: 'applied',
+        applyMode: input.applyMode ?? 'auto',
+        reason: '',
+        createdBy: input.createdBy,
+        body: this.bodyToWire(body),
+      });
+      await this.plans.createVersion({
+        streamId: stream.id,
+        versionNumber: nextVersion,
+        phase: input.phase,
+        createdBy: input.createdBy,
+        createdFromMessageId: null,
+        triggerEventId: input.triggerEventId,
+        summary: this.summarizeDelta(
+          createdTaskIds.length,
+          updatedTaskIds.length,
+          cancelledTaskIds.length,
+          clarificationIds.length,
+        ),
+      });
+      return { planDeltaId: delta.id, createdTaskIds, updatedTaskIds, cancelledTaskIds, clarificationIds };
     });
-    await this.planVersions.create({
-      streamId: stream._id,
-      versionNumber: nextVersion,
-      phase: input.phase,
-      createdBy: new Types.ObjectId(input.createdBy),
-      createdFromMessageId: null,
-      triggerEventId: input.triggerEventId,
-      summary: this.summarizeDelta(
-        createdTaskIds.length,
-        updatedTaskIds.length,
-        cancelledTaskIds.length,
-        clarificationIds.length,
-      ),
-    });
+
+    await this.assignHumans(stream, body.create_tasks ?? [], applied.createdTaskIds);
+
     this.logger.log('Worky plan-delta applied', {
       streamId: input.streamId,
       basePlanVersion: input.basePlanVersion,
       resultPlanVersion: nextVersion,
-      deltaId: (delta._id as Types.ObjectId).toString(),
-      createdTaskIds: createdTaskIds.length,
-      updatedTaskIds: updatedTaskIds.length,
-      cancelledTaskIds: cancelledTaskIds.length,
-      clarificationIds: clarificationIds.length,
+      deltaId: applied.planDeltaId,
+      createdTaskIds: applied.createdTaskIds.length,
+      updatedTaskIds: applied.updatedTaskIds.length,
+      cancelledTaskIds: applied.cancelledTaskIds.length,
+      clarificationIds: applied.clarificationIds.length,
     });
     return {
       streamId: input.streamId,
       basePlanVersion: input.basePlanVersion,
       resultPlanVersion: nextVersion,
-      planDeltaId: (delta._id as Types.ObjectId).toString(),
-      createdTaskIds,
-      updatedTaskIds,
-      cancelledTaskIds,
-      clarificationIds,
+      planDeltaId: applied.planDeltaId,
+      createdTaskIds: applied.createdTaskIds,
+      updatedTaskIds: applied.updatedTaskIds,
+      cancelledTaskIds: applied.cancelledTaskIds,
+      clarificationIds: applied.clarificationIds,
     };
+  }
+
+  /**
+   * Human assignment hook (Part 4 §3.1), after the delta committed. For
+   * each created task with `assigneeType='human_agent'` and an
+   * `assigneeHint`, resolve the workspace user. Unique match → set
+   * `assigneeId`, send email, schedule reminders, share workspace.
+   * Ambiguous / no match → roll the task back to `unassigned` and raise a
+   * clarification.
+   */
+  private async assignHumans(
+    stream: WorkyStreamRecord,
+    creates: IPlanDeltaCreateTask[],
+    createdTaskIds: string[],
+  ): Promise<void> {
+    for (let i = 0; i < creates.length; i += 1) {
+      const c = creates[i];
+      const taskId = createdTaskIds[i];
+      if (c.assigneeType !== 'human_agent' || !c.assigneeHint || !taskId) continue;
+      const result = await this.humanAssignment.assignFromHint({
+        streamId: stream.id,
+        taskId,
+        hint: c.assigneeHint,
+      });
+      if (result.status !== 'unresolved' && result.status !== 'ambiguous') continue;
+      // Roll the task back to `unassigned` so it doesn't sit with a
+      // misleading `human_agent` type while the owner resolves.
+      await withTransaction(this.db, async () => {
+        await this.tasks.update(taskId, {
+          assigneeType: 'unassigned',
+          assigneeId: null,
+          theoreticalDeadlineAt: null,
+        });
+        await this.interactions.create({
+          streamId: stream.id,
+          taskId,
+          type: 'assignment_disambiguation',
+          targetUserId: stream.ownerUserId,
+          question: `Who should be assigned to "${c.title}"? Please clarify or invite the user.`,
+          options: [],
+          blockingScope: 'task',
+          blocksTaskIds: [taskId],
+        });
+      });
+    }
   }
 
   private isPreExecutionPhase(status: string): boolean {
@@ -620,12 +587,12 @@ export class WorkyPlanDeltaService {
   }
 
   private async persistEmptyDelta(
-    stream: WorkyStreamDocument,
+    stream: WorkyStreamRecord,
     input: PlanDeltaApplyInput & { phase: 'planning' | 'replan'; applyMode: 'auto' | 'manual' | 'pending_approval' },
     body: IPlanDeltaBody,
   ): Promise<IPlanDeltaApplyResult> {
-    const delta = await this.planDeltas.create({
-      streamId: stream._id,
+    const delta = await this.plans.createDelta({
+      streamId: stream.id,
       basePlanVersion: input.basePlanVersion,
       resultPlanVersion: stream.currentPlanVersion,
       phase: input.phase,
@@ -633,14 +600,14 @@ export class WorkyPlanDeltaService {
       status: 'applied',
       applyMode: input.applyMode ?? 'auto',
       reason: 'empty delta',
-      createdBy: new Types.ObjectId(input.createdBy),
+      createdBy: input.createdBy,
       body: this.bodyToWire(body),
     });
     return {
       streamId: input.streamId,
       basePlanVersion: input.basePlanVersion,
       resultPlanVersion: stream.currentPlanVersion,
-      planDeltaId: (delta._id as Types.ObjectId).toString(),
+      planDeltaId: delta.id,
       createdTaskIds: [],
       updatedTaskIds: [],
       cancelledTaskIds: [],
@@ -656,9 +623,6 @@ export class WorkyPlanDeltaService {
     // existing task id or the clientTaskId of another `create_tasks` entry
     // in this delta; (2) cycle detection on the new subgraph only (existing
     // tasks are frozen from prior versions).
-    const newClientIds = new Set<string>(
-      (body.create_tasks ?? []).map((c) => c.clientTaskId).filter((x): x is string => !!x),
-    );
     const missingRefs: string[] = [];
     const clientToIndex = new Map<string, number>();
     (body.create_tasks ?? []).forEach((c, i) => {
@@ -681,12 +645,12 @@ export class WorkyPlanDeltaService {
       }
     }
     for (const u of body.update_tasks ?? []) {
-      if (!Types.ObjectId.isValid(u.taskId) || !existingIds.has(u.taskId)) {
+      if (!isObjectId(u.taskId) || !existingIds.has(u.taskId)) {
         missingRefs.push(u.taskId);
       }
     }
     for (const c of body.cancel_tasks ?? []) {
-      if (!Types.ObjectId.isValid(c.taskId) || !existingIds.has(c.taskId)) {
+      if (!isObjectId(c.taskId) || !existingIds.has(c.taskId)) {
         missingRefs.push(c.taskId);
       }
     }
@@ -714,9 +678,9 @@ export class WorkyPlanDeltaService {
 
   private resolveRef(
     ref: string,
-    clientIdMap: Map<string, Types.ObjectId>,
-  ): Types.ObjectId {
-    if (Types.ObjectId.isValid(ref)) return new Types.ObjectId(ref);
+    clientIdMap: Map<string, string>,
+  ): string {
+    if (isObjectId(ref)) return normalizeObjectId(ref);
     const mapped = clientIdMap.get(ref);
     if (!mapped) {
       throw new BadRequestException(

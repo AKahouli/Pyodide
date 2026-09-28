@@ -1,7 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, Min } from 'class-validator';
-import { ADVISOR_SCORING_MODES, type AdvisorScoringMode } from '../schemas/playbook-flow.schema';
+import { ADVISOR_SCORING_MODES, type AdvisorScoringMode } from '../models/playbook-flow.model';
 
 export class RunFlowExecutionAdvisorDto {
   @ApiPropertyOptional({ description: 'Specific task iteration to evaluate', minimum: 0, type: Number })

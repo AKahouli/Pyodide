@@ -1,11 +1,12 @@
-import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable,  OnModuleInit } from '@nestjs/common';
 import { isObjectId } from '@common/postgres';
 import { ConflictException, ForbiddenException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
-import { SKILL_CATEGORY_STORE, type SkillCategoryRow, type SkillCategoryStore } from './persistence/skill.store';
+import { type SkillCategoryRow} from './persistence/skill.store';
 import { CreateSkillCategoryDto } from './dto/create-skill-category.dto';
 import { UpdateSkillCategoryDto } from './dto/update-skill-category.dto';
 import { ISkillCategoryResponse } from './interfaces/skill.interface';
+import { PgSkillCategoryStore } from './persistence/pg-skill.store';
 
 /** Reserved built-in category. Skills assigned to it are hidden from end users. */
 export const SYSTEM_CATEGORY_NAME = 'System';
@@ -13,8 +14,7 @@ export const SYSTEM_CATEGORY_NAME = 'System';
 @Injectable()
 export class SkillCategoryService implements OnModuleInit {
   constructor(
-    @Inject(SKILL_CATEGORY_STORE)
-    private readonly categoryStore: SkillCategoryStore,
+    private readonly categoryStore: PgSkillCategoryStore,
   ) {}
 
   /** Ensure the reserved "System" category exists and is flagged, on every boot. */

@@ -1,5 +1,4 @@
 /** Store ports for catalog.skill_categories, catalog.skills and catalog.skill_files (plan 1B.4.2). */
-export const SKILL_CATEGORY_STORE = Symbol('SKILL_CATEGORY_STORE');
 export const SKILL_STORE = Symbol('SKILL_STORE');
 
 export interface SkillCategoryRow {

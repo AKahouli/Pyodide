@@ -142,3 +142,21 @@ def test_spec_hash_is_deterministic_and_order_independent():
     changed = base_spec()
     changed["concepts"][0]["label"] = "Client"
     assert canonical_spec_hash(changed) != first
+
+
+def aliased_spec() -> dict:
+    spec = base_spec()
+    spec["concepts"][0]["aliases"] = ["Client", "Société"]
+    spec["concepts"][0]["fieldAliases"] = {"name": ["Raison sociale"]}
+    return spec
+
+
+def test_aliases_are_carried_and_hashed_like_typescript():
+    # Same golden vector as model-specification.service.spec.ts ("hashes synonyms").
+    plan = compile_specification(aliased_spec())
+    assert plan["concepts"]["c1"]["aliases"] == ["Client", "Société"]
+    assert plan["concepts"]["c1"]["fieldAliases"] == {"name": ["Raison sociale"]}
+    assert plan["concepts"]["c2"]["aliases"] == []
+    assert validate_specification(aliased_spec()) == []
+    assert canonical_spec_hash(aliased_spec()) != canonical_spec_hash(base_spec())
+    assert canonical_spec_hash(aliased_spec()) == ("sha256:436ade99c32bc6c2aac536ac2d1602281cd30bd8ced68c7c3cd033b5cd244267")

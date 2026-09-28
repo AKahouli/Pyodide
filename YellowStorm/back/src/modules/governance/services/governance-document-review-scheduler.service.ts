@@ -1,19 +1,19 @@
 import { Injectable } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
-import { Inject } from '@nestjs/common';
-import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
-import { GOVERNANCE_DOCUMENT_STORE, GOVERNANCE_TRANSACTION, type GovernanceDocumentStore, type GovernanceTransactionRunner } from '../persistence';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
 import { GovernanceDocumentEventService } from './governance-document-event.service';
+import { PgGovernanceTransactionRunner } from '../persistence/postgres/pg-transaction-runner';
+import { PgGovernanceDocumentStore } from '../persistence/postgres/pg-document.store';
 
 const BATCH_SIZE = 100;
 
 @Injectable()
 export class GovernanceDocumentReviewSchedulerService {
   constructor(
-    @Inject(GOVERNANCE_DOCUMENT_STORE) private readonly documentStore: GovernanceDocumentStore,
+    private readonly documentStore: PgGovernanceDocumentStore,
     private readonly events: GovernanceDocumentEventService,
     private readonly features: FeatureVisibilityService,
-    @Inject(GOVERNANCE_TRANSACTION) private readonly tx: GovernanceTransactionRunner,
+    private readonly tx: PgGovernanceTransactionRunner,
   ) {}
 
   @Cron(CronExpression.EVERY_HOUR, { name: 'governance.document-review-due' })

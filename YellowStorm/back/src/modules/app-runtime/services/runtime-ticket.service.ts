@@ -1,14 +1,11 @@
-import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { Injectable,  Logger,  Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { randomBytes } from 'crypto';
-import {
-  RUNTIME_TICKET_STORE,
-  type RuntimeTicketStore,
-} from '../persistence/runtime-ticket.store';
+import { randomBytes } from 'crypto';
 import type { RuntimeTicketResult } from '../types/app-runtime-protocol';
 import { RuntimeBindingService } from './runtime-binding.service';
 import { RuntimeTokenService } from './runtime-token.service';
 import { AppDataDeploymentService } from '@modules/app-data/services/app-data-deployment.service';
+import { PgRuntimeTicketStore } from '../persistence/pg-runtime-ticket.store';
 
 export interface IssueRuntimeTicketParams {
   conversationSessionId: string;
@@ -32,8 +29,7 @@ export class RuntimeTicketService {
   private readonly logger = new Logger(RuntimeTicketService.name);
 
   constructor(
-    @Inject(RUNTIME_TICKET_STORE)
-    private readonly store: RuntimeTicketStore,
+    private readonly store: PgRuntimeTicketStore,
     private readonly bindings: RuntimeBindingService,
     private readonly tokens: RuntimeTokenService,
     private readonly config: ConfigService,

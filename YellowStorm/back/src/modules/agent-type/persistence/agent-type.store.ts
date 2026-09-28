@@ -1,5 +1,4 @@
 /** Store port for catalog.agent_types, agent_type_skills and agent_type_prompts (plan 1B.4.3). */
-export const AGENT_TYPE_STORE = Symbol('AGENT_TYPE_STORE');
 
 export interface AgentTypeRow {
   id: string;

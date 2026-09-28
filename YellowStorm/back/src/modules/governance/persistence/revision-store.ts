@@ -1,6 +1,5 @@
 import type { GovernanceRevisionRecord } from './governance-records';
 
-export const REVISION_STORE = Symbol('GOVERNANCE_REVISION_STORE');
 
 export interface GovernanceRevisionCreateInput {
   deploymentId: string;

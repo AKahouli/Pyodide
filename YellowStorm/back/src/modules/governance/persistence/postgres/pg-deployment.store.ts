@@ -5,7 +5,7 @@ import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { newObjectId } from '@common/postgres/object-id';
 import { resolveQueryable } from '@common/postgres/transaction';
-import { DEPLOYMENT_STORE, type DeploymentStore, type GovernanceDeploymentCreateInput, type GovernanceDeploymentPatch } from '../deployment-store';
+import { type DeploymentStore,  type GovernanceDeploymentCreateInput,  type GovernanceDeploymentPatch } from '../deployment-store';
 import type { GovernanceDeploymentRecord } from '../governance-records';
 
 const DEPLOYMENTS = schema.governanceDeployments;

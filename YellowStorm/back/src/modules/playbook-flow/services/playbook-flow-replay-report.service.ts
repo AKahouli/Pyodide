@@ -1,10 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import {
-  FlowReplayRunReport,
-  FlowReplayRunReportDocument,
-} from '../schemas/playbook-flow-replay-run-report.schema';
+  ReplayRunReportRepository,
+  toReplayRunReportJson,
+  type FlowReplayRunReportRecord,
+  type NewReplayRunReport,
+  type ReplayRunReportLookupFilter,
+  type ReplayRunReportPatch,
+} from '../persistence/replay-run-report.repository';
 
 export interface ReplayRunReportLookup {
   _id: string;
@@ -44,30 +46,19 @@ function sanitizeLegacyReportRecord(record: Record<string, unknown>): Record<str
 
 @Injectable()
 export class PlaybookFlowReplayReportService {
-  constructor(
-    @InjectModel(FlowReplayRunReport.name)
-    private readonly replayRunReportModel: Model<FlowReplayRunReportDocument>,
-  ) {}
+  constructor(private readonly replayRunReportRepository: ReplayRunReportRepository) {}
 
-  async createReport(payload: Record<string, unknown>): Promise<FlowReplayRunReportDocument> {
-    const [report] = await this.replayRunReportModel.create([payload]);
-    return report;
+  async createReport(payload: NewReplayRunReport): Promise<FlowReplayRunReportRecord> {
+    return this.replayRunReportRepository.create(payload);
   }
 
-  async updateReport(reportId: unknown, fields: Record<string, unknown>): Promise<void> {
-    await this.replayRunReportModel.updateOne(
-      { _id: reportId },
-      { $set: fields },
-    ).exec();
+  async updateReport(reportId: string, fields: ReplayRunReportPatch): Promise<void> {
+    await this.replayRunReportRepository.update(reportId, fields);
   }
 
-  async findLatestReportRecord(filter: Record<string, unknown>): Promise<Record<string, unknown> | null> {
-        const record = await this.replayRunReportModel
-          .findOne(filter)
-          .sort({ createdAt: -1 })
-          .lean()
-          .exec() as Record<string, unknown> | null;
-        return record ? sanitizeLegacyReportRecord(record) : null;
+  async findLatestReportRecord(filter: ReplayRunReportLookupFilter): Promise<Record<string, unknown> | null> {
+    const record = await this.replayRunReportRepository.findLatest(filter);
+    return record ? sanitizeLegacyReportRecord({ ...record }) : null;
   }
 
   async listReports(params: {
@@ -78,41 +69,20 @@ export class PlaybookFlowReplayReportService {
     limit?: number;
     offset?: number;
   }): Promise<any[]> {
-    const filter: Record<string, unknown> = {
+    const records = await this.replayRunReportRepository.list({
       flowId: params.flowId,
       taskId: params.taskId,
-    };
-    if (params.executionId) {
-      filter.executionId = params.executionId;
-    }
-    if (typeof params.iteration === 'number') {
-      filter.iteration = params.iteration;
-    }
-    const docs = await this.replayRunReportModel
-      .find(filter)
-      .sort({ createdAt: -1 })
-      .skip(params.offset ?? 0)
-      .limit(Math.min(params.limit ?? 20, 50))
-      .exec();
-    return docs.map((doc) => sanitizeLegacyReportRecord(doc.toJSON()));
+      executionId: params.executionId || undefined,
+      iteration: typeof params.iteration === 'number' ? params.iteration : undefined,
+      offset: params.offset ?? 0,
+      limit: Math.min(params.limit ?? 20, 50),
+    });
+    return records.map((record) => sanitizeLegacyReportRecord({ ...toReplayRunReportJson(record) }));
   }
 
   async findLatestScoresForReplays(replayIds: string[]): Promise<Map<string, number>> {
     if (replayIds.length === 0) return new Map();
-    const results = await this.replayRunReportModel
-      .aggregate([
-        { $match: { replayId: { $in: replayIds } } },
-        { $sort: { createdAt: -1 } },
-        { $group: { _id: '$replayId', overallScore: { $first: '$overallScore' } } },
-      ])
-      .exec();
-    const map = new Map<string, number>();
-    for (const row of results) {
-      if (typeof row.overallScore === 'number') {
-        map.set(row._id, row.overallScore);
-      }
-    }
-    return map;
+    return this.replayRunReportRepository.latestScoresForReplays(replayIds);
   }
 
   async findLatestReportForExecutionTask(
@@ -120,21 +90,17 @@ export class PlaybookFlowReplayReportService {
     taskId: string,
     iteration?: number,
   ): Promise<ReplayRunReportLookup | null> {
-    const filter: Record<string, unknown> = { executionId, taskId };
-    if (typeof iteration === 'number') {
-      filter.iteration = iteration;
-    }
-    const report = await this.replayRunReportModel
-      .findOne(filter)
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec();
+    const report = await this.replayRunReportRepository.findLatest({
+      executionId,
+      taskId,
+      ...(typeof iteration === 'number' ? { iteration } : {}),
+    });
     if (!report) {
       return null;
     }
 
     return {
-      _id: (report as unknown as Record<string, unknown>)._id as string,
+      _id: report.id,
       executionId: report.executionId,
       flowId: report.flowId,
       taskId: report.taskId,

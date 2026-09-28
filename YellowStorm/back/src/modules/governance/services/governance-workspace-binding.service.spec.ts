@@ -1,6 +1,10 @@
 import { Types } from 'mongoose';
 import { ForbiddenException } from '@modules/exceptions';
 import type { WorkspaceReadPort, WorkspaceShareReadPort } from '@modules/workspace/ports';
+import { PgWorkspaceReadAdapter } from '@modules/workspace/persistence/postgres/pg-workspace-read.adapter';
+import { PgWorkspaceShareReadAdapter } from '@modules/workspace/persistence/postgres/pg-workspace-share-read.adapter';
+import { PgBindingStore } from '../persistence/postgres/pg-binding.store';
+import { PgScopeStore } from '../persistence/postgres/pg-scope.store';
 import { GovernanceWorkspaceBindingService } from './governance-workspace-binding.service';
 import type { GovernanceProgramService } from './governance-program.service';
 import type { GovernanceAccessService } from './governance-access.service';
@@ -85,10 +89,10 @@ describe('GovernanceWorkspaceBindingService', () => {
     };
     const draftPreparation = { prepare: jest.fn().mockResolvedValue(undefined) };
     const service = new GovernanceWorkspaceBindingService(
-      bindingStore as unknown as BindingStore,
-      scopeStore as unknown as ScopeStore,
-      workspaceReadPort as unknown as WorkspaceReadPort,
-      shareReadPort as unknown as WorkspaceShareReadPort,
+      bindingStore as unknown as PgBindingStore,
+      scopeStore as unknown as PgScopeStore,
+      workspaceReadPort as unknown as PgWorkspaceReadAdapter,
+      shareReadPort as unknown as PgWorkspaceShareReadAdapter,
       programs as unknown as GovernanceProgramService,
       access as unknown as GovernanceAccessService,
       draftPreparation as unknown as GovernanceDraftPreparationService,

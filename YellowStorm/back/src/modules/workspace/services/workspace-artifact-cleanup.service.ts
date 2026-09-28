@@ -1,12 +1,9 @@
-import { Inject, Injectable } from '@nestjs/common';
-import {
-  WORKSPACE_ARTIFACT_CLEANUP_PORT,
-  type WorkspaceArtifactCleanupPort,
-} from '../../workspace-artifact/ports/workspace-artifact-cleanup.port';
+import { Injectable } from '@nestjs/common';
+import { WorkspaceArtifactCleanupAdapter } from '../../workspace-artifact/ports/workspace-artifact-cleanup.adapter';
 
 @Injectable()
 export class WorkspaceArtifactCleanupService {
-  constructor(@Inject(WORKSPACE_ARTIFACT_CLEANUP_PORT) private readonly cleanup: WorkspaceArtifactCleanupPort) {}
+  constructor(private readonly cleanup: WorkspaceArtifactCleanupAdapter) {}
 
   countBySource(workspaceId: string, documentId: string): Promise<number> {
     return this.cleanup.countBySource(workspaceId, documentId);

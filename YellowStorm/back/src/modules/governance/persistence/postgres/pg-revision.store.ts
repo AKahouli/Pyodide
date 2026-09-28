@@ -5,7 +5,7 @@ import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { newObjectId } from '@common/postgres/object-id';
 import { resolveQueryable } from '@common/postgres/transaction';
-import { REVISION_STORE, type GovernanceRevisionCreateInput, type GovernanceRevisionPatch, type RevisionStore } from '../revision-store';
+import { type GovernanceRevisionCreateInput,  type GovernanceRevisionPatch,  type RevisionStore } from '../revision-store';
 import type { GovernanceRevisionRecord } from '../governance-records';
 
 const REVISIONS = schema.governanceDeploymentRevisions;

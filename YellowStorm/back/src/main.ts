@@ -63,16 +63,6 @@ async function bootstrap() {
     trustProxy: trustProxy === false ? 'false' : trustProxy,
   });
 
-  const mongoUri = configService.get<string>('MONGODB_URI', 'mongodb://localhost:27017/yellostorm');
-  try {
-    const parsedMongoUri = new URL(mongoUri);
-    logger.log('Resolved runtime database configuration', {
-      mongoHost: parsedMongoUri.host,
-      mongoDatabase: parsedMongoUri.pathname.replace(/^\//, '') || 'unknown',
-    });
-  } catch {
-    logger.warn('Failed to parse runtime database configuration', { mongoUri });
-  }
   const corsOrigins = configService.get<string>('CORS_ORIGIN', 'http://localhost:5173');
   const envAllowedOrigins = corsOrigins
     .split(',')
@@ -93,7 +83,7 @@ async function bootstrap() {
     return allAllowed.has(requestOrigin);
   };
 
-  // CORS: env baseline (CORS_ORIGIN) + admin whitelist from MongoDB
+  // CORS: env baseline (CORS_ORIGIN) + admin whitelist from the settings store
   app.enableCors({
     origin: (requestOrigin, callback) => {
       if (isOriginAllowed(requestOrigin)) {

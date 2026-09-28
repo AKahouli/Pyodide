@@ -1,14 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import {
-  WorkyInteraction,
-  WorkyInteractionDocument,
-} from '../schemas/worky-interaction.schema';
-import {
-  WorkyStream,
-  WorkyStreamDocument,
-} from '../schemas/worky-stream.schema';
+import { WorkyInteractionRepository } from '../persistence/worky-interaction.repository';
+import { WorkyStreamRepository } from '../persistence/worky-stream.repository';
 import { LoggerService } from '../../logger';
 import {
   ConflictException,
@@ -46,10 +38,8 @@ export interface RespondInteractionResult {
 @Injectable()
 export class WorkyInteractionService {
   constructor(
-    @InjectModel(WorkyInteraction.name)
-    private readonly interactions: Model<WorkyInteractionDocument>,
-    @InjectModel(WorkyStream.name)
-    private readonly streams: Model<WorkyStreamDocument>,
+    private readonly interactions: WorkyInteractionRepository,
+    private readonly streams: WorkyStreamRepository,
     private readonly events: WorkyEventService,
     private readonly logger: LoggerService,
   ) {
@@ -57,27 +47,27 @@ export class WorkyInteractionService {
   }
 
   async respond(input: RespondInteractionInput): Promise<RespondInteractionResult> {
-    const interaction = await this.interactions
-      .findById(input.interactionId)
-      .exec();
-    if (!interaction) {
+    const existing = await this.interactions.findById(input.interactionId);
+    if (!existing) {
       throw new NotFoundException(
         ErrorCode.WORKY_INTERACTION_NOT_FOUND,
         'Worky interaction not found.',
       );
     }
-    if (interaction.status !== 'pending') {
+    const cancel = input.dto.cancel === true;
+    const responseContent = cancel ? '' : input.dto.content;
+    // Only a still-pending interaction takes the answer, so two concurrent
+    // responses cannot both win.
+    const interaction = await this.interactions.respond(existing.id, {
+      status: cancel ? 'canceled' : 'responded',
+      response: responseContent,
+    });
+    if (!interaction) {
       throw new ConflictException(
         ErrorCode.WORKY_INTERACTION_ALREADY_RESPONDED,
         'Worky interaction is no longer pending.',
       );
     }
-    const cancel = input.dto.cancel === true;
-    const responseContent = cancel ? '' : input.dto.content;
-    interaction.status = cancel ? 'canceled' : 'responded';
-    interaction.response = responseContent;
-    interaction.respondedAt = new Date();
-    await interaction.save();
 
     // For approval-like interactions, derive a verdict from the
     // `approve` flag and emit it as part of the event so the runtime
@@ -101,41 +91,37 @@ export class WorkyInteractionService {
     // connection that actually subscribed. `WorkyEventService.emit`
     // keys pipes by `${userId}:${streamId}`; broadcasting under
     // `streamId` would never reach the owner's open SSE pipe.
-    const stream = await this.streams
-      .findById(interaction.streamId)
-      .select({ ownerUserId: 1 })
-      .lean()
-      .exec();
-    const ownerUserId = stream?.ownerUserId.toString() ?? '';
+    const stream = await this.streams.findById(interaction.streamId);
+    const ownerUserId = stream?.ownerUserId ?? '';
     if (!ownerUserId) {
       this.logger.warn('interaction.responded: stream not found; dropping SSE', {
-        interactionId: (interaction._id as Types.ObjectId).toString(),
-        streamId: interaction.streamId.toString(),
+        interactionId: interaction.id,
+        streamId: interaction.streamId,
       });
     }
-    this.events.emit(ownerUserId, interaction.streamId.toString(), {
+    this.events.emit(ownerUserId, interaction.streamId, {
       type: 'interaction.responded',
       emittedAt: Date.now(),
       payload: {
-        interactionId: (interaction._id as Types.ObjectId).toString(),
+        interactionId: interaction.id,
         type: interaction.type,
-        taskId: interaction.taskId ? interaction.taskId.toString() : null,
+        taskId: interaction.taskId,
         status: interaction.status,
         response: responseContent,
         verdict,
-        blocksTaskIds: (interaction.blocksTaskIds ?? []).map((id) => id.toString()),
+        blocksTaskIds: interaction.blocksTaskIds,
       },
     });
     this.logger.log('Worky interaction responded', {
-      interactionId: (interaction._id as Types.ObjectId).toString(),
-      streamId: interaction.streamId.toString(),
+      interactionId: interaction.id,
+      streamId: interaction.streamId,
       status: interaction.status,
       type: interaction.type,
       verdict,
     });
     return {
-      interactionId: (interaction._id as Types.ObjectId).toString(),
-      streamId: interaction.streamId.toString(),
+      interactionId: interaction.id,
+      streamId: interaction.streamId,
       status: interaction.status as 'responded' | 'canceled',
       response: responseContent,
       verdict,

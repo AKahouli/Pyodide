@@ -1,11 +1,10 @@
 import { Controller, Post, Body, HttpCode, HttpStatus, UseGuards, VERSION_NEUTRAL } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
-import { Inject } from '@nestjs/common';
 import { isObjectId } from '@common/postgres';
 import { IsArray, IsString } from 'class-validator';
 import { InternalServiceGuard } from '../auth/guards/internal-service.guard';
 import { Public } from '../auth/decorators/public.decorator';
-import { WORKSPACE_STORE, type WorkspaceStore } from './stores/workspace-store';
+import { PgWorkspaceStore } from './stores/postgres/pg-workspace-store';
 
 class ResolveNamesDto {
   @IsArray()
@@ -18,7 +17,7 @@ class ResolveNamesDto {
 @UseGuards(InternalServiceGuard)
 export class WorkspaceInternalController {
   constructor(
-    @Inject(WORKSPACE_STORE) private readonly workspaceStore: WorkspaceStore,
+    private readonly workspaceStore: PgWorkspaceStore,
   ) {}
 
   @Public()

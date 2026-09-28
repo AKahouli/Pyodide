@@ -1,46 +1,248 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { ClientSession, Model, Types } from 'mongoose';
 import { randomUUID } from 'crypto';
-import { KnowledgeExtractionJob, KnowledgeExtractionJobDocument, type KnowledgeExtractionJobStatus, type KnowledgeExtractionJobType } from '../schemas/knowledge-extraction-job.schema';
+import { Inject, Injectable } from '@nestjs/common';
+import { and, asc, desc, eq, gte, inArray, lt, lte, or, sql } from 'drizzle-orm';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { isObjectId, newObjectId, normalizeObjectId, stripNul } from '@common/postgres';
+import { resolveQueryable, withTransaction, type PgQueryable } from '@common/postgres/transaction';
+import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
+import * as schema from '@modules/postgres/schema';
+import type { KnowledgeExtractionJobRecord, KnowledgeExtractionJobStatus, KnowledgeExtractionJobType } from '../knowledge-intelligence.types';
+import { defined } from './knowledge-sql';
 
 export interface EnqueueKnowledgeExtractionJobInput { programId: string; documentId: string; connectorId: string; requestedByUserId: string; jobType: KnowledgeExtractionJobType; inputHash: string; engineVersion: string }
 
+const MAX_ATTEMPTS = 5;
+const LEASE_MS = 300_000;
+const EXHAUSTED_MESSAGE = 'The extraction job exhausted its retry limit after a worker lease expired.';
+
+const t = schema.governanceKnowledgeExtractionJobs;
+type Row = typeof t.$inferSelect;
+
+function toRecord(row: Row): KnowledgeExtractionJobRecord {
+  return defined({
+    id: row.id,
+    programId: row.programId,
+    documentId: row.documentId,
+    connectorId: row.connectorId,
+    requestedByUserId: row.requestedByUserId,
+    jobType: row.jobType as KnowledgeExtractionJobType,
+    status: row.status as KnowledgeExtractionJobStatus,
+    inputHash: row.inputHash,
+    engineVersion: row.engineVersion,
+    attempts: row.attempts,
+    error: row.error,
+    startedAt: row.startedAt,
+    completedAt: row.completedAt,
+    leaseExpiresAt: row.leaseExpiresAt,
+    leaseToken: row.leaseToken,
+    nextAttemptAt: row.nextAttemptAt,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }) as KnowledgeExtractionJobRecord;
+}
+
+/** PostgreSQL governance.knowledge_extraction_jobs queue and leases (roadmap P6). */
 @Injectable()
 export class KnowledgeExtractionOrchestratorService {
-  constructor(@InjectModel(KnowledgeExtractionJob.name) private readonly model: Model<KnowledgeExtractionJobDocument>) {}
+  constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
 
-  async enqueue(input: EnqueueKnowledgeExtractionJobInput): Promise<KnowledgeExtractionJobDocument> {
-    const identity = { programId: new Types.ObjectId(input.programId), documentId: new Types.ObjectId(input.documentId), jobType: input.jobType, inputHash: input.inputHash, engineVersion: input.engineVersion };
-    try {
-      return await this.model.findOneAndUpdate(identity, { $setOnInsert: { ...identity, connectorId: new Types.ObjectId(input.connectorId), requestedByUserId: new Types.ObjectId(input.requestedByUserId), status: 'pending', attempts: 0 } }, { new: true, upsert: true, setDefaultsOnInsert: true }).exec();
-    } catch (error) {
-      if (!this.isDuplicateKeyError(error)) throw error;
-      const existing = await this.model.findOne(identity).exec();
-      if (!existing) throw error;
-      return existing;
-    }
+  private get q(): PgQueryable<typeof schema> {
+    return resolveQueryable(this.db);
   }
 
-  async retryLatestFailedForDocument(documentId: string, connectorId: string, requestedByUserId: string): Promise<KnowledgeExtractionJobDocument | null> {
-    return this.model.findOneAndUpdate({ documentId: new Types.ObjectId(documentId), connectorId: new Types.ObjectId(connectorId), status: 'failed' }, { $set: { status: 'pending', attempts: 0, requestedByUserId: new Types.ObjectId(requestedByUserId) }, $unset: { error: 1, startedAt: 1, completedAt: 1, leaseExpiresAt: 1, leaseToken: 1, nextAttemptAt: 1 } }, { new: true, sort: { createdAt: -1 } }).exec();
+  /** Idempotent per (program, document, type, input hash, engine): a repeat returns the existing job untouched. */
+  async enqueue(input: EnqueueKnowledgeExtractionJobInput): Promise<KnowledgeExtractionJobRecord> {
+    const identity = {
+      programId: normalizeObjectId(input.programId),
+      documentId: normalizeObjectId(input.documentId),
+      jobType: input.jobType,
+      inputHash: input.inputHash,
+      engineVersion: input.engineVersion,
+    };
+    const [inserted] = await this.q
+      .insert(t)
+      .values({
+        id: newObjectId(),
+        ...identity,
+        connectorId: normalizeObjectId(input.connectorId),
+        requestedByUserId: normalizeObjectId(input.requestedByUserId),
+        status: 'pending',
+        attempts: 0,
+      })
+      .onConflictDoNothing({ target: [t.programId, t.documentId, t.jobType, t.inputHash, t.engineVersion] })
+      .returning();
+    if (inserted) return toRecord(inserted);
+    const [existing] = await this.q
+      .select()
+      .from(t)
+      .where(and(
+        eq(t.programId, identity.programId),
+        eq(t.documentId, identity.documentId),
+        eq(t.jobType, identity.jobType),
+        eq(t.inputHash, identity.inputHash),
+        eq(t.engineVersion, identity.engineVersion),
+      ))
+      .limit(1);
+    if (!existing) throw new Error('Knowledge extraction job vanished between conflict and read');
+    return toRecord(existing);
   }
 
-  async markRunning(jobId: string): Promise<KnowledgeExtractionJobDocument | null> { return this.setStatus(jobId, ['pending', 'failed'], 'running', { $inc: { attempts: 1 }, $set: { startedAt: new Date(), leaseExpiresAt: new Date(Date.now() + 300_000), leaseToken: randomUUID(), error: undefined, completedAt: undefined } }); }
+  /** Re-queues the newest failed job of a document for a connector. */
+  async retryLatestFailedForDocument(documentId: string, connectorId: string, requestedByUserId: string): Promise<KnowledgeExtractionJobRecord | null> {
+    if (!isObjectId(documentId) || !isObjectId(connectorId) || !isObjectId(requestedByUserId)) return null;
+    return withTransaction(this.db, async () => {
+      const [latest] = await this.q
+        .select({ id: t.id })
+        .from(t)
+        .where(and(eq(t.documentId, normalizeObjectId(documentId)), eq(t.connectorId, normalizeObjectId(connectorId)), eq(t.status, 'failed')))
+        .orderBy(desc(t.createdAt))
+        .limit(1)
+        .for('update');
+      if (!latest) return null;
+      const [row] = await this.q
+        .update(t)
+        .set({
+          status: 'pending',
+          attempts: 0,
+          requestedByUserId: normalizeObjectId(requestedByUserId),
+          error: null,
+          startedAt: null,
+          completedAt: null,
+          leaseExpiresAt: null,
+          leaseToken: null,
+          nextAttemptAt: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(t.id, latest.id))
+        .returning();
+      return row ? toRecord(row) : null;
+    });
+  }
 
-  async claimNext(jobTypes: KnowledgeExtractionJobType[]): Promise<KnowledgeExtractionJobDocument | null> {
+  async markRunning(jobId: string): Promise<KnowledgeExtractionJobRecord | null> {
+    if (!isObjectId(jobId)) return null;
     const now = new Date();
-    await this.model.updateMany({ status: 'running', attempts: { $gte: 5 }, leaseExpiresAt: { $lte: now } }, { $set: { status: 'failed', completedAt: now, leaseToken: undefined, leaseExpiresAt: undefined, error: 'The extraction job exhausted its retry limit after a worker lease expired.' } }).exec();
-    return this.model.findOneAndUpdate({ jobType: { $in: jobTypes }, attempts: { $lt: 5 }, $or: [{ status: 'pending' }, { status: 'failed', nextAttemptAt: { $lte: now } }, { status: 'running', leaseExpiresAt: { $lte: now } }] }, { $set: { status: 'running', startedAt: now, leaseExpiresAt: new Date(now.getTime() + 300_000), leaseToken: randomUUID(), error: undefined, completedAt: undefined }, $inc: { attempts: 1 } }, { new: true, sort: { createdAt: 1 } }).exec();
+    const [row] = await this.q
+      .update(t)
+      .set({
+        status: 'running',
+        attempts: sql`${t.attempts} + 1`,
+        startedAt: now,
+        leaseExpiresAt: new Date(now.getTime() + LEASE_MS),
+        leaseToken: randomUUID(),
+        error: null,
+        completedAt: null,
+        updatedAt: now,
+      })
+      .where(and(eq(t.id, normalizeObjectId(jobId)), inArray(t.status, ['pending', 'failed'])))
+      .returning();
+    return row ? toRecord(row) : null;
   }
 
-  async markCompleted(jobId: string, leaseToken: string): Promise<KnowledgeExtractionJobDocument | null> { return this.model.findOneAndUpdate({ _id: jobId, status: 'running', leaseToken }, { $set: { status: 'completed', completedAt: new Date() }, $unset: { leaseExpiresAt: 1, leaseToken: 1, error: 1, nextAttemptAt: 1 } }, { new: true }).exec(); }
-  async markFailed(jobId: string, leaseToken: string, error: string, attempts = 1): Promise<KnowledgeExtractionJobDocument | null> { const delay = Math.min(60_000 * 2 ** Math.max(0, attempts - 1), 15 * 60_000); return this.setClaimedStatus(jobId, leaseToken, 'failed', { completedAt: new Date(), leaseExpiresAt: undefined, leaseToken: undefined, nextAttemptAt: new Date(Date.now() + delay), error: error.slice(0, 2000) }); }
-  async heartbeat(jobId: string, leaseToken: string): Promise<boolean> { return (await this.model.updateOne({ _id: jobId, status: 'running', leaseToken }, { $set: { leaseExpiresAt: new Date(Date.now() + 300_000) } }).exec()).modifiedCount === 1; }
-  async purgeDocument(documentId: string, session?: ClientSession): Promise<void> { await this.model.deleteMany({ documentId: new Types.ObjectId(documentId) }, { session }).exec(); }
-  async latestForDocument(documentId: string): Promise<KnowledgeExtractionJobDocument | null> { return this.model.findOne({ documentId: new Types.ObjectId(documentId) }).sort({ createdAt: -1 }).exec(); }
+  /**
+   * Claims the oldest runnable job of the given types: pending, failed and due for a retry, or running
+   * with an expired lease. Concurrent workers skip rows another one is claiming, so no job is handed out twice.
+   * Jobs whose lease expired after the last allowed attempt are failed for good first.
+   */
+  async claimNext(jobTypes: KnowledgeExtractionJobType[]): Promise<KnowledgeExtractionJobRecord | null> {
+    if (!jobTypes.length) return null;
+    const now = new Date();
+    return withTransaction(this.db, async () => {
+      await this.q
+        .update(t)
+        .set({ status: 'failed', completedAt: now, leaseToken: null, leaseExpiresAt: null, error: EXHAUSTED_MESSAGE, updatedAt: now })
+        .where(and(eq(t.status, 'running'), gte(t.attempts, MAX_ATTEMPTS), lte(t.leaseExpiresAt, now)));
+      const [candidate] = await this.q
+        .select({ id: t.id })
+        .from(t)
+        .where(and(
+          inArray(t.jobType, jobTypes),
+          lt(t.attempts, MAX_ATTEMPTS),
+          or(
+            eq(t.status, 'pending'),
+            and(eq(t.status, 'failed'), lte(t.nextAttemptAt, now)),
+            and(eq(t.status, 'running'), lte(t.leaseExpiresAt, now)),
+          ),
+        ))
+        .orderBy(asc(t.createdAt), asc(t.id))
+        .limit(1)
+        .for('update', { skipLocked: true });
+      if (!candidate) return null;
+      const [row] = await this.q
+        .update(t)
+        .set({
+          status: 'running',
+          startedAt: now,
+          leaseExpiresAt: new Date(now.getTime() + LEASE_MS),
+          leaseToken: randomUUID(),
+          error: null,
+          completedAt: null,
+          attempts: sql`${t.attempts} + 1`,
+          updatedAt: now,
+        })
+        .where(eq(t.id, candidate.id))
+        .returning();
+      return row ? toRecord(row) : null;
+    });
+  }
 
-  private async setClaimedStatus(jobId: string, leaseToken: string, status: KnowledgeExtractionJobStatus, values: Record<string, unknown>): Promise<KnowledgeExtractionJobDocument | null> { return this.model.findOneAndUpdate({ _id: jobId, status: 'running', leaseToken }, { $set: { ...values, status } }, { new: true }).exec(); }
-  private async setStatus(jobId: string, expected: KnowledgeExtractionJobStatus[], status: KnowledgeExtractionJobStatus, update: Record<string, unknown>): Promise<KnowledgeExtractionJobDocument | null> { return this.model.findOneAndUpdate({ _id: jobId, status: { $in: expected } }, { ...update, $set: { ...(update.$set as Record<string, unknown>), status } }, { new: true }).exec(); }
-  private isDuplicateKeyError(error: unknown): error is { code: number } { return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: unknown }).code === 11000; }
+  async markCompleted(jobId: string, leaseToken: string): Promise<KnowledgeExtractionJobRecord | null> {
+    if (!isObjectId(jobId)) return null;
+    const now = new Date();
+    const [row] = await this.q
+      .update(t)
+      .set({ status: 'completed', completedAt: now, leaseExpiresAt: null, leaseToken: null, error: null, nextAttemptAt: null, updatedAt: now })
+      .where(and(eq(t.id, normalizeObjectId(jobId)), eq(t.status, 'running'), eq(t.leaseToken, leaseToken)))
+      .returning();
+    return row ? toRecord(row) : null;
+  }
+
+  /** Fails a claimed job and schedules its retry with an exponential back-off capped at 15 minutes. */
+  async markFailed(jobId: string, leaseToken: string, error: string, attempts = 1): Promise<KnowledgeExtractionJobRecord | null> {
+    if (!isObjectId(jobId)) return null;
+    const delay = Math.min(60_000 * 2 ** Math.max(0, attempts - 1), 15 * 60_000);
+    const now = new Date();
+    const [row] = await this.q
+      .update(t)
+      .set({
+        status: 'failed',
+        completedAt: now,
+        leaseExpiresAt: null,
+        leaseToken: null,
+        nextAttemptAt: new Date(now.getTime() + delay),
+        error: stripNul(error.slice(0, 2000)),
+        updatedAt: now,
+      })
+      .where(and(eq(t.id, normalizeObjectId(jobId)), eq(t.status, 'running'), eq(t.leaseToken, leaseToken)))
+      .returning();
+    return row ? toRecord(row) : null;
+  }
+
+  /** Extends the lease; false when the lease was lost. */
+  async heartbeat(jobId: string, leaseToken: string): Promise<boolean> {
+    if (!isObjectId(jobId)) return false;
+    const now = new Date();
+    const rows = await this.q
+      .update(t)
+      .set({ leaseExpiresAt: new Date(now.getTime() + LEASE_MS), updatedAt: now })
+      .where(and(eq(t.id, normalizeObjectId(jobId)), eq(t.status, 'running'), eq(t.leaseToken, leaseToken)))
+      .returning({ id: t.id });
+    return rows.length === 1;
+  }
+
+  async purgeDocument(documentId: string): Promise<void> {
+    if (!isObjectId(documentId)) return;
+    await this.q.delete(t).where(eq(t.documentId, normalizeObjectId(documentId)));
+  }
+
+  async latestForDocument(documentId: string): Promise<KnowledgeExtractionJobRecord | null> {
+    if (!isObjectId(documentId)) return null;
+    const [row] = await this.q
+      .select()
+      .from(t)
+      .where(eq(t.documentId, normalizeObjectId(documentId)))
+      .orderBy(desc(t.createdAt), desc(t.id))
+      .limit(1);
+    return row ? toRecord(row) : null;
+  }
 }

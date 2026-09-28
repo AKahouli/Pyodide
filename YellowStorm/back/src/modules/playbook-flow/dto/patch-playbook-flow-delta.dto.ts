@@ -11,6 +11,8 @@ import {
   MaxLength,
   ValidateNested,
 } from 'class-validator';
+import { ControlEdgeDto } from './playbook-flow-control-edge.dto';
+import { DataBindingDto } from './playbook-flow-data-binding.dto';
 
 class PatchPlaybookFlowDeltaFieldsDto {
   @ApiPropertyOptional()
@@ -116,17 +118,24 @@ class PatchPlaybookFlowDeltaPatchDto {
   @Type(() => PatchPlaybookFlowDeltaNodesDto)
   nodes?: PatchPlaybookFlowDeltaNodesDto;
 
-  @ApiPropertyOptional({ type: [Object] })
+  // Typed like the full update: with the global pipe's enableImplicitConversion an untyped
+  // Record<string, unknown>[] is converted element by element into empty arrays, which the
+  // sanitizer then dropped as orphans and the save persisted as an empty graph.
+  @ApiPropertyOptional({ type: [ControlEdgeDto] })
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(1000)
-  controlEdges?: Record<string, unknown>[];
+  @ValidateNested({ each: true })
+  @Type(() => ControlEdgeDto)
+  controlEdges?: ControlEdgeDto[];
 
-  @ApiPropertyOptional({ type: [Object] })
+  @ApiPropertyOptional({ type: [DataBindingDto] })
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(1000)
-  dataBindings?: Record<string, unknown>[];
+  @ValidateNested({ each: true })
+  @Type(() => DataBindingDto)
+  dataBindings?: DataBindingDto[];
 }
 
 export class PatchPlaybookFlowDeltaDto {

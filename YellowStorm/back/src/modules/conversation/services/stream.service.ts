@@ -8,7 +8,6 @@ import * as path from 'node:path';
 import { StreamGatewayService } from './stream-gateway.service';
 import { MessageService } from './message.service';
 import { ConversationService } from './conversation.service';
-import { CONVERSATION_EXECUTION_STORE, ConversationExecutionStore } from '../persistence/conversation-execution-store';
 import { MessageComponent, ComponentType, type ConversationClientContextV1, type CorrectionReplayContext, type MessageReplayContext } from '../interfaces/message.interface';
 import { getComponentType as sharedGetComponentType, extractComponentData as sharedExtractComponentData, mapTaskStatus as sharedMapTaskStatus } from '../utils/component-mapper';
 import { GrpcHealthStatus } from '../interfaces/stream.interface';
@@ -40,10 +39,12 @@ import type { PreparedConversationAttachment } from '../interfaces/conversation-
 import { SemanticModelService } from '../../semantic-model/services/semantic-model.service';
 import { PLATFORM_COPILOT } from '../../agent/constants/platform-copilot.constants';
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
+import { ConversationNameService } from './conversation-name.service';
 import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
 import type { ConversationLatencyMetricsV1, ConversationLatencyStartContext, StreamChunkLatencyData } from '../interfaces/latency.interface';
 import { LatencyEnvelopeTracker } from '../utils/latency-metrics';
 import { beginBackendPreAdkStage, endBackendPreAdkStage, getBackendPreAdkTracker, markGrpcDispatchedForLatency } from '../utils/backend-latency-tracker';
+import { PostgresConversationExecutionStore } from '../persistence/postgres/postgres-conversation-execution-store';
 
 export interface StreamRequest {
   content: string;
@@ -155,8 +156,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     private readonly attachmentContextService: ConversationAttachmentContextService,
     private readonly conversationSettings: ConversationSettingsService,
     private readonly semanticModelService: SemanticModelService,
-    @Inject(CONVERSATION_EXECUTION_STORE)
-    private readonly executionStore: ConversationExecutionStore,
+    private readonly executionStore: PostgresConversationExecutionStore,
+    private readonly conversationNameService: ConversationNameService,
     private readonly teamService?: TeamService,
   ) {
     this.logger.setContext('StreamService');
@@ -2285,6 +2286,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           completedAt: (incoming.completedAt as string) || (existing.completedAt as string) || '',
           durationMs: incoming.durationMs ?? existing.durationMs,
           resultJson: (incoming.resultJson as string) || (existing.resultJson as string) || '',
+          ...((incoming.uiTargets ?? existing.uiTargets) ? { uiTargets: incoming.uiTargets ?? existing.uiTargets } : {}),
           actorId: (incoming.actorId as string) || (existing.actorId as string) || '',
           actorName: (incoming.actorName as string) || (existing.actorName as string) || '',
           primaryInput: (incoming.primaryInput as string) || (existing.primaryInput as string) || '',
@@ -2380,78 +2382,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
    * Sends the result via SSE to the user.
    */
   generateConversationNameAsync(userId: string, conversationId: string, query: string, username?: string): void {
-    // Fire and forget - don't await at call site
-    this.generateConversationName(userId, conversationId, query, username).catch((err) => {
-      this.logger.error('Failed to generate conversation name', {
-        conversationId,
-        error: (err as Error).message,
-      });
-    });
-  }
-
-  private async generateConversationName(userId: string, conversationId: string, query: string, username?: string): Promise<void> {
-    try {
-      // Naming model is admin-configurable (Paramètres de conversation). Use the
-      // chosen model when set; otherwise fall back to the platform default.
-      // An empty model makes the gRPC name generation fail and the conversation
-      // keeps its default title.
-      const { conversationName } = await this.conversationSettings.getSettings();
-      const chosen = conversationName.modelId ? await this.modelsService.findById(conversationName.modelId).catch(() => null) : null;
-
-      // Chosen models are served by the LiteLLM proxy, so route via the proxy
-      // alias ("litellm_proxy/<model_name>"). Their stored litellmModel is a
-      // provider-prefixed target (e.g. "ollama/gemma3:4b") that would bypass the
-      // proxy and fail. The platform default keeps its litellmModel (unchanged).
-      const litellmModel = chosen ? `litellm_proxy/${chosen.id}` : (await this.modelsService.getDefaultModel())?.litellmModel || '';
-
-      const response = await this.callGenerateNameGrpc(query, litellmModel, username);
-      const generatedName = response.conversation_name || 'New Conversation';
-
-      // Update conversation title in database
-      await this.conversationService.updateConversationInternal(conversationId, {
-        title: generatedName,
-      });
-
-      // Send SSE event to user
-      this.streamGateway.sendToUser(userId, {
-        type: 'conversation_name_generated',
-        data: {
-          conversationId,
-          name: generatedName,
-        },
-      });
-
-      this.logger.debug('Conversation name generated', {
-        conversationId,
-        name: generatedName,
-      });
-    } catch (error) {
-      // Fallback: keep existing title, log warning
-      this.logger.warn('Name generation failed, keeping default title', {
-        conversationId,
-        error: (error as Error).message,
-      });
-    }
-  }
-
-  private callGenerateNameGrpc(query: string, modelId?: string, username?: string): Promise<{ conversation_name: string }> {
-    return new Promise((resolve, reject) => {
-      if (!this.chatbotClient) {
-        reject(new Error('gRPC client not initialized'));
-        return;
-      }
-
-      // Create metadata with user header for LiteLLM logging + shared API key
-      const metadata = createGrpcMetadata(this.configService);
-      const userHeader = username || 'SYSTEM'; // Use 'SYSTEM' for non-user requests
-      metadata.set('user', userHeader);
-
-      const deadline = new Date(Date.now() + 60000); // 60s timeout
-      this.chatbotClient.GenerateConversationName({ query, model: modelId || '' }, metadata, { deadline }, (err: Error | null, response: { conversation_name: string }) => {
-        if (err) reject(err);
-        else resolve(response);
-      });
-    });
+    this.conversationNameService.generateConversationNameAsync(userId, conversationId, query, username, this.chatbotClient);
   }
 
   private async resolveMemberIds(conversationId: string): Promise<string[]> {

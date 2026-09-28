@@ -11,7 +11,6 @@ import { AgentIntegrationController } from './controllers/agent-integration.cont
 import { AgentWidgetTokenController } from './controllers/agent-widget-token.controller';
 import { WidgetChatService } from './services/widget-chat.service';
 import { WidgetTokenGuard } from './guards/widget-token.guard';
-import { WIDGET_MESSAGE_STORE, WIDGET_SESSION_STORE, WIDGET_TOKEN_STORE } from './persistence/widget.store';
 import { PgWidgetMessageStore, PgWidgetSessionStore, PgWidgetTokenStore } from './persistence/pg-widget.store';
 
 @Module({
@@ -31,9 +30,9 @@ import { PgWidgetMessageStore, PgWidgetSessionStore, PgWidgetTokenStore } from '
   ],
   providers: [
     // Widget cutover (plan 4.12–4.14): PG-backed stores.
-    { provide: WIDGET_TOKEN_STORE, useClass: PgWidgetTokenStore },
-    { provide: WIDGET_SESSION_STORE, useClass: PgWidgetSessionStore },
-    { provide: WIDGET_MESSAGE_STORE, useClass: PgWidgetMessageStore },
+    PgWidgetTokenStore,
+    PgWidgetSessionStore,
+    PgWidgetMessageStore,
     WidgetChatService,
     WidgetTokenGuard,
   ],

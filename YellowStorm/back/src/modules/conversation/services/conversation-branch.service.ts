@@ -11,16 +11,16 @@ import { BadRequestException, ConflictException, NotFoundException } from '../..
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { LoggerService } from '../../logger';
 import {
-  CONVERSATION_BRANCH_STORE,
-  type BranchStateRecord,
-  type ConversationBranchStore,
+  type BranchStateRecord,  
 } from '../persistence/conversation-branch-store';
 import {
   CONVERSATION_STORE,
   type ConversationRecord,
   type ConversationStore,
 } from '../persistence/conversation-store';
-import { MESSAGE_STORE, type MessageRecord, type MessageStore } from '../persistence/message-store';
+import { type MessageRecord} from '../persistence/message-store';
+import { PostgresConversationBranchStore } from '../persistence/postgres/postgres-conversation-branch-store';
+import { PostgresMessageStore } from '../persistence/postgres/postgres-message-store';
 
 const MAX_BRANCH_SELECTIONS = 500;
 
@@ -35,9 +35,9 @@ export interface CanonicalConversationPath {
 @Injectable()
 export class ConversationBranchService {
   constructor(
-    @Inject(CONVERSATION_BRANCH_STORE) private readonly branchStore: ConversationBranchStore,
+    private readonly branchStore: PostgresConversationBranchStore,
     @Inject(CONVERSATION_STORE) private readonly conversationStore: ConversationStore,
-    @Inject(MESSAGE_STORE) private readonly messageStore: MessageStore,
+    private readonly messageStore: PostgresMessageStore,
     private readonly conversationService: ConversationService,
     private readonly streamService: StreamService,
     private readonly logger: LoggerService,

@@ -1,9 +1,11 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { BadRequestException, ForbiddenException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { SendMessageDto } from '@modules/conversation/dto/send-message.dto';
-import { DEPLOYMENT_STORE, REVISION_STORE, SCOPE_STORE, type DeploymentStore, type RevisionStore, type ScopeStore } from '../persistence';
+import { SendMessageDto } from '@modules/conversation/dto/send-message.dto';
 import { GovernanceAudienceAuthorizationService } from './governance-audience-authorization.service';
+import { PgRevisionStore } from '../persistence/postgres/pg-revision.store';
+import { PgDeploymentStore } from '../persistence/postgres/pg-deployment.store';
+import { PgScopeStore } from '../persistence/postgres/pg-scope.store';
 
 export interface GovernedConversationRuntime {
   programId: string; scopeId: string; deploymentId: string; revisionId: string; revisionNumber: number;
@@ -30,9 +32,9 @@ export interface GovernedConversationRecord {
 @Injectable()
 export class GovernedConversationRuntimeService {
   constructor(
-    @Inject(SCOPE_STORE) private readonly scopeStore: ScopeStore,
-    @Inject(DEPLOYMENT_STORE) private readonly deploymentStore: DeploymentStore,
-    @Inject(REVISION_STORE) private readonly revisionStore: RevisionStore,
+    private readonly scopeStore: PgScopeStore,
+    private readonly deploymentStore: PgDeploymentStore,
+    private readonly revisionStore: PgRevisionStore,
     private readonly audienceService: GovernanceAudienceAuthorizationService,
   ) {}
 

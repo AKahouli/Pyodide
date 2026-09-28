@@ -34,6 +34,13 @@ export interface PlaybookExecutionAdminSettings {
   graphCacheEnabled: boolean;
   graphCacheMaxEntries: number;
   graphCacheTtlSeconds: number;
+  asyncDesignEnabled: boolean;
+  deltaPatchEnabled: boolean;
+  tokenBufferEnabled: boolean;
+  executionLeaseEnabled: boolean;
+  dynamicReasoningEnabled: boolean;
+  maxConcurrentGlobalDesignOperations: number;
+  maxConcurrentUserDesignOperations: number;
   dynamicReasoning: DynamicReasoningAdminSettings;
 }
 
@@ -74,6 +81,15 @@ export const DEFAULT_PLAYBOOK_EXECUTION_SETTINGS: PlaybookExecutionAdminSettings
   graphCacheEnabled: false,
   graphCacheMaxEntries: 128,
   graphCacheTtlSeconds: 900,
+  // Defaults mirror the previous PLAYBOOK_* env toggles; admins can change
+  // these at runtime via admin/playbook-settings.
+  asyncDesignEnabled: false,
+  deltaPatchEnabled: true,
+  tokenBufferEnabled: false,
+  executionLeaseEnabled: false,
+  dynamicReasoningEnabled: true,
+  maxConcurrentGlobalDesignOperations: 10,
+  maxConcurrentUserDesignOperations: 3,
   dynamicReasoning: {
     plannerAgentId: null,
     maxWorkNodes: 6,
@@ -135,6 +151,21 @@ export function normalizePlaybookExecutionSettings(
     graphCacheEnabled: typeof value?.graphCacheEnabled === 'boolean' ? value.graphCacheEnabled : defaults.graphCacheEnabled,
     graphCacheMaxEntries: boundedInteger(value?.graphCacheMaxEntries, defaults.graphCacheMaxEntries, 1, 10000),
     graphCacheTtlSeconds: boundedInteger(value?.graphCacheTtlSeconds, defaults.graphCacheTtlSeconds, 1, 86400),
+    asyncDesignEnabled: typeof value?.asyncDesignEnabled === 'boolean' ? value.asyncDesignEnabled : defaults.asyncDesignEnabled,
+    deltaPatchEnabled: typeof value?.deltaPatchEnabled === 'boolean' ? value.deltaPatchEnabled : defaults.deltaPatchEnabled,
+    tokenBufferEnabled: typeof value?.tokenBufferEnabled === 'boolean' ? value.tokenBufferEnabled : defaults.tokenBufferEnabled,
+    executionLeaseEnabled: typeof value?.executionLeaseEnabled === 'boolean' ? value.executionLeaseEnabled : defaults.executionLeaseEnabled,
+    dynamicReasoningEnabled: typeof value?.dynamicReasoningEnabled === 'boolean' ? value.dynamicReasoningEnabled : defaults.dynamicReasoningEnabled,
+    maxConcurrentGlobalDesignOperations: boundedInteger(
+      value?.maxConcurrentGlobalDesignOperations,
+      defaults.maxConcurrentGlobalDesignOperations,
+      1,
+      500,
+    ),
+    maxConcurrentUserDesignOperations: Math.min(
+      boundedInteger(value?.maxConcurrentGlobalDesignOperations, defaults.maxConcurrentGlobalDesignOperations, 1, 500),
+      boundedInteger(value?.maxConcurrentUserDesignOperations, defaults.maxConcurrentUserDesignOperations, 1, 500),
+    ),
     dynamicReasoning: {
       plannerAgentId: typeof value?.dynamicReasoning?.plannerAgentId === 'string'
         ? value.dynamicReasoning.plannerAgentId.trim() || null

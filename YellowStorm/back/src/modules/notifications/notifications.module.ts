@@ -8,7 +8,6 @@ import { SseAuthGuard } from './guards/sse-auth.guard';
 import { AuthModule } from '../auth/auth.module';
 import { LoggerModule } from '../logger';
 import notificationsConfig from '../../config/notifications.config';
-import { NOTIFICATION_STORE } from './persistence/notification.store';
 import { PgNotificationStore } from './persistence/pg-notification.store';
 
 @Module({
@@ -25,7 +24,7 @@ import { PgNotificationStore } from './persistence/pg-notification.store';
     SseAuthGuard,
     // Notifications cutover (plan 1B.1): the store runs on ops.notifications;
     // Mongo data was backfilled (expired rows skipped) before this flip.
-    { provide: NOTIFICATION_STORE, useClass: PgNotificationStore },
+    PgNotificationStore,
   ],
   exports: [NotificationsService, NotificationsGateway],
 })

@@ -74,6 +74,7 @@ describe('AuthService account access', () => {
       usageService as never,
       authorizationService as never,
       systemService as never,
+      { getSettings: jest.fn().mockResolvedValue({ throttle: { limit: 100, windowSeconds: 60 }, auth: { maxSessionsPerUser: 10 }, documentUpload: { maxFileSizeMb: 50, maxFilesPerUpload: 10, allowedMimeTypes: [] } }) } as never, // platformSettings
       workspaceInitializer as never,
       humainAgentService as never,
     );

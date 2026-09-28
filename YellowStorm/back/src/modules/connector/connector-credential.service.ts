@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { LoggerService } from '../logger';
 import { NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
@@ -7,17 +7,15 @@ import {
   UpdateConnectorCredentialDto,
 } from './dto';
 import {
-  CONNECTOR_CREDENTIAL_STORE,
-  type ConnectorCredentialRow,
-  type ConnectorCredentialStore,
+  type ConnectorCredentialRow,  
 } from './persistence/connector.store';
 import { IConnectorCredentialResponse } from './interfaces/connector.interface';
+import { PgConnectorCredentialStore } from './persistence/pg-connector.store';
 
 @Injectable()
 export class ConnectorCredentialService {
   constructor(
-    @Inject(CONNECTOR_CREDENTIAL_STORE)
-    private readonly credentialStore: ConnectorCredentialStore,
+    private readonly credentialStore: PgConnectorCredentialStore,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(ConnectorCredentialService.name);

@@ -13,6 +13,7 @@ import {
 } from '../domain/semantic-cross-source.types';
 import type {
   DataPreviewDto,
+  SaveIdentityRuleDto,
   SaveRelationResolutionRuleDto,
   SaveSourceResolutionPolicyDto,
 } from '../dto';
@@ -42,6 +43,15 @@ interface ReviewDecision {
   targetId: string;
   details: Record<string, unknown>;
   resolution: { decision?: string; selectedTargetId?: string; selectedMappingId?: string };
+}
+
+/** The file a generated record was built from, read from its reserved `_source_file_name(s)` values. */
+function generatedSourceName(values: Record<string, unknown>): string | undefined {
+  const single = values._source_file_name;
+  if (typeof single === 'string' && single.trim()) return single;
+  const many = values._source_file_names;
+  if (Array.isArray(many) && typeof many[0] === 'string') return many[0];
+  return undefined;
 }
 
 @Injectable()
@@ -115,6 +125,48 @@ export class SemanticCrossSourceService {
       summary: this.matchSummary(matches),
       sourceIssues: resolved.issues,
     };
+  }
+
+  async listIdentityRules(userId: string, modelId: string) {
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    const result = await this.database.query<{ conceptId: string; fields: string[] }>(
+      'SELECT concept_id AS "conceptId", fields FROM semantic_model.identity_rules WHERE model_id=$1 ORDER BY concept_id',
+      [model.id],
+    );
+    return result.rows;
+  }
+
+  /** What makes each record of a concept unique, chosen on the concept itself; an empty list clears it. */
+  async saveIdentityRule(userId: string, modelId: string, conceptId: string, dto: SaveIdentityRuleDto) {
+    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
+    const concept = await this.database.query<{ attributes: Array<{ key: string }> }>(
+      'SELECT attributes FROM semantic_model.node_types WHERE version_id=$1 AND id=$2',
+      [model.currentDraftVersionId, conceptId],
+    );
+    if (!concept.rows[0]) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'Concept not found in the current draft');
+    const fields = [...new Set(dto.fields)];
+    const known = new Set((concept.rows[0].attributes ?? []).map((attribute) => attribute.key));
+    if (fields.some((field) => !known.has(field))) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Choose fields that belong to this concept');
+    }
+    const revision = await this.database.transaction(async (client) => {
+      const nextRevision = await this.models.advanceRevision(client, model.id, dto.expectedRevision);
+      if (fields.length) {
+        await client.query(
+          `INSERT INTO semantic_model.identity_rules (model_id,concept_id,fields,updated_by)
+           VALUES ($1,$2,$3::jsonb,$4)
+           ON CONFLICT (model_id,concept_id)
+           DO UPDATE SET fields=EXCLUDED.fields,updated_by=EXCLUDED.updated_by,updated_at=now()`,
+          [model.id, conceptId, JSON.stringify(fields), userId],
+        );
+      } else {
+        await client.query('DELETE FROM semantic_model.identity_rules WHERE model_id=$1 AND concept_id=$2', [model.id, conceptId]);
+      }
+      await this.models.audit(client, model.id, model.currentDraftVersionId, userId, 'identity_rule.saved', { conceptId, fields });
+      return nextRevision;
+    });
+    return { revision, conceptId, fields };
   }
 
   async listPolicies(userId: string, modelId: string) {
@@ -302,7 +354,8 @@ export class SemanticCrossSourceService {
       conceptId: record.conceptId,
       mappingId: `manual:${record.id}`,
       identityFields: identityByConcept.get(record.conceptId) ?? [],
-      source: { kind: 'manual', documentName: 'Manual Business Record' },
+      // Records built from documents carry their file in reserved values; only records nobody sourced are "added by hand".
+      source: { kind: 'manual', documentName: generatedSourceName(record.values) ?? 'Added by hand' },
       entity: { entityKey: record.id, label: record.label, values: record.values, provenance: {} },
     }));
     return { concepts: concepts.rows, manualEntities, incompleteConceptIds: [...incompleteConceptIds] };

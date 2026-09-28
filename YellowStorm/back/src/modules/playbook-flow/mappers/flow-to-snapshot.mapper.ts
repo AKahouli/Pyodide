@@ -1,5 +1,6 @@
-import { Flow, FlowNode, ControlEdge, DataBinding } from '../schemas/playbook-flow.schema';
-import { HitlBlockerRule, HitlPolicy } from '../schemas/playbook-flow-hitl.schema';
+import type { FlowNode, ControlEdge, DataBinding } from '../models/playbook-flow.model';
+import type { HitlBlockerRule, HitlPolicy } from '../models/playbook-flow-hitl.model';
+import type { FlowRecord } from '../persistence/flow.repository';
 
 export interface FlowSnapshot {
   nodes: FlowNode[];
@@ -18,7 +19,9 @@ function filterRuntimeHitlBlockers(blockers: HitlBlockerRule[] | undefined): Hit
   return (blockers ?? []).filter((blocker) => blocker?.enabled !== false && blocker?.createdBy === 'user');
 }
 
-export function flowToSnapshot(flow: Flow): FlowSnapshot {
+export type FlowSnapshotSource = Pick<FlowRecord, 'nodes' | 'controlEdges' | 'dataBindings' | 'settings' | 'hitlPolicy' | 'hitlBlockers' | 'workspaces'>;
+
+export function flowToSnapshot(flow: FlowSnapshotSource): FlowSnapshot {
   return {
     nodes: flow.nodes,
     controlEdges: flow.controlEdges,
@@ -29,8 +32,6 @@ export function flowToSnapshot(flow: Flow): FlowSnapshot {
     },
     hitlPolicy: flow.hitlPolicy,
     hitlBlockers: filterRuntimeHitlBlockers(flow.hitlBlockers),
-    workspaces: (flow.workspaces || []).map((w: any) =>
-      typeof w === 'object' && w.toString ? w.toString() : String(w),
-    ),
+    workspaces: [...(flow.workspaces ?? [])],
   };
 }

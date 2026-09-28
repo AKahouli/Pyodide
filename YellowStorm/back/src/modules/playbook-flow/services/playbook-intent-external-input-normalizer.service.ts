@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { PlaybookIntentDiagnostic } from '../interfaces/playbook-flow-intent-diagnostic.interface';
-import type { DataBinding } from '../schemas/playbook-flow.schema';
+import type { DataBinding } from '../models/playbook-flow.model';
 import {
   createManagedPlaybookInputPath,
   isCompleteDataBinding,

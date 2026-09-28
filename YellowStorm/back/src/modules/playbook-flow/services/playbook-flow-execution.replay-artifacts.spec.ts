@@ -39,21 +39,14 @@ describe('PlaybookFlowExecutionService replay artifact handling', () => {
         replayConfig: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false },
       }),
     };
-    const executionModel = {
-      findById: jest.fn(() => ({
-        lean: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue({ flowId: 'flow-1', ownerId: 'owner-1' }),
-        }),
-      })),
-      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
-      findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
+    const executionRepository = {
+      findById: jest.fn().mockResolvedValue({ flowId: 'flow-1', ownerId: 'owner-1' }),
     };
-    const { service, taskResultModel } = createExecutionServiceForTests({
+    const { service } = createExecutionServiceForTests({
       replayArtifactService,
       replayReportService,
-      executionModel,
+      executionRepository,
     });
-    taskResultModel.updateOne.mockResolvedValue(undefined);
     (service as any).trackReplayTask('exec-1', 'step-1');
 
     await (service as any).handleRunEvent('exec-1', {
@@ -97,11 +90,10 @@ describe('PlaybookFlowExecutionService replay artifact handling', () => {
     const replayArtifactService = {
       resolveReplayArtifactByIdentity: jest.fn().mockResolvedValue(null),
     };
-    const { service, taskResultModel } = createExecutionServiceForTests({
+    const { service } = createExecutionServiceForTests({
       replayArtifactService,
       replayReportService,
     });
-    taskResultModel.updateOne.mockResolvedValue(undefined);
     (service as any).trackReplayTask('exec-1', 'step-1');
 
     await (service as any).handleRunEvent('exec-1', {
@@ -135,11 +127,10 @@ describe('PlaybookFlowExecutionService replay artifact handling', () => {
     const replayArtifactService = {
       resolveReplayArtifactByIdentity: jest.fn().mockResolvedValue(null),
     };
-    const { service, taskResultModel } = createExecutionServiceForTests({
+    const { service } = createExecutionServiceForTests({
       replayArtifactService,
       replayReportService,
     });
-    taskResultModel.updateOne.mockResolvedValue(undefined);
     (service as any).trackReplayTask('exec-1', 'step-1');
 
     await (service as any).handleRunEvent('exec-1', {
@@ -214,11 +205,10 @@ describe('PlaybookFlowExecutionService replay artifact handling', () => {
         replayConfig: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false },
       }),
     };
-    const { service, taskResultModel } = createExecutionServiceForTests({
+    const { service } = createExecutionServiceForTests({
       replayArtifactService,
       replayReportService,
     });
-    taskResultModel.updateOne.mockResolvedValue(undefined);
     (service as any).trackReplayTask('exec-1', 'step-1');
 
     await (service as any).handleRunEvent('exec-1', {
@@ -266,11 +256,10 @@ describe('PlaybookFlowExecutionService replay artifact handling', () => {
     const replayArtifactService = {
       resolveReplayArtifactByIdentity: jest.fn().mockResolvedValue(null),
     };
-    const { service, taskResultModel } = createExecutionServiceForTests({
+    const { service } = createExecutionServiceForTests({
       replayArtifactService,
       replayReportService,
     });
-    taskResultModel.updateOne.mockResolvedValue(undefined);
     (service as any).trackReplayTask('exec-1', 'step-1');
 
     await (service as any).handleRunEvent('exec-1', {
@@ -326,14 +315,10 @@ describe('PlaybookFlowExecutionService replay artifact handling', () => {
         replayConfig: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false },
       }]])),
     };
-    const executionModel = {
-      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 0 }) })),
-      findById: jest.fn(() => ({
-        lean: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue({ executionMode: 'replay_strict', stepExecutionModes: { 'step-1': 'replay_strict' } }),
-        }),
-      })),
-      findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
+    // The run was claimed away (no longer running) before its start could be stamped.
+    const executionRepository = {
+      markStarted: jest.fn().mockResolvedValue(false),
+      findById: jest.fn().mockResolvedValue({ executionMode: 'replay_strict', stepExecutionModes: { 'step-1': 'replay_strict' } }),
     };
     const snapshot = {
       nodes: [{ id: 'step-1', kind: 'step', metadata: {} }],
@@ -342,7 +327,7 @@ describe('PlaybookFlowExecutionService replay artifact handling', () => {
       settings: {},
     };
     const { service, agentService } = createExecutionServiceForTests({
-      executionModel,
+      executionRepository,
       replayArtifactService,
       replayPromptService,
       replayReportService,
@@ -370,8 +355,7 @@ describe('PlaybookFlowExecutionService replay artifact handling', () => {
         validationVersion: 2,
       }),
     };
-    const { service, taskResultModel } = createExecutionServiceForTests({ replayReportService });
-    taskResultModel.updateOne.mockResolvedValue(undefined);
+    const { service } = createExecutionServiceForTests({ replayReportService });
 
     await (service as any).handleRunEvent('exec-1', {
       event_type: 'NodeCompleted',
@@ -390,8 +374,7 @@ describe('PlaybookFlowExecutionService replay artifact handling', () => {
       updateStructuralDrift: jest.fn().mockResolvedValue(undefined),
       findLatestReportForExecutionTask: jest.fn().mockRejectedValue(new Error('lookup failed')),
     };
-    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests({ replayReportService });
-    taskResultModel.updateOne.mockResolvedValue(undefined);
+    const { service, streamEvents } = createExecutionServiceForTests({ replayReportService });
     (service as any).trackReplayTask('exec-1', 'step-1');
 
     await (service as any).handleRunEvent('exec-1', {

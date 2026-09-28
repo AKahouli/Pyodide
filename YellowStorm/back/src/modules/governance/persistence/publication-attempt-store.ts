@@ -1,7 +1,6 @@
 import type { GovernancePublicationAttemptRecord } from './governance-records';
 import type { GovernancePublicationAttemptStatus } from '../domain/governance-types';
 
-export const PUBLICATION_ATTEMPT_STORE = Symbol('GOVERNANCE_PUBLICATION_ATTEMPT_STORE');
 
 export interface GovernancePublicationAttemptCreateInput {
   programId: string;

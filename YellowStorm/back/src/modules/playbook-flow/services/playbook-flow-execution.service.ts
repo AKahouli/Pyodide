@@ -1,15 +1,20 @@
 import { forwardRef, Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import { createHash } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { AgentService } from '@modules/agent/agent.service';
 import {
-  FlowExecution,
-  FlowExecutionDocument,
-} from '../schemas/playbook-flow-execution.schema';
-import { FlowTaskResult, FlowTaskResultDocument } from '../schemas/playbook-flow-task-result.schema';
-import { FlowRouterDecision, FlowRouterDecisionDocument } from '../schemas/playbook-flow-router-decision.schema';
+  EXECUTION_TERMINAL_STATUSES,
+  ExecutionRepository,
+  toExecutionJson,
+  type ExecutionRecord,
+} from '../persistence/execution.repository';
+import { TASK_RESULT_OPEN_STATUSES, TaskResultRepository } from '../persistence/task-result.repository';
+import { RouterDecisionRepository } from '../persistence/router-decision.repository';
+import { HitlMemoryRepository } from '../persistence/hitl-memory.repository';
+import {
+  DynamicReasoningAttemptRepository,
+  toDynamicReasoningAttemptJson,
+} from '../persistence/dynamic-reasoning-attempt.repository';
 import { PlaybookFlowQueueService } from './playbook-flow-queue.service';
 import { PlaybookFlowIdempotencyService } from './playbook-flow-idempotency.service';
 import { PlaybookFlowService } from './playbook-flow.service';
@@ -19,6 +24,7 @@ import { PlaybookFlowValidatorService } from './playbook-flow-validator.service'
 import { PlaybookFlowStreamEventsService } from './playbook-flow-stream-events.service';
 import { PlaybookFlowExecutionAdvisorService } from './advisor/playbook-flow-execution-advisor.service';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { DEFAULT_PLAYBOOK_EXECUTION_SETTINGS } from '@modules/system/interfaces/playbook-settings.interface';
 import {
   NotFoundException,
   BadRequestException,
@@ -36,8 +42,7 @@ import {
   IRunFromStepPayload,
 } from '../interfaces/playbook-flow-execution.interface';
 import { IFlowResponse } from '../interfaces/playbook-flow.interface';
-import { ControlEdge, DataBinding, FlowNode } from '../schemas/playbook-flow.schema';
-import type { AdvisorScoringMode } from '../schemas/playbook-flow.schema';
+import type { AdvisorScoringMode, ControlEdge, DataBinding, FlowNode } from '../models/playbook-flow.model';
 import { PlaybookFlowObservabilityService } from './observability/playbook-flow-observability.service';
 import { PlaybookFlowReplayArtifactService } from './playbook-flow-replay-artifact.service';
 import { PlaybookFlowReplayPromptService } from './playbook-flow-replay-prompt.service';
@@ -45,6 +50,7 @@ import { PlaybookFlowReplayReportService } from './playbook-flow-replay-report.s
 import { PlaybookFlowReplayDriftService } from './playbook-flow-replay-drift.service';
 import { PlaybookFlowReplayPlanService } from './playbook-flow-replay-plan.service';
 import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
+import { PlaybookExecutionNodeAgentMetadataService } from '../execution/runtime/playbook-execution-node-agent-metadata.service';
 import { PlaybookFlowOutputFormatService } from './playbook-flow-output-format.service';
 import { ModelsService } from '@modules/models/models.service';
 import { WorkspaceService } from '@modules/workspace/workspace.service';
@@ -78,16 +84,12 @@ import {
   PlaybookExecutionSingleStepPrepService,
   SeededTaskOutput,
 } from '../execution/runtime/playbook-execution-single-step-prep.service';
-import { FlowHitlMemory, FlowHitlMemoryDocument } from '../schemas/playbook-flow-hitl-memory.schema';
 import { FlowAccessService } from '../domain/flow-access.service';
 import { PlaybookExecutionSettingsResolverService } from './playbook-execution-settings-resolver.service';
 import { publicPlaybookTaskResult, sanitizePlaybookPublicValue } from '../utils/playbook-artifact';
 import { PlaybookFlowArtifactService } from './playbook-flow-artifact.service';
-import { FlowDynamicReasoningAttempt, FlowDynamicReasoningAttemptDocument } from '../schemas/playbook-flow-dynamic-reasoning-attempt.schema';
-import { PlaybookInputContractService, type PlaybookInputDescriptor } from './playbook-input-contract.service';
-import { hasRequiredInputValue, readOwnPath } from '../utils/playbook-managed-input.util';
+import { PlaybookInputContractService } from './playbook-input-contract.service';
 
-const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'] as const;
 const RUNTIME_AGENT_METADATA_KEYS = [
   'agent_name',
   'agent_description',
@@ -103,7 +105,7 @@ const RUNTIME_AGENT_METADATA_KEYS = [
 ] as const;
 
 export function isTerminalStatus(status: string): boolean {
-  return (TERMINAL_STATUSES as readonly string[]).includes(status);
+  return (EXECUTION_TERMINAL_STATUSES as readonly string[]).includes(status);
 }
 
 export function sanitizeExecutionSnapshotForResponse(
@@ -130,38 +132,20 @@ export function sanitizeExecutionForResponse(
   } as IFlowExecutionResponse;
 }
 
+/** The execution as its API response (the Mongo toJSON shape). */
+function toExecutionResponse(record: ExecutionRecord): IFlowExecutionResponse & {
+  snapshot?: Record<string, unknown>;
+  playbookPlannerSnapshot?: Record<string, unknown>;
+} {
+  return toExecutionJson(record) as unknown as IFlowExecutionResponse;
+}
+
 function stripRuntimeAgentMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
   const sanitizedMetadata = { ...metadata };
   for (const key of RUNTIME_AGENT_METADATA_KEYS) {
     delete sanitizedMetadata[key];
   }
   return sanitizedMetadata;
-}
-
-function getConnectorIdsFromRuntimeBindings(bindings: unknown): Set<string> {
-  if (!Array.isArray(bindings)) {
-    return new Set<string>();
-  }
-
-  return new Set(
-    bindings
-      .filter((binding): binding is Record<string, unknown> => !!binding && typeof binding === 'object' && !Array.isArray(binding))
-      .map((binding) => String(binding.connector_id || '').trim())
-      .filter(Boolean),
-  );
-}
-
-function getSkillIdsFromRuntimeSkills(skills: unknown): Set<string> {
-  if (!Array.isArray(skills)) {
-    return new Set<string>();
-  }
-
-  return new Set(
-    skills
-      .filter((skill): skill is Record<string, unknown> => !!skill && typeof skill === 'object' && !Array.isArray(skill))
-      .map((skill) => String(skill.id || '').trim())
-      .filter(Boolean),
-  );
 }
 
 function filterRuntimeHitlBlockers(blockers: unknown): Record<string, unknown>[] {
@@ -234,12 +218,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   private fallbackSingleStepPrepService?: PlaybookExecutionSingleStepPrepService;
 
   constructor(
-    @InjectModel(FlowExecution.name)
-    private readonly executionModel: Model<FlowExecutionDocument>,
-    @InjectModel(FlowTaskResult.name)
-    private readonly taskResultModel: Model<FlowTaskResultDocument>,
-    @InjectModel(FlowRouterDecision.name)
-    private readonly routerDecisionModel: Model<FlowRouterDecisionDocument>,
+    private readonly executions: ExecutionRepository,
+    private readonly taskResults: TaskResultRepository,
+    private readonly routerDecisions: RouterDecisionRepository,
     private readonly configService: ConfigService,
     private readonly runtimeClient: PlaybookFlowRuntimeClientService,
     private readonly queueService: PlaybookFlowQueueService,
@@ -270,20 +251,17 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     @Optional() private readonly replayRuntimeService?: PlaybookExecutionReplayRuntimeService,
     @Optional() private readonly executionStreamFinalizerService?: PlaybookExecutionStreamFinalizerService,
     @Optional() private readonly workspaceService?: WorkspaceService,
-    @Optional()
-    @InjectModel(FlowHitlMemory.name)
-    private readonly hitlMemoryModel?: Model<FlowHitlMemoryDocument>,
+    @Optional() private readonly hitlMemories?: HitlMemoryRepository,
     @Optional() private readonly accessService?: FlowAccessService,
     @Optional() private readonly hitlResumeService?: PlaybookExecutionHitlResumeService,
     @Optional() private readonly singleStepPrepService?: PlaybookExecutionSingleStepPrepService,
     @Optional() private readonly executionSettingsResolver?: PlaybookExecutionSettingsResolverService,
-    @Optional()
-    @InjectModel(FlowDynamicReasoningAttempt.name)
-    private readonly dynamicReasoningAttemptModel?: Model<FlowDynamicReasoningAttemptDocument>,
+    @Optional() private readonly dynamicReasoningAttempts?: DynamicReasoningAttemptRepository,
     @Optional() private readonly artifactService?: PlaybookFlowArtifactService,
     @Optional() private readonly inputContractService?: PlaybookInputContractService,
     @Optional() private readonly workspaceShareService?: WorkspaceShareService,
     @Optional() private readonly workspaceDocumentService?: WorkspaceDocumentService,
+    @Optional() private readonly nodeAgentMetadataService?: PlaybookExecutionNodeAgentMetadataService,
   ) {
     this.hitlResumeService?.bindExecutionHost({
       isRuntimeAvailable: () => this.isRuntimeAvailable(),
@@ -305,7 +283,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       return this.replayRuntimeService;
     }
     this.fallbackReplayRuntimeService ??= new PlaybookExecutionReplayRuntimeService(
-        this.executionModel,
+        this.executions,
         this.replayArtifactService,
         this.replayReportService,
         this.outputContractService,
@@ -335,9 +313,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       return this.eventHandlerService;
     }
     this.fallbackEventHandlerService ??= new PlaybookExecutionEventHandlerService(
-      this.executionModel,
-      this.taskResultModel,
-      this.routerDecisionModel,
+      this.executions,
+      this.taskResults,
+      this.routerDecisions,
       this.streamEvents,
       this.observabilityService,
       this.advisorService,
@@ -363,144 +341,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     // This remains disabled until execution ownership is persisted and validated.
   }
 
-  private async buildNodeRuntimeAgentMetadata(
-    ownerId: string,
-    nodeId: string,
-    baseMetadata: Record<string, unknown>,
-    resolvedAgent?: Record<string, unknown>,
-  ): Promise<Record<string, unknown> | undefined> {
-    if (!resolvedAgent) {
-      return resolvedAgent;
-    }
-
-    const taskToolBindings = Array.isArray(baseMetadata.toolBindings)
-      ? baseMetadata.toolBindings.filter((binding): binding is Record<string, unknown> => (
-        !!binding && typeof binding === 'object' && !Array.isArray(binding)
-      ))
-      : [];
-
-    if (taskToolBindings.length === 0) {
-      return this.mergeNodeRuntimeSkills(ownerId, nodeId, baseMetadata, resolvedAgent);
-    }
-
-    const existingConnectorIds = new Set([
-      ...getConnectorIdsFromRuntimeBindings(resolvedAgent.connector_bindings),
-      ...((Array.isArray(resolvedAgent.connector_ids) ? resolvedAgent.connector_ids : [])
-        .map((connectorId) => String(connectorId || '').trim())
-        .filter(Boolean)),
-    ]);
-
-    const additionalBindings: Record<string, unknown>[] = [];
-    const seenConnectorIds = new Set<string>();
-
-    for (const binding of taskToolBindings) {
-      if (binding.isEnabled === false) {
-        continue;
-      }
-
-      const connectorId = String(binding.connectorId || '').trim();
-      if (!connectorId || existingConnectorIds.has(connectorId) || seenConnectorIds.has(connectorId)) {
-        continue;
-      }
-
-      seenConnectorIds.add(connectorId);
-      additionalBindings.push(binding);
-    }
-
-    if (additionalBindings.length === 0) {
-      return this.mergeNodeRuntimeSkills(ownerId, nodeId, baseMetadata, resolvedAgent);
-    }
-
-    const additionalRuntime = await this.agentService.buildGrpcConnectorRuntimeForPlaybook(ownerId, additionalBindings);
-    if (additionalRuntime.connector_bindings.length === 0) {
-      this.logger.warn('Skipped playbook task connector bindings without runtime actions', {
-        ownerId,
-        nodeId,
-        connectorIds: additionalBindings.map((binding) => String(binding.connectorId || '')).filter(Boolean),
-      });
-      return this.mergeNodeRuntimeSkills(ownerId, nodeId, baseMetadata, resolvedAgent);
-    }
-
-    const mergedConnectorBindings = [
-      ...(Array.isArray(resolvedAgent.connector_bindings) ? resolvedAgent.connector_bindings : []),
-      ...additionalRuntime.connector_bindings,
-    ];
-    const existingSkillIds = getSkillIdsFromRuntimeSkills(resolvedAgent.skills);
-    const additionalConnectorSkills = (Array.isArray(additionalRuntime.skills) ? additionalRuntime.skills : [])
-      .filter((skill): skill is Record<string, unknown> => !!skill && typeof skill === 'object' && !Array.isArray(skill))
-      .filter((skill) => {
-        const skillId = String(skill.id || '').trim();
-        return !!skillId && !existingSkillIds.has(skillId);
-      });
-
-    return this.mergeNodeRuntimeSkills(ownerId, nodeId, baseMetadata, {
-      ...resolvedAgent,
-      agent_tools: [
-        ...(Array.isArray(resolvedAgent.agent_tools) ? resolvedAgent.agent_tools : []),
-        ...additionalRuntime.tools,
-      ],
-      skills: [
-        ...(Array.isArray(resolvedAgent.skills) ? resolvedAgent.skills : []),
-        ...additionalConnectorSkills,
-      ],
-      agent_params: {
-        ...(resolvedAgent.agent_params && typeof resolvedAgent.agent_params === 'object' && !Array.isArray(resolvedAgent.agent_params)
-          ? resolvedAgent.agent_params as Record<string, unknown>
-          : {}),
-        connector_bindings_json: JSON.stringify(mergedConnectorBindings),
-      },
-      connector_bindings: mergedConnectorBindings,
-      connector_ids: [
-        ...existingConnectorIds,
-        ...additionalRuntime.connectorIds,
-      ],
-    });
-  }
-
-  private async mergeNodeRuntimeSkills(
-    ownerId: string,
-    nodeId: string,
-    baseMetadata: Record<string, unknown>,
-    resolvedAgent: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> {
-    const taskSkillBindings = Array.isArray(baseMetadata.skillBindings)
-      ? baseMetadata.skillBindings.filter((binding): binding is Record<string, unknown> => (
-        !!binding && typeof binding === 'object' && !Array.isArray(binding)
-      ))
-      : [];
-
-    if (taskSkillBindings.length === 0) {
-      return resolvedAgent;
-    }
-
-    const existingSkillIds = getSkillIdsFromRuntimeSkills(resolvedAgent.skills);
-    const additionalSkillIds = [...new Set(taskSkillBindings
-      .filter((binding) => binding.isEnabled !== false)
-      .map((binding) => String(binding.skillId || '').trim())
-      .filter((skillId) => skillId && !existingSkillIds.has(skillId)))];
-
-    if (additionalSkillIds.length === 0) {
-      return resolvedAgent;
-    }
-
-    const additionalSkills = await this.agentService.buildGrpcSkillsForPlaybook(additionalSkillIds);
-    if (additionalSkills.length === 0) {
-      this.logger.warn('Skipped playbook task skill bindings without active runtime skills', {
-        ownerId,
-        nodeId,
-        skillIds: additionalSkillIds,
-      });
-      return resolvedAgent;
-    }
-
-    return {
-      ...resolvedAgent,
-      skills: [
-        ...(Array.isArray(resolvedAgent.skills) ? resolvedAgent.skills : []),
-        ...additionalSkills,
-      ],
-    };
-  }
 
   private cacheSelectedReplayArtifacts(
     executionId: string,
@@ -597,20 +437,12 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     flowId: string,
     taskIds: string[],
   ): Promise<RuntimeHitlMemory[]> {
-    if (!this.hitlMemoryModel) {
+    if (!this.hitlMemories) {
       return [];
     }
 
     const uniqueTaskIds = Array.from(new Set(taskIds.filter(Boolean)));
-    const memories = await this.hitlMemoryModel.find({
-      flowId,
-      status: 'active',
-      $or: [
-        { nodeId: null },
-        { nodeId: { $exists: false } },
-        ...(uniqueTaskIds.length > 0 ? [{ nodeId: { $in: uniqueTaskIds } }] : []),
-      ],
-    }).lean().exec() as Array<Record<string, unknown>>;
+    const memories = await this.hitlMemories.listActiveForNodes(flowId, uniqueTaskIds);
 
     return this.mapRuntimeHitlMemories(memories);
   }
@@ -627,43 +459,30 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   }
 
   private async recoverQueuedExecutions(): Promise<void> {
-    const owners = await this.executionModel.distinct('ownerId', { status: 'queued' });
-    for (const ownerId of owners as string[]) {
+    const owners = await this.executions.distinctOwnersWithQueued();
+    for (const ownerId of owners) {
       this.scheduleQueueDrain(ownerId);
     }
   }
 
   private async recoverStaleRunningExecutions(): Promise<void> {
-    if (!this.executionLeaseService?.isEnabled()) return;
+    if (!(await this.executionLeaseService?.isEnabled())) return;
 
     const startupTimeoutMs = this.configService.get<number>('playbook-flow.executionStartupTimeoutMs', 180_000);
     const staleBefore = new Date(Date.now() - startupTimeoutMs);
-    const staleExecutions = await this.executionModel.find(
-      { status: 'running', startedAt: { $lte: staleBefore } },
-      'ownerId queuePosition startedAt',
-    ).lean().exec();
+    const staleExecutions = await this.executions.findStaleRunning(staleBefore);
 
-    for (const execution of staleExecutions as Array<Record<string, unknown>>) {
-      const executionId = String(execution._id);
+    for (const execution of staleExecutions) {
+      const executionId = execution.id;
       const activeLease = await this.executionLeaseServiceHasLease(executionId);
       if (activeLease) {
         continue;
       }
 
       this.logger.warn(`Re-queueing stale running execution ${executionId} without an active lease`);
-      await this.executionModel.updateOne(
-        { _id: executionId, status: 'running' },
-        {
-          $set: {
-            status: 'queued',
-            queuePosition: 0,
-            error: null,
-          },
-          $unset: { startedAt: 1 },
-        },
-      ).exec();
+      await this.executions.requeueRunning(executionId, { clearError: true });
 
-      const ownerId = String(execution.ownerId || '');
+      const ownerId = execution.ownerId;
       const changes = await this.queueService.refreshPositions(ownerId);
       for (const { executionId: queuedExecutionId, queuePosition } of changes) {
         this.streamEvents.emitQueuePositionUpdate(queuedExecutionId, queuePosition);
@@ -672,10 +491,11 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   }
 
   private async executionLeaseServiceHasLease(executionId: string): Promise<boolean> {
-    if (!this.executionLeaseService?.isEnabled()) {
+    const leaseService = this.executionLeaseService;
+    if (!leaseService || !(await leaseService.isEnabled())) {
       return false;
     }
-    return this.executionLeaseService.hasActiveLease(executionId);
+    return leaseService.hasActiveLease(executionId);
   }
 
   private async releaseExecutionLease(executionId: string): Promise<void> {
@@ -685,8 +505,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   private getStreamFinalizer(): PlaybookExecutionStreamFinalizerService {
     return this.executionStreamFinalizerService
       ?? new PlaybookExecutionStreamFinalizerService(
-        this.executionModel,
-        this.taskResultModel,
+        this.executions,
+        this.taskResults,
         this.streamEvents,
         this.tokenBufferService,
         this.executionLeaseService,
@@ -832,7 +652,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       this.assertSingleStepControlDependenciesSupported(flow.nodes, flow.controlEdges, singleStepTaskId);
     }
 
-    await this.preflightRequiredInputs(flow, ownerId, inputContext ?? {}, singleStepTaskId);
+    await this.requireInputContractService().preflightRequiredInputs(flow, ownerId, inputContext ?? {}, singleStepTaskId);
     if (graphWasSanitized) {
       await this.persistSanitizedExecutionGraph(flowId, flow);
     }
@@ -841,9 +661,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       ? await this.executionSettingsResolver.resolve(flow.settings)
       : null;
     const maxConcurrent = effectiveExecutionSettings?.maxConcurrentPerUser
-      ?? this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
+      ?? DEFAULT_PLAYBOOK_EXECUTION_SETTINGS.maxConcurrentPerUser;
     const maxDepth = effectiveExecutionSettings?.executionQueueMaxDepth
-      ?? this.configService.get<number>('playbook-flow.executionQueueMaxDepth', 50);
+      ?? DEFAULT_PLAYBOOK_EXECUTION_SETTINGS.executionQueueMaxDepth;
     const recursionLimit = effectiveExecutionSettings
       ? Math.min(flow.settings?.recursionLimit || effectiveExecutionSettings.recursionLimitDefault, effectiveExecutionSettings.recursionLimitMax)
       : flow.settings?.recursionLimit || 25;
@@ -859,16 +679,14 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         modelIdOverride: modelIdOverride || undefined,
       });
       if (reservation.type === 'duplicate') {
-        const existingExecution = await this.executionModel.findById(reservation.executionId);
+        const existingExecution = await this.executions.findById(reservation.executionId);
         if (!existingExecution) {
           throw new ConflictException(
             ErrorCode.CONFLICT,
             'Idempotency record points to a missing execution. Retry with a new key.',
           );
         }
-        return sanitizeExecutionForResponse(
-          existingExecution.toJSON() as unknown as IFlowExecutionResponse,
-        );
+        return sanitizeExecutionForResponse(toExecutionResponse(existingExecution));
       }
     }
 
@@ -962,15 +780,14 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     const enabledAutopilot = advisorAutopilotEnabled ?? (flow as any).advisorAutopilotEnabled ?? false;
     const enabledReflection = reflectionEnabled ?? (flow as any).reflectionEnabled ?? false;
     const resolvedAdvisorScoringMode = advisorScoringMode ?? (flow as any).advisorScoringMode ?? 'llm';
-    const execution = new this.executionModel({
+    const saved = await this.executions.insert({
       flowId,
       ownerId,
-      schemaVersion: 1,
       status: 'queued',
       recursionLimit,
       maxParallelism,
-      playbookExecutionSettings: effectiveExecutionSettings ?? undefined,
-      playbookPlannerSnapshot,
+      playbookExecutionSettings: (effectiveExecutionSettings ?? undefined) as Record<string, unknown> | undefined,
+      plannerSnapshot: playbookPlannerSnapshot,
       inputContext,
       idempotencyKey,
       snapshot,
@@ -980,19 +797,17 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       advisorAutopilotMaxTurns: advisorAutopilotMaxTurns ?? (flow as any).advisorAutopilotMaxTurns ?? undefined,
       reflectionEnabled: enabledReflection,
       advisorScoringMode: resolvedAdvisorScoringMode,
-      seededTaskOutputs,
+      seededTaskOutputs: seededTaskOutputs as unknown as ExecutionRecord['seededTaskOutputs'],
       executionMode: executionMode || 'live',
       stepExecutionModes: stepExecutionModes || {},
       modelIdOverride: modelIdOverride || undefined,
     });
 
-    const saved = await execution.save();
-
     if (idempotencyKey) {
       try {
         await this.idempotencyService.confirmLink(ownerId, idempotencyKey, saved.id);
       } catch (err) {
-        await this.executionModel.findByIdAndDelete(saved.id);
+        await this.executions.delete(saved.id);
         await this.idempotencyService.release(ownerId, idempotencyKey);
         throw err;
       }
@@ -1000,7 +815,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
     const position = await this.queueService.admit(ownerId, saved.id, maxConcurrent, maxDepth);
     if (position < 0) {
-      await this.executionModel.findByIdAndDelete(saved.id);
+      await this.executions.delete(saved.id);
       if (idempotencyKey) {
         await this.idempotencyService.release(ownerId, idempotencyKey);
       }
@@ -1010,115 +825,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       );
     }
 
-    saved.queuePosition = position;
-    await saved.save();
-
     this.scheduleQueueDrain(ownerId);
 
-    return sanitizeExecutionForResponse(saved.toJSON() as unknown as IFlowExecutionResponse);
-  }
-
-  private async preflightRequiredInputs(
-    flow: IFlowResponse,
-    ownerId: string,
-    inputContext: Record<string, unknown>,
-    singleStepTaskId?: string,
-  ): Promise<void> {
-    const contract = (this.inputContractService ?? new PlaybookInputContractService(this.validatorService)).derive(flow);
-    const inputs = singleStepTaskId
-      ? contract.inputs.filter((input) => input.taskId === singleStepTaskId)
-      : contract.inputs;
-    const invalid = inputs.find((input) => input.readiness === 'invalid');
-    if (invalid) {
-      throw new BadRequestException(
-        ErrorCode.PLAYBOOK_INPUT_BINDING_INVALID,
-        `Playbook input binding is invalid for ${invalid.taskTitle}.${invalid.label}.`,
-      );
-    }
-    const configuration = inputs.find((input) => input.readiness === 'configuration_required');
-    if (configuration) {
-      throw new BadRequestException(
-        ErrorCode.PLAYBOOK_CONFIGURATION_REQUIRED,
-        `Playbook setting ${configuration.label} must be configured before execution.`,
-      );
-    }
-
-    for (const input of inputs.filter((item) => item.readiness === 'configured')) {
-      const binding = flow.dataBindings.find((candidate) => (
-        candidate.targetNode === input.taskId
-        && candidate.targetPort === input.portId
-        && candidate.sourceKind === 'constant'
-      ));
-      if (binding) await this.validateInputResource(ownerId, input, binding.constantValue);
-    }
-
-    for (const input of inputs.filter((item) => item.readiness === 'runtime_required')) {
-      const triggerPath = input.binding.triggerPath;
-      const resolved = triggerPath ? readOwnPath(inputContext, triggerPath) : { found: false };
-      if (!resolved.found || !hasRequiredInputValue(resolved.value)) {
-        throw new BadRequestException(
-          ErrorCode.PLAYBOOK_REQUIRED_INPUT_MISSING,
-          `Required Playbook input ${input.label} is missing.`,
-        );
-      }
-      await this.validateInputResource(ownerId, input, resolved.value);
-    }
-  }
-
-  private async validateInputResource(
-    ownerId: string,
-    input: PlaybookInputDescriptor,
-    value: unknown,
-  ): Promise<void> {
-    const configurationDestination = input.scope === 'configuration';
-    const requiresResource = configurationDestination || input.artifactKind === 'document' || input.artifactKind === 'image';
-    if (!value || typeof value !== 'object') {
-      if (requiresResource) this.throwInputResourceInaccessible(input);
-      return;
-    }
-    const resource = value as Record<string, unknown>;
-    if (resource.kind !== 'workspace' && resource.kind !== 'document' && resource.kind !== 'folder') {
-      if (requiresResource) this.throwInputResourceInaccessible(input);
-      return;
-    }
-    if (configurationDestination && resource.kind !== 'workspace' && resource.kind !== 'folder') {
-      this.throwInputResourceInaccessible(input);
-    }
-    const id = typeof resource.id === 'string' ? resource.id.trim() : '';
-    const workspaceId = typeof resource.workspaceId === 'string' ? resource.workspaceId.trim() : '';
-    if (!id || !workspaceId) this.throwInputResourceInaccessible(input);
-    if (resource.kind === 'workspace' && id !== workspaceId) this.throwInputResourceInaccessible(input);
-    const workspaceShareService = this.workspaceShareService;
-    if (!workspaceShareService) this.throwInputResourceInaccessible(input);
-    const workspaceDocumentService = this.workspaceDocumentService;
-    if ((resource.kind === 'document' || resource.kind === 'folder') && !workspaceDocumentService) {
-      this.throwInputResourceInaccessible(input);
-    }
-
-    try {
-      if (input.scope === 'configuration') {
-        await workspaceShareService.assertUserHasWriteAccess(ownerId, workspaceId);
-      } else {
-        await workspaceShareService.assertUserHasAccess(ownerId, [workspaceId]);
-      }
-      if (resource.kind === 'document' || resource.kind === 'folder') {
-        const documents = await workspaceDocumentService!.findByIds([id]);
-        const document = documents.find((candidate) => candidate.id === id);
-        const expectedFolder = resource.kind === 'folder';
-        if (!document || document.workspaceId !== workspaceId || document.isFolder !== expectedFolder) {
-          this.throwInputResourceInaccessible(input);
-        }
-      }
-    } catch {
-      this.throwInputResourceInaccessible(input);
-    }
-  }
-
-  private throwInputResourceInaccessible(input: PlaybookInputDescriptor): never {
-    throw new BadRequestException(
-      ErrorCode.PLAYBOOK_INPUT_RESOURCE_INACCESSIBLE,
-      `The selected resource for ${input.label} is unavailable or inaccessible.`,
-    );
+    return sanitizeExecutionForResponse(toExecutionResponse({ ...saved, queuePosition: position }));
   }
 
   private assertSingleStepSupported(
@@ -1242,10 +951,18 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       return this.singleStepPrepService;
     }
     this.fallbackSingleStepPrepService ??= new PlaybookExecutionSingleStepPrepService(
-      this.executionModel,
-      this.taskResultModel,
+      this.executions,
+      this.taskResults,
     );
     return this.fallbackSingleStepPrepService;
+  }
+
+  private getNodeAgentMetadataService(): PlaybookExecutionNodeAgentMetadataService {
+    return this.nodeAgentMetadataService ?? new PlaybookExecutionNodeAgentMetadataService(this.agentService);
+  }
+
+  private requireInputContractService(): PlaybookInputContractService {
+    return this.inputContractService ?? new PlaybookInputContractService(this.validatorService);
   }
 
   private async callGrpcRun(
@@ -1293,10 +1010,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         agent_revision: planner.agentRevision,
       } : undefined;
       if (effectiveExecutionSettings) {
-        await this.executionModel.updateOne(
-          { _id: executionId },
-          { $set: { playbookExecutionSettings: effectiveExecutionSettings } },
-        ).exec();
+        await this.executions.update(executionId, { playbookExecutionSettings: effectiveExecutionSettings as unknown as Record<string, unknown> });
       }
 
       // Resolve agents referenced by nodes and enrich metadata
@@ -1345,7 +1059,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       const enrichedNodes = await Promise.all(nodeMetadataEntries.map(async ({ n, baseMetadata }) => {
         const assignedAgentId = n.metadata?.assignedAgentId;
         const resolvedAgent = typeof assignedAgentId === 'string' ? agentMap.get(assignedAgentId) : undefined;
-        const runtimeAgentMetadata = await this.buildNodeRuntimeAgentMetadata(normalizedOwnerId, String(n.id || ''), baseMetadata, resolvedAgent);
+        const runtimeAgentMetadata = await this.getNodeAgentMetadataService().buildNodeRuntimeAgentMetadata(normalizedOwnerId, String(n.id || ''), baseMetadata, resolvedAgent);
         const description = typeof n.description === 'string' && n.description.trim()
           ? n.description.trim()
           : typeof n.metadata?.description === 'string' && n.metadata.description.trim()
@@ -1365,7 +1079,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       const taskNodeIds = enrichedNodes
         .filter((n: any) => n.kind === 'step' || n.kind === 'iterator')
         .map((n: any) => n.id);
-      const executionMeta = await this.executionModel.findById(executionId, 'singleStepTaskId executionMode stepExecutionModes modelIdOverride replayPlanningByTask').lean().exec();
+      const executionMeta = await this.executions.findById(executionId);
       const executionModelIdOverride = executionMeta?.modelIdOverride;
       if (executionModelIdOverride && typeof executionModelIdOverride === 'string') {
         for (const node of enrichedNodes) {
@@ -1468,15 +1182,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         }
       }
 
-      const startResult = await this.executionModel.updateOne(
-        { _id: executionId, status: 'running' },
-        {
-          startedAt: new Date(),
-          queuePosition: 0,
-          replayPlanningByTask,
-        },
-      ).exec();
-      if (!(startResult as { modifiedCount?: number }).modifiedCount) {
+      const started = await this.executions.markStarted(executionId, replayPlanningByTask as unknown as Record<string, unknown>);
+      if (!started) {
         this.clearSelectedReplayArtifacts(executionId);
         await this.releaseExecutionLease(executionId);
         this.logger.warn(`Skipping gRPC start for execution ${executionId} because it is no longer runnable`);
@@ -1485,10 +1192,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
       this.executionLeaseService?.startHeartbeat(executionId);
 
-      const executionStartState = await this.executionModel.findById(
-        executionId,
-        'singleStepTaskId advisorAutopilotEnabled advisorAutopilotTargetScore advisorAutopilotMaxTurns reflectionEnabled advisorScoringMode executionMode stepExecutionModes replayPlanningByTask',
-      ).lean().exec();
+      const executionStartState = await this.executions.findById(executionId);
 
       const effectiveExecutionMode = (executionStartState?.executionMode || 'live') as 'live' | 'inherit' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
       this.streamEvents.emitExecutionStart(executionId, flowId, normalizedOwnerId, {
@@ -1497,8 +1201,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         reflectionEnabled: executionStartState?.reflectionEnabled,
         advisorScoringMode: executionStartState?.advisorScoringMode,
         advisorAutopilotEnabled: executionStartState?.advisorAutopilotEnabled,
-        advisorAutopilotTargetScore: executionStartState?.advisorAutopilotTargetScore,
-        advisorAutopilotMaxTurns: executionStartState?.advisorAutopilotMaxTurns,
+        advisorAutopilotTargetScore: executionStartState?.advisorAutopilotTargetScore ?? undefined,
+        advisorAutopilotMaxTurns: executionStartState?.advisorAutopilotMaxTurns ?? undefined,
         singleStepTaskId: executionStartState?.singleStepTaskId ?? null,
         replayPlanningByTask,
       });
@@ -1513,10 +1217,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       }
     }
 
-      const executionRecord = await this.executionModel.findById(executionId, 'seededTaskOutputs').lean().exec();
-      const seededTaskOutputs = Array.isArray((executionRecord as Record<string, unknown> | null)?.seededTaskOutputs)
-        ? ((executionRecord as Record<string, unknown>).seededTaskOutputs as Array<SeededTaskOutput>)
-        : [];
+      const seededTaskOutputs = (executionStartState?.seededTaskOutputs ?? []) as unknown as SeededTaskOutput[];
 
       const dataBindingsProto = await this.buildDataBindingsProto(
         snapshot.dataBindings as any[],
@@ -1707,11 +1408,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     } catch (err) {
       this.clearSelectedReplayArtifacts(executionId);
       this.logger.error(`Playbook flow execution ${executionId} failed before gRPC stream`, err instanceof Error ? err.stack : undefined);
-      await this.executionModel.findByIdAndUpdate(executionId, {
-        status: 'failed',
-        endedAt: new Date(),
-        error: err instanceof Error ? err.message : String(err),
-      }).exec();
+      await this.executions.markFailed(executionId, err instanceof Error ? err.message : String(err));
       await this.tokenBufferService?.flushExecution(executionId);
       await this.releaseExecutionLease(executionId);
       this.streamEvents.emitExecutionComplete(executionId, 'failed', err instanceof Error ? err.message : String(err));
@@ -1735,20 +1432,11 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     limit: number = 10,
   ): Promise<IFlowExecutionListResponse> {
     await this.requireAccessService().assertExecutionAccess(flowId, ownerId, 'read');
-    const filter: Record<string, unknown> = { flowId };
-    const total = await this.executionModel.countDocuments(filter);
-    const items = await this.executionModel
-      .find(filter)
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .lean();
+    const total = await this.executions.countByFlow(flowId);
+    const items = await this.executions.listByFlow(flowId, { limit, offset: (page - 1) * limit });
 
     return {
-      items: items.map((item) => ({
-        ...item,
-        id: (item as unknown as Record<string, unknown>)._id as string,
-      })) as unknown as IFlowExecutionResponse[],
+      items: items.map(toExecutionResponse),
       pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
     };
   }
@@ -1768,24 +1456,15 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     task?: { taskId: string; iteration: number; status: string; taskName?: string };
   }>> {
     if (flowIds.length === 0) return [];
-    const filter: Record<string, unknown> = { flowId: { $in: flowIds } };
-    if (statuses?.length) filter.status = { $in: statuses };
-    const executions = await this.executionModel
-      .find(filter)
-      .select('_id flowId status startedAt updatedAt endedAt pendingApproval')
-      .sort({ updatedAt: -1, createdAt: -1, _id: 1 })
-      .limit(limit)
-      .lean()
-      .exec();
-    const executionIds = executions.map((execution) => String(execution._id));
+    const executions = await this.executions.listRecentByFlows(flowIds, { statuses, limit });
+    const executionIds = executions.map((execution) => execution.id);
     const taskResults = executionIds.length === 0
       ? []
-      : await this.taskResultModel
-        .find({ executionId: { $in: executionIds }, status: { $in: ['failed', 'running'] } })
-        .select('executionId taskId iteration status generatedNodeTitle startedAt')
-        .sort({ startedAt: -1, iteration: -1 })
-        .lean()
-        .exec();
+      : await this.taskResults.listForExecutions(executionIds, {
+        statuses: ['failed', 'running'],
+        order: 'recentlyStarted',
+        light: true,
+      });
     const taskByExecution = new Map<string, (typeof taskResults)[number]>();
     for (const task of taskResults) {
       const current = taskByExecution.get(task.executionId);
@@ -1794,22 +1473,22 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       }
     }
     return executions.map((execution) => {
-      const executionId = String(execution._id);
+      const executionId = execution.id;
       const task = taskByExecution.get(executionId);
       return {
         executionId,
         flowId: execution.flowId,
         status: execution.status,
-        startedAt: execution.startedAt,
+        startedAt: execution.startedAt ?? undefined,
         updatedAt: execution.updatedAt,
-        endedAt: execution.endedAt,
+        endedAt: execution.endedAt ?? undefined,
         waitingForHumanInput: execution.status === 'pending_approval' || Boolean(execution.pendingApproval),
         ...(task ? {
           task: {
             taskId: task.taskId,
             iteration: task.iteration,
             status: task.status,
-            taskName: task.generatedNodeTitle,
+            taskName: task.generatedNodeTitle ?? undefined,
           },
         } : {}),
       };
@@ -1817,7 +1496,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   }
 
   async findOne(executionId: string, ownerId: string): Promise<IFlowExecutionDetailResponse> {
-    const execution = await this.findExecutionWithSnapshot(executionId);
+    const execution = await this.executions.findById(executionId, { withSnapshot: true });
     if (!execution) {
       throw new NotFoundException(
         ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
@@ -1828,24 +1507,15 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       await this.requireAccessService().assertExecutionAccess(String(execution.flowId), ownerId, 'read');
     }
 
-    const taskResults = await this.taskResultModel
-      .find({ executionId })
-      .sort({ taskId: 1, iteration: 1 })
-      .lean();
+    const taskResults = await this.taskResults.listForExecution(executionId);
 
-    const routerDecisions = await this.routerDecisionModel
-      .find({ executionId })
-      .sort({ decidedAt: 1 })
-      .lean();
+    const routerDecisions = await this.routerDecisions.listForExecution(executionId);
     const hitlEvents = execution.hitlEvents ?? [];
     const redactSensitiveText = await this.observabilityService.shouldRedactSensitiveText();
-    const dynamicReasoningAttempts = this.dynamicReasoningAttemptModel
-      ? await this.dynamicReasoningAttemptModel.find({ executionId }).sort({ createdAt: 1 }).lean().exec()
+    const dynamicReasoningAttempts = this.dynamicReasoningAttempts
+      ? await this.dynamicReasoningAttempts.listForExecution(executionId)
       : [];
-    const executionJson = sanitizeExecutionForResponse(execution.toJSON() as unknown as IFlowExecutionResponse & {
-      snapshot?: Record<string, unknown>;
-      playbookPlannerSnapshot?: Record<string, unknown>;
-    });
+    const executionJson = sanitizeExecutionForResponse(toExecutionResponse(execution));
 
       return {
         ...executionJson,
@@ -1867,7 +1537,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
              redactSensitiveText,
            );
         return {
-          id: doc._id as string,
+          id: r.id,
           executionId: r.executionId,
           taskId: r.taskId,
           iteration: r.iteration,
@@ -1879,8 +1549,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           components: doc.components as Array<Record<string, unknown>>,
           iteratorIterations: doc.iteratorIterations as Array<Record<string, unknown>> | undefined,
           error: doc.error == null ? undefined : String(doc.error),
-          startedAt: r.startedAt,
-          endedAt: r.endedAt,
+          startedAt: r.startedAt ?? undefined,
+          endedAt: r.endedAt ?? undefined,
           toolTrace: doc.toolTrace as FlowToolTraceItem[] | undefined,
           reasoningChain: (doc.reasoningChain as PublicReasoningTraceItem[] | undefined) ?? [],
           llmPromptTrace: doc.llmPromptTrace as FlowLlmPromptTraceItem[] | undefined,
@@ -1888,37 +1558,34 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           ...flattenUsage({ usage: r.usage as unknown as FlowUsageSummary | null | undefined }),
           semanticMatch: doc.semanticMatch as FlowSemanticMatchSummary | null | undefined,
           traceMetadata: doc.traceMetadata as Record<string, unknown> ?? {},
-          judgeStatus: (r as any).judgeStatus ?? 'idle',
-          judgeScoringMode: (r as any).judgeScoringMode ?? null,
+          judgeStatus: r.judgeStatus ?? 'idle',
+          judgeScoringMode: r.judgeScoringMode ?? null,
           judgeResult: (doc.judgeResult as IFlowTaskResultResponse['judgeResult']) ?? null,
           judgeError: doc.judgeError == null ? null : String(doc.judgeError),
           judgeHistory: (Array.isArray(doc.judgeHistory) ? doc.judgeHistory : []) as IFlowTaskResultResponse['judgeHistory'],
-          hitlHistory: hitlEvents.filter((event) => event.nodeId === r.taskId && event.iteration === r.iteration),
-          parentTaskId: r.parentTaskId,
-          runtimeSubgraphId: r.runtimeSubgraphId,
-          generatedLocalNodeId: r.generatedLocalNodeId,
-          generatedNodeTitle: r.generatedNodeTitle,
+          hitlHistory: hitlEvents.filter((event) => event.nodeId === r.taskId && event.iteration === r.iteration) as unknown as IFlowTaskResultResponse['hitlHistory'],
+          parentTaskId: r.parentTaskId ?? undefined,
+          runtimeSubgraphId: r.runtimeSubgraphId ?? undefined,
+          generatedLocalNodeId: r.generatedLocalNodeId ?? undefined,
+          generatedNodeTitle: r.generatedNodeTitle ?? undefined,
         };
       })),
       routerDecisions: routerDecisions.map((r) => ({
-        id: (r as unknown as Record<string, unknown>)._id as string,
+        id: r.id,
         executionId: r.executionId,
         routerNodeId: r.routerNodeId,
         iteration: r.iteration,
         label: r.label,
         decidedAt: r.decidedAt,
       })),
-      dynamicReasoningAttempts: dynamicReasoningAttempts.map((attempt) => ({
-        ...attempt,
-        id: String((attempt as unknown as Record<string, unknown>)._id),
-      })),
+      dynamicReasoningAttempts: dynamicReasoningAttempts.map(toDynamicReasoningAttemptJson),
     };
   }
 
   private async drainQueue(ownerId: string): Promise<void> {
     const maxConcurrent = this.executionSettingsResolver
       ? (await this.executionSettingsResolver.resolve()).maxConcurrentPerUser
-      : this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
+      : DEFAULT_PLAYBOOK_EXECUTION_SETTINGS.maxConcurrentPerUser;
     if (!this.isRuntimeAvailable()) return;
 
     while (true) {
@@ -1934,16 +1601,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       if (leaseResult && !leaseResult.acquired) {
         // Keep queue order stable when the oldest runnable execution is blocked by
         // a shared capacity limit. A later execution should not jump the queue.
-        await this.executionModel.updateOne(
-          { _id: next.id, status: 'running' },
-          {
-            $set: {
-              status: 'queued',
-              queuePosition: 0,
-            },
-            $unset: { startedAt: 1 },
-          },
-        ).exec();
+        await this.executions.requeueRunning(next.id);
 
         const restoredChanges = await this.queueService.refreshPositions(ownerId);
         for (const { executionId, queuePosition } of restoredChanges) {
@@ -1957,27 +1615,17 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         this.streamEvents.emitQueuePositionUpdate(executionId, queuePosition);
       }
 
-      const claimedExecution = await this.executionModel
-        .findById(next.id)
-        .select('+snapshot')
-        .lean();
+      const claimedExecution = await this.executions.findById(next.id, { withSnapshot: true });
 
       if (!claimedExecution) {
         this.logger.error(`Drain: claimed execution ${next.id} disappeared before dispatch`);
         await this.releaseExecutionLease(next.id);
-        await this.executionModel
-          .findByIdAndUpdate(next.id, {
-            status: 'failed',
-            endedAt: new Date(),
-            error: 'Claimed execution disappeared before runtime dispatch',
-          })
-          .exec();
+        await this.executions.markFailed(next.id, 'Claimed execution disappeared before runtime dispatch');
         this.streamEvents.emitExecutionComplete(next.id, 'failed', 'Claimed execution disappeared before runtime dispatch');
         continue;
       }
 
-      const executionRecord = claimedExecution as unknown as Record<string, unknown>;
-      const snapshot = executionRecord.snapshot as Record<string, unknown> | undefined;
+      const snapshot = claimedExecution.snapshot ?? undefined;
       let flow: Record<string, unknown> | null = null;
 
       if (!snapshot) {
@@ -1988,13 +1636,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
         if (!flow) {
           await this.releaseExecutionLease(next.id);
-          await this.executionModel
-            .findByIdAndUpdate(next.id, {
-              status: 'failed',
-              endedAt: new Date(),
-              error: 'Flow not found before runtime start',
-            })
-            .exec();
+          await this.executions.markFailed(next.id, 'Flow not found before runtime start');
           this.streamEvents.emitExecutionComplete(next.id, 'failed', 'Flow not found before runtime start');
           continue;
         }
@@ -2002,9 +1644,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
       this.logger.log(`Drain: starting queued execution ${next.id} for owner ${ownerId}`);
 
-      const replaySource = executionRecord.replaySource as { executionId: string; taskId: string; iteration?: number } | undefined;
-      const dispatchInputContext =
-        (executionRecord.inputContext as Record<string, unknown> | undefined) || next.inputContext || {};
+      const replaySource = claimedExecution.replaySource ?? undefined;
+      const dispatchInputContext = claimedExecution.inputContext || next.inputContext || {};
       const isDurableResume = Object.prototype.hasOwnProperty.call(
         dispatchInputContext,
         '__playbook_resume',
@@ -2041,7 +1682,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   }
 
   async cancel(executionId: string, ownerId: string): Promise<IFlowExecutionResponse> {
-    const execution = await this.executionModel.findById(executionId);
+    const execution = await this.executions.findById(executionId);
     if (!execution) {
       throw new NotFoundException(
         ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
@@ -2056,22 +1697,15 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Execution already finished');
     }
 
-    execution.status = 'cancelled';
-    execution.endedAt = new Date();
-    execution.pendingApproval = null;
-    execution.hitlEvents = (execution.hitlEvents ?? []).map((event) => (
-      event.status === 'pending'
-        ? { ...event, status: 'cancelled' as const, respondedAt: new Date() }
-        : event
-    ));
-    await execution.save();
+    // One conditional statement: a run that finished since the read above is not cancelled over.
+    const cancelled = await this.executions.cancelOpen(executionId);
+    if (!cancelled) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Execution already finished');
+    }
     await this.tokenBufferService?.flushExecution(executionId);
     await this.releaseExecutionLease(executionId);
 
-    await this.taskResultModel.updateMany(
-      { executionId, status: { $in: ['pending', 'running', 'interrupted'] } },
-      { status: 'cancelled' },
-    );
+    await this.taskResults.updateManyForExecution(executionId, { statuses: TASK_RESULT_OPEN_STATUSES }, { status: 'cancelled' });
 
     this.streamEvents.emitExecutionCancelled(executionId);
 
@@ -2082,11 +1716,11 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       });
     }
 
-    return sanitizeExecutionForResponse(execution.toJSON() as unknown as IFlowExecutionResponse);
+    return sanitizeExecutionForResponse(toExecutionResponse(cancelled));
   }
 
   async delete(executionId: string, ownerId: string): Promise<void> {
-    const execution = await this.executionModel.findById(executionId);
+    const execution = await this.executions.findById(executionId);
     if (!execution) {
       throw new NotFoundException(
         ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
@@ -2107,9 +1741,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       );
     }
 
-    await this.taskResultModel.deleteMany({ executionId });
-    await this.routerDecisionModel.deleteMany({ executionId });
-    await this.executionModel.findByIdAndDelete(executionId);
+    // Its task results and router decisions go with it (foreign keys).
+    await this.executions.delete(executionId);
   }
 
   async deleteAll(flowId: string, ownerId: string): Promise<{ deleted: number }> {
@@ -2121,16 +1754,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       );
     }
 
-    const executions = await this.executionModel.find({ flowId, ownerId }, { _id: 1 }).lean();
-    const executionIds = executions.map((e: Record<string, unknown>) => String(e._id));
-
-    if (executionIds.length > 0) {
-      await this.taskResultModel.deleteMany({ executionId: { $in: executionIds } });
-      await this.routerDecisionModel.deleteMany({ executionId: { $in: executionIds } });
-    }
-
-    const result = await this.executionModel.deleteMany({ flowId, ownerId });
-    return { deleted: result.deletedCount ?? 0 };
+    const deleted = await this.executions.deleteByFlowAndOwner(flowId, ownerId);
+    return { deleted };
   }
 
   async resumeApproval(
@@ -2156,24 +1781,12 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     return this.hitlResumeService;
   }
 
-  private async findExecutionWithSnapshot(executionId: string): Promise<FlowExecutionDocument | null> {
-    const queryOrDocument = this.executionModel.findById(executionId) as unknown as {
-      select?: (fields: string) => Promise<FlowExecutionDocument | null>;
-    } | Promise<FlowExecutionDocument | null>;
-    if ('select' in queryOrDocument && typeof queryOrDocument.select === 'function') {
-      return queryOrDocument.select('+snapshot');
-    }
-    return queryOrDocument as Promise<FlowExecutionDocument | null>;
-  }
-
   async runFromStep(
     executionId: string,
     ownerId: string,
     payload: IRunFromStepPayload,
   ): Promise<IFlowExecutionResponse> {
-    const sourceExecution = await this.executionModel
-      .findById(executionId)
-      .select('+snapshot');
+    const sourceExecution = await this.executions.findById(executionId, { withSnapshot: true });
     if (!sourceExecution) {
       throw new NotFoundException(
         ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
@@ -2235,7 +1848,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     delete sourceInputContext.__playbook_resume;
     delete sourceInputContext.__playbook_hitl_memory;
 
-    const newExecution = new this.executionModel({
+    const newExecution = await this.executions.insert({
       flowId: sourceExecution.flowId,
       ownerId,
       status: 'queued',
@@ -2249,25 +1862,24 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         iteration,
       },
     });
-    await newExecution.save();
 
     this.logger.log(
       `Created replay execution ${newExecution.id} from source ${sourceExecution.id} task ${payload.taskId} iteration ${iteration}`,
     );
 
     const maxConcurrent = effectiveExecutionSettings?.maxConcurrentPerUser
-      ?? this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
+      ?? DEFAULT_PLAYBOOK_EXECUTION_SETTINGS.maxConcurrentPerUser;
     const maxDepth = effectiveExecutionSettings?.executionQueueMaxDepth
-      ?? this.configService.get<number>('playbook-flow.executionQueueMaxDepth', 50);
+      ?? DEFAULT_PLAYBOOK_EXECUTION_SETTINGS.executionQueueMaxDepth;
     await this.queueService.admit(
       ownerId,
-      (newExecution as any).id || (newExecution as any)._id?.toString(),
+      newExecution.id,
       maxConcurrent,
       maxDepth,
     );
     this.scheduleQueueDrain(ownerId);
 
-    return sanitizeExecutionForResponse(newExecution.toJSON() as unknown as IFlowExecutionResponse);
+    return sanitizeExecutionForResponse(toExecutionResponse(newExecution));
   }
 
   private async callGrpcRunFromCheckpoint(
@@ -2359,7 +1971,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       const assignedAgentId = n.metadata?.assignedAgentId;
       const resolvedAgent = typeof assignedAgentId === 'string' ? agentMap.get(assignedAgentId) : undefined;
       const baseMetadata = stripRuntimeAgentMetadata((n.metadata || {}) as Record<string, unknown>);
-      const runtimeAgentMetadata = await this.buildNodeRuntimeAgentMetadata(normalizedOwnerId, String(n.id || ''), baseMetadata, resolvedAgent);
+      const runtimeAgentMetadata = await this.getNodeAgentMetadataService().buildNodeRuntimeAgentMetadata(normalizedOwnerId, String(n.id || ''), baseMetadata, resolvedAgent);
       return {
         ...n,
         metadata: { ...baseMetadata, ...(runtimeAgentMetadata || {}) },

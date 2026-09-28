@@ -9,8 +9,6 @@ import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-d
 import { SemanticGraphRepository } from '../repositories/semantic-graph.repository';
 import { SemanticModelService } from './semantic-model.service';
 import { SemanticModelValidationService } from './semantic-model-validation.service';
-import { SemanticGraphIndexJobService } from './semantic-graph-index-job.service';
-import { SemanticExecutionOwnershipService } from './semantic-execution-ownership.service';
 
 @Injectable()
 export class SemanticGraphCommandService {
@@ -19,8 +17,6 @@ export class SemanticGraphCommandService {
     private readonly repository: SemanticGraphRepository,
     private readonly models: SemanticModelService,
     private readonly validation: SemanticModelValidationService,
-    private readonly indexJobs: SemanticGraphIndexJobService,
-    private readonly ownership: SemanticExecutionOwnershipService,
   ) {}
 
   async getGraph(userId: string, modelId: string, layer = 'combined') {
@@ -121,11 +117,6 @@ export class SemanticGraphCommandService {
       const updated = await client.query<{ revision: number }>(
         `UPDATE semantic_model.versions SET revision=revision+1,updated_at=now() WHERE id=$1 RETURNING revision::int`, [draftVersionId]);
       await client.query('UPDATE semantic_model.models SET updated_at=now() WHERE id=$1', [modelId]);
-      if (operations.some((operation) => operation.type !== 'layout.update')) {
-        if (await this.ownership.getOwner(modelId, client) === 'legacy') {
-          await this.indexJobs.enqueue(modelId,draftVersionId,updated.rows[0].revision,client);
-        }
-      }
       await this.models.audit(client, modelId, draftVersionId, userId, 'graph.operations_applied', { operationTypes: operations.map((operation) => operation.type) });
       return { revision: updated.rows[0].revision, operations };
     });

@@ -1,18 +1,14 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
-import {
-  CONNECTED_APP_OAUTH_STATE_STORE,
-  USER_APP_CONNECTION_STORE,
-  type ConnectedAppOauthStateStore,
-  type UserAppConnectionStore,
-} from '../persistence/connected-app.store';
 import { ConnectionStatus } from '../connected-app.types';
 import { ConnectedAppDefinitionService } from './connected-app-definition.service';
 import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { PgConnectedAppOauthStateStore } from '../persistence/pg-connected-app.store';
+import { PgUserAppConnectionStore } from '../persistence/pg-connected-app.store';
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
@@ -22,10 +18,8 @@ export class ConnectedAppOAuthService {
   private readonly backendUrl: string;
 
   constructor(
-    @Inject(CONNECTED_APP_OAUTH_STATE_STORE)
-    private readonly oauthStateStore: ConnectedAppOauthStateStore,
-    @Inject(USER_APP_CONNECTION_STORE)
-    private readonly connectionStore: UserAppConnectionStore,
+    private readonly oauthStateStore: PgConnectedAppOauthStateStore,
+    private readonly connectionStore: PgUserAppConnectionStore,
     private readonly definitionService: ConnectedAppDefinitionService,
     private readonly cryptoService: CryptoService,
     private readonly configService: ConfigService,

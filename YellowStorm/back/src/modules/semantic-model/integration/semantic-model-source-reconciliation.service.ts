@@ -35,6 +35,8 @@ export class SemanticModelSourceReconciliationService {
         LEFT JOIN semantic_jobs.source_heads head
           ON head.workspace_id = sm.workspace_id AND head.asset_id = sm.document_id
         WHERE head.deleted IS DISTINCT FROM true
+          -- A workspace mapping stands for many files, not one to reconcile.
+          AND sm.scope = 'document'
         GROUP BY sm.workspace_id, sm.document_id, head.event_id, head.last_reconciled_at
         ORDER BY head.last_reconciled_at ASC NULLS FIRST, sm.workspace_id, sm.document_id
         LIMIT 100`);

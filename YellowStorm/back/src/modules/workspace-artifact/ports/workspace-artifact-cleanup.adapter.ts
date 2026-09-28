@@ -1,13 +1,9 @@
-import { Inject, Injectable } from '@nestjs/common';
-import {
-  WORKSPACE_ARTIFACT_STORE,
-  type WorkspaceArtifactStore,
-} from '../persistence/workspace-artifact-store';
-import { WORKSPACE_ARTIFACT_CLEANUP_PORT, type WorkspaceArtifactCleanupPort } from './workspace-artifact-cleanup.port';
+import { Injectable } from '@nestjs/common';
+import { PostgresWorkspaceArtifactStore } from '../persistence/postgres/postgres-workspace-artifact-store';
 
 @Injectable()
-export class WorkspaceArtifactCleanupAdapter implements WorkspaceArtifactCleanupPort {
-  constructor(@Inject(WORKSPACE_ARTIFACT_STORE) private readonly artifacts: WorkspaceArtifactStore) {}
+export class WorkspaceArtifactCleanupAdapter {
+  constructor(private readonly artifacts: PostgresWorkspaceArtifactStore) {}
 
   countBySource(workspaceId: string, documentId: string): Promise<number> {
     return this.artifacts.countBySource(workspaceId, documentId);
@@ -25,5 +21,3 @@ export class WorkspaceArtifactCleanupAdapter implements WorkspaceArtifactCleanup
     return this.artifacts.deleteAllByWorkspace(workspaceId);
   }
 }
-
-export { WORKSPACE_ARTIFACT_CLEANUP_PORT };

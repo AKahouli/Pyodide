@@ -4,7 +4,6 @@ export interface GovernanceGroupSummary {
   memberCount: number;
 }
 
-export const GROUP_LOOKUP_PORT = Symbol('GOVERNANCE_GROUP_LOOKUP_PORT');
 
 /**
  * Read-only group summaries for membership responses — the replacement for the

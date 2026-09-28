@@ -6,10 +6,9 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { parseApiError } from '@/lib/api-error';
 import { ErrorCode } from '@/lib/error-codes';
+import { useDebouncedCallback } from '@/hooks/useDebouncedCallback';
 import { usePlaybookStore, useIsDirty, useIsSaving, useDirtyVersion } from '../store';
 import { getPlaybookValidationIssues } from '../utils/required-port-validation';
-import { playbookFeatures } from '../features';
-import { useAutosaveActor } from '../machines/autosave/useAutosaveActor';
 
 const IDLE_DEBOUNCE_MS = 600;
 const ACTIVE_EDIT_DEBOUNCE_MS = 1500;
@@ -45,7 +44,6 @@ export function useAutosave(options?: { paused?: boolean }) {
   const isDirty = useIsDirty();
   const isSaving = useIsSaving();
   const dirtyVersion = useDirtyVersion();
-  const autosaveActor = useAutosaveActor(playbookFeatures.xstateAutosaveEnabled);
   const saveCurrentPlaybook = usePlaybookStore((s) => s.saveCurrentPlaybook);
   const setPendingAutosaveAfterCurrent = usePlaybookStore((s) => s.setPendingAutosaveAfterCurrent);
   const lastAutosaveDurationMs = usePlaybookStore((s) => s.lastAutosaveDurationMs);
@@ -60,7 +58,7 @@ export function useAutosave(options?: { paused?: boolean }) {
   const hasUnboundRequiredPorts = validationIssues.some((issue) => issue.reason === 'missing_required_binding');
   const hasIncompleteBindings = validationIssues.some((issue) => issue.reason !== 'missing_required_binding');
 
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { schedule, cancel: clearTimer } = useDebouncedCallback();
   const lastDirtyAtRef = useRef<number | null>(null);
   const lastReportedDirtyVersionRef = useRef(0);
   const conflictDirtyVersionRef = useRef<number | null>(null);
@@ -69,46 +67,22 @@ export function useAutosave(options?: { paused?: boolean }) {
 
   const notifySaveFailure = useCallback((error: unknown, failedDirtyVersion: number) => {
     const apiError = parseApiError(error);
-    if (apiError.code === ErrorCode.CONFLICT) {
-      const latestDirtyVersion = currentDirtyVersionRef.current;
-      conflictDirtyVersionRef.current = latestDirtyVersion === failedDirtyVersion
-        ? failedDirtyVersion
-        : null;
-      if (playbookFeatures.xstateAutosaveEnabled) {
-        autosaveActor.send({ type: 'CONFLICT_DETECTED', errorCode: apiError.code });
-        if (latestDirtyVersion !== failedDirtyVersion) {
-          autosaveActor.send({ type: 'LOCAL_CHANGE', dirtyVersion: latestDirtyVersion });
-        }
-      }
-      return;
-    }
-
-    if (playbookFeatures.xstateAutosaveEnabled) {
-      autosaveActor.send({ type: 'DELTA_SAVE_FAILED' });
-    }
-  }, [autosaveActor]);
-
-  const clearTimer = useCallback(() => {
-    if (debounceRef.current) { clearTimeout(debounceRef.current); debounceRef.current = null; }
+    if (apiError.code !== ErrorCode.CONFLICT) return;
+    const latestDirtyVersion = currentDirtyVersionRef.current;
+    conflictDirtyVersionRef.current = latestDirtyVersion === failedDirtyVersion
+      ? failedDirtyVersion
+      : null;
   }, []);
 
   const doSave = useCallback(() => {
     const saveDirtyVersion = dirtyVersion;
     clearTimer();
-    if (playbookFeatures.xstateAutosaveEnabled) {
-      autosaveActor.send({ type: 'SAVE_NOW', reason: 'autosave' });
-    }
-    return Promise.resolve(saveCurrentPlaybook({ reason: 'autosave' })).then((result) => {
-      if (playbookFeatures.xstateAutosaveEnabled) {
-        autosaveActor.send({ type: 'DELTA_SAVE_SUCCEEDED', durationMs: lastAutosaveDurationMs });
-      }
-      return result;
-    }).catch((error: unknown) => {
+    return Promise.resolve(saveCurrentPlaybook({ reason: 'autosave' })).catch((error: unknown) => {
       notifySaveFailure(error, saveDirtyVersion);
-      // Timer-triggered saves report through the autosave actor; do not leave
+      // Timer-triggered saves swallow conflicts here; do not leave
       // an unhandled rejected promise behind when a conflict blocks retries.
     });
-  }, [autosaveActor, clearTimer, dirtyVersion, lastAutosaveDurationMs, notifySaveFailure, saveCurrentPlaybook]);
+  }, [clearTimer, dirtyVersion, notifySaveFailure, saveCurrentPlaybook]);
 
   useEffect(() => {
     if (paused) {
@@ -127,11 +101,8 @@ export function useAutosave(options?: { paused?: boolean }) {
         conflictDirtyVersionRef.current = null;
       }
     }
-    if (playbookFeatures.xstateAutosaveEnabled && hasNewLocalChange) {
-      autosaveActor.send({ type: 'LOCAL_CHANGE', dirtyVersion });
-    }
 
-    if (conflictDirtyVersionRef.current === dirtyVersion || autosaveActor.isBlockedByConflict) {
+    if (conflictDirtyVersionRef.current === dirtyVersion) {
       clearTimer();
       return;
     }
@@ -142,7 +113,7 @@ export function useAutosave(options?: { paused?: boolean }) {
     }
 
     clearTimer();
-    debounceRef.current = setTimeout(doSave, getAdaptiveDebounceMs({
+    schedule(doSave, getAdaptiveDebounceMs({
       lastAutosaveDurationMs,
       autosaveBackoffUntil,
       lastDirtyAt: previousDirtyAt,
@@ -151,7 +122,6 @@ export function useAutosave(options?: { paused?: boolean }) {
     return clearTimer;
   }, [
     autosaveBackoffUntil,
-    autosaveActor,
     clearTimer,
     dirtyVersion,
     doSave,
@@ -162,32 +132,19 @@ export function useAutosave(options?: { paused?: boolean }) {
     setPendingAutosaveAfterCurrent,
   ]);
 
-  // Cleanup on unmount
-  useEffect(() => clearTimer, [clearTimer]);
-
   const saveNow = useCallback(() => {
     if (hasUnboundRequiredPorts || hasIncompleteBindings) return Promise.resolve();
     const saveDirtyVersion = dirtyVersion;
     clearTimer();
-    if (playbookFeatures.xstateAutosaveEnabled) {
-      autosaveActor.send({ type: 'SAVE_NOW', reason: 'manual' });
-    }
-    return Promise.resolve(saveCurrentPlaybook({ reason: 'manual' })).then((result) => {
-      if (playbookFeatures.xstateAutosaveEnabled) {
-        autosaveActor.send({ type: 'DELTA_SAVE_SUCCEEDED', durationMs: lastAutosaveDurationMs });
-      }
-      return result;
-    }).catch((error: unknown) => {
+    return Promise.resolve(saveCurrentPlaybook({ reason: 'manual' })).catch((error: unknown) => {
       notifySaveFailure(error, saveDirtyVersion);
       throw error;
     });
   }, [
-    autosaveActor,
     clearTimer,
     dirtyVersion,
     hasIncompleteBindings,
     hasUnboundRequiredPorts,
-    lastAutosaveDurationMs,
     notifySaveFailure,
     saveCurrentPlaybook,
   ]);

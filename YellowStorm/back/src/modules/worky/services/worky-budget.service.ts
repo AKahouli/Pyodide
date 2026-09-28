@@ -1,26 +1,12 @@
-import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import {
-  WorkyStream,
-  WorkyStreamDocument,
-} from '../schemas/worky-stream.schema';
-import {
-  WorkyTask,
-  WorkyTaskDocument,
-} from '../schemas/worky-task.schema';
-import {
-  WorkyBudgetReservation,
-  WorkyBudgetReservationDocument,
-} from '../schemas/worky-budget-reservation.schema';
-import {
-  WorkyCostEvent,
-  WorkyCostEventDocument,
-} from '../schemas/worky-cost-event.schema';
-import {
-  WorkyInteraction,
-  WorkyInteractionDocument,
-} from '../schemas/worky-interaction.schema';
+import { Inject, Injectable } from '@nestjs/common';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { isForeignKeyViolation, isObjectId, withTransaction } from '@common/postgres';
+import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
+import * as schema from '@modules/postgres/schema';
+import { WorkyStreamRepository } from '../persistence/worky-stream.repository';
+import { WorkyTaskRepository } from '../persistence/worky-task.repository';
+import { WorkyBudgetRepository } from '../persistence/worky-budget.repository';
+import { WorkyInteractionRepository } from '../persistence/worky-interaction.repository';
 import { LoggerService } from '../../logger';
 import { WorkyEventService } from './worky-event.service';
 import { WorkyAuditService } from './worky-audit.service';
@@ -81,21 +67,20 @@ export interface WorkyRecordCostResult {
 /**
  * Budgeted execution (Part 4 `docs/worky/04_HUMANS_BUDGET_REPORTS.md` §4,
  * canonical §8). The stream carries `budget.{limitUsd, limitTokens,
- * spendUsd, tokensUsed, enforcement}`; reservations are atomic via
- * `findOneAndUpdate` with a conditional guard.
+ * spendUsd, tokensUsed, enforcement}`; reservations are atomic via a
+ * conditional UPDATE of the stream counters (`reserveBudget`).
  *
  *   reserve(input)         estimate → atomic reserve (denied if it
  *                           would push spendUsd past limitUsd) →
- *                           persist `WorkyBudgetReservation`. On
+ *                           persist the reservation. On
  *                           denial with `enforcement='hard_stop'`,
  *                           create a `budget_decision` interaction
  *                           and set `status='waiting_for_budget_decision'`.
  *   release(reservationId) mark reservation 'released' and decrement
  *                           the stream's spendUsd/tokensUsed counters.
- *   recordCost(input)      Persist a `WorkyCostEvent`, bump the task
- *                           budget.actual*, and (if the reservation
- *                           exists) mark it 'consumed'. Emits
- *                           'cost.recorded' SSE for the UI.
+ *   recordCost(input)      Persist a cost event, bump the task
+ *                           budget.actual*, and mark the task's open
+ *                           reservations 'consumed' on overspend.
  *   getSnapshot(streamId)  Returns the live budget + remaining/used.
  *   setLimits(streamId, …) PATCH the stream's limitUsd/limitTokens/
  *                           enforcement (governance may gate this).
@@ -103,16 +88,11 @@ export interface WorkyRecordCostResult {
 @Injectable()
 export class WorkyBudgetService {
   constructor(
-    @InjectModel(WorkyStream.name)
-    private readonly streams: Model<WorkyStreamDocument>,
-    @InjectModel(WorkyTask.name)
-    private readonly tasks: Model<WorkyTaskDocument>,
-    @InjectModel(WorkyBudgetReservation.name)
-    private readonly reservations: Model<WorkyBudgetReservationDocument>,
-    @InjectModel(WorkyCostEvent.name)
-    private readonly costEvents: Model<WorkyCostEventDocument>,
-    @InjectModel(WorkyInteraction.name)
-    private readonly interactions: Model<WorkyInteractionDocument>,
+    @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>,
+    private readonly streams: WorkyStreamRepository,
+    private readonly tasks: WorkyTaskRepository,
+    private readonly budgets: WorkyBudgetRepository,
+    private readonly interactions: WorkyInteractionRepository,
     private readonly events: WorkyEventService,
     private readonly audit: WorkyAuditService,
     private readonly logger: LoggerService,
@@ -137,12 +117,11 @@ export class WorkyBudgetService {
   }
 
   /**
-   * Atomic reserve. If the stream's limitUsd/limitTokens are 0
-   * (unlimited) the reservation is auto-accepted. Otherwise we run a
-   * `findOneAndUpdate` with a `spendUsd+amount<=limit` guard. On
-   * denial under `hard_stop` we transition the stream to
-   * `waiting_for_budget_decision` and raise a `budget_decision`
-   * interaction.
+   * Atomic reserve. The counters always move, also on an unlimited
+   * stream (a limit of 0 is unlimited inside the SQL guard), so
+   * `release` stays symmetric. On denial under `hard_stop` we
+   * transition the stream to `waiting_for_budget_decision` and raise a
+   * `budget_decision` interaction.
    */
   async reserve(input: {
     streamId: string;
@@ -150,97 +129,59 @@ export class WorkyBudgetService {
     amountUsd: number;
     tokens: number;
   }): Promise<WorkyReserveResult> {
-    if (!Types.ObjectId.isValid(input.streamId)) {
+    if (!isObjectId(input.streamId)) {
       throw new Error(`WorkyBudgetService.reserve: invalid streamId ${input.streamId}`);
     }
-    if (!Types.ObjectId.isValid(input.taskId)) {
+    if (!isObjectId(input.taskId)) {
       throw new Error(`WorkyBudgetService.reserve: invalid taskId ${input.taskId}`);
     }
-    const stream = await this.streams.findById(input.streamId).exec();
+    const stream = await this.streams.findById(input.streamId);
     if (!stream) {
       throw new Error(`WorkyBudgetService.reserve: stream ${input.streamId} not found`);
     }
-    const unlimitedUsd = !stream.budget.limitUsd || stream.budget.limitUsd === 0;
-    const unlimitedTokens = !stream.budget.limitTokens || stream.budget.limitTokens === 0;
-    if (unlimitedUsd && unlimitedTokens) {
-      const reservation = await this.reservations.create({
-        streamId: stream._id,
-        taskId: new Types.ObjectId(input.taskId),
+    const outcome = await withTransaction(this.db, async () => {
+      const reserved = await this.streams.reserveBudget(stream.id, input.amountUsd, input.tokens);
+      const reservation = await this.budgets.createReservation({
+        streamId: stream.id,
+        taskId: input.taskId,
         amountUsd: input.amountUsd,
         tokens: input.tokens,
-        status: 'reserved',
+        status: reserved ? 'reserved' : 'denied',
       });
-      this.events.emit(stream.ownerUserId.toString(), stream._id.toString(), {
-        type: 'budget.reserved',
-        emittedAt: Date.now(),
-        payload: {
-          reservationId: reservation._id.toString(),
-          amountUsd: input.amountUsd,
-          tokens: input.tokens,
-        },
-      });
-      return { status: 'reserved', reservationId: reservation._id.toString(), amountUsd: input.amountUsd, tokens: input.tokens };
-    }
-    const usdGuard = unlimitedUsd
-      ? {}
-      : { $expr: { $lte: [{ $add: ['$budget.spendUsd', input.amountUsd] }, '$budget.limitUsd'] } };
-    const tokensGuard = unlimitedTokens
-      ? {}
-      : { $expr: { $lte: [{ $add: ['$budget.tokensUsed', input.tokens] }, '$budget.limitTokens'] } };
-    const updated = await this.streams
-      .findOneAndUpdate(
-        { _id: stream._id, ...usdGuard, ...tokensGuard },
-        {
-          $inc: {
-            'budget.spendUsd': input.amountUsd,
-            'budget.tokensUsed': input.tokens,
-          },
-          $set: { lastActivityAt: new Date() },
-        },
-        { new: true },
-      )
-      .exec();
-    if (!updated) {
-      const reservation = await this.reservations.create({
-        streamId: stream._id,
-        taskId: new Types.ObjectId(input.taskId),
-        amountUsd: input.amountUsd,
-        tokens: input.tokens,
-        status: 'denied',
-      });
-      if (stream.budget.enforcement === 'hard_stop') {
-        await this.streams
-          .updateOne(
-            { _id: stream._id },
-            { $set: { status: 'waiting_for_budget_decision' } },
-          )
-          .exec();
+      if (!reserved && stream.budget.enforcement === 'hard_stop') {
+        await this.streams.update(stream.id, { status: 'waiting_for_budget_decision' });
         await this.interactions.create({
-          streamId: stream._id,
-          taskId: new Types.ObjectId(input.taskId),
+          streamId: stream.id,
+          taskId: input.taskId,
           type: 'budget_decision',
           targetUserId: stream.ownerUserId,
           question: `Budget exhausted on stream "${stream.title}". Increase limit, switch to notify, generate report, or stop?`,
           options: ['increase', 'cheaper_mode', 'report_now', 'stop'],
-          status: 'pending',
           blockingScope: 'stream',
           blocksTaskIds: [],
-          respondedAt: null,
-          response: null,
         });
       }
-      this.events.emit(stream.ownerUserId.toString(), stream._id.toString(), {
+      return { reserved, reservationId: reservation.id };
+    }).catch((err: unknown) => {
+      // budget_reservations.task_id is a foreign key; the transaction also gave the counters back.
+      if (isForeignKeyViolation(err)) {
+        throw new Error(`WorkyBudgetService.reserve: task ${input.taskId} not found`);
+      }
+      throw err;
+    });
+    if (!outcome.reserved) {
+      this.events.emit(stream.ownerUserId, stream.id, {
         type: 'budget.exhausted',
         emittedAt: Date.now(),
         payload: {
-          reservationId: reservation._id.toString(),
+          reservationId: outcome.reservationId,
           amountUsd: input.amountUsd,
           tokens: input.tokens,
           limitUsd: stream.budget.limitUsd,
           limitTokens: stream.budget.limitTokens,
         },
       });
-      this.events.emit(stream.ownerUserId.toString(), stream._id.toString(), {
+      this.events.emit(stream.ownerUserId, stream.id, {
         type: 'budget_decision.requested',
         emittedAt: Date.now(),
         payload: { taskId: input.taskId },
@@ -252,32 +193,25 @@ export class WorkyBudgetService {
         reason: 'budget_exhausted',
       };
     }
-    const reservation = await this.reservations.create({
-      streamId: stream._id,
-      taskId: new Types.ObjectId(input.taskId),
-      amountUsd: input.amountUsd,
-      tokens: input.tokens,
-      status: 'reserved',
-    });
-    this.events.emit(stream.ownerUserId.toString(), stream._id.toString(), {
+    this.events.emit(stream.ownerUserId, stream.id, {
       type: 'budget.reserved',
       emittedAt: Date.now(),
       payload: {
-        reservationId: reservation._id.toString(),
+        reservationId: outcome.reservationId,
         amountUsd: input.amountUsd,
         tokens: input.tokens,
       },
     });
     await this.audit.append({
-      streamId: stream._id.toString(),
+      streamId: stream.id,
       action: 'budget.reserved',
       targetType: 'worky_reservation',
-      targetId: reservation._id.toString(),
+      targetId: outcome.reservationId,
       details: { amountUsd: input.amountUsd, tokens: input.tokens, taskId: input.taskId },
     });
     return {
       status: 'reserved',
-      reservationId: reservation._id.toString(),
+      reservationId: outcome.reservationId,
       amountUsd: input.amountUsd,
       tokens: input.tokens,
     };
@@ -288,131 +222,84 @@ export class WorkyBudgetService {
    * reservation is already 'released' or 'consumed' we no-op.
    */
   async release(reservationId: string): Promise<void> {
-    if (!Types.ObjectId.isValid(reservationId)) return;
-    const reservation = await this.reservations.findById(reservationId).exec();
-    if (!reservation) return;
-    if (reservation.status !== 'reserved') return;
-    const updated = await this.reservations
-      .findOneAndUpdate(
-        { _id: reservation._id, status: 'reserved' },
-        { $set: { status: 'released' } },
-        { new: true },
-      )
-      .exec();
-    if (!updated) return;
-    await this.streams
-      .updateOne(
-        { _id: reservation.streamId },
-        {
-          $inc: {
-            'budget.spendUsd': -reservation.amountUsd,
-            'budget.tokensUsed': -reservation.tokens,
-          },
-        },
-      )
-      .exec();
+    if (!isObjectId(reservationId)) return;
+    await withTransaction(this.db, async () => {
+      const released = await this.budgets.transitionReservation(reservationId, 'reserved', 'released');
+      if (!released) return;
+      await this.streams.releaseBudget(released.streamId, released.amountUsd, released.tokens);
+    });
   }
 
   /**
-   * Record an actual cost event. Increments the task's budget.actual*
-   * and the stream's spend counters. Marks the corresponding
-   * reservation 'consumed' if the actual exceeds the estimate by
-   * more than `OVERSPEND_BAND`.
+   * Record an actual cost event. Increments the task's budget.actual*.
+   * Marks the task's open reservations 'consumed' if the actual exceeds
+   * the estimate by more than `OVERSPEND_BAND`.
    */
   async recordCost(input: WorkyRecordCostInput): Promise<WorkyRecordCostResult> {
-    if (!Types.ObjectId.isValid(input.streamId)) {
+    if (!isObjectId(input.streamId)) {
       throw new Error(`WorkyBudgetService.recordCost: invalid streamId`);
     }
-    const event = await this.costEvents.create({
-      streamId: new Types.ObjectId(input.streamId),
-      taskId: input.taskId && Types.ObjectId.isValid(input.taskId) ? new Types.ObjectId(input.taskId) : null,
-      type: input.type,
-      provider: input.provider,
-      modelId: input.modelId,
-      inputTokens: input.inputTokens,
-      outputTokens: input.outputTokens,
-      costUsd: input.costUsd,
-    });
-    let overspend = false;
-    if (input.taskId && Types.ObjectId.isValid(input.taskId)) {
-      await this.tasks
-        .updateOne(
-          { _id: new Types.ObjectId(input.taskId) },
-          {
-            $inc: {
-              'budget.actualUsd': input.costUsd,
-              'budget.tokensActual': input.inputTokens + input.outputTokens,
-            },
-          },
-        )
-        .exec();
-      const task = await this.tasks
-        .findById(input.taskId)
-        .select({ streamId: 1, budget: 1 })
-        .lean()
-        .exec();
-      if (task && task.budget.estimateUsd > 0) {
-        const ceiling = task.budget.estimateUsd * (1 + OVERSPEND_BAND);
-        if (task.budget.actualUsd > ceiling) {
-          overspend = true;
-        }
+    const taskId = input.taskId && isObjectId(input.taskId) ? input.taskId : null;
+    const { event, task } = await withTransaction(this.db, async () => {
+      // cost_events.task_id is a foreign key: a task that does not exist (any more) leaves
+      // the cost unattributed rather than losing the spend.
+      const task = taskId
+        ? await this.tasks.addActualCost(taskId, input.costUsd, input.inputTokens + input.outputTokens)
+        : null;
+      const event = await this.budgets.insertCostEvent({
+        streamId: input.streamId,
+        taskId: task?.id ?? null,
+        type: input.type,
+        provider: input.provider,
+        modelId: input.modelId,
+        inputTokens: input.inputTokens,
+        outputTokens: input.outputTokens,
+        costUsd: input.costUsd,
+      });
+      return { event, task };
+    }).catch((err: unknown) => {
+      if (isForeignKeyViolation(err)) {
+        throw new Error(`WorkyBudgetService.recordCost: stream ${input.streamId} not found`);
       }
-      if (overspend) {
-        await this.reservations
-          .updateOne(
-            { taskId: new Types.ObjectId(input.taskId), status: 'reserved' },
-            { $set: { status: 'consumed' } },
-          )
-          .exec();
-        const ownerStream = await this.streams
-          .findById(task?.streamId ?? input.streamId)
-          .select({ ownerUserId: 1 })
-          .lean()
-          .exec();
-        const ownerUserId = ownerStream?.ownerUserId.toString() ?? '';
-        if (!ownerUserId) {
-          this.logger.warn('budget.exhausted: stream owner not found; SSE dropped', {
-            streamId: input.streamId,
-            taskId: input.taskId,
-          });
-        }
-        this.events.emit(ownerUserId, input.streamId, {
-          type: 'budget.exhausted',
-          emittedAt: Date.now(),
-          payload: {
-            taskId: input.taskId,
-            actualUsd: task?.budget.actualUsd ?? 0,
-            estimateUsd: task?.budget.estimateUsd ?? 0,
-          },
+      throw err;
+    });
+    // `actualUsd` already includes this cost (the update returns the row afterwards).
+    const overspend =
+      !!task && task.budget.estimateUsd > 0 && task.budget.actualUsd > task.budget.estimateUsd * (1 + OVERSPEND_BAND);
+    if (task && overspend) {
+      await this.budgets.consumeOpenReservations(task.id);
+      const ownerStream = await this.streams.findById(task.streamId);
+      const ownerUserId = ownerStream?.ownerUserId ?? '';
+      if (!ownerUserId) {
+        this.logger.warn('budget.exhausted: stream owner not found; SSE dropped', {
+          streamId: input.streamId,
+          taskId: input.taskId,
         });
       }
-    }
-    const agg = await this.costEvents
-      .aggregate([
-        { $match: { streamId: new Types.ObjectId(input.streamId) } },
-        {
-          $group: {
-            _id: null,
-            totalCostUsd: { $sum: '$costUsd' },
-            totalTokens: { $sum: { $add: ['$inputTokens', '$outputTokens'] } },
-          },
+      this.events.emit(ownerUserId, input.streamId, {
+        type: 'budget.exhausted',
+        emittedAt: Date.now(),
+        payload: {
+          taskId: input.taskId,
+          actualUsd: task.budget.actualUsd,
+          estimateUsd: task.budget.estimateUsd,
         },
-      ])
-      .exec();
-    const totals = agg[0] ?? { totalCostUsd: 0, totalTokens: 0 };
+      });
+    }
+    const totals = await this.budgets.costTotals(input.streamId);
     return {
-      costEventId: event._id.toString(),
+      costEventId: event.id,
       totalCostUsd: totals.totalCostUsd,
-      totalTokens: totals.totalTokens,
+      totalTokens: totals.totalInputTokens + totals.totalOutputTokens,
       overspend,
     };
   }
 
   async getSnapshot(streamId: string): Promise<WorkyBudgetSnapshot> {
-    if (!Types.ObjectId.isValid(streamId)) {
+    if (!isObjectId(streamId)) {
       throw new Error(`WorkyBudgetService.getSnapshot: invalid streamId`);
     }
-    const stream = await this.streams.findById(streamId).lean().exec();
+    const stream = await this.streams.findById(streamId);
     if (!stream) {
       throw new Error(`WorkyBudgetService.getSnapshot: stream ${streamId} not found`);
     }
@@ -436,24 +323,13 @@ export class WorkyBudgetService {
     streamId: string,
     limits: { limitUsd: number; limitTokens: number; enforcement: 'hard_stop' | 'notify' },
   ): Promise<WorkyBudgetSnapshot> {
-    if (!Types.ObjectId.isValid(streamId)) {
+    if (!isObjectId(streamId)) {
       throw new Error(`WorkyBudgetService.setLimits: invalid streamId`);
     }
-    await this.streams
-      .updateOne(
-        { _id: new Types.ObjectId(streamId) },
-        {
-          $set: {
-            'budget.limitUsd': limits.limitUsd,
-            'budget.limitTokens': limits.limitTokens,
-            'budget.enforcement': limits.enforcement,
-          },
-        },
-      )
-      .exec();
-    const stream = await this.streams.findById(streamId).exec();
+    await this.streams.setBudgetLimits(streamId, limits);
+    const stream = await this.streams.findById(streamId);
     if (stream) {
-      this.events.emit(stream.ownerUserId.toString(), streamId, {
+      this.events.emit(stream.ownerUserId, streamId, {
         type: 'budget.updated',
         emittedAt: Date.now(),
         payload: limits,

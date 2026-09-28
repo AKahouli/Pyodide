@@ -165,6 +165,29 @@ def test_exact_and_case_insensitive_strategies_match_symmetrically(plan: dict):
     assert [r["targetEntityId"] for r in matched_folded["relationships"]] == ["e4"]
 
 
+def test_identity_reference_matches_a_plain_attribute_whatever_its_case(plan: dict):
+    """A typed customer's key (stored folded) must find the contract that quotes it as written."""
+    exact = dict(plan["relations"]["r1"], matchingStrategy="exact", cardinality="one_to_many")
+    customers = [{"entityId": "acme", "identity": {"customer_id": "c041"}, "attributes": {}}]
+    contracts = [{"entityId": "cnt-41", "identity": {"contract_number": "cnt-41"},
+                  "attributes": {"customer_id": "C041"}},
+                 {"entityId": "cnt-99", "identity": {"contract_number": "cnt-99"},
+                  "attributes": {"customer_id": "C002"}}]
+    matched = match_relationships(exact, customers, contracts,
+                                  reference_field="customer_id", target_field="customer_id")
+    assert [r["targetEntityId"] for r in matched["relationships"]] == ["cnt-41"]
+    assert matched["gaps"] == []
+
+
+def test_exact_between_plain_attributes_keeps_case(plan: dict):
+    exact = dict(plan["relations"]["r1"], matchingStrategy="exact")
+    sources = [{"entityId": "s1", "identity": {"k": "1"}, "attributes": {"ref": "AB-1"}},
+               {"entityId": "s2", "identity": {"k": "2"}, "attributes": {"ref": "ab-1"}}]
+    targets = [{"entityId": "t1", "identity": {"k": "t"}, "attributes": {"code": "AB-1"}}]
+    matched = match_relationships(exact, sources, targets, reference_field="ref", target_field="code")
+    assert [(r["sourceEntityId"], r["targetEntityId"]) for r in matched["relationships"]] == [("s1", "t1")]
+
+
 def test_one_to_many_matches_one_field_of_composite_target_identity(plan: dict):
     relation = dict(plan["relations"]["r1"], cardinality="one_to_many")
     sources = [{"entityId": "contract", "identity": {"contract_number": "c-1"},

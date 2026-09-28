@@ -1,13 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import { ModelsService } from '@modules/models/models.service';
 import { BadRequestException, ErrorCode } from '@modules/exceptions';
 import { UpdateEvaluationSettingsDto } from '../dto/update-evaluation-settings.dto';
-import {
-  EvaluationSettings,
-  EvaluationSettingsDocument,
-} from '../schemas/evaluation-settings.schema';
+import { PgEvaluationSettingsStore } from '../persistence/pg-evaluation-settings.store';
 
 export type EvaluationMode = 'informative' | 'corrective_transparent' | 'corrective_guarded';
 export type CorrectionFailureBehavior = 'publish_with_warning' | 'abstain' | 'require_human_review';
@@ -88,14 +83,13 @@ function normalizeSettings(value?: Partial<AdminEvaluationSettings>): AdminEvalu
 @Injectable()
 export class EvaluationSettingsService {
   constructor(
-    @InjectModel(EvaluationSettings.name)
-    private readonly settingsModel: Model<EvaluationSettingsDocument>,
+    private readonly settings: PgEvaluationSettingsStore,
     private readonly modelsService: ModelsService,
   ) { }
 
   async getSettings(): Promise<AdminEvaluationSettings> {
-    const existing = await this.settingsModel.findOne({ key: 'global' }).lean().exec();
-    return normalizeSettings(existing as Partial<AdminEvaluationSettings> | undefined);
+    const existing = await this.settings.find();
+    return normalizeSettings(existing ?? undefined);
   }
 
   async updateSettings(input: UpdateEvaluationSettingsDto): Promise<AdminEvaluationSettings> {
@@ -126,14 +120,7 @@ export class EvaluationSettingsService {
       }
     }
 
-    const saved = await this.settingsModel
-      .findOneAndUpdate(
-        { key: 'global' },
-        { $set: { key: 'global', responseReliability: next.responseReliability } },
-        { upsert: true, new: true, setDefaultsOnInsert: true },
-      )
-      .lean()
-      .exec();
-    return normalizeSettings(saved as Partial<AdminEvaluationSettings>);
+    await this.settings.upsert(next);
+    return normalizeSettings(await this.settings.find() ?? undefined);
   }
 }

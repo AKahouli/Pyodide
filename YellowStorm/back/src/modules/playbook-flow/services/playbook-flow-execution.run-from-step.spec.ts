@@ -2,15 +2,6 @@ import { createExecutionServiceForTests, createNoopGraphSanitizer } from './play
 
 describe('runFromStep', () => {
   it('queues replay execution with the immutable source snapshot', async () => {
-    const savedExecution = {
-      id: 'exec-replay-latest',
-      queuePosition: 0,
-      save: jest.fn().mockResolvedValue(undefined),
-      toJSON: jest.fn().mockReturnValue({ id: 'exec-replay-latest' }),
-    };
-    savedExecution.save = jest.fn().mockResolvedValue(savedExecution);
-    const ExecutionModel = jest.fn(() => savedExecution) as any;
-
     const sourceExecution = {
       id: 'exec-source',
       flowId: 'flow-1',
@@ -36,7 +27,11 @@ describe('runFromStep', () => {
       },
     };
 
-    const { service, queueService } = createExecutionServiceForTests({
+    const { service, queueService, executionRepository } = createExecutionServiceForTests({
+      executionRepository: {
+        findById: jest.fn().mockResolvedValue(sourceExecution),
+        insert: jest.fn(async (input: Record<string, unknown>) => ({ ...input, id: 'exec-replay-latest', queuePosition: 0, pendingApproval: null })),
+      },
       queueService: {
         admit: jest.fn().mockResolvedValue(1),
         release: jest.fn(),
@@ -75,15 +70,11 @@ describe('runFromStep', () => {
       graphSanitizerService: createNoopGraphSanitizer(),
       executionDispatcherService: { schedule: jest.fn() },
     });
-    (service as any).executionModel = Object.assign(ExecutionModel, {
-      findById: jest.fn(() => ({
-        select: jest.fn().mockResolvedValue(sourceExecution),
-      })),
-    });
+    const response = await service.runFromStep('exec-source', 'owner-1', { taskId: 'task-2' });
 
-    await service.runFromStep('exec-source', 'owner-1', { taskId: 'task-2' });
-
-    expect(ExecutionModel).toHaveBeenCalledWith(expect.objectContaining({
+    expect(executionRepository.findById).toHaveBeenCalledWith('exec-source', { withSnapshot: true });
+    expect(executionRepository.insert).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'queued',
       flowId: 'flow-1',
       inputContext: { ticketId: '42' },
       recursionLimit: 10,
@@ -101,6 +92,7 @@ describe('runFromStep', () => {
       },
     }));
     expect((queueService as any).admit).toHaveBeenCalledWith('owner-1', 'exec-replay-latest', 10, 50);
+    expect(response).toMatchObject({ id: 'exec-replay-latest', status: 'queued', replaySource: { executionId: 'exec-source', taskId: 'task-2', iteration: 0 } });
   });
 
   it('rejects when the target step does not exist in the source snapshot', async () => {
@@ -120,7 +112,8 @@ describe('runFromStep', () => {
       },
     };
 
-    const { service } = createExecutionServiceForTests({
+    const { service, executionRepository } = createExecutionServiceForTests({
+      executionRepository: { findById: jest.fn().mockResolvedValue(sourceExecution) },
       flowService: {
         findOneForExecutionStart: jest.fn().mockResolvedValue({
           nodes: [{ id: 'task-3', kind: 'step', input: { raw: 'new task 3' }, metadata: {} }],
@@ -140,14 +133,9 @@ describe('runFromStep', () => {
       graphSanitizerService: createNoopGraphSanitizer(),
       executionDispatcherService: { schedule: jest.fn() },
     });
-    (service as any).executionModel = Object.assign(jest.fn(), {
-      findById: jest.fn(() => ({
-        select: jest.fn().mockResolvedValue(sourceExecution),
-      })),
-    });
-
     await expect(service.runFromStep('exec-source', 'owner-1', { taskId: 'task-2' })).rejects.toThrow(
       'Target must be a top-level step node',
     );
+    expect(executionRepository.insert).not.toHaveBeenCalled();
   });
 });

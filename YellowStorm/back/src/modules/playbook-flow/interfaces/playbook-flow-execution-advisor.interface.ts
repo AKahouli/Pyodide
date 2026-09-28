@@ -1,4 +1,4 @@
-import type { AdvisorScoringMode } from '../schemas/playbook-flow.schema';
+import type { AdvisorScoringMode } from '../models/playbook-flow.model';
 
 export interface FlowExecutionJudgeResult {
   accuracyScore: number;

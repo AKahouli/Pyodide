@@ -53,13 +53,14 @@ function attributes(value: unknown): void {
   if (!Array.isArray(value)) invalid('attributes must be an array');
   for (const entry of value) {
     const item = object(entry,'attribute');
-    only(item,['key','label','type','required','description','options'],'attribute');
+    only(item,['key','label','type','required','description','options','aliases'],'attribute');
     if (!/^[a-z][a-z0-9_]*$/.test(text(item.key,'attribute.key'))) invalid('attribute.key is invalid');
     text(item.label,'attribute.label');
     if (!attributeTypes.includes(item.type as never)) invalid('attribute.type is invalid');
     bool(item.required,'attribute.required');
     if (item.description !== undefined) text(item.description,'attribute.description',true);
     if (item.options !== undefined) stringArray(item.options,'attribute.options');
+    if (item.aliases !== undefined) stringArray(item.aliases,'attribute.aliases');
   }
 }
 

@@ -10,14 +10,83 @@ import { PlaybookFlowTraceRedactionService } from './observability/playbook-flow
 import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
 import { PlaybookFlowReplayPlanService } from './playbook-flow-replay-plan.service';
 
+/** ExecutionRepository double: every guarded write holds, reads find a minimal run of owner-1. */
+export function createExecutionRepositoryMock(overrides: Record<string, any> = {}) {
+  return {
+    insert: jest.fn(async (input: Record<string, unknown>) => ({
+      id: 'exec-new',
+      status: 'queued',
+      queuePosition: 0,
+      hitlEvents: [],
+      pendingApproval: null,
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+      updatedAt: new Date('2026-01-01T00:00:00Z'),
+      ...input,
+    })),
+    findById: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }),
+    findOwned: jest.fn().mockResolvedValue(null),
+    listByFlow: jest.fn().mockResolvedValue([]),
+    countByFlow: jest.fn().mockResolvedValue(0),
+    listRecentByFlows: jest.fn().mockResolvedValue([]),
+    listActive: jest.fn().mockResolvedValue([]),
+    hasActiveForFlow: jest.fn().mockResolvedValue(false),
+    listRecentCompletedWithSnapshot: jest.fn().mockResolvedValue([]),
+    distinctOwnersWithQueued: jest.fn().mockResolvedValue([]),
+    findStaleRunning: jest.fn().mockResolvedValue([]),
+    countQueued: jest.fn().mockResolvedValue(0),
+    countActive: jest.fn().mockResolvedValue(0),
+    claimNextQueued: jest.fn().mockResolvedValue(null),
+    renumberQueue: jest.fn().mockResolvedValue([]),
+    update: jest.fn().mockResolvedValue(true),
+    transition: jest.fn().mockResolvedValue(true),
+    markStarted: jest.fn().mockResolvedValue(true),
+    markFailed: jest.fn().mockResolvedValue(true),
+    requeueRunning: jest.fn().mockResolvedValue(true),
+    setPendingApproval: jest.fn().mockResolvedValue(true),
+    answerHitlEvent: jest.fn().mockResolvedValue(true),
+    isInterruptStale: jest.fn().mockResolvedValue(false),
+    cancelOpen: jest.fn().mockResolvedValue(null),
+    delete: jest.fn().mockResolvedValue(true),
+    deleteByFlowAndOwner: jest.fn().mockResolvedValue(0),
+    ...overrides,
+  };
+}
+
+/** TaskResultRepository double: writes succeed, reads find nothing. */
+export function createTaskResultRepositoryMock(overrides: Record<string, any> = {}) {
+  return {
+    find: jest.fn().mockResolvedValue(null),
+    findLatestForTask: jest.fn().mockResolvedValue(null),
+    findLatestFailed: jest.fn().mockResolvedValue(null),
+    listForExecution: jest.fn().mockResolvedValue([]),
+    listForExecutions: jest.fn().mockResolvedValue([]),
+    listRecentArtifacts: jest.fn().mockResolvedValue([]),
+    upsert: jest.fn().mockResolvedValue(true),
+    appendOutput: jest.fn().mockResolvedValue(true),
+    updateManyForExecution: jest.fn().mockResolvedValue(0),
+    updateJudge: jest.fn().mockResolvedValue(true),
+    pushJudgeHistory: jest.fn().mockResolvedValue(true),
+    ...overrides,
+  };
+}
+
+export function createRouterDecisionRepositoryMock(overrides: Record<string, any> = {}) {
+  return {
+    create: jest.fn().mockResolvedValue(null),
+    listForExecution: jest.fn().mockResolvedValue([]),
+    ...overrides,
+  };
+}
+
 export function createExecutionServiceForTests(overrides?: {
-  executionModel?: Record<string, any>;
+  executionRepository?: Record<string, any>;
+  taskResultRepository?: Record<string, any>;
   queueService?: Record<string, any>;
   flowService?: Record<string, any>;
   streamEvents?: Record<string, any>;
   configService?: Record<string, any>;
   runtimeClient?: Record<string, any>;
-  routerDecisionModel?: Record<string, any>;
+  routerDecisionRepository?: Record<string, any>;
   builderService?: Record<string, any>;
   replayArtifactService?: Record<string, any>;
   replayPromptService?: Record<string, any>;
@@ -29,33 +98,13 @@ export function createExecutionServiceForTests(overrides?: {
   graphSanitizerService?: Record<string, any>;
   executionDispatcherService?: Record<string, any>;
   workspaceService?: Record<string, any>;
-  hitlMemoryModel?: Record<string, any>;
+  hitlMemoryRepository?: Record<string, any>;
   accessService?: Record<string, any>;
   executionSettingsResolver?: Record<string, any>;
 }) {
-  const executionModel = {
-    exists: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(null) })),
-    updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
-    findById: jest.fn(() => ({
-      select: jest.fn().mockReturnValue({
-        lean: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }),
-      }),
-      lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }) }),
-    })),
-    findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
-    ...overrides?.executionModel,
-  };
-  const taskResultModel = {
-    updateOne: jest.fn(),
-    updateMany: jest.fn(),
-    deleteMany: jest.fn(),
-    findOne: jest.fn(() => ({ sort: jest.fn().mockReturnThis(), lean: jest.fn().mockResolvedValue(null) })),
-  };
-  const routerDecisionModel = {
-    create: jest.fn(),
-    deleteMany: jest.fn(),
-    ...overrides?.routerDecisionModel,
-  };
+  const executionRepository = createExecutionRepositoryMock(overrides?.executionRepository);
+  const taskResultRepository = createTaskResultRepositoryMock(overrides?.taskResultRepository);
+  const routerDecisionRepository = createRouterDecisionRepositoryMock(overrides?.routerDecisionRepository);
   const configService = {
     get: jest.fn((key: string, fallback: unknown) => fallback),
     ...overrides?.configService,
@@ -170,21 +219,21 @@ export function createExecutionServiceForTests(overrides?: {
   };
 
   const hitlResumeService = new PlaybookExecutionHitlResumeService(
-    executionModel as any,
+    executionRepository as any,
     streamEvents as any,
-    overrides?.hitlMemoryModel as any,
+    overrides?.hitlMemoryRepository as any,
     accessService as any,
   );
 
   const singleStepPrepService = new PlaybookExecutionSingleStepPrepService(
-    executionModel as any,
-    taskResultModel as any,
+    executionRepository as any,
+    taskResultRepository as any,
   );
 
   const service = new PlaybookFlowExecutionService(
-    executionModel as any,
-    taskResultModel as any,
-    routerDecisionModel as any,
+    executionRepository as any,
+    taskResultRepository as any,
+    routerDecisionRepository as any,
     configService as any,
     runtimeClient as any,
     queueService as any,
@@ -213,7 +262,7 @@ export function createExecutionServiceForTests(overrides?: {
     undefined as any,
     undefined as any,
     workspaceService as any,
-    overrides?.hitlMemoryModel as any,
+    overrides?.hitlMemoryRepository as any,
     accessService as any,
     hitlResumeService,
     singleStepPrepService,
@@ -222,13 +271,13 @@ export function createExecutionServiceForTests(overrides?: {
 
   return {
     service,
-    executionModel,
+    executionRepository,
     workspaceService,
-    taskResultModel,
+    taskResultRepository,
     queueService,
     flowService,
     streamEvents,
-    routerDecisionModel,
+    routerDecisionRepository,
     idempotencyService,
     builderService,
     agentService,

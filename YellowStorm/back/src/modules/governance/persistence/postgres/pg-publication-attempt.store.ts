@@ -5,7 +5,7 @@ import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { newObjectId } from '@common/postgres/object-id';
 import { resolveQueryable } from '@common/postgres/transaction';
-import { PUBLICATION_ATTEMPT_STORE, type GovernancePublicationAttemptCreateInput, type PublicationAttemptStore } from '../publication-attempt-store';
+import { type GovernancePublicationAttemptCreateInput,  type PublicationAttemptStore } from '../publication-attempt-store';
 import type { GovernancePublicationAttemptRecord } from '../governance-records';
 
 const ATTEMPTS = schema.governancePublicationAttempts;

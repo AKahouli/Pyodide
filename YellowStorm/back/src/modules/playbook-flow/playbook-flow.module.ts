@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { MongooseModule } from '@nestjs/mongoose';
 import { JwtModule } from '@nestjs/jwt';
 import { AuthModule } from '@modules/auth/auth.module';
 import { AuthorizationModule } from '@modules/authorization/authorization.module';
@@ -16,31 +15,8 @@ import { UserModule } from '@modules/user';
 import { ConversationModule } from '@modules/conversation/conversation.module';
 
 import playbookFlowConfig from '@config/playbook-flow.config';
+import { PLAYBOOK_REPOSITORIES } from './persistence';
 
-import { Flow, FlowSchema } from './schemas/playbook-flow.schema';
-import { SharedPlaybook, SharedPlaybookSchema } from './schemas/shared-playbook.schema';
-import { FlowExecution, FlowExecutionSchema } from './schemas/playbook-flow-execution.schema';
-import { FlowTaskResult, FlowTaskResultSchema } from './schemas/playbook-flow-task-result.schema';
-import { FlowRouterDecision, FlowRouterDecisionSchema } from './schemas/playbook-flow-router-decision.schema';
-import { FlowNodeTemplate, FlowNodeTemplateSchema } from './schemas/playbook-flow-node-template.schema';
-import { FlowPromptTemplate, FlowPromptTemplateSchema } from './schemas/playbook-flow-prompt-template.schema';
-import { FlowOutputFormat, FlowOutputFormatSchema } from './schemas/playbook-flow-output-format.schema';
-import { FlowDesignMessage, FlowDesignMessageSchema } from './schemas/playbook-flow-design-message.schema';
-import { FlowDesignOperation, FlowDesignOperationSchema } from './schemas/playbook-flow-design-operation.schema';
-import { FlowValidatedReplay, FlowValidatedReplaySchema } from './schemas/playbook-flow-validated-replay.schema';
-import { FlowReplayRunReport, FlowReplayRunReportSchema } from './schemas/playbook-flow-replay-run-report.schema';
-import { FlowEvaluationBaseline, FlowEvaluationBaselineSchema } from './schemas/playbook-flow-evaluation-baseline.schema';
-import { FlowEvaluationExecution, FlowEvaluationExecutionSchema } from './schemas/playbook-flow-evaluation-execution.schema';
-import { FlowMailEventLedger, FlowMailEventLedgerSchema } from './schemas/playbook-flow-mail-event-ledger.schema';
-import { FlowIdempotencyRecord, FlowIdempotencyRecordSchema } from './schemas/playbook-flow-idempotency-record.schema';
-import { FlowExecutionLease, FlowExecutionLeaseSchema } from './schemas/playbook-flow-execution-lease.schema';
-import { FlowHitlMemory, FlowHitlMemorySchema } from './schemas/playbook-flow-hitl-memory.schema';
-import { PlaybookAssistantOperation, PlaybookAssistantOperationSchema } from './schemas/playbook-assistant-operation.schema';
-import { PlaybookAssistantRevision, PlaybookAssistantRevisionSchema } from './schemas/playbook-assistant-revision.schema';
-import { FlowDynamicReasoningAttempt, FlowDynamicReasoningAttemptSchema } from './schemas/playbook-flow-dynamic-reasoning-attempt.schema';
-import { PlaybookAssistantRequest, PlaybookAssistantRequestSchema } from './schemas/playbook-assistant-request.schema';
-import { PlaybookAssistantMessage, PlaybookAssistantMessageSchema } from './schemas/playbook-assistant-message.schema';
-import { PlaybookAssistantAttachment, PlaybookAssistantAttachmentSchema } from './schemas/playbook-assistant-attachment.schema';
 
 import { PlaybookFlowController } from './controllers/playbook-flow.controller';
 import { PlaybookFlowExecutionController } from './controllers/playbook-flow-execution.controller';
@@ -110,6 +86,7 @@ import { PlaybookIntentGraphBindingResolverService } from './services/playbook-i
 import { PlaybookIntentBlueprintParserService } from './services/playbook-intent-blueprint-parser.service';
 import { PlaybookIntentGraphBuilderService } from './services/playbook-intent-graph-builder.service';
 import { PlaybookIntentSuggestionDiagnosticsService } from './services/playbook-intent-suggestion-diagnostics.service';
+import { PlaybookIntentSuggestionNormalizerService } from './services/playbook-intent-suggestion-normalizer.service';
 import { PlaybookFlowPrimitiveRegistryService } from './services/playbook-flow-primitive-registry.service';
 import { PlaybookIntentBlueprintRepairService } from './services/playbook-intent-blueprint-repair.service';
 import { PlaybookIntentBlueprintCompilerService } from './services/playbook-intent-blueprint-compiler.service';
@@ -148,6 +125,7 @@ import { PlaybookExecutionStreamFinalizerService } from './execution/runtime/pla
 import { PlaybookExecutionHitlResumeService } from './execution/runtime/playbook-execution-hitl-resume.service';
 import { PlaybookExecutionSingleStepPrepService } from './execution/runtime/playbook-execution-single-step-prep.service';
 import { PlaybookDynamicReasoningEventHandlerService } from './execution/runtime/playbook-dynamic-reasoning-event-handler.service';
+import { PlaybookExecutionNodeAgentMetadataService } from './execution/runtime/playbook-execution-node-agent-metadata.service';
 import { PlaybookDesignRequestBuilderService } from './design/playbook-design-request-builder.service';
 import { PlaybookDesignResultApplierService } from './design/playbook-design-result-applier.service';
 import { PlaybookDesignSummaryService } from './design/playbook-design-summary.service';
@@ -159,36 +137,11 @@ import { PlaybookAssistantRequestService } from './assistant/playbook-assistant-
 import { PlaybookAssistantHistoryService } from './assistant/playbook-assistant-history.service';
 import { PlaybookAssistantActorGuard } from './guards/playbook-assistant-actor.guard';
 import { PlaybookAssistantAttachmentService } from './assistant/playbook-assistant-attachment.service';
+import { PlaybookAssistantSourcesService } from './assistant/playbook-assistant-sources.service';
 
 @Module({
   imports: [
     ConfigModule.forFeature(playbookFlowConfig),
-    MongooseModule.forFeature([
-      { name: Flow.name, schema: FlowSchema },
-      { name: SharedPlaybook.name, schema: SharedPlaybookSchema },
-      { name: FlowExecution.name, schema: FlowExecutionSchema },
-      { name: FlowTaskResult.name, schema: FlowTaskResultSchema },
-      { name: FlowRouterDecision.name, schema: FlowRouterDecisionSchema },
-      { name: FlowNodeTemplate.name, schema: FlowNodeTemplateSchema },
-      { name: FlowPromptTemplate.name, schema: FlowPromptTemplateSchema },
-      { name: FlowOutputFormat.name, schema: FlowOutputFormatSchema },
-      { name: FlowDesignMessage.name, schema: FlowDesignMessageSchema },
-      { name: FlowDesignOperation.name, schema: FlowDesignOperationSchema },
-      { name: FlowValidatedReplay.name, schema: FlowValidatedReplaySchema },
-      { name: FlowReplayRunReport.name, schema: FlowReplayRunReportSchema },
-      { name: FlowEvaluationBaseline.name, schema: FlowEvaluationBaselineSchema },
-      { name: FlowEvaluationExecution.name, schema: FlowEvaluationExecutionSchema },
-      { name: FlowMailEventLedger.name, schema: FlowMailEventLedgerSchema },
-      { name: FlowIdempotencyRecord.name, schema: FlowIdempotencyRecordSchema },
-      { name: FlowExecutionLease.name, schema: FlowExecutionLeaseSchema },
-      { name: FlowHitlMemory.name, schema: FlowHitlMemorySchema },
-      { name: PlaybookAssistantOperation.name, schema: PlaybookAssistantOperationSchema },
-      { name: PlaybookAssistantRevision.name, schema: PlaybookAssistantRevisionSchema },
-      { name: FlowDynamicReasoningAttempt.name, schema: FlowDynamicReasoningAttemptSchema },
-      { name: PlaybookAssistantRequest.name, schema: PlaybookAssistantRequestSchema },
-      { name: PlaybookAssistantMessage.name, schema: PlaybookAssistantMessageSchema },
-      { name: PlaybookAssistantAttachment.name, schema: PlaybookAssistantAttachmentSchema },
-    ]),
     JwtModule.register({}),
     AuthModule,
     AuthorizationModule,
@@ -226,6 +179,7 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     PlaybookFlowInternalArtifactController,
   ],
   providers: [
+    ...PLAYBOOK_REPOSITORIES,
     PlaybookFlowService,
     PlaybookShareService,
     FlowAccessService,
@@ -241,6 +195,7 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     PlaybookExecutionStreamFinalizerService,
     PlaybookExecutionHitlResumeService,
     PlaybookExecutionSingleStepPrepService,
+    PlaybookExecutionNodeAgentMetadataService,
     PlaybookDynamicReasoningEventHandlerService,
     PlaybookDesignRequestBuilderService,
     PlaybookDesignResultApplierService,
@@ -292,6 +247,7 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     PlaybookIntentBlueprintParserService,
     PlaybookIntentGraphBuilderService,
     PlaybookIntentSuggestionDiagnosticsService,
+    PlaybookIntentSuggestionNormalizerService,
     PlaybookIntentBlueprintRepairService,
     PlaybookIntentBlueprintCompilerService,
     PlaybookInputContractService,
@@ -324,6 +280,7 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     PlaybookAssistantHistoryService,
     PlaybookAssistantActorGuard,
     PlaybookAssistantAttachmentService,
+    PlaybookAssistantSourcesService,
   ],
   exports: [
     PlaybookFlowService,

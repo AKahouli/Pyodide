@@ -14,7 +14,6 @@ import {
   type WorkspaceArtifactCreateInput,
   type WorkspaceArtifactEditPatch,
   type WorkspaceArtifactListFilter,
-  type WorkspaceArtifactStore,
   type WorkspaceArtifactUsage,
 } from '../workspace-artifact-store';
 import { artifactCreateInputToRow, artifactRowToRecord } from '../workspace-artifact-record.mapper';
@@ -24,7 +23,7 @@ const ARTIFACTS = schema.workspaceArtifacts;
 type ArtifactRow = typeof ARTIFACTS.$inferSelect;
 
 @Injectable()
-export class PostgresWorkspaceArtifactStore implements WorkspaceArtifactStore {
+export class PostgresWorkspaceArtifactStore {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
 
   private get q() {

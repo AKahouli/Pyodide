@@ -3,6 +3,7 @@ import { WidgetChatService } from './widget-chat.service';
 import { NotFoundException, ServiceUnavailableException } from '@modules/exceptions';
 import { DocumentStatus, IndexingStatus } from '@modules/workspace/interfaces/document-status.enum';
 import { InMemoryWidgetMessageStore, InMemoryWidgetSessionStore, InMemoryWidgetTokenStore } from '../persistence/widget.store.fake';
+import { PgWidgetMessageStore, PgWidgetSessionStore, PgWidgetTokenStore } from '../persistence/pg-widget.store';
 
 const WS_ID = '507f1f77bcf86cd799439011';
 const DOC_ID = '507f1f77bcf86cd799439012';
@@ -38,9 +39,9 @@ function createCitationService() {
   const messageStore = new InMemoryWidgetMessageStore();
 
   const service = new WidgetChatService(
-    tokenStore,
-    sessionStore,
-    messageStore,
+    tokenStore as unknown as PgWidgetTokenStore,
+    sessionStore as unknown as PgWidgetSessionStore,
+    messageStore as unknown as PgWidgetMessageStore,
     {} as any,
     {} as any,
     {} as any,

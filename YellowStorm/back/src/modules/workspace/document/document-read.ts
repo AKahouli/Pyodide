@@ -78,6 +78,17 @@ export class WorkspaceDocumentRead {
   }
 
   /**
+   * Every completed document and folder of a workspace, at all levels, unpaginated. For callers that
+   * must see a whole workspace at once (a semantic mapping applied to all of its files).
+   */
+  async listAllInWorkspace(workspaceId: string): Promise<DocumentResponse[]> {
+    const documents = await this.documentStore.findAllByWorkspaceId(workspaceId);
+    return documents
+      .filter((document) => document.status === DocumentStatus.COMPLETED)
+      .map((document) => this.support.mapToResponse(document));
+  }
+
+  /**
    * List documents in a workspace
    */
   async findAllByWorkspace(

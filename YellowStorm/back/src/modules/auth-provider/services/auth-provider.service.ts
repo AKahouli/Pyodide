@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';
 import { SystemService } from '@modules/system/system.service';
@@ -16,19 +16,17 @@ import {
   AuthProviderAdminResponse,
   DecryptedProviderConfig,
 } from '../interfaces/auth-provider.interface';
-import {
-  AUTH_PROVIDER_STORE,
-  USER_PROVIDER_LINK_STORE,
-  type AuthProviderRecord,
-  type AuthProviderStore,
-  type UserProviderLinkStore,
+import {  
+  type AuthProviderRecord,    
 } from '../persistence/auth-provider.stores';
+import { PgUserProviderLinkStore } from '../persistence/pg-auth-provider.stores';
+import { PgAuthProviderStore } from '../persistence/pg-auth-provider.stores';
 
 @Injectable()
 export class AuthProviderService {
   constructor(
-    @Inject(AUTH_PROVIDER_STORE) private readonly providerStore: AuthProviderStore,
-    @Inject(USER_PROVIDER_LINK_STORE) private readonly linkStore: UserProviderLinkStore,
+    private readonly providerStore: PgAuthProviderStore,
+    private readonly linkStore: PgUserProviderLinkStore,
     private readonly cryptoService: CryptoService,
     private readonly logger: LoggerService,
     private readonly systemService: SystemService,

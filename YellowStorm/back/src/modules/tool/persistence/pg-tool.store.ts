@@ -7,14 +7,10 @@ import { newObjectId } from '@common/postgres';
 import { resolveQueryable, type PgQueryable } from '@common/postgres/transaction';
 import * as schema from '@modules/postgres/schema';
 import {
-  TOOL_CATEGORY_STORE,
-  TOOL_STORE,
   type NewToolRow,
   type ToolCategoryRow,
-  type ToolCategoryStore,
   type ToolListQuery,
   type ToolRow,
-  type ToolStore,
 } from './tool.store';
 
 type CategoryRow = typeof schema.catalogToolCategories.$inferSelect;
@@ -47,7 +43,7 @@ function toolToRow(r: ToolT): ToolRow {
   };
 }
 
-export class PgToolCategoryStore implements ToolCategoryStore {
+export class PgToolCategoryStore {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
 
   private get q(): PgQueryable<typeof schema> {
@@ -95,7 +91,7 @@ export class PgToolCategoryStore implements ToolCategoryStore {
   }
 }
 
-export class PgToolStore implements ToolStore {
+export class PgToolStore {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
 
   private get q(): PgQueryable<typeof schema> {

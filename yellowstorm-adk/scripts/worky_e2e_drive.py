@@ -18,7 +18,7 @@ All validated live end-to-end (2026-09-08) with gpt-5.6-terra for both roles.
 """
 import os, sys, time, uuid
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import grpc, psycopg2
+import grpc, psycopg
 from src.grpc_generated import companion_ai_pb2 as pb, companion_ai_pb2_grpc as pb_grpc
 
 import scripts.worky_e2e_runtask as base  # reuse _agents(), MESSAGE, USER, ADDR
@@ -42,7 +42,7 @@ def _run(stub, sid, msg):
 def _state(sid):
     """Read status + steps + the session interrupt straight from the read-model
     (GetSession can be slow under load; the read-model is authoritative)."""
-    c = psycopg2.connect(RM_DSN); cur = c.cursor()
+    c = psycopg.connect(RM_DSN); cur = c.cursor()
     cur.execute("select status, interrupt_id from sessions where id=%s", (sid,))
     row = cur.fetchone() or ("<none>", None)
     cur.execute("select title, status, interrupt_id from plan_steps where session_id=%s order by wave,ordinal", (sid,))
@@ -210,7 +210,7 @@ def scenario_amend_sends():
     for t, s, _ in steps:
         print(f"     - [{s:9}] {t[:56]}")
     # Proof of real delivery: a mail_wait row is written only after a successful send.
-    c = psycopg2.connect(RM_DSN); cur = c.cursor()
+    c = psycopg.connect(RM_DSN); cur = c.cursor()
     cur.execute("select expected_from, status from mail_waits where session_id=%s", (sid,))
     waits = cur.fetchall(); c.close()
     print(f"  MAIL/TEAMS WAITS (proof of send): {waits}")

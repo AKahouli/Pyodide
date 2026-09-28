@@ -6,11 +6,9 @@ import { isObjectId, newObjectId } from '@common/postgres';
 import { resolveQueryable, type PgQueryable } from '@common/postgres/transaction';
 import * as schema from '@modules/postgres/schema';
 import {
-  NOTIFICATION_STORE,
   type NewNotification,
   type NotificationFindOptions,
   type NotificationRecord,
-  type NotificationStore,
 } from './notification.store';
 
 type Row = typeof schema.opsNotifications.$inferSelect;
@@ -39,8 +37,8 @@ function toRecord(row: Row): NotificationRecord {
   };
 }
 
-/** PostgreSQL ops.notifications implementation of NotificationStore (plan 1B.1.2). */
-export class PgNotificationStore implements NotificationStore {
+/** PostgreSQL ops.notifications store (plan 1B.1.2). */
+export class PgNotificationStore {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
 
   private get q(): PgQueryable<typeof schema> {

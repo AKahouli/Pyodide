@@ -1,13 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
 import { Cron } from '@nestjs/schedule';
-import { Model } from 'mongoose';
 import { LoggerService } from '@modules/logger';
 import { PlaybookFlowMailGraphClientService } from '@modules/playbook-flow/services/playbook-flow-mail-graph-client.service';
-import {
-  WorkyMailSubscription,
-  WorkyMailSubscriptionDocument,
-} from '../schemas/worky-mail-subscription.schema';
+import { WorkyMailRepository } from '../persistence/worky-mail.repository';
+import type { WorkyMailSubscriptionRecord } from '../worky.types';
 import { WorkyOrchestratorGrpcClientService } from './worky-orchestrator.grpc-client.service';
 import { WorkyTurnContextService } from './worky-turn-context.service';
 import { extractMailToken, fullReplyText } from './worky-mail-token';
@@ -47,8 +43,7 @@ const SWEEP_CRON = '0 */2 * * * *';
 @Injectable()
 export class WorkyMailCatchupService {
   constructor(
-    @InjectModel(WorkyMailSubscription.name)
-    private readonly subscriptionModel: Model<WorkyMailSubscriptionDocument>,
+    private readonly subscriptions: WorkyMailRepository,
     private readonly graphClient: PlaybookFlowMailGraphClientService,
     private readonly orchestrator: WorkyOrchestratorGrpcClientService,
     private readonly turnContext: WorkyTurnContextService,
@@ -59,7 +54,7 @@ export class WorkyMailCatchupService {
 
   @Cron(SWEEP_CRON)
   async sweep(): Promise<void> {
-    const subscriptions = await this.subscriptionModel.find().lean().exec();
+    const subscriptions = await this.subscriptions.listAll();
     this.logger.log('Mail catch-up sweep tick', { mailboxes: subscriptions.length });
     for (const subscription of subscriptions) {
       try {
@@ -73,13 +68,10 @@ export class WorkyMailCatchupService {
     }
   }
 
-  /** Only the fields the sweep needs — a lean doc, not a hydrated model. */
-  private async sweepMailbox(subscription: {
-    _id: unknown;
-    userId: string;
-    mailboxAppKey: string;
-    lastSweptAt?: Date | null;
-  }): Promise<void> {
+  /** Only the fields the sweep needs. */
+  private async sweepMailbox(
+    subscription: Pick<WorkyMailSubscriptionRecord, 'id' | 'userId' | 'mailboxAppKey' | 'lastSweptAt'>,
+  ): Promise<void> {
     const lastSweptAt = subscription.lastSweptAt ?? undefined;
     const since = new Date(
       (lastSweptAt?.getTime() ?? Date.now() - COLD_START_LOOKBACK_MS) - OVERLAP_MS,
@@ -136,9 +128,7 @@ export class WorkyMailCatchupService {
       if (result.delivered) recovered += 1;
     }
 
-    await this.subscriptionModel
-      .updateOne({ _id: subscription._id }, { $set: { lastSweptAt: sweptAt } })
-      .exec();
+    await this.subscriptions.setLastSwept(subscription.id, sweptAt);
 
     if (recovered > 0) {
       this.logger.log('Mail catch-up recovered replies the webhook missed', {

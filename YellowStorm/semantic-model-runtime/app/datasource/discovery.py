@@ -207,10 +207,7 @@ def discover(source: dict[str, Any], options: dict[str, Any] | None = None) -> d
     elif source.get("corrupt") is True:
         status, structure = "corrupt", {}
         warnings.append({"code": "corrupt_source", "message": "Source failed validation; not retried automatically."})
-    elif indexing == "failed":
-        status, structure = "indexing_required", {}
-        warnings.append({"code": "indexing_required",
-                         "message": "Population needs the existing logical index; re-run the unchanged upload/indexing workflow."})
+    # Spreadsheets are read straight from the uploaded file, so their indexing state does not matter.
     elif mime in _TABULAR_MIMES:
         kind = _TABULAR_MIMES[mime]
         size = source.get("sizeBytes")
@@ -220,6 +217,10 @@ def discover(source: dict[str, Any], options: dict[str, Any] | None = None) -> d
                              "message": "Preview is bounded; full preparation runs as a batch job."})
         else:
             status, structure = "ready", _structure_hint(source, kind)
+    elif mime in _DOCUMENT_MIMES and indexing == "failed":
+        status, structure = "indexing_required", {}
+        warnings.append({"code": "indexing_required",
+                         "message": "Population needs the existing logical index; re-run the unchanged upload/indexing workflow."})
     elif mime in _DOCUMENT_MIMES:
         if indexing in INDEX_COMPLETE:
             status, structure = "ready", _structure_hint(source, "document")

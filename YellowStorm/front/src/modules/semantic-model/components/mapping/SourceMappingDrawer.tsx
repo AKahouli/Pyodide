@@ -18,6 +18,7 @@ import { useSemanticModelEditorStore } from '../../store';
 import type { KnowledgeResource } from '../../hooks/use-knowledge-linking';
 import type { ConceptSourceMapping, SourceFieldMapping, SheetProfile } from '../../types';
 import { DocumentSourceMappingDrawer } from './DocumentSourceMappingDrawer';
+import type { SuggestionSource } from '../editor/SuggestConceptsDialog';
 
 export interface SourceMappingTarget {
   workspaceId: string;
@@ -29,6 +30,33 @@ export interface SourceMappingTarget {
   conceptId?: string;
   mapping?: ConceptSourceMapping;
   bulkEdit?: boolean;
+  /** Map many files of this workspace at once: all of them, or picked folders and files. */
+  workspace?: WorkspaceSourceScope;
+}
+
+export interface WorkspaceSourceScope {
+  workspaceId: string;
+  /** The name shown for the source ("Legal", or "Legal / Contracts" when opened from a folder). */
+  name: string;
+  /** The workspace's own name, for "every file in …". */
+  workspaceName?: string;
+  /** Opened from a folder: that folder starts picked. */
+  folderId?: string | null;
+  /** What is picked to start with; nothing means the whole workspace. */
+  folderIds?: string[];
+  documentIds?: string[];
+}
+
+/** A target that maps many readable files of a workspace with one mapping. */
+export function sourceMappingTargetFromWorkspace(scope: WorkspaceSourceScope, conceptId?: string): SourceMappingTarget {
+  return {
+    workspaceId: scope.workspaceId,
+    documentId: `workspace:${scope.workspaceId}:${scope.folderId || 'all'}`,
+    documentName: scope.name,
+    assetKind: 'document',
+    conceptId,
+    workspace: scope,
+  };
 }
 
 export function sourceMappingTargetFromResource(resource: Extract<KnowledgeResource, { kind: 'document' }>, conceptId?: string): SourceMappingTarget {
@@ -45,12 +73,12 @@ export function sourceMappingTargetFromResource(resource: Extract<KnowledgeResou
 
 const normalizeName = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-export function SourceMappingDrawer(props: Readonly<{ modelId: string; target: SourceMappingTarget | null; onClose: () => void }>) {
+export function SourceMappingDrawer({ onSuggestConcepts, ...props }: Readonly<{ modelId: string; target: SourceMappingTarget | null; onClose: () => void; onSuggestConcepts?: (source: SuggestionSource) => void }>) {
   if (props.target?.assetKind === 'document') return <DocumentSourceMappingDrawer {...props} />;
-  return <StructuredSourceMappingDrawer {...props} />;
+  return <StructuredSourceMappingDrawer {...props} onSuggestConcepts={onSuggestConcepts} />;
 }
 
-function StructuredSourceMappingDrawer({ modelId, target, onClose }: Readonly<{ modelId: string; target: SourceMappingTarget | null; onClose: () => void }>) {
+function StructuredSourceMappingDrawer({ modelId, target, onClose, onSuggestConcepts }: Readonly<{ modelId: string; target: SourceMappingTarget | null; onClose: () => void; onSuggestConcepts?: (source: SuggestionSource) => void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const client = useQueryClient();
   const graph = useSemanticModelEditorStore((state) => state.graph);
@@ -89,6 +117,19 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose }: Readonly<{ 
     ),
     onError: (error) => showError(t('sourceAnalysis.error'), { description: parseApiError(error).message }),
   });
+
+  // A spreadsheet is usable as soon as it is uploaded: when it has not been read yet, read it now
+  // instead of asking the user to start an analysis.
+  const readKey = `${target?.documentId ?? ''}|${sheetName}`;
+  const [autoRead, setAutoRead] = useState('');
+  const unread = profile.isError || (profile.data && !profile.data.sheets.length && !sheetName);
+  useEffect(() => {
+    if (!target || !unread || analyze.isPending || autoRead === readKey) return;
+    setAutoRead(readKey);
+    analyze.mutate();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unread, readKey]);
+  const reading = profile.isLoading || analyze.isPending;
 
   const fields = sheetName ? profile.data?.fields ?? [] : [];
 
@@ -142,11 +183,14 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose }: Readonly<{ 
       });
       return result;
     },
-    onSuccess: async () => {
+    onSuccess: async (result) => {
+      // The mapping command advanced the model revision; adopt it so the next autosave does not conflict.
+      useSemanticModelEditorStore.getState().adoptRevision(result.revision);
       await Promise.all([
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) }),
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.mappingHealth(modelId) }),
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId) }),
+        client.invalidateQueries({ queryKey: semanticModelQueryKeys.freshness(modelId) }),
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.model(modelId) }),
         client.invalidateQueries({ queryKey: ['semantic-models', 'data-preview', modelId] }),
       ]);
@@ -160,12 +204,13 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose }: Readonly<{ 
   const canSave = Boolean(conceptId && sheetName && activeMappings.length && identityValid) && !save.isPending;
 
   return (
-    <Sheet open={Boolean(target)} onOpenChange={(open) => { if (!open) onClose(); }}>
+    <Sheet modal={false} open={Boolean(target)} onOpenChange={(open) => { if (!open) onClose(); }}>
       {target && (
-        <SheetContent side='right' className='flex w-full flex-col gap-0 p-0 sm:max-w-xl'>
+        <SheetContent side='right' className='flex w-full flex-col gap-0 p-0 sm:max-w-xl' onInteractOutside={(event) => event.preventDefault()}>
           <SheetHeader className='border-b p-5'>
             <SheetTitle>{target.mapping ? t('mapping.editTitle') : t('mapping.title', { name: target.documentName })}</SheetTitle>
             <SheetDescription>{t('mapping.description')}</SheetDescription>
+            {onSuggestConcepts && !target.mapping && (target.assetKind === 'excel_sheet' || target.assetKind === 'csv') && <Button size='sm' variant='outline' className='mt-2 w-fit' onClick={() => onSuggestConcepts({ workspaceId: target.workspaceId, documentId: target.documentId, documentName: target.documentName, assetKind: target.assetKind as SuggestionSource['assetKind'] })}><Sparkles className='mr-2 h-4 w-4' />{t('suggest.openFromFile')}</Button>}
           </SheetHeader>
           <div className='min-h-0 flex-1 space-y-5 overflow-y-auto p-5'>
             <div className='space-y-2'>
@@ -180,16 +225,17 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose }: Readonly<{ 
               <Select value={sheetName} onValueChange={(value) => { setSheetName(value); setMappings([]); setIdentityField(''); preview.reset(); }} disabled={Boolean(target.mapping)}>
                 <SelectTrigger aria-label={t('mapping.sheet')}><SelectValue placeholder={t('mapping.chooseSheet')} /></SelectTrigger>
                 <SelectContent>{(profile.data?.sheets ?? []).map((sheet) => (
-                  <SelectItem key={sheet.name} value={sheet.name}>{sheet.name} · {t('mapping.sheetMeta', { rows: sheet.rowCount, fields: sheet.fieldCount })}</SelectItem>
+                  <SelectItem key={sheet.name} value={sheet.name}>{sheet.name}{sheet.rowCount || sheet.fieldCount ? ` · ${t('mapping.sheetMeta', { rows: sheet.rowCount, fields: sheet.fieldCount })}` : ''}</SelectItem>
                 ))}</SelectContent>
               </Select>
-              {profile.isLoading && <div className='flex items-center gap-2 text-xs text-muted-foreground'><Loader2 className='h-3.5 w-3.5 animate-spin' />{t('sourceAnalysis.loading')}</div>}
-              {profile.isError && (
+              {reading && <div className='flex items-center gap-2 text-xs text-muted-foreground'><Loader2 className='h-3.5 w-3.5 animate-spin' />{t('sourceAnalysis.loading')}</div>}
+              {/* Shown once the file was read and still gave no sheets, or reading it failed. */}
+              {!reading && unread && (analyze.isError || autoRead === readKey) && (
                 <div className='flex items-start gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive'>
                   <AlertTriangle className='mt-0.5 h-3.5 w-3.5 shrink-0' />
-                  <span className='min-w-0 flex-1'>{t('sourceAnalysis.required')}</span>
+                  <span className='min-w-0 flex-1'>{t('sourceAnalysis.readFailed')}</span>
                   <Button size='sm' variant='ghost' className='h-6 shrink-0 px-2 text-[11px]' disabled={analyze.isPending} onClick={() => analyze.mutate()}>
-                    {analyze.isPending ? <Loader2 className='mr-1 h-3 w-3 animate-spin' /> : null}{t('sourceAnalysis.analyze')}
+                    {analyze.isPending ? <Loader2 className='mr-1 h-3 w-3 animate-spin' /> : null}{t('sourceAnalysis.retry')}
                   </Button>
                 </div>
               )}

@@ -1,6 +1,7 @@
 import { Readable, Writable } from 'stream';
 import { ConflictException, PayloadTooLargeException } from '@nestjs/common';
 import { WorkspaceAssetInternalController } from './workspace-asset-internal.controller';
+import { SKIP_RESPONSE_WRAP_KEY } from '../response/decorators/skip-response-wrap.decorator';
 
 const query = {
   actorUserId: '6512f0a1c9e77a001234aaa1',
@@ -131,6 +132,10 @@ describe('WorkspaceAssetInternalController', () => {
       { sha256: hash, datasetid: datasetId },
     );
     expect(result).toEqual({ datasetId, sizeBytes: 4, contentHash: `sha256:${hash}` });
+  });
+
+  it('answers a dataset upload with the bare manifest the runtime verifies', () => {
+    expect(Reflect.getMetadata(SKIP_RESPONSE_WRAP_KEY, WorkspaceAssetInternalController.prototype.putDataset)).toBe(true);
   });
 
   it('rejects a dataset without a valid size before storage', async () => {

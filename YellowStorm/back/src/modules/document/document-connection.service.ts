@@ -2,7 +2,7 @@ import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { S3Client, HeadBucketCommand, CreateBucketCommand } from '@aws-sdk/client-s3';
 import { LoggerService } from '../logger';
-import { randomBackoffJitter } from '@common/utils';
+import { ReconnectBackoff } from '@common/utils';
 
 interface ReconnectConfig {
   enabled: boolean;
@@ -34,8 +34,6 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
   private isConnecting = false;
   private lastError: string | null = null;
   private lastCheckedAt: Date | null = null;
-  private reconnectAttempt = 0;
-  private reconnectTimeout: NodeJS.Timeout | null = null;
   private healthCheckInterval: NodeJS.Timeout | null = null;
 
   private readonly endpoint: string;
@@ -46,6 +44,7 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
   private readonly forcePathStyle: boolean;
   private readonly publicUrl: string;
   private readonly reconnectConfig: ReconnectConfig;
+  private readonly reconnect: ReconnectBackoff;
   private readonly healthCheckConfig: HealthCheckConfig;
 
   constructor(
@@ -70,6 +69,14 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
       multiplier: this.configService.get<number>('storage.reconnect.multiplier', 2),
     };
 
+    this.reconnect = new ReconnectBackoff(this.reconnectConfig, {
+      connect: () => this.connect(),
+      label: () => 'Ceph S3',
+      log: (message) => this.logger.log(message, { display: true, save: false }),
+      warn: (message) => this.logger.warn(message),
+      error: (message) => this.logger.error(message),
+    });
+
     this.healthCheckConfig = {
       enabled: this.configService.get<boolean>('storage.healthCheck.enabled', true),
       intervalMs: this.configService.get<number>('storage.healthCheck.intervalMs', 60000),
@@ -83,7 +90,7 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
 
   onModuleDestroy(): void {
     this.stopHealthCheck();
-    this.clearReconnectTimeout();
+    this.reconnect.clear();
     this.s3Client?.destroy();
   }
 
@@ -107,7 +114,7 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
       this.logger.log(
         'Attempting to connect to Ceph S3...',
         {
-          attempt: this.reconnectAttempt + 1,
+          attempt: this.reconnect.attempts + 1,
           bucket: this.bucket,
           endpoint: this.endpoint,
         },
@@ -129,7 +136,7 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
       this.isConnected = true;
       this.lastError = null;
       this.lastCheckedAt = new Date();
-      this.reconnectAttempt = 0;
+      this.reconnect.reset();
 
       this.logger.log('Ceph S3 connection established', {
         bucket: this.bucket,
@@ -143,10 +150,10 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
 
       this.logger.error('Ceph S3 connection failed', {
         message: err.message,
-        attempt: this.reconnectAttempt + 1,
+        attempt: this.reconnect.attempts + 1,
       });
 
-      this.scheduleReconnect();
+      this.reconnect.schedule();
     } finally {
       this.isConnecting = false;
     }
@@ -186,7 +193,7 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
       this.isConnected = true;
       this.lastError = null;
       this.lastCheckedAt = new Date();
-      this.reconnectAttempt = 0;
+      this.reconnect.reset();
 
       if (wasDisconnected) {
         this.logger.log('Ceph S3 connection restored');
@@ -205,7 +212,7 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
         this.logger.warn('Ceph S3 connection lost', {
           error: err.message,
         });
-        this.scheduleReconnect();
+        this.reconnect.schedule();
       }
 
       return false;
@@ -235,55 +242,6 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
     }
   }
 
-  private scheduleReconnect(): void {
-    if (!this.reconnectConfig.enabled) {
-      this.logger.warn('Reconnection disabled, Ceph S3 will remain disconnected');
-      return;
-    }
-
-    if (
-      this.reconnectConfig.maxAttempts > 0 &&
-      this.reconnectAttempt >= this.reconnectConfig.maxAttempts
-    ) {
-      this.logger.error(
-        `Max reconnection attempts (${this.reconnectConfig.maxAttempts}) reached for Ceph S3. Giving up.`,
-      );
-      return;
-    }
-
-    this.clearReconnectTimeout();
-
-    const delay = this.calculateBackoffDelay();
-    this.reconnectAttempt++;
-
-    this.logger.log(
-      `Scheduling Ceph S3 reconnection attempt ${this.reconnectAttempt} in ${delay}ms`,
-      { display: true, save: false },
-    );
-
-    this.reconnectTimeout = setTimeout(() => {
-      void this.connect();
-    }, delay);
-
-    this.reconnectTimeout.unref();
-  }
-
-  private calculateBackoffDelay(): number {
-    const { initialDelayMs, maxDelayMs, multiplier } = this.reconnectConfig;
-
-    const jitter = randomBackoffJitter();
-    const exponentialDelay = initialDelayMs * Math.pow(multiplier, this.reconnectAttempt);
-    const delayWithJitter = exponentialDelay * jitter;
-
-    return Math.min(delayWithJitter, maxDelayMs);
-  }
-
-  private clearReconnectTimeout(): void {
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-      this.reconnectTimeout = null;
-    }
-  }
 
   // Public accessors
 
@@ -313,8 +271,8 @@ export class DocumentConnectionService implements OnModuleInit, OnModuleDestroy 
       connected: this.isConnected,
       error: this.lastError,
       lastCheckedAt: this.lastCheckedAt || undefined,
-      reconnectAttempts: this.reconnectAttempt,
-      isReconnecting: this.reconnectTimeout !== null,
+      reconnectAttempts: this.reconnect.attempts,
+      isReconnecting: this.reconnect.isWaiting,
     };
   }
 }

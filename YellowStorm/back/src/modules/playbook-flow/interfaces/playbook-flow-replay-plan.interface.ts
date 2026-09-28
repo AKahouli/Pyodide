@@ -4,7 +4,7 @@ import type {
   ReplaySemanticChecklistItem,
   ReplayToolTraceTemplateItem,
 } from './playbook-flow-replay-template.interface';
-import type { FlowReplayToolCall } from '../schemas/playbook-flow-validated-replay.schema';
+import type { FlowReplayToolCall } from '../models/playbook-flow-validated-replay.model';
 
 export type ReplayContextMappingSource =
   | ReplayContextVariable['source']

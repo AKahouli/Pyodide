@@ -171,6 +171,9 @@ const PlaybookPromptsPage = React.lazy(() =>
 );
 const PlaybookSettingsPage = React.lazy(() =>
   import('./modules/admin/pages/PlaybookSettingsPage').then((m) => ({ default: m.PlaybookSettingsPage }))
+)
+const PlatformSettingsPage = React.lazy(() =>
+  import('./modules/admin/pages/PlatformSettingsPage').then((m) => ({ default: m.PlatformSettingsPage }))
 );
 const WorkspaceSettingsPage = React.lazy(() =>
   import('./modules/admin/pages/WorkspaceSettingsPage').then((m) => ({ default: m.WorkspaceSettingsPage }))
@@ -463,6 +466,14 @@ export const router = createHashRouter([
             element: lazyPage(
               <PermissionGuard permissions={['system.maintenance', 'system.*', '*']}>
                 <PlaybookSettingsPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'platform-settings',
+            element: lazyPage(
+              <PermissionGuard permissions={['system.*', '*']}>
+                <PlatformSettingsPage />
               </PermissionGuard>
             ),
           },
