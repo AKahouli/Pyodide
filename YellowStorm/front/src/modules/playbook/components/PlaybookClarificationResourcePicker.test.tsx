@@ -1,66 +1,30 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { PlaybookClarificationResourcePicker } from './PlaybookClarificationResourcePicker';
 
-const workspaceApiMocks = vi.hoisted(() => ({
-  getWorkspaces: vi.fn(),
-  getHierarchicalDocuments: vi.fn(),
+const base = { folderIds: [], folders: [], fileCount: 0, stillIndexing: 0, reason: '' };
+// The chooser has its own tests: here it shows the mode it was opened in and hands back a choice.
+vi.mock('@/modules/semantic-model/components/assistant/SourceChooser', () => ({
+  SourceChooserDialog: ({ open, mode, onChoose }: { open: boolean; mode: string; onChoose: (option: unknown) => void }) => open ? <>
+    <button type='button' onClick={() => onChoose({ ...base, workspaceId: 'ws-1', workspaceName: 'Legal', kind: 'workspace', documentIds: [], documents: [] })}>{mode}: whole workspace</button>
+    <button type='button' onClick={() => onChoose({ ...base, workspaceId: 'ws-1', workspaceName: 'Legal', kind: 'document', documentIds: ['doc-1'], documents: ['Brief.pdf'], mimeType: 'application/pdf' })}>{mode}: one file</button>
+  </> : null,
 }));
-
-const translationMocks = vi.hoisted(() => ({
-  t: vi.fn((key: string, options?: Record<string, string>) => options?.name ? `${key}:${options.name}` : key),
-}));
-
-vi.mock('@/modules/localization', () => ({
-  useModuleTranslation: () => ({ t: translationMocks.t }),
-}));
-
-vi.mock('@/modules/workspace/api', () => ({
-  getWorkspaces: workspaceApiMocks.getWorkspaces,
-  getHierarchicalDocuments: workspaceApiMocks.getHierarchicalDocuments,
-}));
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => { resolve = next; });
-  return { promise, resolve };
-}
 
 describe('PlaybookClarificationResourcePicker', () => {
-  it('ignores stale document responses when switching workspaces', async () => {
-    const firstDocuments = deferred<{ documents: Array<Record<string, unknown>> }>();
-    const secondDocuments = deferred<{ documents: Array<Record<string, unknown>> }>();
-    workspaceApiMocks.getWorkspaces.mockResolvedValue({
-      workspaces: [
-        { id: 'workspace-1', name: 'Finance', documentCount: 1 },
-        { id: 'workspace-2', name: 'Legal', documentCount: 1 },
-      ],
-    });
-    workspaceApiMocks.getHierarchicalDocuments
-      .mockReturnValueOnce(firstDocuments.promise)
-      .mockReturnValueOnce(secondDocuments.promise);
+  it('chooses one file or a whole workspace from the searchable list', () => {
+    const onSelect = vi.fn();
+    const onOpenChange = vi.fn();
+    render(<PlaybookClarificationResourcePicker open mode='workspace_or_document' onOpenChange={onOpenChange} onSelect={onSelect} />);
+    fireEvent.click(screen.getByText('file: one file'));
+    expect(onSelect).toHaveBeenCalledWith({ kind: 'document', id: 'doc-1', name: 'Brief.pdf', workspaceId: 'ws-1', workspaceName: 'Legal', mimeType: 'application/pdf' });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    fireEvent.click(screen.getByText('file: whole workspace'));
+    expect(onSelect).toHaveBeenLastCalledWith({ kind: 'workspace', id: 'ws-1', name: 'Legal', workspaceId: 'ws-1', workspaceName: 'Legal' });
+  });
 
-    render(
-      <PlaybookClarificationResourcePicker
-        open
-        mode="workspace_or_document"
-        onOpenChange={vi.fn()}
-        onSelect={vi.fn()}
-      />,
-    );
-
-    await waitFor(() => expect(screen.getByLabelText('intentBar.design.resource.workspaceLabel')).toHaveValue('workspace-1'));
-    fireEvent.change(screen.getByLabelText('intentBar.design.resource.workspaceLabel'), { target: { value: 'workspace-2' } });
-    secondDocuments.resolve({
-      documents: [{ id: 'legal-doc', filename: 'legal.pdf', originalName: 'Legal Brief.pdf', mimeType: 'application/pdf', path: '/Legal/Brief.pdf', workspaceId: 'workspace-2', isFolder: false }],
-    });
-    await waitFor(() => expect(screen.getByText('Legal Brief.pdf')).toBeInTheDocument());
-
-    firstDocuments.resolve({
-      documents: [{ id: 'finance-doc', filename: 'finance.pdf', originalName: 'Finance Report.pdf', mimeType: 'application/pdf', path: '/Finance/Report.pdf', workspaceId: 'workspace-1', isFolder: false }],
-    });
-
-    await waitFor(() => expect(screen.queryByText('Finance Report.pdf')).not.toBeInTheDocument());
-    expect(screen.getByText('Legal Brief.pdf')).toBeInTheDocument();
+  it('chooses only a workspace for a destination', () => {
+    render(<PlaybookClarificationResourcePicker open mode='destination_workspace' onOpenChange={vi.fn()} onSelect={vi.fn()} />);
+    expect(screen.getByText('workspace: whole workspace')).toBeInTheDocument();
   });
 });

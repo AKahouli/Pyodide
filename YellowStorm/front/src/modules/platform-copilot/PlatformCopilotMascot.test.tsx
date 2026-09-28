@@ -90,6 +90,8 @@ vi.mock('@/modules/playbook', () => {
 });
 
 vi.mock('@/modules/playbook/api', () => ({ getExecution: vi.fn() }));
+// The run status under an execution button has its own tests.
+vi.mock('@/modules/playbook/components/assistant/PlaybookRunStatus', () => ({ PlaybookRunStatus: () => null }));
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({

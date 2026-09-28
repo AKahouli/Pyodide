@@ -21,6 +21,7 @@ type Choice = {
   whole: boolean;
   pick: WorkspacePick;
   names: Record<string, string>;
+  mimeTypes?: Record<string, string>;
   spreadsheet?: { id: string; name: string; mimeType: string };
 };
 
@@ -40,21 +41,48 @@ export function choiceToOption(choice: Choice): SourceSuggestionOption {
   };
 }
 
+/** In `file` mode the tree picks one file: the one just ticked replaces the one before. */
+function onePick(current: WorkspacePick, next: WorkspacePick): WorkspacePick {
+  const added = next.documentIds.find((id) => !current.documentIds.includes(id));
+  return { folderIds: [], documentIds: added ? [added] : next.documentIds.slice(-1) };
+}
+
+/** The one file chosen, with its type, or the whole workspace. */
+function oneFile(choice: Choice): SourceSuggestionOption {
+  const option = choiceToOption(choice);
+  const [id] = option.documentIds;
+  return option.kind === 'documents' && id ? { ...option, kind: 'document', mimeType: choice.mimeTypes?.[id] } : option;
+}
+
 function isComplete(choice: Choice | null): choice is Choice {
   return Boolean(choice && (choice.spreadsheet || choice.whole || choice.pick.folderIds.length || choice.pick.documentIds.length));
 }
+
+/**
+ * What can be chosen: `source` (a semantic model source: one spreadsheet alone, or readable files and folders),
+ * `files` (any files, or a whole workspace), `file` (one file, or a whole workspace) or `workspace` (one workspace).
+ */
+export type SourceChooserMode = 'source' | 'files' | 'file' | 'workspace';
 
 /**
  * Every workspace the person can open, in a list they scroll and search, to choose the source of one concept
  * themselves. Searching also finds files by name in all of them. Nothing is connected here: the choice opens
  * in the designer, which shows what will be read before it is saved.
  */
-export function SourceChooserDialog({ open, modelId, conceptLabel, onClose, onChoose }: Readonly<{
+export function SourceChooserDialog({ open, modelId, conceptLabel, onClose, onChoose, mode = 'source', searchFiles, title, description, useLabel, initialSearch = '' }: Readonly<{
   open: boolean;
-  modelId: string;
+  /** The model whose file search is used, unless `searchFiles` is given. */
+  modelId?: string;
   conceptLabel: string;
   onClose: () => void;
   onChoose: (option: SourceSuggestionOption) => void;
+  mode?: SourceChooserMode;
+  searchFiles?: (term: string) => Promise<{ files: SourceFileMatch[] }>;
+  title?: string;
+  description?: string;
+  useLabel?: string;
+  /** What the search starts with, such as the name a suggestion quoted. */
+  initialSearch?: string;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
   const [search, setSearch] = useState('');
@@ -65,7 +93,8 @@ export function SourceChooserDialog({ open, modelId, conceptLabel, onClose, onCh
 
   useEffect(() => {
     if (!open) return;
-    setSearch(''); setTerm(''); setChoice(null); setExpanded(null); setReplaced(null);
+    setSearch(initialSearch); setTerm(initialSearch.trim()); setChoice(null); setExpanded(null); setReplaced(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
   useEffect(() => {
     const timer = window.setTimeout(() => setTerm(search.trim()), 250);
@@ -94,11 +123,14 @@ export function SourceChooserDialog({ open, modelId, conceptLabel, onClose, onCh
     },
     placeholderData: (previous) => previous,
   });
+  const findsFiles = mode !== 'workspace';
   const files = useQuery({
-    queryKey: ['semantic-model', 'source-chooser', 'files', modelId, term],
-    enabled: open && term.length >= MIN_FILE_SEARCH,
-    queryFn: () => semanticModelApi.searchSourceFiles(modelId, term),
+    queryKey: ['semantic-model', 'source-chooser', 'files', modelId ?? 'any', mode, term],
+    enabled: open && findsFiles && term.length >= MIN_FILE_SEARCH,
+    queryFn: () => searchFiles ? searchFiles(term) : semanticModelApi.searchSourceFiles(modelId ?? '', term),
   });
+  /** A spreadsheet is a source on its own only for a semantic model; elsewhere it is a file like any other. */
+  const isSheet = (file: Pick<SourceFileMatch, 'kind' | 'mimeType'>) => mode === 'source' && (file.kind === 'spreadsheet' || isStructuredDocument(file.mimeType));
 
   /** A source covers one workspace: picking in another one starts over there, and says so. */
   const inWorkspace = (workspace: { id: string; name: string }, next: (current: Choice) => Choice) => {
@@ -111,14 +143,18 @@ export function SourceChooserDialog({ open, modelId, conceptLabel, onClose, onCh
     inWorkspace(row, (current) => current);
   };
   const toggleFile = (file: SourceFileMatch, checked: boolean) => {
-    if (file.kind === 'spreadsheet') {
+    if (isSheet(file)) {
       inWorkspace({ id: file.workspaceId, name: file.workspaceName }, (current) => ({ ...current, spreadsheet: { id: file.id, name: file.name, mimeType: file.mimeType } }));
       return;
     }
     inWorkspace({ id: file.workspaceId, name: file.workspaceName }, (current) => {
-      const documentIds = new Set(current.whole ? [] : current.pick.documentIds);
+      const documentIds = new Set(current.whole || mode === 'file' ? [] : current.pick.documentIds);
       if (checked) documentIds.add(file.id); else documentIds.delete(file.id);
-      return { ...current, spreadsheet: undefined, whole: false, pick: { folderIds: current.whole ? [] : current.pick.folderIds, documentIds: [...documentIds] }, names: { ...current.names, [file.id]: file.name } };
+      return {
+        ...current, spreadsheet: undefined, whole: false,
+        pick: { folderIds: current.whole || mode === 'file' ? [] : current.pick.folderIds, documentIds: [...documentIds] },
+        names: { ...current.names, [file.id]: file.name }, mimeTypes: { ...current.mimeTypes, [file.id]: file.mimeType },
+      };
     });
   };
 
@@ -128,14 +164,14 @@ export function SourceChooserDialog({ open, modelId, conceptLabel, onClose, onCh
     : t('assistantSources.chooser.pickedChosen', { workspace: choice.workspaceName, items: [...choice.pick.folderIds, ...choice.pick.documentIds].map((id) => choice.names[id]).filter(Boolean).join(', ') || String(choice.pick.folderIds.length + choice.pick.documentIds.length) });
 
   const renderWorkspace = (row: WorkspaceRow) => {
-    const isOpen = expanded === row.id;
+    const isOpen = findsFiles && expanded === row.id;
     const chosen = choice?.workspaceId === row.id;
     return <li key={row.id} className={`overflow-hidden rounded-lg border ${chosen ? 'border-primary/60 bg-primary/5' : 'bg-card'}`}>
       <div className='flex items-center gap-1 p-1.5'>
-        <Button type='button' size='icon' variant='ghost' className='h-8 w-8 shrink-0' onClick={() => setExpanded(isOpen ? null : row.id)}
+        {findsFiles && <Button type='button' size='icon' variant='ghost' className='h-8 w-8 shrink-0' onClick={() => setExpanded(isOpen ? null : row.id)}
           aria-label={isOpen ? t('knowledge.collapseWorkspace', { name: row.name }) : t('knowledge.expandWorkspace', { name: row.name })}>
           {isOpen ? <ChevronDown className='h-4 w-4' /> : <ChevronRight className='h-4 w-4' />}
-        </Button>
+        </Button>}
         <button type='button' className='flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1 text-left hover:bg-muted/60' onClick={() => chooseWorkspace(row)} aria-label={t('assistantSources.chooser.pickWorkspace', { name: row.name })} aria-pressed={chosen}>
           {row.shared ? <Share2 className='h-4 w-4 shrink-0 text-blue-400' /> : <Warehouse className='h-4 w-4 shrink-0 text-primary' />}
           <span className='min-w-0 flex-1'>
@@ -149,9 +185,13 @@ export function SourceChooserDialog({ open, modelId, conceptLabel, onClose, onCh
           // Opening a workspace shows its files; it is chosen only once something in it is picked (or it is picked whole).
           whole={chosen ? choice!.whole && !choice!.spreadsheet : false}
           pick={chosen && !choice!.spreadsheet ? choice!.pick : { folderIds: [], documentIds: [] }}
-          onChange={(next) => inWorkspace(row, (current) => ({ ...current, spreadsheet: undefined, whole: next.whole, pick: next.pick }))}
-          onNamed={(id, name) => setChoice((current) => current?.workspaceId === row.id ? { ...current, names: { ...current.names, [id]: name } } : current)}
-          onPickSpreadsheet={(file) => inWorkspace(row, (current) => ({ ...current, spreadsheet: { id: file.id, name: file.originalName, mimeType: file.mimeType } }))} />
+          onChange={(next) => inWorkspace(row, (current) => ({ ...current, spreadsheet: undefined, whole: next.whole, pick: mode === 'file' ? onePick(current.pick, next.pick) : next.pick }))}
+          onNamed={(id, name, mimeType) => setChoice((current) => current?.workspaceId === row.id
+            ? { ...current, names: { ...current.names, [id]: name }, mimeTypes: mimeType ? { ...current.mimeTypes, [id]: mimeType } : current.mimeTypes }
+            : current)}
+          {...(mode === 'source'
+            ? { onPickSpreadsheet: (file) => inWorkspace(row, (current) => ({ ...current, spreadsheet: { id: file.id, name: file.originalName, mimeType: file.mimeType } })) }
+            : { canPick: () => true, folders: false })} />
       </div>}
     </li>;
   };
@@ -162,25 +202,25 @@ export function SourceChooserDialog({ open, modelId, conceptLabel, onClose, onCh
   return <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
     <DialogContent className='flex max-h-[90dvh] w-[calc(100vw-2rem)] max-w-2xl flex-col gap-3 p-4 sm:p-6'>
       <DialogHeader>
-        <DialogTitle>{t('assistantSources.chooser.title', { concept: conceptLabel })}</DialogTitle>
-        <DialogDescription>{t('assistantSources.chooser.description')}</DialogDescription>
+        <DialogTitle>{title ?? t('assistantSources.chooser.title', { concept: conceptLabel })}</DialogTitle>
+        <DialogDescription>{description ?? t('assistantSources.chooser.description')}</DialogDescription>
       </DialogHeader>
       <div className='relative'>
         <Search className='pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground' />
         <Input autoFocus className='pl-9' value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('assistantSources.chooser.search')} aria-label={t('assistantSources.chooser.search')} />
       </div>
       <div className='min-h-0 flex-1 space-y-4 overflow-y-auto pr-1' data-testid='source-chooser-list'>
-        {term.length >= MIN_FILE_SEARCH && <section aria-label={t('assistantSources.chooser.files')}>
+        {findsFiles && term.length >= MIN_FILE_SEARCH && <section aria-label={t('assistantSources.chooser.files')}>
           <h3 className='mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('assistantSources.chooser.files')}</h3>
           {files.isLoading ? <div className='flex justify-center p-3'><Loader2 className='h-4 w-4 animate-spin text-primary' /></div>
             : !files.data?.files.length ? <p className='text-xs text-muted-foreground'>{t('assistantSources.chooser.noFiles')}</p>
             : <ul className='space-y-1'>{files.data.files.map((file) => {
-              const spreadsheet = file.kind === 'spreadsheet' || isStructuredDocument(file.mimeType);
-              const readable = spreadsheet || isReadableDocument(file.mimeType);
+              const spreadsheet = isSheet(file);
+              const readable = mode === 'files' || mode === 'file' || spreadsheet || isReadableDocument(file.mimeType);
               const picked = choice?.workspaceId === file.workspaceId && (choice.spreadsheet ? choice.spreadsheet.id === file.id : !choice.whole && choice.pick.documentIds.includes(file.id));
               return <li key={file.id}>
                 <label className={`flex min-h-10 items-center gap-2 rounded-md px-2 text-sm ${readable ? 'cursor-pointer hover:bg-muted/60' : 'opacity-60'} ${picked ? 'bg-primary/10' : ''}`}>
-                  <input type={spreadsheet ? 'radio' : 'checkbox'} name={spreadsheet ? 'source-chooser-sheet' : undefined} disabled={!readable} checked={picked} onChange={(event) => toggleFile(file, event.target.checked)} />
+                  <input type={spreadsheet || mode === 'file' ? 'radio' : 'checkbox'} name={spreadsheet ? 'source-chooser-sheet' : mode === 'file' ? 'source-chooser-file' : undefined} disabled={!readable} checked={picked} onChange={(event) => toggleFile(file, event.target.checked)} />
                   {spreadsheet ? <FileSpreadsheet className='h-4 w-4 shrink-0 text-emerald-600' /> : <FileText className='h-4 w-4 shrink-0 text-muted-foreground' />}
                   <span className='min-w-0 flex-1'>
                     <span className='block truncate'>{file.name}</span>
@@ -191,7 +231,7 @@ export function SourceChooserDialog({ open, modelId, conceptLabel, onClose, onCh
               </li>;
             })}</ul>}
         </section>}
-        {term.length > 0 && term.length < MIN_FILE_SEARCH && <p className='text-xs text-muted-foreground'>{t('assistantSources.chooser.searchHint')}</p>}
+        {findsFiles && term.length > 0 && term.length < MIN_FILE_SEARCH && <p className='text-xs text-muted-foreground'>{t('assistantSources.chooser.searchHint')}</p>}
         <section aria-label={t('assistantSources.chooser.workspaces')}>
           <h3 className='mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground'>{t('assistantSources.chooser.workspaces')}</h3>
           {workspaces.isError ? <p className='text-xs text-muted-foreground'>{t('assistantSources.chooser.loadError')}</p>
@@ -213,7 +253,7 @@ export function SourceChooserDialog({ open, modelId, conceptLabel, onClose, onCh
       </div>
       <DialogFooter className='gap-2 sm:gap-0'>
         <Button type='button' variant='ghost' onClick={onClose}>{t('assistantSources.chooser.cancel')}</Button>
-        <Button type='button' disabled={!isComplete(choice)} onClick={() => { if (isComplete(choice)) onChoose(choiceToOption(choice)); }}>{t('assistantSources.chooser.use')}</Button>
+        <Button type='button' disabled={!isComplete(choice)} onClick={() => { if (isComplete(choice)) onChoose(mode === 'file' ? oneFile(choice) : choiceToOption(choice)); }}>{useLabel ?? t('assistantSources.chooser.use')}</Button>
       </DialogFooter>
     </DialogContent>
   </Dialog>;

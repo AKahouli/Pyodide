@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react';
 import { useParams, useNavigate, useSearchParams, useLocation, useBlocker } from 'react-router-dom';
+import { PlaybookPendingSources } from './assistant/PlaybookPendingSources';
 import { ArrowLeft, Loader2, PanelRightOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { ReactFlowProvider, useReactFlow, getNodesBounds, type Edge, type Node } from '@xyflow/react';
@@ -4817,6 +4818,11 @@ function PlaybookCanvasInner() {
                 {t('executionFocus.label')}
               </Button>
             </div>
+            {id && (
+              <div className="absolute left-3 top-14 z-30 sm:left-4 sm:top-16">
+                <PlaybookPendingSources playbookId={id} />
+              </div>
+            )}
             {canvasViewMode === 'overview' ? (
               <PlaybookOverviewCanvas
                 nodes={canvasNodes}

@@ -64,6 +64,8 @@ export function PlatformCopilotMascot() {
   const openPanel = usePlatformCopilotPanelStore((s) => s.openPanel);
   const closePanel = usePlatformCopilotPanelStore((s) => s.closePanel);
   const consumePendingPrompt = usePlatformCopilotPanelStore((s) => s.consumePendingPrompt);
+  // A prompt written from elsewhere (the canvas) while the panel is already open still lands in the input.
+  const queuedPrompt = usePlatformCopilotPanelStore((s) => s.pendingPrompt);
   const pendingHandoff = usePlatformCopilotPanelStore((s) => s.pendingHandoff);
   const clearHandoff = usePlatformCopilotPanelStore((s) => s.clearHandoff);
   const open = panelOpen;
@@ -94,7 +96,7 @@ export function PlatformCopilotMascot() {
     initializedHandoffIdRef.current = undefined;
     const pendingPrompt = consumePendingPrompt();
     if (pendingPrompt) setInput(pendingPrompt);
-  }, [consumePendingPrompt, open, pendingHandoff]);
+  }, [consumePendingPrompt, open, pendingHandoff, queuedPrompt]);
 
   React.useEffect(() => {
     if (open || !hasOpenedRef.current) return;
@@ -360,6 +362,10 @@ export function PlatformCopilotMascot() {
       onNavigate={(route) => {
         if (pageContext.hasUnsavedChanges && !window.confirm(t('navigation.unsaved'))) return;
         navigate(route);
+      }}
+      onSend={(text) => {
+        setScrollRequest((request) => request + 1);
+        return platformCopilot.send(text);
       }} />
   );
 

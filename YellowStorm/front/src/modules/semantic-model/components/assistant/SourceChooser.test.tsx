@@ -54,6 +54,36 @@ describe('SourceChooserDialog', () => {
     }));
   });
 
+  it('picks any files, spreadsheets included, with the search it is given', async () => {
+    const onChoose = vi.fn();
+    const searchFiles = vi.fn().mockResolvedValue({ files: [
+      { id: 'f-3', name: 'cv_export.xlsx', mimeType: xlsx, kind: 'document', workspaceId: 'ws-2', workspaceName: 'HR shared', folderName: null },
+      { id: 'f-4', name: 'grid.xlsx', mimeType: xlsx, kind: 'document', workspaceId: 'ws-2', workspaceName: 'HR shared', folderName: null },
+    ] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><SourceChooserDialog open mode='files' searchFiles={searchFiles} conceptLabel='Which CVs?' title='Which CVs?' useLabel='Use for the playbook' onClose={vi.fn()} onChoose={onChoose} /></QueryClientProvider>);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'xl' } });
+    fireEvent.click(await screen.findByText('cv_export.xlsx'));
+    fireEvent.click(screen.getByText('grid.xlsx'));
+    fireEvent.click(screen.getByText('Use for the playbook'));
+    expect(searchFiles).toHaveBeenCalledWith('xl');
+    expect(api.searchSourceFiles).not.toHaveBeenCalled();
+    expect(onChoose).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'ws-2', kind: 'documents', documentIds: ['f-3', 'f-4'] }));
+  });
+
+  it('chooses one workspace only, without files', async () => {
+    const onChoose = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={client}><SourceChooserDialog open mode='workspace' conceptLabel='Where?' onClose={vi.fn()} onChoose={onChoose} /></QueryClientProvider>);
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'cv' } });
+    fireEvent.click((await screen.findByText('HR shared')).closest('button')!);
+    expect(screen.queryByText('assistantSources.chooser.files')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('knowledge.expandWorkspace')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('assistantSources.chooser.use'));
+    expect(api.searchSourceFiles).not.toHaveBeenCalled();
+    expect(onChoose).toHaveBeenCalledWith(expect.objectContaining({ workspaceId: 'ws-2', kind: 'workspace' }));
+  });
+
   it('uses one spreadsheet on its own, and says a pick in another workspace replaces the first one', async () => {
     const onChoose = renderChooser();
     fireEvent.change(screen.getByRole('textbox'), { target: { value: 'cv' } });

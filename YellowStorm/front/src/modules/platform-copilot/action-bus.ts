@@ -9,6 +9,8 @@ const paramsSchema = z.object({
   operationId: z.string().min(1).max(200).optional(),
   modelId: z.string().min(1).max(200).optional(),
   modelName: z.string().min(1).max(300).optional(),
+  continuationId: z.string().min(1).max(200).optional(),
+  playbookName: z.string().min(1).max(300).optional(),
 }).strict();
 
 const targetSchema = z.object({
@@ -21,6 +23,7 @@ const targetSchema = z.object({
     'playbook.execution.task',
     'semanticModel.editor',
     'semanticModel.sources',
+    'playbook.sources',
   ]),
   params: paramsSchema,
   effects: z.array(z.discriminatedUnion('type', [
@@ -72,6 +75,10 @@ export function executePlatformCopilotUiTarget(input: {
       route = `/playbooks/${encodeURIComponent(playbookId)}/executions/${encodeURIComponent(executionId)}${suffix}`;
       break;
     }
+    case 'playbook.sources':
+      // Shown as a card in the conversation; as a link it only leads to the library.
+      route = playbookId ? `/playbooks/${encodeURIComponent(playbookId)}` : '/playbooks';
+      break;
     case 'semanticModel.editor':
     case 'semanticModel.sources': {
       const modelId = target.params.modelId;
@@ -143,5 +150,7 @@ export function getPlatformCopilotUiTargetIdentity(target: PlatformCopilotUiTarg
     case 'semanticModel.editor':
     case 'semanticModel.sources':
       return JSON.stringify([target.surface, modelId]);
+    case 'playbook.sources':
+      return JSON.stringify([target.surface, target.params.continuationId ?? '']);
   }
 }

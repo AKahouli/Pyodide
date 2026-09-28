@@ -20,16 +20,20 @@ export const isReadableDocument = (mimeType: string) => isMappableDocument(mimeT
  * What a workspace source covers: every file of the workspace, or the folders and files picked in its tree.
  * A picked folder covers what is inside it, so its content shows as included rather than as separate picks.
  */
-export function WorkspaceFilePicker({ workspaceId, name, whole, pick, onChange, onNamed, onPickSpreadsheet }: Readonly<{
+export function WorkspaceFilePicker({ workspaceId, name, whole, pick, onChange, onNamed, onPickSpreadsheet, canPick = isReadableDocument, folders: foldersPickable = true }: Readonly<{
   workspaceId: string;
   name: string;
   whole: boolean;
   pick: WorkspacePick;
   onChange: (next: { whole: boolean; pick: WorkspacePick }) => void;
-  /** Told the name of each folder or file as it is picked. */
-  onNamed?: (id: string, name: string) => void;
+  /** Told the name (and, for a file, the type) of each folder or file as it is picked. */
+  onNamed?: (id: string, name: string, mimeType?: string) => void;
   /** When given, a spreadsheet in the tree can be chosen on its own instead of showing as not readable. */
   onPickSpreadsheet?: (file: WorkspaceDocument) => void;
+  /** Which files can be picked; by default the ones a semantic model can read. */
+  canPick?: (mimeType: string) => boolean;
+  /** False when only files can be picked: folders can still be opened. */
+  folders?: boolean;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
   const [pages, setPages] = useState<Record<string, Page>>({});
@@ -63,7 +67,7 @@ export function WorkspaceFilePicker({ workspaceId, name, whole, pick, onChange, 
   const documents = new Set(pick.documentIds);
   const toggle = (item: WorkspaceDocument, checked: boolean) => {
     const target = item.isFolder ? new Set(folders) : new Set(documents);
-    if (checked) { target.add(item.id); onNamed?.(item.id, item.isFolder ? item.folderName ?? item.originalName : item.originalName); } else target.delete(item.id);
+    if (checked) { target.add(item.id); onNamed?.(item.id, item.isFolder ? item.folderName ?? item.originalName : item.originalName, item.isFolder ? undefined : item.mimeType); } else target.delete(item.id);
     onChange({ whole: false, pick: item.isFolder ? { folderIds: [...target], documentIds: pick.documentIds } : { folderIds: pick.folderIds, documentIds: [...target] } });
   };
   const toggleOpen = (folderId: string) => {
@@ -78,7 +82,7 @@ export function WorkspaceFilePicker({ workspaceId, name, whole, pick, onChange, 
     return <>
       {page.items.map((item) => {
         const label = item.isFolder ? item.folderName ?? item.originalName : item.originalName;
-        const readable = item.isFolder || isReadableDocument(item.mimeType);
+        const readable = item.isFolder || canPick(item.mimeType);
         const picked = item.isFolder ? folders.has(item.id) : documents.has(item.id);
         const expanded = open.has(item.id);
         return <div key={item.id}>
@@ -86,8 +90,9 @@ export function WorkspaceFilePicker({ workspaceId, name, whole, pick, onChange, 
             {item.isFolder
               ? <button type='button' className='flex h-7 w-6 shrink-0 items-center justify-center rounded' onClick={() => toggleOpen(item.id)} aria-label={expanded ? t('knowledge.collapseWorkspace', { name: label }) : t('knowledge.expandWorkspace', { name: label })}>{expanded ? <ChevronDown className='h-3.5 w-3.5' /> : <ChevronRight className='h-3.5 w-3.5' />}</button>
               : <span className='w-6 shrink-0' />}
-            <input type='checkbox' className='shrink-0' disabled={covered || !readable} checked={covered || picked} onChange={(event) => toggle(item, event.target.checked)}
-              aria-label={t(item.isFolder ? 'mapping.pickFolder' : 'mapping.pickFile', { name: label })} />
+            {item.isFolder && !foldersPickable ? <span className='w-[13px] shrink-0' />
+              : <input type='checkbox' className='shrink-0' disabled={covered || !readable} checked={covered || picked} onChange={(event) => toggle(item, event.target.checked)}
+                aria-label={t(item.isFolder ? 'mapping.pickFolder' : 'mapping.pickFile', { name: label })} />}
             {item.isFolder ? <Folder className='h-3.5 w-3.5 shrink-0 text-primary' /> : <FileText className='h-3.5 w-3.5 shrink-0 text-muted-foreground' />}
             <span className={`min-w-0 flex-1 truncate ${readable ? '' : 'text-muted-foreground'}`}>{label}</span>
             {!readable && (onPickSpreadsheet && isStructuredDocument(item.mimeType)
