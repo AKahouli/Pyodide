@@ -1,16 +1,10 @@
 import { BadRequestException, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
-import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
-import { Model } from 'mongoose';
 import AdmZip = require('adm-zip');
 import { mkdir, writeFile, readFile, rename, rm } from 'fs/promises';
 import { join } from 'path';
 import * as XLSX from 'xlsx';
-import {
-  FlowExecution,
-  FlowExecutionDocument,
-} from '../../playbook-flow/schemas/playbook-flow-execution.schema';
 import { PlaybookFlowExecutionService } from '../../playbook-flow/services/playbook-flow-execution.service';
 import { AgentService } from '../../agent/agent.service';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
@@ -51,11 +45,6 @@ function mergeTokenUsage(
     prompt_tokens: prompt > 0 ? prompt : undefined,
     completion_tokens: completion > 0 ? completion : undefined,
   };
-}
-
-interface SnapshotLike {
-  nodes?: { id?: string }[];
-  [key: string]: unknown;
 }
 
 interface PreparedConfig {
@@ -136,7 +125,6 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
 
   constructor(
     private readonly repository: LogicalSearchEvaluationRepository,
-    @InjectModel(FlowExecution.name) private readonly executionModel: Model<FlowExecutionDocument>,
     private readonly config: ConfigService,
     private readonly executionService: PlaybookFlowExecutionService,
     private readonly agentService: AgentService,
@@ -233,129 +221,6 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
 
   async listByOwner(ownerId: string) {
     return this.repository.listByOwner(ownerId);
-  }
-
-  /**
-   * Capture the snapshot persisted on a playbook execution and materialize the
-   * evaluator inputs (request_template.json, config.json, dataset.zip) under
-   * uploads/eval/{evaluationId}/.
-   */
-  async prepare(
-    ownerId: string,
-    evaluationId: string,
-    input: { executionId: string; agentId?: string; workspaceId?: string },
-  ) {
-    const evaluation = await this.getById(ownerId, evaluationId);
-    if (evaluation.status === 'running' || evaluation.status === 'completed') {
-      throw new BadRequestException(
-        `Evaluation is ${evaluation.status}; create a new evaluation to re-prepare.`,
-      );
-    }
-
-    const execution = await this.executionModel
-      .findById(input.executionId)
-      .select('+snapshot')
-      .lean<{ _id?: unknown; ownerId?: string; flowId?: string; snapshot?: SnapshotLike; recursionLimit?: number; maxParallelism?: number }>();
-    if (!execution || String(execution.ownerId) !== ownerId) {
-      throw new NotFoundException(ErrorCode.NOT_FOUND, 'Execution not found');
-    }
-    const snapshot = execution.snapshot;
-    if (!snapshot || !Array.isArray(snapshot.nodes) || snapshot.nodes.length === 0) {
-      throw new BadRequestException(
-        'Execution has no persisted snapshot; run the playbook first.',
-      );
-    }
-    // ponytail: mono-node flows only; multi-step flows need an explicit answer node picker.
-    const answerNodeId = snapshot.nodes[0]?.id;
-    if (!answerNodeId) {
-      throw new BadRequestException('Snapshot answer node has no id.');
-    }
-
-    const grpcTarget = this.config.get<string>('playbook-flow.grpcUrl') ?? 'localhost:50051';
-    const runDir = join(process.cwd(), 'uploads', 'eval', evaluationId);
-    const benchmarkPayload = evaluation.queries as { queries?: unknown[] };
-    const zipPath = join(runDir, 'dataset.zip');
-
-    const requestTemplate = {
-      execution_id: input.executionId,
-      flow_id: execution.flowId,
-      owner_id: ownerId,
-      snapshot,
-      input_context: { query: '' },
-      settings: {
-        recursion_limit: execution.recursionLimit ?? 25,
-        max_parallelism: execution.maxParallelism ?? 5,
-      },
-      seeded_task_outputs: [],
-    };
-    const evaluatorConfig = {
-      grpc_target: grpcTarget,
-      grpc_secure: false,
-      request_template_path: 'uploads/eval/' + evaluationId + '/request_template.json',
-      answer_node_id: answerNodeId,
-      benchmark_zip_path: zipPath,
-      benchmark_queries_member: 'benchmark_queries.json',
-      output_directory: join(runDir, 'outputs'),
-      query_path: ['input_context', 'query'],
-      // The captured node keeps the manual question in metadata.description;
-      // overwrite it or the agent answers the stale question.
-      additional_query_paths: [['snapshot', 'nodes', '0', 'metadata', 'description']],
-    };
-
-    try {
-      await mkdir(runDir, { recursive: true });
-      // A new execution captures a new snapshot → previous run outputs are stale.
-      await rm(join(runDir, 'results.json'), { force: true });
-      await rm(join(runDir, 'summary.json'), { force: true });
-      await rm(join(runDir, 'progress.json'), { force: true });
-      await rm(join(runDir, 'progress.json.tmp'), { force: true });
-      await rm(join(runDir, 'outputs'), { force: true, recursive: true });
-      await writeFile(join(runDir, 'benchmark_queries.json'), JSON.stringify(benchmarkPayload), 'utf-8');
-      const zip = new AdmZip();
-      zip.addFile(
-        'benchmark_queries.json',
-        Buffer.from(JSON.stringify(benchmarkPayload), 'utf-8'),
-      );
-      await zip.writeZipPromise(zipPath);
-      await writeFile(
-        join(runDir, 'request_template.json'),
-        JSON.stringify(requestTemplate, null, 2),
-        'utf-8',
-      );
-      await writeFile(join(runDir, 'config.json'), JSON.stringify(evaluatorConfig, null, 2), 'utf-8');
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.error(`Failed to write evaluator inputs for ${evaluationId}: ${message}`);
-      await this.repository.applyPrepare({
-        id: evaluationId,
-        agentId: input.agentId ?? evaluation.agentId,
-        flowId: execution.flowId ?? null,
-        workspaceId: input.workspaceId ?? evaluation.workspaceId,
-        executionId: input.executionId,
-        answerNodeId: null,
-        status: 'failed',
-        error: message,
-      });
-      throw new BadRequestException(`Failed to generate evaluator inputs: ${message}`);
-    }
-
-    const updated = await this.repository.applyPrepare({
-      id: evaluationId,
-      agentId: input.agentId ?? evaluation.agentId,
-      flowId: execution.flowId ?? null,
-      workspaceId: input.workspaceId ?? evaluation.workspaceId,
-      executionId: input.executionId,
-      answerNodeId,
-      status: 'prepared',
-    });
-    return {
-      evaluationId,
-      runDir,
-      answerNodeId,
-      flowId: execution.flowId,
-      files: ['benchmark_queries.json', 'dataset.zip', 'request_template.json', 'config.json'],
-      status: updated?.status ?? 'prepared',
-    };
   }
 
   /**

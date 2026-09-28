@@ -52,19 +52,6 @@ export class LogicalSearchEvaluationController {
     return this.service.duplicate(user._id.toString(), id);
   }
 
-  @Post(':id/prepare')
-  @ApiOperation({ summary: 'Capture a playbook execution snapshot and generate evaluator inputs' })
-  async prepare(
-    @CurrentUser() user: UserDocument,
-    @Param('id') id: string,
-    @Body() body: { executionId: string; agentId?: string; workspaceId?: string },
-  ) {
-    if (!body?.executionId) {
-      throw new BadRequestException('executionId is required.');
-    }
-    return this.service.prepare(user._id.toString(), id, body);
-  }
-
   @Post(':id/prepare-adhoc')
   @ApiOperation({ summary: 'Prepare evaluation with a direct agent/workspace/model config (no playbook)' })
   async prepareAdhoc(

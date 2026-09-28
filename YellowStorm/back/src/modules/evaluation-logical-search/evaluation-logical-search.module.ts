@@ -1,9 +1,4 @@
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
-import {
-  FlowExecution,
-  FlowExecutionSchema,
-} from '../playbook-flow/schemas/playbook-flow-execution.schema';
 import { PlaybookFlowModule } from '../playbook-flow/playbook-flow.module';
 import { AgentModule } from '../agent/agent.module';
 import { LogicalSearchEvaluationController } from './controllers/logical-search-evaluation.controller';
@@ -12,9 +7,6 @@ import { LogicalSearchEvaluationRepository } from './repositories/logical-search
 
 @Module({
   imports: [
-    MongooseModule.forFeature([
-      { name: FlowExecution.name, schema: FlowExecutionSchema },
-    ]),
     PlaybookFlowModule,
     AgentModule,
   ],

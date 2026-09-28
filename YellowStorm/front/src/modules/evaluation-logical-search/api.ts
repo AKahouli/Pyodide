@@ -71,17 +71,6 @@ export const evaluationLogicalSearchApi = {
     return res.data.data;
   },
 
-  async prepare(
-    id: string,
-    payload: { executionId: string; agentId?: string; workspaceId?: string },
-  ): Promise<PrepareResult> {
-    const res = await apiClient.post<{ data: PrepareResult }>(
-      `${API_ENDPOINTS.logicalSearchEvaluation.base}/${id}/prepare`,
-      payload,
-    );
-    return res.data.data;
-  },
-
   async prepareAdhoc(id: string, config: AdhocConfig): Promise<PrepareResult> {
     const res = await apiClient.post<{ data: PrepareResult }>(
       `${API_ENDPOINTS.logicalSearchEvaluation.base}/${id}/prepare-adhoc`,
