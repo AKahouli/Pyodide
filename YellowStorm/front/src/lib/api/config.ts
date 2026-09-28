@@ -2,17 +2,24 @@
  * API Configuration
  */
 
+const isDev = process.env.NODE_ENV === 'development';
+
+/**
+ * Two ways to configure the public backend URL, in priority order:
+ * 1. `VITE_API_URL` — inlined by Vite at build time (pass it as a Docker `--build-arg`).
+ * 2. `MY_APP_VITE_API_URL` — literal placeholder that `env.sh` rewrites at container start,
+ *    for deployments that inject config at runtime instead of build time.
+ */
 export const API_CONFIG = {
-  baseURL: process.env.NODE_ENV === 'development'
-    ? import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1'
-    : 'MY_APP_VITE_API_URL',
+  baseURL: import.meta.env.VITE_API_URL
+    || (isDev ? 'http://localhost:3000/api/v1' : 'MY_APP_VITE_API_URL'),
   timeout: 30000,
   withCredentials: true, // Required for HTTP-only cookies (refresh token)
 } as const;
 
 /**
- * Prod: env.sh replaces this literal with a real origin (e.g. https://poc.back.yellowmind.ai).
- * Do not compare against another copy of the same placeholder — sed replaces both sides.
+ * Same two mechanisms as above, socket origin. `env.sh` replaces this literal, so do not
+ * compare against another copy of the same placeholder — sed replaces both sides.
  * Prefer this over nginx /socket.io/ proxy: the image runs as `metafront` and cannot
  * sed /etc/nginx/conf.d/default.conf (Permission denied → container exit).
  */
@@ -24,13 +31,9 @@ function isHttpUrl(value: string): boolean {
 
 /** Origin for Socket.IO (app-runtime, browser-session). */
 export function getSocketBaseUrl(): string {
-  if (process.env.NODE_ENV === 'development') {
-    const devOverride = import.meta.env.VITE_SOCKET_BASE_URL?.trim();
-    if (devOverride && isHttpUrl(devOverride)) {
-      return new URL(devOverride).origin;
-    }
-  } else if (isHttpUrl(SOCKET_BASE_INJECTED)) {
-    return new URL(SOCKET_BASE_INJECTED).origin;
+  const configured = (import.meta.env.VITE_SOCKET_BASE_URL?.trim() || SOCKET_BASE_INJECTED).trim();
+  if (isHttpUrl(configured)) {
+    return new URL(configured).origin;
   }
 
   const base = API_CONFIG.baseURL;
