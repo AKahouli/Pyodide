@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Delete, Param, Body, Query, UseGuards, Logger, Res, Headers, DefaultValuePipe, ParseIntPipe } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Delete, Param, Body, Query, UseGuards, Logger, Res, Headers, DefaultValuePipe, ParseIntPipe } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { PlaybookFlowService } from '../services/playbook-flow.service';
@@ -21,7 +21,8 @@ import { SystemService } from '@modules/system/system.service';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { PlaybookAssistantService } from '../assistant/playbook-assistant.service';
-import { InitializePlaybookAssistantAttachmentDto, RunPlaybookAssistantTurnDto, StartAdvisorRemediationConstructionDto } from '../dto/playbook-assistant.dto';
+import { ChoosePlaybookClarificationSourcesDto, InitializePlaybookAssistantAttachmentDto, RunPlaybookAssistantTurnDto, StartAdvisorRemediationConstructionDto } from '../dto/playbook-assistant.dto';
+import { PlaybookAssistantSourcesService } from '../assistant/playbook-assistant-sources.service';
 import { RateLimit } from '@modules/rate-limiter';
 import { PlaybookInputContractService } from '../services/playbook-input-contract.service';
 import { PlaybookFlowArtifactService } from '../services/playbook-flow-artifact.service';
@@ -41,6 +42,7 @@ export class PlaybookFlowController {
     private readonly playbookFlowIntentService: PlaybookFlowIntentService,
     private readonly playbookFlowIntentConstructionService: PlaybookFlowIntentConstructionService,
     private readonly playbookAssistantService: PlaybookAssistantService,
+    private readonly playbookAssistantSourcesService: PlaybookAssistantSourcesService,
     private readonly playbookInputContractService: PlaybookInputContractService,
     private readonly artifactService: PlaybookFlowArtifactService,
     private readonly systemService: SystemService,
@@ -83,6 +85,49 @@ export class PlaybookFlowController {
     @Query('limit', new DefaultValuePipe(6), ParseIntPipe) limit: number,
   ) {
     return this.artifactService.listRecent(userId, Math.min(Math.max(limit, 1), 20));
+  }
+
+  @Get('assistant/source-files')
+  @ApiOperation({ summary: 'Find files by name across every workspace the user can open, to choose a playbook source' })
+  @RequirePermissions(Permissions.PLAYBOOK_READ)
+  searchAssistantSourceFiles(
+    @CurrentUser('_id') userId: string,
+    @Query('search') search = '',
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+  ) {
+    return this.playbookAssistantSourcesService.searchFiles(userId, search, Math.max(page, 1));
+  }
+
+  @Get('assistant/pending-sources')
+  @ApiOperation({ summary: 'The Yellowmind source questions still waiting on a change to this playbook' })
+  @RequirePermissions(Permissions.PLAYBOOK_READ)
+  getAssistantPendingSources(
+    @CurrentUser('_id') userId: string,
+    @Query('playbookId') playbookId = '',
+  ) {
+    return this.playbookAssistantSourcesService.pendingForPlaybook(userId, playbookId);
+  }
+
+  @Get('assistant/clarifications/:continuationId/sources')
+  @ApiOperation({ summary: 'The source questions the assistant is waiting on, and what the user chose for them' })
+  @RequirePermissions(Permissions.PLAYBOOK_READ)
+  getAssistantClarificationSources(
+    @CurrentUser('_id') userId: string,
+    @Param('continuationId') continuationId: string,
+  ) {
+    return this.playbookAssistantSourcesService.getSources(userId, continuationId);
+  }
+
+  @Put('assistant/clarifications/:continuationId/questions/:questionId/sources')
+  @ApiOperation({ summary: 'Choose the workspaces or files for one source question, or skip it' })
+  @RequirePermissions(Permissions.PLAYBOOK_READ)
+  chooseAssistantClarificationSources(
+    @CurrentUser('_id') userId: string,
+    @Param('continuationId') continuationId: string,
+    @Param('questionId') questionId: string,
+    @Body() dto: ChoosePlaybookClarificationSourcesDto,
+  ) {
+    return this.playbookAssistantSourcesService.choose(userId, continuationId, questionId, dto);
   }
 
   @Get(':id')

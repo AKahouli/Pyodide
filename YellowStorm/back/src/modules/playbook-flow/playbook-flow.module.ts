@@ -137,6 +137,7 @@ import { PlaybookAssistantRequestService } from './assistant/playbook-assistant-
 import { PlaybookAssistantHistoryService } from './assistant/playbook-assistant-history.service';
 import { PlaybookAssistantActorGuard } from './guards/playbook-assistant-actor.guard';
 import { PlaybookAssistantAttachmentService } from './assistant/playbook-assistant-attachment.service';
+import { PlaybookAssistantSourcesService } from './assistant/playbook-assistant-sources.service';
 
 @Module({
   imports: [
@@ -279,6 +280,7 @@ import { PlaybookAssistantAttachmentService } from './assistant/playbook-assista
     PlaybookAssistantHistoryService,
     PlaybookAssistantActorGuard,
     PlaybookAssistantAttachmentService,
+    PlaybookAssistantSourcesService,
   ],
   exports: [
     PlaybookFlowService,

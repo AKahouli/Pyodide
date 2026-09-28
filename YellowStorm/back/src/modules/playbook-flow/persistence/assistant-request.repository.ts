@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import type { PgUpdateSetSource } from 'drizzle-orm/pg-core';
 import { newObjectId, stripNul } from '@common/postgres';
@@ -183,6 +183,17 @@ export class PlaybookAssistantRequestRepository {
     return row ? toAssistantRequestRecord(row) : null;
   }
 
+  /** The owner's live clarifications waiting on a change to `playbookId`, newest first. */
+  async findAwaitingForPlaybook(playbookId: string, ownerId: string, limit = 5): Promise<PlaybookAssistantRequestRecord[]> {
+    const rows = await this.q
+      .select()
+      .from(r)
+      .where(and(eq(r.playbookId, playbookId), eq(r.ownerId, ownerId), eq(r.status, 'awaiting_clarification'), this.live()))
+      .orderBy(desc(r.updatedAt))
+      .limit(limit);
+    return rows.map(toAssistantRequestRecord);
+  }
+
   async findContinuation(continuationId: string, ownerId: string, playbookId: string, conversationId: string): Promise<PlaybookAssistantRequestRecord | null> {
     const [row] = await this.q
       .select()
@@ -241,6 +252,18 @@ export class PlaybookAssistantRequestRepository {
     const [row] = await this.updateWhere(
       [eq(r.requestId, requestId), eq(r.assessmentVersion, assessmentVersion), eq(r.status, 'processing')],
       { assessment: json(update.assessment), continuationId: update.continuationId, status: update.status, expiresAt: update.expiresAt },
+    );
+    return row ? toAssistantRequestRecord(row) : null;
+  }
+
+  /**
+   * Keeps the workspaces and files the person chose for the questions of a waiting clarification, next
+   * to its assessment, until the assistant continues it. Null when the clarification is no longer waiting.
+   */
+  async saveResourcePicks(continuationId: string, ownerId: string, picks: Record<string, unknown>): Promise<PlaybookAssistantRequestRecord | null> {
+    const [row] = await this.updateWhere(
+      [eq(r.continuationId, continuationId), eq(r.ownerId, ownerId), eq(r.status, 'awaiting_clarification')],
+      { assessment: sql`jsonb_set(coalesce(${r.assessment}, '{}'::jsonb), '{resourcePicks}', ${JSON.stringify(stripNul(picks))}::jsonb)` },
     );
     return row ? toAssistantRequestRecord(row) : null;
   }

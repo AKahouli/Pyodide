@@ -32,6 +32,17 @@ import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.
 import { WorkspaceShareService } from '@modules/workspace/workspace-share.service';
 import { ConversationPlaybookHandoffService } from '@modules/conversation/services/conversation-playbook-handoff.service';
 import type { ResolvedConversationPlaybookHandoffV1 } from '@modules/conversation/interfaces/conversation-playbook-handoff.interface';
+import {
+  chosenWorkspaceIds,
+  isSourceQuestion,
+  publicAssessment,
+  resourceClarificationLines,
+  resourcePicksOf,
+  sourcesUiTarget,
+  withResourcePicks,
+  type ClarificationAnswerLike,
+  type ClarificationQuestionLike,
+} from './playbook-assistant-sources.util';
 
 const DEFAULT_OPTIMIZATION_DIMENSIONS = ['clarity', 'agent', 'tools', 'inputs', 'outputs', 'bindings', 'cost', 'latency', 'determinism'];
 
@@ -273,19 +284,29 @@ export class PlaybookAssistantService {
     if (dto.answers.some((answer) => !allowedQuestionIds.has(answer.questionId))) {
       throw new ConflictException(ErrorCode.CONFLICT, 'Clarification answer does not match the active assessment');
     }
-    const validatedAnswers = await this.validateClarificationResources(request.ownerId, questions, dto.answers);
-    const answeredIds = new Set(validatedAnswers.map((answer) => answer.questionId));
+    const answeredIds = new Set(dto.answers.map((answer) => answer.questionId));
     if (answeredIds.size !== dto.answers.length) {
       throw new ConflictException(ErrorCode.CONFLICT, 'Clarification contains duplicate answers');
     }
+    // The workspaces and files the person chose in the sources card replace what the assistant said for them.
+    const validatedAnswers: ClarificationAnswerLike[] = withResourcePicks(
+      questions,
+      await this.validateClarificationResources(request.ownerId, questions, dto.answers),
+      resourcePicksOf(request.assessment),
+    );
     const meaningfulAnswerIds = new Set(validatedAnswers
-      .filter((answer) => Boolean(answer.resource || answer.choice?.trim() || answer.text?.trim()))
+      .filter((answer) => Boolean(answer.resource || answer.resources?.length || answer.choice?.trim() || answer.text?.trim()))
       .map((answer) => answer.questionId));
-    if (!dto.skip && questions.some((question) => question.required && question.id && !meaningfulAnswerIds.has(question.id))) {
+    const missing = dto.skip ? [] : questions.filter((question) => question.required && question.id && !meaningfulAnswerIds.has(question.id));
+    if (missing.some(isSourceQuestion)) {
+      const names = missing.filter(isSourceQuestion).map((question) => `"${question.question || question.id}"`).join(', ');
+      throw new ConflictException(ErrorCode.CONFLICT, `The user has not chosen a source yet for ${names}. Ask them to choose it in the sources card, or to skip it.`);
+    }
+    if (missing.length) {
       throw new ConflictException(ErrorCode.CONFLICT, 'A required clarification answer is missing');
     }
     const normalized = {
-      ...(request.assessment ?? {}),
+      ...publicAssessment(request.assessment ?? {}),
       status: 'ready_to_construct',
       ...(dto.skip ? {
         clarificationsSkipped: true,
@@ -333,6 +354,7 @@ export class PlaybookAssistantService {
         constructionId: status.operationId,
         playbookId: status.playbookId,
         baseDefinitionRevision: status.baseDefinitionRevision,
+        playbookName: flow.name,
       });
     }
     try {
@@ -352,7 +374,7 @@ export class PlaybookAssistantService {
         },
         { origin: 'mcp', operationId, requestId: request.requestId, operationKind: 'construction' },
       );
-      return this.withEventStreamPath(result);
+      return this.withEventStreamPath({ ...result, playbookName: flow.name });
     } catch (error) {
       await this.requestService.releaseMutation(request.requestId, operationId);
       throw error;
@@ -401,6 +423,7 @@ export class PlaybookAssistantService {
         constructionId: status.operationId,
         playbookId: status.playbookId,
         baseDefinitionRevision: status.baseDefinitionRevision,
+        playbookName: existingFlow.name,
       });
     }
     let playbookId: string | null = null;
@@ -444,7 +467,7 @@ export class PlaybookAssistantService {
           trustedHandoffContext: request.handoffContext ?? undefined,
         },
       );
-      return this.withEventStreamPath(result);
+      return this.withEventStreamPath({ ...result, playbookName: flow.name });
     } catch (error) {
       if (playbookId) {
         const removed = await this.flowService.removeAssistantDraftIfUnchanged(request.ownerId, playbookId, operationId, baseDefinitionRevision);
@@ -499,8 +522,9 @@ export class PlaybookAssistantService {
       }
     }
     if (assessment.status === 'needs_clarification') {
-      const { requestId: _requestId, assessmentId: _assessmentId, ...safeAssessment } = assessment;
-      return safeAssessment;
+      const { requestId: _requestId, assessmentId: _assessmentId, ...safeAssessment } = publicAssessment(assessment);
+      const uiTarget = sourcesUiTarget(safeAssessment.continuationId, safeAssessment.questions, request.requestedName ?? dto.name);
+      return { ...safeAssessment, ...(uiTarget ? { uiTarget } : {}) };
     }
     return this.startGeneration(requestId, actor, dto);
   }
@@ -538,13 +562,15 @@ export class PlaybookAssistantService {
       }
     }
     if (assessment.status === 'needs_clarification') {
+      const uiTarget = sourcesUiTarget(assessment.continuationId, assessment.questions, flow.name);
       return {
         requestId,
         status: 'needs_clarification' as const,
         continuationId: assessment.continuationId ?? null,
         definitionRevision: assessment.definitionRevision ?? null,
         questions: assessment.questions ?? [],
-        assessment,
+        assessment: publicAssessment(assessment),
+        ...(uiTarget ? { uiTarget } : {}),
       };
     }
     const request = await this.requestService.getBound(requestId, actor);
@@ -556,6 +582,7 @@ export class PlaybookAssistantService {
       status: 'ready' as const,
       continuationId: null,
       definitionRevision: construction.baseDefinitionRevision,
+      playbookName: flow.name,
       operation: construction,
       assessment,
     };
@@ -600,7 +627,7 @@ export class PlaybookAssistantService {
     const flow = await this.accessService.findAccessibleFlow(playbookId, userId, 'write');
     this.assertRevision(flow.definitionRevision ?? 0, dto.expectedDefinitionRevision);
     const result = await this.constructionService.start(playbookId, userId, dto, { origin: 'mcp' });
-    return this.withEventStreamPath(result);
+    return this.withEventStreamPath({ ...result, playbookName: flow.name });
   }
 
   getConstruction(playbookId: string, userId: string, constructionId: string) {
@@ -732,11 +759,14 @@ export class PlaybookAssistantService {
       dto.modelIdOverride,
     );
     const executionId = this.executionId(execution);
+    // The run has started: a missing name only leaves the button unnamed.
+    const playbookName = await this.flowService.findOneBase(playbookId, userId).then((flow) => flow.name, () => undefined);
     return {
       executionId,
+      ...(playbookName ? { playbookName } : {}),
       uiTarget: {
         surface: 'playbook.execution.details' as const,
-        params: { playbookId, executionId },
+        params: { playbookId, executionId, ...(playbookName ? { playbookName } : {}) },
         effects: [{ type: 'focusExecutionStatus' as const }],
       },
     };
@@ -752,7 +782,7 @@ export class PlaybookAssistantService {
         status: 'active' as const,
         uiTarget: {
           surface: 'playbook.editor' as const,
-          params: { playbookId: item.playbookId },
+          params: { playbookId: item.playbookId, playbookName: item.name },
         },
       })),
       count: items.length,
@@ -794,6 +824,7 @@ export class PlaybookAssistantService {
             params: {
               playbookId: execution.flowId,
               executionId: execution.executionId,
+              ...(flow?.name ? { playbookName: flow.name } : {}),
               ...(execution.task?.status === 'failed' ? { taskId: execution.task.taskId } : {}),
             },
             ...(execution.task?.status === 'failed' ? { effects: [{ type: 'highlightTask' as const, taskId: execution.task.taskId }] } : {}),
@@ -818,12 +849,12 @@ export class PlaybookAssistantService {
     const uiTarget = failedTask
       ? {
         surface: 'playbook.execution.task' as const,
-        params: { playbookId: execution.flowId, executionId, taskId: failedTask.taskId },
+        params: { playbookId: execution.flowId, executionId, taskId: failedTask.taskId, playbookName: flow.name },
         effects: [{ type: 'highlightTask' as const, taskId: failedTask.taskId }],
       }
       : {
         surface: 'playbook.execution.details' as const,
-        params: { playbookId: execution.flowId, executionId },
+        params: { playbookId: execution.flowId, executionId, playbookName: flow.name },
         effects: [{ type: 'focusExecutionStatus' as const }],
       };
     return {
@@ -970,11 +1001,12 @@ export class PlaybookAssistantService {
     };
   }
 
-  private withEventStreamPath<T extends { constructionId: string; playbookId: string; baseDefinitionRevision: number }>(result: T) {
+  private withEventStreamPath<T extends { constructionId: string; playbookId: string; baseDefinitionRevision: number; playbookName?: string }>(result: T) {
     return {
       operationId: result.constructionId,
       constructionId: result.constructionId,
       playbookId: result.playbookId,
+      ...(result.playbookName ? { playbookName: result.playbookName } : {}),
       baseDefinitionRevision: result.baseDefinitionRevision,
       status: 'planning' as const,
       eventStreamPath: `/api/v1/playbooks/${encodeURIComponent(result.playbookId)}/intent-constructions/${encodeURIComponent(result.constructionId)}/stream`,
@@ -1003,6 +1035,8 @@ export class PlaybookAssistantService {
     const skipped = Array.isArray(assessment?.unansweredQuestionIds)
       ? assessment.unansweredQuestionIds as string[]
       : [];
+    const questions = Array.isArray(assessment?.questions) ? assessment.questions as ClarificationQuestionLike[] : [];
+    const resourceLines = resourceClarificationLines(questions, (request.answers ?? []) as unknown as ClarificationAnswerLike[]);
     return [
       '<original_request>',
       request.originalText,
@@ -1017,11 +1051,16 @@ export class PlaybookAssistantService {
       ...(assessment?.clarificationsSkipped === true && skipped.length > 0 ? [
         'The user explicitly skipped the remaining clarification questions. For those questions choose sensible defaults, record them as assumptions, and proceed without asking again.',
       ] : []),
+      // The trusted resource lines the construction reads to bind the chosen workspaces and files.
+      ...(resourceLines.length ? ['', 'Clarifications:', ...resourceLines] : []),
     ].join('\n');
   }
 
   private async resolveGenerationWorkspaces(request: PlaybookAssistantRequestRecord): Promise<string[]> {
-    const workspaceIds = request.workspaceDefaultIds ?? [];
+    const workspaceIds = [...new Set([
+      ...(request.workspaceDefaultIds ?? []),
+      ...chosenWorkspaceIds((request.answers ?? []) as unknown as ClarificationAnswerLike[]),
+    ])];
     if (workspaceIds.length === 0) return [];
     await this.workspaceShareService.assertUserHasAccess(request.ownerId, workspaceIds);
     return workspaceIds;
