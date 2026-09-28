@@ -26,6 +26,25 @@ dotenv.config({ path: path.resolve(__dirname, '..', '..', '.env') });
 const OBJECT_PROBES: Record<string, string[]> = {
   '0023_integrations': ['integrations.connectors', 'integrations.connected_app_definitions', 'integrations.connector_credentials'],
   '0024_agent_ecosystem': ['channels.telegram_integrations', 'channels.widget_tokens', 'teams.teams', 'public.shared_agents'],
+  '0030_conversation_v2_templates': [
+    'conversation_v2.template_categories',
+    'conversation_v2.templates',
+    'conversation_v2.uq_c2_tpl_categories_slug',
+    'conversation_v2.uq_c2_tpl_categories_name',
+    'conversation_v2.uq_c2_templates_category_title',
+    'conversation_v2.uq_c2_templates_revision',
+    'conversation_v2.idx_c2_templates_category',
+  ],
+  '0031_template_revisions': [
+    'conversation_v2.template_revisions',
+    'conversation_v2.uq_c2_tpl_revisions_revision',
+    'conversation_v2.idx_c2_tpl_revisions_template',
+  ],
+};
+const COLUMN_PROBES: Record<string, Array<{ schema: string; table: string; column: string }>> = {
+  '0030_conversation_v2_templates': [
+    { schema: 'conversation_v2', table: 'sessions', column: 'starter_revision_id' },
+  ],
 };
 
 async function main(): Promise<void> {
@@ -66,6 +85,17 @@ async function main(): Promise<void> {
       if (!r.rows[0].reg) missingObjects.push(probe);
     }
     if (probes.length && missingObjects.length) {
+      console.log(`${entry.tag}: objects missing in DB (${missingObjects.join(', ')}) — NOT recorded (would be a lie)`);
+      continue;
+    }
+    for (const probe of COLUMN_PROBES[entry.tag] ?? []) {
+      const r = await client.query(
+        'SELECT 1 FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 AND column_name = $3',
+        [probe.schema, probe.table, probe.column],
+      );
+      if (r.rowCount === 0) missingObjects.push(`${probe.schema}.${probe.table}.${probe.column}`);
+    }
+    if (missingObjects.length) {
       console.log(`${entry.tag}: objects missing in DB (${missingObjects.join(', ')}) — NOT recorded (would be a lie)`);
       continue;
     }

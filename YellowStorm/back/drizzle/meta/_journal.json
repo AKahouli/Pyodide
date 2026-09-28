@@ -225,6 +225,13 @@
       "when": 1790530000000,
       "tag": "0030_conversation_v2_templates",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1790540000000,
+      "tag": "0031_template_revisions",
+      "breakpoints": true
     }
   ]
 }
