@@ -33,14 +33,14 @@ LABEL description="Secured Python API (ADK) with security scanning + gRPC codege
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=120 \
+    PIP_RETRIES=10
 
 # Keep /tmp valid for dpkg triggers
 RUN set -eux; mkdir -p /tmp; chmod 1777 /tmp
 
 # CI runner's bridge network blocks port 80; switch mirrors to HTTPS.
-# Bootstrap CA bundle from alpine so HTTPS verification works.
 COPY --from=ca-certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 RUN sed -i 's|http://archive.ubuntu.com|https://archive.ubuntu.com|g; s|http://security.ubuntu.com|https://security.ubuntu.com|g' /etc/apt/sources.list
 
@@ -75,13 +75,23 @@ RUN set -eux; \
     "${VENV_PATH}/bin/python" -m pip install --upgrade pip setuptools wheel
 
 COPY --chown=azureuser:azureuser requirements.txt /build/requirements.txt
-RUN set -eux; \
-    "${VENV_PATH}/bin/pip" install -r /build/requirements.txt; \
+
+# Mount the pip cache and install dependencies with network resilience
+RUN --mount=type=cache,target=/root/.cache/pip \
+    set -eux; \
+    "${VENV_PATH}/bin/pip" install \
+        --default-timeout=120 \
+        --retries=10 \
+        -r /build/requirements.txt; \
     "${VENV_PATH}/bin/pip" check
 
-# Security tools (builder only)
-RUN set -eux; \
-    "${VENV_PATH}/bin/pip" install pip-audit safety bandit
+# Security tools (builder only) using the cache mount
+RUN --mount=type=cache,target=/root/.cache/pip \
+    set -eux; \
+    "${VENV_PATH}/bin/pip" install \
+        --default-timeout=120 \
+        --retries=10 \
+        pip-audit safety bandit
 
 # App code
 COPY --chown=azureuser:azureuser src /build/src
