@@ -1,7 +1,7 @@
 import { Inject, NotFoundException } from '@nestjs/common';
 import { and, asc, eq, gt } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
-import { isObjectId, newObjectId, normalizeObjectId } from '@common/postgres';
+import { isObjectId, newObjectId, normalizeObjectId, stripNul } from '@common/postgres';
 import { resolveQueryable, withTransaction } from '@common/postgres/transaction';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
@@ -70,7 +70,7 @@ export class PgConversationV2EventStore implements ConversationV2EventStore {
           sequence,
           type: event.type,
           emittedAt: event.payload.timestamp,
-          payload: payloadWithoutHeader,
+          payload: stripNul(payloadWithoutHeader),
         })
         .onConflictDoNothing({
           target: [schema.conversationV2Events.sessionId, schema.conversationV2Events.eventId],

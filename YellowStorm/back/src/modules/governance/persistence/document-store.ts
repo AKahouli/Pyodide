@@ -1,6 +1,5 @@
 import type { GovernanceDocumentRecord } from './governance-records';
 
-export const GOVERNANCE_DOCUMENT_STORE = Symbol('GOVERNANCE_DOCUMENT_STORE');
 
 export interface GovernanceDocumentUpsertInput {
   programId: string;

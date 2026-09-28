@@ -1,14 +1,8 @@
 import { Injectable, Optional } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import { LiteLLMConnectionService } from '@modules/models/litellm-connection.service';
 import { LoggerService } from '@modules/logger';
 import { PlaybookFlowAdvisorModelService } from './advisor/playbook-flow-advisor-model.service';
-import { PlaybookFlowReplayReportService } from './playbook-flow-replay-report.service';
-import {
-  FlowReplayRunReport,
-  FlowReplayRunReportDocument,
-} from '../schemas/playbook-flow-replay-run-report.schema';
+import { ReplayRunReportRepository } from '../persistence/replay-run-report.repository';
 
 const VALID_VERDICTS = new Set(['match', 'minor_drift', 'major_drift', 'not_comparable']);
 const VALID_ACTIONS = new Set(['accept', 'review', 'reject']);
@@ -51,8 +45,7 @@ interface PostRunEvaluationResult {
 @Injectable()
 export class PlaybookFlowReplayPostRunEvaluationService {
   constructor(
-    @InjectModel(FlowReplayRunReport.name)
-    private readonly reportModel: Model<FlowReplayRunReportDocument>,
+    private readonly reportRepository: ReplayRunReportRepository,
     private readonly liteLLMConnectionService: LiteLLMConnectionService,
     private readonly modelService: PlaybookFlowAdvisorModelService,
     @Optional() private readonly logger: LoggerService | null,
@@ -78,7 +71,7 @@ export class PlaybookFlowReplayPostRunEvaluationService {
     taskDescription: string | null;
     replayMode: string;
   }): Promise<void> {
-    const existing = await this.reportModel.findById(params.replayReportId).lean();
+    const existing = await this.reportRepository.findById(params.replayReportId);
     if (!existing) {
       this.logger?.warn?.(`Replay report not found: ${params.replayReportId}`);
       return;
@@ -104,10 +97,8 @@ export class PlaybookFlowReplayPostRunEvaluationService {
       }
     }
 
-    await this.reportModel.updateOne(
-      { _id: params.replayReportId },
-      { $set: { postRunEvaluation: result } },
-    ).exec();
+    // A concurrent evaluation of the same report may have finished first: its result is kept.
+    await this.reportRepository.setPostRunEvaluationIfAbsent(params.replayReportId, result);
   }
 
   private buildNotComparable(failureReason: string): PostRunEvaluationResult {

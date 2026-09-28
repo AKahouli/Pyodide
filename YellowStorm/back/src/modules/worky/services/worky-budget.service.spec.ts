@@ -1,136 +1,85 @@
-import { Types } from 'mongoose';
+import { newObjectId } from '@common/postgres';
 import { WorkyBudgetService } from './worky-budget.service';
+import type { WorkyStreamBudget, WorkyStreamRecord, WorkyTaskBudget, WorkyTaskRecord } from '../worky.types';
 
-interface MakeOptions {
-  streamBudget?: {
-    limitUsd: number;
-    limitTokens: number;
-    spendUsd: number;
-    tokensUsed: number;
-    enforcement: 'hard_stop' | 'notify';
-  };
-  updateOneNull?: boolean;
-  costEvents?: Array<unknown>;
-}
+const fkViolation = () => Object.assign(new Error('insert violates foreign key constraint'), { code: '23503' });
 
-const makeService = (options: MakeOptions = {}) => {
-  const streamObjectId = new Types.ObjectId();
-  const ownerObjectId = new Types.ObjectId();
-  const taskObjectId = new Types.ObjectId();
-  const budget = options.streamBudget ?? {
-    limitUsd: 1.0,
-    limitTokens: 0,
-    spendUsd: 0,
-    tokensUsed: 0,
-    enforcement: 'hard_stop' as 'hard_stop' | 'notify',
-  };
-  const stream = {
-    _id: streamObjectId,
-    ownerUserId: ownerObjectId,
-    title: 'Test stream',
-    budget: { ...budget },
-  };
+const buildStream = (budget: Partial<WorkyStreamBudget> = {}): WorkyStreamRecord => ({
+  id: newObjectId(),
+  ownerUserId: newObjectId(),
+  shares: [],
+  workspaceId: newObjectId(),
+  artifactWorkspaceId: null,
+  managerAgentId: null,
+  managerModelId: null,
+  workerModelId: null,
+  voicePrompt: null,
+  aiSessionId: null,
+  governancePolicyRef: null,
+  title: 'Test stream',
+  status: 'active',
+  controlState: 'active',
+  schedulerEnabled: false,
+  currentPlanVersion: 0,
+  executionPlanVersion: null,
+  budget: { limitUsd: 1, limitTokens: 0, spendUsd: 0, tokensUsed: 0, enforcement: 'hard_stop', ...budget },
+  startedAt: null,
+  completedAt: null,
+  activeDurationMinutes: 0,
+  lastActivityAt: new Date(),
+  createdAt: new Date(),
+  updatedAt: new Date(),
+});
+
+const buildTask = (streamId: string, budget: Partial<WorkyTaskBudget> = {}): WorkyTaskRecord =>
+  ({
+    id: newObjectId(),
+    streamId,
+    title: 'A task',
+    actionCategory: 'internal_analysis',
+    budget: { estimateUsd: 0.1, actualUsd: 0, tokensEstimate: 100, tokensActual: 0, ...budget },
+  }) as WorkyTaskRecord;
+
+const makeService = (budget: Partial<WorkyStreamBudget> = {}) => {
+  const stream = buildStream(budget);
+  const db = { transaction: jest.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn({})) };
   const streams = {
-    findById: jest.fn().mockImplementation(() => ({
-      lean: jest.fn().mockReturnValue({
-        exec: jest.fn().mockResolvedValue({ ...stream, budget: { ...stream.budget } }),
-      }),
-      exec: jest.fn().mockResolvedValue({ ...stream, budget: { ...stream.budget } }),
-    })),
-    findOneAndUpdate: jest.fn().mockImplementation((filter) => ({
-      exec: jest.fn().mockResolvedValue(
-        options.updateOneNull
-          ? null
-          : { ...stream, budget: { ...stream.budget, spendUsd: stream.budget.spendUsd + (filter?.$inc?.['budget.spendUsd'] ?? 0) } },
-      ),
-    })),
-    updateOne: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ acknowledged: true }) }),
+    findById: jest.fn().mockResolvedValue(stream),
+    reserveBudget: jest.fn().mockResolvedValue(true),
+    releaseBudget: jest.fn().mockResolvedValue(undefined),
+    update: jest.fn().mockResolvedValue(stream),
+    setBudgetLimits: jest.fn().mockResolvedValue(undefined),
   };
-  const tasks = {
-    updateOne: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ acknowledged: true }) }),
-    findById: jest.fn().mockReturnValue({
-      select: jest.fn().mockReturnValue({
-        lean: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue({
-            _id: taskObjectId,
-            streamId: streamObjectId,
-            budget: { estimateUsd: 0.1, actualUsd: 0, tokensEstimate: 100, tokensActual: 0 },
-          }),
-        }),
-      }),
-    }),
-  };
-  const reservations = {
-    create: jest.fn().mockImplementation((doc) =>
-      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
-    ),
-    findById: jest.fn().mockImplementation((id) => ({
-      exec: jest.fn().mockResolvedValue({
-        _id: new Types.ObjectId(id),
-        streamId: streamObjectId,
-        amountUsd: 0.1,
-        tokens: 0,
-        status: 'reserved',
-      }),
-    })),
-    findOneAndUpdate: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ status: 'released' }) }),
-    updateOne: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ acknowledged: true }) }),
-  };
-  const costEvents = {
-    create: jest.fn().mockImplementation((doc) =>
-      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
-    ),
-    aggregate: jest.fn().mockReturnValue({
-      exec: jest.fn().mockResolvedValue(
-        options.costEvents ?? [
-          { _id: null, totalCostUsd: 0.05, totalTokens: 50 },
-        ],
-      ),
-    }),
+  const tasks = { addActualCost: jest.fn().mockResolvedValue(null) };
+  const budgets = {
+    createReservation: jest.fn().mockImplementation(async (input: Record<string, unknown>) => ({ id: newObjectId(), ...input })),
+    transitionReservation: jest.fn().mockResolvedValue(null),
+    consumeOpenReservations: jest.fn().mockResolvedValue(1),
+    insertCostEvent: jest.fn().mockImplementation(async (input: Record<string, unknown>) => ({ id: newObjectId(), ...input })),
+    costTotals: jest.fn().mockResolvedValue({ totalCostUsd: 0.05, totalInputTokens: 30, totalOutputTokens: 20, eventCount: 2 }),
   };
   const interactions = {
-    create: jest.fn().mockImplementation((doc) =>
-      Promise.resolve({ _id: new Types.ObjectId(), ...doc }),
-    ),
+    create: jest.fn().mockImplementation(async (input: Record<string, unknown>) => ({ id: newObjectId(), ...input })),
   };
-  const emitted: Array<{ type: string; payload: unknown }> = [];
+  const emitted: Array<{ userId: string; streamId: string; type: string; payload: Record<string, unknown> }> = [];
   const events = {
-    emit: jest.fn((_userId: string, _streamId: string, e: { type: string; payload: unknown }) => {
-      emitted.push({ type: e.type, payload: e.payload });
+    emit: jest.fn((userId: string, streamId: string, e: { type: string; payload: Record<string, unknown> }) => {
+      emitted.push({ userId, streamId, type: e.type, payload: e.payload });
     }),
   };
   const audit = { append: jest.fn().mockResolvedValue(undefined) };
-  const logger = {
-    setContext: jest.fn(),
-    log: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn(),
-    debug: jest.fn(),
-  };
+  const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
   const service = new WorkyBudgetService(
-    streams as any,
-    tasks as any,
-    reservations as any,
-    costEvents as any,
-    interactions as any,
-    events as any,
-    audit as any,
-    logger as any,
+    db as never,
+    streams as never,
+    tasks as never,
+    budgets as never,
+    interactions as never,
+    events as never,
+    audit as never,
+    logger as never,
   );
-  return {
-    service,
-    stream,
-    streams,
-    reservations,
-    costEvents,
-    events,
-    audit,
-    emitted,
-    taskObjectId,
-    streamObjectId,
-    interactions,
-    tasks,
-  };
+  return { service, stream, db, streams, tasks, budgets, interactions, events, emitted, audit, logger };
 };
 
 describe('WorkyBudgetService.estimate', () => {
@@ -154,268 +103,263 @@ describe('WorkyBudgetService.estimate', () => {
 });
 
 describe('WorkyBudgetService.reserve', () => {
-  it('accepts the reservation when stream has no limits', async () => {
-    const { service, reservations, emitted } = makeService({
-      streamBudget: { limitUsd: 0, limitTokens: 0, spendUsd: 0, tokensUsed: 0, enforcement: 'hard_stop' },
-    });
-    const result = await service.reserve({
-      streamId: new Types.ObjectId().toString(),
-      taskId: new Types.ObjectId().toString(),
+  it('reserves against the stream counters also when the stream has no limits', async () => {
+    // A limit of 0 is unlimited inside the SQL guard; the counters still move so that
+    // release() (which always gives the amounts back) stays symmetric.
+    const { service, stream, streams, budgets, emitted, audit, db } = makeService({ limitUsd: 0, limitTokens: 0 });
+    const taskId = newObjectId();
+    const result = await service.reserve({ streamId: stream.id, taskId, amountUsd: 0.5, tokens: 100 });
+
+    expect(streams.reserveBudget).toHaveBeenCalledWith(stream.id, 0.5, 100);
+    expect(budgets.createReservation).toHaveBeenCalledWith({
+      streamId: stream.id,
+      taskId,
       amountUsd: 0.5,
       tokens: 100,
+      status: 'reserved',
     });
-    expect(result.status).toBe('reserved');
-    expect(reservations.create).toHaveBeenCalledWith(
-      expect.objectContaining({ status: 'reserved' }),
+    expect(db.transaction).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ status: 'reserved', amountUsd: 0.5, tokens: 100 });
+    expect(result.reservationId).toEqual(expect.any(String));
+    expect(emitted).toEqual([
+      expect.objectContaining({ userId: stream.ownerUserId, streamId: stream.id, type: 'budget.reserved' }),
+    ]);
+    expect(audit.append).toHaveBeenCalledWith(
+      expect.objectContaining({ streamId: stream.id, action: 'budget.reserved', targetId: result.reservationId }),
     );
-    expect(emitted.find((e) => e.type === 'budget.reserved')).toBeDefined();
+  });
+
+  it('lets the atomic guard decide, not the stream read beforehand', async () => {
+    // The stream read says the amount would not fit, but the conditional UPDATE is the
+    // linearisation point: it accepted, so the reservation stands.
+    const { service, stream, streams, budgets } = makeService({ limitUsd: 1, spendUsd: 0.95 });
+    streams.reserveBudget.mockResolvedValueOnce(true);
+    const result = await service.reserve({ streamId: stream.id, taskId: newObjectId(), amountUsd: 0.1, tokens: 0 });
+
+    expect(result.status).toBe('reserved');
+    expect(budgets.createReservation).toHaveBeenCalledWith(expect.objectContaining({ status: 'reserved' }));
   });
 
   it('denies reservation when it would exceed the limit and creates a budget_decision interaction under hard_stop', async () => {
-    const { service, interactions, emitted } = makeService({ updateOneNull: true });
-    const result = await service.reserve({
-      streamId: new Types.ObjectId().toString(),
-      taskId: new Types.ObjectId().toString(),
-      amountUsd: 0.5,
-      tokens: 0,
+    const { service, stream, streams, budgets, interactions, emitted, audit } = makeService();
+    streams.reserveBudget.mockResolvedValueOnce(false);
+    const taskId = newObjectId();
+    const result = await service.reserve({ streamId: stream.id, taskId, amountUsd: 0.5, tokens: 0 });
+
+    expect(result).toEqual({ status: 'denied', amountUsd: 0.5, tokens: 0, reason: 'budget_exhausted' });
+    expect(budgets.createReservation).toHaveBeenCalledWith(expect.objectContaining({ status: 'denied', taskId }));
+    expect(streams.update).toHaveBeenCalledWith(stream.id, { status: 'waiting_for_budget_decision' });
+    expect(interactions.create).toHaveBeenCalledWith({
+      streamId: stream.id,
+      taskId,
+      type: 'budget_decision',
+      targetUserId: stream.ownerUserId,
+      question: 'Budget exhausted on stream "Test stream". Increase limit, switch to notify, generate report, or stop?',
+      options: ['increase', 'cheaper_mode', 'report_now', 'stop'],
+      blockingScope: 'stream',
+      blocksTaskIds: [],
     });
-    expect(result.status).toBe('denied');
-    expect(result.reason).toBe('budget_exhausted');
-    expect(interactions.create).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'budget_decision', blockingScope: 'stream' }),
-    );
-    expect(emitted.find((e) => e.type === 'budget.exhausted')).toBeDefined();
-    expect(emitted.find((e) => e.type === 'budget_decision.requested')).toBeDefined();
+    expect(emitted.find((e) => e.type === 'budget.exhausted')?.payload).toMatchObject({ limitUsd: 1, limitTokens: 0 });
+    expect(emitted.find((e) => e.type === 'budget_decision.requested')?.payload).toEqual({ taskId });
+    expect(emitted.find((e) => e.type === 'budget.reserved')).toBeUndefined();
+    expect(audit.append).not.toHaveBeenCalled();
   });
 
   it('denies reservation under notify enforcement but does not raise an interaction', async () => {
-    const { service, interactions, emitted } = makeService({
-      streamBudget: { limitUsd: 1, limitTokens: 0, spendUsd: 0.5, tokensUsed: 0, enforcement: 'notify' },
-      updateOneNull: true,
-    });
-    const result = await service.reserve({
-      streamId: new Types.ObjectId().toString(),
-      taskId: new Types.ObjectId().toString(),
-      amountUsd: 0.6,
-      tokens: 0,
-    });
+    const { service, stream, streams, interactions, emitted } = makeService({ limitUsd: 1, spendUsd: 0.5, enforcement: 'notify' });
+    streams.reserveBudget.mockResolvedValueOnce(false);
+    const result = await service.reserve({ streamId: stream.id, taskId: newObjectId(), amountUsd: 0.6, tokens: 0 });
+
     expect(result.status).toBe('denied');
     expect(interactions.create).not.toHaveBeenCalled();
+    expect(streams.update).not.toHaveBeenCalled();
     expect(emitted.find((e) => e.type === 'budget.exhausted')).toBeDefined();
+  });
+
+  it('reports a task that does not exist as a clear error and emits nothing', async () => {
+    const { service, stream, budgets, emitted } = makeService();
+    budgets.createReservation.mockRejectedValueOnce(fkViolation());
+    const taskId = newObjectId();
+
+    await expect(service.reserve({ streamId: stream.id, taskId, amountUsd: 0.1, tokens: 0 })).rejects.toThrow(
+      `WorkyBudgetService.reserve: task ${taskId} not found`,
+    );
+    expect(emitted).toHaveLength(0);
+  });
+
+  it('throws when the stream does not exist, before touching the counters', async () => {
+    const { service, streams } = makeService();
+    streams.findById.mockResolvedValueOnce(null);
+    const streamId = newObjectId();
+
+    await expect(service.reserve({ streamId, taskId: newObjectId(), amountUsd: 0.1, tokens: 0 })).rejects.toThrow(
+      `WorkyBudgetService.reserve: stream ${streamId} not found`,
+    );
+    expect(streams.reserveBudget).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed ids', async () => {
+    const { service, streams } = makeService();
+    await expect(service.reserve({ streamId: 'nope', taskId: newObjectId(), amountUsd: 0.1, tokens: 0 })).rejects.toThrow(/invalid streamId/);
+    await expect(service.reserve({ streamId: newObjectId(), taskId: 'nope', amountUsd: 0.1, tokens: 0 })).rejects.toThrow(/invalid taskId/);
+    expect(streams.findById).not.toHaveBeenCalled();
   });
 });
 
 describe('WorkyBudgetService.release', () => {
-  it('decrements the stream spend when releasing a reserved reservation', async () => {
-    const { service, streams } = makeService();
-    await service.release(new Types.ObjectId().toString());
-    expect(streams.updateOne).toHaveBeenCalled();
+  it('marks the reservation released and gives its amounts back to the stream', async () => {
+    const { service, budgets, streams, db } = makeService();
+    const reservationId = newObjectId();
+    const streamId = newObjectId();
+    budgets.transitionReservation.mockResolvedValueOnce({ id: reservationId, streamId, amountUsd: 0.1, tokens: 20, status: 'released' });
+
+    await service.release(reservationId);
+
+    expect(budgets.transitionReservation).toHaveBeenCalledWith(reservationId, 'reserved', 'released');
+    expect(streams.releaseBudget).toHaveBeenCalledWith(streamId, 0.1, 20);
+    expect(db.transaction).toHaveBeenCalledTimes(1);
   });
-  it('is a no-op for an unknown reservation id', async () => {
-    const { service, streams } = makeService();
+
+  it('is idempotent: a reservation that is no longer reserved changes nothing', async () => {
+    const { service, budgets, streams } = makeService();
+    budgets.transitionReservation.mockResolvedValueOnce(null);
+
+    await service.release(newObjectId());
+
+    expect(streams.releaseBudget).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op for a malformed reservation id', async () => {
+    const { service, budgets, streams } = makeService();
     await service.release('not-a-valid-id');
-    expect(streams.updateOne).not.toHaveBeenCalled();
+    expect(budgets.transitionReservation).not.toHaveBeenCalled();
+    expect(streams.releaseBudget).not.toHaveBeenCalled();
   });
 });
 
 describe('WorkyBudgetService.recordCost', () => {
+  const costInput = (streamId: string, taskId: string | null, costUsd = 0.02) => ({
+    streamId,
+    taskId,
+    type: 'llm' as const,
+    provider: 'openai',
+    modelId: 'gpt-4o',
+    inputTokens: 100,
+    outputTokens: 50,
+    costUsd,
+  });
+
   it('persists a cost event and increments the task budget', async () => {
-    const { service, costEvents, tasks, events } = makeService();
-    const result = await service.recordCost({
-      streamId: new Types.ObjectId().toString(),
-      taskId: new Types.ObjectId().toString(),
-      type: 'llm',
-      provider: 'openai',
-      modelId: 'gpt-4o',
-      inputTokens: 100,
-      outputTokens: 50,
-      costUsd: 0.02,
-    });
-    expect(costEvents.create).toHaveBeenCalled();
-    expect(tasks.updateOne).toHaveBeenCalled();
-    expect(result.totalCostUsd).toBe(0.05);
+    const { service, stream, tasks, budgets, events } = makeService();
+    const task = buildTask(stream.id, { estimateUsd: 0.1, actualUsd: 0.02 });
+    tasks.addActualCost.mockResolvedValueOnce(task);
+
+    const result = await service.recordCost(costInput(stream.id, task.id));
+
+    expect(tasks.addActualCost).toHaveBeenCalledWith(task.id, 0.02, 150);
+    expect(budgets.insertCostEvent).toHaveBeenCalledWith(expect.objectContaining({ streamId: stream.id, taskId: task.id, costUsd: 0.02 }));
+    expect(budgets.costTotals).toHaveBeenCalledWith(stream.id);
+    expect(result).toEqual({ costEventId: expect.any(String), totalCostUsd: 0.05, totalTokens: 50, overspend: false });
+    expect(budgets.consumeOpenReservations).not.toHaveBeenCalled();
     // No overspend → no event emitted by the service (the controller
     // emits `cost.recorded` separately).
     expect(events.emit).not.toHaveBeenCalled();
+  });
+
+  it('flags overspend on the post-increment actual (no double-count) and consumes the open reservations', async () => {
+    // estimateUsd=0.1, OVERSPEND_BAND=0.1 → ceiling=0.11. addActualCost returns the row after the
+    // increment, so actualUsd=0.15 already includes this cost of 0.05.
+    const { service, stream, tasks, budgets, emitted } = makeService();
+    const task = buildTask(stream.id, { estimateUsd: 0.1, actualUsd: 0.15 });
+    tasks.addActualCost.mockResolvedValueOnce(task);
+
+    const result = await service.recordCost(costInput(stream.id, task.id, 0.05));
+
+    expect(result.overspend).toBe(true);
+    expect(budgets.consumeOpenReservations).toHaveBeenCalledWith(task.id);
+    expect(emitted).toEqual([
+      {
+        userId: stream.ownerUserId,
+        streamId: stream.id,
+        type: 'budget.exhausted',
+        payload: { taskId: task.id, actualUsd: 0.15, estimateUsd: 0.1 },
+      },
+    ]);
+  });
+
+  it('does not flag overspend within the band', async () => {
+    const { service, stream, tasks, budgets } = makeService();
+    tasks.addActualCost.mockResolvedValueOnce(buildTask(stream.id, { estimateUsd: 0.1, actualUsd: 0.105 }));
+
+    const result = await service.recordCost(costInput(stream.id, newObjectId(), 0.005));
+
+    expect(result.overspend).toBe(false);
+    expect(budgets.consumeOpenReservations).not.toHaveBeenCalled();
+  });
+
+  it('keeps the cost of a task that no longer exists, unattributed', async () => {
+    const { service, stream, tasks, budgets } = makeService();
+    tasks.addActualCost.mockResolvedValueOnce(null);
+
+    const result = await service.recordCost(costInput(stream.id, newObjectId()));
+
+    expect(budgets.insertCostEvent).toHaveBeenCalledWith(expect.objectContaining({ taskId: null }));
+    expect(result.overspend).toBe(false);
+  });
+
+  it('records a stream-level cost without touching any task', async () => {
+    const { service, stream, tasks, budgets } = makeService();
+
+    await service.recordCost(costInput(stream.id, null));
+
+    expect(tasks.addActualCost).not.toHaveBeenCalled();
+    expect(budgets.insertCostEvent).toHaveBeenCalledWith(expect.objectContaining({ taskId: null }));
+  });
+
+  it('reports a stream that does not exist as a clear error', async () => {
+    const { service, budgets } = makeService();
+    budgets.insertCostEvent.mockRejectedValueOnce(fkViolation());
+    const streamId = newObjectId();
+
+    await expect(service.recordCost(costInput(streamId, null))).rejects.toThrow(
+      `WorkyBudgetService.recordCost: stream ${streamId} not found`,
+    );
   });
 });
 
 describe('WorkyBudgetService.getSnapshot', () => {
   it('returns the live budget with remainingUsd/tokens + exhausted flag', async () => {
-    const { service } = makeService({
-      streamBudget: { limitUsd: 1, limitTokens: 1000, spendUsd: 0.7, tokensUsed: 500, enforcement: 'hard_stop' },
-    });
-    const snap = await service.getSnapshot(new Types.ObjectId().toString());
+    const { service, stream } = makeService({ limitUsd: 1, limitTokens: 1000, spendUsd: 0.7, tokensUsed: 500 });
+    const snap = await service.getSnapshot(stream.id);
     expect(snap.remainingUsd).toBeCloseTo(0.3);
     expect(snap.remainingTokens).toBe(500);
     expect(snap.exhausted).toBe(false);
   });
   it('reports exhausted when spend >= limit', async () => {
-    const { service } = makeService({
-      streamBudget: { limitUsd: 1, limitTokens: 0, spendUsd: 1, tokensUsed: 0, enforcement: 'hard_stop' },
-    });
-    const snap = await service.getSnapshot(new Types.ObjectId().toString());
+    const { service, stream } = makeService({ limitUsd: 1, limitTokens: 0, spendUsd: 1, tokensUsed: 0 });
+    const snap = await service.getSnapshot(stream.id);
     expect(snap.exhausted).toBe(true);
+    expect(snap.remainingTokens).toBe(Number.POSITIVE_INFINITY);
+  });
+  it('throws when the stream does not exist', async () => {
+    const { service, streams } = makeService();
+    streams.findById.mockResolvedValueOnce(null);
+    await expect(service.getSnapshot(newObjectId())).rejects.toThrow(/not found/);
   });
 });
 
 describe('WorkyBudgetService.setLimits', () => {
   it('updates the limits, emits budget.updated, and returns the snapshot', async () => {
-    const { service, streams, events } = makeService();
-    const result = await service.setLimits(new Types.ObjectId().toString(), {
-      limitUsd: 5,
-      limitTokens: 1000,
-      enforcement: 'notify',
-    });
-    expect(streams.updateOne).toHaveBeenCalledWith(
-      expect.objectContaining({}),
-      expect.objectContaining({
-        $set: expect.objectContaining({
-          'budget.limitUsd': 5,
-          'budget.limitTokens': 1000,
-          'budget.enforcement': 'notify',
-        }),
-      }),
-    );
+    const { service, stream, streams, events } = makeService();
+    const limits = { limitUsd: 5, limitTokens: 1000, enforcement: 'notify' as const };
+    const result = await service.setLimits(stream.id, limits);
+
+    expect(streams.setBudgetLimits).toHaveBeenCalledWith(stream.id, limits);
     expect(events.emit).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.anything(),
-      expect.objectContaining({ type: 'budget.updated' }),
+      stream.ownerUserId,
+      stream.id,
+      expect.objectContaining({ type: 'budget.updated', payload: limits }),
     );
-    // Snapshot reflects the mock's static state.
-    expect(result).toBeDefined();
-  });
-});
-
-describe('WorkyBudgetService concurrent reservations (race)', () => {
-  it('the conditional guard filter references the limit and the new amount', async () => {
-    // Faithfully exercise the conditional `$expr` guard by passing a
-    // mock that captures the filter shape. This proves the service
-    // builds an atomic conditional update, not a read-then-write.
-    const calls: Array<Record<string, unknown>> = [];
-    const stream = {
-      _id: new Types.ObjectId(),
-      ownerUserId: new Types.ObjectId(),
-      title: 'Race stream',
-      budget: { limitUsd: 1.0, limitTokens: 0, spendUsd: 0, tokensUsed: 0, enforcement: 'hard_stop' },
-    };
-    const streams = {
-      findById: jest.fn().mockReturnValue({
-        exec: jest.fn().mockResolvedValue({ ...stream, budget: { ...stream.budget } }),
-      }),
-      findOneAndUpdate: jest.fn().mockImplementation((filter: Record<string, unknown>) => {
-        calls.push(filter);
-        return { exec: jest.fn().mockResolvedValue({ ...stream, budget: { ...stream.budget, spendUsd: 0.1 } }) };
-      }),
-      updateOne: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ acknowledged: true }) }),
-    };
-    const tasks = { updateOne: jest.fn(), findById: jest.fn() };
-    const reservations = {
-      create: jest.fn().mockImplementation((doc) => Promise.resolve({ _id: new Types.ObjectId(), ...doc })),
-    };
-    const costEvents = { create: jest.fn(), aggregate: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([]) }) };
-    const interactions = { create: jest.fn() };
-    const events = { emit: jest.fn() };
-    const audit = { append: jest.fn() };
-    const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
-    const service = new WorkyBudgetService(
-      streams as any,
-      tasks as any,
-      reservations as any,
-      costEvents as any,
-      interactions as any,
-      events as any,
-      audit as any,
-      logger as any,
-    );
-    await service.reserve({
-      streamId: stream._id.toString(),
-      taskId: new Types.ObjectId().toString(),
-      amountUsd: 0.1,
-      tokens: 0,
-    });
-    expect(calls).toHaveLength(1);
-    const filter = calls[0]!;
-    expect(filter).toHaveProperty('$expr');
-    // The guard references the limit (`$budget.limitUsd`) — proves the
-    // service performs an atomic conditional update.
-    const expr = filter.$expr as { $lte: Array<unknown> };
-    const serialized = JSON.stringify(expr);
-    expect(serialized).toContain('budget.limitUsd');
-    expect(serialized).toContain('budget.spendUsd');
-  });
-
-  it('recordCost uses post-increment actualUsd directly (no double-count)', async () => {
-    // Regression: previously `actualUsd + input.costUsd > ceiling`
-    // double-counted the cost. Now we compare `actualUsd > ceiling`
-    // (actualUsd already includes the new cost).
-    const streamObjectId = new Types.ObjectId();
-    const taskObjectId = new Types.ObjectId();
-    const stream = {
-      _id: streamObjectId,
-      ownerUserId: new Types.ObjectId(),
-      budget: { limitUsd: 1.0, limitTokens: 0, spendUsd: 0, tokensUsed: 0, enforcement: 'hard_stop' },
-    };
-    const streams = {
-      findById: jest.fn().mockImplementation(() => ({
-        select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockReturnValue({
-            exec: jest.fn().mockResolvedValue({ ...stream, budget: { ...stream.budget } }),
-          }),
-        }),
-        exec: jest.fn().mockResolvedValue({ ...stream, budget: { ...stream.budget } }),
-      })),
-      findOneAndUpdate: jest.fn(),
-      updateOne: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({}) }),
-    };
-    const tasks = {
-      updateOne: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({}) }),
-      findById: jest.fn().mockReturnValue({
-        select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockReturnValue({
-            // estimateUsd=0.1, OVERSPEND_BAND=0.1 → ceiling=0.11.
-            // actualUsd=0.15 is already above ceiling (simulating
-            // post-increment state). We must flag overspend=true
-            // and NOT require actualUsd+costUsd > ceiling.
-            exec: jest.fn().mockResolvedValue({
-              _id: taskObjectId,
-              streamId: streamObjectId,
-              budget: { estimateUsd: 0.1, actualUsd: 0.15, tokensEstimate: 100, tokensActual: 0 },
-            }),
-          }),
-        }),
-      }),
-    };
-    const reservations = {
-      updateOne: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({}) }),
-    };
-    const costEvents = {
-      create: jest.fn().mockResolvedValue({ _id: new Types.ObjectId() }),
-      aggregate: jest.fn().mockReturnValue({
-        exec: jest.fn().mockResolvedValue([{ totalCostUsd: 0.15, totalTokens: 0 }]),
-      }),
-    };
-    const events = { emit: jest.fn() };
-    const service = new WorkyBudgetService(
-      streams as any,
-      tasks as any,
-      reservations as any,
-      costEvents as any,
-      {} as any,
-      events as any,
-      {} as any,
-      { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() } as any,
-    );
-    const result = await service.recordCost({
-      streamId: streamObjectId.toString(),
-      taskId: taskObjectId.toString(),
-      type: 'tool',
-      provider: 'p',
-      modelId: 'm',
-      inputTokens: 0,
-      outputTokens: 0,
-      costUsd: 0.05,
-    });
-    expect(result.overspend).toBe(true);
+    expect(result.streamId).toBe(stream.id);
   });
 });

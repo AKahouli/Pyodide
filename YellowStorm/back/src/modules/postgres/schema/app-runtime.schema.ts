@@ -43,16 +43,24 @@ export const appRuntimeBindings = appRuntimeSchema.table(
   ],
 );
 
-export const appRuntimeTickets = appRuntimeSchema.table('tickets', {
-  runtimeSessionId: varchar('runtime_session_id', { length: 64 }).primaryKey(),
-  ticketHash: text('ticket_hash').unique().notNull(),
-  bindingId: varchar('binding_id', { length: 64 }).notNull(),
-  workspaceId: varchar('workspace_id', { length: 128 }).notNull(),
-  userId: varchar('user_id', { length: 24 }).notNull(),
-  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
-  consumedAt: timestamp('consumed_at', { withTimezone: true }),
-  ...timestamps(),
-});
+export const appRuntimeTickets = appRuntimeSchema.table(
+  'tickets',
+  {
+    runtimeSessionId: varchar('runtime_session_id', { length: 64 }).primaryKey(),
+    ticketHash: text('ticket_hash').unique().notNull(),
+    bindingId: varchar('binding_id', { length: 64 }).notNull(),
+    workspaceId: varchar('workspace_id', { length: 128 }).notNull(),
+    userId: varchar('user_id', { length: 24 }).notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    ...timestamps(),
+  },
+  (t) => [
+    // Leading indexes of the 0037 foreign keys (binding, user).
+    index('idx_ar_tickets_binding').on(t.bindingId),
+    index('idx_ar_tickets_user').on(t.userId),
+  ],
+);
 
 export const appRuntimeToolCalls = appRuntimeSchema.table(
   'tool_calls',

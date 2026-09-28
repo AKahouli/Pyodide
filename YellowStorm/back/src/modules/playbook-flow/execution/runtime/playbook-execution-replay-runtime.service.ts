@@ -1,7 +1,5 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { FlowExecution, FlowExecutionDocument } from '../../schemas/playbook-flow-execution.schema';
+import { ExecutionRepository } from '../../persistence/execution.repository';
 import type { FlowSnapshot } from '../../mappers/flow-to-snapshot.mapper';
 import type { ResolvedReplayArtifacts } from '../../interfaces/playbook-flow-replay-artifact.interface';
 import type {
@@ -48,8 +46,7 @@ export class PlaybookExecutionReplayRuntimeService {
   private readonly trackedReplayTasksByExecution = new Map<string, Set<string>>();
 
   constructor(
-    @InjectModel(FlowExecution.name)
-    private readonly executionModel: Model<FlowExecutionDocument>,
+    private readonly executionRepository: ExecutionRepository,
     private readonly replayArtifactService: PlaybookFlowReplayArtifactService,
     private readonly replayReportService: PlaybookFlowReplayReportService,
     private readonly outputContractService: PlaybookFlowOutputContractService,
@@ -149,11 +146,11 @@ export class PlaybookExecutionReplayRuntimeService {
     const report = await this.replayReportService.findLatestReportForExecutionTask(executionId, taskId, iteration);
     if (!report || !report.replayId) return;
 
-    const taskNode = await this.executionModel.findById(executionId).select('+snapshot').lean();
+    const taskNode = await this.executionRepository.findById(executionId, { withSnapshot: true });
     let taskTitle = taskId;
     let taskDescription: string | null = null;
     if (taskNode?.snapshot) {
-      const nodes = (taskNode.snapshot as Record<string, unknown>)?.nodes;
+      const nodes = taskNode.snapshot.nodes;
       if (Array.isArray(nodes)) {
         const matched = nodes.find((n: Record<string, unknown>) => n.id === taskId) as Record<string, unknown> | undefined;
         if (matched) {
@@ -281,7 +278,7 @@ export class PlaybookExecutionReplayRuntimeService {
   private getReplayDriftService(): PlaybookFlowReplayDriftService {
     return this.replayDriftService
       ?? new PlaybookFlowReplayDriftService(
-        this.executionModel,
+        this.executionRepository,
         this.replayReportService,
         this.outputContractService,
         this.replayPlanService ?? new PlaybookFlowReplayPlanService(),

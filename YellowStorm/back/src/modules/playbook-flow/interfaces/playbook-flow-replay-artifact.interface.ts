@@ -1,4 +1,4 @@
-import type { FlowTaskPublicReasoningTraceItem } from '../schemas/playbook-flow-task-result.schema';
+import type { FlowTaskPublicReasoningTraceItem } from '../models/playbook-flow-task-result.model';
 import type {
   ReplayContextVariable,
   ReplayDriftPolicy,
@@ -14,7 +14,7 @@ import type {
   FlowReplayToolCall,
   FlowReplayToolPolicy,
   ReplayMode,
-} from '../schemas/playbook-flow-validated-replay.schema';
+} from './playbook-flow-validated-replay.interface';
 
 export interface ResolvedReplayArtifacts {
   taskId: string;

@@ -7,8 +7,8 @@ import {
   UpdateHitlMemoryDto,
   UpdateHitlPolicyDto,
 } from '../dto/playbook-flow-hitl.dto';
-import { FlowHitlMemory } from '../schemas/playbook-flow-hitl-memory.schema';
-import { HitlBlockerRule, HitlPolicy } from '../schemas/playbook-flow-hitl.schema';
+import { FlowHitlMemory } from '../models/playbook-flow-hitl-memory.model';
+import { HitlBlockerRule, HitlPolicy } from '../models/playbook-flow-hitl.model';
 import { PlaybookFlowHitlBlockerService } from './playbook-flow-hitl-blocker.service';
 import { PlaybookFlowHitlContextService } from './playbook-flow-hitl-context.service';
 import { PlaybookFlowHitlMemoryService } from './playbook-flow-hitl-memory.service';

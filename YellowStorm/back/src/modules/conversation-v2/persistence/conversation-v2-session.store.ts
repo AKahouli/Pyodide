@@ -3,7 +3,6 @@ import type {
   ConversationV2SessionStatus,
 } from '../types/conversation-v2-persistence.types';
 
-export const CONVERSATION_V2_SESSION_STORE = Symbol('CONVERSATION_V2_SESSION_STORE');
 
 export interface ConversationV2SessionRecord {
   id: string;

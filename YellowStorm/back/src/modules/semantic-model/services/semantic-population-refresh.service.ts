@@ -7,12 +7,15 @@ import type { AttributeDefinition } from '../domain/semantic-model.types';
 import type { RelationResolutionRule } from '../domain/semantic-cross-source.types';
 import type { SourceFieldMapping } from '../domain/semantic-source-mapping.types';
 import type { ConceptSpec, RelationSpec } from '../domain/model-specification.types';
+import type { RecordCorrectionDto } from '../dto/semantic-model.dto';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
 import { ModelSpecificationService } from './model-specification.service';
 import { SemanticModelService } from './semantic-model.service';
-import { SemanticRuntimeClientService } from './semantic-runtime-client.service';
+import { SemanticRuntimeClientService, type RuntimeValueOrigin } from './semantic-runtime-client.service';
 import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
 import { DOCUMENT_MIME_TYPES, STRUCTURED_MIME_PREFIXES } from './semantic-source-mapping.service';
+import { mappingSelection, type WorkspaceSelection, workspaceMappingFiles } from '../domain/workspace-source-scope';
+import type { DocumentResponse as WorkspaceDocumentResponse } from '@modules/workspace/interfaces/workspace-document.interface';
 
 export type PopulationRefreshScope = { kind: 'model' } | { kind: 'mapping'; mappingId: string };
 
@@ -25,6 +28,7 @@ interface NodeTypeRow {
   id: string;
   key: string;
   label: string;
+  aliases?: string[];
   attributes: AttributeDefinition[];
 }
 
@@ -49,13 +53,29 @@ interface MappingRow {
   sourceEnabled: boolean;
   validatedSourceVersion: string | null;
   updatedAt: Date;
+  scope?: 'document' | 'workspace';
+  folderId?: string | null;
+  selection?: WorkspaceSelection | null;
 }
 
-type RelationRuleRow = Pick<RelationResolutionRule,
+interface RecordSource {
+  mappingId: string;
+  workspaceId: string;
+  documentId: string;
+  documentName: string;
+  mimeType?: string;
+  sheetName?: string;
+  kind: string;
+}
+
+type RelationRuleRow =Pick<RelationResolutionRule,
   'relationId' | 'sourceAttribute' | 'targetAttribute' | 'strategy'>;
 
 const POPULATION_KINDS = new Set(['excel_sheet', 'csv', 'document']);
 const MAX_REFRESH_SOURCES = 25;
+/** Files one run may read, workspace mappings expanded; matches the runtime's per-task limit. */
+const MAX_RUN_SOURCES = 5000;
+const MANUAL_BATCH_SIZE = 500;
 const POPULATION_ENGINE_VERSION = 'r1-mvp-5';
 // Version of the AI extraction contract (prompt + response shape). Must equal the
 // ADK's reported extractorVersion; bump both together.
@@ -80,9 +100,9 @@ export class SemanticPopulationRefreshService {
    * changes the revision identity.
    */
   private async aiExtractionIdentity(
-    sources: Array<{ fieldMappings?: SourceFieldMapping[] | null }>,
+    sources: object[],
   ): Promise<{ agentSlug: string; model: string | null; contractVersion: string } | null> {
-    const usesAi = sources.some((source) => (source.fieldMappings ?? [])
+    const usesAi = sources.some((source) => ((source as { fieldMappings?: SourceFieldMapping[] | null }).fieldMappings ?? [])
       .some((field) => field.mode === 'extract' && field.extractionStrategy === 'ai'));
     if (!usesAi) return null;
     const agent = await this.aiExtractionAgent.resolveAgent();
@@ -102,13 +122,83 @@ export class SemanticPopulationRefreshService {
     return job;
   }
 
+  /** The data update of this model still running for this person, or null. */
+  async activeJob(userId: string, modelId: string) {
+    await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    return this.runtime.getActiveJob(modelId, userId);
+  }
+
+  /**
+   * Stop a data update. Nothing it read is kept: the data in use stays as it was before the run.
+   * A run that already ended is returned as it is.
+   */
+  async stopJob(userId: string, modelId: string, jobId: string) {
+    await this.models.requireRole(userId, modelId, ['owner', 'editor']);
+    const job = await this.getJob(userId, modelId, jobId);
+    if (['completed', 'completed_with_gaps', 'failed', 'cancelled', 'superseded'].includes(job.state)) return job;
+    return this.runtime.cancelJob(jobId, userId);
+  }
+
+  /**
+   * One concept's records in the data in use, a page at a time and optionally searched, with where each
+   * value came from. Answers "nothing yet" rather than failing when no data has been generated.
+   */
+  async conceptRecords(userId: string, modelId: string, conceptId: string,
+    query: { q?: string; limit?: number; offset?: number; dataRevisionId?: string }) {
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
+    const limit = query.limit ?? 50;
+    const offset = query.offset ?? 0;
+    let page;
+    try {
+      page = await this.runtime.searchConceptRecords(model.id, conceptId, userId,
+        { q: query.q?.trim() || undefined, limit, offset, dataRevisionId: query.dataRevisionId });
+    } catch (error) {
+      if ((error as { status?: number }).status === 404) return { dataRevisionId: null, total: 0, offset, limit, records: [] };
+      throw error;
+    }
+    const sources = await this.recordSources(model.id, page.entities.flatMap((entity) => Object.values(entity.origins ?? {})));
+    const correctors = await this.correctorNames(model.id, userId,
+      page.entities.flatMap((entity) => Object.values(entity.origins ?? {}).map((origin) => origin.correctedBy)));
+    return {
+      dataRevisionId: page.dataRevisionId,
+      total: page.total,
+      offset: page.offset,
+      limit: page.limit,
+      records: page.entities.map((entity) => ({
+        id: entity.entityId,
+        conceptId: entity.conceptId,
+        entityKey: entity.entityId,
+        label: entity.label,
+        values: entity.attributes,
+        identity: entity.identity ?? {},
+        provenance: Object.fromEntries(Object.entries(entity.origins ?? {})
+          .map(([attribute, origin]) => [attribute, this.withCorrection(this.valueProvenance(origin, sources), origin, correctors)])),
+        conflicts: [],
+      })),
+    };
+  }
+
   async boundRecords(userId: string, modelId: string, limit: number, conceptId?: string, dataRevisionId?: string) {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
     const records = await this.runtime.getBoundRecords(model.id, userId, limit, conceptId, dataRevisionId);
     const entities = records.entities;
+    const [nodes, sources] = await Promise.all([
+      this.database.query<NodeTypeRow>(
+        'SELECT id, key, label, attributes FROM semantic_model.node_types WHERE version_id=$1',
+        [model.currentDraftVersionId],
+      ).then((result) => result.rows),
+      this.recordSources(model.id, entities.flatMap((entity) => Object.values(entity.origins ?? {}))),
+    ]);
+    const correctors = await this.correctorNames(model.id, userId,
+      entities.flatMap((entity) => Object.values(entity.origins ?? {}).map((origin) => origin.correctedBy)));
+    const attributeLabel = (concept: string, attribute: string) => nodes.find((node) => node.id === concept)
+      ?.attributes?.find((candidate) => candidate.key === attribute)?.label || attribute;
     const entityIds = new Set(entities.map((entity) => entity.entityId));
     const relationLabels = new Map(records.specification.relations.map((relation) => [relation.relationId, relation.label]));
+    const conceptLabels = new Map(records.specification.concepts.map((concept) => [concept.conceptId, concept.label]));
+    const gaps = records.gaps ?? { missingValues: [], unresolvedLinks: [], other: [] };
     return {
       dataRevisionId: records.dataRevisionId,
       concepts: records.specification.concepts
@@ -116,13 +206,15 @@ export class SemanticPopulationRefreshService {
         .map((concept) => ({
           id: concept.conceptId,
           label: concept.label,
+          total: records.conceptCounts?.[concept.conceptId],
           entities: entities.filter((entity) => entity.conceptId === concept.conceptId).map((entity) => ({
             id: entity.entityId,
             conceptId: entity.conceptId,
             entityKey: entity.entityId,
             label: entity.label,
             values: entity.attributes,
-            provenance: {},
+            provenance: Object.fromEntries(Object.entries(entity.origins ?? {})
+              .map(([attribute, origin]) => [attribute, this.withCorrection(this.valueProvenance(origin, sources), origin, correctors)])),
             conflicts: [],
           })),
         })),
@@ -142,12 +234,223 @@ export class SemanticPopulationRefreshService {
           partial: false,
         })),
       sourceIssues: [],
+      gaps: {
+        missingValues: gaps.missingValues.map((gap) => ({
+          ...gap,
+          conceptLabel: conceptLabels.get(gap.conceptId) ?? gap.conceptId,
+          attributeLabel: attributeLabel(gap.conceptId, gap.attribute),
+        })),
+        unresolvedLinks: gaps.unresolvedLinks.map((gap) => ({
+          ...gap,
+          relationLabel: relationLabels.get(gap.relationId) ?? gap.relationId,
+        })),
+        other: gaps.other.map((gap) => ({
+          ...gap,
+          conceptLabel: gap.conceptId ? conceptLabels.get(gap.conceptId) ?? null : null,
+        })),
+      },
       summary: {
         entities: records.counts.entities,
         resolvedRelations: records.counts.relationships,
-        unresolvedRelations: 0,
+        unresolvedRelations: gaps.unresolvedLinks.reduce((total, gap) => total + gap.count, 0),
         ambiguousRelations: 0,
         conflicts: 0,
+      },
+    };
+  }
+
+  /** Fixes people made on the data, still in force, newest first, with who made them. */
+  async listCorrections(userId: string, modelId: string) {
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    const listed = await this.runtime.listCorrections(model.id, userId);
+    const names = await this.correctorNames(model.id, userId, listed.corrections.map((correction) => correction.actorUserId));
+    return {
+      corrections: [...listed.corrections].reverse().map((correction) => {
+        const who = correction.actorUserId ? names.get(correction.actorUserId) : undefined;
+        return {
+          sequence: correction.sequence,
+          action: correction.action,
+          targetIdentity: correction.targetIdentity,
+          payload: correction.payload,
+          reason: correction.reason,
+          createdAt: correction.createdAt,
+          correctedBy: who?.name ?? '',
+          correctedByYou: who?.self ?? false,
+        };
+      }),
+    };
+  }
+
+  /**
+   * Records a fix on the data (value, hidden record or link, added link) and rebuilds the draft so it
+   * shows at once. The fix is replayed on every later rebuild, so new source data never undoes it.
+   */
+  async recordCorrection(userId: string, modelId: string, input: RecordCorrectionDto) {
+    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
+    const target = input.targetIdentity ?? {};
+    const text = (value: unknown) => typeof value === 'string' && value.length > 0 && value.length <= 300;
+    const valid = input.action === 'edit_entity' || input.action === 'remove_entity'
+      ? text(target.entityId)
+      : text(target.relationId) && text(target.sourceEntityId) && text(target.targetEntityId);
+    if (!valid || (input.action === 'edit_entity' && !text(input.payload?.attribute))) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'This fix does not point to a record or link');
+    }
+    const { correctionSequence } = await this.runtime.listCorrections(model.id, userId);
+    const recorded = await this.runtime.recordCorrection({
+      actorUserId: userId,
+      modelId: model.id,
+      modelVersionId: model.currentDraftVersionId,
+      action: input.action,
+      targetIdentity: target,
+      payload: input.action === 'edit_entity'
+        ? { attribute: input.payload?.attribute, value: input.payload?.value ?? null }
+        : {},
+      reason: input.reason ?? '',
+      expectedCorrectionSequence: correctionSequence,
+    });
+    return { sequence: recorded.sequence, rebuild: await this.rebuildAfterCorrection(userId, model.id) };
+  }
+
+  /** Undoing is itself recorded, so the history stays complete and rebuilds replay the same result. */
+  async undoCorrection(userId: string, modelId: string, sequence: number) {
+    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
+    const listed = await this.runtime.listCorrections(model.id, userId);
+    const correction = listed.corrections.find((candidate) => candidate.sequence === sequence);
+    if (!correction) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'This fix no longer exists');
+    const recorded = await this.runtime.recordCorrection({
+      actorUserId: userId,
+      modelId: model.id,
+      modelVersionId: model.currentDraftVersionId,
+      action: 'revert',
+      targetIdentity: correction.targetIdentity,
+      payload: { sequence },
+      expectedCorrectionSequence: listed.correctionSequence,
+    });
+    return { sequence: recorded.sequence, rebuild: await this.rebuildAfterCorrection(userId, model.id) };
+  }
+
+  private async rebuildAfterCorrection(userId: string, modelId: string) {
+    try {
+      // Only a whole-model build becomes the draft people explore, so a fix must rebuild, not refresh.
+      const accepted = await this.requestRefresh(userId, modelId, { purpose: 'build', scope: { kind: 'model' } });
+      return { jobId: String(accepted.jobId), status: String(accepted.status) };
+    } catch (error) {
+      // The fix is kept; it applies on the next successful build.
+      this.logger.warn(`Rebuild after a data fix was not started: ${(error as Error).message}`);
+      return null;
+    }
+  }
+
+  /** Display names of the people behind corrections; the viewer is flagged so the UI can say "you". */
+  private async correctorNames(modelId: string, viewerId: string, userIds: Array<string | null | undefined>) {
+    const ids = [...new Set(userIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
+    const names = new Map<string, { name: string; self: boolean }>();
+    if (!ids.length) return names;
+    const rows = await this.database.query<{ userId: string; email: string | null; firstName: string | null; lastName: string | null }>(
+      `SELECT user_id AS "userId", email, first_name AS "firstName", last_name AS "lastName"
+       FROM semantic_model.memberships WHERE model_id=$1 AND user_id = ANY($2::text[])`,
+      [modelId, ids],
+    ).then((result) => result.rows).catch(() => []);
+    for (const id of ids) {
+      const row = rows.find((candidate) => candidate.userId === id);
+      const name = [row?.firstName, row?.lastName].filter(Boolean).join(' ') || row?.email || '';
+      names.set(id, { name, self: id === viewerId });
+    }
+    return names;
+  }
+
+  private withCorrection<T extends object>(provenance: T, origin: RuntimeValueOrigin,
+    correctors: Map<string, { name: string; self: boolean }>) {
+    if (origin.kind !== 'human' || origin.correctionSequence == null) return provenance;
+    const who = origin.correctedBy ? correctors.get(origin.correctedBy) : undefined;
+    return {
+      ...provenance,
+      correction: {
+        sequence: origin.correctionSequence,
+        correctedBy: who?.name ?? '',
+        correctedByYou: who?.self ?? false,
+        originalValue: origin.originalValue ?? null,
+      },
+    };
+  }
+
+  /** Files behind record values; typed-by-hand values (manual snapshot) have no file. */
+  private async recordSources(modelId: string, origins: RuntimeValueOrigin[]) {
+    const assetIds = [...new Set(origins.map((origin) => origin.assetId)
+      .filter((assetId): assetId is string => typeof assetId === 'string' && !assetId.startsWith('manual:')))];
+    const sources = new Map<string, RecordSource>();
+    if (!assetIds.length) return sources;
+    const mappings = await this.database.query<Pick<MappingRow, 'id' | 'workspaceId' | 'documentId' | 'sheetName' | 'assetKind'>>(
+      `SELECT id, workspace_id AS "workspaceId", document_id AS "documentId", sheet_name AS "sheetName",
+              asset_kind AS "assetKind"
+       FROM semantic_model.source_mappings WHERE model_id=$1 AND document_id = ANY($2::text[])
+       ORDER BY id`,
+      [modelId, assetIds],
+    );
+    for (const mapping of mappings.rows) {
+      if (sources.has(mapping.documentId)) continue;
+      const document = await this.documents.findById(mapping.workspaceId, mapping.documentId).catch(() => null);
+      sources.set(mapping.documentId, {
+        mappingId: mapping.id,
+        workspaceId: mapping.workspaceId,
+        documentId: mapping.documentId,
+        documentName: document?.originalName ?? '',
+        mimeType: document?.mimeType,
+        sheetName: mapping.assetKind === 'excel_sheet' ? mapping.sheetName || undefined : undefined,
+        kind: mapping.assetKind,
+      });
+    }
+    // Files read through a workspace mapping have no mapping row of their own: name them from the file.
+    const unmatched = assetIds.filter((assetId) => !sources.has(assetId));
+    if (unmatched.length) {
+      const workspaceMappings = await this.database.query<{ id: string; workspaceId: string }>(
+        `SELECT id, workspace_id AS "workspaceId" FROM semantic_model.source_mappings
+         WHERE model_id=$1 AND scope='workspace' ORDER BY id`,
+        [modelId],
+      ).then((result) => result.rows).catch(() => [] as Array<{ id: string; workspaceId: string }>);
+      if (workspaceMappings.length) {
+        const files = await this.documents.findByIds(unmatched).catch(() => []);
+        for (const file of files) {
+          const mapping = workspaceMappings.find((candidate) => candidate.workspaceId === file.workspaceId);
+          if (!mapping) continue;
+          sources.set(file.id, {
+            mappingId: mapping.id,
+            workspaceId: file.workspaceId,
+            documentId: file.id,
+            documentName: file.originalName,
+            mimeType: file.mimeType,
+            kind: 'document',
+          });
+        }
+      }
+    }
+    return sources;
+  }
+
+  private valueProvenance(origin: RuntimeValueOrigin, sources: Map<string, RecordSource>) {
+    const manual = typeof origin.assetId === 'string' && origin.assetId.startsWith('manual:');
+    const source = origin.assetId && !manual ? sources.get(origin.assetId) : undefined;
+    if (manual || !source) return { mappingId: '', source: { kind: 'manual' as const, documentName: '' } };
+    const method = origin.kind === 'metadata' ? 'document_metadata' as const
+      : origin.kind === 'ai' ? 'semantic_extraction' as const
+        : origin.kind === 'human' ? 'fixed_value' as const : 'direct_mapping' as const;
+    return {
+      mappingId: source.mappingId,
+      source: {
+        kind: source.kind,
+        workspaceId: source.workspaceId,
+        documentId: source.documentId,
+        documentName: source.documentName,
+        mimeType: source.mimeType,
+        sheetName: origin.sheet ?? source.sheetName,
+      },
+      ...(typeof origin.rowNumber === 'number' ? { rowNumber: origin.rowNumber } : {}),
+      field: {
+        method,
+        ...(origin.column && method === 'direct_mapping' ? { reference: origin.column } : {}),
+        ...(origin.pageNumber != null ? { page: String(origin.pageNumber) } : {}),
       },
     };
   }
@@ -172,7 +475,7 @@ export class SemanticPopulationRefreshService {
               attributes: (concept?.allowedFields ?? []).map((field) => ({
                 key: field,
                 label: field,
-                value: node.properties[field] ?? null,
+                value: node.properties[field] ?? node.properties[graphPropertyKey(field)] ?? null,
               })),
             },
           },
@@ -185,15 +488,21 @@ export class SemanticPopulationRefreshService {
     };
   }
 
-  async requestRefresh(userId: string, modelId: string, input: RequestPopulationRefreshInput) {
-    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+  /**
+   * Everything a run would read, without starting it: the specification and the fingerprint that decides
+   * whether a run is new. A viewer may plan (to learn whether the data is current); only editors may run.
+   */
+  private async planRefresh(userId: string, modelId: string, input: RequestPopulationRefreshInput, access: 'run' | 'read') {
+    const model = access === 'run'
+      ? await this.models.requireActiveRole(userId, modelId, ['owner', 'editor'])
+      : await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
     const scope: PopulationRefreshScope = input.scope.kind === 'mapping'
       ? { kind: 'mapping', mappingId: input.scope.mappingId ?? '' }
       : { kind: 'model' };
     const [nodes, relationRows, identityRules, relationRules, links] = await Promise.all([
       this.database.query<NodeTypeRow>(
-        'SELECT id, key, label, attributes FROM semantic_model.node_types WHERE version_id=$1',
+        'SELECT id, key, label, aliases, attributes FROM semantic_model.node_types WHERE version_id=$1',
         [model.currentDraftVersionId],
       ).then((result) => result.rows),
       this.database.query<RelationTypeRow>(
@@ -225,6 +534,7 @@ export class SemanticPopulationRefreshService {
     const sources = [];
     const usableMappings: MappingRow[] = [];
     const skipped: Array<{ mappingId: string; reason: string }> = [];
+    let waitingFiles = 0;
     for (const mapping of [...mappings].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0)) {
       try {
         const node = nodes.find((candidate) => candidate.id === mapping.conceptId);
@@ -234,20 +544,39 @@ export class SemanticPopulationRefreshService {
             'The mapped concept is not present in the current draft',
           );
         }
-        sources.push(await this.populationSource(mapping, node));
+        if (mapping.scope === 'workspace') {
+          // One source per readable file, resolved now: files added since the last run are included.
+          const files = await this.workspaceFiles(mapping.workspaceId, mappingSelection(mapping));
+          if (!files.readable.length) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT, 'The workspace has no readable file yet');
+          for (const file of files.readable) sources.push(await this.populationSource(mapping, node, file));
+          waitingFiles += files.waiting.length;
+        } else {
+          sources.push(await this.populationSource(mapping, node));
+        }
         usableMappings.push(mapping);
       } catch (error) {
         if (scope.kind === 'mapping') throw error;
         skipped.push({ mappingId: mapping.id, reason: (error as Error).message });
       }
     }
+    const manual = scope.kind === 'model'
+      ? await this.manualSource(model.id, model.currentDraftVersionId, homeWorkspaceId, nodes)
+      : null;
+    if (manual) sources.push(...manual.sources);
     if (!sources.length) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'No usable source in the selected scope');
     }
+    if (sources.length > MAX_RUN_SOURCES) {
+      throw new BadRequestException(
+        ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+        `A run can read at most ${MAX_RUN_SOURCES} files; map a folder instead of the whole workspace`,
+      );
+    }
     const scopedConceptIds = new Set(usableMappings.map((mapping) => mapping.conceptId));
+    const manualOnly = new Set((manual?.sources ?? []).map((source) => source.conceptId).filter((id) => !scopedConceptIds.has(id)));
     const concepts = nodes
-      .filter((node) => scopedConceptIds.has(node.id))
-      .map((node) => this.conceptSpec(node, identityRules.get(node.id) ?? []));
+      .filter((node) => scopedConceptIds.has(node.id) || manualOnly.has(node.id))
+      .map((node) => this.conceptSpec(node, identityRules.get(node.id) ?? [], manualOnly.has(node.id)));
     const inScope = new Set(concepts.map((concept) => concept.conceptId));
     const relations: RelationSpec[] = [];
     const relationBindings: Array<{ relationId: string; referenceField: string; targetField: string }> = [];
@@ -303,7 +632,7 @@ export class SemanticPopulationRefreshService {
       relations,
       sourceScope: [...new Map(
         usableMappings.map((mapping) => [`${mapping.workspaceId}:${mapping.documentId}`, { workspaceId: mapping.workspaceId, assetId: mapping.documentId }]),
-      ).values()],
+      ).values(), ...(manual ? [{ workspaceId: homeWorkspaceId, assetId: manual.assetId }] : [])],
     };
     const issues = this.specifications.validate(draft);
     if (issues.length) {
@@ -314,13 +643,6 @@ export class SemanticPopulationRefreshService {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'The population specification could not be hashed');
     }
     const { specHash, ...specification } = snapshot;
-    await this.runtime.mirrorSpecification({
-      homeWorkspaceId,
-      modelId: model.id,
-      modelVersionId: model.currentDraftVersionId,
-      specHash,
-      specification,
-    });
     const scopeKey = scope.kind === 'model' ? 'model' : `mapping:${scope.mappingId}`;
     relationBindings.sort((left, right) => left.relationId < right.relationId ? -1 : left.relationId > right.relationId ? 1 : 0);
     const runtimeSources = JSON.parse(JSON.stringify(sources)) as typeof sources;
@@ -344,8 +666,26 @@ export class SemanticPopulationRefreshService {
       aiExtraction,
       populationEngineVersion: POPULATION_ENGINE_VERSION,
     });
+    return { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, aiExtraction, populationExecutionFingerprint, skipped, waitingFiles };
+  }
+
+  async requestRefresh(userId: string, modelId: string, input: RequestPopulationRefreshInput) {
+    const { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, aiExtraction, populationExecutionFingerprint, skipped, waitingFiles }
+      = await this.planRefresh(userId, modelId, input, 'run');
+    await this.runtime.mirrorSpecification({
+      homeWorkspaceId,
+      modelId: model.id,
+      modelVersionId: model.currentDraftVersionId!,
+      specHash,
+      specification,
+    });
+    // A new data fix must rebuild even when every source is unchanged.
+    const correctionSequence = scope.kind === 'model' && typeof this.runtime.listCorrections === 'function'
+      ? await this.runtime.listCorrections(model.id, userId).then((listed) => listed.correctionSequence).catch(() => 0)
+      : 0;
     const idempotencyKey = createHash('sha256')
       .update(JSON.stringify({
+        ...(correctionSequence ? { correctionSequence } : {}),
         modelVersionId: model.currentDraftVersionId,
         specHash: snapshot.specHash,
         populationExecutionFingerprint,
@@ -371,12 +711,32 @@ export class SemanticPopulationRefreshService {
         aiExtraction,
       },
     }, idempotencyKey);
-    return { ...accepted, skipped };
+    return { ...accepted, skipped, sourceCount: runtimeSources.length, waitingFiles };
   }
 
-  private conceptSpec(node: NodeTypeRow, identityFields: string[]): ConceptSpec {
+  /**
+   * Whether the records in use were built from the model as it is now. Compares the fingerprint a run would
+   * have today (design, mappings and source file versions) with the one of the active data.
+   */
+  async freshness(userId: string, modelId: string): Promise<{ state: 'current' | 'outdated' | 'never_run' | 'not_runnable'; reason?: string }> {
+    let fingerprint: string;
+    try {
+      fingerprint = (await this.planRefresh(userId, modelId, { purpose: 'build', scope: { kind: 'model' } }, 'read')).populationExecutionFingerprint;
+    } catch (error) {
+      if (error instanceof BadRequestException || error instanceof ConflictException) return { state: 'not_runnable', reason: (error as Error).message };
+      throw error;
+    }
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    const active = await this.runtime.getBoundRecords(model.id, userId, 1).catch(() => null);
+    if (!active) return { state: 'never_run' };
+    return { state: active.executionFingerprint === fingerprint ? 'current' : 'outdated' };
+  }
+
+  private conceptSpec(node: NodeTypeRow, identityFields: string[], manualOnly = false): ConceptSpec {
     const knownKeys = new Set((node.attributes ?? []).map((attribute) => attribute.key));
     const keyComponents = identityFields.filter((field) => knownKeys.has(field));
+    // Records typed by hand need no key: the runtime falls back to each record's own id.
+    if (!keyComponents.length && manualOnly && node.attributes?.length) keyComponents.push(node.attributes[0].key);
     if (!keyComponents.length) {
       throw new BadRequestException(
         ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
@@ -390,7 +750,74 @@ export class SemanticPopulationRefreshService {
       identity: { namespace: node.key, keyComponents },
       populationMode: 'materialized',
       allowedFields: (node.attributes ?? []).map((attribute) => attribute.key),
+      ...this.conceptAliases(node),
     };
+  }
+
+  /** Synonyms go into the spec only when present, so a model without any keeps its specification hash. */
+  private conceptAliases(node: NodeTypeRow): Pick<ConceptSpec, 'aliases' | 'fieldAliases'> {
+    const clean = (values: string[] | undefined) => [...new Set((values ?? []).map((value) => value.trim()).filter(Boolean))];
+    const aliases = clean(node.aliases);
+    const fieldAliases = Object.fromEntries((node.attributes ?? [])
+      .map((attribute) => [attribute.key, clean(attribute.aliases)] as const)
+      .filter(([, values]) => values.length));
+    return {
+      ...(aliases.length ? { aliases } : {}),
+      ...(Object.keys(fieldAliases).length ? { fieldAliases } : {}),
+    };
+  }
+
+  /**
+   * Records entered by hand on the draft (including records migrated from the legacy pipeline) as one
+   * immutable runtime snapshot. The snapshot id hashes its content, so unchanged records reuse it.
+   */
+  private async manualSource(modelId: string, versionId: string, workspaceId: string, nodes: NodeTypeRow[]) {
+    const withFields = new Map(nodes.filter((node) => node.attributes?.length).map((node) => [node.id, node]));
+    const [records, recordRelations] = await Promise.all([
+      this.database.query<{ id: string; nodeTypeId: string; label: string; values: Record<string, unknown> }>(
+        `SELECT id, node_type_id AS "nodeTypeId", label, values FROM semantic_model.records
+         WHERE model_id=$1 AND version_id=$2 AND status='active' ORDER BY id`,
+        [modelId, versionId],
+      ).then((result) => result.rows.filter((row) => withFields.has(row.nodeTypeId))),
+      this.database.query<{ relationTypeId: string; sourceRecordId: string; targetRecordId: string }>(
+        `SELECT relation_type_id AS "relationTypeId", source_record_id AS "sourceRecordId", target_record_id AS "targetRecordId"
+         FROM semantic_model.record_relations WHERE model_id=$1 AND version_id=$2
+         ORDER BY relation_type_id, source_record_id, target_record_id`,
+        [modelId, versionId],
+      ).then((result) => result.rows),
+    ]);
+    if (!records.length) return null;
+    const known = new Set(records.map((record) => record.id));
+    const rows = records.map((record) => ({
+      conceptId: record.nodeTypeId,
+      rowKey: record.id,
+      label: record.label ?? '',
+      values: Object.fromEntries(Object.entries(record.values ?? {}).filter(([key]) => !key.startsWith('_'))),
+    }));
+    const links = recordRelations
+      .filter((link) => known.has(link.sourceRecordId) && known.has(link.targetRecordId))
+      .map((link) => ({ relationId: link.relationTypeId, sourceRowKey: link.sourceRecordId, targetRowKey: link.targetRecordId }));
+    const snapshotId = `m${this.specifications.hashCanonical({ modelId, rows, links }).replace(/^sha256:/, '').slice(0, 40)}`;
+    for (let index = 0; index < Math.max(rows.length, links.length); index += MANUAL_BATCH_SIZE) {
+      await this.runtime.appendManualRows(modelId, snapshotId, {
+        rows: rows.slice(index, index + MANUAL_BATCH_SIZE),
+        links: links.slice(index, index + MANUAL_BATCH_SIZE),
+      });
+    }
+    await this.runtime.commitManualSnapshot(modelId, snapshotId, { rowCount: rows.length, linkCount: links.length });
+    const assetId = `manual:${snapshotId}`;
+    const sources = [...new Set(rows.map((row) => row.conceptId))].map((conceptId) => {
+      const keys = withFields.get(conceptId)!.attributes.map((attribute) => attribute.key);
+      return {
+        sourceKind: 'manual' as const,
+        conceptId,
+        source: { workspaceId, assetId, snapshotId },
+        options: {},
+        columnMapping: Object.fromEntries(keys.map((key) => [key, key])),
+        mappingVersion: snapshotId,
+      };
+    });
+    return { assetId, sources };
   }
 
   private async loadScopeMappings(modelId: string, scope: PopulationRefreshScope): Promise<MappingRow[]> {
@@ -404,7 +831,8 @@ export class SemanticPopulationRefreshService {
                 m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings",
                 m.status, i.fields AS "identityFields",
                 COALESCE(w.enabled, false) AS "sourceEnabled",
-                m.validated_source_version AS "validatedSourceVersion", m.updated_at AS "updatedAt"
+                m.validated_source_version AS "validatedSourceVersion", m.updated_at AS "updatedAt",
+                m.scope, m.folder_id AS "folderId", m.selection
          FROM semantic_model.source_mappings m
          LEFT JOIN semantic_model.workspace_links w ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id
          LEFT JOIN semantic_model.identity_rules i ON i.model_id=m.model_id AND i.concept_id=m.concept_id
@@ -422,7 +850,8 @@ export class SemanticPopulationRefreshService {
               m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings",
               m.status, i.fields AS "identityFields",
               COALESCE(w.enabled, false) AS "sourceEnabled",
-              m.validated_source_version AS "validatedSourceVersion", m.updated_at AS "updatedAt"
+              m.validated_source_version AS "validatedSourceVersion", m.updated_at AS "updatedAt",
+              m.scope, m.folder_id AS "folderId", m.selection
        FROM semantic_model.source_mappings m
        LEFT JOIN semantic_model.workspace_links w ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id
        LEFT JOIN semantic_model.identity_rules i ON i.model_id=m.model_id AND i.concept_id=m.concept_id
@@ -451,14 +880,24 @@ export class SemanticPopulationRefreshService {
     }
   }
 
-  private async populationSource(mapping: MappingRow, node: NodeTypeRow) {
+  /** Readable files of a workspace mapping, listed at run time. */
+  private async workspaceFiles(workspaceId: string, selection: WorkspaceSelection | null) {
+    const all = await this.documents.listAllInWorkspace(workspaceId);
+    return workspaceMappingFiles(all, DOCUMENT_MIME_TYPES, selection);
+  }
+
+  /**
+   * The runtime source for a mapping. A workspace mapping passes each file it covers: those files were
+   * listed a moment ago, so they are read as they are now rather than checked against a saved version.
+   */
+  private async populationSource(mapping: MappingRow, node: NodeTypeRow, file?: WorkspaceDocumentResponse) {
     this.assertUsable(mapping);
-    const document = await this.documents.findById(mapping.workspaceId, mapping.documentId);
+    const document = file ?? await this.documents.findById(mapping.workspaceId, mapping.documentId);
     const currentSourceVersion = document.contentHash || `${document.updatedAt}:${document.size}`;
     const currentKind = STRUCTURED_MIME_PREFIXES.some((prefix) => document.mimeType.startsWith(prefix))
       ? document.mimeType.includes('csv') ? 'csv' : 'excel_sheet'
       : DOCUMENT_MIME_TYPES.has(document.mimeType) ? 'document' : null;
-    if (currentSourceVersion !== mapping.validatedSourceVersion || currentKind !== mapping.assetKind) {
+    if ((!file && currentSourceVersion !== mapping.validatedSourceVersion) || currentKind !== mapping.assetKind) {
       throw new ConflictException(
         ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT,
         'The mapped source changed since this mapping was validated',
@@ -497,8 +936,8 @@ export class SemanticPopulationRefreshService {
     }
     const source = {
       workspaceId: mapping.workspaceId,
-      assetId: mapping.documentId,
-      assetVersionId: mapping.validatedSourceVersion ?? undefined,
+      assetId: file ? file.id : mapping.documentId,
+      assetVersionId: file ? currentSourceVersion : mapping.validatedSourceVersion ?? undefined,
       originalName: document.originalName,
       uploaderUserId: document.createdBy,
       mimeType: document.mimeType,
@@ -547,4 +986,10 @@ export class SemanticPopulationRefreshService {
       mappingVersion,
     };
   }
+}
+
+/** The name the graph stores a field under: the runtime replaces characters it cannot use in a property name. */
+export function graphPropertyKey(field: string): string {
+  const safe = field.replace(/[^a-zA-Z0-9_]/g, '_');
+  return /^[0-9]/.test(safe) ? `_${safe}` : safe;
 }

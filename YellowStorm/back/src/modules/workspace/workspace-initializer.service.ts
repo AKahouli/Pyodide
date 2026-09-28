@@ -1,8 +1,8 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { WorkspaceResponse } from './interfaces/workspace.interface';
 import { LoggerService } from '../logger';
 import type { WorkspaceRecord } from './ports/workspace-records';
-import { WORKSPACE_STORE, type WorkspaceStore } from './stores/workspace-store';
+import { PgWorkspaceStore } from './stores/postgres/pg-workspace-store';
 
 const PERSONAL_WORKSPACE_NAME = 'Mon workspace personnel';
 const PERSONAL_WORKSPACE_ALIAS = 'mon-workspace-personnel';
@@ -11,7 +11,7 @@ const PERSONAL_WORKSPACE_DESCRIPTION = 'Votre espace personnel pour organiser vo
 @Injectable()
 export class WorkspaceInitializerService {
   constructor(
-    @Inject(WORKSPACE_STORE) private readonly workspaceStore: WorkspaceStore,
+    private readonly workspaceStore: PgWorkspaceStore,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('WorkspaceInitializerService');

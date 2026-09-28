@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { KnowledgeLinkingController } from '../../hooks/use-knowledge-linking';
@@ -7,7 +7,11 @@ import { useSemanticModelEditorStore } from '../../store';
 import { SemanticModelInspector } from './SemanticModelInspector';
 
 vi.mock('../knowledge/KnowledgePanel',()=>({KnowledgePanel:()=> <div>knowledge-tray</div>}));
-vi.mock('../../query/hooks',()=>({useSourceMappings:()=>({data:[],isLoading:false})}));
+const hookState = vi.hoisted(() => ({ mappings: [] as Array<Record<string, unknown>>, rules: [] as Array<{ conceptId: string; fields: string[] }> }));
+const saveIdentityRule = vi.hoisted(() => vi.fn(async () => ({ revision: 1, conceptId: 'customer', fields: [] })));
+vi.mock('../mapping/RelationMatchingPanel',()=>({RelationMatchingPanel:()=> <div>relation-matching</div>}));
+vi.mock('../../query/hooks',()=>({useSourceMappings:()=>({data:hookState.mappings,isLoading:false}),useIdentityRules:()=>({data:hookState.rules,isLoading:false})}));
+vi.mock('../../api',()=>({semanticModelApi:{saveIdentityRule}}));
 
 const graph: SemanticGraph = {
   modelId:'model',versionId:'version',revision:0,relations:[],records:[],recordRelations:[],
@@ -20,7 +24,7 @@ const renderInspector=(canEdit:boolean)=>render(
   </QueryClientProvider>);
 
 describe('SemanticModelInspector', () => {
-  beforeEach(() => { useSemanticModelEditorStore.getState().hydrate(graph);useSemanticModelEditorStore.getState().select('customer'); });
+  beforeEach(() => { hookState.mappings=[];hookState.rules=[];saveIdentityRule.mockClear();useSemanticModelEditorStore.getState().hydrate(graph);useSemanticModelEditorStore.getState().select('customer'); });
 
   it('renders read-only details without mutation-shaped controls', () => {
     renderInspector(false);
@@ -54,6 +58,50 @@ describe('SemanticModelInspector', () => {
     renderInspector(true);
     fireEvent.click(screen.getByRole('checkbox', { name: 'attributes.required' }));
     expect(useSemanticModelEditorStore.getState().graph?.nodes[0].attributes[0].required).toBe(true);
+  });
+
+  it('asks what makes each concept unique and saves the chosen fields', async () => {
+    useSemanticModelEditorStore.getState().hydrate({ ...graph, nodes: [{ ...graph.nodes[0], attributes: [{ key: 'number', label: 'Number', type: 'text', required: false }, { key: 'country', label: 'Country', type: 'text', required: false }] }] });
+    useSemanticModelEditorStore.getState().select('customer');
+    hookState.rules=[{ conceptId: 'customer', fields: ['country'] }];
+    renderInspector(true);
+    expect(screen.getByText('identity.title')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Country' })).toHaveAttribute('aria-pressed', 'true');
+    fireEvent.click(screen.getByRole('button', { name: 'Number' }));
+    await waitFor(() => expect(saveIdentityRule).toHaveBeenCalledWith('model', 'customer', ['country', 'number']));
+  });
+
+  it('warns when a mapped concept has nothing that makes it unique', () => {
+    useSemanticModelEditorStore.getState().hydrate({ ...graph, nodes: [{ ...graph.nodes[0], attributes: [{ key: 'number', label: 'Number', type: 'text', required: false }] }] });
+    useSemanticModelEditorStore.getState().select('customer');
+    hookState.mappings=[{ id: 'm', conceptId: 'customer', identityFields: [] }];
+    renderInspector(true);
+    expect(screen.getByRole('alert')).toHaveTextContent('identity.missing');
+  });
+
+  it('edits a relationship as two sentences that set its cardinality', () => {
+    useSemanticModelEditorStore.getState().hydrate({
+      ...graph,
+      nodes:[graph.nodes[0],{...graph.nodes[0],id:'contract',key:'contract',label:'Contract'}],
+      relations:[{id:'belongs',key:'belongs_to',label:'belongs to',inverseLabel:'has',description:'',sourceNodeTypeId:'contract',targetNodeTypeId:'customer',cardinality:'many_to_one',traversable:true,filterable:true,attributes:[]}],
+    });
+    useSemanticModelEditorStore.getState().select('belongs');
+    renderInspector(true);
+    expect(screen.getByDisplayValue('belongs to')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('has')).toBeInTheDocument();
+    expect(screen.getByText('relation-matching')).toBeInTheDocument();
+    fireEvent.change(screen.getByDisplayValue('has'), { target: { value: 'owns' } });
+    expect(useSemanticModelEditorStore.getState().graph?.relations[0].inverseLabel).toBe('owns');
+  });
+
+  it('adds and removes business synonyms on a concept', () => {
+    renderInspector(true);
+    const input = screen.getByRole('textbox', { name: 'aliases.placeholder' });
+    fireEvent.change(input, { target: { value: 'Client' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(useSemanticModelEditorStore.getState().graph?.nodes[0].aliases).toEqual(['Client']);
+    fireEvent.click(screen.getByRole('button', { name: 'aliases.remove' }));
+    expect(useSemanticModelEditorStore.getState().graph?.nodes[0].aliases).toEqual([]);
   });
 
   it('keeps the knowledge tray out of the empty details state', () => {

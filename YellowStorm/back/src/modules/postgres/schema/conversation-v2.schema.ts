@@ -57,6 +57,7 @@ export const conversationV2Sessions = conversationV2Schema.table(
     check('c2_sessions_event_sequence_nonneg', sql`${t.eventSequence} >= 0`),
     check('c2_sessions_event_count_nonneg', sql`${t.eventCount} >= 0`),
     index('idx_c2_sessions_owner_deleted_last').on(t.ownerId, t.deletedAt, t.lastEventAt.desc()),
+    index('idx_c2_sessions_system_workspace').on(t.systemWorkspaceId),
     uniqueIndex('uq_c2_sessions_ai_session')
       .on(t.aiSessionId)
       .where(sql`${t.aiSessionId} IS NOT NULL`),
@@ -126,5 +127,6 @@ export const conversationV2AppShares = conversationV2Schema.table(
       .on(t.inviteTokenHash)
       .where(sql`${t.inviteTokenHash} IS NOT NULL`),
     index('idx_c2_shares_recipient_updated').on(t.recipientUserId, t.updatedAt.desc()),
+    index('idx_c2_app_shares_owner').on(t.ownerId),
   ],
 );

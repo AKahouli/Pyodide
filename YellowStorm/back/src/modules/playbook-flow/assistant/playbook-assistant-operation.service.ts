@@ -1,12 +1,13 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import { randomUUID } from 'crypto';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import { BadRequestException, ConflictException, NotFoundException, ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import type { PlaybookIntentConstructionEvent, PlaybookIntentConstructionStatus } from '../interfaces/playbook-flow-intent-construction.interface';
-import { PlaybookAssistantOperation, PlaybookAssistantOperationDocument } from '../schemas/playbook-assistant-operation.schema';
-import { PlaybookAssistantRevision, PlaybookAssistantRevisionDocument } from '../schemas/playbook-assistant-revision.schema';
+import {
+  PlaybookAssistantOperationRepository,
+  type PlaybookAssistantOperationRecord,
+} from '../persistence/assistant-operation.repository';
+import { PlaybookAssistantRevisionRepository } from '../persistence/assistant-revision.repository';
 import { PlaybookFlowService } from '../services/playbook-flow.service';
 import type { UpdatePlaybookFlowDto } from '../dto/update-playbook-flow.dto';
 import type { CreatePlaybookFlowDto } from '../dto/create-playbook-flow.dto';
@@ -30,11 +31,9 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
   private readonly workerId = randomUUID();
   private recoveryTimer: NodeJS.Timeout | null = null;
   constructor(
-    @InjectModel(PlaybookAssistantOperation.name)
-    private readonly operationModel: Model<PlaybookAssistantOperationDocument>,
+    private readonly operations: PlaybookAssistantOperationRepository,
     @Optional() private readonly flowService?: PlaybookFlowService,
-    @Optional() @InjectModel(PlaybookAssistantRevision.name)
-    private readonly revisionModel?: Model<PlaybookAssistantRevisionDocument>,
+    @Optional() private readonly revisions?: PlaybookAssistantRevisionRepository,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -50,10 +49,7 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
 
   private async recoverExpiredOperations(): Promise<void> {
     const cutoff = new Date();
-    const orphaned = await this.operationModel.find({
-      status: { $in: ['queued', 'running'] },
-      $or: [{ leaseExpiresAt: { $lte: cutoff } }, { leaseExpiresAt: null }, { leaseExpiresAt: { $exists: false } }],
-    }).lean().exec();
+    const orphaned = await this.operations.findOrphaned(cutoff);
     for (const operation of orphaned) {
       const event = {
         type: 'failed' as const,
@@ -65,22 +61,10 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
         createdAt: new Date().toISOString(),
       };
       const eventBytes = Buffer.byteLength(JSON.stringify(event), 'utf8');
-      await this.operationModel.findOneAndUpdate(
-        {
-          operationId: operation.operationId,
-          playbookId: operation.playbookId,
-          ownerId: operation.ownerId,
-          lastSequence: operation.lastSequence,
-          status: { $in: ['queued', 'running'] },
-          $or: [{ leaseExpiresAt: { $lte: cutoff } }, { leaseExpiresAt: null }, { leaseExpiresAt: { $exists: false } }],
-        },
-        {
-          $inc: { lastSequence: 1, eventBytes },
-          $push: { events: event },
-          $set: { status: 'failed', terminalAt: new Date(), leaseExpiresAt: null, expiresAt: this.expiresAt() },
-        },
-        { new: true },
-      ).lean().exec();
+      await this.operations.failOrphaned(
+        { operationId: operation.operationId, playbookId: operation.playbookId, ownerId: operation.ownerId },
+        { expectedSequence: operation.lastSequence, cutoff, event, eventBytes, expiresAt: this.expiresAt() },
+      );
     }
   }
 
@@ -96,7 +80,7 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
     operationKind?: 'construction' | 'generation';
     createdPlaybookId?: string;
   }): Promise<void> {
-    await this.operationModel.create({
+    await this.operations.insert({
       ...input,
       origin: input.origin ?? 'designer',
       target: input.target ?? 'canonical',
@@ -104,11 +88,6 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
       requestId: input.requestId ?? null,
       operationKind: input.operationKind ?? 'construction',
       createdPlaybookId: input.createdPlaybookId ?? null,
-      disposition: 'pending',
-      status: 'queued',
-      lastSequence: 0,
-      events: [],
-      eventBytes: 0,
       workerId: this.workerId,
       leaseExpiresAt: this.leaseExpiresAt(),
       expiresAt: this.expiresAt(),
@@ -129,7 +108,7 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
       }
       let boundedEvent = event;
       let eventBytes = Buffer.byteLength(JSON.stringify(event), 'utf8');
-      if (eventBytes > MAX_EVENT_BYTES || (current.eventBytes ?? 0) + eventBytes > MAX_OPERATION_EVENT_BYTES) {
+      if (eventBytes > MAX_EVENT_BYTES || current.eventBytes + eventBytes > MAX_OPERATION_EVENT_BYTES) {
         boundedEvent = {
           type: 'failed', constructionId: operationId, playbookId,
           message: 'Construction event storage limit exceeded', recoverable: false,
@@ -143,31 +122,18 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
         sequence: current.lastSequence + 1,
         createdAt: new Date().toISOString(),
       } as PlaybookIntentConstructionEvent;
-      const operation = await this.operationModel.findOneAndUpdate(
-        {
-          operationId,
-          playbookId,
-          ownerId,
-          lastSequence: current.lastSequence,
-          status: { $nin: TERMINAL_STATUSES },
-          ...(boundedEvent.type === 'cancelled' ? {} : {
-            workerId: this.workerId,
-            $expr: { $gt: ['$leaseExpiresAt', '$$NOW'] },
-          }),
-        },
-        {
-          $inc: { lastSequence: 1, eventBytes },
-          $push: { events: persisted },
-          $set: {
-            ...(status ? { status } : {}),
-            ...(terminal ? { terminalAt: new Date() } : {}),
-            leaseExpiresAt: terminal ? null : this.leaseExpiresAt(),
-            expiresAt: this.expiresAt(),
-          },
-        },
-        { new: true },
-      ).lean().exec();
-      if (operation) return persisted;
+      const appended = await this.operations.appendEvent({ operationId, playbookId, ownerId }, {
+        expectedSequence: current.lastSequence,
+        event: persisted as unknown as Record<string, unknown>,
+        eventBytes,
+        status,
+        terminal,
+        leaseExpiresAt: terminal ? null : this.leaseExpiresAt(),
+        expiresAt: this.expiresAt(),
+        // A cancellation is accepted from any caller; every other event only from the worker holding the lease.
+        ...(boundedEvent.type === 'cancelled' ? {} : { workerId: this.workerId }),
+      });
+      if (appended) return persisted;
     }
     throw new ConflictException(ErrorCode.CONFLICT, 'Assistant operation event sequence changed concurrently');
   }
@@ -192,36 +158,20 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
       lastSequence: operation.lastSequence,
       origin: operation.origin,
       target: operation.target,
-      disposition: operation.disposition ?? 'pending',
-      committedRevision: operation.committedRevision ?? null,
+      disposition: operation.disposition,
+      committedRevision: operation.committedRevision,
     };
   }
 
   async renewWorkerLease(playbookId: string, ownerId: string, operationId: string): Promise<boolean> {
-    const result = await this.operationModel.updateOne(
-      {
-        operationId,
-        playbookId,
-        ownerId,
-        workerId: this.workerId,
-        status: { $in: ['queued', 'running'] },
-        $expr: { $gt: ['$leaseExpiresAt', '$$NOW'] },
-      },
-      [{
-        $set: {
-          leaseExpiresAt: { $dateAdd: { startDate: '$$NOW', unit: 'millisecond', amount: PLAYBOOK_ASSISTANT_WORKER_LEASE_MS } },
-          expiresAt: { $dateAdd: { startDate: '$$NOW', unit: 'millisecond', amount: RETENTION_MS } },
-        },
-      }],
-    ).exec();
-    return result.modifiedCount === 1;
+    return this.operations.renewLease({ operationId, playbookId, ownerId }, this.workerId, PLAYBOOK_ASSISTANT_WORKER_LEASE_MS, RETENTION_MS);
   }
 
   async *stream(playbookId: string, ownerId: string, operationId: string, afterSequence: number): AsyncGenerator<PlaybookIntentConstructionEvent> {
     let cursor = Math.max(0, afterSequence);
     while (true) {
       const operation = await this.getOperation(playbookId, ownerId, operationId);
-      const events = (operation.events ?? []) as unknown as PlaybookIntentConstructionEvent[];
+      const events = operation.events as unknown as PlaybookIntentConstructionEvent[];
       for (const event of events.filter((item) => item.sequence > cursor).sort((left, right) => left.sequence - right.sequence)) {
         cursor = event.sequence;
         yield event;
@@ -232,8 +182,7 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
   }
 
   async cancel(playbookId: string, ownerId: string, operationId: string, reason?: string): Promise<boolean> {
-    const operation = await this.operationModel.findOne({ operationId, playbookId, ownerId }).lean().exec();
-    if (!operation) throw new NotFoundException(ErrorCode.NOT_FOUND, 'Assistant operation not found');
+    const operation = await this.getOperation(playbookId, ownerId, operationId);
     if (TERMINAL_STATUSES.includes(operation.status)) return false;
     await this.append(playbookId, ownerId, operationId, {
       type: 'cancelled',
@@ -260,10 +209,7 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
     if (operation.disposition === 'applying' || operation.disposition === 'applied' || operation.disposition === 'reverted') {
       throw new ConflictException(ErrorCode.CONFLICT, 'Applied Advisor preview cannot be discarded');
     }
-    await this.operationModel.updateOne(
-      { operationId, playbookId, ownerId, disposition: { $in: ['pending', 'discarded'] } },
-      { $set: { disposition: 'discarded', expiresAt: this.expiresAt() } },
-    ).exec();
+    await this.operations.discard({ operationId, playbookId, ownerId }, this.expiresAt());
     this.logger.log(`playbook_assistant_preview_discarded operationId=${operationId} playbookId=${playbookId}`);
     return { discarded: true };
   }
@@ -274,14 +220,14 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
       return {
         reverted: true as const,
         playbookId,
-        definitionRevision: operation.revertedRevision ?? operation.committedRevision ?? null,
-        createdPlaybookId: operation.createdPlaybookId ?? null,
+        definitionRevision: operation.revertedRevision ?? operation.committedRevision,
+        createdPlaybookId: operation.createdPlaybookId,
       };
     }
     if (!operation.committedRevision) {
       throw new ConflictException(ErrorCode.CONFLICT, 'Assistant operation is not revertible');
     }
-    if (!this.flowService || !this.revisionModel) {
+    if (!this.flowService || !this.revisions) {
       throw new ServiceUnavailableException(ErrorCode.SERVICE_UNAVAILABLE, 'Assistant operation revert is unavailable');
     }
     if (operation.createdPlaybookId) {
@@ -290,15 +236,15 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
         throw new ConflictException(ErrorCode.CONFLICT, 'The generated Playbook changed after the assistant operation was applied');
       }
       await this.flowService.remove(operation.createdPlaybookId, ownerId);
-      await this.operationModel.updateOne(
-        { operationId, playbookId, ownerId, disposition: { $ne: 'reverted' } },
-        { $set: { disposition: 'reverted', revertedRevision: operation.committedRevision, revertedAt: new Date(), expiresAt: this.expiresAt() } },
-      ).exec();
+      await this.operations.markReverted({ operationId, playbookId, ownerId }, {
+        revertedRevision: operation.committedRevision,
+        expiresAt: this.expiresAt(),
+      });
       return { reverted: true as const, playbookId, createdPlaybookId: operation.createdPlaybookId, deleted: true as const };
     }
-    const snapshot = await this.revisionModel.findOne({ operationId, playbookId, ownerId }).lean().exec();
+    const snapshot = await this.revisions.find({ operationId, playbookId, ownerId });
     if (!snapshot) throw new NotFoundException(ErrorCode.NOT_FOUND, 'Assistant operation revision snapshot not found');
-    const definition = snapshot.definition as UpdatePlaybookFlowDto;
+    const definition = snapshot.definition as unknown as UpdatePlaybookFlowDto;
     const result = await this.flowService.update(playbookId, ownerId, {
       ...definition,
       expectedDefinitionRevision: operation.committedRevision,
@@ -307,11 +253,12 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
       allowUnboundRequiredPorts: true,
       allowIncompleteNodeOutputBindings: true,
     });
-    const updated = await this.operationModel.updateOne(
-      { operationId, playbookId, ownerId, committedRevision: operation.committedRevision, disposition: { $ne: 'reverted' } },
-      { $set: { disposition: 'reverted', revertedRevision: result.definitionRevision, revertedAt: new Date(), expiresAt: this.expiresAt() } },
-    ).exec();
-    if (updated.modifiedCount !== 1) throw new ConflictException(ErrorCode.CONFLICT, 'Assistant operation was reverted concurrently');
+    const reverted = await this.operations.markReverted({ operationId, playbookId, ownerId }, {
+      revertedRevision: result.definitionRevision,
+      committedRevision: operation.committedRevision,
+      expiresAt: this.expiresAt(),
+    });
+    if (!reverted) throw new ConflictException(ErrorCode.CONFLICT, 'Assistant operation was reverted concurrently');
     this.logger.log(`playbook_assistant_operation_reverted operationId=${operationId} playbookId=${playbookId} revision=${result.definitionRevision}`);
     return result;
   }
@@ -324,8 +271,8 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
     target: 'canonical' | 'advisor_preview',
   ) {
     const operation = await this.getOperation(playbookId, ownerId, operationId);
-    const failureIndex = (operation.events ?? []).findIndex((event) => event.type === 'failed' && event.failureKind === 'strict_validation');
-    const hasRetainedBlockedDraft = failureIndex > 0 && (operation.events ?? [])
+    const failureIndex = operation.events.findIndex((event) => event.type === 'failed' && event.failureKind === 'strict_validation');
+    const hasRetainedBlockedDraft = failureIndex > 0 && operation.events
       .slice(0, failureIndex)
       .some((event) => {
         if (event.type !== 'node_delta' && event.type !== 'edge_delta' && event.type !== 'data_binding_delta') return false;
@@ -355,11 +302,7 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
       if (operation.disposition === 'applying') {
         return this.waitForCreatedPlaybook(playbookId, ownerId, operationId);
       }
-      const claimed = await this.operationModel.findOneAndUpdate(
-        { operationId, playbookId, ownerId, status: 'completed', disposition: 'pending' },
-        { $set: { disposition: 'applying', expiresAt: this.expiresAt() } },
-        { new: true },
-      ).lean().exec();
+      const claimed = await this.operations.claimApply({ operationId, playbookId, ownerId }, this.expiresAt());
       if (!claimed) return this.waitForCreatedPlaybook(playbookId, ownerId, operationId);
       try {
         const current = await this.flowService.findOneBase(playbookId, ownerId);
@@ -385,44 +328,36 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
       } catch (error) {
         const created = await this.flowService.findByAssistantOperationId(ownerId, operationId);
         if (created) return this.recordGeneratedPlaybook(operationId, playbookId, ownerId, created);
-        await this.operationModel.updateOne(
-          { operationId, playbookId, ownerId, disposition: 'applying' },
-          { $set: { disposition: 'pending', expiresAt: this.expiresAt() } },
-        ).exec();
+        await this.operations.releaseApply({ operationId, playbookId, ownerId }, this.expiresAt());
         throw error;
       }
     }
-    if (this.revisionModel) {
+    if (this.revisions) {
       const current = await this.flowService.findOneBase(playbookId, ownerId);
       const definition = this.toUpdateDefinition(current);
       const snapshotBytes = Buffer.byteLength(JSON.stringify(definition), 'utf8');
       if (snapshotBytes > MAX_REVISION_SNAPSHOT_BYTES) {
         throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Playbook is too large to capture a safe assistant revert snapshot');
       }
-      await this.revisionModel.updateOne(
-        { operationId },
-        {
-          $setOnInsert: {
-            operationId,
-            playbookId,
-            ownerId,
-            definitionRevision: current.definitionRevision,
-            definition,
-          },
-          $set: { expiresAt: this.expiresAt() },
-        },
-        { upsert: true },
-      ).exec();
+      await this.revisions.captureOnce({
+        operationId,
+        playbookId,
+        ownerId,
+        definitionRevision: current.definitionRevision,
+        definition,
+        expiresAt: this.expiresAt(),
+      });
     }
     const result = await this.flowService.update(playbookId, ownerId, {
       ...dto,
       expectedDefinitionRevision: operation.baseDefinitionRevision,
       clientMutationId: `assistant-operation-${operationId}`,
     });
-    await this.operationModel.updateOne(
-      { operationId, playbookId, ownerId, status: isStrictValidationDraft ? 'failed' : 'completed' },
-      { $set: { disposition: 'applied', committedRevision: result.definitionRevision, committedAt: new Date(), expiresAt: this.expiresAt() } },
-    ).exec();
+    await this.operations.markApplied({ operationId, playbookId, ownerId }, {
+      status: isStrictValidationDraft ? 'failed' : 'completed',
+      committedRevision: result.definitionRevision,
+      expiresAt: this.expiresAt(),
+    });
     this.logger.log(`playbook_assistant_operation_committed operationId=${operationId} playbookId=${playbookId} target=${target} revision=${result.definitionRevision}`);
     return result;
   }
@@ -470,11 +405,12 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
     ownerId: string,
     created: Awaited<ReturnType<PlaybookFlowService['create']>>,
   ) {
-    const recorded = await this.operationModel.updateOne(
-      { operationId, playbookId, ownerId, status: 'completed', disposition: 'applying' },
-      { $set: { disposition: 'applied', committedRevision: created.definitionRevision, committedAt: new Date(), createdPlaybookId: created.id, expiresAt: this.expiresAt() } },
-    ).exec();
-    if (recorded.modifiedCount !== 1) {
+    const recorded = await this.operations.recordCreatedPlaybook({ operationId, playbookId, ownerId }, {
+      createdPlaybookId: created.id,
+      committedRevision: created.definitionRevision,
+      expiresAt: this.expiresAt(),
+    });
+    if (!recorded) {
       const operation = await this.getOperation(playbookId, ownerId, operationId);
       if (operation.disposition === 'applied' && operation.createdPlaybookId === created.id) return created;
       throw new ConflictException(ErrorCode.CONFLICT, 'Generated Playbook result could not be recorded');
@@ -483,8 +419,8 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
     return created;
   }
 
-  private async getOperation(playbookId: string, ownerId: string, operationId: string) {
-    const operation = await this.operationModel.findOne({ operationId, playbookId, ownerId }).lean().exec();
+  private async getOperation(playbookId: string, ownerId: string, operationId: string): Promise<PlaybookAssistantOperationRecord> {
+    const operation = await this.operations.find({ operationId, playbookId, ownerId });
     if (!operation) throw new NotFoundException(ErrorCode.NOT_FOUND, 'Assistant operation not found');
     return operation;
   }

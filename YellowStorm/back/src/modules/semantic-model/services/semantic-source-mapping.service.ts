@@ -3,6 +3,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
+import { WorkspaceService } from '@modules/workspace/workspace.service';
 import {
   type ResolvedMappingEntity,
   type SourcePreviewIssue,
@@ -19,11 +20,22 @@ import type {
   CreateSourceMappingDto,
   BulkDocumentSourceMappingDto,
   SourceAssetProfileQueryDto,
+  WorkspaceSourceMappingDto,
   SourceMappingPreviewDto,
 } from '../dto';
 import { DocumentExtractionConceptResolver } from './document-extraction-concept.resolver';
 import type { AttributeDefinition } from '../domain/semantic-model.types';
 import { SemanticRuntimeClientService } from './semantic-runtime-client.service';
+import {
+  MAX_WORKSPACE_MAPPING_DOCUMENTS,
+  MAX_WORKSPACE_SELECTION_ITEMS,
+  mappingSelection,
+  normalizeWorkspaceSelection,
+  type SourceMappingScope,
+  type WorkspaceSelection,
+  workspaceMappingFiles,
+  workspaceMappingKey,
+} from '../domain/workspace-source-scope';
 
 export const STRUCTURED_MIME_PREFIXES = [
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -54,6 +66,10 @@ interface SourceMappingRow {
   sourceEnabled: boolean;
   validatedSourceVersion: string | null;
   validatedAt: Date | null;
+  scope?: SourceMappingScope;
+  folderId?: string | null;
+  selection?: WorkspaceSelection | null;
+  sourceLabel?: string | null;
 }
 
 @Injectable()
@@ -66,7 +82,14 @@ export class SemanticSourceMappingService {
     private readonly documents: WorkspaceDocumentService,
     private readonly runtime: SemanticRuntimeClientService,
     private readonly documentExtraction: DocumentExtractionConceptResolver,
+    private readonly workspaces?: WorkspaceService,
   ) {}
+
+  /** The readable files a workspace mapping covers right now, and those still being indexed. */
+  async workspaceFiles(workspaceId: string, selection?: WorkspaceSelection | null) {
+    const all = await this.documents.listAllInWorkspace(workspaceId);
+    return workspaceMappingFiles(all, DOCUMENT_MIME_TYPES, selection);
+  }
 
   async listAssets(userId: string, modelId: string) {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
@@ -88,6 +111,30 @@ export class SemanticSourceMappingService {
         }));
     }));
     return { assets: assets.flat() };
+  }
+
+  async listCanvasPositions(userId: string, modelId: string) {
+    const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    const result = await this.database.query<{ id: string; x: number; y: number }>(
+      'SELECT element_id AS id, x, y FROM semantic_model.canvas_positions WHERE model_id=$1',
+      [model.id],
+    );
+    return { positions: result.rows };
+  }
+
+  /** Layout only: moving a box changes no meaning, so it neither advances the model revision nor needs one. */
+  async saveCanvasPositions(userId: string, modelId: string, positions: Array<{ id: string; x: number; y: number }>) {
+    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    if (positions.length) {
+      await this.database.query(
+        `INSERT INTO semantic_model.canvas_positions (model_id, element_id, x, y)
+         SELECT $1, item.id, item.x, item.y
+         FROM jsonb_to_recordset($2::jsonb) AS item(id text, x double precision, y double precision)
+         ON CONFLICT (model_id, element_id) DO UPDATE SET x=EXCLUDED.x, y=EXCLUDED.y, updated_at=now()`,
+        [model.id, JSON.stringify(positions)],
+      );
+    }
+    return { saved: positions.length };
   }
 
   async profileAsset(userId: string, modelId: string, workspaceId: string, documentId: string, query: SourceAssetProfileQueryDto) {
@@ -164,23 +211,143 @@ export class SemanticSourceMappingService {
               m.sheet_name AS "sheetName", m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings",
               m.status, m.created_by AS "createdBy", m.created_at AS "createdAt", m.updated_at AS "updatedAt",
               i.fields AS "identityFields", m.validated_source_version AS "validatedSourceVersion",
-              m.validated_at AS "validatedAt"
+              m.validated_at AS "validatedAt", m.scope, m.folder_id AS "folderId", m.selection, m.source_label AS "sourceLabel"
        FROM semantic_model.source_mappings m
        INNER JOIN semantic_model.workspace_links w
          ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id AND w.enabled
        LEFT JOIN semantic_model.identity_rules i ON i.model_id = m.model_id AND i.concept_id = m.concept_id
        WHERE m.model_id=$1
        ORDER BY m.created_at`, [model.id]);
-    const documentIds = [...new Set(result.rows.map((row) => row.documentId))];
+    const documentIds = [...new Set(result.rows.filter((row) => row.scope !== 'workspace').map((row) => row.documentId))];
     const documents = documentIds.length ? await this.documents.findByIds(documentIds) : [];
     const names = new Map(documents.map((document) => [document.id, document.originalName]));
-    return result.rows.map((row) => ({
-      ...row,
-      identityFields: row.identityFields ?? [],
-      documentName: names.get(row.documentId) ?? row.documentId,
-      documentPath: documents.find((document) => document.id === row.documentId)?.path ?? '',
-      mimeType: documents.find((document) => document.id === row.documentId)?.mimeType ?? '',
+    // A workspace mapping shows how many files it covers today; each workspace is listed once.
+    const fileCounts = new Map<string, Promise<{ fileCount: number; waitingCount: number }>>();
+    const countFiles = (row: SourceMappingRow) => {
+      const selection = mappingSelection(row);
+      const key = `${row.workspaceId}:${JSON.stringify(selection)}`;
+      if (!fileCounts.has(key)) {
+        fileCounts.set(key, this.workspaceFiles(row.workspaceId, selection)
+          .then((files) => ({ fileCount: files.readable.length, waitingCount: files.waiting.length }))
+          .catch(() => ({ fileCount: 0, waitingCount: 0 })));
+      }
+      return fileCounts.get(key)!;
+    };
+    return Promise.all(result.rows.map(async (row) => {
+      const { scope, folderId, selection, sourceLabel, ...rest } = row;
+      if (scope === 'workspace') {
+        return {
+          ...rest,
+          scope,
+          folderId: folderId ?? null,
+          selection: mappingSelection({ folderId, selection }),
+          identityFields: row.identityFields ?? [],
+          documentName: sourceLabel || row.workspaceId,
+          documentPath: '',
+          mimeType: '',
+          ...(await countFiles(row)),
+        };
+      }
+      return {
+        ...rest,
+        scope: 'document' as const,
+        identityFields: row.identityFields ?? [],
+        documentName: names.get(row.documentId) ?? row.documentId,
+        documentPath: documents.find((document) => document.id === row.documentId)?.path ?? '',
+        mimeType: documents.find((document) => document.id === row.documentId)?.mimeType ?? '',
+      };
     }));
+  }
+
+  /**
+   * Map many files of a workspace with one document mapping: all of them, or the folders and files that
+   * were picked. Files added later (to the workspace, or inside a picked folder) are included; each run
+   * reads the files that are there at that moment. With `mappingId`, changes what that mapping covers.
+   */
+  async createWorkspace(userId: string, modelId: string, dto: WorkspaceSourceMappingDto) {
+    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    await this.requireLinkedWorkspace(model.id, dto.workspaceId);
+    this.assertMappingModes('document', dto.fieldMappings);
+    await this.assertConceptInDraft(model.id, model.currentDraftVersionId, dto.conceptId, dto.fieldMappings, dto.identityFields ?? []);
+    let workspaceName = dto.workspaceId;
+    try {
+      workspaceName = (await this.workspaces?.findById(dto.workspaceId))?.name || workspaceName;
+    } catch (error) {
+      this.logger.warn(`Could not read the name of workspace ${dto.workspaceId}: ${(error as Error).name}`);
+    }
+    const selection = normalizeWorkspaceSelection([...(dto.folderIds ?? []), ...(dto.folderId ? [dto.folderId] : [])], dto.documentIds ?? []);
+    if (selection && selection.folderIds.length + selection.documentIds.length > MAX_WORKSPACE_SELECTION_ITEMS) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Pick at most ${MAX_WORKSPACE_SELECTION_ITEMS} folders and files; pick their folder instead`);
+    }
+    const all = await this.documents.listAllInWorkspace(dto.workspaceId);
+    const byId = new Map(all.map((item) => [item.id, item]));
+    const pickedNames: string[] = [];
+    for (const folderId of selection?.folderIds ?? []) {
+      const folder = byId.get(folderId);
+      if (!folder?.isFolder) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A picked folder is not a folder of this workspace');
+      pickedNames.push(folder.folderName || folder.originalName);
+    }
+    for (const documentId of selection?.documentIds ?? []) {
+      const document = byId.get(documentId);
+      if (!document || document.isFolder || !DOCUMENT_MIME_TYPES.has(document.mimeType)) {
+        throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${document?.originalName ?? 'A picked file'} cannot be read as a document`);
+      }
+      pickedNames.push(document.originalName);
+    }
+    const label = workspaceSourceLabel(workspaceName, pickedNames);
+    const files = workspaceMappingFiles(all, DOCUMENT_MIME_TYPES, selection);
+    if (files.readable.length + files.waiting.length > MAX_WORKSPACE_MAPPING_DOCUMENTS) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+        `A workspace source can cover at most ${MAX_WORKSPACE_MAPPING_DOCUMENTS} files; pick folders instead`);
+    }
+    const key = workspaceMappingKey(dto.workspaceId, selection);
+    const storedSelection = selection ? JSON.stringify(selection) : null;
+    const revision = await this.database.transaction(async (client) => {
+      const nextRevision = await this.models.advanceRevision(client, modelId, dto.expectedRevision);
+      if (dto.mappingId) {
+        const clash = await client.query(
+          `SELECT 1 FROM semantic_model.source_mappings
+           WHERE model_id=$1 AND concept_id=$2 AND document_id=$3 AND sheet_name='' AND id<>$4`,
+          [model.id, dto.conceptId, key, dto.mappingId],
+        );
+        if (clash.rows[0]) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'This concept already has a source covering exactly these files');
+        const updated = await client.query(
+          `UPDATE semantic_model.source_mappings
+           SET document_id=$5, folder_id=NULL, selection=$6::jsonb, source_label=$7, field_mappings=$8::jsonb,
+               status='ready', validated_at=now(), updated_at=now()
+           WHERE id=$1 AND model_id=$2 AND concept_id=$3 AND workspace_id=$4 AND scope='workspace'`,
+          [dto.mappingId, model.id, dto.conceptId, dto.workspaceId, key, storedSelection, label, JSON.stringify(dto.fieldMappings)],
+        );
+        if (!updated.rowCount) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'Source mapping not found');
+      } else {
+        await client.query(
+          `INSERT INTO semantic_model.source_mappings
+            (model_id,concept_id,workspace_id,document_id,sheet_name,asset_kind,field_mappings,status,created_by,
+             validated_source_version,validated_at,scope,folder_id,selection,source_label)
+            VALUES ($1,$2,$3,$4,'','document',$5::jsonb,'ready',$6,NULL,now(),'workspace',NULL,$7::jsonb,$8)
+            ON CONFLICT (model_id,concept_id,document_id,sheet_name)
+            DO UPDATE SET field_mappings=EXCLUDED.field_mappings,status='ready',source_label=EXCLUDED.source_label,
+              selection=EXCLUDED.selection,folder_id=NULL,validated_at=now(),updated_at=now()`,
+          [model.id, dto.conceptId, dto.workspaceId, key, JSON.stringify(dto.fieldMappings), userId, storedSelection, label],
+        );
+      }
+      if (dto.identityFields?.length) {
+        await client.query(
+          `INSERT INTO semantic_model.identity_rules (model_id,concept_id,fields,updated_by)
+           VALUES ($1,$2,$3::jsonb,$4)
+           ON CONFLICT (model_id,concept_id)
+           DO UPDATE SET fields=EXCLUDED.fields,updated_by=EXCLUDED.updated_by,updated_at=now()`,
+          [model.id, dto.conceptId, JSON.stringify(dto.identityFields), userId],
+        );
+      } else if (dto.identityFields) {
+        await client.query('DELETE FROM semantic_model.identity_rules WHERE model_id=$1 AND concept_id=$2', [model.id, dto.conceptId]);
+      }
+      await this.models.audit(client, model.id, model.currentDraftVersionId, userId, 'source_mapping.workspace_saved', {
+        conceptId: dto.conceptId, workspaceId: dto.workspaceId, selection, mappingId: dto.mappingId ?? null,
+      });
+      return nextRevision;
+    });
+    return { revision, fileCount: files.readable.length, waitingCount: files.waiting.length };
   }
 
   async resolveConfigured(userId: string, modelId: string, conceptIds: string[] = [], limit = 25) {
@@ -192,7 +359,8 @@ export class SemanticSourceMappingService {
       `SELECT m.id, m.concept_id AS "conceptId", m.workspace_id AS "workspaceId", m.document_id AS "documentId",
               m.sheet_name AS "sheetName", m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings",
               m.status, m.created_by AS "createdBy", m.created_at AS "createdAt", m.updated_at AS "updatedAt",
-              i.fields AS "identityFields", COALESCE(w.enabled, false) AS "sourceEnabled"
+              i.fields AS "identityFields", COALESCE(w.enabled, false) AS "sourceEnabled",
+              m.scope, m.folder_id AS "folderId", m.selection, m.source_label AS "sourceLabel"
        FROM semantic_model.source_mappings m
        LEFT JOIN semantic_model.workspace_links w
          ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id
@@ -226,7 +394,12 @@ export class SemanticSourceMappingService {
         continue;
       }
       try {
-        const document = await this.documents.findById(mapping.workspaceId, mapping.documentId);
+        // A workspace source is previewed on its first readable file.
+        const sampleId = mapping.scope === 'workspace'
+          ? (await this.workspaceFiles(mapping.workspaceId, mappingSelection(mapping))).readable[0]?.id
+          : mapping.documentId;
+        if (!sampleId) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'This workspace has no readable file yet');
+        const document = await this.documents.findById(mapping.workspaceId, sampleId);
         const kind = this.requireAssetKind(document.mimeType, mapping.assetKind);
         this.assertMappingModes(kind, mapping.fieldMappings);
         const concept = await this.assertConceptInDraft(
@@ -240,7 +413,7 @@ export class SemanticSourceMappingService {
           userId,
           modelId: model.id,
           workspaceId: mapping.workspaceId,
-          documentId: mapping.documentId,
+          documentId: document.id,
           documentName: document.originalName,
           concept,
           fieldMappings: mapping.fieldMappings,
@@ -258,7 +431,7 @@ export class SemanticSourceMappingService {
           source: {
             kind,
             workspaceId: mapping.workspaceId,
-            documentId: mapping.documentId,
+            documentId: document.id,
             documentName: document.originalName,
             documentPath: document.path ?? '',
             mimeType: document.mimeType,
@@ -286,14 +459,16 @@ export class SemanticSourceMappingService {
   }
 
   private async documentNames(rows: SourceMappingRow[]) {
-    const documentIds = [...new Set(rows.map((row) => row.documentId))];
-    if (!documentIds.length) return new Map<string, string>();
+    const workspaceNames = rows.filter((row) => row.scope === 'workspace')
+      .map((row) => [row.documentId, row.sourceLabel || row.workspaceId] as [string, string]);
+    const documentIds = [...new Set(rows.filter((row) => row.scope !== 'workspace').map((row) => row.documentId))];
+    if (!documentIds.length) return new Map<string, string>(workspaceNames);
     try {
       const documents = await this.documents.findByIds(documentIds);
-      return new Map(documents.map((document) => [document.id, document.originalName]));
+      return new Map([...documents.map((document) => [document.id, document.originalName] as [string, string]), ...workspaceNames]);
     } catch (error) {
       this.logger.warn(`Could not read source document names: ${(error as Error).message}`);
-      return new Map<string, string>();
+      return new Map<string, string>(workspaceNames);
     }
   }
 
@@ -472,7 +647,9 @@ export class SemanticSourceMappingService {
       },
     };
     const key = createHash('sha256').update(JSON.stringify(command)).digest('hex');
-    return this.runtime.requestDatasourceDiscovery(command, `datasource:${key}`);
+    // Bump the version when discovery rules change, so a finished job made under the old rules is not
+    // handed back as-is (v2: spreadsheets no longer wait for indexing).
+    return this.runtime.requestDatasourceDiscovery(command, `datasource:v2:${key}`);
   }
 
   private sheetProfile(profile: Record<string, unknown>) {
@@ -480,16 +657,20 @@ export class SemanticSourceMappingService {
     const rawSheets = Array.isArray(structure.sheets) ? structure.sheets
       : structure.kind === 'csv' ? [{ name: 'CSV', reportedRows: structure.dataRows, reportedColumns: Array.isArray(structure.columns) ? structure.columns.length : 0 }]
       : [];
-    const sheets = rawSheets.map((sheet) => {
-      const value = sheet as Record<string, unknown>;
-      return {
-        name: String(value.name ?? ''),
-        rowCount: Number(value.reportedRows ?? value.rowCount ?? 0),
-        fieldCount: Number(value.reportedColumns ?? value.fieldCount ?? 0),
-      };
-    });
     const selected = typeof structure.selectedSheet === 'string' ? structure.selectedSheet
       : structure.kind === 'csv' ? 'CSV' : undefined;
+    // Workbooks that do not declare their size report no counts; the sheet that was read has measured ones.
+    const measuredRows = typeof structure.dataRows === 'number' ? structure.dataRows : undefined;
+    const measuredFields = Array.isArray(structure.columns) ? structure.columns.length : undefined;
+    const sheets = rawSheets.map((sheet) => {
+      const value = sheet as Record<string, unknown>;
+      const read = value.name === selected;
+      return {
+        name: String(value.name ?? ''),
+        rowCount: Number(value.reportedRows ?? value.rowCount ?? (read ? measuredRows : undefined) ?? 0),
+        fieldCount: Number(value.reportedColumns ?? value.fieldCount ?? (read ? measuredFields : undefined) ?? 0),
+      };
+    });
     return {
       sheets,
       ...(selected ? { sheet: sheets.find((sheet) => sheet.name === selected) } : {}),
@@ -591,4 +772,11 @@ export class SemanticSourceMappingService {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'An extraction strategy is only supported for extracted document fields');
     }
   }
+}
+
+/** "Legal", "Legal / Contracts", "Legal / Contracts, NDA.pdf" or "Legal / Contracts, NDA.pdf +3". */
+export function workspaceSourceLabel(workspaceName: string, picked: string[]): string {
+  if (!picked.length) return workspaceName;
+  const shown = picked.slice(0, 2).join(', ');
+  return `${workspaceName} / ${shown}${picked.length > 2 ? ` +${picked.length - 2}` : ''}`;
 }

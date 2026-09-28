@@ -1,34 +1,19 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import {
-  WorkyStream,
-  WorkyStreamDocument,
-} from '../schemas/worky-stream.schema';
-import {
-  WorkyTask,
-  WorkyTaskDocument,
-} from '../schemas/worky-task.schema';
-import {
-  WorkyExecutionReport,
-  WorkyExecutionReportDocument,
-} from '../schemas/worky-execution-report.schema';
-import {
-  WorkyCostEvent,
-  WorkyCostEventDocument,
-} from '../schemas/worky-cost-event.schema';
-import {
-  WorkyAuditEvent,
-  WorkyAuditEventDocument,
-} from '../schemas/worky-audit-event.schema';
-import {
-  WorkyEphemeralWorker,
-  WorkyEphemeralWorkerDocument,
-} from '../schemas/worky-ephemeral-worker.schema';
-import {
-  WorkyInteraction,
-  WorkyInteractionDocument,
-} from '../schemas/worky-interaction.schema';
+import { isObjectId } from '@common/postgres';
+import { WorkyStreamRepository } from '../persistence/worky-stream.repository';
+import { WorkyTaskRepository } from '../persistence/worky-task.repository';
+import { WorkyReportRepository } from '../persistence/worky-report.repository';
+import { WorkyBudgetRepository, type WorkyCostTotals } from '../persistence/worky-budget.repository';
+import { WorkyAuditRepository } from '../persistence/worky-audit.repository';
+import { WorkyInteractionRepository } from '../persistence/worky-interaction.repository';
+import type {
+  WorkyAuditEventRecord,
+  WorkyEphemeralWorkerRecord,
+  WorkyExecutionReportRecord,
+  WorkyInteractionRecord,
+  WorkyStreamRecord,
+  WorkyTaskRecord,
+} from '../worky.types';
 import { LoggerService } from '../../logger';
 import { WorkyEventService } from './worky-event.service';
 import { WorkyMemoryService } from './worky-memory.service';
@@ -68,11 +53,11 @@ export interface IWorkyExecutionReportResponse {
  *     event was observed; lightweight otherwise.
  *   - The Markdown is built deterministically from the events,
  *     tasks, artifacts (cost events), ephemeral workers, and
- *     governance evaluations persisted in Mongo. The runtime is the
+ *     governance evaluations persisted in Postgres. The runtime is the
  *     source of the raw LLM/tool traces; the backend holds the
  *     durable summary.
- *   - The report is persisted to `WorkyExecutionReport` with
- *     `type`, `status`, `summary`, `markdown`, `metadata`. The
+ *   - The report is persisted to `worky.execution_reports` (one per
+ *     stream) with `type`, `status`, `summary`, `markdown`, `metadata`. The
  *     frontend renders both the structured `summary` and the
  *     full Markdown.
  *   - Emits `report.generated` SSE so the frontend can navigate
@@ -81,20 +66,12 @@ export interface IWorkyExecutionReportResponse {
 @Injectable()
 export class WorkyReportService {
   constructor(
-    @InjectModel(WorkyStream.name)
-    private readonly streams: Model<WorkyStreamDocument>,
-    @InjectModel(WorkyTask.name)
-    private readonly tasks: Model<WorkyTaskDocument>,
-    @InjectModel(WorkyExecutionReport.name)
-    private readonly reports: Model<WorkyExecutionReportDocument>,
-    @InjectModel(WorkyCostEvent.name)
-    private readonly costEvents: Model<WorkyCostEventDocument>,
-    @InjectModel(WorkyAuditEvent.name)
-    private readonly audits: Model<WorkyAuditEventDocument>,
-    @InjectModel(WorkyEphemeralWorker.name)
-    private readonly workers: Model<WorkyEphemeralWorkerDocument>,
-    @InjectModel(WorkyInteraction.name)
-    private readonly interactions: Model<WorkyInteractionDocument>,
+    private readonly streams: WorkyStreamRepository,
+    private readonly tasks: WorkyTaskRepository,
+    private readonly reports: WorkyReportRepository,
+    private readonly budgets: WorkyBudgetRepository,
+    private readonly audits: WorkyAuditRepository,
+    private readonly interactions: WorkyInteractionRepository,
     private readonly events: WorkyEventService,
     private readonly memory: WorkyMemoryService,
     private readonly logger: LoggerService,
@@ -107,14 +84,14 @@ export class WorkyReportService {
    * `ready` report already exists, it is overwritten with a fresh one.
    * The MVP does not write the Markdown to the workspace's
    * `/final-deliverables/...` folder; that is a Part 5+ hardening
-   * follow-up. The Markdown is stored in the `WorkyExecutionReport`
-   * row itself.
+   * follow-up. The Markdown is stored in the execution report row
+   * itself.
    */
   async generate(streamId: string): Promise<IWorkyExecutionReportResponse> {
-    if (!Types.ObjectId.isValid(streamId)) {
+    if (!isObjectId(streamId)) {
       throw new Error(`WorkyReportService.generate: invalid streamId`);
     }
-    const stream = await this.streams.findById(streamId).exec();
+    const stream = await this.streams.findById(streamId);
     if (!stream) {
       throw new Error(`WorkyReportService.generate: stream ${streamId} not found`);
     }
@@ -131,52 +108,18 @@ export class WorkyReportService {
 
     const [
       tasks,
-      costAgg,
+      totals,
       auditEvents,
       workers,
       interactions,
     ] = await Promise.all([
-      this.tasks
-        .find({ streamId: stream._id })
-        .select({ title: 1, lane: 1, executionState: 1, assigneeType: 1, assigneeId: 1, actionCategory: 1, budget: 1, theoreticalDeadlineAt: 1 })
-        .lean()
-        .exec(),
-      this.costEvents
-        .aggregate([
-          { $match: { streamId: stream._id } },
-          {
-            $group: {
-              _id: null,
-              totalCostUsd: { $sum: '$costUsd' },
-              totalInputTokens: { $sum: '$inputTokens' },
-              totalOutputTokens: { $sum: '$outputTokens' },
-              eventCount: { $sum: 1 },
-            },
-          },
-        ])
-        .exec(),
-      this.audits
-        .find({ streamId: stream._id })
-        .sort({ createdAt: 1 })
-        .lean()
-        .exec(),
-      this.workers
-        .find({ streamId: stream._id })
-        .select({ role: 1, status: 1, createdAt: 1, retiredAt: 1 })
-        .lean()
-        .exec(),
-      this.interactions
-        .find({ streamId: stream._id })
-        .sort({ createdAt: 1 })
-        .lean()
-        .exec(),
+      this.tasks.listByStream(stream.id),
+      this.budgets.costTotals(stream.id),
+      // Oldest first, by occurredAt.
+      this.audits.listForScope(stream.id),
+      this.audits.listWorkersByStream(stream.id),
+      this.interactions.listByStream(stream.id),
     ]);
-    const totals = costAgg[0] ?? {
-      totalCostUsd: 0,
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      eventCount: 0,
-    };
 
     const summary = this.buildSummary(stream, tasks, totals, type);
     const markdown =
@@ -192,44 +135,32 @@ export class WorkyReportService {
       budgetExhausted,
       generatedFromStatus: stream.status,
     };
-    const existing = await this.reports.findOne({ streamId: stream._id }).exec();
-    let saved: WorkyExecutionReportDocument;
-    if (existing) {
-      existing.type = type;
-      existing.status = 'ready';
-      existing.summary = summary;
-      existing.markdown = markdown;
-      existing.metadata = metadata;
-      existing.generatedAt = new Date();
-      saved = await existing.save();
-    } else {
-      saved = await this.reports.create({
-        streamId: stream._id,
-        type,
-        status: 'ready',
-        summary,
-        markdown,
-        metadata,
-        generatedAt: new Date(),
-      });
-    }
-    this.events.emit(stream.ownerUserId.toString(), stream._id.toString(), {
+    // One report per stream: a regeneration overwrites it in place.
+    const saved = await this.reports.upsert(stream.id, {
+      type,
+      status: 'ready',
+      summary,
+      markdown,
+      metadata,
+      generatedAt: new Date(),
+    });
+    this.events.emit(stream.ownerUserId, stream.id, {
       type: 'report.generated',
       emittedAt: Date.now(),
       payload: {
-        reportId: saved._id.toString(),
+        reportId: saved.id,
         type,
         budgetExhausted,
       },
     });
     // Auto-propose a memory entry for the stream owner. Confirm-before-
     // write semantics (Part 4 §7, canonical §21): nothing is written
-    // to `WorkyMemoryEntry` until the owner calls
+    // to the memory entries until the owner calls
     // `POST /worky/memory/proposals/{id}/confirm`.
     try {
       await this.memory.propose({
-        ownerUserId: stream.ownerUserId.toString(),
-        sourceStreamId: stream._id.toString(),
+        ownerUserId: stream.ownerUserId,
+        sourceStreamId: stream.id,
         category: 'stream_summary',
         title: `Stream summary: ${stream.title}`,
         content: summary,
@@ -243,14 +174,14 @@ export class WorkyReportService {
     this.logger.log('Worky execution report generated', {
       streamId,
       type,
-      reportId: saved._id.toString(),
+      reportId: saved.id,
     });
     return this.toResponse(saved);
   }
 
   async findForStream(streamId: string): Promise<IWorkyExecutionReportResponse | null> {
-    if (!Types.ObjectId.isValid(streamId)) return null;
-    const report = await this.reports.findOne({ streamId: new Types.ObjectId(streamId) }).exec();
+    if (!isObjectId(streamId)) return null;
+    const report = await this.reports.findByStream(streamId);
     return report ? this.toResponse(report) : null;
   }
 
@@ -259,9 +190,9 @@ export class WorkyReportService {
   // =================================================================
 
   private buildSummary(
-    stream: WorkyStreamDocument,
-    tasks: Array<{ lane?: string; executionState?: string }>,
-    totals: { totalCostUsd: number; totalInputTokens: number; totalOutputTokens: number; eventCount: number },
+    stream: WorkyStreamRecord,
+    tasks: WorkyTaskRecord[],
+    totals: WorkyCostTotals,
     type: 'rich' | 'lightweight',
   ): string {
     const done = tasks.filter((t) => t.lane === 'done').length;
@@ -277,12 +208,12 @@ export class WorkyReportService {
   }
 
   private buildRichMarkdown(
-    stream: WorkyStreamDocument,
-    tasks: Array<Record<string, unknown>>,
-    totals: { totalCostUsd: number; totalInputTokens: number; totalOutputTokens: number; eventCount: number },
-    auditEvents: Array<{ action?: string; createdAt?: Date }>,
-    workers: Array<Record<string, unknown>>,
-    interactions: Array<{ type?: string; status?: string; question?: string; response?: string | null; createdAt?: Date }>,
+    stream: WorkyStreamRecord,
+    tasks: WorkyTaskRecord[],
+    totals: WorkyCostTotals,
+    auditEvents: WorkyAuditEventRecord[],
+    workers: WorkyEphemeralWorkerRecord[],
+    interactions: WorkyInteractionRecord[],
   ): string {
     const lines: string[] = [];
     lines.push(`# Worky Execution Report — ${stream.title}`);
@@ -291,13 +222,13 @@ export class WorkyReportService {
     lines.push('');
     lines.push('## Summary');
     lines.push('');
-    lines.push(this.buildSummary(stream, tasks as never, totals, 'rich'));
+    lines.push(this.buildSummary(stream, tasks, totals, 'rich'));
     lines.push('');
     lines.push('## Tasks');
     lines.push('');
     const byLane = new Map<string, number>();
     for (const t of tasks) {
-      const lane = String(t.lane ?? 'unknown');
+      const lane = t.lane;
       byLane.set(lane, (byLane.get(lane) ?? 0) + 1);
     }
     for (const lane of TASK_LANES) {
@@ -325,7 +256,7 @@ export class WorkyReportService {
     lines.push('## Audit trail');
     lines.push('');
     for (const a of auditEvents.slice(0, 200)) {
-      lines.push(`- ${a.createdAt?.toISOString() ?? '?'} ${a.action}`);
+      lines.push(`- ${a.occurredAt.toISOString()} ${a.action}`);
     }
     if (auditEvents.length > 200) {
       lines.push(`- ... ${auditEvents.length - 200} more audit rows truncated`);
@@ -334,10 +265,10 @@ export class WorkyReportService {
   }
 
   private buildLightweightMarkdown(
-    stream: WorkyStreamDocument,
-    tasks: Array<Record<string, unknown>>,
-    totals: { totalCostUsd: number; totalInputTokens: number; totalOutputTokens: number; eventCount: number },
-    auditEvents: Array<{ action?: string; createdAt?: Date }>,
+    stream: WorkyStreamRecord,
+    tasks: WorkyTaskRecord[],
+    totals: WorkyCostTotals,
+    auditEvents: WorkyAuditEventRecord[],
   ): string {
     const lines: string[] = [];
     lines.push(`# Worky Execution Report (lightweight) — ${stream.title}`);
@@ -347,7 +278,7 @@ export class WorkyReportService {
     lines.push(`**Status:** ${stream.status} • **Generated:** ${new Date().toISOString()}`);
     lines.push('');
     lines.push('## Summary');
-    lines.push(this.buildSummary(stream, tasks as never, totals, 'lightweight'));
+    lines.push(this.buildSummary(stream, tasks, totals, 'lightweight'));
     lines.push('');
     lines.push('## Tasks');
     for (const t of tasks) {
@@ -356,7 +287,7 @@ export class WorkyReportService {
     lines.push('');
     lines.push('## Audit trail');
     for (const a of auditEvents.slice(0, 100)) {
-      lines.push(`- ${a.createdAt?.toISOString() ?? '?'} ${a.action}`);
+      lines.push(`- ${a.occurredAt.toISOString()} ${a.action}`);
     }
     if (auditEvents.length > 100) {
       lines.push(`- ... ${auditEvents.length - 100} more audit rows truncated`);
@@ -364,18 +295,18 @@ export class WorkyReportService {
     return lines.join('\n');
   }
 
-  private toResponse(doc: WorkyExecutionReportDocument): IWorkyExecutionReportResponse {
+  private toResponse(row: WorkyExecutionReportRecord): IWorkyExecutionReportResponse {
     return {
-      id: doc._id.toString(),
-      streamId: doc.streamId.toString(),
-      type: doc.type as 'rich' | 'lightweight' | 'summary',
-      status: doc.status as 'generating' | 'ready' | 'failed',
-      summary: doc.summary,
-      markdown: doc.markdown,
-      metadata: doc.metadata,
-      generatedAt: doc.generatedAt ? doc.generatedAt.toISOString() : null,
-      createdAt: doc.createdAt.toISOString(),
-      updatedAt: doc.updatedAt.toISOString(),
+      id: row.id,
+      streamId: row.streamId,
+      type: row.type as 'rich' | 'lightweight' | 'summary',
+      status: row.status as 'generating' | 'ready' | 'failed',
+      summary: row.summary,
+      markdown: row.markdown,
+      metadata: row.metadata,
+      generatedAt: row.generatedAt ? row.generatedAt.toISOString() : null,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
     };
   }
 }

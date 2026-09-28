@@ -1,10 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConnectedAppUserService } from './connected-app-user.service';
-import { ConnectedAppDefinitionService } from './connected-app-definition.service';
-import { USER_APP_CONNECTION_STORE } from '../persistence/connected-app.store';
+import { ConnectedAppDefinitionService } from './connected-app-definition.service';
 import { InMemoryConnectionStore } from '../persistence/connected-app.store.fake';
 import { ConnectionStatus } from '../connected-app.types';
 import { LoggerService } from '@modules/logger';
+import { PgUserAppConnectionStore } from '../persistence/pg-connected-app.store';
 
 const userId = '507f1f77bcf86cd799439011';
 
@@ -41,7 +41,7 @@ describe('ConnectedAppUserService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ConnectedAppUserService,
-        { provide: USER_APP_CONNECTION_STORE, useValue: connectionStore },
+        { provide: PgUserAppConnectionStore, useValue: connectionStore },
         { provide: ConnectedAppDefinitionService, useValue: definitionService },
         {
           provide: LoggerService,

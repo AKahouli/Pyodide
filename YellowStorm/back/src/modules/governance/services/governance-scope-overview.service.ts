@@ -4,32 +4,24 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
 import { GovernanceAccessService } from './governance-access.service';
 import { GovernanceProgramService } from './governance-program.service';
-import {
-  BINDING_STORE,
-  DEPLOYMENT_STORE,
-  DRY_RUN_STORE,
-  GOVERNANCE_DOCUMENT_STORE,
-  MEMBERSHIP_STORE,
-  METRIC_STORE,
-  REVISION_STORE,
-  SCOPE_STORE,
-  type BindingStore,
-  type DeploymentStore,
-  type DryRunStore,
-  type GovernanceBindingRecord,
-  type GovernanceDeploymentRecord,
-  type GovernanceDocumentRecord,
-  type GovernanceDocumentStore,
-  type GovernanceDryRunRecord,
-  type GovernanceRevisionRecord,
-  type GovernanceScopeRecord,
-  type MembershipStore,
-  type MetricStore,
-  type RevisionStore,
-  type ScopeStore,
-} from '../persistence';
-import { WORKSPACE_DOCUMENT_READ_PORT, type WorkspaceDocumentReadPort } from '@modules/workspace/ports';
+import {              
+  type GovernanceBindingRecord,                
+  type GovernanceDeploymentRecord,                
+  type GovernanceDocumentRecord,                
+  type GovernanceDryRunRecord,                
+  type GovernanceRevisionRecord,                
+  type GovernanceScopeRecord,                
+} from '../persistence';
 import { AgentRepository } from '@modules/agent/repositories/agent.repository';
+import { PgWorkspaceDocumentReadAdapter } from '../../workspace/persistence/postgres/pg-workspace-document-read.adapter';
+import { PgMetricStore } from '../persistence/postgres/pg-metric.store';
+import { PgDryRunStore } from '../persistence/postgres/pg-dry-run.store';
+import { PgRevisionStore } from '../persistence/postgres/pg-revision.store';
+import { PgDeploymentStore } from '../persistence/postgres/pg-deployment.store';
+import { PgScopeStore } from '../persistence/postgres/pg-scope.store';
+import { PgGovernanceDocumentStore } from '../persistence/postgres/pg-document.store';
+import { PgBindingStore } from '../persistence/postgres/pg-binding.store';
+import { PgMembershipStore } from '../persistence/postgres/pg-membership.store';
 
 interface GovernanceActorSummary { id: string; displayName: string; email: string }
 
@@ -64,15 +56,15 @@ export interface GovernanceScopeOverview {
 @Injectable()
 export class GovernanceScopeOverviewService {
   constructor(
-    @Inject(SCOPE_STORE) private readonly scopeStore: ScopeStore,
-    @Inject(GOVERNANCE_DOCUMENT_STORE) private readonly documentStore: GovernanceDocumentStore,
-    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly workspaceDocumentReadPort: WorkspaceDocumentReadPort,
-    @Inject(BINDING_STORE) private readonly bindingStore: BindingStore,
-    @Inject(DEPLOYMENT_STORE) private readonly deploymentStore: DeploymentStore,
-    @Inject(REVISION_STORE) private readonly revisionStore: RevisionStore,
-    @Inject(DRY_RUN_STORE) private readonly dryRunStore: DryRunStore,
-    @Inject(MEMBERSHIP_STORE) private readonly membershipStore: MembershipStore,
-    @Inject(METRIC_STORE) private readonly metricStore: MetricStore,
+    private readonly scopeStore: PgScopeStore,
+    private readonly documentStore: PgGovernanceDocumentStore,
+    private readonly workspaceDocumentReadPort: PgWorkspaceDocumentReadAdapter,
+    private readonly bindingStore: PgBindingStore,
+    private readonly deploymentStore: PgDeploymentStore,
+    private readonly revisionStore: PgRevisionStore,
+    private readonly dryRunStore: PgDryRunStore,
+    private readonly membershipStore: PgMembershipStore,
+    private readonly metricStore: PgMetricStore,
     private readonly agentRepository: AgentRepository,
     @Inject(USER_LOOKUP_PORT) private readonly userLookup: UserLookupPort,
     private readonly programService: GovernanceProgramService,

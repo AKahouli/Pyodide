@@ -1,6 +1,5 @@
 import { ConfigModule } from '@nestjs/config';
 import { Module } from '@nestjs/common';
-import { CONNECTOR_ADMIN_AUTH_STORE, CONNECTOR_ADMIN_OAUTH_STATE_STORE, CONNECTOR_CATEGORY_STORE, CONNECTOR_CREDENTIAL_STORE, CONNECTOR_STORE } from './persistence/connector.store';
 import { PgConnectorAdminAuthStore, PgConnectorAdminOauthStateStore, PgConnectorCategoryStore, PgConnectorCredentialStore, PgConnectorStore } from './persistence/pg-connector.store';
 
 import { ConnectorService } from './connector.service';
@@ -31,9 +30,7 @@ import { CatalogTransferService } from './services/catalog-transfer.service';
 import { AdminCatalogTransferController } from './admin-catalog-transfer.controller';
 import { SKILL_STORE } from '../skill/persistence/skill.store';
 import { PgSkillStore } from '../skill/persistence/pg-skill.store';
-import { SKILL_CATEGORY_STORE } from '../skill/persistence/skill.store';
 import { PgSkillCategoryStore } from '../skill/persistence/pg-skill.store';
-import { CONNECTED_APP_DEFINITION_STORE, USER_APP_CONNECTION_STORE } from '../connected-app/persistence/connected-app.store';
 import { PgConnectedAppDefinitionStore, PgUserAppConnectionStore } from '../connected-app/persistence/pg-connected-app.store';
 
 @Module({
@@ -56,14 +53,14 @@ import { PgConnectedAppDefinitionStore, PgUserAppConnectionStore } from '../conn
   ],
   providers: [
     // Integrations cutover (plan step 3.4-3.6): PG-backed connector stores.
-    { provide: CONNECTOR_STORE, useClass: PgConnectorStore },
-    { provide: CONNECTOR_CATEGORY_STORE, useClass: PgConnectorCategoryStore },
-    { provide: CONNECTOR_CREDENTIAL_STORE, useClass: PgConnectorCredentialStore },
-    { provide: CONNECTOR_ADMIN_AUTH_STORE, useClass: PgConnectorAdminAuthStore },
-    { provide: CONNECTOR_ADMIN_OAUTH_STATE_STORE, useClass: PgConnectorAdminOauthStateStore },
+    PgConnectorStore,
+    PgConnectorCategoryStore,
+    PgConnectorCredentialStore,
+    PgConnectorAdminAuthStore,
+    PgConnectorAdminOauthStateStore,
     // Catalog-transfer reads/writes connected-app definitions (plan 3.7).
-    { provide: CONNECTED_APP_DEFINITION_STORE, useClass: PgConnectedAppDefinitionStore },
-    { provide: USER_APP_CONNECTION_STORE, useClass: PgUserAppConnectionStore },
+    PgConnectedAppDefinitionStore,
+    PgUserAppConnectionStore,
     CryptoService,
     ConnectorService,
     AgentMcpConnectorBootstrapService,
@@ -84,7 +81,7 @@ import { PgConnectedAppDefinitionStore, PgUserAppConnectionStore } from '../conn
     },
       // Catalog-transfer reads/writes PG-backed skills (plan 1B.4.5).
     { provide: SKILL_STORE, useClass: PgSkillStore },
-    { provide: SKILL_CATEGORY_STORE, useClass: PgSkillCategoryStore },
+    PgSkillCategoryStore,
   ],
   exports: [ConnectorService, ConnectorCredentialService, 'ConnectorAuthService', ConnectorTransferService, ConnectorMcpRuntimeService],
 })

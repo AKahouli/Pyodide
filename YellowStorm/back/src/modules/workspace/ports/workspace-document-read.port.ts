@@ -1,7 +1,6 @@
 import type { DocumentFilter, DocumentFindOptions } from './document-filter';
 import type { WorkspaceDocumentRecord } from './workspace-records';
 
-export const WORKSPACE_DOCUMENT_READ_PORT = Symbol('WORKSPACE_DOCUMENT_READ_PORT');
 
 export interface WorkspaceDocumentReadPort {
   findById(id: string): Promise<WorkspaceDocumentRecord | null>;

@@ -26,15 +26,13 @@ export function CreateSemanticModelDialog({ open, onOpenChange, onCreated }: Rea
     if (!open) return;
     void Promise.all([
       getWorkspaces({ limit: 100 }),
-      getSharedWorkspaces({ limit: 100 }).catch((err) => { console.warn('[CreateDialog] getSharedWorkspaces failed:', err); return { workspaces: [] }; }),
+      getSharedWorkspaces({ limit: 100 }).catch(() => ({ workspaces: [] })),
     ]).then(([own, shared]) => {
-      console.log('[CreateDialog] own:', own.workspaces.length, 'shared raw:', shared.workspaces.length);
       const ownIds = new Set(own.workspaces.map((w) => w.id));
       const filteredShared = shared.workspaces.filter((w) => !ownIds.has(w.id));
-      console.log('[CreateDialog] shared after filter:', filteredShared.length);
       setOwnWorkspaces(own.workspaces);
       setSharedWorkspaces(filteredShared);
-    }).catch((err) => { console.error('[CreateDialog] Promise.all failed:', err); setOwnWorkspaces([]); setSharedWorkspaces([]); });
+    }).catch(() => { setOwnWorkspaces([]); setSharedWorkspaces([]); });
   }, [open]);
 
   const filteredOwn = useMemo(() => {
@@ -90,7 +88,7 @@ export function CreateSemanticModelDialog({ open, onOpenChange, onCreated }: Rea
               <Input
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
-                placeholder='Filtrer par nom…'
+                placeholder={t('create.filterWorkspaces')}
                 className='h-8 pl-8 text-sm'
               />
             </div>
@@ -102,7 +100,7 @@ export function CreateSemanticModelDialog({ open, onOpenChange, onCreated }: Rea
                     <div className='h-px flex-1 bg-border' />
                     <div className='flex items-center gap-1.5 rounded-full border border-blue-500/30 bg-blue-500/10 px-2.5 py-0.5'>
                       <Share2 className='h-3 w-3 text-blue-400' />
-                      <span className='text-[10px] font-semibold text-blue-400'>Partagés avec moi</span>
+                      <span className='text-[10px] font-semibold text-blue-400'>{t('knowledge.sharedWithMe')}</span>
                       <span className='flex h-3.5 w-3.5 items-center justify-center rounded-full bg-blue-500/20 text-[9px] font-bold text-blue-400'>
                         {filteredShared.length}
                       </span>
@@ -115,7 +113,7 @@ export function CreateSemanticModelDialog({ open, onOpenChange, onCreated }: Rea
                       <Warehouse className='h-4 w-4 shrink-0 text-blue-400' />
                       <span className='truncate text-sm'>{workspace.name}</span>
                       <span className='ml-auto shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-blue-400 border border-blue-500/30 bg-blue-500/10'>
-                        partagé
+                        {t('knowledge.sharedBadge')}
                       </span>
                     </label>
                   ))}
@@ -128,7 +126,7 @@ export function CreateSemanticModelDialog({ open, onOpenChange, onCreated }: Rea
                   {filteredShared.length > 0 && (
                     <div className='my-2.5 flex items-center gap-2'>
                       <div className='h-px flex-1 bg-border' />
-                      <span className='text-[10px] text-muted-foreground'>Mes workspaces</span>
+                      <span className='text-[10px] text-muted-foreground'>{t('create.ownWorkspaces')}</span>
                       <div className='h-px flex-1 bg-border' />
                     </div>
                   )}
@@ -144,7 +142,7 @@ export function CreateSemanticModelDialog({ open, onOpenChange, onCreated }: Rea
 
               {!hasAny && (
                 <p className='p-3 text-sm text-muted-foreground'>
-                  {filter.trim() ? 'Aucun workspace ne correspond.' : t('create.noWorkspaces')}
+                  {filter.trim() ? t('create.noMatchingWorkspaces') : t('create.noWorkspaces')}
                 </p>
               )}
             </div>

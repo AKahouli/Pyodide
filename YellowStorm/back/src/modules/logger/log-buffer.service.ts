@@ -1,12 +1,15 @@
-import { Injectable, OnModuleDestroy, Optional } from '@nestjs/common';
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
-import { FilterQuery, Model } from 'mongoose';
-import { Log, LogDocument } from './schemas/log.schema';
+import { ModuleRef } from '@nestjs/core';
+import { and, asc, desc, eq, gte, ilike, inArray, isNotNull, lte, sql, type SQL } from 'drizzle-orm';
+import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import { hostname as osHostname } from 'os';
+import { escapeLike, isObjectId, newObjectId, normalizeObjectId, stripNul } from '@common/postgres';
+import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
+import * as schema from '@modules/postgres/schema';
 import {
   LogQueryFilters,
   LogQueryOptions,
-  LogQueryPagination,
   LogQueryResult,
 } from './interfaces/log-query.interface';
 import { escapeRegex } from '../../common/utils';
@@ -42,27 +45,77 @@ export interface LogEntry {
   _fromBuffer?: boolean;
 }
 
+const logs = schema.opsLogs;
+type LogRow = typeof logs.$inferSelect;
+
+/** Rows per INSERT: 10 parameters each stays far below Postgres' 65,535-parameter limit. */
+const INSERT_CHUNK = 500;
+/** While the database is not reachable yet the buffer keeps the newest entries only. */
+const MAX_HELD_LOGS = 5000;
+
+/**
+ * A `context` filter is exact unless it holds a `*` or starts with `^`: `*` then matches anything, a
+ * leading `^` anchors the start, and every other character is literal. Case-insensitive, unanchored otherwise.
+ */
+function contextPattern(context: string): string {
+  const anchored = context.startsWith('^');
+  const body = escapeRegex(anchored ? context.slice(1) : context).replaceAll('\\*', '.*');
+  return `${anchored ? '^' : ''}${body}`;
+}
+const isPattern = (context: string): boolean => context.includes('*') || context.startsWith('^');
+
+/** JSON the database can hold: BigInt becomes a string, NUL is stripped, and anything unserializable is flagged instead of failing the whole batch. */
+function storableData(data: Record<string, unknown> | undefined): Record<string, unknown> | null {
+  if (data === undefined) return null;
+  try {
+    const json = JSON.stringify(data, (_key, value: unknown) => (typeof value === 'bigint' ? value.toString() : value));
+    return stripNul(JSON.parse(json) as Record<string, unknown>);
+  } catch {
+    return { unserializable: true };
+  }
+}
+
 @Injectable()
 export class LogBufferService implements OnModuleDestroy {
   private buffer: BufferedLog[] = [];
   private flushTimer: NodeJS.Timeout | null = null;
   private readonly maxBufferSize: number;
   private readonly flushIntervalMs: number;
+  private readonly persistenceEnabled: boolean;
   private readonly hostname: string;
   private readonly nodeEnv: string;
   private isShuttingDown = false;
+  private database: NodePgDatabase<typeof schema> | null = null;
 
+  /**
+   * The database is resolved lazily: the connection pool itself needs a LoggerService, which needs this
+   * service, so injecting it here would be a cycle. Entries logged before it exists wait in the buffer.
+   */
   constructor(
     private readonly configService: ConfigService,
-    @Optional() @InjectModel(Log.name, 'logging') private readonly logModel?: Model<LogDocument>,
+    private readonly moduleRef: ModuleRef,
   ) {
     this.maxBufferSize = this.configService.get<number>('logging.buffer.maxSize', 100);
     this.flushIntervalMs = this.configService.get<number>('logging.buffer.flushIntervalMs', 60000);
-    this.hostname = require('os').hostname();
+    this.persistenceEnabled = this.configService.get<boolean>('logging.persistenceEnabled', true);
+    this.hostname = osHostname();
     this.nodeEnv = this.configService.get<string>('app.nodeEnv', 'development');
 
     // Start the flush timer
     this.startFlushTimer();
+  }
+
+  /** Never inside a caller's transaction: a rolled-back request must not erase the logs that explain it. */
+  private get db(): NodePgDatabase<typeof schema> | null {
+    if (!this.persistenceEnabled) return null;
+    if (!this.database) {
+      try {
+        this.database = this.moduleRef.get<NodePgDatabase<typeof schema>>(DRIZZLE_DB, { strict: false });
+      } catch {
+        return null;
+      }
+    }
+    return this.database;
   }
 
   /**
@@ -88,23 +141,33 @@ export class LogBufferService implements OnModuleDestroy {
   }
 
   /**
-   * Flush buffer to MongoDB (fire-and-forget)
+   * Flush buffer to PostgreSQL (fire-and-forget)
    */
   private flushAsync(): void {
     // Use setImmediate to not block the calling code
     setImmediate(() => {
-      this.flush().catch((err) => {
+      this.flush().catch((err: unknown) => {
         // Silent failure - log to console only
-        console.error('[LogBufferService] Failed to flush logs:', err.message);
+        console.error('[LogBufferService] Failed to flush logs:', err instanceof Error ? err.message : 'Unknown error');
       });
     });
   }
 
   /**
-   * Flush all buffered logs to MongoDB
+   * Flush all buffered logs to PostgreSQL
    */
   async flush(): Promise<void> {
-    if (this.buffer.length === 0 || !this.logModel) {
+    if (this.buffer.length === 0) {
+      return;
+    }
+    if (!this.persistenceEnabled) {
+      this.buffer = [];
+      return;
+    }
+    const db = this.db;
+    if (!db) {
+      // The pool is not up yet: keep the entries, but not without bound.
+      if (this.buffer.length > MAX_HELD_LOGS) this.buffer = this.buffer.slice(-MAX_HELD_LOGS);
       return;
     }
 
@@ -112,17 +175,34 @@ export class LogBufferService implements OnModuleDestroy {
     const logsToFlush = this.buffer;
     this.buffer = [];
 
-    try {
-      // Use insertMany with ordered: false for best performance
-      // This allows remaining inserts to continue even if some fail
-      await this.logModel.insertMany(logsToFlush, { ordered: false });
-    } catch (error) {
-      // On failure, log to console but don't throw
-      // This ensures the app continues even if DB is unavailable
-      console.error(
-        '[LogBufferService] Failed to persist logs:',
-        error instanceof Error ? error.message : 'Unknown error',
-      );
+    const rows = logsToFlush.map((log) => {
+      const loggedAt = new Date(log.timestamp);
+      return {
+        id: newObjectId(),
+        timestamp: stripNul(log.timestamp),
+        level: log.level,
+        context: log.context === undefined ? null : stripNul(log.context),
+        message: stripNul(log.message),
+        data: storableData(log.data),
+        traceId: log.traceId ?? null,
+        requestId: log.requestId ?? null,
+        hostname: log.hostname ?? null,
+        nodeEnv: log.nodeEnv ?? null,
+        createdAt: Number.isNaN(loggedAt.getTime()) ? new Date() : loggedAt,
+      };
+    });
+    // A failing chunk must not take the others with it (Mongo's insertMany was unordered too).
+    for (let i = 0; i < rows.length; i += INSERT_CHUNK) {
+      try {
+        await db.insert(logs).values(rows.slice(i, i + INSERT_CHUNK));
+      } catch (error) {
+        // On failure, log to console but don't throw
+        // This ensures the app continues even if DB is unavailable
+        console.error(
+          '[LogBufferService] Failed to persist logs:',
+          error instanceof Error ? error.message : 'Unknown error',
+        );
+      }
     }
   }
 
@@ -192,8 +272,9 @@ export class LogBufferService implements OnModuleDestroy {
     // Filter buffer logs
     const filteredBufferLogs = this.filterBufferLogs(filters);
 
-    // If no database model, return only buffer logs
-    if (!this.logModel) {
+    const db = this.db;
+    // If no database, return only buffer logs
+    if (!db) {
       const sortedBuffer = this.sortLogs(filteredBufferLogs, sort);
       const total = sortedBuffer.length;
       const totalPages = Math.ceil(total / clampedLimit);
@@ -212,11 +293,11 @@ export class LogBufferService implements OnModuleDestroy {
       };
     }
 
-    // Build the filter query for database
-    const query = this.buildFilterQuery(filters);
+    // Build the filter for the database
+    const where = this.buildWhere(filters);
 
     // Get total count from database
-    const dbTotal = await this.logModel.countDocuments(query);
+    const [{ count: dbTotal }] = await db.select({ count: sql<number>`count(*)::int` }).from(logs).where(where);
     const bufferCount = filteredBufferLogs.length;
     const total = dbTotal + bufferCount;
     const totalPages = Math.ceil(total / clampedLimit);
@@ -235,39 +316,17 @@ export class LogBufferService implements OnModuleDestroy {
         // If we need more logs from DB
         const remaining = clampedLimit - data.length;
         if (remaining > 0) {
-          const dbLogs = await this.logModel
-            .find(query)
-            .sort({ createdAt: -1 })
-            .skip(0)
-            .limit(remaining)
-            .lean()
-            .exec();
-          data = [...data, ...this.convertDbLogsToEntries(dbLogs)];
+          data = [...data, ...(await this.readRows(db, where, 'desc', 0, remaining))];
         }
       } else {
         // All logs from DB (skip past buffer)
-        const dbSkip = skip - bufferCount;
-        const dbLogs = await this.logModel
-          .find(query)
-          .sort({ createdAt: -1 })
-          .skip(dbSkip)
-          .limit(clampedLimit)
-          .lean()
-          .exec();
-        data = this.convertDbLogsToEntries(dbLogs);
+        data = await this.readRows(db, where, 'desc', skip - bufferCount, clampedLimit);
       }
     } else {
       // sort === 'asc': DB logs first (oldest), then buffer logs
       if (skip < dbTotal) {
         // Need some DB logs
-        const dbLogs = await this.logModel
-          .find(query)
-          .sort({ createdAt: 1 })
-          .skip(skip)
-          .limit(clampedLimit)
-          .lean()
-          .exec();
-        data = this.convertDbLogsToEntries(dbLogs);
+        data = await this.readRows(db, where, 'asc', skip, clampedLimit);
 
         // If we need more logs from buffer
         const remaining = clampedLimit - data.length;
@@ -298,18 +357,17 @@ export class LogBufferService implements OnModuleDestroy {
 
   /**
    * Get a single log by ID (only searches database, not buffer)
-   * @param id - Log document ID
-   * @returns Log document or null
+   * @param id - Log ID
+   * @returns Log entry or null
    */
   async findLogById(id: string): Promise<LogEntry | null> {
-    if (!this.logModel) {
+    const db = this.db;
+    if (!db || !isObjectId(id)) {
       return null;
     }
 
-    const doc = await this.logModel.findById(id).lean().exec();
-    if (!doc) return null;
-
-    return this.convertDbLogsToEntries([doc])[0];
+    const [row] = await db.select().from(logs).where(eq(logs.id, normalizeObjectId(id))).limit(1);
+    return row ? this.toEntry(row) : null;
   }
 
   /**
@@ -333,9 +391,12 @@ export class LogBufferService implements OnModuleDestroy {
 
     // Get values from database
     let dbValues: string[] = [];
-    if (this.logModel) {
-      const query = filters ? this.buildFilterQuery(filters) : {};
-      dbValues = await this.logModel.distinct(field, query).exec();
+    const db = this.db;
+    if (db) {
+      const column = logs[field];
+      const where = and(filters ? this.buildWhere(filters) : undefined, isNotNull(column));
+      const rows = await db.selectDistinct({ value: column }).from(logs).where(where);
+      dbValues = rows.map((row) => row.value).filter((value): value is string => value !== null);
     }
 
     // Merge and return unique values
@@ -354,20 +415,20 @@ export class LogBufferService implements OnModuleDestroy {
     const counts: Record<string, number> = {};
 
     for (const log of filteredBuffer) {
-      counts[log.level] = (counts[log.level] || 0) + 1;
+      counts[log.level] = (counts[log.level] ?? 0) + 1;
     }
 
     // Count database logs by level
-    if (this.logModel) {
-      const query = filters ? this.buildFilterQuery(filters) : {};
+    const db = this.db;
+    if (db) {
+      const rows = await db
+        .select({ level: logs.level, count: sql<number>`count(*)::int` })
+        .from(logs)
+        .where(filters ? this.buildWhere(filters) : undefined)
+        .groupBy(logs.level);
 
-      const results = await this.logModel.aggregate([
-        { $match: query },
-        { $group: { _id: '$level', count: { $sum: 1 } } },
-      ]);
-
-      for (const { _id, count } of results) {
-        counts[_id] = (counts[_id] || 0) + count;
+      for (const { level, count } of rows) {
+        counts[level] = (counts[level] ?? 0) + count;
       }
     }
 
@@ -385,30 +446,28 @@ export class LogBufferService implements OnModuleDestroy {
    * Filter buffer logs based on query filters
    */
   private filterBufferLogs(filters: LogQueryFilters): LogEntry[] {
+    const contextRegex = filters.context && isPattern(filters.context) ? new RegExp(contextPattern(filters.context), 'i') : null;
+    const messageRegex = filters.message ? new RegExp(escapeRegex(filters.message), 'i') : null;
     return this.buffer
       .filter((log) => {
         // Level filter
         if (filters.level) {
-          const levels = Array.isArray(filters.level) ? filters.level : [filters.level];
-          if (!levels.includes(log.level as any)) return false;
+          const levels: string[] = Array.isArray(filters.level) ? filters.level : [filters.level];
+          if (!levels.includes(log.level)) return false;
         }
 
         // Context filter
         if (filters.context) {
           if (!log.context) return false;
-          if (filters.context.includes('*') || filters.context.startsWith('^')) {
-            const pattern = new RegExp(filters.context.replaceAll('*', '.*'), 'i');
-            if (!pattern.test(log.context)) return false;
-          } else {
-            if (log.context !== filters.context) return false;
+          if (contextRegex) {
+            if (!contextRegex.test(log.context)) return false;
+          } else if (log.context !== filters.context) {
+            return false;
           }
         }
 
-        // Message filter (case-insensitive)
-        if (filters.message) {
-          const pattern = new RegExp(filters.message, 'i');
-          if (!pattern.test(log.message)) return false;
-        }
+        // Message filter (case-insensitive, literal)
+        if (messageRegex && !messageRegex.test(log.message)) return false;
 
         // Date range filters
         const logDate = new Date(log.timestamp);
@@ -438,98 +497,65 @@ export class LogBufferService implements OnModuleDestroy {
   /**
    * Sort log entries by timestamp
    */
-  private sortLogs(logs: LogEntry[], sort: 'asc' | 'desc'): LogEntry[] {
-    return [...logs].sort((a, b) => {
+  private sortLogs(entries: LogEntry[], sort: 'asc' | 'desc'): LogEntry[] {
+    return [...entries].sort((a, b) => {
       const timeA = new Date(a.timestamp).getTime();
       const timeB = new Date(b.timestamp).getTime();
       return sort === 'asc' ? timeA - timeB : timeB - timeA;
     });
   }
 
-  /**
-   * Convert database documents to LogEntry format
-   */
-  private convertDbLogsToEntries(docs: any[]): LogEntry[] {
-    return docs.map((doc) => ({
-      _id: doc._id?.toString(),
-      timestamp: doc.timestamp,
-      level: doc.level,
-      context: doc.context,
-      message: doc.message,
-      data: doc.data,
-      traceId: doc.traceId,
-      requestId: doc.requestId,
-      hostname: doc.hostname,
-      nodeEnv: doc.nodeEnv,
-      createdAt: doc.createdAt,
+  private async readRows(db: NodePgDatabase<typeof schema>, where: SQL | undefined, sort: 'asc' | 'desc', offset: number, limit: number): Promise<LogEntry[]> {
+    const order = sort === 'asc' ? [asc(logs.createdAt), asc(logs.id)] : [desc(logs.createdAt), desc(logs.id)];
+    const rows = await db.select().from(logs).where(where).orderBy(...order).limit(limit).offset(offset);
+    return rows.map((row) => this.toEntry(row));
+  }
+
+  /** A stored row as the API always returned it: absent fields are omitted, not null. */
+  private toEntry(row: LogRow): LogEntry {
+    return {
+      _id: row.id,
+      timestamp: row.timestamp,
+      level: row.level,
+      ...(row.context !== null ? { context: row.context } : {}),
+      message: row.message,
+      ...(row.data !== null ? { data: row.data } : {}),
+      ...(row.traceId !== null ? { traceId: row.traceId } : {}),
+      ...(row.requestId !== null ? { requestId: row.requestId } : {}),
+      ...(row.hostname !== null ? { hostname: row.hostname } : {}),
+      ...(row.nodeEnv !== null ? { nodeEnv: row.nodeEnv } : {}),
+      createdAt: row.createdAt,
       _fromBuffer: false,
-    }));
+    };
   }
 
   /**
-   * Build a MongoDB filter query from LogQueryFilters
+   * Build the SQL filter from LogQueryFilters
    */
-  private buildFilterQuery(filters: LogQueryFilters): FilterQuery<Log> {
-    const query: FilterQuery<Log> = {};
+  private buildWhere(filters: LogQueryFilters): SQL | undefined {
+    const validDate = (value: Date | string | undefined): Date | null => {
+      if (!value) return null;
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? null : date;
+    };
+    const from = validDate(filters.from);
+    const to = validDate(filters.to);
 
     // Level filter (single or multiple)
-    if (filters.level) {
-      if (Array.isArray(filters.level)) {
-        query.level = { $in: filters.level };
-      } else {
-        query.level = filters.level;
-      }
-    }
+    const levels = filters.level ? (Array.isArray(filters.level) ? filters.level : [filters.level]) : null;
 
-    // Context filter (exact match or regex)
-    if (filters.context) {
-      // If it looks like a regex pattern (contains * or ^), use regex
-      if (filters.context.includes('*') || filters.context.startsWith('^')) {
-        // Escape special chars except *, then convert * to .*
-        const escaped = filters.context.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
-        const pattern = escaped.replaceAll('*', '.*');
-        query.context = { $regex: pattern, $options: 'i' };
-      } else {
-        query.context = filters.context;
-      }
-    }
-
-    // Message text search (case-insensitive)
-    if (filters.message) {
-      query.message = { $regex: escapeRegex(filters.message), $options: 'i' };
-    }
-
-    // Date range filters
-    if (filters.from || filters.to) {
-      query.createdAt = {};
-      if (filters.from) {
-        query.createdAt.$gte = new Date(filters.from);
-      }
-      if (filters.to) {
-        query.createdAt.$lte = new Date(filters.to);
-      }
-    }
-
-    // Hostname filter
-    if (filters.hostname) {
-      query.hostname = filters.hostname;
-    }
-
-    // Environment filter
-    if (filters.nodeEnv) {
-      query.nodeEnv = filters.nodeEnv;
-    }
-
-    // Trace ID filter
-    if (filters.traceId) {
-      query.traceId = filters.traceId;
-    }
-
-    // Request ID filter
-    if (filters.requestId) {
-      query.requestId = filters.requestId;
-    }
-
-    return query;
+    return and(
+      levels ? (levels.length > 0 ? inArray(logs.level, levels) : sql`false`) : undefined,
+      // Context filter (exact match or pattern)
+      filters.context ? (isPattern(filters.context) ? sql`${logs.context} ~* ${contextPattern(filters.context)}` : eq(logs.context, filters.context)) : undefined,
+      // Message text search (case-insensitive, literal)
+      filters.message ? ilike(logs.message, `%${escapeLike(filters.message)}%`) : undefined,
+      from ? gte(logs.createdAt, from) : undefined,
+      to ? lte(logs.createdAt, to) : undefined,
+      filters.hostname ? eq(logs.hostname, filters.hostname) : undefined,
+      filters.nodeEnv ? eq(logs.nodeEnv, filters.nodeEnv) : undefined,
+      filters.traceId ? eq(logs.traceId, filters.traceId) : undefined,
+      filters.requestId ? eq(logs.requestId, filters.requestId) : undefined,
+    );
   }
 }

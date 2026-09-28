@@ -17,6 +17,7 @@ NATIVE_TOOL_POLICIES: dict[str, dict[str, str]] = {
     "save_file_to_workspace": {"safety": "write", "kind": "workspace_write"},
     "run_code": {"safety": "write", "kind": "execution"},
     "create_temporary_child_agent": {"safety": "internal", "kind": "orchestration"},
+    "request_owner_validation": {"safety": "internal", "kind": "approval_request"},
 }
 
 

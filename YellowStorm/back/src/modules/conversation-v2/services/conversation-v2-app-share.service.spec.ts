@@ -8,15 +8,15 @@ import { EmailTemplateRenderer } from '@modules/email/email-template-renderer.se
 import { ConversationV2AppShareService } from './conversation-v2-app-share.service';
 import { ConversationV2ShareService } from './conversation-v2-share.service';
 import {
-  CONVERSATION_V2_APP_SHARE_STORE,
-  type ConversationV2AppShareRecord,
-  type ConversationV2AppShareStore,
+  type ConversationV2AppShareRecord, 
+  type ConversationV2AppShareStore, 
 } from '../persistence/conversation-v2-app-share.store';
 import {
-  CONVERSATION_V2_SESSION_STORE,
-  type ConversationV2SessionRecord,
-  type ConversationV2SessionStore,
+  type ConversationV2SessionRecord, 
+  type ConversationV2SessionStore, 
 } from '../persistence/conversation-v2-session.store';
+import { PgConversationV2AppShareStore } from '../persistence/postgres/pg-conversation-v2-app-share.store';
+import { PgConversationV2SessionStore } from '../persistence/postgres/pg-conversation-v2-session.store';
 
 const OWNER_ID = 'a'.repeat(24);
 const RECIPIENT_ID = 'b'.repeat(24);
@@ -141,8 +141,8 @@ describe('ConversationV2AppShareService', () => {
       providers: [
         ConversationV2AppShareService,
         ConversationV2ShareService,
-        { provide: CONVERSATION_V2_APP_SHARE_STORE, useValue: shares },
-        { provide: CONVERSATION_V2_SESSION_STORE, useValue: sessions },
+        { provide: PgConversationV2AppShareStore, useValue: shares },
+        { provide: PgConversationV2SessionStore, useValue: sessions },
         { provide: UserService, useValue: users },
         { provide: EmailService, useValue: email },
         { provide: NotificationsService, useValue: notifications },

@@ -5,7 +5,7 @@ import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { newObjectId } from '@common/postgres/object-id';
 import { resolveQueryable } from '@common/postgres/transaction';
-import { DRY_RUN_STORE, type DryRunStore, type GovernanceDryRunCreateInput, type GovernanceDryRunPatch } from '../dry-run-store';
+import { type DryRunStore,  type GovernanceDryRunCreateInput,  type GovernanceDryRunPatch } from '../dry-run-store';
 import type { GovernanceDryRunRecord } from '../governance-records';
 
 const DRY_RUNS = schema.governanceDryRuns;

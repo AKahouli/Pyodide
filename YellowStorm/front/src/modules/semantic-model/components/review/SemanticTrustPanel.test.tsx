@@ -13,11 +13,13 @@ vi.mock('../../query/hooks', () => ({
       { key: 'sources', complete: false, issues: [{ severity: 'blocking', message: 'source issue' }] },
     ],
   } }),
-  useSemanticReviewItems: () => ({ isLoading: false, data: [{
-    id: 'review', kind: 'ambiguous_relation', targetId: 'relation', status: 'open',
-    details: { sourceLabel: 'Contract C102', targetEntityIds: ['sony-eu', 'sony-fr'], targetLabels: ['Sony Europe', 'Sony France'] },
-    resolution: null, createdAt: '', updatedAt: '', resolvedBy: null, resolvedAt: null,
-  }] }),
+  useReviewQueue: () => ({ isLoading: false, isError: false, data: { count: 4, items: [
+    { key: 'review:1', group: 'decisions', priority: 2, kind: 'ambiguous_link', params: { record: 'Contract C102', relationship: 'signed by', count: 2 },
+      action: { kind: 'choose_match', reviewItemId: 'review', select: 'target', options: [{ value: 'sony-eu', label: 'Sony Europe' }, { value: 'sony-fr', label: 'Sony France' }] } },
+    { key: 'mapping:m1', group: 'sources', priority: 1, kind: 'source_broken', params: { document: 'orders.csv', concept: 'Order', fields: 'order_no' }, action: { kind: 'repair_mapping', mappingId: 'm1' } },
+    { key: 'identity:c1', group: 'identity', priority: 1, kind: 'missing_unique_field', params: { concept: 'Invoice' }, action: { kind: 'choose_unique_field', conceptId: 'c1' } },
+    { key: 'gap:c2:city', group: 'data', priority: 3, kind: 'missing_values', params: { concept: 'Customer', field: 'City', missing: 3, total: 10 }, action: { kind: 'fix_values', conceptId: 'c2' } },
+  ] } }),
 }));
 
 const api = vi.hoisted(() => ({ resolveReviewItem: vi.fn() }));
@@ -30,9 +32,28 @@ describe('SemanticTrustPanel', () => {
     render(<QueryClientProvider client={new QueryClient()}><SemanticTrustPanel modelId='model' canEdit onClose={vi.fn()} /></QueryClientProvider>);
     expect(screen.getByText('60%')).toBeInTheDocument();
     expect(screen.getByText('trust.issue.sources')).toBeInTheDocument();
-    expect(screen.getByText('Contract C102')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'trust.leaveUnresolved' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'trust.dismiss' })).toBeInTheDocument();
+    expect(screen.getByText('reviewQueue.title')).toBeInTheDocument();
+    expect(screen.getByText('reviewQueue.kind.ambiguous_link')).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Sony Europe' })).toBeInTheDocument();
+  });
+
+  it('groups items with the most important first and routes each to its one action', () => {
+    const onRepairMapping = vi.fn(); const onOpenItem = vi.fn(); const onFixValues = vi.fn(); const onClose = vi.fn();
+    render(<QueryClientProvider client={new QueryClient()}><SemanticTrustPanel modelId='model' canEdit onClose={onClose} onRepairMapping={onRepairMapping} onOpenItem={onOpenItem} onFixValues={onFixValues} /></QueryClientProvider>);
+    const groups = screen.getAllByRole('region').map((region) => region.getAttribute('aria-label'));
+    expect(groups.indexOf('reviewQueue.group.sources')).toBeLessThan(groups.indexOf('reviewQueue.group.data'));
+    fireEvent.click(screen.getByRole('button', { name: 'reviewQueue.action.repair_mapping' }));
+    expect(onRepairMapping).toHaveBeenCalledWith('m1');
+    fireEvent.click(screen.getByRole('button', { name: 'reviewQueue.action.choose_unique_field' }));
+    expect(onOpenItem).toHaveBeenCalledWith('c1');
+    fireEvent.click(screen.getByRole('button', { name: 'reviewQueue.action.fix_values' }));
+    expect(onFixValues).toHaveBeenCalledWith('c2');
+  });
+
+  it('hides actions from people who can only read', () => {
+    render(<QueryClientProvider client={new QueryClient()}><SemanticTrustPanel modelId='model' canEdit={false} onClose={vi.fn()} /></QueryClientProvider>);
+    expect(screen.getByText('reviewQueue.kind.source_broken')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'reviewQueue.action.repair_mapping' })).not.toBeInTheDocument();
   });
 
   it('closes from the panel close control', () => {
@@ -66,8 +87,10 @@ describe('SemanticTrustPanel', () => {
     const client = new QueryClient();
     const invalidate = vi.spyOn(client, 'invalidateQueries');
     render(<QueryClientProvider client={client}><SemanticTrustPanel modelId='model' canEdit onClose={vi.fn()} /></QueryClientProvider>);
-    fireEvent.click(screen.getByRole('button', { name: 'trust.dismiss' }));
-    await waitFor(() => expect(api.resolveReviewItem).toHaveBeenCalled());
+    fireEvent.change(screen.getByRole('combobox', { name: 'reviewQueue.chooseRecord' }), { target: { value: 'sony-fr' } });
+    fireEvent.click(screen.getByRole('button', { name: 'reviewQueue.action.choose_match' }));
+    await waitFor(() => expect(api.resolveReviewItem).toHaveBeenCalledWith('model', 'review', { decision: 'accepted', selectedTargetId: 'sony-fr' }));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['semantic-models', 'review-queue', 'model'] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['semantic-models', 'data-preview', 'model'] });
   });
 });

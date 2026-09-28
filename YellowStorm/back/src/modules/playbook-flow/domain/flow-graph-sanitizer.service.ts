@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ControlEdge, DataBinding, FlowNode } from '../schemas/playbook-flow.schema';
+import { ControlEdge, DataBinding, FlowNode } from '../models/playbook-flow.model';
 
 export interface SanitizedFlowGraph {
   controlEdges: ControlEdge[];

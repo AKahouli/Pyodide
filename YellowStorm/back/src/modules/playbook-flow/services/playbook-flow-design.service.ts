@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { isObjectId } from '@common/postgres';
 import { LoggerService } from '@modules/logger';
 import { AgentService } from '@modules/agent/agent.service';
 import { LiteLLMConnectionService } from '@modules/models/litellm-connection.service';
@@ -11,7 +10,7 @@ import { PlaybookFlowService } from './playbook-flow.service';
 import { PlaybookFlowContextService } from './playbook-flow-context.service';
 import { PlaybookFlowSettingsService } from './playbook-flow-settings.service';
 import { PlaybookFlowPromptTemplateService } from './playbook-flow-prompt-template.service';
-import { FlowDesignMessage, FlowDesignMessageDocument } from '../schemas/playbook-flow-design-message.schema';
+import { PlaybookDesignMessageRepository, type PlaybookDesignMessageRecord } from '../persistence/design-message.repository';
 import { BadRequestException, ForbiddenException, NotFoundException, ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { mapGrpcResponseToFlow } from './playbook-flow-design-mapper';
@@ -29,8 +28,7 @@ const FALLBACK_PROMPT_REWRITE_SYSTEM_PROMPT = [
 @Injectable()
 export class PlaybookFlowDesignService {
   constructor(
-    @InjectModel(FlowDesignMessage.name)
-    private readonly designMessageModel: Model<FlowDesignMessageDocument>,
+    private readonly designMessages: PlaybookDesignMessageRepository,
     private readonly playbookFlowService: PlaybookFlowService,
     private readonly grpcService: PlaybookFlowDesignGrpcService,
     private readonly contextService: PlaybookFlowContextService,
@@ -131,8 +129,8 @@ export class PlaybookFlowDesignService {
         snapshotBefore.nodes, snapshotBefore.controlEdges, nodes, controlEdges,
       );
 
-      const message = await this.designMessageModel.create({
-        flowId: new Types.ObjectId(flowId), createdBy: new Types.ObjectId(userId),
+      const message = await this.designMessages.create({
+        flowId, createdBy: userId,
         userQuery: query, aiSummary, snapshotBefore,
         status: 'completed', error: null,
       });
@@ -140,8 +138,8 @@ export class PlaybookFlowDesignService {
       return { flow: updatedFlow, message: this.mapMessageToResponse(message) };
     } catch (error) {
       if ((error as any)?.errorCode) throw error;
-      const message = await this.designMessageModel.create({
-        flowId: new Types.ObjectId(flowId), createdBy: new Types.ObjectId(userId),
+      const message = await this.designMessages.create({
+        flowId, createdBy: userId,
         userQuery: query, aiSummary: '', snapshotBefore,
         status: 'failed', error: (error as Error).message || 'Design failed',
       });
@@ -185,10 +183,7 @@ export class PlaybookFlowDesignService {
     if (String(flow.ownerId) !== String(userId)) {
       throw new ForbiddenException(ErrorCode.FORBIDDEN);
     }
-    const messages = await this.designMessageModel
-      .find({ flowId: new Types.ObjectId(flowId), createdBy: new Types.ObjectId(userId) })
-      .sort({ createdAt: -1 })
-      .lean();
+    const messages = await this.designMessages.listForUser(flowId, userId);
     return messages.map((m) => this.mapMessageToResponse(m));
   }
 
@@ -212,9 +207,9 @@ export class PlaybookFlowDesignService {
       throw new ForbiddenException(ErrorCode.FORBIDDEN);
     }
 
-    const message = await this.designMessageModel.create({
-      flowId: new Types.ObjectId(flowId),
-      createdBy: new Types.ObjectId(userId),
+    const message = await this.designMessages.create({
+      flowId,
+      createdBy: userId,
       userQuery,
       aiSummary,
       snapshotBefore: {
@@ -235,11 +230,7 @@ export class PlaybookFlowDesignService {
       throw new ForbiddenException(ErrorCode.FORBIDDEN);
     }
 
-    const result = await this.designMessageModel.deleteMany({
-      flowId: new Types.ObjectId(flowId),
-      createdBy: new Types.ObjectId(userId),
-    });
-    return { deletedCount: result.deletedCount ?? 0 };
+    return { deletedCount: await this.designMessages.deleteForUser(flowId, userId) };
   }
 
   async revertToSnapshot(flowId: string, msgId: string, userId: string) {
@@ -248,15 +239,11 @@ export class PlaybookFlowDesignService {
       throw new ForbiddenException(ErrorCode.FORBIDDEN);
     }
 
-    if (!Types.ObjectId.isValid(msgId)) {
+    if (!isObjectId(msgId)) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Invalid message ID');
     }
 
-    const message = await this.designMessageModel.findOne({
-      _id: new Types.ObjectId(msgId),
-      flowId: new Types.ObjectId(flowId),
-      createdBy: new Types.ObjectId(userId),
-    });
+    const message = await this.designMessages.findForUser(msgId, flowId, userId);
     if (!message) {
       throw new NotFoundException(ErrorCode.NOT_FOUND, 'Design message not found');
     }
@@ -268,9 +255,9 @@ export class PlaybookFlowDesignService {
       dataBindings: snapshot.dataBindings || [],
     });
 
-    const revertedMessage = await this.designMessageModel.create({
-      flowId: new Types.ObjectId(flowId),
-      createdBy: new Types.ObjectId(userId),
+    const revertedMessage = await this.designMessages.create({
+      flowId,
+      createdBy: userId,
       userQuery: `Reverted to snapshot from ${msgId}`,
       aiSummary: 'Flow reverted to previous design snapshot',
       snapshotBefore: {
@@ -279,25 +266,25 @@ export class PlaybookFlowDesignService {
         dataBindings: (flow.dataBindings || []).map((b: any) => ({ ...b })),
       },
       status: 'reverted',
-      revertedFromMessageId: message._id,
+      revertedFromMessageId: message.id,
     });
 
     return { flow: updatedFlow, message: this.mapMessageToResponse(revertedMessage) };
   }
 
-  private mapMessageToResponse(message: any) {
+  private mapMessageToResponse(message: PlaybookDesignMessageRecord) {
     return {
-      id: (message._id || message.id).toString(),
-      flowId: message.flowId?.toString?.() || message.flowId,
-      playbookId: message.flowId?.toString?.() || message.flowId,
+      id: message.id,
+      flowId: message.flowId,
+      playbookId: message.flowId,
       userQuery: message.userQuery,
       aiSummary: message.aiSummary || '',
       snapshotBefore: message.snapshotBefore || { nodes: [], controlEdges: [], dataBindings: [] },
       status: message.status,
-      revertedFromMessageId: message.revertedFromMessageId?.toString?.() || message.revertedFromMessageId || null,
+      revertedFromMessageId: message.revertedFromMessageId || null,
       error: message.error || null,
-      createdAt: message.createdAt?.toISOString?.() || message.createdAt,
-      updatedAt: message.updatedAt?.toISOString?.() || message.updatedAt,
+      createdAt: message.createdAt.toISOString(),
+      updatedAt: message.updatedAt.toISOString(),
     };
   }
 }

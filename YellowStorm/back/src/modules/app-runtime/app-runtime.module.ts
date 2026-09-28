@@ -6,16 +6,11 @@ import { AppDataModule } from '@modules/app-data/app-data.module';
 import appRuntimeConfig from '@config/app-runtime.config';
 import { AppRuntimeInternalController } from './controllers/app-runtime-internal.controller';
 import { AppRuntimeMcpController } from './controllers/app-runtime-mcp.controller';
-import { AppRuntimeGateway } from './gateways/app-runtime.gateway';
-import { RUNTIME_BINDING_STORE } from './persistence/runtime-binding.store';
-import { PgRuntimeBindingStore } from './persistence/pg-runtime-binding.store';
-import { RUNTIME_TICKET_STORE } from './persistence/runtime-ticket.store';
-import { PgRuntimeTicketStore } from './persistence/pg-runtime-ticket.store';
-import { RUNTIME_TOOL_CALL_STORE } from './persistence/runtime-tool-call.store';
-import { PgRuntimeToolCallStore } from './persistence/pg-runtime-tool-call.store';
-import { RUNTIME_SOURCE_REVISION_STORE } from './persistence/runtime-source-revision.store';
-import { PgRuntimeSourceRevisionStore } from './persistence/pg-runtime-source-revision.store';
-import { RUNTIME_FINALIZED_REVISION_STORE } from './persistence/runtime-finalized-revision.store';
+import { AppRuntimeGateway } from './gateways/app-runtime.gateway';
+import { PgRuntimeBindingStore } from './persistence/pg-runtime-binding.store';
+import { PgRuntimeTicketStore } from './persistence/pg-runtime-ticket.store';
+import { PgRuntimeToolCallStore } from './persistence/pg-runtime-tool-call.store';
+import { PgRuntimeSourceRevisionStore } from './persistence/pg-runtime-source-revision.store';
 import { PgRuntimeFinalizedRevisionStore } from './persistence/pg-runtime-finalized-revision.store';
 import { RuntimeBindingService } from './services/runtime-binding.service';
 import { RuntimeBrokerService } from './services/runtime-broker.service';
@@ -38,11 +33,11 @@ import { RuntimeFinalizedRevisionService } from './services/runtime-finalized-re
   ],
   controllers: [AppRuntimeInternalController, AppRuntimeMcpController],
   providers: [
-    { provide: RUNTIME_BINDING_STORE, useClass: PgRuntimeBindingStore },
-    { provide: RUNTIME_TICKET_STORE, useClass: PgRuntimeTicketStore },
-    { provide: RUNTIME_TOOL_CALL_STORE, useClass: PgRuntimeToolCallStore },
-    { provide: RUNTIME_SOURCE_REVISION_STORE, useClass: PgRuntimeSourceRevisionStore },
-    { provide: RUNTIME_FINALIZED_REVISION_STORE, useClass: PgRuntimeFinalizedRevisionStore },
+    PgRuntimeBindingStore,
+    PgRuntimeTicketStore,
+    PgRuntimeToolCallStore,
+    PgRuntimeSourceRevisionStore,
+    PgRuntimeFinalizedRevisionStore,
     RuntimeTokenService,
     RuntimeRevisionService,
     RuntimeBindingService,

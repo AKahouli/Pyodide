@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import {
   type FlowReplayOutputContract,
   FlowReplayOutputContractType,
-} from '../schemas/playbook-flow-validated-replay.schema';
+} from '../models/playbook-flow-validated-replay.model';
 import { extractMarkdownHeadings, hasCitationMarkersInText } from '../utils/playbook-flow-safe-text.util';
 
 export interface OutputContractValidationResult {

@@ -5,7 +5,6 @@ import type { HealthCheckDetailRecord } from '../schemas/health-history.schema';
  * backfill; rows expire via the sweeper on expire_at.
  * `_id` and `recordedAt` keep the Mongo field names the admin API returns.
  */
-export const HEALTH_HISTORY_STORE = Symbol('HEALTH_HISTORY_STORE');
 
 export interface HealthHistoryRow {
   _id: string;

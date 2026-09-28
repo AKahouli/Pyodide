@@ -7,7 +7,7 @@ import { escapeLike } from '@common/postgres/like';
 import { newObjectId } from '@common/postgres/object-id';
 import { resolveQueryable } from '@common/postgres/transaction';
 import { workspaceRowToRecord } from '../../persistence/postgres/pg-workspace-read.adapter';
-import { WORKSPACE_STORE, type WorkspaceStore, type WorkspaceCreateInput, type WorkspaceListParams, type WorkspaceListPublicParams, type WorkspaceUpdatePatch, type WorkspaceCounterDelta } from '../workspace-store';
+import { type WorkspaceCreateInput, type WorkspaceListParams, type WorkspaceListPublicParams, type WorkspaceUpdatePatch, type WorkspaceCounterDelta } from '../workspace-store';
 import type { WorkspaceRecord } from '../../ports/workspace-records';
 
 const WORKSPACES = schema.workspaces;
@@ -19,7 +19,7 @@ function orderClause(col: string | undefined, direction: 'asc' | 'desc'): SQL {
 }
 
 @Injectable()
-export class PgWorkspaceStore implements WorkspaceStore {
+export class PgWorkspaceStore {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
 
   private get q() {

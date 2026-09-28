@@ -1,10 +1,10 @@
 import { Test } from '@nestjs/testing';
 import { ConversationV2EventStoreService } from './conversation-v2-event-store.service';
 import {
-  CONVERSATION_V2_EVENT_STORE,
-  type ConversationV2EventStore,
+  type ConversationV2EventStore, 
 } from '../persistence/conversation-v2-event.store';
 import type { ConversationV2Event as WireEvent } from '../types/conversation-v2.types';
+import { PgConversationV2EventStore } from '../persistence/postgres/pg-conversation-v2-event.store';
 
 const SESSION_HEX = '507f1f77bcf86cd799439011';
 
@@ -23,7 +23,7 @@ describe('ConversationV2EventStoreService', () => {
     const mod = await Test.createTestingModule({
       providers: [
         ConversationV2EventStoreService,
-        { provide: CONVERSATION_V2_EVENT_STORE, useValue: store },
+        { provide: PgConversationV2EventStore, useValue: store },
       ],
     }).compile();
 

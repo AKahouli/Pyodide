@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HealthCheckResult, HealthCheckDetail } from './interfaces/health.interface';
-import { DatabaseConnectionService } from '../database';
 import { DocumentConnectionService } from '../document/document-connection.service';
 import { EmailConnectionService } from '../email/email-connection.service';
 import { UsageService, UsageType } from '../usage';
@@ -20,7 +19,6 @@ export class HealthService {
   private readonly memoryLimitBytes: number;
 
   constructor(
-    private readonly dbConnection: DatabaseConnectionService,
     private readonly documentConnection: DocumentConnectionService,
     private readonly emailConnection: EmailConnectionService,
     private readonly configService: ConfigService,
@@ -39,11 +37,10 @@ export class HealthService {
 
   async check(userId?:string): Promise<HealthCheckResult> {
     // Run all checks in parallel — network pings are independent
-    const [memory, eventLoop, database, postgres, storage, email, litellm, conversationGrpc, conversationV2Grpc, playbookMcp, semanticModel] =
+    const [memory, eventLoop, postgres, storage, email, litellm, conversationGrpc, conversationV2Grpc, playbookMcp, semanticModel] =
       await Promise.all([
         this.checkMemory(),
         this.checkEventLoop(),
-        this.checkDatabase(),
         this.checkPostgres(),
         this.checkStorage(),
         this.checkEmail(),
@@ -55,7 +52,7 @@ export class HealthService {
       ]);
 
     const checks: Record<string, HealthCheckDetail> = {
-      memory, eventLoop, database, postgres, storage, email, litellm, conversationGrpc, conversationV2Grpc, playbookMcp, semanticModel,
+      memory, eventLoop, postgres, storage, email, litellm, conversationGrpc, conversationV2Grpc, playbookMcp, semanticModel,
     };
 
     const allUp = Object.values(checks).every((c) => c.status === 'up');
@@ -86,9 +83,6 @@ export class HealthService {
 
     const memoryCheck = await this.checkMemory();
     checks.memory = memoryCheck.status === 'up';
-
-    const databaseCheck = await this.checkDatabase();
-    checks.database = databaseCheck.status === 'up';
 
     checks.postgres = await this.postgres.ping();
 
@@ -240,35 +234,6 @@ export class HealthService {
       message,
       lastChecked: new Date().toISOString(),
     };
-  }
-
-  private async checkDatabase(): Promise<HealthCheckDetail> {
-    const startTime = Date.now();
-
-    try {
-      const connection = this.dbConnection.getConnection();
-      const info = this.dbConnection.getConnectionInfo();
-
-      // Actual round-trip ping to MongoDB
-      await connection.db!.admin().ping();
-
-      return {
-        status: 'up',
-        responseTime: Date.now() - startTime,
-        message: `Connected to ${info.name}`,
-        lastChecked: new Date().toISOString(),
-      };
-    } catch {
-      const info = this.dbConnection.getConnectionInfo();
-      return {
-        status: 'down',
-        responseTime: Date.now() - startTime,
-        message: info.isReconnecting
-          ? `Database ${info.state} (reconnect attempt ${info.reconnectAttempts})`
-          : `Database ${info.state}`,
-        lastChecked: new Date().toISOString(),
-      };
-    }
   }
 
   private async checkStorage(): Promise<HealthCheckDetail> {

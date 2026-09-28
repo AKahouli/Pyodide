@@ -80,8 +80,12 @@ def _xlsx_rows(data: bytes, options: dict[str, Any]) -> tuple[list[str], Iterabl
     preview = parse_xlsx_preview(data, options)
     workbook = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
     sheet = workbook[preview["structure"]["selectedSheet"]]
+    # Workbooks written without a <dimension> report no max_column; read the header row to its end then.
     header_cells = list(next(sheet.iter_rows(min_row=1, max_row=1,
-                                             max_col=max(sheet.max_column, 1), values_only=True), []))
+                                             max_col=max(sheet.max_column or 0, 1) if sheet.max_column else None,
+                                             values_only=True), []))
+    while header_cells and header_cells[-1] is None:
+        header_cells.pop()
     warnings: list[dict[str, str]] = []
     headers = _disambiguate_headers(
         ["" if value is None else Stringify(value) for value in header_cells], warnings)

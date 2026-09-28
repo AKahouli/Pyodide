@@ -50,7 +50,7 @@ class PopulationSource(BaseModel):
 
     concept_id: str = Field(alias="conceptId", min_length=1, max_length=200)
     source: dict[str, Any]
-    source_kind: Literal["tabular", "excel_sheet", "csv", "document"] | None = Field(
+    source_kind: Literal["tabular", "excel_sheet", "csv", "document", "manual"] | None = Field(
         default=None, alias="sourceKind")
     options: dict[str, Any] = Field(default_factory=dict)
     column_mapping: dict[str, str] | None = Field(default=None, alias="columnMapping")
@@ -163,7 +163,7 @@ class CorrectionCommand(BaseModel):
     model_version_id: str = Field(alias="modelVersionId", min_length=1, max_length=200)
     action: Literal["create_entity", "edit_entity", "remove_entity", "add_relationship",
                     "remove_relationship", "set_override", "reset_override",
-                    "suppress", "unsuppress"]
+                    "suppress", "unsuppress", "revert"]
     target_identity: dict[str, Any] = Field(alias="targetIdentity")
     reason: str = Field(default="", max_length=2000)
     payload: dict[str, Any] = Field(default_factory=dict)
@@ -254,3 +254,45 @@ class IdempotencyConflict(Exception):
 
 class StaleLease(Exception):
     pass
+
+
+class PublishModelDataCommand(BaseModel):
+    """Promote the model's draft data revision to production for a published version."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    actor_user_id: str = Field(alias="actorUserId", min_length=1, max_length=200)
+    model_version_id: str = Field(alias="modelVersionId", min_length=1, max_length=200)
+
+
+class ManualRow(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    concept_id: str = Field(alias="conceptId", min_length=1, max_length=200)
+    row_key: str = Field(alias="rowKey", min_length=1, max_length=200)
+    label: str = Field(default="", max_length=500)
+    values: dict[str, Any] = Field(default_factory=dict)
+
+
+class ManualLink(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    relation_id: str = Field(alias="relationId", min_length=1, max_length=200)
+    source_row_key: str = Field(alias="sourceRowKey", min_length=1, max_length=200)
+    target_row_key: str = Field(alias="targetRowKey", min_length=1, max_length=200)
+
+
+class ManualBatchCommand(BaseModel):
+    """One batch of a manual source snapshot; batches are appended until commit."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rows: list[ManualRow] = Field(default_factory=list, max_length=500)
+    links: list[ManualLink] = Field(default_factory=list, max_length=500)
+
+
+class ManualCommitCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    row_count: int = Field(alias="rowCount", ge=0)
+    link_count: int = Field(alias="linkCount", ge=0)

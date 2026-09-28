@@ -12,10 +12,11 @@ import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { StreamEvent } from '../interfaces/stream.interface';
 import { EmailService } from '../../email/email.service';
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
-import { MESSAGE_STORE, type MessageRecord, type MessageStore } from '../persistence/message-store';
+import { type MessageRecord} from '../persistence/message-store';
 import { ConversationUsageAccountingService } from './conversation-usage-accounting.service';
 import type { ConversationUsageAttribution, ConversationUsageMetrics } from '../utils/usage-metrics';
 import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
+import { PostgresMessageStore } from '../persistence/postgres/postgres-message-store';
 
 const SETTINGS_LOOKUP_TIMEOUT_MS = 1_000;
 
@@ -24,7 +25,7 @@ export class MessageService {
   private readonly appUrl: string;
 
   constructor(
-    @Inject(MESSAGE_STORE) private readonly messageStore: MessageStore,
+    private readonly messageStore: PostgresMessageStore,
     private readonly conversationService: ConversationService,
     private readonly streamGateway: StreamGatewayService,
     @Inject(forwardRef(() => WorkspaceDocumentService))

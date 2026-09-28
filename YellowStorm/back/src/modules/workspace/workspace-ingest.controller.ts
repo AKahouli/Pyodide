@@ -8,13 +8,12 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
-import { Inject } from '@nestjs/common';
 import { isObjectId } from '@common/postgres';
 import { InternalServiceGuard } from '../auth/guards/internal-service.guard';
 import { Public } from '../auth/decorators/public.decorator';
 import { WorkspaceDocumentService } from './workspace-document.service';
 import { IngestUrlDto } from './dto/ingest-url.dto';
-import { WORKSPACE_STORE, type WorkspaceStore } from './stores/workspace-store';
+import { PgWorkspaceStore } from './stores/postgres/pg-workspace-store';
 import { NotFoundException, ForbiddenException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 
@@ -24,7 +23,7 @@ import { ErrorCode } from '../exceptions/constants/error-codes';
 export class WorkspaceIngestController {
   constructor(
     private readonly workspaceDocService: WorkspaceDocumentService,
-    @Inject(WORKSPACE_STORE) private readonly workspaceStore: WorkspaceStore,
+    private readonly workspaceStore: PgWorkspaceStore,
   ) {}
 
   @Public()

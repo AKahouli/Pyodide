@@ -103,3 +103,19 @@ describe('platform copilot action bus', () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 });
+
+describe('semantic model targets', () => {
+  it('open the model, or its suggested sources, by id and are told apart by model', () => {
+    const navigate = vi.fn();
+    const editor = { surface: 'semanticModel.editor' as const, params: { modelId: 'm/1', modelName: 'Billing' } };
+    expect(executePlatformCopilotUiTarget({ target: editor, pageContext: context, navigate, confirmNavigation: () => true })).toEqual({ ok: true });
+    expect(navigate).toHaveBeenLastCalledWith('/semantic-models/m%2F1');
+    executePlatformCopilotUiTarget({ target: { ...editor, surface: 'semanticModel.sources' }, pageContext: context, navigate, confirmNavigation: () => true });
+    expect(navigate).toHaveBeenLastCalledWith('/semantic-models/m%2F1?sources=1');
+    expect(executePlatformCopilotUiTarget({ target: { surface: 'semanticModel.editor', params: {} }, pageContext: context, navigate, confirmNavigation: () => true }))
+      .toEqual({ ok: false, reason: 'missing_parameter' });
+    expect(dedupePlatformCopilotUiTargets([editor, { ...editor, params: { modelId: 'm/1', modelName: 'Renamed' } }])).toHaveLength(1);
+    expect(getPlatformCopilotUiTargetIdentity(editor)).not.toBe(getPlatformCopilotUiTargetIdentity({ ...editor, params: { modelId: 'm/2' } }));
+    expect(findUiTargets(JSON.stringify({ data: { uiTarget: editor } }))).toEqual([editor]);
+  });
+});

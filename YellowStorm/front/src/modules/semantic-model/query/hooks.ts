@@ -3,10 +3,10 @@ import { semanticModelApi } from '../api';
 import { semanticModelQueryKeys } from './queryKeys';
 
 export function useSemanticModels(filters: Record<string, string | number | undefined>) {
-  return useQuery({ queryKey: semanticModelQueryKeys.catalog(filters), queryFn: () => semanticModelApi.list(filters), refetchInterval: (query) => query.state.data?.items.some((model) => model.indexStatus === 'pending' || model.indexStatus === 'in_progress') ? 3000 : false });
+  return useQuery({ queryKey: semanticModelQueryKeys.catalog(filters), queryFn: () => semanticModelApi.list(filters) });
 }
 export function useSemanticModel(id: string | undefined) {
-  return useQuery({ queryKey: semanticModelQueryKeys.model(id ?? 'none'), queryFn: () => semanticModelApi.get(id ?? ''), enabled: Boolean(id), refetchInterval: (query) => ['pending','in_progress'].includes(query.state.data?.indexStatus ?? '') ? 3000 : false });
+  return useQuery({ queryKey: semanticModelQueryKeys.model(id ?? 'none'), queryFn: () => semanticModelApi.get(id ?? ''), enabled: Boolean(id) });
 }
 export function useSemanticGraph(id: string | undefined) {
   return useQuery({ queryKey: semanticModelQueryKeys.graph(id ?? 'none'), queryFn: () => semanticModelApi.graph(id ?? ''), enabled: Boolean(id) });
@@ -33,6 +33,10 @@ export function useSourceMappings(id: string | undefined) {
 export function useRelationResolutionRules(id: string | undefined) {
   return useQuery({ queryKey: semanticModelQueryKeys.relationRules(id ?? 'none'), queryFn: () => semanticModelApi.listRelationResolutionRules(id ?? ''), enabled: Boolean(id) });
 }
+export function useIdentityRules(id: string | undefined) {
+  return useQuery({ queryKey: semanticModelQueryKeys.identityRules(id ?? 'none'), queryFn: () => semanticModelApi.listIdentityRules(id ?? ''), enabled: Boolean(id) });
+}
+
 export function useSourceResolutionPolicies(id: string | undefined) {
   return useQuery({ queryKey: semanticModelQueryKeys.sourcePolicies(id ?? 'none'), queryFn: () => semanticModelApi.listSourceResolutionPolicies(id ?? ''), enabled: Boolean(id) });
 }
@@ -51,6 +55,22 @@ export function useMappingHealth(id: string | undefined) {
 export function useSemanticReadiness(id: string | undefined) {
   return useQuery({ queryKey: semanticModelQueryKeys.readiness(id ?? 'none'), queryFn: () => semanticModelApi.readiness(id ?? ''), enabled: Boolean(id) });
 }
-export function useSemanticReviewItems(id: string | undefined, status: 'open' | 'resolved' = 'open', enabled = true) {
-  return useQuery({ queryKey: semanticModelQueryKeys.reviewItems(id ?? 'none', status), queryFn: () => semanticModelApi.reviewItems(id ?? '', status), enabled: Boolean(id) && enabled });
+export function useVersionComparison(id: string | undefined, left: string | undefined, right: string | undefined) {
+  return useQuery({
+    queryKey: ['semantic-models', 'version-compare', id ?? 'none', left ?? 'none', right ?? 'none'],
+    queryFn: () => semanticModelApi.compareVersions(id ?? '', left ?? '', right ?? ''),
+    enabled: Boolean(id && left && right && left !== right),
+    retry: false,
+  });
+}
+export function useReviewQueue(id: string | undefined, enabled = true) {
+  return useQuery({ queryKey: semanticModelQueryKeys.reviewQueue(id ?? 'none'), queryFn: () => semanticModelApi.reviewQueue(id ?? ''), enabled: Boolean(id) && enabled, retry: false, staleTime: 30_000 });
+}
+
+/** Whether the data in use matches the model as it is now; re-asked whenever the model's queries are refreshed. */
+export function usePopulationFreshness(id: string | undefined, enabled = true) {
+  return useQuery({ queryKey: semanticModelQueryKeys.freshness(id ?? 'none'), queryFn: () => semanticModelApi.populationFreshness(id ?? ''), enabled: Boolean(id) && enabled, staleTime: 5_000 });
+}
+export function useCanvasPositions(id: string | undefined) {
+  return useQuery({ queryKey: semanticModelQueryKeys.canvasPositions(id ?? 'none'), queryFn: () => semanticModelApi.canvasPositions(id ?? ''), enabled: Boolean(id) });
 }

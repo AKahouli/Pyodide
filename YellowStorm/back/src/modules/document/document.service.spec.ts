@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { PlatformSettingsService } from '@modules/system/platform-settings.service';
 import { ConfigService } from '@nestjs/config';
 import { Readable } from 'stream';
 import { DocumentService } from './document.service';
@@ -62,6 +63,22 @@ const notFoundError = () =>
     name: 'NotFound',
     $metadata: { httpStatusCode: 404 },
   });
+
+
+function mockPlatformSettings(overrides: Record<string, any> = {}) {
+  return {
+    getSettings: jest.fn().mockResolvedValue({
+      throttle: { limit: 100, windowSeconds: 60 },
+      auth: { maxSessionsPerUser: 10 },
+      documentUpload: {
+        maxFileSizeMb: 50,
+        maxFilesPerUpload: 10,
+        allowedMimeTypes: ['application/pdf', 'image/png', 'text/plain'],
+        ...overrides,
+      },
+    }),
+  };
+}
 
 describe('DocumentService', () => {
   let service: DocumentService;
@@ -132,6 +149,7 @@ describe('DocumentService', () => {
         { provide: ConfigService, useValue: mockConfigService },
         { provide: LoggerService, useValue: mockLoggerService },
         { provide: DocumentConnectionService, useValue: mockConnectionService },
+        { provide: PlatformSettingsService, useValue: mockPlatformSettings() },
       ],
     }).compile();
 
@@ -923,6 +941,7 @@ describe('DocumentService', () => {
           { provide: ConfigService, useValue: configService },
           { provide: LoggerService, useValue: loggerService },
           { provide: DocumentConnectionService, useValue: connectionService },
+          { provide: PlatformSettingsService, useValue: mockPlatformSettings({ allowedMimeTypes: [] }) },
         ],
       }).compile();
 

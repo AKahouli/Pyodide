@@ -1,6 +1,5 @@
 import type { TrustedConversationPlaybookContextV1 } from '../interfaces/conversation-playbook-handoff.interface';
 
-export const CONVERSATION_PLAYBOOK_HANDOFF_STORE = Symbol('CONVERSATION_PLAYBOOK_HANDOFF_STORE');
 
 export type HandoffStatus = 'prepared' | 'bound' | 'consumed';
 

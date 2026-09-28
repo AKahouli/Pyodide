@@ -1,10 +1,5 @@
-import axios from 'axios';
 import { SemanticRuntimeClientService } from './semantic-runtime-client.service';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-
-jest.mock('axios');
-
-const mockedAxios = jest.mocked(axios);
 
 const config = (overrides: Record<string, unknown> = {}) => ({
   runtimeEnabled: true,
@@ -22,25 +17,43 @@ const runCommand = {
   payload: { purpose: 'build' },
 };
 
+function jsonResponse(payload: unknown) {
+  return new Response(JSON.stringify(payload), { status: 200, headers: { 'Content-Type': 'application/json' } });
+}
+
 describe('SemanticRuntimeClientService (P2.11)', () => {
-  beforeEach(() => jest.clearAllMocks());
+  let fetchMock: jest.Mock;
+
+  beforeEach(() => {
+    fetchMock = jest.fn();
+    global.fetch = fetchMock as unknown as typeof fetch;
+  });
 
   it('posts population runs with service key, idempotency key and timeout', async () => {
-    mockedAxios.post.mockResolvedValueOnce({ data: { jobId: 'j1', reused: false } });
+    fetchMock.mockResolvedValueOnce(jsonResponse({ jobId: 'j1', reused: false }));
     const client = new SemanticRuntimeClientService(config() as any);
     const result = await client.requestPopulationRun(runCommand, 'idem-1');
     expect(result).toEqual({ jobId: 'j1', reused: false });
-    expect(mockedAxios.post).toHaveBeenCalledWith(
-      'http://runtime:8000/v1/semantic-model-population/runs',
-      runCommand,
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          'X-Semantic-Service-Key': 'secret',
-          'Idempotency-Key': 'idem-1',
-        }),
-        timeout: 5000,
-      }),
-    );
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://runtime:8000/v1/semantic-model-population/runs');
+    expect(JSON.parse(init.body)).toEqual(runCommand);
+    expect(init.headers).toEqual(expect.objectContaining({
+      'X-Semantic-Service-Key': 'secret',
+      'Idempotency-Key': 'idem-1',
+    }));
+  });
+
+  it('stops a job as its actor and finds the model run still going', async () => {
+    const client = new SemanticRuntimeClientService(config() as any);
+    fetchMock.mockResolvedValueOnce(jsonResponse({ jobId: 'j/1', state: 'cancel_requested' }));
+    await expect(client.cancelJob('j/1', 'u1')).resolves.toMatchObject({ state: 'cancel_requested' });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://runtime:8000/v1/semantic-model-jobs/j%2F1/cancel');
+    expect(init.headers).toEqual(expect.objectContaining({ 'X-Actor-User-Id': 'u1', 'X-Semantic-Service-Key': 'secret' }));
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ job: null }));
+    await expect(client.getActiveJob('m1', 'u1')).resolves.toBeNull();
+    expect(fetchMock.mock.calls[1][0]).toBe('http://runtime:8000/v1/semantic-model-jobs/active?modelId=m1&jobType=population.run');
   });
 
   it('refuses writes when the runtime is disabled or unconfigured', async () => {
@@ -52,24 +65,23 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
     await expect(unconfigured.recordCorrection({} as any)).rejects.toMatchObject({
       code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
     });
-    expect(mockedAxios.post).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('allows bound reads when runtime writes are disabled', async () => {
-    mockedAxios.get.mockResolvedValueOnce({ data: { dataRevisionId: 'dr_1', nodes: [], edges: [] } });
+    fetchMock.mockResolvedValueOnce(jsonResponse({ dataRevisionId: 'dr_1', nodes: [], edges: [] }));
     const client = new SemanticRuntimeClientService(config({ runtimeWritesEnabled: false }) as any);
     await expect(client.getBoundGraph('m1', 'u1')).resolves.toMatchObject({ dataRevisionId: 'dr_1' });
   });
 
   it('maps runtime 409 to conflict and 404 to not-found', async () => {
     const client = new SemanticRuntimeClientService(config() as any);
-    (axios.isAxiosError as unknown as jest.Mock).mockReturnValue(true);
-    mockedAxios.post.mockRejectedValueOnce({ response: { status: 409, data: { detail: 'stale' } } });
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'stale' }), { status: 409 }));
     await expect(
       client.activateRevision('dr_1', { actorUserId: 'u', modelId: 'm', modelVersionId: 'v', expectedCorrectionSequence: 0 }),
     ).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT });
 
-    mockedAxios.post.mockRejectedValueOnce({ response: { status: 404, data: {} } });
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 404 }));
     await expect(client.projectRevision('missing')).rejects.toMatchObject({
       code: ErrorCode.SEMANTIC_MODEL_NOT_FOUND,
     });
@@ -77,11 +89,10 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
 
   it('maps transport failures to unavailable without retrying', async () => {
     const client = new SemanticRuntimeClientService(config() as any);
-    (axios.isAxiosError as unknown as jest.Mock).mockReturnValue(false);
-    mockedAxios.post.mockRejectedValueOnce(new Error('timeout'));
+    fetchMock.mockRejectedValueOnce(new Error('timeout'));
     await expect(client.resolveReview('r1', { actorUserId: 'u', modelId: 'm', resolution: {} })).rejects.toMatchObject(
       { code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE },
     );
-    expect(mockedAxios.post).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

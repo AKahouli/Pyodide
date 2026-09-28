@@ -2,6 +2,9 @@
 
 > **Golden rule:** before introducing a new pattern, look at an existing sibling module (`playbook`, `conversation`, `workspace`, `admin`). If a pattern already exists, follow it.
 
+> **Index — agents: grep `^## `, then read only the section(s) the change needs. Never load this whole file (~39 KB).**
+> 1 Stack · 2 Project Structure · 3 Module Anatomy · 4 Routing · 5 State Management · 6 API Layer · 7 Caching & Data Fetching · 8 Forms · 9 UI & Styling · 10 i18n · 11 Notifications · 12 Streaming (SSE) · 13 Error Handling · 14 Testing · 15 TypeScript Conventions · 16 File Naming · 17 Environment & Config · 18 Performance · 19 Integrations · 20 Module-Specific Patterns · 21 Pre-PR Checklist · 22 Anti-Patterns
+
 ---
 
 ## 1. Stack

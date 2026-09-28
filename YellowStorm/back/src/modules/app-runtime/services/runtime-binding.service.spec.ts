@@ -1,9 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { RUNTIME_BINDING_STORE, type RuntimeBindingStore } from '../persistence/runtime-binding.store';
+import { type RuntimeBindingStore } from '../persistence/runtime-binding.store';
 import { RuntimeBindingService } from './runtime-binding.service';
 import { RuntimeRevisionService } from './runtime-revision.service';
 import { RuntimeTokenService } from './runtime-token.service';
+import { PgRuntimeBindingStore } from '../persistence/pg-runtime-binding.store';
 
 const MCP_URL = 'http://127.0.0.1:3000/api/v1/mcp/app-runtime';
 const STARTER = 'starter_react_vite_v1';
@@ -48,7 +49,7 @@ describe('RuntimeBindingService', () => {
         RuntimeBindingService,
         RuntimeTokenService,
         {
-          provide: RUNTIME_BINDING_STORE,
+          provide: PgRuntimeBindingStore,
           useValue: store,
         },
         { provide: RuntimeRevisionService, useValue: { ensureStarterRevision } },

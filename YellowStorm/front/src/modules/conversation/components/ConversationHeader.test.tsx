@@ -16,7 +16,7 @@ vi.mock('./RenameDialog', () => ({ RenameDialog: ({ open }: { open: boolean }) =
 vi.mock('./DeleteConversationDialog', () => ({ DeleteConversationDialog: ({ open, isShared }: { open: boolean; isShared?: boolean }) => <div>{open ? `delete-open${isShared ? '-shared' : ''}` : 'delete-closed'}</div> }));
 vi.mock('./ShareDialog', () => ({ ShareDialog: ({ open }: { open: boolean }) => <div>{open ? 'share-open' : 'share-closed'}</div> }));
 vi.mock('./CreateGroupConversationDialog', () => ({ CreateGroupConversationDialog: () => null }));
-vi.mock('./ConversationPdfExport', () => ({ ConversationPdfExport: () => <div>conversation-pdf-export</div> }));
+vi.mock('./PdfExportPortal', () => ({ PdfExportPortal: () => <div>conversation-pdf-export</div> }));
 
 const currentConversation = vi.hoisted(() => ({
   value: { id: 'conv-1', title: 'Conversation title', workspaces: [] } as Record<string, unknown>,

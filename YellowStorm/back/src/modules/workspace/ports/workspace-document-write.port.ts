@@ -1,6 +1,5 @@
 import type { DocumentFilter } from './document-filter';
 
-export const WORKSPACE_DOCUMENT_WRITE_PORT = Symbol('WORKSPACE_DOCUMENT_WRITE_PORT');
 
 /**
  * Field patch for the indexing pipeline's document mutations. NOTE: never pass

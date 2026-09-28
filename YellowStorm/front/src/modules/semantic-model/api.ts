@@ -1,10 +1,10 @@
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type { ApiResponse } from '@/lib/api/client';
-import type { AgeGraphEdge, AgeGraphNode, AgeGraphOperation, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, MappingProposalJob, Paginated, PopulationJob, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticBuildApplyMode, SemanticBuildJob, SemanticBuildStatus, SemanticCorpusManifest, SemanticDataPreview, SemanticEvidenceSearchResponse, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMappingProposalResponse, SemanticModelManualInstances, SemanticModelMember,
-SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, SemanticReviewItem, SemanticVersion,
+import type { AgeGraphEdge, AssistantChangesPage, SourceSuggestionsPage, SourceFileMatches, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
+SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, PopulationFreshness, DesignerBoxPosition, SemanticReviewItem, SemanticVersion,
 SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
-StructuredSourceAsset, ValidationIssue } from './types';
+StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison, ReviewQueue, ConceptRecordsPage } from './types';
 import type { SemanticDataTokenResponse } from './data-plane/semantic-api.types';
 
 const unwrap = <T>(response: { data: ApiResponse<T> }): T => response.data.data;
@@ -29,6 +29,9 @@ const waitForDatasourceJob = async (modelId: string, jobId: string): Promise<Dat
   throw new Error('Source analysis timed out');
 };
 
+
+/** Publishing always publishes the structure; `data` says whether its records are now what chat reads. */
+export interface PublishResult { publishedVersionId: string; draftVersionId: string; revision: number; data?: { published: boolean; reason?: string } }
 export const semanticModelApi = {
   async list(params: Record<string, string | number | undefined> = {}): Promise<Paginated<SemanticModel>> {
     return unwrap(await apiClient.get<ApiResponse<Paginated<SemanticModel>>>(API_ENDPOINTS.semanticModels.base, { params }));
@@ -55,85 +58,9 @@ export const semanticModelApi = {
   async validate(id: string): Promise<{ issues: ValidationIssue[] }> {
     return unwrap(await apiClient.post<ApiResponse<{ issues: ValidationIssue[] }>>(API_ENDPOINTS.semanticModels.validate(id)));
   },
-  async generateOntology(id: string, businessRequirements: string[]): Promise<{ modelId: string; generatedAt: string }> {
-    return unwrap(await apiClient.post<ApiResponse<{ modelId: string; generatedAt: string }>>(API_ENDPOINTS.semanticModels.generateOntology(id), { businessRequirements }, { timeout: 0 }));
-  },
-  async searchEvidence(id: string): Promise<SemanticEvidenceSearchResponse> {
-    return unwrap(await apiClient.post<ApiResponse<SemanticEvidenceSearchResponse>>(API_ENDPOINTS.semanticModels.evidenceSearch(id), {}, { timeout: 0 }));
-  },
-  async startMappingProposalJob(id: string): Promise<{ jobId: string; status: 'running' }> {
-    return unwrap(await apiClient.post<ApiResponse<{ jobId: string; status: 'running' }>>(
-      API_ENDPOINTS.semanticModels.mappingProposals(id),
-      {},
-      { timeout: 0 },
-    ));
-  },
-  async listMappingProposalJobs(id: string): Promise<MappingProposalJob[]> {
-    return unwrap(await apiClient.get<ApiResponse<MappingProposalJob[]>>(
-      API_ENDPOINTS.semanticModels.mappingProposalJobs(id),
-    ));
-  },
-  async getMappingProposalJob(id: string, jobId: string): Promise<MappingProposalJob> {
-    return unwrap(await apiClient.get<ApiResponse<MappingProposalJob>>(
-      API_ENDPOINTS.semanticModels.mappingProposalJob(id, jobId),
-    ));
-  },
-  async applyMappingPlan(
-    id: string,
-    jobId: string,
-    mode: 'replace' | 'incremental' = 'incremental',
-  ): Promise<{ appliedNodeCount: number; updatedNodeCount: number; deletedNodeCount: number; appliedEdgeCount: number; graphViewerWarning: string | null }> {
-    return unwrap(await apiClient.post<ApiResponse<{ appliedNodeCount: number; updatedNodeCount: number; deletedNodeCount: number; appliedEdgeCount: number; graphViewerWarning: string | null }>>(
-      `${API_ENDPOINTS.semanticModels.mappingPlanApply(id, jobId)}?mode=${mode}`,
-      {},
-      { timeout: 0 },
-    ));
-  },
   async getAgeGraph(id: string, dataRevisionId?: string): Promise<{ dataRevisionId?: string; nodes: AgeGraphNode[]; edges: AgeGraphEdge[] }> {
     return unwrap(await apiClient.get<ApiResponse<{ dataRevisionId?: string; nodes: AgeGraphNode[]; edges: AgeGraphEdge[] }>>(
       API_ENDPOINTS.semanticModels.ageGraph(id), { params: { dataRevisionId } },
-    ));
-  },
-  async rebuildAgeGraph(id: string): Promise<{ vertexCount: number; edgeCount: number; failedVertexCount: number; failedEdgeCount: number; graphViewerWarning: string | null }> {
-    return unwrap(await apiClient.post<ApiResponse<{ vertexCount: number; edgeCount: number; failedVertexCount: number; failedEdgeCount: number; graphViewerWarning: string | null }>>(
-      API_ENDPOINTS.semanticModels.ageGraphRebuild(id),
-      {},
-    ));
-  },
-  async indexAgeGraph(id: string): Promise<{ queued: true }> {
-    return unwrap(await apiClient.post<ApiResponse<{ queued: true }>>(
-      API_ENDPOINTS.semanticModels.ageGraphIndex(id),
-      {},
-    ));
-  },
-  async applyAgeGraphOperations(id: string, operations: AgeGraphOperation[]): Promise<{ appliedNodeCount: number; appliedEdgeCount: number; deletedNodeCount: number; deletedEdgeCount: number; graphViewerWarning: string | null }> {
-    return unwrap(await apiClient.post<ApiResponse<{ appliedNodeCount: number; appliedEdgeCount: number; deletedNodeCount: number; deletedEdgeCount: number; graphViewerWarning: string | null }>>(
-      API_ENDPOINTS.semanticModels.ageGraphOperations(id),
-      { operations },
-    ));
-  },
-  async corpus(id: string): Promise<SemanticCorpusManifest> {
-    return unwrap(await apiClient.get<ApiResponse<SemanticCorpusManifest>>(API_ENDPOINTS.semanticModels.corpus(id)));
-  },
-  async startBuild(
-    id: string,
-    businessRequirements: string[],
-    applyMode: SemanticBuildApplyMode = 'replace',
-    manualInstances: SemanticModelManualInstances[] = [],
-  ): Promise<{ buildId: string; status: SemanticBuildStatus }> {
-    return unwrap(await apiClient.post<ApiResponse<{ buildId: string; status: SemanticBuildStatus }>>(
-      API_ENDPOINTS.semanticModels.builds(id),
-      { businessRequirements, applyMode, manualInstances },
-    ));
-  },
-  async getBuild(id: string, buildId: string): Promise<SemanticBuildJob> {
-    return unwrap(await apiClient.get<ApiResponse<SemanticBuildJob>>(
-      API_ENDPOINTS.semanticModels.build(id, buildId),
-    ));
-  },
-  async getLatestBuild(id: string): Promise<SemanticBuildJob | null> {
-    return unwrap(await apiClient.get<ApiResponse<SemanticBuildJob | null>>(
-      API_ENDPOINTS.semanticModels.latestBuild(id),
     ));
   },
   async bindings(id: string): Promise<KnowledgeBinding[]> {
@@ -155,10 +82,13 @@ export const semanticModelApi = {
   async versions(id: string): Promise<SemanticVersion[]> {
     return unwrap(await apiClient.get<ApiResponse<SemanticVersion[]>>(API_ENDPOINTS.semanticModels.versions(id)));
   },
-  async publish(id: string): Promise<{ publishedVersionId: string; draftVersionId: string; revision: number }> {
+  async compareVersions(id: string, left: string, right: string): Promise<VersionComparison> {
+    return unwrap(await apiClient.get<ApiResponse<VersionComparison>>(API_ENDPOINTS.semanticModels.compareVersions(id), { params: { left, right } }));
+  },
+  async publish(id: string): Promise<PublishResult> {
     const model = await semanticModelApi.get(id);
     const graph = await semanticModelApi.graph(id);
-    return unwrap(await apiClient.post<ApiResponse<{ publishedVersionId: string; draftVersionId: string; revision: number }>>(API_ENDPOINTS.semanticModels.publish(id), { expectedRevision: model.revision, expectedGraphRevision: graph.revision }));
+    return unwrap(await apiClient.post<ApiResponse<PublishResult>>(API_ENDPOINTS.semanticModels.publish(id), { expectedRevision: model.revision, expectedGraphRevision: graph.revision }));
   },
   async restore(id: string, versionId: string): Promise<{ draftVersionId: string; revision: number }> {
     const model = await semanticModelApi.get(id);
@@ -216,6 +146,35 @@ export const semanticModelApi = {
     const model = await semanticModelApi.get(id);
     return unwrap(await apiClient.post<ApiResponse<{ revision: number; mappingCount: number }>>(API_ENDPOINTS.semanticModels.bulkDocumentSourceMappings(id), { ...payload, expectedRevision: model.revision }));
   },
+  /** One mapping for every readable file of a workspace, or of one of its folders. */
+  /** One mapping for many files of a workspace: all of them, or the picked folders and files. `mappingId` changes an existing one. */
+  async createWorkspaceSourceMapping(id: string, payload: { conceptId: string; workspaceId: string; folderIds?: string[]; documentIds?: string[]; mappingId?: string; fieldMappings: SourceMappingDraft['fieldMappings']; identityFields: string[] }): Promise<{ revision: number; fileCount: number; waitingCount: number }> {
+    const model = await semanticModelApi.get(id);
+    const { folderIds, documentIds, mappingId, ...rest } = payload;
+    return unwrap(await apiClient.post<ApiResponse<{ revision: number; fileCount: number; waitingCount: number }>>(API_ENDPOINTS.semanticModels.workspaceSourceMapping(id), {
+      ...rest,
+      ...(folderIds?.length ? { folderIds } : {}),
+      ...(documentIds?.length ? { documentIds } : {}),
+      ...(mappingId ? { mappingId } : {}),
+      expectedRevision: model.revision,
+    }));
+  },
+  /** Changes assistants made to the model since a moment, with the draft's graph revision. */
+  async assistantChanges(id: string, since?: string): Promise<AssistantChangesPage> {
+    return unwrap(await apiClient.get<ApiResponse<AssistantChangesPage>>(API_ENDPOINTS.semanticModels.assistantChanges(id), { params: since ? { since } : {} }));
+  },
+  async undoAssistantChange(id: string, changeId: string): Promise<{ undone: boolean }> {
+    return unwrap(await apiClient.post<ApiResponse<{ undone: boolean }>>(API_ENDPOINTS.semanticModels.assistantChange(id, changeId, 'undo'), {}, { timeout: 0 }));
+  },
+  async redoAssistantChange(id: string, changeId: string): Promise<{ redone: boolean }> {
+    return unwrap(await apiClient.post<ApiResponse<{ redone: boolean }>>(API_ENDPOINTS.semanticModels.assistantChange(id, changeId, 'redo'), {}, { timeout: 0 }));
+  },
+  /** A page of one concept's records in the data in use, optionally searched. */
+  async conceptRecords(id: string, conceptId: string, query: { q?: string; limit?: number; offset?: number } = {}): Promise<ConceptRecordsPage> {
+    return unwrap(await apiClient.get<ApiResponse<ConceptRecordsPage>>(API_ENDPOINTS.semanticModels.conceptRecords(id, conceptId), {
+      params: { ...(query.q ? { q: query.q } : {}), limit: query.limit ?? 50, offset: query.offset ?? 0 },
+    }));
+  },
   async previewSourceMapping(id: string, draft: SourceMappingPreviewDraft): Promise<SourceMappingPreviewResponse> {
     const result = unwrap(await apiClient.post<ApiResponse<SourceMappingPreviewResponse | { jobId: string }>>(API_ENDPOINTS.semanticModels.sourceMappingPreview(id), draft));
     if (!('jobId' in result)) return result;
@@ -234,6 +193,16 @@ export const semanticModelApi = {
   async previewRelationResolutionRule(id: string, ruleId: string, limit = 25): Promise<RelationResolutionPreview> {
     return unwrap(await apiClient.post<ApiResponse<RelationResolutionPreview>>(API_ENDPOINTS.semanticModels.relationResolutionPreview(id, ruleId), { limit }, { timeout: 0 }));
   },
+  async listIdentityRules(id: string): Promise<Array<{ conceptId: string; fields: string[] }>> {
+    return unwrap(await apiClient.get<ApiResponse<Array<{ conceptId: string; fields: string[] }>>>(API_ENDPOINTS.semanticModels.identityRules(id)));
+  },
+  async saveIdentityRule(id: string, conceptId: string, fields: string[]): Promise<{ revision: number; conceptId: string; fields: string[] }> {
+    const model = await semanticModelApi.get(id);
+    return unwrap(await apiClient.put<ApiResponse<{ revision: number; conceptId: string; fields: string[] }>>(API_ENDPOINTS.semanticModels.identityRule(id, conceptId), {
+      expectedRevision: model.revision,
+      fields,
+    }));
+  },
   async listSourceResolutionPolicies(id: string): Promise<SourceResolutionPolicy[]> {
     return unwrap(await apiClient.get<ApiResponse<SourceResolutionPolicy[]>>(API_ENDPOINTS.semanticModels.sourceResolutionPolicies(id)));
   },
@@ -248,6 +217,15 @@ export const semanticModelApi = {
   async dataPreview(id: string, options: { conceptId?: string; limit?: number; dataRevisionId?: string } = {}): Promise<SemanticDataPreview> {
     return unwrap(await apiClient.post<ApiResponse<SemanticDataPreview>>(API_ENDPOINTS.semanticModels.dataPreview(id), options, { timeout: 0 }));
   },
+  async listCorrections(id: string): Promise<{ corrections: RecordCorrection[] }> {
+    return unwrap(await apiClient.get<ApiResponse<{ corrections: RecordCorrection[] }>>(API_ENDPOINTS.semanticModels.corrections(id)));
+  },
+  async recordCorrection(id: string, correction: RecordCorrectionInput): Promise<RecordCorrectionResult> {
+    return unwrap(await apiClient.post<ApiResponse<RecordCorrectionResult>>(API_ENDPOINTS.semanticModels.corrections(id), correction, { timeout: 0 }));
+  },
+  async undoCorrection(id: string, sequence: number): Promise<RecordCorrectionResult> {
+    return unwrap(await apiClient.post<ApiResponse<RecordCorrectionResult>>(API_ENDPOINTS.semanticModels.undoCorrection(id, sequence), {}, { timeout: 0 }));
+  },
   async mappingHealth(id: string): Promise<MappingHealthResponse> {
     return unwrap(await apiClient.post<ApiResponse<MappingHealthResponse>>(API_ENDPOINTS.semanticModels.mappingHealth(id), {}));
   },
@@ -257,8 +235,36 @@ export const semanticModelApi = {
   async getPopulationJob(id: string, jobId: string): Promise<PopulationJob> {
     return unwrap(await apiClient.get<ApiResponse<PopulationJob>>(API_ENDPOINTS.semanticModels.populationJob(id, jobId)));
   },
+  /** Stop a data update; nothing it read is kept, the data in use stays as it was. */
+  async stopPopulationJob(id: string, jobId: string): Promise<PopulationJob> {
+    return unwrap(await apiClient.post<ApiResponse<PopulationJob>>(API_ENDPOINTS.semanticModels.populationJobStop(id, jobId), {}));
+  },
+  /** Sources an assistant suggested for the concepts, with whether each was used or skipped. */
+  async sourceSuggestions(id: string): Promise<SourceSuggestionsPage> {
+    return unwrap(await apiClient.get<ApiResponse<SourceSuggestionsPage>>(API_ENDPOINTS.semanticModels.sourceSuggestions(id)));
+  },
+  async setSourceSuggestionStatus(id: string, conceptKey: string, status: 'pending' | 'skipped'): Promise<SourceSuggestionsPage> {
+    return unwrap(await apiClient.put<ApiResponse<SourceSuggestionsPage>>(API_ENDPOINTS.semanticModels.sourceSuggestionStatus(id, conceptKey), { status }));
+  },
+  /** Files matching a name across every workspace the person can open. */
+  async searchSourceFiles(id: string, search: string, page = 1): Promise<SourceFileMatches> {
+    return unwrap(await apiClient.get<ApiResponse<SourceFileMatches>>(API_ENDPOINTS.semanticModels.sourceFiles(id), { params: { search, page } }));
+  },
+  /** Whether the records in use were built from the model as it is now. */
+  async populationFreshness(id: string): Promise<PopulationFreshness> {
+    return unwrap(await apiClient.get<ApiResponse<PopulationFreshness>>(API_ENDPOINTS.semanticModels.populationFreshness(id)));
+  },
+  async canvasPositions(id: string): Promise<DesignerBoxPosition[]> {
+    return unwrap(await apiClient.get<ApiResponse<{ positions: DesignerBoxPosition[] }>>(API_ENDPOINTS.semanticModels.canvasPositions(id))).positions;
+  },
+  async saveCanvasPositions(id: string, positions: DesignerBoxPosition[]): Promise<void> {
+    await apiClient.put(API_ENDPOINTS.semanticModels.canvasPositions(id), { positions });
+  },
   async readiness(id: string): Promise<SemanticReadiness> {
     return unwrap(await apiClient.get<ApiResponse<SemanticReadiness>>(API_ENDPOINTS.semanticModels.readiness(id)));
+  },
+  async reviewQueue(id: string): Promise<ReviewQueue> {
+    return unwrap(await apiClient.get<ApiResponse<ReviewQueue>>(API_ENDPOINTS.semanticModels.reviewQueue(id)));
   },
   async reviewItems(id: string, status: 'open' | 'resolved' = 'open'): Promise<SemanticReviewItem[]> {
     return unwrap(await apiClient.get<ApiResponse<SemanticReviewItem[]>>(API_ENDPOINTS.semanticModels.reviewItems(id), { params: { status } }));

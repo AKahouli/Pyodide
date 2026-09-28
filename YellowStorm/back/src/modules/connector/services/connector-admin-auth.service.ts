@@ -10,14 +10,12 @@ import { LoggerService } from '@modules/logger';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { AdminConnectorAuthStatus } from '../connector.types';
-import {
-  CONNECTOR_ADMIN_AUTH_STORE,
-  CONNECTOR_ADMIN_OAUTH_STATE_STORE,
-  type ConnectorAdminAuthRow,
-  type ConnectorAdminAuthStore,
-  type ConnectorAdminOauthStateStore,
+import {  
+  type ConnectorAdminAuthRow,    
 } from '../persistence/connector.store';
 import { ConnectedAppDefinitionService } from '../../connected-app/services/connected-app-definition.service';
+import { PgConnectorAdminOauthStateStore } from '../persistence/pg-connector.store';
+import { PgConnectorAdminAuthStore } from '../persistence/pg-connector.store';
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
@@ -36,10 +34,8 @@ export class ConnectorAdminAuthService {
   private readonly backendUrl: string;
 
   constructor(
-    @Inject(CONNECTOR_ADMIN_OAUTH_STATE_STORE)
-    private readonly oauthStateStore: ConnectorAdminOauthStateStore,
-    @Inject(CONNECTOR_ADMIN_AUTH_STORE)
-    private readonly authStore: ConnectorAdminAuthStore,
+    private readonly oauthStateStore: PgConnectorAdminOauthStateStore,
+    private readonly authStore: PgConnectorAdminAuthStore,
     @Inject(DRIZZLE_DB) private readonly pgDb: NodePgDatabase<typeof schema>,
     private readonly cryptoService: CryptoService,
     private readonly configService: ConfigService,

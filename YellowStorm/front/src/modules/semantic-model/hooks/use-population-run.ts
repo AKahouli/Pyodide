@@ -20,7 +20,7 @@ export function usePopulationRun(modelId: string | undefined) {
       // page can already show: records land on the graph, ambiguities land in the review queue.
       void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.graph(modelId) });
       void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId) });
-      void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.reviewItems(modelId, 'open') });
+      void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.reviewQueue(modelId) });
     },
   });
 }

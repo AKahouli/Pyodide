@@ -1,4 +1,4 @@
-import { ControlEdge } from '../schemas/playbook-flow.schema';
+import { ControlEdge } from '../models/playbook-flow.model';
 
 export function buildAdjacency(edges: ControlEdge[]): Map<string, string[]> {
   const adjacency = new Map<string, string[]>();

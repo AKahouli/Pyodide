@@ -565,6 +565,8 @@ export interface ToolActivityData extends Record<string, unknown> {
   actorName?: string;
   primaryInput?: string;
   primaryInputLanguage?: string;
+  /** Buttons the tool result asked for, kept with the activity (the result itself is fetched on demand). */
+  uiTargets?: Array<{ surface: string; params: Record<string, string> }>;
 }
 export interface ArtifactActivityData extends Record<string, unknown> {
   artifactId: string;

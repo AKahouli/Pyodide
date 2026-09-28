@@ -1,6 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
-import axios from 'axios';
 import { createHash } from 'node:crypto';
 import semanticModelConfig from '@config/semantic-model.config';
 import { ServiceUnavailableException } from '@modules/exceptions';
@@ -63,30 +62,26 @@ export class SemanticModelNativeSearchClient {
           ...this.queryMetadata(request.query),
           attempt,
         });
-        const { data } = await axios.post<unknown>(
-          this.config.nativeSearchUrl,
-          request,
-          {
-            headers: {
-              Authorization: `Bearer ${this.config.nativeSearchAuthToken}`,
-              'Content-Type': 'application/json',
-            },
-            // No timeout: the semantic-model pipeline is a background job driven by the
-            // build orchestrator + heartbeat. Native search can legitimately take a long time
-            // for large evidence sets.
-            timeout: 0,
+        const res = await fetch(this.config.nativeSearchUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.config.nativeSearchAuthToken}`,
+            'Content-Type': 'application/json',
           },
-        );
-        return this.parseSections(data);
+          body: JSON.stringify(request),
+          // No timeout: the semantic-model pipeline is a background job driven by the
+          // build orchestrator + heartbeat. Native search can legitimately take a long time
+          // for large evidence sets. (fetch has no deadline unless a signal is set.)
+        });
+        if (!res.ok) {
+          throw await this.httpError(res);
+        }
+        return this.parseSections(await res.json() as unknown);
       } catch (error) {
         if (error instanceof SemanticModelNativeSearchFatalError) throw error;
-        const status = axios.isAxiosError(error) ? error.response?.status : undefined;
-        const validationDetails = axios.isAxiosError(error)
-          ? this.validationDetails(error.response?.data)
-          : [];
-        const responseMetadata = axios.isAxiosError(error)
-          ? this.responseMetadata(error.response?.data)
-          : {};
+        const status = this.errorStatus(error);
+        const validationDetails = this.validationDetails(this.errorData(error));
+        const responseMetadata = this.responseMetadata(this.errorData(error));
         const fileMetadata = this.fileMetadata(request.file_name);
         this.logger.warn('Semantic native search request failed', {
           endpoint: this.config.nativeSearchUrl,
@@ -155,27 +150,26 @@ export class SemanticModelNativeSearchClient {
           requestCount: requests.length,
           attempt,
         });
-        const { data } = await axios.post<unknown>(
-          this.config.nativeSearchBatchUrl,
-          { requests: batchedRequests },
-          {
-            headers: {
-              Authorization: `Bearer ${this.config.nativeSearchAuthToken}`,
-              'Content-Type': 'application/json',
-            },
-            // No timeout: the semantic-model pipeline is a background job driven by the
-            // build orchestrator + heartbeat. Native search can legitimately take a long time
-            // for large evidence sets.
-            timeout: timeoutMs,
+        const res = await fetch(this.config.nativeSearchBatchUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${this.config.nativeSearchAuthToken}`,
+            'Content-Type': 'application/json',
           },
-        );
-        return this.parseBatchResults(data, requests.length);
+          body: JSON.stringify({ requests: batchedRequests }),
+          // No timeout: the semantic-model pipeline is a background job driven by the
+          // build orchestrator + heartbeat. Native search can legitimately take a long time
+          // for large evidence sets. (fetch has no deadline unless a signal is set.)
+          signal: timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : undefined,
+        });
+        if (!res.ok) {
+          throw await this.httpError(res);
+        }
+        return this.parseBatchResults(await res.json() as unknown, requests.length);
       } catch (error) {
         if (error instanceof SemanticModelNativeSearchFatalError) throw error;
-        const status = axios.isAxiosError(error) ? error.response?.status : undefined;
-        const validationDetails = axios.isAxiosError(error)
-          ? this.validationDetails(error.response?.data)
-          : [];
+        const status = this.errorStatus(error);
+        const validationDetails = this.validationDetails(this.errorData(error));
         this.logger.warn('Semantic native search batch request failed', {
           endpoint: this.config.nativeSearchBatchUrl,
           requestCount: requests.length,
@@ -207,6 +201,27 @@ export class SemanticModelNativeSearchClient {
       ErrorCode.SERVICE_UNAVAILABLE,
       'Semantic native search batch failed',
     );
+  }
+
+  /** Thrown on non-2xx; carries the response status and parsed body like axios errors did. */
+  private async httpError(res: Response): Promise<Error & { status: number; data: unknown }> {
+    const text = await res.text().catch(() => '');
+    let data: unknown = text;
+    try {
+      data = JSON.parse(text) as unknown;
+    } catch {
+      // non-JSON error body
+    }
+    return Object.assign(new Error(`HTTP ${res.status}`), { status: res.status, data });
+  }
+
+  private errorStatus(error: unknown): number | undefined {
+    const status = (error as { status?: unknown }).status;
+    return typeof status === 'number' ? status : undefined;
+  }
+
+  private errorData(error: unknown): unknown {
+    return (error as { data?: unknown }).data;
   }
 
   private parseBatchResults(payload: unknown, requestCount: number): SemanticModelNativeSearchBatchResult[] {

@@ -2,7 +2,7 @@
 
 import asyncio
 import time
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 from google.adk import Runner
 from google.adk.sessions import DatabaseSessionService
 from sqlalchemy.exc import SQLAlchemyError

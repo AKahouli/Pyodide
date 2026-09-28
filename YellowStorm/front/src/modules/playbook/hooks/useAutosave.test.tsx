@@ -3,9 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAutosave } from './useAutosave';
 import type { ControlEdge, DataBinding, PlaybookTask } from '../types';
 
-const actorSendMock = vi.hoisted(() => vi.fn());
-const actorState = vi.hoisted(() => ({ isBlockedByConflict: false }));
-const featureState = vi.hoisted(() => ({ xstateAutosaveEnabled: true }));
 const parseApiErrorMock = vi.hoisted(() => vi.fn(() => ({ code: 'ERR_0000' })));
 const storeState = vi.hoisted(() => ({
   isDirty: false,
@@ -44,24 +41,6 @@ vi.mock('../store', () => ({
     }),
 }));
 
-vi.mock('../features', () => ({
-  playbookFeatures: {
-    get xstateAutosaveEnabled() {
-      return featureState.xstateAutosaveEnabled;
-    },
-  },
-}));
-
-vi.mock('../machines/autosave/useAutosaveActor', () => ({
-  useAutosaveActor: () => ({
-    status: 'clean',
-    canSaveNow: true,
-    isSaving: false,
-    isBlockedByConflict: actorState.isBlockedByConflict,
-    send: actorSendMock,
-  }),
-}));
-
 vi.mock('@/lib/api-error', () => ({
   parseApiError: parseApiErrorMock,
 }));
@@ -75,8 +54,6 @@ describe('useAutosave', () => {
     storeState.dirtyVersion = 0;
     storeState.lastAutosaveDurationMs = null;
     storeState.autosaveBackoffUntil = null;
-    actorState.isBlockedByConflict = false;
-    featureState.xstateAutosaveEnabled = true;
     storeState.currentPlaybook = { tasks: [], dataBindings: [] };
     parseApiErrorMock.mockReturnValue({ code: 'ERR_0000' });
   });
@@ -297,7 +274,7 @@ describe('useAutosave', () => {
     expect(storeState.saveCurrentPlaybook).toHaveBeenCalledWith({ reason: 'manual' });
   });
 
-  it('reports autosave conflicts to the autosave actor', async () => {
+  it('propagates conflict errors from manual save', async () => {
     const conflictError = new Error('conflict');
     storeState.saveCurrentPlaybook.mockRejectedValueOnce(conflictError);
     parseApiErrorMock.mockReturnValue({ code: 'ERR_1005' });
@@ -305,19 +282,12 @@ describe('useAutosave', () => {
     const { result } = renderHook(() => useAutosave());
 
     await expect(result.current.saveNow()).rejects.toThrow('conflict');
-
-    expect(actorSendMock).toHaveBeenCalledWith({ type: 'SAVE_NOW', reason: 'manual' });
-    expect(actorSendMock).toHaveBeenCalledWith({ type: 'CONFLICT_DETECTED', errorCode: 'ERR_1005' });
   });
 
   it('does not retry a timer-triggered conflict until another local edit', async () => {
     const conflictError = new Error('conflict');
     storeState.saveCurrentPlaybook.mockRejectedValue(conflictError);
     parseApiErrorMock.mockReturnValue({ code: 'ERR_1005' });
-    actorSendMock.mockImplementation((event: { type: string }) => {
-      if (event.type === 'CONFLICT_DETECTED') actorState.isBlockedByConflict = true;
-      if (event.type === 'LOCAL_CHANGE') actorState.isBlockedByConflict = false;
-    });
     storeState.isDirty = true;
     storeState.dirtyVersion = 1;
 
@@ -331,27 +301,6 @@ describe('useAutosave', () => {
     });
 
     expect(storeState.saveCurrentPlaybook).toHaveBeenCalledTimes(1);
-    expect(actorSendMock).toHaveBeenCalledWith({ type: 'CONFLICT_DETECTED', errorCode: 'ERR_1005' });
-  });
-
-  it('does not retry a timer-triggered conflict when the autosave actor is disabled', async () => {
-    featureState.xstateAutosaveEnabled = false;
-    storeState.saveCurrentPlaybook.mockRejectedValue(new Error('conflict'));
-    parseApiErrorMock.mockReturnValue({ code: 'ERR_1005' });
-    storeState.isDirty = true;
-    storeState.dirtyVersion = 1;
-
-    const { rerender } = renderHook(() => useAutosave());
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(600);
-    });
-    rerender();
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(15_000);
-    });
-
-    expect(storeState.saveCurrentPlaybook).toHaveBeenCalledTimes(1);
-    expect(actorSendMock).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'CONFLICT_DETECTED' }));
   });
 
   it('retries a newer edit when an older in-flight save conflicts', async () => {
@@ -360,10 +309,6 @@ describe('useAutosave', () => {
       .mockImplementationOnce(() => new Promise((_, reject) => { rejectFirstSave = reject; }))
       .mockResolvedValueOnce(undefined);
     parseApiErrorMock.mockReturnValue({ code: 'ERR_1005' });
-    actorSendMock.mockImplementation((event: { type: string }) => {
-      if (event.type === 'CONFLICT_DETECTED') actorState.isBlockedByConflict = true;
-      if (event.type === 'LOCAL_CHANGE') actorState.isBlockedByConflict = false;
-    });
     storeState.isDirty = true;
     storeState.dirtyVersion = 1;
 
@@ -385,10 +330,9 @@ describe('useAutosave', () => {
     });
 
     expect(storeState.saveCurrentPlaybook).toHaveBeenCalledTimes(2);
-    expect(actorSendMock).toHaveBeenCalledWith({ type: 'LOCAL_CHANGE', dirtyVersion: 2 });
   });
 
-  it('reports non-conflict autosave failures as generic delta failures', async () => {
+  it('propagates non-conflict errors from manual save', async () => {
     const saveError = new Error('save failed');
     storeState.saveCurrentPlaybook.mockRejectedValueOnce(saveError);
     parseApiErrorMock.mockReturnValue({ code: 'ERR_1000' });
@@ -396,8 +340,5 @@ describe('useAutosave', () => {
     const { result } = renderHook(() => useAutosave());
 
     await expect(result.current.saveNow()).rejects.toThrow('save failed');
-
-    expect(actorSendMock).toHaveBeenCalledWith({ type: 'SAVE_NOW', reason: 'manual' });
-    expect(actorSendMock).toHaveBeenCalledWith({ type: 'DELTA_SAVE_FAILED' });
   });
 });

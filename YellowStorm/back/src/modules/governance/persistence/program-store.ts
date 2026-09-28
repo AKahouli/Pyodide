@@ -1,6 +1,5 @@
 import type { GovernanceProgramRecord } from './governance-records';
 
-export const PROGRAM_STORE = Symbol('GOVERNANCE_PROGRAM_STORE');
 
 export type GovernanceProgramCreateInput = Pick<
   GovernanceProgramRecord,

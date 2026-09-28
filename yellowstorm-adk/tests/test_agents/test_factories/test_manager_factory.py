@@ -97,7 +97,7 @@ class TestManagerAgentFactory:
         )
         assert factory.chatbot_name == 'default'
 
-    @patch('src.smart_rag.agents.factories.manager_factory.Agent')
+    @patch('src.smart_rag.agents.factories.base_factory.Agent')
     def test_create_manager_agent_basic(self, mock_agent_class, manager_factory, mock_llm_factory):
         """Test basic manager agent creation."""
         mock_delegation_factory = MagicMock()
@@ -126,7 +126,7 @@ class TestManagerAgentFactory:
         assert call_kwargs['tools'] == tools
         assert result._team_instance == mock_delegation_factory
 
-    @patch('src.smart_rag.agents.factories.manager_factory.Agent')
+    @patch('src.smart_rag.agents.factories.base_factory.Agent')
     def test_create_manager_agent_with_callbacks(self, mock_agent_class, manager_factory):
         """Test that manager agent is created with proper callbacks."""
         mock_delegation_factory = MagicMock()
@@ -226,7 +226,7 @@ class TestManagerAgentFactoryCallbacks:
             agent_helper=agent_helper
         )
 
-    @patch('src.smart_rag.agents.factories.manager_factory.Agent')
+    @patch('src.smart_rag.agents.factories.base_factory.Agent')
     def test_check_if_agent_with_search_callback(self, mock_agent_class, manager_factory_with_mocks):
         """Test the check_if_agent_with_search_in_team callback."""
         mock_delegation_factory = MagicMock()
@@ -256,7 +256,7 @@ class TestManagerAgentFactoryCallbacks:
         assert "has_search_agents" in mock_context.state
         assert mock_context.state["has_search_agents"] is True
 
-    @patch('src.smart_rag.agents.factories.manager_factory.Agent')
+    @patch('src.smart_rag.agents.factories.base_factory.Agent')
     def test_add_task_order_to_state_callback(self, mock_agent_class, manager_factory_with_mocks):
         """Test the add_task_order_to_state callback."""
         mock_delegation_factory = MagicMock()
@@ -289,7 +289,7 @@ class TestManagerAgentFactoryCallbacks:
 class TestManagerAgentFactoryIntegration:
     """Integration tests for ManagerAgentFactory."""
 
-    @patch('src.smart_rag.agents.factories.manager_factory.Agent')
+    @patch('src.smart_rag.agents.factories.base_factory.Agent')
     def test_full_manager_creation_flow(self, mock_agent_class):
         """Test complete flow of creating a manager agent."""
         # Setup all mocks

@@ -20,7 +20,8 @@ import asyncpg
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from .api import datasource_routes, health_routes, index_routes, job_routes, population_routes
+from .api import (datasource_routes, graph_search_routes, health_routes, index_routes, job_routes,
+                  population_routes)
 from .jobs.dispatcher import OutboxDispatcher, OutboxRepository
 from .jobs.service import JobRepository, JobService
 from .persistence.postgres_jobs import PostgresJobRepository
@@ -37,6 +38,15 @@ logger = logging.getLogger(__name__)
 
 # Health is unauthenticated by design (load-balancer / core capability checks).
 OPEN_PATHS = {"/health/live", "/health/ready", "/openapi.json", "/docs"}
+
+
+def presented_service_key(request: Request) -> str | None:
+    """Service key header, or a bearer token for the chat graph search contract."""
+    key = request.headers.get(SERVICE_KEY_HEADER)
+    if key or not request.url.path.startswith("/v1/graphs/"):
+        return key
+    scheme, _, token = (request.headers.get("Authorization") or "").partition(" ")
+    return token.strip() if scheme.lower() == "bearer" else None
 
 
 async def check_body_size(request: Request) -> str:
@@ -174,7 +184,7 @@ def create_app(job_repository: JobRepository | None = None) -> FastAPI:
     @app.middleware("http")
     async def guards(request: Request, call_next):  # type: ignore[no-untyped-def]
         request_id = request.headers.get(REQUEST_ID_HEADER) or uuid.uuid4().hex
-        if request.url.path not in OPEN_PATHS and not is_authorized(request.headers.get(SERVICE_KEY_HEADER)):
+        if request.url.path not in OPEN_PATHS and not is_authorized(presented_service_key(request)):
             return JSONResponse(
                 status_code=401,
                 content={"detail": "unauthorized"},
@@ -206,6 +216,7 @@ def create_app(job_repository: JobRepository | None = None) -> FastAPI:
     app.include_router(index_routes.router)
     app.include_router(population_routes.router)
     app.include_router(job_routes.router)
+    app.include_router(graph_search_routes.router)
     return app
 
 

@@ -3,6 +3,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 export type TelegramIntegrationMessageKey =
   | 'webhook_success'
   | 'webhook_failed'
+  | 'polling'
   | 'disabled'
   | 'saved';
 
@@ -29,7 +30,7 @@ export class TelegramIntegrationResponseDto {
   webhookRegistered?: boolean;
 
   @ApiPropertyOptional({
-    enum: ['webhook_success', 'webhook_failed', 'disabled', 'saved'],
+    enum: ['webhook_success', 'webhook_failed', 'polling', 'disabled', 'saved'],
     example: 'webhook_success',
   })
   messageKey?: TelegramIntegrationMessageKey;

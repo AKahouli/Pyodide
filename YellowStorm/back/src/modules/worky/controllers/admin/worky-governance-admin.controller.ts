@@ -21,7 +21,8 @@ import { Permissions } from '../../../authorization/constants/permissions';
 import { LoggerService } from '../../../logger';
 import { BadRequestException, NotFoundException } from '../../../exceptions';
 import { ErrorCode } from '../../../exceptions/constants/error-codes';
-import { Types } from 'mongoose';
+import { isObjectId } from '@common/postgres';
+import type { WorkyGovernancePolicyRecord } from '../../worky.types';
 
 interface IWorkyGovernancePolicyResponse {
   workspaceId: string;
@@ -50,7 +51,7 @@ export class WorkyGovernanceAdminController {
     if (!workspaceId) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'workspaceId is required.');
     }
-    if (!Types.ObjectId.isValid(workspaceId)) {
+    if (!isObjectId(workspaceId)) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid workspaceId.');
     }
     const policy = await this.governance.findPolicy(workspaceId);
@@ -83,23 +84,16 @@ export class WorkyGovernanceAdminController {
     return this.toResponse(policy);
   }
 
-  private toResponse(policy: {
-    workspaceId: Types.ObjectId;
-    scope: string;
-    defaultLevel: string;
-    categories: Array<{ category: string; level: string }>;
-    allowStreamOwnerOverride: boolean;
-    maxOwnerRelaxLevel: string;
-  }): IWorkyGovernancePolicyResponse {
+  private toResponse(policy: WorkyGovernancePolicyRecord): IWorkyGovernancePolicyResponse {
     return {
-      workspaceId: policy.workspaceId.toString(),
+      workspaceId: policy.workspaceId,
       scope: policy.scope,
       defaultLevel: policy.defaultLevel,
-      categories: (policy.categories ?? []).map((c) => ({
+      categories: policy.categories.map((c) => ({
         category: c.category,
         level: c.level,
       })),
-      allowStreamOwnerOverride: Boolean(policy.allowStreamOwnerOverride),
+      allowStreamOwnerOverride: policy.allowStreamOwnerOverride,
       maxOwnerRelaxLevel: policy.maxOwnerRelaxLevel,
     };
   }

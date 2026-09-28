@@ -107,23 +107,16 @@ describe('FlowDeltaPatchService', () => {
     expect(result.positionUpdates).toBe(0);
   });
 
-  it('preserves node ids from hydrated flow subdocuments', () => {
+  it('copies the stored nodes, so a position update never mutates the flow record', () => {
     const service = new FlowDeltaPatchService(
       new FlowWorkspacePolicyService(),
       new FlowGraphSanitizerService(),
     );
-    const hydratedNode = {
-      toObject: () => ({
-        id: 'task-1',
-        kind: 'step',
-        label: 'Hydrated',
-        metadata: { positionX: 10, positionY: 20 },
-      }),
-    };
+    const storedNode = { id: 'task-1', kind: 'step', label: 'Stored', metadata: { positionX: 10, positionY: 20 } };
 
     const result = service.buildPatchedGraph({
       workspaces: ['workspace-1'],
-      nodes: [hydratedNode],
+      nodes: [storedNode],
       controlEdges: [],
       dataBindings: [],
     } as any, {
@@ -141,6 +134,7 @@ describe('FlowDeltaPatchService', () => {
         metadata: expect.objectContaining({ positionX: 15, positionY: 25 }),
       }),
     ]);
+    expect(storedNode.metadata).toEqual({ positionX: 10, positionY: 20 });
   });
 
   it('allows a delta patch to persist without a default workspace', () => {
@@ -162,27 +156,18 @@ describe('FlowDeltaPatchService', () => {
     expect(result.normalizedWorkspaces).toEqual([]);
   });
 
-  it('converts hydrated data binding subdocuments to plain objects on merged graphs', () => {
+  it('keeps stored constant bindings as own-property copies on merged graphs', () => {
     const service = new FlowDeltaPatchService(
       new FlowWorkspacePolicyService(),
       new FlowGraphSanitizerService(),
     );
-    // Mongoose exposes subdocument fields through prototype getters, so a
-    // constantValue that is readable is not an own property of the instance.
-    const hydratedBinding = Object.create(
-      { constantValue: { text: 'BPC-Playbook1' } },
-    ) as Record<string, unknown> & { toObject: () => Record<string, unknown> };
-    hydratedBinding.id = 'binding-1';
-    hydratedBinding.targetNode = 'task-1';
-    hydratedBinding.targetPort = 'input';
-    hydratedBinding.sourceKind = 'constant';
-    hydratedBinding.toObject = () => ({
+    const storedBinding = {
       id: 'binding-1',
       targetNode: 'task-1',
       targetPort: 'input',
       sourceKind: 'constant',
       constantValue: { text: 'BPC-Playbook1' },
-    });
+    };
 
     const result = service.buildPatchedGraph({
       workspaces: ['workspace-1'],
@@ -197,7 +182,7 @@ describe('FlowDeltaPatchService', () => {
         },
       ],
       controlEdges: [],
-      dataBindings: [hydratedBinding],
+      dataBindings: [storedBinding],
     } as any, {
       expectedUpdatedAt: '2026-05-30T06:00:00.000Z',
       patch: {
@@ -209,6 +194,7 @@ describe('FlowDeltaPatchService', () => {
 
     expect(result.dataBindings).toHaveLength(1);
     const mergedBinding = result.dataBindings[0];
+    expect(mergedBinding).not.toBe(storedBinding);
     expect(mergedBinding.sourceKind).toBe('constant');
     expect(Object.prototype.hasOwnProperty.call(mergedBinding, 'constantValue')).toBe(true);
     expect((mergedBinding as { constantValue?: unknown }).constantValue).toEqual({ text: 'BPC-Playbook1' });

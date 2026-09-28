@@ -1,11 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import {
-  ClassifierRule,
-  ClassifierRuleDocument,
-  ClassifierRuleScope,
-} from '../schemas/classifier-rule.schema';
+import { isObjectId } from '@common/postgres';
+import { ClassifierRuleRepository } from '../persistence/classifier-rule.repository';
+import { ClassifierRuleScope, type ClassifierRuleRecord } from '../classifier.types';
 import { CreateRuleDto } from '../dto/create-rule.dto';
 import { UpdateRuleDto } from '../dto/update-rule.dto';
 import { ListRulesQueryDto } from '../dto/list-rules-query.dto';
@@ -22,8 +18,7 @@ import { ClassifierAccessService } from './classifier-access.service';
 @Injectable()
 export class ClassifierRuleService {
   constructor(
-    @InjectModel(ClassifierRule.name)
-    private readonly ruleModel: Model<ClassifierRuleDocument>,
+    private readonly rules: ClassifierRuleRepository,
     private readonly access: ClassifierAccessService,
     private readonly logger: LoggerService,
   ) {
@@ -34,34 +29,23 @@ export class ClassifierRuleService {
     userId: string,
     query: ListRulesQueryDto,
   ): Promise<IClassifierRuleResponse[]> {
-    const filter: Record<string, unknown> = {
-      userId: new Types.ObjectId(userId),
-    };
-
-    if (query.scope) {
-      filter.scope = query.scope;
-    }
+    let workspaceId: string | null | undefined;
 
     if (query.scope === ClassifierRuleScope.LOCAL) {
       if (!query.workspaceId) {
         throw new BadRequestException(ErrorCode.CLASSIFIER_RULE_INVALID_SCOPE);
       }
       await this.access.assertWorkspaceAccess(query.workspaceId, userId);
-      filter.workspaceId = new Types.ObjectId(query.workspaceId);
+      workspaceId = query.workspaceId;
     } else if (query.scope === ClassifierRuleScope.GLOBAL) {
-      filter.workspaceId = null;
+      workspaceId = null;
     } else if (query.workspaceId) {
       // No scope specified but workspaceId given: filter strictly to that workspace
       await this.access.assertWorkspaceAccess(query.workspaceId, userId);
-      filter.workspaceId = new Types.ObjectId(query.workspaceId);
+      workspaceId = query.workspaceId;
     }
 
-    const rules = await this.ruleModel
-      .find(filter)
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec();
-
+    const rules = await this.rules.listForUser(userId, { scope: query.scope, workspaceId });
     return rules.map((r) => this.toResponse(r));
   }
 
@@ -80,18 +64,18 @@ export class ClassifierRuleService {
       await this.access.assertWorkspaceAccess(dto.workspaceId, userId);
     }
 
-    const rule = await this.ruleModel.create({
-      userId: new Types.ObjectId(userId),
+    const rule = await this.rules.create({
+      userId,
       scope: dto.scope,
-      workspaceId: dto.workspaceId ? new Types.ObjectId(dto.workspaceId) : null,
+      workspaceId: dto.workspaceId ?? null,
       text: dto.text.trim(),
       enabled: dto.enabled ?? true,
     });
 
     this.logger.log('Classifier rule created', {
-      ruleId: rule._id.toString(),
+      ruleId: rule.id,
       scope: rule.scope,
-      workspaceId: rule.workspaceId?.toString() ?? null,
+      workspaceId: rule.workspaceId,
       userId,
     });
 
@@ -105,22 +89,27 @@ export class ClassifierRuleService {
   ): Promise<IClassifierRuleResponse> {
     const rule = await this.getOwnedRule(userId, ruleId);
 
+    const patch: { text?: string; enabled?: boolean } = {};
     if (dto.text !== undefined) {
-      rule.text = dto.text.trim();
+      patch.text = dto.text.trim();
     }
     if (dto.enabled !== undefined) {
-      rule.enabled = dto.enabled;
+      patch.enabled = dto.enabled;
+    }
+    if (Object.keys(patch).length === 0) {
+      return this.toResponse(rule);
     }
 
-    await rule.save();
-    return this.toResponse(rule);
+    const updated = await this.rules.update(rule.id, patch);
+    if (!updated) throw new NotFoundException(ErrorCode.CLASSIFIER_RULE_NOT_FOUND);
+    return this.toResponse(updated);
   }
 
   async delete(userId: string, ruleId: string): Promise<void> {
     const rule = await this.getOwnedRule(userId, ruleId);
-    await this.ruleModel.deleteOne({ _id: rule._id }).exec();
+    await this.rules.delete(rule.id);
     this.logger.log('Classifier rule deleted', {
-      ruleId: rule._id.toString(),
+      ruleId: rule.id,
       userId,
     });
   }
@@ -133,22 +122,7 @@ export class ClassifierRuleService {
     userId: string,
     workspaceId: string,
   ): Promise<IClassifierRuleResponse[]> {
-    const rules = await this.ruleModel
-      .find({
-        userId: new Types.ObjectId(userId),
-        enabled: true,
-        $or: [
-          { scope: ClassifierRuleScope.GLOBAL, workspaceId: null },
-          {
-            scope: ClassifierRuleScope.LOCAL,
-            workspaceId: new Types.ObjectId(workspaceId),
-          },
-        ],
-      })
-      .sort({ createdAt: 1 })
-      .lean()
-      .exec();
-
+    const rules = await this.rules.listActiveForWorkspace(userId, workspaceId);
     return rules.map((r) => this.toResponse(r));
   }
 
@@ -157,35 +131,30 @@ export class ClassifierRuleService {
   private async getOwnedRule(
     userId: string,
     ruleId: string,
-  ): Promise<ClassifierRuleDocument> {
-    if (!Types.ObjectId.isValid(ruleId)) {
+  ): Promise<ClassifierRuleRecord> {
+    if (!isObjectId(ruleId)) {
       throw new NotFoundException(ErrorCode.CLASSIFIER_RULE_NOT_FOUND);
     }
-    const rule = await this.ruleModel.findById(ruleId).exec();
+    const rule = await this.rules.findById(ruleId);
     if (!rule) {
       throw new NotFoundException(ErrorCode.CLASSIFIER_RULE_NOT_FOUND);
     }
-    if (rule.userId.toString() !== userId) {
+    if (rule.userId !== userId) {
       throw new ForbiddenException(ErrorCode.CLASSIFIER_RULE_FORBIDDEN);
     }
     return rule;
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private toResponse(doc: any): IClassifierRuleResponse {
+  private toResponse(rule: ClassifierRuleRecord): IClassifierRuleResponse {
     return {
-      id: (doc._id as { toString(): string }).toString(),
-      userId: (doc.userId as { toString(): string }).toString(),
-      scope: doc.scope as 'global' | 'local',
-      workspaceId: doc.workspaceId
-        ? (doc.workspaceId as { toString(): string }).toString()
-        : null,
-      text: doc.text as string,
-      enabled: Boolean(doc.enabled),
-      createdAt:
-        doc.createdAt instanceof Date ? doc.createdAt.toISOString() : doc.createdAt,
-      updatedAt:
-        doc.updatedAt instanceof Date ? doc.updatedAt.toISOString() : doc.updatedAt,
+      id: rule.id,
+      userId: rule.userId,
+      scope: rule.scope,
+      workspaceId: rule.workspaceId,
+      text: rule.text,
+      enabled: rule.enabled,
+      createdAt: rule.createdAt.toISOString(),
+      updatedAt: rule.updatedAt.toISOString(),
     };
   }
 }

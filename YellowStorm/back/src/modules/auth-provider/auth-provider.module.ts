@@ -13,12 +13,6 @@ import { UsageModule } from '@modules/usage';
 import { AuthorizationModule } from '@modules/authorization/authorization.module';
 import { WorkspaceModule } from '@modules/workspace/workspace.module';
 import {
-  AUTH_PROVIDER_STORE,
-  OAUTH_STATE_STORE,
-  PROVIDER_LINK_TOKEN_STORE,
-  USER_PROVIDER_LINK_STORE,
-} from './persistence/auth-provider.stores';
-import {
   PgAuthProviderStore,
   PgOAuthStateStore,
   PgProviderLinkTokenStore,
@@ -42,10 +36,6 @@ import {
     ProviderLinkService,
     AuthProviderHealthService,
     // Mongo-backed until the 1A cutover; swap useClass to the Pg* stores then.
-    { provide: AUTH_PROVIDER_STORE, useClass: PgAuthProviderStore },
-    { provide: OAUTH_STATE_STORE, useClass: PgOAuthStateStore },
-    { provide: PROVIDER_LINK_TOKEN_STORE, useClass: PgProviderLinkTokenStore },
-    { provide: USER_PROVIDER_LINK_STORE, useClass: PgUserProviderLinkStore },
     PgAuthProviderStore,
     PgOAuthStateStore,
     PgProviderLinkTokenStore,

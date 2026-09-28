@@ -1,18 +1,12 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
 import { ShapeStream, isChangeMessage, isControlMessage } from '@electric-sql/client';
 import { LoggerService } from '../../logger';
 import { WorkyStreamService } from './worky-stream.service';
 import { WorkyEventService } from './worky-event.service';
-import { WorkyTask, WorkyTaskDocument } from '../schemas/worky-task.schema';
-import { WorkyMessage, WorkyMessageDocument } from '../schemas/worky-message.schema';
-import { WorkyPlanProjection, WorkyPlanProjectionDocument } from '../schemas/worky-plan-projection.schema';
-import { WorkyElectricCursor, WorkyElectricCursorDocument } from '../schemas/worky-electric-cursor.schema';
-import { WorkyMessageComponent, WorkyMessageComponentDocument } from '../schemas/worky-message-component.schema';
-import { WorkyPlanStepComponent, WorkyPlanStepComponentDocument } from '../schemas/worky-plan-step-component.schema';
-import { WorkyPlanStepArtifact, WorkyPlanStepArtifactDocument } from '../schemas/worky-plan-step-artifact.schema';
+import { WorkyTaskRepository } from '../persistence/worky-task.repository';
+import { WorkyMessageRepository } from '../persistence/worky-message.repository';
+import { WorkyMirrorRepository } from '../persistence/worky-mirror.repository';
 import {
   PgSessionRow,
   PgMessageRow,
@@ -36,8 +30,8 @@ import {
 
 /**
  * Nest-side `ShapeStream` consumer that mirrors the manager's Postgres rows
- * (synced via Electric SQL) into Mongo and re-broadcasts a `WorkyEvent` over
- * the existing SSE channel (`WorkyEventService.emit`).
+ * (synced via Electric SQL) into the `worky` schema and re-broadcasts a
+ * `WorkyEvent` over the existing SSE channel (`WorkyEventService.emit`).
  *
  * Real contract (reconciled): three whole-table shapes scoped by
  * `session_id` — `messages`, `plans`, `plan_steps` (the board). Every shape
@@ -45,7 +39,7 @@ import {
  * PLACE — there is no separate task_results shape/table.
  *
  * Resume: each shape's Electric `handle`+`offset` is persisted in
- * `WorkyElectricCursor` after every processed batch, so a restart resumes
+ * `worky.electric_cursors` after every processed batch, so a restart resumes
  * the shape log rather than re-streaming from scratch.
  */
 @Injectable()
@@ -62,13 +56,9 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
     private readonly streamService: WorkyStreamService,
     private readonly events: WorkyEventService,
     private readonly logger: LoggerService,
-    @InjectModel(WorkyTask.name) private readonly taskModel: Model<WorkyTaskDocument>,
-    @InjectModel(WorkyMessage.name) private readonly messageModel: Model<WorkyMessageDocument>,
-    @InjectModel(WorkyPlanProjection.name) private readonly planProjectionModel: Model<WorkyPlanProjectionDocument>,
-    @InjectModel(WorkyElectricCursor.name) private readonly cursorModel: Model<WorkyElectricCursorDocument>,
-    @InjectModel(WorkyMessageComponent.name) private readonly messageComponentModel: Model<WorkyMessageComponentDocument>,
-    @InjectModel(WorkyPlanStepComponent.name) private readonly planStepComponentModel: Model<WorkyPlanStepComponentDocument>,
-    @InjectModel(WorkyPlanStepArtifact.name) private readonly planStepArtifactModel: Model<WorkyPlanStepArtifactDocument>,
+    private readonly tasks: WorkyTaskRepository,
+    private readonly messages: WorkyMessageRepository,
+    private readonly mirror: WorkyMirrorRepository,
   ) {
     this.logger.setContext(WorkyElectricConsumerService.name);
   }
@@ -139,10 +129,7 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
     handler: (messages: unknown[]) => Promise<void>,
     cursorKey = shape,
   ): Promise<void> {
-    const cursor = await this.cursorModel
-      .findOne({ shape: cursorKey })
-      .lean<{ handle?: string | null; offset?: string | null }>()
-      .exec();
+    const cursor = await this.mirror.findCursor(cursorKey);
     const secret = this.config.get<string>('worky.electricSecret');
     const url = this.config.get<string>('worky.electricUrl')!;
     this.logger.log('[worky-electric] subscribing', {
@@ -152,7 +139,7 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
       url,
       hasSecret: !!secret,
       resumeHandle: cursor?.handle ?? null,
-      resumeOffset: cursor?.offset ?? null,
+      resumeOffset: cursor?.logOffset ?? null,
     });
     const stream = new ShapeStream({
       url,
@@ -161,7 +148,7 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
       // title/description/lane/status with defaults (e.g. "Step undefined").
       params: { table, replica: 'full', ...(secret ? { secret } : {}) },
       handle: cursor?.handle ?? undefined,
-      offset: (cursor?.offset as never) ?? undefined,
+      offset: (cursor?.logOffset as never) ?? undefined,
       // Without an onError handler, non-retryable errors (4xx) are THROWN and
       // escape as an unhandled rejection that crashes the whole backend. The
       // most common one: a shape whose Postgres table doesn't exist yet (the
@@ -219,58 +206,8 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
   }
 
   async persistCursor(shape: string, handle: string | undefined, offset: string): Promise<void> {
-    await this.cursorModel
-      .updateOne({ shape }, { $set: { handle: handle ?? null, offset } }, { upsert: true })
-      .exec();
+    await this.mirror.saveCursor(shape, handle ?? null, offset);
     this.logger.log('[worky-electric] cursor persisted', { shape, handle: handle ?? null, offset });
-  }
-
-  /**
-   * The manager sends session/stream ids as strings, but our Mongo schemas type
-   * `streamId` as ObjectId and every read query (board, messages) matches an
-   * ObjectId. A raw string stored via upsert never matched, so the UI showed
-   * nothing. Store a real ObjectId. Falls back to the raw string for
-   * non-ObjectId ids (e.g. unit-test fixtures like 'stream-1').
-   */
-  private toStreamOid(streamId: string): Types.ObjectId | string {
-    return Types.ObjectId.isValid(streamId) ? new Types.ObjectId(streamId) : streamId;
-  }
-
-  /**
-   * Mirror one manager `messages` row into Mongo and return the stored doc.
-   *
-   * The manager echoes the owner's own message back through Electric, but
-   * `appendOwnerMessage` already persisted that message locally with no
-   * `externalId`. Inserting the mirrored row as a fresh document would leave
-   * two copies of the same message in the history (and hand the UI two
-   * different ids for it), so an owner row first adopts the most recent
-   * un-mirrored local copy with the same content, stamping it with the
-   * Postgres id. Replays then match that `externalId` and update in place.
-   */
-  private async mirrorMessage(
-    streamOid: Types.ObjectId | string,
-    row: PgMessageRow,
-    set: Record<string, unknown>,
-  ): Promise<WorkyMessageDocument | null> {
-    const $set = { ...set, streamId: streamOid };
-    if (set.role === 'owner') {
-      const adopted = await this.messageModel
-        .findOneAndUpdate(
-          { streamId: streamOid, role: 'owner', content: row.content, externalId: null },
-          { $set },
-          { new: true, sort: { createdAt: -1 } },
-        )
-        .exec();
-      if (adopted) return adopted;
-    }
-    const update: Record<string, unknown> = { $set };
-    return this.messageModel
-      .findOneAndUpdate(
-        { streamId: streamOid, externalId: row.id },
-        update,
-        { upsert: true, new: true, setDefaultsOnInsert: true },
-      )
-      .exec();
   }
 
   async handleMessages(messages: unknown[]): Promise<void> {
@@ -299,15 +236,16 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
           this.logger.warn('[worky-electric] unknown session', { shape: 'messages', sid: row.session_id });
           return;
         }
-        const streamOid = this.toStreamOid(target.streamId);
         const { set, event } = mapMessage(row, target.streamId);
-        const doc = await this.mirrorMessage(streamOid, row, set);
-        // Emit the Mongo id, not the Postgres row id, so the SSE frame and the
-        // REST history agree on identity. The frontend dedupes on that id to
-        // drop the copy it already rendered from the POST response.
+        // An owner row adopts the local copy appendOwnerMessage already stored
+        // instead of inserting a duplicate (see WorkyMessageRepository.mirror).
+        const stored = await this.messages.mirror(target.streamId, row.id, set);
+        // Emit the stored message id, not the manager's row id, so the SSE frame
+        // and the REST history agree on identity. The frontend dedupes on that id
+        // to drop the copy it already rendered from the POST response.
         this.events.emit(target.ownerUserId, target.streamId, {
           ...event,
-          payload: { ...event.payload, id: String(doc?._id ?? row.id) },
+          payload: { ...event.payload, id: stored.id },
         });
         if (this.debug) {
           this.logger.debug('[worky-electric] applied', {
@@ -352,15 +290,8 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
         if (!isKnownPlanStepStatus(row.status)) {
           this.logger.warn('Unknown plan_step status', { status: row.status, step: row.step_id });
         }
-        const streamOid = this.toStreamOid(target.streamId);
         const { set, event } = mapPlanStep(row, target.streamId);
-        await this.taskModel
-          .findOneAndUpdate(
-            { streamId: streamOid, externalId: row.step_id },
-            { $set: { ...set, streamId: streamOid } },
-            { upsert: true, new: true, setDefaultsOnInsert: true },
-          )
-          .exec();
+        await this.tasks.upsertMirrored(target.streamId, row.step_id, set);
         this.events.emit(target.ownerUserId, target.streamId, event);
         if (this.debug) {
           this.logger.debug('[worky-electric] applied', {
@@ -394,15 +325,8 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
           this.logger.warn('[worky-electric] unknown session', { shape: 'sessions', sid: row.id });
           return;
         }
-        const streamOid = this.toStreamOid(target.streamId);
         const { set, event } = mapSession(row, target.streamId);
-        await this.planProjectionModel
-          .findOneAndUpdate(
-            { streamId: streamOid },
-            { $set: { ...set, streamId: streamOid } },
-            { upsert: true, new: true, setDefaultsOnInsert: true },
-          )
-          .exec();
+        await this.mirror.upsertProjection(target.streamId, set);
         this.events.emit(target.ownerUserId, target.streamId, event);
         if (isTerminalSessionStatus(row.status)) {
           this.events.emit(target.ownerUserId, target.streamId, {
@@ -450,15 +374,8 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
           this.logger.warn('[worky-electric] unknown session', { shape: 'plans', sid: row.session_id });
           return;
         }
-        const streamOid = this.toStreamOid(target.streamId);
         const { set, event } = mapPlan(row, target.streamId);
-        await this.planProjectionModel
-          .findOneAndUpdate(
-            { streamId: streamOid },
-            { $set: { ...set, streamId: streamOid } },
-            { upsert: true, new: true, setDefaultsOnInsert: true },
-          )
-          .exec();
+        await this.mirror.upsertProjection(target.streamId, set);
         this.events.emit(target.ownerUserId, target.streamId, event);
         if (this.debug) {
           this.logger.debug('[worky-electric] applied', {
@@ -509,15 +426,8 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
           this.logger.warn('[worky-electric] unknown session', { shape: 'message_components', sid: row.session_id });
           continue;
         }
-        const streamOid = this.toStreamOid(target.streamId);
         const { set, event } = mapMessageComponent(row, target.streamId);
-        await this.messageComponentModel
-          .findOneAndUpdate(
-            { streamId: streamOid, externalId: row.component_id },
-            { $set: { ...set, streamId: streamOid } },
-            { upsert: true, new: true, setDefaultsOnInsert: true },
-          )
-          .exec();
+        await this.messages.upsertComponent(target.streamId, row.component_id, set);
         this.events.emit(target.ownerUserId, target.streamId, event);
         // An `error` component is only ever attached to a failed turn's message
         // (service._add_error_message), so its arrival means the turn is over.
@@ -552,15 +462,8 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
           this.logger.warn('[worky-electric] unknown session', { shape: 'plan_step_components', sid: row.session_id });
           continue;
         }
-        const streamOid = this.toStreamOid(target.streamId);
         const { set, event } = mapPlanStepComponent(row, target.streamId);
-        await this.planStepComponentModel
-          .findOneAndUpdate(
-            { streamId: streamOid, externalId: row.component_id },
-            { $set: { ...set, streamId: streamOid } },
-            { upsert: true, new: true, setDefaultsOnInsert: true },
-          )
-          .exec();
+        await this.mirror.upsertStepComponent(target.streamId, row.component_id, set);
         this.events.emit(target.ownerUserId, target.streamId, event);
       } catch (err) {
         this.logger.error('Failed to process plan_step_component row', { error: (err as Error).message });
@@ -581,15 +484,8 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
           this.logger.warn('[worky-electric] unknown session', { shape: 'plan_step_artifacts', sid: row.session_id });
           continue;
         }
-        const streamOid = this.toStreamOid(target.streamId);
         const { set, event } = mapPlanStepArtifact(row, target.streamId);
-        await this.planStepArtifactModel
-          .findOneAndUpdate(
-            { streamId: streamOid, externalId: row.artifact_id },
-            { $set: { ...set, streamId: streamOid } },
-            { upsert: true, new: true, setDefaultsOnInsert: true },
-          )
-          .exec();
+        await this.mirror.upsertStepArtifact(target.streamId, row.artifact_id, set);
         this.events.emit(target.ownerUserId, target.streamId, event);
       } catch (err) {
         this.logger.error('Failed to process plan_step_artifact row', { error: (err as Error).message });

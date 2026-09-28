@@ -146,6 +146,8 @@ export class WorkspaceAssetInternalController {
 
   @Public()
   @Put('semantic-dataset')
+  // The runtime checks this exact body against its manifest; the usual { success, data } envelope breaks that.
+  @SkipResponseWrap()
   @ApiOperation({ summary: 'Store a prepared semantic dataset under an identity-derived key' })
   async putDataset(
     @Query() query: SemanticDatasetQueryDto,

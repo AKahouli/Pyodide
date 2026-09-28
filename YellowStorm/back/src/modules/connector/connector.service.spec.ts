@@ -6,6 +6,7 @@ import type {
   ConnectorStore,
 } from './persistence/connector.store';
 import { SandboxRuntimeContext } from '../../common/runtime/sandbox-scope';
+import { PgConnectorStore, PgConnectorCategoryStore } from './persistence/pg-connector.store';
 
 const createPlaybookBindingSyncServiceMock = () => ({
   syncConnectorActions: jest.fn().mockResolvedValue(undefined),
@@ -48,7 +49,7 @@ const baseRow = (over: RowOver = {}): ConnectorRow =>
     ...over,
   }) as ConnectorRow;
 
-const connectorStoreMock = (over: Record<string, jest.Mock> = {}): ConnectorStore =>
+const connectorStoreMock = (over: Record<string, jest.Mock> = {}): PgConnectorStore =>
   ({
     findBySlugAndOwner: jest.fn().mockResolvedValue(null),
     findById: jest.fn().mockResolvedValue(null),
@@ -67,9 +68,9 @@ const connectorStoreMock = (over: Record<string, jest.Mock> = {}): ConnectorStor
     delete: jest.fn().mockResolvedValue(null),
     upsertSystemActionsBySlug: jest.fn(),
     ...over,
-  }) as unknown as ConnectorStore;
+  }) as unknown as PgConnectorStore;
 
-const categoryStoreMock = (over: Record<string, jest.Mock> = {}): ConnectorCategoryStore =>
+const categoryStoreMock = (over: Record<string, jest.Mock> = {}): PgConnectorCategoryStore =>
   ({
     ensureSystem: jest.fn().mockResolvedValue(undefined),
     findByNameInsensitive: jest.fn().mockResolvedValue(null),
@@ -82,7 +83,7 @@ const categoryStoreMock = (over: Record<string, jest.Mock> = {}): ConnectorCateg
     findNamesByIds: jest.fn().mockResolvedValue(new Map()),
     findIdsByNameInsensitive: jest.fn().mockResolvedValue([]),
     ...over,
-  }) as unknown as ConnectorCategoryStore;
+  }) as unknown as PgConnectorCategoryStore;
 
 describe('ConnectorService findAllActive', () => {
   it('includes hidden Playbook MCP while excluding other hidden connectors', async () => {

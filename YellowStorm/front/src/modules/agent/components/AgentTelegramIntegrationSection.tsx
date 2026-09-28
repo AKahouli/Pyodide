@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, Copy, Loader2, Send } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Copy, ExternalLink, Loader2, QrCode, Send } from "lucide-react";
+import QRCode from "qrcode";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -49,6 +50,10 @@ function resolveIntegrationMessage(
       });
     case "webhook_failed":
       return t("createEdit.fields.telegramWebhookFailed");
+    case "polling":
+      return t("createEdit.fields.telegramPollingSuccess", {
+        botUsername: integration.botUsername ?? "bot",
+      });
     case "disabled":
       return t("createEdit.fields.telegramDisabled");
     case "saved":
@@ -71,6 +76,28 @@ export function AgentTelegramIntegrationSection({
   const [integration, setIntegration] = useState<AgentTelegramIntegration | null>(null);
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [showQr, setShowQr] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+
+  const botUrl = integration?.botUsername ? `https://t.me/${integration.botUsername}` : null;
+
+  useEffect(() => {
+    if (!showQr || !botUrl) {
+      setQrDataUrl(null);
+      return;
+    }
+    let cancelled = false;
+    QRCode.toDataURL(botUrl, { margin: 1, width: 200 })
+      .then((url) => {
+        if (!cancelled) setQrDataUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) setQrDataUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showQr, botUrl]);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,6 +154,9 @@ export function AgentTelegramIntegrationSection({
         showWarning(message, {
           description: updated.errorMessage,
         });
+        break;
+      case "polling":
+        showSuccess(message);
         break;
       case "disabled":
         showInfo(message);
@@ -220,8 +250,20 @@ export function AgentTelegramIntegrationSection({
     }
   };
 
+  const handleCopyBotLink = async () => {
+    if (!botUrl) return;
+    try {
+      await navigator.clipboard.writeText(botUrl);
+      showSuccess(t("createEdit.fields.telegramBotLinkCopied"));
+    } catch {
+      showWarning(t("createEdit.fields.telegramSaveFailed"));
+    }
+  };
+
   const isSuccessBanner =
-    integration?.messageKey === "webhook_success" || integration?.webhookRegistered;
+    integration?.messageKey === "webhook_success" ||
+    integration?.messageKey === "polling" ||
+    integration?.webhookRegistered;
   const isWarningBanner =
     integration?.messageKey === "webhook_failed" || integration?.status === "error";
 
@@ -320,6 +362,68 @@ export function AgentTelegramIntegrationSection({
             </p>
             {tokenError && <p className="text-xs text-destructive">{tokenError}</p>}
           </div>
+        </div>
+      )}
+
+      {agentId && enabled && botUrl && (
+        <div
+          className="space-y-3 rounded-md border p-3"
+          data-testid="telegram-share-block"
+        >
+          <div className="space-y-1">
+            <p className="text-sm font-medium">{t("createEdit.fields.telegramShareTitle")}</p>
+            <p className="text-xs text-muted-foreground">
+              {t("createEdit.fields.telegramShareHint")}
+            </p>
+          </div>
+          <code className="block rounded bg-muted px-2 py-1 text-xs font-mono">
+            @{integration?.botUsername}
+          </code>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={handleCopyBotLink}>
+              <Copy className="mr-2 h-3.5 w-3.5" />
+              {t("createEdit.fields.telegramCopyBotLink")}
+            </Button>
+            <Button type="button" variant="outline" size="sm" asChild>
+              <a href={botUrl} target="_blank" rel="noreferrer">
+                <ExternalLink className="mr-2 h-3.5 w-3.5" />
+                {t("createEdit.fields.telegramOpenBot")}
+              </a>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setShowQr((v) => !v)}
+              data-testid="telegram-qr-toggle"
+            >
+              <QrCode className="mr-2 h-3.5 w-3.5" />
+              {showQr
+                ? t("createEdit.fields.telegramHideQr")
+                : t("createEdit.fields.telegramShowQr")}
+            </Button>
+          </div>
+          {showQr && (
+            <div className="flex flex-col items-start gap-2">
+              {qrDataUrl ? (
+                <img
+                  src={qrDataUrl}
+                  alt={t("createEdit.fields.telegramQrAlt")}
+                  className="rounded-md border bg-white p-1"
+                  data-testid="telegram-qr-image"
+                />
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  {t("createEdit.fields.telegramQrUnavailable")}
+                </p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                {t("createEdit.fields.telegramSearchHint", {
+                  botUsername: integration?.botUsername ?? "",
+                })}
+              </p>
+            </div>
+          )}
         </div>
       )}
 

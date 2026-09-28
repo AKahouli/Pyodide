@@ -7,6 +7,7 @@ import {
   IsDefined,
   IsIn,
   IsInt,
+  IsNumber,
   IsObject,
   IsOptional,
   IsString,
@@ -256,17 +257,6 @@ export class PublishSemanticModelDto extends ExpectedModelRevisionDto {
   expectedGraphRevision!: number;
 }
 
-export class GenerateSemanticModelOntologyDto {
-  @ApiProperty({ type: [String], maxItems: 50, required: false, default: [] })
-  @IsArray()
-  @ArrayMinSize(0)
-  @ArrayMaxSize(50)
-  @IsString({ each: true })
-  @MinLength(1, { each: true })
-  @MaxLength(4000, { each: true })
-  businessRequirements: string[] = [];
-}
-
 export class SemanticModelManualInstancesDto {
   @ApiProperty()
   @IsUUID()
@@ -495,6 +485,99 @@ export class BulkDocumentSourceMappingDto {
   identityFields?: string[];
 }
 
+/** One document mapping applied to every readable file of a workspace, or of one of its folders. */
+export class WorkspaceSourceMappingDto {
+  @ApiProperty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  expectedRevision!: number;
+
+  @ApiProperty()
+  @IsUUID()
+  conceptId!: string;
+
+  @ApiProperty()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  workspaceId!: string;
+
+  @ApiPropertyOptional({ description: 'Only files inside this folder (at any depth)' })
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  folderId?: string;
+
+  @ApiPropertyOptional({ type: [String], maxItems: 500, description: 'Picked folders: every file inside, at any depth. With documentIds empty too, the whole workspace.' })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(500)
+  @IsString({ each: true })
+  @MaxLength(200, { each: true })
+  folderIds?: string[];
+
+  @ApiPropertyOptional({ type: [String], maxItems: 500, description: 'Picked single files' })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(500)
+  @IsString({ each: true })
+  @MaxLength(200, { each: true })
+  documentIds?: string[];
+
+  @ApiPropertyOptional({ description: 'Change what an existing workspace mapping covers instead of adding one' })
+  @IsOptional()
+  @IsUUID()
+  mappingId?: string;
+
+  @ApiProperty({ type: [SourceFieldMappingDto], maxItems: 100 })
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => SourceFieldMappingDto)
+  fieldMappings!: SourceFieldMappingDto[];
+
+  @ApiPropertyOptional({ type: [String], maxItems: 5 })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsString({ each: true })
+  @MaxLength(200, { each: true })
+  identityFields?: string[];
+}
+
+/** A page of one concept's records, optionally narrowed by a search. */
+export class ConceptRecordsQueryDto {
+  @ApiPropertyOptional({ maxLength: 200 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  q?: string;
+
+  @ApiPropertyOptional({ default: 50, maximum: 200 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  limit?: number;
+
+  @ApiPropertyOptional({ default: 0 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(1_000_000)
+  offset?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  dataRevisionId?: string;
+}
+
 export class SourceAssetProfileQueryDto {
   @ApiProperty()
   @IsString()
@@ -551,6 +634,22 @@ export class SourcePriorityDto {
   @Min(1)
   @Max(50)
   rank!: number;
+}
+
+export class SaveIdentityRuleDto {
+  @ApiProperty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  expectedRevision!: number;
+
+  @ApiProperty({ type: [String], maxItems: 10, description: 'Concept fields that together make each record unique; empty clears the rule' })
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsString({ each: true })
+  @MinLength(1, { each: true })
+  @MaxLength(200, { each: true })
+  fields!: string[];
 }
 
 export class SaveSourceResolutionPolicyDto {
@@ -652,4 +751,58 @@ export class RequestPopulationRefreshDto {
   @ValidateNested()
   @Type(() => PopulationRefreshScopeDto)
   scope!: PopulationRefreshScopeDto;
+}
+
+export const RECORD_CORRECTION_ACTIONS = ['edit_entity', 'remove_entity', 'add_relationship', 'remove_relationship'] as const;
+export type RecordCorrectionAction = (typeof RECORD_CORRECTION_ACTIONS)[number];
+
+export class RecordCorrectionDto {
+  @ApiProperty({ enum: RECORD_CORRECTION_ACTIONS })
+  @IsIn(RECORD_CORRECTION_ACTIONS as unknown as string[])
+  action!: RecordCorrectionAction;
+
+  @ApiProperty({ description: 'Record ({ entityId }) or link ({ relationId, sourceEntityId, targetEntityId })' })
+  @IsDefined()
+  @IsObject()
+  targetIdentity!: Record<string, unknown>;
+
+  @ApiPropertyOptional({ description: 'For a value fix: { attribute, value }' })
+  @IsOptional()
+  @IsObject()
+  payload?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ maxLength: 500 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}
+
+export class CanvasPositionDto {
+  @ApiProperty({ maxLength: 300 })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(300)
+  id!: string;
+
+  @ApiProperty()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @Min(-1_000_000)
+  @Max(1_000_000)
+  x!: number;
+
+  @ApiProperty()
+  @IsNumber({ allowNaN: false, allowInfinity: false })
+  @Min(-1_000_000)
+  @Max(1_000_000)
+  y!: number;
+}
+
+export class SaveCanvasPositionsDto {
+  @ApiProperty({ type: [CanvasPositionDto] })
+  @IsArray()
+  @ArrayMaxSize(500)
+  @ValidateNested({ each: true })
+  @Type(() => CanvasPositionDto)
+  positions!: CanvasPositionDto[];
 }

@@ -1,6 +1,5 @@
 import type { EmbeddedMessage, ShareType } from '../interfaces/share.interface';
 
-export const SHARE_STORE = Symbol('SHARE_STORE');
 
 export class ConversationCloneLimitError extends Error {}
 

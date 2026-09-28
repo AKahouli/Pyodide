@@ -1,5 +1,5 @@
 import { ModelSpecificationService } from './model-specification.service';
-import { SemanticPopulationRefreshService } from './semantic-population-refresh.service';
+import { graphPropertyKey, SemanticPopulationRefreshService } from './semantic-population-refresh.service';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 
 const NODES = [
@@ -37,6 +37,8 @@ const setup = (
   identity: Record<string, string[]> = { 'c-customer': ['customer_id'] },
   relations: unknown[] = [],
   relationRules: unknown[] = [],
+  records: unknown[] = [],
+  recordRelations: unknown[] = [],
 ) => {
   const database = {
     query: jest.fn(async (sql: string, params: unknown[] = []) => {
@@ -55,6 +57,8 @@ const setup = (
         }
         return { rows: mappings };
       }
+      if (sql.includes('FROM semantic_model.records')) return { rows: records };
+      if (sql.includes('FROM semantic_model.record_relations')) return { rows: recordRelations };
       throw new Error(`unexpected query: ${sql}`);
     }),
   };
@@ -71,6 +75,8 @@ const setup = (
   };
   const runtime = {
     mirrorSpecification: jest.fn(async () => ({ reused: false })),
+    appendManualRows: jest.fn(async () => undefined),
+    commitManualSnapshot: jest.fn(async () => ({ reused: false })),
     requestPopulationRun: jest.fn(async () => ({ jobId: 'j-1', status: 'queued', reused: false })),
     getJob: jest.fn(async () => ({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'completed' })),
     getBoundRecords: jest.fn(async () => ({
@@ -95,6 +101,12 @@ const setup = (
 };
 
 describe('SemanticPopulationRefreshService', () => {
+  it('finds a field in the graph under the name the runtime stores it with', () => {
+    expect(graphPropertyKey('customer_id')).toBe('customer_id');
+    expect(graphPropertyKey('customer-id')).toBe('customer_id');
+    expect(graphPropertyKey('9lives')).toBe('_9lives');
+  });
+
   it('returns only matching population jobs', async () => {
     const { runtime, service } = setup();
     await expect(service.getJob('u-1', 'model-1', 'j-1')).resolves.toMatchObject({ state: 'completed' });
@@ -107,6 +119,126 @@ describe('SemanticPopulationRefreshService', () => {
     const result = await service.boundRecords('u-1', 'model-1', 25);
     expect(result).toMatchObject({ dataRevisionId: 'dr-1', summary: { entities: 1, resolvedRelations: 0 } });
     expect(result.concepts[0]).toMatchObject({ id: 'c-customer', entities: [{ id: 'e-1', values: { name: 'Acme' } }] });
+  });
+
+  it('says whether the data in use was built from the model as it is now', async () => {
+    const { runtime, service, models } = setup();
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const planned = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>]>)[0][0].payload.populationExecutionFingerprint;
+    (runtime.getBoundRecords as jest.Mock).mockResolvedValueOnce({ ...(await runtime.getBoundRecords()), executionFingerprint: planned });
+    await expect(service.freshness('u-1', 'model-1')).resolves.toEqual({ state: 'current' });
+    (runtime.getBoundRecords as jest.Mock).mockResolvedValueOnce({ ...(await runtime.getBoundRecords()), executionFingerprint: 'sha256:older' });
+    await expect(service.freshness('u-1', 'model-1')).resolves.toEqual({ state: 'outdated' });
+    runtime.getBoundRecords.mockRejectedValueOnce(new Error('active_binding_not_found'));
+    await expect(service.freshness('u-1', 'model-1')).resolves.toEqual({ state: 'never_run' });
+    // Reading freshness never starts a run or touches the runtime specification.
+    expect(runtime.requestPopulationRun).toHaveBeenCalledTimes(1);
+    expect(models.requireRole).toHaveBeenCalled();
+  });
+
+  it('sends business synonyms in the specification only when there are some', async () => {
+    const { database, runtime, service } = setup();
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const plain = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>]>)[0][0];
+    expect(plain.payload.specification.concepts[0]).not.toHaveProperty('aliases');
+    expect(plain.payload.specification.concepts[0]).not.toHaveProperty('fieldAliases');
+    const query = database.query.getMockImplementation()!;
+    database.query.mockImplementation(async (sql: string, params: unknown[] = []) => sql.includes('FROM semantic_model.node_types')
+      ? { rows: [{ ...NODES[0], aliases: [' Client ', 'Client', ''], attributes: [NODES[0].attributes[0], { ...NODES[0].attributes[1], aliases: ['Company name'] }] }, NODES[1]] }
+      : query(sql, params));
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const aliased = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>]>)[1][0];
+    expect(aliased.payload.specification.concepts[0]).toMatchObject({ aliases: ['Client'], fieldAliases: { name: ['Company name'] } });
+    expect(aliased.payload.specification.specHash).not.toBe(plain.payload.specification.specHash);
+  });
+
+  it('explains where each value came from and what is missing', async () => {
+    const { runtime, service } = setup();
+    runtime.getBoundRecords.mockResolvedValueOnce({
+      dataRevisionId: 'dr-1',
+      entities: [{
+        entityId: 'e-1', conceptId: 'c-customer', label: 'Acme', attributes: { name: 'Acme', customer_id: '7' }, provenance: {},
+        origins: {
+          name: { kind: 'source', assetId: 'd-1', rowNumber: 4, column: 'name' },
+          customer_id: { kind: 'source', assetId: 'manual:snap-1', rowNumber: 'r1', column: 'customer_id' },
+        },
+      }],
+      relationships: [],
+      counts: { entities: 1, assertions: 2, relationships: 0 },
+      gaps: {
+        missingValues: [{ conceptId: 'c-customer', attribute: 'name', missing: 2, total: 5 }],
+        unresolvedLinks: [{ relationId: 'r-1', kind: 'unresolved_reference', count: 3 }],
+        other: [],
+      },
+      specification: {
+        concepts: [{ conceptId: 'c-customer', label: 'Customer', allowedFields: ['customer_id', 'name'] }],
+        relations: [{ relationId: 'r-1', label: 'belongs to' }],
+      },
+    } as never);
+    const result = await service.boundRecords('u-1', 'model-1', 25);
+    const entity = result.concepts[0].entities[0];
+    expect(entity.provenance.name).toMatchObject({
+      mappingId: 'm-1', rowNumber: 4,
+      source: { documentId: 'd-1', documentName: 'a.xlsx', sheetName: 'Sheet1' },
+      field: { method: 'direct_mapping', reference: 'name' },
+    });
+    expect(entity.provenance.customer_id).toEqual({ mappingId: '', source: { kind: 'manual', documentName: '' } });
+    expect(result.gaps.missingValues[0]).toMatchObject({ conceptLabel: 'Customer', attributeLabel: 'Name', missing: 2 });
+    expect(result.gaps.unresolvedLinks[0]).toMatchObject({ relationLabel: 'belongs to', count: 3 });
+    expect(result.summary.unresolvedRelations).toBe(3);
+  });
+
+  it('reads every readable file of a workspace mapping, and sees a new file as a change', async () => {
+    const file = (id: string, overrides: Record<string, unknown> = {}) => ({
+      id, workspaceId: 'ws-1', originalName: `${id}.pdf`, mimeType: 'application/pdf', isFolder: false, parentId: 'folder-1',
+      contentHash: `sha256:${id}`, updatedAt: '2026-01-01', uploadedAt: '2026-01-01', size: 10, createdBy: 'u-9', indexingStatus: 'ready',
+      ...overrides,
+    });
+    const workspace = MAPPING({
+      scope: 'workspace', folderId: 'folder-1', documentId: 'workspace:ws-1:folder-1', sheetName: '', assetKind: 'document',
+      validatedSourceVersion: null,
+      fieldMappings: [
+        { sourceField: 'Customer Id', targetAttribute: 'customer_id', mode: 'extract' },
+        { sourceField: 'document_name', targetAttribute: 'name', mode: 'metadata' },
+      ],
+    });
+    const { documents, runtime, service } = setup([workspace]);
+    const listing = [
+      file('b'), file('a'),
+      file('pending', { indexingStatus: 'processing' }),
+      file('elsewhere', { parentId: 'other-folder' }),
+      file('sheet', { mimeType: 'text/csv' }),
+      { id: 'folder-1', isFolder: true, mimeType: '', parentId: null },
+    ];
+    (documents as any).listAllInWorkspace = jest.fn(async () => listing);
+    const accepted = await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const first = (runtime.requestPopulationRun.mock.calls[0] as any)[0].payload;
+    expect(first.sources.map((source: any) => source.source.assetId)).toEqual(['a', 'b']);
+    expect(first.sources[0]).toMatchObject({ sourceKind: 'document', source: { assetVersionId: 'sha256:a', originalName: 'a.pdf' } });
+    expect(first.specification.sourceScope).toEqual([{ workspaceId: 'ws-1', assetId: 'workspace:ws-1:folder-1' }]);
+    expect(accepted).toMatchObject({ sourceCount: 2, waitingFiles: 1 });
+    expect(documents.findById).not.toHaveBeenCalled();
+
+    listing.push(file('c'));
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const second = (runtime.requestPopulationRun.mock.calls[1] as any)[0].payload;
+    expect(second.sources).toHaveLength(3);
+    expect(second.populationExecutionFingerprint).not.toBe(first.populationExecutionFingerprint);
+  });
+
+  it('pages and searches the records of one concept, and answers nothing yet before any data exists', async () => {
+    const { runtime, service } = setup();
+    (runtime as any).searchConceptRecords = jest.fn(async () => ({
+      modelId: 'model-1', conceptId: 'c-customer', dataRevisionId: 'dr-1', total: 120, offset: 40, limit: 20,
+      entities: [{ entityId: 'e-1', conceptId: 'c-customer', label: 'Acme', attributes: { name: 'Acme' }, provenance: {}, origins: {} }],
+    }));
+    await expect(service.conceptRecords('u-1', 'model-1', 'c-customer', { q: '  acme ', limit: 20, offset: 40 })).resolves.toMatchObject({
+      dataRevisionId: 'dr-1', total: 120, offset: 40, records: [{ id: 'e-1', label: 'Acme', values: { name: 'Acme' } }],
+    });
+    expect((runtime as any).searchConceptRecords).toHaveBeenCalledWith('model-1', 'c-customer', 'u-1',
+      { q: 'acme', limit: 20, offset: 40, dataRevisionId: undefined });
+    (runtime as any).searchConceptRecords.mockRejectedValueOnce(Object.assign(new Error('HTTP 404'), { status: 404 }));
+    await expect(service.conceptRecords('u-1', 'model-1', 'c-customer', {})).resolves.toMatchObject({ total: 0, records: [] });
   });
 
   it('assembles, mirrors and runs a whole-model refresh', async () => {
@@ -520,5 +652,94 @@ describe('SemanticPopulationRefreshService', () => {
     const { service } = setup(mappings);
     await expect(service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } }))
       .rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED });
+  });
+
+  it('sends records typed by hand as a manual source, with their links', async () => {
+    const records = [
+      { id: 'r-1', nodeTypeId: 'c-customer', label: 'Acme', values: { name: 'Acme', _entity_key: 'x' } },
+      { id: 'r-2', nodeTypeId: 'c-customer', label: 'Globex', values: { name: 'Globex' } },
+    ];
+    const links = [{ relationTypeId: 'rel-1', sourceRecordId: 'r-1', targetRecordId: 'r-2' }];
+    const { runtime, service } = setup([], {}, [], [], records, links);
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const [modelId, snapshotId, batch] = runtime.appendManualRows.mock.calls[0] as unknown as [string, string, { rows: Array<{ values: object }>; links: unknown[] }];
+    expect(modelId).toBe('model-1');
+    expect(snapshotId).toMatch(/^m[0-9a-f]{40}$/);
+    expect(batch.rows[0].values).toEqual({ name: 'Acme' });
+    expect(batch.links).toEqual([{ relationId: 'rel-1', sourceRowKey: 'r-1', targetRowKey: 'r-2' }]);
+    expect(runtime.commitManualSnapshot).toHaveBeenCalledWith('model-1', snapshotId, { rowCount: 2, linkCount: 1 });
+    const payload = (runtime.requestPopulationRun.mock.calls[0] as unknown as [{ payload: { sources: Array<Record<string, unknown>>; specification: { concepts: Array<{ identity: object }>; sourceScope: unknown[] } } }])[0].payload;
+    expect(payload.sources).toEqual([expect.objectContaining({ sourceKind: 'manual', conceptId: 'c-customer', source: { workspaceId: 'ws-1', assetId: `manual:${snapshotId}`, snapshotId } })]);
+    expect(payload.specification.sourceScope).toContainEqual({ workspaceId: 'ws-1', assetId: `manual:${snapshotId}` });
+    expect(payload.specification.concepts[0].identity).toEqual({ namespace: 'customer', keyComponents: ['customer_id'] });
+  });
+
+  describe('data fixes', () => {
+    const withCorrections = (runtime: Record<string, jest.Mock>, sequence = 3, corrections: unknown[] = []) => {
+      runtime.listCorrections = jest.fn(async () => ({ modelId: 'model-1', correctionSequence: sequence, corrections }));
+      runtime.recordCorrection = jest.fn(async () => ({ sequence: sequence + 1, modelId: 'model-1', state: 'accepted' }));
+    };
+
+    it('records a value fix at the current watermark and rebuilds the draft', async () => {
+      const { runtime, service } = setup();
+      withCorrections(runtime as any);
+      const result = await service.recordCorrection('u-1', 'model-1', {
+        action: 'edit_entity', targetIdentity: { entityId: 'e-1' }, payload: { attribute: 'name', value: 'Acme SA', extra: 1 },
+      });
+      expect((runtime as any).recordCorrection).toHaveBeenCalledWith(expect.objectContaining({
+        action: 'edit_entity', targetIdentity: { entityId: 'e-1' }, payload: { attribute: 'name', value: 'Acme SA' },
+        expectedCorrectionSequence: 3, modelVersionId: 'v-1', actorUserId: 'u-1',
+      }));
+      expect(result).toEqual({ sequence: 4, rebuild: { jobId: 'j-1', status: 'queued' } });
+      // Only a whole-model build replaces the draft people explore.
+      expect(runtime.requestPopulationRun).toHaveBeenCalledWith(
+        expect.objectContaining({ payload: expect.objectContaining({ purpose: 'build', scope: { kind: 'model' } }) }),
+        expect.any(String),
+      );
+    });
+
+    it('refuses a fix that points to nothing', async () => {
+      const { runtime, service } = setup();
+      withCorrections(runtime as any);
+      await expect(service.recordCorrection('u-1', 'model-1', { action: 'add_relationship', targetIdentity: { relationId: 'r' } }))
+        .rejects.toThrow('This fix does not point to a record or link');
+      await expect(service.recordCorrection('u-1', 'model-1', { action: 'edit_entity', targetIdentity: { entityId: 'e-1' } }))
+        .rejects.toThrow('This fix does not point to a record or link');
+    });
+
+    it('undoes a fix by recording a revert of it', async () => {
+      const { runtime, service } = setup();
+      withCorrections(runtime as any, 5, [{ sequence: 2, action: 'remove_entity', targetIdentity: { entityId: 'e-1' }, payload: {} }]);
+      await service.undoCorrection('u-1', 'model-1', 2);
+      expect((runtime as any).recordCorrection).toHaveBeenCalledWith(expect.objectContaining({
+        action: 'revert', payload: { sequence: 2 }, expectedCorrectionSequence: 5,
+      }));
+      await expect(service.undoCorrection('u-1', 'model-1', 9)).rejects.toThrow('This fix no longer exists');
+    });
+
+    it('changes the rebuild key when a new fix exists', async () => {
+      const { runtime, service } = setup();
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'refresh', scope: { kind: 'model' } });
+      withCorrections(runtime as any, 1);
+      await service.requestRefresh('u-1', 'model-1', { purpose: 'refresh', scope: { kind: 'model' } });
+      const keys = (runtime.requestPopulationRun.mock.calls as unknown as Array<[unknown, string]>).map((call) => call[1]);
+      expect(keys[0]).not.toEqual(keys[1]);
+    });
+
+    it('shows who corrected a value and what the source said', async () => {
+      const { runtime, service } = setup();
+      runtime.getBoundRecords.mockResolvedValueOnce({
+        dataRevisionId: 'dr-1',
+        entities: [{ entityId: 'e-1', conceptId: 'c-customer', label: 'Acme', attributes: { name: 'Acme SA' }, provenance: {},
+          origins: { name: { kind: 'human', assetId: 'manual:x', correctedBy: 'u-1', originalValue: 'Acme', correctionSequence: 4 } } }],
+        relationships: [],
+        counts: { entities: 1, assertions: 1, relationships: 0 },
+        specification: { concepts: [{ conceptId: 'c-customer', label: 'Customer', allowedFields: ['name'] }], relations: [] },
+      } as any);
+      const result = await service.boundRecords('u-1', 'model-1', 25);
+      expect(result.concepts[0].entities[0].provenance.name).toMatchObject({
+        correction: { sequence: 4, correctedByYou: true, originalValue: 'Acme' },
+      });
+    });
   });
 });

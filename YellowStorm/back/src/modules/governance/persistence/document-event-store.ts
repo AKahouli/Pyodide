@@ -1,7 +1,6 @@
 import type { GovernanceDocumentEventRecord } from './governance-records';
 import type { GovernanceDocumentEventType } from '../domain/governance-types';
 
-export const GOVERNANCE_EVENT_STORE = Symbol('GOVERNANCE_EVENT_STORE');
 
 export interface AppendGovernanceDocumentEventInput {
   programId: string;

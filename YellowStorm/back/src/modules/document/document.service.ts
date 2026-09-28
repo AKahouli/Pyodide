@@ -16,6 +16,7 @@ import { createHash } from 'crypto';
 import { randomUUID } from 'crypto';
 import { Readable } from 'stream';
 import { LoggerService } from '../logger';
+import { PlatformSettingsService } from '@modules/system/platform-settings.service';
 import {
   UploadedDocument,
   UploadOptions,
@@ -28,33 +29,30 @@ import {
 import { BadRequestException, InternalServerException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { DocumentConnectionService, StorageConnectionStatus } from './document-connection.service';
-import {
-  collapseCharSet,
-  collapseRepeatedChar,
-  stripLeadingTrailingChar,
-  stripLeadingTrailingWhitespaceOrDot,
-  stripTrailingChar,
-} from '@common/utils';
 
 @Injectable()
 export class DocumentService {
-  private readonly maxFileSizeBytes: number;
-  private readonly maxFilesPerUpload: number;
   private readonly sasExpiryMinutes: number;
-  private readonly allowedMimeTypes: string[];
 
   constructor(
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
     private readonly connectionService: DocumentConnectionService,
+    private readonly platformSettings: PlatformSettingsService,
   ) {
     this.logger.setContext(DocumentService.name);
 
-    this.maxFileSizeBytes =
-      this.configService.get<number>('storage.maxFileSizeMb', 50) * 1024 * 1024;
-    this.maxFilesPerUpload = this.configService.get<number>('storage.maxFilesPerUpload', 10);
     this.sasExpiryMinutes = this.configService.get<number>('storage.sasExpiryMinutes', 60);
-    this.allowedMimeTypes = this.configService.get<string[]>('storage.allowedMimeTypes', []);
+  }
+
+  /** Upload limits are admin-managed at runtime (platform settings). */
+  private async getUploadLimits() {
+    const { documentUpload } = await this.platformSettings.getSettings();
+    return {
+      maxFileSizeBytes: documentUpload.maxFileSizeMb * 1024 * 1024,
+      maxFilesPerUpload: documentUpload.maxFilesPerUpload,
+      allowedMimeTypes: documentUpload.allowedMimeTypes,
+    };
   }
 
   isAvailable(): boolean {
@@ -87,7 +85,7 @@ export class DocumentService {
     options: UploadOptions = {},
   ): Promise<UploadedDocument> {
     this.ensureAvailable();
-    this.validateFile(originalName, mimeType, file instanceof Buffer ? file.length : undefined);
+    await this.validateFile(originalName, mimeType, file instanceof Buffer ? file.length : undefined);
 
     const id = randomUUID();
     const sanitizedName = this.sanitizeFileName(originalName);
@@ -107,10 +105,11 @@ export class DocumentService {
     }
 
     const size = uploadData.length;
-    if (size > this.maxFileSizeBytes) {
+    const { maxFileSizeBytes } = await this.getUploadLimits();
+    if (size > maxFileSizeBytes) {
       throw new BadRequestException(
         `File size ${Math.round(size / 1024 / 1024)}MB exceeds maximum ${Math.round(
-          this.maxFileSizeBytes / 1024 / 1024,
+          maxFileSizeBytes / 1024 / 1024,
         )}MB`,
       );
     }
@@ -169,9 +168,10 @@ export class DocumentService {
     files: Array<{ buffer: Buffer; originalName: string; mimeType: string }>,
     options: UploadOptions = {},
   ): Promise<UploadedDocument[]> {
-    if (files.length > this.maxFilesPerUpload) {
+    const { maxFilesPerUpload } = await this.getUploadLimits();
+    if (files.length > maxFilesPerUpload) {
       throw new BadRequestException(
-        `Cannot upload more than ${this.maxFilesPerUpload} files at once`,
+        `Cannot upload more than ${maxFilesPerUpload} files at once`,
       );
     }
 
@@ -496,7 +496,7 @@ export class DocumentService {
   // ============ Private Methods ============
 
   private getObjectUrl(objectKey: string): string {
-    const base = stripTrailingChar(this.connectionService.getPublicUrl(), '/');
+    const base = this.connectionService.getPublicUrl().replace(/\/+$/, '');
     const bucket = this.getBucket();
     return `${base}/${bucket}/${objectKey}`;
   }
@@ -507,17 +507,18 @@ export class DocumentService {
     }
   }
 
-  private validateFile(fileName: string, mimeType: string, size?: number): void {
-    if (this.allowedMimeTypes.length > 0 && !this.allowedMimeTypes.includes(mimeType)) {
+  private async validateFile(fileName: string, mimeType: string, size?: number): Promise<void> {
+    const { maxFileSizeBytes, allowedMimeTypes } = await this.getUploadLimits();
+    if (allowedMimeTypes.length > 0 && !allowedMimeTypes.includes(mimeType)) {
       throw new BadRequestException(
-        `File type '${mimeType}' is not allowed. Allowed types: ${this.allowedMimeTypes.join(', ')}`,
+        `File type '${mimeType}' is not allowed. Allowed types: ${allowedMimeTypes.join(', ')}`,
       );
     }
 
-    if (size !== undefined && size > this.maxFileSizeBytes) {
+    if (size !== undefined && size > maxFileSizeBytes) {
       throw new BadRequestException(
         `File size ${Math.round(size / 1024 / 1024)}MB exceeds maximum ${Math.round(
-          this.maxFileSizeBytes / 1024 / 1024,
+          maxFileSizeBytes / 1024 / 1024,
         )}MB`,
       );
     }
@@ -533,8 +534,8 @@ export class DocumentService {
 
   private sanitizeFileName(fileName: string): string {
     let sanitized = fileName.replaceAll(/[/\\:\0]/g, '_');
-    sanitized = stripLeadingTrailingWhitespaceOrDot(sanitized);
-    sanitized = collapseCharSet(sanitized, '_ \t\n\r\f\v', '_');
+    sanitized = sanitized.replace(/^[ \t\n\r\f\v.]+|[ \t\n\r\f\v.]+$/g, '');
+    sanitized = sanitized.replace(/[ _\t\n\r\f\v]+/g, '_');
 
     if (!sanitized || sanitized === '_') {
       sanitized = `file_${Date.now()}`;
@@ -544,9 +545,9 @@ export class DocumentService {
   }
 
   private sanitizePath(path: string): string {
-    let sanitized = stripLeadingTrailingChar(path, '/');
+    let sanitized = path.replace(/^\/+|\/+$/g, '');
     sanitized = sanitized.replaceAll(/[\0\\]/g, '');
-    sanitized = collapseRepeatedChar(sanitized, '/');
+    sanitized = sanitized.replace(/\/{2,}/g, '/');
     sanitized = sanitized.replaceAll('..', '');
     return sanitized;
   }

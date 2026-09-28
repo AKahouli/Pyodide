@@ -34,6 +34,10 @@ export interface ConceptSpec {
   eligibility?: FilterNode | null; // forbidden rows outside this filter
   materialization?: FilterNode | null; // subset prepared into graph; null = all eligible
   allowedFields: string[];
+  /** Business synonyms of the concept, used by search only; omitted when empty so older specs keep their hash. */
+  aliases?: string[];
+  /** Business synonyms per field key; omitted when empty. */
+  fieldAliases?: Record<string, string[]>;
 }
 
 export interface RelationSpec {

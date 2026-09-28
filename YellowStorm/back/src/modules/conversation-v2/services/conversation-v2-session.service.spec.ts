@@ -1,10 +1,10 @@
 import { Test } from '@nestjs/testing';
 import { ConversationV2SessionService } from './conversation-v2-session.service';
 import {
-  CONVERSATION_V2_SESSION_STORE,
-  type ConversationV2SessionRecord,
-  type ConversationV2SessionStore,
+  type ConversationV2SessionRecord, 
+  type ConversationV2SessionStore, 
 } from '../persistence/conversation-v2-session.store';
+import { PgConversationV2SessionStore } from '../persistence/postgres/pg-conversation-v2-session.store';
 
 const SESSION_HEX = 'a'.repeat(24);
 
@@ -76,7 +76,7 @@ describe('ConversationV2SessionService', () => {
     const mod = await Test.createTestingModule({
       providers: [
         ConversationV2SessionService,
-        { provide: CONVERSATION_V2_SESSION_STORE, useValue: store },
+        { provide: PgConversationV2SessionStore, useValue: store },
       ],
     }).compile();
 

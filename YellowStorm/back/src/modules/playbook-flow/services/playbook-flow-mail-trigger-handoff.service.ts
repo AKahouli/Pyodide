@@ -1,19 +1,13 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import {
-  FlowMailEventLedger,
-  FlowMailEventLedgerDocument,
-} from '../schemas/playbook-flow-mail-event-ledger.schema';
 import { FlowMailTriggerHandoffResultData } from '../interfaces/playbook-flow-mail.interface';
 import { PlaybookFlowExecutionService } from './playbook-flow-execution.service';
 import { LoggerService } from '@modules/logger';
+import { MailEventLedgerRepository } from '../persistence/mail-event-ledger.repository';
 
 @Injectable()
 export class PlaybookFlowMailTriggerHandoffService {
   constructor(
-    @InjectModel(FlowMailEventLedger.name)
-    private readonly ledgerModel: Model<FlowMailEventLedgerDocument>,
+    private readonly ledger: MailEventLedgerRepository,
     private readonly executionService: PlaybookFlowExecutionService,
     private readonly logger: LoggerService,
   ) { this.logger.setContext('PlaybookFlowMailTriggerHandoffService'); }
@@ -23,10 +17,7 @@ export class PlaybookFlowMailTriggerHandoffService {
     userId: string,
     ledgerEntryId: string,
   ): Promise<FlowMailTriggerHandoffResultData> {
-    const ledgerEntry = await this.ledgerModel
-      .findOne({ id: ledgerEntryId, flowId })
-      .lean()
-      .exec();
+    const ledgerEntry = await this.ledger.findByLedgerId(ledgerEntryId, flowId);
 
     if (!ledgerEntry) {
       this.logger.warn('Handoff: ledger entry not found', { ledgerEntryId, flowId });
@@ -48,7 +39,7 @@ export class PlaybookFlowMailTriggerHandoffService {
 
     const triggerContext = {
       type: 'mail',
-      occurredAt: ledgerEntry.occurredAt?.toISOString?.() ?? ledgerEntry.occurredAt,
+      occurredAt: ledgerEntry.occurredAt.toISOString(),
       mailEvent: {
         subject: ledgerEntry.subject,
         bodyText: ledgerEntry.bodyText,
@@ -71,14 +62,7 @@ export class PlaybookFlowMailTriggerHandoffService {
       `mail:${flowId}:${ledgerEntryId}`,
     );
 
-    const updateResult = await this.ledgerModel
-      .updateOne(
-        { id: ledgerEntryId, status: 'matched' },
-        { $set: { status: 'handed_off', executionId: execution.id, error: null } },
-      )
-      .exec();
-
-    if ((updateResult as any)?.modifiedCount === 0) {
+    if (!(await this.ledger.markHandedOff(ledgerEntryId, execution.id))) {
       return { executionId: execution.id, handedOff: false, skippedReason: 'duplicate' };
     }
 

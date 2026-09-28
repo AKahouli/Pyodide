@@ -1,14 +1,13 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Injectable,  Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'crypto';
 import {
-  RUNTIME_BINDING_STORE,
-  type RuntimeBindingRecord,
-  type RuntimeBindingStore,
+  type RuntimeBindingRecord,  
 } from '../persistence/runtime-binding.store';
 import { RuntimeRevisionService } from './runtime-revision.service';
 import { RuntimeTokenService } from './runtime-token.service';
 import { DEFAULT_STARTER_REVISION_ID } from '../constants/starter-revisions';
+import { PgRuntimeBindingStore } from '../persistence/pg-runtime-binding.store';
 
 export interface BindRuntimeParams {
   conversationSessionId: string;
@@ -38,8 +37,7 @@ export class RuntimeBindingService {
   private readonly logger = new Logger(RuntimeBindingService.name);
 
   constructor(
-    @Inject(RUNTIME_BINDING_STORE)
-    private readonly store: RuntimeBindingStore,
+    private readonly store: PgRuntimeBindingStore,
     private readonly tokens: RuntimeTokenService,
     private readonly revisions: RuntimeRevisionService,
     private readonly config: ConfigService,

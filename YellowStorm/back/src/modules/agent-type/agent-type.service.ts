@@ -1,7 +1,7 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { isObjectId } from '@common/postgres';
 import { LoggerService } from '../logger';
-import { AGENT_TYPE_STORE, type AgentTypePromptRow, type AgentTypeRow, type AgentTypeStore } from './persistence/agent-type.store';
+import { type AgentTypePromptRow,   type AgentTypeRow} from './persistence/agent-type.store';
 import { IAgentTypeResponse } from './interfaces/agent-type.interface';
 import { IAgentTypePromptResponse } from './interfaces/agent-type-prompt.interface';
 import { CreateAgentTypeDto } from './dto/create-agent-type.dto';
@@ -11,12 +11,12 @@ import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { NotFoundException, ConflictException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { SkillService } from '../skill/skill.service';
+import { PgAgentTypeStore } from './persistence/pg-agent-type.store';
 
 @Injectable()
 export class AgentTypeService {
   constructor(
-    @Inject(AGENT_TYPE_STORE)
-    private readonly agentTypeStore: AgentTypeStore,
+    private readonly agentTypeStore: PgAgentTypeStore,
     private readonly skillService: SkillService,
     private readonly logger: LoggerService,
   ) {

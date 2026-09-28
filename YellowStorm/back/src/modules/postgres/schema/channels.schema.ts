@@ -3,7 +3,7 @@ import { bigint, boolean, char, check, index, integer, jsonb, pgSchema, text, ti
 import { agents } from './agents.schema';
 import { objectId, timestamps } from '../../../common/postgres/columns';
 
-/** P4 channels schema: telegram, whatsapp, widget (plan 2026-09-19 step 4b/4c). */
+/** P4 channels schema: telegram and widget (plan 2026-09-19 step 4b/4c). WhatsApp tables were dropped by 0032. */
 export const channelsSchema = pgSchema('channels');
 
 // ── telegram ──────────────────────────────────────────────────────────
@@ -48,10 +48,13 @@ export const channelsTelegramChatBindings = channelsSchema.table(
     telegramChatId: varchar('telegram_chat_id', { length: 64 }).notNull(),
     telegramUserId: varchar('telegram_user_id', { length: 64 }),
     conversationId: objectId('conversation_id'),
+    /** 'member' = owner-linked chat, 'guest' = external visitor inbox. */
+    bindingType: varchar('binding_type', { length: 16 }).notNull().default('member'),
     lastMessageAt: timestamp('last_message_at', { withTimezone: true }),
     ...timestamps(),
   },
   (t) => [
+    check('telegram_chat_bindings_type_enum', sql`${t.bindingType} IN ('member','guest')`),
     uniqueIndex('uq_telegram_chat_bindings_chat').on(t.integrationId, t.telegramChatId),
     index('idx_telegram_chat_bindings_user').on(t.userId),
     index('idx_telegram_chat_bindings_agent').on(t.agentId),
@@ -81,74 +84,31 @@ export const channelsTelegramLinkCodes = channelsSchema.table(
   ],
 );
 
-// ── whatsapp ──────────────────────────────────────────────────────────
-
-export const channelsWhatsappIntegrations = channelsSchema.table(
-  'whatsapp_integrations',
+/** Owner validation (human-in-the-loop): guest asks, owner answers async. */
+export const channelsTelegramHumanValidations = channelsSchema.table(
+  'telegram_human_validations',
   {
     id: objectId('id').primaryKey(),
-    userId: objectId('user_id').notNull(),
-    /** Safety net — agent delete teardown runs first (plan 4.6). */
-    agentId: objectId('agent_id')
+    integrationId: objectId('integration_id')
       .notNull()
-      .references(() => agents.id, { onDelete: 'cascade' }),
-    phoneNumber: varchar('phone_number', { length: 32 }),
-    displayName: varchar('display_name', { length: 200 }),
-    status: varchar('status', { length: 16 }).notNull().default('DISCONNECTED'),
-    sessionId: varchar('session_id', { length: 128 }),
-    lastActivityAt: timestamp('last_activity_at', { withTimezone: true }),
-    errorMessage: varchar('error_message', { length: 500 }),
-    enabled: boolean('enabled').notNull().default(true),
-    ...timestamps(),
-  },
-  (t) => [
-    check('whatsapp_integrations_status_enum', sql`${t.status} IN ('PAIRING','CONNECTED','DISCONNECTED','FAILED')`),
-    uniqueIndex('uq_whatsapp_integrations_agent').on(t.agentId),
-    index('idx_whatsapp_integrations_user_status').on(t.userId, t.status),
-    index('idx_whatsapp_integrations_session').on(t.sessionId).where(sql`${t.sessionId} IS NOT NULL`),
-    index('idx_whatsapp_integrations_connected').on(t.status, t.enabled).where(sql`${t.status} = 'CONNECTED'`),
-  ],
-);
-
-/** integration_id is POLYMORPHIC (agent | worky stream | worky system bot): no FK until P7. */
-export const channelsWhatsappAuthSessions = channelsSchema.table(
-  'whatsapp_auth_sessions',
-  {
-    integrationId: objectId('integration_id').primaryKey(),
-    ownerKind: varchar('owner_kind', { length: 16 }).notNull(),
-    /** Ciphertext; nullable — creds and keys are upserted separately. */
-    encryptedCredentials: text('encrypted_credentials'),
-    encryptedKeys: text('encrypted_keys'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-  },
-  (t) => [
-    check('whatsapp_auth_sessions_owner_kind_enum', sql`${t.ownerKind} IN ('agent','worky_stream','worky_system_bot')`),
-  ],
-);
-
-export const channelsWhatsappChatBindings = channelsSchema.table(
-  'whatsapp_chat_bindings',
-  {
-    id: objectId('id').primaryKey(),
-    /** Polymorphic, see auth sessions. */
-    integrationId: objectId('integration_id').notNull(),
-    ownerKind: varchar('owner_kind', { length: 16 }).notNull(),
-    userId: objectId('user_id').notNull(),
+      .references(() => channelsTelegramIntegrations.id, { onDelete: 'cascade' }),
     agentId: objectId('agent_id').notNull(),
-    remoteJid: varchar('remote_jid', { length: 128 }).notNull(),
-    conversationId: objectId('conversation_id'),
-    workyStreamId: objectId('worky_stream_id'),
-    lastMessageAt: timestamp('last_message_at', { withTimezone: true }),
-    lastInboundText: text('last_inbound_text'),
+    conversationId: objectId('conversation_id').notNull(),
+    guestTelegramChatId: varchar('guest_telegram_chat_id', { length: 64 }).notNull().default(''),
+    guestLabel: varchar('guest_label', { length: 200 }),
+    question: text('question').notNull(),
+    choices: text('choices').array().notNull().default([]),
+    status: varchar('status', { length: 16 }).notNull().default('pending'),
+    answer: text('answer'),
+    answeredAt: timestamp('answered_at', { withTimezone: true }),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    ownerMessageId: integer('owner_message_id'),
     ...timestamps(),
   },
   (t) => [
-    check('whatsapp_chat_bindings_owner_kind_enum', sql`${t.ownerKind} IN ('agent','worky_stream','worky_system_bot')`),
-    uniqueIndex('uq_whatsapp_chat_bindings_jid').on(t.integrationId, t.remoteJid),
-    index('idx_whatsapp_chat_bindings_user').on(t.userId),
-    index('idx_whatsapp_chat_bindings_agent_recent').on(t.agentId, t.lastMessageAt.desc().nullsLast(), t.createdAt.desc()),
-    index('idx_whatsapp_chat_bindings_conv').on(t.conversationId).where(sql`${t.conversationId} IS NOT NULL`),
+    check('telegram_human_validations_status_enum', sql`${t.status} IN ('pending','answered','expired','failed')`),
+    index('idx_telegram_validations_integration_status').on(t.integrationId, t.status, t.expiresAt),
+    index('idx_telegram_validations_conversation').on(t.conversationId, t.status),
   ],
 );
 

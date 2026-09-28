@@ -7,7 +7,7 @@ import { AiProxyStreamService } from './ai-proxy-stream.service';
 import { AI_PROXY_REQUEST_TIMEOUT_MS } from './constants/ai-proxy.constants';
 import { ChatCompletionDto, ChatMessageRole } from './dto/chat-completion.dto';
 import { LiteLLMConnectionService } from '../models/litellm-connection.service';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { AiProxyUsageService } from './ai-proxy-usage.service';
 
 describe('AiProxyStreamService', () => {
@@ -28,7 +28,7 @@ describe('AiProxyStreamService', () => {
     ip: '127.0.0.1',
     get: jest.fn().mockReturnValue('jest'),
   }) as unknown as Request;
-  const user = { _id: { toString: () => 'user-123' } } as unknown as UserDocument;
+  const user = { _id: { toString: () => 'user-123' } } as unknown as AuthUser;
   const usageService = {
     resolveTokens: jest.fn((usage?: { prompt_tokens?: number; completion_tokens?: number }) => {
       if (!usage || (usage.prompt_tokens === undefined && usage.completion_tokens === undefined)) {

@@ -4,7 +4,7 @@ import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagg
 import type { Response } from 'express';
 import { multipartFileInterceptorOptions } from '@common/utils';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
-import { UserDocument } from '../../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import { LogicalSearchEvaluationService } from '../services/logical-search-evaluation.service';
 
 const EVAL_UPLOAD_MAX_BYTES = 20 * 1024 * 1024;
@@ -27,7 +27,7 @@ export class LogicalSearchEvaluationController {
   @UseInterceptors(
     FileInterceptor('file', multipartFileInterceptorOptions(EVAL_UPLOAD_MAX_BYTES)),
   )
-  async upload(@CurrentUser() user: UserDocument, @UploadedFile() file: MulterFile) {
+  async upload(@CurrentUser() user: AuthUser, @UploadedFile() file: MulterFile) {
     if (!file?.buffer?.length) {
       throw new BadRequestException('No benchmark file uploaded.');
     }
@@ -37,7 +37,7 @@ export class LogicalSearchEvaluationController {
   @Get()
   @ApiOperation({ summary: 'List logical search evaluations for the current user (paginated)' })
   async list(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
     @Query('scope') scope?: string,
@@ -51,26 +51,26 @@ export class LogicalSearchEvaluationController {
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete an evaluation and its per-question results' })
-  async remove(@CurrentUser() user: UserDocument, @Param('id') id: string) {
+  async remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.service.remove(user._id.toString(), id);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get a logical search evaluation by id' })
-  async getById(@CurrentUser() user: UserDocument, @Param('id') id: string) {
+  async getById(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.service.getById(user._id.toString(), id);
   }
 
   @Post(':id/duplicate')
   @ApiOperation({ summary: 'Create a new evaluation seeded from an existing benchmark dataset' })
-  async duplicate(@CurrentUser() user: UserDocument, @Param('id') id: string) {
+  async duplicate(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.service.duplicate(user._id.toString(), id);
   }
 
   @Post(':id/prepare-adhoc')
   @ApiOperation({ summary: 'Prepare evaluation with a direct agent/workspace/model config (no playbook)' })
   async prepareAdhoc(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() body: { agentId: string; workspaceId?: string; modelId?: string; fileScope?: string[]; evaluatorAgentId: string; evaluatorModelId?: string },
   ) {
@@ -86,7 +86,7 @@ export class LogicalSearchEvaluationController {
   @Post(':id/run')
   @ApiOperation({ summary: 'Run the logical search benchmark queries against the runtime' })
   async run(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Body() body: { queryIds?: string[]; queryId?: string },
   ) {
@@ -96,26 +96,26 @@ export class LogicalSearchEvaluationController {
 
   @Post(':id/stop')
   @ApiOperation({ summary: 'Request a graceful stop of a running evaluation (at the next query boundary)' })
-  async stop(@CurrentUser() user: UserDocument, @Param('id') id: string) {
+  async stop(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.service.stop(user._id.toString(), id);
   }
 
   @Get(':id/progress')
   @ApiOperation({ summary: 'Live progress of a running evaluation (which query, how many done)' })
-  async progress(@CurrentUser() user: UserDocument, @Param('id') id: string) {
+  async progress(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.service.getProgress(user._id.toString(), id);
   }
 
   @Get(':id/results')
   @ApiOperation({ summary: 'Get the aggregated summary and per-question results of an evaluation' })
-  async results(@CurrentUser() user: UserDocument, @Param('id') id: string) {
+  async results(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.service.getResults(user._id.toString(), id);
   }
 
   @Get(':id/export')
   @ApiOperation({ summary: 'Download the evaluation results as a ZIP (XLSX + raw execution logs JSON)' })
   async export(
-    @CurrentUser() user: UserDocument,
+    @CurrentUser() user: AuthUser,
     @Param('id') id: string,
     @Res() res: Response,
   ): Promise<void> {

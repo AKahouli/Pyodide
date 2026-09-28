@@ -2,12 +2,13 @@ import { Inject, Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { LoggerService } from '../logger';
 import { LiteLLMClient } from './litellm.client';
-import { MODEL_STORE, type ModelPatch, type ModelRow, type ModelStore, type NewModelRow } from './persistence/model.store';
+import { type ModelPatch,   type ModelRow,   type NewModelRow } from './persistence/model.store';
 import { LiteLLMModelInfoEntry, LiteLLMHealthStatus, ModelInputModality, ModelResponse, ModelsListResponse, ReasoningEffortOption, ModelPricingSnapshot } from './interfaces/model.interface';
 import { BadRequestException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { withTransaction } from '@common/postgres/transaction';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
+import { PgModelStore } from './persistence/pg-model.store';
 import * as schema from '@modules/postgres/schema';
 
 // Provider display name mappings
@@ -38,8 +39,7 @@ const CHEF_DISPLAY_NAMES: Record<string, string> = {
 @Injectable()
 export class ModelsService implements OnApplicationBootstrap {
   constructor(
-    @Inject(MODEL_STORE)
-    private readonly modelStore: ModelStore,
+    private readonly modelStore: PgModelStore,
     private readonly litellmClient: LiteLLMClient,
     private readonly logger: LoggerService,
     @Inject(DRIZZLE_DB) private readonly pgDb: NodePgDatabase<typeof schema>,

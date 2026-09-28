@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '@modules/logger';
 import { BadRequestException, ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { TelegramSendMessageResult } from '../interfaces/telegram-update.interface';
+import { TelegramSendMessageResult, TelegramUpdate } from '../interfaces/telegram-update.interface';
 
 interface TelegramApiResponse<T = unknown> {
   ok: boolean;
@@ -61,6 +61,50 @@ export class TelegramApiService {
 
   async deleteWebhook(botToken: string): Promise<void> {
     await this.request(botToken, 'deleteWebhook', { drop_pending_updates: false });
+  }
+
+  async getUpdates(botToken: string, offset?: number): Promise<TelegramUpdate[]> {
+    const response = await this.request<TelegramUpdate[]>(botToken, 'getUpdates', {
+      offset,
+      timeout: 0,
+      allowed_updates: ['message', 'callback_query'],
+    });
+    return response.result ?? [];
+  }
+
+  async sendMessageWithButtons(
+    botToken: string,
+    chatId: string,
+    text: string,
+    buttons: Array<{ text: string; callbackData: string }>,
+  ): Promise<TelegramSendMessageResult> {
+    const response = await this.request(botToken, 'sendMessage', {
+      chat_id: chatId,
+      text,
+      reply_markup: {
+        inline_keyboard: [buttons.map((button) => ({
+          text: button.text,
+          callback_data: button.callbackData,
+        }))],
+      },
+    });
+    return {
+      ok: response.ok,
+      result: response.result,
+      description: response.description,
+    };
+  }
+
+  async answerCallbackQuery(
+    botToken: string,
+    callbackQueryId: string,
+    text?: string,
+    showAlert = false,
+  ): Promise<void> {
+    await this.request(botToken, 'answerCallbackQuery', {
+      callback_query_id: callbackQueryId,
+      ...(text ? { text, show_alert: showAlert } : {}),
+    });
   }
 
   async sendMessage(

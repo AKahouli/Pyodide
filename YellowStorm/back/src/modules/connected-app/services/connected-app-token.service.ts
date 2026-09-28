@@ -4,9 +4,7 @@ import { withTransaction } from '@common/postgres/transaction';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import {
-  USER_APP_CONNECTION_STORE,
-  type UserAppConnectionRow,
-  type UserAppConnectionStore,
+  type UserAppConnectionRow,  
 } from '../persistence/connected-app.store';
 import { ConnectionStatus } from '../connected-app.types';
 import { ConnectedAppDefinitionService } from './connected-app-definition.service';
@@ -15,6 +13,7 @@ import { LoggerService } from '@modules/logger';
 import { BadRequestException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { MailboxCapabilityResponse } from '../interfaces/connected-app.interface';
+import { PgUserAppConnectionStore } from '../persistence/pg-connected-app.store';
 
 const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 const M365_MAIL_APP_KEYS = ['microsoft365', 'microsoft', 'm365'];
@@ -29,8 +28,7 @@ type RefreshOutcome = { ok: true; token: string } | { ok: false; message: string
 @Injectable()
 export class ConnectedAppTokenService {
   constructor(
-    @Inject(USER_APP_CONNECTION_STORE)
-    private readonly connectionStore: UserAppConnectionStore,
+    private readonly connectionStore: PgUserAppConnectionStore,
     @Inject(DRIZZLE_DB) private readonly pgDb: NodePgDatabase<typeof schema>,
     private readonly definitionService: ConnectedAppDefinitionService,
     private readonly cryptoService: CryptoService,

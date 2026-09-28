@@ -1,6 +1,5 @@
 import type { GovernanceDeploymentRecord } from './governance-records';
 
-export const DEPLOYMENT_STORE = Symbol('GOVERNANCE_DEPLOYMENT_STORE');
 
 export interface GovernanceDeploymentCreateInput {
   programId: string;

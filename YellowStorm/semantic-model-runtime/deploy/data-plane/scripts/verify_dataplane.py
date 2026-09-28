@@ -30,8 +30,7 @@ HERE = Path(__file__).resolve().parent
 DATAPLANE = HERE.parent
 REPO = DATAPLANE.parent.parent.parent.parent
 RT = "http://127.0.0.1:4000"
-# Same variable the backend uses (SEMANTIC_DATA_REST_URL in back/.env);
-# defaults to the PostgREST host port from the compose file.
+# PostgREST URL; defaults to the host port from the compose file.
 PGRST = os.environ.get("SEMANTIC_DATA_REST_URL", "http://127.0.0.1:3050")
 EXTERNAL_ID = "yellowmind-semantic"
 TOPIC = "semantic-model:model-verify-1"
@@ -259,10 +258,12 @@ async def seed_fixture() -> bool:
 
 
 def _runtime_url() -> str:
-    for line in (REPO / "YellowStorm/back/.env").read_text(encoding="utf-8").splitlines():
+    # The semantic runtime owns its own .env; back/.env no longer carries
+    # SEMANTIC_* connection URLs.
+    for line in (REPO / "YellowStorm/semantic-model-runtime/.env").read_text(encoding="utf-8").splitlines():
         if line.startswith("SEMANTIC_RUNTIME_DATABASE_URL="):
             return line.split("=", 1)[1]
-    raise SystemExit("SEMANTIC_RUNTIME_DATABASE_URL missing in back/.env")
+    raise SystemExit("SEMANTIC_RUNTIME_DATABASE_URL missing in semantic-model-runtime/.env")
 
 
 async def drop_fixture() -> None:

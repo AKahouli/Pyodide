@@ -1,6 +1,5 @@
 import { Inject, Injectable, OnModuleInit, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
-import axios from 'axios';
 import semanticModelConfig from '@config/semantic-model.config';
 import { WorkspaceIntegrationEvents, type WorkspaceDocumentEventV1 } from '@modules/integration-events/contracts';
 import type { IntegrationEventEnvelope } from '@modules/integration-events/interfaces/integration-event.interface';
@@ -36,21 +35,22 @@ export class SemanticModelSourceEventHandler implements OnModuleInit {
     if (!payload.workspaceId || !payload.documentId) {
       throw new ServiceUnavailableException('Workspace source event is missing identity');
     }
-    await axios.post(
-      `${this.config.runtimeUrl.replace(/\/+$/, '')}/v1/semantic-model-datasource/events`,
-      {
+    const res = await fetch(`${this.config.runtimeUrl.replace(/\/+$/, '')}/v1/semantic-model-datasource/events`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Semantic-Service-Key': this.config.runtimeServiceKey,
+      },
+      body: JSON.stringify({
         eventId: event.eventId,
         eventType: event.eventType,
         occurredAt: event.occurredAt.toISOString(),
         payload: event.payload,
-      },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Semantic-Service-Key': this.config.runtimeServiceKey,
-        },
-        timeout: this.config.runtimeRequestTimeoutMs,
-      },
-    );
+      }),
+      signal: AbortSignal.timeout(this.config.runtimeRequestTimeoutMs),
+    });
+    if (!res.ok) {
+      throw new Error(`Semantic model runtime relay returned HTTP ${res.status}`);
+    }
   }
 }

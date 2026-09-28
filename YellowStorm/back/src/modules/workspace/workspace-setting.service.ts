@@ -10,12 +10,13 @@ import { LoggerService } from '../logger';
 import { NotFoundException, ForbiddenException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import type { WorkspaceSettingRecord } from './ports/workspace-records';
-import { SETTING_STORE, type SettingStore, type SettingUpdatePatch } from './stores/setting-store';
+import { type SettingUpdatePatch } from './stores/setting-store';
+import { PgSettingStore } from './stores/postgres/pg-setting-store';
 
 @Injectable()
 export class WorkspaceSettingService {
   constructor(
-    @Inject(SETTING_STORE) private readonly settingStore: SettingStore,
+    private readonly settingStore: PgSettingStore,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('WorkspaceSettingService');

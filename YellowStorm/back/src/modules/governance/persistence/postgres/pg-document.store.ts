@@ -6,11 +6,10 @@ import * as schema from '@modules/postgres/schema';
 import { newObjectId } from '@common/postgres/object-id';
 import { resolveQueryable } from '@common/postgres/transaction';
 import {
-  GOVERNANCE_DOCUMENT_STORE,
-  type GovernanceDocumentStore,
-  type GovernanceDocumentUpdate,
-  type GovernanceDocumentUpdateGuard,
-  type GovernanceDocumentUpsertInput,
+  type GovernanceDocumentStore, 
+  type GovernanceDocumentUpdate, 
+  type GovernanceDocumentUpdateGuard, 
+  type GovernanceDocumentUpsertInput, 
 } from '../document-store';
 import type { GovernanceDocumentRecord } from '../governance-records';
 

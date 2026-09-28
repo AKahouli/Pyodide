@@ -1,9 +1,6 @@
 import type { ConnectionStatus } from '../connected-app.types';
 
 /** Store ports for the integrations connected-app tables (plan step 3.1–3.3). */
-export const CONNECTED_APP_DEFINITION_STORE = Symbol('CONNECTED_APP_DEFINITION_STORE');
-export const USER_APP_CONNECTION_STORE = Symbol('USER_APP_CONNECTION_STORE');
-export const CONNECTED_APP_OAUTH_STATE_STORE = Symbol('CONNECTED_APP_OAUTH_STATE_STORE');
 
 export interface ConnectedAppDefinitionRow {
   id: string;

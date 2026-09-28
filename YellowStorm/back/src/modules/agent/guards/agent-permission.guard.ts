@@ -6,17 +6,16 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { Inject } from '@nestjs/common';
 import { isObjectId } from '@common/postgres';
 import { AgentRepository } from '../repositories/agent.repository';
 import { AgentRecord } from '../repositories/agent-record.mapper';
-import { AGENT_SHARE_STORE, type AgentShareStore } from '../persistence/agent-share.store';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import {
   AGENT_PERMISSION_KEY,
   RequiredAgentPermission,
 } from '../decorators/require-agent-permission.decorator';
 import { AgentPermissionLevel } from '../interfaces/agent.interface';
+import { PgAgentShareStore } from '../persistence/pg-agent-share.store';
 
 export interface AgentContext {
   agent: AgentRecord;
@@ -36,8 +35,7 @@ export class AgentPermissionGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly agentRepository: AgentRepository,
-    @Inject(AGENT_SHARE_STORE)
-    private readonly shareStore: AgentShareStore,
+    private readonly shareStore: PgAgentShareStore,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {

@@ -8,16 +8,13 @@ import { isObjectId, normalizeObjectId } from '@common/postgres';
 import { escapeLike } from '@common/postgres/like';
 import { NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
-import { USER_STORE, type UserStore } from '../../user/persistence/user.store';
-import {
-  CONVERSATION_V2_SESSION_STORE,
-  type ConversationV2SessionStore,
-} from '../../conversation-v2/persistence/conversation-v2-session.store';
+import { USER_STORE, type UserStore } from '../../user/persistence/user.store';
 import { AppDataClientService } from '../../app-data/services/app-data-client.service';
 import { APP_BUILDER_AI_USAGE_SOURCE } from '../constants';
 import { AppBuilderAiSettingsService } from './app-builder-ai-settings.service';
 import { AppBuilderAiOfferService } from './app-builder-ai-offer.service';
 import { AppBuilderAiUsageService } from './app-builder-ai-usage.service';
+import { PgConversationV2SessionStore } from '../../conversation-v2/persistence/postgres/pg-conversation-v2-session.store';
 
 type AppUsageAgg = {
   sessionId: string | null;
@@ -37,8 +34,7 @@ export class AppBuilderAiAdminService {
     private readonly usage: AppBuilderAiUsageService,
     @Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>,
     @Inject(USER_STORE) private readonly users: UserStore,
-    @Inject(CONVERSATION_V2_SESSION_STORE)
-    private readonly sessions: ConversationV2SessionStore,
+    private readonly sessions: PgConversationV2SessionStore,
     @Optional() private readonly appDataClient?: AppDataClientService,
   ) {}
 

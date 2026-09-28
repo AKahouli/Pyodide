@@ -796,3 +796,71 @@ async def test_recovery_leaves_live_leases_and_completed_jobs_untouched(pool: as
     await _age_dispatch(pool, seconds=3600)
     assert await _recover(repository, max_attempts=0) == {"exhausted": 0, "requeued": 0}
     assert await pool.fetchval("SELECT state FROM semantic_jobs.jobs WHERE id = $1::uuid", admitted.job_id) == "completed"
+
+
+QUEUE = "semantic-model-population.batch"
+
+
+@pytest.mark.asyncio
+async def test_stopping_a_queued_run_ends_it_at_once_and_a_new_request_starts_fresh(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    admitted = await admit(repository)
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks")
+    model_id = "11111111-1111-1111-1111-111111111111"
+    assert (await repository.find_active_job(actor_user_id="user-1", model_id=model_id,
+                                             job_type="population.run"))["jobId"] == admitted.job_id
+
+    # Only the actor who started it can stop it.
+    assert await repository.request_cancel(admitted.job_id, "someone-else") is None
+    stopped = await repository.request_cancel(admitted.job_id, "user-1")
+    assert stopped["state"] == "cancelled" and stopped["errorCode"] == "cancelled"
+    assert await pool.fetchval("SELECT state FROM semantic_jobs.tasks WHERE id = $1", task_id) == "cancelled"
+    assert await repository.claim_task(task_id=task_id, queue_name=QUEUE, lease_owner="w", lease_seconds=30) is None
+    assert await repository.find_active_job(actor_user_id="user-1", model_id=model_id,
+                                            job_type="population.run") is None
+    # Stopping again changes nothing.
+    assert (await repository.request_cancel(admitted.job_id, "user-1"))["state"] == "cancelled"
+    assert await pool.fetchval("SELECT count(*) FROM semantic_jobs.events WHERE event_type = 'job.cancelled'") == 1
+
+    again = await admit(repository)
+    assert again.job_id != admitted.job_id and again.reused is False
+
+
+@pytest.mark.asyncio
+async def test_stopping_a_running_run_asks_its_worker_which_ends_it_without_a_result(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    admitted = await admit(repository)
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks")
+    lease = await repository.claim_task(task_id=task_id, queue_name=QUEUE, lease_owner="w", lease_seconds=30)
+    assert lease and await repository.cancel_requested(admitted.job_id) is False
+
+    asked = await repository.request_cancel(admitted.job_id, "user-1")
+    assert asked["state"] == "cancel_requested"
+    assert await repository.cancel_requested(admitted.job_id) is True
+    # Still followed as the model's run until the worker ends it.
+    assert (await repository.find_active_job(actor_user_id="user-1", model_id=asked["modelId"],
+                                             job_type="population.run"))["jobId"] == admitted.job_id
+
+    assert await repository.cancel_task(task_id=task_id, lease_owner="w", lease_epoch=lease.lease_epoch) == {
+        "jobId": admitted.job_id, "state": "cancelled"}
+    job = await repository.get_job(admitted.job_id, "user-1")
+    assert job["state"] == "cancelled" and job["result"] is None and job["completedAt"] is not None
+    assert await pool.fetchval("SELECT state FROM semantic_jobs.tasks WHERE id = $1", task_id) == "cancelled"
+    with pytest.raises(StaleLease):
+        await repository.cancel_task(task_id=task_id, lease_owner="w", lease_epoch=lease.lease_epoch)
+
+
+@pytest.mark.asyncio
+async def test_recovery_ends_a_dead_workers_run_that_was_asked_to_stop(pool: asyncpg.Pool):
+    repository = PostgresJobRepository(pool)
+    admitted = await admit(repository)
+    task_id = await pool.fetchval("SELECT id FROM semantic_jobs.tasks")
+    assert await repository.claim_task(task_id=task_id, queue_name=QUEUE, lease_owner="dead", lease_seconds=30)
+    await repository.request_cancel(admitted.job_id, "user-1")
+    await _expire_lease(pool, task_id)
+
+    # Never claimed again, never requeued: it ends as stopped.
+    assert await repository.claim_task(task_id=task_id, queue_name=QUEUE, lease_owner="w2", lease_seconds=30) is None
+    assert await _recover(repository) == {"exhausted": 0, "requeued": 0}
+    assert await pool.fetchval("SELECT state FROM semantic_jobs.tasks WHERE id = $1", task_id) == "cancelled"
+    assert (await repository.get_job(admitted.job_id, "user-1"))["state"] == "cancelled"

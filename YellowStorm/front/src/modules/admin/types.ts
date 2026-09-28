@@ -1120,6 +1120,13 @@ export interface PlaybookExecutionAdminSettings {
   graphCacheEnabled: boolean;
   graphCacheMaxEntries: number;
   graphCacheTtlSeconds: number;
+  asyncDesignEnabled: boolean;
+  deltaPatchEnabled: boolean;
+  tokenBufferEnabled: boolean;
+  executionLeaseEnabled: boolean;
+  dynamicReasoningEnabled: boolean;
+  maxConcurrentGlobalDesignOperations: number;
+  maxConcurrentUserDesignOperations: number;
   dynamicReasoning: {
     plannerAgentId: string | null;
     maxWorkNodes: number;

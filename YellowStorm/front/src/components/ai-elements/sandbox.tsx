@@ -1,17 +1,19 @@
 'use client';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
-import type { ToolUIPart } from 'ai';
 import { ChevronDownIcon, Code, Loader2, CheckCircle2, XCircle } from 'lucide-react';
 import type { ComponentProps } from 'react';
 import { CollapsibleTrigger, Collapsible, CollapsibleContent } from '../ui/collapsible';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 
+// Tool invocation states (previously ToolUIPart['state'] from the 'ai' package).
+type ToolUIPartState = 'input-streaming' | 'input-available' | 'output-available' | 'output-error';
+
 /**
  * Extended state type that includes error state and legacy states for sandbox execution.
  */
-export type SandboxState = ToolUIPart['state'] | 'error' | 'partial-call' | 'call' | 'result';
+export type SandboxState = ToolUIPartState | 'error' | 'partial-call' | 'call' | 'result';
 
 /**
  * Returns a status badge based on the sandbox state.

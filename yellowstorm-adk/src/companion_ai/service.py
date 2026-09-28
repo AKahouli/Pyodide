@@ -32,7 +32,6 @@ from typing import List, Optional, Tuple
 active_turn_id: ContextVar[Optional[str]] = ContextVar("worky_active_turn_id", default=None)
 
 from google.adk.agents import LlmAgent
-from google.adk.runners import Runner
 from google.genai import types
 from pydantic import BaseModel, Field
 

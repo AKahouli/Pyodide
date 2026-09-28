@@ -22,6 +22,8 @@ export interface AttributeDefinition {
   required: boolean;
   description?: string;
   options?: string[];
+  /** Business synonyms for this field, e.g. "Client no." for "Customer number". */
+  aliases?: string[];
 }
 
 export interface SemanticNodeType {

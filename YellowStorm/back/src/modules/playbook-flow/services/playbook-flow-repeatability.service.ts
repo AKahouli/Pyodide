@@ -1,25 +1,16 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import { LoggerService } from '@modules/logger';
-import { Flow, FlowDocument } from '../schemas/playbook-flow.schema';
-import { FlowExecution, FlowExecutionDocument } from '../schemas/playbook-flow-execution.schema';
-import { FlowTaskResult, FlowTaskResultDocument } from '../schemas/playbook-flow-task-result.schema';
-import {
-  FlowValidatedReplay,
-  FlowValidatedReplayDocument,
-  type FlowReplayToolPolicy,
-  FlowReplayValidationStatus,
-  normalizeReplayMode,
-  type ReplayMode,
-} from '../schemas/playbook-flow-validated-replay.schema';
-import {
-  FlowEvaluationExecution,
-  FlowEvaluationExecutionDocument,
-} from '../schemas/playbook-flow-evaluation-execution.schema';
+import { FlowRepository } from '../persistence/flow.repository';
+import { ExecutionRepository } from '../persistence/execution.repository';
+import { TaskResultRepository } from '../persistence/task-result.repository';
+import { ValidatedReplayRepository } from '../persistence/validated-replay.repository';
+import { EvaluationExecutionRepository } from '../persistence/evaluation-execution.repository';
 import {
   type FlowReplayOutputContract,
-} from '../schemas/playbook-flow-validated-replay.schema';
+  type FlowReplayToolPolicy,
+  normalizeReplayMode,
+  type ReplayMode,
+} from '../interfaces/playbook-flow-validated-replay.interface';
 import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
 import { scoreToolPolicyCompliance } from '../utils/playbook-flow-tool-policy.util';
 
@@ -90,11 +81,11 @@ interface GoldenBaselineRecord {
 @Injectable()
 export class PlaybookFlowRepeatabilityService {
   constructor(
-    @InjectModel(Flow.name) private readonly flowModel: Model<FlowDocument>,
-    @InjectModel(FlowExecution.name) private readonly executionModel: Model<FlowExecutionDocument>,
-    @InjectModel(FlowTaskResult.name) private readonly taskResultModel: Model<FlowTaskResultDocument>,
-    @InjectModel(FlowValidatedReplay.name) private readonly replayModel: Model<FlowValidatedReplayDocument>,
-    @InjectModel(FlowEvaluationExecution.name) private readonly evalModel: Model<FlowEvaluationExecutionDocument>,
+    private readonly flowRepository: FlowRepository,
+    private readonly executionRepository: ExecutionRepository,
+    private readonly taskResultRepository: TaskResultRepository,
+    private readonly replayRepository: ValidatedReplayRepository,
+    private readonly evaluationExecutionRepository: EvaluationExecutionRepository,
     private readonly logger: LoggerService,
     private readonly outputContractService: PlaybookFlowOutputContractService,
   ) { this.logger.setContext('PlaybookFlowRepeatabilityService'); }
@@ -104,14 +95,13 @@ export class PlaybookFlowRepeatabilityService {
     limit = 5,
     offset = 0,
   ): Promise<FlowRepeatabilitySummary> {
-    const flow = await this.flowModel.findById(flowId).lean().exec();
+    const flow = await this.flowRepository.findById(flowId);
     if (!flow) return this.emptySummary(flowId);
 
     const stepNodes = this.extractStepNodes(flow);
     if (stepNodes.length === 0) return this.emptySummary(flowId);
 
-    const baseQuery = { flowId, status: 'completed' };
-    const totalCount = await this.executionModel.countDocuments(baseQuery);
+    const totalCount = await this.executionRepository.countByFlow(flowId, ['completed']);
 
     if (totalCount < MIN_ITERATIONS) {
       return {
@@ -129,15 +119,11 @@ export class PlaybookFlowRepeatabilityService {
 
     const taskIds = stepNodes.map((n) => n.id);
     const goldenBaselines = await this.loadGoldenBaselines(flowId, taskIds);
-    const allExecutions = await this.executionModel
-      .find(baseQuery)
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec();
+    const allExecutions = await this.executionRepository.listByFlow(flowId, { statuses: ['completed'] });
 
     const allIterations = await Promise.all(
       allExecutions.map((exec) =>
-        this.evaluateIteration(exec._id.toString(), stepNodes, goldenBaselines),
+        this.evaluateIteration(exec, stepNodes, goldenBaselines),
       ),
     );
 
@@ -172,7 +158,7 @@ export class PlaybookFlowRepeatabilityService {
     taskId: string,
     limit = 5,
   ): Promise<FlowRepeatabilityTaskSummary[] | null> {
-    const flow = await this.flowModel.findById(flowId).lean().exec();
+    const flow = await this.flowRepository.findById(flowId);
     if (!flow) return null;
 
     const node = flow.nodes.find((n) => n.id === taskId && n.kind === 'step');
@@ -180,16 +166,11 @@ export class PlaybookFlowRepeatabilityService {
 
     const goldenBaselines = await this.loadGoldenBaselines(flowId, [taskId]);
 
-    const executions = await this.executionModel
-      .find({ flowId, status: 'completed' })
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .lean()
-      .exec();
+    const executions = await this.executionRepository.listByFlow(flowId, { statuses: ['completed'], limit });
 
     return Promise.all(
       executions.map((exec) =>
-        this.evaluateTaskExecution(exec._id.toString(), node, goldenBaselines),
+        this.evaluateTaskExecution(exec.id, node, goldenBaselines),
       ),
     );
   }
@@ -205,24 +186,22 @@ export class PlaybookFlowRepeatabilityService {
   }
 
   private async evaluateIteration(
-    executionId: string,
+    execution: { id: string; endedAt: Date | null },
     nodes: Array<{ id: string; label?: string; metadata?: Record<string, unknown> }>,
     goldenBaselines: Map<string, GoldenBaselineRecord>,
   ): Promise<FlowRepeatabilityIterationSummary> {
     const taskSummaries = await Promise.all(
       nodes.map((node) =>
-        this.evaluateTaskExecution(executionId, node, goldenBaselines),
+        this.evaluateTaskExecution(execution.id, node, goldenBaselines),
       ),
     );
-
-    const execution = await this.executionModel.findById(executionId).lean().exec();
 
     const evaluatedTasks = taskSummaries.filter((t) => t.evaluated);
     const passedTasks = taskSummaries.filter((t) => t.passed);
 
     return {
-      executionId,
-      completedAt: execution?.endedAt ?? null,
+      executionId: execution.id,
+      completedAt: execution.endedAt ?? null,
       taskCount: taskSummaries.length,
       evaluatedTasks: evaluatedTasks.length,
       passedTasks: passedTasks.length,
@@ -243,10 +222,13 @@ export class PlaybookFlowRepeatabilityService {
     const { value: expectedResult, source: expectedResultSource } =
       this.resolveExpectedResult(node, baseline);
 
-    const taskResult = await this.taskResultModel
-      .findOne({ executionId, taskId: node.id, status: 'completed' })
-      .lean()
-      .exec();
+    // The task's first completed iteration, as Mongo's unsorted findOne returned it.
+    const [taskResult] = await this.taskResultRepository.listForExecution(executionId, {
+      taskIds: [node.id],
+      statuses: ['completed'],
+      light: true,
+      with: ['output', 'toolTrace'],
+    });
 
     const output = taskResult
       ? typeof taskResult.output === 'string' ? taskResult.output : JSON.stringify(taskResult.output ?? '')
@@ -255,7 +237,7 @@ export class PlaybookFlowRepeatabilityService {
     const completedAt = taskResult?.endedAt ?? null;
     const toolPolicy = scoreToolPolicyCompliance({
       toolPolicy: baseline?.toolPolicy ?? null,
-      toolTrace: taskResult?.toolTrace ?? [],
+      toolTrace: (taskResult?.toolTrace ?? []) as unknown as Parameters<typeof scoreToolPolicyCompliance>[0]['toolTrace'],
     });
 
     const textMatchScore = expectedResultSource !== 'none' && expectedResult && output
@@ -274,11 +256,7 @@ export class PlaybookFlowRepeatabilityService {
       ? structuralValidation.reasons
       : [];
 
-    const contentEval = await this.evalModel
-      .findOne({ executionId, taskId: node.id })
-      .sort({ createdAt: -1 })
-      .lean()
-      .exec();
+    const contentEval = await this.evaluationExecutionRepository.findLatestForTask(executionId, node.id);
 
     const contentScore = contentEval
       ? this.normalizePercentScore(contentEval.semanticScore)
@@ -348,19 +326,12 @@ export class PlaybookFlowRepeatabilityService {
     const baselines = new Map<string, GoldenBaselineRecord>();
     if (taskIds.length === 0) return baselines;
 
-    const replays = await this.replayModel
-      .find({
-        flowId,
-        taskId: { $in: taskIds },
-        status: FlowReplayValidationStatus.ACTIVE,
-      })
-      .lean()
-      .exec();
+    const replays = await this.replayRepository.listActiveForTasks(flowId, taskIds);
 
     for (const replay of replays) {
       baselines.set(replay.taskId, {
         flowId: replay.flowId,
-        replayId: String(replay._id),
+        replayId: replay.id,
         mode: replay.mode ? normalizeReplayMode(replay.mode) : null,
         referenceOutput: replay.referenceOutput ?? null,
         toolPolicy: replay.toolPolicy ?? null,

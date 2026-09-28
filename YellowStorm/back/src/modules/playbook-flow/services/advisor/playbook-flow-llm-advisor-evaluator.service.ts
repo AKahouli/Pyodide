@@ -9,8 +9,8 @@ import { PlaybookFlowPromptRendererService } from '../playbook-flow-prompt-rende
 import { PlaybookFlowPromptTemplateService } from '../playbook-flow-prompt-template.service';
 import { PlaybookFlowAdvisorModelService } from './playbook-flow-advisor-model.service';
 import { PlaybookFlowExecutionAdvisorMapper } from './playbook-flow-execution-advisor.mapper';
-import type { FlowNode } from '../../schemas/playbook-flow.schema';
-import type { FlowTaskResultDocument } from '../../schemas/playbook-flow-task-result.schema';
+import type { FlowNode } from '../../models/playbook-flow.model';
+import type { TaskResultRecord } from '../../persistence/task-result.repository';
 import type {
   FlowExecutionAdvisorEvaluationResult,
   FlowExecutionJudgePromptTraceItem,
@@ -39,7 +39,7 @@ export class PlaybookFlowLlmAdvisorEvaluatorService {
     ownerId: string;
     flowId: string;
     node: FlowNode;
-    taskResult: FlowTaskResultDocument | Record<string, unknown>;
+    taskResult: TaskResultRecord | Record<string, unknown>;
     expectedResult: string | null;
     outputFormatGuide: string | null;
     baselineOutput: string | null;
@@ -106,7 +106,7 @@ export class PlaybookFlowLlmAdvisorEvaluatorService {
     executionId: string;
     flowId: string;
     node: FlowNode;
-    taskResult: FlowTaskResultDocument | Record<string, unknown>;
+    taskResult: TaskResultRecord | Record<string, unknown>;
     expectedResult: string | null;
     outputFormatGuide: string | null;
     baselineOutput: string | null;

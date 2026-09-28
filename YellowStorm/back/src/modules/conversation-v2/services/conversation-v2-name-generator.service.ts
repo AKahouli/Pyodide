@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ChatCompletionService } from '@modules/chat-completion';
 import { ModelsService } from '@modules/models/models.service';
-import { stripLeadingTrailingChars } from '@common/utils';
 
 const TITLE_SYSTEM_PROMPT = `You generate a short, descriptive conversation title from the user's first message.
 
@@ -60,7 +59,7 @@ export class ConversationV2NameGeneratorService {
 
   private sanitize(raw: string): string {
     // Strip surrounding quotes/whitespace and clamp length to keep DB tidy.
-    const trimmed = stripLeadingTrailingChars(raw.trim(), '\'"`').trim();
+    const trimmed = raw.trim().replace(/^['"`]+|['"`]+$/g, '').trim();
     const oneLine = trimmed.split(/\r?\n/)[0].trim();
     return oneLine.length > 120 ? oneLine.slice(0, 120).trim() : oneLine;
   }

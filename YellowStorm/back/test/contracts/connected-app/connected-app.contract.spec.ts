@@ -5,6 +5,7 @@ import { ConnectedAppDefinitionService } from '@modules/connected-app/services/c
 import { ConnectedAppUserService } from '@modules/connected-app/services/connected-app-user.service';
 import { InMemoryConnectionStore } from '@modules/connected-app/persistence/connected-app.store.fake';
 import type { ConnectedAppDefinitionRow } from '@modules/connected-app/persistence/connected-app.store';
+import { PgUserAppConnectionStore } from '../../../src/modules/connected-app/persistence/pg-connected-app.store';
 
 const definition: ConnectedAppDefinitionRow = {
   id: '64b000000000000000000901',
@@ -56,7 +57,7 @@ describe('connected-app contracts', () => {
       providerAccountId: 'acct-1',
     });
     const service = new ConnectedAppUserService(
-      store,
+      store as unknown as PgUserAppConnectionStore,
       { findAllEnabled: async () => [definition] } as never,
       { setContext: jest.fn() } as never,
     );

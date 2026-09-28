@@ -6,10 +6,7 @@ import {
   forwardRef,
 } from '@nestjs/common';
 import { ConversationV2EventStoreService } from '@modules/conversation-v2/services/conversation-v2-event-store.service';
-import {
-  RUNTIME_FINALIZED_REVISION_STORE,
-  type RuntimeFinalizedRevisionStore,
-} from '../persistence/runtime-finalized-revision.store';
+import { PgRuntimeFinalizedRevisionStore } from '../persistence/pg-runtime-finalized-revision.store';
 
 export interface FinalizedRevisionRecord {
   revisionId: string;
@@ -39,8 +36,7 @@ export class RuntimeFinalizedRevisionService {
   private readonly logger = new Logger(RuntimeFinalizedRevisionService.name);
 
   constructor(
-    @Inject(RUNTIME_FINALIZED_REVISION_STORE)
-    private readonly store: RuntimeFinalizedRevisionStore,
+    private readonly store: PgRuntimeFinalizedRevisionStore,
     @Inject(forwardRef(() => ConversationV2EventStoreService))
     private readonly eventStore: ConversationV2EventStoreService,
   ) {}

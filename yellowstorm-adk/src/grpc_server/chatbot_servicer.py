@@ -13,12 +13,10 @@ import tempfile
 import shutil
 import time
 from contextvars import Token
-from google.protobuf import json_format, struct_pb2, timestamp_pb2
 
 import litellm
 import aiohttp
 import aiofiles
-from azure.storage.filedatalake.aio import DataLakeServiceClient
 from typing import AsyncGenerator, Dict, Any, Optional, List
 
 from google.protobuf.json_format import MessageToDict
@@ -26,7 +24,7 @@ from structlog import get_logger
 from src.config.settings import get_settings
 from src.flow_engine.generation.prompt import build_generate_playbook_prompt
 
-from src.middleware.correlation import UserContext, user_ctx, set_user_context, get_user_label
+from src.middleware.correlation import user_ctx, set_user_context, get_user_label
 # Import generated protobuf code (will be generated after running proto generation)
 try:
     from src.grpc_generated import chatbot_pb2, chatbot_pb2_grpc
@@ -521,21 +519,13 @@ class ChatbotServicer(
                         get_task.cancel()  # Cancel the pending queue.get()
 
                         # Send error component instead of aborting stream
-                        error_component = {
-                            "action": "add",
-                            "component": {
-                                "id": str(uuid.uuid4()),
-                                "type": "error",
-                                "data": {
-                                    "title": "Exception",
-                                    "content": "The model couldn't finish your answer due to an unexpected error.",
-                                },
-                            },
-                            "metadata": {"message_id": request.conversation_id},
-                        }
-
-                        # Convert error component to protobuf and yield it
-                        error_chunk_pb = self._dict_to_stream_chunk(error_component)
+                        error_chunk_pb = self._dict_to_stream_chunk(
+                            self._agent_stream_error_component(
+                                request.conversation_id,
+                                "Exception",
+                                "The model couldn't finish your answer due to an unexpected error.",
+                            )
+                        )
                         yield error_chunk_pb
 
                         logger.info(
@@ -605,28 +595,7 @@ class ChatbotServicer(
                 f"user_id: {request.user_context.user_id}"
             )
 
-            if get_task is not None and not get_task.done():
-                get_task.cancel()
-                try:
-                    await get_task
-                except asyncio.CancelledError:
-                    logger.debug("[gRPC] Queue get task cancelled successfully")
-                except Exception as cleanup_error:
-                    logger.warning(
-                        f"[gRPC] Error during queue get task cleanup: {cleanup_error}"
-                    )
-
-            # Cancel the background task gracefully
-            if bg_task is not None and not bg_task.done():
-                bg_task.cancel()
-                try:
-                    await bg_task
-                except asyncio.CancelledError:
-                    logger.debug("[gRPC] Background task cancelled successfully")
-                except Exception as cleanup_error:
-                    logger.warning(
-                        f"[gRPC] Error during background task cleanup: {cleanup_error}"
-                    )
+            await self._cancel_stream_tasks(get_task, bg_task)
 
             # Drain the queue to prevent memory leaks
             drained = 0
@@ -653,23 +622,13 @@ class ChatbotServicer(
             logger.error(f"[gRPC] Error in RunAgentTeam: {str(e)}", exc_info=True)
 
             # Send error component to client instead of aborting stream
-            error_component = {
-                "action": "add",
-                "component": {
-                    "id": str(uuid.uuid4()),
-                    "type": "error",
-                    "data": {
-                        "title": "Validation Error"
-                        if isinstance(e, ValueError)
-                        else "Error",
-                        "content": str(e),
-                    },
-                },
-                "metadata": {"message_id": request.conversation_id},
-            }
-
-            # Convert error component to protobuf and yield it
-            error_chunk_pb = self._dict_to_stream_chunk(error_component)
+            error_chunk_pb = self._dict_to_stream_chunk(
+                self._agent_stream_error_component(
+                    request.conversation_id,
+                    "Validation Error" if isinstance(e, ValueError) else "Error",
+                    str(e),
+                )
+            )
             yield error_chunk_pb
 
             logger.info(
@@ -784,19 +743,13 @@ class ChatbotServicer(
                             f"error: {str(exception)}"
                         )
                         get_task.cancel()
-                        error_component = {
-                            "action": "add",
-                            "component": {
-                                "id": str(uuid.uuid4()),
-                                "type": "error",
-                                "data": {
-                                    "title": "Exception",
-                                    "content": "The model couldn't finish your answer due to an unexpected error.",
-                                },
-                            },
-                            "metadata": {"message_id": request.conversation_id},
-                        }
-                        yield self._dict_to_stream_chunk(error_component)
+                        yield self._dict_to_stream_chunk(
+                            self._agent_stream_error_component(
+                                request.conversation_id,
+                                "Exception",
+                                "The model couldn't finish your answer due to an unexpected error.",
+                            )
+                        )
                         return
 
                 chunk_dict = await get_task
@@ -833,41 +786,20 @@ class ChatbotServicer(
             logger.info(
                 f"[gRPC] Client cancelled single-agent stream - conversation_id: {request.conversation_id}"
             )
-            if get_task is not None and not get_task.done():
-                get_task.cancel()
-                try:
-                    await get_task
-                except asyncio.CancelledError:
-                    pass
-                except Exception as cleanup_error:
-                    logger.warning(f"[gRPC] Error during queue get task cleanup: {cleanup_error}")
-            if bg_task is not None and not bg_task.done():
-                bg_task.cancel()
-                try:
-                    await bg_task
-                except asyncio.CancelledError:
-                    pass
-                except Exception as cleanup_error:
-                    logger.warning(f"[gRPC] Error during background task cleanup: {cleanup_error}")
+            await self._cancel_stream_tasks(get_task, bg_task)
             if isinstance(cancellation, asyncio.CancelledError):
                 raise cancellation
             return
 
         except Exception as e:
             logger.error(f"[gRPC] Error in RunSingleAgent: {str(e)}", exc_info=True)
-            error_component = {
-                "action": "add",
-                "component": {
-                    "id": str(uuid.uuid4()),
-                    "type": "error",
-                    "data": {
-                        "title": "Validation Error" if isinstance(e, ValueError) else "Error",
-                        "content": str(e),
-                    },
-                },
-                "metadata": {"message_id": request.conversation_id},
-            }
-            yield self._dict_to_stream_chunk(error_component)
+            yield self._dict_to_stream_chunk(
+                self._agent_stream_error_component(
+                    request.conversation_id,
+                    "Validation Error" if isinstance(e, ValueError) else "Error",
+                    str(e),
+                )
+            )
             return
         finally:
             self._reset_latency_trace(latency_trace_token)
@@ -889,6 +821,47 @@ class ChatbotServicer(
             },
             "metadata": {"message_id": message_id},
         })
+
+    @staticmethod
+    def _agent_stream_error_component(message_id: str, title: str, content: str) -> Dict[str, Any]:
+        """Error component dict shared by the agent-stream failure paths."""
+        return {
+            "action": "add",
+            "component": {
+                "id": str(uuid.uuid4()),
+                "type": "error",
+                "data": {"title": title, "content": content},
+            },
+            "metadata": {"message_id": message_id},
+        }
+
+    @staticmethod
+    async def _cancel_stream_tasks(
+        get_task: Optional[asyncio.Task],
+        bg_task: Optional[asyncio.Task],
+    ) -> None:
+        """Cancel a pending queue-get and the background producer task.
+
+        Shared by the RunAgentTeam/RunSingleAgent cancellation handlers; each
+        cancellation is awaited so it settles before the RPC unwinds.
+        """
+        if get_task is not None and not get_task.done():
+            get_task.cancel()
+            try:
+                await get_task
+            except asyncio.CancelledError:
+                logger.debug("[gRPC] Queue get task cancelled successfully")
+            except Exception as cleanup_error:
+                logger.warning(f"[gRPC] Error during queue get task cleanup: {cleanup_error}")
+
+        if bg_task is not None and not bg_task.done():
+            bg_task.cancel()
+            try:
+                await bg_task
+            except asyncio.CancelledError:
+                logger.debug("[gRPC] Background task cancelled successfully")
+            except Exception as cleanup_error:
+                logger.warning(f"[gRPC] Error during background task cleanup: {cleanup_error}")
 
     @staticmethod
     def _build_stream_heartbeat_chunk(message_id: str) -> "chatbot_pb2.StreamChunk":

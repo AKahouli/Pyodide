@@ -1,14 +1,14 @@
-import { Inject, Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Injectable,  CanActivate,  ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { LoggerService } from '@modules/logger';
 import { Request } from 'express';
 import { createHash } from 'crypto';
 import { UnauthorizedException, ForbiddenException, NotFoundException } from '@modules/exceptions';
-import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { WIDGET_TOKEN_STORE, type WidgetTokenStore } from '../persistence/widget.store';
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { AgentRepository } from '@modules/agent/repositories/agent.repository';
 import { AgentRecord } from '@modules/agent/repositories/agent-record.mapper';
 import { WIDGET_DEPLOYMENT_MODE_KEY, type WidgetDeploymentMode } from '../decorators/widget-deployment-mode.decorator';
+import { PgWidgetTokenStore } from '../persistence/pg-widget.store';
 
 interface RequestWithWidget extends Request {
   widgetTokenHash?: string;
@@ -19,7 +19,7 @@ interface RequestWithWidget extends Request {
 @Injectable()
 export class WidgetTokenGuard implements CanActivate {
   constructor(
-    @Inject(WIDGET_TOKEN_STORE) private readonly widgetTokenStore: WidgetTokenStore,
+    private readonly widgetTokenStore: PgWidgetTokenStore,
     private readonly agentRepository: AgentRepository,
     private readonly reflector: Reflector,
     private readonly logger: LoggerService,

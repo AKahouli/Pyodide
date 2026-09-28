@@ -1,148 +1,39 @@
-import { Types } from 'mongoose';
+import { newObjectId } from '@common/postgres';
 import { WorkySchedulerService } from './worky-scheduler.service';
+import type { WorkyScheduledEventRecord, WorkyTaskRecord } from '../worky.types';
 
-class FakeCollection {
-  private readonly docs = new Map<string, any>();
+const timer = (over: Partial<WorkyScheduledEventRecord> = {}): WorkyScheduledEventRecord => ({
+  id: newObjectId(),
+  streamId: newObjectId(),
+  taskId: null,
+  eventType: 'reminder',
+  fireAt: new Date(Date.now() - 1_000),
+  status: 'claimed',
+  claimToken: 'token',
+  claimedAt: new Date(),
+  firedAt: null,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+  ...over,
+});
 
-  findOne(filter: Record<string, unknown> = {}): any {
-    let sortKey: string | null = null;
-    let sortDir: 1 | -1 = 1;
-    const exec = async () => {
-      const matches = Array.from(this.docs.values()).filter((d) => this.matches(d, filter));
-      if (sortKey) {
-        matches.sort((a, b) => {
-          const av = a[sortKey as string];
-          const bv = b[sortKey as string];
-          if (av === bv) return 0;
-          if (av === undefined || av === null) return 1;
-          if (bv === undefined || bv === null) return -1;
-          if (av < bv) return -1 * sortDir;
-          if (av > bv) return 1 * sortDir;
-          return 0;
-        });
-      }
-      return matches[0] ?? null;
-    };
-    const lean = () => ({ exec });
-    const sort = (sortSpec: Record<string, 1 | -1>) => {
-      const [[key, dir]] = Object.entries(sortSpec);
-      sortKey = key;
-      sortDir = dir;
-      return { exec, lean };
-    };
-    return { exec, lean, sort };
-  }
-
-  findOneAndUpdate(filter: Record<string, unknown>, update: Record<string, unknown>, options: Record<string, unknown> = {}): any {
-    const exec = async () => {
-      for (const doc of this.docs.values()) {
-        if (this.matches(doc, filter)) {
-          Object.assign(doc, (update as { $set: Record<string, unknown> }).$set ?? {});
-          return (options as { new: boolean }).new ? doc : doc;
-        }
-      }
-      return null;
-    };
-    return { exec };
-  }
-
-  async create(doc: Record<string, unknown>): Promise<any> {
-    const _id = (doc._id as Types.ObjectId) ?? new Types.ObjectId();
-    const persisted: any = { ...doc, _id };
-    this.docs.set(_id.toString(), persisted);
-    return persisted;
-  }
-
-  findById(id: any): any {
-    const doc = this.docs.get(id.toString()) ?? null;
-    const exec = async () => doc;
-    return {
-      exec,
-      lean: () => ({ exec }),
-      select: () => ({ exec, lean: () => ({ exec }) }),
-    };
-  }
-
-  updateOne(filter: Record<string, unknown>, update: Record<string, unknown>): any {
-    for (const doc of this.docs.values()) {
-      if (this.matches(doc, filter)) {
-        Object.assign(doc, (update as { $set: Record<string, unknown> }).$set ?? {});
-        const exec = async () => ({ matchedCount: 1, modifiedCount: 1 });
-        return { exec };
-      }
-    }
-    const exec = async () => ({ matchedCount: 0, modifiedCount: 0 });
-    return { exec };
-  }
-
-  updateMany(filter: Record<string, unknown>, update: Record<string, unknown>): any {
-    let count = 0;
-    for (const doc of this.docs.values()) {
-      if (this.matches(doc, filter)) {
-        Object.assign(doc, (update as { $set: Record<string, unknown> }).$set ?? {});
-        count += 1;
-      }
-    }
-    const exec = async () => ({ modifiedCount: count });
-    return { exec };
-  }
-
-  private matches(doc: any, filter: Record<string, unknown>): boolean {
-    for (const [k, v] of Object.entries(filter)) {
-      const dv = doc[k];
-      // Recognize Mongo-style operator filters. `v` can be either an
-      // object with `$op` keys (e.g. `{ $lte: ... }`) or an array of
-      // alternatives for top-level `$or`.
-      const vIsOperatorObject =
-        v && typeof v === 'object' && !(v instanceof Date);
-      if (vIsOperatorObject) {
-        // Top-level $or: value is an array of sub-filters.
-        if (k === '$or' && Array.isArray(v)) {
-          const ors = v as Array<Record<string, unknown>>;
-          if (!ors.some((sub) => this.matches(doc, sub))) return false;
-          continue;
-        }
-        if (!Array.isArray(v) && '$lte' in (v as Record<string, unknown>)) {
-          const lte = (v as { $lte: Date }).$lte;
-          if (dv && dv.getTime && lte && lte.getTime) {
-            if (dv.getTime() > lte.getTime()) return false;
-            continue;
-          }
-          return false;
-        }
-        if (
-          dv &&
-          typeof dv === 'object' &&
-          'toString' in (dv as object) &&
-          'toString' in (v as object) &&
-          !Array.isArray(v)
-        ) {
-          if ((v as { toString(): string }).toString() !== (dv as { toString(): string }).toString()) return false;
-          continue;
-        }
-      }
-      if (dv !== v) return false;
-    }
-    return true;
-  }
-}
+const task = (executionState: string, lane: string): WorkyTaskRecord =>
+  ({ id: newObjectId(), streamId: newObjectId(), title: 'T', executionState, lane }) as WorkyTaskRecord;
 
 function buildService() {
-  const events = new FakeCollection();
-  const tasks = new FakeCollection();
-  const logger = {
-    setContext: jest.fn(),
-    log: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn(),
-    debug: jest.fn(),
+  const timers = {
+    create: jest.fn().mockImplementation(async (input: Record<string, unknown>) =>
+      timer({ ...input, status: 'pending', claimToken: null, claimedAt: null }),
+    ),
+    cancelPending: jest.fn().mockResolvedValue(undefined),
+    claimDue: jest.fn().mockResolvedValue(null),
+    markFired: jest.fn().mockResolvedValue(true),
+    requeueExpired: jest.fn().mockResolvedValue(0),
   };
-  const service = new WorkySchedulerService(
-    events as never,
-    tasks as never,
-    logger as never,
-  );
-  return { service, events, tasks, logger };
+  const tasks = { findById: jest.fn().mockResolvedValue(null) };
+  const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
+  const service = new WorkySchedulerService(timers as never, tasks as never, logger as never);
+  return { service, timers, tasks, logger };
 }
 
 describe('WorkySchedulerService', () => {
@@ -151,183 +42,139 @@ describe('WorkySchedulerService', () => {
     ctx = buildService();
   });
 
-  it('schedule creates a pending row', async () => {
-    const row = await ctx.service.schedule({
-      streamId: new Types.ObjectId().toString(),
-      taskId: null,
-      eventType: 'reminder',
-      fireAt: new Date(Date.now() + 60_000),
+  describe('schedule', () => {
+    it('creates a pending row and returns it', async () => {
+      const streamId = newObjectId();
+      const fireAt = new Date(Date.now() + 60_000);
+      const row = await ctx.service.schedule({ streamId, taskId: null, eventType: 'reminder', fireAt });
+
+      expect(ctx.timers.create).toHaveBeenCalledWith({ streamId, taskId: null, eventType: 'reminder', fireAt });
+      expect(row.status).toBe('pending');
+      expect(row.eventType).toBe('reminder');
     });
-    expect(row.status).toBe('pending');
-    expect(row.eventType).toBe('reminder');
+
+    it('rejects a malformed stream or task id', async () => {
+      await expect(
+        ctx.service.schedule({ streamId: 'nope', taskId: null, eventType: 'reminder', fireAt: new Date() }),
+      ).rejects.toThrow(/invalid streamId/);
+      await expect(
+        ctx.service.schedule({ streamId: newObjectId(), taskId: 'nope', eventType: 'reminder', fireAt: new Date() }),
+      ).rejects.toThrow(/invalid taskId/);
+      expect(ctx.timers.create).not.toHaveBeenCalled();
+    });
   });
 
-  it('cancel only affects pending rows', async () => {
-    const row = await ctx.service.schedule({
-      streamId: new Types.ObjectId().toString(),
-      taskId: null,
-      eventType: 'reminder',
-      fireAt: new Date(Date.now() + 60_000),
+  describe('cancel', () => {
+    it('cancels only a pending timer (the repository guards the status)', async () => {
+      const id = newObjectId();
+      await ctx.service.cancel(id);
+      expect(ctx.timers.cancelPending).toHaveBeenCalledWith(id);
     });
-    await ctx.service.cancel((row._id as Types.ObjectId).toString());
-    const stored = (await ctx.events.findOne({ _id: row._id }).exec()) as { status: string };
-    expect(stored.status).toBe('canceled');
+
+    it('rejects a malformed id', async () => {
+      await expect(ctx.service.cancel('nope')).rejects.toThrow(/invalid id/);
+      expect(ctx.timers.cancelPending).not.toHaveBeenCalled();
+    });
   });
 
-  it('claimDue is a no-op when no events are due', async () => {
-    await ctx.service.schedule({
-      streamId: new Types.ObjectId().toString(),
-      taskId: null,
-      eventType: 'reminder',
-      fireAt: new Date(Date.now() + 60_000),
+  describe('claimDue', () => {
+    // Ordering, the lease and concurrent claimers are the SQL statement's job: see the scheduler
+    // cases of persistence/worky.repositories.spec.ts.
+    it('is a no-op when no events are due', async () => {
+      expect(await ctx.service.claimDue()).toBeNull();
     });
-    const claimed = await ctx.service.claimDue();
-    expect(claimed).toBeNull();
+
+    it('claims with the current time and a fresh claim token per call', async () => {
+      const claimed = timer();
+      ctx.timers.claimDue.mockResolvedValueOnce(claimed).mockResolvedValueOnce(null);
+      const before = Date.now();
+
+      expect(await ctx.service.claimDue()).toBe(claimed);
+      await ctx.service.claimDue();
+
+      const [[firstNow, firstToken], [, secondToken]] = ctx.timers.claimDue.mock.calls as Array<[Date, string]>;
+      expect(firstNow.getTime()).toBeGreaterThanOrEqual(before);
+      expect(firstNow.getTime()).toBeLessThanOrEqual(Date.now());
+      expect(firstToken).toMatch(/^[0-9a-f-]{36}$/);
+      expect(secondToken).not.toBe(firstToken);
+    });
   });
 
-  it('claimDue picks the earliest due event and marks it claimed', async () => {
-    const streamId = new Types.ObjectId().toString();
-    const a = await ctx.service.schedule({
-      streamId,
-      taskId: null,
-      eventType: 'reminder',
-      fireAt: new Date(Date.now() - 1_000),
+  describe('dispatchClaimed', () => {
+    it('marks the row fired for a non-terminal task', async () => {
+      const row = timer({ taskId: newObjectId() });
+      ctx.tasks.findById.mockResolvedValueOnce(task('running', 'running'));
+
+      const outcome = await ctx.service.dispatchClaimed(row);
+
+      expect(outcome).toBe('fired');
+      expect(ctx.tasks.findById).toHaveBeenCalledWith(row.taskId);
+      expect(ctx.timers.markFired).toHaveBeenCalledWith(row.id, expect.any(Date));
     });
-    const b = await ctx.service.schedule({
-      streamId,
-      taskId: null,
-      eventType: 'reminder',
-      fireAt: new Date(Date.now() - 2_000),
+
+    it('is a no-op for terminal tasks, but still consumes the timer', async () => {
+      const row = timer({ taskId: newObjectId() });
+      ctx.tasks.findById.mockResolvedValueOnce(task('done', 'done'));
+
+      const outcome = await ctx.service.dispatchClaimed(row);
+
+      expect(outcome).toBe('skipped_terminal');
+      expect(ctx.timers.markFired).toHaveBeenCalledWith(row.id, expect.any(Date));
+      expect(ctx.logger.log).toHaveBeenCalledWith('Worky scheduled event skipped (task terminal)', expect.anything());
     });
-    const claimed = await ctx.service.claimDue();
-    expect(claimed).toBeTruthy();
-    expect((claimed!._id as Types.ObjectId).toString()).toBe((b._id as Types.ObjectId).toString());
-    expect(claimed!.status).toBe('claimed');
-    // The other one is still pending.
-    const aStored = (await ctx.events.findOne({ _id: a._id }).exec()) as { status: string };
-    expect(aStored.status).toBe('pending');
+
+    it('treats a task in a terminal lane as terminal', async () => {
+      ctx.tasks.findById.mockResolvedValueOnce(task('not_started', 'archived'));
+      expect(await ctx.service.dispatchClaimed(timer({ taskId: newObjectId() }))).toBe('skipped_terminal');
+    });
+
+    it('fires a stream-level timer without looking up a task', async () => {
+      expect(await ctx.service.dispatchClaimed(timer())).toBe('fired');
+      expect(ctx.tasks.findById).not.toHaveBeenCalled();
+    });
+
+    it('replays of dispatchClaimed are no-ops', async () => {
+      expect(await ctx.service.dispatchClaimed(timer({ status: 'fired' }))).toBe('skipped_already_fired');
+      expect(await ctx.service.dispatchClaimed(timer({ status: 'canceled' }))).toBe('skipped_already_fired');
+      expect(ctx.timers.markFired).not.toHaveBeenCalled();
+    });
   });
 
-  it('claimDue does not claim a row held by another worker within the lease window', async () => {
-    const row = await ctx.service.schedule({
-      streamId: new Types.ObjectId().toString(),
-      taskId: null,
-      eventType: 'reminder',
-      fireAt: new Date(Date.now() - 1_000),
+  describe('reconcile', () => {
+    it('re-queues claimed rows whose lease expired a minute ago', async () => {
+      ctx.timers.requeueExpired.mockResolvedValueOnce(1);
+      const before = Date.now();
+
+      expect(await ctx.service.reconcile()).toBe(1);
+
+      const [cutoff] = ctx.timers.requeueExpired.mock.calls[0] as [Date];
+      expect(cutoff.getTime()).toBeLessThanOrEqual(Date.now() - 60_000);
+      expect(cutoff.getTime()).toBeGreaterThanOrEqual(before - 60_000);
+      expect(ctx.logger.warn).toHaveBeenCalledWith('Worky scheduled events re-queued by reconciler', { count: 1 });
     });
-    const first = await ctx.service.claimDue();
-    expect(first).toBeTruthy();
-    // Second attempt should not return the same row (it's still claimed).
-    const second = await ctx.service.claimDue();
-    expect(second).toBeNull();
-    const stored = (await ctx.events.findOne({ _id: row._id }).exec()) as { status: string };
-    expect(stored.status).toBe('claimed');
+
+    it('is a no-op when there are no expired leases', async () => {
+      expect(await ctx.service.reconcile()).toBe(0);
+      expect(ctx.logger.warn).not.toHaveBeenCalled();
+    });
   });
 
-  it('dispatchClaimed marks the row fired for a non-terminal task', async () => {
-    const taskId = new Types.ObjectId();
-    await ctx.tasks.create({
-      _id: taskId,
-      streamId: new Types.ObjectId(),
-      title: 'T',
-      executionState: 'running',
-      lane: 'running',
-    });
-    const row = await ctx.service.schedule({
-      streamId: new Types.ObjectId().toString(),
-      taskId: taskId.toString(),
-      eventType: 'reminder',
-      fireAt: new Date(Date.now() - 1_000),
-    });
-    const claimed = await ctx.service.claimDue();
-    expect(claimed).toBeTruthy();
-    const outcome = await ctx.service.dispatchClaimed(claimed!);
-    expect(outcome).toBe('fired');
-    const stored = (await ctx.events.findOne({ _id: row._id }).exec()) as { status: string };
-    expect(stored.status).toBe('fired');
-  });
+  describe('cronClaimDue', () => {
+    it('drains the due timers until none is left', async () => {
+      ctx.timers.claimDue.mockResolvedValueOnce(timer()).mockResolvedValueOnce(timer()).mockResolvedValueOnce(null);
 
-  it('dispatchClaimed is a no-op for terminal tasks', async () => {
-    const taskId = new Types.ObjectId();
-    await ctx.tasks.create({
-      _id: taskId,
-      streamId: new Types.ObjectId(),
-      title: 'T',
-      executionState: 'done',
-      lane: 'done',
-    });
-    await ctx.service.schedule({
-      streamId: new Types.ObjectId().toString(),
-      taskId: taskId.toString(),
-      eventType: 'reminder',
-      fireAt: new Date(Date.now() - 1_000),
-    });
-    const claimed = await ctx.service.claimDue();
-    expect(claimed).toBeTruthy();
-    const outcome = await ctx.service.dispatchClaimed(claimed!);
-    expect(outcome).toBe('skipped_terminal');
-  });
+      await ctx.service.cronClaimDue();
 
-  it('reconcile re-queues claimed rows whose lease expired', async () => {
-    const row = await ctx.service.schedule({
-      streamId: new Types.ObjectId().toString(),
-      taskId: null,
-      eventType: 'reminder',
-      fireAt: new Date(Date.now() - 1_000),
+      expect(ctx.timers.claimDue).toHaveBeenCalledTimes(3);
+      expect(ctx.timers.markFired).toHaveBeenCalledTimes(2);
     });
-    const claimed = await ctx.service.claimDue();
-    expect(claimed).toBeTruthy();
-    // Simulate lease expiry by setting claimedAt to a time in the past.
-    await ctx.events.updateOne(
-      { _id: row._id },
-      { $set: { claimedAt: new Date(Date.now() - 5 * 60_000) } },
-    );
-    const requeued = await ctx.service.reconcile();
-    expect(requeued).toBe(1);
-    const stored = (await ctx.events.findOne({ _id: row._id }).exec()) as {
-      status: string;
-      claimToken: string | null;
-    };
-    expect(stored.status).toBe('pending');
-    expect(stored.claimToken).toBeNull();
-  });
 
-  it('reconcile is a no-op when there are no expired leases', async () => {
-    await ctx.service.schedule({
-      streamId: new Types.ObjectId().toString(),
-      taskId: null,
-      eventType: 'reminder',
-      fireAt: new Date(Date.now() - 1_000),
-    });
-    const claimed = await ctx.service.claimDue();
-    expect(claimed).toBeTruthy();
-    const requeued = await ctx.service.reconcile();
-    expect(requeued).toBe(0);
-  });
+    it('logs instead of throwing when a claim fails', async () => {
+      ctx.timers.claimDue.mockRejectedValueOnce(new Error('db down'));
 
-  it('replays of dispatchClaimed are no-ops', async () => {
-    const taskId = new Types.ObjectId();
-    await ctx.tasks.create({
-      _id: taskId,
-      streamId: new Types.ObjectId(),
-      title: 'T',
-      executionState: 'running',
-      lane: 'running',
+      await expect(ctx.service.cronClaimDue()).resolves.toBeUndefined();
+
+      expect(ctx.logger.error).toHaveBeenCalledWith('Worky scheduler claim-due failed', { error: 'db down' });
     });
-    const row = await ctx.service.schedule({
-      streamId: new Types.ObjectId().toString(),
-      taskId: taskId.toString(),
-      eventType: 'reminder',
-      fireAt: new Date(Date.now() - 1_000),
-    });
-    const claimed = await ctx.service.claimDue();
-    expect(claimed).toBeTruthy();
-    const first = await ctx.service.dispatchClaimed(claimed!);
-    const second = await ctx.service.dispatchClaimed({
-      ...(claimed as object),
-      status: 'fired',
-    } as never);
-    expect(first).toBe('fired');
-    expect(second).toBe('skipped_already_fired');
   });
 });
