@@ -1,7 +1,5 @@
 import type { WorkspaceSettingRecord } from '../ports/workspace-records';
 
-export const SETTING_STORE = Symbol('SETTING_STORE');
-
 export interface SettingCreateInput {
   name: string;
   description?: string;
@@ -42,12 +40,3 @@ export interface SettingUpdatePatch {
   topK?: number;
 }
 
-/** Internal write/read store for the workspace_settings aggregate (plan D.5). */
-export interface SettingStore {
-  create(input: SettingCreateInput): Promise<WorkspaceSettingRecord>;
-  findById(id: string): Promise<WorkspaceSettingRecord | null>;
-  listByUser(userId: string, params: SettingListParams): Promise<{ items: WorkspaceSettingRecord[]; total: number }>;
-  listTemplates(params: SettingListParams): Promise<{ items: WorkspaceSettingRecord[]; total: number }>;
-  updateFields(id: string, patch: SettingUpdatePatch): Promise<void>;
-  deleteById(id: string): Promise<void>;
-}

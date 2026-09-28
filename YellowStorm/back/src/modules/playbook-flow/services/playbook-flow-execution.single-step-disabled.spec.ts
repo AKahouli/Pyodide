@@ -4,27 +4,21 @@ import { PlaybookFlowObservabilityService } from './observability/playbook-flow-
 import { PlaybookFlowPublicReasoningParserService } from './observability/playbook-flow-public-reasoning-parser.service';
 import { PlaybookFlowTraceRedactionService } from './observability/playbook-flow-trace-redaction.service';
 import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
-import { createExecutionServiceForTests, createNoopGraphSanitizer } from './playbook-flow-execution.test-support';
+import {
+  createExecutionRepositoryMock,
+  createExecutionServiceForTests,
+  createNoopGraphSanitizer,
+  createTaskResultRepositoryMock,
+} from './playbook-flow-execution.test-support';
 
 describe('single-step execution disabled-node safety', () => {
   it('drops disabled nodes from full workflow execution snapshots', async () => {
-    const savedExecution = {
-      id: 'exec-filtered',
-      queuePosition: 0,
-      snapshot: undefined,
-      save: jest.fn().mockResolvedValue(undefined),
-      toJSON: jest.fn().mockReturnValue({ id: 'exec-filtered' }),
-    };
-    savedExecution.save = jest.fn().mockResolvedValue(savedExecution);
-    const ExecutionModel = jest.fn(function ExecutionModel(this: Record<string, unknown>, payload: Record<string, unknown>) {
-      Object.assign(this, savedExecution, payload);
-      return this;
-    }) as any;
-    ExecutionModel.findByIdAndDelete = jest.fn();
+    const executionRepository = createExecutionRepositoryMock();
+    const taskResultRepository = createTaskResultRepositoryMock();
     const service = new PlaybookFlowExecutionService(
-      ExecutionModel,
-      { updateOne: jest.fn(), deleteMany: jest.fn(), find: jest.fn() } as any,
-      { create: jest.fn(), deleteMany: jest.fn() } as any,
+      executionRepository as any,
+      taskResultRepository as any,
+      { create: jest.fn(), listForExecution: jest.fn() } as any,
       { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
       { init: jest.fn(), isAvailable: jest.fn().mockReturnValue(false) } as any,
       { admit: jest.fn().mockResolvedValue(1), release: jest.fn(), refreshPositions: jest.fn().mockResolvedValue([]) } as any,
@@ -80,14 +74,14 @@ describe('single-step execution disabled-node safety', () => {
       { validateModelActive: jest.fn().mockResolvedValue({ valid: true, model: null, inactive: false }) } as any,
     );
     (service as any).singleStepPrepService = new PlaybookExecutionSingleStepPrepService(
-      (service as any).executionModel,
-      (service as any).taskResultModel,
+      executionRepository as any,
+      taskResultRepository as any,
     );
     jest.spyOn(service as any, 'drainQueue').mockResolvedValue(undefined);
 
     await service.start('flow-1', 'owner-1', {});
 
-    expect(ExecutionModel.mock.calls[0][0].snapshot).toEqual({
+    expect(executionRepository.insert.mock.calls[0][0].snapshot).toEqual({
       settings: {},
       nodes: [{ id: 'task-1', kind: 'step', metadata: {}, output: { ports: [{ id: 'output' }] } }],
       controlEdges: [],

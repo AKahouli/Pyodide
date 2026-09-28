@@ -6,13 +6,13 @@ import * as schema from '@modules/postgres/schema';
 import { newObjectId } from '@common/postgres/object-id';
 import { resolveQueryable } from '@common/postgres/transaction';
 import { shareRowToRecord } from '../../persistence/postgres/pg-workspace-share-read.adapter';
-import { SHARE_STORE, type ShareStore, type ShareCreateInput, type SharePage } from '../share-store';
+import { type ShareCreateInput, type SharePage } from '../share-store';
 import type { WorkspaceShareRecord } from '../../ports/workspace-records';
 
 const SHARES = schema.workspaceShares;
 
 @Injectable()
-export class PgShareStore implements ShareStore {
+export class PgShareStore {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
 
   private get q() {

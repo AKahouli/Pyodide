@@ -1,11 +1,12 @@
-import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable,  OnModuleInit } from '@nestjs/common';
 import { isObjectId } from '@common/postgres';
 import { ConflictException, ForbiddenException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
-import { CONNECTOR_CATEGORY_STORE, type ConnectorCategoryRow, type ConnectorCategoryStore } from './persistence/connector.store';
+import { type ConnectorCategoryRow} from './persistence/connector.store';
 import { CreateConnectorCategoryDto } from './dto/create-connector-category.dto';
 import { UpdateConnectorCategoryDto } from './dto/update-connector-category.dto';
 import { IConnectorCategoryResponse } from './interfaces/connector.interface';
+import { PgConnectorCategoryStore } from './persistence/pg-connector.store';
 
 /** Reserved built-in category. Connectors assigned to it are hidden from end users. */
 export const SYSTEM_CATEGORY_NAME = 'System';
@@ -15,8 +16,7 @@ const SYSTEM_OWNER_ID = '000000000000000000000000';
 @Injectable()
 export class ConnectorCategoryService implements OnModuleInit {
   constructor(
-    @Inject(CONNECTOR_CATEGORY_STORE)
-    private readonly categoryStore: ConnectorCategoryStore,
+    private readonly categoryStore: PgConnectorCategoryStore,
   ) {}
 
   /** Ensure the reserved "System" category exists and is flagged, on every boot. */

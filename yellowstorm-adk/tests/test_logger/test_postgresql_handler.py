@@ -5,7 +5,6 @@ import os
 import time
 from unittest.mock import Mock, MagicMock, patch, call
 import pytest
-import psycopg2
 
 from tests.common_schema import MockSettings
 from src.logger.postgresql_handler import PostgreSQLHandler, is_postgresql_logging_enabled
@@ -39,12 +38,12 @@ class TestPostgreSQLHandler:
     def test_parse_database_url(self, mock_settings):
         """Test parsing of PostgreSQL database URL."""
         with patch('src.logger.postgresql_handler.get_settings', return_value=mock_settings):
-            with patch('psycopg2.pool.ThreadedConnectionPool'):
+            with patch('src.logger.postgresql_handler.ConnectionPool'):
                 handler = PostgreSQLHandler()
 
                 assert handler.connection_params['host'] == 'localhost'
                 assert handler.connection_params['port'] == 5432
-                assert handler.connection_params['database'] == 'testdb'
+                assert handler.connection_params['dbname'] == 'testdb'
                 assert handler.connection_params['user'] == 'testuser'
                 assert handler.connection_params['password'] == 'testpass'
 
@@ -53,7 +52,7 @@ class TestPostgreSQLHandler:
         mock_settings.DATABASE_URL = "postgresql://user:pass@localhost/testdb"
 
         with patch('src.logger.postgresql_handler.get_settings', return_value=mock_settings):
-            with patch('psycopg2.pool.ThreadedConnectionPool'):
+            with patch('src.logger.postgresql_handler.ConnectionPool'):
                 handler = PostgreSQLHandler()
 
                 assert handler.connection_params['port'] == 5432  # Default port
@@ -77,7 +76,7 @@ class TestPostgreSQLHandler:
     def test_handler_initialization(self, mock_settings):
         """Test handler initialization."""
         with patch('src.logger.postgresql_handler.get_settings', return_value=mock_settings):
-            with patch('psycopg2.pool.ThreadedConnectionPool') as mock_pool_class:
+            with patch('src.logger.postgresql_handler.ConnectionPool') as mock_pool_class:
                 mock_pool = MagicMock()
                 mock_pool_class.return_value = mock_pool
 
@@ -103,7 +102,7 @@ class TestPostgreSQLHandler:
         mock_pool, mock_conn, mock_cursor = mock_connection_pool
 
         with patch('src.logger.postgresql_handler.get_settings', return_value=mock_settings):
-            with patch('psycopg2.pool.ThreadedConnectionPool', return_value=mock_pool):
+            with patch('src.logger.postgresql_handler.ConnectionPool', return_value=mock_pool):
                 handler = PostgreSQLHandler()
 
                 # Verify that execute was called with CREATE TABLE query
@@ -115,7 +114,7 @@ class TestPostgreSQLHandler:
     def test_emit_adds_to_queue(self, mock_settings):
         """Test that emit() adds log records to the queue."""
         with patch('src.logger.postgresql_handler.get_settings', return_value=mock_settings):
-            with patch('psycopg2.pool.ThreadedConnectionPool'):
+            with patch('src.logger.postgresql_handler.ConnectionPool'):
                 handler = PostgreSQLHandler()
 
                 # Create a log record
@@ -138,7 +137,7 @@ class TestPostgreSQLHandler:
     def test_emit_filters_debug_logs(self, mock_settings):
         """Test that emit() filters out DEBUG level logs."""
         with patch('src.logger.postgresql_handler.get_settings', return_value=mock_settings):
-            with patch('psycopg2.pool.ThreadedConnectionPool'):
+            with patch('src.logger.postgresql_handler.ConnectionPool'):
                 handler = PostgreSQLHandler()
 
                 # Create a DEBUG log record
@@ -161,7 +160,7 @@ class TestPostgreSQLHandler:
     def test_emit_filters_warning_logs(self, mock_settings):
         """Test that emit() filters out WARNING level logs."""
         with patch('src.logger.postgresql_handler.get_settings', return_value=mock_settings):
-            with patch('psycopg2.pool.ThreadedConnectionPool'):
+            with patch('src.logger.postgresql_handler.ConnectionPool'):
                 handler = PostgreSQLHandler()
 
                 # Create a WARNING log record
@@ -184,7 +183,7 @@ class TestPostgreSQLHandler:
     def test_emit_accepts_info_error_critical(self, mock_settings):
         """Test that emit() accepts INFO, ERROR, and CRITICAL logs."""
         with patch('src.logger.postgresql_handler.get_settings', return_value=mock_settings):
-            with patch('psycopg2.pool.ThreadedConnectionPool'):
+            with patch('src.logger.postgresql_handler.ConnectionPool'):
                 handler = PostgreSQLHandler()
 
                 # Create records for each accepted level
@@ -212,7 +211,7 @@ class TestPostgreSQLHandler:
     def test_prepare_log_data(self, mock_settings):
         """Test log data preparation."""
         with patch('src.logger.postgresql_handler.get_settings', return_value=mock_settings):
-            with patch('psycopg2.pool.ThreadedConnectionPool'):
+            with patch('src.logger.postgresql_handler.ConnectionPool'):
                 handler = PostgreSQLHandler()
 
                 # Create a log record with custom attributes
@@ -246,7 +245,7 @@ class TestPostgreSQLHandler:
     def test_prepare_log_data_with_http_info(self, mock_settings):
         """Test log data preparation with HTTP information from direct attributes."""
         with patch('src.logger.postgresql_handler.get_settings', return_value=mock_settings):
-            with patch('psycopg2.pool.ThreadedConnectionPool'):
+            with patch('src.logger.postgresql_handler.ConnectionPool'):
                 handler = PostgreSQLHandler()
 
                 record = logging.LogRecord(
@@ -277,7 +276,7 @@ class TestPostgreSQLHandler:
     def test_prepare_log_data_with_duration_ns(self, mock_settings):
         """Test log data preparation with duration_ns field."""
         with patch('src.logger.postgresql_handler.get_settings', return_value=mock_settings):
-            with patch('psycopg2.pool.ThreadedConnectionPool'):
+            with patch('src.logger.postgresql_handler.ConnectionPool'):
                 handler = PostgreSQLHandler()
 
                 record = logging.LogRecord(
@@ -300,7 +299,7 @@ class TestPostgreSQLHandler:
     def test_prepare_log_data_with_duration_fallback(self, mock_settings):
         """Test log data preparation with duration fallback."""
         with patch('src.logger.postgresql_handler.get_settings', return_value=mock_settings):
-            with patch('psycopg2.pool.ThreadedConnectionPool'):
+            with patch('src.logger.postgresql_handler.ConnectionPool'):
                 handler = PostgreSQLHandler()
 
                 record = logging.LogRecord(
@@ -324,7 +323,7 @@ class TestPostgreSQLHandler:
     def test_prepare_log_data_with_trace_ids(self, mock_settings):
         """Test log data preparation with Datadog trace IDs."""
         with patch('src.logger.postgresql_handler.get_settings', return_value=mock_settings):
-            with patch('psycopg2.pool.ThreadedConnectionPool'):
+            with patch('src.logger.postgresql_handler.ConnectionPool'):
                 handler = PostgreSQLHandler()
 
                 record = logging.LogRecord(
@@ -351,7 +350,7 @@ class TestPostgreSQLHandler:
         mock_pool, mock_conn, mock_cursor = mock_connection_pool
 
         with patch('src.logger.postgresql_handler.get_settings', return_value=mock_settings):
-            with patch('psycopg2.pool.ThreadedConnectionPool', return_value=mock_pool):
+            with patch('src.logger.postgresql_handler.ConnectionPool', return_value=mock_pool):
                 handler = PostgreSQLHandler()
 
                 # Reset cursor mock to clear table creation calls
@@ -389,7 +388,7 @@ class TestPostgreSQLHandler:
     def test_connection_pool_error_handling(self, mock_settings):
         """Test handling of connection pool creation errors."""
         with patch('src.logger.postgresql_handler.get_settings', return_value=mock_settings):
-            with patch('psycopg2.pool.ThreadedConnectionPool', side_effect=Exception("Connection failed")):
+            with patch('src.logger.postgresql_handler.ConnectionPool', side_effect=Exception("Connection failed")):
                 handler = PostgreSQLHandler()
 
                 # Handler should still be created but pool should be None
@@ -400,7 +399,7 @@ class TestPostgreSQLHandler:
         mock_pool, mock_conn, mock_cursor = mock_connection_pool
 
         with patch('src.logger.postgresql_handler.get_settings', return_value=mock_settings):
-            with patch('psycopg2.pool.ThreadedConnectionPool', return_value=mock_pool):
+            with patch('src.logger.postgresql_handler.ConnectionPool', return_value=mock_pool):
                 handler = PostgreSQLHandler()
 
                 # Close handler
@@ -417,7 +416,7 @@ class TestPostgreSQLHandler:
         mock_pool, mock_conn, mock_cursor = mock_connection_pool
 
         with patch('src.logger.postgresql_handler.get_settings', return_value=mock_settings):
-            with patch('psycopg2.pool.ThreadedConnectionPool', return_value=mock_pool):
+            with patch('src.logger.postgresql_handler.ConnectionPool', return_value=mock_pool):
                 # Use smaller batch size and interval for testing
                 handler = PostgreSQLHandler(batch_size=2, flush_interval=0.5)
 

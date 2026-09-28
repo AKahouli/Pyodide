@@ -191,7 +191,7 @@ class TestPrepareAgentData:
             "vectorstore_name": "custom-vs",
             "chatbot_name": {"provider": "gpt-4o"},
         }
-        with patch("src.smart_rag.agents.factories.delegation_factory_helper.build_tree", return_value=([], {})):
+        with patch("src.smart_rag.agents.factories.delegation_factory.build_tree", return_value=([], {})):
             result = prepare_agent_data(helper, config, agent_config, ["search"], "base", "bot")
         assert result[2].startswith("base")
         assert "Use top_k wisely" in result[2]

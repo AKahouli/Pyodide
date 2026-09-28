@@ -1,8 +1,6 @@
 import { randomUUID } from 'crypto';
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { PlaybookAssistantMessage, PlaybookAssistantMessageDocument } from '../schemas/playbook-assistant-message.schema';
+import { PlaybookAssistantMessageRepository } from '../persistence/assistant-message.repository';
 
 const MESSAGE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -21,10 +19,7 @@ export interface PlaybookAssistantHistory {
 
 @Injectable()
 export class PlaybookAssistantHistoryService {
-  constructor(
-    @InjectModel(PlaybookAssistantMessage.name)
-    private readonly messageModel: Model<PlaybookAssistantMessageDocument>,
-  ) {}
+  constructor(private readonly messages: PlaybookAssistantMessageRepository) {}
 
   async append(input: {
     requestId: string;
@@ -35,42 +30,27 @@ export class PlaybookAssistantHistoryService {
     content: string;
     operationId?: string;
   }): Promise<void> {
-    await this.messageModel.updateOne(
-      { requestId: input.requestId, role: input.role },
-      {
-        $setOnInsert: {
-          messageId: randomUUID(),
-          ...input,
-          operationId: input.operationId ?? null,
-          expiresAt: new Date(Date.now() + MESSAGE_RETENTION_MS),
-        },
-      },
-      { upsert: true },
-    ).exec();
+    await this.messages.appendOnce({
+      messageId: randomUUID(),
+      ...input,
+      operationId: input.operationId ?? null,
+      expiresAt: new Date(Date.now() + MESSAGE_RETENTION_MS),
+    });
   }
 
   async list(ownerId: string, playbookId: string, conversationId?: string): Promise<PlaybookAssistantHistory> {
-    const resolvedConversationId = conversationId || (await this.messageModel
-      .findOne({ ownerId, playbookId })
-      .sort({ createdAt: -1 })
-      .select({ conversationId: 1 })
-      .lean()
-      .exec())?.conversationId;
+    const resolvedConversationId = conversationId || await this.messages.latestConversationId(ownerId, playbookId);
     if (!resolvedConversationId) return { conversationId: null, messages: [] };
 
-    const messages = await this.messageModel
-      .find({ ownerId, playbookId, conversationId: resolvedConversationId })
-      .sort({ createdAt: 1 })
-      .lean()
-      .exec();
+    const messages = await this.messages.listConversation(ownerId, playbookId, resolvedConversationId);
     return {
       conversationId: resolvedConversationId,
       messages: messages.map((message) => ({
         messageId: message.messageId,
         role: message.role,
         content: message.content,
-        operationId: message.operationId ?? null,
-        createdAt: message.createdAt ?? null,
+        operationId: message.operationId,
+        createdAt: message.createdAt,
       })),
     };
   }

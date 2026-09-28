@@ -1,18 +1,13 @@
 import { createHash } from 'crypto';
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
-import {
-  BINDING_STORE,
-  DEPLOYMENT_STORE,
-  REVISION_STORE,
-  SCOPE_STORE,
-  type BindingStore,
-  type DeploymentStore,
-  type GovernanceRevisionRecord,
-  type RevisionStore,
-  type ScopeStore,
-  GOVERNANCE_TRANSACTION, PASSTHROUGH_TRANSACTION, type GovernanceTransactionRunner
-} from '../persistence';
+import {        
+  type GovernanceRevisionRecord,           PASSTHROUGH_TRANSACTION} from '../persistence';
+import { PgGovernanceTransactionRunner } from '../persistence/postgres/pg-transaction-runner';
+import { PgRevisionStore } from '../persistence/postgres/pg-revision.store';
+import { PgDeploymentStore } from '../persistence/postgres/pg-deployment.store';
+import { PgBindingStore } from '../persistence/postgres/pg-binding.store';
+import { PgScopeStore } from '../persistence/postgres/pg-scope.store';
 
 type AudienceSnapshot = { mode: 'all_authenticated' | 'restricted'; userIds: string[]; groupIds: string[] };
 
@@ -23,12 +18,12 @@ export interface PrepareGovernanceDraftOptions {
 @Injectable()
 export class GovernanceDraftPreparationService {
   constructor(
-    @Inject(SCOPE_STORE) private readonly scopeStore: ScopeStore,
-    @Inject(BINDING_STORE) private readonly bindingStore: BindingStore,
-    @Inject(DEPLOYMENT_STORE) private readonly deploymentStore: DeploymentStore,
-    @Inject(REVISION_STORE) private readonly revisionStore: RevisionStore,
+    private readonly scopeStore: PgScopeStore,
+    private readonly bindingStore: PgBindingStore,
+    private readonly deploymentStore: PgDeploymentStore,
+    private readonly revisionStore: PgRevisionStore,
     private readonly auditLogService: AuditLogService,
-    @Inject(GOVERNANCE_TRANSACTION) private readonly tx: GovernanceTransactionRunner = PASSTHROUGH_TRANSACTION,
+    private readonly tx: PgGovernanceTransactionRunner = PASSTHROUGH_TRANSACTION as unknown as PgGovernanceTransactionRunner,
   ) {}
 
   async prepare(actorId: string, actorEmail: string, programId: string, scopeId: string, options: PrepareGovernanceDraftOptions = {}): Promise<void> {

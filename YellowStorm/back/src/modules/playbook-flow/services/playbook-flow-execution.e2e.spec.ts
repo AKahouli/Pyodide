@@ -9,41 +9,38 @@ import { PlaybookFlowTraceRedactionService } from './observability/playbook-flow
 import { PlaybookFlowReplayDriftService } from './playbook-flow-replay-drift.service';
 import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
 import { PlaybookFlowReplayPlanService } from './playbook-flow-replay-plan.service';
+import {
+  createExecutionRepositoryMock,
+  createRouterDecisionRepositoryMock,
+  createTaskResultRepositoryMock,
+} from './playbook-flow-execution.test-support';
 
-function mockExecutionModel(overrides?: Record<string, any>) {
-  const base = {
-    exists: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(null) })),
-    updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
-    findById: jest.fn(() => ({
-      select: jest.fn().mockReturnValue({
-        lean: jest.fn().mockResolvedValue({ _id: 'exec-e2e', ownerId: 'owner-1', inputContext: {} }),
-      }),
-      lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }) }),
+const OPEN_STATUSES = ['queued', 'running', 'pending_approval'];
+
+/** The run the E2E flows start: inserted as exec-e2e, read back without a snapshot (the drain loads the flow). */
+function mockExecutionRepository(overrides?: Record<string, any>) {
+  return createExecutionRepositoryMock({
+    insert: jest.fn(async (input: Record<string, unknown>) => ({
+      id: 'exec-e2e',
+      status: 'queued',
+      queuePosition: 0,
+      pendingApproval: null,
+      hitlEvents: [],
+      ...input,
     })),
-    findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
-    findByIdAndDelete: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
-    countDocuments: jest.fn().mockResolvedValue(0),
-    find: jest.fn().mockReturnValue({
-      sort: jest.fn().mockReturnThis(),
-      skip: jest.fn().mockReturnThis(),
-      limit: jest.fn().mockReturnThis(),
-      lean: jest.fn().mockResolvedValue([]),
-    }),
-    deleteMany: jest.fn().mockResolvedValue({ deletedCount: 0 }),
-    distinct: jest.fn().mockResolvedValue([]),
-    updateMany: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 0 }) })),
-  };
-  return { ...base, ...overrides };
+    findById: jest.fn().mockResolvedValue({ id: 'exec-e2e', ownerId: 'owner-1', inputContext: {} }),
+    ...overrides,
+  });
 }
 
 interface E2EContext {
   service: PlaybookFlowExecutionService;
-  executionModel: Record<string, any>;
-  taskResultModel: Record<string, any>;
+  executionRepository: Record<string, any>;
+  taskResultRepository: Record<string, any>;
   queueService: Record<string, any>;
   flowService: Record<string, any>;
   streamEvents: Record<string, any>;
-  routerDecisionModel: Record<string, any>;
+  routerDecisionRepository: Record<string, any>;
   mockRun: jest.Mock;
   triggerStreamEvents: () => Promise<void>;
   buildSnapshot: Record<string, any>;
@@ -52,7 +49,8 @@ interface E2EContext {
 async function createE2EService(
   streamEventsSequence?: Array<{ event_type: string; node_id?: string; iteration?: number; payload?: Record<string, unknown> }>,
   overrides?: {
-    executionModel?: Record<string, any>;
+    executionRepository?: Record<string, any>;
+    taskResultRepository?: Record<string, any>;
     queueService?: Record<string, any>;
     flowService?: Record<string, any>;
     configService?: Record<string, any>;
@@ -76,27 +74,9 @@ async function createE2EService(
     }
   };
 
-  const savedDoc: Record<string, any> = {
-    id: 'exec-e2e',
-    _id: 'exec-e2e',
-    ownerId: 'owner-1',
-    status: 'queued',
-    toJSON: jest.fn().mockReturnValue({ id: 'exec-e2e', queuePosition: 1 }),
-  };
-  savedDoc.save = jest.fn().mockResolvedValue(savedDoc);
-  const ExecutionModel = jest.fn(() => savedDoc) as any;
-  Object.assign(ExecutionModel, mockExecutionModel(overrides?.executionModel));
-
-  const taskResultModel = {
-    updateOne: jest.fn(),
-    updateMany: jest.fn(),
-    deleteMany: jest.fn(),
-    findOne: jest.fn(() => ({ sort: jest.fn().mockReturnThis(), lean: jest.fn().mockResolvedValue(null) })),
-  };
-  const routerDecisionModel = {
-    create: jest.fn(),
-    deleteMany: jest.fn(),
-  };
+  const executionRepository = mockExecutionRepository(overrides?.executionRepository);
+  const taskResultRepository = createTaskResultRepositoryMock(overrides?.taskResultRepository);
+  const routerDecisionRepository = createRouterDecisionRepositoryMock();
 
   const streamHandlers: Record<string, (data?: unknown) => void> = {};
   let streamMockCall: { on: jest.Mock };
@@ -195,7 +175,7 @@ async function createE2EService(
   const replayReportService = { findLatestReportForExecutionTask: jest.fn().mockResolvedValue(null) };
   const outputContractService = new PlaybookFlowOutputContractService();
   const replayDriftService = new PlaybookFlowReplayDriftService(
-    ExecutionModel as any,
+    executionRepository as any,
     replayReportService as any,
     outputContractService,
     new PlaybookFlowReplayPlanService(),
@@ -209,21 +189,21 @@ async function createE2EService(
   };
 
   const hitlResumeService = new PlaybookExecutionHitlResumeService(
-    ExecutionModel as any,
+    executionRepository as any,
     streamEvents as any,
     undefined,
     accessService as any,
   );
 
   const singleStepPrepService = new PlaybookExecutionSingleStepPrepService(
-    ExecutionModel as any,
-    taskResultModel as any,
+    executionRepository as any,
+    taskResultRepository as any,
   );
 
   const service = new PlaybookFlowExecutionService(
-    ExecutionModel,
-    taskResultModel as any,
-    routerDecisionModel as any,
+    executionRepository as any,
+    taskResultRepository as any,
+    routerDecisionRepository as any,
     configService as any,
     runtimeClient as any,
     queueService as any,
@@ -274,12 +254,12 @@ async function createE2EService(
 
   return {
     service,
-    executionModel: ExecutionModel,
-    taskResultModel,
+    executionRepository,
+    taskResultRepository,
     queueService,
     flowService,
     streamEvents,
-    routerDecisionModel,
+    routerDecisionRepository,
     mockRun,
     triggerStreamEvents,
     buildSnapshot,
@@ -319,9 +299,16 @@ describe('E2E: Linear Flow — 3 steps with ExecutionCompleted', () => {
     expect(ctx.streamEvents.emitStepComplete).toHaveBeenCalledTimes(3);
     expect(ctx.streamEvents.emitExecutionComplete).toHaveBeenCalledWith('exec-e2e', 'completed');
     expect(ctx.streamEvents.emitExecutionComplete).toHaveBeenCalledTimes(1);
-    expect(ctx.executionModel.updateOne).toHaveBeenCalledWith(
-      expect.objectContaining({ _id: 'exec-e2e' }),
-      expect.objectContaining({ status: 'completed' }),
+    expect(ctx.executionRepository.insert).toHaveBeenCalledWith(expect.objectContaining({
+      flowId: 'flow-1', ownerId: 'owner-1', status: 'queued', inputContext: { input: 'data' }, executionMode: 'live',
+    }));
+    expect(ctx.executionRepository.markStarted).toHaveBeenCalledWith('exec-e2e', {});
+    expect(ctx.executionRepository.transition).toHaveBeenCalledWith('exec-e2e', {
+      from: OPEN_STATUSES,
+      patch: expect.objectContaining({ status: 'completed' }),
+    });
+    expect(ctx.taskResultRepository.updateManyForExecution).toHaveBeenCalledWith(
+      'exec-e2e', { statuses: ['pending', 'running', 'interrupted'] }, { status: 'completed' },
     );
   });
 
@@ -424,7 +411,10 @@ describe('E2E: Router Loop — multiple iterations', () => {
     expect(ctx.streamEvents.emitRouterDecision).toHaveBeenNthCalledWith(1, 'exec-e2e', 'router-1', 'continue', 0);
     expect(ctx.streamEvents.emitRouterDecision).toHaveBeenNthCalledWith(2, 'exec-e2e', 'router-1', 'continue', 1);
     expect(ctx.streamEvents.emitRouterDecision).toHaveBeenNthCalledWith(3, 'exec-e2e', 'router-1', 'exit', 2);
-    expect(ctx.routerDecisionModel.create).toHaveBeenCalledTimes(3);
+    expect(ctx.routerDecisionRepository.create).toHaveBeenCalledTimes(3);
+    expect(ctx.routerDecisionRepository.create).toHaveBeenNthCalledWith(3, expect.objectContaining({
+      executionId: 'exec-e2e', routerNodeId: 'router-1', iteration: 2, label: 'exit',
+    }));
     expect(ctx.streamEvents.emitExecutionComplete).toHaveBeenCalledWith('exec-e2e', 'completed');
     expect(ctx.streamEvents.emitStepStart).toHaveBeenCalledTimes(3);
   });
@@ -445,10 +435,10 @@ describe('E2E: Error Recovery via __error__ routing', () => {
     expect(ctx.streamEvents.emitStepComplete).toHaveBeenCalledWith('exec-e2e', 'step-1', undefined, 'Something broke', 0);
     expect(ctx.streamEvents.emitRouterDecision).toHaveBeenCalledWith('exec-e2e', 'router-1', '__error__', 0);
     expect(ctx.streamEvents.emitExecutionComplete).toHaveBeenCalledWith('exec-e2e', 'failed', 'Router router-1 returned __error__');
-    expect(ctx.executionModel.updateOne).toHaveBeenCalledWith(
-      expect.objectContaining({ _id: 'exec-e2e' }),
-      expect.objectContaining({ status: 'failed', error: 'Router router-1 returned __error__' }),
-    );
+    expect(ctx.executionRepository.transition).toHaveBeenCalledWith('exec-e2e', {
+      from: OPEN_STATUSES,
+      patch: expect.objectContaining({ status: 'failed', error: 'Router router-1 returned __error__' }),
+    });
   });
 
   it('NodeFailed stores error without marking execution failed', async () => {
@@ -465,9 +455,14 @@ describe('E2E: Error Recovery via __error__ routing', () => {
     await flushPromises();
 
     expect(ctx.streamEvents.emitExecutionComplete).toHaveBeenCalledWith('exec-e2e', 'completed');
-    expect(ctx.executionModel.updateOne).toHaveBeenLastCalledWith(
-      expect.objectContaining({ _id: 'exec-e2e' }),
-      expect.objectContaining({ status: 'completed' }),
+    expect(ctx.executionRepository.transition).toHaveBeenLastCalledWith('exec-e2e', {
+      from: OPEN_STATUSES,
+      patch: expect.objectContaining({ status: 'completed' }),
+    });
+    expect(ctx.taskResultRepository.upsert).toHaveBeenCalledWith(
+      { executionId: 'exec-e2e', taskId: 'step-1', iteration: 0 },
+      expect.objectContaining({ status: 'failed', error: 'Retryable' }),
+      expect.any(Object),
     );
   });
 
@@ -482,10 +477,10 @@ describe('E2E: Error Recovery via __error__ routing', () => {
     await flushPromises();
 
     expect(ctx.streamEvents.emitExecutionComplete).toHaveBeenCalledWith('exec-e2e', 'failed', 'Unrecoverable failure');
-    expect(ctx.executionModel.updateOne).toHaveBeenCalledWith(
-      expect.objectContaining({ _id: 'exec-e2e' }),
-      expect.objectContaining({ status: 'failed', error: 'Unrecoverable failure' }),
-    );
+    expect(ctx.executionRepository.transition).toHaveBeenCalledWith('exec-e2e', {
+      from: OPEN_STATUSES,
+      patch: expect.objectContaining({ status: 'failed', error: 'Unrecoverable failure' }),
+    });
   });
 });
 
@@ -500,10 +495,9 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
     await ctx.triggerStreamEvents();
     await flushPromises();
 
-    expect(ctx.executionModel.updateOne).toHaveBeenCalledWith(
-      expect.objectContaining({ _id: 'exec-e2e' }),
-      expect.objectContaining({ status: 'pending_approval' }),
-    );
+    expect(ctx.executionRepository.setPendingApproval).toHaveBeenCalledWith('exec-e2e', expect.objectContaining({
+      nodeId: 'approval-1', iteration: 0, prompt: 'Approve this?', interruptType: 'approval_request',
+    }));
     expect(ctx.streamEvents.emitInterrupt).toHaveBeenCalledWith(
       'exec-e2e', 'approval-1', 'Approve this?', 0, 'exec-e2e',
       { interruptType: 'approval_request', resumableActions: ['approve', 'reject'] },
@@ -540,31 +534,41 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
     await ctx.triggerStreamEvents();
     await flushPromises();
 
-    expect(ctx.executionModel.updateOne).toHaveBeenCalledWith(
-      expect.objectContaining({ _id: 'exec-e2e' }),
+    expect(ctx.executionRepository.isInterruptStale).toHaveBeenCalledWith('exec-e2e', 'task-1:clarification:1');
+    expect(ctx.taskResultRepository.upsert).toHaveBeenCalledWith(
+      { executionId: 'exec-e2e', taskId: 'task-1', iteration: 1 },
+      { status: 'interrupted' },
+      expect.objectContaining({ startedAt: expect.any(Date) }),
+    );
+    expect(ctx.executionRepository.setPendingApproval).toHaveBeenCalledWith(
+      'exec-e2e',
       expect.objectContaining({
-        $set: expect.objectContaining({
-          status: 'pending_approval',
-          pendingApproval: expect.objectContaining({
-            nodeId: 'task-1',
-            iteration: 1,
-            prompt: 'Which country should I analyze?',
-            interruptType: 'clarification',
-            interruptId: 'task-1:clarification:1',
-            taskTitle: 'GDP Analysis',
-            taskDescription: 'Analyze GDP for a country and year',
-            payloadJson: '[]',
-            resumableActions: ['reply', 'skip'],
-            blockerRuleId: 'rule-1',
-            blockerKind: 'missing_required_input',
-            reasonCode: 'missing_required_input',
-            riskLevel: 'medium',
-            confidence: 1,
-            downstreamNodeIds: ['task-2'],
-            feedbackScopeDefault: 'downstream_run',
-            interruptPayload: expect.objectContaining({ reason_code: 'missing_required_input' }),
-          }),
-        }),
+        nodeId: 'task-1',
+        iteration: 1,
+        prompt: 'Which country should I analyze?',
+        interruptType: 'clarification',
+        interruptId: 'task-1:clarification:1',
+        taskTitle: 'GDP Analysis',
+        taskDescription: 'Analyze GDP for a country and year',
+        payloadJson: '[]',
+        resumableActions: ['reply', 'skip'],
+        blockerRuleId: 'rule-1',
+        blockerKind: 'missing_required_input',
+        reasonCode: 'missing_required_input',
+        riskLevel: 'medium',
+        confidence: 1,
+        downstreamNodeIds: ['task-2'],
+        feedbackScopeDefault: 'downstream_run',
+        interruptPayload: expect.objectContaining({ reason_code: 'missing_required_input' }),
+      }),
+      expect.objectContaining({
+        nodeId: 'task-1',
+        iteration: 1,
+        interruptId: 'task-1:clarification:1',
+        type: 'clarification',
+        reasonCode: 'missing_required_input',
+        status: 'pending',
+        downstreamNodeIds: ['task-2'],
       }),
     );
   });
@@ -572,36 +576,35 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
   it('resumeApproval clears pendingApproval only after gRPC ResumeApproval succeeds', async () => {
     const execDoc = {
       id: 'exec-hum-1',
-      _id: 'exec-hum-1',
       ownerId: 'owner-1',
       status: 'pending_approval',
       pendingApproval: { nodeId: 'approval-1', iteration: 0, prompt: 'Approve?' },
-      save: jest.fn().mockResolvedValue(undefined),
-      toJSON: jest.fn().mockReturnValue({ id: 'exec-hum-1', status: 'running' }),
+      hitlEvents: [],
     };
-    const executionModel = {
-      ...mockExecutionModel(),
+    const executionRepository = {
       findById: jest.fn().mockResolvedValue(execDoc),
     };
     const mockResumeApproval = jest.fn((_req, cb) => cb(null, { resumed: true }));
 
-    const ctx = await createE2EService(undefined, { executionModel });
+    const ctx = await createE2EService(undefined, { executionRepository });
     (ctx.service as any).playbookFlowClient.ResumeApproval = mockResumeApproval;
 
     const result = await ctx.service.resumeApproval('exec-hum-1', 'owner-1', { decision: 'approved' });
 
-    expect(executionModel.updateOne).toHaveBeenCalledWith(
-      expect.objectContaining({
-        _id: 'exec-hum-1',
-        status: 'running',
-        'pendingApproval.nodeId': 'approval-1',
-        'pendingApproval.iteration': 0,
-      }),
-      expect.objectContaining({
-        $set: expect.objectContaining({ status: 'running', pendingApproval: null }),
-      }),
-      expect.objectContaining({ arrayFilters: expect.any(Array) }),
-    );
+    expect(ctx.executionRepository.transition).toHaveBeenCalledWith('exec-hum-1', {
+      from: ['pending_approval'],
+      pendingApproval: { nodeId: 'approval-1', iteration: 0 },
+      patch: { status: 'running' },
+    });
+    expect(ctx.executionRepository.answerHitlEvent).toHaveBeenCalledWith('exec-hum-1', {
+      from: ['running'],
+      pendingApproval: { nodeId: 'approval-1', iteration: 0 },
+      interruptId: '',
+      response: { action: 'approved' },
+      patch: { status: 'running', pendingApproval: null },
+    });
+    expect(ctx.executionRepository.transition.mock.invocationCallOrder[0]).toBeLessThan(mockResumeApproval.mock.invocationCallOrder[0]);
+    expect(mockResumeApproval.mock.invocationCallOrder[0]).toBeLessThan(ctx.executionRepository.answerHitlEvent.mock.invocationCallOrder[0]);
     expect(mockResumeApproval).toHaveBeenCalled();
     const grpcArgs = mockResumeApproval.mock.calls[0];
     expect(grpcArgs[0].execution_id).toBe('exec-hum-1');
@@ -614,14 +617,14 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
     ['reject', 'rejected'],
   ])('routes a human approval %s action through ResumeApproval', async (action, decision) => {
     const execDoc = {
-      id: 'exec-approval-node', _id: 'exec-approval-node', flowId: 'flow-1', ownerId: 'owner-1',
+      id: 'exec-approval-node', flowId: 'flow-1', ownerId: 'owner-1',
       status: 'pending_approval',
       pendingApproval: { nodeId: 'approval-1', iteration: 0, interruptId: 'interrupt-1', prompt: 'Approve?' },
+      hitlEvents: [],
       snapshot: { nodes: [{ id: 'approval-1', kind: 'human_approval' }] },
-      toJSON: jest.fn().mockReturnValue({ id: 'exec-approval-node', status: 'running' }),
     };
-    const executionModel = { ...mockExecutionModel(), findById: jest.fn().mockResolvedValue(execDoc) };
-    const ctx = await createE2EService(undefined, { executionModel });
+    const executionRepository = { findById: jest.fn().mockResolvedValue(execDoc) };
+    const ctx = await createE2EService(undefined, { executionRepository });
     const resumeApproval = jest.fn((_req, cb) => cb(null, { resumed: true }));
     const resumeFromStep = jest.fn();
     (ctx.service as any).playbookFlowClient.ResumeApproval = resumeApproval;
@@ -644,7 +647,7 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
       snapshot: { nodes: [{ id: 'approval-1', kind: 'human_approval' }] },
     };
     const ctx = await createE2EService(undefined, {
-      executionModel: { ...mockExecutionModel(), findById: jest.fn().mockResolvedValue(execDoc) },
+      executionRepository: { findById: jest.fn().mockResolvedValue(execDoc) },
     });
     const resumeFromStep = jest.fn();
     (ctx.service as any).playbookFlowClient.ResumeFromStep = resumeFromStep;
@@ -658,20 +661,17 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
   it('keeps pendingApproval when the runtime reports resume=false', async () => {
     const execDoc = {
       id: 'exec-hum-2',
-      _id: 'exec-hum-2',
       ownerId: 'owner-1',
       status: 'pending_approval',
       pendingApproval: { nodeId: 'approval-1', iteration: 0, prompt: 'Approve?' },
-      save: jest.fn().mockResolvedValue(undefined),
-      toJSON: jest.fn().mockReturnValue({ id: 'exec-hum-2', status: 'pending_approval' }),
+      hitlEvents: [],
     };
-    const executionModel = {
-      ...mockExecutionModel(),
+    const executionRepository = {
       findById: jest.fn().mockResolvedValue(execDoc),
     };
     const mockResumeApproval = jest.fn((_req, cb) => cb(null, { resumed: false }));
 
-    const ctx = await createE2EService(undefined, { executionModel });
+    const ctx = await createE2EService(undefined, { executionRepository });
     (ctx.service as any).playbookFlowClient.ResumeApproval = mockResumeApproval;
 
     await expect(
@@ -680,48 +680,52 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
 
     expect(execDoc.pendingApproval).toEqual({ nodeId: 'approval-1', iteration: 0, prompt: 'Approve?' });
     expect(execDoc.status).toBe('pending_approval');
-    expect(execDoc.save).not.toHaveBeenCalled();
+    expect(ctx.executionRepository.answerHitlEvent).not.toHaveBeenCalled();
+    // The claim is given back: the run waits on the same approval again.
+    expect(ctx.executionRepository.transition).toHaveBeenLastCalledWith('exec-hum-2', {
+      from: ['running'],
+      pendingApproval: { nodeId: 'approval-1', iteration: 0 },
+      patch: { status: 'pending_approval' },
+    });
   });
 
   it('returns the latest terminal execution state if resume loses the race to completion', async () => {
     const execDoc = {
       id: 'exec-hum-3',
-      _id: 'exec-hum-3',
       ownerId: 'owner-1',
       status: 'pending_approval',
       pendingApproval: { nodeId: 'approval-1', iteration: 0, prompt: 'Approve?' },
-      save: jest.fn().mockResolvedValue(undefined),
-      toJSON: jest.fn().mockReturnValue({ id: 'exec-hum-3', status: 'running' }),
+      hitlEvents: [],
     };
     const latestExecDoc = {
       id: 'exec-hum-3',
-      _id: 'exec-hum-3',
       ownerId: 'owner-1',
       status: 'completed',
-      toJSON: jest.fn().mockReturnValue({ id: 'exec-hum-3', status: 'completed' }),
+      pendingApproval: null,
+      hitlEvents: [],
     };
-    const executionModel = {
-      ...mockExecutionModel(),
+    const executionRepository = {
       findById: jest.fn()
         .mockResolvedValueOnce(execDoc)
         .mockResolvedValueOnce(latestExecDoc),
-      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 0 }) })),
+      transition: jest.fn().mockResolvedValue(false),
+      answerHitlEvent: jest.fn().mockResolvedValue(false),
     };
     const mockResumeApproval = jest.fn((_req, cb) => cb(null, { resumed: true }));
 
-    const ctx = await createE2EService(undefined, { executionModel });
+    const ctx = await createE2EService(undefined, { executionRepository });
     (ctx.service as any).playbookFlowClient.ResumeApproval = mockResumeApproval;
 
     const result = await ctx.service.resumeApproval('exec-hum-3', 'owner-1', { decision: 'approved' });
 
     expect(result.status).toBe('completed');
-    expect(execDoc.save).not.toHaveBeenCalled();
+    expect(mockResumeApproval).not.toHaveBeenCalled();
+    expect(ctx.executionRepository.answerHitlEvent).not.toHaveBeenCalled();
   });
 
   it('allows only one concurrent approval request to call the runtime', async () => {
     const execDoc = {
       id: 'exec-hum-race',
-      _id: 'exec-hum-race',
       flowId: 'flow-1',
       ownerId: 'owner-1',
       status: 'pending_approval',
@@ -731,28 +735,24 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
         interruptId: 'approval-race-1',
         prompt: 'Approve?',
       },
-      toJSON: jest.fn().mockReturnValue({ id: 'exec-hum-race', status: 'running' }),
+      hitlEvents: [],
     };
     let claimed = false;
-    const executionModel = {
-      ...mockExecutionModel(),
+    const executionRepository = {
       findById: jest.fn().mockResolvedValue(execDoc),
-      updateOne: jest.fn((filter, update) => ({
-        exec: jest.fn().mockImplementation(async () => {
-          const isClaim = filter.status === 'pending_approval'
-            && update?.$set?.status === 'running'
-            && !Object.prototype.hasOwnProperty.call(update.$set, 'pendingApproval');
-          if (!isClaim) return { modifiedCount: 1 };
-          if (claimed) return { modifiedCount: 0 };
-          claimed = true;
-          return { modifiedCount: 1 };
-        }),
-      })),
+      // The conditional claim (pending_approval -> running on this approval) holds for one caller only.
+      transition: jest.fn(async (_id: string, change: { from?: string[]; patch: { status?: string } }) => {
+        const isClaim = change.from?.includes('pending_approval') && change.patch.status === 'running';
+        if (!isClaim) return true;
+        if (claimed) return false;
+        claimed = true;
+        return true;
+      }),
     };
     const mockResumeApproval = jest.fn((_req, cb) => {
       setTimeout(() => cb(null, { resumed: true }), 5);
     });
-    const ctx = await createE2EService(undefined, { executionModel });
+    const ctx = await createE2EService(undefined, { executionRepository });
     (ctx.service as any).playbookFlowClient.ResumeApproval = mockResumeApproval;
 
     await Promise.all([
@@ -766,7 +766,6 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
   it('restores pending approval when the runtime resume call fails', async () => {
     const execDoc = {
       id: 'exec-hum-error',
-      _id: 'exec-hum-error',
       flowId: 'flow-1',
       ownerId: 'owner-1',
       status: 'pending_approval',
@@ -776,13 +775,12 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
         interruptId: 'approval-error-1',
         prompt: 'Approve?',
       },
-      toJSON: jest.fn().mockReturnValue({ id: 'exec-hum-error', status: 'pending_approval' }),
+      hitlEvents: [],
     };
-    const executionModel = {
-      ...mockExecutionModel(),
+    const executionRepository = {
       findById: jest.fn().mockResolvedValue(execDoc),
     };
-    const ctx = await createE2EService(undefined, { executionModel });
+    const ctx = await createE2EService(undefined, { executionRepository });
     (ctx.service as any).playbookFlowClient.ResumeApproval = jest.fn((_req, cb) => {
       cb(new Error('runtime unavailable'));
     });
@@ -791,45 +789,42 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
       ctx.service.resumeApproval('exec-hum-error', 'owner-1', { decision: 'approved' }),
     ).rejects.toThrow('runtime unavailable');
 
-    expect(executionModel.updateOne).toHaveBeenLastCalledWith(
-      expect.objectContaining({ _id: 'exec-hum-error', status: 'running' }),
-      { $set: { status: 'pending_approval' } },
-    );
+    expect(ctx.executionRepository.transition).toHaveBeenLastCalledWith('exec-hum-error', {
+      from: ['running'],
+      pendingApproval: { nodeId: 'approval-1', iteration: 0, interruptId: 'approval-error-1' },
+      patch: { status: 'pending_approval' },
+    });
+    expect(ctx.executionRepository.answerHitlEvent).not.toHaveBeenCalled();
   });
 
   it('resumeFromStep clears pendingApproval only after gRPC ResumeFromStep succeeds', async () => {
     const execDoc = {
       id: 'exec-step-1',
-      _id: 'exec-step-1',
       ownerId: 'owner-1',
       status: 'pending_approval',
       pendingApproval: {
         nodeId: 'task-1', iteration: 2, prompt: 'Approve?',
         interruptPayload: { request_fingerprint: 'trusted-fingerprint' },
       },
-      save: jest.fn().mockResolvedValue(undefined),
-      toJSON: jest.fn().mockReturnValue({ id: 'exec-step-1', status: 'running' }),
+      hitlEvents: [],
     };
-    const executionModel = {
-      ...mockExecutionModel(),
+    const executionRepository = {
       findById: jest.fn().mockResolvedValue(execDoc),
     };
     const mockResumeFromStep = jest.fn((_req, cb) => cb(null, { resumed: true }));
 
-    const ctx = await createE2EService(undefined, { executionModel });
+    const ctx = await createE2EService(undefined, { executionRepository });
     (ctx.service as any).playbookFlowClient.ResumeFromStep = mockResumeFromStep;
 
     const result = await ctx.service.resumeFromStep('exec-step-1', 'owner-1', {
       taskId: 'task-1', action: 'approve', payload: { request_fingerprint: 'untrusted-fingerprint' },
     });
 
-    expect(executionModel.updateOne).toHaveBeenCalledWith(
-      { _id: 'exec-step-1', status: 'pending_approval' },
-      expect.objectContaining({
-        $set: expect.objectContaining({ status: 'running', pendingApproval: null }),
-      }),
-      expect.objectContaining({ arrayFilters: expect.any(Array) }),
-    );
+    expect(ctx.executionRepository.answerHitlEvent).toHaveBeenCalledWith('exec-step-1', expect.objectContaining({
+      from: ['pending_approval'],
+      interruptId: '',
+      patch: { status: 'running', pendingApproval: null },
+    }));
     expect(mockResumeFromStep).toHaveBeenCalled();
     const grpcArgs = mockResumeFromStep.mock.calls[0];
     expect(grpcArgs[0]).toMatchObject({
@@ -846,19 +841,16 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
   it('resumeFromStep rejects when the pending step does not match', async () => {
     const execDoc = {
       id: 'exec-step-2',
-      _id: 'exec-step-2',
       ownerId: 'owner-1',
       status: 'pending_approval',
       pendingApproval: { nodeId: 'task-1', iteration: 0, prompt: 'Approve?' },
-      save: jest.fn().mockResolvedValue(undefined),
-      toJSON: jest.fn().mockReturnValue({ id: 'exec-step-2', status: 'pending_approval' }),
+      hitlEvents: [],
     };
-    const executionModel = {
-      ...mockExecutionModel(),
+    const executionRepository = {
       findById: jest.fn().mockResolvedValue(execDoc),
     };
 
-    const ctx = await createE2EService(undefined, { executionModel });
+    const ctx = await createE2EService(undefined, { executionRepository });
 
     await expect(
       ctx.service.resumeFromStep('exec-step-2', 'owner-1', { taskId: 'task-2', action: 'approve' }),
@@ -868,17 +860,15 @@ describe('E2E: Human-in-the-Loop — approval and resume', () => {
   it('throws if resuming an execution that is not pending_approval', async () => {
     const execDoc = {
       id: 'exec-nope',
-      _id: 'exec-nope',
       ownerId: 'owner-1',
       status: 'running',
-      save: jest.fn(),
-      toJSON: jest.fn().mockReturnValue({ id: 'exec-nope', status: 'running' }),
+      pendingApproval: null,
+      hitlEvents: [],
     };
-    const executionModel = {
-      ...mockExecutionModel(),
+    const executionRepository = {
       findById: jest.fn().mockResolvedValue(execDoc),
     };
-    const ctx = await createE2EService(undefined, { executionModel });
+    const ctx = await createE2EService(undefined, { executionRepository });
 
     await expect(
       ctx.service.resumeApproval('exec-nope', 'owner-1', { decision: 'approved' }),
@@ -890,17 +880,22 @@ describe('E2E: Cancel', () => {
   it('cancels a running execution and waits for the runtime to release the slot', async () => {
     const execDoc: Record<string, any> = {
       id: 'exec-run-1',
-      _id: 'exec-run-1',
       ownerId: 'owner-1',
       status: 'running',
       pendingApproval: { nodeId: 'step-1', interruptId: 'int-1', prompt: 'Clarify?' },
       hitlEvents: [{ interruptId: 'int-1', status: 'pending' }],
-      save: jest.fn().mockResolvedValue(undefined),
-      toJSON: jest.fn().mockReturnValue({ id: 'exec-run-1', status: 'cancelled' }),
     };
-    const executionModel = {
-      ...mockExecutionModel(),
+    // What the repository's single conditional UPDATE returns (covered by the integration spec).
+    const cancelledDoc = {
+      ...execDoc,
+      status: 'cancelled',
+      endedAt: new Date(),
+      pendingApproval: null,
+      hitlEvents: [{ interruptId: 'int-1', status: 'cancelled', respondedAt: new Date() }],
+    };
+    const executionRepository = {
       findById: jest.fn().mockResolvedValue(execDoc),
+      cancelOpen: jest.fn().mockResolvedValue(cancelledDoc),
     };
     const mockCancel = jest.fn();
     const queueService = {
@@ -909,20 +904,23 @@ describe('E2E: Cancel', () => {
       refreshPositions: jest.fn().mockResolvedValue([]),
       getRunningCount: jest.fn().mockResolvedValue(0),
     };
-    const ctx = await createE2EService(undefined, { executionModel, queueService });
+    const ctx = await createE2EService(undefined, { executionRepository, queueService });
     (ctx.service as any).playbookFlowClient.Cancel = mockCancel;
 
     const result = await ctx.service.cancel('exec-run-1', 'owner-1');
 
-    expect(execDoc.status).toBe('cancelled');
-    expect(execDoc.pendingApproval).toBeNull();
-    expect(execDoc.hitlEvents[0]).toEqual(expect.objectContaining({
-      interruptId: 'int-1',
+    expect(ctx.executionRepository.cancelOpen).toHaveBeenCalledWith('exec-run-1');
+    expect(ctx.taskResultRepository.updateManyForExecution).toHaveBeenCalledWith(
+      'exec-run-1', { statuses: ['pending', 'running', 'interrupted'] }, { status: 'cancelled' },
+    );
+    expect(ctx.streamEvents.emitExecutionCancelled).toHaveBeenCalledWith('exec-run-1');
+    expect(result).toEqual(expect.objectContaining({
+      id: 'exec-run-1',
       status: 'cancelled',
-      respondedAt: expect.any(Date),
+      pendingApproval: null,
+      hitlEvents: [expect.objectContaining({ interruptId: 'int-1', status: 'cancelled', respondedAt: expect.any(Date) })],
+      endedAt: expect.any(Date),
     }));
-    expect(execDoc.endedAt).toBeInstanceOf(Date);
-    expect(execDoc.save).toHaveBeenCalled();
     expect(mockCancel).toHaveBeenCalledWith(
       { execution_id: 'exec-run-1' },
       expect.any(Function),
@@ -934,26 +932,38 @@ describe('E2E: Cancel', () => {
   it('rejects cancel for already completed execution', async () => {
     const execDoc = {
       id: 'exec-done',
-      _id: 'exec-done',
       ownerId: 'owner-1',
       status: 'completed',
-      save: jest.fn(),
     };
-    const executionModel = {
-      ...mockExecutionModel(),
+    const executionRepository = {
       findById: jest.fn().mockResolvedValue(execDoc),
     };
-    const ctx = await createE2EService(undefined, { executionModel });
+    const ctx = await createE2EService(undefined, { executionRepository });
 
     await expect(ctx.service.cancel('exec-done', 'owner-1')).rejects.toThrow('already finished');
+    expect(ctx.executionRepository.cancelOpen).not.toHaveBeenCalled();
+  });
+
+  it('rejects cancel when the run finishes between the read and the cancellation', async () => {
+    const executionRepository = {
+      findById: jest.fn().mockResolvedValue({ id: 'exec-racing', ownerId: 'owner-1', status: 'running' }),
+      cancelOpen: jest.fn().mockResolvedValue(null),
+    };
+    const ctx = await createE2EService(undefined, { executionRepository });
+    const mockCancel = jest.fn();
+    (ctx.service as any).playbookFlowClient.Cancel = mockCancel;
+
+    await expect(ctx.service.cancel('exec-racing', 'owner-1')).rejects.toThrow('already finished');
+    expect(ctx.taskResultRepository.updateManyForExecution).not.toHaveBeenCalled();
+    expect(ctx.streamEvents.emitExecutionCancelled).not.toHaveBeenCalled();
+    expect(mockCancel).not.toHaveBeenCalled();
   });
 
   it('rejects cancel for non-existent execution', async () => {
-    const executionModel = {
-      ...mockExecutionModel(),
+    const executionRepository = {
       findById: jest.fn().mockResolvedValue(null),
     };
-    const ctx = await createE2EService(undefined, { executionModel });
+    const ctx = await createE2EService(undefined, { executionRepository });
 
     await expect(ctx.service.cancel('exec-none', 'owner-1')).rejects.toThrow('not found');
   });
@@ -961,56 +971,70 @@ describe('E2E: Cancel', () => {
   it('rejects cancel for wrong owner', async () => {
     const execDoc = {
       id: 'exec-other',
-      _id: 'exec-other',
       ownerId: 'owner-2',
       status: 'running',
     };
-    const executionModel = {
-      ...mockExecutionModel(),
+    const executionRepository = {
       findById: jest.fn().mockResolvedValue(execDoc),
     };
-    const ctx = await createE2EService(undefined, { executionModel });
+    const ctx = await createE2EService(undefined, { executionRepository });
 
     await expect(ctx.service.cancel('exec-other', 'owner-1')).rejects.toThrow('do not have access');
+    expect(ctx.executionRepository.cancelOpen).not.toHaveBeenCalled();
   });
 });
 
 describe('E2E: Delete', () => {
   it('deletes execution with associated records', async () => {
-    const ctx = await createE2EService();
-    const taskResultModel = { deleteMany: jest.fn() };
-    const routerDecisionModel = { deleteMany: jest.fn() };
-    const executionModel = {
-      ...mockExecutionModel(),
-      findById: jest.fn(() => ({
-        lean: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }),
-        ownerId: 'owner-1',
-        status: 'completed',
-      })),
+    const executionRepository = {
+      findById: jest.fn().mockResolvedValue({ id: 'exec-to-delete', ownerId: 'owner-1', status: 'completed' }),
     };
-    (ctx.service as any).executionModel = executionModel;
-    (ctx.service as any).taskResultModel = taskResultModel;
-    (ctx.service as any).routerDecisionModel = routerDecisionModel;
+    const ctx = await createE2EService(undefined, { executionRepository });
 
     await ctx.service.delete('exec-to-delete', 'owner-1');
 
-    expect(taskResultModel.deleteMany).toHaveBeenCalledWith({ executionId: 'exec-to-delete' });
-    expect(routerDecisionModel.deleteMany).toHaveBeenCalledWith({ executionId: 'exec-to-delete' });
-    expect(executionModel.findByIdAndDelete).toHaveBeenCalledWith('exec-to-delete');
+    // Its task results and router decisions go with it through the foreign keys.
+    expect(ctx.executionRepository.delete).toHaveBeenCalledWith('exec-to-delete');
   });
 
   it('rejects delete for running execution', async () => {
-    const executionModel = {
-      ...mockExecutionModel(),
-      findById: jest.fn(() => ({
-        lean: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }),
-        ownerId: 'owner-1',
-        status: 'running',
-      })),
+    const executionRepository = {
+      findById: jest.fn().mockResolvedValue({ id: 'exec-running', ownerId: 'owner-1', status: 'running' }),
     };
-    const ctx = await createE2EService(undefined, { executionModel });
+    const ctx = await createE2EService(undefined, { executionRepository });
 
     await expect(ctx.service.delete('exec-running', 'owner-1')).rejects.toThrow('Cancel it first');
+    expect(ctx.executionRepository.delete).not.toHaveBeenCalled();
+  });
+
+  it('hides another owner\'s execution from delete', async () => {
+    const executionRepository = {
+      findById: jest.fn().mockResolvedValue({ id: 'exec-other', ownerId: 'owner-2', status: 'completed' }),
+    };
+    const ctx = await createE2EService(undefined, { executionRepository });
+
+    await expect(ctx.service.delete('exec-other', 'owner-1')).rejects.toThrow('Execution not found');
+    expect(ctx.executionRepository.delete).not.toHaveBeenCalled();
+  });
+
+  it('deletes all of the owner\'s runs of a flow they own', async () => {
+    const executionRepository = { deleteByFlowAndOwner: jest.fn().mockResolvedValue(4) };
+    const ctx = await createE2EService(undefined, {
+      executionRepository,
+      flowService: { findById: jest.fn().mockResolvedValue({ id: 'flow-1', ownerId: 'owner-1' }) },
+    });
+
+    await expect(ctx.service.deleteAll('flow-1', 'owner-1')).resolves.toEqual({ deleted: 4 });
+    expect(ctx.executionRepository.deleteByFlowAndOwner).toHaveBeenCalledWith('flow-1', 'owner-1');
+  });
+
+  it('refuses to delete the runs of a flow owned by someone else', async () => {
+    const ctx = await createE2EService(undefined, {
+      flowService: { findById: jest.fn().mockResolvedValue({ id: 'flow-1', ownerId: 'owner-2' }) },
+    });
+
+    await expect(ctx.service.deleteAll('flow-1', 'owner-1')).rejects.toThrow('Execution not found');
+    expect(ctx.executionRepository.deleteByFlowAndOwner).not.toHaveBeenCalled();
   });
 });
 
@@ -1115,21 +1139,17 @@ describe('E2E: Edge cases', () => {
     const ctx = await createE2EService([
       { event_type: 'NodeFailed', node_id: 'step-1', iteration: 0, payload: { error: 'Unrecoverable' } },
     ]);
-    ctx.taskResultModel.findOne = jest.fn(() => ({
-      sort: jest.fn().mockReturnThis(),
-      lean: jest.fn().mockResolvedValue({ error: 'Unrecoverable' }),
-    }));
-    (ctx.service as any).taskResultModel = ctx.taskResultModel;
+    ctx.taskResultRepository.findLatestFailed.mockResolvedValue({ error: 'Unrecoverable' });
 
     await ctx.service.start('flow-1', 'owner-1', {});
     await ctx.triggerStreamEvents();
     await flushPromises();
 
     expect(ctx.streamEvents.emitExecutionComplete).toHaveBeenCalledWith('exec-e2e', 'failed', 'Unrecoverable');
-    expect(ctx.executionModel.updateOne).toHaveBeenCalledWith(
-      expect.objectContaining({ _id: 'exec-e2e' }),
-      expect.objectContaining({ status: 'failed', error: 'Unrecoverable' }),
-    );
+    expect(ctx.executionRepository.transition).toHaveBeenCalledWith('exec-e2e', {
+      from: OPEN_STATUSES,
+      patch: expect.objectContaining({ status: 'failed', error: 'Unrecoverable' }),
+    });
   });
 
   it('handles RouterDecision with missing payload label', async () => {
@@ -1142,8 +1162,8 @@ describe('E2E: Edge cases', () => {
     await ctx.triggerStreamEvents();
     await flushPromises();
 
-    expect(ctx.routerDecisionModel.create).toHaveBeenCalledWith(
-      expect.objectContaining({ routerNodeId: 'router-1', label: '' }),
+    expect(ctx.routerDecisionRepository.create).toHaveBeenCalledWith(
+      expect.objectContaining({ executionId: 'exec-e2e', routerNodeId: 'router-1', iteration: 0, label: '' }),
     );
     expect(ctx.streamEvents.emitExecutionComplete).toHaveBeenCalledWith('exec-e2e', 'completed');
   });

@@ -4,7 +4,10 @@ export type PlatformCopilotSurface =
   | 'playbook.editor.assistant'
   | 'playbook.validation'
   | 'playbook.execution.details'
-  | 'playbook.execution.task';
+  | 'playbook.execution.task'
+  | 'semanticModel.editor'
+  | 'semanticModel.sources'
+  | 'playbook.sources';
 
 export type PlatformCopilotUiTarget = {
   surface: PlatformCopilotSurface;
@@ -13,6 +16,12 @@ export type PlatformCopilotUiTarget = {
     executionId?: string;
     taskId?: string;
     operationId?: string;
+    modelId?: string;
+    /** Shown on the button ("Open Billing & Contract Management"), never an id. */
+    modelName?: string;
+    /** The waiting Yellowmind questions whose sources the person chooses in the conversation. */
+    continuationId?: string;
+    playbookName?: string;
   };
   effects?: Array<
     | { type: 'highlightTask'; taskId: string }

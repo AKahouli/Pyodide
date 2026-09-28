@@ -7,14 +7,13 @@ Classes:
 
 import asyncio
 import json
-import os
 import re2 as re
 import time
 import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from typing import Optional, Tuple, Any, List, Dict
-from google.adk import Agent, Runner
+from google.adk import Agent
 from google.adk.agents.run_config import StreamingMode, RunConfig
 from google.adk.sessions import InMemorySessionService
 from src.temporary_child_summary import record_temporary_child_tool_call
@@ -30,7 +29,6 @@ from src.smart_rag.infrastructure.monitoring.latency_diagnostics import (
     set_latency_diag_phase,
 )
 from src.smart_rag.infrastructure.processing import PromptProcessor
-from src.smart_rag.infrastructure.processing.plugin import CleanSessionPlugin
 from src.smart_rag.messaging import MessageTransformer, StreamingFormatter
 from src.smart_rag.engines.helpers import build_content_with_images, coerce_to_dict
 from src.smart_rag.messaging.ui_tool_component_registry import UI_TOOL_COMPONENT_REGISTRY
@@ -93,7 +91,6 @@ class _latency_diag_phase:
     def __exit__(self, exc_type, exc, tb) -> None:
         reset_latency_diag_phase(self._token)
 
-APP_NAME = "manager_app"
 _STATE_KEY_CONNECTOR_TEXT_SOURCES = "_connector_text_sources"
 _STATE_KEY_CONNECTOR_IMAGE_SOURCES = "_connector_image_sources"
 _STATE_KEY_CONNECTOR_WEB_SOURCES = "_connector_web_sources"
@@ -1313,46 +1310,6 @@ class AgentRunner:
             if getattr(part, "text", None)
             and getattr(part, "thought", False) is not True
         )
-
-        # OLD LOGIC: Sending all sources at the end - DISABLED
-        # Sources are now sent dynamically as citations are detected during streaming
-        # if toolkit and hasattr(toolkit, 'sources_text') and hasattr(toolkit, 'sources_image'):
-        #     sources = toolkit.sources_text + toolkit.sources_image
-        #     if q and sources:  # Only send sources if they exist
-        #         unique_sources = []
-        #         seen_signatures = set()
-        #         for source in sources:
-        #             try:
-        #                 signature = json.dumps(source, sort_keys=True, default=str)
-        #             except (TypeError, ValueError):
-        #                 signature = str(source)
-        #             if signature in seen_signatures:
-        #                 continue
-        #             seen_signatures.add(signature)
-        #             unique_sources.append(source)
-        #
-        #         if len(unique_sources) < len(sources):
-        #             logger.info(
-        #                 f"[AGENT RUNNER] Filtered {len(sources) - len(unique_sources)} duplicate sources "
-        #                 f"- agent_name: {agent_name}, session_id: {session_id}"
-        #             )
-        #
-        #         logger.info(f"[AGENT RUNNER] Sending {len(unique_sources)} sources to backend - agent_name: {agent_name}, session_id: {session_id}")
-        #         for source in unique_sources:
-        #             output = self.streaming_formatter.format_streaming_event(
-        #                 agent_name=agent_name, agent_type="agent",
-        #                 chunk=json.dumps(source), message_id=session_id,
-        #                 content_type="source"
-        #             )
-        #             await q.put(output)
-        #
-        # elif agent_name == "ReportWriterAgent" and q:
-        #     output = self.streaming_formatter.format_streaming_event(
-        #         agent_name="ReportWriterAgent", agent_type="reporter",
-        #         chunk=json.dumps([]), message_id=session_id,
-        #         content_type="source"
-        #     )
-        #     await q.put(output)
 
         # Handle diagram references in the final response
         # Replace any remaining diagram references with actual diagram content

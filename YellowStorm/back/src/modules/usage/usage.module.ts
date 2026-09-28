@@ -7,8 +7,6 @@ import { LoggerModule } from '../logger';
 import { UserModule } from '../user/user.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { PostgresUsageStore } from './persistence/postgres-usage-store';
-import { USAGE_STORE } from './persistence/usage-store';
-import { PLAN_STORE } from './persistence/plan.store';
 import { PgPlanStore } from './persistence/pg-plan.store';
 
 @Module({
@@ -21,12 +19,11 @@ import { PgPlanStore } from './persistence/pg-plan.store';
   controllers: [UsageController],
   providers: [
     PostgresUsageStore,
-    { provide: USAGE_STORE, useExisting: PostgresUsageStore },
     // Plans cutover (plan 1B.3.2): catalog.plans; Mongo data backfilled before this flip.
-    { provide: PLAN_STORE, useClass: PgPlanStore },
+    PgPlanStore,
     UsageService,
     UsageLimitGuard,
   ],
-  exports: [UsageService, UsageLimitGuard, USAGE_STORE],
+  exports: [UsageService, UsageLimitGuard, PostgresUsageStore],
 })
 export class UsageModule {}

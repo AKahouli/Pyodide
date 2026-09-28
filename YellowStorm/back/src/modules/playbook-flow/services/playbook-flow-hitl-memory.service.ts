@@ -1,28 +1,27 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { normalizeObjectId } from '@common/postgres';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { NotFoundException } from '@modules/exceptions';
 import { CreateHitlMemoryDto, UpdateHitlMemoryDto } from '../dto/playbook-flow-hitl.dto';
-import { Flow, FlowDocument } from '../schemas/playbook-flow.schema';
-import { FlowHitlMemory, FlowHitlMemoryDocument } from '../schemas/playbook-flow-hitl-memory.schema';
+import { FlowRepository } from '../persistence/flow.repository';
+import { HitlMemoryRepository, toHitlMemoryJson, type HitlMemoryJson } from '../persistence/hitl-memory.repository';
 
 /** Persists user-approved HITL memories separately from per-execution interrupt audit data. */
 @Injectable()
 export class PlaybookFlowHitlMemoryService {
   constructor(
-    @InjectModel(Flow.name) private readonly flowModel: Model<FlowDocument>,
-    @InjectModel(FlowHitlMemory.name) private readonly memoryModel: Model<FlowHitlMemoryDocument>,
+    private readonly flows: FlowRepository,
+    private readonly memories: HitlMemoryRepository,
   ) {}
 
-  async listMemories(flowId: string, ownerId: string): Promise<FlowHitlMemory[]> {
+  async listMemories(flowId: string, ownerId: string): Promise<HitlMemoryJson[]> {
     await this.findOwnedFlow(flowId, ownerId);
-    return this.memoryModel.find({ flowId, ownerId }).sort({ updatedAt: -1 }).lean();
+    return (await this.memories.listForFlow(flowId, ownerId)).map(toHitlMemoryJson);
   }
 
-  async createMemory(flowId: string, ownerId: string, dto: CreateHitlMemoryDto): Promise<FlowHitlMemory> {
+  async createMemory(flowId: string, ownerId: string, dto: CreateHitlMemoryDto): Promise<HitlMemoryJson> {
     await this.findOwnedFlow(flowId, ownerId);
-    const created = await this.memoryModel.create({
+    const created = await this.memories.create({
       ownerId,
       flowId,
       nodeId: dto.nodeId ?? null,
@@ -37,30 +36,27 @@ export class PlaybookFlowHitlMemoryService {
       createdFromExecutionId: dto.createdFromExecutionId,
       createdFromInterruptId: dto.createdFromInterruptId,
     });
-    return created.toJSON() as FlowHitlMemory;
+    return toHitlMemoryJson(created);
   }
 
-  async updateMemory(flowId: string, ownerId: string, memoryId: string, dto: UpdateHitlMemoryDto): Promise<FlowHitlMemory> {
+  async updateMemory(flowId: string, ownerId: string, memoryId: string, dto: UpdateHitlMemoryDto): Promise<HitlMemoryJson> {
     await this.findOwnedFlow(flowId, ownerId);
-    const updated = await this.memoryModel.findOneAndUpdate(
-      { _id: memoryId, flowId, ownerId },
-      { $set: dto },
-      { new: true },
-    );
+    const updated = await this.memories.update(memoryId, flowId, ownerId, dto);
     if (!updated) throw new NotFoundException(ErrorCode.NOT_FOUND, 'HITL memory not found');
-    return updated.toJSON() as FlowHitlMemory;
+    return toHitlMemoryJson(updated);
   }
 
   async deleteMemory(flowId: string, ownerId: string, memoryId: string): Promise<{ deleted: true }> {
     await this.findOwnedFlow(flowId, ownerId);
-    const deleted = await this.memoryModel.deleteOne({ _id: memoryId, flowId, ownerId });
-    if (!deleted.deletedCount) throw new NotFoundException(ErrorCode.NOT_FOUND, 'HITL memory not found');
+    const deleted = await this.memories.delete(memoryId, flowId, ownerId);
+    if (!deleted) throw new NotFoundException(ErrorCode.NOT_FOUND, 'HITL memory not found');
     return { deleted: true };
   }
 
-  private async findOwnedFlow(flowId: string, ownerId: string): Promise<FlowDocument> {
-    const flow = await this.flowModel.findOne({ _id: flowId, ownerId });
-    if (!flow) throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook not found');
-    return flow;
+  private async findOwnedFlow(flowId: string, ownerId: string): Promise<void> {
+    const flow = await this.flows.findOwnerRef(flowId);
+    if (!flow || typeof ownerId !== 'string' || flow.ownerId !== normalizeObjectId(ownerId)) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook not found');
+    }
   }
 }

@@ -1,6 +1,7 @@
 import { Inject, Injectable, Optional, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { isObjectId, newObjectId } from '@common/postgres/object-id';
+import { deriveAgentSlug } from '@common/utils/slugify';
 import { LoggerService } from '../logger';
 import { IAgentResponse, IAgentForStream, IGrpcAgent, IGrpcCompaction, ISharedAgentInfo } from './interfaces/agent.interface';
 import { AgentShareService } from './services/agent-share.service';
@@ -17,7 +18,7 @@ import {
 } from '../../common/runtime/sandbox-scope';
 import { NotFoundException, ConflictException, ForbiddenException, BadRequestException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
-import { escapeRegex, collapseRepeatedChar, collapseWhitespace, stripLeadingTrailingChar } from '../../common/utils';
+import { escapeRegex } from '../../common/utils';
 import { ToolService } from '../tool/tool.service';
 import { IToolResponse } from '../tool/interfaces/tool.interface';
 import { AgentTypeService } from '../agent-type/agent-type.service';
@@ -59,6 +60,10 @@ const TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS = new Set([
   PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG,
   AGENT_MCP_CONNECTOR_SLUG,
 ]);
+/** Compare MCP server URLs without case or trailing slash differences. */
+function normalizeMcpServerUrl(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase().replace(/\/+$/, '') : '';
+}
 const PLATFORM_COPILOT_LEGACY_PLAYBOOK_ACTIONS = new Set([
   'assess_playbook_request',
   'continue_playbook_clarification',
@@ -853,7 +858,7 @@ export class AgentService {
         // agent (not just the copilot) — their MCP servers authorize per-call
         // as the acting user.
         for (const binding of connectorBindings) {
-          if (!TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS.has(String(binding.connector_slug || '').toLowerCase())) continue;
+          if (!this.isTrustedIdentityBinding(binding)) continue;
           binding.auth_headers = {
             ...((binding.auth_headers as Record<string, string> | undefined) ?? {}),
             'X-YellowStorm-User-Id': userId,
@@ -931,8 +936,9 @@ export class AgentService {
             platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
             ...(semanticSchemaName ? {
               semantic_model_schema_name: semanticSchemaName,
-              semantic_search_url: `${this.configService.get<string>('SEMANTIC_SEARCH_URL', 'http://127.0.0.1:8100').replace(/\/$/, '')}/v1/graphs/search/fused`,
-              semantic_search_token: this.configService.get<string>('SEMANTIC_SEARCH_TOKEN', ''),
+              // Published semantic graphs are searched by the semantic runtime, authenticated with its service key.
+              semantic_search_url: `${this.configService.get<string>('SEMANTIC_MODEL_RUNTIME_URL', '').replace(/\/$/, '')}/v1/graphs/search/fused`,
+              semantic_search_token: this.configService.get<string>('SEMANTIC_RUNTIME_SERVICE_KEY', ''),
               semantic_search_timeout_seconds: String(this.configService.get<number>('SEMANTIC_SEARCH_TIMEOUT_SECONDS', 300)),
             } : {}),
             ...(resolvedModel?.omitTemperature
@@ -1094,7 +1100,7 @@ export class AgentService {
           agent.id,
         );
         for (const binding of connectorBindings) {
-          if (!TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS.has(String(binding.connector_slug || '').toLowerCase())) continue;
+          if (!this.isTrustedIdentityBinding(binding)) continue;
           binding.auth_headers = {
             ...((binding.auth_headers as Record<string, string>) || {}),
             'X-YellowStorm-Agent-Id': agent.id,
@@ -1346,21 +1352,7 @@ export class AgentService {
   }
 
   private normalizeSlug(value: string): string {
-    return stripLeadingTrailingChar(
-      collapseRepeatedChar(
-        collapseWhitespace(
-          value
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '')
-            .toLowerCase()
-            .trim(),
-          '-',
-        )
-          .replace(/[^a-z0-9-]/g, '-'),
-        '-',
-      ),
-      '-',
-    );
+    return deriveAgentSlug(value);
   }
 
   private async ensureSlugUniqueness(
@@ -2001,6 +1993,25 @@ export class AgentService {
 
   private async buildConnectorsMap(connectorIds: string[]): Promise<Map<string, IConnectorResponse>> {
     return this.getConnectorRuntime().buildConnectorsMap(connectorIds);
+  }
+
+  /**
+   * Bindings that receive the acting user's identity: the built-in system MCP connectors, and connectors
+   * an admin created that point at a trusted internal MCP server (such as the semantic model MCP), matched
+   * by server URL so a connector pointing anywhere else never receives it.
+   */
+  private isTrustedIdentityBinding(binding: Record<string, unknown>): boolean {
+    if (TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS.has(String(binding.connector_slug || '').toLowerCase())) return true;
+    const url = normalizeMcpServerUrl(binding.mcp_server_url);
+    return Boolean(url) && this.trustedMcpServerUrls().has(url);
+  }
+
+  private trustedMcpServerUrls(): Set<string> {
+    const configured = [
+      this.configService.get<string>('SEMANTIC_MODEL_MCP_SERVER_URL', ''),
+      ...this.configService.get<string>('TRUSTED_MCP_SERVER_URLS', '').split(','),
+    ];
+    return new Set(configured.map(normalizeMcpServerUrl).filter(Boolean));
   }
 
   private async buildConnectorBindings(

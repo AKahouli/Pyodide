@@ -27,13 +27,11 @@ describe('callGrpcRun replay context and contracts', () => {
           outputContract: null,
           replayConfig: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false },
         }]]) },
-      executionModel: {
-        updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
+      executionRepository: {
         findById: jest.fn()
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ executionMode: 'replay_strict', stepExecutionModes: {} }) }) })
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ executionMode: 'replay_strict' }) }) })
-          .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) })
-          .mockReturnValue({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }) }),
+          .mockResolvedValueOnce({ executionMode: 'replay_strict', stepExecutionModes: {} })
+          .mockResolvedValueOnce({ executionMode: 'replay_strict' })
+          .mockResolvedValue({ seededTaskOutputs: [] }),
       },
     });
     const runCall = { on: jest.fn() };

@@ -1,21 +1,23 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { FeatureVisibilityService } from '@modules/system/feature-visibility.service';
 import { ConversationService } from '@modules/conversation/services/conversation.service';
 import { ConversationResponse } from '@modules/conversation/interfaces/conversation.interface';
 import { ConflictException, NotFoundException, ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { AgentRepository } from '@modules/agent/repositories/agent.repository';
-import { ForbiddenException } from '@modules/exceptions';
-import { DEPLOYMENT_STORE, REVISION_STORE, SCOPE_STORE, type DeploymentStore, type RevisionStore, type ScopeStore } from '../persistence';
+import { ForbiddenException } from '@modules/exceptions';
 import { CreateGovernedConversationDto } from '../dto';
 import { GovernanceScopeAudienceService } from './governance-scope-audience.service';
+import { PgRevisionStore } from '../persistence/postgres/pg-revision.store';
+import { PgDeploymentStore } from '../persistence/postgres/pg-deployment.store';
+import { PgScopeStore } from '../persistence/postgres/pg-scope.store';
 
 @Injectable()
 export class GovernedConversationService {
   constructor(
-    @Inject(SCOPE_STORE) private readonly scopeStore: ScopeStore,
-    @Inject(DEPLOYMENT_STORE) private readonly deploymentStore: DeploymentStore,
-    @Inject(REVISION_STORE) private readonly revisionStore: RevisionStore,
+    private readonly scopeStore: PgScopeStore,
+    private readonly deploymentStore: PgDeploymentStore,
+    private readonly revisionStore: PgRevisionStore,
     private readonly agentRepository: AgentRepository,
     private readonly audienceService: GovernanceScopeAudienceService,
     private readonly conversationService: ConversationService,

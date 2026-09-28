@@ -22,8 +22,6 @@ export type AuthProviderPatch = Partial<
   Omit<AuthProviderRecord, 'id' | 'providerKey' | 'createdAt' | 'updatedAt'>
 >;
 
-export const AUTH_PROVIDER_STORE = Symbol('AUTH_PROVIDER_STORE');
-
 export interface AuthProviderStore {
   findAll(): Promise<AuthProviderRecord[]>;
   findAllEnabled(): Promise<AuthProviderRecord[]>;
@@ -45,8 +43,6 @@ export interface OAuthStateRecord {
   createdAt: Date;
   updatedAt: Date;
 }
-
-export const OAUTH_STATE_STORE = Symbol('OAUTH_STATE_STORE');
 
 export interface OAuthStateStore {
   create(init: Omit<OAuthStateRecord, 'id' | 'createdAt' | 'updatedAt'>): Promise<OAuthStateRecord>;
@@ -70,8 +66,6 @@ export interface ProviderLinkTokenRecord {
   updatedAt: Date;
 }
 
-export const PROVIDER_LINK_TOKEN_STORE = Symbol('PROVIDER_LINK_TOKEN_STORE');
-
 export interface ProviderLinkTokenStore {
   create(init: Omit<ProviderLinkTokenRecord, 'id' | 'createdAt' | 'updatedAt'>): Promise<ProviderLinkTokenRecord>;
   /** One-shot + expiry-strict, as consumeByState. */
@@ -89,8 +83,6 @@ export interface UserProviderLinkRecord {
   createdAt: Date;
   updatedAt: Date;
 }
-
-export const USER_PROVIDER_LINK_STORE = Symbol('USER_PROVIDER_LINK_STORE');
 
 export interface UserProviderLinkStore {
   findByProvider(providerKey: string, providerUserId: string): Promise<UserProviderLinkRecord | null>;

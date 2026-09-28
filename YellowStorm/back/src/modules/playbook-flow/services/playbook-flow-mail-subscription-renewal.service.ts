@@ -1,18 +1,22 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { Model } from 'mongoose';
-import { Flow, FlowDocument } from '../schemas/playbook-flow.schema';
 import { PlaybookFlowMailGraphClientService } from './playbook-flow-mail-graph-client.service';
 import { PlaybookFlowService } from './playbook-flow.service';
 import { LoggerService } from '@modules/logger';
+import { FlowRepository } from '../persistence/flow.repository';
 
 const RENEWAL_WINDOW_MINUTES = 10;
+
+/** A stored expiry (the ISO string Graph returned, or a Date) as epoch ms; NaN when unreadable. */
+function expiryTime(value: unknown): number {
+  if (value instanceof Date) return value.getTime();
+  return typeof value === 'string' ? new Date(value).getTime() : Number.NaN;
+}
 
 @Injectable()
 export class PlaybookFlowMailSubscriptionRenewalService {
   constructor(
-    @InjectModel(Flow.name) private readonly flowModel: Model<FlowDocument>,
+    private readonly flows: FlowRepository,
     private readonly graphClient: PlaybookFlowMailGraphClientService,
     private readonly flowService: PlaybookFlowService,
     private readonly logger: LoggerService,
@@ -20,18 +24,15 @@ export class PlaybookFlowMailSubscriptionRenewalService {
 
   @Cron(CronExpression.EVERY_10_MINUTES)
   async renewExpiringSubscriptions(): Promise<void> {
-    const cutoff = new Date(Date.now() + RENEWAL_WINDOW_MINUTES * 60 * 1000);
+    const now = Date.now();
+    const cutoff = now + RENEWAL_WINDOW_MINUTES * 60 * 1000;
 
-    const flows = await this.flowModel
-      .find({
-        'triggerConfig.kind': 'mail',
-        'triggerConfig.params.runtimeEnabled': true,
-        'triggerConfig.params.subscriptionId': { $ne: null },
-        'triggerConfig.params.subscriptionExpiresAt': { $lte: cutoff, $gt: new Date() },
-      })
-      .select('_id ownerId triggerConfig')
-      .lean()
-      .exec();
+    const candidates = await this.flows.listByTrigger('mail', { runtimeEnabled: true });
+    const flows = candidates.filter((flow) => {
+      const params = (flow.triggerConfig?.params ?? {}) as Record<string, unknown>;
+      const expiresAt = expiryTime(params['subscriptionExpiresAt']);
+      return params['subscriptionId'] != null && expiresAt <= cutoff && expiresAt > now;
+    });
 
     if (flows.length === 0) return;
 
@@ -54,7 +55,7 @@ export class PlaybookFlowMailSubscriptionRenewalService {
           autoRenewUntil,
         );
 
-        await this.flowService.update(flow._id.toString(), flow.ownerId, {
+        await this.flowService.update(flow.id, flow.ownerId, {
           triggerConfig: {
             kind: 'mail',
             params: {
@@ -65,13 +66,13 @@ export class PlaybookFlowMailSubscriptionRenewalService {
         } as any);
 
         this.logger.log('Mail subscription renewed', {
-          flowId: flow._id.toString(),
+          flowId: flow.id,
           subscriptionId,
           newExpiry: result.expirationDateTime,
         });
       } catch (err) {
         this.logger.error('Mail subscription renewal failed', {
-          flowId: flow._id.toString(),
+          flowId: flow.id,
           subscriptionId,
           error: (err as Error).message,
         });

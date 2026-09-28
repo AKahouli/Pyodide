@@ -1,8 +1,7 @@
 import { Global, Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
-import { Flow, FlowSchema } from '../schemas/playbook-flow.schema';
+import { FlowRepository } from '../persistence/flow.repository';
 import { FLOW_READ_PORT } from './flow-read.port';
-import { MongoFlowReadAdapter } from './mongo-flow-read.adapter';
+import { PgFlowReadAdapter } from './pg-flow-read.adapter';
 
 /**
  * Global binding for FLOW_READ_PORT so consumers (workspace, classifier) can
@@ -12,8 +11,7 @@ import { MongoFlowReadAdapter } from './mongo-flow-read.adapter';
  */
 @Global()
 @Module({
-  imports: [MongooseModule.forFeature([{ name: Flow.name, schema: FlowSchema }])],
-  providers: [MongoFlowReadAdapter, { provide: FLOW_READ_PORT, useExisting: MongoFlowReadAdapter }],
-  exports: [FLOW_READ_PORT],
+  providers: [FlowRepository, PgFlowReadAdapter, { provide: FLOW_READ_PORT, useExisting: PgFlowReadAdapter }],
+  exports: [PgFlowReadAdapter, FLOW_READ_PORT],
 })
 export class FlowReadPortModule {}

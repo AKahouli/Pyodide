@@ -1,21 +1,23 @@
-import { PlaybookFlowReplayDriftService } from './playbook-flow-replay-drift.service';
+﻿import { PlaybookFlowReplayDriftService } from './playbook-flow-replay-drift.service';
 import { PlaybookFlowReplayReportService } from './playbook-flow-replay-report.service';
 import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
 import { PlaybookFlowReplayPlanService } from './playbook-flow-replay-plan.service';
 
 describe('PlaybookFlowReplayDriftService', () => {
+  /** An execution repository whose runs carry the given HITL events (answered clarifications on task-1 by default). */
+  const executionsWithHitl = (byExecution: Record<string, unknown[]>) => ({
+    findById: jest.fn(async (executionId: string) => ({ id: executionId, hitlEvents: byExecution[executionId] ?? [], replayPlanningByTask: {} })),
+  });
+
   function createService(overrides?: {
-    executionModel?: Record<string, unknown>;
-    hitlMemoryModel?: Record<string, unknown>;
+    executionRepository?: Record<string, unknown>;
+    hitlMemoryRepository?: Record<string, unknown>;
     replayReportService?: Record<string, unknown>;
+    streamEvents?: Record<string, unknown>;
   }) {
-    const executionModel = {
-      findById: jest.fn(() => ({
-        lean: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue(null),
-        }),
-      })),
-      ...overrides?.executionModel,
+    const executionRepository = {
+      findById: jest.fn().mockResolvedValue(null),
+      ...overrides?.executionRepository,
     };
     const replayReportService = {
       createReport: jest.fn().mockResolvedValue({ id: 'report-1' }),
@@ -26,16 +28,17 @@ describe('PlaybookFlowReplayDriftService', () => {
     const loggerService = { setContext: jest.fn(), warn: jest.fn(), log: jest.fn(), error: jest.fn() };
 
     const service = new PlaybookFlowReplayDriftService(
-      executionModel as any,
+      executionRepository as any,
       replayReportService as unknown as PlaybookFlowReplayReportService,
       new PlaybookFlowOutputContractService(),
       new PlaybookFlowReplayPlanService(),
       loggerService as any,
       undefined,
-      overrides?.hitlMemoryModel as any,
+      overrides?.hitlMemoryRepository as any,
+      overrides?.streamEvents as any,
     );
 
-    return { service, executionModel, hitlMemoryModel: overrides?.hitlMemoryModel, replayReportService, loggerService };
+    return { service, executionRepository, hitlMemoryRepository: overrides?.hitlMemoryRepository, replayReportService, loggerService };
   }
 
   it('persists a pre-run replay report without eligibility gating', async () => {
@@ -76,26 +79,22 @@ describe('PlaybookFlowReplayDriftService', () => {
   });
 
   it('counts active baseline HITL memories in the replay HITL summary', async () => {
+    const countActiveFromExecution = jest.fn().mockResolvedValue(2);
+    const emitReplayHitlSummaryUpdated = jest.fn();
     const { service, replayReportService } = createService({
-      executionModel: {
-        findById: jest.fn((executionId: string) => ({
-          lean: jest.fn().mockReturnValue({
-            exec: jest.fn().mockResolvedValue({
-              hitlEvents: executionId === 'baseline-exec-1'
-                ? [{ nodeId: 'task-1', type: 'clarification', status: 'answered' }]
-                : [],
-            }),
-          }),
-        })),
-      },
-      hitlMemoryModel: {
-        countDocuments: jest.fn(() => ({
-          exec: jest.fn().mockResolvedValue(2),
-        })),
-      },
+      executionRepository: executionsWithHitl({
+        'baseline-exec-1': [
+          { nodeId: 'task-1', type: 'clarification', status: 'answered' },
+          { nodeId: 'task-1', type: 'clarification', status: 'pending' },
+          { nodeId: 'task-2', type: 'clarification', status: 'answered' },
+        ],
+      }),
+      hitlMemoryRepository: { countActiveFromExecution },
+      replayReportService: { createReport: jest.fn().mockResolvedValue({ id: 'report-9' }) },
+      streamEvents: { emitReplayHitlSummaryUpdated },
     });
 
-    await service.createPreRunReport({
+    const report = await service.createPreRunReport({
       executionId: 'exec-1',
       flowId: 'flow-1',
       taskId: 'task-1',
@@ -105,35 +104,48 @@ describe('PlaybookFlowReplayDriftService', () => {
       mode: 'replay_flex',
     });
 
+    expect(countActiveFromExecution).toHaveBeenCalledWith('flow-1', 'task-1', 'baseline-exec-1');
     expect(replayReportService.createReport).toHaveBeenCalledWith(expect.objectContaining({
       hitlSummary: expect.objectContaining({
         baselineHitlCount: 1,
         runtimeHitlCount: 0,
         reusedMemoryCount: 2,
+        hitlContextDrift: true,
+        findings: [{ severity: 'info', message: 'baseline_hitl_reused_or_not_needed', nodeId: 'task-1' }],
       }),
+    }));
+    expect(report).toEqual({ id: 'report-9' });
+    expect(emitReplayHitlSummaryUpdated).toHaveBeenCalledWith('exec-1', expect.objectContaining({ reportId: 'report-9', taskId: 'task-1', executionMode: 'replay_flex' }));
+  });
+
+  it('counts no reusable memory without a HITL memory repository', async () => {
+    const { service, replayReportService } = createService();
+
+    await service.createPreRunReport({
+      executionId: 'exec-1',
+      flowId: 'flow-1',
+      taskId: 'task-1',
+      replayId: 'replay-1',
+      referenceExecutionId: 'baseline-exec-1',
+      validationVersion: 2,
+      mode: 'replay_strict',
+    });
+
+    expect(replayReportService.createReport).toHaveBeenCalledWith(expect.objectContaining({
+      hitlSummary: expect.objectContaining({ baselineHitlCount: 0, runtimeHitlCount: 0, reusedMemoryCount: 0, hitlContextDrift: false, findings: [] }),
     }));
   });
 
   it('prefers reusable replay HITL snapshots over baseline memory candidates after artifacts load', async () => {
-    const countDocuments = jest.fn(() => ({
-      exec: jest.fn().mockResolvedValue(3),
-    }));
+    const countActiveFromExecution = jest.fn().mockResolvedValue(3);
     const { service, replayReportService } = createService({
-      executionModel: {
-        findById: jest.fn((executionId: string) => ({
-          lean: jest.fn().mockReturnValue({
-            exec: jest.fn().mockResolvedValue({
-              hitlEvents: executionId === 'baseline-exec-1'
-                ? [{ nodeId: 'task-1', type: 'clarification', status: 'answered' }]
-                : [],
-            }),
-          }),
-        })),
-      },
-      hitlMemoryModel: { countDocuments },
+      executionRepository: executionsWithHitl({
+        'baseline-exec-1': [{ nodeId: 'task-1', type: 'clarification', status: 'answered' }],
+      }),
+      hitlMemoryRepository: { countActiveFromExecution },
       replayReportService: {
         findLatestReportRecord: jest.fn().mockResolvedValue({
-          _id: 'report-1',
+          id: 'report-1',
           mode: 'replay_strict',
         }),
       },
@@ -208,7 +220,7 @@ describe('PlaybookFlowReplayDriftService', () => {
       traceMetadata: null,
     });
 
-    expect(countDocuments).not.toHaveBeenCalled();
+    expect(countActiveFromExecution).not.toHaveBeenCalled();
     expect(replayReportService.updateReport).toHaveBeenCalledWith(
       'report-1',
       expect.objectContaining({
@@ -226,7 +238,7 @@ describe('PlaybookFlowReplayDriftService', () => {
         findLatestReportRecord: jest.fn()
           .mockResolvedValueOnce(null)
           .mockResolvedValueOnce({
-            _id: 'report-1',
+            id: 'report-1',
             executionId: 'exec-1',
             flowId: 'flow-1',
             taskId: 'task-1',
@@ -252,14 +264,20 @@ describe('PlaybookFlowReplayDriftService', () => {
             dataDrift: 99,
             driftFindings: [],
             blockedBy: [],
+            createdAt: new Date('2026-01-01T00:00:00Z'),
+            updatedAt: new Date('2026-01-01T00:00:00Z'),
           }),
-        createReport: jest.fn().mockResolvedValue({ _id: 'report-2', toJSON: () => ({ _id: 'report-2' }) }),
+        createReport: jest.fn().mockResolvedValue({ id: 'report-2' }),
       },
     });
 
     await service.ensureIterationReportMaterialized('exec-1', 'task-1', 2);
 
+    expect(replayReportService.findLatestReportRecord).toHaveBeenNthCalledWith(1, { executionId: 'exec-1', taskId: 'task-1', iteration: 2 });
+    expect(replayReportService.findLatestReportRecord).toHaveBeenNthCalledWith(2, { executionId: 'exec-1', taskId: 'task-1' });
     expect(replayReportService.createReport).toHaveBeenCalledWith(expect.objectContaining({
+      executionId: 'exec-1',
+      replayId: 'replay-1',
       iteration: 2,
       verdict: 'unknown',
       overallScore: null,
@@ -267,13 +285,26 @@ describe('PlaybookFlowReplayDriftService', () => {
       replayConfidence: null,
       contextDrift: null,
     }));
+    const clone = replayReportService.createReport.mock.calls[0][0];
+    expect(clone).not.toHaveProperty('id');
+    expect(clone).not.toHaveProperty('createdAt');
+    expect(clone).not.toHaveProperty('updatedAt');
+  });
+
+  it('does not materialize an iteration when the run has no report for the task', async () => {
+    const { service, replayReportService } = createService();
+
+    await service.ensureIterationReportMaterialized('exec-1', 'task-1', 3);
+
+    expect(replayReportService.findLatestReportRecord).toHaveBeenCalledTimes(2);
+    expect(replayReportService.createReport).not.toHaveBeenCalled();
   });
 
   it('updates semanticMatch on a replay report and re-derives the verdict from evidence', async () => {
     const { service, replayReportService } = createService({
       replayReportService: {
         findLatestReportRecord: jest.fn().mockResolvedValue({
-          _id: 'report-1',
+          id: 'report-1',
           mode: 'replay_flex',
           outputContractEvaluated: false,
           outputContractPassed: false,
@@ -320,7 +351,7 @@ describe('PlaybookFlowReplayDriftService', () => {
     const { service, replayReportService } = createService({
       replayReportService: {
         findLatestReportRecord: jest.fn().mockResolvedValue({
-          _id: 'report-1',
+          id: 'report-1',
           mode: 'replay_strict',
           outputContractEvaluated: false,
           outputContractPassed: false,
@@ -350,7 +381,7 @@ describe('PlaybookFlowReplayDriftService', () => {
       const { service, replayReportService, loggerService } = createService({
         replayReportService: {
           findLatestReportRecord: jest.fn().mockResolvedValue({
-            _id: 'report-1',
+            id: 'report-1',
             mode: 'replay_strict',
           }),
         },
@@ -406,31 +437,26 @@ describe('PlaybookFlowReplayDriftService', () => {
     });
 
     it('infers observed_intent_key from tool trace evidence when trace metadata has none', async () => {
-      const countDocuments = jest.fn(() => ({
-        exec: jest.fn().mockResolvedValue(3),
-      }));
+      const countActiveFromExecution = jest.fn().mockResolvedValue(3);
       const { service, replayReportService } = createService({
-        hitlMemoryModel: { countDocuments },
-        executionModel: {
-          findById: jest.fn(() => ({
-            lean: jest.fn().mockReturnValue({
-              exec: jest.fn().mockResolvedValue({
-                replayPlanningByTask: {
-                  'task-1': {
-                    executionPlan: {
-                      plannedToolSteps: [],
-                      semanticChecklist: [],
-                    },
-                    contextMapping: [],
-                  },
+        hitlMemoryRepository: { countActiveFromExecution },
+        executionRepository: {
+          findById: jest.fn().mockResolvedValue({
+            hitlEvents: [],
+            replayPlanningByTask: {
+              'task-1': {
+                executionPlan: {
+                  plannedToolSteps: [],
+                  semanticChecklist: [],
                 },
-              }),
-            }),
-          })),
+                contextMapping: [],
+              },
+            },
+          }),
         },
         replayReportService: {
           findLatestReportRecord: jest.fn().mockResolvedValue({
-            _id: 'report-1',
+            id: 'report-1',
             mode: 'replay_flex',
             outputContractEvaluated: false,
             outputContractPassed: false,
@@ -499,7 +525,7 @@ describe('PlaybookFlowReplayDriftService', () => {
         traceMetadata: null,
       });
 
-      expect(countDocuments).not.toHaveBeenCalled();
+      expect(countActiveFromExecution).not.toHaveBeenCalled();
       expect(replayReportService.updateReport).toHaveBeenCalledWith(
         'report-1',
         expect.objectContaining({

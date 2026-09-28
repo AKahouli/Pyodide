@@ -1,8 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConversationV2EventStoreService } from '@modules/conversation-v2/services/conversation-v2-event-store.service';
-import { RUNTIME_FINALIZED_REVISION_STORE, type RuntimeFinalizedRevisionStore } from '../persistence/runtime-finalized-revision.store';
+import { type RuntimeFinalizedRevisionStore } from '../persistence/runtime-finalized-revision.store';
 import { RuntimeFinalizedRevisionService } from './runtime-finalized-revision.service';
+import { PgRuntimeFinalizedRevisionStore } from '../persistence/pg-runtime-finalized-revision.store';
 
 describe('RuntimeFinalizedRevisionService', () => {
   let svc: RuntimeFinalizedRevisionService;
@@ -35,7 +36,7 @@ describe('RuntimeFinalizedRevisionService', () => {
       providers: [
         RuntimeFinalizedRevisionService,
         {
-          provide: RUNTIME_FINALIZED_REVISION_STORE,
+          provide: PgRuntimeFinalizedRevisionStore,
           useValue: store,
         },
         {

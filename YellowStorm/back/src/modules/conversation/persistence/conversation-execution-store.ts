@@ -8,7 +8,6 @@
  * guarantee; capacity counters are best-effort gates around it.
  */
 
-export const CONVERSATION_EXECUTION_STORE = Symbol('CONVERSATION_EXECUTION_STORE');
 
 export type ConversationExecutionConflictReason =
   | 'conversation_busy'

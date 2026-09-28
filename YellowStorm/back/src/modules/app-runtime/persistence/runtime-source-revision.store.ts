@@ -1,7 +1,6 @@
 /**
  * Store port for app_runtime.source_revisions (P8 Mongo cutover).
  */
-export const RUNTIME_SOURCE_REVISION_STORE = Symbol('RUNTIME_SOURCE_REVISION_STORE');
 
 export interface SourceRevisionFileRecord {
   path: string;

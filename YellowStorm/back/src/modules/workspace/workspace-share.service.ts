@@ -22,8 +22,8 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/notification.types';
 import { asAuthUser, type AuthUser } from '@common/auth/auth-user';
 import type { WorkspaceRecord, WorkspaceShareRecord } from './ports/workspace-records';
-import { WORKSPACE_STORE, type WorkspaceStore } from './stores/workspace-store';
-import { SHARE_STORE, type ShareStore } from './stores/share-store';
+import { PgWorkspaceStore } from './stores/postgres/pg-workspace-store';
+import { PgShareStore } from './stores/postgres/pg-share-store';
 import { WorkspaceIntegrationEvents } from '../integration-events/contracts';
 import { IntegrationEventOutboxService } from '../integration-events/services/integration-event-outbox.service';
 import { SemanticDataGrantRevocationService } from '../semantic-model/services/semantic-data-grant-revocation.service';
@@ -33,8 +33,8 @@ type ShareEventType = 'workspace_shared' | 'workspace_share_revoked' | 'workspac
 @Injectable()
 export class WorkspaceShareService {
   constructor(
-    @Inject(WORKSPACE_STORE) private readonly workspaceStore: WorkspaceStore,
-    @Inject(SHARE_STORE) private readonly shareStore: ShareStore,
+    private readonly workspaceStore: PgWorkspaceStore,
+    private readonly shareStore: PgShareStore,
     @Inject(USER_LOOKUP_PORT) private readonly userLookup: UserLookupPort,
     private readonly logger: LoggerService,
     private readonly userService: UserService,

@@ -1,17 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { NotFoundException } from '@modules/exceptions';
-import { Flow, FlowDocument } from '../schemas/playbook-flow.schema';
-import { DEFAULT_HITL_POLICY, HitlPolicy } from '../schemas/playbook-flow-hitl.schema';
+import { ConflictException, NotFoundException } from '@modules/exceptions';
+import { DEFAULT_HITL_POLICY, HitlPolicy } from '../models/playbook-flow-hitl.model';
+import { FlowRepository, type FlowRecord } from '../persistence/flow.repository';
 
 /** Resolves workflow and node HITL policy defaults used by APIs, snapshots, and prompt injection. */
 @Injectable()
 export class PlaybookFlowHitlPromptService {
   constructor(
-    @InjectModel(Flow.name) private readonly flowModel: Model<FlowDocument>,
+    private readonly flows: FlowRepository,
     private readonly configService: ConfigService,
   ) {}
 
@@ -31,8 +29,8 @@ export class PlaybookFlowHitlPromptService {
       flow as unknown as Record<string, unknown>,
     );
     const nextPolicy = { ...this.buildPolicyDefaults(), ...compatiblePolicy, ...patch };
-    flow.hitlPolicy = nextPolicy as HitlPolicy;
-    await flow.save();
+    const saved = await this.flows.updateFields(flow.id, { hitlPolicy: nextPolicy as HitlPolicy }, { ownerId });
+    if (!saved) throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook not found');
     return nextPolicy as HitlPolicy;
   }
 
@@ -61,8 +59,9 @@ export class PlaybookFlowHitlPromptService {
       ),
       ...patch,
     };
-    flow.set(`nodes.${index}.hitlPolicy`, nextPolicy);
-    await flow.save();
+    if (!await this.flows.setNodeHitlPolicy(flow.id, ownerId, index, nodeId, nextPolicy as HitlPolicy)) {
+      throw new ConflictException(ErrorCode.CONFLICT, 'Playbook changed while updating the node policy. Refresh and retry.');
+    }
     return nextPolicy as HitlPolicy;
   }
 
@@ -77,13 +76,13 @@ export class PlaybookFlowHitlPromptService {
     } as HitlPolicy;
   }
 
-  private async findOwnedFlow(flowId: string, ownerId: string): Promise<FlowDocument> {
-    const flow = await this.flowModel.findOne({ _id: flowId, ownerId });
+  private async findOwnedFlow(flowId: string, ownerId: string): Promise<FlowRecord> {
+    const flow = await this.flows.findOwned(flowId, ownerId);
     if (!flow) throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook not found');
     return flow;
   }
 
-  private findNode(flow: FlowDocument, nodeId: string): { node: Record<string, unknown>; index: number } {
+  private findNode(flow: FlowRecord, nodeId: string): { node: Record<string, unknown>; index: number } {
     const index = (flow.nodes as unknown as Array<Record<string, unknown>>).findIndex((item) => item.id === nodeId);
     const node = index >= 0 ? (flow.nodes as unknown as Array<Record<string, unknown>>)[index] : undefined;
     if (!node) throw new NotFoundException(ErrorCode.NOT_FOUND, 'Playbook node not found');
@@ -101,9 +100,6 @@ export class PlaybookFlowHitlPromptService {
   private toPolicyRecord(policy: unknown): Record<string, unknown> {
     if (!policy || typeof policy !== 'object') {
       return {};
-    }
-    if (typeof (policy as { toObject?: () => unknown }).toObject === 'function') {
-      return (policy as { toObject: () => Record<string, unknown> }).toObject();
     }
     return { ...(policy as Record<string, unknown>) };
   }

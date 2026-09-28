@@ -1,36 +1,26 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConflictException, ForbiddenException, NotFoundException, ValidationException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { AuditLogService } from '@modules/authorization/services/audit-log.service';
 import { UserGroupService } from '@modules/user-group';
 import { CreateGovernanceScopeDto, GovernanceScopeKnowledgeDto, UpdateGovernanceScopeDto } from '../dto';
-import {
-  BINDING_STORE,
-  DEPLOYMENT_STORE,
-  DRY_RUN_STORE,
-  GOVERNANCE_DOCUMENT_STORE,
-  MEMBERSHIP_STORE,
-  METRIC_STORE,
-  PUBLICATION_ATTEMPT_STORE,
-  REVISION_STORE,
-  SCOPE_STORE,
-  GOVERNANCE_TRANSACTION,
-  type BindingStore,
-  type GovernanceTransactionRunner,
-  type DeploymentStore,
-  type DryRunStore,
-  type GovernanceDocumentStore,
-  type GovernanceScopeKnowledge,
-  type GovernanceScopeRecord,
-  type MembershipStore,
-  type MetricStore,
-  type PublicationAttemptStore,
-  type RevisionStore,
-  type ScopeStore,
+import {                   
+  type GovernanceScopeKnowledge,                    
+  type GovernanceScopeRecord,                    
 } from '../persistence';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceDraftPreparationService } from './governance-draft-preparation.service';
 import type { GovernanceScopeType } from '../domain/governance-types';
+import { PgGovernanceTransactionRunner } from '../persistence/postgres/pg-transaction-runner';
+import { PgMetricStore } from '../persistence/postgres/pg-metric.store';
+import { PgPublicationAttemptStore } from '../persistence/postgres/pg-publication-attempt.store';
+import { PgDryRunStore } from '../persistence/postgres/pg-dry-run.store';
+import { PgRevisionStore } from '../persistence/postgres/pg-revision.store';
+import { PgScopeStore } from '../persistence/postgres/pg-scope.store';
+import { PgGovernanceDocumentStore } from '../persistence/postgres/pg-document.store';
+import { PgBindingStore } from '../persistence/postgres/pg-binding.store';
+import { PgMembershipStore } from '../persistence/postgres/pg-membership.store';
+import { PgDeploymentStore } from '../persistence/postgres/pg-deployment.store';
 
 export interface GovernanceScopeKnowledgeResponse {
   sourceMode: 'llm_only' | 'workspaces_only';
@@ -56,20 +46,20 @@ export interface GovernanceScopeResponse {
 @Injectable()
 export class GovernanceScopeService {
   constructor(
-    @Inject(SCOPE_STORE) private readonly scopeStore: ScopeStore,
-    @Inject(GOVERNANCE_DOCUMENT_STORE) private readonly documentStore: GovernanceDocumentStore,
-    @Inject(BINDING_STORE) private readonly bindingStore: BindingStore,
-    @Inject(MEMBERSHIP_STORE) private readonly membershipStore: MembershipStore,
-    @Inject(DEPLOYMENT_STORE) private readonly deploymentStore: DeploymentStore,
-    @Inject(REVISION_STORE) private readonly revisionStore: RevisionStore,
-    @Inject(DRY_RUN_STORE) private readonly dryRunStore: DryRunStore,
-    @Inject(METRIC_STORE) private readonly metricStore: MetricStore,
-    @Inject(PUBLICATION_ATTEMPT_STORE) private readonly publicationAttemptStore: PublicationAttemptStore,
+    private readonly scopeStore: PgScopeStore,
+    private readonly documentStore: PgGovernanceDocumentStore,
+    private readonly bindingStore: PgBindingStore,
+    private readonly membershipStore: PgMembershipStore,
+    private readonly deploymentStore: PgDeploymentStore,
+    private readonly revisionStore: PgRevisionStore,
+    private readonly dryRunStore: PgDryRunStore,
+    private readonly metricStore: PgMetricStore,
+    private readonly publicationAttemptStore: PgPublicationAttemptStore,
     private readonly programService: GovernanceProgramService,
     private readonly userGroupService: UserGroupService,
     private readonly auditLogService: AuditLogService,
     private readonly draftPreparation: GovernanceDraftPreparationService,
-    @Inject(GOVERNANCE_TRANSACTION) private readonly tx: GovernanceTransactionRunner,
+    private readonly tx: PgGovernanceTransactionRunner,
   ) {}
 
   async create(ownerUserId: string, programId: string, dto: CreateGovernanceScopeDto): Promise<GovernanceScopeResponse> {

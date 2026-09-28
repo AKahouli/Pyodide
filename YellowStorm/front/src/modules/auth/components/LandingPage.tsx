@@ -25,7 +25,12 @@ export function LandingPage() {
   React.useEffect(() => {
     getAuthProviders()
       .then(setProviders)
-      .catch(() => setProviders([]))
+      .catch((error: unknown) => {
+        // An unreachable backend and a backend with no providers enabled are indistinguishable
+        // in the UI below, so record which baseURL failed instead of swallowing the error.
+        console.error(`[auth] Could not load auth providers from ${API_CONFIG.baseURL}`, error);
+        setProviders([]);
+      })
       .finally(() => setLoadingProviders(false));
   }, []);
 

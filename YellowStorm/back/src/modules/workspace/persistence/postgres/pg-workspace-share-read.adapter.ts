@@ -4,7 +4,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { resolveQueryable } from '@common/postgres/transaction';
-import { WORKSPACE_SHARE_READ_PORT, type WorkspaceShareReadPort } from '../../ports/workspace-share-read.port';
+import { type WorkspaceShareReadPort } from '../../ports/workspace-share-read.port';
 import type { WorkspaceShareRecord } from '../../ports/workspace-records';
 
 const SHARES = schema.workspaceShares;

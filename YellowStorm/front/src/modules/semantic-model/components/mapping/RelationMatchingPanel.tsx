@@ -44,6 +44,7 @@ export function RelationMatchingPanel({ modelId, relation }: Readonly<{ modelId:
     }),
     onSuccess: async (result) => {
       setRuleId(result.id);
+      useSemanticModelEditorStore.getState().adoptRevision(result.revision);
       await Promise.all([
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.relationRules(modelId) }),
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.model(modelId) }),
@@ -60,9 +61,13 @@ export function RelationMatchingPanel({ modelId, relation }: Readonly<{ modelId:
   const canSave = Boolean(sourceAttribute && targetAttribute) && !save.isPending;
 
   return <div className='space-y-4'>
-    <p className='rounded-xl bg-primary/5 p-3 text-xs text-muted-foreground'>
-       {t('relationMatching.question', { source: source?.label ?? '', target: target?.label ?? '' })}
-       <span className='mt-1 block font-medium text-foreground'>{t(`cardinality.${relation.cardinality}`)}</span>
+    <p className='rounded-xl bg-primary/5 p-3 text-sm'>
+      {sourceAttribute && targetAttribute
+        ? t('relationSentence.matchSentence', {
+          source: source?.label ?? '', sourceField: source?.attributes.find((attribute) => attribute.key === sourceAttribute)?.label ?? sourceAttribute,
+          target: target?.label ?? '', targetField: target?.attributes.find((attribute) => attribute.key === targetAttribute)?.label ?? targetAttribute,
+        })
+        : t('relationSentence.chooseBoth')}
     </p>
     <div className='space-y-2'>
       <Label>{source?.label}</Label>

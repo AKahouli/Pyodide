@@ -15,8 +15,7 @@ import { AiProxyUsageService } from './ai-proxy-usage.service';
 import { AiProxyRateLimitGuard } from './guards/ai-proxy-rate-limit.guard';
 import { AiProxyPayloadLimitGuard } from './guards/ai-proxy-payload-limit.guard';
 import { AppBuilderAiAuthGuard } from './guards/app-builder-ai-auth.guard';
-import { AiPreviewTicketService } from './services/ai-preview-ticket.service';
-import { AI_PREVIEW_TICKET_STORE } from './persistence/ai-preview-ticket.store';
+import { AiPreviewTicketService } from './services/ai-preview-ticket.service';
 import { PgAiPreviewTicketStore } from './persistence/pg-ai-preview-ticket.store';
 
 @Module({
@@ -33,7 +32,7 @@ import { PgAiPreviewTicketStore } from './persistence/pg-ai-preview-ticket.store
   ],
   controllers: [AiProxyController],
   providers: [
-    { provide: AI_PREVIEW_TICKET_STORE, useClass: PgAiPreviewTicketStore },
+    PgAiPreviewTicketStore,
     AiProxyService,
     AiProxyStreamService,
     AiProxyUsageService,

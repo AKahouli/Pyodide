@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { expectContract } from '../expect-contract';
 import { toWire, expectNoMongoKeys, expectNoKeys } from '../wire-helpers';
 import { WidgetChatService } from '@modules/widget-chat/services/widget-chat.service';
+import { PgWidgetTokenStore, PgWidgetSessionStore, PgWidgetMessageStore } from '../../../src/modules/widget-chat/persistence/pg-widget.store';
 import {
   InMemoryWidgetTokenStore,
   InMemoryWidgetSessionStore,
@@ -14,10 +15,11 @@ const USER = '64b000000000000000000001';
 
 function makeService() {
   const tokenStore = new InMemoryWidgetTokenStore();
+  const tokenStoreTyped = tokenStore as unknown as PgWidgetTokenStore;
   const service = new WidgetChatService(
-    tokenStore,
-    new InMemoryWidgetSessionStore(),
-    new InMemoryWidgetMessageStore(),
+    tokenStoreTyped,
+    new InMemoryWidgetSessionStore() as unknown as PgWidgetSessionStore,
+    new InMemoryWidgetMessageStore() as unknown as PgWidgetMessageStore,
     {} as never,
     {} as never,
     {} as never,

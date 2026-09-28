@@ -32,30 +32,22 @@
 | **App-data** | ✅ Own `app_data` schema. One Mongo coupling: `app-data-owner.controller.ts` (+ remote variant) injects `ConversationV2Session`. |
 | **Conversation v1** | ✅ PG-only. `usage.service.ts` now reads plans from `catalog.plans`; users resolve through `USER_LOOKUP_PORT` (Postgres). |
 | **Identity, catalog, integrations, agent ecosystem** | ✅ On Postgres (P1A, P1B, P3, P4). All cross-schema FKs are validated and generated from `scripts/migrate/fk-specs.ts` into `drizzle/0025`; `npm run db:verify` and `reconcile-ids.ts --strict` are the health checks. |
-| **Everything else** | ❌ Still Mongoose — see §1.3 (≈109 collection models across 10 modules). |
+| **Conversation v2, app-runtime, app-builder AI offers** | ✅ On Postgres (P8, migrations 0026–0028). Backfilled and content-verified; see the remediation plan, Appendix C. Cross-schema foreign keys (12) follow in migration 0037, safe on dirty data; three of them still have orphans to clear at the deploy (remediation plan, Appendix D). |
+| **Agent evaluation** | ✅ On Postgres (P6, migration 0031, schema `agent_evaluation`). `evaluation.*` in the shared DB belongs to a different feature. |
+| **Knowledge intelligence** | ✅ On Postgres (P6, migration 0033, six `governance.knowledge_*` tables with FKs). The job queue claims with `FOR UPDATE SKIP LOCKED`; governance now reads plain records instead of Mongoose documents. |
+| **Classifier** | ✅ On Postgres (P6, migration 0034, schema `classifier`: folders, file assignments, rules, runs). The folder tree is a self-referencing table (`ON DELETE CASCADE`, `NULLS NOT DISTINCT` name uniqueness); deleting a folder unassigns its files atomically. `playbook_id` got its FK to `playbook.flows` in migration 0041 (P5). |
+| **Integration events** | ✅ On Postgres (P6, migration 0035, `ops.integration_events` + `ops.integration_event_deliveries`). A real transactional outbox: `record()` joins the caller's transaction, the dispatcher claims with `FOR UPDATE SKIP LOCKED` and fences every write on its lock owner, and a claim left by a dead dispatcher is taken over after two minutes. |
+| **Logger** | ✅ On Postgres (P6, migration 0036, `ops.logs`). Written through the shared pool but never inside a caller's transaction, swept by the TTL sweeper after `LOGGING_RETENTION_DAYS` (default 30). The pool depends on `LoggerService`, so the buffer resolves it lazily instead of injecting it. |
+| **Worky** | ✅ On Postgres (P7, migration 0038, schema `worky`: 25 tables). Streams, shares, the board (tasks), plan history, messages, interactions, budget, governance, mail, scheduling, reports, audit and memory, plus the rows the Electric consumer mirrors from the manager, with real foreign keys: deleting a stream cascades to everything under it (the old 15-collection cascade also missed the mirror tables and left 14 orphan rows). The budget reservation is one atomic `UPDATE … WHERE spend + amount <= limit`, the scheduler claims with `FOR UPDATE SKIP LOCKED`, and a plan delta applies in one transaction. The Electric cursors are copied so the consumer resumes where it stopped. |
+| **Playbook-flow** | ✅ On Postgres (P5, migration 0040, schema `playbook`: 25 tables). Definitions (flows with jsonb graphs, workspaces junction, shares, node/prompt templates, output formats), executions with task results / router decisions / dynamic-reasoning attempts / HITL memory, leases and idempotency records (TTL-swept), mail-trigger ledger, the design and assistant workspaces, replay baselines and reports, evaluations. Executions are conditional `UPDATE`s (queue claim with `FOR UPDATE SKIP LOCKED`, HITL approval claim, cancel), the flow list joins the latest execution in SQL, and deleting a flow cascades to everything under it (the Mongo delete removed the flow and its shares only: 635 of the 2,067 dev executions belong to flows that no longer exist). The connector's raw `flows` aggregation is a transaction over jsonb. `FLOW_READ_PORT` has a Postgres adapter. |
+| **WhatsApp** | ✂️ Removed from back, front and ADK (PR #317). The empty `channels.whatsapp_*` tables are dropped by migration 0032. |
+| **Mongo in the runtime** | ✅ None (P10). `DatabaseModule`, the Mongo health ping, `user.schema.ts` and the connector bridge are gone, `MONGODB_URI` left the config schema, and `no-mongoose-in-migrated-modules.spec.ts` now has an empty allowlist. The `mongoose` package remains only for specs and the one-off backfill scripts. |
 
 Not affected: **`yellowstorm-adk`, `mcp-*`, `yellowstorm-code-runtime` have no Mongo access** (only comments mention ObjectIds) — they reach data through Nest over gRPC/REST. **Front** has no datastore coupling; it only assumes 24-hex IDs (`isObjectIdLike` in `PlaybookExecutionComparePage.tsx`).
 
-### 1.3 Remaining Mongo surface (updated 2026-09-21, after the identity / catalog / integrations / agent-ecosystem remediation)
+### 1.3 Remaining Mongo surface (updated 2026-09-25: none)
 
-Done and verified on Postgres: `agents`, `app-data`, conversation v1, `project`, `workspace`, `workspace-artifact`, `governance`, identity (`user`, `auth`, `auth-provider`, `authorization`, `user-group`), config/catalog (`system`, `models`, `guardrails`, `health` history, `usage` plans, `notifications`, `tool`, `skill`, `agent-type`, `humain-agent`), integrations (`connected-app`, `connector`) and the agent ecosystem (shared agents, `team`, `telegram`, `widget-chat`). The remaining Mongo modules — enforced by `src/common/testing/no-mongoose-in-migrated-modules.spec.ts`, whose allowlist is exactly this table — are:
-
-| Module | Mongo collections | Non-spec files with `@InjectModel` | Notes |
-|---|---|---|---|
-| `playbook-flow` | 24 models (+3 subdocument helper files) | 47 | Largest. `$lookup` aggregations in `playbook-flow-artifact.service.ts` and `playbook-flow.service.ts`, a replay-report aggregation, 2 `bulkWrite` (node/prompt templates), leases + idempotency with TTL and duplicate-key semantics, 5 assistant collections (4 with TTL), event appends with `$inc`/`$push`, runtime index management, `FLOW_READ_PORT` (Mongo adapter used by `workspace` and `classifier`) |
-| `worky` | 26 models (25 schema files) | 26 (+1 `@InjectConnection`) | 619-line Electric consumer writing 7 collections + cursors; aggregations in budget / report / stream services; atomic budget `$inc`; cascade delete over 16 collections (`worky-stream.service.ts`); WhatsApp system-bot models (channel deprecated) |
-| `knowledge-intelligence` | 6 (all empty in dev) | 6 | Repositories already sit behind interfaces |
-| `classifier` | 4 | 5 | Reads flows through `FLOW_READ_PORT` |
-| `evaluation` | 4 | 3 | |
-| `conversation-v2` | 3 | 4 (+2 in `app-data` owner controllers) | Event store `$inc` counters; `(session_id, seq)` ordering |
-| `app-runtime` | 5 | 5 | Tickets (TTL), tool calls, source/finalized revisions; 7 unique indexes |
-| `integration-events` | 1 (outbox) | 2 | **Consumed by already-migrated modules** (`governance`, `workspace`, `indexing`, `semantic-model`) |
-| `logger` | 1 (`logs`, TTL 30 d, separate `logging` connection) | 1 | Aggregation in `log-buffer.service.ts` |
-| `whatsapp` | 3 | 5 | Deprecated by product decision; disabled with `WHATSAPP_ENABLED=false`; cleanup deferred |
-| `connector` (bridge) | — | 1 raw `connection.collection('flows')` | `connector-playbook-binding-sync.service.ts`; replaced in P5 |
-| `database` / `health` | — | — | `DatabaseModule` (`MongooseModule.forRoot`) and the Mongo ping in `health.service.ts`; removed in P10 |
-
-Live TTL indexes still in Mongo: 8 (app-runtime tickets, logger logs, 4 playbook-assistant collections, execution leases, idempotency records). Mongo transactions in wired code: none. `.aggregate()` files: 7 (logger, 3 in playbook-flow, 3 in worky). `bulkWrite`: 2.
+Every module now runs on Postgres, including the last two (`worky`, P7, and `playbook-flow`, P5) and the connection shell (P10). `src/common/testing/no-mongoose-in-migrated-modules.spec.ts` fails on any `@InjectModel`, `@InjectConnection`, `MongooseModule.forFeature`, `mongoose` or `@nestjs/mongoose` import in a non-spec file, with an empty allowlist; the whole application initialises against the test database without a MongoDB connection. What is left is data, not code: the dev Mongo collections keep their rows until the deploy-day backfills and the cutover reconciliation (`reconcile-ids --strict`) are done, and `mongoose` stays a dependency for the specs and those scripts until then.
 
 ---
 
@@ -119,11 +111,12 @@ flowchart TD
 - **`tool`/`skill`/`agent-type` are already referenced by migrated `agents` junction rows** → moving them (P1B) allows real FKs and removes the "hydrate agentType from Mongo" hop.
 - **`workspace.service.ts` and `classifier` import the `Flow` model** → break with a `FlowReadPort` in P0/P2 so workspace does not wait for P5.
 - **`connector-playbook-binding-sync.service.ts` rewrites `flows[].nodes[].toolBindings` via raw Mongo** → keep as a bridge through P3–P4, rewrite (hard #2) inside P5.
-- **P5 before P6/P7**: governance, classifier, worky and evaluation all reference flow/playbook IDs and executions.
+- **P5 before P6**: governance, classifier and evaluation reference flow/playbook IDs and executions (all three are done; their `playbook_id` columns take a foreign key once the flow store leaves Mongo).
+- **P7 (worky) does not wait for P5** (checked 2026-09-25): nothing outside `worky/` imports it, and it imports only one class from playbook-flow (`PlaybookFlowMailGraphClientService`, a Graph mail client with no data of its own). It never reads flows or executions, so its migration can run first or in parallel; the only later link is an id reference for the P10 foreign keys.
 - **P8, P9 are nearly leaf** → schedule as parallel lanes once P2 (P8) / P1A (P9) land.
 
 **Critical path:** P0 → P1A → P1B → P2 → P3 → P4 → P5 → P6/P7 → P10.
-**Parallel lanes** (2 engineers): after P1B, lane A = P2→P4→P5→P6; lane B = P3→P8→P9→P7 (P7 waits for P5's execution tables).
+**Parallel lanes** (2 engineers): after P1B, lane A = P2→P4→P5→P6; lane B = P3→P8→P9→P7 (P7 is independent of P5, see above).
 
 ---
 
@@ -199,6 +192,7 @@ Blocks everything else.
 - **Data:** backfill shared_*/teams/integrations/bindings; widget sessions/messages fresh.
 
 ### Phase 5 — Playbook-flow  *(XL — biggest single phase)*
+> **Done 2026-09-25** (migration 0040, remediation plan Appendix F). Built as one schema with four parallel work packages instead of four sequential sub-phases, because the flow list and the delete cascade join flows and executions. Deviations from the plan below: the whole execution history is migrated (the dev data is small: 2,067 executions, 3,648 task results, so the "last 90 days" cut-off was not needed; the 635 executions of deleted flows are reported, not migrated); the load gate and a real ADK execution were not run (they need a running runtime and a token): verification is the repository integration specs, the ordered backfill rehearsal and a full application initialisation on the test database.
 29 schema files, 47 coupled files. Split into 4 sub-phases, each independently deployable:
 - **5A Definitions:** `flows` (jsonb `nodes/edges/settings` + promoted `ownerId, workspaceId, name, status, version, updatedAt`), `shared_playbooks`, `node_templates`, `prompt_templates`, `output_formats`. Rewrite `playbook.service`-style paginated list (correlated `$lookup` + `$facet`) as window/`COUNT(*) OVER()` (**hard #3**). Rewrite `connector-playbook-binding-sync` (**hard #2**) — either `jsonb_set` update over `flows` or a normalised `flow_node_tool_bindings(flow_id,node_id,connector_id,…)` table (recommended: normalised, gives the `connectorId` index the Mongo migration script `2026-07-09-create-flow-toolbindings-connectorid-index.ts` was emulating). Replace `FlowReadPort` adapter; drop Mongo bridge from P3.
 - **5B Executions:** `flow_executions` (promoted: `flowId, status, executedBy, startedAt, finishedAt`, `replay_source` cols) with `task_results` — **recommended:** separate `flow_task_results` table (`execution_id, node_id, status, usage…`) with `jsonb` for `toolTrace / llmPromptTrace / judgeHistory / components`; HITL tables; router decisions; `execution_leases` and `idempotency_records` (TTL, `INSERT … ON CONFLICT DO NOTHING` for lease acquisition — replaces the unique-index-race pattern; **must be race-tested**).
@@ -217,6 +211,7 @@ Blocks everything else.
 - **Data:** backfill governance programs/scopes/documents/revisions/memberships; runs/attempts/metrics per §7-Q1.
 
 ### Phase 7 — Worky  *(L)*
+> **Done 2026-09-25** (migration 0038, remediation plan Appendix E). Deviations from the plan below: the Electric shapes and cursor protocol are unchanged and the sink is the `worky` schema; the 3 aggregations became `GROUP BY` queries in the repositories; `cost_events` / `audit_events` got `(stream_id, …)` indexes but no partitioning (116 audit rows and no cost events in the dev data); `scripts/create-worky-component-tables.cjs` still targets the *manager's* database and is left alone. The 24 collections that code uses became 25 tables (the embedded shares got their own); `worky_idempotency_records`, `worky_execution_snapshots` and the two `worky_whatsapp_*` collections are legacy and not migrated.
 25 collections; audit events, cost events, budget reservations, plan versions/deltas/projections, task results, streams, interactions, mail ledger, WhatsApp delivery, ephemeral workers, Electric cursors.
 - **Electric consumer (`worky-electric-consumer.service.ts`, 619 lines):** today mirrors an external Worky-manager PG into Mongo. Re-point the sink to the app PG (`worky.*` tables); keep the Electric shape/cursor protocol unchanged. Cursor table becomes trivial `INSERT … ON CONFLICT`. Decide if the two PGs can eventually be merged (§7-Q4) — not required for this phase.
 - Replace 3 aggregations (`worky-budget.service.ts`, `worky-report.service.ts`, `worky-stream.service.ts`) with SQL (`date_trunc`, `GROUP BY`). Budget **reservations** must be an atomic `UPDATE … WHERE remaining >= $x RETURNING` (replaces `findOneAndUpdate`+`$inc`).
@@ -237,6 +232,7 @@ Blocks everything else.
 - **Data:** fresh.
 
 ### Phase 10 — Integrity hardening, Mongo removal, tuning  *(M–L)*
+> **Partly done 2026-09-25:** item 3 (Mongo removal from the runtime: `DatabaseModule`, health ping, `user.schema.ts`, `MONGODB_URI`, no-Mongoose gate with an empty allowlist). Still open: item 1 (the cross-schema FKs of the old `ref:` edges beyond those already added), removing the `mongoose` / `@nestjs/mongoose` packages once the backfill scripts are retired, the Mongo-only scripts and deployment docs, item 4 (EXPLAIN of the top queries) and item 5 (full regression incl. ADK e2e and the load gate).
 1. **Orphan audit** across all `ref:` edges (324 declarations, never FK-enforced) using the harness reference map; repair or null out; then add cross-schema FKs (`NOT VALID` → `VALIDATE CONSTRAINT`) — agents↔users/agent-types, conversations↔workspaces/projects/users, messages↔agents, flows↔workspaces, governance↔documents, worky↔flows, etc.
 2. Audit **IDs hidden inside `jsonb`/`Mixed`** (e.g. conversation `runtimeDefinition.{primaryAgentId,allowedAgentIds,workspaceIds}`): promote to columns/junctions or explicitly accept as opaque.
 3. **Remove Mongo:** `DatabaseModule`/`MongooseModule.forRoot`, logger connection, `mongoose`/`@nestjs/mongoose`/`mongodb` deps, `MONGODB_*` in `config.schema.ts` + `database.config.ts`, `scripts/init-mongodb.js`, `scripts/init-db.sh`, docker/deployment docs (`docs/deployment/docker-deployment-guide.md`), README/CHANGELOG, health-check indicator (swap to PG), Mongo-only one-off scripts under `back/scripts/migrations`.

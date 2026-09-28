@@ -11,9 +11,12 @@ const api = vi.hoisted(() => ({
   previewSourceMapping: vi.fn(),
   createSourceMapping: vi.fn(),
   createBulkDocumentSourceMappings: vi.fn(),
+  createWorkspaceSourceMapping: vi.fn(),
 }));
+const workspaceApi = vi.hoisted(() => ({ getDocuments: vi.fn(), getFolderContents: vi.fn(), getDocument: vi.fn() }));
 
 vi.mock('../../api', () => ({ semanticModelApi: api }));
+vi.mock('@/modules/workspace/api', () => workspaceApi);
 
 const graph: SemanticGraph = {
   modelId: 'model-1', versionId: 'version-1', revision: 0, relations: [], records: [], recordRelations: [],
@@ -122,5 +125,86 @@ describe('DocumentSourceMappingDrawer', () => {
       expect(payload.fieldMappings[0]).toEqual(expect.objectContaining({ targetAttribute: 'contract_number', extractionStrategy: 'ai' }));
     }
     await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it('maps every file of a folder at once, previewing a couple of them', async () => {
+    workspaceApi.getFolderContents.mockResolvedValue({ documents: [
+      { id: 'sub', originalName: 'Archive', isFolder: true, mimeType: '' },
+      { id: 'a', originalName: 'A.pdf', isFolder: false, mimeType: 'application/pdf', path: 'a.pdf' },
+      { id: 'sheet', originalName: 'List.xlsx', isFolder: false, mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+      { id: 'b', originalName: 'B.docx', isFolder: false, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
+      { id: 'c', originalName: 'C.pdf', isFolder: false, mimeType: 'application/pdf' },
+    ], pagination: { page: 1, totalPages: 1 } });
+    api.createWorkspaceSourceMapping.mockResolvedValue({ revision: 4, fileCount: 120, waitingCount: 3 });
+    workspaceApi.getDocuments.mockResolvedValue({ documents: [{ id: 'folder-1', originalName: 'Contracts', folderName: 'Contracts', isFolder: true, mimeType: '' }], pagination: { page: 1, totalPages: 1 } });
+    const onClose = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><DocumentSourceMappingDrawer modelId='model-1' target={{
+      workspaceId: 'workspace-1', documentId: 'workspace:workspace-1:folder-1', documentName: 'Legal / Contracts', assetKind: 'document', conceptId: 'concept-1',
+      workspace: { workspaceId: 'workspace-1', folderId: 'folder-1', name: 'Legal / Contracts' },
+    }} onClose={onClose} /></QueryClientProvider>);
+
+    expect(await screen.findByText('mapping.coverage')).toBeInTheDocument();
+    // Opened from a folder, that folder starts picked.
+    expect(await screen.findByRole('checkbox', { name: 'mapping.pickFolder' })).toBeChecked();
+    // No per-document picker: the whole folder is the source.
+    expect(screen.queryByText('mapping.bulkDocuments')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'mapping.previewButton' })).toBeEnabled());
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.previewButton' }));
+    await waitFor(() => expect(api.previewSourceMapping).toHaveBeenCalledTimes(2));
+    expect(api.previewSourceMapping.mock.calls.map(([, draft]) => draft.documentId)).toEqual(['a', 'b']);
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.workspaceSave' }));
+    await waitFor(() => expect(api.createWorkspaceSourceMapping).toHaveBeenCalledWith('model-1', expect.objectContaining({
+      conceptId: 'concept-1', workspaceId: 'workspace-1', folderIds: ['folder-1'], documentIds: [],
+    })));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(api.createBulkDocumentSourceMappings).not.toHaveBeenCalled();
+  });
+
+  it('covers the whole workspace or only the folders and files picked, and changes an existing source in place', async () => {
+    workspaceApi.getDocuments.mockResolvedValue({ documents: [
+      { id: 'f1', originalName: 'Contracts', folderName: 'Contracts', isFolder: true, mimeType: '' },
+      { id: 'f2', originalName: 'NDAs', folderName: 'NDAs', isFolder: true, mimeType: '' },
+      { id: 'loose', originalName: 'Loose.pdf', isFolder: false, mimeType: 'application/pdf' },
+      { id: 'sheet', originalName: 'List.csv', isFolder: false, mimeType: 'text/csv' },
+    ], pagination: { page: 1, totalPages: 1 } });
+    workspaceApi.getFolderContents.mockResolvedValue({ documents: [{ id: 'inner', originalName: 'Inner.pdf', isFolder: false, mimeType: 'application/pdf' }], pagination: { page: 1, totalPages: 1 } });
+    workspaceApi.getDocument.mockResolvedValue({ id: 'loose', originalName: 'Loose.pdf', isFolder: false, mimeType: 'application/pdf' });
+    api.createWorkspaceSourceMapping.mockResolvedValue({ revision: 4, fileCount: 3, waitingCount: 0 });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const view = render(<QueryClientProvider client={client}><DocumentSourceMappingDrawer modelId='model-1' target={{
+      workspaceId: 'workspace-1', documentId: 'workspace:workspace-1:all', documentName: 'Legal', assetKind: 'document', conceptId: 'concept-1',
+      workspace: { workspaceId: 'workspace-1', name: 'Legal', workspaceName: 'Legal' },
+    }} onClose={vi.fn()} /></QueryClientProvider>);
+
+    const whole = await screen.findByRole('radio', { name: /mapping.coverWhole/ });
+    expect(whole).toBeChecked();
+    fireEvent.click(screen.getByRole('radio', { name: /mapping.coverPicked/ }));
+    expect(screen.getByText('mapping.pickNothing')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'mapping.workspaceSave' })).toBeDisabled();
+    const folders = await screen.findAllByRole('checkbox', { name: 'mapping.pickFolder' });
+    fireEvent.click(folders[1]);
+    const files = screen.getAllByRole('checkbox', { name: 'mapping.pickFile' });
+    // A spreadsheet cannot be read as a document.
+    expect(files[1]).toBeDisabled();
+    fireEvent.click(files[0]);
+    expect(screen.getByText('mapping.pickedSummary')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.workspaceSave' }));
+    await waitFor(() => expect(api.createWorkspaceSourceMapping).toHaveBeenLastCalledWith('model-1', expect.objectContaining({
+      folderIds: ['f2'], documentIds: ['loose'], mappingId: undefined,
+    })));
+
+    view.unmount();
+    render(<QueryClientProvider client={client}><DocumentSourceMappingDrawer modelId='model-1' target={{
+      workspaceId: 'workspace-1', documentId: 'workspace:workspace-1:pick-1', documentName: 'Legal / NDAs, Loose.pdf', assetKind: 'document',
+      mapping: { id: 'm-1', conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'workspace:workspace-1:pick-1', documentName: 'Legal / NDAs, Loose.pdf', sheetName: '', assetKind: 'document',
+        fieldMappings: [{ sourceField: null, targetAttribute: 'contract_number', mode: 'extract', extractionStrategy: 'deterministic' }], status: 'ready', createdBy: '', createdAt: '', updatedAt: '', identityFields: [],
+        scope: 'workspace', selection: { folderIds: ['f2'], documentIds: ['loose'] } },
+    }} onClose={vi.fn()} /></QueryClientProvider>);
+    expect(await screen.findByRole('radio', { name: /mapping.coverPicked/ })).toBeChecked();
+    fireEvent.click(screen.getByRole('radio', { name: /mapping.coverWhole/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.save' }));
+    await waitFor(() => expect(api.createWorkspaceSourceMapping).toHaveBeenLastCalledWith('model-1', expect.objectContaining({ mappingId: 'm-1' })));
+    expect(api.createWorkspaceSourceMapping.mock.lastCall![1]).not.toHaveProperty('folderIds');
   });
 });

@@ -34,7 +34,6 @@ export interface BrowserEngine {
   launchSession(startUrl: string): Promise<EngineSession>;
 }
 
-export const BROWSER_ENGINE = Symbol('BROWSER_ENGINE');
 
 export type UrlSafetyFn = (url: string) => Promise<void>;
 export const URL_SAFETY = Symbol('URL_SAFETY');

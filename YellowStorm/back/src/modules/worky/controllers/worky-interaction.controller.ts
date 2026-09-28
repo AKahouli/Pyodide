@@ -7,6 +7,7 @@ import {
   Post,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
+import { isObjectId } from '@common/postgres';
 import { WorkyInteractionService } from '../services/worky-interaction.service';
 import { WorkyPlanDeltaService } from '../services/worky-plan-delta.service';
 import { RespondWorkyInteractionDto } from '../dto/respond-worky-interaction.dto';
@@ -14,14 +15,11 @@ import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import type { AuthUser } from '@common/auth/auth-user';
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
 import { Permissions } from '../../authorization/constants/permissions';
-import { Types } from 'mongoose';
 import { NotFoundException, ForbiddenException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { WorkyStream, WorkyStreamDocument } from '../schemas/worky-stream.schema';
-import { WorkyInteraction, WorkyInteractionDocument } from '../schemas/worky-interaction.schema';
-import { WorkyPlanDelta, WorkyPlanDeltaDocument } from '../schemas/worky-plan-delta.schema';
+import { WorkyStreamRepository } from '../persistence/worky-stream.repository';
+import { WorkyInteractionRepository } from '../persistence/worky-interaction.repository';
+import { WorkyPlanRepository } from '../persistence/worky-plan.repository';
 import {
   PreparedWorkyTurn,
   WorkyTurnKickoffService,
@@ -46,12 +44,9 @@ export class WorkyInteractionController {
     private readonly interactions: WorkyInteractionService,
     private readonly planDeltaService: WorkyPlanDeltaService,
     private readonly kickoff: WorkyTurnKickoffService,
-    @InjectModel(WorkyStream.name)
-    private readonly streams: Model<WorkyStreamDocument>,
-    @InjectModel(WorkyInteraction.name)
-    private readonly interactionModel: Model<WorkyInteractionDocument>,
-    @InjectModel(WorkyPlanDelta.name)
-    private readonly planDeltas: Model<WorkyPlanDeltaDocument>,
+    private readonly streams: WorkyStreamRepository,
+    private readonly interactionRecords: WorkyInteractionRepository,
+    private readonly plans: WorkyPlanRepository,
   ) {}
 
   @Post(':id/respond')
@@ -66,20 +61,20 @@ export class WorkyInteractionController {
     @Param('id') interactionId: string,
     @Body() dto: RespondWorkyInteractionDto,
   ): Promise<RespondInteractionResponse> {
-    if (!Types.ObjectId.isValid(interactionId)) {
+    if (!isObjectId(interactionId)) {
       throw new NotFoundException(
         ErrorCode.WORKY_INTERACTION_NOT_FOUND,
         'Worky interaction not found.',
       );
     }
-    const interaction = await this.interactionModel.findById(interactionId).lean().exec();
+    const interaction = await this.interactionRecords.findById(interactionId);
     if (!interaction) {
       throw new NotFoundException(
         ErrorCode.WORKY_INTERACTION_NOT_FOUND,
         'Worky interaction not found.',
       );
     }
-    const stream = await this.streams.findById(interaction.streamId).lean().exec();
+    const stream = await this.streams.findById(interaction.streamId);
     if (!stream) {
       throw new NotFoundException(
         ErrorCode.WORKY_STREAM_NOT_FOUND,
@@ -95,7 +90,7 @@ export class WorkyInteractionController {
     const preparedTurn: PreparedWorkyTurn | null = dto.cancel
       ? null
       : await this.kickoff.prepare({
-          streamId: interaction.streamId.toString(),
+          streamId: interaction.streamId,
           userId: user._id.toString(),
           content: dto.content,
           requester: user,
@@ -114,13 +109,9 @@ export class WorkyInteractionController {
       interaction.type === 'replan_review' &&
       result.verdict === 'approved'
     ) {
-      const planDeltaId =
-        (interaction.metadata as Record<string, unknown> | undefined)?.planDeltaId;
-      if (typeof planDeltaId === 'string' && Types.ObjectId.isValid(planDeltaId)) {
-        const pending = await this.planDeltas
-          .findById(planDeltaId)
-          .lean()
-          .exec();
+      const planDeltaId = interaction.metadata.planDeltaId;
+      if (typeof planDeltaId === 'string' && isObjectId(planDeltaId)) {
+        const pending = await this.plans.findDeltaById(planDeltaId);
         if (pending && pending.status === 'pending_approval') {
           const applyResult = await this.planDeltaService.applyApproved({
             planDeltaId,

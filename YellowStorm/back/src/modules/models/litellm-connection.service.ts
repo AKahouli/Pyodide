@@ -2,7 +2,7 @@ import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import { LoggerService } from '../logger';
-import { randomBackoffJitter } from '@common/utils';
+import { ReconnectBackoff } from '@common/utils';
 
 interface ReconnectConfig {
   enabled: boolean;
@@ -72,8 +72,6 @@ export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
   private isConnecting = false;
   private lastError: string | null = null;
   private lastCheckedAt: Date | null = null;
-  private reconnectAttempt = 0;
-  private reconnectTimeout: NodeJS.Timeout | null = null;
   private healthCheckInterval: NodeJS.Timeout | null = null;
 
   private readonly apiUrl: string;
@@ -81,6 +79,7 @@ export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
   private readonly timeoutMs: number;
   private readonly healthEndpoint: string;
   private readonly reconnectConfig: ReconnectConfig;
+  private readonly reconnect: ReconnectBackoff;
   private readonly healthCheckConfig: HealthCheckConfig;
 
   constructor(
@@ -102,6 +101,14 @@ export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
       multiplier: this.configService.get<number>('litellm.reconnect.multiplier', 2),
     };
 
+    this.reconnect = new ReconnectBackoff(this.reconnectConfig, {
+      connect: () => this.connect(),
+      label: () => 'LiteLLM',
+      log: (message) => this.logger.log(message, { display: true, save: false }),
+      warn: (message) => this.logger.warn(message),
+      error: (message) => this.logger.error(message),
+    });
+
     this.healthCheckConfig = {
       enabled: this.configService.get<boolean>('litellm.healthCheck.enabled', true),
       intervalMs: this.configService.get<number>('litellm.healthCheck.intervalMs', 60000),
@@ -115,7 +122,7 @@ export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
 
   onModuleDestroy(): void {
     this.stopHealthCheck();
-    this.clearReconnectTimeout();
+    this.reconnect.clear();
   }
 
   async connect(): Promise<void> {
@@ -133,7 +140,7 @@ export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
     this.isConnecting = true;
     try {
       this.logger.log('Attempting to connect to LiteLLM...', {
-        attempt: this.reconnectAttempt + 1,
+        attempt: this.reconnect.attempts + 1,
         apiUrl: this.maskUrl(this.apiUrl),
       },{display:true,save:false});
 
@@ -153,7 +160,7 @@ export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
       this.isConnected = true;
       this.lastError = null;
       this.lastCheckedAt = new Date();
-      this.reconnectAttempt = 0;
+      this.reconnect.reset();
 
       this.logger.log('LiteLLM connection established', {
         apiUrl: this.maskUrl(this.apiUrl),
@@ -166,10 +173,10 @@ export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
 
       this.logger.error('LiteLLM connection failed', {
         message: errorMessage,
-        attempt: this.reconnectAttempt + 1,
+        attempt: this.reconnect.attempts + 1,
       });
 
-      this.scheduleReconnect();
+      this.reconnect.schedule();
     } finally {
       this.isConnecting = false;
     }
@@ -190,7 +197,7 @@ export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
       this.isConnected = true;
       this.lastError = null;
       this.lastCheckedAt = new Date();
-      this.reconnectAttempt = 0;
+      this.reconnect.reset();
 
       if (wasDisconnected) {
         this.logger.log('LiteLLM connection restored');
@@ -209,7 +216,7 @@ export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn('LiteLLM connection lost', {
           error: errorMessage,
         });
-        this.scheduleReconnect();
+        this.reconnect.schedule();
       }
 
       return false;
@@ -239,53 +246,6 @@ export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private scheduleReconnect(): void {
-    if (!this.reconnectConfig.enabled) {
-      this.logger.warn('Reconnection disabled, LiteLLM will remain disconnected');
-      return;
-    }
-
-    if (
-      this.reconnectConfig.maxAttempts > 0 &&
-      this.reconnectAttempt >= this.reconnectConfig.maxAttempts
-    ) {
-      this.logger.error(
-        `Max reconnection attempts (${this.reconnectConfig.maxAttempts}) reached for LiteLLM. Giving up.`,
-      );
-      return;
-    }
-
-    this.clearReconnectTimeout();
-
-    const delay = this.calculateBackoffDelay();
-    this.reconnectAttempt++;
-
-    this.logger.log(`Scheduling LiteLLM reconnection attempt ${this.reconnectAttempt} in ${delay}ms`,{display:true,save:false});
-
-    this.reconnectTimeout = setTimeout(() => {
-      void this.connect();
-    }, delay);
-
-    this.reconnectTimeout.unref();
-  }
-
-  private calculateBackoffDelay(): number {
-    const { initialDelayMs, maxDelayMs, multiplier } = this.reconnectConfig;
-
-    // Add jitter (±10%) to prevent thundering herd
-    const jitter = randomBackoffJitter();
-    const exponentialDelay = initialDelayMs * Math.pow(multiplier, this.reconnectAttempt);
-    const delayWithJitter = exponentialDelay * jitter;
-
-    return Math.min(delayWithJitter, maxDelayMs);
-  }
-
-  private clearReconnectTimeout(): void {
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-      this.reconnectTimeout = null;
-    }
-  }
 
   private maskUrl(url: string): string {
     try {
@@ -324,8 +284,8 @@ export class LiteLLMConnectionService implements OnModuleInit, OnModuleDestroy {
       connected: this.isConnected,
       error: this.lastError,
       lastCheckedAt: this.lastCheckedAt || undefined,
-      reconnectAttempts: this.reconnectAttempt,
-      isReconnecting: this.reconnectTimeout !== null,
+      reconnectAttempts: this.reconnect.attempts,
+      isReconnecting: this.reconnect.isWaiting,
     };
   }
 }

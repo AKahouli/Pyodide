@@ -9,4 +9,4 @@ export type {
   LogQueryPagination,
   LogQueryResult,
 } from './interfaces/log-query.interface';
-export { LogLevelEnum } from './schemas/log.schema';
+export { LogLevelEnum } from './interfaces/log-level.enum';

@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { AxiosError } from 'axios';
 import { ConfigService } from '@nestjs/config';
 import { Request, Response } from 'express';
-import { UserDocument } from '../user/schemas/user.schema';
+import type { AuthUser } from '@common/auth/auth-user';
 import {
   BadRequestException,
   BadGatewayException,
@@ -55,7 +55,7 @@ export class AiProxyService {
 
   async proxyChatCompletion(
     body: ChatCompletionDto,
-    user: UserDocument,
+    user: AuthUser,
     request?: Request,
     res?: Response,
   ): Promise<Record<string, unknown> | void> {

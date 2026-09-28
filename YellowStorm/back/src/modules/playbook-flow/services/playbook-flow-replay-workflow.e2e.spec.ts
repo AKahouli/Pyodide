@@ -13,64 +13,26 @@ import { PlaybookFlowOutputContractService } from './playbook-flow-output-contra
 import { PlaybookFlowObservabilityService } from './observability/playbook-flow-observability.service';
 import { PlaybookFlowPublicReasoningParserService } from './observability/playbook-flow-public-reasoning-parser.service';
 import { PlaybookFlowTraceRedactionService } from './observability/playbook-flow-trace-redaction.service';
+import {
+  createExecutionRepositoryMock,
+  createRouterDecisionRepositoryMock,
+  createTaskResultRepositoryMock,
+} from './playbook-flow-execution.test-support';
+
+const FLOW_ID = 'aaaaaaaaaaaaaaaaaaaaaaa1';
 
 function clone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value));
+  return structuredClone(value);
 }
 
-function createAwaitableResult<T>(value: T) {
-  const promise = Promise.resolve(clone(value));
-  return {
-    exec: jest.fn().mockResolvedValue(clone(value)),
-    then: promise.then.bind(promise),
-    catch: promise.catch.bind(promise),
-    finally: promise.finally.bind(promise),
-  };
-}
+type Row = Record<string, any>;
 
-function createQuery<T>(value: T) {
-  return {
-    select: jest.fn().mockReturnThis(),
-    sort: jest.fn().mockReturnThis(),
-    skip: jest.fn().mockReturnThis(),
-    limit: jest.fn().mockReturnThis(),
-    lean: jest.fn().mockImplementation(() => createAwaitableResult(value)),
-    exec: jest.fn().mockResolvedValue(value),
-  };
-}
-
-function createExecutionQuery<T extends Record<string, any> | null>(value: T) {
-  let selected = '';
-  const resolve = () => {
-    if (!value) {
-      return value;
-    }
-    const next = clone(value);
-    if (!selected.includes('+snapshot')) {
-      delete next.snapshot;
-    }
-    return next;
-  };
-  const query = {
-    select: jest.fn().mockImplementation((selection: string) => {
-      selected = selection;
-      return query;
-    }),
-    sort: jest.fn().mockReturnThis(),
-    skip: jest.fn().mockReturnThis(),
-    limit: jest.fn().mockReturnThis(),
-    lean: jest.fn().mockImplementation(() => createAwaitableResult(resolve())),
-    exec: jest.fn().mockImplementation(async () => resolve()),
-  };
-  return query;
-}
-
+/** In-memory stand-ins for the repositories: just enough state for one validate-then-replay round trip. */
 function createReplayWorkflowHarness() {
-  const executions = new Map<string, any>();
-  const taskResults = new Map<string, any>();
-  const replays: any[] = [];
-  const reports: any[] = [];
-  const releasedExecutions = new Set<string>();
+  const executions = new Map<string, Row>();
+  const taskResults = new Map<string, Row>();
+  const replays: Row[] = [];
+  const reports: Row[] = [];
   let executionSequence = 1;
   let replaySequence = 1;
   let reportSequence = 1;
@@ -84,18 +46,21 @@ function createReplayWorkflowHarness() {
   };
 
   executions.set('exec-baseline', {
-    _id: 'exec-baseline',
     id: 'exec-baseline',
     ownerId: 'owner-1',
-    flowId: 'flow-1',
+    flowId: FLOW_ID,
     status: 'completed',
     inputContext: { query: 'hello' },
     snapshot: clone(baselineSnapshot),
     schemaVersion: 1,
+    hitlEvents: [],
     executionMode: 'live',
     stepExecutionModes: {},
+    replayPlanningByTask: {},
+    modelIdOverride: null,
   });
   taskResults.set('exec-baseline:step-1:0', {
+    id: 'tr-baseline',
     executionId: 'exec-baseline',
     taskId: 'step-1',
     iteration: 0,
@@ -109,187 +74,124 @@ function createReplayWorkflowHarness() {
     traceMetadata: {},
   });
 
-  const ExecutionModel = jest.fn().mockImplementation((data: any) => {
-    const id = data.id ?? `exec-replay-${executionSequence++}`;
-    const serializeDoc = () => ({
-      ...clone(data),
-      _id: id,
-      id,
-    });
-    const doc = {
-      ...clone(data),
-      _id: id,
-      id,
-      toJSON: jest.fn().mockImplementation(serializeDoc),
-      save: jest.fn().mockImplementation(async () => {
-        executions.set(id, serializeDoc());
-        return doc;
-      }),
-    };
-    return doc;
-  }) as any;
-
-  ExecutionModel.findOne = jest.fn((filter: Record<string, any>) => {
-    const match = Array.from(executions.values()).find((execution) => (
-      (filter._id == null || execution._id === filter._id)
-      && (filter.ownerId == null || execution.ownerId === filter.ownerId)
-      && (filter.flowId == null || execution.flowId === filter.flowId)
-    )) ?? null;
-    return createExecutionQuery(match);
+  const readExecution = (id: string, options?: { withSnapshot?: boolean }): Row | null => {
+    const execution = executions.get(id);
+    if (!execution) return null;
+    const copy = clone(execution);
+    if (!options?.withSnapshot) delete copy.snapshot;
+    return copy;
+  };
+  const executionRepository = createExecutionRepositoryMock({
+    insert: jest.fn(async (input: Row) => {
+      const id = `exec-replay-${executionSequence++}`;
+      const record = {
+        id, status: 'queued', queuePosition: 0, hitlEvents: [], pendingApproval: null, replayPlanningByTask: {}, stepExecutionModes: {},
+        createdAt: new Date(), updatedAt: new Date(), ...clone(input),
+      };
+      executions.set(id, record);
+      return clone(record);
+    }),
+    findById: jest.fn(async (id: string, options?: { withSnapshot?: boolean }) => readExecution(id, options)),
+    findOwned: jest.fn(async (id: string, ownerId: string, options?: { withSnapshot?: boolean }) => (executions.get(id)?.ownerId === ownerId ? readExecution(id, options) : null)),
+    update: jest.fn(async (id: string, patch: Row) => {
+      const execution = executions.get(id);
+      if (!execution) return false;
+      Object.assign(execution, clone(patch));
+      return true;
+    }),
+    transition: jest.fn(async (id: string, change: { from?: string[]; patch: Row }) => {
+      const execution = executions.get(id);
+      if (!execution || (change.from && !change.from.includes(execution.status))) return false;
+      Object.assign(execution, clone(change.patch));
+      return true;
+    }),
+    markStarted: jest.fn(async (id: string, replayPlanningByTask: Row) => {
+      const execution = executions.get(id);
+      if (!execution || execution.status !== 'running') return false;
+      Object.assign(execution, { startedAt: new Date(), queuePosition: 0, replayPlanningByTask: clone(replayPlanningByTask) });
+      return true;
+    }),
+    markFailed: jest.fn(async (id: string, error: string) => {
+      const execution = executions.get(id);
+      if (!execution) return false;
+      Object.assign(execution, { status: 'failed', error, endedAt: new Date() });
+      return true;
+    }),
   });
-  ExecutionModel.findById = jest.fn((id: string) => createExecutionQuery(executions.get(id) ?? null));
-  ExecutionModel.findByIdAndDelete = jest.fn((id: string) => ({
-    exec: jest.fn().mockImplementation(async () => {
-      executions.delete(id);
-      return null;
-    }),
-  }));
-  ExecutionModel.updateOne = jest.fn((filter: Record<string, any>, update: Record<string, any>) => ({
-    exec: jest.fn().mockImplementation(async () => {
-      const execution = executions.get(filter._id);
-      if (!execution) return { modifiedCount: 0 };
-      if (filter.status && execution.status !== filter.status) return { modifiedCount: 0 };
-      Object.assign(execution, clone(update.$set ?? update));
-      executions.set(filter._id, execution);
-      return { modifiedCount: 1 };
-    }),
-  }));
-  ExecutionModel.updateMany = jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 0 }) }));
-  ExecutionModel.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 0 });
-  ExecutionModel.countDocuments = jest.fn().mockResolvedValue(0);
 
-  const taskResultModel = {
-    findOne: jest.fn((filter: Record<string, any>) => createQuery(taskResults.get(`${filter.executionId}:${filter.taskId}:${filter.iteration}`) ?? null)),
-    updateOne: jest.fn(async (filter: Record<string, any>, update: Record<string, any>) => {
-      const key = `${filter.executionId}:${filter.taskId}:${filter.iteration}`;
-      const existing = taskResults.get(key) ?? {};
-      taskResults.set(key, {
-        ...existing,
-        ...(update.$setOnInsert ?? {}),
-        ...(update.$set ?? {}),
-      });
-      return { acknowledged: true };
+  const taskResultKey = (key: { executionId: string; taskId: string; iteration: number }) => `${key.executionId}:${key.taskId}:${key.iteration}`;
+  const taskResultRepository = createTaskResultRepositoryMock({
+    find: jest.fn(async (key: { executionId: string; taskId: string; iteration: number }) => {
+      const found = taskResults.get(taskResultKey(key));
+      return found ? clone(found) : null;
     }),
-    updateMany: jest.fn(),
-    deleteMany: jest.fn(),
-  };
+    listForExecution: jest.fn(async (executionId: string) => [...taskResults.values()].filter((row) => row.executionId === executionId).map(clone)),
+    upsert: jest.fn(async (key: { executionId: string; taskId: string; iteration: number }, set: Row, setOnInsert: Row = {}) => {
+      const existing = taskResults.get(taskResultKey(key));
+      taskResults.set(taskResultKey(key), existing ? { ...existing, ...clone(set) } : { id: `tr-${taskResults.size + 1}`, ...key, ...clone(setOnInsert), ...clone(set) });
+      return true;
+    }),
+  });
 
-  const replayModel = {
-    findOne: jest.fn((filter: Record<string, any>) => {
-      const match = [...replays]
-        .filter((replay) => replay.flowId === filter.flowId && replay.taskId === filter.taskId)
-        .sort((left, right) => (right.validationVersion ?? 0) - (left.validationVersion ?? 0))[0] ?? null;
-      return {
-        sort: jest.fn().mockReturnValue(createQuery(match)),
-      };
-    }),
-    find: jest.fn((filter: Record<string, any>) => {
-      const taskIds = Array.isArray(filter.taskId?.$in)
-        ? filter.taskId.$in
-        : [filter.taskId].filter(Boolean);
-      const items = replays.filter((replay) => (
-        replay.flowId === filter.flowId
-        && (taskIds.length === 0 || taskIds.includes(replay.taskId))
-        && (filter.status == null || replay.status === filter.status)
-      ));
-      return {
-        sort: jest.fn().mockReturnThis(),
-        lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(clone(items)) }),
-        exec: jest.fn().mockResolvedValue(items),
-      };
-    }),
-    create: jest.fn(async (docs: any[]) => docs.map((entry) => {
-      const replay = { ...clone(entry), _id: `replay-${replaySequence++}` };
+  const replayRepository = {
+    createNextVersion: jest.fn(async (input: Row) => {
+      const inTask = replays.filter((replay) => replay.flowId === input.flowId && replay.taskId === input.taskId);
+      const last = [...inTask].sort((left, right) => right.validationVersion - left.validationVersion)[0];
+      const replay = { ...clone(input), id: `replay-${replaySequence++}`, validationVersion: (last?.validationVersion ?? 0) + 1, createdAt: new Date(), updatedAt: new Date() };
       replays.push(replay);
-      return replay;
-    })),
-    updateOne: jest.fn(async (filter: Record<string, any>, update: Record<string, any>) => {
-      const replay = replays.find((entry) => entry._id === filter._id);
-      if (!replay) return { modifiedCount: 0 };
-      Object.assign(replay, clone(update.$set ?? update));
-      return { modifiedCount: 1 };
+      if (last) last.status = 'inactive';
+      return clone(replay);
     }),
-    updateMany: jest.fn(async (filter: Record<string, any>, update: Record<string, any>) => {
-      let modifiedCount = 0;
-      for (const replay of replays) {
-        if (replay.flowId === filter.flowId && replay.taskId === filter.taskId && replay.status === filter.status) {
-          Object.assign(replay, clone(update.$set ?? update));
-          modifiedCount += 1;
-        }
-      }
-      return { modifiedCount };
-    }),
-    findOneAndUpdate: jest.fn(),
-    deleteOne: jest.fn(),
+    listActiveForTasks: jest.fn(async (flowId: string, taskIds: string[]) => replays.filter((replay) => replay.flowId === flowId && taskIds.includes(replay.taskId) && replay.status === 'active').map(clone)),
+    findActive: jest.fn(async (flowId: string, taskId: string) => clone(replays.find((replay) => replay.flowId === flowId && replay.taskId === taskId && replay.status === 'active') ?? null)),
+    findByIdentity: jest.fn(async (identity: Row) => clone(replays.find((replay) => replay.id === identity.id && replay.validationVersion === identity.validationVersion) ?? null)),
   };
 
-  const replayRunReportModel = {
-    create: jest.fn(async (docs: any[]) => docs.map((entry) => {
-      const report = { ...clone(entry), _id: `report-${reportSequence++}`, createdAt: new Date(reportSequence * 1000) };
+  const reportRepository = {
+    create: jest.fn(async (input: Row) => {
+      const report = { ...clone(input), id: `report-${reportSequence}`, iteration: input.iteration ?? 0, createdAt: new Date(reportSequence * 1000), updatedAt: new Date(reportSequence * 1000) };
+      reportSequence += 1;
       reports.push(report);
-      return report;
-    })),
-    find: jest.fn((filter: Record<string, any>) => {
-      const items = reports.filter((report) => (
-        report.flowId === filter.flowId
-        && report.taskId === filter.taskId
-        && (filter.executionId == null || report.executionId === filter.executionId)
-      )).sort((left, right) => Number(right.createdAt) - Number(left.createdAt));
-      let offset = 0;
-      let limit = items.length;
-      const query = {
-        sort: jest.fn().mockReturnThis(),
-        skip: jest.fn().mockImplementation((value: number) => { offset = value; return query; }),
-        limit: jest.fn().mockImplementation((value: number) => { limit = value; return query; }),
-        exec: jest.fn().mockImplementation(async () => items.slice(offset, offset + limit).map((report) => ({
-          ...report,
-          toJSON: () => ({ ...clone(report), id: report._id }),
-        }))),
-      };
-      return query;
+      return clone(report);
     }),
-    findOne: jest.fn((filter: Record<string, any>) => ({
-      sort: jest.fn().mockReturnValue({
-        lean: jest.fn().mockReturnValue({
-          exec: jest.fn().mockResolvedValue(
-            [...reports]
-              .filter((report) => (
-                report.executionId === filter.executionId
-                && report.taskId === filter.taskId
-                && report.replayId === filter.replayId
-                && report.validationVersion === filter.validationVersion
-              ))
-              .sort((left, right) => Number(right.createdAt) - Number(left.createdAt))[0] ?? null,
-          ),
-        }),
-      }),
-    })),
-    updateOne: jest.fn((filter: Record<string, any>, update: Record<string, any>) => ({
-      exec: jest.fn().mockImplementation(async () => {
-        const report = reports.find((entry) => entry._id === filter._id);
-        if (!report) return { modifiedCount: 0 };
-        Object.assign(report, clone(update.$set ?? update));
-        return { modifiedCount: 1 };
-      }),
-    })),
+    update: jest.fn(async (id: string, patch: Row) => {
+      const report = reports.find((entry) => entry.id === id);
+      if (!report) return false;
+      Object.assign(report, clone(patch));
+      return true;
+    }),
+    findLatest: jest.fn(async (filter: Row) => clone([...reports]
+      .filter((report) => report.executionId === filter.executionId && report.taskId === filter.taskId
+        && (filter.iteration === undefined || report.iteration === filter.iteration)
+        && (filter.replayId === undefined || report.replayId === filter.replayId)
+        && (filter.validationVersion === undefined || report.validationVersion === filter.validationVersion))
+      .sort((left, right) => right.createdAt - left.createdAt)[0] ?? null)),
+    list: jest.fn(async (query: Row) => [...reports]
+      .filter((report) => report.flowId === query.flowId && report.taskId === query.taskId
+        && (query.executionId === undefined || report.executionId === query.executionId)
+        && (query.iteration === undefined || report.iteration === query.iteration))
+      .sort((left, right) => right.createdAt - left.createdAt)
+      .slice(query.offset, query.offset + query.limit)
+      .map(clone)),
+    latestScoresForReplays: jest.fn(async () => new Map()),
   };
 
   const logger = { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() };
   const outputContractService = new PlaybookFlowOutputContractService();
   const replayBaselineService = new PlaybookFlowReplayBaselineService(new PlaybookFlowReplayHashService(), outputContractService);
   const replayService = new PlaybookFlowReplayService(
-    ExecutionModel,
-    taskResultModel as any,
-    { find: jest.fn() } as any,
-    replayModel as any,
+    executionRepository as any,
+    taskResultRepository as any,
+    createRouterDecisionRepositoryMock() as any,
+    replayRepository as any,
     { start: jest.fn() } as any,
     replayBaselineService,
     logger as any,
   );
-  const replayArtifactService = new PlaybookFlowReplayArtifactService(replayModel as any, logger as any, new PlaybookFlowReplayHashService());
-  const replayReportService = new PlaybookFlowReplayReportService(replayRunReportModel as any);
+  const replayArtifactService = new PlaybookFlowReplayArtifactService(replayRepository as any, logger as any, new PlaybookFlowReplayHashService());
+  const replayReportService = new PlaybookFlowReplayReportService(reportRepository as any);
   const replayDriftService = new PlaybookFlowReplayDriftService(
-    ExecutionModel as any,
+    executionRepository as any,
     replayReportService,
     outputContractService,
     new PlaybookFlowReplayPlanService(),
@@ -303,11 +205,13 @@ function createReplayWorkflowHarness() {
     return runCall;
   });
   const mockRun = jest.fn().mockReturnValue(runCall);
+  const releasedExecutions = new Set<string>();
+  const flowForStart = { nodes: clone(baselineSnapshot.nodes), controlEdges: [], dataBindings: [], settings: baselineSnapshot.settings };
 
   const executionService = new PlaybookFlowExecutionService(
-    ExecutionModel,
-    taskResultModel as any,
-    { create: jest.fn(), deleteMany: jest.fn() } as any,
+    executionRepository as any,
+    taskResultRepository as any,
+    createRouterDecisionRepositoryMock() as any,
     { get: jest.fn((_: string, fallback: unknown) => fallback) } as any,
     {
       init: jest.fn(),
@@ -331,14 +235,13 @@ function createReplayWorkflowHarness() {
         }
         releasedExecutions.add(next.id);
         next.status = 'running';
-        executions.set(next.id, next);
         return clone(next);
       }),
       refreshPositions: jest.fn().mockResolvedValue([]),
       getRunningCount: jest.fn().mockResolvedValue(0),
     } as any,
     { reserve: jest.fn().mockResolvedValue({ type: 'reserved' }), confirmLink: jest.fn(), release: jest.fn() } as any,
-    { findOne: jest.fn().mockResolvedValue({ nodes: clone(baselineSnapshot.nodes), controlEdges: [], dataBindings: [], settings: baselineSnapshot.settings }) } as any,
+    { findOne: jest.fn().mockResolvedValue(clone(flowForStart)), findOneForExecutionStart: jest.fn().mockResolvedValue(clone(flowForStart)) } as any,
     { buildSnapshot: jest.fn().mockReturnValue(clone(baselineSnapshot)) } as any,
     { validate: jest.fn(), collectValidationErrors: jest.fn().mockReturnValue([]) } as any,
     { buildGrpcAgentsForPlaybook: jest.fn().mockResolvedValue([]) } as any,
@@ -370,7 +273,7 @@ function createReplayWorkflowHarness() {
   (executionService as any).playbookFlowClient = { Run: mockRun };
 
   return {
-    replayController: new PlaybookFlowReplayController(replayService, replayDriftService, replayReportService, { findOneForWrite: jest.fn().mockResolvedValue({ id: 'flow-1' }) } as any),
+    replayController: new PlaybookFlowReplayController(replayService, replayDriftService, replayReportService, { findOneForWrite: jest.fn().mockResolvedValue({ id: FLOW_ID }) } as any),
     executionController: new PlaybookFlowExecutionController(executionService, replayService, { requestArtifactAccess: jest.fn() } as any),
     reports,
     replays,
@@ -420,7 +323,7 @@ describe('E2E: Replay workflow', () => {
   it('validates a baseline, runs replay_strict, and returns a populated replay report', async () => {
     const harness = createReplayWorkflowHarness();
 
-    const replay = await harness.replayController.validateTaskReplay('owner-1', 'flow-1', 'step-1', {
+    const replay = await harness.replayController.validateTaskReplay('owner-1', FLOW_ID, 'step-1', {
       iteration: 0,
       executionId: 'exec-baseline',
       mode: 'replay_strict',
@@ -429,8 +332,9 @@ describe('E2E: Replay workflow', () => {
     expect(replay.fingerprints?.flowSnapshotHash).toEqual(expect.any(String));
     expect(replay.fingerprints?.nodeSnapshotHash).toEqual(expect.any(String));
     expect(replay.fingerprints?.modelConfigHash).toEqual(expect.any(String));
+    expect(replay).toMatchObject({ validationVersion: 1, status: 'active', mode: 'replay_strict', referenceOutput: '# Summary\nhello' });
 
-    const started = await harness.executionController.start('owner-1', 'flow-1', {
+    const started = await harness.executionController.start('owner-1', FLOW_ID, {
       inputContext: { query: 'hello' },
       executionMode: 'replay_strict',
     } as any);
@@ -446,7 +350,7 @@ describe('E2E: Replay workflow', () => {
       expect(replayInstructions).toContain('Use tool: search');
     }
 
-    const reports = await harness.replayController.listReplayReports('user-1', 'flow-1', 'step-1', {
+    const reports = await harness.replayController.listReplayReports('user-1', FLOW_ID, 'step-1', {
       executionId: started.executionId,
       limit: 5,
       offset: 0,
@@ -459,7 +363,7 @@ describe('E2E: Replay workflow', () => {
       id: expect.any(String),
       executionId: started.executionId,
       taskId: 'step-1',
-      replayId: replay._id,
+      replayId: replay.id,
     }));
   }, 15000);
 });

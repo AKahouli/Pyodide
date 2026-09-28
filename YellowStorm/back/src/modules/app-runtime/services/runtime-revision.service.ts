@@ -22,11 +22,8 @@ import {
 } from '../constants/starter-revisions';
 import { STARTER_REACT_VITE_V1_REVISION_ID } from '../constants/starter-react-vite-v1';
 import { blobObjectKey } from '../utils/blob-object-key';
-import {
-  RUNTIME_SOURCE_REVISION_STORE,
-  type RuntimeSourceRevisionStore,
-  type SourceRevisionFileRecord,
-} from '../persistence/runtime-source-revision.store';
+import { type SourceRevisionFileRecord } from '../persistence/runtime-source-revision.store';
+import { PgRuntimeSourceRevisionStore } from '../persistence/pg-runtime-source-revision.store';
 
 export interface RevisionManifest {
   revisionId: string;
@@ -54,8 +51,7 @@ export class RuntimeRevisionService {
   private starterCache: RevisionManifest | null = null;
 
   constructor(
-    @Inject(RUNTIME_SOURCE_REVISION_STORE)
-    private readonly store: RuntimeSourceRevisionStore,
+    private readonly store: PgRuntimeSourceRevisionStore,
     private readonly documents: DocumentService,
     private readonly config: ConfigService,
     @Optional()

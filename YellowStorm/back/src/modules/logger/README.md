@@ -1,6 +1,6 @@
 # Logger Module
 
-A production-grade, global logging module with MongoDB persistence, buffered writes, and request tracking.
+A production-grade, global logging module with PostgreSQL persistence, buffered writes, and request tracking.
 
 ## Features
 
@@ -9,7 +9,7 @@ A production-grade, global logging module with MongoDB persistence, buffered wri
 - **Log Levels** - ERROR, WARN, INFO, DEBUG, VERBOSE
 - **Sensitive Data Redaction** - Automatically redacts passwords, tokens, secrets
 - **Context Support** - Track which service/class is logging
-- **MongoDB Persistence** - Logs are saved to a separate MongoDB connection
+- **PostgreSQL Persistence** - Logs are saved to `ops.logs` (migration 0036) and swept after `LOGGING_RETENTION_DAYS`
 - **Buffered Writes** - Non-blocking, fire-and-forget log persistence
 - **Request Tracking** - Track all logs for a specific HTTP request via `requestId`
 - **Display/Save Control** - Skip console output or database persistence per log
@@ -25,13 +25,12 @@ A production-grade, global logging module with MongoDB persistence, buffered wri
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOG_LEVEL` | `info` | Minimum log level (error, warn, info, debug, verbose) |
-| `LOGGING_MONGODB_URI` | `MONGODB_URI` | Separate MongoDB URI for logging (falls back to main DB) |
 | `LOGGING_BUFFER_SIZE` | `100` | Max logs in buffer before auto-flush |
 | `LOGGING_FLUSH_INTERVAL_MS` | `5000` | Flush interval in milliseconds |
 | `LOGGING_PERSISTENCE_ENABLED` | `true` | Enable/disable database persistence |
 | `LOGGING_DEFAULT_SAVE` | `true` | Default value for `save` option |
 | `LOGGING_DEFAULT_DISPLAY` | `true` | Default value for `display` option |
-| `LOGGING_MAX_POOL_SIZE` | `3` | Max MongoDB connections for logging |
+| `LOGGING_RETENTION_DAYS` | `30` | Days the persisted logs are kept (swept hourly from `ops.logs`) |
 | `LOGGING_DISPLAY_ONLY_CONTEXTS` | *(see below)* | Comma-separated contexts that are display-only |
 
 ### Display-Only Contexts
@@ -58,7 +57,6 @@ LOGGING_DISPLAY_ONLY_CONTEXTS=NestFactory,Bootstrap,MyCustomStartupService
 
 ```env
 LOG_LEVEL=info
-LOGGING_MONGODB_URI=mongodb://localhost:27017/yellostorm_logs
 LOGGING_BUFFER_SIZE=100
 LOGGING_FLUSH_INTERVAL_MS=5000
 ```
@@ -251,7 +249,7 @@ const unflushedCount = this.logBuffer.getBufferSize();
 
 ```typescript
 interface LogEntry {
-  _id?: string;           // MongoDB ID (only for persisted logs)
+  _id?: string;           // Log id (only for persisted logs)
   timestamp: string;      // ISO 8601 timestamp
   level: string;          // ERROR, WARN, INFO, DEBUG, VERBOSE
   context?: string;       // Service/class name
@@ -261,7 +259,7 @@ interface LogEntry {
   requestId?: string;     // HTTP request tracking ID
   hostname?: string;      // Server hostname
   nodeEnv?: string;       // Environment (development, production, test)
-  createdAt?: Date;       // MongoDB timestamp (only for persisted logs)
+  createdAt?: Date;       // When the entry was logged (only for persisted logs)
   _fromBuffer?: boolean;  // true if from memory buffer, false if from DB
 }
 ```
@@ -297,7 +295,7 @@ this.logger.log('User login', { email: 'user@example.com', password: 'secret123'
 
 ```
 ┌─────────────────┐     ┌────────────────┐     ┌─────────────────┐
-│  LoggerService  │────>│ LogBufferService│────>│ MongoDB (logs)  │
+│  LoggerService  │────>│ LogBufferService│────>│ PostgreSQL logs │
 │                 │     │                │     │ Separate conn   │
 │  - log()        │     │ - buffer[]     │     │                 │
 │  - error()      │     │ - add()        │     │ - logs collection│

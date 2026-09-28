@@ -1,9 +1,9 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { normalizeChoiceComponentData } from '../utils/choice-component-normalizer';
 import type { ChoiceInteractionDto } from '../dto/send-message.dto';
-import { MESSAGE_STORE, type MessageStore } from '../persistence/message-store';
+import { PostgresMessageStore } from '../persistence/postgres/postgres-message-store';
 
 export interface CanonicalChoiceSubmission {
   content: string;
@@ -19,7 +19,7 @@ export interface CanonicalMultiChoiceSubmission {
 
 @Injectable()
 export class ChoiceInteractionService {
-  constructor(@Inject(MESSAGE_STORE) private readonly messageStore: MessageStore) {}
+  constructor(private readonly messageStore: PostgresMessageStore) {}
 
   async canonicalize(
     conversationId: string,

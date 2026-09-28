@@ -33,7 +33,6 @@ import { ExceptionsModule } from './modules/exceptions';
 import { RateLimiterModule } from './modules/rate-limiter';
 import { RequestContextModule } from './modules/request-context';
 import { ResponseModule } from './modules/response';
-import { DatabaseModule } from './modules/database';
 import { PostgresModule } from './modules/postgres';
 import { AgentRepositoryModule } from './modules/agent/repositories/agent-repository.module';
 import { AgentEmbeddingModule } from './modules/agent/agent-embedding.module';
@@ -101,7 +100,6 @@ import { AppBuilderAiModule } from './modules/app-builder-ai/app-builder-ai.modu
 
     // Global Modules
     LoggerModule,
-    DatabaseModule,
     PostgresModule,
     AgentRepositoryModule,
     AgentEmbeddingModule,

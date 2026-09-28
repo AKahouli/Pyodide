@@ -1,7 +1,6 @@
 import type { GovernanceMembershipRecord } from './governance-records';
 import type { GovernanceMembershipRole } from '../domain/governance-types';
 
-export const MEMBERSHIP_STORE = Symbol('GOVERNANCE_MEMBERSHIP_STORE');
 
 export interface GovernanceMembershipCreateInput {
   programId: string;

@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Types } from 'mongoose';
+import { isObjectId } from '@common/postgres';
 import { WorkyStreamService } from '../services/worky-stream.service';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { canWriteWorkyStream, getWorkyStreamAccess } from '../worky-stream-access';
@@ -32,7 +32,7 @@ export class WorkyStreamAccessGuard implements CanActivate {
     const userId = req.user?.id;
     const streamId = req.params.id;
     if (!userId || !streamId) throw new NotFoundException('Stream not found');
-    if (!Types.ObjectId.isValid(streamId)) throw new NotFoundException('Stream not found');
+    if (!isObjectId(streamId)) throw new NotFoundException('Stream not found');
 
     const stream = await this.streams.findByIdInternal(streamId);
     if (!stream) throw new NotFoundException('Stream not found');

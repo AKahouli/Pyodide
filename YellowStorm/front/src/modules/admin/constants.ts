@@ -294,6 +294,16 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     descriptionKey: 'menu.playbookSettings.description',
   },
   {
+    id: 'platform-settings',
+    label: 'Platform Settings',
+    labelKey: 'menu.platformSettings.label',
+    path: '/admin/platform-settings',
+    icon: Settings,
+    permissions: ['system.*', '*'],
+    description: 'Manage rate limiting, session and upload limits, and export/import configuration',
+    descriptionKey: 'menu.platformSettings.description',
+  },
+  {
     id: 'workspace-settings',
     label: 'Workspace Settings',
     labelKey: 'menu.workspaceSettings.label',

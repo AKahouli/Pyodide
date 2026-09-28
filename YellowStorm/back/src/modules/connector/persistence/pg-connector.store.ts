@@ -7,23 +7,18 @@ import { newObjectId } from '@common/postgres';
 import { withTransaction, resolveQueryable, type PgQueryable } from '@common/postgres/transaction';
 import * as schema from '@modules/postgres/schema';
 import type { ConnectorAction } from '../connector.types';
-import {
-  CONNECTOR_ADMIN_AUTH_STORE,
-  CONNECTOR_ADMIN_OAUTH_STATE_STORE,
-  CONNECTOR_CATEGORY_STORE,
-  CONNECTOR_CREDENTIAL_STORE,
-  CONNECTOR_STORE,
-  type ConnectorAdminAuthRow,
-  type ConnectorAdminAuthStore,
-  type ConnectorCategoryRow,
-  type ConnectorCategoryStore,
-  type ConnectorCredentialRow,
-  type ConnectorCredentialStore,
-  type ConnectorAdminOauthStateStore,
-  type ConnectorListQuery,
-  type ConnectorRow,
-  type ConnectorStore,
-  type NewConnectorRow,
+import {    
+  type ConnectorAdminAuthRow,     
+  type ConnectorAdminAuthStore,     
+  type ConnectorCategoryRow,     
+  type ConnectorCategoryStore,     
+  type ConnectorCredentialRow,     
+  type ConnectorCredentialStore,     
+  type ConnectorAdminOauthStateStore,     
+  type ConnectorListQuery,     
+  type ConnectorRow,     
+  type ConnectorStore,     
+  type NewConnectorRow,     
 } from './connector.store';
 
 type ConnRow = typeof schema.integrationsConnectors.$inferSelect;

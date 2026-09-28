@@ -24,7 +24,11 @@ Yellowmind receives only this runtime-enforced allowlist: `search_playbooks`, `o
 
 Semantic UI targets contain only allowlisted Yellowmind surfaces and identifiers. The frontend resolves local route templates and enforces unsaved-change guards. This server never operates the DOM, emits arbitrary URLs, or performs mouse/keyboard automation.
 
-Workspace/document search and personal memory are intentionally outside this server. They remain future separate MCP integrations.
+The server sends Yellowmind instructions at initialization: names only (never ids; any `playbook_id` also accepts the exact Playbook name, any `task_id` the exact task name), sources and runs are the user's decision. Tools carry MCP `readOnlyHint` / `destructiveHint` annotations.
+
+Sources are chosen by the user, not searched by the assistant. Clarification questions with a `resourceSelector` come back with a `playbook.sources` `uiTarget`; the conversation shows a card backed by the JWT routes `GET /api/v1/playbooks/assistant/clarifications/:continuationId/sources`, `PUT .../questions/:questionId/sources` and `GET /api/v1/playbooks/assistant/source-files?search=` (a searchable list of every workspace and file the user can open). NestJS keeps the picks with the waiting clarification and joins them to the answers when the assistant continues it; chosen workspaces become fixed task inputs and the new Playbook's workspaces.
+
+Personal memory is intentionally outside this server.
 
 No tool responds to runtime HITL. Normal MCP-started construction returns a Playbook canvas deep link and operation ID. The authenticated canvas consumes the durable operation through its JWT construction stream and applies deltas directly with one atomic Undo checkpoint. MCP ingress credentials are never forwarded to the browser.
 

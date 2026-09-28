@@ -1,18 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { DocumentService } from '@modules/document/document.service';
 import { BadRequestException, NotFoundException, ServiceUnavailableException, UnauthorizedException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { FlowAccessService } from '../domain/flow-access.service';
-import { FlowExecution, FlowExecutionDocument } from '../schemas/playbook-flow-execution.schema';
-import { FlowTaskResult, FlowTaskResultDocument } from '../schemas/playbook-flow-task-result.schema';
+import { ExecutionRepository } from '../persistence/execution.repository';
+import { TaskResultRepository } from '../persistence/task-result.repository';
 import { publicPlaybookTaskResult, trustedPlaybookArtifacts } from '../utils/playbook-artifact';
 import type { PlaybookArtifactAction } from '../dto/request-playbook-artifact-access.dto';
 import { randomBytes } from 'crypto';
-import { Flow, FlowDocument } from '../schemas/playbook-flow.schema';
 import { PlaybookShareService } from './playbook-share.service';
 
 const ARTIFACT_AUDIENCE = 'yellostorm-playbook-artifact';
@@ -32,13 +29,12 @@ export class PlaybookFlowArtifactService {
   private readonly logger = new Logger(PlaybookFlowArtifactService.name);
 
   constructor(
-    @InjectModel(FlowExecution.name) private readonly executionModel: Model<FlowExecutionDocument>,
-    @InjectModel(FlowTaskResult.name) private readonly taskResultModel: Model<FlowTaskResultDocument>,
+    private readonly executionRepository: ExecutionRepository,
+    private readonly taskResultRepository: TaskResultRepository,
     private readonly accessService: FlowAccessService,
     private readonly documentService: DocumentService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
-    @InjectModel(Flow.name) private readonly flowModel: Model<FlowDocument>,
     private readonly playbookShareService: PlaybookShareService,
   ) {}
 
@@ -54,35 +50,11 @@ export class PlaybookFlowArtifactService {
     generatedAt: string;
   }>> {
     const sharedFlowIds = await this.playbookShareService.getSharedPlaybookIdsForUser(userId);
-    const accessFilter = sharedFlowIds.length > 0
-      ? { $or: [{ ownerId: userId }, { _id: { $in: sharedFlowIds.map((id) => new Types.ObjectId(id)) } }] }
-      : { ownerId: userId };
-    const rows = await this.flowModel.aggregate<{
-      playbookId: string;
-      playbookName: string;
-      execution: { _id: unknown; ownerId: string; updatedAt?: Date };
-      taskResult: FlowTaskResult & { generatedAt?: Date };
-    }>([
-      { $match: accessFilter },
-      { $lookup: { from: this.executionModel.collection.name, let: { flowId: { $toString: '$_id' } }, pipeline: [
-        { $match: { $expr: { $eq: ['$flowId', '$$flowId'] } } },
-        { $project: { _id: 1, ownerId: 1, updatedAt: 1 } },
-      ], as: 'execution' } },
-      { $unwind: '$execution' },
-      { $lookup: { from: this.taskResultModel.collection.name, let: { executionId: { $toString: '$execution._id' } }, pipeline: [
-        { $match: { $expr: { $eq: ['$executionId', '$$executionId'] }, 'components.type': 'artifact' } },
-        { $set: { generatedAt: { $ifNull: ['$endedAt', '$updatedAt'] } } },
-      ], as: 'taskResult' } },
-      { $unwind: '$taskResult' },
-      { $sort: { 'taskResult.generatedAt': -1, 'taskResult._id': 1 } },
-      { $limit: limit },
-      { $project: { _id: 0, playbookId: { $toString: '$_id' }, playbookName: '$name', execution: 1, taskResult: 1 } },
-    ]);
+    const rows = await this.taskResultRepository.listRecentArtifacts(userId, sharedFlowIds, limit);
 
-    return rows.flatMap(({ playbookId, playbookName, execution, taskResult }) => {
-      const executionId = String(execution._id);
-      const generatedAt = (taskResult.generatedAt ?? execution.updatedAt ?? new Date()).toISOString();
-      return trustedPlaybookArtifacts(taskResult as unknown as Record<string, unknown>, String(execution.ownerId), executionId).map((artifact) => ({
+    return rows.flatMap(({ flowId: playbookId, flowName: playbookName, executionId, executionOwnerId, executionUpdatedAt, taskResult, generatedAt }) => {
+      const generated = (generatedAt ?? executionUpdatedAt ?? new Date()).toISOString();
+      return trustedPlaybookArtifacts(taskResult as unknown as Record<string, unknown>, executionOwnerId, executionId).map((artifact) => ({
           source: 'playbook' as const,
           artifactId: artifact.artifactId,
           filename: artifact.filename,
@@ -91,7 +63,7 @@ export class PlaybookFlowArtifactService {
           playbookId,
           playbookName,
           executionId,
-          generatedAt,
+          generatedAt: generated,
         }));
     }).slice(0, limit);
   }
@@ -107,12 +79,8 @@ export class PlaybookFlowArtifactService {
     if (file.buffer.length > PLAYBOOK_ARTIFACT_MAX_BYTES) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Artifact exceeds the 10 MB publication limit');
     }
-    const execution = await this.executionModel
-      .findOne({ _id: executionId, ownerId, status: 'running' })
-      .select('_id')
-      .lean()
-      .exec();
-    if (!execution) {
+    const execution = await this.executionRepository.findOwned(executionId, ownerId);
+    if (execution?.status !== 'running') {
       throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND, 'Running execution not found');
     }
     if (!this.documentService.isAvailable()) {
@@ -151,7 +119,7 @@ export class PlaybookFlowArtifactService {
     userId: string,
     action: PlaybookArtifactAction,
   ): Promise<{ token: string; expiresAt: string }> {
-    const execution = await this.executionModel.findById(executionId).select('ownerId flowId').lean().exec();
+    const execution = await this.executionRepository.findById(executionId);
     if (!execution) {
       throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND, 'Execution not found');
     }
@@ -182,7 +150,7 @@ export class PlaybookFlowArtifactService {
     if (!this.documentService.isAvailable()) {
       throw new ServiceUnavailableException(undefined, 'Document service is currently unavailable');
     }
-    const execution = await this.executionModel.findById(capability.executionId).select('ownerId').lean().exec();
+    const execution = await this.executionRepository.findById(capability.executionId);
     if (!execution) {
       throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND, 'Execution not found');
     }
@@ -219,7 +187,7 @@ export class PlaybookFlowArtifactService {
   }
 
   private async resolveArtifact(executionId: string, artifactId: string, ownerId: string) {
-    const taskResults = await this.taskResultModel.find({ executionId }).select('taskId iteration components').lean().exec();
+    const taskResults = await this.taskResultRepository.listForExecution(executionId, { light: true, with: ['components'] });
     const artifact = taskResults
       .flatMap((taskResult) => trustedPlaybookArtifacts(taskResult as unknown as Record<string, unknown>, ownerId, executionId))
       .find((candidate) => candidate.artifactId === artifactId);

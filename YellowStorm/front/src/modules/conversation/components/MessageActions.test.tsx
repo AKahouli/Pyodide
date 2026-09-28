@@ -131,8 +131,8 @@ vi.mock('./TimingIndicator', () => ({
 const pdfExportMock = vi.hoisted(() => ({
   onFinish: null as null | ((ok: boolean) => void),
 }));
-vi.mock('./MessagePdfExport', () => ({
-  MessagePdfExport: ({ onFinish }: { onFinish: (ok: boolean) => void }) => {
+vi.mock('./PdfExportPortal', () => ({
+  PdfExportPortal: ({ onFinish }: { onFinish: (ok: boolean) => void }) => {
     pdfExportMock.onFinish = onFinish;
     return <div data-testid="message-pdf-export" />;
   },

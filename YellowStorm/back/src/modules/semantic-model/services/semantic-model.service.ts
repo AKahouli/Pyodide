@@ -6,10 +6,10 @@ import { ConflictException, ForbiddenException, NotFoundException } from '@modul
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { CreateSemanticModelDto, SemanticModelQueryDto, UpdateSemanticModelDto } from '../dto';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
-import { SemanticAgeGraphRepository } from '../repositories/semantic-age-graph.repository';
 import { SemanticGraphRepository } from '../repositories/semantic-graph.repository';
 import { SemanticModelRepository, SemanticModelRow } from '../repositories/semantic-model.repository';
 import { SemanticRealtimeSignalService } from './semantic-realtime-signal.service';
+import { RuntimePublishedBinding, SemanticRuntimeClientService } from './semantic-runtime-client.service';
 
 interface CloneIdMaps {
   nodeIds: Map<string, string>;
@@ -41,8 +41,8 @@ export class SemanticModelService {
     private readonly models: SemanticModelRepository,
     private readonly graph: SemanticGraphRepository,
     private readonly workspaces: WorkspaceService,
-    private readonly ageGraph: SemanticAgeGraphRepository,
     private readonly realtimeSignals: SemanticRealtimeSignalService,
+    private readonly runtime: SemanticRuntimeClientService,
   ) {}
 
   list(userId: string, query: SemanticModelQueryDto) {
@@ -55,13 +55,20 @@ export class SemanticModelService {
     return model;
   }
 
+  /** Chat reads only the published data of a model: the runtime graph bound to production. */
   async resolveSearchSchema(userId: string, modelId: string): Promise<string> {
     const model = await this.get(userId, modelId);
     if (model.status === 'archived') throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND);
-    if (model.indexStatus !== 'indexed') {
-      throw new ConflictException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'This semantic model is still being indexed');
+    let binding: RuntimePublishedBinding;
+    try {
+      binding = await this.runtime.getPublishedBinding(model.id, userId);
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw new ConflictException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Publish this semantic model to use it in chat');
+      }
+      throw error;
     }
-    return this.ageGraph.graphNameForModel(model.id);
+    return binding.projectionRef.slice(binding.projectionRef.lastIndexOf(':') + 1);
   }
 
   async create(userId: string, dto: CreateSemanticModelDto): Promise<SemanticModelRow> {
@@ -155,7 +162,6 @@ export class SemanticModelService {
         `UPDATE semantic_model.models SET status='archived', archived_at=now(), revision=revision+1, updated_at=now()
          WHERE id=$1 AND revision=$2`, [model.id, expectedRevision]);
       if (!result.rowCount) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT);
-      await client.query('DELETE FROM semantic_model.graph_index_jobs WHERE model_id=$1',[modelId]);
       await this.audit(client, modelId, model.currentDraftVersionId, userId, 'model.archived', {});
     });
   }
@@ -166,7 +172,7 @@ export class SemanticModelService {
     if (!versionId) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
     const revisionResult = await this.database.query<{ revision: number }>('SELECT revision::int FROM semantic_model.versions WHERE id=$1', [versionId]);
     const sourceGraph = await this.graph.getGraph(source.id, versionId, revisionResult.rows[0]?.revision ?? 0);
-    const [links, bindings, ontology] = await Promise.all([
+    const [links, bindings] = await Promise.all([
       this.database.query<{ workspaceId: string }>(
         'SELECT workspace_id AS "workspaceId" FROM semantic_model.workspace_links WHERE model_id=$1 AND enabled', [source.id]),
       this.database.query<SemanticBindingRow>(
@@ -174,9 +180,6 @@ export class SemanticModelService {
                 workspace_id AS "workspaceId", document_id AS "documentId", inclusion_mode AS "inclusionMode",
                 retrieval_mode AS "retrievalMode", priority, enabled, protected, availability
          FROM semantic_model.knowledge_bindings WHERE model_id=$1`, [source.id]),
-      this.database.query<{ ontologyDefinition: Record<string, unknown>; ontologyTtl: string }>(
-        `SELECT ontology_definition AS "ontologyDefinition", ontology_ttl AS "ontologyTtl"
-         FROM semantic_model.ontology_artifacts WHERE model_id=$1`, [source.id]),
     ]);
     const ids = this.createCloneIdMaps(sourceGraph);
     try {
@@ -184,27 +187,13 @@ export class SemanticModelService {
         const target = await this.createCloneModel(client, userId, name, source.description, links.rows.map((item) => item.workspaceId));
         await this.copyCloneGraph(client, target.id, target.currentDraftVersionId!, sourceGraph, ids);
         await this.copyCloneBindings(client, target.id, userId, bindings.rows, ids);
-        await this.copyCloneOntology(client, target.id, ontology.rows[0]);
         await this.audit(client, target.id, target.currentDraftVersionId, userId, 'model.cloned', {
           sourceModelId: source.id,
           sourceVersionId: versionId,
         });
         return target;
       });
-      try {
-        await this.ageGraph.dropGraph(clone.id);
-        const ageResult = await this.ageGraph.buildGraph(
-          this.remapCloneGraph(sourceGraph, clone.id, clone.currentDraftVersionId!, ids),
-          clone.id,
-        );
-        if (ageResult.failedVertexCount > 0 || ageResult.failedEdgeCount > 0) {
-          throw new ConflictException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'The cloned graph could not be fully materialized');
-        }
-        return clone;
-      } catch (error) {
-        await this.removeFailedClone(clone.id);
-        throw error;
-      }
+      return clone;
     } catch (error) {
       if (this.isUniqueViolation(error)) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NAME_EXISTS);
       throw error;
@@ -273,49 +262,9 @@ export class SemanticModelService {
     }
   }
 
-  private async copyCloneOntology(client: PoolClient, modelId: string, ontology?: { ontologyDefinition: Record<string, unknown>; ontologyTtl: string }): Promise<void> {
-    if (!ontology) return;
-    await client.query(
-      `INSERT INTO semantic_model.ontology_artifacts(model_id,ontology_definition,ontology_ttl)
-       VALUES ($1,$2::jsonb,$3)`,
-      [modelId, JSON.stringify(ontology.ontologyDefinition), ontology.ontologyTtl],
-    );
-  }
-
-  private remapCloneGraph(source: Awaited<ReturnType<SemanticGraphRepository['getGraph']>>, modelId: string, versionId: string, ids: CloneIdMaps): Awaited<ReturnType<SemanticGraphRepository['getGraph']>> {
-    return {
-      modelId,
-      versionId,
-      revision: 0,
-      nodes: source.nodes.map((node) => ({ ...node, id: ids.nodeIds.get(node.id)! })),
-      relations: source.relations.map((relation) => ({
-        ...relation,
-        id: ids.relationIds.get(relation.id)!,
-        sourceNodeTypeId: ids.nodeIds.get(relation.sourceNodeTypeId)!,
-        targetNodeTypeId: ids.nodeIds.get(relation.targetNodeTypeId)!,
-      })),
-      records: source.records.map((record) => ({ ...record, id: ids.recordIds.get(record.id)!, nodeTypeId: ids.nodeIds.get(record.nodeTypeId)!, values: this.remapRecordValues(record.id, record.values, ids) })),
-      recordRelations: source.recordRelations.map((relation) => ({
-        ...relation,
-        id: ids.recordRelationIds.get(relation.id)!,
-        relationTypeId: ids.relationIds.get(relation.relationTypeId)!,
-        sourceRecordId: ids.recordIds.get(relation.sourceRecordId)!,
-        targetRecordId: ids.recordIds.get(relation.targetRecordId)!,
-      })),
-    };
-  }
-
   private remapRecordValues(recordId: string, values: Record<string, unknown>, ids: CloneIdMaps): Record<string, unknown> {
     if (values['_entity_key'] !== recordId) return { ...values };
     return { ...values, _entity_key: ids.recordIds.get(recordId)! };
-  }
-
-  private async removeFailedClone(modelId: string): Promise<void> {
-    try {
-      await this.database.query('DELETE FROM semantic_model.models WHERE id=$1', [modelId]);
-    } catch (cleanupError) {
-      this.logger.error(`Failed to clean up incomplete semantic model clone ${modelId}: ${(cleanupError as Error).message}`);
-    }
   }
 
   async overview(userId: string, modelId: string): Promise<Record<string, unknown>> {

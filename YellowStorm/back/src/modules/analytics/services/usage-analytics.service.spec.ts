@@ -2,6 +2,7 @@ import { Types } from 'mongoose';
 import { UsageAnalyticsService } from './usage-analytics.service';
 import { GroupByPeriod } from '../dto';
 import type { UsageStore } from '@modules/usage/persistence/usage-store';
+import { PostgresUsageStore } from '@modules/usage/persistence/postgres-usage-store';
 
 describe('UsageAnalyticsService', () => {
   it('delegates analytics to PostgreSQL with string user IDs', async () => {
@@ -12,7 +13,7 @@ describe('UsageAnalyticsService', () => {
       usageOverTime: [],
       errorRates: [],
     };
-    const store = { getAnalytics: jest.fn().mockResolvedValue(response) } as unknown as UsageStore;
+    const store = { getAnalytics: jest.fn().mockResolvedValue(response) } as unknown as PostgresUsageStore;
     const service = new UsageAnalyticsService(store);
     const userId = new Types.ObjectId().toString();
 

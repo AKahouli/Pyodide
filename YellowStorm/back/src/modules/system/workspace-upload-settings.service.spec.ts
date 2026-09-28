@@ -20,6 +20,10 @@ class InMemorySettingStore implements SystemSettingStore {
     return keys.flatMap((key) => (this.rows.has(key) ? [this.rows.get(key)!] : []));
   }
 
+  async listAll(): Promise<SystemSettingRow[]> {
+    return [];
+  }
+
   async upsert(key: string, value: unknown): Promise<SystemSettingRow> {
     const row: SystemSettingRow = { key, value, updatedAt: new Date() };
     this.rows.set(key, row);

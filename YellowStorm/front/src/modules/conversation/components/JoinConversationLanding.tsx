@@ -1,7 +1,6 @@
 import { Users, ArrowRight, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useModuleTranslation } from '@/modules/localization';
-import { motion } from 'motion/react';
 import type { Conversation } from '../types';
 
 interface JoinConversationLandingProps {
@@ -21,11 +20,7 @@ export function JoinConversationLanding({ conversation, onJoin, loading }: JoinC
   return (
     <div className='relative flex flex-1 flex-col items-center justify-center'>
 
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className='relative w-full max-w-lg text-center'
-      >
+      <div className='animate-fade-up relative w-full max-w-lg text-center'>
         <div className='mx-auto mb-8 flex h-24 w-24 items-center justify-center rounded-3xl bg-primary/10 text-primary'>
           <Users className='h-12 w-12' />
         </div>
@@ -63,7 +58,7 @@ export function JoinConversationLanding({ conversation, onJoin, loading }: JoinC
             {invitedUsers.length} {t('joinLanding.participants').toLowerCase()}
           </div>
         </div>
-      </motion.div>
+      </div>
     </div>
   );
 }

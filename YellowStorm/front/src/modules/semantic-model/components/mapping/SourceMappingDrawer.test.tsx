@@ -6,7 +6,7 @@ import type { ConceptSourceMapping, SemanticGraph } from '../../types';
 import { SourceMappingDrawer } from './SourceMappingDrawer';
 
 const api = vi.hoisted(() => ({
-  listSourceMappings: vi.fn(), profileSourceAsset: vi.fn(), createSourceMapping: vi.fn(), previewSourceMapping: vi.fn(),
+  listSourceMappings: vi.fn(), profileSourceAsset: vi.fn(), createSourceMapping: vi.fn(), previewSourceMapping: vi.fn(), analyzeSourceAsset: vi.fn(),
 }));
 vi.mock('../../api', () => ({ semanticModelApi: api }));
 
@@ -36,5 +36,22 @@ describe('SourceMappingDrawer repair', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'mapping.save' }));
     await waitFor(() => expect(api.createSourceMapping).toHaveBeenCalled());
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['semantic-models', 'data-preview', 'model-1'] });
+  });
+
+  it('keeps the graph revision: a mapping advances the model revision, a separate counter from graph saves', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><SourceMappingDrawer modelId='model-1' target={{ workspaceId: mapping.workspaceId, documentId: mapping.documentId, documentName: mapping.documentName!, assetKind: mapping.assetKind, conceptId: mapping.conceptId, mapping }} onClose={vi.fn()} /></QueryClientProvider>);
+    fireEvent.click(await screen.findByRole('button', { name: 'mapping.save' }));
+    await waitFor(() => expect(api.createSourceMapping).toHaveBeenCalled());
+    expect(useSemanticModelEditorStore.getState().graph?.revision).toBe(0);
+  });
+
+  it('reads a newly uploaded spreadsheet by itself, without asking for an analysis', async () => {
+    api.profileSourceAsset.mockRejectedValue(new Error('This source has not been analyzed yet'));
+    api.analyzeSourceAsset.mockResolvedValue({ sheets: [{ name: 'Customers', rowCount: 3, fieldCount: 2 }], fields: [] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><SourceMappingDrawer modelId='model-1' target={{ workspaceId: 'workspace-1', documentId: 'document-2', documentName: 'customers.xlsx', assetKind: 'excel_sheet' }} onClose={vi.fn()} /></QueryClientProvider>);
+    await waitFor(() => expect(api.analyzeSourceAsset).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole('button', { name: 'sourceAnalysis.retry' })).not.toBeInTheDocument();
   });
 });

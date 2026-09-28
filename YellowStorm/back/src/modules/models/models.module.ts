@@ -6,7 +6,6 @@ import { AdminModelsController } from './admin-models.controller';
 import { ModelsService } from './models.service';
 import { LiteLLMClient } from './litellm.client';
 import { LiteLLMConnectionService } from './litellm-connection.service';
-import { MODEL_STORE } from './persistence/model.store';
 import { PgModelStore } from './persistence/pg-model.store';
 import { AuthorizationModule } from '../authorization/authorization.module';
 
@@ -20,7 +19,7 @@ import { AuthorizationModule } from '../authorization/authorization.module';
     LiteLLMConnectionService,
     LiteLLMClient,
     // Models cutover (plan 1B.3.1): catalog.ai_models; Mongo data backfilled before this flip.
-    { provide: MODEL_STORE, useClass: PgModelStore },
+    PgModelStore,
     ModelsService,
   ],
   exports: [ModelsService, LiteLLMConnectionService],

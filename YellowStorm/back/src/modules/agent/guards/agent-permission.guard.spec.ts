@@ -3,7 +3,7 @@ import { Reflector } from '@nestjs/core';
 
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { AgentPermissionGuard } from './agent-permission.guard';
-import type { AgentShareStore } from '../persistence/agent-share.store';
+import { PgAgentShareStore } from '../persistence/pg-agent-share.store';
 import type { AgentRecord } from '../repositories/agent-record.mapper';
 import { newObjectId } from '@common/postgres/object-id';
 
@@ -19,7 +19,7 @@ function createExecutionContext(request: any): any {
 
 /**
  * Full authorization matrix (remediation 6.1) exercised through a fake
- * AGENT_SHARE_STORE — the original spec only covered default agents and
+ * agent share store — the original spec only covered default agents and
  * never reached the share path.
  */
 describe('AgentPermissionGuard authorization matrix', () => {
@@ -36,9 +36,9 @@ describe('AgentPermissionGuard authorization matrix', () => {
       getAllAndOverride: jest.fn().mockReturnValue(requiredPermission),
     } as unknown as Reflector;
     const agentRepository = { findById: jest.fn().mockResolvedValue(agent) };
-    const shareStore: AgentShareStore = {
+    const shareStore = {
       find: jest.fn().mockResolvedValue(share ?? null),
-    } as unknown as AgentShareStore;
+    } as unknown as PgAgentShareStore;
     return { guard: new AgentPermissionGuard(reflector, agentRepository as any, shareStore), shareStore };
   }
 

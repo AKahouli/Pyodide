@@ -6,7 +6,7 @@ import { newObjectId } from '@common/postgres';
 import { withTransaction, resolveQueryable, type PgQueryable } from '@common/postgres/transaction';
 import * as schema from '@modules/postgres/schema';
 import type { CreatePlanData, UpdatePlanData } from '../interfaces/plan.interface';
-import { PLAN_STORE, type PlanRecord, type PlanStore } from './plan.store';
+import type { PlanRecord } from './plan.store';
 
 type Row = typeof schema.catalogPlans.$inferSelect;
 
@@ -52,7 +52,7 @@ function toValues(data: CreatePlanData | UpdatePlanData): PlanValues {
 }
 
 /** PostgreSQL catalog.plans implementation of PlanStore (plan 1B.3.2). */
-export class PgPlanStore implements PlanStore {
+export class PgPlanStore {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
 
   private get q(): PgQueryable<typeof schema> {

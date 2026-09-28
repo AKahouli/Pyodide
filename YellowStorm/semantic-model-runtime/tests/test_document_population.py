@@ -451,3 +451,57 @@ async def test_document_assertion_uses_persistable_origin(monkeypatch: pytest.Mo
     await store_assertions(pool, model_id="m1", revision_id="r1", assertions=result["assertions"])
     assert pool.rows[0][5] == "source"
     assert '"origin":"ocr"' in pool.rows[0][6]
+
+
+class MemoryCache:
+    def __init__(self):
+        self.rows: dict[str, dict] = {}
+
+    async def get(self, key):
+        return self.rows.get(key)
+
+    async def put(self, key, *, concept_id, asset_id, output):
+        import json
+        self.rows[key] = json.loads(json.dumps(output))
+
+
+@pytest.mark.asyncio
+async def test_an_unchanged_document_reuses_its_result_and_a_changed_one_is_read_again(
+        monkeypatch: pytest.MonkeyPatch, index_stubs):
+    reads = []
+
+    async def read(*_args, **_kwargs):
+        reads.append(1)
+        return {"sections": [{"sectionPk": 7, "sectionKey": "s7", "blocks": [{
+            "blockPk": 9, "blockKey": "b9", "pageNumber": 2, "origin": "text",
+            "content": "Contract Number: CNT-0041\nCustomer Reference: C-99"}]}],
+            "coverage": {"directBlocksComplete": True}}
+
+    monkeypatch.setattr(document, "read_complete_section_set", read)
+    cache = MemoryCache()
+    mapped = entry({"sourceField": "Contract Number", "targetAttribute": "contract_number", "mode": "extract"})
+    first = await document.populate_document(object(), mapped, CONCEPT, "u1", metadata_fetch=metadata, cache=cache)
+    second = await document.populate_document(object(), mapped, CONCEPT, "u1", metadata_fetch=metadata, cache=cache)
+    assert len(reads) == 1
+    assert "reused" not in first and second.pop("reused") is True
+    assert second["entities"] == first["entities"]
+
+    async def edited(source: dict, actor: str) -> dict:
+        return {**SOURCE, "contentHash": "sha256:" + "b" * 64}
+
+    third = await document.populate_document(object(), mapped, CONCEPT, "u1", metadata_fetch=edited, cache=cache)
+    assert len(reads) == 2 and "reused" not in third
+
+
+@pytest.mark.asyncio
+async def test_a_failed_extraction_call_is_not_kept_for_the_next_run(monkeypatch: pytest.MonkeyPatch, index_stubs):
+    async def extraction(**_kwargs):
+        raise AttributeExtractionError("attribute_extraction_unavailable")
+
+    ai_stubs(monkeypatch, extraction)
+    cache = MemoryCache()
+    await document.populate_document(object(), ai_entry(
+        {"sourceField": "contract number", "targetAttribute": "contract_number", "mode": "extract",
+         "extractionStrategy": "ai"},
+    ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata, model_id="model-1", cache=cache)
+    assert cache.rows == {}

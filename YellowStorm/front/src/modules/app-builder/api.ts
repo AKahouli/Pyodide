@@ -19,10 +19,16 @@ const TEMPLATE_ZIP_TIMEOUT_MS = 300_000;
 export const appBuilderApi = {
   /** Owned deployed, shared, and draft apps for the current user. */
   async listApps(): Promise<AppBuilderCatalog> {
-    const res = await apiClient.get<ApiResponse<ListAppBuilderAppsResponse>>(
+    const res = await apiClient.get<ApiResponse<Partial<ListAppBuilderAppsResponse> | null>>(
       '/conversation-v2/apps',
     );
-    return res.data.data;
+
+    const data = res.data.data;
+    return {
+      deployed: data?.deployed ?? [],
+      shared: data?.shared ?? [],
+      drafts: data?.drafts ?? [],
+    };
   },
   /** Remove an app from App Builder without deleting its conversation. */
   async removeApp(sessionId: string): Promise<void> {

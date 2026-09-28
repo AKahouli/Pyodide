@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import type { ControlEdge, DataBinding, FlowNode } from '../schemas/playbook-flow.schema';
+import type { ControlEdge, DataBinding, FlowNode } from '../models/playbook-flow.model';
 
 export const MANAGED_PLAYBOOK_INPUT_PREFIX = 'playbookInputs.';
 export const MAX_MANAGED_TRIGGER_PATH_LENGTH = 200;

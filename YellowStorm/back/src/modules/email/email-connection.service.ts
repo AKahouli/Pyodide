@@ -5,7 +5,7 @@ import { Transporter } from 'nodemailer';
 import SMTPTransport from 'nodemailer/lib/smtp-transport';
 import { ConfidentialClientApplication } from '@azure/msal-node';
 import { LoggerService } from '../logger';
-import { randomBackoffJitter, stripTrailingChar } from '@common/utils';
+import { ReconnectBackoff } from '@common/utils';
 
 interface ReconnectConfig {
   enabled: boolean;
@@ -40,8 +40,6 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
   private lastError: string | null = null;
   private lastCheckedAt: Date | null = null;
   private lastConnectedAt: Date | null = null;
-  private reconnectAttempt = 0;
-  private reconnectTimeout: NodeJS.Timeout | null = null;
   private healthCheckInterval: NodeJS.Timeout | null = null;
 
   private readonly provider: 'smtp' | 'outlook';
@@ -56,6 +54,7 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
   private readonly connectionTimeoutMs: number;
   private readonly socketTimeoutMs: number;
   private readonly reconnectConfig: ReconnectConfig;
+  private readonly reconnect: ReconnectBackoff;
   private readonly healthCheckConfig: HealthCheckConfig;
 
   private readonly outlookClientId: string;
@@ -98,6 +97,14 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
       multiplier: this.configService.get<number>('email.reconnect.multiplier', 2),
     };
 
+    this.reconnect = new ReconnectBackoff(this.reconnectConfig, {
+      connect: () => this.connect(),
+      label: () => this.provider === 'outlook' ? 'Outlook' : 'SMTP',
+      log: (message) => this.logger.log(message, { display: true, save: false }),
+      warn: (message) => this.logger.warn(message),
+      error: (message) => this.logger.error(message),
+    });
+
     this.healthCheckConfig = {
       enabled: this.configService.get<boolean>('email.healthCheck.enabled', true),
       intervalMs: this.configService.get<number>('email.healthCheck.intervalMs', 60000),
@@ -111,7 +118,7 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
 
   async onModuleDestroy(): Promise<void> {
     this.stopHealthCheck();
-    this.clearReconnectTimeout();
+    this.reconnect.clear();
     await this.closeTransporter();
   }
 
@@ -135,7 +142,7 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
 
     try {
       this.logger.log('Attempting to connect to SMTP server...', {
-        attempt: this.reconnectAttempt + 1,
+        attempt: this.reconnect.attempts + 1,
         host: this.smtpHost,
         port: this.smtpPort,
       },{display:true,save:false});
@@ -152,7 +159,7 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
       this.lastError = null;
       this.lastCheckedAt = new Date();
       this.lastConnectedAt = new Date();
-      this.reconnectAttempt = 0;
+      this.reconnect.reset();
 
       this.logger.log('SMTP connection established', {
         host: this.smtpHost,
@@ -168,11 +175,11 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
 
       this.logger.error('SMTP connection failed', {
         message: err.message,
-        attempt: this.reconnectAttempt + 1,
+        attempt: this.reconnect.attempts + 1,
 
       },{display:true,save:false});
 
-      this.scheduleReconnect();
+      this.reconnect.schedule();
     } finally {
       this.isConnecting = false;
     }
@@ -189,7 +196,7 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
 
     try {
       this.logger.log('Attempting to connect to Outlook (Microsoft Graph)...', {
-        attempt: this.reconnectAttempt + 1,
+        attempt: this.reconnect.attempts + 1,
         tenantId: this.outlookTenantId,
         senderEmail: this.outlookSenderEmail,
       },{display:true,save:false});
@@ -215,7 +222,7 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
       this.lastError = null;
       this.lastCheckedAt = new Date();
       this.lastConnectedAt = new Date();
-      this.reconnectAttempt = 0;
+      this.reconnect.reset();
 
       this.logger.log('Outlook connection established', {
         tenantId: this.outlookTenantId,
@@ -229,10 +236,10 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
 
       this.logger.error('Outlook connection failed', {
         message: err.message,
-        attempt: this.reconnectAttempt + 1,
+        attempt: this.reconnect.attempts + 1,
       },{display:true,save:false});
 
-      this.scheduleReconnect();
+      this.reconnect.schedule();
     } finally {
       this.isConnecting = false;
     }
@@ -258,7 +265,7 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
       this.lastError = null;
       this.lastCheckedAt = new Date();
       this.lastConnectedAt = new Date();
-      this.reconnectAttempt = 0;
+      this.reconnect.reset();
 
       if (wasDisconnected) {
         this.logger.log('SMTP connection restored');
@@ -277,7 +284,7 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn('SMTP connection lost', {
           error: err.message,
         });
-        this.scheduleReconnect();
+        this.reconnect.schedule();
       }
 
       return false;
@@ -306,7 +313,7 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
       this.lastError = null;
       this.lastCheckedAt = new Date();
       this.lastConnectedAt = new Date();
-      this.reconnectAttempt = 0;
+      this.reconnect.reset();
 
       if (wasDisconnected) {
         this.logger.log('Outlook connection restored');
@@ -325,7 +332,7 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn('Outlook connection lost', {
           error: err.message,
         });
-        this.scheduleReconnect();
+        this.reconnect.schedule();
       }
 
       return false;
@@ -391,7 +398,7 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
   }
 
   private resolveHttpsAuthority(authority: string): string {
-    const trimmed = stripTrailingChar(authority.trim(), '/');
+    const trimmed = authority.trim().replace(/\/+$/, '');
     const lower = trimmed.toLowerCase();
 
     if (lower.startsWith('http://')) {
@@ -429,56 +436,6 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private scheduleReconnect(): void {
-    if (!this.reconnectConfig.enabled) {
-      const label = this.provider === 'outlook' ? 'Outlook' : 'SMTP';
-      this.logger.warn(`Reconnection disabled, ${label} will remain disconnected`);
-      return;
-    }
-
-    if (
-      this.reconnectConfig.maxAttempts > 0 &&
-      this.reconnectAttempt >= this.reconnectConfig.maxAttempts
-    ) {
-      const label = this.provider === 'outlook' ? 'Outlook' : 'SMTP';
-      this.logger.error(
-        `Max reconnection attempts (${this.reconnectConfig.maxAttempts}) reached for ${label}. Giving up.`,
-      );
-      return;
-    }
-
-    this.clearReconnectTimeout();
-
-    const delay = this.calculateBackoffDelay();
-    this.reconnectAttempt++;
-
-    const label = this.provider === 'outlook' ? 'Outlook' : 'SMTP';
-    this.logger.log(`Scheduling ${label} reconnection attempt ${this.reconnectAttempt} in ${delay}ms`,{display:true,save:false});
-
-    this.reconnectTimeout = setTimeout(() => {
-      void this.connect();
-    }, delay);
-
-    this.reconnectTimeout.unref();
-  }
-
-  private calculateBackoffDelay(): number {
-    const { initialDelayMs, maxDelayMs, multiplier } = this.reconnectConfig;
-
-    // Add jitter (±10%) to prevent thundering herd
-    const jitter = randomBackoffJitter();
-    const exponentialDelay = initialDelayMs * Math.pow(multiplier, this.reconnectAttempt);
-    const delayWithJitter = exponentialDelay * jitter;
-
-    return Math.min(delayWithJitter, maxDelayMs);
-  }
-
-  private clearReconnectTimeout(): void {
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-      this.reconnectTimeout = null;
-    }
-  }
 
   // Public accessors
 
@@ -528,8 +485,8 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
       error: this.lastError,
       lastCheckedAt: this.lastCheckedAt || undefined,
       lastConnectedAt: this.lastConnectedAt || undefined,
-      reconnectAttempts: this.reconnectAttempt,
-      isReconnecting: this.reconnectTimeout !== null,
+      reconnectAttempts: this.reconnect.attempts,
+      isReconnecting: this.reconnect.isWaiting,
     };
   }
 }

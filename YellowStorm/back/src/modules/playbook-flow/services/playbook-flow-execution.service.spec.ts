@@ -5,8 +5,30 @@ import { PlaybookFlowObservabilityService } from './observability/playbook-flow-
 import { PlaybookFlowPublicReasoningParserService } from './observability/playbook-flow-public-reasoning-parser.service';
 import { PlaybookFlowTraceRedactionService } from './observability/playbook-flow-trace-redaction.service';
 import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
+import { PlaybookInputContractService } from './playbook-input-contract.service';
 
-import { createExecutionServiceForTests } from './playbook-flow-execution.test-support';
+import {
+  createExecutionRepositoryMock,
+  createExecutionServiceForTests,
+  createRouterDecisionRepositoryMock,
+  createTaskResultRepositoryMock,
+} from './playbook-flow-execution.test-support';
+
+/** Builds a real input-contract service whose derive() returns the given contract stub. */
+function stubInputContractService(
+  service: PlaybookFlowExecutionService,
+  contract: { inputs: unknown[] },
+  workspaceServices: { workspaceShareService?: unknown; workspaceDocumentService?: unknown } = {},
+): PlaybookInputContractService {
+  const inputContractService = new PlaybookInputContractService(
+    { collectValidationErrors: jest.fn().mockReturnValue([]) } as any,
+    workspaceServices.workspaceShareService as any,
+    workspaceServices.workspaceDocumentService as any,
+  );
+  jest.spyOn(inputContractService, 'derive').mockReturnValue(contract as any);
+  (service as any).inputContractService = inputContractService;
+  return inputContractService;
+}
 
 function structFields(value: Record<string, unknown>): Record<string, unknown> {
   return (toGrpcStruct(value) as { fields: Record<string, unknown> }).fields;
@@ -78,15 +100,7 @@ describe('buildGrpcNodeMetadata', () => {
 
 describe('PlaybookFlowExecutionService start preflight', () => {
   it('uses the base execution-start read instead of the enriched read path', async () => {
-    const savedExecution = {
-      id: 'exec-new',
-      queuePosition: 0,
-      save: jest.fn(),
-      toJSON: jest.fn().mockReturnValue({ id: 'exec-new' }),
-    };
-    savedExecution.save.mockResolvedValue(savedExecution);
-    const ExecutionModel = jest.fn(() => savedExecution) as any;
-    ExecutionModel.findByIdAndDelete = jest.fn();
+    const executionRepository = createExecutionRepositoryMock();
     const flowService = {
       findOneForExecutionStart: jest.fn().mockResolvedValue({
         id: 'flow-1',
@@ -99,9 +113,9 @@ describe('PlaybookFlowExecutionService start preflight', () => {
       findById: jest.fn(),
     };
     const service = new PlaybookFlowExecutionService(
-      ExecutionModel,
-      { updateOne: jest.fn(), deleteMany: jest.fn() } as any,
-      { create: jest.fn(), deleteMany: jest.fn() } as any,
+      executionRepository as any,
+      createTaskResultRepositoryMock() as any,
+      createRouterDecisionRepositoryMock() as any,
       { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
       { init: jest.fn(), isAvailable: jest.fn().mockReturnValue(false) } as any,
       { admit: jest.fn().mockResolvedValue(0), release: jest.fn(), refreshPositions: jest.fn().mockResolvedValue([]) } as any,
@@ -144,9 +158,9 @@ describe('PlaybookFlowExecutionService start preflight', () => {
       }),
     };
     const { service, idempotencyService } = createExecutionServiceForTests({ flowService, graphSanitizerService });
-    (service as any).inputContractService = {
-      derive: jest.fn().mockReturnValue({
-        inputs: [{
+    const inputContractService = stubInputContractService(service, {
+      inputs: [
+        {
           id: 'step-1:brief',
           taskId: 'step-1',
           taskTitle: 'Draft report',
@@ -158,9 +172,9 @@ describe('PlaybookFlowExecutionService start preflight', () => {
           binding: { kind: 'trigger', triggerPath: 'playbookInputs.brief' },
           acceptedSources: ['manual'],
           readiness: 'runtime_required',
-        }],
-      }),
-    };
+        },
+      ],
+      });
 
     await expect(service.start('flow-1', 'owner-1', {}, 'idem-1'))
       .rejects.toThrow('Required Playbook input Brief is missing.');
@@ -172,9 +186,9 @@ describe('PlaybookFlowExecutionService start preflight', () => {
 
   it('rejects inaccessible document inputs before reserving idempotency', async () => {
     const { service, idempotencyService } = createExecutionServiceForTests();
-    (service as any).inputContractService = {
-      derive: jest.fn().mockReturnValue({
-        inputs: [{
+    stubInputContractService(service, {
+      inputs: [
+        {
           id: 'step-1:document',
           taskId: 'step-1',
           taskTitle: 'Summarize document',
@@ -186,13 +200,13 @@ describe('PlaybookFlowExecutionService start preflight', () => {
           binding: { kind: 'trigger', triggerPath: 'playbookInputs.document' },
           acceptedSources: ['document'],
           readiness: 'runtime_required',
-        }],
-      }),
-    };
-    (service as any).workspaceShareService = {
-      assertUserHasAccess: jest.fn().mockRejectedValue(new Error('forbidden')),
-    };
-    (service as any).workspaceDocumentService = { findByIds: jest.fn() };
+        },
+      ],
+    }, {
+      workspaceShareService: { assertUserHasAccess: jest.fn().mockRejectedValue(new Error('forbidden')) },
+      workspaceDocumentService: { findByIds: jest.fn() },
+    });
+
 
     await expect(service.start('flow-1', 'owner-1', {
       playbookInputs: {
@@ -205,9 +219,9 @@ describe('PlaybookFlowExecutionService start preflight', () => {
 
   it('fails closed when document authorization services are unavailable', async () => {
     const { service } = createExecutionServiceForTests();
-    (service as any).inputContractService = {
-      derive: jest.fn().mockReturnValue({
-        inputs: [{
+    const inputContractService = stubInputContractService(service, {
+      inputs: [
+        {
           id: 'step-1:document',
           taskId: 'step-1',
           taskTitle: 'Summarize document',
@@ -219,9 +233,9 @@ describe('PlaybookFlowExecutionService start preflight', () => {
           binding: { kind: 'trigger', triggerPath: 'playbookInputs.document' },
           acceptedSources: ['document'],
           readiness: 'runtime_required',
-        }],
-      }),
-    };
+        },
+      ],
+      });
 
     await expect(service.start('flow-1', 'owner-1', {
       playbookInputs: {
@@ -257,10 +271,9 @@ describe('PlaybookFlowExecutionService start preflight', () => {
       assertUserHasAccess: jest.fn(),
       assertUserHasWriteAccess: jest.fn().mockRejectedValue(new Error('read only')),
     };
-    (service as any).workspaceShareService = workspaceShareService;
-    (service as any).inputContractService = {
-      derive: jest.fn().mockReturnValue({
-        inputs: [{
+    const inputContractService = stubInputContractService(service, {
+      inputs: [
+        {
           id: 'step-1:destination',
           taskId: 'step-1',
           taskTitle: 'Save report',
@@ -272,9 +285,9 @@ describe('PlaybookFlowExecutionService start preflight', () => {
           binding: { kind: 'constant' },
           acceptedSources: ['workspace'],
           readiness: 'configured',
-        }],
-      }),
-    };
+        },
+      ],
+    }, { workspaceShareService });
 
     await expect(service.start('flow-1', 'owner-1', {}, 'idem-1'))
       .rejects.toThrow('The selected resource for Destination workspace is unavailable or inaccessible.');
@@ -310,17 +323,16 @@ describe('PlaybookFlowExecutionService start preflight', () => {
       assertUserHasAccess: jest.fn(),
       assertUserHasWriteAccess: jest.fn(),
     };
-    (service as any).workspaceShareService = workspaceShareService;
-    (service as any).inputContractService = {
-      derive: jest.fn().mockReturnValue({
-        inputs: [{
+    const inputContractService = stubInputContractService(service, {
+      inputs: [
+        {
           id: 'step-1:destination', taskId: 'step-1', taskTitle: 'Save report',
           portId: 'destination', label: 'Destination workspace', artifactKind: 'data',
           required: true, scope: 'configuration', binding: { kind: 'constant' },
           acceptedSources: ['workspace'], readiness: 'configured',
-        }],
-      }),
-    };
+        },
+      ],
+    }, { workspaceShareService });
 
     await expect(service.start('flow-1', 'owner-1', {}, 'idem-1'))
       .rejects.toThrow('The selected resource for Destination workspace is unavailable or inaccessible.');
@@ -332,10 +344,9 @@ describe('PlaybookFlowExecutionService start preflight', () => {
   it('rejects workspace resources whose id does not match their authorized workspace', async () => {
     const { service, idempotencyService } = createExecutionServiceForTests();
     const workspaceShareService = { assertUserHasAccess: jest.fn() };
-    (service as any).workspaceShareService = workspaceShareService;
-    (service as any).inputContractService = {
-      derive: jest.fn().mockReturnValue({
-        inputs: [{
+    stubInputContractService(service, {
+      inputs: [
+        {
           id: 'step-1:workspace',
           taskId: 'step-1',
           taskTitle: 'Read workspace',
@@ -347,9 +358,9 @@ describe('PlaybookFlowExecutionService start preflight', () => {
           binding: { kind: 'trigger', triggerPath: 'playbookInputs.workspace' },
           acceptedSources: ['workspace'],
           readiness: 'runtime_required',
-        }],
-      }),
-    };
+        },
+      ],
+    }, { workspaceShareService });
 
     await expect(service.start('flow-1', 'owner-1', {
       playbookInputs: {
@@ -397,14 +408,8 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
   });
 
   it('fails a claimed execution when its flow cannot be loaded', async () => {
-    const executionModel = {
-      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
-      findById: jest.fn(() => ({
-        select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }),
-        }),
-      })),
-      findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
+    const executionRepository = {
+      findById: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }),
     };
     const queueService = {
       release: jest.fn()
@@ -415,15 +420,13 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
     const flowService = {
       findOne: jest.fn().mockResolvedValue(null),
     };
-    const { service, streamEvents } = createExecutionServiceForTests({ executionModel, queueService, flowService });
+    const { service, streamEvents, executionRepository: repository } = createExecutionServiceForTests({ executionRepository, queueService, flowService });
     (service as any).isGrpcAvailable = true;
 
     await (service as any).drainQueue('owner-1');
 
-    expect(executionModel.findByIdAndUpdate).toHaveBeenCalledWith(
-      'exec-missing',
-      expect.objectContaining({ status: 'failed', error: 'Flow not found before runtime start' }),
-    );
+    expect(repository.findById).toHaveBeenCalledWith('exec-missing', { withSnapshot: true });
+    expect(repository.markFailed).toHaveBeenCalledWith('exec-missing', 'Flow not found before runtime start');
     expect(streamEvents.emitExecutionComplete).toHaveBeenCalledWith(
       'exec-missing',
       'failed',
@@ -432,11 +435,11 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
   });
 
   it('ignores late approval requests after a terminal state already won', async () => {
-    const executionModel = {
-      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 0 }) })),
-      findById: jest.fn(() => ({ lean: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }) })),
+    const executionRepository = {
+      setPendingApproval: jest.fn().mockResolvedValue(false),
+      findById: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }),
     };
-    const { service, streamEvents } = createExecutionServiceForTests({ executionModel });
+    const { service, streamEvents } = createExecutionServiceForTests({ executionRepository });
 
     await (service as any).handleRunEvent('exec-2', {
       event_type: 'ApprovalRequested',
@@ -445,15 +448,18 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       payload: { prompt: 'Approve?' },
     });
 
+    expect(executionRepository.setPendingApproval).toHaveBeenCalledWith('exec-2', expect.objectContaining({
+      nodeId: 'approval-1', iteration: 0, prompt: 'Approve?', interruptType: 'approval_request', resumableActions: ['approve', 'reject'],
+    }));
     expect(streamEvents.emitInterrupt).not.toHaveBeenCalled();
   });
 
   it('ignores late reserved router labels after a terminal state already won', async () => {
-    const executionModel = {
-      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 0 }) })),
-      findById: jest.fn(() => ({ lean: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }) })),
+    const executionRepository = {
+      transition: jest.fn().mockResolvedValue(false),
+      findById: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }),
     };
-    const { service, streamEvents } = createExecutionServiceForTests({ executionModel });
+    const { service, streamEvents } = createExecutionServiceForTests({ executionRepository });
 
     await (service as any).handleRunEvent('exec-3', {
       event_type: 'RouterDecision',
@@ -476,9 +482,9 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
     };
 
     const service = new PlaybookFlowExecutionService(
-      {} as any,
-      { updateOne: jest.fn(), deleteMany: jest.fn() } as any,
-      { create: jest.fn(), deleteMany: jest.fn() } as any,
+      createExecutionRepositoryMock() as any,
+      createTaskResultRepositoryMock() as any,
+      createRouterDecisionRepositoryMock() as any,
       { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
       { init: jest.fn(), isAvailable: jest.fn().mockReturnValue(false) } as any,
       { admit: jest.fn(), release: jest.fn(), refreshPositions: jest.fn() } as any,
@@ -510,16 +516,9 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
   });
 
   it('rolls back a saved execution when idempotency linking fails', async () => {
-    const savedExecution = {
-      id: 'exec-rollback',
-      save: jest.fn().mockResolvedValue({
-        id: 'exec-rollback',
-        queuePosition: 1,
-        toJSON: jest.fn().mockReturnValue({ id: 'exec-rollback' }),
-      }),
-    };
-    const ExecutionModel = jest.fn(() => savedExecution) as any;
-    ExecutionModel.findByIdAndDelete = jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) }));
+    const executionRepository = createExecutionRepositoryMock({
+      insert: jest.fn().mockResolvedValue({ id: 'exec-rollback', status: 'queued', queuePosition: 0, pendingApproval: null }),
+    });
 
     const idempotencyService = {
       reserve: jest.fn().mockResolvedValue({ type: 'reserved' }),
@@ -528,9 +527,9 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
     };
 
     const service = new PlaybookFlowExecutionService(
-      ExecutionModel,
-      { updateOne: jest.fn(), deleteMany: jest.fn() } as any,
-      { create: jest.fn(), deleteMany: jest.fn() } as any,
+      executionRepository as any,
+      createTaskResultRepositoryMock() as any,
+      createRouterDecisionRepositoryMock() as any,
       { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
       { init: jest.fn(), isAvailable: jest.fn().mockReturnValue(false) } as any,
       { admit: jest.fn(), release: jest.fn(), refreshPositions: jest.fn() } as any,
@@ -553,38 +552,31 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
     );
 
     await expect(service.start('flow-1', 'owner-1', {}, 'idem-1')).rejects.toThrow('link failed');
-    expect(ExecutionModel.findByIdAndDelete).toHaveBeenCalledWith('exec-rollback');
+    expect(executionRepository.delete).toHaveBeenCalledWith('exec-rollback');
     expect(idempotencyService.release).toHaveBeenCalledWith('owner-1', 'idem-1');
   });
 
   it('returns the existing execution for a duplicate idempotency key', async () => {
-    const existingExecution = {
-      id: 'exec-existing',
-      ownerId: 'owner-1',
-      toJSON: jest.fn().mockReturnValue({ id: 'exec-existing', status: 'queued' }),
-    };
-    const executionModel = {
+    const existingExecution = { id: 'exec-existing', ownerId: 'owner-1', status: 'queued', startedAt: null, pendingApproval: null };
+    const executionRepository = {
       findById: jest.fn().mockResolvedValue(existingExecution),
     };
-    const { service, idempotencyService } = createExecutionServiceForTests({ executionModel });
+    const { service, idempotencyService } = createExecutionServiceForTests({ executionRepository });
     idempotencyService.reserve.mockResolvedValue({ type: 'duplicate', executionId: 'exec-existing' });
 
     const result = await service.start('flow-1', 'owner-1', { brief: 'same' }, 'idem-1');
 
-    expect(result).toEqual({ id: 'exec-existing', status: 'queued' });
-    expect(executionModel.findById).toHaveBeenCalledWith('exec-existing');
+    // The stored run as its toJSON shape: unset fields absent, no snapshot.
+    expect(result).toEqual({ id: 'exec-existing', ownerId: 'owner-1', status: 'queued', pendingApproval: null });
+    expect(executionRepository.findById).toHaveBeenCalledWith('exec-existing');
   });
 
   it('returns the existing execution for a duplicate idempotency key before validating model override', async () => {
-    const existingExecution = {
-      id: 'exec-existing',
-      ownerId: 'owner-1',
-      toJSON: jest.fn().mockReturnValue({ id: 'exec-existing', status: 'queued' }),
-    };
-    const executionModel = {
+    const existingExecution = { id: 'exec-existing', ownerId: 'owner-1', status: 'queued', pendingApproval: null };
+    const executionRepository = {
       findById: jest.fn().mockResolvedValue(existingExecution),
     };
-    const { service, idempotencyService } = createExecutionServiceForTests({ executionModel });
+    const { service, idempotencyService } = createExecutionServiceForTests({ executionRepository });
     idempotencyService.reserve.mockResolvedValue({ type: 'duplicate', executionId: 'exec-existing' });
     (service as any).modelsService = {
       validateModelActive: jest.fn().mockResolvedValue({ valid: false, model: null, inactive: true }),
@@ -592,7 +584,7 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
 
     const result = await service.start('flow-1', 'owner-1', { brief: 'same' }, 'idem-1', undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, 'inactive-model-id');
 
-    expect(result).toEqual({ id: 'exec-existing', status: 'queued' });
+    expect(result).toEqual({ id: 'exec-existing', ownerId: 'owner-1', status: 'queued', pendingApproval: null });
     expect((service as any).modelsService.validateModelActive).not.toHaveBeenCalled();
   });
 
@@ -607,9 +599,9 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
     };
 
     const service = new PlaybookFlowExecutionService(
-      {} as any,
-      { updateOne: jest.fn(), deleteMany: jest.fn() } as any,
-      { create: jest.fn(), deleteMany: jest.fn() } as any,
+      createExecutionRepositoryMock() as any,
+      createTaskResultRepositoryMock() as any,
+      createRouterDecisionRepositoryMock() as any,
       { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
       { init: jest.fn(), isAvailable: jest.fn().mockReturnValue(false) } as any,
       { admit: jest.fn(), release: jest.fn(), refreshPositions: jest.fn() } as any,
@@ -674,25 +666,11 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
         replayConfig: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false },
       }]])),
     };
-    const executionModel = {
-      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
-      findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
+    const executionRepository = {
       findById: jest.fn()
-        .mockReturnValueOnce({
-          lean: jest.fn().mockReturnValue({
-            exec: jest.fn().mockResolvedValue({ executionMode: 'replay_strict', stepExecutionModes: { 'step-1': 'replay_strict' } }),
-          }),
-        })
-        .mockReturnValueOnce({
-          lean: jest.fn().mockReturnValue({
-            exec: jest.fn().mockResolvedValue({ executionMode: 'replay_strict', singleStepTaskId: null }),
-          }),
-        })
-        .mockReturnValue({
-          lean: jest.fn().mockReturnValue({
-            exec: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }),
-          }),
-        }),
+        .mockResolvedValueOnce({ executionMode: 'replay_strict', stepExecutionModes: { 'step-1': 'replay_strict' } })
+        .mockResolvedValueOnce({ executionMode: 'replay_strict', singleStepTaskId: null })
+        .mockResolvedValue({ ownerId: 'owner-1' }),
     };
     const snapshot = {
       nodes: [{ id: 'step-1', kind: 'step', metadata: {} }],
@@ -700,12 +678,11 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       dataBindings: [],
       settings: {},
     };
-    const { service, taskResultModel, agentService } = createExecutionServiceForTests({
+    const { service, agentService } = createExecutionServiceForTests({
       replayArtifactService,
       replayReportService,
-      executionModel,
+      executionRepository,
     });
-    taskResultModel.updateOne.mockResolvedValue(undefined);
     agentService.buildGrpcAgentsForPlaybook.mockResolvedValue([]);
 
     const handlers: Record<string, (arg?: any) => void> = {};
@@ -740,24 +717,16 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
   });
 
   it('scopes idempotency reservations by flowId and inputContext', async () => {
-    const savedExecution = {
-      id: 'exec-new',
-      queuePosition: 0,
-      save: jest.fn().mockResolvedValue(undefined),
-      toJSON: jest.fn().mockReturnValue({ id: 'exec-new' }),
-    };
-    savedExecution.save = jest.fn().mockResolvedValue(savedExecution);
-    const ExecutionModel = jest.fn(() => savedExecution) as any;
-    ExecutionModel.findByIdAndDelete = jest.fn();
+    const executionRepository = createExecutionRepositoryMock();
     const idempotencyService = {
       reserve: jest.fn().mockResolvedValue({ type: 'reserved' }),
       confirmLink: jest.fn().mockResolvedValue(undefined),
       release: jest.fn().mockResolvedValue(undefined),
     };
     const service = new PlaybookFlowExecutionService(
-      ExecutionModel,
-      { updateOne: jest.fn(), deleteMany: jest.fn() } as any,
-      { create: jest.fn(), deleteMany: jest.fn() } as any,
+      executionRepository as any,
+      createTaskResultRepositoryMock() as any,
+      createRouterDecisionRepositoryMock() as any,
       { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
       { init: jest.fn(), isAvailable: jest.fn().mockReturnValue(false) } as any,
       { admit: jest.fn().mockResolvedValue(1), release: jest.fn(), refreshPositions: jest.fn().mockResolvedValue([]) } as any,
@@ -789,6 +758,7 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       executionMode: 'live',
       stepExecutionModes: {},
     });
+    expect(idempotencyService.confirmLink).toHaveBeenCalledWith('owner-1', 'idem-1', 'exec-new');
   });
 
   it('drains the queue after a pre-stream startup failure without claiming and abandoning work', async () => {
@@ -828,20 +798,12 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
     const { service, agentService } = createExecutionServiceForTests({
       flowService: { findOne: jest.fn().mockResolvedValue(snapshot) },
       builderService: { buildSnapshot: jest.fn().mockReturnValue(snapshot) },
-      executionModel: {
-        updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
-        findById: jest.fn(() => ({
-          lean: jest.fn().mockReturnValue({
-            exec: jest.fn().mockResolvedValue({ executionMode: 'live', stepExecutionModes: {}, seededTaskOutputs: [] }),
-          }),
-        })),
-        findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
+      executionRepository: {
+        findById: jest.fn().mockResolvedValue({ executionMode: 'live', stepExecutionModes: {}, seededTaskOutputs: [] }),
       },
-      hitlMemoryModel: {
-        find: jest.fn(() => ({
-          lean: jest.fn().mockReturnValue({
-            exec: jest.fn().mockResolvedValue([{
-              _id: 'memory-1',
+      hitlMemoryRepository: {
+        listActiveForNodes: jest.fn().mockResolvedValue([{
+              id: 'memory-1',
               flowId: 'flow-1',
               nodeId: 'step-1',
               memoryType: 'procedural',
@@ -851,8 +813,6 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
               appliesTo: 'node',
               sensitivity: 'normal',
             }]),
-          }),
-        })),
       },
     });
     (service as any).playbookFlowClient = { Run: run };
@@ -860,8 +820,10 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
 
     await (service as any).callGrpcRun('exec-1', 'flow-1', 'owner-1', snapshot, { brief: 'run it' }, snapshot);
 
+    expect((service as any).hitlMemories.listActiveForNodes).toHaveBeenCalledWith('flow-1', ['step-1']);
     const sentContext = run.mock.calls[0][0].input_context.fields;
     expect(sentContext.__playbook_hitl_memory.listValue.values).toHaveLength(1);
+    expect(sentContext.__playbook_hitl_memory.listValue.values[0].structValue.fields.id).toEqual({ kind: 'stringValue', stringValue: 'memory-1' });
   });
 
   it('replaces caller-supplied HITL memory with server-loaded runtime memory', async () => {
@@ -875,21 +837,11 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
     const { service, agentService } = createExecutionServiceForTests({
       flowService: { findOne: jest.fn().mockResolvedValue(snapshot) },
       builderService: { buildSnapshot: jest.fn().mockReturnValue(snapshot) },
-      executionModel: {
-        updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
-        findById: jest.fn(() => ({
-          lean: jest.fn().mockReturnValue({
-            exec: jest.fn().mockResolvedValue({ executionMode: 'live', stepExecutionModes: {}, seededTaskOutputs: [] }),
-          }),
-        })),
-        findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
+      executionRepository: {
+        findById: jest.fn().mockResolvedValue({ executionMode: 'live', stepExecutionModes: {}, seededTaskOutputs: [] }),
       },
-      hitlMemoryModel: {
-        find: jest.fn(() => ({
-          lean: jest.fn().mockReturnValue({
-            exec: jest.fn().mockResolvedValue([]),
-          }),
-        })),
+      hitlMemoryRepository: {
+        listActiveForNodes: jest.fn().mockResolvedValue([]),
       },
     });
     (service as any).playbookFlowClient = { Run: run };
@@ -934,11 +886,9 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       },
     };
     const { service, agentService } = createExecutionServiceForTests({
-      hitlMemoryModel: {
-        find: jest.fn(() => ({
-          lean: jest.fn().mockReturnValue({
-            exec: jest.fn().mockResolvedValue([{
-              _id: 'memory-1',
+      hitlMemoryRepository: {
+        listActiveForNodes: jest.fn().mockResolvedValue([{
+              id: 'memory-1',
               nodeId: null,
               memoryType: 'semantic',
               title: 'Prefer signed docs',
@@ -947,8 +897,6 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
               appliesTo: 'workflow',
               sensitivity: 'normal',
             }]),
-          }),
-        })),
       },
     });
     (service as any).playbookFlowClient = { RunFromCheckpoint: runFromCheckpoint };
@@ -1206,13 +1154,12 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
   });
 
   it('does not start gRPC when a claimed execution is cancelled before launch', async () => {
-    const { service, agentService, executionModel, streamEvents } = createExecutionServiceForTests({
+    const { service, agentService, executionRepository, streamEvents } = createExecutionServiceForTests({
       flowService: { findOne: jest.fn().mockResolvedValue({ settings: {}, nodes: [], controlEdges: [], dataBindings: [] }) },
       builderService: { buildSnapshot: jest.fn().mockReturnValue({ settings: {}, nodes: [], controlEdges: [], dataBindings: [] }) },
-      executionModel: {
-        updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 0 }) })),
-        findById: jest.fn(() => ({ lean: () => ({ exec: jest.fn().mockResolvedValue({ ownerId: 'owner-1', status: 'cancelled' }) }) })),
-        findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
+      executionRepository: {
+        markStarted: jest.fn().mockResolvedValue(false),
+        findById: jest.fn().mockResolvedValue({ ownerId: 'owner-1', status: 'cancelled' }),
       },
     });
     const mockRun = jest.fn();
@@ -1226,10 +1173,8 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       settings: {},
     }, {});
 
-    expect(executionModel.updateOne).toHaveBeenCalledWith(
-      { _id: 'exec-1', status: 'running' },
-      expect.objectContaining({ queuePosition: 0 }),
-    );
+    // markStarted only stamps a run that is still running (queue position 0, start time, replay planning).
+    expect(executionRepository.markStarted).toHaveBeenCalledWith('exec-1', {});
     expect(mockRun).not.toHaveBeenCalled();
     expect(streamEvents.emitExecutionStart).not.toHaveBeenCalled();
   });
@@ -1252,37 +1197,26 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
           dataBindings: [],
         }),
       },
-      executionModel: {
-        updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
+      executionRepository: {
         findById: jest.fn()
-          .mockReturnValueOnce({
-            lean: jest.fn().mockReturnValue({
-              exec: jest.fn().mockResolvedValue({
-                singleStepTaskId: null,
-                executionMode: 'inherit',
-                stepExecutionModes: { 'step-1': 'replay_flex' },
-                modelIdOverride: null,
-                replayPlanningByTask: null,
-              }),
-            }),
+          .mockResolvedValueOnce({
+            singleStepTaskId: null,
+            executionMode: 'inherit',
+            stepExecutionModes: { 'step-1': 'replay_flex' },
+            modelIdOverride: null,
+            replayPlanningByTask: null,
           })
-          .mockReturnValueOnce({
-            lean: jest.fn().mockReturnValue({
-              exec: jest.fn().mockResolvedValue({
-                singleStepTaskId: null,
-                advisorAutopilotEnabled: false,
-                advisorAutopilotTargetScore: 90,
-                advisorAutopilotMaxTurns: 4,
-                reflectionEnabled: false,
-                advisorScoringMode: 'llm',
-                executionMode: 'inherit',
-                stepExecutionModes: { 'step-1': 'replay_flex' },
-                replayPlanningByTask: null,
-              }),
-            }),
-          })
-          .mockReturnValueOnce({
-            lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ seededTaskOutputs: [] }) }),
+          .mockResolvedValueOnce({
+            singleStepTaskId: null,
+            advisorAutopilotEnabled: false,
+            advisorAutopilotTargetScore: 90,
+            advisorAutopilotMaxTurns: 4,
+            reflectionEnabled: false,
+            advisorScoringMode: 'llm',
+            executionMode: 'inherit',
+            stepExecutionModes: { 'step-1': 'replay_flex' },
+            replayPlanningByTask: null,
+            seededTaskOutputs: [],
           }),
       },
     });
@@ -1303,36 +1237,27 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
       expect.objectContaining({
         executionMode: 'inherit',
         stepExecutionModes: { 'step-1': 'replay_flex' },
+        advisorAutopilotTargetScore: 90,
+        advisorAutopilotMaxTurns: 4,
+        singleStepTaskId: null,
       }),
     );
   });
 
   it('does not fail running executions during startup without ownership proof', async () => {
-    const executionModel = {
-      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
-      findById: jest.fn(() => ({ lean: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }) })),
-      updateMany: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 3 }) })),
-    };
-    const { service } = createExecutionServiceForTests({ executionModel });
+    const { service, executionRepository } = createExecutionServiceForTests();
     (service as any).isGrpcAvailable = true;
-    Object.defineProperty(service as any, 'executionModel', { value: executionModel });
 
     await (service as any).reconcileOrphanedExecutions();
 
-    expect(executionModel.updateMany).not.toHaveBeenCalled();
+    expect(executionRepository.markFailed).not.toHaveBeenCalled();
+    expect(executionRepository.transition).not.toHaveBeenCalled();
+    expect(executionRepository.update).not.toHaveBeenCalled();
   });
 
   it('recovers queued executions until all available concurrency slots are filled', async () => {
-    let countDocsCallCount = 0;
-    const executionModel = {
-      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
-      findById: jest.fn(() => ({ lean: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }) })),
-      findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
-      distinct: jest.fn().mockResolvedValue(['owner-1']),
-      countDocuments: jest.fn().mockImplementation(() => {
-        countDocsCallCount++;
-        return Promise.resolve(countDocsCallCount === 1 ? 3 : 0);
-      }),
+    const executionRepository = {
+      distinctOwnersWithQueued: jest.fn().mockResolvedValue(['owner-1']),
     };
     const queueService = {
       release: jest.fn()
@@ -1346,27 +1271,21 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
     const flowService = {
       findOne: jest.fn().mockResolvedValue({ settings: {} }),
     };
-    const { service } = createExecutionServiceForTests({ executionModel, queueService, flowService });
+    const { service } = createExecutionServiceForTests({ executionRepository, queueService, flowService });
     (service as any).isGrpcAvailable = true;
 
     const scheduleQueueDrainSpy = jest.spyOn(service as any, 'scheduleQueueDrain').mockImplementation(() => undefined);
 
     await (service as any).recoverQueuedExecutions();
 
-    expect(executionModel.distinct).toHaveBeenCalledWith('ownerId', { status: 'queued' });
+    expect(executionRepository.distinctOwnersWithQueued).toHaveBeenCalled();
     expect(scheduleQueueDrainSpy).toHaveBeenCalledWith('owner-1');
     scheduleQueueDrainSpy.mockRestore();
   });
 
   it('drainQueue continues draining after a flow-not-found failure', async () => {
-    const executionModel = {
-      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
-      findById: jest.fn(() => ({
-        select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }),
-        }),
-      })),
-      findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
+    const executionRepository = {
+      findById: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }),
     };
     const queueService = {
       release: jest.fn()
@@ -1380,17 +1299,15 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
         .mockResolvedValueOnce(null)
         .mockResolvedValueOnce({ settings: {} }),
     };
-    const { service, streamEvents } = createExecutionServiceForTests({ executionModel, queueService, flowService });
+    const { service, streamEvents, executionRepository: repository } = createExecutionServiceForTests({ executionRepository, queueService, flowService });
     (service as any).isGrpcAvailable = true;
 
     const callGrpcRunSpy = jest.spyOn(service as any, 'callGrpcRun').mockResolvedValue(undefined);
 
     await (service as any).drainQueue('owner-1');
 
-    expect(executionModel.findByIdAndUpdate).toHaveBeenCalledWith(
-      'exec-missing',
-      expect.objectContaining({ status: 'failed', error: 'Flow not found before runtime start' }),
-    );
+    expect(repository.markFailed).toHaveBeenCalledWith('exec-missing', 'Flow not found before runtime start');
+    expect(repository.markFailed).toHaveBeenCalledTimes(1);
     expect(flowService.findOne).toHaveBeenCalledTimes(2);
     expect(callGrpcRunSpy).toHaveBeenCalledTimes(1);
     expect(callGrpcRunSpy).toHaveBeenCalledWith('exec-ok', 'flow-ok', 'owner-1', { settings: {} }, {}, undefined);
@@ -1398,17 +1315,15 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
   });
 
   it('re-queues a claimed execution when distributed capacity is exhausted', async () => {
-    const executionModel = {
-      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
+    const executionRepository = {
       findById: jest.fn(),
-      findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
     };
     const queueService = {
       release: jest.fn().mockResolvedValueOnce({ id: 'exec-1', flowId: 'flow-1', inputContext: {} }).mockResolvedValueOnce(null),
       refreshPositions: jest.fn().mockResolvedValue([{ executionId: 'exec-1', queuePosition: 1 }]),
     };
-    const { service, streamEvents, executionLeaseService } = createExecutionServiceForTests({
-      executionModel,
+    const { service, streamEvents, executionLeaseService, executionRepository: repository } = createExecutionServiceForTests({
+      executionRepository,
       queueService,
       executionLeaseService: {
         isEnabled: jest.fn().mockReturnValue(true),
@@ -1421,13 +1336,9 @@ describe('PlaybookFlowExecutionService lifecycle handling', () => {
     await (service as any).drainQueue('owner-1');
 
     expect(executionLeaseService.acquire).toHaveBeenCalledWith('exec-1', 'owner-1', 'flow-1', {});
-    expect(executionModel.updateOne).toHaveBeenCalledWith(
-      { _id: 'exec-1', status: 'running' },
-      {
-        $set: { status: 'queued', queuePosition: 0 },
-        $unset: { startedAt: 1 },
-      },
-    );
+    // Back to the head of the queue (queued, position 0, start time cleared) while it is still running.
+    expect(repository.requeueRunning).toHaveBeenCalledWith('exec-1');
+    expect(repository.findById).not.toHaveBeenCalled();
     expect(streamEvents.emitQueuePositionUpdate).toHaveBeenCalledWith('exec-1', 1);
   });
 });
@@ -1436,7 +1347,6 @@ describe('PlaybookFlowExecutionService HITL memory persistence', () => {
   function createPendingStepExecution(overrides: Record<string, unknown> = {}) {
     return {
       id: 'exec-1',
-      _id: 'exec-1',
       ownerId: 'owner-1',
       flowId: 'flow-1',
       status: 'pending_approval',
@@ -1449,28 +1359,27 @@ describe('PlaybookFlowExecutionService HITL memory persistence', () => {
         taskTitle: 'Review contract',
         feedbackScopeDefault: 'downstream_run',
       },
-      toJSON: jest.fn().mockReturnValue({ id: 'exec-1', status: 'running' }),
+      hitlEvents: [],
       ...overrides,
     };
   }
 
   it('creates active node memory when future node feedback is explicitly remembered', async () => {
     const execution = createPendingStepExecution();
-    const hitlMemoryModel = { create: jest.fn().mockResolvedValue({}) };
+    const hitlMemoryRepository = { create: jest.fn().mockResolvedValue({}) };
     const streamEvents = { emitHitlInterruptResolved: jest.fn(), emitHitlMemorySaved: jest.fn() };
-    const executionModel = {
+    const executionRepository = {
       findById: jest.fn().mockResolvedValue(execution),
-      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
     };
     const runtimeClient = {
       isAvailable: jest.fn().mockReturnValue(true),
       resumeFromStep: jest.fn((_request, callback) => callback(null, { resumed: true })),
     };
-    const { service } = createExecutionServiceForTests({
-      executionModel,
+    const { service, executionRepository: repository } = createExecutionServiceForTests({
+      executionRepository,
       runtimeClient,
       streamEvents,
-      hitlMemoryModel,
+      hitlMemoryRepository,
     });
 
     await service.resumeFromStep('exec-1', 'owner-1', {
@@ -1481,7 +1390,12 @@ describe('PlaybookFlowExecutionService HITL memory persistence', () => {
       remember: true,
     });
 
-    expect(hitlMemoryModel.create).toHaveBeenCalledWith(expect.objectContaining({
+    expect(repository.answerHitlEvent).toHaveBeenCalledWith('exec-1', expect.objectContaining({
+      from: ['pending_approval'],
+      interruptId: 'interrupt-1',
+      patch: { status: 'running', pendingApproval: null },
+    }));
+    expect(hitlMemoryRepository.create).toHaveBeenCalledWith(expect.objectContaining({
       ownerId: 'owner-1',
       flowId: 'flow-1',
       nodeId: 'task-1',
@@ -1504,18 +1418,17 @@ describe('PlaybookFlowExecutionService HITL memory persistence', () => {
   });
 
   it('does not create memory for current-run or unremembered feedback scopes', async () => {
-    const hitlMemoryModel = { create: jest.fn().mockResolvedValue({}) };
-    const executionModel = {
+    const hitlMemoryRepository = { create: jest.fn().mockResolvedValue({}) };
+    const executionRepository = {
       findById: jest.fn()
         .mockResolvedValueOnce(createPendingStepExecution())
         .mockResolvedValueOnce(createPendingStepExecution()),
-      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
     };
     const runtimeClient = {
       isAvailable: jest.fn().mockReturnValue(true),
       resumeFromStep: jest.fn((_request, callback) => callback(null, { resumed: true })),
     };
-    const { service } = createExecutionServiceForTests({ executionModel, runtimeClient, hitlMemoryModel });
+    const { service } = createExecutionServiceForTests({ executionRepository, runtimeClient, hitlMemoryRepository });
 
     await service.resumeFromStep('exec-1', 'owner-1', {
       taskId: 'task-1',
@@ -1532,7 +1445,7 @@ describe('PlaybookFlowExecutionService HITL memory persistence', () => {
       remember: false,
     });
 
-    expect(hitlMemoryModel.create).not.toHaveBeenCalled();
+    expect(hitlMemoryRepository.create).not.toHaveBeenCalled();
   });
 
   it('restarts the stream with a hidden resume command when runtime state was lost', async () => {
@@ -1541,15 +1454,14 @@ describe('PlaybookFlowExecutionService HITL memory persistence', () => {
       snapshot,
       inputContext: { customer: 'acme' },
     });
-    const executionModel = {
+    const executionRepository = {
       findById: jest.fn().mockResolvedValue(execution),
-      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
     };
     const runtimeClient = {
       isAvailable: jest.fn().mockReturnValue(true),
       resumeFromStep: jest.fn((_request, callback) => callback(null, { resumed: false })),
     };
-    const { service, streamEvents } = createExecutionServiceForTests({ executionModel, runtimeClient });
+    const { service, streamEvents, executionRepository: repository } = createExecutionServiceForTests({ executionRepository, runtimeClient });
     const scheduleDurableResume = jest
       .spyOn(service as any, 'scheduleQueueDrain')
       .mockImplementation(() => undefined);
@@ -1563,23 +1475,23 @@ describe('PlaybookFlowExecutionService HITL memory persistence', () => {
     });
 
     expect(scheduleDurableResume).toHaveBeenCalledWith('owner-1');
-    expect(executionModel.updateOne).toHaveBeenCalledWith(
-      expect.objectContaining({ _id: 'exec-1' }),
-      expect.objectContaining({
-        $set: expect.objectContaining({
-          status: 'queued',
-          inputContext: expect.objectContaining({
-            customer: 'acme',
-            __playbook_resume: expect.objectContaining({
-              action: 'reply',
-              message: 'Use the signed contract.',
-              scope: 'downstream_run',
-            }),
+    expect(repository.answerHitlEvent).toHaveBeenCalledWith('exec-1', expect.objectContaining({
+      from: ['running', 'pending_approval'],
+      interruptId: 'interrupt-1',
+      patch: expect.objectContaining({
+        status: 'queued',
+        queuePosition: 0,
+        pendingApproval: null,
+        inputContext: expect.objectContaining({
+          customer: 'acme',
+          __playbook_resume: expect.objectContaining({
+            action: 'reply',
+            message: 'Use the signed contract.',
+            scope: 'downstream_run',
           }),
         }),
       }),
-      expect.any(Object),
-    );
+    }));
     expect(streamEvents.emitHitlInterruptResolved).toHaveBeenCalledWith(
       'exec-1',
       'interrupt-1',
@@ -1602,17 +1514,14 @@ describe('PlaybookFlowExecutionService HITL memory persistence', () => {
         riskLevel: 'critical',
       },
     });
-    const executionModel = {
-      findById: jest.fn().mockReturnValue({
-        select: jest.fn().mockResolvedValue(execution),
-      }),
-      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
+    const executionRepository = {
+      findById: jest.fn().mockResolvedValue(execution),
     };
     const runtimeClient = {
       isAvailable: jest.fn().mockReturnValue(true),
       resumeApproval: jest.fn((_request, callback) => callback(null, { resumed: false })),
     };
-    const { service, streamEvents } = createExecutionServiceForTests({ executionModel, runtimeClient });
+    const { service, streamEvents, executionRepository: repository } = createExecutionServiceForTests({ executionRepository, runtimeClient });
     const scheduleDurableResume = jest
       .spyOn(service as any, 'scheduleQueueDrain')
       .mockImplementation(() => undefined);
@@ -1627,25 +1536,29 @@ describe('PlaybookFlowExecutionService HITL memory persistence', () => {
     });
 
     expect(scheduleDurableResume).toHaveBeenCalledWith('owner-1');
-    expect(executionModel.updateOne).toHaveBeenCalledWith(
-      expect.objectContaining({ _id: 'exec-1' }),
-      expect.objectContaining({
-        $set: expect.objectContaining({
-          status: 'queued',
-          inputContext: expect.objectContaining({
-            recipient: 'customer@example.com',
-            __playbook_resume: expect.objectContaining({
-              decision: 'approved',
-              payload: expect.objectContaining({
-                feedback: 'Approved for this signed contract only.',
-                scope: 'step_only',
-              }),
+    expect(repository.findById).toHaveBeenCalledWith('exec-1', { withSnapshot: true });
+    expect(repository.transition).toHaveBeenCalledWith('exec-1', {
+      from: ['pending_approval'],
+      pendingApproval: { nodeId: 'task-1', iteration: 0, interruptId: 'approval-1' },
+      patch: { status: 'running' },
+    });
+    expect(repository.answerHitlEvent).toHaveBeenCalledWith('exec-1', expect.objectContaining({
+      from: ['running', 'pending_approval'],
+      interruptId: 'approval-1',
+      patch: expect.objectContaining({
+        status: 'queued',
+        inputContext: expect.objectContaining({
+          recipient: 'customer@example.com',
+          __playbook_resume: expect.objectContaining({
+            decision: 'approved',
+            payload: expect.objectContaining({
+              feedback: 'Approved for this signed contract only.',
+              scope: 'step_only',
             }),
           }),
         }),
       }),
-      expect.any(Object),
-    );
+    }));
     expect(streamEvents.emitHitlInterruptResolved).toHaveBeenCalledWith(
       'exec-1',
       'approval-1',
@@ -1665,21 +1578,20 @@ describe('PlaybookFlowExecutionService HITL memory persistence', () => {
         riskLevel: 'critical',
       },
     });
-    const hitlMemoryModel = { create: jest.fn().mockResolvedValue({}) };
+    const hitlMemoryRepository = { create: jest.fn().mockResolvedValue({}) };
     const streamEvents = { emitHitlInterruptResolved: jest.fn(), emitHitlMemorySaved: jest.fn() };
-    const executionModel = {
+    const executionRepository = {
       findById: jest.fn().mockResolvedValue(execution),
-      updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
     };
     const runtimeClient = {
       isAvailable: jest.fn().mockReturnValue(true),
       resumeApproval: jest.fn((_request, callback) => callback(null, { resumed: true })),
     };
     const { service } = createExecutionServiceForTests({
-      executionModel,
+      executionRepository,
       runtimeClient,
       streamEvents,
-      hitlMemoryModel,
+      hitlMemoryRepository,
     });
 
     await service.resumeApproval('exec-1', 'owner-1', {
@@ -1691,7 +1603,7 @@ describe('PlaybookFlowExecutionService HITL memory persistence', () => {
       },
     });
 
-    expect(hitlMemoryModel.create).toHaveBeenCalledWith(expect.objectContaining({
+    expect(hitlMemoryRepository.create).toHaveBeenCalledWith(expect.objectContaining({
       flowId: 'flow-1',
       nodeId: null,
       memoryType: 'approval_policy',
@@ -1722,5 +1634,142 @@ describe('PlaybookFlowExecutionService lease release', () => {
     await (service as any).handleRunEvent('exec-1', { event_type: 'ExecutionCompleted', payload: {} });
 
     expect(executionLeaseService.release).toHaveBeenCalledWith('exec-1');
+  });
+});
+
+describe('PlaybookFlowExecutionService reads', () => {
+  const at = (iso: string) => new Date(iso);
+
+  it('lists a flow\'s runs newest first as their toJSON shape, one page at a time', async () => {
+    const executionRepository = {
+      countByFlow: jest.fn().mockResolvedValue(12),
+      listByFlow: jest.fn().mockResolvedValue([{
+        id: 'exec-2', flowId: 'flow-1', ownerId: 'owner-1', status: 'completed', startedAt: at('2026-01-01T00:00:00Z'), endedAt: null,
+        error: null, pendingApproval: null, hitlEvents: [], queuePosition: 0, createdAt: at('2026-01-01T00:00:00Z'),
+      }]),
+    };
+    const { service, executionRepository: repository } = createExecutionServiceForTests({ executionRepository });
+
+    const result = await service.findAll('flow-1', 'owner-1', 2, 5);
+
+    expect(repository.countByFlow).toHaveBeenCalledWith('flow-1');
+    expect(repository.listByFlow).toHaveBeenCalledWith('flow-1', { limit: 5, offset: 5 });
+    expect(result.pagination).toEqual({ page: 2, limit: 5, total: 12, totalPages: 3 });
+    expect(result.items).toEqual([{
+      id: 'exec-2', flowId: 'flow-1', ownerId: 'owner-1', status: 'completed', startedAt: at('2026-01-01T00:00:00Z'),
+      pendingApproval: null, hitlEvents: [], queuePosition: 0, createdAt: at('2026-01-01T00:00:00Z'),
+    }]);
+  });
+
+  it('returns the start response with the admitted queue position and no planner snapshot', async () => {
+    const queueService = { admit: jest.fn().mockResolvedValue(3), release: jest.fn(), refreshPositions: jest.fn().mockResolvedValue([]) };
+    const { service, executionRepository } = createExecutionServiceForTests({ queueService });
+    jest.spyOn(service as any, 'scheduleQueueDrain').mockImplementation(() => undefined);
+
+    const result = await service.start('flow-1', 'owner-1', { brief: 'x' });
+
+    const inserted = executionRepository.insert.mock.calls[0][0];
+    expect(inserted).toMatchObject({ flowId: 'flow-1', ownerId: 'owner-1', status: 'queued', executionMode: 'live', advisorScoringMode: 'llm', seededTaskOutputs: [] });
+    expect(queueService.admit).toHaveBeenCalledWith('owner-1', 'exec-new', expect.any(Number), expect.any(Number));
+    expect(result).toMatchObject({ id: 'exec-new', status: 'queued', queuePosition: 3, pendingApproval: null });
+    expect(result).not.toHaveProperty('playbookPlannerSnapshot');
+  });
+
+  it('assembles the execution detail from the three repositories', async () => {
+    const execution = {
+      id: 'exec-1', flowId: 'flow-1', ownerId: 'owner-1', status: 'completed', pendingApproval: null, error: null,
+      snapshot: { nodes: [], playbookPlanner: { model: 'secret' } },
+      hitlEvents: [
+        { id: 'h1', nodeId: 'task-1', iteration: 0, interruptId: 'i1', status: 'answered' },
+        { id: 'h2', nodeId: 'task-2', iteration: 0, interruptId: 'i2', status: 'answered' },
+      ],
+      replayPlanningByTask: {},
+    };
+    const taskResult = {
+      id: 'tr-1', executionId: 'exec-1', taskId: 'task-1', iteration: 0, status: 'completed', output: 'done', displayText: null,
+      outputs: null, artifacts: null, components: null, iteratorIterations: null, error: null, startedAt: at('2026-01-01T00:00:00Z'), endedAt: null,
+      toolTrace: [], reasoningChain: [], llmPromptTrace: [], usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3, model: 'm' }, semanticMatch: null,
+      traceMetadata: {}, judgeStatus: 'idle', judgeResult: null, judgeScoringMode: null, judgeError: null, judgeHistory: [],
+      parentTaskId: null, runtimeSubgraphId: null, generatedLocalNodeId: null, generatedNodeTitle: null,
+    };
+    const decision = { id: 'rd-1', executionId: 'exec-1', routerNodeId: 'router-1', iteration: 0, label: 'yes', decidedAt: at('2026-01-01T00:00:01Z') };
+    const { service, executionRepository, taskResultRepository, routerDecisionRepository } = createExecutionServiceForTests({
+      executionRepository: { findById: jest.fn().mockResolvedValue(execution) },
+      taskResultRepository: { listForExecution: jest.fn().mockResolvedValue([taskResult]) },
+      routerDecisionRepository: { listForExecution: jest.fn().mockResolvedValue([decision]) },
+    });
+
+    const detail = await service.findOne('exec-1', 'owner-1');
+
+    expect(executionRepository.findById).toHaveBeenCalledWith('exec-1', { withSnapshot: true });
+    expect(taskResultRepository.listForExecution).toHaveBeenCalledWith('exec-1');
+    expect(routerDecisionRepository.listForExecution).toHaveBeenCalledWith('exec-1');
+    expect((detail as unknown as Record<string, unknown>).snapshot).toEqual({ nodes: [] });
+    expect(detail.error).toBeUndefined();
+    expect(detail.taskResults).toEqual([expect.objectContaining({
+      id: 'tr-1', taskId: 'task-1', status: 'completed', output: 'done', displayText: undefined, error: undefined,
+      startedAt: at('2026-01-01T00:00:00Z'), endedAt: undefined, inputTokens: 1, totalTokens: 3, judgeStatus: 'idle', judgeHistory: [],
+      parentTaskId: undefined, generatedNodeTitle: undefined,
+      hitlHistory: [expect.objectContaining({ id: 'h1' })],
+    })]);
+    expect(detail.routerDecisions).toEqual([decision]);
+    expect(detail.dynamicReasoningAttempts).toEqual([]);
+  });
+
+  it('lists recent runs of accessible flows with their most relevant task, failed ones first', async () => {
+    const executionRepository = {
+      listRecentByFlows: jest.fn().mockResolvedValue([
+        { id: 'exec-1', flowId: 'flow-1', status: 'running', startedAt: null, updatedAt: at('2026-01-02T00:00:00Z'), endedAt: null, pendingApproval: null },
+        { id: 'exec-2', flowId: 'flow-2', status: 'pending_approval', startedAt: at('2026-01-01T00:00:00Z'), updatedAt: at('2026-01-01T00:00:00Z'), endedAt: null, pendingApproval: { nodeId: 'n' } },
+      ]),
+    };
+    const taskResultRepository = {
+      listForExecutions: jest.fn().mockResolvedValue([
+        { executionId: 'exec-1', taskId: 'running-task', iteration: 0, status: 'running', generatedNodeTitle: null },
+        { executionId: 'exec-1', taskId: 'failed-task', iteration: 0, status: 'failed', generatedNodeTitle: 'Failed step' },
+      ]),
+    };
+    const { service, executionRepository: repository, taskResultRepository: tasks } = createExecutionServiceForTests({ executionRepository, taskResultRepository });
+
+    const rows = await service.findRecentByAccessibleFlowIds(['flow-1', 'flow-2'], ['running', 'pending_approval'], 10);
+
+    expect(repository.listRecentByFlows).toHaveBeenCalledWith(['flow-1', 'flow-2'], { statuses: ['running', 'pending_approval'], limit: 10 });
+    expect(tasks.listForExecutions).toHaveBeenCalledWith(['exec-1', 'exec-2'], { statuses: ['failed', 'running'], order: 'recentlyStarted', light: true });
+    expect(rows).toEqual([
+      {
+        executionId: 'exec-1', flowId: 'flow-1', status: 'running', startedAt: undefined, updatedAt: at('2026-01-02T00:00:00Z'), endedAt: undefined,
+        waitingForHumanInput: false, task: { taskId: 'failed-task', iteration: 0, status: 'failed', taskName: 'Failed step' },
+      },
+      {
+        executionId: 'exec-2', flowId: 'flow-2', status: 'pending_approval', startedAt: at('2026-01-01T00:00:00Z'), updatedAt: at('2026-01-01T00:00:00Z'), endedAt: undefined,
+        waitingForHumanInput: true,
+      },
+    ]);
+    await expect(service.findRecentByAccessibleFlowIds([], undefined, 10)).resolves.toEqual([]);
+  });
+
+  it('re-queues stale running runs that no longer hold a lease at startup', async () => {
+    const executionRepository = {
+      findStaleRunning: jest.fn().mockResolvedValue([
+        { id: 'exec-stale', ownerId: 'owner-1' },
+        { id: 'exec-leased', ownerId: 'owner-1' },
+      ]),
+    };
+    const { service, executionRepository: repository, queueService, streamEvents } = createExecutionServiceForTests({
+      executionRepository,
+      queueService: { release: jest.fn(), refreshPositions: jest.fn().mockResolvedValue([{ executionId: 'exec-stale', queuePosition: 1 }]) },
+      executionLeaseService: {
+        isEnabled: jest.fn().mockResolvedValue(true),
+        hasActiveLease: jest.fn(async (id: string) => id === 'exec-leased'),
+      },
+    });
+
+    await (service as any).recoverStaleRunningExecutions();
+
+    expect(repository.findStaleRunning).toHaveBeenCalledWith(expect.any(Date));
+    expect(repository.requeueRunning).toHaveBeenCalledTimes(1);
+    expect(repository.requeueRunning).toHaveBeenCalledWith('exec-stale', { clearError: true });
+    expect(queueService.refreshPositions).toHaveBeenCalledWith('owner-1');
+    expect(streamEvents.emitQueuePositionUpdate).toHaveBeenCalledWith('exec-stale', 1);
   });
 });

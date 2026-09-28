@@ -12,6 +12,8 @@ const legacyMutableMigrations = new Set([
   '002_semantic_age_graph.sql',
   '003_semantic_indexes.sql',
   '004_record_relation_uniqueness.sql',
+  // 015 later tolerates graph_index_jobs being dropped by 017.
+  '015_runtime_execution_owner.sql',
 ]);
 const pool = new Pool({
   host: process.env.SEMANTIC_PG_HOST,
@@ -48,7 +50,9 @@ try {
     const checksum = createHash('sha256').update(template).digest('hex');
     const previous = await pool.query('SELECT checksum FROM semantic_model.schema_migrations WHERE version = $1', [file]);
     if (previous.rowCount) {
-      if (previous.rows[0].checksum !== checksum && !legacyMutableMigrations.has(file)) {
+      // A Windows checkout (CRLF) must match a ledger written from an LF checkout, and vice versa.
+      const lfChecksum = createHash('sha256').update(template.replace(/\r\n/g, '\n')).digest('hex');
+      if (![checksum, lfChecksum].includes(previous.rows[0].checksum) && !legacyMutableMigrations.has(file)) {
         throw new Error(`Migration checksum changed: ${file}`);
       }
       continue;

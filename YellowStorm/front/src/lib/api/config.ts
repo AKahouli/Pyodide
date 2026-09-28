@@ -2,35 +2,89 @@
  * API Configuration
  */
 
-export const API_CONFIG = {
-  baseURL: process.env.NODE_ENV === 'development'
-    ? import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1'
-    : 'MY_APP_VITE_API_URL',
-  timeout: 30000,
-  withCredentials: true, // Required for HTTP-only cookies (refresh token)
-} as const;
+const isDev = process.env.NODE_ENV === 'development';
 
 /**
- * Prod: env.sh replaces this literal with a real origin (e.g. https://poc.back.yellowmind.ai).
- * Do not compare against another copy of the same placeholder — sed replaces both sides.
- * Prefer this over nginx /socket.io/ proxy: the image runs as `metafront` and cannot
- * sed /etc/nginx/conf.d/default.conf (Permission denied → container exit).
+ * Literal placeholder that `env.sh` rewrites at container start. Kept as one plain literal
+ * so the sed in env.sh finds it in the built bundle. Whether it was rewritten is detected by
+ * shape (`isHttpUrl`), never by comparing it to a second copy of the same string: the
+ * bundler folds a copy into an identical literal and sed would rewrite both sides, making
+ * the comparison permanently true and the runtime value unreachable.
  */
-const SOCKET_BASE_INJECTED = 'MY_APP_SOCKET_BASE_URL';
+const API_URL_INJECTED = 'MY_APP_VITE_API_URL';
+
+const LOOPBACK_BASE_URL = /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::|\/|$)/i;
 
 function isHttpUrl(value: string): boolean {
   return /^https?:\/\//i.test(value);
 }
 
+/**
+ * Resolve the public backend URL the browser must call.
+ *
+ * A runtime-injected URL wins over the build-time one deliberately: once `VITE_API_URL` is
+ * inlined the placeholder is gone from the bundle, so a wrong build arg would otherwise be
+ * unrecoverable without rebuilding the image. Reading the injected value first lets a bad
+ * image be fixed by setting `MY_APP_VITE_API_URL` on the container and restarting it.
+ */
+export function resolveApiBaseUrl(
+  injected: string = API_URL_INJECTED,
+  buildTimeUrl: string = import.meta.env.VITE_API_URL ?? '',
+  dev: boolean = isDev,
+): string {
+  const injectedValue = injected.trim();
+  if (isHttpUrl(injectedValue)) {
+    return injectedValue;
+  }
+
+  const buildTimeValue = buildTimeUrl.trim();
+  if (isHttpUrl(buildTimeValue)) {
+    return buildTimeValue;
+  }
+
+  // Unconfigured production keeps the placeholder visible so the network tab names the
+  // missing container variable instead of showing a plausible-looking URL.
+  return dev ? 'http://localhost:3000/api/v1' : API_URL_INJECTED;
+}
+
+const baseURL = resolveApiBaseUrl();
+
+// Both failure modes are silent from the outside: nginx answers any unknown path with
+// index.html and a 200, so a wrong baseURL surfaces as an empty auth-provider list
+// ("no authentication methods available") rather than as an error. Log it instead.
+if (import.meta.env.PROD && !isHttpUrl(baseURL)) {
+  console.error(
+    `[api-config] No backend URL configured: the ${API_URL_INJECTED} placeholder was not `
+      + `replaced, so the app will call <frontend-origin>/${API_URL_INJECTED}/... and nginx will `
+      + 'answer with the SPA HTML. Set the API URL variable on the container and restart.',
+  );
+} else if (import.meta.env.PROD && LOOPBACK_BASE_URL.test(baseURL)) {
+  console.error(
+    `[api-config] Production bundle is calling a loopback API URL (${baseURL}); the browser `
+      + 'cannot reach the backend. Set the API URL variable on the container, or rebuild the '
+      + 'image with a build-arg pointing at the public backend URL.',
+  );
+}
+
+export const API_CONFIG = {
+  baseURL,
+  timeout: 30000,
+  withCredentials: true, // Required for HTTP-only cookies (refresh token)
+} as const;
+
+/**
+ * Same two mechanisms as above, socket origin. `env.sh` replaces this literal, so do not
+ * compare against another copy of the same placeholder — sed replaces both sides.
+ * Prefer this over nginx /socket.io/ proxy: the image runs as `metafront` and cannot
+ * sed /etc/nginx/conf.d/default.conf (Permission denied → container exit).
+ */
+const SOCKET_BASE_INJECTED = 'MY_APP_SOCKET_BASE_URL';
+
 /** Origin for Socket.IO (app-runtime, browser-session). */
 export function getSocketBaseUrl(): string {
-  if (process.env.NODE_ENV === 'development') {
-    const devOverride = import.meta.env.VITE_SOCKET_BASE_URL?.trim();
-    if (devOverride && isHttpUrl(devOverride)) {
-      return new URL(devOverride).origin;
-    }
-  } else if (isHttpUrl(SOCKET_BASE_INJECTED)) {
-    return new URL(SOCKET_BASE_INJECTED).origin;
+  const configured = (import.meta.env.VITE_SOCKET_BASE_URL?.trim() || SOCKET_BASE_INJECTED).trim();
+  if (isHttpUrl(configured)) {
+    return new URL(configured).origin;
   }
 
   const base = API_CONFIG.baseURL;
@@ -125,6 +179,13 @@ export const API_ENDPOINTS = {
   adminPlaybookSettings: {
     base: '/admin/playbook-settings',
     plannerAgents: '/admin/playbook-settings/planner-agents',
+  },
+  adminPlatformSettings: {
+    base: '/admin/platform-settings',
+  },
+  adminSystemSettings: {
+    export: '/admin/system-settings/export',
+    import: '/admin/system-settings/import',
   },
   adminGuardrails: {
     base: '/admin/guardrails',
@@ -379,26 +440,14 @@ export const API_ENDPOINTS = {
     graph: (id: string) => `/semantic-models/${id}/graph`,
     operations: (id: string) => `/semantic-models/${id}/graph/operations`,
     validate: (id: string) => `/semantic-models/${id}/graph/validate`,
-    generateOntology: (id: string) => `/semantic-models/${id}/ontology/generate`,
-    evidenceSearch: (id: string) => `/semantic-models/${id}/evidence/search`,
-    mappingProposals: (id: string) => `/semantic-models/${id}/mapping/proposals`,
-    mappingProposalJobs: (id: string) => `/semantic-models/${id}/mapping/proposals/jobs`,
-    mappingProposalJob: (id: string, jobId: string) => `/semantic-models/${id}/mapping/proposals/jobs/${jobId}`,
-    mappingPlanApply: (id: string, jobId: string) => `/semantic-models/${id}/mapping/jobs/${jobId}/apply`,
     ageGraph: (id: string) => `/semantic-models/${id}/age-graph`,
-    ageGraphRebuild: (id: string) => `/semantic-models/${id}/age-graph/rebuild`,
-    ageGraphIndex: (id: string) => `/semantic-models/${id}/age-graph/index`,
-    ageGraphOperations: (id: string) => `/semantic-models/${id}/age-graph/operations`,
-    corpus: (id: string) => `/semantic-models/${id}/corpus`,
-    builds: (id: string) => `/semantic-models/${id}/builds`,
-    latestBuild: (id: string) => `/semantic-models/${id}/builds/latest`,
-    build: (id: string, buildId: string) => `/semantic-models/${id}/builds/${buildId}`,
     bindings: (id: string) => `/semantic-models/${id}/bindings`,
     binding: (id: string, bindingId: string) => `/semantic-models/${id}/bindings/${bindingId}`,
     workspaces: (id: string) => `/semantic-models/${id}/workspaces`,
     workspace: (id: string, workspaceId: string) => `/semantic-models/${id}/workspaces/${workspaceId}`,
     versions: (id: string) => `/semantic-models/${id}/versions`,
     publish: (id: string) => `/semantic-models/${id}/versions/publish`,
+    compareVersions: (id: string) => `/semantic-models/${id}/versions/compare`,
     restore: (id: string, versionId: string) => `/semantic-models/${id}/versions/${versionId}/restore`,
     workspaceDefault: (workspaceId: string) => `/workspaces/${workspaceId}/semantic-model`,
     workspaceModels: (workspaceId: string) => `/workspaces/${workspaceId}/semantic-models`,
@@ -410,18 +459,34 @@ export const API_ENDPOINTS = {
     sourceAssetJob: (id: string, jobId: string) => `/semantic-models/${id}/source-assets/jobs/${jobId}`,
     sourceMappings: (id: string) => `/semantic-models/${id}/source-mappings`,
     bulkDocumentSourceMappings: (id: string) => `/semantic-models/${id}/source-mappings/bulk-documents`,
+    workspaceSourceMapping: (id: string) => `/semantic-models/${id}/source-mappings/workspace`,
+    conceptRecords: (id: string, conceptId: string) => `/semantic-models/${id}/concepts/${conceptId}/records`,
+    assistantChanges: (id: string) => `/semantic-models/${id}/assistant/changes`,
+    assistantChange: (id: string, changeId: string, action: 'undo' | 'redo') => `/semantic-models/${id}/assistant/changes/${changeId}/${action}`,
     sourceMapping: (id: string, mappingId: string) => `/semantic-models/${id}/source-mappings/${mappingId}`,
     sourceMappingPreview: (id: string) => `/semantic-models/${id}/source-mappings/preview`,
     relationResolutionRules: (id: string) => `/semantic-models/${id}/relation-resolution-rules`,
     relationResolutionPreview: (id: string, ruleId: string) => `/semantic-models/${id}/relation-resolution-rules/${ruleId}/preview`,
+    identityRules: (id: string) => `/semantic-models/${id}/identity-rules`,
+    identityRule: (id: string, conceptId: string) => `/semantic-models/${id}/identity-rules/${conceptId}`,
     sourceResolutionPolicies: (id: string) => `/semantic-models/${id}/source-resolution-policies`,
     sourceResolutionPolicy: (id: string, conceptId: string) => `/semantic-models/${id}/source-resolution-policies/${conceptId}`,
     dataPreview: (id: string) => `/semantic-models/${id}/data-preview`,
+    corrections: (id: string) => `/semantic-models/${id}/corrections`,
+    undoCorrection: (id: string, sequence: number) => `/semantic-models/${id}/corrections/${sequence}/undo`,
     populationRefresh: (id: string) => `/semantic-models/${id}/population/refresh`,
     populationJob: (id: string, jobId: string) => `/semantic-models/${id}/population/jobs/${jobId}`,
+    populationJobStop: (id: string, jobId: string) => `/semantic-models/${id}/population/jobs/${jobId}/stop`,
+    populationActive: (id: string) => `/semantic-models/${id}/population/active`,
+    sourceSuggestions: (id: string) => `/semantic-models/${id}/source-suggestions`,
+    sourceFiles: (id: string) => `/semantic-models/${id}/source-files`,
+    sourceSuggestionStatus: (id: string, conceptKey: string) => `/semantic-models/${id}/source-suggestions/${encodeURIComponent(conceptKey)}/status`,
+    populationFreshness: (id: string) => `/semantic-models/${id}/population/freshness`,
+    canvasPositions: (id: string) => `/semantic-models/${id}/canvas-positions`,
     mappingHealth: (id: string) => `/semantic-models/${id}/mapping-health`,
     readiness: (id: string) => `/semantic-models/${id}/readiness`,
     reviewItems: (id: string) => `/semantic-models/${id}/review-items`,
+    reviewQueue: (id: string) => `/semantic-models/${id}/review-queue`,
     resolveReviewItem: (id: string, reviewItemId: string) => `/semantic-models/${id}/review-items/${reviewItemId}/resolve`,
     dataToken: (id: string) => `/semantic-models/${id}/data-token`,
   },
@@ -556,6 +621,10 @@ export const API_ENDPOINTS = {
     assistantAttachments: (id: string) => `/playbooks/${id}/assistant/attachments`,
     assistantAttachmentConfirm: (id: string, attachmentId: string) => `/playbooks/${id}/assistant/attachments/${attachmentId}/confirm`,
     assistantMessages: (id: string) => `/playbooks/${id}/assistant/messages`,
+    assistantSourceFiles: '/playbooks/assistant/source-files',
+    assistantPendingSources: '/playbooks/assistant/pending-sources',
+    assistantClarificationSources: (continuationId: string) => `/playbooks/assistant/clarifications/${encodeURIComponent(continuationId)}/sources`,
+    assistantClarificationQuestionSources: (continuationId: string, questionId: string) => `/playbooks/assistant/clarifications/${encodeURIComponent(continuationId)}/questions/${encodeURIComponent(questionId)}/sources`,
     intentTraces: (id: string) => `/playbooks/${id}/intent-traces`,
     intentConstructions: (id: string) => `/playbooks/${id}/intent-constructions`,
     intentConstruction: (id: string, constructionId: string) => `/playbooks/${id}/intent-constructions/${constructionId}`,

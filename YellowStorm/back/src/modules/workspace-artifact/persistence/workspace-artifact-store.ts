@@ -1,8 +1,6 @@
 import type { DecisionFlowGenerationOptions } from '../interfaces/workspace-artifact.interface';
 import type { DecisionFlowPayload } from '../interfaces/decision-flow.interface';
 
-export const WORKSPACE_ARTIFACT_STORE = Symbol('WORKSPACE_ARTIFACT_STORE');
-
 export interface WorkspaceArtifactUsage {
   inputTokens: number;
   outputTokens: number;
@@ -88,38 +86,3 @@ export interface ArtifactLeaseClaim {
   leaseToken: string;
 }
 
-export interface WorkspaceArtifactStore {
-  findByIdAndWorkspace(workspaceId: string, id: string): Promise<WorkspaceArtifactRecord | null>;
-  list(workspaceId: string, filter: WorkspaceArtifactListFilter): Promise<WorkspaceArtifactRecord[]>;
-  create(input: WorkspaceArtifactCreateInput): Promise<WorkspaceArtifactRecord>;
-  /** Optimistic concurrency: null when the revision no longer matches. */
-  updateWithRevision(
-    workspaceId: string,
-    id: string,
-    expectedRevision: number,
-    patch: WorkspaceArtifactEditPatch,
-    updatedBy: string,
-  ): Promise<WorkspaceArtifactRecord | null>;
-  /** Reset a failed artifact for a fresh generation run. */
-  resetForGeneration(
-    id: string,
-    generation: { agentId: string; requestedBy: string },
-    updatedBy: string,
-  ): Promise<WorkspaceArtifactRecord | null>;
-  deleteById(id: string): Promise<void>;
-  existsName(workspaceId: string, name: string, exceptId?: string): Promise<boolean>;
-  countBySource(workspaceId: string, documentId: string): Promise<number>;
-  /** Batched count of artifacts whose primary source is any of the documents; 0 for []. */
-  countBySourceDocumentIds(documentIds: string[]): Promise<number>;
-  deleteBySource(workspaceId: string, documentId: string): Promise<void>;
-  deleteAllByWorkspace(workspaceId: string): Promise<void>;
-
-  // Worker lease paths — race-free by construction (FOR UPDATE SKIP LOCKED / lease-token guards).
-  failExhaustedLeases(maxAttempts: number): Promise<void>;
-  /** Atomically claim the oldest claimable artifact, or null when the queue is empty. */
-  claim(maxAttempts: number, leaseMinutes: number): Promise<ArtifactLeaseClaim | null>;
-  /** Complete generation; returns false when the lease was lost mid-run. */
-  complete(id: string, leaseToken: string, payload: DecisionFlowPayload, usage?: WorkspaceArtifactUsage): Promise<boolean>;
-  /** Requeue (transient failure) or fail; returns false when the lease was lost mid-run. */
-  fail(id: string, leaseToken: string, opts: { canRetry: boolean; message: string; nextAttemptAt: Date }): Promise<boolean>;
-}

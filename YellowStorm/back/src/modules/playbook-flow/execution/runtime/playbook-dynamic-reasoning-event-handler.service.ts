@@ -1,11 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import {
-  FlowDynamicReasoningAttempt,
-  FlowDynamicReasoningAttemptDocument,
-} from '../../schemas/playbook-flow-dynamic-reasoning-attempt.schema';
-import { FlowExecution, FlowExecutionDocument } from '../../schemas/playbook-flow-execution.schema';
+  DynamicReasoningAttemptRepository,
+  type DynamicReasoningAttemptPatch,
+} from '../../persistence/dynamic-reasoning-attempt.repository';
+import { ExecutionRepository } from '../../persistence/execution.repository';
 import { PlaybookFlowStreamEventsService } from '../../services/playbook-flow-stream-events.service';
 
 const DYNAMIC_EVENTS = new Set([
@@ -18,10 +16,8 @@ const DYNAMIC_EVENTS = new Set([
 @Injectable()
 export class PlaybookDynamicReasoningEventHandlerService {
   constructor(
-    @InjectModel(FlowDynamicReasoningAttempt.name)
-    private readonly attemptModel: Model<FlowDynamicReasoningAttemptDocument>,
-    @InjectModel(FlowExecution.name)
-    private readonly executionModel: Model<FlowExecutionDocument>,
+    private readonly attemptRepository: DynamicReasoningAttemptRepository,
+    private readonly executionRepository: ExecutionRepository,
     private readonly streamEvents: PlaybookFlowStreamEventsService,
   ) {}
 
@@ -30,10 +26,10 @@ export class PlaybookDynamicReasoningEventHandlerService {
   }
 
   async handle(executionId: string, eventType: string, parentTaskId: string, parentIteration: number, payload: Record<string, unknown>): Promise<void> {
-    const execution = await this.executionModel.findById(executionId, { flowId: 1 }).lean().exec();
+    const execution = await this.executionRepository.findById(executionId);
     if (!execution) return;
     const identity = { executionId, parentTaskId, parentIteration, attempt: 0 };
-    const set: Record<string, unknown> = {};
+    const set: DynamicReasoningAttemptPatch = {};
     if (eventType === 'DynamicPlanningStarted') {
       set.status = 'planning';
       set.planningStartedAt = new Date();
@@ -63,29 +59,18 @@ export class PlaybookDynamicReasoningEventHandlerService {
       }
     }
 
-    const update: Record<string, unknown> = {
-      $set: set,
-      $setOnInsert: { ...identity, flowId: String(execution.flowId) },
-    };
-    await this.attemptModel.updateOne(identity, update, { upsert: true }).exec();
+    // The run can be deleted between the read and the write: the foreign key refuses the attempt.
+    const stored = await this.attemptRepository.upsert(identity, set, { flowId: execution.flowId });
+    if (!stored) return;
 
     if (eventType === 'DynamicPlanProposed' || eventType === 'DynamicPlanRepaired') {
-      const revision = Number(payload.revision ?? 0);
-      const kind = eventType === 'DynamicPlanProposed' ? 'proposal' : 'repair';
-      await this.attemptModel.updateOne(
-        { ...identity, revisions: { $not: { $elemMatch: { revision, kind } } } },
-        {
-          $push: {
-            revisions: {
-              revision,
-              kind,
-              plan: payload.plan,
-              validationIssues: [],
-              createdAt: new Date(),
-            },
-          },
-        },
-      ).exec();
+      await this.attemptRepository.pushRevision(identity, {
+        revision: Number(payload.revision ?? 0),
+        kind: eventType === 'DynamicPlanProposed' ? 'proposal' : 'repair',
+        plan: payload.plan,
+        validationIssues: [],
+        createdAt: new Date(),
+      });
     }
     this.streamEvents.emitDynamicReasoningUpdate(executionId, eventType, parentTaskId, parentIteration, payload);
   }

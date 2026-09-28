@@ -1,7 +1,7 @@
 import { AiPreviewTicketService } from './ai-preview-ticket.service';
 import { RuntimeBindingService } from '../../app-runtime/services/runtime-binding.service';
 import { RuntimeTokenService } from '../../app-runtime/services/runtime-token.service';
-import { AI_PREVIEW_TICKET_STORE, type AiPreviewTicketStore } from '../persistence/ai-preview-ticket.store';
+import { type AiPreviewTicketStore } from '../persistence/ai-preview-ticket.store';
 
 describe('AiPreviewTicketService', () => {
   const create = jest.fn();

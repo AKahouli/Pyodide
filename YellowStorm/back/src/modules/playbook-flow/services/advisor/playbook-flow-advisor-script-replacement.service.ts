@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { isObjectId, normalizeObjectId } from '@common/postgres';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions/exceptions/http.exceptions';
-import { Flow, FlowDocument, FlowNode } from '../../schemas/playbook-flow.schema';
-import { FlowExecution, FlowExecutionDocument } from '../../schemas/playbook-flow-execution.schema';
-import { FlowTaskResult, FlowTaskResultDocument } from '../../schemas/playbook-flow-task-result.schema';
+import type { FlowNode } from '../../models/playbook-flow.model';
+import { ExecutionRepository } from '../../persistence/execution.repository';
+import { FlowRepository } from '../../persistence/flow.repository';
+import { TaskResultRepository } from '../../persistence/task-result.repository';
 import type { ApplyAdvisorScriptReplacementDto, PreviewAdvisorScriptReplacementDto } from '../../dto/preview-advisor-remediation.dto';
 import type { AdvisorScriptReplacementPreviewResponse } from '../../interfaces/playbook-flow-execution-advisor.interface';
 
@@ -18,9 +18,9 @@ const BLOCKED_SCRIPT_PATTERNS = [
 @Injectable()
 export class PlaybookFlowAdvisorScriptReplacementService {
   constructor(
-    @InjectModel(Flow.name) private readonly flowModel: Model<FlowDocument>,
-    @InjectModel(FlowExecution.name) private readonly executionModel: Model<FlowExecutionDocument>,
-    @InjectModel(FlowTaskResult.name) private readonly taskResultModel: Model<FlowTaskResultDocument>,
+    private readonly flowRepository: FlowRepository,
+    private readonly executionRepository: ExecutionRepository,
+    private readonly taskResultRepository: TaskResultRepository,
   ) {}
 
   async preview(
@@ -97,17 +97,17 @@ export class PlaybookFlowAdvisorScriptReplacementService {
           passedCount: validation.passedCount,
           failedCount: validation.failedCount,
           appliedAt: new Date().toISOString(),
-          appliedFromExecutionId: String(execution._id),
-          appliedFromTaskResultId: String(taskResult._id),
+          appliedFromExecutionId: execution.id,
+          appliedFromTaskResultId: taskResult.id,
         },
       },
     };
 
-    const saved = await this.flowModel.findOneAndUpdate(
-      { _id: flowId, ownerId, definitionRevision: flow.definitionRevision ?? 0 },
-      { $set: { nodes }, $inc: { definitionRevision: 1 } },
-      { new: true, runValidators: true },
-    ).lean().exec();
+    const saved = await this.flowRepository.updateFields(flowId, { nodes }, {
+      ownerId,
+      expectedRevision: flow.definitionRevision ?? 0,
+      incrementRevision: true,
+    });
 
     if (!saved) {
       throw new ConflictException(ErrorCode.CONFLICT, 'Playbook changed since this script preview was generated. Refresh and retry.');
@@ -117,11 +117,12 @@ export class PlaybookFlowAdvisorScriptReplacementService {
   }
 
   private async loadContext(flowId: string, ownerId: string, executionId: string, targetTaskId: string) {
-    const [flow, execution, taskResult] = await Promise.all([
-      this.flowModel.findOne({ _id: flowId, ownerId }).lean().exec(),
-      this.executionModel.findOne({ _id: executionId, flowId, ownerId }).lean().exec(),
-      this.taskResultModel.findOne({ executionId, taskId: targetTaskId }).sort({ iteration: -1 }).lean().exec(),
+    const [flow, ownedExecution, taskResult] = await Promise.all([
+      this.flowRepository.findOwned(flowId, ownerId),
+      this.executionRepository.findOwned(executionId, ownerId),
+      this.taskResultRepository.findLatestForTask(executionId, targetTaskId),
     ]);
+    const execution = ownedExecution && isObjectId(flowId) && ownedExecution.flowId === normalizeObjectId(flowId) ? ownedExecution : null;
     if (!flow) throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook not found');
     if (!execution) throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND, 'Execution not found');
     if (!taskResult) throw new NotFoundException(ErrorCode.PLAYBOOK_TASK_NOT_FOUND, 'Task result not found');

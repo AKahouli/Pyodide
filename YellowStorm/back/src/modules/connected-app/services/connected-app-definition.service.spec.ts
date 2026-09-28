@@ -1,13 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConnectedAppDefinitionService } from './connected-app-definition.service';
-import {
-  CONNECTED_APP_DEFINITION_STORE,
-  USER_APP_CONNECTION_STORE,
-} from '../persistence/connected-app.store';
+import { ConnectedAppDefinitionService } from './connected-app-definition.service';
 import { InMemoryConnectionStore, InMemoryDefinitionStore } from '../persistence/connected-app.store.fake';
 import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { PgUserAppConnectionStore } from '../persistence/pg-connected-app.store';
+import { PgConnectedAppDefinitionStore } from '../persistence/pg-connected-app.store';
 
 const definitionId = '507f1f77bcf86cd799439011';
 
@@ -29,8 +27,8 @@ describe('ConnectedAppDefinitionService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ConnectedAppDefinitionService,
-        { provide: CONNECTED_APP_DEFINITION_STORE, useValue: definitionStore },
-        { provide: USER_APP_CONNECTION_STORE, useValue: connectionStore },
+        { provide: PgConnectedAppDefinitionStore, useValue: definitionStore },
+        { provide: PgUserAppConnectionStore, useValue: connectionStore },
         { provide: CryptoService, useValue: cryptoService },
         {
           provide: LoggerService,

@@ -6,10 +6,11 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
 import { UserGroupService } from '@modules/user-group';
 import { UpdateGovernanceScopeAudienceDto } from '../dto';
-import { SCOPE_STORE, type ScopeStore } from '../persistence';
+import { type ScopeStore } from '../persistence';
 import { GovernanceAccessService } from './governance-access.service';
 import { GovernanceAudienceAuthorizationService } from './governance-audience-authorization.service';
 import { GovernanceDraftPreparationService } from './governance-draft-preparation.service';
+import { PgScopeStore } from '../persistence/postgres/pg-scope.store';
 
 export interface GovernanceScopeAudienceResponse {
   mode: 'all_authenticated' | 'restricted';
@@ -21,7 +22,7 @@ export interface GovernanceScopeAudienceResponse {
 @Injectable()
 export class GovernanceScopeAudienceService {
   constructor(
-    @Inject(SCOPE_STORE) private readonly scopeStore: ScopeStore,
+    private readonly scopeStore: PgScopeStore,
     @Inject(USER_LOOKUP_PORT) private readonly userLookup: UserLookupPort,
     private readonly accessService: GovernanceAccessService,
     private readonly userGroupService: UserGroupService,

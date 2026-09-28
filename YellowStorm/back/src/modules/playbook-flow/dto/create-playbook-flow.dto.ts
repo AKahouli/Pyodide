@@ -9,7 +9,7 @@ import { ControlEdgeDto } from './playbook-flow-control-edge.dto';
 import { DataBindingDto } from './playbook-flow-data-binding.dto';
 import { FlowTriggerConfigDto, FlowSettingsDto } from './playbook-flow-node.dto';
 import { NODE_KINDS } from '../constants/node-kinds';
-import { ADVISOR_SCORING_MODES, type AdvisorScoringMode } from '../schemas/playbook-flow.schema';
+import { ADVISOR_SCORING_MODES, type AdvisorScoringMode } from '../models/playbook-flow.model';
 
 export class CreatePlaybookFlowDto {
   @ApiProperty({ minLength: 2, maxLength: 100 })

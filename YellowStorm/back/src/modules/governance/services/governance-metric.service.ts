@@ -1,7 +1,7 @@
-import { Inject, Injectable } from '@nestjs/common';
-import { METRIC_STORE, type MetricStore } from '../persistence/metric-store';
+import { Injectable } from '@nestjs/common';
 import { GovernanceProgramService } from './governance-program.service';
 import { GovernanceAccessService } from './governance-access.service';
+import { PgMetricStore } from '../persistence/postgres/pg-metric.store';
 
 export interface GovernanceMetricResponse {
   id: string;
@@ -20,7 +20,7 @@ export interface GovernanceMetricResponse {
 @Injectable()
 export class GovernanceMetricService {
   constructor(
-    @Inject(METRIC_STORE) private readonly metricStore: MetricStore,
+    private readonly metricStore: PgMetricStore,
     private readonly programService: GovernanceProgramService,
     private readonly accessService: GovernanceAccessService,
   ) {}

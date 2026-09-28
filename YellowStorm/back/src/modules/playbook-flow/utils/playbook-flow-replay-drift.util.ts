@@ -1,5 +1,5 @@
-import type { FlowTaskPublicReasoningTraceItem, FlowTaskSemanticMatch } from '../schemas/playbook-flow-task-result.schema';
-import type { FlowReplayToolCall } from '../schemas/playbook-flow-validated-replay.schema';
+import type { FlowTaskPublicReasoningTraceItem, FlowTaskSemanticMatch } from '../models/playbook-flow-task-result.model';
+import type { FlowReplayToolCall } from '../models/playbook-flow-validated-replay.model';
 import type { ReplayDriftPolicy, ReplayReasoningStage } from '../interfaces/playbook-flow-replay-template.interface';
 import type { FlowToolTraceItem } from '../interfaces/playbook-flow-observability.interface';
 

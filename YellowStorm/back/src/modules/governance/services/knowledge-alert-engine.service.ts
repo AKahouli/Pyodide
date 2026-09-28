@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { KnowledgeAssessmentContext, KnowledgeAssessmentDimensions, KnowledgePriority } from '@modules/knowledge-intelligence/domain/knowledge-steward';
-import type { KnowledgeAlertCategory } from '@modules/knowledge-intelligence/schemas/knowledge-alert.schema';
+import type { KnowledgeAlertCategory } from '@modules/knowledge-intelligence/knowledge-intelligence.types';
 import type { KnowledgeAlertInput } from '@modules/knowledge-intelligence/services/knowledge-alert-repository.service';
 
 @Injectable()

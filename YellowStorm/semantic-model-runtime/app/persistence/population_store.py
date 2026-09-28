@@ -187,6 +187,34 @@ async def model_correction_sequence(pool: Any, model_id: str) -> int:
     return int(value or 0)
 
 
+async def list_model_corrections(pool: Any, model_id: str,
+                                 limit: int = 5000) -> list[dict[str, Any]]:
+    """Every correction of a model in sequence order (undos included)."""
+    rows = await pool.fetch(
+        "SELECT sequence, model_version_id, actor_user_id, reason, target_identity, "
+        "action, payload, created_at FROM semantic_population.corrections "
+        "WHERE model_id = $1 ORDER BY sequence LIMIT $2",
+        model_id, limit,
+    )
+    result = []
+    for row in rows:
+        values = dict(row)
+        target = values.get("target_identity") or {}
+        payload = values.get("payload") or {}
+        created = values.get("created_at")
+        result.append({
+            "sequence": int(values["sequence"]),
+            "modelVersionId": values.get("model_version_id"),
+            "actorUserId": values.get("actor_user_id"),
+            "reason": values.get("reason") or "",
+            "targetIdentity": json.loads(target) if isinstance(target, str) else dict(target),
+            "action": values["action"],
+            "payload": json.loads(payload) if isinstance(payload, str) else dict(payload),
+            "createdAt": created.isoformat() if hasattr(created, "isoformat") else created,
+        })
+    return result
+
+
 async def open_review_item(pool: Any, *, model_id: str, model_version_id: str,
                            data_revision_id: str | None, kind: str, prompt: str,
                            candidates: list[dict[str, Any]],
@@ -394,11 +422,20 @@ async def count_revision_rows(pool: Any, revision_id: str) -> dict[str, int]:
             "relationships": int(row["relationships"])}
 
 
+async def count_revision_entities_by_concept(pool: Any, revision_id: str) -> dict[str, int]:
+    rows = await pool.fetch(
+        "SELECT concept_id, count(*) AS entities FROM semantic_population.entities "
+        "WHERE data_revision_id = $1 GROUP BY concept_id",
+        revision_id,
+    )
+    return {str(row["concept_id"]): int(row["entities"]) for row in rows}
+
+
 async def list_revision_entities(pool: Any, revision_id: str,
                                  limit: int = 50000,
                                  concept_id: str | None = None) -> list[dict[str, Any]]:
     rows = await pool.fetch(
-        "SELECT id, concept_id, namespace, label, attributes, provenance "
+        "SELECT id, concept_id, namespace, label, attributes, provenance, identity_key "
         "FROM semantic_population.entities WHERE data_revision_id = $1 "
         "AND ($3::text IS NULL OR concept_id = $3) ORDER BY id LIMIT $2",
         revision_id, limit, concept_id,
@@ -414,7 +451,93 @@ async def list_revision_entities(pool: Any, revision_id: str,
             "provenance": json.loads(values.get("provenance") or "{}")
             if isinstance(values.get("provenance"), str)
             else dict(values.get("provenance") or {}),
+            "identity": _json_object(values.get("identity_key")),
         })
+    return result
+
+
+async def search_revision_entities(pool: Any, revision_id: str, concept_id: str, *,
+                                   query: str | None = None, limit: int = 50,
+                                   offset: int = 0) -> tuple[int, list[dict[str, Any]]]:
+    """A page of one concept's records, optionally narrowed to those whose name or values contain ``query``."""
+    pattern = None
+    if query and query.strip():
+        escaped = query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+    where = ("data_revision_id = $1 AND concept_id = $2 "
+             "AND ($3::text IS NULL OR label ILIKE $3 OR attributes::text ILIKE $3 "
+             "OR identity_key ILIKE $3)")
+    total = await pool.fetchval(
+        f"SELECT count(*) FROM semantic_population.entities WHERE {where}",
+        revision_id, concept_id, pattern)
+    rows = await pool.fetch(
+        "SELECT id, concept_id, namespace, label, attributes, provenance, identity_key "
+        f"FROM semantic_population.entities WHERE {where} "
+        "ORDER BY lower(label), id LIMIT $4 OFFSET $5",
+        revision_id, concept_id, pattern, limit, offset)
+    entities = []
+    for row in rows:
+        values = dict(row)
+        entities.append({
+            "entityId": values["id"], "conceptId": values["concept_id"],
+            "namespace": values["namespace"], "label": values["label"],
+            "attributes": json.loads(values["attributes"])
+            if isinstance(values["attributes"], str) else dict(values["attributes"]),
+            "provenance": json.loads(values.get("provenance") or "{}")
+            if isinstance(values.get("provenance"), str)
+            else dict(values.get("provenance") or {}),
+            # The matching key, normalized; key fields are not repeated among the attributes.
+            "identity": _json_object(values.get("identity_key")),
+        })
+    return int(total or 0), entities
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except ValueError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _origin_of(evidence: dict[str, Any], origin: str | None) -> dict[str, Any]:
+    asset_ref = evidence.get("assetRef") or {}
+    result: dict[str, Any] = {
+        "kind": "human" if origin == "human" else (
+            "metadata" if evidence.get("origin") == "metadata" else
+            "ai" if evidence.get("origin") == "ai" else "source"),
+        "assetId": asset_ref.get("assetId"),
+    }
+    correction = evidence.get("correction")
+    if isinstance(correction, dict):
+        result["correctedBy"] = correction.get("actorUserId")
+        result["originalValue"] = correction.get("originalValue")
+        result["correctionSequence"] = correction.get("correctionSequence")
+    for source, target in (("rowNumber", "rowNumber"), ("column", "column"),
+                           ("pageNumber", "pageNumber"), ("sheet", "sheet")):
+        if evidence.get(source) is not None:
+            result[target] = evidence[source]
+    return result
+
+
+async def list_entity_origins(pool: Any, revision_id: str,
+                              entity_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Where each attribute value of the given entities came from."""
+    if not entity_ids:
+        return {}
+    rows = await pool.fetch(
+        "SELECT entity_id, attribute, origin, evidence FROM semantic_population.assertions "
+        "WHERE data_revision_id = $1 AND entity_id = ANY($2::text[])",
+        revision_id, list(entity_ids),
+    )
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        evidence = row["evidence"]
+        evidence = json.loads(evidence) if isinstance(evidence, str) else dict(evidence or {})
+        result.setdefault(row["entity_id"], {})[row["attribute"]] = _origin_of(
+            evidence, row["origin"])
     return result
 
 

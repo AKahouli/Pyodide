@@ -205,6 +205,14 @@ def merge_concept_results(results: list[dict[str, Any]]) -> dict[str, Any]:
             "counts": counts}
 
 
+def _match_side(entity: dict[str, Any], field: str) -> tuple[Any, bool]:
+    """The value an entity offers for matching, and whether it came from its (case-folded) identity."""
+    value = entity["attributes"].get(field)
+    if value is not None:
+        return value, False
+    return entity["identity"].get(field), True
+
+
 def match_relationships(compiled: dict[str, Any], source_entities: list[dict[str, Any]],
                         target_entities: list[dict[str, Any]], reference_field: str,
                         target_field: str) -> dict[str, Any]:
@@ -215,23 +223,35 @@ def match_relationships(compiled: dict[str, Any], source_entities: list[dict[str
     ambiguous to-one reference never auto-links (T06/T09).
     """
     strategy = compiled["matchingStrategy"]
-    targets: dict[str, list[dict[str, Any]]] = {}
+    # Identity values are stored case-folded, so a side that falls back to the identity is
+    # compared case-insensitively; two plain attribute values keep the strategy as is.
+    exact_targets: dict[str, list[dict[str, Any]]] = {}
+    folded_targets: dict[str, list[dict[str, Any]]] = {}
+    identity_targets: dict[str, list[dict[str, Any]]] = {}
     for entity in target_entities:
-        raw = entity["attributes"].get(target_field, entity["identity"].get(target_field))
+        raw, from_identity = _match_side(entity, target_field)
         key = match_value(raw, strategy)
-        if key is not None:
-            targets.setdefault(key, []).append(entity)
+        if key is None:
+            continue
+        folded_targets.setdefault(key.lower(), []).append(entity)
+        if from_identity:
+            identity_targets.setdefault(key.lower(), []).append(entity)
+        else:
+            exact_targets.setdefault(key, []).append(entity)
     relationships: list[dict[str, Any]] = []
     gaps: list[dict[str, Any]] = []
     for source in source_entities:
-        raw = source["attributes"].get(reference_field, source["identity"].get(reference_field))
-        reference = match_value(normalize_identity_value(raw), strategy)
+        raw, from_identity = _match_side(source, reference_field)
+        reference = match_value(raw, strategy)
         if reference is None:
             gaps.append({"kind": "missing_reference", "relationId": compiled["relationId"],
                          "sourceEntityId": source["entityId"],
                          "detail": f"reference field '{reference_field}' is empty"})
             continue
-        candidates = targets.get(reference, [])
+        if from_identity:
+            candidates = folded_targets.get(reference.lower(), [])
+        else:
+            candidates = exact_targets.get(reference, []) + identity_targets.get(reference.lower(), [])
         if not candidates:
             gaps.append({"kind": "unresolved_reference", "relationId": compiled["relationId"],
                          "sourceEntityId": source["entityId"], "detail": "no approved target matches"})

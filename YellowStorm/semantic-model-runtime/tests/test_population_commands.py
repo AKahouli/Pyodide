@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 fastapi = pytest.importorskip("fastapi")
@@ -196,13 +198,25 @@ def test_bound_records_and_graph_share_the_draft_revision(client: TestClient):
     specification = {"concepts": [{"conceptId": "c1", "label": "Customer",
                                     "allowedFields": ["name"]}],
                      "relations": [{"relationId": "r1", "label": "knows"}]}
-    _inject(client, ScriptedPool([binding, counts, [entity], [relationship],
-                                  {"specification": specification}]))
+    origins = [{"entity_id": "crm::1", "attribute": "name", "origin": "source",
+                "evidence": {"assetRef": {"assetId": "a1"}, "rowNumber": 4,
+                             "column": "name"}}]
+    gaps = {"missingValues": [{"conceptId": "c1", "attribute": "city", "missing": 1,
+                               "total": 1}], "unresolvedLinks": [], "other": []}
+    revision = {"id": "dr_1", "coverage": json.dumps({"gaps": gaps}), "execution_fingerprint": "sha256:run"}
+    _inject(client, ScriptedPool([binding, counts, [{"concept_id": "c1", "entities": 1}],
+                                  [entity], origins, revision,
+                                  [relationship], {"specification": specification}]))
     records = client.get("/v1/semantic-model-population/models/m1/records?limit=25",
                          headers=AUTH)
     assert records.status_code == 200
     assert records.json()["dataRevisionId"] == "dr_1"
     assert records.json()["entities"][0]["entityId"] == "crm::1"
+    assert records.json()["entities"][0]["origins"]["name"] == {
+        "kind": "source", "assetId": "a1", "rowNumber": 4, "column": "name"}
+    assert records.json()["gaps"] == gaps
+    assert records.json()["conceptCounts"] == {"c1": 1}
+    assert records.json()["executionFingerprint"] == "sha256:run"
 
     graph_rows = [
         [{"record_id": '"crm::1"', "concept_id": '"c1"', "label": '"Acme"',
@@ -225,6 +239,43 @@ def test_bound_records_and_graph_share_the_draft_revision(client: TestClient):
     )
     assert stale.status_code == 409
     assert stale.json()["detail"] == "active_binding_changed"
+
+
+class RecordingPool(ScriptedPool):
+    def __init__(self, script: list) -> None:
+        super().__init__(script)
+        self.calls: list[tuple] = []
+
+    async def fetchval(self, sql: str, *params):  # type: ignore[no-untyped-def]
+        self.calls.append((sql, params))
+        return await super().fetchval(sql, *params)
+
+    async def fetch(self, sql: str, *params):  # type: ignore[no-untyped-def]
+        self.calls.append((sql, params))
+        return await super().fetch(sql, *params)
+
+
+def test_concept_records_are_searched_a_page_at_a_time(client: TestClient):
+    binding = {"model_id": "m1", "model_version_id": "v1", "data_revision_id": "dr_1"}
+    entity = {"id": "crm::1", "concept_id": "c1", "namespace": "crm", "label": "Acme 50%",
+              "attributes": {"name": "Acme"}, "provenance": {}}
+    origins = [{"entity_id": "crm::1", "attribute": "name", "origin": "source",
+                "evidence": {"assetRef": {"assetId": "a1"}, "rowNumber": 4}}]
+    pool = RecordingPool([binding, 120, [entity], origins])
+    _inject(client, pool)
+    response = client.get(
+        "/v1/semantic-model-population/models/m1/concepts/c1/records?q=50%25&limit=20&offset=40",
+        headers=AUTH)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total"] == 120 and body["offset"] == 40 and body["limit"] == 20
+    assert body["entities"][0]["origins"]["name"]["rowNumber"] == 4
+    count_params = next(params for sql, params in pool.calls if "count(*)" in sql)
+    assert count_params == ("dr_1", "c1", r"%50\%%")
+    page_params = next(params for sql, params in pool.calls if "OFFSET" in sql)
+    assert page_params[-2:] == (20, 40)
+    assert client.get("/v1/semantic-model-population/models/m1/concepts/c1/records?limit=500",
+                      headers=AUTH).status_code == 422
 
 
 def test_project_rejects_truncated_listing(client: TestClient):
@@ -380,3 +431,81 @@ def test_mirror_specification_validates_and_reuses(client: TestClient):
 def test_commands_require_service_key_and_store(client: TestClient):
     assert client.post("/v1/semantic-model-population/corrections",
                        json=CORRECTION).status_code == 401
+
+
+def test_publish_promotes_the_draft_revision_of_the_published_version(client: TestClient):
+    revision = {"id": "dr_1", "model_id": "m1", "spec_hash": "sha256:" + "a" * 64,
+                "validation_state": "valid",
+                "projection_ref": "age:v1:pop_dr_1", "correction_sequence": 0}
+    draft = {"model_id": "m1", "environment": "draft", "model_version_id": "v1",
+             "data_revision_id": "dr_1", "version": 3, "projection_ref": "age:v1:pop_dr_1"}
+    production = {**draft, "environment": "production", "version": 1}
+    body = {"actorUserId": "u1", "modelVersionId": "v1"}
+    _inject(client, ScriptedPool([draft, revision, revision, None, {"version": 1}, production]), FakeAgePool())
+    response = client.post("/v1/semantic-model-population/models/m1/publish", headers=AUTH, json=body)
+    assert response.status_code == 200
+    assert response.json()["active"]["environment"] == "production"
+    assert response.json()["reused"] is False
+
+    _inject(client, ScriptedPool([draft, revision, revision, production]), FakeAgePool())
+    again = client.post("/v1/semantic-model-population/models/m1/publish", headers=AUTH, json=body)
+    assert again.json()["reused"] is True
+
+    _inject(client, ScriptedPool([{**draft, "model_version_id": "v0"}]))
+    outdated = client.post("/v1/semantic-model-population/models/m1/publish", headers=AUTH, json=body)
+    assert outdated.status_code == 409
+    assert outdated.json()["detail"] == "draft_data_outdated"
+
+    _inject(client, ScriptedPool([None]))
+    missing = client.post("/v1/semantic-model-population/models/m1/publish", headers=AUTH, json=body)
+    assert missing.json()["detail"] == "no_draft_data"
+
+
+def test_published_binding_is_readable_and_404_when_unpublished(client: TestClient):
+    production = {"model_id": "m1", "model_version_id": "v1", "data_revision_id": "dr_1",
+                  "projection_ref": "age:v1:pop_dr_1", "version": 1}
+    _inject(client, ScriptedPool([production]))
+    response = client.get("/v1/semantic-model-population/models/m1/published", headers=AUTH)
+    assert response.json()["projectionRef"] == "age:v1:pop_dr_1"
+    _inject(client, ScriptedPool([None]))
+    assert client.get("/v1/semantic-model-population/models/m1/published",
+                      headers=AUTH).status_code == 404
+
+
+def test_data_summary_counts_draft_and_published_records(client: TestClient):
+    draft = {"model_id": "m1", "model_version_id": "v2", "data_revision_id": "dr_2", "version": 1}
+    counts = {"entities": 12, "assertions": 30, "relationships": 4}
+    _inject(client, ScriptedPool([draft, counts, None]))
+    response = client.get("/v1/semantic-model-population/models/m1/data-summary", headers=AUTH)
+    assert response.status_code == 200
+    assert response.json() == {"modelId": "m1", "production": None,
+                               "draft": {"modelVersionId": "v2", "records": 12, "links": 4}}
+
+
+def test_corrections_list_hides_undone_fixes(client: TestClient):
+    rows = [
+        {"sequence": 1, "model_version_id": "v1", "actor_user_id": "u1", "reason": "",
+         "target_identity": {"entityId": "e1"}, "action": "remove_entity", "payload": {},
+         "created_at": None},
+        {"sequence": 2, "model_version_id": "v1", "actor_user_id": "u1", "reason": "",
+         "target_identity": {"entityId": "e2"}, "action": "remove_entity", "payload": {},
+         "created_at": None},
+        {"sequence": 3, "model_version_id": "v1", "actor_user_id": "u1", "reason": "",
+         "target_identity": {"entityId": "e1"}, "action": "revert", "payload": {"sequence": 1},
+         "created_at": None},
+    ]
+    _inject(client, ScriptedPool([rows, 3]))
+    response = client.get("/v1/semantic-model-population/models/m1/corrections", headers=AUTH)
+    assert response.status_code == 200
+    body = response.json()
+    assert body["correctionSequence"] == 3
+    assert [item["sequence"] for item in body["corrections"]] == [2]
+
+
+def test_revert_must_name_an_existing_correction(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("SEMANTIC_MODEL_RUNTIME_WRITES_ENABLED", "true")
+    body = {**CORRECTION, "action": "revert", "payload": {"sequence": 9}}
+    _inject(client, ScriptedPool([2]))
+    response = client.post("/v1/semantic-model-population/corrections", headers=AUTH, json=body)
+    assert response.status_code == 422
+    assert response.json()["detail"] == "invalid_revert_target"

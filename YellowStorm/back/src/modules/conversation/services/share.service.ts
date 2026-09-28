@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'crypto';
 import { BadRequestException, ForbiddenException, NotFoundException } from '../../exceptions';
@@ -15,13 +15,12 @@ import type {
   ShareResponse,
 } from '../interfaces/share.interface';
 import {
-  SHARE_STORE,
-  type SharedConversationRecord,
-  type ShareSourceConversationRecord,
-  type ShareStore,
+  type SharedConversationRecord,  
+  type ShareSourceConversationRecord,  
 } from '../persistence/share-store';
 import { sanitizePublicComponent } from '../utils/public-component-sanitizer';
 import { buildShareEmailBody } from '../utils/share-email.template';
+import { PostgresShareStore } from '../persistence/postgres/postgres-share-store';
 
 const publicShareComponentTypes = new Set([
   'text',
@@ -61,6 +60,7 @@ function sanitizePublicShareMessages(messages: readonly EmbeddedMessage[]): Embe
                   paramsJson: _paramsJson,
                   resultJson: _resultJson,
                   primaryInput: _primaryInput,
+                  uiTargets: _uiTargets,
                   ...displayData
                 } = component.data;
                 return sanitizePublicComponent({ ...component, data: displayData });
@@ -75,7 +75,7 @@ function sanitizePublicShareMessages(messages: readonly EmbeddedMessage[]): Embe
 @Injectable()
 export class ShareService {
   constructor(
-    @Inject(SHARE_STORE) private readonly shareStore: ShareStore,
+    private readonly shareStore: PostgresShareStore,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
     private readonly userService: UserService,

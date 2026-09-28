@@ -1,15 +1,13 @@
 import { Controller, Get, Param, UseGuards, Logger } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
 import { WorkyStreamAccessGuard } from '../guards/worky-stream-access.guard';
 import { WorkyTaskService, IBoardTaskView, BoardLane, BOARD_LANES } from '../services/worky-task.service';
+import { WorkyInteractionRepository } from '../persistence/worky-interaction.repository';
+import { WorkyMirrorRepository } from '../persistence/worky-mirror.repository';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import type { AuthUser } from '@common/auth/auth-user';
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
 import { Permissions } from '../../authorization/constants/permissions';
-import { WorkyInteraction } from '../schemas/worky-interaction.schema';
-import { WorkyPlanProjection, WorkyPlanProjectionDocument } from '../schemas/worky-plan-projection.schema';
 
 export interface WorkyBoardResponse {
   streamId: string;
@@ -36,10 +34,8 @@ export class WorkyBoardController {
 
   constructor(
     private readonly tasks: WorkyTaskService,
-    @InjectModel(WorkyInteraction.name)
-    private readonly interactions: Model<WorkyInteraction>,
-    @InjectModel(WorkyPlanProjection.name)
-    private readonly planProjections: Model<WorkyPlanProjectionDocument>,
+    private readonly interactions: WorkyInteractionRepository,
+    private readonly mirror: WorkyMirrorRepository,
   ) {}
 
   @Get(':id/board')
@@ -50,21 +46,14 @@ export class WorkyBoardController {
     @CurrentUser() _user: AuthUser,
     @Param('id') streamId: string,
   ): Promise<WorkyBoardResponse> {
-    const streamObjectId = new Types.ObjectId(streamId);
     const [pending, projection] = await Promise.all([
-      this.interactions
-        .find({ streamId: streamObjectId, status: 'pending' })
-        .sort({ createdAt: 1 })
-        .lean()
-        .exec(),
-      this.planProjections.findOne({ streamId: streamObjectId }).lean().exec(),
+      this.interactions.listPending(streamId),
+      this.mirror.findProjection(streamId),
     ]);
     const blockersByTaskId = new Map<string, string[]>();
     for (const p of pending) {
-      const id = (p._id as Types.ObjectId).toString();
-      const reason = `clarification:${id}`;
-      for (const t of p.blocksTaskIds ?? []) {
-        const tid = t.toString();
+      const reason = `clarification:${p.id}`;
+      for (const tid of p.blocksTaskIds) {
         const list = blockersByTaskId.get(tid) ?? [];
         if (!list.includes(reason)) list.push(reason);
         blockersByTaskId.set(tid, list);
@@ -84,20 +73,20 @@ export class WorkyBoardController {
     return {
       streamId,
       plan: projection?.status
-        ? { title: projection.title ?? '', goal: projection.goal ?? '', status: projection.status }
+        ? { title: projection.title, goal: projection.goal, status: projection.status }
         : null,
       session: projection?.sessionStatus
-        ? { status: projection.sessionStatus, activeInterruptId: projection.activeInterruptId ?? null }
+        ? { status: projection.sessionStatus, activeInterruptId: projection.activeInterruptId }
         : null,
       lanes: { ...emptyLanes, ...lanes },
       pendingClarifications: pending.map((p) => ({
-        id: (p._id as Types.ObjectId).toString(),
-        type: p.type as string,
-        question: p.question as string,
-        options: (p.options ?? []) as string[],
-        taskId: p.taskId ? (p.taskId as Types.ObjectId).toString() : null,
-        blocksTaskIds: (p.blocksTaskIds ?? []).map((t) => (t as Types.ObjectId).toString()),
-        createdAt: (p.createdAt as Date).toISOString(),
+        id: p.id,
+        type: p.type,
+        question: p.question,
+        options: p.options,
+        taskId: p.taskId,
+        blocksTaskIds: p.blocksTaskIds,
+        createdAt: p.createdAt.toISOString(),
       })),
     };
   }

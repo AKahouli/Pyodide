@@ -204,6 +204,10 @@ def compile_specification(spec: dict[str, Any]) -> dict[str, Any]:
             "eligibility": entry.get("eligibility"),
             "materialization": entry.get("materialization"),
             "allowedFields": list(entry["allowedFields"]),
+            # Business synonyms travel with the concept for search; they never
+            # change how records are built.
+            "aliases": list(entry.get("aliases") or []),
+            "fieldAliases": {k: list(v) for k, v in (entry.get("fieldAliases") or {}).items()},
         }
     relations: dict[str, Any] = {}
     for entry in spec.get("relations", []):

@@ -1,7 +1,6 @@
 /**
  * Store port for app_runtime.bindings (P8 Mongo cutover).
  */
-export const RUNTIME_BINDING_STORE = Symbol('RUNTIME_BINDING_STORE');
 
 export type RuntimeBindingStatus =
   | 'created'

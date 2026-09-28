@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { isObjectId } from '@common/postgres';
 import { ListSessionsDto } from '../dto/list-sessions.dto';
 import type {
@@ -6,10 +6,9 @@ import type {
   ConversationV2SessionStatus,
 } from '../types/conversation-v2-persistence.types';
 import {
-  CONVERSATION_V2_SESSION_STORE,
-  type ConversationV2SessionRecord,
-  type ConversationV2SessionStore,
+  type ConversationV2SessionRecord,  
 } from '../persistence/conversation-v2-session.store';
+import { PgConversationV2SessionStore } from '../persistence/postgres/pg-conversation-v2-session.store';
 
 export type { ConversationV2SessionStatus, ConversationV2DeployStatus };
 
@@ -70,8 +69,7 @@ const EMPTY_REVISION_CATALOG: AppRevisionCatalogFields = {
 @Injectable()
 export class ConversationV2SessionService {
   constructor(
-    @Inject(CONVERSATION_V2_SESSION_STORE)
-    private readonly store: ConversationV2SessionStore,
+    private readonly store: PgConversationV2SessionStore,
   ) {}
 
   /**

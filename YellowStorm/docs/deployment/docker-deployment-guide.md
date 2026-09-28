@@ -35,8 +35,9 @@ This guide is the straight-line path. Follow the steps in order.
 Key facts that decide whether browsing works:
 
 - The **frontend is static** (`front/nginx.conf` only does `try_files`). It does **not**
-  proxy the API or the socket. At runtime the built JS has `MY_APP_VITE_API_URL` replaced
-  by `env.sh` with your real backend URL (e.g. `https://api.example.com/api/v1`).
+  proxy the API or the socket. The built JS carries your real backend URL (e.g.
+  `https://api.example.com/api/v1`), injected either at build time via `--build-arg
+  VITE_API_URL=...` or at runtime by `env.sh` rewriting the `MY_APP_VITE_API_URL` literal.
 - The browser then opens the Socket.IO connection to that URL's **origin** (`/api/v1` is
   stripped): `wss://api.example.com/socket.io/?...` on namespace `/browser-session`.
 - Therefore **whatever sits in front of the backend must forward `/socket.io/` with the
@@ -90,12 +91,16 @@ so it works as the non-root container user and won't exhaust the default 64 MB `
 
 ## 3. Frontend environment variable
 
-The frontend image rewrites a placeholder at container start (`env.sh` replaces any env var
-named `MY_APP_*` into the built files). Set exactly one:
+The public backend URL is baked into the built JS. Set exactly one mechanism:
 
-| Variable | Example | Purpose |
-|---|---|---|
-| ✅ `MY_APP_VITE_API_URL` | `https://api.example.com/api/v1` | **Public** REST base URL. The socket URL is derived from this by stripping `/api/v1`. |
+| Variable | Where | Example | Purpose |
+|---|---|---|---|
+| ✅ `VITE_API_URL` | `docker build --build-arg VITE_API_URL=...` | `https://api.example.com/api/v1` | **Public** REST base URL, inlined by Vite. Baked into the image. |
+| `VITE_SOCKET_BASE_URL` | `docker build --build-arg VITE_SOCKET_BASE_URL=...` | `https://api.example.com` | Optional socket origin override. Defaults to the API URL's origin. |
+| `MY_APP_VITE_API_URL` | container env at start | `https://api.example.com/api/v1` | Same value, injected at runtime by `env.sh` instead. Use this when one image serves several environments. |
+
+If neither is set, the app requests `<frontend-origin>/MY_APP_VITE_API_URL/...`, nginx
+returns the SPA HTML with **200**, and every call fails with a `filter`/`map` of undefined.
 
 **Critical:** this must be the URL the *browser* can reach (public DNS/ingress), **not** an
 internal Docker service name like `http://backend:3000`. The browser — not the frontend
@@ -258,7 +263,7 @@ Verify each layer — in order — so you know exactly where a failure is:
 | Works locally, breaks in prod behind a proxy | Proxy forwards `/api` only | Add a `/socket.io/` location block |
 | Session drops after ~1 minute | Proxy/LB idle timeout too low | Raise `proxy_read_timeout` / target-group idle timeout to 3600 s |
 | REST works, socket handshake fails with CORS | `CORS_ORIGIN` missing frontend origin | Add the exact frontend origin (scheme+host) |
-| Socket tries to hit the frontend host | `MY_APP_VITE_API_URL` not injected | Set it to the **public** backend URL incl. `/api/v1` |
+| Socket tries to hit the frontend host | Public backend URL never injected | Build with `--build-arg VITE_API_URL=...` or set `MY_APP_VITE_API_URL` on the container |
 | Backend logs "Chromium/Target closed" on launch | Missing libs or tiny `/dev/shm` | Use the provided image; set `shm_size: 1gb`; `--no-sandbox`/`--disable-dev-shm-usage` are already on |
 | Browsing fine, "Indexer" fails | url-to-pdf service unreachable | Deploy it and set `URL_TO_PDF_API_URL` (+ key) |
 | Multiple backend replicas, random disconnects | Session pinned to one pod | Enable sticky sessions or keep browsing on one replica |
@@ -268,7 +273,7 @@ Verify each layer — in order — so you know exactly where a failure is:
 ## 8. Final checklist
 
 - [ ] Backend image built (includes Chromium at `/usr/bin/chromium`).
-- [ ] Frontend image built; `MY_APP_VITE_API_URL` = public backend URL incl. `/api/v1`.
+- [ ] Frontend image built with the public backend URL incl. `/api/v1` (`--build-arg VITE_API_URL=...`, or `MY_APP_VITE_API_URL` on the container).
 - [ ] `CORS_ORIGIN` includes the frontend origin.
 - [ ] The proxy/ingress in front of the backend forwards **`/api/`** *and* **`/socket.io/`**.
 - [ ] `/socket.io/` block sets `proxy_http_version 1.1`, `Upgrade`/`Connection` headers, and a long read timeout.

@@ -6,12 +6,13 @@ import {
   STARTER_REACT_VITE_V1_FILES,
   STARTER_REACT_VITE_V1_REVISION_ID,
 } from '../constants/starter-react-vite-v1';
-import { RUNTIME_SOURCE_REVISION_STORE, type RuntimeSourceRevisionStore } from '../persistence/runtime-source-revision.store';
+import { type RuntimeSourceRevisionStore } from '../persistence/runtime-source-revision.store';
 import {
   CONVERSATION_V2_TEMPLATE_STORE,
   type ConversationV2TemplateStore,
 } from '@modules/conversation-v2/persistence/conversation-v2-template.store';
 import { RuntimeRevisionService } from './runtime-revision.service';
+import { PgRuntimeSourceRevisionStore } from '../persistence/pg-runtime-source-revision.store';
 
 describe('RuntimeRevisionService', () => {
   let svc: RuntimeRevisionService;
@@ -69,7 +70,7 @@ describe('RuntimeRevisionService', () => {
       providers: [
         RuntimeRevisionService,
         {
-          provide: RUNTIME_SOURCE_REVISION_STORE,
+          provide: PgRuntimeSourceRevisionStore,
           useValue: store,
         },
         { provide: DocumentService, useValue: { download, exists, upload } },

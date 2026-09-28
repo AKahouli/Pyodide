@@ -193,6 +193,28 @@ export class PlaybookClarificationResourceDto {
   id!: string;
 }
 
+/** The workspaces and files the person chose for one source question, or that they skip it. */
+export class ChoosePlaybookClarificationSourcesDto {
+  @ApiPropertyOptional({ type: [PlaybookClarificationResourceDto] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => PlaybookClarificationResourceDto)
+  resources?: PlaybookClarificationResourceDto[];
+
+  @ApiPropertyOptional({ description: 'One of the question\'s own answers that is not a workspace or a file.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  choice?: string;
+
+  @ApiPropertyOptional({ description: 'Skip this question: the playbook asks for it when it runs.' })
+  @IsOptional()
+  @IsBoolean()
+  skip?: boolean;
+}
+
 export class PlaybookClarificationAnswerDto {
   @ApiProperty()
   @IsString()

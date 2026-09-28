@@ -1,4 +1,4 @@
-import { FlowNode, ControlEdge, DataBinding, FlowTriggerConfig, FlowSettings, type AdvisorScoringMode } from '../schemas/playbook-flow.schema';
+import { FlowNode, ControlEdge, DataBinding, FlowTriggerConfig, FlowSettings, type AdvisorScoringMode } from '../models/playbook-flow.model';
 import type { ISharedPlaybookInfo, PlaybookPermissionLevel } from './playbook-share.interface';
 
 export interface IFlowActiveReplay {

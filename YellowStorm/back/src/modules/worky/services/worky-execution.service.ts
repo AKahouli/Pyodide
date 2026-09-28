@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { WorkyStream, WorkyStreamDocument } from '../schemas/worky-stream.schema';
-import { WorkyTask, WorkyTaskDocument } from '../schemas/worky-task.schema';
+import { isObjectId } from '@common/postgres';
+import { WorkyStreamRepository } from '../persistence/worky-stream.repository';
+import { WorkyTaskRepository, type WorkyTaskPatch } from '../persistence/worky-task.repository';
+import type { WorkyTaskRecord } from '../worky.types';
 import { ConflictException, ForbiddenException, NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { WorkyEventService } from './worky-event.service';
@@ -12,10 +12,8 @@ import { canWriteWorkyStream } from '../worky-stream-access';
 @Injectable()
 export class WorkyExecutionService {
   constructor(
-    @InjectModel(WorkyStream.name)
-    private readonly streams: Model<WorkyStreamDocument>,
-    @InjectModel(WorkyTask.name)
-    private readonly tasks: Model<WorkyTaskDocument>,
+    private readonly streams: WorkyStreamRepository,
+    private readonly tasks: WorkyTaskRepository,
     private readonly events: WorkyEventService,
   ) {}
 
@@ -27,52 +25,42 @@ export class WorkyExecutionService {
   ): Promise<IWorkyTaskSummary> {
     const task = await this.findTaskForUser(taskId, userId);
     const nextExecutionState = laneToExecutionState(lane);
-    task.lane = lane;
-    if (nextExecutionState) task.executionState = nextExecutionState;
-    task.set('updatedAt', new Date());
-    await task.save();
-    this.emitTaskUpdate(task, { lane, reason: reason ?? '' });
-    return this.toSummary(task);
+    const updated = await this.save(task, nextExecutionState ? { lane, executionState: nextExecutionState } : { lane });
+    this.emitTaskUpdate(updated, { lane, reason: reason ?? '' });
+    return this.toSummary(updated);
   }
 
   async pauseTask(taskId: string, userId: string, reason?: string): Promise<IWorkyTaskSummary> {
     const task = await this.findTaskForUser(taskId, userId);
     this.assertTaskNotTerminal(task.executionState);
-    task.controlState = 'paused';
-    task.set('updatedAt', new Date());
-    await task.save();
-    this.emitTaskUpdate(task, { controlState: 'paused', reason: reason ?? '' });
-    return this.toSummary(task);
+    const updated = await this.save(task, { controlState: 'paused' });
+    this.emitTaskUpdate(updated, { controlState: 'paused', reason: reason ?? '' });
+    return this.toSummary(updated);
   }
 
   async resumeTask(taskId: string, userId: string, reason?: string): Promise<IWorkyTaskSummary> {
     const task = await this.findTaskForUser(taskId, userId);
-    task.controlState = 'active';
-    task.set('updatedAt', new Date());
-    await task.save();
-    this.emitTaskUpdate(task, { controlState: 'active', reason: reason ?? '' });
-    return this.toSummary(task);
+    const updated = await this.save(task, { controlState: 'active' });
+    this.emitTaskUpdate(updated, { controlState: 'active', reason: reason ?? '' });
+    return this.toSummary(updated);
   }
 
   async cancelTask(taskId: string, userId: string, reason?: string): Promise<IWorkyTaskSummary> {
     const task = await this.findTaskForUser(taskId, userId);
+    let patch: WorkyTaskPatch;
     if (task.executionState === 'not_started') {
-      task.lane = 'canceled';
-      task.executionState = 'canceled';
-      task.controlState = 'stopped';
+      patch = { lane: 'canceled', executionState: 'canceled', controlState: 'stopped' };
     } else if (task.executionState === 'done') {
-      task.lane = 'superseded';
-      task.controlState = 'stopped';
+      patch = { lane: 'superseded', controlState: 'stopped' };
     } else {
       throw new ConflictException(
         ErrorCode.WORKY_TASK_INVALID_STATE,
         `Cannot cancel task in executionState '${task.executionState}'.`,
       );
     }
-    task.set('updatedAt', new Date());
-    await task.save();
-    this.emitTaskUpdate(task, { lane: task.lane, reason: reason ?? '' });
-    return this.toSummary(task);
+    const updated = await this.save(task, patch);
+    this.emitTaskUpdate(updated, { lane: updated.lane, reason: reason ?? '' });
+    return this.toSummary(updated);
   }
 
   async reviewTask(taskId: string, userId: string, reason?: string): Promise<IWorkyTaskSummary> {
@@ -83,27 +71,20 @@ export class WorkyExecutionService {
         `Only running tasks can be moved to review (got '${task.executionState}').`,
       );
     }
-    task.lane = 'review';
-    task.executionState = 'review';
-    task.set('updatedAt', new Date());
-    await task.save();
-    this.emitTaskUpdate(task, { lane: 'review', reason: reason ?? '' });
-    return this.toSummary(task);
+    const updated = await this.save(task, { lane: 'review', executionState: 'review' });
+    this.emitTaskUpdate(updated, { lane: 'review', reason: reason ?? '' });
+    return this.toSummary(updated);
   }
 
-  private async findTaskForUser(taskId: string, userId: string): Promise<WorkyTaskDocument> {
-    if (!Types.ObjectId.isValid(taskId)) {
+  private async findTaskForUser(taskId: string, userId: string): Promise<WorkyTaskRecord> {
+    if (!isObjectId(taskId)) {
       throw new NotFoundException(ErrorCode.WORKY_TASK_NOT_FOUND, 'Worky task not found.');
     }
-    const task = await this.tasks.findById(taskId).exec();
+    const task = await this.tasks.findById(taskId);
     if (!task) {
       throw new NotFoundException(ErrorCode.WORKY_TASK_NOT_FOUND, 'Worky task not found.');
     }
-    const stream = await this.streams
-      .findById(task.streamId)
-      .select({ ownerUserId: 1, shares: 1 })
-      .lean()
-      .exec();
+    const stream = await this.streams.findById(task.streamId);
     if (!stream || !canWriteWorkyStream(stream, userId)) {
       throw new ForbiddenException(
         ErrorCode.WORKY_STREAM_FORBIDDEN,
@@ -111,6 +92,15 @@ export class WorkyExecutionService {
       );
     }
     return task;
+  }
+
+  /** Applies the patch; the task can only have vanished if it was deleted with its stream meanwhile. */
+  private async save(task: WorkyTaskRecord, patch: WorkyTaskPatch): Promise<WorkyTaskRecord> {
+    const updated = await this.tasks.update(task.id, patch);
+    if (!updated) {
+      throw new NotFoundException(ErrorCode.WORKY_TASK_NOT_FOUND, 'Worky task not found.');
+    }
+    return updated;
   }
 
   private assertTaskNotTerminal(executionState: string): void {
@@ -123,20 +113,19 @@ export class WorkyExecutionService {
   }
 
   private emitTaskUpdate(
-    task: WorkyTaskDocument,
+    task: WorkyTaskRecord,
     payload: Record<string, unknown>,
   ): void {
-    const streamId = task.streamId.toString();
-    this.events.emit(streamId, streamId, {
+    this.events.emit(task.streamId, task.streamId, {
       type: 'task.updated',
       emittedAt: Date.now(),
       payload: { taskId: task.id, ...payload },
     });
   }
 
-  private toSummary(task: WorkyTaskDocument): IWorkyTaskSummary {
+  private toSummary(task: WorkyTaskRecord): IWorkyTaskSummary {
     return {
-      id: (task._id as Types.ObjectId).toString(),
+      id: task.id,
       title: task.title,
       lane: task.lane,
       executionState: task.executionState,

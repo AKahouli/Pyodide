@@ -1,4 +1,4 @@
-import type { FlowTaskSemanticMatch } from '../schemas/playbook-flow-task-result.schema';
+import type { FlowTaskSemanticMatch } from '../models/playbook-flow-task-result.model';
 import type { ReplayPlanningSummary } from '../interfaces/playbook-flow-replay-plan.interface';
 import { extractRequiredSectionFromDescription } from '../utils/playbook-flow-safe-text.util';
 

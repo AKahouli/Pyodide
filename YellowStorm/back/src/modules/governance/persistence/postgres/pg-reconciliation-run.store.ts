@@ -6,7 +6,7 @@ import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
 import { newObjectId } from '@common/postgres/object-id';
 import { resolveQueryable } from '@common/postgres/transaction';
-import { RECONCILIATION_RUN_STORE, type ReconciliationRunLeaseClaim, type ReconciliationRunStore } from '../reconciliation-run-store';
+import { type ReconciliationRunLeaseClaim,  type ReconciliationRunStore } from '../reconciliation-run-store';
 import type { GovernanceReconciliationRunRecord } from '../governance-records';
 
 const RUNS = schema.governanceReconciliationRuns;

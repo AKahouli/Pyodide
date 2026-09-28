@@ -2,8 +2,8 @@
 
 The Worky module implements Chief of Staff streams, orchestrated through the
 `WorkyOrchestratorGrpcClientService`. Manager-owned Postgres state is consumed
-through Electric, projected into MongoDB, and broadcast to the frontend over
-the Worky SSE channel.
+through Electric, mirrored into the app database (`worky` schema, migration
+0038), and broadcast to the frontend over the Worky SSE channel.
 
 ## Runtime Flow
 
@@ -11,7 +11,8 @@ the Worky SSE channel.
 2. The backend starts or controls the manager session over gRPC.
 3. `WorkyElectricConsumerService` consumes manager messages, plans, steps,
    components, and artifacts.
-4. MongoDB projections back the Worky REST reads.
+4. The `worky.*` tables back the Worky REST reads; `persistence/` holds one
+   Drizzle repository per aggregate.
 5. `WorkyEventService` notifies connected frontend clients over SSE.
 
 The former standalone HTTP/SSE runtime and `/worky/internal/*` callback API
@@ -28,7 +29,7 @@ have been retired.
 | Electric projections | `services/worky-electric-consumer.service.ts` |
 | Orchestrator client | `services/worky-orchestrator.grpc-client.service.ts` |
 | Browser updates | `controllers/worky-events.controller.ts`, `services/worky-event.service.ts` |
-| WhatsApp integration | `controllers/worky-whatsapp-integration.controller.ts` |
+| Persistence | `persistence/*.repository.ts`, tables in `src/modules/postgres/schema/worky.schema.ts` |
 
 ## Configuration
 

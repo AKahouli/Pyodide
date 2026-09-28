@@ -11,6 +11,7 @@ import mongoose from 'mongoose';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import { Pool } from 'pg';
+import { stripNul } from '../../src/common/postgres/json';
 import { runBackfill, BackfillError, type MongoDoc } from './harness';
 
 dotenv.config({ path: path.resolve(__dirname, '..', '..', '.env') });
@@ -203,8 +204,8 @@ async function main(): Promise<void> {
           arguments_hash: String(doc.argumentsHash ?? ''),
           base_revision_id: s(doc.baseRevisionId),
           status: String(doc.status ?? 'pending'),
-          result: doc.result != null ? JSON.stringify(doc.result) : null,
-          error: doc.error != null ? JSON.stringify(doc.error) : null,
+          result: doc.result != null ? JSON.stringify(stripNul(doc.result)) : null,
+          error: doc.error != null ? JSON.stringify(stripNul(doc.error)) : null,
           resulting_revision_id: s(doc.resultingRevisionId),
           started_at_ms: typeof doc.startedAtMs === 'number' ? doc.startedAtMs : null,
           duration_ms: typeof doc.durationMs === 'number' ? doc.durationMs : null,

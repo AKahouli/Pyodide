@@ -1,11 +1,13 @@
-import { Inject, BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { BadRequestException,  ConflictException,  Injectable } from '@nestjs/common';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { DocumentStatus, IndexingStatus } from '@modules/workspace/interfaces/document-status.enum';
-import { WORKSPACE_DOCUMENT_READ_PORT, type WorkspaceDocumentReadPort } from '@modules/workspace/ports';
-import { GOVERNANCE_DOCUMENT_STORE, type GovernanceDocumentRecord, type GovernanceDocumentStore, type GovernanceDocumentUpdateSet, GOVERNANCE_TRANSACTION, PASSTHROUGH_TRANSACTION, type GovernanceTransactionRunner } from '../persistence';
+import { DocumentStatus, IndexingStatus } from '@modules/workspace/interfaces/document-status.enum';
+import {   type GovernanceDocumentRecord,     type GovernanceDocumentUpdateSet,     PASSTHROUGH_TRANSACTION} from '../persistence';
 import type { GovernanceDocumentLifecycleStatus } from '../domain/governance-types';
 import { GovernanceDocumentService } from './governance-document.service';
 import { GovernanceDocumentEventService } from './governance-document-event.service';
+import { PgWorkspaceDocumentReadAdapter } from '../../workspace/persistence/postgres/pg-workspace-document-read.adapter';
+import { PgGovernanceTransactionRunner } from '../persistence/postgres/pg-transaction-runner';
+import { PgGovernanceDocumentStore } from '../persistence/postgres/pg-document.store';
 
 const transitions: Record<GovernanceDocumentLifecycleStatus, GovernanceDocumentLifecycleStatus[]> = {
   captured: ['to_review', 'rejected'],
@@ -21,11 +23,11 @@ export interface GovernanceDocumentTransitionCommand { commandId: string; expect
 @Injectable()
 export class GovernanceDocumentTransitionService {
   constructor(
-    @Inject(GOVERNANCE_DOCUMENT_STORE) private readonly documentStore: GovernanceDocumentStore,
-    @Inject(WORKSPACE_DOCUMENT_READ_PORT) private readonly workspaceDocuments: WorkspaceDocumentReadPort,
+    private readonly documentStore: PgGovernanceDocumentStore,
+    private readonly workspaceDocuments: PgWorkspaceDocumentReadAdapter,
     private readonly documents: GovernanceDocumentService,
     private readonly events: GovernanceDocumentEventService,
-    @Inject(GOVERNANCE_TRANSACTION) private readonly tx: GovernanceTransactionRunner = PASSTHROUGH_TRANSACTION,
+    private readonly tx: PgGovernanceTransactionRunner = PASSTHROUGH_TRANSACTION as unknown as PgGovernanceTransactionRunner,
   ) {}
 
   async transition(command: GovernanceDocumentTransitionCommand): Promise<GovernanceDocumentRecord> {

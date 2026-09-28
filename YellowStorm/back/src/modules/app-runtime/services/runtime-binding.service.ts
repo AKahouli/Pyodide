@@ -5,14 +5,11 @@ import {
   CONVERSATION_V2_SESSION_STORE,
   type ConversationV2SessionStore,
 } from '@modules/conversation-v2/persistence/conversation-v2-session.store';
-import {
-  RUNTIME_BINDING_STORE,
-  type RuntimeBindingRecord,
-  type RuntimeBindingStore,
-} from '../persistence/runtime-binding.store';
+import { type RuntimeBindingRecord } from '../persistence/runtime-binding.store';
 import { RuntimeRevisionService } from './runtime-revision.service';
 import { RuntimeTokenService } from './runtime-token.service';
 import { DEFAULT_STARTER_REVISION_ID } from '../constants/starter-revisions';
+import { PgRuntimeBindingStore } from '../persistence/pg-runtime-binding.store';
 
 export interface BindRuntimeParams {
   conversationSessionId: string;
@@ -42,8 +39,7 @@ export class RuntimeBindingService {
   private readonly logger = new Logger(RuntimeBindingService.name);
 
   constructor(
-    @Inject(RUNTIME_BINDING_STORE)
-    private readonly store: RuntimeBindingStore,
+    private readonly store: PgRuntimeBindingStore,
     private readonly tokens: RuntimeTokenService,
     private readonly revisions: RuntimeRevisionService,
     private readonly config: ConfigService,

@@ -1,5 +1,4 @@
 /** Store port for public.shared_agents (plan 4.1). */
-export const AGENT_SHARE_STORE = Symbol('AGENT_SHARE_STORE');
 
 export interface AgentShareRow {
   id: string;

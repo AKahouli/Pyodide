@@ -1,7 +1,6 @@
 import type { ConversationV2EventTypeName } from '../types/conversation-v2-persistence.types';
 import type { ConversationV2Event as WireEvent } from '../types/conversation-v2.types';
 
-export const CONVERSATION_V2_EVENT_STORE = Symbol('CONVERSATION_V2_EVENT_STORE');
 
 export interface AppendResult {
   sequence: number;

@@ -1,22 +1,20 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import {
-  FlowValidatedReplay,
-  FlowValidatedReplayDocument,
-  FlowReplayValidationStatus,
   type FlowReplayFingerprints,
   normalizeReplayMode,
-} from '../schemas/playbook-flow-validated-replay.schema';
+} from '../interfaces/playbook-flow-validated-replay.interface';
 import type { ResolvedReplayArtifacts } from '../interfaces/playbook-flow-replay-artifact.interface';
 import { LoggerService } from '@modules/logger';
 import { PlaybookFlowReplayHashService } from './playbook-flow-replay-hash.service';
+import {
+  ValidatedReplayRepository,
+  type FlowValidatedReplayRecord,
+} from '../persistence/validated-replay.repository';
 
 @Injectable()
 export class PlaybookFlowReplayArtifactService {
   constructor(
-    @InjectModel(FlowValidatedReplay.name)
-    private readonly replayModel: Model<FlowValidatedReplayDocument>,
+    private readonly replayRepository: ValidatedReplayRepository,
     private readonly logger: LoggerService,
     private readonly replayHashService: PlaybookFlowReplayHashService,
   ) {
@@ -30,11 +28,7 @@ export class PlaybookFlowReplayArtifactService {
     const result = new Map<string, ResolvedReplayArtifacts>();
     if (!taskIds.length) return result;
 
-    const activeReplays = await this.replayModel.find({
-      flowId,
-      taskId: { $in: taskIds },
-      status: FlowReplayValidationStatus.ACTIVE,
-    }).lean().exec();
+    const activeReplays = await this.replayRepository.listActiveForTasks(flowId, taskIds);
 
     for (const replay of activeReplays) {
       const resolved = this.mapReplayToResolvedArtifacts(replay);
@@ -50,12 +44,12 @@ export class PlaybookFlowReplayArtifactService {
     replayId: string;
     validationVersion: number;
   }): Promise<ResolvedReplayArtifacts | null> {
-    const replay = await this.replayModel.findOne({
-      _id: params.replayId,
+    const replay = await this.replayRepository.findByIdentity({
+      id: params.replayId,
       flowId: params.flowId,
       taskId: params.taskId,
       validationVersion: params.validationVersion,
-    }).lean().exec();
+    });
 
     if (!replay) {
       return null;
@@ -68,11 +62,7 @@ export class PlaybookFlowReplayArtifactService {
     flowId: string,
     taskId: string,
   ): Promise<ResolvedReplayArtifacts | null> {
-    const replay = await this.replayModel.findOne({
-      flowId,
-      taskId,
-      status: FlowReplayValidationStatus.ACTIVE,
-    }).lean().exec();
+    const replay = await this.replayRepository.findActive(flowId, taskId);
 
     if (!replay) {
       return null;
@@ -81,10 +71,10 @@ export class PlaybookFlowReplayArtifactService {
     return this.mapReplayToResolvedArtifacts(replay);
   }
 
-  private mapReplayToResolvedArtifacts(replay: Record<string, any>): ResolvedReplayArtifacts {
+  private mapReplayToResolvedArtifacts(replay: FlowValidatedReplayRecord): ResolvedReplayArtifacts {
     return {
       taskId: replay.taskId,
-      replayId: String(replay._id),
+      replayId: replay.id,
       referenceExecutionId: replay.referenceExecutionId,
       validationVersion: replay.validationVersion,
       mode: normalizeReplayMode(replay.mode),

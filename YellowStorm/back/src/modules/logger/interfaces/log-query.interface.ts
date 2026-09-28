@@ -1,4 +1,4 @@
-import { LogLevelEnum } from '../schemas/log.schema';
+import { LogLevelEnum } from './log-level.enum';
 
 /**
  * Filters for querying logs

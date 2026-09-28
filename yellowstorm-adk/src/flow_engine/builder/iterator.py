@@ -184,13 +184,19 @@ def _build_body_subgraph(
         if e.get("source") in child_set and e.get("target") in child_set
     ]
 
+    from src.flow_engine.builder.sequential import _edge_key, suppressed_mirror_edges
+    suppressed_mirrors = suppressed_mirror_edges(child_edges, data_bindings)
+
     incoming_from_children = {e["target"] for e in child_edges}
     entry_ids = [c for c in children if c not in incoming_from_children]
     exit_ids = [c for c in children if c not in {e["source"] for e in child_edges}]
 
     for edge in child_edges:
-        if edge.get("kind") != "conditional":
-            subgraph.add_edge(edge["source"], edge["target"])
+        if edge.get("kind") == "conditional":
+            continue
+        if _edge_key(edge) in suppressed_mirrors:
+            continue
+        subgraph.add_edge(edge["source"], edge["target"])
     add_conditional_edges(
         subgraph,
         child_edges,

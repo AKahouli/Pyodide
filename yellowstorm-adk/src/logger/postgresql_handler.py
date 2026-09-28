@@ -12,8 +12,8 @@ import threading
 import time
 from typing import Any, Dict, Optional
 
-import psycopg2
-import psycopg2.pool
+import psycopg
+from psycopg_pool import ConnectionPool
 
 from src.config.settings import get_settings
 
@@ -66,10 +66,10 @@ class PostgreSQLHandler(logging.Handler):
 
         # Initialize connection pool
         try:
-            self.connection_pool = psycopg2.pool.ThreadedConnectionPool(
-                minconn=1,
-                maxconn=pool_size + max_overflow,
-                **self.connection_params
+            self.connection_pool = ConnectionPool(
+                min_size=1,
+                max_size=pool_size + max_overflow,
+                kwargs=self.connection_params,
             )
         except Exception as e:
             logging.error(f"Failed to create PostgreSQL connection pool: {e}")
@@ -120,7 +120,7 @@ class PostgreSQLHandler(logging.Handler):
         return {
             "host": host,
             "port": port,
-            "database": dbname,
+            "dbname": dbname,
             "user": user,
             "password": password,
             # TCP keepalive parameters to prevent connection timeouts
@@ -282,12 +282,13 @@ class PostgreSQLHandler(logging.Handler):
             conn.commit()
             cursor.close()
 
-        except psycopg2.OperationalError as e:
+        except psycopg.OperationalError as e:
             logging.error(f"Database connection error in PostgreSQL handler: {e}")
             # Try to recreate connection pool
             if conn:
                 try:
-                    self.connection_pool.putconn(conn, close=True)
+                    conn.close()  # Discard the broken connection; the pool replaces it
+                    self.connection_pool.putconn(conn)
                     conn = None  # Prevent double putconn in finally block
                 except Exception:
                     conn = None  # Prevent double putconn in finally block

@@ -27,3 +27,11 @@ export function isUniqueViolation(err: unknown, constraint?: string): boolean {
   if (pg?.code !== PG_UNIQUE_VIOLATION) return false;
   return constraint === undefined || pg.constraint === constraint;
 }
+
+/** Postgres SQLSTATE for foreign_key_violation. */
+export const PG_FOREIGN_KEY_VIOLATION = '23503';
+
+/** True when `err` (or its drizzle-wrapped cause) is a foreign-key violation. */
+export function isForeignKeyViolation(err: unknown): boolean {
+  return pgError(err)?.code === PG_FOREIGN_KEY_VIOLATION;
+}

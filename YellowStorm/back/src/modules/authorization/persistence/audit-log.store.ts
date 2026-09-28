@@ -29,8 +29,6 @@ export interface AuditLogQuery {
   limit?: number;
 }
 
-export const AUDIT_LOG_STORE = Symbol('AUDIT_LOG_STORE');
-
 export interface AuditLogStore {
   insert(record: Omit<AuditLogRecord, 'id' | 'createdAt'>): Promise<void>;
   findAll(query: AuditLogQuery): Promise<{ logs: AuditLogRecord[]; total: number; hasMore: boolean }>;

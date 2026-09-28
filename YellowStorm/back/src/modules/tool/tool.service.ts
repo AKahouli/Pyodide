@@ -1,6 +1,7 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { LoggerService } from '../logger';
-import { TOOL_STORE, type ToolRow, type ToolStore } from './persistence/tool.store';
+import { type ToolRow } from './persistence/tool.store';
+import { PgToolStore } from './persistence/pg-tool.store';
 import { ToolAttributeType } from './tool.types';
 import { IToolResponse } from './interfaces/tool.interface';
 import { CreateToolDto } from './dto/create-tool.dto';
@@ -14,8 +15,7 @@ import { ErrorCode } from '../exceptions/constants/error-codes';
 @Injectable()
 export class ToolService {
   constructor(
-    @Inject(TOOL_STORE)
-    private readonly toolStore: ToolStore,
+    private readonly toolStore: PgToolStore,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(ToolService.name);

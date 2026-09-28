@@ -1,15 +1,11 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Injectable,  Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'crypto';
 import {
   MUTATING_TOOLS,
   TOOL_REQUIRED_CAPABILITY,
 } from '../constants/app-runtime-capabilities';
-import { AppRuntimeErrorCodes } from '../constants/app-runtime-error-codes';
-import {
-  RUNTIME_TOOL_CALL_STORE,
-  type RuntimeToolCallStore,
-} from '../persistence/runtime-tool-call.store';
+import { AppRuntimeErrorCodes } from '../constants/app-runtime-error-codes';
 import {
   AppRuntimeEvents,
   RuntimeToolError,
@@ -24,6 +20,7 @@ import {
   RuntimeConnectionRegistry,
 } from './runtime-connection.registry';
 import { RuntimeRevisionService } from './runtime-revision.service';
+import { PgRuntimeToolCallStore } from '../persistence/pg-runtime-tool-call.store';
 
 export interface InvokeToolParams {
   workspaceId: string;
@@ -69,8 +66,7 @@ export class RuntimeToolDispatcherService {
   private readonly inFlight = new Map<string, Promise<ToolInvokeEnvelope>>();
 
   constructor(
-    @Inject(RUNTIME_TOOL_CALL_STORE)
-    private readonly toolCalls: RuntimeToolCallStore,
+    private readonly toolCalls: PgRuntimeToolCallStore,
     private readonly bindings: RuntimeBindingService,
     private readonly registry: RuntimeConnectionRegistry,
     private readonly revisions: RuntimeRevisionService,

@@ -5,19 +5,16 @@ import {
 } from './evaluation-settings.service';
 
 describe('EvaluationSettingsService', () => {
-  const leanExec = (value: unknown) => ({ lean: () => ({ exec: async () => value }) });
-
   it('returns disabled defaults when no singleton exists', async () => {
-    const model = { findOne: jest.fn(() => leanExec(null)) };
-    const service = new EvaluationSettingsService(model as never, {} as never);
+    const store = { find: jest.fn().mockResolvedValue(null) };
+    const service = new EvaluationSettingsService(store as never, {} as never);
     await expect(service.getSettings()).resolves.toEqual(DEFAULT_ADMIN_EVALUATION_SETTINGS);
-    expect(model.findOne).toHaveBeenCalledWith({ key: 'global' });
+    expect(store.find).toHaveBeenCalledTimes(1);
   });
 
   it('normalizes legacy informative settings with corrective defaults', async () => {
-    const model = {
-      findOne: jest.fn(() => leanExec({
-        key: 'global',
+    const store = {
+      find: jest.fn().mockResolvedValue({
         responseReliability: {
           enabled: false,
           mode: 'informative',
@@ -26,9 +23,9 @@ describe('EvaluationSettingsService', () => {
           timeoutMs: 30000,
           maxFindings: 5,
         },
-      })),
+      }),
     };
-    const service = new EvaluationSettingsService(model as never, {} as never);
+    const service = new EvaluationSettingsService(store as never, {} as never);
 
     await expect(service.getSettings()).resolves.toEqual({
       responseReliability: {
@@ -45,7 +42,6 @@ describe('EvaluationSettingsService', () => {
 
   it('persists enabled corrective transparent settings without clamping values', async () => {
     const saved = {
-      key: 'global',
       responseReliability: {
         enabled: true,
         mode: 'corrective_transparent',
@@ -61,28 +57,27 @@ describe('EvaluationSettingsService', () => {
         },
       },
     };
-    const model = { findOneAndUpdate: jest.fn(() => leanExec(saved)) };
+    const store = {
+      upsert: jest.fn().mockResolvedValue(undefined),
+      find: jest.fn().mockResolvedValue(saved),
+    };
     const modelsService = {
       validateModelActive: jest.fn().mockResolvedValue({ valid: true, model: { types: ['chat'] } }),
     };
-    const service = new EvaluationSettingsService(model as never, modelsService as never);
+    const service = new EvaluationSettingsService(store as never, modelsService as never);
     await expect(service.updateSettings(saved as never)).resolves.toEqual({
       responseReliability: saved.responseReliability,
     });
-    expect(model.findOneAndUpdate).toHaveBeenCalledWith(
-      { key: 'global' },
+    expect(store.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        $set: expect.objectContaining({
-          responseReliability: expect.objectContaining({
-            mode: 'corrective_transparent',
-            maxConcurrentEvaluations: 11,
-            timeoutMs: 601000,
-            maxFindings: 11,
-            correction: expect.objectContaining({ threshold: 101, maxAttempts: 4 }),
-          }),
+        responseReliability: expect.objectContaining({
+          mode: 'corrective_transparent',
+          maxConcurrentEvaluations: 11,
+          timeoutMs: 601000,
+          maxFindings: 11,
+          correction: expect.objectContaining({ threshold: 101, maxAttempts: 4 }),
         }),
       }),
-      expect.objectContaining({ upsert: true, new: true }),
     );
   });
 
@@ -104,8 +99,10 @@ describe('EvaluationSettingsService', () => {
   });
 
   it('normalizes legacy settings with correction defaults', async () => {
-    const model = { findOne: jest.fn(() => leanExec({ responseReliability: { enabled: false, mode: 'informative' } })) };
-    const service = new EvaluationSettingsService(model as never, {} as never);
+    const store = {
+      find: jest.fn().mockResolvedValue({ responseReliability: { enabled: false, mode: 'informative' } }),
+    };
+    const service = new EvaluationSettingsService(store as never, {} as never);
     await expect(service.getSettings()).resolves.toEqual(expect.objectContaining({
       responseReliability: expect.objectContaining({ correction: DEFAULT_ADMIN_EVALUATION_SETTINGS.responseReliability.correction }),
     }));

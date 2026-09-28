@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { Injectable,  Logger,  Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { UserService } from '@modules/user/user.service';
 import { EmailService } from '@modules/email';
@@ -17,14 +17,10 @@ import type { DeployedAppSummary } from './conversation-v2-session.service';
 import { ConversationV2ShareService } from './conversation-v2-share.service';
 import { AppDataClientService } from '@modules/app-data/services/app-data-client.service';
 import {
-  CONVERSATION_V2_APP_SHARE_STORE,
-  type ConversationV2AppShareRecord,
-  type ConversationV2AppShareStore,
+  type ConversationV2AppShareRecord,  
 } from '../persistence/conversation-v2-app-share.store';
-import {
-  CONVERSATION_V2_SESSION_STORE,
-  type ConversationV2SessionStore,
-} from '../persistence/conversation-v2-session.store';
+import { PgConversationV2AppShareStore } from '../persistence/postgres/pg-conversation-v2-app-share.store';
+import { PgConversationV2SessionStore } from '../persistence/postgres/pg-conversation-v2-session.store';
 
 export interface ShareAppsBatchResult {
   shared: Array<{ shareId: string; recipientEmail: string }>;
@@ -52,10 +48,8 @@ export class ConversationV2AppShareService {
   private readonly logger = new Logger(ConversationV2AppShareService.name);
 
   constructor(
-    @Inject(CONVERSATION_V2_APP_SHARE_STORE)
-    private readonly shares: ConversationV2AppShareStore,
-    @Inject(CONVERSATION_V2_SESSION_STORE)
-    private readonly sessions: ConversationV2SessionStore,
+    private readonly shares: PgConversationV2AppShareStore,
+    private readonly sessions: PgConversationV2SessionStore,
     private readonly users: UserService,
     private readonly email: EmailService,
     private readonly notifications: NotificationsService,

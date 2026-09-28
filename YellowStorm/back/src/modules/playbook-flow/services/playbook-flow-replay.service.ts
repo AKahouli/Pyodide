@@ -1,17 +1,22 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { isObjectId, normalizeObjectId } from '@common/postgres';
 import { LoggerService } from '@modules/logger';
 import { PlaybookFlowExecutionService } from './playbook-flow-execution.service';
-import { FlowExecution, FlowExecutionDocument } from '../schemas/playbook-flow-execution.schema';
-import { FlowTaskResult, FlowTaskResultDocument } from '../schemas/playbook-flow-task-result.schema';
-import { FlowRouterDecision, FlowRouterDecisionDocument } from '../schemas/playbook-flow-router-decision.schema';
+import { ExecutionRepository } from '../persistence/execution.repository';
+import { TaskResultRepository } from '../persistence/task-result.repository';
+import { RouterDecisionRepository } from '../persistence/router-decision.repository';
 import {
-  FlowValidatedReplay,
-  FlowValidatedReplayDocument,
+  ValidatedReplayRepository,
+  toValidatedReplayJson,
+  type FlowValidatedReplayRecord,
+  type NewValidatedReplay,
+} from '../persistence/validated-replay.repository';
+import {
   FlowReplayValidationStatus,
+  serializeReplayMode,
+  type BuildValidatedReplayBaselineInput,
   type ReplayMode,
-} from '../schemas/playbook-flow-validated-replay.schema';
+} from '../interfaces/playbook-flow-validated-replay.interface';
 import { flattenUsage } from './observability/playbook-flow-observability.mapper';
 import { PlaybookFlowReplayBaselineService } from './playbook-flow-replay-baseline.service';
 
@@ -41,31 +46,33 @@ export interface UpdateReplayFormatGuidePayload {
   };
 }
 
+type BaselineTaskResult = BuildValidatedReplayBaselineInput['taskResult'];
+
 @Injectable()
 export class PlaybookFlowReplayService {
   constructor(
-    @InjectModel(FlowExecution.name) private readonly executionModel: Model<FlowExecutionDocument>,
-    @InjectModel(FlowTaskResult.name) private readonly taskResultModel: Model<FlowTaskResultDocument>,
-    @InjectModel(FlowRouterDecision.name) private readonly routerDecisionModel: Model<FlowRouterDecisionDocument>,
-    @InjectModel(FlowValidatedReplay.name) private readonly replayModel: Model<FlowValidatedReplayDocument>,
+    private readonly executionRepository: ExecutionRepository,
+    private readonly taskResultRepository: TaskResultRepository,
+    private readonly routerDecisionRepository: RouterDecisionRepository,
+    private readonly replayRepository: ValidatedReplayRepository,
     private readonly executionService: PlaybookFlowExecutionService,
     private readonly replayBaselineService: PlaybookFlowReplayBaselineService,
     private readonly logger: LoggerService,
   ) { this.logger.setContext('PlaybookFlowReplayService'); }
 
   async traceReplay(executionId: string, userId: string): Promise<TraceReplayEvent[]> {
-    const execution = await this.executionModel.findOne({ _id: executionId, ownerId: userId }).select('+snapshot +inputContext').lean();
+    const execution = await this.executionRepository.findOwned(executionId, userId);
     if (!execution) throw new NotFoundException('Execution not found');
 
     const [taskResults, routerDecisions] = await Promise.all([
-      this.taskResultModel.find({ executionId }).sort({ endedAt: 1 }).lean(),
-      this.routerDecisionModel.find({ executionId }).sort({ decidedAt: 1 }).lean(),
+      this.taskResultRepository.listForExecution(executionId, { order: 'ended' }),
+      this.routerDecisionRepository.listForExecution(executionId),
     ]);
 
     const events: TraceReplayEvent[] = [];
 
     for (const tr of taskResults) {
-      const ts = tr.startedAt?.toISOString() ?? (tr as any).createdAt?.toISOString() ?? '';
+      const ts = tr.startedAt?.toISOString() ?? tr.createdAt?.toISOString() ?? '';
       const te = tr.endedAt?.toISOString() ?? ts;
 
       events.push({
@@ -85,7 +92,7 @@ export class PlaybookFlowReplayService {
             output: tr.output,
             displayText: tr.displayText,
             toolTrace: tr.toolTrace ?? [],
-            reasoningChain: (tr as any).reasoningChain ?? [],
+            reasoningChain: tr.reasoningChain ?? [],
             llmPromptTrace: tr.llmPromptTrace ?? [],
             usage,
             ...flattenUsage({ usage }),
@@ -105,7 +112,7 @@ export class PlaybookFlowReplayService {
     for (const rd of routerDecisions) {
       events.push({
         type: 'RouterDecision',
-        timestamp: rd.decidedAt?.toISOString() ?? (rd as any).createdAt?.toISOString() ?? '',
+        timestamp: rd.decidedAt?.toISOString() ?? '',
         data: { routerNodeId: rd.routerNodeId, iteration: rd.iteration, label: rd.label },
       });
     }
@@ -123,13 +130,13 @@ export class PlaybookFlowReplayService {
   }
 
   async reExecute(executionId: string, userId: string): Promise<{ executionId: string; divergenceWarning: boolean }> {
-    const execution = await this.executionModel.findOne({ _id: executionId, ownerId: userId }).select('+snapshot +inputContext').lean();
+    const execution = await this.executionRepository.findOwned(executionId, userId);
     if (!execution) throw new NotFoundException('Execution not found');
 
     const result = await this.executionService.start(
       execution.flowId,
       userId,
-      execution.inputContext as Record<string, unknown> | undefined,
+      execution.inputContext ?? undefined,
       undefined,
       undefined,
       undefined,
@@ -138,8 +145,8 @@ export class PlaybookFlowReplayService {
       undefined,
       undefined,
       execution.executionMode || 'live',
-      execution.stepExecutionModes as Record<string, string> | undefined,
-      execution.modelIdOverride,
+      execution.stepExecutionModes,
+      execution.modelIdOverride ?? undefined,
     );
 
     return { executionId: result.id, divergenceWarning: true };
@@ -152,26 +159,22 @@ export class PlaybookFlowReplayService {
     iteration: number,
     executionId: string,
     dto?: ValidateTaskReplayOptions,
-  ): Promise<FlowValidatedReplayDocument> {
-    const execution = await this.executionModel.findOne({ _id: executionId, ownerId: userId }).select('+snapshot +inputContext').lean();
+  ): Promise<FlowValidatedReplayRecord> {
+    const execution = await this.executionRepository.findOwned(executionId, userId, { withSnapshot: true });
     if (!execution) throw new NotFoundException('Execution not found');
-    if (execution.flowId !== flowId) throw new NotFoundException('Execution not found');
+    if (!isObjectId(flowId) || execution.flowId !== normalizeObjectId(flowId)) throw new NotFoundException('Execution not found');
 
-    const taskResult = await this.taskResultModel.findOne({ executionId, taskId, iteration }).lean();
+    const taskResult = await this.taskResultRepository.find({ executionId, taskId, iteration });
     if (!taskResult) throw new NotFoundException('Task result not found');
 
     const referenceNodeSnapshot = this.findReferenceNodeSnapshot(execution.snapshot, taskId);
     if (!referenceNodeSnapshot) throw new NotFoundException('Task not found in execution snapshot');
 
-    const lastReplay = await this.replayModel
-      .findOne({ flowId, taskId })
-      .sort({ validationVersion: -1 })
-      .lean();
-
-    const newVersion = (lastReplay?.validationVersion ?? 0) + 1;
     const taskTitle = this.resolveTaskTitle(referenceNodeSnapshot, taskId);
     const taskDescription = this.resolveTaskDescription(referenceNodeSnapshot);
-    const referenceExecutionNumber = this.resolveReferenceExecutionNumber(execution);
+    const referenceExecutionNumber = this.resolveReferenceExecutionNumber(execution as unknown as Record<string, unknown>);
+    const toolTrace = (taskResult.toolTrace ?? []) as unknown as NonNullable<BaselineTaskResult['toolTrace']>;
+    const reasoningChain = (taskResult.reasoningChain ?? []) as unknown as NonNullable<BaselineTaskResult['reasoningChain']>;
     const baseline = this.replayBaselineService.buildValidatedReplayBaseline({
       taskId,
       iteration,
@@ -185,16 +188,17 @@ export class PlaybookFlowReplayService {
       nodeSnapshot: referenceNodeSnapshot,
       taskResult: {
         output: taskResult.output,
-        toolTrace: taskResult.toolTrace ?? [],
-        reasoningChain: (taskResult as any).reasoningChain ?? [],
-        judgeResult: taskResult.judgeResult ?? null,
+        toolTrace,
+        reasoningChain,
+        judgeResult: (taskResult.judgeResult ?? null) as BaselineTaskResult['judgeResult'],
       },
       hitlEvents: execution.hitlEvents ?? [],
       preserveOutputFormat: dto?.preserveOutputFormat ?? false,
       outputFormatGuide: undefined,
     });
 
-    const [replay] = await this.replayModel.create([{
+    // The new version is drawn and the previously latest one made inactive in the same transaction.
+    const replay = await this.replayRepository.createNextVersion({
       flowId,
       taskId,
       iteration,
@@ -203,13 +207,12 @@ export class PlaybookFlowReplayService {
       createdBy: userId,
       referenceExecutionId: executionId,
       referenceExecutionNumber,
-      validationVersion: newVersion,
       status: FlowReplayValidationStatus.ACTIVE,
-      mode: baseline.mode,
+      mode: serializeReplayMode(baseline.mode),
       referenceOutput: typeof taskResult.output === 'string' ? taskResult.output : JSON.stringify(taskResult.output ?? ''),
-      toolCalls: taskResult.toolTrace ?? [],
-      reasoningChain: (taskResult as any).reasoningChain ?? [],
-      llmPromptTrace: taskResult.llmPromptTrace ?? [],
+      toolCalls: toolTrace as NewValidatedReplay['toolCalls'],
+      reasoningChain,
+      llmPromptTrace: (taskResult.llmPromptTrace ?? []) as unknown as NewValidatedReplay['llmPromptTrace'],
       fingerprints: baseline.fingerprints,
       behaviorBaseline: baseline.behaviorBaseline,
       toolPolicy: baseline.toolPolicy,
@@ -224,8 +227,8 @@ export class PlaybookFlowReplayService {
       hitlMemorySnapshots: baseline.hitlMemorySnapshots,
       driftPolicy: baseline.driftPolicy,
       acceptedExamples: baseline.acceptedExamples,
-      referenceUsage: taskResult.usage ?? null,
-      referenceSemanticMatch: taskResult.semanticMatch ?? null,
+      referenceUsage: (taskResult.usage ?? null) as NewValidatedReplay['referenceUsage'],
+      referenceSemanticMatch: (taskResult.semanticMatch ?? null) as NewValidatedReplay['referenceSemanticMatch'],
       traceMetadata: taskResult.traceMetadata ?? {},
       referenceFlowRevision: execution.schemaVersion,
       referenceNodeSnapshot,
@@ -237,35 +240,21 @@ export class PlaybookFlowReplayService {
         replayToolTrace: dto?.replayConfig?.replayToolTrace ?? false,
         replayReasoningChain: dto?.replayConfig?.replayReasoningChain ?? true,
       },
-    }]);
+    });
 
-    if (lastReplay) {
-      await this.replayModel.updateOne(
-        { _id: lastReplay._id },
-        { status: FlowReplayValidationStatus.INACTIVE },
-      );
-    }
-
-    return replay;
+    return toValidatedReplayJson(replay);
   }
 
-  async listTaskReplays(flowId: string, taskId: string): Promise<FlowValidatedReplayDocument[]> {
-    return this.replayModel.find({ flowId, taskId }).sort({ validationVersion: -1 }).exec();
+  async listTaskReplays(flowId: string, taskId: string): Promise<FlowValidatedReplayRecord[]> {
+    const replays = await this.replayRepository.listByTask(flowId, taskId);
+    return replays.map(toValidatedReplayJson);
   }
 
-  async activateTaskReplay(flowId: string, taskId: string, replayId: string): Promise<FlowValidatedReplayDocument> {
-    await this.replayModel.updateMany(
-      { flowId, taskId, status: FlowReplayValidationStatus.ACTIVE },
-      { status: FlowReplayValidationStatus.INACTIVE },
-    );
-
-    const updated = await this.replayModel.findOneAndUpdate(
-      { _id: replayId, flowId, taskId },
-      { status: FlowReplayValidationStatus.ACTIVE },
-      { new: true },
-    );
+  async activateTaskReplay(flowId: string, taskId: string, replayId: string): Promise<FlowValidatedReplayRecord> {
+    // One statement: the other active baselines of the task are deactivated only when the target exists.
+    const updated = await this.replayRepository.activate(replayId, flowId, taskId);
     if (!updated) throw new NotFoundException('Replay not found');
-    return updated;
+    return toValidatedReplayJson(updated);
   }
 
   async updateTaskReplayFormatGuide(
@@ -273,8 +262,8 @@ export class PlaybookFlowReplayService {
     taskId: string,
     replayId: string,
     dto: UpdateReplayFormatGuidePayload,
-  ): Promise<FlowValidatedReplayDocument> {
-    const existing = await this.replayModel.findOne({ _id: replayId, flowId, taskId }).lean();
+  ): Promise<FlowValidatedReplayRecord> {
+    const existing = await this.replayRepository.findInTask(replayId, flowId, taskId);
     if (!existing) throw new NotFoundException('Replay not found');
 
     const preserveOutputFormat = dto.preserveOutputFormat ?? existing.preserveOutputFormat ?? false;
@@ -292,23 +281,19 @@ export class PlaybookFlowReplayService {
       }
       : existing.fingerprints;
 
-    const updated = await this.replayModel.findOneAndUpdate(
-      { _id: replayId, flowId, taskId },
-      {
-        $set: {
-          outputFormatGuide,
-          preserveOutputFormat,
-          outputContract,
-          ...(fingerprints ? { fingerprints } : {}),
-          ...(dto.replayConfig?.replayOutputFormat != null ? { 'replayConfig.replayOutputFormat': dto.replayConfig.replayOutputFormat } : {}),
-          ...(dto.replayConfig?.replayToolTrace != null ? { 'replayConfig.replayToolTrace': dto.replayConfig.replayToolTrace } : {}),
-          ...(dto.replayConfig?.replayReasoningChain != null ? { 'replayConfig.replayReasoningChain': dto.replayConfig.replayReasoningChain } : {}),
-        },
+    const updated = await this.replayRepository.update(replayId, flowId, taskId, {
+      outputFormatGuide,
+      preserveOutputFormat,
+      outputContract,
+      ...(fingerprints ? { fingerprints } : {}),
+      replayConfig: {
+        ...(dto.replayConfig?.replayOutputFormat != null ? { replayOutputFormat: dto.replayConfig.replayOutputFormat } : {}),
+        ...(dto.replayConfig?.replayToolTrace != null ? { replayToolTrace: dto.replayConfig.replayToolTrace } : {}),
+        ...(dto.replayConfig?.replayReasoningChain != null ? { replayReasoningChain: dto.replayConfig.replayReasoningChain } : {}),
       },
-      { new: true },
-    );
+    });
     if (!updated) throw new NotFoundException('Replay not found');
-    return updated;
+    return toValidatedReplayJson(updated);
   }
 
   async updateTaskReplayLabel(
@@ -316,34 +301,26 @@ export class PlaybookFlowReplayService {
     taskId: string,
     replayId: string,
     label: string | null,
-  ): Promise<FlowValidatedReplayDocument> {
-    const updated = await this.replayModel.findOneAndUpdate(
-      { _id: replayId, flowId, taskId },
-      { $set: { label } },
-      { new: true },
-    );
+  ): Promise<FlowValidatedReplayRecord> {
+    const updated = await this.replayRepository.update(replayId, flowId, taskId, { label });
     if (!updated) throw new NotFoundException('Replay not found');
-    return updated;
+    return toValidatedReplayJson(updated);
   }
 
   async deleteTaskReplay(flowId: string, taskId: string, replayId: string): Promise<{ removed: boolean; wasActive: boolean }> {
-    const existing = await this.replayModel.findOne({ _id: replayId, flowId, taskId }).lean();
-    if (!existing) return { removed: false, wasActive: false };
-    const wasActive = existing.status === FlowReplayValidationStatus.ACTIVE;
-    await this.replayModel.deleteOne({ _id: replayId });
-    return { removed: true, wasActive };
+    const deleted = await this.replayRepository.deleteInTask(replayId, flowId, taskId);
+    if (!deleted) return { removed: false, wasActive: false };
+    return { removed: true, wasActive: deleted.status === FlowReplayValidationStatus.ACTIVE };
   }
 
-  async getActiveReplay(flowId: string, taskId: string): Promise<FlowValidatedReplayDocument | null> {
-    return this.replayModel.findOne({ flowId, taskId, status: FlowReplayValidationStatus.ACTIVE }).exec();
+  async getActiveReplay(flowId: string, taskId: string): Promise<FlowValidatedReplayRecord | null> {
+    const replay = await this.replayRepository.findActive(flowId, taskId);
+    return replay ? toValidatedReplayJson(replay) : null;
   }
 
-  async getActiveReplays(flowId: string, taskIds: string[]): Promise<FlowValidatedReplayDocument[]> {
-    return this.replayModel.find({
-      flowId,
-      taskId: { $in: taskIds },
-      status: FlowReplayValidationStatus.ACTIVE,
-    }).exec();
+  async getActiveReplays(flowId: string, taskIds: string[]): Promise<FlowValidatedReplayRecord[]> {
+    const replays = await this.replayRepository.listActiveForTasks(flowId, taskIds);
+    return replays.map(toValidatedReplayJson);
   }
 
   private findReferenceNodeSnapshot(snapshot: unknown, taskId: string): Record<string, unknown> | null {

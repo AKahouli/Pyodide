@@ -1,7 +1,7 @@
 import { Inject, Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { isObjectId } from '@common/postgres';
 import { LoggerService } from '../../logger';
-import { AGENT_SHARE_STORE, type AgentShareRow, type AgentShareStore } from '../persistence/agent-share.store';
+import { type AgentShareRow} from '../persistence/agent-share.store';
 import { USER_LOOKUP_PORT, type UserLookupPort } from '@common/ports/user-lookup.port';
 import {
   IAgentShareEntry,
@@ -10,6 +10,7 @@ import {
 } from '../interfaces/agent.interface';
 import { ShareAgentDto, UpdateAgentSharePermissionDto } from '../dto';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
+import { PgAgentShareStore } from '../persistence/pg-agent-share.store';
 
 interface PopulatedUser {
   _id: string;
@@ -20,8 +21,7 @@ interface PopulatedUser {
 @Injectable()
 export class AgentShareService {
   constructor(
-    @Inject(AGENT_SHARE_STORE)
-    private readonly shareStore: AgentShareStore,
+    private readonly shareStore: PgAgentShareStore,
     @Inject(USER_LOOKUP_PORT) private readonly userLookup: UserLookupPort,
     private readonly logger: LoggerService,
   ) {

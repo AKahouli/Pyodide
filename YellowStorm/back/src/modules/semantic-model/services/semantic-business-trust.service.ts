@@ -41,7 +41,15 @@ interface ReadinessCounts {
   ruleCount: string;
   unhealthyMappingCount: string;
   openReviewCount: string;
+  /** First data-bearing concept without an identity, so the readiness step can open it. */
+  missingIdentityConceptId?: string | null;
+  /** First relationship between data-bearing concepts without a way to link records. */
+  unmatchedRelationId?: string | null;
 }
+
+/** Restricts relation counts to links between data-bearing business concepts; system and classification-only ends need no matching rule. */
+const DATA_RELATION_JOIN = `JOIN semantic_model.node_types source_node ON source_node.id=relation.source_node_type_id AND source_node.version_id=relation.version_id AND source_node.system_key IS NULL AND source_node.record_policy<>'none'
+  JOIN semantic_model.node_types target_node ON target_node.id=relation.target_node_type_id AND target_node.version_id=relation.version_id AND target_node.system_key IS NULL AND target_node.record_policy<>'none'`;
 
 @Injectable()
 export class SemanticBusinessTrustService {
@@ -103,11 +111,11 @@ export class SemanticBusinessTrustService {
               m.asset_kind AS "assetKind",m.field_mappings AS "fieldMappings",m.status,
               m.created_by AS "createdBy",m.created_at AS "createdAt",m.updated_at AS "updatedAt",
               COALESCE(w.enabled,false) AS "sourceEnabled",m.validated_source_version AS "validatedSourceVersion",
-              m.validated_at AS "validatedAt",COALESCE(p.profile->'metadata'->>'originalName',m.document_id) AS "documentName",
-              COALESCE(h.state,'checking') AS state,h.source_fingerprint AS "currentSourceVersion",
+              m.validated_at AS "validatedAt",COALESCE(m.source_label,p.profile->'metadata'->>'originalName',m.document_id) AS "documentName",
+              (CASE WHEN m.scope='workspace' THEN 'healthy' ELSE COALESCE(h.state,'checking') END) AS state,h.source_fingerprint AS "currentSourceVersion",
               COALESCE(h.missing_fields,'[]'::jsonb) AS "missingFields",
               COALESCE(h.available_fields,'[]'::jsonb) AS "availableFields",
-              CASE COALESCE(h.state,'checking')
+              CASE (CASE WHEN m.scope='workspace' THEN 'healthy' ELSE COALESCE(h.state,'checking') END)
                 WHEN 'changed' THEN 'The source changed since this mapping was validated.'
                 WHEN 'broken' THEN 'One or more mapped fields no longer exist.'
                 WHEN 'unavailable' THEN 'The mapped source is unavailable.'
@@ -149,14 +157,16 @@ export class SemanticBusinessTrustService {
         (SELECT count(*) FROM semantic_model.node_types WHERE model_id=$1 AND version_id=$2 AND system_key IS NULL AND record_policy<>'none')::text AS "dataConceptCount",
         (SELECT count(DISTINCT m.concept_id) FROM semantic_model.source_mappings m JOIN semantic_model.workspace_links w ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id AND w.enabled JOIN semantic_model.node_types n ON n.id=m.concept_id AND n.version_id=$2 WHERE m.model_id=$1 AND m.status='ready' AND n.system_key IS NULL AND n.record_policy<>'none')::text AS "sourcedConceptCount",
         (SELECT count(*) FROM semantic_model.identity_rules i JOIN semantic_model.node_types n ON n.id=i.concept_id AND n.version_id=$2 WHERE i.model_id=$1 AND n.system_key IS NULL AND n.record_policy<>'none')::text AS "identityCount",
-        (SELECT count(*) FROM semantic_model.relation_types WHERE model_id=$1 AND version_id=$2)::text AS "relationCount",
-        (SELECT count(*) FROM semantic_model.relation_resolution_rules rule JOIN semantic_model.relation_types relation ON relation.id=rule.relation_id AND relation.version_id=$2 WHERE rule.model_id=$1)::text AS "ruleCount",
-        (SELECT count(*) FROM semantic_model.source_mappings m JOIN semantic_model.node_types n ON n.id=m.concept_id AND n.version_id=$2 LEFT JOIN semantic_model.workspace_links w ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id LEFT JOIN semantic_datasource.mapping_health h ON h.model_id=m.model_id AND h.mapping_id=m.id WHERE m.model_id=$1 AND (m.status<>'ready' OR NOT COALESCE(w.enabled,false) OR COALESCE(h.state,'checking')<>'healthy'))::text AS "unhealthyMappingCount",
+        (SELECT count(*) FROM semantic_model.relation_types relation ${DATA_RELATION_JOIN} WHERE relation.model_id=$1 AND relation.version_id=$2)::text AS "relationCount",
+        (SELECT count(*) FROM semantic_model.relation_resolution_rules rule JOIN semantic_model.relation_types relation ON relation.id=rule.relation_id AND relation.version_id=$2 ${DATA_RELATION_JOIN} WHERE rule.model_id=$1)::text AS "ruleCount",
+        (SELECT count(*) FROM semantic_model.source_mappings m JOIN semantic_model.node_types n ON n.id=m.concept_id AND n.version_id=$2 LEFT JOIN semantic_model.workspace_links w ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id LEFT JOIN semantic_datasource.mapping_health h ON h.model_id=m.model_id AND h.mapping_id=m.id WHERE m.model_id=$1 AND (m.status<>'ready' OR NOT COALESCE(w.enabled,false) OR (CASE WHEN m.scope='workspace' THEN 'healthy' ELSE COALESCE(h.state,'checking') END)<>'healthy'))::text AS "unhealthyMappingCount",
         (SELECT count(*) FROM semantic_model.review_items review WHERE review.model_id=$1 AND review.status='open' AND (
           (review.kind='ambiguous_relation' AND EXISTS (SELECT 1 FROM semantic_model.relation_types relation WHERE relation.version_id=$2 AND relation.id::text=review.target_id)) OR
           (review.kind='source_conflict' AND EXISTS (SELECT 1 FROM semantic_model.node_types node WHERE node.version_id=$2 AND node.id::text=review.details->>'conceptId')) OR
           (review.kind='broken_mapping' AND EXISTS (SELECT 1 FROM semantic_model.source_mappings mapping JOIN semantic_model.node_types node ON node.id=mapping.concept_id AND node.version_id=$2 WHERE mapping.id::text=review.target_id))
-        ))::text AS "openReviewCount"`,
+        ))::text AS "openReviewCount",
+        (SELECT n.id::text FROM semantic_model.node_types n WHERE n.model_id=$1 AND n.version_id=$2 AND n.system_key IS NULL AND n.record_policy<>'none' AND NOT EXISTS (SELECT 1 FROM semantic_model.identity_rules i WHERE i.model_id=$1 AND i.concept_id=n.id) ORDER BY n.created_at LIMIT 1) AS "missingIdentityConceptId",
+        (SELECT relation.id::text FROM semantic_model.relation_types relation ${DATA_RELATION_JOIN} WHERE relation.model_id=$1 AND relation.version_id=$2 AND NOT EXISTS (SELECT 1 FROM semantic_model.relation_resolution_rules rule WHERE rule.model_id=$1 AND rule.relation_id=relation.id) ORDER BY relation.created_at LIMIT 1) AS "unmatchedRelationId"`,
       [model.id, model.currentDraftVersionId],
     );
     const counts = result.rows[0];
@@ -165,16 +175,24 @@ export class SemanticBusinessTrustService {
     const areas = [
       this.area('structure', configured, 'Add at least one business concept.'),
       this.area('sources', configured && number(counts.dataConceptCount) <= number(counts.sourcedConceptCount) && !number(counts.unhealthyMappingCount), 'Map every data-bearing concept to an available source.'),
-      this.area('identity', configured && number(counts.dataConceptCount) <= number(counts.identityCount), 'Define an identity rule for every data-bearing concept.'),
-      this.area('relationships', configured && number(counts.relationCount) <= number(counts.ruleCount), 'Configure matching for every relationship.'),
-      this.area('quality', configured && !number(counts.openReviewCount) && !number(counts.unhealthyMappingCount), 'Resolve open reviews and source issues.'),
+      this.area('identity', configured && number(counts.dataConceptCount) <= number(counts.identityCount), 'Define an identity rule for every data-bearing concept.', counts.missingIdentityConceptId),
+      this.area('relationships', configured && number(counts.relationCount) <= number(counts.ruleCount), 'Configure matching for every relationship.', counts.unmatchedRelationId),
+      // Source health already counts under `sources`; quality is only about decisions left open.
+      this.area('quality', configured && !number(counts.openReviewCount), 'Resolve open reviews.'),
     ];
     const completeAreas = areas.filter((area) => area.complete).length;
-    return { status: configured ? completeAreas === areas.length ? 'ready' : 'needs_review' : 'not_configured', score: completeAreas * 20, completeAreas, totalAreas: areas.length, areas };
+    // The areas are steps: a later one only earns points once every earlier step is done, so an empty
+    // relationship list or review queue cannot make a model with no data look most of the way there.
+    const firstGap = areas.findIndex((area) => !area.complete);
+    const progress = firstGap === -1 ? areas.length : firstGap;
+    return { status: configured ? completeAreas === areas.length ? 'ready' : 'needs_review' : 'not_configured', score: progress * 20, completeAreas, totalAreas: areas.length, areas };
   }
 
-  private area(key: string, complete: boolean, message: string) {
-    return { key, complete, issues: complete ? [] : [{ severity: key === 'quality' ? 'review' : 'blocking', message }] };
+  private area(key: string, complete: boolean, message: string, targetId?: string | null) {
+    return {
+      key, complete, issues: complete ? [] : [{ severity: key === 'quality' ? 'review' : 'blocking', message }],
+      ...(!complete && targetId ? { targetId } : {}),
+    };
   }
 
   private validateResolution(item: { kind: string; details: Record<string, unknown> }, dto: ResolveReviewItemDto): void {

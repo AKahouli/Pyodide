@@ -1,6 +1,7 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { RateLimitResult, RateLimitOptions, RateLimitRecord } from './interfaces/rate-limiter.interface';
+import { PlatformSettingsService } from '@modules/system/platform-settings.service';
+import { DEFAULT_PLATFORM_SETTINGS } from '@modules/system/constants/platform-settings.constants';
 
 const CLEANUP_INTERVAL_MS = 60000;
 
@@ -8,16 +9,12 @@ const CLEANUP_INTERVAL_MS = 60000;
 export class RateLimiterService implements OnModuleDestroy {
   private readonly store = new Map<string, RateLimitRecord>();
   private readonly cleanupInterval: NodeJS.Timeout;
-  private readonly defaultLimit: number;
-  private readonly defaultWindowMs: number;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(private readonly platformSettings: PlatformSettingsService) {
     this.cleanupInterval = setInterval(() => {
       void this.cleanup();
     }, CLEANUP_INTERVAL_MS);
     this.cleanupInterval.unref();
-    this.defaultLimit = this.configService.get<number>('app.throttleLimit', 100);
-    this.defaultWindowMs = this.configService.get<number>('app.throttleTtl', 60) * 1000;
   }
 
   onModuleDestroy() {
@@ -25,12 +22,29 @@ export class RateLimiterService implements OnModuleDestroy {
     this.store.clear();
   }
 
+  /**
+   * Default rate-limit settings come from the admin-managed platform settings
+   * (5s cache); explicit options still win.
+   */
+  private async resolveDefaults(): Promise<{ limit: number; windowMs: number }> {
+    try {
+      const { throttle } = await this.platformSettings.getSettings();
+      return { limit: throttle.limit, windowMs: throttle.windowSeconds * 1000 };
+    } catch {
+      return {
+        limit: DEFAULT_PLATFORM_SETTINGS.throttle.limit,
+        windowMs: DEFAULT_PLATFORM_SETTINGS.throttle.windowSeconds * 1000,
+      };
+    }
+  }
+
   async check(
     identifier: string,
     options?: Partial<RateLimitOptions>,
   ): Promise<RateLimitResult> {
-    const limit = options?.limit ?? this.defaultLimit;
-    const windowMs = options?.windowMs ?? this.defaultWindowMs;
+    const defaults = await this.resolveDefaults();
+    const limit = options?.limit ?? defaults.limit;
+    const windowMs = options?.windowMs ?? defaults.windowMs;
     const keyPrefix = options?.keyPrefix ?? 'rl';
 
     const key = `${keyPrefix}:${identifier}`;
@@ -63,8 +77,9 @@ export class RateLimiterService implements OnModuleDestroy {
     identifier: string,
     options?: Partial<RateLimitOptions>,
   ): Promise<RateLimitResult> {
-    const limit = options?.limit ?? this.defaultLimit;
-    const windowMs = options?.windowMs ?? this.defaultWindowMs;
+    const defaults = await this.resolveDefaults();
+    const limit = options?.limit ?? defaults.limit;
+    const windowMs = options?.windowMs ?? defaults.windowMs;
     const keyPrefix = options?.keyPrefix ?? 'rl';
 
     const key = `${keyPrefix}:${identifier}`;

@@ -1,16 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import {
-  FlowExecution,
-  FlowExecutionDocument,
-} from '../../schemas/playbook-flow-execution.schema';
-import {
-  FlowTaskResult,
-  FlowTaskResultDocument,
-} from '../../schemas/playbook-flow-task-result.schema';
+import { ExecutionRepository } from '../../persistence/execution.repository';
+import { TaskResultRepository } from '../../persistence/task-result.repository';
 import { FlowSnapshot } from '../../mappers/flow-to-snapshot.mapper';
-import { ControlEdge, DataBinding, FlowNode } from '../../schemas/playbook-flow.schema';
+import type { ControlEdge, DataBinding, FlowNode } from '../../models/playbook-flow.model';
 import { ErrorCode } from '../../../exceptions/constants/error-codes';
 import { BadRequestException } from '../../../exceptions/exceptions/http.exceptions';
 import {
@@ -53,10 +45,8 @@ export class PlaybookExecutionSingleStepPrepService {
   private readonly logger = new Logger(PlaybookExecutionSingleStepPrepService.name);
 
   constructor(
-    @InjectModel(FlowExecution.name)
-    private readonly executionModel: Model<FlowExecutionDocument>,
-    @InjectModel(FlowTaskResult.name)
-    private readonly taskResultModel: Model<FlowTaskResultDocument>,
+    private readonly executionRepository: ExecutionRepository,
+    private readonly taskResultRepository: TaskResultRepository,
   ) {}
 
   assertSingleStepSupported(nodes: FlowNode[], singleStepTaskId: string): void {
@@ -220,15 +210,11 @@ export class PlaybookExecutionSingleStepPrepService {
       ? currentSnapshot.nodes as unknown as Array<Record<string, unknown>>
       : [];
 
-    const completedExecutions = await this.executionModel.find({
-      flowId,
-      ownerId,
-      status: { $in: ['completed', 'failed'] },
-    }).select('+snapshot').sort({ createdAt: -1 }).limit(20).lean().exec();
+    const completedExecutions = await this.executionRepository.listRecentCompletedWithSnapshot(flowId, ownerId, 20);
 
-    let matchingExecution: Record<string, unknown> | null = null;
+    let matchingExecution: (typeof completedExecutions)[number] | null = null;
     for (const exec of completedExecutions) {
-      const execSnapshot = (exec as Record<string, unknown>).snapshot;
+      const execSnapshot = exec.snapshot;
       const execSnapshotNodes = Array.isArray(execSnapshot && (execSnapshot as Record<string, unknown>).nodes)
         ? ((execSnapshot as Record<string, unknown>).nodes as Array<Record<string, unknown>>)
         : [];
@@ -239,7 +225,7 @@ export class PlaybookExecutionSingleStepPrepService {
           && JSON.stringify(comparableNode(priorNode)) === JSON.stringify(comparableNode(currentNode));
       });
       if (allUpstreamMatch) {
-        matchingExecution = exec as unknown as Record<string, unknown>;
+        matchingExecution = exec;
         break;
       }
     }
@@ -251,11 +237,11 @@ export class PlaybookExecutionSingleStepPrepService {
       );
     }
 
-    const taskResults = await this.taskResultModel.find({
-      executionId: matchingExecution._id?.toString() ?? matchingExecution.id,
-      taskId: { $in: requiredSourceNodeIds },
-      status: 'completed',
-    }).sort({ iteration: -1, endedAt: -1 }).lean().exec();
+    const taskResults = await this.taskResultRepository.listForExecution(matchingExecution.id, {
+      taskIds: requiredSourceNodeIds,
+      statuses: ['completed'],
+      order: 'latest',
+    });
 
     const resultsByTaskId = new Map<string, Array<Record<string, unknown>>>();
     for (const result of taskResults) {

@@ -4,9 +4,8 @@ export interface FlowReadPort {
   /** Existence + owner lookup; null when the flow does not exist. */
   findById(id: string): Promise<{ id: string; ownerId: string } | null>;
   /**
-   * Detach a workspace from every flow referencing it. Preserves the legacy
-   * quirk verbatim: Flow.workspaces is string[] but the old model code queried
-   * and pulled with ObjectId values — the Mongo adapter must do the same.
+   * Detach a workspace from every flow referencing it. Deleting the workspace row already does it
+   * (the playbook.flow_workspaces foreign key cascades), so after a delete this is a no-op.
    */
   removeWorkspaceReference(workspaceId: string): Promise<void>;
 }

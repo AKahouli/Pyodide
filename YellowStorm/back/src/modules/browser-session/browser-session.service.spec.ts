@@ -1,10 +1,10 @@
 import { Test } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { BrowserSessionService } from './browser-session.service';
-import {
-  BROWSER_ENGINE, URL_SAFETY, BrowserEngine, EngineSession, InputEvent, NavAction, UrlSafetyFn,
+import { URL_SAFETY,  BrowserEngine,  EngineSession,  InputEvent,  NavAction,  UrlSafetyFn, 
 } from './browser-session.types';
 import { LoggerService } from '../logger';
+import { PlaywrightBrowserEngine } from './/playwright-browser-engine';
 
 class FakeSession implements EngineSession {
   frameCb?: (f: string) => void;
@@ -41,7 +41,7 @@ async function build(engine: FakeEngine, safety: UrlSafetyFn = async () => {}) {
   const mod = await Test.createTestingModule({
     providers: [
       BrowserSessionService,
-      { provide: BROWSER_ENGINE, useValue: engine },
+      { provide: PlaywrightBrowserEngine, useValue: engine },
       { provide: URL_SAFETY, useValue: safety },
       { provide: ConfigService, useValue: { get: () => CONFIG } },
       { provide: LoggerService, useValue: { setContext: jest.fn(), log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() } },

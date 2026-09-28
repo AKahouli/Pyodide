@@ -33,6 +33,11 @@ import {
     { provide: CONVERSATION_V2_TEMPLATE_STORE, useExisting: PgConversationV2TemplateStore },
   ],
   exports: [
+    PgConversationV2SessionStore,
+    PgConversationV2EventStore,
+    PgConversationV2AppShareStore,
+    PgConversationV2TemplateCategoryStore,
+    PgConversationV2TemplateStore,
     CONVERSATION_V2_SESSION_STORE,
     CONVERSATION_V2_EVENT_STORE,
     CONVERSATION_V2_APP_SHARE_STORE,

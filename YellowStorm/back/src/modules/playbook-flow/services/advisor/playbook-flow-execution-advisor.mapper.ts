@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import type { FlowNode } from '../../schemas/playbook-flow.schema';
-import type { FlowTaskResultDocument } from '../../schemas/playbook-flow-task-result.schema';
+import type { FlowNode } from '../../models/playbook-flow.model';
+import type { TaskResultRecord } from '../../persistence/task-result.repository';
 import type {
   FlowExecutionAdvisorEvaluationResult,
   FlowExecutionAdvisorTaskResponse,
@@ -17,7 +17,7 @@ export class PlaybookFlowExecutionAdvisorMapper {
     ownerId: string;
     flowId: string;
     node: FlowNode;
-    taskResult: FlowTaskResultDocument | Record<string, unknown>;
+    taskResult: TaskResultRecord | Record<string, unknown>;
     expectedResult: string | null;
     outputFormatGuide: string | null;
     baselineOutput: string | null;
@@ -213,7 +213,7 @@ export class PlaybookFlowExecutionAdvisorMapper {
     taskOutput?: unknown;
     taskError?: string;
     judgeStatus: 'idle' | 'evaluating' | 'evaluated' | 'failed';
-    judgeScoringMode?: import('../../schemas/playbook-flow.schema').AdvisorScoringMode | null;
+    judgeScoringMode?: import('../../models/playbook-flow.model').AdvisorScoringMode | null;
     judgeResult: FlowExecutionJudgeResult | null;
     judgeError: string | null;
     judgeHistory: FlowExecutionJudgeHistoryEntry[];
@@ -286,7 +286,7 @@ export class PlaybookFlowExecutionAdvisorMapper {
       : 'review_only';
   }
 
-  private buildUsage(taskResult: FlowTaskResultDocument | Record<string, unknown>): Record<string, unknown> {
+  private buildUsage(taskResult: TaskResultRecord | Record<string, unknown>): Record<string, unknown> {
     const usage = (taskResult.usage ?? {}) as Record<string, unknown>;
     return {
       input_tokens: typeof usage.inputTokens === 'number' ? usage.inputTokens : 0,

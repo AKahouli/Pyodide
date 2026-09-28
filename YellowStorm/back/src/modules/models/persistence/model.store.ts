@@ -2,7 +2,6 @@
  * Store port for catalog.ai_models (plan 1B.3.1). Rows mirror the former
  * Mongo documents; the service maps rows to the public ModelResponse.
  */
-export const MODEL_STORE = Symbol('MODEL_STORE');
 
 export interface ModelRow {
   id: string;

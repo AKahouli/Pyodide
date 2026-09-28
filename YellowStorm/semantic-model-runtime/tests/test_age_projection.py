@@ -53,6 +53,16 @@ def test_compile_and_render_escapes_values():
         render_edge_batch("pop_dr_1", plan["edges"] * 501)
 
 
+def test_graph_nodes_show_key_fields_and_keep_their_own_id():
+    plan = compile_projection(
+        [{"entityId": "crm:C00042", "conceptId": "customer", "label": "Sony France",
+          "identity": {"customer_id": "C00042"},
+          "attributes": {"name": "Sony France", "country": "France", "record_id": "spoofed", "label": "other"}}],
+        [])
+    assert plan["vertices"][0] == {"customer_id": "C00042", "name": "Sony France", "country": "France",
+                                   "record_id": "crm:C00042", "concept_id": "customer", "label": "Sony France"}
+
+
 def test_validate_projection_compares_counts():
     assert validate_projection({"vertices": 2, "edges": 1}, {"vertices": 2, "edges": 1}) == []
     issues = validate_projection({"vertices": 2, "edges": 1}, {"vertices": 1, "edges": 1})

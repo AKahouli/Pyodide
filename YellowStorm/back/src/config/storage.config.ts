@@ -1,20 +1,4 @@
 import { registerAs } from '@nestjs/config';
-import { DEFAULT_ALLOWED_MIME_TYPES } from '../modules/document/constants/mime-types.constant';
-
-function getAllowedStorageMimeTypes(): string[] {
-  if (!process.env.STORAGE_ALLOWED_MIME_TYPES) {
-    return [...DEFAULT_ALLOWED_MIME_TYPES];
-  }
-
-  const configuredTypes = process.env.STORAGE_ALLOWED_MIME_TYPES
-    .split(',')
-    .map((type) => type.trim())
-    .filter((type) => type.length > 0);
-
-  // Keep existing deployment-specific additions while ensuring newly
-  // supported built-in MIME types remain accepted by the storage layer.
-  return [...new Set([...DEFAULT_ALLOWED_MIME_TYPES, ...configuredTypes])];
-}
 
 export default registerAs('storage', () => ({
   s3: {
@@ -27,14 +11,13 @@ export default registerAs('storage', () => ({
     publicUrl: process.env.CEPH_S3_PUBLIC_URL || process.env.CEPH_PUBLIC_URL || '',
   },
 
-  maxFileSizeMb: Number.parseInt(process.env.STORAGE_MAX_FILE_SIZE_MB || '50', 10),
-  maxFilesPerUpload: Number.parseInt(process.env.STORAGE_MAX_FILES_PER_UPLOAD || '10', 10),
+  // Upload size/count/MIME limits are admin-managed at runtime via
+  // catalog.system_settings `platform_settings` (PlatformSettingsService).
 
   sasExpiryMinutes: Number.parseInt(process.env.STORAGE_SAS_EXPIRY_MINUTES || '60', 10),
   semanticDatasetPrefix: process.env.SEMANTIC_DATASET_STORAGE_PREFIX || 'semantic-model/datasets',
   semanticDatasetMaxSizeMb: Number.parseInt(process.env.SEMANTIC_DATASET_MAX_SIZE_MB || '200', 10),
 
-  allowedMimeTypes: getAllowedStorageMimeTypes(),
 
   healthCheck: {
     enabled: process.env.STORAGE_HEALTH_CHECK_ENABLED !== 'false',

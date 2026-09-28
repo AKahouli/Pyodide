@@ -21,7 +21,6 @@ export type SemanticModelStatus = 'draft' | 'published' | 'archived';
 export type SemanticModelMaturity = 'automatic' | 'structured' | 'structured_with_records' | 'operational';
 export type EditorMode = 'structure' | 'records' | 'mappings';
 export type SaveStatus = 'saved' | 'saving' | 'offline' | 'error' | 'conflict';
-export type SemanticModelIndexStatus = 'not_indexed' | 'pending' | 'in_progress' | 'indexed' | 'failed';
 
 export interface SemanticModel {
   id: string;
@@ -44,14 +43,6 @@ export interface SemanticModel {
   brokenBindingCount?: number;
   createdAt: string;
   updatedAt: string;
-  indexStatus: SemanticModelIndexStatus;
-  indexError: string | null;
-  executionOwner?: 'legacy' | 'runtime';
-}
-
-export interface SemanticModelManualInstances {
-  nodeTypeId: string;
-  labels: string[];
 }
 
 export interface AttributeDefinition {
@@ -61,6 +52,8 @@ export interface AttributeDefinition {
   required: boolean;
   description?: string;
   options?: string[];
+  /** Business synonyms for this field. */
+  aliases?: string[];
 }
 
 export interface CanvasPosition { x: number; y: number }
@@ -123,28 +116,6 @@ export interface AgeGraphEdge {
   properties: Record<string, unknown>;
 }
 
-export type AgeGraphOperation =
-  | { type: 'node.create'; nodeTypeId: string; label: string; values: Record<string, unknown> }
-  | { type: 'node.delete'; nodeId: string }
-  | { type: 'edge.create'; relationTypeId: string; sourceId: string; targetId: string }
-  | { type: 'edge.delete'; edgeId: string };
-
-export interface SemanticCorpusDocument {
-  sourceDocumentId: string;
-  workspaceId: string;
-  originalName: string;
-  indexingStatus?: 'none' | 'pending' | 'processing' | 'ready' | 'failed';
-}
-
-export interface SemanticCorpusBinding {
-  target: { kind: string; id: string | null; label: string };
-  documents: SemanticCorpusDocument[];
-}
-
-export interface SemanticCorpusManifest {
-  bindings: SemanticCorpusBinding[];
-}
-
 export interface SemanticGraph {
   modelId: string;
   versionId: string;
@@ -205,110 +176,6 @@ export interface SemanticVersion {
   createdAt: string;
 }
 
-export interface SemanticEvidenceSearchTask {
-  bindingId: string;
-  target: {
-    kind: KnowledgeBinding['targetKind'];
-    id?: string;
-    label: string;
-  };
-  workspaceId: string;
-  text: string;
-  evidence: Array<{
-    source: string;
-    fileName: string;
-    page?: string;
-    quote?: string;
-    workspaceId?: string;
-    reference?: string;
-  }>;
-  toolResults: Array<{ name: string; status: 'completed' | 'failed'; result: unknown }>;
-}
-
-export interface SemanticEvidenceSearchResponse {
-  modelId: string;
-  searchedAt: string;
-  tasks: SemanticEvidenceSearchTask[];
-  summary: {
-    searchedBindingCount: number;
-    candidateDocumentCount: number;
-  };
-}
-
-export interface MappingProposalJob {
-  jobId: string;
-  modelId: string;
-  status: 'running' | 'completed' | 'failed';
-  startedAt: string;
-  completedAt?: string;
-  result?: SemanticModelMappingProposalResponse;
-  error?: string;
-}
-
-export type SemanticBuildStatus = 'running' | 'completed' | 'failed';
-export type SemanticBuildStep = 'ontology' | 'mapping' | 'apply';
-export type SemanticBuildStepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
-export type SemanticBuildApplyMode = 'replace' | 'incremental';
-
-export interface SemanticBuildJob {
-  buildId: string;
-  modelId: string;
-  startedBy: string;
-  status: SemanticBuildStatus;
-  currentStep: SemanticBuildStep | null;
-  ontologyStatus: SemanticBuildStepStatus;
-  mappingStatus: SemanticBuildStepStatus;
-  applyStatus: SemanticBuildStepStatus;
-  applyMode: SemanticBuildApplyMode;
-  mappingJobId: string | null;
-  graphWarning: string | null;
-  error: string | null;
-  startedAt: string;
-  ontologyCompletedAt: string | null;
-  mappingCompletedAt: string | null;
-  applyCompletedAt: string | null;
-  completedAt: string | null;
-  lastHeartbeatAt: string;
-}
-
-export interface SemanticModelMappingProposalResponse {
-  modelId: string;
-  generatedAt: string;
-  search: {
-    searchedBindingCount: number;
-    candidateDocumentCount: number;
-  };
-  plan: {
-    nodes: Array<{
-      id: string;
-      nodeTypeId: string;
-      label: string;
-      attributes: Array<{ key: string; value: string | number | boolean; evidenceReferences: string[] }>;
-      evidenceReferences: string[];
-      confidence: number;
-    }>;
-    edges: Array<{
-      id: string;
-      relationTypeId: string;
-      sourceNodeId: string;
-      targetNodeId: string;
-      evidenceReferences: string[];
-      confidence: number;
-    }>;
-    mergeGroups: Array<{ canonicalNodeId: string; mergedNodeIds: string[]; reason: string }>;
-  };
-  proposals: SemanticModelMappingProposal[];
-}
-
-export interface SemanticModelMappingProposal {
-  id: string;
-  target: { nodeTypeLabel: string; attributeLabel: string };
-  value: string | number | boolean;
-  normalizedValue?: string | number | boolean;
-  normalization: { status: 'valid' | 'invalid'; reason: 'normalized' | 'empty_value' | 'invalid_number' | 'invalid_boolean' | 'invalid_date' | 'invalid_enum' };
-  evidence: { fileName: string; page?: string; quote: string };
-}
-
 export interface Paginated<T> {
   items: T[];
   pagination: { page: number; limit: number; total: number; totalPages: number };
@@ -361,6 +228,74 @@ export interface SourceFieldMapping {
   extractionStrategy?: SourceExtractionStrategy;
 }
 
+/** A change an assistant (an agent using the semantic model MCP) made to the model. */
+export interface AssistantChange {
+  id: string;
+  message: string;
+  agentId: string | null;
+  createdAt: string;
+  undoneAt: string | null;
+}
+
+export interface AssistantChangesPage {
+  graphRevision: number;
+  /** Server time of the answer, to ask only for what happens after it. */
+  now: string;
+  /** A data update running for this model (started here, from a conversation, or elsewhere). */
+  activeRun?: { jobId: string; state: string } | null;
+  changes: AssistantChange[];
+}
+
+/** A source an assistant suggested for a concept. Nothing is connected until someone picks it. */
+export interface SourceSuggestionOption {
+  workspaceId: string;
+  workspaceName: string;
+  /** workspace: every file; documents: picked folders and files; document / spreadsheet: one file. */
+  kind: 'workspace' | 'documents' | 'document' | 'spreadsheet';
+  folderIds: string[];
+  documentIds: string[];
+  folders: string[];
+  documents: string[];
+  sheetName?: string;
+  mimeType?: string;
+  fileCount: number;
+  stillIndexing: number;
+  reason: string;
+}
+
+/** A file found by name across the person's workspaces, to choose as a source. */
+export interface SourceFileMatch {
+  id: string;
+  name: string;
+  mimeType: string;
+  kind: 'spreadsheet' | 'document' | 'other';
+  workspaceId: string;
+  workspaceName: string;
+  folderName: string | null;
+}
+
+export interface SourceFileMatches {
+  files: SourceFileMatch[];
+  page: number;
+  totalPages: number;
+}
+
+export interface SourceSuggestion {
+  conceptId: string;
+  conceptKey: string;
+  conceptLabel: string;
+  note: string;
+  options: SourceSuggestionOption[];
+  /** connected: the concept got a source since (from this suggestion or not). */
+  status: 'pending' | 'skipped' | 'connected';
+  updatedAt: string;
+}
+
+export interface SourceSuggestionsPage {
+  model: { id: string; name: string };
+  suggestions: SourceSuggestion[];
+}
+
 export interface ConceptSourceMapping {
   id: string;
   conceptId: string;
@@ -379,6 +314,14 @@ export interface ConceptSourceMapping {
   identityFields: string[];
   validatedSourceVersion?: string | null;
   validatedAt?: string | null;
+  /** 'workspace': one mapping for every readable file of a workspace (or folder), files added later included. */
+  scope?: 'document' | 'workspace';
+  folderId?: string | null;
+  /** Workspace mappings: the picked folders and files, or null for the whole workspace. */
+  selection?: { folderIds: string[]; documentIds: string[] } | null;
+  /** Workspace mappings: files it covers today, and files still being indexed. */
+  fileCount?: number;
+  waitingCount?: number;
 }
 
 export type MappingHealthState = 'healthy' | 'changed' | 'unavailable' | 'broken' | 'checking';
@@ -406,6 +349,10 @@ export interface PopulationRefreshResponse {
   progressUrl: string;
   reused: boolean;
   skipped: Array<{ mappingId: string; reason: string }>;
+  /** Files the run reads, workspace sources expanded. */
+  sourceCount?: number;
+  /** Files of a workspace source still being indexed; they are read by a later run. */
+  waitingFiles?: number;
 }
 
 export interface PopulationJob {
@@ -413,8 +360,33 @@ export interface PopulationJob {
   jobType: string;
   modelId: string | null;
   state: string;
+  /** What the run has done so far; reported about once a second while it reads sources. */
+  progress?: Partial<PopulationProgress>;
   result: Record<string, unknown> | null;
   errorCode: string | null;
+}
+
+export interface PopulationProgress {
+  phase: 'starting' | 'reading' | 'linking' | 'saving';
+  total: number;
+  done: number;
+  /** Files whose earlier result was reused because nothing about them changed. */
+  reused: number;
+  records: number;
+  gaps: number;
+  current: { name: string; conceptId?: string; kind?: string } | null;
+  recent: Array<{ name: string; conceptId?: string; status: string; records: number; reused: boolean }>;
+  startedAt: string;
+}
+
+/** A page of one concept's records in the data in use. */
+export interface ConceptRecordsPage {
+  dataRevisionId: string | null;
+  total: number;
+  offset: number;
+  limit: number;
+  /** `identity` holds the normalized matching key: key fields are not repeated among the values. */
+  records: Array<SemanticDataPreview['concepts'][number]['entities'][number] & { identity?: Record<string, unknown> }>;
 }
 
 export interface SemanticReadiness {
@@ -426,6 +398,8 @@ export interface SemanticReadiness {
     key: 'structure' | 'sources' | 'identity' | 'relationships' | 'quality';
     complete: boolean;
     issues: Array<{ severity: 'blocking' | 'review'; message: string }>;
+    /** The concept or relationship to open to complete this step, when there is one. */
+    targetId?: string;
   }>;
 }
 
@@ -532,6 +506,8 @@ export interface SemanticDataPreview {
   concepts: Array<{
     id: string;
     label: string;
+    /** Records of this concept in the whole run; `entities` is only the first page. */
+    total?: number;
     entities: Array<{
       id: string;
       conceptId: string;
@@ -551,6 +527,8 @@ export interface SemanticDataPreview {
         };
         rowNumber?: number;
         field?: NonNullable<SourceMappingPreviewResponse['entities'][number]['provenance']['fields']>[string];
+        /** Present when a person fixed this value. */
+        correction?: ValueCorrection;
       }>;
       sources?: Array<{ mappingId: string; source: { documentName: string; sheetName?: string } }>;
       conflicts: Array<{ attribute: string; preferred: unknown; conflicting: unknown; preferredMappingId: string; conflictingMappingId: string }>;
@@ -570,5 +548,92 @@ export interface SemanticDataPreview {
     partial: boolean;
   }>;
   sourceIssues: SourcePreviewIssue[];
+  /** What the prepared records are missing; absent on records prepared before gaps were kept. */
+  gaps?: SemanticDataGaps;
   summary: { entities: number; resolvedRelations: number; unresolvedRelations: number; ambiguousRelations: number; conflicts: number };
 }
+
+export interface SemanticDataGaps {
+  missingValues: Array<{ conceptId: string; conceptLabel: string; attribute: string; attributeLabel: string; missing: number; total: number }>;
+  unresolvedLinks: Array<{ relationId: string; relationLabel: string; kind: string; count: number }>;
+  other: Array<{ conceptId: string | null; conceptLabel: string | null; kind: string; count: number }>;
+}
+
+export interface ValueCorrection {
+  sequence: number;
+  correctedBy: string;
+  correctedByYou: boolean;
+  originalValue: unknown;
+}
+
+export type RecordCorrectionAction = 'edit_entity' | 'remove_entity' | 'add_relationship' | 'remove_relationship';
+
+export interface RecordCorrectionInput {
+  action: RecordCorrectionAction;
+  targetIdentity: Record<string, string>;
+  payload?: { attribute: string; value: unknown };
+  reason?: string;
+}
+
+export interface RecordCorrection {
+  sequence: number;
+  action: RecordCorrectionAction | string;
+  targetIdentity: Record<string, unknown>;
+  payload: Record<string, unknown>;
+  reason: string;
+  createdAt: string | null;
+  correctedBy: string;
+  correctedByYou: boolean;
+}
+
+export interface RecordCorrectionResult {
+  sequence: number;
+  rebuild: { jobId: string; status: string } | null;
+}
+
+export type VersionChange =
+  | { kind: 'concept_added' | 'concept_removed'; concept: string }
+  | { kind: 'concept_renamed'; from: string; to: string }
+  | { kind: 'field_added' | 'field_removed'; concept: string; field: string }
+  | { kind: 'field_renamed'; concept: string; from: string; to: string }
+  | { kind: 'field_type_changed'; concept: string; field: string; from: string; to: string }
+  | { kind: 'field_required_changed'; concept: string; field: string; required: boolean }
+  | { kind: 'relation_added' | 'relation_removed'; relation: string; source: string; target: string }
+  | { kind: 'relation_renamed'; from: string; to: string; source: string; target: string }
+  | { kind: 'relation_cardinality_changed'; relation: string; source: string; target: string; from: string; to: string };
+
+export interface VersionComparison {
+  changes: VersionChange[];
+  /** Prepared records on each side, when known. */
+  records: { before: number | null; after: number | null; change: number | null };
+}
+
+export type ReviewQueueAction =
+  | { kind: 'choose_match'; reviewItemId: string; options: Array<{ value: string; label: string }>; select: 'target' | 'source' }
+  | { kind: 'repair_mapping'; mappingId: string }
+  | { kind: 'choose_unique_field'; conceptId: string }
+  | { kind: 'set_up_link'; relationId: string }
+  | { kind: 'fix_values'; conceptId: string };
+
+export interface ReviewQueueItem {
+  key: string;
+  group: 'decisions' | 'sources' | 'identity' | 'links' | 'data';
+  priority: 1 | 2 | 3;
+  kind: string;
+  params: Record<string, string | number>;
+  action: ReviewQueueAction;
+}
+
+export interface ReviewQueue {
+  count: number;
+  items: ReviewQueueItem[];
+}
+
+export interface PopulationFreshness {
+  /** current: built from the model as it is now; outdated: the design, a mapping or a source file changed since. */
+  state: 'current' | 'outdated' | 'never_run' | 'not_runnable';
+  reason?: string;
+}
+
+/** Where a source or typed-record box sits on the canvas. */
+export interface DesignerBoxPosition { id: string; x: number; y: number }

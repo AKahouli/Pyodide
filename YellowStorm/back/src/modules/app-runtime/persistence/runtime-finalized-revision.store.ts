@@ -1,7 +1,6 @@
 /**
  * Store port for app_runtime.finalized_revisions (P8 Mongo cutover).
  */
-export const RUNTIME_FINALIZED_REVISION_STORE = Symbol('RUNTIME_FINALIZED_REVISION_STORE');
 
 export interface FinalizedRevisionRecord {
   id: string;

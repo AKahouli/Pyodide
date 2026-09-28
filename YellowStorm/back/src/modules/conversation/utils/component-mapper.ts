@@ -1,5 +1,6 @@
 import { ComponentType } from '../interfaces/message.interface';
 import { normalizeChoiceComponentData } from './choice-component-normalizer';
+import { extractToolUiTargets } from './tool-ui-targets';
 
 const ONEOF_FIELD_TYPES: ReadonlyArray<{ field: string; type: ComponentType }> = [
   { field: 'text', type: 'text' },
@@ -369,6 +370,7 @@ export function extractComponentData(comp: any, agentId?: string): { type: Compo
     }
     case 'toolActivity': {
       const toolActivity = comp.tool_activity;
+      const uiTargets = extractToolUiTargets(toolActivity?.result_json);
       return {
         type,
         data: {
@@ -376,6 +378,7 @@ export function extractComponentData(comp: any, agentId?: string): { type: Compo
           status: toolActivity?.status || 'running',
           paramsJson: toolActivity?.params_json || '',
           ...(toolActivity?.result_json ? { resultJson: toolActivity.result_json } : {}),
+          ...(uiTargets.length ? { uiTargets } : {}),
           ...(toolActivity?.started_at ? { startedAt: toolActivity.started_at } : {}),
           ...(toolActivity?.completed_at ? { completedAt: toolActivity.completed_at } : {}),
           ...(toolActivity?.duration_ms !== undefined ? { durationMs: Number(toolActivity.duration_ms) } : {}),

@@ -9,7 +9,6 @@ services:
       - .env
     environment:
       RUN_CODE_RUNTIME_URL: http://yellowstorm-code-runtime:8080
-      RUN_CODE_RUNTIME_API_KEY: ${CODE_RUNTIME_API_KEY}
     depends_on:
       yellowstorm-code-runtime:
         condition: service_healthy
@@ -24,7 +23,7 @@ services:
     container_name: yellowstorm-code-runtime-dev
     restart: unless-stopped
     environment:
-      CODE_RUNTIME_API_KEY: ${CODE_RUNTIME_API_KEY}
+      CODE_RUNTIME_API_KEY: ${RUN_CODE_RUNTIME_API_KEY}
       CEPH_S3_ENDPOINT: ${CEPH_S3_ENDPOINT}
       CEPH_S3_REGION: ${CEPH_S3_REGION:-us-east-1}
       CEPH_S3_BUCKET: ${CEPH_S3_BUCKET}

@@ -531,3 +531,113 @@ ALTER TABLE semantic_model.models ADD CONSTRAINT semantic_models_execution_owner
 ALTER TABLE semantic_model.graph_index_jobs DROP CONSTRAINT IF EXISTS graph_index_jobs_status_check;
 ALTER TABLE semantic_model.graph_index_jobs ADD CONSTRAINT graph_index_jobs_status_check CHECK (status IN ('pending','in_progress','indexed','failed','superseded'));
 CREATE INDEX IF NOT EXISTS semantic_models_execution_owner_idx ON semantic_model.models (execution_owner, updated_at DESC);
+
+-- 016 - Every model runs on the semantic runtime (UX phase 1).
+-- Records made by the legacy pipeline stay on the draft and are sent to the
+-- runtime as a manual source on the next build; chat reads a model only
+-- once a version built by the runtime is published.
+UPDATE semantic_model.models
+  SET execution_owner = 'runtime', runtime_claimed_at = COALESCE(runtime_claimed_at, now()),
+      runtime_claimed_by = COALESCE(runtime_claimed_by, 'migration:016'), updated_at = now()
+  WHERE execution_owner = 'legacy';
+ALTER TABLE semantic_model.models ALTER COLUMN execution_owner SET DEFAULT 'runtime';
+
+-- One line: the migration runner splits statements on a semicolon at end of line.
+DO $$ BEGIN IF to_regclass('semantic_model.graph_index_jobs') IS NOT NULL THEN UPDATE semantic_model.graph_index_jobs SET status = 'superseded', completed_at = now(), last_error = 'Moved to the semantic runtime', updated_at = now() WHERE status IN ('pending', 'in_progress', 'failed'); END IF; END $$;
+
+-- 017 - Drop the legacy pipeline tables.
+-- Every model runs on the semantic runtime (016): the legacy LLM build
+-- (mapping_runs, build_runs) and the sem_<modelId> AGE graph indexing queue
+-- (graph_index_jobs) have no readers or writers left. Records and record
+-- relations stay: they are the manual source sent to the runtime.
+-- models.execution_owner is kept (always 'runtime', no longer read).
+DROP TABLE IF EXISTS semantic_model.graph_index_jobs;
+DROP TABLE IF EXISTS semantic_model.build_runs;
+DROP TABLE IF EXISTS semantic_model.mapping_runs;
+
+-- 018 - Drop the ontology artifacts table.
+-- Ontology generation (POST :id/ontology/generate) was the only writer and
+-- model cloning the only other reader; both are gone. The semantic runtime
+-- works from the population specification instead.
+DROP TABLE IF EXISTS semantic_model.ontology_artifacts;
+
+-- 019 - Where designer-only boxes sit on the model canvas.
+-- Concepts and records keep their position in the versioned graph. Source and
+-- typed-record boxes are derived from mappings and records, so their position
+-- is plain layout: one row per box, shared by everyone editing the model.
+CREATE TABLE IF NOT EXISTS semantic_model.canvas_positions (
+  model_id   UUID        NOT NULL REFERENCES semantic_model.models(id) ON DELETE CASCADE,
+  element_id TEXT        NOT NULL CHECK (char_length(element_id) BETWEEN 1 AND 300),
+  x          DOUBLE PRECISION NOT NULL,
+  y          DOUBLE PRECISION NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (model_id, element_id)
+);
+
+-- 020 - A mapping can cover a whole workspace, or one of its folders.
+-- The row's document_id holds a workspace key (workspace:<id>:<folder|all>);
+-- the files it covers are resolved each time data is generated, so files
+-- added later are included. source_label is the name shown for the source.
+ALTER TABLE semantic_model.source_mappings
+  ADD COLUMN IF NOT EXISTS scope TEXT NOT NULL DEFAULT 'document',
+  ADD COLUMN IF NOT EXISTS folder_id TEXT,
+  ADD COLUMN IF NOT EXISTS source_label TEXT;
+ALTER TABLE semantic_model.source_mappings
+  DROP CONSTRAINT IF EXISTS source_mappings_scope_check;
+ALTER TABLE semantic_model.source_mappings
+  ADD CONSTRAINT source_mappings_scope_check
+  CHECK (scope IN ('document', 'workspace') AND (scope = 'workspace' OR folder_id IS NULL));
+
+-- 021 - A workspace mapping can cover picked folders and files instead of the whole workspace.
+-- selection holds {"folderIds": [...], "documentIds": [...]}; NULL keeps the older meaning
+-- (the whole workspace, or the single folder in folder_id).
+ALTER TABLE semantic_model.source_mappings
+  ADD COLUMN IF NOT EXISTS selection JSONB;
+ALTER TABLE semantic_model.source_mappings
+  DROP CONSTRAINT IF EXISTS source_mappings_selection_check;
+ALTER TABLE semantic_model.source_mappings
+  ADD CONSTRAINT source_mappings_selection_check
+  CHECK (selection IS NULL OR (scope = 'workspace' AND jsonb_typeof(selection) = 'object'));
+
+-- 022 - Changes an assistant made to a model, so people can see and undo them.
+-- One row per assistant request: the graph operations that made it and those that
+-- undo it, the key fields before and after, and the sources it added or removed.
+CREATE TABLE IF NOT EXISTS semantic_model.assistant_change_sets (
+  id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  model_id         UUID        NOT NULL REFERENCES semantic_model.models(id) ON DELETE CASCADE,
+  version_id       UUID        NOT NULL,
+  actor_user_id    TEXT        NOT NULL,
+  agent_id         TEXT,
+  conversation_id  TEXT,
+  summary          JSONB       NOT NULL DEFAULT '{}'::jsonb,
+  graph_forward    JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  graph_undo       JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  identity_before  JSONB       NOT NULL DEFAULT '{}'::jsonb,
+  identity_after   JSONB       NOT NULL DEFAULT '{}'::jsonb,
+  sources_added    JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  sources_removed  JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  undone_at        TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS assistant_change_sets_model_idx
+  ON semantic_model.assistant_change_sets (model_id, created_at DESC);
+
+-- 023 - Sources an assistant suggests for a model's concepts. Nothing is connected until a
+-- person picks a suggestion (or other files) in the designer; a person can also skip one.
+-- One row per concept; the options hold the workspaces, folders and files as the assistant
+-- proposed them, with names and file counts read when the suggestion was made.
+CREATE TABLE IF NOT EXISTS semantic_model.assistant_source_suggestions (
+  id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  model_id         UUID        NOT NULL REFERENCES semantic_model.models(id) ON DELETE CASCADE,
+  concept_id       UUID        NOT NULL,
+  concept_key      TEXT        NOT NULL,
+  options          JSONB       NOT NULL DEFAULT '[]'::jsonb,
+  note             TEXT        NOT NULL DEFAULT '',
+  status           TEXT        NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'skipped')),
+  created_by       TEXT        NOT NULL,
+  agent_id         TEXT,
+  conversation_id  TEXT,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (model_id, concept_key)
+);

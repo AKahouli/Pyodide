@@ -1,12 +1,9 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Injectable,  Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'crypto';
 import { RuntimeBindingService } from '../../app-runtime/services/runtime-binding.service';
 import { RuntimeTokenService } from '../../app-runtime/services/runtime-token.service';
-import {
-  AI_PREVIEW_TICKET_STORE,
-  type AiPreviewTicketStore,
-} from '../persistence/ai-preview-ticket.store';
+import { PgAiPreviewTicketStore } from '../persistence/pg-ai-preview-ticket.store';
 
 export const AI_PREVIEW_TICKET_PREFIX = 'aiprev_';
 
@@ -39,8 +36,7 @@ export class AiPreviewTicketService {
   private readonly logger = new Logger(AiPreviewTicketService.name);
 
   constructor(
-    @Inject(AI_PREVIEW_TICKET_STORE)
-    private readonly store: AiPreviewTicketStore,
+    private readonly store: PgAiPreviewTicketStore,
     private readonly bindings: RuntimeBindingService,
     private readonly tokens: RuntimeTokenService,
     private readonly config: ConfigService,
