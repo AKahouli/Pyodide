@@ -9,6 +9,16 @@ COPY index.html ./
 COPY vite.config.ts ./
 COPY tsconfig.json tsconfig.node.json ./
 ENV NODE_OPTIONS=--max-old-space-size=8192
+# Build-time config: Vite inlines these into the bundle. The ARG defaults below mean a plain
+# `docker build` already produces a working image for this deployment, instead of shipping the
+# `MY_APP_VITE_API_URL` placeholder. Override for another environment with
+# `--build-arg VITE_API_URL=...`, or leave the container variable set at runtime (env.sh wins
+# only when the build-time value is absent, so a build arg pins the image to one environment).
+# This is the URL the *browser* must reach, including the /api/v1 prefix.
+ARG VITE_API_URL=https://poc.back.yellowmind.ai/api/v1
+ARG VITE_SOCKET_BASE_URL
+ENV VITE_API_URL=$VITE_API_URL
+ENV VITE_SOCKET_BASE_URL=$VITE_SOCKET_BASE_URL
 RUN npm run build
 
 FROM nginx:stable-alpine-slim
