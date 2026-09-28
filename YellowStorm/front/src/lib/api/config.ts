@@ -5,14 +5,61 @@
 const isDev = process.env.NODE_ENV === 'development';
 
 /**
- * Two ways to configure the public backend URL, in priority order:
- * 1. `VITE_API_URL` — inlined by Vite at build time (pass it as a Docker `--build-arg`).
- * 2. `MY_APP_VITE_API_URL` — literal placeholder that `env.sh` rewrites at container start,
- *    for deployments that inject config at runtime instead of build time.
+ * Literal placeholder that `env.sh` rewrites at container start. Declared once, as a plain
+ * literal, so the sed in env.sh finds exactly one occurrence in the built bundle.
  */
+const API_URL_INJECTED = 'MY_APP_VITE_API_URL';
+
+/**
+ * The same string, assembled at runtime so env.sh's sed cannot rewrite it. Comparing the
+ * two tells us whether the literal above reached the browser untouched.
+ */
+const API_URL_UNRESOLVED = 'MY_APP_' + 'VITE_API_URL';
+
+const LOOPBACK_BASE_URL = /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::|\/|$)/i;
+
+/**
+ * Resolve the public backend URL the browser must call.
+ *
+ * Runtime injection wins over the build-time value deliberately: once `VITE_API_URL` is
+ * inlined the placeholder is gone from the bundle, so a wrong build arg would otherwise be
+ * unrecoverable without rebuilding the image. Reading the injected value first lets a bad
+ * image be fixed by setting `MY_APP_VITE_API_URL` on the container and restarting it.
+ */
+export function resolveApiBaseUrl(
+  injected: string = API_URL_INJECTED,
+  buildTimeUrl: string | undefined = import.meta.env.VITE_API_URL,
+  dev: boolean = isDev,
+): string {
+  const injectedValue = injected.trim();
+  if (injectedValue !== API_URL_UNRESOLVED) {
+    return injectedValue;
+  }
+
+  const buildTimeValue = buildTimeUrl?.trim();
+  if (buildTimeValue) {
+    return buildTimeValue;
+  }
+
+  // Unconfigured production keeps the placeholder visible so the network tab names the
+  // missing container variable instead of showing a plausible-looking URL.
+  return dev ? 'http://localhost:3000/api/v1' : API_URL_UNRESOLVED;
+}
+
+const baseURL = resolveApiBaseUrl();
+
+if (import.meta.env.PROD && LOOPBACK_BASE_URL.test(baseURL)) {
+  // nginx serves index.html for unknown paths, so a wrong baseURL surfaces as an empty
+  // auth-provider list ("no authentication methods available") rather than as an error.
+  console.error(
+    `[api-config] Production bundle is calling a loopback API URL (${baseURL}); the browser `
+      + 'cannot reach the backend. Set MY_APP_VITE_API_URL on the container, or rebuild the '
+      + 'image with --build-arg VITE_API_URL=<public backend URL>.',
+  );
+}
+
 export const API_CONFIG = {
-  baseURL: import.meta.env.VITE_API_URL
-    || (isDev ? 'http://localhost:3000/api/v1' : 'MY_APP_VITE_API_URL'),
+  baseURL,
   timeout: 30000,
   withCredentials: true, // Required for HTTP-only cookies (refresh token)
 } as const;
