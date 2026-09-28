@@ -994,6 +994,10 @@ export class AgentService {
       iteration?: number;
     },
     compaction?: IGrpcCompaction,
+    options?: {
+      semanticSchemaName?: string;
+      webConnectorAccessEnabled?: boolean;
+    },
   ): Promise<IGrpcAgent[]> {
     if (agentIds.length === 0) return [];
 
@@ -1054,6 +1058,10 @@ export class AgentService {
       ...new Set(streamAgents.flatMap((agent) => agent.connectorIds || []).filter(Boolean) as string[]),
     ];
     const connectorsMap = await this.buildConnectorsMap(allConnectorIds);
+    if (options?.webConnectorAccessEnabled === false && allConnectorIds.length > 0) {
+      const blockedConnectorIds = await this.connectorService.findIdsByCategoryName(allConnectorIds, WEB_SEARCH_CATEGORY_NAME);
+      for (const connectorId of blockedConnectorIds) connectorsMap.delete(connectorId);
+    }
     const agentsWithConnectorSkills = streamAgents.map((agent) => ({
       ...agent,
       connectorSkillIds: this.getConnectorSkillIds(connectorsMap, agent.connectorIds || []),
@@ -1181,6 +1189,12 @@ export class AgentService {
                 classifier: { omitTemperature: guardrailsClassifierModel?.omitTemperature === true },
               }),
               guardrails_classifier_model: guardrailsClassifierModelId,
+              ...(options?.semanticSchemaName ? {
+                semantic_model_schema_name: options.semanticSchemaName,
+                semantic_search_url: `${this.configService.get<string>('SEMANTIC_SEARCH_URL', 'http://127.0.0.1:8100').replace(/\/$/, '')}/v1/graphs/search/fused`,
+                semantic_search_token: this.configService.get<string>('SEMANTIC_SEARCH_TOKEN', ''),
+                semantic_search_timeout_seconds: String(this.configService.get<number>('SEMANTIC_SEARCH_TIMEOUT_SECONDS', 300)),
+              } : {}),
               ...(sessionId ? { session_id: sessionId } : {}),
               platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
               platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),

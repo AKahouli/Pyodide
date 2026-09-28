@@ -154,6 +154,9 @@ def build_model_node(tools: list[Any]):
             "temperature": normalize_temperature_for_model(context.model_id, 0 if tools else 0.7),
             "max_tokens": 32000,
         }
+        reasoning_effort = context.agent_config.get("reasoning_effort") if isinstance(context.agent_config, dict) else None
+        if isinstance(reasoning_effort, str) and reasoning_effort:
+            kwargs["reasoning_effort"] = reasoning_effort
         if definitions:
             kwargs.update({"tools": definitions, "tool_choice": "auto", "parallel_tool_calls": False})
         output_guard_enabled = resolve_effective_guardrails(context.agent_config).prompt_injection.output_enabled

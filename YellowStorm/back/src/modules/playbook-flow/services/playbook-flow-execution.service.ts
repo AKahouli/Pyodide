@@ -4,6 +4,7 @@ import { Model } from 'mongoose';
 import { createHash } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { AgentService } from '@modules/agent/agent.service';
+import type { IGrpcCompaction } from '@modules/agent/interfaces/agent.interface';
 import {
   FlowExecution,
   FlowExecutionDocument,
@@ -99,6 +100,13 @@ export interface EvaluationQueryRunResult {
   judgeDurationMs?: number;         // durée de l'étape 2 (eval-judge)
   durationMs: number;               // somme des deux étapes
   error: string | null;
+}
+
+export interface EvaluationAgentContext {
+  /** Conversation-parity knobs forwarded to the agent builder for eval runs. */
+  semanticSchemaName?: string;
+  webConnectorAccessEnabled?: boolean;
+  compaction?: IGrpcCompaction;
 }
 
 export interface EvaluationTargetRunResult {
@@ -1895,6 +1903,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     ownerId: string;
     snapshot: Record<string, unknown>;
     inputContext: Record<string, unknown>;
+    agentContext?: EvaluationAgentContext;
     timeoutMs?: number;
   }): Promise<EvaluationTargetRunResult> {
     const request = await this.buildEvaluationGrpcRequest({
@@ -1923,6 +1932,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     inputContext: Record<string, unknown>;
     targetAnswer: string;
     retrievedContext: unknown[];
+    agentContext?: EvaluationAgentContext;
     timeoutMs?: number;
   }): Promise<EvaluationJudgeRunResult> {
     const request = await this.buildEvaluationGrpcRequest({
@@ -1957,6 +1967,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     inputContext: Record<string, unknown>;
     nodeIds: string[];
     extraInputContext?: Record<string, unknown>;
+    agentContext?: EvaluationAgentContext;
   }): Promise<Record<string, unknown>> {
     const { executionId, flowId, ownerId, snapshot, inputContext, nodeIds } = input;
     const normalizedOwnerId = String(ownerId);
@@ -1981,6 +1992,11 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         undefined,
         executionId,
         { userId: normalizedOwnerId, scopeType: 'playbook', scopeId: `playbook:${executionId}`, laneId: 'main' },
+        input.agentContext?.compaction,
+        {
+          semanticSchemaName: input.agentContext?.semanticSchemaName,
+          webConnectorAccessEnabled: input.agentContext?.webConnectorAccessEnabled,
+        },
       );
       for (const agent of resolved) {
         agentMap.set(agent.id, {
@@ -1995,6 +2011,13 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           connector_bindings: agent.connector_bindings || [],
           connector_ids: agent.connectorIds || [],
           brain_context: agent.brain_context || [],
+          // Conversation-parity model knobs: reasoning effort and context window
+          // are resolved by the agent builder but were dropped here, so the flow
+          // runtime always ran the default effort. Carry them through.
+          agent_reasoning_effort: agent.chatbot?.reasoning_effort,
+          agent_input_modalities: agent.chatbot?.input_modalities,
+          agent_context_window_tokens: agent.chatbot?.context_window_tokens,
+          agent_compaction: agent.chatbot?.compaction,
         });
       }
     }
