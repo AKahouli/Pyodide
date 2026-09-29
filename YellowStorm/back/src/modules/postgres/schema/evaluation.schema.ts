@@ -40,6 +40,8 @@ export const evaluationRuns = evaluationSchema.table(
     modelId: varchar('model_id', { length: 128 }),
     answerNodeId: varchar('answer_node_id', { length: 64 }),
     summary: jsonb('summary'),
+    // LLM-generated narrative report (structured sections), overwritten on regenerate.
+    narrative: jsonb('narrative'),
     error: text('error'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

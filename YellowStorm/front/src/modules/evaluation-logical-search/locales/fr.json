@@ -126,6 +126,25 @@
       "retrievedFiles": "Fichiers récupérés",
       "judgeReasoning": "Raisonnement du juge",
       "error": "Erreur"
+    },
+    "narrative": {
+      "title": "Analyse",
+      "help": "Rédigée par un agent interpréteur à partir des métriques calculées ci-dessus.",
+      "agent": "Agent interpréteur",
+      "agentPlaceholder": "Sélectionner un agent interpréteur…",
+      "generate": "Générer l'analyse",
+      "regenerate": "Régénérer l'analyse",
+      "generating": "Génération…",
+      "loading": "Chargement de l'analyse…",
+      "empty": "Aucune analyse pour le moment. Générez-la pour obtenir une synthèse rédigée.",
+      "unavailable": "L'analyse est disponible une fois l'évaluation terminée.",
+      "overview": "Vue d'ensemble",
+      "performance": "Qualité des réponses",
+      "retrieval": "Recherche documentaire",
+      "tokens": "Consommation de tokens",
+      "strengths": "Points forts",
+      "improvements": "Axes d'amélioration",
+      "caveats": "Réserves"
     }
   }
 }

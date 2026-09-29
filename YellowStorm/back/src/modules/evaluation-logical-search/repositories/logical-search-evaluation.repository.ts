@@ -134,8 +134,7 @@ export class LogicalSearchEvaluationRepository {
     return row ?? null;
   }
 
-  async applyRunComplete(id: string, input: { summary: unknown; error?: string | null }) {
-    const [row] = await this.db
+  async applyRunComplete(id: string, input: { summary: unknown; error?: string | null }) {    const [row] = await this.db
       .update(evaluationRuns)
       .set({
         status: input.error ? 'failed' : 'completed',
@@ -143,6 +142,15 @@ export class LogicalSearchEvaluationRepository {
         error: input.error ?? null,
         updatedAt: new Date(),
       })
+      .where(eq(evaluationRuns.id, id))
+      .returning();
+    return row ?? null;
+  }
+
+  async applyNarrative(id: string, narrative: unknown) {
+    const [row] = await this.db
+      .update(evaluationRuns)
+      .set({ narrative, updatedAt: new Date() })
       .where(eq(evaluationRuns.id, id))
       .returning();
     return row ?? null;

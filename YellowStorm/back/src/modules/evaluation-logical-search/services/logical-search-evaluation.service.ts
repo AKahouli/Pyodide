@@ -26,6 +26,11 @@ import {
   buildExportFilename,
   truncateExportRow,
 } from './evaluation-export.util';
+import {
+  buildReportModel,
+  parseNarrativeSections,
+  EvaluationNarrative,
+} from './evaluation-report';
 
 const ALLOWED_EXTENSIONS = ['.xlsx', '.csv'];
 const ORPHAN_RUN_MAX_AGE_MS = 15 * 60 * 1000;
@@ -766,6 +771,85 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       summary = null;
     }
     return { evaluationId, status: evaluation.status, queryCount: results.length, summary, results };
+  }
+
+  async getReport(ownerId: string, evaluationId: string) {
+    const evaluation = await this.getById(ownerId, evaluationId);
+    return {
+      report: (evaluation.narrative as EvaluationNarrative | null) ?? null,
+      defaultAgentId: this.config.get<string>('EVALUATION_INTERPRETER_AGENT_ID') ?? null,
+    };
+  }
+
+  /**
+   * Generate (or regenerate) the narrative report by running the interpreter
+   * agent on the deterministic report model. Overwrites the previous report.
+   */
+  async generateReport(
+    ownerId: string,
+    evaluationId: string,
+    input: { agentId: string; locale?: string },
+  ) {
+    const agentId = input.agentId?.trim() ?? '';
+    if (!agentId) {
+      throw new BadRequestException('agentId is required.');
+    }
+    const accessible = await this.agentService.findByIds([agentId], ownerId);
+    if (accessible.length === 0) {
+      throw new BadRequestException('Interpreter agent not found or not accessible.');
+    }
+
+    const runDir = join(process.cwd(), 'uploads', 'eval', evaluationId);
+    let results: EvaluationQueryResult[] = [];
+    let summary: EvaluationRunSummary;
+    try {
+      const parsed = await readJson<EvaluationQueryResult[]>(join(runDir, 'results.json'));
+      results = Array.isArray(parsed) ? parsed : [];
+      summary = await readJson<EvaluationRunSummary>(join(runDir, 'summary.json'));
+    } catch {
+      throw new BadRequestException('No run output yet; run the evaluation first.');
+    }
+    if (results.length === 0) {
+      throw new BadRequestException('No run output yet; run the evaluation first.');
+    }
+
+    const locale = input.locale === 'fr' ? 'fr' : 'en';
+    const payload = JSON.stringify({ locale, report: buildReportModel(results, summary) });
+    // Reuse the eval-target plumbing: a single synthetic node whose assigned
+    // agent is the interpreter, receiving the report model as its question.
+    const snapshot = {
+      nodes: [
+        {
+          id: 'eval-target',
+          kind: 'step',
+          label: 'Evaluation Interpreter',
+          metadata: { assignedAgentId: agentId, description: payload },
+        },
+      ],
+      controlEdges: [],
+      settings: { recursionLimit: 25, maxParallelism: 5 },
+    };
+
+    const run = await this.executionService.runEvaluationTarget({
+      executionId: `eval-${evaluationId}-interpreter`,
+      flowId: `eval-flow-${evaluationId}`,
+      ownerId,
+      snapshot,
+      inputContext: { query: payload },
+    });
+    const text = run.targetAnswer?.trim() ?? '';
+    if (run.status !== 'completed' || !text) {
+      throw new BadRequestException(run.error || 'Interpreter agent did not return a report.');
+    }
+
+    const narrative: EvaluationNarrative = {
+      generatedAt: new Date().toISOString(),
+      agentId,
+      interpreterTokens: run.tokenUsage ?? null,
+      sections: parseNarrativeSections(text),
+    };
+    await this.repository.applyNarrative(evaluationId, narrative);
+    return { report: narrative, defaultAgentId: agentId };
   }
 
   async exportArchive(

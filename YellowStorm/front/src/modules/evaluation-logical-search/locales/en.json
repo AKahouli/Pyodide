@@ -126,6 +126,25 @@
       "retrievedFiles": "Retrieved files",
       "judgeReasoning": "Judge reasoning",
       "error": "Error"
+    },
+    "narrative": {
+      "title": "Analysis",
+      "help": "Written by an interpreter agent from the computed metrics above.",
+      "agent": "Interpreter agent",
+      "agentPlaceholder": "Select an interpreter agent…",
+      "generate": "Generate analysis",
+      "regenerate": "Regenerate analysis",
+      "generating": "Generating…",
+      "loading": "Loading analysis…",
+      "empty": "No analysis yet. Generate it to get a written summary.",
+      "unavailable": "The analysis is available once the evaluation is completed.",
+      "overview": "Overview",
+      "performance": "Answer quality",
+      "retrieval": "Retrieval",
+      "tokens": "Token usage",
+      "strengths": "Strengths",
+      "improvements": "Improvements",
+      "caveats": "Caveats"
     }
   }
 }

@@ -2,9 +2,12 @@ import { Fragment, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useModuleTranslation } from '@/modules/localization';
+import { EvaluationNarrativePanel } from './EvaluationNarrativePanel';
 import type { EvaluationQueryResult, EvaluationResultsResponse } from '../types';
 
 interface Props {
+  evaluationId: string;
+  status: string;
   evaluationName: string;
   data: EvaluationResultsResponse | null;
   loading: boolean;
@@ -36,7 +39,7 @@ function Kpi({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function EvaluationResultsPanel({ evaluationName, data, loading, error, onClose }: Props): JSX.Element {
+export function EvaluationResultsPanel({ evaluationId, status, evaluationName, data, loading, error, onClose }: Props): JSX.Element {
   const { t } = useModuleTranslation('evaluation-logical-search');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -167,6 +170,8 @@ export function EvaluationResultsPanel({ evaluationName, data, loading, error, o
             </table>
           </div>
         )}
+
+        <EvaluationNarrativePanel evaluationId={evaluationId} status={status} />
       </CardContent>
     </Card>
   );

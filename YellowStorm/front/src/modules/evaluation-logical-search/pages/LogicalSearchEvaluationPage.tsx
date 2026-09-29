@@ -335,6 +335,11 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   const activeHistoryPage = Math.min(historyPage, historyPageCount);
   const visibleEvaluations = runs;
 
+  const openResultsEval = useMemo(
+    () => (openResultsId ? [...benchmarks, ...runs].find((e) => e.id === openResultsId) ?? null : null),
+    [benchmarks, runs, openResultsId],
+  );
+
   useEffect(() => { setSelectedQueryIds([]); }, [selectedEvalId]);
 
   return (
@@ -645,7 +650,9 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
 
       {openResultsId && (
         <EvaluationResultsPanel
-          evaluationName={[...benchmarks, ...runs].find((e) => e.id === openResultsId)?.name ?? ''}
+          evaluationId={openResultsId}
+          status={openResultsEval?.status ?? 'completed'}
+          evaluationName={openResultsEval?.name ?? ''}
           data={resultsData}
           loading={resultsLoading}
           error={resultsError}

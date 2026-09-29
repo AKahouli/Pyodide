@@ -112,6 +112,26 @@ export class LogicalSearchEvaluationController {
     return this.service.getResults(user._id.toString(), id);
   }
 
+  @Get(':id/report')
+  @ApiOperation({ summary: 'Get the stored narrative report and the default interpreter agent id' })
+  async report(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.service.getReport(user._id.toString(), id);
+  }
+
+  @Post(':id/report')
+  @ApiOperation({ summary: 'Generate (or regenerate) the narrative report with an interpreter agent' })
+  async generateReport(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: { agentId: string; locale?: string },
+  ) {
+    if (!body?.agentId) {
+      throw new BadRequestException('agentId is required.');
+    }
+    return this.service.generateReport(user._id.toString(), id, body);
+  }
+
+
   @Get(':id/export')
   @ApiOperation({ summary: 'Download the evaluation results as a ZIP (XLSX + raw execution logs JSON)' })
   async export(
