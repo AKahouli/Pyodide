@@ -291,13 +291,21 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         token = active_turn_id.set(run_id)
         try:
             planner = _agent_by_type(request.agents, PLANNER_AGENT_TYPE)
+            executor = _agent_by_type(request.agents, EXECUTOR_AGENT_TYPE)
+            requester = _requester(request)
+            # connectors/executor_prompt/model are used ONLY by the LangGraph engine
+            # (to drive amend-added steps itself); the ADK engine ignores them (its
+            # running drive loop already carries them).
             plan = await self._svc.converse_turn(
                 session_id=request.session_id, user_id=request.user_id,
                 message=request.message,
                 planner_model=planner.chatbot.model if planner else None,
                 planner_prompt=planner.prompt if planner else None,
                 planner_connectors=_agent_connector_bindings(planner),
-                requester=_requester(request))
+                requester=requester,
+                connectors=_agent_connector_bindings(executor),
+                executor_prompt=_with_requester(executor.prompt if executor else None, requester),
+                model=executor.chatbot.model if executor and executor.chatbot else None)
             logger.info("[worky] converse turn done (session=%s run=%s)",
                         request.session_id, run_id)
             # An amend that adds work to a PARKED plan promised "runs on resume",

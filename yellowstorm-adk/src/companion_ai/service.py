@@ -78,6 +78,8 @@ class _PlannerOp(BaseModel):
     op: str
     step_id: str
     description: str = ""
+    new: str = ""                                         # insert_before: the new gate step's id
+    depends_on: List[str] = Field(default_factory=list)   # reparent: the step's new dependencies
 
 
 class _PlannerOutput(BaseModel):
@@ -1463,7 +1465,13 @@ class OrchestratorService:
                             planner_model: Optional[str] = None,
                             planner_prompt: Optional[str] = None,
                             planner_connectors: Optional[List[dict]] = None,
-                            requester: Optional[dict] = None) -> Plan:
+                            requester: Optional[dict] = None,
+                            # Accepted for signature parity with the LangGraph engine
+                            # (LgService.converse_turn drives amend-added steps itself);
+                            # the ADK drive loop already carries these, so unused here.
+                            connectors: Optional[List[dict]] = None,
+                            executor_prompt: Optional[str] = None,
+                            model: Optional[str] = None) -> Plan:
         """A message that arrives WHILE a plan is executing.
 
         This is deliberately NOT the old supersede (cancel the running turn and
@@ -1581,33 +1589,46 @@ class OrchestratorService:
         lines = []
         for s in live.steps:
             label = s.title or (s.description[:60] if s.description else s.id)
-            lines.append(f"[{s.id}] {label} ({s.status.value})")
+            deps = ", ".join(s.depends_on) if s.depends_on else "—"
+            lines.append(f"[{s.id}] {label}  (status={s.status.value}; kind={s.kind}; "
+                         f"after=[{deps}])")
             if s.result:
                 lines.append(f"    result: {s.result}")
         context = "\n".join(lines)
         return (
-            "You are AMENDING a plan that is ALREADY RUNNING for the user. The "
-            "steps below already exist and their results (where produced) are "
-            "shown — they are DONE. Do NOT recreate or restate them.\n\n"
+            "You are AMENDING a plan that is ALREADY RUNNING for the user. Below is "
+            "the FULL current plan — every step with its status, kind, and its "
+            "dependencies, where after=[...] lists the step ids it runs AFTER. Steps "
+            "that show a result are DONE; never recreate or restate them.\n\n"
             f"--- running plan ---\n{context}\n--- end plan ---\n\n"
-            "The user now says the following. Usually you ADD work: return the "
-            "NEW step(s) needed for it as a normal plan. Where a new step needs an "
-            "existing result, paste that result directly into the step's "
-            "description (do not refer to it as 'the summary' — the executor can't "
-            "see other steps).\n\n"
-            "But if the user instead wants to CHANGE a step that is still "
-            "'pending' above, don't add a step — return an `ops` entry keyed by "
-            "that step's [id]:\n"
-            "  - to drop it:   {\"op\": \"cancel\", \"step_id\": \"<id>\"}\n"
-            "  - to reword it: {\"op\": \"modify\", \"step_id\": \"<id>\", "
-            "\"description\": \"<the step's full new instruction>\"}\n"
-            "Only a 'pending' step can be changed — a 'running' or 'completed' one "
-            "has already started, so amend it by adding a follow-up step instead. "
-            "You may combine `ops` and new `steps` in one response.\n\n"
-            "Give a short, friendly `answer`.\n\n"
+            "READ the structure above and decide WHERE the user's change belongs in "
+            "it, then return only the delta (new `steps` and/or `ops`). Placement:\n"
+            "- ADD work: return the new step(s). To run a new step AFTER an existing "
+            "one, set its \"depends_on\" to that step's [id]. If a new step needs an "
+            "existing result, paste that result into its description (the executor "
+            "can't see other steps).\n"
+            "- Run a new step BEFORE an existing PENDING step — i.e. gate/precede it "
+            "('ask me before X', 'check before the update', 'validate before sending', "
+            "'... avant X') — put the new step in `steps` AND add {\"op\": "
+            "\"insert_before\", \"step_id\": \"<the existing step's id>\", \"new\": "
+            "\"<the new step's id>\"}. The existing step will then wait for your new "
+            "step, and the new step automatically inherits that step's current "
+            "after=[...] (so any gate already before it stays intact). This is the "
+            "ONLY correct way to insert before a step — do NOT just add a standalone "
+            "step (it would run in parallel, not before), and do NOT cancel+recreate "
+            "it (that drops its dependencies).\n"
+            "- CHANGE a pending step in place: {\"op\": \"cancel\", \"step_id\": "
+            "\"<id>\"} to drop it; {\"op\": \"modify\", \"step_id\": \"<id>\", "
+            "\"description\": \"<new full instruction>\"} to reword it; {\"op\": "
+            "\"reparent\", \"step_id\": \"<id>\", \"depends_on\": [\"<ids>\"]} to "
+            "change what it waits on.\n"
+            "Only a PENDING step can be changed or gated — a running/completed one has "
+            "already started, so amend it by adding a follow-up step instead. Combine "
+            "`ops` and new `steps` freely. Give a short, friendly `answer`.\n\n"
             f"USER MESSAGE: {message}")
 
-    async def _inject_steps(self, session_id: str, user_id: str, live: Plan, new_steps: List[Step]) -> int:
+    async def _inject_steps(self, session_id: str, user_id: str, live: Plan, new_steps: List[Step],
+                            id_map_out: Optional[dict] = None) -> int:
         """Append planner-produced steps to a LIVE, executing plan.
 
         The drive loop (_drive_until_quiescent) rebuilds the workflow each pass
@@ -1642,6 +1663,8 @@ class OrchestratorService:
                            if s.status in (Status.COMPLETED, Status.RUNNING)
                            and not any(s.id in o.depends_on for o in live.steps)]
         id_map = {s.id: uuid.uuid4().hex[:12] for s in new_steps}
+        if id_map_out is not None:            # let converse resolve new ids for its ops
+            id_map_out.update(id_map)
         for s in new_steps:
             s.id = id_map[s.id]
             # Keep in-batch deps (remapped) AND planner-named live-plan deps; only
@@ -1668,7 +1691,8 @@ class OrchestratorService:
                     len(new_steps), session_id, [s.id for s in new_steps])
         return len(new_steps)
 
-    async def _apply_ops(self, session_id: str, live: Plan, ops: List[dict]) -> List[str]:
+    async def _apply_ops(self, session_id: str, live: Plan, ops: List[dict],
+                         id_map: Optional[dict] = None) -> List[str]:
         """Apply converse cancel/modify ops to a LIVE plan — PENDING steps only.
 
         This is the whole "safe subset" of amending a running plan: it never
@@ -1705,6 +1729,32 @@ class OrchestratorService:
                 # Only the description changed; upsert_steps DOES update that.
                 await self._project_step(session_id, live, step)
                 notes.append(f"updated '{label}'")
+            elif kind == "insert_before":
+                # Blocking insert (mirrors the executor's _spawn_ops): put a NEW
+                # step before this pending one — the gate inherits THIS step's
+                # current deps, and this step now waits on the gate. Preserves the
+                # existing chain (e.g. an approval gate stays), unlike cancel+recreate.
+                imap = id_map or {}
+                gate_id = imap.get(op.get("new", ""), op.get("new", ""))
+                gate = live.step(gate_id)
+                if gate is None:
+                    notes.append(f"couldn't gate '{label}' — new step not found")
+                    continue
+                gate.depends_on = list(step.depends_on)
+                step.depends_on = [gate_id]
+                await self._project_step(session_id, live, gate)
+                await self._project_step(session_id, live, step)
+                notes.append(f"inserted '{gate.title or gate.id}' before '{label}'")
+            elif kind == "reparent":
+                imap = id_map or {}
+                new_deps = []
+                for d in (op.get("depends_on") or []):
+                    rd = imap.get(d, d)
+                    if rd != step.id and live.step(rd) is not None:
+                        new_deps.append(rd)
+                step.depends_on = new_deps
+                await self._project_step(session_id, live, step)
+                notes.append(f"re-pointed '{label}'")
             else:
                 continue
             logger.info("[worky] converse op=%s step=%s session=%s", kind, step.id, session_id)
