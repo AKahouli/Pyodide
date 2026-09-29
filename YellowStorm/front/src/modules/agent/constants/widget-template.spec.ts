@@ -37,10 +37,11 @@ describe('buildWidgetRuntimeSource', () => {
     expect(source).not.toContain('<script>');
   });
 
-  it('defaults to the frontend production API placeholder for env.sh injection', () => {
+  it('defaults to runtime /config.js resolution when no API base is baked', () => {
     const source = buildWidgetRuntimeSource();
-    expect(source).toContain('__ysResolveApiBase("MY_APP_VITE_API_URL")');
+    expect(source).toContain('window.__APP_CONFIG__');
     expect(source).toContain('function __ysResolveApiBase');
+    expect(source).toContain('__ysResolveApiBase("")');
     expect(source).not.toContain('__ysResolveApiBase("http://localhost:3000/api/v1")');
   });
 });
