@@ -75,8 +75,17 @@ export const semanticModelApi = {
     return unwrap(await apiClient.get<ApiResponse<Array<{ workspaceId: string; role: 'origin' | 'connected'; enabled: boolean }>>>(API_ENDPOINTS.semanticModels.workspaces(id)));
   },
   async connectWorkspace(id: string, workspaceId: string, addToDocumentsFallback: boolean): Promise<void> {
-    const model = await semanticModelApi.get(id);
-    await apiClient.post(API_ENDPOINTS.semanticModels.workspaces(id), { workspaceId, addToDocumentsFallback, expectedRevision: model.revision });
+    // The model can change between reading its revision and linking: read it again and retry once.
+    for (let attempt = 0; ; attempt += 1) {
+      const model = await semanticModelApi.get(id);
+      try {
+        await apiClient.post(API_ENDPOINTS.semanticModels.workspaces(id), { workspaceId, addToDocumentsFallback, expectedRevision: model.revision });
+        return;
+      } catch (error) {
+        const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined;
+        if (code !== 'ERR_3703' || attempt > 0) throw error;
+      }
+    }
   },
   async disconnectWorkspace(id: string, workspaceId: string): Promise<void> { const model = await semanticModelApi.get(id); await apiClient.delete(API_ENDPOINTS.semanticModels.workspace(id, workspaceId), { data: { expectedRevision: model.revision } }); },
   async versions(id: string): Promise<SemanticVersion[]> {
