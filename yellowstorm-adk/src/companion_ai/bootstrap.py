@@ -27,6 +27,7 @@ class OrchestratorRuntime:
         self._s = settings or get_orchestrator_settings()
         self._pool: Optional[asyncpg.Pool] = None
         self._session_service: Optional[DatabaseSessionService] = None
+        self._checkpointer_cm = None  # AsyncPostgresSaver context manager (langgraph)
         self._poller: Optional[MCPTaskPoller] = None
         self._mail_sweep: Optional[asyncio.Task] = None
         self.servicer: Optional[CompanionAiServicer] = None
@@ -65,6 +66,21 @@ class OrchestratorRuntime:
             max_concurrency=s.ORCHESTRATOR_MAX_CONCURRENCY,
             pool=self._pool, schema=schema,
             mail_wait_timeout_hours=s.MAIL_WAIT_TIMEOUT_HOURS)
+
+        # LangGraph engine (opt-in): reuse the ADK service for planning/projection,
+        # execute/resume on a StateGraph checkpointed to Postgres. The saver owns
+        # its own psycopg pool + tables; created here and closed in stop().
+        if s.ORCHESTRATOR_ENGINE.lower() == "langgraph":
+            from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+            from src.companion_ai.lg.service import LgService
+            self._checkpointer_cm = AsyncPostgresSaver.from_conn_string(s.readmodel_dsn())
+            checkpointer = await self._checkpointer_cm.__aenter__()
+            await checkpointer.setup()
+            service = LgService(service, rm, checkpointer)
+            logger.info("[orchestrator] engine=langgraph (checkpointer=AsyncPostgresSaver)")
+        else:
+            logger.info("[orchestrator] engine=adk")
+
         self.servicer = CompanionAiServicer(service, rm)
 
         # Nothing else notices a reply that never comes: the step is parked on an
@@ -132,6 +148,13 @@ class OrchestratorRuntime:
             except BaseException as error:
                 self._poller = poller
                 cleanup_error = error
+        if getattr(self, "_checkpointer_cm", None):
+            cm, self._checkpointer_cm = self._checkpointer_cm, None
+            try:
+                await cm.__aexit__(None, None, None)
+            except BaseException as error:
+                self._checkpointer_cm = cm
+                cleanup_error = cleanup_error or error
         if self._session_service:
             session_service, self._session_service = self._session_service, None
             try:
