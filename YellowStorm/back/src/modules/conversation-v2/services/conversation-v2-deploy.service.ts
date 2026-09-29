@@ -4,9 +4,14 @@ import { ConfigService } from '@nestjs/config';
 import { AppDataDeploymentService } from '@modules/app-data/services/app-data-deployment.service';
 import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
 import {
-  AppDataErrorCode,
-  AppDataException,
-} from '@modules/app-data/constants/app-data.errors';
+  PlatformBaselineService,
+  type BaselineFile,
+} from '@modules/app-runtime/platform-kit/platform-baseline.service';
+import { checkAiUsage } from '@modules/app-runtime/platform-kit/platform-conformance';
+import {
+  detectRevisionUsesAi,
+  isScannableAppSourcePath,
+} from '../utils/conversation-v2-revision-ai-usage';
 
 const DEFAULT_DEPLOY_BASE_URL = 'https://app-deployer.yellowsys.org/';
 
@@ -64,55 +69,59 @@ export class ConversationV2DeployService {
   constructor(
     private readonly config: ConfigService,
     private readonly revisions: RuntimeRevisionService,
+    private readonly baseline: PlatformBaselineService,
     @Optional() private readonly appDataDeployment?: AppDataDeploymentService,
   ) {}
 
-  async deploy(aiSessionId: string, revisionId: string): Promise<DeployResponse> {
+  async deploy(
+    aiSessionId: string,
+    revisionId: string,
+    ownerUserId?: string,
+  ): Promise<DeployResponse> {
     const productionEnv: Record<string, string> = {
       VITE_APP_BASE: this.resolveDeployAppBasePath(aiSessionId),
     };
 
+    // Re-verify the platform baseline the workspace was seeded with. Missing
+    // files are re-added deterministically; a platform file the agent rewrote
+    // into something that cannot run in production is refused.
+    const baselinePlan = await this.baseline.planBaseline({
+      workspaceId: aiSessionId,
+      revisionId,
+      mode: 'deploy',
+    });
+    if (baselinePlan.violations.length) {
+      throw new ServiceUnavailableException(
+        `This app does not meet the YellowStorm platform contract. ${baselinePlan.violations.join(
+          ' ',
+        )} Fix it in OpenCode, finalize again, then deploy.`,
+      );
+    }
+
+    const usesAi = await detectRevisionUsesAi(this.revisions, aiSessionId, revisionId);
     const backendUrl = this.resolveDeployBackendUrl();
-    if (backendUrl) {
+    if (backendUrl && usesAi) {
       productionEnv.VITE_YM_API_BASE_URL = `${backendUrl}/api/v1`;
     }
 
     if (this.config.get<boolean>('appData.enabled', false) && this.appDataDeployment) {
-      try {
-        const env = await this.appDataDeployment.prepareProduction(aiSessionId, revisionId);
-        Object.assign(productionEnv, {
-          VITE_YM_APP_DATA_URL: env.publicUrl,
-          VITE_YM_APP_DATA_ID: env.appDataId,
-          VITE_YM_APP_DATA_ENV: env.environment,
-        });
-        this.logger.log(
-          `App Data PROD env prepared for session=${aiSessionId}: URL=${env.publicUrl} appDataId=${env.appDataId}`,
-        );
-      } catch (err) {
-        if (
-          err instanceof AppDataException &&
-          err.appDataCode === AppDataErrorCode.NOT_PROVISIONED
-        ) {
-          this.logger.warn(
-            `App Data NOT_PROVISIONED for session=${aiSessionId} rev=${revisionId} — deploying without App Data env vars`,
-          );
-        } else if (await this.appDataDeployment.getRuntimeEnvForWorkspace(aiSessionId, 'dev')) {
-          throw err;
-        } else {
-          this.logger.warn(
-            `App Data prepareProduction failed for session=${aiSessionId} — deploying without App Data env vars: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        }
-      }
+      await this.mergeAppDataProductionEnv(aiSessionId, revisionId, ownerUserId, productionEnv);
+    }
+    if (usesAi) {
+      this.logger.log(
+        `Deploy revision ${revisionId} uses Conversation V2 AI proxy (session=${aiSessionId})`,
+      );
     }
 
     let deployRevisionId = revisionId;
-    await this.assertRevisionSupportsSubpath(aiSessionId, revisionId);
-    await this.assertRevisionSupportsAuth(aiSessionId, revisionId, productionEnv);
+    await this.assertProductionEnv(aiSessionId, revisionId, productionEnv, usesAi);
     try {
-      deployRevisionId = await this.injectEnvProduction(aiSessionId, revisionId, productionEnv);
+      deployRevisionId = await this.injectEnvProduction(
+        aiSessionId,
+        revisionId,
+        productionEnv,
+        baselinePlan.files,
+      );
     } catch (err) {
       this.logger.error(
         `Failed to inject .env.production into revision ${revisionId}: ${
@@ -354,6 +363,7 @@ export class ConversationV2DeployService {
     workspaceId: string,
     baseRevisionId: string,
     env: Record<string, string>,
+    baselineFiles: BaselineFile[],
   ): Promise<string> {
     const lines = Object.entries(env)
       .map(([k, v]) => `${k}=${quoteDotenvValue(v)}`)
@@ -365,110 +375,107 @@ export class ConversationV2DeployService {
       workspaceId,
       baseRevisionId,
       newRevisionId: patchedRevisionId,
-      additionalFiles: [{ path: '.env.production', content: lines + '\n' }],
+      additionalFiles: [
+        ...baselineFiles,
+        { path: '.env.production', content: lines + '\n' },
+      ],
     });
 
     this.logger.log(
-      `Injected .env.production into patched revision ${patchedRevisionId} (base ${baseRevisionId})`,
+      `Injected .env.production into patched revision ${patchedRevisionId} (base ${baseRevisionId}) ` +
+        `with ${baselineFiles.length} restored platform file(s)`,
     );
     return patchedRevisionId;
   }
 
-  private async assertRevisionSupportsSubpath(
-    workspaceId: string,
+  /**
+   * Deployed apps always enforce App Data auth, so App Data is provisioned
+   * systematically — there is no "app without auth" path.
+   */
+  private async mergeAppDataProductionEnv(
+    aiSessionId: string,
     revisionId: string,
+    ownerUserId: string | undefined,
+    productionEnv: Record<string, string>,
   ): Promise<void> {
-    const revision = await this.revisions.getAuthorizedRevision(workspaceId, revisionId);
-    const baseHelper = revision.files.find(
-      (file) => /^(.+\/)?app-base\.(js|ts)$/.test(file.path),
-    );
-    const viteConfig = revision.files.find(
-      (file) => /^(.+\/)?vite\.config\.(js|ts|mjs|mts|cjs|cts)$/.test(file.path),
-    );
-    const routerEntries = revision.files.filter(
-      (file) => /^src\/(main|AppRouter)\.(js|jsx|ts|tsx)$/.test(file.path),
-    );
-    if (!baseHelper || !viteConfig || routerEntries.length === 0) {
-      throw new ServiceUnavailableException(
-        'This template is missing deployment base-path support. Configure Vite with base: process.env.VITE_APP_BASE || \'/\', add src/lib/app-base.js or .ts, and pass resolveRouterBasename() to BrowserRouter. Do not bypass this check with an unused stub; apply the helper to the app router, then deploy again.',
-      );
+    if (ownerUserId) {
+      try {
+        await this.appDataDeployment!.ensureDevProvisioned(aiSessionId, ownerUserId);
+      } catch (err) {
+        this.logger.error(
+          `App Data DEV ensure failed for session=${aiSessionId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        throw new ServiceUnavailableException(
+          'App Data could not be provisioned for this workspace. Check App Data service connectivity, then deploy again.',
+        );
+      }
     }
 
-    const [helperSource, viteSource, ...routerSources] = await Promise.all([
-      this.revisions.readRevisionFileText(workspaceId, revisionId, baseHelper.path),
-      this.revisions.readRevisionFileText(workspaceId, revisionId, viteConfig.path),
-      ...routerEntries.map((file) =>
-        this.revisions.readRevisionFileText(workspaceId, revisionId, file.path),
-      ),
-    ]);
-    const helperExportsBasename = helperSource?.includes('resolveRouterBasename') ?? false;
-    const viteUsesDeployBase = /base\s*:\s*process\.env\.VITE_APP_BASE\s*\|\|/.test(
-      viteSource ?? '',
-    );
-    const routerUsesBasename = routerSources.some(
-      (source) => source?.includes('BrowserRouter') && source.includes('resolveRouterBasename'),
-    );
-    if (!helperExportsBasename || !viteUsesDeployBase || !routerUsesBasename) {
+    try {
+      const env = await this.appDataDeployment!.prepareProduction(aiSessionId, revisionId);
+      Object.assign(productionEnv, {
+        VITE_YM_APP_DATA_URL: env.publicUrl,
+        VITE_YM_APP_DATA_ID: env.appDataId,
+        VITE_YM_APP_DATA_ENV: env.environment,
+      });
+      this.logger.log(
+        `App Data PROD env prepared for session=${aiSessionId}: URL=${env.publicUrl} appDataId=${env.appDataId}`,
+      );
+    } catch (err) {
+      this.logger.error(
+        `App Data prepareProduction failed for session=${aiSessionId} rev=${revisionId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
       throw new ServiceUnavailableException(
-        'This template has incomplete deployment base-path support. Export resolveRouterBasename() from app-base.js/.ts, wire it into BrowserRouter, and configure Vite base from process.env.VITE_APP_BASE || \'/\'.',
+        'App Data could not be prepared for production. Provision App Data (OpenCode MCP yellowappdata_provision or deploy with owner context), then deploy again.',
       );
     }
   }
 
-  /** Deployed apps must mount AppRouter so /login and /register stay reachable. */
-  private async assertRevisionSupportsAuth(
+  /**
+   * The baseline guarantees the app's structure; this guarantees the values it
+   * will read at runtime actually exist.
+   */
+  private async assertProductionEnv(
     workspaceId: string,
     revisionId: string,
     runtimeEnv: Record<string, string>,
+    usesAi: boolean,
   ): Promise<void> {
-    const revision = await this.revisions.getAuthorizedRevision(workspaceId, revisionId);
-    const mainEntry = revision.files.find(
-      (file) => file.path === 'src/main.jsx' || file.path === 'src/main.tsx',
-    );
-    if (!mainEntry) return;
-
-    const mainSource = await this.revisions.readRevisionFileText(
-      workspaceId,
-      revisionId,
-      mainEntry.path,
-    );
-    if (!mainSource?.includes('AppRouter')) {
-      throw new ServiceUnavailableException(
-        'This app revision does not mount AppRouter in src/main.jsx. Restore the starter entry point (AppRouter with /login and /register), then deploy again.',
-      );
-    }
-
-    const authClient = revision.files.find((file) =>
-      /^src\/lib\/yellowmind-auth\.(js|jsx|ts|tsx)$/.test(file.path),
-    );
-    if (authClient) {
-      const authSource = await this.revisions.readRevisionFileText(
-        workspaceId,
-        revisionId,
-        authClient.path,
-      );
-      if (
-        !authSource?.includes('VITE_YM_APP_DATA_URL') ||
-        authSource.includes('VITE_YM_API_BASE_URL')
-      ) {
-        throw new ServiceUnavailableException(
-          'App authentication must use the App Data auth client and VITE_YM_APP_DATA_URL, not VITE_YM_API_BASE_URL. Restore the Starter V6 yellowmind-auth client, then deploy again.',
-        );
-      }
+    if (this.config.get<boolean>('appData.enabled', false)) {
       if (!runtimeEnv.VITE_YM_APP_DATA_URL || !runtimeEnv.VITE_YM_APP_DATA_ID) {
         throw new ServiceUnavailableException(
-          'App Data is not provisioned for this workspace. Provision App Data before deploying its login/register routes.',
+          'App Data production env vars are missing after prepareProduction. Provision App Data for this workspace, then deploy again.',
         );
       }
     }
 
-    const hasAiClient = revision.files.some((file) =>
-      /^src\/lib\/yellowmind-ai\.(js|jsx|ts|tsx)$/.test(file.path),
-    );
-    if (hasAiClient && !runtimeEnv.VITE_YM_API_BASE_URL) {
+    if (!usesAi) return;
+
+    if (!runtimeEnv.VITE_YM_API_BASE_URL) {
       throw new ServiceUnavailableException(
-        'This app uses the AI client but no public API base is configured. Set BACKEND_URL to the browser-reachable YellowStorm API origin, then deploy again.',
+        'This app calls the AI proxy but no browser-reachable YellowStorm API origin is configured. Set BACKEND_URL or APP_RUNTIME_PUBLIC_BASE_URL to a public origin (not localhost), then deploy again.',
       );
+    }
+
+    const { files } = await this.revisions.listFiles(workspaceId, revisionId);
+    const candidates = files
+      .map((file) => file.path)
+      .filter(isScannableAppSourcePath)
+      .slice(0, 40);
+    for (const path of candidates) {
+      const source = await this.revisions.readRevisionFileText(workspaceId, revisionId, path);
+      const violations = checkAiUsage(source ?? '');
+      if (violations.length) {
+        throw new ServiceUnavailableException(
+          `AI integration does not meet the YellowStorm platform contract. ${path}: ${violations.join(
+            ' ',
+          )} Fix it in OpenCode, finalize again, then deploy.`,
+        );
+      }
     }
   }
 }

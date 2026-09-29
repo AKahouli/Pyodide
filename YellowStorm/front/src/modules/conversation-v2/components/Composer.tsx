@@ -46,9 +46,11 @@ import { useAuth } from '@/modules/auth/useAuth';
 
 interface ComposerProps {
   onSend: (text: string, model?: string) => void | Promise<void>;
+  /** Extra lock (e.g. waiting for NodePod ready before the first agent turn). */
+  disabled?: boolean;
 }
 
-export function Composer({ onSend }: ComposerProps) {
+export function Composer({ onSend, disabled = false }: ComposerProps) {
   const { user } = useAuth();
   const streaming = useConversationV2Store((s) => s.streaming);
   const events = useConversationV2Store((s) => s.events);
@@ -126,7 +128,7 @@ export function Composer({ onSend }: ComposerProps) {
   const status: 'ready' | 'streaming' = streaming ? 'streaming' : 'ready';
   const isPaused = !streaming && pointerStatus === 'paused';
   const turnOpen = isTurnOpen(events);
-  const inputLocked = streaming || turnOpen || isLimitExceeded;
+  const inputLocked = streaming || turnOpen || isLimitExceeded || disabled;
 
   const handleSubmit = (message: PromptInputMessage) => {
     const value = message.text?.trim() ?? '';

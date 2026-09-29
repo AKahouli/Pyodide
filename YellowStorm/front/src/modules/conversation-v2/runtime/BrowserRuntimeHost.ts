@@ -18,6 +18,7 @@ import {
   type ToolInvokePayload,
   type RuntimeRehydratePayload,
   type RuntimeTicketResponse,
+  type PreviewInspectResult,
 } from './runtime.types';
 
 const LOG = '[BrowserRuntimeHost]';
@@ -732,6 +733,13 @@ export class BrowserRuntimeHost {
     }
   }
 
+  private assertPreviewAfterDevServer(): void {
+    if (this.previewCtrl.previewUrl) return;
+    throw new Error(
+      'The dev server did not become reachable inside NodePod. Check the browser console for Vite/npm errors.',
+    );
+  }
+
   /**
    * Full lifecycle: ticket -> connect -> hydrate -> boot -> install -> dev server -> register -> heartbeat.
    *
@@ -820,6 +828,7 @@ export class BrowserRuntimeHost {
       const viteEnv = await this.refreshAppDataViteEnv();
       await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, viteEnv);
       if (this._destroyed) return;
+      this.assertPreviewAfterDevServer();
       this.syncPreviewRelayOrigins();
       this.flushPendingIframe();
       await this.ensureHiddenPreviewIframe();
@@ -858,6 +867,58 @@ export class BrowserRuntimeHost {
   }
 
   /**
+   * Template ZIP validation: boot NodePod from in-memory files only (no runtime
+   * ticket, Ceph hydration, or Conversation v2 session).
+   */
+  async startFromLocalFiles(sessionId: string, files: VfsFiles): Promise<void> {
+    if (this._destroyed) return;
+    if (this._status !== 'idle') return;
+    this.sessionId = sessionId;
+    this.reconnectAttempts = 0;
+    this.legacyMode = true;
+    this.ticket = null;
+    this.revisionId = 'rev_validation';
+    this.setupAppDataFetchProxy();
+
+    try {
+      this.setStatus('hydrating');
+      await this.adapter.boot(files, sessionId, this.revisionId);
+      if (this._destroyed) return;
+
+      this.revisions.seed(await this.adapter.shaManifest(), this.revisionId);
+
+      this.setStatus('installing');
+      await this.adapter.ensureDeps({
+        onProgress: (phase, msg) => console.log(LOG, 'local validation install', { phase, msg }),
+      });
+      if (this._destroyed) return;
+
+      this.setStatus('starting');
+      await this.adapter.startDevServer(
+        this.previewCtrl,
+        () => this._destroyed,
+        undefined,
+        this.buildAppDataViteEnv(),
+        { hardTimeoutMs: 240_000, promotePolicy: 'direct' },
+      );
+      if (this._destroyed) return;
+      this.assertPreviewAfterDevServer();
+      await this.refreshPreview();
+      if (this._destroyed) return;
+      this.syncPreviewRelayOrigins();
+      this.flushPendingIframe();
+
+      this.setStatus('ready');
+      console.log(LOG, 'local validation ready', { previewUrl: this.previewCtrl.previewUrl });
+    } catch (err) {
+      if (this._destroyed) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(LOG, 'local validation start failed', msg);
+      this.setStatus('error', msg);
+    }
+  }
+
+  /**
    * Rollback path for already-generated apps: hydrate from Ceph and run Nodepod
    * without a runtime ticket / Socket.IO. No MCP tool dispatch in this mode.
    */
@@ -889,6 +950,7 @@ export class BrowserRuntimeHost {
       await this.ensureDefaultAiModelId();
       await this.adapter.startDevServer(this.previewCtrl, () => this._destroyed, undefined, this.buildAppDataViteEnv());
       if (this._destroyed) return;
+      this.assertPreviewAfterDevServer();
       this.syncPreviewRelayOrigins();
       this.flushPendingIframe();
       await this.ensureHiddenPreviewIframe();
@@ -1217,15 +1279,12 @@ export class BrowserRuntimeHost {
       filesTree?: FilesTreeNode | null;
     },
   ): Promise<VfsFiles> {
+    let revisionError: string | undefined;
     try {
       return await this.hydrator.hydrateFromRevision(sessionId, opts.revisionId);
     } catch (err) {
-      console.warn(
-        LOG,
-        'revision hydration failed',
-        { revisionId: opts.revisionId },
-        err instanceof Error ? err.message : String(err),
-      );
+      revisionError = err instanceof Error ? err.message : String(err);
+      console.warn(LOG, 'revision hydration failed', { revisionId: opts.revisionId }, revisionError);
     }
 
     if (opts.cephPath && opts.filesTree) {
@@ -1236,8 +1295,9 @@ export class BrowserRuntimeHost {
       );
     }
 
+    const detail = revisionError ? ` ${revisionError}` : '';
     throw new Error(
-      `Cannot hydrate workspace from Ceph for revision ${opts.revisionId}. ` +
+      `Cannot hydrate workspace from Ceph for revision ${opts.revisionId}.${detail} ` +
         'Ensure the starter manifest exists in Ceph and revision APIs are reachable.',
     );
   }
@@ -1250,6 +1310,15 @@ export class BrowserRuntimeHost {
    * Register the preview iframe for `preview_inspect` / `preview_action`. The
    * iframe usually mounts before the pod exists, so it is queued until boot.
    */
+  /** Live DOM inspection for template validation / preview_inspect tooling. */
+  async inspectLivePreview(): Promise<PreviewInspectResult> {
+    const pod = this.adapter.currentPod;
+    if (!pod) {
+      throw new Error('NodePod is not running.');
+    }
+    return this.previewCtrl.inspectPreview(pod);
+  }
+
   attachPreviewIframe(iframe: HTMLIFrameElement): void {
     this.removeHiddenPreviewIframe();
     if (this.pendingIframe && this.pendingIframe !== iframe) {

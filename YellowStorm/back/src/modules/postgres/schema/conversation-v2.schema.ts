@@ -175,6 +175,8 @@ export const conversationV2Templates = conversationV2Schema.table(
     revisionId: text('revision_id'),
     manifestObjectKey: text('manifest_object_key'),
     status: varchar('status', { length: 16 }).notNull().default('draft'),
+    /** Platform Kit analysis of the uploaded ZIP, computed at publish time. */
+    platformReport: jsonb('platform_report').$type<Record<string, unknown>>(),
     ...timestamps(),
   },
   (t) => [

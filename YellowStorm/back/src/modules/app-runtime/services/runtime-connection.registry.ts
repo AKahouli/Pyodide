@@ -42,6 +42,11 @@ export interface RegisterConnectionParams {
 export class RuntimeConnectionRegistry {
   private readonly logger = new Logger(RuntimeConnectionRegistry.name);
   private readonly byWorkspace = new Map<string, RuntimeConnection>();
+  /** Waiters for the next non-stale register on a workspace (tool dispatch). */
+  private readonly connectionWaiters = new Map<
+    string,
+    Set<(connection: RuntimeConnection) => void>
+  >();
 
   constructor(private readonly config: ConfigService) {}
 
@@ -69,10 +74,11 @@ export class RuntimeConnectionRegistry {
       this.logger.debug(
         `Runtime re-registered workspaceId=${params.workspaceId} runtimeSessionId=${params.runtimeSessionId}`,
       );
+      this.notifyConnectionWaiters(params.workspaceId, previous);
       return null;
     }
 
-    this.byWorkspace.set(params.workspaceId, {
+    const connection: RuntimeConnection = {
       socket: params.socket,
       runtimeSessionId: params.runtimeSessionId,
       bindingId: params.bindingId,
@@ -85,17 +91,76 @@ export class RuntimeConnectionRegistry {
       // not socket-scoped, and the previous holder may still be settling.
       mutationLock: previous?.mutationLock ?? Promise.resolve(),
       lastHeartbeatFlushAt: now,
-    });
+    };
+    this.byWorkspace.set(params.workspaceId, connection);
 
     this.logger.debug(
       `Runtime registered workspaceId=${params.workspaceId} runtimeSessionId=${params.runtimeSessionId}`,
     );
+    this.notifyConnectionWaiters(params.workspaceId, connection);
 
     return previous;
   }
 
   get(workspaceId: string): RuntimeConnection | null {
     return this.byWorkspace.get(workspaceId) ?? null;
+  }
+
+  /**
+   * Wait until a non-stale browser connection is registered for `workspaceId`,
+   * or until `timeoutMs` elapses. `timeoutMs <= 0` returns immediately.
+   */
+  waitForConnection(
+    workspaceId: string,
+    timeoutMs: number,
+  ): Promise<RuntimeConnection | null> {
+    const current = this.get(workspaceId);
+    if (current && !this.isStale(current)) return Promise.resolve(current);
+    if (timeoutMs <= 0) return Promise.resolve(null);
+
+    return new Promise<RuntimeConnection | null>((resolve) => {
+      let settled = false;
+      let waiters = this.connectionWaiters.get(workspaceId);
+      if (!waiters) {
+        waiters = new Set();
+        this.connectionWaiters.set(workspaceId, waiters);
+      }
+
+      const finish = (connection: RuntimeConnection | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        waiters.delete(onConnection);
+        if (waiters.size === 0) this.connectionWaiters.delete(workspaceId);
+        resolve(connection);
+      };
+
+      const onConnection = (connection: RuntimeConnection) => {
+        if (!this.isStale(connection)) finish(connection);
+      };
+
+      waiters.add(onConnection);
+
+      const timer = setTimeout(() => finish(null), timeoutMs);
+
+      const raced = this.get(workspaceId);
+      if (raced && !this.isStale(raced)) finish(raced);
+    });
+  }
+
+  private notifyConnectionWaiters(
+    workspaceId: string,
+    connection: RuntimeConnection,
+  ): void {
+    const waiters = this.connectionWaiters.get(workspaceId);
+    if (!waiters?.size) return;
+    for (const waiter of [...waiters]) {
+      try {
+        waiter(connection);
+      } catch {
+        /* ignore waiter errors */
+      }
+    }
   }
 
   /** Only removes the entry when it still points at the given socket. */

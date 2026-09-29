@@ -1,10 +1,12 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
+import { AppDataDeploymentService } from '@modules/app-data/services/app-data-deployment.service';
+import { PlatformBaselineService } from '@modules/app-runtime/platform-kit/platform-baseline.service';
 import { ConversationV2DeployService } from './conversation-v2-deploy.service';
 
 describe('ConversationV2DeployService', () => {
-  const configValues: Record<string, string | number | undefined> = {
+  const configValues: Record<string, string | number | boolean | undefined> = {
     'conversationV2.appBuilderDeployBaseUrl': 'https://app-deployer.yellowsys.org/',
     'conversationV2.appBuilderDeployToken': undefined,
     'conversationV2.appBuilderDeployTimeoutMs': 600_000,
@@ -17,17 +19,43 @@ describe('ConversationV2DeployService', () => {
       Object.prototype.hasOwnProperty.call(configValues, key) ? configValues[key] : defaultValue,
     ),
   };
+  const planBaseline = jest.fn();
+  const baseline = { planBaseline };
   const revisions = {
     patchRevisionWithFiles: jest.fn().mockResolvedValue(undefined),
-    getAuthorizedRevision: jest.fn().mockResolvedValue({
-      files: [
-        { path: 'src/lib/app-base.js' },
-        { path: 'src/AppRouter.jsx' },
-        { path: 'src/main.jsx' },
-        { path: 'vite.config.js' },
-      ],
-    }),
-    readRevisionFileText: jest.fn().mockImplementation(async (_workspaceId, _revisionId, path) => {
+    getAuthorizedRevision: jest.fn(),
+    readRevisionFileText: jest.fn(),
+    listFiles: jest.fn(),
+    starterRevisionId: 'starter_react_vite_v6',
+  };
+  let service: ConversationV2DeployService;
+
+  const defaultRevisionFiles = [
+    { path: 'src/lib/app-base.js' },
+    { path: 'src/AppRouter.jsx' },
+    { path: 'src/main.jsx' },
+    { path: 'vite.config.js' },
+  ];
+
+  beforeEach(() => {
+    jest.restoreAllMocks();
+    config.get.mockClear();
+    revisions.patchRevisionWithFiles.mockClear();
+    revisions.getAuthorizedRevision.mockReset();
+    revisions.readRevisionFileText.mockReset();
+    revisions.listFiles.mockReset();
+    planBaseline.mockReset();
+    planBaseline.mockResolvedValue({
+      mode: 'deploy',
+      files: [],
+      violations: [],
+      warnings: [],
+      entry: 'src/main.jsx',
+      appRoot: 'src/App.jsx',
+    });
+    revisions.getAuthorizedRevision.mockResolvedValue({ files: defaultRevisionFiles });
+    revisions.listFiles.mockResolvedValue({ files: defaultRevisionFiles });
+    revisions.readRevisionFileText.mockImplementation(async (_workspaceId, _revisionId, path) => {
       if (path.endsWith('app-base.js')) return 'export function resolveRouterBasename() {}';
       if (path.endsWith('vite.config.js')) {
         return "base: process.env.VITE_APP_BASE || '/',";
@@ -36,16 +64,7 @@ describe('ConversationV2DeployService', () => {
         return '<BrowserRouter basename={resolveRouterBasename()}>;';
       }
       return "import AppRouter from './AppRouter';";
-    }),
-  };
-  let service: ConversationV2DeployService;
-
-  beforeEach(() => {
-    jest.restoreAllMocks();
-    config.get.mockClear();
-    revisions.patchRevisionWithFiles.mockClear();
-    revisions.getAuthorizedRevision.mockClear();
-    revisions.readRevisionFileText.mockClear();
+    });
     configValues['conversationV2.appBuilderDeployBaseUrl'] = 'https://app-deployer.yellowsys.org/';
     configValues['conversationV2.appBuilderDeployToken'] = undefined;
     configValues['conversationV2.appBuilderDeployTimeoutMs'] = 600_000;
@@ -54,10 +73,12 @@ describe('ConversationV2DeployService', () => {
     delete configValues['app.backendUrl'];
     delete configValues['app.nodeEnv'];
     delete configValues['appRuntime.publicBaseUrl'];
+    delete configValues['appData.enabled'];
     delete process.env.ALLOW_LOCALHOST_DEPLOY_API;
     service = new ConversationV2DeployService(
       config as unknown as ConfigService,
       revisions as unknown as RuntimeRevisionService,
+      baseline as unknown as PlatformBaselineService,
     );
   });
 
@@ -184,6 +205,16 @@ describe('ConversationV2DeployService', () => {
 
   it('injects public BACKEND_URL as VITE_YM_API_BASE_URL', async () => {
     configValues['app.backendUrl'] = 'https://api.yellowsys.org';
+    revisions.listFiles.mockResolvedValue({
+      files: [{ path: 'src/pages/Chat.jsx' }, ...defaultRevisionFiles],
+    });
+    const readSource = revisions.readRevisionFileText.getMockImplementation()!;
+    revisions.readRevisionFileText.mockImplementation(async (workspaceId, id, path) => {
+      if (path.endsWith('Chat.jsx')) {
+        return "import { createAIClient } from '@/lib/yellowmind-ai';\nexport function Chat() { createAIClient(); }";
+      }
+      return readSource(workspaceId, id, path);
+    });
     jest.spyOn(global, 'fetch').mockResolvedValueOnce(
       jsonResponse({
         status: 'ready',
@@ -208,6 +239,16 @@ describe('ConversationV2DeployService', () => {
     configValues['app.nodeEnv'] = 'production';
     configValues['appRuntime.publicBaseUrl'] = 'https://api.yellowsys.org';
     delete process.env.ALLOW_LOCALHOST_DEPLOY_API;
+    revisions.listFiles.mockResolvedValue({
+      files: [{ path: 'src/pages/Chat.jsx' }, ...defaultRevisionFiles],
+    });
+    const readSource = revisions.readRevisionFileText.getMockImplementation()!;
+    revisions.readRevisionFileText.mockImplementation(async (workspaceId, id, path) => {
+      if (path.endsWith('Chat.jsx')) {
+        return "import { chatCompletion } from '@/lib/yellowmind-ai';";
+      }
+      return readSource(workspaceId, id, path);
+    });
     jest.spyOn(global, 'fetch').mockResolvedValueOnce(
       jsonResponse({
         status: 'ready',
@@ -244,64 +285,163 @@ describe('ConversationV2DeployService', () => {
 
   it('requires a public API base before deploying an app with the AI client', async () => {
     configValues['app.backendUrl'] = 'http://localhost:3000';
-    revisions.getAuthorizedRevision.mockResolvedValueOnce({
-      files: [
-        { path: 'src/lib/app-base.js' },
-        { path: 'src/AppRouter.jsx' },
-        { path: 'src/main.jsx' },
-        { path: 'src/lib/yellowmind-ai.js' },
-        { path: 'vite.config.js' },
-      ],
+    const aiRevisionFiles = [
+      { path: 'src/lib/app-base.js' },
+      { path: 'src/AppRouter.jsx' },
+      { path: 'src/main.jsx' },
+      { path: 'src/pages/Chat.jsx' },
+      { path: 'src/lib/yellowmind-ai.js' },
+      { path: 'vite.config.js' },
+    ];
+    revisions.getAuthorizedRevision.mockResolvedValue({ files: aiRevisionFiles });
+    revisions.listFiles.mockResolvedValue({ files: aiRevisionFiles });
+    const readSource = revisions.readRevisionFileText.getMockImplementation()!;
+    revisions.readRevisionFileText.mockImplementation(async (workspaceId, revisionId, path) => {
+      if (path.endsWith('Chat.jsx')) {
+        return "import { createAIClient } from '@/lib/yellowmind-ai';\nexport function Chat() { createAIClient(); }";
+      }
+      return readSource(workspaceId, revisionId, path);
     });
 
     await expect(service.deploy('2e65d5fa87a0499f', 'rev_15')).rejects.toThrow(
-      /Set BACKEND_URL to the browser-reachable YellowStorm API origin/,
+      /browser-reachable YellowStorm API origin/,
     );
   });
 
-  it('rejects an auth client that builds auth URLs from the platform API base', async () => {
-    revisions.getAuthorizedRevision.mockResolvedValueOnce({
-      files: [
-        { path: 'src/lib/app-base.js' },
-        { path: 'src/AppRouter.jsx' },
-        { path: 'src/main.jsx' },
-        { path: 'src/lib/yellowmind-auth.js' },
-        { path: 'vite.config.js' },
+  it('does not require a public API base when only the starter yellowmind-ai library is present', async () => {
+    configValues['app.backendUrl'] = 'http://localhost:3000';
+    const authRevisionFiles = [
+      { path: 'src/lib/app-base.js' },
+      { path: 'src/AppRouter.jsx' },
+      { path: 'src/main.jsx' },
+      { path: 'src/lib/yellowmind-ai.js' },
+      { path: 'vite.config.js' },
+    ];
+    revisions.getAuthorizedRevision.mockResolvedValue({ files: authRevisionFiles });
+    revisions.listFiles.mockResolvedValue({ files: authRevisionFiles });
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValueOnce(
+      jsonResponse({
+        status: 'ready',
+        app_id: '2e65d5fa87a0499f',
+        url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+      }),
+    );
+
+    const result = await service.deploy('2e65d5fa87a0499f', 'rev_15');
+    expect(result.runtimeEnv?.VITE_YM_API_BASE_URL).toBeUndefined();
+    const launchBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(launchBody.runtimeEnv).not.toContain('VITE_YM_API_BASE_URL');
+  });
+
+  it('refuses to deploy when the platform baseline reports a violation', async () => {
+    planBaseline.mockResolvedValue({
+      mode: 'deploy',
+      files: [],
+      violations: [
+        'src/lib/yellowmind-auth.tsx: Auth must read import.meta.env.VITE_YM_APP_DATA_URL.',
       ],
+      warnings: [],
+      entry: 'src/main.jsx',
+      appRoot: 'src/App.jsx',
     });
-    const readSource = revisions.readRevisionFileText.getMockImplementation()!;
-    revisions.readRevisionFileText.mockImplementation(async (workspaceId, id, path) => {
-      if (path.endsWith('yellowmind-auth.js')) {
-        return "const API_BASE = import.meta.env.VITE_YM_API_BASE_URL; fetch(`${API_BASE}/auth/register`);";
-      }
-      return readSource(workspaceId, id, path);
-    });
+    const fetchMock = jest.spyOn(global, 'fetch');
 
     await expect(service.deploy('2e65d5fa87a0499f', 'rev_15')).rejects.toThrow(
-      /App authentication must use the App Data auth client/,
+      /platform contract.*VITE_YM_APP_DATA_URL/i,
+    );
+    expect(revisions.patchRevisionWithFiles).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('restores platform files the agent deleted instead of failing the deploy', async () => {
+    planBaseline.mockResolvedValue({
+      mode: 'deploy',
+      files: [{ path: 'src/lib/ym-diag.ts', content: 'export const ymDiag = {};' }],
+      violations: [],
+      warnings: [],
+      entry: 'src/main.jsx',
+      appRoot: 'src/App.jsx',
+    });
+    jest.spyOn(global, 'fetch').mockResolvedValueOnce(
+      jsonResponse({
+        status: 'ready',
+        app_id: '2e65d5fa87a0499f',
+        url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+      }),
+    );
+
+    await service.deploy('2e65d5fa87a0499f', 'rev_15');
+
+    expect(revisions.patchRevisionWithFiles).toHaveBeenCalledWith(
+      expect.objectContaining({
+        additionalFiles: expect.arrayContaining([
+          expect.objectContaining({ path: 'src/lib/ym-diag.ts' }),
+          expect.objectContaining({ path: '.env.production' }),
+        ]),
+      }),
     );
   });
 
-  it('rejects auth-enabled apps when App Data was not provisioned for PROD', async () => {
-    revisions.getAuthorizedRevision.mockResolvedValueOnce({
-      files: [
-        { path: 'src/lib/app-base.js' },
-        { path: 'src/AppRouter.jsx' },
-        { path: 'src/main.jsx' },
-        { path: 'src/lib/yellowmind-auth.js' },
-        { path: 'vite.config.js' },
-      ],
-    });
-    const readSource = revisions.readRevisionFileText.getMockImplementation()!;
-    revisions.readRevisionFileText.mockImplementation(async (workspaceId, id, path) => {
-      if (path.endsWith('yellowmind-auth.js')) {
-        return "const url = import.meta.env.VITE_YM_APP_DATA_URL; fetch(`${url}/auth/register`);";
-      }
-      return readSource(workspaceId, id, path);
-    });
+  it('rejects apps when App Data was not provisioned and no owner context', async () => {
+    configValues['appData.enabled'] = true;
+    const appDataDeployment = {
+      ensureDevProvisioned: jest.fn(),
+      prepareProduction: jest.fn().mockRejectedValue(new Error('not provisioned')),
+      getRuntimeEnvForWorkspace: jest.fn().mockResolvedValue(null),
+    };
+    service = new ConversationV2DeployService(
+      config as unknown as ConfigService,
+      revisions as unknown as RuntimeRevisionService,
+      baseline as unknown as PlatformBaselineService,
+      appDataDeployment as unknown as AppDataDeploymentService,
+    );
 
     await expect(service.deploy('2e65d5fa87a0499f', 'rev_15')).rejects.toThrow(
-      /App Data is not provisioned for this workspace/,
+      /Provision App Data/,
+    );
+    expect(appDataDeployment.ensureDevProvisioned).not.toHaveBeenCalled();
+  });
+
+  it('always provisions DEV App Data before deploy', async () => {
+    configValues['appData.enabled'] = true;
+    const appDataDeployment = {
+      ensureDevProvisioned: jest.fn().mockResolvedValue(undefined),
+      prepareProduction: jest.fn().mockResolvedValue({
+        appDataId: 'app-uuid',
+        environment: 'prod',
+        publicUrl: 'http://localhost:8443/v1/apps/app-uuid/prod',
+      }),
+      getRuntimeEnvForWorkspace: jest.fn(),
+    };
+    service = new ConversationV2DeployService(
+      config as unknown as ConfigService,
+      revisions as unknown as RuntimeRevisionService,
+      baseline as unknown as PlatformBaselineService,
+      appDataDeployment as unknown as AppDataDeploymentService,
+    );
+    jest.spyOn(global, 'fetch').mockResolvedValueOnce(
+      jsonResponse({
+        status: 'ready',
+        app_id: '2e65d5fa87a0499f',
+        url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+      }),
+    );
+
+    await expect(
+      service.deploy('2e65d5fa87a0499f', 'rev_15', 'owner-user-1'),
+    ).resolves.toMatchObject({
+      runtimeEnv: {
+        VITE_YM_APP_DATA_ID: 'app-uuid',
+        VITE_YM_APP_DATA_ENV: 'prod',
+      },
+    });
+    expect(appDataDeployment.ensureDevProvisioned).toHaveBeenCalledWith(
+      '2e65d5fa87a0499f',
+      'owner-user-1',
+    );
+    expect(appDataDeployment.prepareProduction).toHaveBeenCalledWith(
+      '2e65d5fa87a0499f',
+      'rev_15',
     );
   });
 
@@ -355,17 +495,7 @@ describe('ConversationV2DeployService', () => {
     );
   });
 
-  it('explains the required Vite and router changes when template base-path support is missing', async () => {
-    revisions.getAuthorizedRevision.mockResolvedValueOnce({ files: [{ path: 'src/main.jsx' }] });
-    const fetchMock = jest.spyOn(global, 'fetch');
-
-    await expect(service.deploy('2e65d5fa87a0499f', 'template_tpl_1')).rejects.toThrow(
-      /VITE_APP_BASE.*src\/lib\/app-base\.js or \.ts.*resolveRouterBasename/,
-    );
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('accepts JavaScript base-path helpers wired into the Vite build and BrowserRouter', async () => {
+  it('verifies the platform baseline of the revision being deployed', async () => {
     jest.spyOn(global, 'fetch').mockResolvedValueOnce(
       jsonResponse({
         status: 'ready',
@@ -377,11 +507,11 @@ describe('ConversationV2DeployService', () => {
     await expect(service.deploy('2e65d5fa87a0499f', 'template_tpl_1')).resolves.toMatchObject({
       url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
     });
-    expect(revisions.readRevisionFileText).toHaveBeenCalledWith(
-      '2e65d5fa87a0499f',
-      'template_tpl_1',
-      'src/lib/app-base.js',
-    );
+    expect(planBaseline).toHaveBeenCalledWith({
+      workspaceId: '2e65d5fa87a0499f',
+      revisionId: 'template_tpl_1',
+      mode: 'deploy',
+    });
   });
 
   it('sends a bearer token when configured', async () => {

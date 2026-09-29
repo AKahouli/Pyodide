@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "kitVersion": 1,
+  "capabilities": {
+    "auth": "app_data",
+    "data": "app_data",
+    "ai": "ai_proxy"
+  },
+  "managedFiles": [
+    "src/lib/app-base.ts",
+    "src/lib/ym-diag.ts",
+    "src/lib/yellowmind-auth.tsx",
+    "src/lib/yellowmind-data.ts",
+    "src/lib/yellowmind-ai.ts",
+    "src/components/auth/ProtectedRoute.tsx",
+    "src/pages/AuthPages.tsx",
+    "src/AppRouter.tsx"
+  ],
+  "appRoot": "src/App.jsx",
+  "entry": "src/main.jsx"
+}

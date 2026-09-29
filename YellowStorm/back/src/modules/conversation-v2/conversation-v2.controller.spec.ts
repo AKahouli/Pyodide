@@ -617,7 +617,7 @@ describe('ConversationV2Controller', () => {
       'conversation-1',
     );
     expect(mockFinalizedRevisions.resolveLatestFinalized).toHaveBeenCalledWith('conversation-1');
-    expect(mockDeployment.deploy).toHaveBeenCalledWith('conversation-1', 'rev_15');
+    expect(mockDeployment.deploy).toHaveBeenCalledWith('conversation-1', 'rev_15', 'user-1');
     expect(mockSessions.setDeployState).toHaveBeenNthCalledWith(
       1,
       'user-1',
@@ -661,7 +661,7 @@ describe('ConversationV2Controller', () => {
       'conversation-1',
       'rev_15',
     );
-    expect(mockDeployment.deploy).toHaveBeenCalledWith('conversation-1', 'rev_15');
+    expect(mockDeployment.deploy).toHaveBeenCalledWith('conversation-1', 'rev_15', 'user-1');
   });
 
   it('POST /sessions/:id/deploy rejects non-finalized explicit revisionId', async () => {

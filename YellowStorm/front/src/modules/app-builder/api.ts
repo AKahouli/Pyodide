@@ -162,11 +162,19 @@ export const adminTemplateApi = {
   async deleteTemplate(id: string): Promise<void> {
     await apiClient.delete(`/admin/conversation-v2/templates/${id}`);
   },
-  /** Flip a draft template to published after NodePod validation succeeds. */
-  async validate(id: string): Promise<AppTemplate> {
-    const res = await apiClient.post<ApiResponse<AppTemplate>>(
-      `/admin/conversation-v2/templates/${id}/validate`,
+  async publishStagingZip(zip: File): Promise<{ stagingTemplateId: string }> {
+    const form = new FormData();
+    form.append('zip', zip);
+    const res = await apiClient.post<ApiResponse<{ stagingTemplateId: string }>>(
+      '/admin/conversation-v2/templates/staging/publish',
+      form,
+      { timeout: TEMPLATE_ZIP_TIMEOUT_MS },
     );
     return res.data.data;
+  },
+  async discardStagingZip(stagingTemplateId: string): Promise<void> {
+    await apiClient.delete(
+      `/admin/conversation-v2/templates/staging/${stagingTemplateId}`,
+    );
   },
 };

@@ -20,6 +20,7 @@ import {
 import type { RuntimeBindingRecord as AppRuntimeBinding } from '../persistence/runtime-binding.store';
 import { RuntimeToolDispatcherService } from './runtime-tool-dispatcher.service';
 import { AppRuntimeConversationNotifierService } from './app-runtime-conversation-notifier.service';
+import { PlatformBaselineService } from '../platform-kit/platform-baseline.service';
 import { AppDataReleaseBindingService } from '@modules/app-data/services/app-data-release-binding.service';
 import type { ToolInvokeEnvelope } from '../types/app-runtime-protocol';
 
@@ -40,6 +41,7 @@ export class RuntimeBrokerService {
     private readonly dispatcher: RuntimeToolDispatcherService,
     private readonly config: ConfigService,
     private readonly conversationNotifier: AppRuntimeConversationNotifierService,
+    private readonly baseline: PlatformBaselineService,
     @Optional() private readonly releaseBinding?: AppDataReleaseBindingService,
   ) {}
 
@@ -54,6 +56,11 @@ export class RuntimeBrokerService {
     }
 
     const tool = toolName as RuntimeMcpToolName;
+    // Answered from the revision store; the browser runtime is not involved.
+    if (tool === 'platform_check') {
+      return { result: await this.checkPlatform(binding) };
+    }
+
     let args = prepareToolArguments(tool, argumentsRaw);
 
     if (tool === 'finalize') {
@@ -154,6 +161,24 @@ export class RuntimeBrokerService {
     }
 
     return { result };
+  }
+
+  /** Same verification deploy runs, so the agent can fix issues before finalize. */
+  private async checkPlatform(binding: AppRuntimeBinding): Promise<Record<string, unknown>> {
+    const plan = await this.baseline.planBaseline({
+      workspaceId: binding.workspaceId,
+      revisionId: binding.latestRevisionId,
+      mode: 'deploy',
+    });
+    return {
+      revisionId: binding.latestRevisionId,
+      ok: plan.violations.length === 0,
+      violations: plan.violations,
+      warnings: plan.warnings,
+      missingPlatformFiles: plan.files.map((file) => file.path),
+      entry: plan.entry,
+      appRoot: plan.appRoot,
+    };
   }
 
   private resolveTimeout(tool: RuntimeMcpToolName, args: Record<string, unknown>): number | undefined {

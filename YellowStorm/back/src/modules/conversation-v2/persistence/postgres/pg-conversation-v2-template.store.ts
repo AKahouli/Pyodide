@@ -13,6 +13,7 @@ import type {
   ConversationV2TemplateStatus,
   ConversationV2TemplateStore,
 } from '../conversation-v2-template.store';
+import type { TemplatePlatformReport } from '@modules/app-runtime/platform-kit/platform-template-report';
 
 type CategoryRow = typeof schema.conversationV2TemplateCategories.$inferSelect;
 type TemplateRow = typeof schema.conversationV2Templates.$inferSelect;
@@ -39,6 +40,7 @@ function toTemplate(row: TemplateRow): ConversationV2TemplateRow {
     revisionId: row.revisionId ?? null,
     manifestObjectKey: row.manifestObjectKey ?? null,
     status: row.status as ConversationV2TemplateStatus,
+    platformReport: (row.platformReport as TemplatePlatformReport | null) ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -268,7 +270,11 @@ export class PgConversationV2TemplateStore implements ConversationV2TemplateStor
 
   async setRevision(
     id: string,
-    binding: { revisionId: string; manifestObjectKey: string },
+    binding: {
+      revisionId: string;
+      manifestObjectKey: string;
+      platformReport?: TemplatePlatformReport;
+    },
   ): Promise<ConversationV2TemplateRow | null> {
     // Bind the Ceph manifest to a draft template without publishing it.
     const [row] = await this.q
@@ -276,6 +282,9 @@ export class PgConversationV2TemplateStore implements ConversationV2TemplateStor
       .set({
         revisionId: binding.revisionId,
         manifestObjectKey: binding.manifestObjectKey,
+        ...(binding.platformReport
+          ? { platformReport: binding.platformReport as unknown as Record<string, unknown> }
+          : {}),
         updatedAt: new Date(),
       })
       .where(eq(schema.conversationV2Templates.id, id))
@@ -284,7 +293,6 @@ export class PgConversationV2TemplateStore implements ConversationV2TemplateStor
   }
 
   async markPublished(id: string): Promise<ConversationV2TemplateRow | null> {
-    // NodePod validation confirmed — expose the template to users.
     const [row] = await this.q
       .update(schema.conversationV2Templates)
       .set({ status: 'published', updatedAt: new Date() })
@@ -351,7 +359,6 @@ export class PgConversationV2TemplateStore implements ConversationV2TemplateStor
   }
 
   async markRevisionsPublished(templateId: string): Promise<void> {
-    // Validation confirmed: publish every revision row of the template.
     await this.q
       .update(schema.conversationV2TemplateRevisions)
       .set({ status: 'published', updatedAt: new Date() })

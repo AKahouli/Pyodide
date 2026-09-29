@@ -203,6 +203,86 @@ describe('RemoteAppDataDeploymentService', () => {
       publicUrl: 'http://localhost:8443/v1/apps/app-1/prod',
     });
   });
+
+  it('ensureDevProvisioned registers the workspace and provisions DEV', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({ id: 'app-1', workspaceId: 'ws-1', name: 'App', ownerUserId: 'u-1' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ database: 'app_data_tenant_dev' }),
+      });
+    const service = serviceWith(fetchImpl);
+    await service.ensureDevProvisioned('ws-1', 'u-1');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('ensureDevRuntimeEnv provisions DEV when the workspace has no app yet', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        text: async () => JSON.stringify({ message: 'App not found' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () =>
+          JSON.stringify({ id: 'app-1', workspaceId: 'ws-1', name: 'App', ownerUserId: 'u-1' }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify({ database: 'app_data_tenant_dev' }),
+      });
+    const service = serviceWith(fetchImpl);
+    await expect(service.ensureDevRuntimeEnv('ws-1', 'u-1')).resolves.toEqual({
+      appDataId: 'app-1',
+      environment: 'dev',
+      publicUrl: 'http://localhost:8443/v1/apps/app-1/dev',
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('ensureDevRuntimeEnv reuses an existing app without provisioning', async () => {
+    const fetchImpl = fetchMock(200, {
+      id: 'app-1',
+      workspaceId: 'ws-1',
+      name: 'App',
+      ownerUserId: 'u-1',
+    });
+    const service = serviceWith(fetchImpl);
+    await expect(service.ensureDevRuntimeEnv('ws-1', 'u-1')).resolves.toEqual({
+      appDataId: 'app-1',
+      environment: 'dev',
+      publicUrl: 'http://localhost:8443/v1/apps/app-1/dev',
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('ensureDevRuntimeEnv returns null when provisioning fails', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        text: async () => JSON.stringify({ message: 'App not found' }),
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        text: async () => JSON.stringify({ message: 'down' }),
+      });
+    const service = serviceWith(fetchImpl);
+    await expect(service.ensureDevRuntimeEnv('ws-1', 'u-1')).resolves.toBeNull();
+  });
 });
 
 describe('RemoteAppDataReleaseBindingService', () => {

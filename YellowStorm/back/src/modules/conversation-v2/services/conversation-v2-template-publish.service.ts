@@ -7,6 +7,10 @@ import {
   templateRevisionId,
 } from '../constants/template-catalog.constants';
 import { extractTemplateArchive } from '../utils/template-zip.util';
+import {
+  analyzeTemplatePlatform,
+  type TemplatePlatformReport,
+} from '@modules/app-runtime/platform-kit/platform-template-report';
 import type { ConversationV2TemplateRow } from '../persistence/conversation-v2-template.store';
 export interface PublishedTemplateRevision {
   revisionId: string;
@@ -15,6 +19,8 @@ export interface PublishedTemplateRevision {
   fileCount: number;
   /** Manifest file list, also persisted to `conversation_v2.template_revisions`. */
   files: TemplateManifestFile[];
+  /** What the Platform Kit will have to inject when a session uses this template. */
+  platformReport: TemplatePlatformReport;
 }
 
 interface TemplateManifestFile {
@@ -43,6 +49,7 @@ export class ConversationV2TemplatePublishService {
     const revisionId = templateRevisionId(templateId);
     const files = extractTemplateArchive(zip);
     const manifestFiles: TemplateManifestFile[] = [];
+    const platformReport = await this.analyze(files);
 
     // Blob uploads dominate publish latency (one exists + one put per file), so
     // they run in bounded parallel batches; order stays ZIP order.
@@ -82,7 +89,8 @@ export class ConversationV2TemplatePublishService {
     });
 
     this.logger.log(
-      `Published template revision templateId=${templateId} revisionId=${revisionId} files=${manifestFiles.length}`,
+      `Published template revision templateId=${templateId} revisionId=${revisionId} ` +
+        `files=${manifestFiles.length} platform=${platformReport.status}`,
     );
 
     return {
@@ -91,7 +99,19 @@ export class ConversationV2TemplatePublishService {
       manifestHash: createHash('sha256').update(manifest).digest('hex'),
       fileCount: manifestFiles.length,
       files: manifestFiles,
+      platformReport,
     };
+  }
+
+  /** Runs the Platform Kit baseline against the ZIP contents, before upload. */
+  private analyze(
+    files: Array<{ path: string; data: Buffer }>,
+  ): Promise<TemplatePlatformReport> {
+    const byPath = new Map(files.map((file) => [file.path.replace(/\\/g, '/'), file.data]));
+    return analyzeTemplatePlatform({
+      paths: [...byPath.keys()],
+      read: (path) => Promise.resolve(byPath.get(path)?.toString('utf8') ?? null),
+    });
   }
 
   /**

@@ -6,6 +6,7 @@ import { RuntimeBindingService } from './runtime-binding.service';
 import { RuntimeRevisionService } from './runtime-revision.service';
 import { RuntimeTokenService } from './runtime-token.service';
 import { PgRuntimeBindingStore } from '../persistence/pg-runtime-binding.store';
+import { PlatformBaselineService } from '../platform-kit/platform-baseline.service';
 
 const MCP_URL = 'http://127.0.0.1:3000/api/v1/mcp/app-runtime';
 const STARTER = 'starter_react_vite_v1';
@@ -23,8 +24,10 @@ describe('RuntimeBindingService', () => {
   const ensureWorkspaceRevision = jest.fn().mockResolvedValue({
     revisionId: STARTER,
   });
+  const revisionExists = jest.fn().mockResolvedValue(true);
 
   const findByAiSessionId = jest.fn();
+  const applyBaseline = jest.fn();
 
   const store: RuntimeBindingStore = {
     upsertByWorkspaceId,
@@ -47,6 +50,10 @@ describe('RuntimeBindingService', () => {
     jest.clearAllMocks();
     ensureWorkspaceRevision.mockResolvedValue({ revisionId: STARTER });
     findByAiSessionId.mockResolvedValue(null);
+    applyBaseline.mockResolvedValue({
+      revisionId: 'rev_1',
+      plan: { files: [], violations: [], warnings: [] },
+    });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -56,7 +63,11 @@ describe('RuntimeBindingService', () => {
           provide: PgRuntimeBindingStore,
           useValue: store,
         },
-        { provide: RuntimeRevisionService, useValue: { ensureWorkspaceRevision } },
+        {
+          provide: RuntimeRevisionService,
+          useValue: { ensureWorkspaceRevision, revisionExists },
+        },
+        { provide: PlatformBaselineService, useValue: { applyBaseline } },
         { provide: ConfigService, useValue: config },
         { provide: PgConversationV2SessionStore, useValue: { findByAiSessionId } },
       ],
@@ -177,12 +188,70 @@ describe('RuntimeBindingService', () => {
       latestRevisionId: 'template_tpl_1',
     });
 
-    await svc.bind({ conversationSessionId: 'sess_1', userId: 'user_1' });
+    const result = await svc.bind({ conversationSessionId: 'sess_1', userId: 'user_1' });
 
     expect(findByAiSessionId).toHaveBeenCalledWith('sess_1');
     const call = upsertByWorkspaceId.mock.calls[0][0];
     expect(call.latestRevisionId).toBe('template_tpl_1');
     expect(ensureWorkspaceRevision).toHaveBeenCalledWith('sess_1', 'template_tpl_1');
+
+    // The browser must boot on the template normalized with the Platform Kit.
+    expect(applyBaseline).toHaveBeenCalledWith({
+      workspaceId: 'sess_1',
+      baseRevisionId: 'template_tpl_1',
+      newRevisionId: 'rev_1',
+      mode: 'seed',
+    });
+    expect(updateRevision).toHaveBeenCalledWith('sess_1', 'rev_1');
+    expect(result.latestRevisionId).toBe('rev_1');
+  });
+
+  it('promotes a stale system-starter binding to the session template seed', async () => {
+    findByAiSessionId.mockResolvedValueOnce({ starterRevisionId: 'template_tpl_1' });
+    // Conflict upsert keeps the previous starter revision (by design).
+    upsertByWorkspaceId.mockResolvedValueOnce({
+      bindingId: 'arb_aabbccddeeff',
+      workspaceId: 'sess_1',
+      latestRevisionId: STARTER,
+    });
+
+    const result = await svc.bind({ conversationSessionId: 'sess_1', userId: 'user_1' });
+
+    expect(updateRevision).toHaveBeenCalledWith('sess_1', 'template_tpl_1');
+    expect(ensureWorkspaceRevision).toHaveBeenCalledWith('sess_1', 'template_tpl_1');
+    expect(applyBaseline).toHaveBeenCalledWith({
+      workspaceId: 'sess_1',
+      baseRevisionId: 'template_tpl_1',
+      newRevisionId: 'rev_1',
+      mode: 'seed',
+    });
+    expect(result.latestRevisionId).toBe('rev_1');
+  });
+
+  it('does not promote when the agent already owns a workspace revision', async () => {
+    findByAiSessionId.mockResolvedValueOnce({ starterRevisionId: 'template_tpl_1' });
+    upsertByWorkspaceId.mockResolvedValueOnce({
+      bindingId: 'arb_aabbccddeeff',
+      workspaceId: 'sess_1',
+      latestRevisionId: 'rev_4',
+    });
+
+    await svc.bind({ conversationSessionId: 'sess_1', userId: 'user_1' });
+
+    expect(updateRevision).not.toHaveBeenCalledWith('sess_1', 'template_tpl_1');
+    expect(applyBaseline).not.toHaveBeenCalled();
+  });
+
+  it('does not normalize a workspace revision the agent already owns', async () => {
+    upsertByWorkspaceId.mockResolvedValueOnce({
+      bindingId: 'arb_aabbccddeeff',
+      workspaceId: 'sess_1',
+      latestRevisionId: 'rev_4',
+    });
+
+    await svc.bind({ conversationSessionId: 'sess_1', userId: 'user_1' });
+
+    expect(applyBaseline).not.toHaveBeenCalled();
   });
 
   it('propagates non-duplicate persistence errors', async () => {

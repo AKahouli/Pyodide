@@ -24,6 +24,8 @@ import {
 } from './session-permissions';
 import { getOrCreateHost, removeHost } from './runtime/BrowserRuntimeHost';
 import { mapHostStatusToRuntimeUi } from './runtime/runtime.types';
+import { waitForHostReady } from './runtime/wait-for-host-ready';
+import { appRuntimeEnabled } from './features';
 import { isTurnOpen } from './utils/session-reducer';
 import { Button } from '@/components/ui/button';
 
@@ -52,6 +54,7 @@ export default function ConversationV2SessionPage() {
   const initialConnectorIds = (location.state as LocationState | null)?.connectorIds;
   const entrySource = (location.state as LocationState | null)?.source;
   const [showAppBuilderBanner, setShowAppBuilderBanner] = useState(false);
+  const [waitingForPreview, setWaitingForPreview] = useState(false);
 
   // Latch from navigation state once per session. Do not depend on entrySource
   // continuously — the initial-message effect clears history state and would
@@ -234,25 +237,59 @@ export default function ConversationV2SessionPage() {
     };
   }, [sessionId, switchToSession, setSystemWorkspaceId, setWorkspaceIds, setDeployState, setSelectedSkillIds, setSelectedConnectorIds, replayEvents, loadFinalizedVersions, setStreaming, hydrateSelectedModelForSession]);
 
-  // Fire off the initial message handed in from the landing page once the
-  // session is loaded. Guarded by sentInitialForSession so we don't re-send
-  // when the user navigates back to a session that was created with a state.
+  // Fire the landing-page initial message only after NodePod has registered
+  // (host status `ready`), so the first agent tools do not hit RUNTIME_OFFLINE
+  // while npm install / Vite are still running.
   useEffect(() => {
     if (loading || notFound || isReadOnlyViewer) return;
     if (!sessionId || !initialMessage) return;
     if (sentInitialForSession.current === sessionId) return;
     sentInitialForSession.current = sessionId;
-    // Re-apply the skill selection carried from the landing page. The loader
-    // ran first and reset selectedSkillIds from the (empty) new-session pointer;
-    // restore it here so sendMessage (which reads it from the store) ships it.
+
     if (initialSkillIds?.length) setSelectedSkillIds(initialSkillIds);
     if (initialConnectorIds?.length) setSelectedConnectorIds(initialConnectorIds);
-    void sendMessage(initialMessage, initialModel);
-    // Wipe the location state so a refresh doesn't replay the same prompt.
+
+    let cancelled = false;
+
+    const sendWhenReady = async () => {
+      if (appRuntimeEnabled) {
+        setWaitingForPreview(true);
+        const host = getOrCreateHost(sessionId);
+        const outcome = await waitForHostReady(host);
+        if (cancelled) return;
+        setWaitingForPreview(false);
+        if (outcome === 'error') {
+          useConversationV2Store.setState(
+            { streaming: false, streamError: t('session.previewBootFailed') },
+            false,
+            'initialMessage/preview-error',
+          );
+          return;
+        }
+        if (outcome === 'timeout') {
+          useConversationV2Store.setState(
+            { streaming: false, streamError: t('session.previewBootTimeout') },
+            false,
+            'initialMessage/preview-timeout',
+          );
+          return;
+        }
+      }
+      if (cancelled) return;
+      await sendMessage(initialMessage, initialModel);
+    };
+
+    void sendWhenReady();
+
     if (window.history.replaceState) {
       window.history.replaceState({}, '');
     }
-  }, [loading, notFound, isReadOnlyViewer, sessionId, initialMessage, initialModel, initialSkillIds, setSelectedSkillIds, initialConnectorIds, setSelectedConnectorIds, sendMessage]);
+
+    return () => {
+      cancelled = true;
+      setWaitingForPreview(false);
+    };
+  }, [loading, notFound, isReadOnlyViewer, sessionId, initialMessage, initialModel, initialSkillIds, setSelectedSkillIds, initialConnectorIds, setSelectedConnectorIds, sendMessage, t]);
 
   // Boot BrowserRuntimeHost at session open so Nodepod is long-lived.
   // Read-only viewers don't get a runtime (no ticket request).
@@ -316,6 +353,14 @@ export default function ConversationV2SessionPage() {
           readOnly={isReadOnlyViewer}
           permissions={sessionPermissions}
         />
+        {waitingForPreview && (
+          <div className='border-b border-border/60 bg-muted/40 px-4 py-3'>
+            <p className='text-sm font-medium'>{t('session.waitingForPreview.title')}</p>
+            <p className='mt-0.5 text-xs text-muted-foreground sm:text-sm'>
+              {t('session.waitingForPreview.body')}
+            </p>
+          </div>
+        )}
         {showAppBuilderBanner && (
           <div className='flex items-start gap-3 border-b border-border/60 bg-muted/40 px-4 py-3'>
             <div className='min-w-0 flex-1'>
@@ -350,11 +395,11 @@ export default function ConversationV2SessionPage() {
         {pendingQuestion && canWrite && (
           <QuestionChoices
             pendingQuestion={pendingQuestion}
-            disabled={streaming}
+            disabled={streaming || waitingForPreview}
             onSelect={handleSend}
           />
         )}
-        {canWrite && <Composer onSend={handleSend} />}
+        {canWrite && <Composer onSend={handleSend} disabled={waitingForPreview} />}
       </div>
       {canWrite && <RightPanel />}
       <FileViewerSidebar />

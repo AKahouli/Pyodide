@@ -8,6 +8,12 @@
     "loading": "Chargement de la session…",
     "notFound": "Session introuvable.",
     "errorTitle": "Erreur de flux",
+    "waitingForPreview": {
+      "title": "En attente de l'aperçu en direct",
+      "body": "L'agent démarre une fois l'installation des dépendances terminée et Vite prêt."
+    },
+    "previewBootFailed": "L'aperçu en direct n'a pas pu démarrer. Rechargez la page, puis renvoyez votre message.",
+    "previewBootTimeout": "L'aperçu en direct a mis trop de temps à démarrer. Rechargez la page, puis réessayez.",
     "fromAppBuilder": {
       "title": "Création depuis App Builder",
       "body": "Votre demande a été envoyée à l'Agent. Continuez la conversation ici pour affiner l'application — l'aperçu en direct s'ouvre dans le panneau latéral dès qu'une version est prête. Revenez à App Builder à tout moment via la barre latérale.",

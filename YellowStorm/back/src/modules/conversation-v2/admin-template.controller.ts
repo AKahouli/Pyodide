@@ -62,6 +62,61 @@ export class AdminTemplateController {
     return this.templates.listAll();
   }
 
+  @Post('staging/publish')
+  @HttpCode(HttpStatus.CREATED)
+  @RequirePermissions(Permissions.SUPER_ADMIN)
+  @UseInterceptors(FileFieldsInterceptor([{ name: 'zip', maxCount: 1 }], multipartLimits))
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { zip: { type: 'string', format: 'binary' } },
+      required: ['zip'],
+    },
+  })
+  @ApiOperation({ summary: 'Publish a ZIP to Ceph for ephemeral NodePod validation' })
+  async publishStaging(
+    @UploadedFiles() files: TemplateFiles,
+    @CurrentUser() user: AuthUser,
+    @Req() req: Request,
+  ): Promise<{ stagingTemplateId: string }> {
+    const result = await this.templates.publishStagingZip(files?.zip?.[0]);
+    this.auditLogService.logSuccess({
+      actorId: user._id.toString(),
+      actorEmail: user.email,
+      action: 'conversation_v2_templates.staging_publish',
+      targetId: result.stagingTemplateId,
+      targetType: 'ConversationV2TemplateStaging',
+      metadata: {},
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+    return result;
+  }
+
+  @Delete('staging/:stagingTemplateId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermissions(Permissions.SUPER_ADMIN)
+  @ApiOperation({ summary: 'Remove a staging template manifest after validation' })
+  @ApiParam({ name: 'stagingTemplateId', description: 'Ephemeral staging template id' })
+  async discardStaging(
+    @Param('stagingTemplateId') stagingTemplateId: string,
+    @CurrentUser() user: AuthUser,
+    @Req() req: Request,
+  ): Promise<void> {
+    await this.templates.discardStagingZip(stagingTemplateId);
+    this.auditLogService.logSuccess({
+      actorId: user._id.toString(),
+      actorEmail: user.email,
+      action: 'conversation_v2_templates.staging_discard',
+      targetId: stagingTemplateId,
+      targetType: 'ConversationV2TemplateStaging',
+      metadata: {},
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+  }
+
   @Get(':id')
   @RequirePermissions(Permissions.SUPER_ADMIN)
   @ApiOperation({ summary: 'Get a template by ID' })
@@ -198,29 +253,6 @@ export class AdminTemplateController {
       actorId: user._id.toString(),
       actorEmail: user.email,
       action: 'conversation_v2_templates.replace_source',
-      targetId: id,
-      targetType: 'ConversationV2Template',
-      metadata: { revisionId: template.revisionId },
-      ipAddress: req.ip,
-      userAgent: req.headers['user-agent'],
-    });
-    return template;
-  }
-
-  @Post(':id/validate')
-  @RequirePermissions(Permissions.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Confirm a template after NodePod validation (draft → published)' })
-  @ApiParam({ name: 'id', description: 'Template ID' })
-  async validate(
-    @Param('id') id: string,
-    @CurrentUser() user: AuthUser,
-    @Req() req: Request,
-  ): Promise<ITemplateResponse> {
-    const template = await this.templates.validate(id);
-    this.auditLogService.logSuccess({
-      actorId: user._id.toString(),
-      actorEmail: user.email,
-      action: 'conversation_v2_templates.validate',
       targetId: id,
       targetType: 'ConversationV2Template',
       metadata: { revisionId: template.revisionId },

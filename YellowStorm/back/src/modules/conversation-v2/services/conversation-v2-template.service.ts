@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { isObjectId } from '@common/postgres';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
@@ -18,6 +19,8 @@ import {
   TEMPLATE_COVER_MIME_TYPES,
   TEMPLATE_MAX_ZIP_BYTES,
   templateCoverKey,
+  templateManifestKey,
+  templateRevisionId,
 } from '../constants/template-catalog.constants';
 import { ConversationV2TemplatePublishService } from './conversation-v2-template-publish.service';
 
@@ -73,6 +76,7 @@ export class ConversationV2TemplateService {
       const bound = await this.templates.setRevision(row.id, {
         revisionId: published.revisionId,
         manifestObjectKey: published.manifestObjectKey,
+        platformReport: published.platformReport,
       });
       await this.templates.upsertRevision({
         templateId: row.id,
@@ -81,8 +85,12 @@ export class ConversationV2TemplateService {
         manifestHash: published.manifestHash,
         files: published.files,
       });
-      // Draft until a NodePod validation run confirms it.
-      return this.toResponse(bound!, category.name);
+      const confirmed = await this.templates.markPublished(row.id);
+      if (!confirmed) {
+        throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_PUBLISHED);
+      }
+      await this.templates.markRevisionsPublished(row.id);
+      return this.toResponse(confirmed, category.name);
     } catch (error) {
       await this.templates.delete(row.id).catch(() => undefined);
       throw error;
@@ -125,8 +133,7 @@ export class ConversationV2TemplateService {
 
   /**
    * Usable template revision for starting a session. Users may only use
-   * published templates; super admins may use their own drafts to run the
-   * NodePod validation.
+   * published templates; super admins may also open drafts (legacy rows).
    */
   async requireUsableForUser(
     id: string,
@@ -140,19 +147,6 @@ export class ConversationV2TemplateService {
       throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_PUBLISHED);
     }
     return row;
-  }
-
-  /** Confirm a template after its NodePod validation succeeded (draft → published). */
-  async validate(id: string): Promise<ITemplateResponse> {
-    const current = await this.requireTemplate(id);
-    if (!current.revisionId || !current.manifestObjectKey) {
-      throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_PUBLISHED);
-    }
-    const updated = await this.templates.markPublished(id);
-    if (!updated) throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_PUBLISHED);
-    await this.templates.markRevisionsPublished(id);
-    const category = await this.categories.findById(updated.categoryId);
-    return this.toResponse(updated, category?.name ?? '');
   }
 
   async update(id: string, dto: UpdateTemplateDto): Promise<ITemplateResponse> {
@@ -198,7 +192,7 @@ export class ConversationV2TemplateService {
     return this.toResponse(updated, category?.name ?? '');
   }
 
-  /** Replace the source ZIP and re-bind the same revision id (status unchanged). */
+  /** Replace the source ZIP and re-bind the same revision id (publishes). */
   async replaceSource(id: string, zip: MulterFile | undefined): Promise<ITemplateResponse> {
     await this.requireTemplate(id);
     this.assertZip(zip);
@@ -206,6 +200,7 @@ export class ConversationV2TemplateService {
     const updated = await this.templates.setRevision(id, {
       revisionId: published.revisionId,
       manifestObjectKey: published.manifestObjectKey,
+      platformReport: published.platformReport,
     });
     if (!updated) throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_FOUND);
     await this.templates.upsertRevision({
@@ -215,14 +210,62 @@ export class ConversationV2TemplateService {
       manifestHash: published.manifestHash,
       files: published.files,
     });
-    const category = await this.categories.findById(updated.categoryId);
-    return this.toResponse(updated, category?.name ?? '');
+    const confirmed = (await this.templates.markPublished(id)) ?? updated;
+    await this.templates.markRevisionsPublished(id);
+    const category = await this.categories.findById(confirmed.categoryId);
+    return this.toResponse(confirmed, category?.name ?? '');
   }
 
   async delete(id: string): Promise<void> {
     const row = await this.templates.delete(id);
     if (!row) throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_FOUND);
     await this.publish.removeTemplateArtifacts([row]);
+  }
+
+  /**
+   * Publish a ZIP to Ceph under a throwaway template id (no DB row). Used to
+   * boot NodePod for admin validation before catalog create.
+   */
+  async publishStagingZip(zip: MulterFile | undefined): Promise<{ stagingTemplateId: string }> {
+    this.assertZip(zip);
+    const stagingTemplateId = randomBytes(12).toString('hex');
+    await this.publish.publish(stagingTemplateId, zip!.buffer);
+    return { stagingTemplateId };
+  }
+
+  /** Manifest revision id for a staging publish; 404 when the manifest is missing. */
+  async resolveStagingRevisionId(stagingTemplateId: string): Promise<string> {
+    if (!isObjectId(stagingTemplateId)) {
+      throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_FOUND);
+    }
+    const revisionId = templateRevisionId(stagingTemplateId);
+    const manifestObjectKey = templateManifestKey(revisionId);
+    const exists = await this.documents.exists(manifestObjectKey);
+    if (!exists) {
+      throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_FOUND);
+    }
+    return revisionId;
+  }
+
+  /** Drop the staging manifest after validation (shared blobs are kept). */
+  async discardStagingZip(stagingTemplateId: string): Promise<void> {
+    if (!isObjectId(stagingTemplateId)) return;
+    const revisionId = templateRevisionId(stagingTemplateId);
+    await this.publish.removeTemplateArtifacts([
+      {
+        id: stagingTemplateId,
+        categoryId: stagingTemplateId,
+        title: '',
+        description: '',
+        coverImage: '',
+        revisionId,
+        manifestObjectKey: templateManifestKey(revisionId),
+        platformReport: null,
+        status: 'draft',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ]);
   }
 
   private async requireTemplate(id: string): Promise<ConversationV2TemplateRow> {
@@ -292,6 +335,7 @@ export class ConversationV2TemplateService {
       coverImage,
       status: row.status,
       revisionId: row.revisionId,
+      platformReport: row.platformReport,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };

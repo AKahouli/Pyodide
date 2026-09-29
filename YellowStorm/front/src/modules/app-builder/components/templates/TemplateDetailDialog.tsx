@@ -1,37 +1,31 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader2, Pencil, Trash2 } from 'lucide-react';
+import { AppWindow, Loader2, Pencil, Sparkles, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
 import type { PromptInputMessage } from '@/components/ai-elements/prompt-input';
+import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { AgentComposer } from '@/modules/conversation-v2/components/AgentComposer';
 import { startConversationV2AgentSession } from '@/modules/conversation-v2/startAgentSession';
 import type { AppTemplate } from '../../types';
+import { TemplatePlatformSummary } from './TemplatePlatformSummary';
 
 interface TemplateDetailDialogProps {
   template: AppTemplate | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Super admin only: reveal management actions in the modal footer. */
   isSuperAdmin?: boolean;
   onEdit?: (template: AppTemplate) => void;
   onDelete?: (template: AppTemplate) => void;
 }
 
-/**
- * Template detail + launch modal. Reuses the shared AgentComposer (prompt input
- * + AI model selector) and startConversationV2AgentSession so the session,
- * runtime boot and NodePod preview stay on the existing conversation-v2 path —
- * the template revision is seeded server-side via `templateId`.
- */
 export function TemplateDetailDialog({
   template,
   open,
@@ -71,66 +65,127 @@ export function TemplateDetailDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => (isSending ? undefined : onOpenChange(next))}>
-      <DialogContent className='flex max-h-[90vh] max-w-2xl flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl'>
+      <DialogContent
+        className={cn(
+          'flex max-h-[min(92vh,880px)] w-[calc(100%-1.5rem)] max-w-4xl flex-col gap-0 overflow-hidden p-0 sm:rounded-2xl',
+          '[&>button:last-child]:right-3 [&>button:last-child]:top-3 [&>button:last-child]:z-20',
+          '[&>button:last-child]:rounded-full [&>button:last-child]:border [&>button:last-child]:border-border/60',
+          '[&>button:last-child]:bg-background/95 [&>button:last-child]:shadow-sm [&>button:last-child]:backdrop-blur-sm',
+        )}
+      >
         {template ? (
-          <>
-            <div className='relative aspect-[16/7] w-full shrink-0 overflow-hidden bg-muted/40'>
-              {template.coverImage ? (
-                <img src={template.coverImage} alt='' className='size-full object-cover' />
+          <div className='flex min-h-0 flex-1 flex-col lg:grid lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)] lg:grid-rows-1'>
+            {/* Preview panel */}
+            <div className='relative flex min-h-[200px] flex-col border-b border-border/60 bg-muted/20 lg:min-h-0 lg:border-b-0 lg:border-r'>
+              <div className='flex items-center justify-between gap-2 px-4 pb-2 pt-4 lg:px-5 lg:pt-5'>
+                <p className='text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground'>
+                  {t('templateModal.previewLabel')}
+                </p>
+              </div>
+              <div className='flex flex-1 items-center justify-center px-4 pb-4 pt-1 lg:px-5 lg:pb-6'>
+                <div className='relative w-full max-w-md overflow-hidden rounded-xl border border-border/70 bg-background shadow-md ring-1 ring-black/5'>
+                  <div className='flex items-center gap-1.5 border-b border-border/60 bg-muted/40 px-3 py-2'>
+                    <span className='size-2 rounded-full bg-border' aria-hidden />
+                    <span className='size-2 rounded-full bg-border' aria-hidden />
+                    <span className='size-2 rounded-full bg-border' aria-hidden />
+                    <span className='ml-2 truncate text-[10px] text-muted-foreground'>
+                      {template.title}
+                    </span>
+                  </div>
+                  <div className='relative aspect-[16/10] w-full bg-muted/30'>
+                    {template.coverImage ? (
+                      <img
+                        src={template.coverImage}
+                        alt=''
+                        className='size-full object-cover object-top'
+                      />
+                    ) : (
+                      <div className='flex size-full flex-col items-center justify-center gap-2 text-muted-foreground'>
+                        <AppWindow className='size-8 opacity-60' aria-hidden />
+                        <span className='text-xs'>{t('templateModal.noPreview')}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Details + composer */}
+            <div className='flex min-h-0 flex-1 flex-col'>
+              <div className='space-y-3 border-b border-border/60 px-5 py-5 sm:px-6'>
+                <span className='inline-flex items-center rounded-full border border-border/70 bg-muted/40 px-2.5 py-0.5 text-xs font-medium text-muted-foreground'>
+                  {template.categoryName}
+                </span>
+                <DialogTitle className='text-left text-xl font-semibold leading-tight tracking-tight sm:text-2xl'>
+                  {template.title}
+                </DialogTitle>
+                <DialogDescription className='text-left text-sm leading-relaxed text-muted-foreground'>
+                  {template.description || t('templateModal.noDescription')}
+                </DialogDescription>
+              </div>
+
+              <div className='min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6'>
+                <div className='space-y-3'>
+                  <div className='flex items-start gap-2.5'>
+                    <span className='mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
+                      <Sparkles className='size-4' aria-hidden />
+                    </span>
+                    <div className='min-w-0 space-y-1'>
+                      <p className='text-sm font-semibold text-foreground'>
+                        {isSending ? t('templateModal.sending') : t('templateModal.startHeading')}
+                      </p>
+                      <p className='text-sm leading-relaxed text-muted-foreground'>
+                        {t('templateModal.startHint')}
+                      </p>
+                    </div>
+                    {isSending ? (
+                      <Loader2 className='ml-auto size-5 shrink-0 animate-spin text-muted-foreground' aria-hidden />
+                    ) : null}
+                  </div>
+
+                  <div className='rounded-xl border border-border/70 bg-card/80 p-3 shadow-sm ring-1 ring-border/40'>
+                    <AgentComposer
+                      key={template.id}
+                      onSubmit={handleSubmit}
+                      disabled={isSending}
+                      placeholder={t('templateModal.placeholder')}
+                    />
+                  </div>
+                </div>
+
+                {isSuperAdmin ? (
+                  <div className='mt-5'>
+                    <TemplatePlatformSummary report={template.platformReport} />
+                  </div>
+                ) : null}
+              </div>
+
+              {isSuperAdmin ? (
+                <div className='flex flex-wrap items-center justify-end gap-2 border-t border-border/60 px-5 py-3 sm:px-6'>
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    size='sm'
+                    className='gap-1.5 text-muted-foreground'
+                    onClick={() => onEdit?.(template)}
+                  >
+                    <Pencil className='size-3.5' aria-hidden />
+                    {t('admin.editTemplate')}
+                  </Button>
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    size='sm'
+                    className='gap-1.5 text-fail hover:text-fail'
+                    onClick={() => onDelete?.(template)}
+                  >
+                    <Trash2 className='size-3.5' aria-hidden />
+                    {t('admin.deleteTemplate')}
+                  </Button>
+                </div>
               ) : null}
             </div>
-
-            <DialogHeader className='border-b px-6 py-4 text-left'>
-              <p className='text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground'>
-                {template.categoryName}
-              </p>
-              <DialogTitle className='text-left text-xl'>{template.title}</DialogTitle>
-              <DialogDescription className='text-left'>
-                {template.description || t('templateModal.noDescription')}
-              </DialogDescription>
-            </DialogHeader>
-
-            <div className='flex-1 overflow-y-auto px-6 py-5'>
-              <p className='mb-3 flex items-center gap-2 text-sm font-semibold text-foreground'>
-                {isSending ? <Loader2 className='size-4 animate-spin' aria-hidden /> : null}
-                {isSending ? t('templateModal.sending') : t('templateModal.startHeading')}
-              </p>
-              {/* Remount per open so the composer text resets between templates. */}
-              <div className='rounded-xl border border-border/70 bg-background/90 p-2.5 ring-1 ring-border/40'>
-                <AgentComposer
-                  key={template.id}
-                  onSubmit={handleSubmit}
-                  disabled={isSending}
-                  placeholder={t('templateModal.placeholder')}
-                />
-              </div>
-            </div>
-
-            {isSuperAdmin ? (
-              <div className='flex items-center justify-end gap-2 border-t px-6 py-3'>
-                <Button
-                  type='button'
-                  variant='ghost'
-                  size='sm'
-                  className='gap-1.5 text-muted-foreground'
-                  onClick={() => onEdit?.(template)}
-                >
-                  <Pencil className='size-3.5' aria-hidden />
-                  {t('admin.editTemplate')}
-                </Button>
-                <Button
-                  type='button'
-                  variant='ghost'
-                  size='sm'
-                  className='gap-1.5 text-fail hover:text-fail'
-                  onClick={() => onDelete?.(template)}
-                >
-                  <Trash2 className='size-3.5' aria-hidden />
-                  {t('admin.deleteTemplate')}
-                </Button>
-              </div>
-            ) : null}
-          </>
+          </div>
         ) : null}
       </DialogContent>
     </Dialog>

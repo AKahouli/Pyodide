@@ -88,6 +88,21 @@ export interface AppTemplate {
   coverImage: string;
   status: TemplateStatus;
   revisionId: string | null;
+  platformReport: TemplatePlatformReport | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type TemplatePlatformStatus = 'ready' | 'needs_normalization' | 'incompatible';
+
+/** Platform Kit analysis computed by the backend when the ZIP is published. */
+export interface TemplatePlatformReport {
+  kitVersion: number;
+  analyzedAt: string;
+  status: TemplatePlatformStatus;
+  injectedFiles: string[];
+  violations: string[];
+  warnings: string[];
+  entry: string;
+  appRoot: string;
 }

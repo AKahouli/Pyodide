@@ -63,6 +63,24 @@ describe('ConversationV2TemplatePublishService', () => {
     );
   });
 
+  it('publishes a nested GitHub ZIP with flattened project-root paths', async () => {
+    const result = await svc.publish(
+      'tpl_nested',
+      buildZip({
+        'material-kit-react-main/package.json': '{"name":"mk"}',
+        'material-kit-react-main/src/App.jsx': 'export default function App() { return null; }',
+        'material-kit-react-main/index.html': '<html><body><div id="root"></div></body></html>',
+      }),
+    );
+
+    expect(result.files.map((file) => file.path)).toEqual([
+      'index.html',
+      'package.json',
+      'src/App.jsx',
+    ]);
+    expect(result.platformReport.appRoot).toBe('src/App.jsx');
+  });
+
   it('reuses a blob that already exists in Ceph', async () => {
     exists.mockResolvedValue(true);
     await svc.publish('tpl_2', buildZip({ 'package.json': '{}' }));

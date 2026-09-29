@@ -87,13 +87,15 @@ describe('ConversationV2TemplateService', () => {
     );
   });
 
-  it('creates a draft, uploads the cover and publishes the ZIP to Ceph', async () => {
-    templates.setRevision.mockResolvedValueOnce({
+  it('creates a published template, uploads the cover and publishes the ZIP to Ceph', async () => {
+    const bound = {
       ...draftRow,
       coverImage: `appbuilder/templates/${TPL_ID}/cover.png`,
       revisionId: `template_${TPL_ID}`,
       manifestObjectKey: `appbuilder/manifests/_system/template_${TPL_ID}.json`,
-    });
+    };
+    templates.setRevision.mockResolvedValueOnce(bound);
+    templates.markPublished.mockResolvedValueOnce({ ...bound, status: 'published' as const });
 
     const result = await svc.create({ categoryId: 'c1', title: 'Landing' }, ZIP, COVER);
 
@@ -105,6 +107,7 @@ describe('ConversationV2TemplateService', () => {
     expect(templates.setRevision).toHaveBeenCalledWith(TPL_ID, {
       revisionId: `template_${TPL_ID}`,
       manifestObjectKey: `appbuilder/manifests/_system/template_${TPL_ID}.json`,
+      platformReport: undefined,
     });
     expect(templates.upsertRevision).toHaveBeenCalledWith({
       templateId: TPL_ID,
@@ -113,9 +116,11 @@ describe('ConversationV2TemplateService', () => {
       manifestHash: 'manifest-hash',
       files: expect.arrayContaining([expect.objectContaining({ path: 'package.json' })]),
     });
+    expect(templates.markPublished).toHaveBeenCalledWith(TPL_ID);
+    expect(templates.markRevisionsPublished).toHaveBeenCalledWith(TPL_ID);
     expect(result).toMatchObject({
       id: TPL_ID,
-      status: 'draft',
+      status: 'published',
       revisionId: `template_${TPL_ID}`,
       coverImage: 'https://ceph/signed',
       categoryName: 'Guides',
@@ -151,25 +156,6 @@ describe('ConversationV2TemplateService', () => {
 
     templates.findById.mockResolvedValueOnce(draftRow);
     await expect(svc.requireUsableForUser(TPL_ID, false)).rejects.toBeInstanceOf(NotFoundException);
-  });
-
-  it('validate flips a revision-bound draft to published', async () => {
-    templates.findById.mockResolvedValueOnce({
-      ...draftRow,
-      revisionId: `template_${TPL_ID}`,
-      manifestObjectKey: `appbuilder/manifests/_system/template_${TPL_ID}.json`,
-    });
-    templates.markPublished.mockResolvedValueOnce({
-      ...draftRow,
-      revisionId: `template_${TPL_ID}`,
-      manifestObjectKey: `appbuilder/manifests/_system/template_${TPL_ID}.json`,
-      status: 'published',
-    });
-
-    const result = await svc.validate(TPL_ID);
-    expect(templates.markPublished).toHaveBeenCalledWith(TPL_ID);
-    expect(templates.markRevisionsPublished).toHaveBeenCalledWith(TPL_ID);
-    expect(result.status).toBe('published');
   });
 
   it('deletes the row and cleans its Ceph artifacts', async () => {

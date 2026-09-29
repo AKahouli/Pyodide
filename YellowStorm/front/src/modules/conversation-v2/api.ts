@@ -55,10 +55,15 @@ export const conversationV2Api = {
   async createSession(
     workspaceIds: string[] = [],
     templateId?: string,
+    stagingTemplateId?: string,
   ): Promise<CreateSessionResponse> {
     const res = await apiClient.post<ApiResponse<CreateSessionResponse>>(
       '/conversation-v2/sessions',
-      { workspaceIds, ...(templateId ? { templateId } : {}) },
+      {
+        workspaceIds,
+        ...(templateId ? { templateId } : {}),
+        ...(stagingTemplateId ? { stagingTemplateId } : {}),
+      },
     );
     return res.data.data;
   },
@@ -291,7 +296,8 @@ export const conversationV2Api = {
     body: {
       revisionId: string;
       parentRevisionId: string | null;
-      files: Array<{ path: string; content: string }>;
+      files: Array<{ path: string; content: string; encoding?: 'utf8' | 'base64' }>;
+      presentPaths?: string[];
       toolCallId?: string | null;
     },
   ): Promise<{

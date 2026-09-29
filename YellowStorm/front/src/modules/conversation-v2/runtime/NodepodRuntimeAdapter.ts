@@ -5,6 +5,8 @@ import {
   looksLikeDevServerReady,
   PREVIEW_PORTS,
   PreviewController,
+  waitUntilDirectServerReady,
+  type DevServerPromotePolicy,
 } from './PreviewController';
 import type { VfsFiles } from './RevisionHydrator';
 import type { FileEntry } from './runtime.types';
@@ -28,7 +30,9 @@ const REACT_PKG_PATH = '/node_modules/react';
 const ROLLDOWN_PKG_PATH = '/node_modules/rolldown';
 const ROLLDOWN_WASM_PATH = '/node_modules/@rolldown/binding-wasm32-wasi';
 const READY_SOFT_MS = 20_000;
-const READY_HARD_MS = 90_000;
+/** Large templates (e.g. Material UI kits) can need several minutes for first Vite boot. */
+const READY_HARD_MS = 300_000;
+const PORT_SCAN_INTERVAL_MS = 8_000;
 const MAX_CACHE_AGE_MS = 10 * 60 * 1000;
 
 function log(phase: string, details?: Record<string, unknown>) {
@@ -111,13 +115,37 @@ function detectDevCommand(files: VfsFiles): { cmd: string; args: string[] } {
     try {
       const pkg = JSON.parse(pkgRaw) as { scripts?: Record<string, string> };
       const scripts = pkg.scripts ?? {};
-      if (scripts.dev) return { cmd: 'npm', args: ['run', 'dev'] };
+      if (scripts.dev) {
+        const devScript = scripts.dev;
+        if (/\bvite\b/i.test(devScript) && !/--host/i.test(devScript)) {
+          return { cmd: 'npm', args: ['run', 'dev', '--', '--host', '0.0.0.0'] };
+        }
+        return { cmd: 'npm', args: ['run', 'dev'] };
+      }
       if (scripts.start) return { cmd: 'npm', args: ['run', 'start'] };
     } catch {
       // fall through
     }
   }
-  return { cmd: 'npm', args: ['run', 'dev'] };
+  return { cmd: 'npm', args: ['run', 'dev', '--', '--host', '0.0.0.0'] };
+}
+
+export interface StartDevServerOptions {
+  softTimeoutMs?: number;
+  hardTimeoutMs?: number;
+  promotePolicy?: DevServerPromotePolicy;
+}
+
+function uniquePortCandidates(pendingUrl: string | null, pendingPort: number | null): number[] {
+  const out: number[] = [];
+  const add = (value: number | null | undefined) => {
+    if (value == null || !Number.isInteger(value) || value <= 0) return;
+    if (!out.includes(value)) out.push(value);
+  };
+  add(resolvePreviewPort({ previewUrl: pendingUrl, reportedPort: pendingPort }));
+  add(pendingPort);
+  for (const port of PREVIEW_PORTS) add(port);
+  return out;
 }
 
 export interface SpawnResult {
@@ -159,6 +187,8 @@ export class NodepodRuntimeAdapter {
   private _files: VfsFiles | null = null;
   private lastInstallFingerprint: string | null = null;
   private currentDevProc: NodepodProc | null = null;
+  private pendingServerPort: number | null = null;
+  private pendingServerUrl: string | null = null;
 
   get currentPod(): NodepodInstance | null {
     return this.pod;
@@ -178,6 +208,8 @@ export class NodepodRuntimeAdapter {
     this.sessionId = sessionId;
     this.revision = revision;
     this._files = files;
+    this.pendingServerPort = null;
+    this.pendingServerUrl = null;
 
     log('boot:start', { fileCount: Object.keys(files).length });
     const pod = await Nodepod.boot({
@@ -186,6 +218,8 @@ export class NodepodRuntimeAdapter {
       watermark: false,
       onServerReady: (port: number, url: string) => {
         log('server-ready', { port, url });
+        this.pendingServerPort = port;
+        this.pendingServerUrl = url;
         onServerReady?.(port, url);
       },
     });
@@ -316,12 +350,17 @@ export class NodepodRuntimeAdapter {
     isStale: () => boolean,
     onProgress?: ProgressCallback,
     extraEnv?: Record<string, string>,
+    serverOpts?: StartDevServerOptions,
   ): Promise<string | null> {
     const pod = this.requirePod();
     const files = this._files ?? {};
     const { cmd, args } = detectDevCommand(files);
     const needsWasi = await pod.fs.exists(ROLLDOWN_WASM_PATH);
+    const softTimeoutMs = serverOpts?.softTimeoutMs ?? READY_SOFT_MS;
+    const hardTimeoutMs = serverOpts?.hardTimeoutMs ?? READY_HARD_MS;
+    const promotePolicy = serverOpts?.promotePolicy ?? 'full';
     const devEnv = {
+      HOST: '0.0.0.0',
       ...(needsWasi ? { NAPI_RS_FORCE_WASI: 'true', NAPI_RS_FORCE_WASM: '1' } : {}),
       ...(extraEnv ?? {}),
     };
@@ -342,52 +381,79 @@ export class NodepodRuntimeAdapter {
     log('dev-server:spawn', { cmd, args, env: spawnEnv ?? null });
     onProgress?.('starting', `${cmd} ${args.join(' ')}`);
 
-    let pendingPort: number | null = null;
-    let pendingUrl: string | null = null;
+    let pendingPort: number | null = this.pendingServerPort;
+    let pendingUrl: string | null = this.pendingServerUrl;
     let devExited = false;
     let resolved = false;
+    let promoteChain: Promise<void> = Promise.resolve();
 
     return new Promise<string | null>((resolve) => {
+      let portScanTimer: ReturnType<typeof setInterval> | null = null;
+
       const finish = (url: string | null) => {
         if (resolved) return;
         resolved = true;
         clearTimeout(softTimer);
         clearTimeout(hardTimer);
+        if (portScanTimer) clearInterval(portScanTimer);
         if (url) {
-          previewCtrl.setPreview(url, pendingPort ?? 5173);
+          const port =
+            previewCtrl.port ??
+            resolvePreviewPort({ previewUrl: url, reportedPort: pendingPort }) ??
+            pendingPort ??
+            5173;
+          previewCtrl.setPreview(url, port);
           this.updateCachePreview(url);
         }
         resolve(url);
       };
 
-      const tryProbe = async (url: string, port: number, source: string) => {
-        if (resolved || isStale()) return;
-        log('promote:start', { source, url, port });
-        const result = await previewCtrl.probeAndPromote(pod, url, port, isStale);
-        if (result.ok) {
-          finish(previewCtrl.previewUrl);
-        } else if (result.error) {
-          finish(null);
-        }
+      const tryProbe = (url: string, port: number, source: string) => {
+        promoteChain = promoteChain.then(async () => {
+          if (resolved || isStale()) return;
+          log('promote:start', { source, url, port, promotePolicy });
+          const result = await previewCtrl.probeAndPromote(pod, url, port, isStale, {
+            promotePolicy,
+          });
+          if (result.ok) {
+            finish(previewCtrl.previewUrl);
+            return;
+          }
+          if (result.error) {
+            log('promote:retry-later', { source, reason: result.error, devExited });
+          }
+        });
+        return promoteChain;
       };
 
-      const tryFallbackPorts = (): { url: string; port: number } | null => {
-        const candidates = [
-          resolvePreviewPort({ previewUrl: pendingUrl, reportedPort: pendingPort }),
-          pendingPort,
-          ...PREVIEW_PORTS,
-        ];
-        for (const port of candidates) {
-          if (port == null) continue;
+      const scanAllPorts = async (source: string, attemptsPerPort: number) => {
+        if (resolved || isStale()) return;
+        for (const port of uniquePortCandidates(pendingUrl, pendingPort)) {
+          if (resolved || isStale()) return;
           const url = pod.port(port);
-          if (url) return { url, port };
+          if (!url) continue;
+          const directOk = await waitUntilDirectServerReady(pod, port, isStale, attemptsPerPort);
+          if (!directOk) continue;
+          pendingPort = port;
+          pendingUrl = url;
+          await tryProbe(url, port, `${source}:port-${port}`);
+          if (resolved) return;
         }
-        return pendingUrl && pendingPort != null ? { url: pendingUrl, port: pendingPort } : null;
       };
 
       void (async () => {
         const proc = await pod.spawn(cmd, args, spawnEnv ? { env: spawnEnv } : undefined);
         this.currentDevProc = proc;
+
+        if (pendingUrl && pendingPort != null) {
+          void tryProbe(pendingUrl, pendingPort, 'boot-server-ready');
+        }
+
+        portScanTimer = setInterval(() => {
+          if (resolved || isStale() || devExited) return;
+          void scanAllPorts('interval-scan', 6);
+        }, PORT_SCAN_INTERVAL_MS);
+
         proc.on('output', (text: string) => {
           console.log(`${LOG} [dev:stdout]`, text);
           if (!resolved && !isStale() && looksLikeDevServerReady(text)) {
@@ -396,8 +462,16 @@ export class NodepodRuntimeAdapter {
               reportedPort: pendingPort ?? 5173,
               stdoutText: text,
             }) ?? 5173;
-            const url = pendingUrl || pod.port(port) || PREVIEW_PORTS.map((p) => pod.port(p)).find(Boolean) || null;
-            if (url) void tryProbe(url, port, 'stdout-ready');
+            pendingPort = port;
+            const url =
+              pendingUrl ||
+              pod.port(port) ||
+              PREVIEW_PORTS.map((p) => pod.port(p)).find(Boolean) ||
+              null;
+            if (url) {
+              pendingUrl = url;
+              void tryProbe(url, port, 'stdout-ready');
+            }
           }
         });
         proc.on('error', (text: string) => console.warn(`${LOG} [dev:stderr]`, text));
@@ -407,33 +481,22 @@ export class NodepodRuntimeAdapter {
           log('dev-server:exit', { code });
           if (!resolved) finish(null);
         });
-
-        // Capture onServerReady port
-        // (already set by boot's onServerReady → stored in pendingPort/pendingUrl above)
-        // We need a bridge; the onServerReady from boot() should set pendingPort/pendingUrl
-        // that we reference here. Since boot() already fired before startDevServer,
-        // the consumer must wire them together via the host.
       })();
 
       const softTimer = setTimeout(() => {
         if (resolved || isStale()) return;
-        const fallback = tryFallbackPorts();
-        if (fallback) {
-          void tryProbe(fallback.url, fallback.port, 'soft-timeout');
-        } else if (devExited) {
-          finish(null);
-        }
-      }, READY_SOFT_MS);
+        void scanAllPorts('soft-timeout', 12).then(() => {
+          if (!resolved && devExited && !isStale()) finish(null);
+        });
+      }, softTimeoutMs);
 
       const hardTimer = setTimeout(() => {
         if (resolved || isStale()) return;
-        const fallback = tryFallbackPorts();
-        if (fallback) {
-          void tryProbe(fallback.url, fallback.port, 'hard-timeout');
-        } else {
-          finish(null);
-        }
-      }, READY_HARD_MS);
+        void (async () => {
+          await scanAllPorts('hard-timeout', 24);
+          if (!resolved && !isStale()) finish(null);
+        })();
+      }, hardTimeoutMs);
     });
   }
 
@@ -456,6 +519,14 @@ export class NodepodRuntimeAdapter {
 
   async readFile(path: string): Promise<string> {
     return this.requirePod().fs.readFile(path, 'utf-8');
+  }
+
+  /** Raw bytes for binary assets (png/jpg/…); used by shaManifest + commit. */
+  async readFileBytes(path: string): Promise<Uint8Array> {
+    const raw: unknown = await this.requirePod().fs.readFile(path);
+    if (raw instanceof Uint8Array) return raw;
+    if (typeof raw === 'string') return new TextEncoder().encode(raw);
+    throw new Error(`Unsupported file payload for ${path}`);
   }
 
   async exists(path: string): Promise<boolean> {
@@ -581,10 +652,15 @@ export class NodepodRuntimeAdapter {
   async shaManifest(): Promise<Map<string, string>> {
     const manifest = new Map<string, string>();
     for (const full of await this.listFiles('/')) {
+      const rel = full.replace(/^\//, '');
       try {
-        manifest.set(full.replace(/^\//, ''), await sha256(await this.readFile(full)));
+        manifest.set(rel, await sha256(await this.readFile(full)));
       } catch {
-        // Binary files are excluded from revision manifests.
+        try {
+          manifest.set(rel, await sha256(await this.readFileBytes(full)));
+        } catch {
+          // Skip unreadable paths.
+        }
       }
     }
     return manifest;

@@ -76,6 +76,17 @@ describe('RuntimeConnectionRegistry', () => {
     expect(registry.get('sess_1')).toBeNull();
   });
 
+  it('waitForConnection resolves when a browser registers within the timeout', async () => {
+    const pending = registry.waitForConnection('sess_1', 1_000);
+    await new Promise((r) => setTimeout(r, 20));
+    registry.register(registerParams(socketOf('s1')));
+    await expect(pending).resolves.toMatchObject({ workspaceId: 'sess_1' });
+  });
+
+  it('waitForConnection returns null when timeoutMs is 0 and nobody is connected', async () => {
+    await expect(registry.waitForConnection('sess_1', 0)).resolves.toBeNull();
+  });
+
   it('treats a connection as stale once the heartbeat window elapses', () => {
     registry.register(registerParams(socketOf('s1')));
     const connection = registry.get('sess_1')!;

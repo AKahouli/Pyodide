@@ -18,6 +18,10 @@ const EXCLUDED_BASENAMES = new Set(['manifest.json', 'README.md', 'package-lock.
  * Extract the shippable source files from a template ZIP, mirroring the
  * starter publish script's exclusions (build output, locks, source maps).
  * Rejects empty or oversized archives as ERR_3804.
+ *
+ * GitHub-style archives wrap the project in a single top folder
+ * (`material-kit-react-main/...`). That prefix is stripped so Vite, the
+ * Platform Kit and NodePod preview all see a flat React project root.
  */
 export function extractTemplateArchive(buffer: Buffer): TemplateArchiveFile[] {
   let archive: AdmZip;
@@ -63,5 +67,42 @@ export function extractTemplateArchive(buffer: Buffer): TemplateArchiveFile[] {
     );
   }
 
-  return files.sort((a, b) => a.path.localeCompare(b.path));
+  return stripSingleRootPrefix(files).sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/**
+ * When every path is under one shared directory (and none sit at the ZIP
+ * root), drop that directory so the project root matches a Vite workspace.
+ * Only strips when the flattened root still looks like a project (package.json,
+ * index.html, or vite.config.*) — never peel a real `src/` folder away.
+ */
+export function stripSingleRootPrefix(files: TemplateArchiveFile[]): TemplateArchiveFile[] {
+  if (files.length === 0) return files;
+
+  const roots = new Set(files.map((file) => file.path.split('/')[0]));
+  if (roots.size !== 1) return files;
+
+  const prefix = [...roots][0];
+  // A lone root file (`package.json`) is already the project root.
+  if (!files.every((file) => file.path.startsWith(`${prefix}/`))) return files;
+
+  const stripped = files.map((file) => ({
+    ...file,
+    path: file.path.slice(prefix.length + 1),
+  }));
+
+  if (!stripped.some((file) => isProjectRootMarker(file.path))) {
+    return files;
+  }
+
+  return stripped;
+}
+
+function isProjectRootMarker(path: string): boolean {
+  if (path.includes('/')) return false;
+  return (
+    path === 'package.json' ||
+    path === 'index.html' ||
+    /^vite\.config\.[cm]?[jt]s$/.test(path)
+  );
 }

@@ -3,6 +3,8 @@
  * (`conversation_v2.template_categories` + `conversation_v2.templates`).
  * All SQL lives in the Postgres implementation; services never query directly.
  */
+import type { TemplatePlatformReport } from '@modules/app-runtime/platform-kit/platform-template-report';
+
 export const CONVERSATION_V2_TEMPLATE_CATEGORY_STORE = Symbol(
   'CONVERSATION_V2_TEMPLATE_CATEGORY_STORE',
 );
@@ -30,6 +32,8 @@ export interface ConversationV2TemplateRow {
   revisionId: string | null;
   manifestObjectKey: string | null;
   status: ConversationV2TemplateStatus;
+  /** Platform Kit analysis of the uploaded ZIP; null before the first publish. */
+  platformReport: TemplatePlatformReport | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -88,9 +92,13 @@ export interface ConversationV2TemplateStore {
   /** Bind the Ceph revision to a still-draft template (pending validation). */
   setRevision(
     id: string,
-    binding: { revisionId: string; manifestObjectKey: string },
+    binding: {
+      revisionId: string;
+      manifestObjectKey: string;
+      platformReport?: TemplatePlatformReport;
+    },
   ): Promise<ConversationV2TemplateRow | null>;
-  /** Mark a template published after NodePod validation confirmed it. */
+  /** Flip template status to published. */
   markPublished(id: string): Promise<ConversationV2TemplateRow | null>;
   delete(id: string): Promise<ConversationV2TemplateRow | null>;
 

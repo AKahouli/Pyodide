@@ -13,7 +13,10 @@ import {
   CONVERSATION_V2_TEMPLATE_STORE,
   type ConversationV2TemplateStore,
 } from '@modules/conversation-v2/persistence/conversation-v2-template.store';
-import { TEMPLATE_REVISION_PREFIX } from '@modules/conversation-v2/constants/template-catalog.constants';
+import {
+  TEMPLATE_REVISION_PREFIX,
+  templateManifestKey,
+} from '@modules/conversation-v2/constants/template-catalog.constants';
 import {
   DEFAULT_STARTER_MANIFEST_KEY,
   DEFAULT_STARTER_REVISION_ID,
@@ -22,6 +25,7 @@ import {
 } from '../constants/starter-revisions';
 import { STARTER_REACT_VITE_V1_REVISION_ID } from '../constants/starter-react-vite-v1';
 import { blobObjectKey } from '../utils/blob-object-key';
+import { isTextSourcePath } from '../utils/source-path.util';
 import { type SourceRevisionFileRecord } from '../persistence/runtime-source-revision.store';
 import { PgRuntimeSourceRevisionStore } from '../persistence/pg-runtime-source-revision.store';
 
@@ -221,7 +225,11 @@ export class RuntimeRevisionService {
         return true;
       }
       const template = await this.templateStore?.findByRevisionId(revisionId);
-      return template?.status === 'published' && !!template.manifestObjectKey;
+      if (template?.status === 'published' && template.manifestObjectKey) {
+        return true;
+      }
+      // Ephemeral staging publish (ZIP validation): manifest in Ceph, no catalog row.
+      return this.documents.exists(templateManifestKey(revisionId));
     }
     return this.store.existsByWorkspaceAndRevision(workspaceId, revisionId);
   }
@@ -229,12 +237,19 @@ export class RuntimeRevisionService {
   /**
    * Persist a workspace revision snapshot to Ceph (content-addressed blobs +
    * manifest) and Postgres. Called by the browser runtime after each mutating tool.
+   *
+   * Uploaded bodies overlay the parent. When `presentPaths` is set, the result is
+   * parent ∩ presentPaths ⊕ uploads (template binaries survive text-only commits;
+   * omitted paths are deletions). Without `presentPaths`, non-text parent files
+   * not overridden by an upload are still inherited so older clients do not drop
+   * assets.
    */
   async commitWorkspaceRevision(input: {
     workspaceId: string;
     revisionId: string;
     parentRevisionId?: string | null;
-    files: Array<{ path: string; content: string }>;
+    files: Array<{ path: string; content: string; encoding?: 'utf8' | 'base64' }>;
+    presentPaths?: string[];
     toolCallId?: string | null;
   }): Promise<RevisionManifest> {
     const { workspaceId, revisionId } = input;
@@ -256,6 +271,7 @@ export class RuntimeRevisionService {
       };
     }
 
+    let parentFiles: SourceRevisionFileRecord[] = [];
     if (parentRevisionId) {
       const parentOk = await this.revisionExists(workspaceId, parentRevisionId);
       if (!parentOk) {
@@ -263,23 +279,35 @@ export class RuntimeRevisionService {
           `Parent revision ${parentRevisionId} is not authorized for workspace ${workspaceId}`,
         );
       }
+      try {
+        const parent = await this.getAuthorizedRevision(workspaceId, parentRevisionId);
+        parentFiles = parent.files;
+      } catch (err) {
+        throw new BadRequestException(
+          `Parent revision ${parentRevisionId} could not be loaded for workspace ${workspaceId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
     }
 
-    const manifestFiles: SourceRevisionFileRecord[] = [];
+    const uploadedByPath = new Map<string, SourceRevisionFileRecord>();
     for (const raw of input.files) {
       const path = this.normalizeRelativePath(raw.path);
-      const body = Buffer.from(raw.content, 'utf8');
+      const encoding = raw.encoding === 'base64' ? 'base64' : 'utf8';
+      const body = Buffer.from(raw.content, encoding);
       const sha256 = createHash('sha256').update(body).digest('hex');
       const objectKey = blobObjectKey(sha256);
+      const contentType = encoding === 'base64' ? 'application/octet-stream' : 'text/plain';
 
       if (!(await this.documents.exists(objectKey))) {
-        await this.documents.upload(body, path.split('/').pop() || path, 'text/plain', {
+        await this.documents.upload(body, path.split('/').pop() || path, contentType, {
           generateUniqueName: false,
           customFileName: objectKey,
         });
       }
 
-      manifestFiles.push({
+      uploadedByPath.set(path, {
         path,
         sha256,
         objectKey,
@@ -287,7 +315,34 @@ export class RuntimeRevisionService {
       });
     }
 
-    manifestFiles.sort((a, b) => a.path.localeCompare(b.path));
+    const parentByPath = new Map(parentFiles.map((f) => [f.path, f]));
+    const fileMap = new Map<string, SourceRevisionFileRecord>();
+
+    const presentPaths = input.presentPaths?.map((p) => this.normalizeRelativePath(p));
+    if (presentPaths?.length) {
+      for (const path of presentPaths) {
+        const uploaded = uploadedByPath.get(path);
+        if (uploaded) {
+          fileMap.set(path, uploaded);
+          continue;
+        }
+        const inherited = parentByPath.get(path);
+        if (inherited) {
+          fileMap.set(path, inherited);
+        }
+      }
+    } else {
+      for (const [path, file] of uploadedByPath) {
+        fileMap.set(path, file);
+      }
+      for (const [path, file] of parentByPath) {
+        if (uploadedByPath.has(path)) continue;
+        if (isTextSourcePath(path)) continue;
+        fileMap.set(path, file);
+      }
+    }
+
+    const manifestFiles = [...fileMap.values()].sort((a, b) => a.path.localeCompare(b.path));
 
     const manifestPayload = JSON.stringify({
       revisionId,
@@ -512,11 +567,27 @@ export class RuntimeRevisionService {
     const template = await this.templateStore?.findByRevisionId(revisionId);
     // Draft templates are loadable so a super-admin can run the NodePod
     // validation; user-facing use is gated to published elsewhere.
-    if (!template || !template.manifestObjectKey) {
+    if (template && !template.manifestObjectKey) {
       throw new NotFoundException(`Template revision ${revisionId} not found`);
     }
 
-    const raw = await this.documents.download(template.manifestObjectKey);
+    const manifestObjectKey =
+      template?.manifestObjectKey ?? templateManifestKey(revisionId);
+    if (!template) {
+      const exists = await this.documents.exists(manifestObjectKey);
+      if (!exists) {
+        throw new NotFoundException(`Template revision ${revisionId} not found`);
+      }
+    }
+
+    return this.readSystemManifestFromCeph(manifestObjectKey, revisionId);
+  }
+
+  private async readSystemManifestFromCeph(
+    manifestObjectKey: string,
+    revisionId: string,
+  ): Promise<RevisionManifest> {
+    const raw = await this.documents.download(manifestObjectKey);
     const parsed = JSON.parse(raw.toString('utf8')) as CephStarterManifestJson;
     const files = this.normalizeManifestFiles(parsed.files);
     if (files.length === 0) {
@@ -528,7 +599,7 @@ export class RuntimeRevisionService {
       workspaceId: '_system',
       parentRevisionId: parsed.parentRevisionId ?? null,
       manifestHash: createHash('sha256').update(raw).digest('hex'),
-      manifestObjectKey: template.manifestObjectKey,
+      manifestObjectKey,
       files,
     };
   }

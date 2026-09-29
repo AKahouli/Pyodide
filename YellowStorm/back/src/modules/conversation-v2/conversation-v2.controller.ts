@@ -7,6 +7,7 @@ import {
   HttpCode,
   HttpStatus,
   Logger,
+  ForbiddenException,
   NotFoundException,
   NotImplementedException,
   Param,
@@ -36,6 +37,7 @@ import { RequireConversationSessionPermission } from './decorators/require-conve
 import { CurrentConversationSession } from './decorators/current-conversation-session.decorator';
 import { ConversationV2SessionPermissions } from './constants/conversation-v2-session-permissions';
 import { Permissions } from '@modules/authorization/constants/permissions';
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import type { ConversationV2SessionPermission } from './constants/conversation-v2-session-permissions';
 import type { ConversationV2ResolvedSession } from './services/conversation-v2-session-access.service';
 import { CreateSessionDto } from './dto/create-session.dto';
@@ -137,9 +139,22 @@ export class ConversationV2Controller {
 
     // Optional template seed: the session (and therefore the browser runtime
     // binding) boots on the template's published revision. Super admins may
-    // also seed a draft template to run the NodePod validation.
+    // also seed a legacy draft that already has a revision binding, or a
+    // staging manifest from template ZIP validation (no catalog row).
     let starterRevisionId: string | undefined;
-    if (body.templateId) {
+    if (body.templateId && body.stagingTemplateId) {
+      throw new BadRequestException(
+        ErrorCode.VALIDATION_ERROR,
+        'Provide either templateId or stagingTemplateId, not both.',
+      );
+    }
+    if (body.stagingTemplateId) {
+      const isSuperAdmin = user.permissions?.includes(Permissions.SUPER_ADMIN) ?? false;
+      if (!isSuperAdmin) {
+        throw new ForbiddenException(ErrorCode.FORBIDDEN);
+      }
+      starterRevisionId = await this.templates.resolveStagingRevisionId(body.stagingTemplateId);
+    } else if (body.templateId) {
       const isSuperAdmin = user.permissions?.includes(Permissions.SUPER_ADMIN) ?? false;
       const template = await this.templates.requireUsableForUser(body.templateId, isSuperAdmin);
       starterRevisionId = template.revisionId ?? undefined;
@@ -565,7 +580,7 @@ export class ConversationV2Controller {
         );
       }
       revisionId = resolvedRevisionId;
-      const result = await this.deployment.deploy(pointer.aiSessionId, revisionId);
+      const result = await this.deployment.deploy(pointer.aiSessionId, revisionId, ownerId);
       deployedUrl = result.url;
     } catch (err) {
       await this.sessions
@@ -776,6 +791,7 @@ export class ConversationV2Controller {
       revisionId: body.revisionId,
       parentRevisionId: body.parentRevisionId ?? null,
       files: body.files,
+      presentPaths: body.presentPaths,
       toolCallId: body.toolCallId ?? null,
     });
     return {

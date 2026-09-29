@@ -193,13 +193,28 @@ async function commitRevision(ctx: ToolContext): Promise<string> {
   const parentRevisionId = ctx.revisions.latestRevisionId;
   const revisionId = ctx.revisions.commit(manifest);
 
-  const files: Array<{ path: string; content: string }> = [];
-  for (const relPath of manifest.keys()) {
-    if (!isTextSourcePath(relPath)) continue;
+  const presentPaths = [...manifest.keys()];
+  const files: Array<{ path: string; content: string; encoding?: 'utf8' | 'base64' }> = [];
+  for (const relPath of presentPaths) {
     const vfsPath = toVfsPath(relPath);
-    const content = await ctx.adapter.readFile(vfsPath);
-    if (typeof content === 'string') {
-      files.push({ path: relPath, content });
+    if (isTextSourcePath(relPath)) {
+      const content = await ctx.adapter.readFile(vfsPath);
+      if (typeof content === 'string') {
+        files.push({ path: relPath, content, encoding: 'utf8' });
+      }
+      continue;
+    }
+    // Binary: prefer upload; if unreadable, still list in presentPaths so the
+    // backend can inherit the blob from the parent (template) revision.
+    try {
+      const bytes = await ctx.adapter.readFileBytes(vfsPath);
+      files.push({
+        path: relPath,
+        content: bytesToBase64(bytes),
+        encoding: 'base64',
+      });
+    } catch {
+      // inherit via presentPaths
     }
   }
 
@@ -208,6 +223,7 @@ async function commitRevision(ctx: ToolContext): Promise<string> {
       revisionId,
       parentRevisionId,
       files,
+      presentPaths,
       toolCallId: ctx.toolCallId ?? null,
     });
   } catch (err) {
@@ -222,6 +238,15 @@ async function commitRevision(ctx: ToolContext): Promise<string> {
   }
 
   return revisionId;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  const chunk = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
 }
 
 function conflict(

@@ -1,3 +1,4 @@
+import type { TemplatePlatformReport } from '@modules/app-runtime/platform-kit/platform-template-report';
 import type { ConversationV2TemplateStatus } from '../persistence/conversation-v2-template.store';
 
 export interface ITemplateCategoryResponse {
@@ -21,6 +22,8 @@ export interface ITemplateResponse {
   status: ConversationV2TemplateStatus;
   /** `template_<id>` once published, else null. */
   revisionId: string | null;
+  /** What the Platform Kit must inject for this template (null before publish). */
+  platformReport: TemplatePlatformReport | null;
   createdAt: Date;
   updatedAt: Date;
 }

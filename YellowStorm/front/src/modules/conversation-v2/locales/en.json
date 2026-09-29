@@ -8,6 +8,12 @@
     "loading": "Loading session…",
     "notFound": "Session not found.",
     "errorTitle": "Stream error",
+    "waitingForPreview": {
+      "title": "Waiting for live preview",
+      "body": "The agent starts once the preview finishes installing dependencies and Vite is ready."
+    },
+    "previewBootFailed": "The live preview could not start. Reload the page, then send your message again.",
+    "previewBootTimeout": "The live preview took too long to become ready. Reload the page, then try again.",
     "fromAppBuilder": {
       "title": "Building from App Builder",
       "body": "Your prompt was sent to the Agent. Keep chatting here to refine the app — the live preview opens in the side panel when a version is ready. Return to App Builder anytime from the sidebar.",

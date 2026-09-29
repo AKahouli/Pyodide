@@ -27,17 +27,25 @@ export function TemplateGrid({
   if (loading) {
     return (
       <div
-        className='grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3'
+        className='grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3'
         aria-busy='true'
         aria-label='Loading'
       >
         {Array.from({ length: 6 }, (_, i) => (
-          <div key={i} className='overflow-hidden rounded-2xl border border-border/60 bg-card'>
-            <Skeleton className='aspect-[16/9] w-full rounded-none' />
-            <div className='space-y-2 p-4'>
-              <Skeleton className='h-3 w-16' />
-              <Skeleton className='h-5 w-40' />
-              <Skeleton className='h-4 w-full' />
+          <div
+            key={i}
+            className='flex flex-col overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm'
+          >
+            <Skeleton className='aspect-[16/10] w-full rounded-none' />
+            <div className='space-y-3 px-4 py-4'>
+              <div className='flex gap-3'>
+                <Skeleton className='size-9 shrink-0 rounded-full' />
+                <div className='min-w-0 flex-1 space-y-2'>
+                  <Skeleton className='h-4 w-3/4' />
+                  <Skeleton className='h-3 w-1/3' />
+                </div>
+              </div>
+              <Skeleton className='h-9 w-full rounded-full' />
             </div>
           </div>
         ))}
@@ -50,7 +58,7 @@ export function TemplateGrid({
       <div className='flex flex-col items-center justify-center gap-4 rounded-2xl border border-fail/20 bg-fail-soft/30 px-6 py-16 text-center'>
         <AlertCircle className='size-6 text-fail' aria-hidden />
         <p className='text-sm text-muted-foreground'>{t('templates.error')}</p>
-        <Button type='button' variant='outline' size='sm' className='gap-1.5' onClick={onRetry}>
+        <Button type='button' variant='outline' size='sm' className='gap-1.5 rounded-lg' onClick={onRetry}>
           <RefreshCw className='size-3.5' aria-hidden />
           {t('page.retry')}
         </Button>
@@ -60,7 +68,7 @@ export function TemplateGrid({
 
   if (templates.length === 0) {
     return (
-      <div className='flex flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-border/80 bg-muted/15 px-6 py-16 text-center'>
+      <div className='flex flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-border/70 bg-muted/10 px-6 py-16 text-center'>
         <div className='flex size-14 items-center justify-center rounded-2xl border border-border/60 bg-card shadow-sm'>
           <AppWindow className='size-6 text-muted-foreground' aria-hidden />
         </div>
@@ -77,7 +85,7 @@ export function TemplateGrid({
   }
 
   return (
-    <div className='grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3'>
+    <div className='grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3'>
       {templates.map((template) => (
         <TemplateCard key={template.id} template={template} onOpen={onOpen} />
       ))}

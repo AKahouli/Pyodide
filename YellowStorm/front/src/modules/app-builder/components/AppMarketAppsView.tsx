@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { AlertCircle, AppWindow, Loader2, RefreshCw, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -46,8 +46,10 @@ function CatalogSkeleton() {
   );
 }
 
-/** The original App Market view: generated apps as cards, with filters. */
-export function AppMarketAppsView() {
+/** The original App Market view: generated apps as cards, with filters.
+ *  `children` is rendered directly under the App Market chat, before the app
+ *  list, so the chat and the catalog stay visible while a category browses. */
+export function AppMarketAppsView({ children }: { children?: ReactNode }) {
   const { t } = useModuleTranslation('app-builder');
   const deployed = useAppBuilderStore((s) => s.deployed);
   const shared = useAppBuilderStore((s) => s.shared);
@@ -100,6 +102,7 @@ export function AppMarketAppsView() {
     return (
       <div className='space-y-6'>
         <AppBuilderCreateWithAgent />
+        {children}
         <div className='flex flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-border/80 bg-muted/15 px-6 py-16 text-center'>
           <div className='flex size-14 items-center justify-center rounded-2xl border border-border/60 bg-card shadow-sm'>
             <AppWindow className='size-6 text-muted-foreground' aria-hidden />
@@ -116,6 +119,8 @@ export function AppMarketAppsView() {
   return (
     <div className='space-y-7'>
       <AppBuilderCreateWithAgent />
+
+      {children}
 
       <div className='space-y-1'>
         <p className='text-sm leading-relaxed text-muted-foreground'>

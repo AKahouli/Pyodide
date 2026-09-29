@@ -1,22 +1,16 @@
 /**
- * Template validation pipeline. A template is only published to users once
- * every step confirms. Today there is a single step (NodePod execution), but
- * the pipeline is sequential and data-driven so later steps (build, a11y,
- * lint, …) can be appended without touching the orchestration or the UI.
+ * Sequential validation steps for template ZIP preview (NodePod today; more later).
  */
 export type ValidationStepStatus = 'pending' | 'running' | 'confirmed' | 'failed';
 
 export interface ValidationStepContext {
-  templateId: string;
-  /** Aborts an in-flight run (dialog closed / retry). */
   signal: AbortSignal;
-  /** Publishes the transient session id so the UI can bind the preview iframe. */
   setSessionId: (sessionId: string | null) => void;
+  setStagingTemplateId: (stagingTemplateId: string | null) => void;
 }
 
 export interface ValidationStep {
   id: string;
-  /** i18n key for the step label. */
   labelKey: string;
   run: (ctx: ValidationStepContext) => Promise<void>;
 }
@@ -28,7 +22,6 @@ export interface StepProgress {
   error?: string;
 }
 
-/** Runs steps in order, reporting progress; rejects on the first failure. */
 export async function runValidationPipeline(
   steps: ValidationStep[],
   ctx: ValidationStepContext,

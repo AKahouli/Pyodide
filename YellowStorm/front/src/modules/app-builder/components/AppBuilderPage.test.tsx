@@ -2,13 +2,14 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { DeployedApp, DraftApp } from '../types';
+import type { AppTemplate, DeployedApp, DraftApp, TemplateCategory } from '../types';
 import { emptyRevisionCatalog } from '../test-fixtures';
 
 const listAppsMock = vi.hoisted(() => vi.fn());
 const removeAppMock = vi.hoisted(() => vi.fn());
 const navigateMock = vi.hoisted(() => vi.fn());
 const listCategoriesMock = vi.hoisted(() => vi.fn());
+const listTemplatesMock = vi.hoisted(() => vi.fn(async (): Promise<AppTemplate[]> => []));
 
 vi.mock('../api', () => ({
   appBuilderApi: {
@@ -17,7 +18,7 @@ vi.mock('../api', () => ({
   },
   templateCatalogApi: {
     listCategories: listCategoriesMock,
-    listTemplates: vi.fn(async () => []),
+    listTemplates: listTemplatesMock,
     getTemplate: vi.fn(),
   },
   adminTemplateApi: {
@@ -32,7 +33,6 @@ vi.mock('../api', () => ({
     replaceCover: vi.fn(),
     replaceSource: vi.fn(),
     deleteTemplate: vi.fn(),
-    validate: vi.fn(),
   },
 }));
 
@@ -99,6 +99,43 @@ const fullCatalog = {
   drafts: mockDrafts,
 };
 
+const mockCategories: TemplateCategory[] = [
+  {
+    id: 'cat-1',
+    name: 'Business',
+    slug: 'business',
+    icon: 'briefcase',
+    templateCount: 1,
+    createdAt: '2026-07-01T00:00:00.000Z',
+    updatedAt: '2026-07-01T00:00:00.000Z',
+  },
+  {
+    id: 'cat-2',
+    name: 'Finance',
+    slug: 'finance',
+    icon: 'wallet',
+    templateCount: 0,
+    createdAt: '2026-07-01T00:00:00.000Z',
+    updatedAt: '2026-07-01T00:00:00.000Z',
+  },
+];
+
+const mockTemplates: AppTemplate[] = [
+  {
+    id: 'tpl-1',
+    categoryId: 'cat-1',
+    categoryName: 'Business',
+    title: 'CRM starter',
+    description: 'A starter CRM for sales teams.',
+    coverImage: '',
+    status: 'published',
+    revisionId: null,
+    platformReport: null,
+    createdAt: '2026-07-01T00:00:00.000Z',
+    updatedAt: '2026-07-01T00:00:00.000Z',
+  },
+];
+
 function renderPage(initialRoute = '/') {
   return render(
     <MemoryRouter initialEntries={[initialRoute]}>
@@ -116,7 +153,74 @@ describe('AppBuilderPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     listCategoriesMock.mockResolvedValue([]);
+    listTemplatesMock.mockResolvedValue([]);
     useAppBuilderStore.setState(initialState);
+  });
+
+  it('keeps the App Market chat and the app list visible when a category is selected', async () => {
+    listCategoriesMock.mockResolvedValue(mockCategories);
+    listTemplatesMock.mockResolvedValue(mockTemplates);
+    listAppsMock.mockResolvedValue(fullCatalog);
+
+    renderPage();
+    await screen.findByText('Generated app');
+
+    fireEvent.click(screen.getByRole('button', { name: /^Business/ }));
+
+    expect(await screen.findByText('CRM starter')).toBeInTheDocument();
+    expect(screen.getByTestId('create-with-agent')).toBeInTheDocument();
+    expect(screen.getByText('Generated app')).toBeInTheDocument();
+    expect(screen.getByText('Shared app')).toBeInTheDocument();
+    expect(screen.getByText('Draft app')).toBeInTheDocument();
+  });
+
+  it('shows the templates empty state for a category without templates', async () => {
+    listCategoriesMock.mockResolvedValue(mockCategories);
+    listTemplatesMock.mockResolvedValue([]);
+    listAppsMock.mockResolvedValue(fullCatalog);
+
+    renderPage();
+    await screen.findByText('Generated app');
+
+    fireEvent.click(screen.getByRole('button', { name: /^Finance/ }));
+
+    expect(await screen.findByText('templates.emptyTitle')).toBeInTheDocument();
+    expect(screen.getByTestId('create-with-agent')).toBeInTheDocument();
+  });
+
+  it('hides the templates section again when all applications is selected', async () => {
+    listCategoriesMock.mockResolvedValue(mockCategories);
+    listTemplatesMock.mockResolvedValue(mockTemplates);
+    listAppsMock.mockResolvedValue(fullCatalog);
+
+    renderPage();
+    await screen.findByText('Generated app');
+
+    fireEvent.click(screen.getByRole('button', { name: /^Business/ }));
+    expect(await screen.findByText('CRM starter')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /categories\.allApps/ }));
+
+    await waitFor(() => expect(screen.queryByText('CRM starter')).not.toBeInTheDocument());
+    expect(screen.getByTestId('create-with-agent')).toBeInTheDocument();
+  });
+
+  it('shows Clone App on template cards and opens the detail modal from the preview', async () => {
+    listCategoriesMock.mockResolvedValue(mockCategories);
+    listTemplatesMock.mockResolvedValue(mockTemplates);
+    listAppsMock.mockResolvedValue(fullCatalog);
+
+    renderPage();
+    await screen.findByText('Generated app');
+
+    fireEvent.click(screen.getByRole('button', { name: /^Business/ }));
+    const openButtons = await screen.findAllByRole('button', {
+      name: /templateModal\.openAria/,
+    });
+    expect(openButtons.length).toBeGreaterThanOrEqual(mockTemplates.length);
+
+    fireEvent.click(openButtons[0]);
+    expect(await screen.findByText('templateModal.startHeading')).toBeInTheDocument();
   });
 
   it('renders all apps by default', async () => {

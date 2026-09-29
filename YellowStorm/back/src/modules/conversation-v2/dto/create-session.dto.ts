@@ -21,4 +21,12 @@ export class CreateSessionDto {
   @IsOptional()
   @IsMongoId()
   templateId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Super-admin only: ephemeral template id from POST …/templates/staging/publish. Seeds the session from that Ceph manifest without a catalog row.',
+  })
+  @IsOptional()
+  @IsMongoId()
+  stagingTemplateId?: string;
 }

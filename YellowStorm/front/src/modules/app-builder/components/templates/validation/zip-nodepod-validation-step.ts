@@ -1,13 +1,15 @@
-import { conversationV2Api } from '@/modules/conversation-v2/api';
+import { nanoid } from 'nanoid';
 import {
   getOrCreateHost,
   removeHost,
   type BrowserRuntimeHost,
 } from '@/modules/conversation-v2/runtime/BrowserRuntimeHost';
 import type { ValidationStep, ValidationStepContext } from './pipeline';
+import { extractTemplateZipFromFile } from './extract-template-zip';
 
-/** NodePod boot (hydrate → install → dev server) can take a while for a cold project. */
-const READY_TIMEOUT_MS = 240_000;
+const READY_TIMEOUT_MS = 300_000;
+/** Local-only NodePod sessions — no Conversation v2 / Ceph staging. */
+export const LOCAL_TEMPLATE_VALIDATION_PREFIX = 'validate-local-';
 
 class AbortedError extends Error {
   constructor() {
@@ -16,43 +18,38 @@ class AbortedError extends Error {
   }
 }
 
-/**
- * The single validation step: open the template revision in a real NodePod
- * preview via the existing BrowserRuntimeHost (a transient session seeded with
- * the template revision). Resolves once the host reaches `ready`; rejects on
- * `error`/`disconnected`, timeout, or abort.
- */
-export function createNodepodValidationStep(): ValidationStep {
+export function createZipNodepodValidationStep(zipFile: File): ValidationStep {
   return {
     id: 'nodepod',
     labelKey: 'validation.nodepod',
     async run(ctx) {
       if (ctx.signal.aborted) throw new AbortedError();
 
-      const { sessionId } = await conversationV2Api.createSession([], ctx.templateId);
+      const sessionId = `${LOCAL_TEMPLATE_VALIDATION_PREFIX}${nanoid()}`;
       ctx.setSessionId(sessionId);
+      ctx.setStagingTemplateId(null);
 
-      if (ctx.signal.aborted) {
-        await cleanup(sessionId);
-        throw new AbortedError();
-      }
+      const files = await extractTemplateZipFromFile(zipFile);
+      if (ctx.signal.aborted) throw new AbortedError();
 
       const host = getOrCreateHost(sessionId);
       try {
-        await waitForReady(host, sessionId, ctx.signal);
+        await waitForReady(host, sessionId, files, ctx.signal);
       } catch (err) {
-        // Failed / timed out / aborted → drop the transient session + pod.
         await cleanup(sessionId);
         ctx.setSessionId(null);
         throw err;
       }
-      // Success: host stays alive so the preview keeps running; the panel owns
-      // final teardown (removeHost + deleteSession) when the dialog closes.
     },
   };
 }
 
-function waitForReady(host: BrowserRuntimeHost, sessionId: string, signal: AbortSignal): Promise<void> {
+function waitForReady(
+  host: BrowserRuntimeHost,
+  sessionId: string,
+  files: Awaited<ReturnType<typeof extractTemplateZipFromFile>>,
+  signal: AbortSignal,
+): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     let settled = false;
     const finish = (fn: () => void) => {
@@ -65,7 +62,7 @@ function waitForReady(host: BrowserRuntimeHost, sessionId: string, signal: Abort
     };
 
     const unsubscribe = host.subscribe((state) => {
-      if (state.status === 'ready') finish(resolve);
+      if (state.status === 'ready' && state.previewUrl) finish(resolve);
       else if (state.status === 'error' || state.status === 'disconnected') {
         finish(() => reject(new Error(state.error || 'The template could not be started in NodePod.')));
       }
@@ -75,19 +72,30 @@ function waitForReady(host: BrowserRuntimeHost, sessionId: string, signal: Abort
     signal.addEventListener('abort', onAbort, { once: true });
 
     const timer = setTimeout(
-      () => finish(() => reject(new Error('NodePod validation timed out before the preview became ready.'))),
+      () =>
+        finish(() =>
+          reject(new Error('NodePod validation timed out before the preview became ready.')),
+        ),
       READY_TIMEOUT_MS,
     );
 
-    void host.start(sessionId);
+    void host.startFromLocalFiles(sessionId, files);
   });
 }
 
 async function cleanup(sessionId: string): Promise<void> {
   removeHost(sessionId);
-  try {
-    await conversationV2Api.deleteSession(sessionId);
-  } catch {
-    // Best-effort: a throwaway validation session must never block the UI.
+}
+
+export async function disposeZipValidationSession(
+  sessionId: string | null,
+  stagingTemplateId: string | null,
+): Promise<void> {
+  if (sessionId) {
+    removeHost(sessionId);
+  }
+  if (stagingTemplateId) {
+    const { adminTemplateApi } = await import('../../../api');
+    await adminTemplateApi.discardStagingZip(stagingTemplateId).catch(() => undefined);
   }
 }

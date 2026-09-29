@@ -14,6 +14,7 @@ export const TOOL_NAMES = [
   'dev_server',
   'preview_inspect',
   'preview_action',
+  'platform_check',
   'finalize',
 ] as const;
 
@@ -36,6 +37,8 @@ export const TOOL_DESCRIPTIONS: Record<RuntimeMcpToolName, string> = {
     'Report or restart the managed preview (Vite). The preview is a virtual URL served by the browser runtime, not localhost:5173.',
   preview_inspect: 'Inspect the rendered preview: visible text, DOM, console, errors',
   preview_action: 'Interact with the preview: reload, click, input, scroll',
+  platform_check:
+    'Check the workspace against the YellowStorm platform contract (the files listed in yellowstorm.platform.json). Returns the violations deploy would reject. Runs on the server; no preview needed.',
   finalize: 'Finalize a revision as the completed application with verification evidence',
 };
 
@@ -135,6 +138,7 @@ export const TOOL_INPUT_SCHEMAS: Record<RuntimeMcpToolName, Record<string, unkno
       y: { type: 'number' },
     },
   },
+  platform_check: { type: 'object', properties: {} },
   finalize: {
     type: 'object',
     required: ['title'],
