@@ -10,44 +10,79 @@ async function loadConfig() {
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  delete window.__APP_CONFIG__;
 });
 
 describe('resolveApiBaseUrl', () => {
-  it('uses the URL env.sh injected at container start', async () => {
+  it('uses runtime config from /config.js first', async () => {
     const { resolveApiBaseUrl } = await loadConfig();
     expect(resolveApiBaseUrl(PUBLIC, LOOPBACK, false)).toBe(PUBLIC);
   });
 
-  it('lets runtime injection override a wrong inlined build arg', async () => {
+  it('lets runtime config override a wrong inlined build arg', async () => {
     const { resolveApiBaseUrl } = await loadConfig();
     expect(resolveApiBaseUrl(PUBLIC, 'http://localhost:9999/api/v1', false)).toBe(PUBLIC);
   });
 
-  it('falls back to the build arg when the placeholder was not rewritten', async () => {
+  it('falls back to VITE_API_URL when runtime config is empty', async () => {
     const { resolveApiBaseUrl } = await loadConfig();
-    expect(resolveApiBaseUrl('MY_APP_VITE_API_URL', PUBLIC, false)).toBe(PUBLIC);
+    expect(resolveApiBaseUrl('', PUBLIC, false)).toBe(PUBLIC);
   });
 
-  it('treats a blank injected value as absent instead of an empty base URL', async () => {
+  it('treats a blank runtime value as absent', async () => {
     const { resolveApiBaseUrl } = await loadConfig();
-    // `MY_APP_VITE_API_URL=${SOME_UNSET_VAR}` in compose expands to an empty string.
     expect(resolveApiBaseUrl('   ', PUBLIC, false)).toBe(PUBLIC);
   });
 
-  it('keeps the placeholder when production has no configuration at all', async () => {
+  it('returns empty string in production when nothing is configured', async () => {
     const { resolveApiBaseUrl } = await loadConfig();
-    expect(resolveApiBaseUrl('MY_APP_VITE_API_URL', '', false)).toBe('MY_APP_VITE_API_URL');
+    expect(resolveApiBaseUrl('', '', false)).toBe('');
   });
 
   it('defaults dev to loopback when nothing is configured', async () => {
     const { resolveApiBaseUrl } = await loadConfig();
-    expect(resolveApiBaseUrl('MY_APP_VITE_API_URL', '', true)).toBe(LOOPBACK);
+    expect(resolveApiBaseUrl('', '', true)).toBe(LOOPBACK);
   });
 
   it('trims surrounding whitespace from both sources', async () => {
     const { resolveApiBaseUrl } = await loadConfig();
     expect(resolveApiBaseUrl(`  ${PUBLIC}  `, '', false)).toBe(PUBLIC);
-    expect(resolveApiBaseUrl('MY_APP_VITE_API_URL', `  ${PUBLIC}  `, false)).toBe(PUBLIC);
+    expect(resolveApiBaseUrl('', `  ${PUBLIC}  `, false)).toBe(PUBLIC);
+  });
+
+  it('supports root-relative API URLs', async () => {
+    const { resolveApiBaseUrl } = await loadConfig();
+    expect(resolveApiBaseUrl('/api/v1', '', false)).toBe('/api/v1');
+  });
+
+  it('reads window.__APP_CONFIG__.API_URL by default', async () => {
+    window.__APP_CONFIG__ = { API_URL: 'https://runtime.example.com/api/v1' };
+    const { resolveApiBaseUrl } = await loadConfig();
+    expect(resolveApiBaseUrl()).toBe('https://runtime.example.com/api/v1');
+  });
+});
+
+describe('isValidApiUrl & isApiConfigured', () => {
+  it('identifies valid and invalid API URLs', async () => {
+    const { isValidApiUrl } = await loadConfig();
+    expect(isValidApiUrl('https://api.example.com/api/v1')).toBe(true);
+    expect(isValidApiUrl('/api/v1')).toBe(true);
+    expect(isValidApiUrl('')).toBe(false);
+    expect(isValidApiUrl(null)).toBe(false);
+  });
+
+  it('reports configured status from baseURL', async () => {
+    vi.stubEnv('VITE_API_URL', PUBLIC);
+    const { isApiConfigured } = await loadConfig();
+    expect(isApiConfigured()).toBe(true);
+  });
+});
+
+describe('getSocketBaseUrl', () => {
+  it('resolves socket origin from window.__APP_CONFIG__.SOCKET_BASE_URL', async () => {
+    window.__APP_CONFIG__ = { SOCKET_BASE_URL: 'https://socket.example.com:8443' };
+    const { getSocketBaseUrl } = await loadConfig();
+    expect(getSocketBaseUrl()).toBe('https://socket.example.com:8443');
   });
 });
 
