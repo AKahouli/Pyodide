@@ -67,6 +67,7 @@
     "createdAt": "Created",
     "queries": "{{count}} queries",
     "view": "View",
+    "paginationLabel": "History pagination",
     "confirmDelete": "Delete evaluation \"{{name}}\" and its results? This cannot be undone."
   },
   "adhoc": {

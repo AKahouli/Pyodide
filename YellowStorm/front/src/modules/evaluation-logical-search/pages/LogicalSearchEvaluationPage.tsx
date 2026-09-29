@@ -11,6 +11,7 @@ import { API_ENDPOINTS } from '@/lib/api/config';
 import { useAgents, useAgentsLoading, useAgentStore } from '@/modules/agent';
 import { evaluationLogicalSearchApi } from '../api';
 import { EvaluationResultsPanel } from '../components/EvaluationResultsPanel';
+import { buildPageWindow } from '../pagination';
 import type { LogicalSearchEvaluation, UploadResult, BenchmarkQuery, EvaluationResultsResponse } from '../types';
 
 const HISTORY_PAGE_SIZE = 3;
@@ -596,7 +597,10 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
               ))}
             </div>
             {historyPageCount > 1 && (
-              <div className='mt-3 flex items-center justify-center gap-1'>
+              <nav
+                className='mt-3 flex flex-wrap items-center justify-center gap-1'
+                aria-label={t('history.paginationLabel')}
+              >
                 <Button
                   size='sm'
                   variant='outline'
@@ -605,16 +609,26 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
                 >
                   ‹
                 </Button>
-                {Array.from({ length: historyPageCount }, (_, i) => i + 1).map((page) => (
-                  <Button
-                    key={page}
-                    size='sm'
-                    variant={page === activeHistoryPage ? 'default' : 'outline'}
-                    onClick={() => setHistoryPage(page)}
-                  >
-                    {page}
-                  </Button>
-                ))}
+                {buildPageWindow(activeHistoryPage, historyPageCount).map((item, index) =>
+                  item === 'ellipsis' ? (
+                    <span
+                      key={`ellipsis-${index}`}
+                      className='px-1 text-sm text-muted-foreground'
+                      aria-hidden
+                    >
+                      …
+                    </span>
+                  ) : (
+                    <Button
+                      key={item}
+                      size='sm'
+                      variant={item === activeHistoryPage ? 'default' : 'outline'}
+                      onClick={() => setHistoryPage(item)}
+                    >
+                      {item}
+                    </Button>
+                  ),
+                )}
                 <Button
                   size='sm'
                   variant='outline'
@@ -623,7 +637,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
                 >
                   ›
                 </Button>
-              </div>
+              </nav>
             )}
           </CardContent>
         </Card>

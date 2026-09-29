@@ -67,6 +67,7 @@
     "createdAt": "Créé",
     "queries": "{{count}} questions",
     "view": "Voir",
+    "paginationLabel": "Pagination de l'historique",
     "confirmDelete": "Supprimer l'évaluation « {{name}} » et ses résultats ? Action irréversible."
   },
   "adhoc": {
