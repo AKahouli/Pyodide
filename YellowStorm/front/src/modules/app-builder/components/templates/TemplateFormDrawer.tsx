@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CheckCircle2, Loader2 } from 'lucide-react';
-import { nanoid } from 'nanoid';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -23,19 +22,13 @@ import { Textarea } from '@/components/ui/textarea';
 import { useApiAction } from '@/lib/use-api-action';
 import { useModuleTranslation } from '@/modules/localization';
 import { adminTemplateApi } from '../../api';
+import { useCoverImageItems } from '../../hooks/useCoverImageItems';
 import type { AppTemplate, TemplateCategory } from '../../types';
 import { FileDropZone } from './FileDropZone';
 import { TemplateValidatePreviewDialog } from './TemplateValidatePreviewDialog';
 import { CoverFocusDialog } from './cover/CoverFocusDialog';
 import { CoverImageGallery } from './cover/CoverImageGallery';
-import {
-  COVER_MAX_IMAGES,
-  defaultCoverFocus,
-  screenshotCoverFocus,
-  exportPrimaryCoverFile,
-  type CoverFocus,
-  type CoverImageItem,
-} from './cover/cover-focus';
+import { exportPrimaryCoverFile } from './cover/cover-focus';
 
 interface TemplateFormDrawerProps {
   open: boolean;
@@ -49,26 +42,6 @@ interface TemplateFormDrawerProps {
 
 const ACCEPT_IMAGE = 'image/png,image/jpeg,image/webp,image/svg+xml';
 const ACCEPT_ZIP = '.zip,application/zip';
-
-function createCoverItem(
-  file: File,
-  isPrimary: boolean,
-  focus = defaultCoverFocus(),
-): CoverImageItem {
-  return {
-    id: nanoid(),
-    file,
-    previewUrl: URL.createObjectURL(file),
-    focus,
-    isPrimary,
-  };
-}
-
-function revokeCoverUrls(items: CoverImageItem[]): void {
-  for (const item of items) {
-    URL.revokeObjectURL(item.previewUrl);
-  }
-}
 
 export function TemplateFormDrawer({
   open,
@@ -85,13 +58,22 @@ export function TemplateFormDrawer({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [zipFile, setZipFile] = useState<File | null>(null);
-  const [coverItems, setCoverItems] = useState<CoverImageItem[]>([]);
   const [zipValidated, setZipValidated] = useState(false);
   const [validateOpen, setValidateOpen] = useState(false);
-  const [focusItemId, setFocusItemId] = useState<string | null>(null);
   const [exportingCover, setExportingCover] = useState(false);
-  const coverItemsRef = useRef(coverItems);
-  coverItemsRef.current = coverItems;
+
+  const {
+    coverItems,
+    primaryCover,
+    focusItem,
+    setFocusItemId,
+    resetCoverItems,
+    addCoverFiles,
+    removeCover,
+    setPrimaryCover,
+    applyFocus,
+    replaceWithValidatedCover,
+  } = useCoverImageItems();
 
   useEffect(() => {
     if (!open) return;
@@ -99,18 +81,10 @@ export function TemplateFormDrawer({
     setDescription(template?.description ?? '');
     setCategoryId(template?.categoryId ?? defaultCategoryId ?? categories[0]?.id ?? '');
     setZipFile(null);
-    revokeCoverUrls(coverItemsRef.current);
-    setCoverItems([]);
+    resetCoverItems();
     setZipValidated(false);
     setValidateOpen(false);
-    setFocusItemId(null);
-  }, [open, template, defaultCategoryId, categories]);
-
-  useEffect(() => {
-    return () => {
-      revokeCoverUrls(coverItemsRef.current);
-    };
-  }, []);
+  }, [open, template, defaultCategoryId, categories, resetCoverItems]);
 
   const create = useApiAction(adminTemplateApi.createTemplate, {
     showErrorToast: false,
@@ -133,8 +107,6 @@ export function TemplateFormDrawer({
 
   const busy = create.isLoading || update.isLoading || exportingCover;
   const error = create.error ?? update.error;
-  const primaryCover = coverItems.find((item) => item.isPrimary) ?? coverItems[0] ?? null;
-  const focusItem = coverItems.find((item) => item.id === focusItemId) ?? null;
   const canSubmitCreate = Boolean(
     categoryId && title.trim() && zipFile && primaryCover && zipValidated,
   );
@@ -142,61 +114,14 @@ export function TemplateFormDrawer({
   const handleZipChange = (file: File | null) => {
     setZipFile(file);
     setZipValidated(false);
-    setCoverItems((prev) => {
-      revokeCoverUrls(prev);
-      return [];
-    });
-    setFocusItemId(null);
+    resetCoverItems();
   };
 
-  const addCoverFiles = useCallback((files: File[]) => {
-    setCoverItems((prev) => {
-      const remaining = COVER_MAX_IMAGES - prev.length;
-      if (remaining <= 0) return prev;
-      const nextFiles = files.slice(0, remaining);
-      const created = nextFiles.map((file, index) =>
-        createCoverItem(file, prev.length === 0 && index === 0),
-      );
-      return [...prev, ...created];
-    });
-  }, []);
-
-  const removeCover = useCallback((id: string) => {
-    setCoverItems((prev) => {
-      const target = prev.find((item) => item.id === id);
-      if (target) URL.revokeObjectURL(target.previewUrl);
-      const next = prev.filter((item) => item.id !== id);
-      if (next.length > 0 && !next.some((item) => item.isPrimary)) {
-        next[0] = { ...next[0]!, isPrimary: true };
-      }
-      return next;
-    });
-    setFocusItemId((current) => (current === id ? null : current));
-  }, []);
-
-  const setPrimaryCover = useCallback((id: string) => {
-    setCoverItems((prev) =>
-      prev.map((item) => ({
-        ...item,
-        isPrimary: item.id === id,
-      })),
-    );
-  }, []);
-
-  const applyFocus = useCallback((id: string, focus: CoverFocus) => {
-    setCoverItems((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, focus } : item)),
-    );
-  }, []);
-
-  const handleValidatedCover = useCallback((file: File) => {
-    setCoverItems((prev) => {
-      revokeCoverUrls(prev);
-      return [createCoverItem(file, true, screenshotCoverFocus())];
-    });
+  const handleValidatedCover = (file: File) => {
+    replaceWithValidatedCover(file);
     setZipValidated(true);
     setValidateOpen(false);
-  }, []);
+  };
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
