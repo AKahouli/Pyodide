@@ -13,30 +13,6 @@ interface Props {
   status: string;
 }
 
-function NarrativeBlock({ title, text }: { title: string; text: string }) {
-  if (!text.trim()) return null;
-  return (
-    <div>
-      <p className='font-medium'>{title}</p>
-      <AssistantMarkdown className='text-sm text-muted-foreground'>{text}</AssistantMarkdown>
-    </div>
-  );
-}
-
-function NarrativeList({ title, items }: { title: string; items: string[] }) {
-  if (items.length === 0) return null;
-  return (
-    <div>
-      <p className='font-medium'>{title}</p>
-      <ul className='list-disc space-y-1 pl-5 text-muted-foreground'>
-        {items.map((item, index) => (
-          <li key={index}>{item}</li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
 export function EvaluationNarrativePanel({ evaluationId, status }: Props): JSX.Element {
   const { t, language } = useModuleTranslation('evaluation-logical-search');
   const agents = useAgents();
@@ -77,7 +53,7 @@ export function EvaluationNarrativePanel({ evaluationId, status }: Props): JSX.E
     }
   }, [evaluationId, selectedAgentId, language]);
 
-  const sections = report?.sections;
+  const content = report?.content;
 
   return (
     <section className='space-y-4 border-t pt-4'>
@@ -118,16 +94,8 @@ export function EvaluationNarrativePanel({ evaluationId, status }: Props): JSX.E
         </p>
       )}
 
-      {sections && (
-        <div className='space-y-4 text-sm leading-relaxed'>
-          <NarrativeBlock title={t('results.narrative.overview')} text={sections.overview} />
-          <NarrativeBlock title={t('results.narrative.performance')} text={sections.performance} />
-          <NarrativeBlock title={t('results.narrative.retrieval')} text={sections.retrieval} />
-          <NarrativeBlock title={t('results.narrative.tokens')} text={sections.tokens} />
-          <NarrativeList title={t('results.narrative.strengths')} items={sections.strengths} />
-          <NarrativeList title={t('results.narrative.improvements')} items={sections.improvements} />
-          <NarrativeList title={t('results.narrative.caveats')} items={sections.caveats} />
-        </div>
+      {content && (
+        <AssistantMarkdown className='text-sm text-muted-foreground'>{content}</AssistantMarkdown>
       )}
     </section>
   );

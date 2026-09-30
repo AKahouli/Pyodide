@@ -28,7 +28,6 @@ import {
 } from './evaluation-export.util';
 import {
   buildReportModel,
-  parseNarrativeSections,
   EvaluationNarrative,
 } from './evaluation-report';
 
@@ -846,7 +845,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       generatedAt: new Date().toISOString(),
       agentId,
       interpreterTokens: run.tokenUsage ?? null,
-      sections: parseNarrativeSections(text),
+      content: text,
     };
     await this.repository.applyNarrative(evaluationId, narrative);
     return { report: narrative, defaultAgentId: agentId };

@@ -133,21 +133,11 @@ export interface EvaluationResultsResponse {
   results: EvaluationQueryResult[];
 }
 
-export interface EvaluationNarrativeSections {
-  overview: string;
-  performance: string;
-  retrieval: string;
-  tokens: string;
-  strengths: string[];
-  improvements: string[];
-  caveats: string[];
-}
-
 export interface EvaluationNarrative {
   generatedAt: string;
   agentId: string;
   interpreterTokens?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number } | null;
-  sections: EvaluationNarrativeSections;
+  content: string;
 }
 
 export interface EvaluationReportResponse {

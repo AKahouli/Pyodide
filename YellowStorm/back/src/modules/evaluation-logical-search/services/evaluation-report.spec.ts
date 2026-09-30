@@ -1,4 +1,4 @@
-import { buildReportModel, parseNarrativeSections } from './evaluation-report';
+import { buildReportModel } from './evaluation-report';
 import type { EvaluationQueryResult, EvaluationRunSummary } from './evaluation-metrics';
 
 function result(over: Partial<EvaluationQueryResult>): EvaluationQueryResult {
@@ -40,54 +40,39 @@ const summary: EvaluationRunSummary = {
 };
 
 describe('buildReportModel', () => {
-  it('aggregates counts, failures, durations and tokens from the results', () => {
+  it('exposes template-ready values without recomputation by the agent', () => {
     const model = buildReportModel(
       [
-        result({ query_id: 'Q1', duration_ms: 100, target_duration_ms: 60, judge_duration_ms: 40, judge_score: 1, judge_faithfulness_score: 0.6, token_usage: { total_tokens: 100, prompt_tokens: 90, completion_tokens: 10 } }),
-        result({ query_id: 'Q2', duration_ms: 300, target_duration_ms: 200, judge_duration_ms: 100, token_usage: { total_tokens: 300, prompt_tokens: 280, completion_tokens: 20 } }),
-        result({ query_id: 'Q3', status: 'failed', duration_ms: 200, error: 'network', token_usage: { total_tokens: 200, prompt_tokens: 190, completion_tokens: 10 } }),
+        result({ query_id: 'Q1', duration_ms: 100_000, target_duration_ms: 60_000, judge_duration_ms: 40_000, judge_score: 1, judge_faithfulness_score: 0.6, token_usage: { total_tokens: 100, prompt_tokens: 90, completion_tokens: 10 } }),
+        result({ query_id: 'Q2', duration_ms: 300_000, target_duration_ms: 200_000, judge_duration_ms: 100_000, token_usage: { total_tokens: 300, prompt_tokens: 280, completion_tokens: 20 } }),
+        result({ query_id: 'Q3', status: 'failed', duration_ms: 200_000, error: 'network', token_usage: { total_tokens: 200, prompt_tokens: 190, completion_tokens: 10 } }),
       ],
       summary,
     );
 
-    expect(model.query_count).toBe(3);
-    expect(model.completed_queries).toBe(2);
-    expect(model.failed_queries).toBe(1);
-    expect(model.evaluated_queries).toBe(1);
-    expect(model.failed_queries_detail).toEqual([{ query_id: 'Q3', error: 'network' }]);
+    expect(model.nb_total).toBe(3);
+    expect(model.nb_succes).toBe(2);
+    expect(model.pct_succes).toBe(66.67);
+    expect(model.nb_echecs).toBe(1);
+    expect(model.nb_evaluees).toBe(1);
+    expect(model.nb_scores_manquants).toBe(1);
+    expect(model.failed_queries).toEqual([{ query_id: 'Q3', error: 'network' }]);
     expect(model.missing_judge_score_ids).toEqual(['Q2']);
 
-    expect(model.durations_ms).toEqual({ mean_total: 200, mean_target: 130, mean_judge: 70 });
-    expect(model.tokens).toEqual({
-      total: 600,
-      mean_per_query: 200,
-      prompt: 560,
-      completion: 40,
-      prompt_share: 0.9333,
-      completion_share: 0.0667,
-    });
-    expect(model.judge).toEqual({ mean_score: 1, zero_score_count: 0, mean_faithfulness: 0.6 });
-    expect(model.retrieval.recall).toBe(0.93);
-  });
-});
+    expect(model.duree_totale_s).toBe(200);
+    expect(model.duree_target_s).toBe(130);
+    expect(model.pct_target_latence).toBe(65);
 
-describe('parseNarrativeSections', () => {
-  it('parses fenced JSON into fixed sections', () => {
-    const raw = '```json\n{"overview":"Vue","performance":"Perf","retrieval":"Ret","tokens":"Tok","strengths":["a"],"improvements":["b"],"caveats":[]}\n```';
-    expect(parseNarrativeSections(raw)).toEqual({
-      overview: 'Vue',
-      performance: 'Perf',
-      retrieval: 'Ret',
-      tokens: 'Tok',
-      strengths: ['a'],
-      improvements: ['b'],
-      caveats: [],
-    });
-  });
+    expect(model.total_tokens).toBe(600);
+    expect(model.pct_prompt_tokens).toBe(93.33);
+    expect(model.pct_completion_tokens).toBe(6.67);
+    expect(model.ratio_prompt_completion).toBe(14);
 
-  it('falls back to overview when the output is not JSON', () => {
-    const sections = parseNarrativeSections('Texte libre non-JSON');
-    expect(sections.overview).toBe('Texte libre non-JSON');
-    expect(sections.strengths).toEqual([]);
+    expect(model.score_moyen_juge).toBe(1);
+    expect(model.nb_validees).toBe(1);
+    expect(model.faithfulness_pct).toBe(60);
+
+    expect(model.f1_score).toBe(0.25);
+    expect(model.retrieval_recall).toBe(0.93);
   });
 });

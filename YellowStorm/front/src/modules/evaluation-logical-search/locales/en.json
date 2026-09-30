@@ -137,14 +137,7 @@
       "generating": "Generating…",
       "loading": "Loading analysis…",
       "empty": "No analysis yet. Generate it to get a written summary.",
-      "unavailable": "The analysis is available once the evaluation is completed.",
-      "overview": "Overview",
-      "performance": "Answer quality",
-      "retrieval": "Retrieval",
-      "tokens": "Token usage",
-      "strengths": "Strengths",
-      "improvements": "Improvements",
-      "caveats": "Caveats"
+      "unavailable": "The analysis is available once the evaluation is completed."
     }
   }
 }
