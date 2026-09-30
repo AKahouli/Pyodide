@@ -6,6 +6,13 @@ export const TEMPLATE_SLUG_REGEX = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 /** System manifest folder shared with the starter revisions. */
 export const TEMPLATE_MANIFEST_PREFIX = 'appbuilder/manifests/_system';
 
+/**
+ * Synthetic workspace id used by the App Market clone preview. No session or
+ * workspace row exists yet at that point; revision authorization only needs a
+ * stable id to keep the runtime revision lookups scoped.
+ */
+export const TEMPLATE_CATALOG_PREVIEW_WORKSPACE_ID = '_catalog';
+
 /** Per-template cover folder; the object key is stored in `templates.cover_image`. */
 export const TEMPLATE_COVER_PREFIX = 'appbuilder/templates';
 
