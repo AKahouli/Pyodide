@@ -14,7 +14,7 @@ function buildZip(entries: Record<string, string>): Buffer {
 
 describe('ConversationV2TemplatePublishService', () => {
   const exists = jest.fn();
-  const upload = jest.fn();
+  const upload = jest.fn<Promise<unknown>, [Buffer, string, string, unknown]>();
   const deleteMany = jest.fn();
   let svc: ConversationV2TemplatePublishService;
 
@@ -106,7 +106,7 @@ describe('ConversationV2TemplatePublishService', () => {
 
     const entries: Record<string, string> = {};
     for (let i = 0; i < 20; i += 1) {
-      entries[`src/file${String(i).padStart(2, '0')}.js`] = `content-${i}`;
+      entries[`src/file${String(i).padStart(2, '0')}.js`] = `content-${String(i)}`;
     }
     const result = await svc.publish('tpl_4', buildZip(entries));
 

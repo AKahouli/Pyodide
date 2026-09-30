@@ -30,7 +30,8 @@ function detectRenderedRoot(source: string): { name: string; importPath: string 
   const match = RENDER_ROOT_RE.exec(source);
   const name = match?.[1] ?? match?.[2];
   if (!name || name === 'StrictMode' || name === 'AppRouter') {
-    return findImport(source, 'App') ? { name: 'App', importPath: findImport(source, 'App')! } : null;
+    const appImport = findImport(source, 'App');
+    return appImport ? { name: 'App', importPath: appImport } : null;
   }
   const importPath = findImport(source, name);
   return importPath ? { name, importPath } : null;

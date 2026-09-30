@@ -197,6 +197,13 @@ async function planPackageJson(ctx: {
   if (result.changed && result.content) ctx.add('package.json', result.content);
 }
 
+/** Narrows unparsed JSON to a plain object; anything else reads as empty. */
+function asJsonRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
 async function planTsconfig(ctx: {
   paths: Set<string>;
   read: Reader;
@@ -212,10 +219,10 @@ async function planTsconfig(ctx: {
   if (source.includes('"@/*"')) return;
 
   try {
-    const parsed = JSON.parse(source) as Record<string, any>;
-    const compilerOptions = { ...(parsed.compilerOptions ?? {}) };
-    compilerOptions.baseUrl = compilerOptions.baseUrl ?? '.';
-    compilerOptions.paths = { ...(compilerOptions.paths ?? {}), '@/*': ['src/*'] };
+    const parsed = asJsonRecord(JSON.parse(source) as unknown);
+    const compilerOptions = { ...asJsonRecord(parsed.compilerOptions) };
+    compilerOptions.baseUrl ??= '.';
+    compilerOptions.paths = { ...asJsonRecord(compilerOptions.paths), '@/*': ['src/*'] };
     ctx.add(path, `${JSON.stringify({ ...parsed, compilerOptions }, null, 2)}\n`);
   } catch {
     // Comments are legal in tsconfig; the Vite alias already resolves `@` at

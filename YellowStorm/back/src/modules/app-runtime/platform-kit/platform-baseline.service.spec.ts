@@ -13,21 +13,28 @@ function revisionsFor(files: Record<string, string>): {
 } {
   const state = { ...files };
   const service = {
-    getAuthorizedRevision: jest.fn(async () => ({
-      revisionId: 'rev_1',
-      workspaceId: 'ws',
-      parentRevisionId: null,
-      manifestHash: 'h',
-      manifestObjectKey: 'k',
-      files: Object.keys(state).map((path) => ({ path, sha256: 'x', objectKey: 'o', size: 1 })),
-    })),
-    readRevisionFileText: jest.fn(async (_ws: string, _rev: string, path: string) =>
-      state[path] ?? null,
+    getAuthorizedRevision: jest.fn(() =>
+      Promise.resolve({
+        revisionId: 'rev_1',
+        workspaceId: 'ws',
+        parentRevisionId: null,
+        manifestHash: 'h',
+        manifestObjectKey: 'k',
+        files: Object.keys(state).map((path) => ({ path, sha256: 'x', objectKey: 'o', size: 1 })),
+      }),
     ),
-    patchRevisionWithFiles: jest.fn(async (input: any) => {
-      for (const file of input.additionalFiles) state[file.path] = file.content;
-      return { revisionId: input.newRevisionId, files: [] };
-    }),
+    readRevisionFileText: jest.fn((_ws: string, _rev: string, path: string) =>
+      Promise.resolve(state[path] ?? null),
+    ),
+    patchRevisionWithFiles: jest.fn(
+      (input: {
+        additionalFiles: { path: string; content: string }[];
+        newRevisionId: string;
+      }) => {
+        for (const file of input.additionalFiles) state[file.path] = file.content;
+        return Promise.resolve({ revisionId: input.newRevisionId, files: [] });
+      },
+    ),
   } as unknown as RuntimeRevisionService;
   return { service, files: state };
 }
@@ -94,7 +101,7 @@ describe('PlatformBaselineService', () => {
     const result = await plan(BARE_TEMPLATE);
     const pkg = JSON.parse(
       result.files.find((file) => file.path === 'package.json')!.content,
-    );
+    ) as { dependencies: Record<string, string>; scripts: Record<string, string> };
 
     expect(pkg.dependencies.react).toBe('^18.2.0');
     expect(pkg.dependencies['react-router-dom']).toBeDefined();

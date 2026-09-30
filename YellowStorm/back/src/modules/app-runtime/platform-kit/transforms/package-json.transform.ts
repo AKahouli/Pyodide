@@ -21,6 +21,13 @@ const CRA_VIOLATION =
 const NEXT_VIOLATION =
   'Next.js cannot run in App Builder. Convert the project to Vite first.';
 
+/** A package.json field is only usable as a string map when it is one. */
+function asStringRecord(value: unknown): Record<string, string> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, string>)
+    : {};
+}
+
 /**
  * Add the dependencies the platform files import. Template-declared versions
  * always win — a template pinning React 18 keeps React 18.
@@ -42,9 +49,9 @@ export function transformPackageJson(source: string | null): PackageJsonTransfor
     }
   }
 
-  const deps = { ...((parsed.dependencies as Record<string, string>) ?? {}) };
-  const devDeps = { ...((parsed.devDependencies as Record<string, string>) ?? {}) };
-  const scripts = { ...((parsed.scripts as Record<string, string>) ?? {}) };
+  const deps = { ...asStringRecord(parsed.dependencies) };
+  const devDeps = { ...asStringRecord(parsed.devDependencies) };
+  const scripts = { ...asStringRecord(parsed.scripts) };
   const scriptBlob = Object.values(scripts).join('\n');
 
   if (deps['react-scripts'] || devDeps['react-scripts'] || /\breact-scripts\b/.test(scriptBlob)) {

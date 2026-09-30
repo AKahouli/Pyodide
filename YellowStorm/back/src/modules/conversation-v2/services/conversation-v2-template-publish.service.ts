@@ -66,9 +66,11 @@ export class ConversationV2TemplatePublishService {
           const objectKey = blobObjectKey(sha256);
           // Blobs are content-addressed and shared across revisions: reuse when present.
           if (!(await this.documents.exists(objectKey))) {
+            // ZIP directory entries yield an empty basename, which is not a usable name.
+            const basename = file.path.split('/').pop() ?? '';
             await this.documents.upload(
               file.data,
-              file.path.split('/').pop() || 'file',
+              basename || 'file',
               'application/octet-stream',
               {
                 generateUniqueName: false,
@@ -100,7 +102,7 @@ export class ConversationV2TemplatePublishService {
 
     this.logger.log(
       `Published template revision templateId=${templateId} revisionId=${revisionId} ` +
-        `files=${manifestFiles.length} platform=${platformReport.status}`,
+        `files=${String(manifestFiles.length)} platform=${platformReport.status}`,
     );
 
     return {
@@ -115,7 +117,7 @@ export class ConversationV2TemplatePublishService {
 
   /** Runs the Platform Kit baseline against the ZIP contents, before upload. */
   private analyze(
-    files: Array<{ path: string; data: Buffer }>,
+    files: { path: string; data: Buffer }[],
   ): Promise<TemplatePlatformReport> {
     const byPath = new Map(files.map((file) => [file.path.replace(/\\/g, '/'), file.data]));
     return analyzeTemplatePlatform({
@@ -139,10 +141,13 @@ export class ConversationV2TemplatePublishService {
       await this.documents.deleteMany(keys);
     } catch (error) {
       this.logger.warn(
-        `Failed to remove ${keys.length} template artifact(s) from Ceph: ${
-          (error as Error)?.message ?? error
-        }`,
+        `Failed to remove ${String(keys.length)} template artifact(s) from Ceph: ${describeError(error)}`,
       );
     }
   }
+}
+
+/** Anything can be thrown, so fall back to its string form instead of assuming an Error. */
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

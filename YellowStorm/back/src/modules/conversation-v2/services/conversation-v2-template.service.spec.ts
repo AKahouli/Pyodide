@@ -59,11 +59,12 @@ describe('ConversationV2TemplateService', () => {
     categories.findAll.mockResolvedValue([{ id: 'c1', name: 'Guides' }]);
     templates.findByCategoryAndTitle.mockResolvedValue(null);
     templates.insert.mockResolvedValue(draftRow);
-    templates.update.mockImplementation(async (_id, patch) => ({ ...draftRow, ...patch }));
-    templates.setRevision.mockImplementation(async (_id, binding) => ({
-      ...draftRow,
-      ...binding,
-    }));
+    templates.update.mockImplementation((_id: string, patch: Record<string, unknown>) =>
+      Promise.resolve({ ...draftRow, ...patch }),
+    );
+    templates.setRevision.mockImplementation((_id: string, binding: Record<string, unknown>) =>
+      Promise.resolve({ ...draftRow, ...binding }),
+    );
     publish.publish.mockResolvedValue({
       revisionId: `template_${TPL_ID}`,
       manifestObjectKey: `appbuilder/manifests/_system/template_${TPL_ID}.json`,
@@ -115,7 +116,7 @@ describe('ConversationV2TemplateService', () => {
       revisionId: `template_${TPL_ID}`,
       manifestObjectKey: `appbuilder/manifests/_system/template_${TPL_ID}.json`,
       manifestHash: 'manifest-hash',
-      files: expect.arrayContaining([expect.objectContaining({ path: 'package.json' })]),
+      files: expect.arrayContaining([expect.objectContaining({ path: 'package.json' })]) as unknown[],
     });
     expect(templates.markPublished).toHaveBeenCalledWith(TPL_ID);
     expect(templates.markRevisionsPublished).toHaveBeenCalledWith(TPL_ID);

@@ -70,7 +70,7 @@ export class PlatformBaselineService {
 
     this.logger.log(
       `Applied platform baseline mode=${input.mode} workspaceId=${input.workspaceId} ` +
-        `base=${input.baseRevisionId} new=${revision.revisionId} files=${plan.files.length}`,
+        `base=${input.baseRevisionId} new=${revision.revisionId} files=${String(plan.files.length)}`,
     );
 
     return { revisionId: revision.revisionId, plan };

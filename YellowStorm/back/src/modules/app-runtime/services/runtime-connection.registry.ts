@@ -141,7 +141,9 @@ export class RuntimeConnectionRegistry {
 
       waiters.add(onConnection);
 
-      const timer = setTimeout(() => finish(null), timeoutMs);
+      const timer = setTimeout(() => {
+        finish(null);
+      }, timeoutMs);
 
       const raced = this.get(workspaceId);
       if (raced && !this.isStale(raced)) finish(raced);
@@ -166,7 +168,7 @@ export class RuntimeConnectionRegistry {
   /** Only removes the entry when it still points at the given socket. */
   unregister(workspaceId: string, socketId: string): boolean {
     const current = this.byWorkspace.get(workspaceId);
-    if (!current || current.socket.id !== socketId) return false;
+    if (current?.socket.id !== socketId) return false;
     this.byWorkspace.delete(workspaceId);
     this.logger.debug(`Runtime unregistered workspaceId=${workspaceId}`);
     return true;
@@ -227,7 +229,9 @@ export class RuntimeConnectionRegistry {
     const acquired = await Promise.race([
       predecessor.then(() => true),
       new Promise<boolean>((resolve) => {
-        timer = setTimeout(() => resolve(false), waitMs);
+        timer = setTimeout(() => {
+          resolve(false);
+        }, waitMs);
       }),
     ]);
     if (timer) clearTimeout(timer);

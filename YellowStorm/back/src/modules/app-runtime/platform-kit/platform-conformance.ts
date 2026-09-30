@@ -14,6 +14,11 @@ const AUTH_ROUTE_RE =
   /\/auth\/(login|register|logout|refresh)|['"`]\/login['"`]|['"`]\/register['"`]/;
 const YELLOWMIND_AI_IMPORT_RE =
   /from\s+['"][^'"]*yellowmind-ai['"]|import\s*\(\s*['"][^'"]*yellowmind-ai['"]\s*\)/;
+const APP_BASE_EXPORT = 'resolveRouterBasename';
+const REMOTE_AI_CALL_RE =
+  /\b(chatCompletion|streamChatCompletion|generateAiReply)\s*\(|\/chat\/completions/;
+const CREATE_AI_CLIENT_RE = /\bcreateAIClient\s*\(/;
+const DEPLOY_API_BASE = 'import.meta.env.VITE_YM_API_BASE_URL';
 
 export function checkAuthModule(source: string): string[] {
   const violations: string[] = [];
@@ -50,7 +55,7 @@ export function checkAppRouter(source: string): string[] {
 }
 
 export function checkAppBase(source: string): string[] {
-  return /resolveRouterBasename/.test(source)
+  return source.includes(APP_BASE_EXPORT)
     ? []
     : ['src/lib/app-base must export resolveRouterBasename().'];
 }
@@ -64,15 +69,12 @@ export function checkDataModule(source: string): string[] {
 /** Any app source may call AI; it must go through the platform proxy. */
 export function checkAiUsage(source: string): string[] {
   if (!source.trim()) return [];
-  const callsRemoteAi =
-    YELLOWMIND_AI_IMPORT_RE.test(source) ||
-    /\b(chatCompletion|streamChatCompletion|generateAiReply)\s*\(/.test(source) ||
-    /\/chat\/completions/.test(source);
+  const callsRemoteAi = YELLOWMIND_AI_IMPORT_RE.test(source) || REMOTE_AI_CALL_RE.test(source);
   if (!callsRemoteAi) return [];
 
   const usesPlatformClient =
-    YELLOWMIND_AI_IMPORT_RE.test(source) || /\bcreateAIClient\s*\(/.test(source);
-  const usesDeployApiBase = /import\.meta\.env\.VITE_YM_API_BASE_URL/.test(source);
+    YELLOWMIND_AI_IMPORT_RE.test(source) || CREATE_AI_CLIENT_RE.test(source);
+  const usesDeployApiBase = source.includes(DEPLOY_API_BASE);
   return usesPlatformClient || usesDeployApiBase
     ? []
     : [
