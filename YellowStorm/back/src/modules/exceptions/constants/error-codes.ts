@@ -751,7 +751,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_PUBLISHED]: 'This template is not published yet.',
   [ErrorCode.CONVERSATION_V2_TEMPLATE_COVER_INVALID]: 'The template cover image is invalid.',
 
-  [ErrorCode.SEMANTIC_MODEL_NOT_FOUND]: 'Semantic Model not found.',  [ErrorCode.SEMANTIC_MODEL_NAME_EXISTS]: 'A Semantic Model with this name already exists.',
+  [ErrorCode.SEMANTIC_MODEL_NOT_FOUND]: 'Semantic Model not found.',
+  [ErrorCode.SEMANTIC_MODEL_NAME_EXISTS]: 'A Semantic Model with this name already exists.',
   [ErrorCode.SEMANTIC_MODEL_ACCESS_DENIED]: 'You do not have access to this Semantic Model.',
   [ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT]: 'This Semantic Model was changed elsewhere. Reload it before continuing.',
   [ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED]: 'Resolve the blocking model issues before continuing.',
