@@ -18,6 +18,8 @@ class OrchestratorSettings(BaseSettings):
 
     ORCHESTRATOR_MAX_CONCURRENCY: int = 4
     ORCHESTRATOR_PLANNER_MODEL: str = "gpt-5.4-mini"
+    # "adk" (default, google-adk engine) or "langgraph" (migration engine).
+    ORCHESTRATOR_ENGINE: str = "adk"
 
     # Read model (client-facing, synced via ElectricSQL)
     ORCHESTRATOR_READMODEL_DSN: Optional[str] = None   # explicit override

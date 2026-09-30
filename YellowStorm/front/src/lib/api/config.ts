@@ -2,67 +2,70 @@
  * API Configuration
  */
 
-const isDev = process.env.NODE_ENV === 'development';
+declare global {
+  interface Window {
+    __APP_CONFIG__?: {
+      API_URL?: string;
+      SOCKET_BASE_URL?: string;
+      [key: string]: unknown;
+    };
+  }
+}
 
-/**
- * Literal placeholder that `env.sh` rewrites at container start. Kept as one plain literal
- * so the sed in env.sh finds it in the built bundle. Whether it was rewritten is detected by
- * shape (`isHttpUrl`), never by comparing it to a second copy of the same string: the
- * bundler folds a copy into an identical literal and sed would rewrite both sides, making
- * the comparison permanently true and the runtime value unreachable.
- */
-const API_URL_INJECTED = 'MY_APP_VITE_API_URL';
+const isDev = process.env.NODE_ENV === 'development';
 
 const LOOPBACK_BASE_URL = /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::|\/|$)/i;
 
-function isHttpUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
+/** HTTP(S) URL or root-relative path (e.g. /api/v1 behind a reverse proxy). */
+export function isValidApiUrl(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  return /^https?:\/\//i.test(trimmed) || trimmed.startsWith('/');
 }
 
 /**
  * Resolve the public backend URL the browser must call.
  *
- * A runtime-injected URL wins over the build-time one deliberately: once `VITE_API_URL` is
- * inlined the placeholder is gone from the bundle, so a wrong build arg would otherwise be
- * unrecoverable without rebuilding the image. Reading the injected value first lets a bad
- * image be fixed by setting `MY_APP_VITE_API_URL` on the container and restarting it.
+ * Precedence:
+ * 1. `window.__APP_CONFIG__.API_URL` from `/config.js` (container `VITE_API_URL` via env.sh)
+ * 2. Build-time `import.meta.env.VITE_API_URL` (`.env` or Docker `--build-arg`)
+ * 3. Dev default `http://localhost:3000/api/v1`
+ * 4. Empty string in production when unset
  */
 export function resolveApiBaseUrl(
-  injected: string = API_URL_INJECTED,
+  runtimeUrl: string = (typeof window !== 'undefined' && window.__APP_CONFIG__?.API_URL) || '',
   buildTimeUrl: string = import.meta.env.VITE_API_URL ?? '',
   dev: boolean = isDev,
 ): string {
-  const injectedValue = injected.trim();
-  if (isHttpUrl(injectedValue)) {
-    return injectedValue;
+  const runtimeValue = runtimeUrl.trim();
+  if (isValidApiUrl(runtimeValue)) {
+    return runtimeValue;
   }
 
   const buildTimeValue = buildTimeUrl.trim();
-  if (isHttpUrl(buildTimeValue)) {
+  if (isValidApiUrl(buildTimeValue)) {
     return buildTimeValue;
   }
 
-  // Unconfigured production keeps the placeholder visible so the network tab names the
-  // missing container variable instead of showing a plausible-looking URL.
-  return dev ? 'http://localhost:3000/api/v1' : API_URL_INJECTED;
+  return dev ? 'http://localhost:3000/api/v1' : '';
 }
 
 const baseURL = resolveApiBaseUrl();
 
-// Both failure modes are silent from the outside: nginx answers any unknown path with
-// index.html and a 200, so a wrong baseURL surfaces as an empty auth-provider list
-// ("no authentication methods available") rather than as an error. Log it instead.
-if (import.meta.env.PROD && !isHttpUrl(baseURL)) {
+export function isApiConfigured(): boolean {
+  return isValidApiUrl(API_CONFIG.baseURL);
+}
+
+if (import.meta.env.PROD && !isValidApiUrl(baseURL)) {
   console.error(
-    `[api-config] No backend URL configured: the ${API_URL_INJECTED} placeholder was not `
-      + `replaced, so the app will call <frontend-origin>/${API_URL_INJECTED}/... and nginx will `
-      + 'answer with the SPA HTML. Set the API URL variable on the container and restart.',
+    '[api-config] No backend URL configured. Set VITE_API_URL on the container '
+      + '(e.g. -e VITE_API_URL=https://api.example.com/api/v1) or pass --build-arg VITE_API_URL=... when building the image.',
   );
 } else if (import.meta.env.PROD && LOOPBACK_BASE_URL.test(baseURL)) {
   console.error(
     `[api-config] Production bundle is calling a loopback API URL (${baseURL}); the browser `
-      + 'cannot reach the backend. Set the API URL variable on the container, or rebuild the '
-      + 'image with a build-arg pointing at the public backend URL.',
+      + 'cannot reach the backend. Set VITE_API_URL on the container or rebuild with a public API URL.',
   );
 }
 
@@ -72,25 +75,32 @@ export const API_CONFIG = {
   withCredentials: true, // Required for HTTP-only cookies (refresh token)
 } as const;
 
-/**
- * Same two mechanisms as above, socket origin. `env.sh` replaces this literal, so do not
- * compare against another copy of the same placeholder — sed replaces both sides.
- * Prefer this over nginx /socket.io/ proxy: the image runs as `metafront` and cannot
- * sed /etc/nginx/conf.d/default.conf (Permission denied → container exit).
- */
-const SOCKET_BASE_INJECTED = 'MY_APP_SOCKET_BASE_URL';
-
 /** Origin for Socket.IO (app-runtime, browser-session). */
 export function getSocketBaseUrl(): string {
-  const configured = (import.meta.env.VITE_SOCKET_BASE_URL?.trim() || SOCKET_BASE_INJECTED).trim();
-  if (isHttpUrl(configured)) {
-    return new URL(configured).origin;
+  const windowSocketUrl = typeof window !== 'undefined'
+    ? window.__APP_CONFIG__?.SOCKET_BASE_URL?.trim()
+    : undefined;
+  if (windowSocketUrl && isValidApiUrl(windowSocketUrl)) {
+    try {
+      return new URL(windowSocketUrl, typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000').origin;
+    } catch {
+      /* fall through */
+    }
+  }
+
+  const configured = (import.meta.env.VITE_SOCKET_BASE_URL ?? '').trim();
+  if (configured && isValidApiUrl(configured)) {
+    try {
+      return new URL(configured, typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000').origin;
+    } catch {
+      /* fall through */
+    }
   }
 
   const base = API_CONFIG.baseURL;
-  if (isHttpUrl(base)) {
+  if (isValidApiUrl(base)) {
     try {
-      return new URL(base).origin;
+      return new URL(base, typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000').origin;
     } catch {
       /* fall through */
     }

@@ -13,7 +13,7 @@ def _fresh_barrier(sequence, timeout):
 
 
 def test_diverged_shortcircuit():
-    from src.companion_ai import adk_patches
+    from src.companion_ai.adk import adk_patches
     adk_patches.apply_replay_barrier_resilience_patch()
 
     seq = [f"n{i}@1" for i in range(6)]
@@ -42,7 +42,7 @@ def test_diverged_shortcircuit():
 
 def test_in_order_still_advances():
     """A well-formed replay (each key advanced in order) never trips divergence."""
-    from src.companion_ai import adk_patches
+    from src.companion_ai.adk import adk_patches
     adk_patches.apply_replay_barrier_resilience_patch()
     seq = ["a@1", "b@1", "c@1"]
     b = _fresh_barrier(seq, 0.3)

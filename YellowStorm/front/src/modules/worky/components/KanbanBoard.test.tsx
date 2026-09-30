@@ -251,6 +251,15 @@ describe('KanbanBoard reconciles when useBoard returns new data', () => {
             assigneeKey: 'deadbeef',
           },
           { ...baseTask, id: 'task-3', title: 'Unattributed task', lane: 'ready' },
+          {
+            ...baseTask,
+            id: 'task-4',
+            title: 'Persona task',
+            lane: 'ready',
+            assigneeType: 'human_agent' as const,
+            assigneeName: 'Aziza',
+            isPersona: true,
+          },
         ],
         running: [],
         review: [],
@@ -285,6 +294,9 @@ describe('KanbanBoard reconciles when useBoard returns new data', () => {
     expect(screen.getByText('deadbeef')).toBeInTheDocument();
     // Unattributed task keeps the assignee-type label (i18n mock returns the key).
     expect(screen.getByText('kanban.assignees.unassigned')).toBeInTheDocument();
+    // Persona step (assigneeName set, assigneeKey null) shows the human's name,
+    // not the generic type label — the fix for personas hidden on the board.
+    expect(screen.getByText('Aziza')).toBeInTheDocument();
   });
 });
 

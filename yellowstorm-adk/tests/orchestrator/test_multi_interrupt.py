@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from google.adk.runners import InMemoryRunner
 from google.genai import types
 
-from src.companion_ai import graph, hitl
+from src.companion_ai.adk import graph, hitl
 from src.companion_ai.plan import Plan, Step
 
 

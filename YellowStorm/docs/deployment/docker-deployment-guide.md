@@ -37,7 +37,7 @@ Key facts that decide whether browsing works:
 - The **frontend is static** (`front/nginx.conf` only does `try_files`). It does **not**
   proxy the API or the socket. The built JS carries your real backend URL (e.g.
   `https://api.example.com/api/v1`), injected either at build time via `--build-arg
-  VITE_API_URL=...` or at runtime by `env.sh` rewriting the `MY_APP_VITE_API_URL` literal.
+  VITE_API_URL=...` or at runtime by `env.sh` writing `/config.js` from container `VITE_API_URL`.
 - The browser then opens the Socket.IO connection to that URL's **origin** (`/api/v1` is
   stripped): `wss://api.example.com/socket.io/?...` on namespace `/browser-session`.
 - Therefore **whatever sits in front of the backend must forward `/socket.io/` with the
@@ -91,16 +91,14 @@ so it works as the non-root container user and won't exhaust the default 64 MB `
 
 ## 3. Frontend environment variable
 
-The public backend URL is baked into the built JS. Set exactly one mechanism:
+Set `VITE_API_URL` (and optionally `VITE_SOCKET_BASE_URL`) at **build time** and/or on the **container** at start:
 
 | Variable | Where | Example | Purpose |
 |---|---|---|---|
-| ✅ `VITE_API_URL` | `docker build --build-arg VITE_API_URL=...` | `https://api.example.com/api/v1` | **Public** REST base URL, inlined by Vite. Baked into the image. |
-| `VITE_SOCKET_BASE_URL` | `docker build --build-arg VITE_SOCKET_BASE_URL=...` | `https://api.example.com` | Optional socket origin override. Defaults to the API URL's origin. |
-| `MY_APP_VITE_API_URL` | container env at start | `https://api.example.com/api/v1` | Same value, injected at runtime by `env.sh` instead. Use this when one image serves several environments. |
+| ✅ `VITE_API_URL` | `docker build --build-arg VITE_API_URL=...` and/or container env | `https://api.example.com/api/v1` | **Public** REST base URL. Inlined at build; `env.sh` also writes it to `/config.js` at start (runtime wins). |
+| `VITE_SOCKET_BASE_URL` | same | `https://api.example.com` | Optional socket origin override. Defaults to the API URL's origin. |
 
-If neither is set, the app requests `<frontend-origin>/MY_APP_VITE_API_URL/...`, nginx
-returns the SPA HTML with **200**, and every call fails with a `filter`/`map` of undefined.
+If unset in production, the app has no API base URL and auth/API calls fail until you set `VITE_API_URL` and restart the container.
 
 **Critical:** this must be the URL the *browser* can reach (public DNS/ingress), **not** an
 internal Docker service name like `http://backend:3000`. The browser — not the frontend
@@ -197,7 +195,7 @@ services:
   frontend:
     image: yellostorm-front:latest
     environment:
-      MY_APP_VITE_API_URL: "https://api.example.com/api/v1"   # PUBLIC backend URL
+      VITE_API_URL: "https://api.example.com/api/v1"   # PUBLIC backend URL → /config.js at start
     expose: ["80"]
 
   gateway:
@@ -215,7 +213,7 @@ services:
 
 `gateway.conf` = the nginx from **Step 4** (serve/pass the frontend on `/`, `/api/` and
 `/socket.io/` to `backend:3000`). If instead you expose the backend on its **own** public
-hostname, drop the gateway and just point `MY_APP_VITE_API_URL` at that hostname — only make
+hostname, drop the gateway and set `VITE_API_URL` to that public API URL — only make
 sure that hostname's ingress does the Step 4 upgrade handling.
 
 ---
@@ -246,7 +244,7 @@ Verify each layer — in order — so you know exactly where a failure is:
    - **200 but no upgrade / connection drops after ~60 s** → missing `Upgrade` headers or a
      short `proxy_read_timeout`.
    - **CORS error on the handshake** → `CORS_ORIGIN` doesn't include the frontend origin.
-   - **Connects to the frontend origin, not the API** → `MY_APP_VITE_API_URL` unset/wrong.
+   - **Connects to the frontend origin, not the API** → `VITE_API_URL` unset/wrong.
 
 4. **A page actually renders** in the navigator canvas → Chromium + screencast + WS all good.
 
@@ -263,7 +261,7 @@ Verify each layer — in order — so you know exactly where a failure is:
 | Works locally, breaks in prod behind a proxy | Proxy forwards `/api` only | Add a `/socket.io/` location block |
 | Session drops after ~1 minute | Proxy/LB idle timeout too low | Raise `proxy_read_timeout` / target-group idle timeout to 3600 s |
 | REST works, socket handshake fails with CORS | `CORS_ORIGIN` missing frontend origin | Add the exact frontend origin (scheme+host) |
-| Socket tries to hit the frontend host | Public backend URL never injected | Build with `--build-arg VITE_API_URL=...` or set `MY_APP_VITE_API_URL` on the container |
+| Socket tries to hit the frontend host | Public backend URL never injected | Build with `--build-arg VITE_API_URL=...` or set `VITE_API_URL` on the container |
 | Backend logs "Chromium/Target closed" on launch | Missing libs or tiny `/dev/shm` | Use the provided image; set `shm_size: 1gb`; `--no-sandbox`/`--disable-dev-shm-usage` are already on |
 | Browsing fine, "Indexer" fails | url-to-pdf service unreachable | Deploy it and set `URL_TO_PDF_API_URL` (+ key) |
 | Multiple backend replicas, random disconnects | Session pinned to one pod | Enable sticky sessions or keep browsing on one replica |
@@ -273,7 +271,7 @@ Verify each layer — in order — so you know exactly where a failure is:
 ## 8. Final checklist
 
 - [ ] Backend image built (includes Chromium at `/usr/bin/chromium`).
-- [ ] Frontend image built with the public backend URL incl. `/api/v1` (`--build-arg VITE_API_URL=...`, or `MY_APP_VITE_API_URL` on the container).
+- [ ] Frontend image built and/or container started with public backend URL incl. `/api/v1` (`VITE_API_URL`).
 - [ ] `CORS_ORIGIN` includes the frontend origin.
 - [ ] The proxy/ingress in front of the backend forwards **`/api/`** *and* **`/socket.io/`**.
 - [ ] `/socket.io/` block sets `proxy_http_version 1.1`, `Upgrade`/`Connection` headers, and a long read timeout.

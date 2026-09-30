@@ -21,8 +21,8 @@ from google.adk.events import Event
 from google.adk.workflow import JoinNode, RetryConfig, START, Workflow
 from google.adk.workflow import BaseNode
 
-from . import scheduler
-from .plan import Plan, Step
+from .. import scheduler
+from ..plan import Plan, Step
 
 # A factory the caller supplies: build the executable node for a step, given the
 # graph-safe node name to use. In production it wraps an LlmAgent; tests pass a

@@ -1,7 +1,7 @@
 """_dep_results_context now also feeds a step the steps that DEPEND on it, as
 context-only, so the executor/persona won't runtime-spawn an await that the plan
 already contains (that spawn reshapes the graph and breaks replay)."""
-from src.companion_ai.service import OrchestratorService
+from src.companion_ai.adk.service import OrchestratorService
 from src.companion_ai.plan import Plan, Step, Status
 
 
