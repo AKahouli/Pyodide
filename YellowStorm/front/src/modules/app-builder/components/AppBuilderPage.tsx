@@ -1,7 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ChevronRight, Loader2, Plus, Search, Store, X } from 'lucide-react';
-import { Input } from '@/components/ui/input';
+import { useEffect, useState } from 'react';
+import { Loader2, Store } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -17,16 +15,13 @@ import {
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { usePermissions } from '@/modules/admin/hooks/usePermissions';
-import { startTemplateSession } from '@/modules/conversation-v2/startAgentSession';
 import { adminTemplateApi } from '../api';
 import { useAppBuilderStore } from '../store';
 import type { AppTemplate, TemplateCategory } from '../types';
 import { AppMarketAppsView } from './AppMarketAppsView';
 import { CategorySidebar } from './templates/CategorySidebar';
-import { TemplateGrid } from './templates/TemplateGrid';
-import { TemplateDetailDialog } from './templates/TemplateDetailDialog';
 import { CategoryFormDialog } from './templates/CategoryFormDialog';
-import { TemplateFormDrawer } from './templates/TemplateFormDrawer';
+import { TemplatesMarketSection } from './templates/TemplatesMarketSection';
 
 type PendingDelete =
   | { kind: 'category'; item: TemplateCategory }
@@ -34,7 +29,6 @@ type PendingDelete =
 
 export function AppBuilderPage() {
   const { t } = useModuleTranslation('app-builder');
-  const navigate = useNavigate();
   const { hasPermission } = usePermissions();
   const isSuperAdmin = hasPermission('*');
 
@@ -44,27 +38,17 @@ export function AppBuilderPage() {
   const categories = useAppBuilderStore((s) => s.categories);
   const categoriesLoading = useAppBuilderStore((s) => s.categoriesLoading);
   const categoriesError = useAppBuilderStore((s) => s.categoriesError);
-  const templates = useAppBuilderStore((s) => s.templates);
-  const templatesLoading = useAppBuilderStore((s) => s.templatesLoading);
-  const templatesError = useAppBuilderStore((s) => s.templatesError);
   const selectedCategoryId = useAppBuilderStore((s) => s.selectedCategoryId);
   const fetchCategories = useAppBuilderStore((s) => s.fetchCategories);
   const selectCategory = useAppBuilderStore((s) => s.selectCategory);
   const fetchTemplates = useAppBuilderStore((s) => s.fetchTemplates);
 
-  const [activeTemplate, setActiveTemplate] = useState<AppTemplate | null>(null);
-  const [cloningTemplateId, setCloningTemplateId] = useState<string | null>(null);
   const [categoryForm, setCategoryForm] = useState<{
     open: boolean;
     category: TemplateCategory | null;
   }>({ open: false, category: null });
-  const [templateForm, setTemplateForm] = useState<{
-    open: boolean;
-    template: AppTemplate | null;
-  }>({ open: false, template: null });
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [templateSearch, setTemplateSearch] = useState('');
   const [categorySidebarCollapsed, setCategorySidebarCollapsed] = useState(false);
 
   useEffect(() => {
@@ -81,47 +65,7 @@ export function AppBuilderPage() {
     return () => mq.removeEventListener('change', sync);
   }, []);
 
-  const selectedCategory = categories.find((c) => c.id === selectedCategoryId) ?? null;
   const totalApps = deployed.length + shared.length + drafts.length;
-
-  const filteredTemplates = useMemo(() => {
-    const q = templateSearch.trim().toLowerCase();
-    if (!q) return templates;
-    return templates.filter(
-      (tpl) =>
-        tpl.title.toLowerCase().includes(q) ||
-        tpl.description.toLowerCase().includes(q) ||
-        tpl.categoryName.toLowerCase().includes(q),
-    );
-  }, [templates, templateSearch]);
-
-  useEffect(() => {
-    setTemplateSearch('');
-  }, [selectedCategoryId]);
-
-  const refreshTemplates = () => {
-    if (selectedCategoryId) fetchTemplates(selectedCategoryId);
-  };
-
-  const refreshCatalog = () => {
-    fetchCategories();
-    refreshTemplates();
-  };
-
-  const handleCloneTemplate = async (template: AppTemplate) => {
-    if (cloningTemplateId) return;
-    setCloningTemplateId(template.id);
-    try {
-      await startTemplateSession({
-        templateId: template.id,
-        navigate,
-      });
-    } catch {
-      toast.error(t('templates.cloneError'));
-    } finally {
-      setCloningTemplateId(null);
-    }
-  };
 
   const confirmDelete = async () => {
     if (!pendingDelete) return;
@@ -133,7 +77,8 @@ export function AppBuilderPage() {
         fetchCategories();
       } else {
         await adminTemplateApi.deleteTemplate(pendingDelete.item.id);
-        refreshCatalog();
+        fetchCategories();
+        if (selectedCategoryId) fetchTemplates(selectedCategoryId);
       }
       toast.success(t('admin.deleteSuccess'));
     } catch {
@@ -199,134 +144,22 @@ export function AppBuilderPage() {
         <div className='min-w-0 flex-1 overflow-y-auto bg-gradient-to-br from-background via-background to-muted/25'>
           <div className='mx-auto max-w-6xl px-6 py-6 sm:px-10 sm:py-7'>
             <AppMarketAppsView>
-              {selectedCategoryId !== null ? (
-                <section
-                  key={selectedCategoryId}
-                  aria-labelledby='app-builder-templates-heading'
-                  className='animate-in fade-in-0 slide-in-from-top-1 space-y-6 border-t border-border/50 pt-8 duration-200'
-                >
-                  <div className='flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between'>
-                    <div className='min-w-0 space-y-2.5'>
-                      <nav
-                        aria-label={t('templates.breadcrumbAria')}
-                        className='flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground sm:text-sm'
-                      >
-                        <span>{t('page.eyebrow')}</span>
-                        <ChevronRight className='size-3.5 shrink-0 opacity-50' aria-hidden />
-                        <span className='truncate font-medium text-foreground'>
-                          {selectedCategory?.name ?? t('templates.heading')}
-                        </span>
-                      </nav>
-                      <div className='space-y-1'>
-                        <h2
-                          id='app-builder-templates-heading'
-                          className='truncate text-xl font-semibold tracking-tight text-foreground sm:text-2xl'
-                        >
-                          {selectedCategory?.name ?? t('templates.heading')}
-                        </h2>
-                        <p className='text-sm leading-relaxed text-muted-foreground'>
-                          {templatesLoading
-                            ? t('templates.loading')
-                            : templateSearch.trim()
-                              ? t('templates.filteredCount', {
-                                  count: filteredTemplates.length,
-                                  total: templates.length,
-                                })
-                              : t('templates.count', { count: templates.length })}
-                        </p>
-                      </div>
-                    </div>
-                    <div className='flex w-full flex-col gap-2 sm:flex-row sm:items-center lg:w-auto lg:min-w-[280px]'>
-                      <div className='relative flex-1'>
-                        <Search
-                          className='pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground'
-                          aria-hidden
-                        />
-                        <Input
-                          value={templateSearch}
-                          onChange={(e) => setTemplateSearch(e.target.value)}
-                          placeholder={t('templates.searchPlaceholder')}
-                          className='h-10 rounded-xl border-border/60 bg-card pl-9 pr-9 shadow-sm'
-                          aria-label={t('templates.searchPlaceholder')}
-                        />
-                        {templateSearch ? (
-                          <button
-                            type='button'
-                            onClick={() => setTemplateSearch('')}
-                            className='absolute right-2.5 top-1/2 -translate-y-1/2 rounded-full p-1 text-muted-foreground transition hover:bg-muted hover:text-foreground'
-                            aria-label={t('hub.filters.clear')}
-                          >
-                            <X className='size-4' />
-                          </button>
-                        ) : null}
-                      </div>
-                      {isSuperAdmin ? (
-                        <Button
-                          type='button'
-                          size='sm'
-                          className='h-10 shrink-0 gap-1.5 rounded-full px-4'
-                          onClick={() => setTemplateForm({ open: true, template: null })}
-                        >
-                          <Plus className='size-4' aria-hidden />
-                          {t('templates.new')}
-                        </Button>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  <TemplateGrid
-                    templates={filteredTemplates}
-                    loading={templatesLoading}
-                    error={templatesError}
-                    categoryName={selectedCategory?.name}
-                    onRetry={refreshTemplates}
-                    onOpen={setActiveTemplate}
-                    onClone={handleCloneTemplate}
-                    cloningTemplateId={cloningTemplateId}
-                    isSuperAdmin={isSuperAdmin}
-                    onEdit={(template) => setTemplateForm({ open: true, template })}
-                    onDelete={(template) =>
-                      setPendingDelete({ kind: 'template', item: template })
-                    }
-                  />
-                </section>
-              ) : null}
+              <TemplatesMarketSection
+                isSuperAdmin={isSuperAdmin}
+                onRequestDeleteTemplate={(template) =>
+                  setPendingDelete({ kind: 'template', item: template })
+                }
+              />
             </AppMarketAppsView>
           </div>
         </div>
       </div>
-
-      <TemplateDetailDialog
-        template={activeTemplate}
-        open={activeTemplate !== null}
-        onOpenChange={(open) => !open && setActiveTemplate(null)}
-        isSuperAdmin={isSuperAdmin}
-        onClone={handleCloneTemplate}
-        cloning={cloningTemplateId === activeTemplate?.id}
-        onEdit={(template) => {
-          setActiveTemplate(null);
-          setTemplateForm({ open: true, template });
-        }}
-        onDelete={(template) => {
-          setActiveTemplate(null);
-          setPendingDelete({ kind: 'template', item: template });
-        }}
-      />
 
       <CategoryFormDialog
         open={categoryForm.open}
         category={categoryForm.category}
         onOpenChange={(open) => setCategoryForm((prev) => ({ ...prev, open }))}
         onSaved={fetchCategories}
-      />
-
-      <TemplateFormDrawer
-        open={templateForm.open}
-        template={templateForm.template}
-        categories={categories}
-        defaultCategoryId={selectedCategoryId}
-        onOpenChange={(open) => setTemplateForm((prev) => ({ ...prev, open }))}
-        onSaved={refreshCatalog}
       />
 
       <AlertDialog open={pendingDelete !== null} onOpenChange={(open) => !open && setPendingDelete(null)}>
