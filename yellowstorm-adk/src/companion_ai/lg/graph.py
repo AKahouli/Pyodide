@@ -251,12 +251,13 @@ def make_worker(model: ChatModel, project: Optional[ProjectFn],
             return {"results": {step.id: text},
                     "plan": [{**d, "status": "completed", "result": text}]}
 
-        # ---- await_reply: park, then an LLM acts on the reply (may spawn) ----
+        # ---- await_reply: state-driven — the reply is already in state (route only
+        # dispatches this step once replies[step.id] exists), so no interrupt(). An
+        # LLM then acts on the reply (may spawn). ----
         if step.kind == "await_reply":
-            reply = interrupt({"kind": "await_reply", "step_id": step.id,
-                               "message": step.description or step.title})
             if project:
                 await project(step.id, "running")
+            reply = payload.get("reply")
             text_reply = reply if isinstance(reply, str) else str(reply)
             human = _await_human(step, text_reply, ctx)
         else:
@@ -291,10 +292,21 @@ def make_worker(model: ChatModel, project: Optional[ProjectFn],
     return worker
 
 
-def _ready(plan: List[dict], results: Dict[str, str]) -> List[dict]:
-    return [s for s in plan
-            if s.get("status", "pending") == "pending"
-            and all(dep in results for dep in (s.get("depends_on") or []))]
+def _ready(plan: List[dict], results: Dict[str, str],
+           replies: Dict[str, str]) -> List[dict]:
+    out = []
+    for s in plan:
+        if s.get("status", "pending") != "pending":
+            continue
+        if not all(dep in results for dep in (s.get("depends_on") or [])):
+            continue
+        # State-driven wait: an await_reply step is ready only once its reply is in
+        # state. Until then it is simply "not ready" — no interrupt(), so the drive
+        # ends cleanly and other branches keep going independently.
+        if s.get("kind") == "await_reply" and s["id"] not in replies:
+            continue
+        out.append(s)
+    return out
 
 
 def build_graph(model: ChatModel, project: Optional[ProjectFn] = None,
@@ -311,7 +323,8 @@ def build_graph(model: ChatModel, project: Optional[ProjectFn] = None,
     def route(state: OrchState):
         plan = state["plan"]
         results = state.get("results", {})
-        ready = _ready(plan, results)
+        replies = state.get("replies", {})
+        ready = _ready(plan, results, replies)
         if not ready:
             return END
         dep_map = {x["id"]: (x.get("depends_on") or []) for x in plan}
@@ -339,7 +352,8 @@ def build_graph(model: ChatModel, project: Optional[ProjectFn] = None,
             dependents = [dict(x) for x in plan if s["id"] in (x.get("depends_on") or [])]
             sends.append(Send("worker", {"step": s, "ctx": ctx,
                                          "dependents": dependents,
-                                         "next_ordinal": max_ord + 1}))
+                                         "next_ordinal": max_ord + 1,
+                                         "reply": replies.get(s["id"])}))
         return sends
 
     g = StateGraph(OrchState)

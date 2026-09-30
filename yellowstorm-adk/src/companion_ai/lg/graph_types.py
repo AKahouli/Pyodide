@@ -46,3 +46,8 @@ class OrchState(TypedDict):
     # step_id -> result text. Every worker writes its own key; merged so parallel
     # branches don't clobber.
     results: Annotated[Dict[str, str], merge_results]
+    # step_id -> the reply that arrived for an await_reply step. State-driven wait:
+    # an await step is NOT ready until its reply lands here (written by
+    # DeliverMailReply, then the graph is re-driven). No interrupt() -> the graph
+    # never halts, so parallel waits don't block each other.
+    replies: Annotated[Dict[str, str], merge_results]

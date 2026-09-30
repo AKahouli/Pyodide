@@ -657,6 +657,7 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                 answer=answer, model=model,
                 connectors=_agent_connector_bindings(executor),
                 interrupt_id=wait["interrupt_id"],
+                step_id=wait["step_id"],
                 executor_prompt=executor.prompt if executor else None)
             logger.info("[worky] DeliverMailReply turn done (session=%s step=%s)",
                         session_id, wait["step_id"])

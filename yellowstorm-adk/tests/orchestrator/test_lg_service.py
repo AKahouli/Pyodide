@@ -147,7 +147,8 @@ async def test_lgservice_plan_then_resume():
         assert wait and wait["interrupt_id"]
 
         out = await svc.resume_turn(session_id="S", user_id="u", answer="REPLY!",
-                                    model="m", interrupt_id=wait["interrupt_id"])
+                                    model="m", step_id=wait["step_id"],
+                                    interrupt_id=wait["interrupt_id"])
         # await step is LLM-powered now: it processes the reply itself
         assert "REPLY!" in model.seen["WAIT"]
         assert rm.steps["pl_wait"]["status"] == "completed"

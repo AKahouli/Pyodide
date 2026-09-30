@@ -1762,8 +1762,13 @@ class OrchestratorService:
     async def resume_turn(self, *, session_id: str, user_id: str, answer: str,
                           model: str, connectors: Optional[List[dict]] = None,
                           interrupt_id: Optional[str] = None,
+                          step_id: Optional[str] = None,
                           executor_prompt: Optional[str] = None) -> Plan:
         """Resume a turn blocked on ask-the-user with the user's `answer`.
+
+        `step_id` is accepted for signature-compatibility with the LangGraph engine
+        (state-driven waits route by step id); the ADK engine resumes by
+        interrupt_id and ignores it.
 
         Reached from STEP 4 when the session is waiting; skips planning (STEP
         5-7 already happened on the original turn) and rejoins the sequence at
