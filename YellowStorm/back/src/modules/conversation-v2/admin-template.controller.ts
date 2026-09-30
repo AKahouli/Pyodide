@@ -30,10 +30,8 @@ import { RequirePermissions } from '../authorization/decorators/require-permissi
 import { Permissions } from '../authorization/constants/permissions';
 import { PermissionsGuard } from '../authorization/guards/permissions.guard';
 import { AuditLogService } from '../authorization/services/audit-log.service';
-import {
-  ConversationV2TemplateService,
-  type MulterFile,
-} from './services/conversation-v2-template.service';
+import { ConversationV2TemplateService } from './services/conversation-v2-template.service';
+import { MulterFile } from './interfaces/multer-file.interface';
 import { CreateTemplateDto } from './dto/create-template.dto';
 import { UpdateTemplateDto } from './dto/update-template.dto';
 import { ITemplateResponse } from './interfaces/template-catalog.interface';

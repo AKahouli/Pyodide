@@ -122,12 +122,28 @@ describe('ConversationV2TemplatePublishService', () => {
       {
         coverImage: 'appbuilder/templates/tpl_3/cover.png',
         manifestObjectKey: 'appbuilder/manifests/_system/template_tpl_3.json',
-      } as never,
+      },
     ]);
 
     expect(deleteMany).toHaveBeenCalledWith([
       'appbuilder/templates/tpl_3/cover.png',
       'appbuilder/manifests/_system/template_tpl_3.json',
     ]);
+  });
+
+  it('skips null and missing object keys', async () => {
+    await svc.removeTemplateArtifacts([
+      {},
+      { coverImage: null, manifestObjectKey: null },
+      { coverImage: 'appbuilder/templates/tpl_4/cover.png' },
+    ]);
+
+    expect(deleteMany).toHaveBeenCalledWith(['appbuilder/templates/tpl_4/cover.png']);
+  });
+
+  it('does not call Ceph when every key is empty', async () => {
+    await svc.removeTemplateArtifacts([{}, { coverImage: '', manifestObjectKey: null }]);
+
+    expect(deleteMany).not.toHaveBeenCalled();
   });
 });

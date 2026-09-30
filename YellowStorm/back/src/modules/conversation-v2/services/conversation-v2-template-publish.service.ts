@@ -11,7 +11,6 @@ import {
   analyzeTemplatePlatform,
   type TemplatePlatformReport,
 } from '@modules/app-runtime/platform-kit/platform-template-report';
-import type { ConversationV2TemplateRow } from '../persistence/conversation-v2-template.store';
 export interface PublishedTemplateRevision {
   revisionId: string;
   manifestObjectKey: string;
@@ -28,6 +27,12 @@ interface TemplateManifestFile {
   sha256: string;
   objectKey: string;
   size: number;
+}
+
+/** Only the Ceph object keys matter for cleanup; DB rows satisfy this structurally. */
+export interface TemplateArtifactRefs {
+  coverImage?: string | null;
+  manifestObjectKey?: string | null;
 }
 
 /** Ceph round trips per template file are the publish bottleneck; bound the fan-out. */
@@ -124,9 +129,9 @@ export class ConversationV2TemplatePublishService {
    * content-addressed blobs are intentionally left in place. Never throws:
    * a Ceph hiccup must not fail an already-committed DB delete.
    */
-  async removeTemplateArtifacts(templates: ConversationV2TemplateRow[]): Promise<void> {
+  async removeTemplateArtifacts(templates: TemplateArtifactRefs[]): Promise<void> {
     const keys = [
-      ...templates.map((t) => t.coverImage),
+      ...templates.map((t) => t.coverImage ?? ''),
       ...templates.map((t) => t.manifestObjectKey ?? ''),
     ].filter((key) => key.length > 0);
     if (keys.length === 0) return;

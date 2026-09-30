@@ -14,6 +14,7 @@ import {
 import { CreateTemplateDto } from '../dto/create-template.dto';
 import { UpdateTemplateDto } from '../dto/update-template.dto';
 import { ITemplateResponse } from '../interfaces/template-catalog.interface';
+import { MulterFile } from '../interfaces/multer-file.interface';
 import {
   TEMPLATE_COVER_MAX_BYTES,
   TEMPLATE_COVER_MIME_TYPES,
@@ -23,13 +24,6 @@ import {
   templateRevisionId,
 } from '../constants/template-catalog.constants';
 import { ConversationV2TemplatePublishService } from './conversation-v2-template-publish.service';
-
-export interface MulterFile {
-  originalname: string;
-  mimetype: string;
-  size: number;
-  buffer: Buffer;
-}
 
 @Injectable()
 export class ConversationV2TemplateService {
@@ -255,19 +249,7 @@ export class ConversationV2TemplateService {
     if (!isObjectId(stagingTemplateId)) return;
     const revisionId = templateRevisionId(stagingTemplateId);
     await this.publish.removeTemplateArtifacts([
-      {
-        id: stagingTemplateId,
-        categoryId: stagingTemplateId,
-        title: '',
-        description: '',
-        coverImage: '',
-        revisionId,
-        manifestObjectKey: templateManifestKey(revisionId),
-        platformReport: null,
-        status: 'draft',
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      },
+      { manifestObjectKey: templateManifestKey(revisionId) },
     ]);
   }
 

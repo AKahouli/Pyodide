@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
 import { DocumentService } from '@modules/document/document.service';
-import { ConversationV2TemplateService, type MulterFile } from './conversation-v2-template.service';
+import { ConversationV2TemplateService } from './conversation-v2-template.service';
+import type { MulterFile } from '../interfaces/multer-file.interface';
 
 const TPL_ID = 'a'.repeat(24);
 const ZIP: MulterFile = {
