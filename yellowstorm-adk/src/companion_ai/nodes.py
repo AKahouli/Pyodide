@@ -47,7 +47,7 @@ def _lookup_signature(part) -> Optional[tuple]:
     still gets caught even when it jitters incidental args between calls
     (e.g. sometimes passing role='', sometimes not; sometimes pairing the
     call with an unrelated tool, or alternating which of two names it
-    re-checks). Seen live: find_human_agents('Firas Kahia') called 6+ times
+    re-checks). Seen live: human-agents_search_human_agents('Firas Kahia') called 6+ times
     across one step with the args shape changing almost every round — a
     strict "same 3 rounds in a row, byte-identical" check never caught it."""
     fc = getattr(part, "function_call", None)
@@ -84,7 +84,7 @@ def _stop_after_n_calls(limit: int, model_name: str, *,
 
     Separately: before that budget is anywhere near exhausted, also watch for
     a step re-issuing the exact same tool call(s) round after round — seen
-    live, a step re-verified the same two already-confirmed find_human_agents
+    live, a step re-verified the same two already-confirmed human-agents_search_human_agents
     lookups 7+ times with identical, successful results each time, making no
     other progress. That is a model reasoning stall, not a budget problem, so
     it gets a different remedy: a pointed nudge with tools still available
@@ -827,7 +827,7 @@ def make_llm_node_factory(
         # decision from {assignee_name} themselves" — for a delegate that is
         # self-referential (you represent Firas, but must also email Firas
         # and await Firas's reply), a real, confirmed trigger for the step
-        # stalling on repeated find_human_agents lookups instead of ever
+        # stalling on repeated human-agents_search_human_agents lookups instead of ever
         # sending the email. Give delegates a distinct preamble: relay and
         # wait, no "draft as if you were them" framing.
         if step.is_persona and step.is_dynamic_delegate:
@@ -837,7 +837,7 @@ def make_llm_node_factory(
                 "question to relay, not something for you to answer in "
                 f"their place. Your job is to get {step.assignee_name}'s "
                 "ACTUAL answer, never invent or guess it: look up their "
-                "contact via find_human_agents (there is no fixed roster), "
+                "contact via human-agents_search_human_agents (there is no fixed roster), "
                 "send them the question below on the channel the task "
                 "specifies — a Teams message if it says Teams, otherwise a "
                 "real email — then call "
@@ -854,7 +854,7 @@ def make_llm_node_factory(
                 f"Before you send anything: if the matter genuinely falls "
                 f"outside {step.assignee_name}'s own role or authority, do "
                 "what any real colleague would first — find the right "
-                "person (find_human_agents) and actually ask them "
+                "person (human-agents_search_human_agents) and actually ask them "
                 "(delegate_to_human_agent). That becomes its own step and "
                 "their answer arrives there, not back here, so don't wait "
                 "for it and never invent what they said.\n\n"
@@ -882,7 +882,7 @@ def make_llm_node_factory(
                 "judgment and expertise, draft the analysis, recommendation, or "
                 f"answer they would need — then get the actual decision from "
                 f"{step.assignee_name} themselves: look up their contact via "
-                "find_human_agents (there is no fixed roster), send them your "
+                "human-agents_search_human_agents (there is no fixed roster), send them your "
                 "draft on the channel the task specifies — a Teams message if "
                 "it says Teams, otherwise a real email — laying out the "
                 "situation and asking for "
@@ -903,7 +903,7 @@ def make_llm_node_factory(
                 f"Before you draft anything: if the matter genuinely falls "
                 f"outside {step.assignee_name}'s own role or authority, do what "
                 "any real colleague would first — find the right person "
-                "(find_human_agents) and actually ask them "
+                "(human-agents_search_human_agents) and actually ask them "
                 "(delegate_to_human_agent). They are a real person who answers "
                 "by email in their own time, so that becomes its own step and "
                 "their answer arrives THERE, not back here: do not wait for it "

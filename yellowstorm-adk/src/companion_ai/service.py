@@ -140,7 +140,7 @@ Rules:
   - "await_reply": pause until SOMEONE ELSE replies to an email a previous step
     sent. See below.
 - Use "await_reply" whenever the task depends on a REPLY to a mail you send to
-  a REAL external person (anyone find_human_agents does not find — see below) —
+  a REAL external person (anyone human-agents_search_human_agents does not find — see below) —
   "email X and then ...", "ask X by email and report back", "wait for their
   answer". Without it the plan would send the mail and carry on as if the answer
   had arrived, inventing one.
@@ -159,7 +159,7 @@ Rules:
   instead of leaving it as a restated pending item.
   Do NOT use it for mail you send that needs no answer (a notification, a
   report), and do NOT use it to wait for anything other than an email reply.
-  NEVER use it for a human agent found via find_human_agents — see below,
+  NEVER use it for a human agent found via human-agents_search_human_agents — see below,
   it is a completely different, single-step mechanism with no email involved.
 - ids are short unique strings. depends_on lists ids that MUST finish first;
   leave it [] for independent steps.
@@ -187,8 +187,8 @@ contacting them.
 
 MANDATORY FIRST CHECK — human agents, NO fixed roster: before you write ANY
 step whose job is to reach a named person, or a role (e.g. "the approver",
-"someone in support"), you MUST call find_human_agents(name=...) and/or
-find_human_agents(role=...) to check whether they are a human agent — never
+"someone in support"), you MUST call human-agents_search_human_agents(name=...) and/or
+human-agents_search_human_agents(role=...) to check whether they are a human agent — never
 assume, and never skip this because the wording sounds like a message to
 send. If the message names no one and implies no role at all, skip this
 check entirely.
@@ -201,13 +201,13 @@ an await_reply step around them yourself. Reach for email/a messaging
 connector (Teams, etc.) ONLY when the user explicitly says "email" / "send
 an email" / gives an actual email address — wording like "send it to X and
 ask her", "tell X", "ask X" is NOT an email instruction by itself; it means
-find_human_agents first, and if she's a match, delegate to her, full stop.
+human-agents_search_human_agents first, and if she's a match, delegate to her, full stop.
 Do not also try a connector's send_email/send_teams_message tool "just in
-case" — if find_human_agents found her, that IS the entire interaction, and
+case" — if human-agents_search_human_agents found her, that IS the entire interaction, and
 if it found no one, then and only then does an ordinary step / connector
 send make sense.
 
-When find_human_agents finds a match, that's ONE "execute" step: set
+When human-agents_search_human_agents finds a match, that's ONE "execute" step: set
 "assignee": "<their exact name>" and write "description" as the question/task
 addressed directly TO them (e.g. "Should we invest in Bitcoin today, given:
 <summary>?" — never "send/email/notify <name> and ask...", you are not
@@ -222,12 +222,12 @@ they handle actually reaching that person and getting their real decision
 themselves, inside their own step; from your plan's point of view, the
 single assignee step IS the question and IS the answer, both in that one
 step.
-If find_human_agents finds no match, treat it as an ordinary step (or, if the
+If human-agents_search_human_agents finds no match, treat it as an ordinary step (or, if the
 user clearly means to email a real external person by address, use the
 normal execute + await_reply pattern above).
 
 Example — "search bitcoin news, then send it to Rabeb and ask if we should
-invest today" — find_human_agents(name="Rabeb") found her, so this is
+invest today" — human-agents_search_human_agents(name="Rabeb") found her, so this is
 CORRECT (one assignee step, no email/Teams anywhere):
 {{"title": "Bitcoin investment check", "goal": "Get Rabeb's investment call on Bitcoin", "answer": "On it — I'll pull the latest Bitcoin news and get Rabeb's call.",
   "steps": [
@@ -238,7 +238,7 @@ WRONG for that same request (do NOT do this): a plain "execute" step titled
 something like "Send to Rabeb" with no "assignee", whose description tells
 the executor to email her or message her on Teams. The user never said
 "email" — that phrasing came only from misreading "send it to Rabeb" as a
-literal message to compose, instead of checking find_human_agents first.
+literal message to compose, instead of checking human-agents_search_human_agents first.
 
 Example — "email x asking which company she works for, then report on it":
 {{"title": "Company report", "goal": "Report on the company x works for", "answer": "Sure — I'll email x, wait for her reply, then research the company.",
@@ -665,8 +665,8 @@ class OrchestratorService:
                                           tool_context: ToolContext = None) -> str:
             matches = await human_agents.search_human_agents(name=agent_name)
             if not matches:
-                return (f"Unknown agent {agent_name!r} — no match via find_human_agents. "
-                        "Call find_human_agents first to discover who actually exists.")
+                return (f"Unknown agent {agent_name!r} — no match via human-agents_search_human_agents. "
+                        "Call human-agents_search_human_agents first to discover who actually exists.")
             agent = matches[0]
             agent_display_name = agent.get("name") or agent_name
             caller = plan.step(caller_step_id)
@@ -758,7 +758,7 @@ class OrchestratorService:
                     "later, so this does NOT hand their answer back to you: it becomes "
                     "its own step in the plan where their real answer lands. Call it, "
                     "then end your own turn reporting that you asked them — never wait "
-                    "for it and never guess what they will say. Use find_human_agents "
+                    "for it and never guess what they will say. Use human-agents_search_human_agents "
                     "first if you don't already know their exact name."),
                 "parameters": {
                     "type": "object",
@@ -1170,7 +1170,6 @@ class OrchestratorService:
             # not something to chain the next one after.
             siblings: set = set()
             return list(tools) + [
-                human_agents.make_find_human_agents_tool(),
                 self._delegate_tool_for(session_id, user_id, plan, factory_holder,
                                         name_to_step, step.id, siblings),
                 self._create_task_tool_for(session_id, user_id, plan, factory_holder,
@@ -1192,7 +1191,7 @@ class OrchestratorService:
                 "real work that was not part of your own step's original "
                 "description. Even when you already have the tool to do that "
                 "work yourself, spin it off instead of doing it inline: "
-                "find_human_agents + delegate_to_human_agent for a named "
+                "human-agents_search_human_agents + delegate_to_human_agent for a named "
                 "colleague's judgment, or create_task for anything else "
                 "(kind='await_reply' if it itself means emailing someone and "
                 "waiting on THEIR answer) — that keeps it tracked as its own "
@@ -1367,7 +1366,7 @@ class OrchestratorService:
                     session_id, plan.title, len(plan.steps))
         # A genuine direct reply (CASE A) has an ANSWER. Zero steps AND an empty
         # answer is a broken/empty planner response, not chit-chat — seen live:
-        # glm-5.3-go returned {steps:[], answer:"", ops:[{op:"find_human_agents"}]}
+        # glm-5.3-go returned {steps:[], answer:"", ops:[{op:"human-agents_search_human_agents"}]}
         # for "search solana and email Imed", so the turn silently 'completed'
         # having done and said nothing. Retry the planner once on a fresh session
         # (a flaky planner often succeeds on the second try); if it's STILL empty,
@@ -2306,10 +2305,11 @@ class OrchestratorService:
         # read the whole prompt twice, and its {{ }} JSON examples reached the
         # model as invalid doubled braces.)
         planner_instruction = (planner_prompt or PLANNER_INSTRUCTION)
-        # The planner runs on ITS OWN connectors (like the executor). find_human_agents
-        # stays the built-in until a human-agents MCP is linked to replace it.
-        planner_tools = [human_agents.make_find_human_agents_tool(),
-                         *self._tools_for(planner_connectors, session_id, user_id)]
+        # The planner runs on ITS OWN connectors (like the executor). Human-agent
+        # lookup comes from the human-agents connector's tool
+        # (human-agents_search_human_agents), attached to every agent — the old
+        # built-in human-agents_search_human_agents wrapper has been dropped to avoid a duplicate.
+        planner_tools = list(self._tools_for(planner_connectors, session_id, user_id))
 
         def _planner_agent(use_schema: bool) -> LlmAgent:
             kwargs = dict(name="planner", model=model_obj,
@@ -2498,7 +2498,7 @@ class OrchestratorService:
         return unmet
 
     def _build_planner_model(self, model_name: Optional[str] = None):
-        # Always has the find_human_agents discovery tool now.
+        # Always has the human-agents_search_human_agents discovery tool now.
         return nodes.build_llm(model_name or self._planner_model, with_tools=True, temperature=0.0)
 
     @staticmethod

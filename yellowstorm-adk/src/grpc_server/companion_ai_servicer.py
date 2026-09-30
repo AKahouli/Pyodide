@@ -219,6 +219,8 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         # STEP 1 — the user's message arrives. Everything downstream is driven by
         # this one request; the RPC itself only ever returns an ack.
         run_id = request.turn_id or uuid.uuid4().hex
+        _engine = "langgraph" if type(self._svc).__name__ == "LgService" else "adk"
+        logger.info("[worky] 1. RunTask ◄ engine=%s (%s)", _engine, type(self._svc).__name__)
         logger.info("[worky] 1. RunTask ◄ incoming request: %s", _describe_request(request))
         logger.info("[worky] 1. RunTask ◄ models: %s", _agent_models(request))
         # LOCAL CAPTURE (do NOT commit) — refresh connector tokens for the E2E
