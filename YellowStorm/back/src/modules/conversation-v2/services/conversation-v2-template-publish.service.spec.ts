@@ -49,8 +49,12 @@ describe('ConversationV2TemplatePublishService', () => {
     expect(upload).toHaveBeenCalledWith(
       expect.any(Buffer),
       'App.jsx',
-      'text/plain',
-      { generateUniqueName: false, customFileName: blobObjectKey(sha) },
+      'application/octet-stream',
+      {
+        generateUniqueName: false,
+        customFileName: blobObjectKey(sha),
+        skipMimeValidation: true,
+      },
     );
     expect(upload).toHaveBeenCalledWith(
       expect.any(Buffer),

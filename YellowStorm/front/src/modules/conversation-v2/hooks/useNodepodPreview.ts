@@ -29,6 +29,13 @@ export interface UseNodepodPreviewArgs {
 
 export interface UseNodepodPreviewResult {
   status: NodepodPreviewStatus;
+  /**
+   * The un-collapsed runtime status. `status` folds `connecting`/`registering`/
+   * `hydrating` into a single `loading`; the UI needs the distinction because
+   * hydration is the slowest phase (it streams the whole template from Ceph) and
+   * collapsing it leaves the user staring at one spinner for many seconds.
+   */
+  hostStatus: RuntimeHostStatus;
   previewUrl: string | null;
   error: string | null;
   files: Record<string, string | Uint8Array> | null;
@@ -72,6 +79,7 @@ export function useNodepodPreview({
   sessionId,
 }: UseNodepodPreviewArgs): UseNodepodPreviewResult {
   const [status, setStatus] = useState<NodepodPreviewStatus>('idle');
+  const [hostStatus, setHostStatus] = useState<RuntimeHostStatus>('idle');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [files, setFiles] = useState<Record<string, string | Uint8Array> | null>(null);
@@ -79,7 +87,11 @@ export function useNodepodPreview({
 
   useEffect(() => {
     if (!sessionId) {
+      const prev = hostRef.current;
+      hostRef.current = null;
+      prev?.detachPreviewIframe();
       setStatus('idle');
+      setHostStatus('idle');
       setPreviewUrl(null);
       setError(null);
       setFiles(null);
@@ -87,10 +99,16 @@ export function useNodepodPreview({
     }
 
     const host = getOrCreateHost(sessionId);
+    // After template-clone promote, `rebindHost` moves the same instance to the
+    // real session id. Do not detach the iframe — that blanks the live preview.
+    if (hostRef.current && hostRef.current !== host) {
+      hostRef.current.detachPreviewIframe();
+    }
     hostRef.current = host;
 
     const sync = (state: HostState) => {
       setStatus(hostStatusToPreviewStatus(state.status));
+      setHostStatus(state.status);
       setPreviewUrl(state.previewUrl);
       setError(state.error);
       setFiles(state.files);
@@ -101,9 +119,18 @@ export function useNodepodPreview({
 
     return () => {
       unsubscribe();
-      host.detachPreviewIframe();
+      // Detach only when leaving this host for a different one / null session —
+      // handled at the top of the next effect run, or on unmount below.
     };
   }, [sessionId]);
+
+  // Unmount: release the visible iframe (hidden preview iframe stays with the host).
+  useEffect(() => {
+    return () => {
+      hostRef.current?.detachPreviewIframe();
+      hostRef.current = null;
+    };
+  }, []);
 
   const retry = useCallback(() => {
     hostRef.current?.retry();
@@ -116,5 +143,5 @@ export function useNodepodPreview({
     else host.detachPreviewIframe();
   }, []);
 
-  return { status, previewUrl, error, files, retry, previewIframeRef };
+  return { status, hostStatus, previewUrl, error, files, retry, previewIframeRef };
 }

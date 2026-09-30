@@ -7,10 +7,22 @@
   "session": {
     "loading": "Chargement de la session…",
     "notFound": "Session introuvable.",
+    "notFoundHint": "Cette conversation a peut-être été supprimée, ou vous n'y avez pas accès.",
+    "back": "Retour",
+    "conversationError": "La conversation a rencontré une erreur inattendue.",
+    "previewError": "Le panneau d'aperçu a rencontré une erreur inattendue.",
     "errorTitle": "Erreur de flux",
     "waitingForPreview": {
       "title": "En attente de l'aperçu en direct",
       "body": "L'agent démarre une fois l'installation des dépendances terminée et Vite prêt."
+    },
+    "templateClone": {
+      "waitingTitle": "Préparation de l'aperçu de l'application",
+      "waitingBody": "Veuillez patienter pendant que nous préparons un aperçu en direct du modèle cloné. L'envoi est désactivé jusqu'à ce que l'aperçu soit prêt.",
+      "waitingBodyDraft": "L'aperçu en direct démarre dans le panneau latéral. Vous pouvez saisir un message — Envoyer s'active dès que l'aperçu est prêt, puis ouvre votre session Conversation V2 avec ce modèle.",
+      "readyTitle": "Aperçu prêt",
+      "readyBody": "Votre modèle est chargé dans l'aperçu en direct. Envoyez un message lorsque vous êtes prêt à le modifier et le personnaliser.",
+      "dismiss": "Compris"
     },
     "previewBootFailed": "L'aperçu en direct n'a pas pu démarrer. Rechargez la page, puis renvoyez votre message.",
     "previewBootTimeout": "L'aperçu en direct a mis trop de temps à démarrer. Rechargez la page, puis réessayez.",
@@ -40,7 +52,9 @@
   "conversation": {
     "emptyTitle": "Envoyez un message pour démarrer",
     "emptyDescription": "L'agent vous répondra et pourra utiliser des outils et une machine virtuelle pour accomplir votre tâche.",
-    "thinking": "Réflexion"
+    "thinking": "Réflexion",
+    "assistantName": "YelloStorm",
+    "fileOpenFailed": "Impossible d'ouvrir le fichier"
   },
   "tool": {
     "running": "En cours",
@@ -109,6 +123,20 @@
     "statusStarting": "Démarrage",
     "statusError": "Indisponible",
     "statusWaiting": "En attente",
+    "phase": {
+      "connecting": "Démarrage de votre espace",
+      "registering": "Préparation du runtime",
+      "hydrating": "Restauration des fichiers",
+      "installing": "Installation des dépendances",
+      "starting": "Lancement de votre application"
+    },
+    "hint": {
+      "connecting": "Ouverture d'un runtime sécurisé pour cette session.",
+      "registering": "Transmission de la session au runtime.",
+      "hydrating": "Récupération des fichiers du projet depuis le stockage.",
+      "installing": "Cela peut prendre un moment au premier lancement.",
+      "starting": "Votre aperçu apparaîtra dans un instant."
+    },
     "bootHint": "YellowMind prépare un aperçu en direct de votre application. Cela ne prend généralement que quelques instants.",
     "waitingHint": "Décrivez ce que vous souhaitez dans la conversation — l'aperçu apparaîtra ici.",
     "loading": "Préparation de l'aperçu…",
@@ -168,6 +196,8 @@
   "header": {
     "back": "Retour",
     "readOnly": "Lecture seule",
+    "streaming": "En cours",
+    "streamError": "Problème de connexion",
     "tooltips": {
       "workspaces": "Gérer les workspaces",
       "files": "Fichiers"
@@ -195,6 +225,7 @@
   },
   "deploy": {
     "publish": "Déployer",
+    "error": "Échec du déploiement — réessayez.",
     "publishing": "Déploiement…",
     "update": "Mettre à jour",
     "liveUrl": "URL en ligne",

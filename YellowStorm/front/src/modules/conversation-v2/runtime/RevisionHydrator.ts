@@ -1,3 +1,4 @@
+import { templateCatalogApi } from '@/modules/app-builder/api';
 import { conversationV2Api } from '../api';
 import type { FilesTreeNode } from '../types';
 import { isTextSourcePath } from '../utils/app-source';
@@ -24,10 +25,23 @@ function safeHost(url: string): string {
 export type VfsFiles = Record<string, string | Uint8Array>;
 
 export class RevisionHydrator {
-  /**
-   * Hydrate Nodepod from an authorized revision (Ceph starter or workspace).
-   * Uses revision files + presign APIs — never a client-supplied cephPath.
-   */
+  /** Hydrate NodePod from a published App Market template (no Conversation V2 session). */
+  async hydrateFromCatalogTemplate(templateId: string): Promise<VfsFiles> {
+    log('hydrateFromCatalogTemplate:start', { templateId });
+    const listed = await templateCatalogApi.listTemplatePreviewFiles(templateId);
+    const paths = listed.files.map((f) => f.path);
+    if (paths.length === 0) {
+      throw new Error(`Template ${templateId} has no files`);
+    }
+    log('presign-template:request', { templateId, revisionId: listed.revisionId, pathCount: paths.length });
+    const { items } = await templateCatalogApi.presignTemplatePreviewFiles(templateId, paths);
+    log('presign-template:response', {
+      itemCount: items.length,
+      sample: items.slice(0, 3).map((i) => ({ path: i.path, urlHost: safeHost(i.url) })),
+    });
+    return this.downloadPresignedItems(items);
+  }
+
   async hydrateFromRevision(sessionId: string, revisionId: string): Promise<VfsFiles> {
     log('hydrateFromRevision:start', { sessionId, revisionId });
     const listed = await conversationV2Api.getRevisionFiles(sessionId, revisionId);

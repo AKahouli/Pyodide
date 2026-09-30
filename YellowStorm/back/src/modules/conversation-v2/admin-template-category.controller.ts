@@ -99,7 +99,10 @@ export class AdminTemplateCategoryController {
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @RequirePermissions(Permissions.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Delete a template category and its templates (cascade)' })
+  @ApiOperation({
+    summary:
+      'Delete a template category and its templates; Ceph cover/manifest cleanup continues in the background',
+  })
   @ApiParam({ name: 'id', description: 'Category ID' })
   async delete(
     @Param('id') id: string,

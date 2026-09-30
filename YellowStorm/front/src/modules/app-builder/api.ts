@@ -74,6 +74,29 @@ export const templateCatalogApi = {
     );
     return res.data.data;
   },
+  async listTemplatePreviewFiles(templateId: string): Promise<{
+    revisionId: string;
+    files: Array<{ path: string; sha256: string; size: number }>;
+  }> {
+    const res = await apiClient.get<
+      ApiResponse<{
+        revisionId: string;
+        files: Array<{ path: string; sha256: string; size: number }>;
+      }>
+    >(`/conversation-v2/template-catalog/templates/${templateId}/preview/files`);
+    return res.data.data;
+  },
+  async presignTemplatePreviewFiles(
+    templateId: string,
+    paths: string[],
+  ): Promise<{ items: Array<{ path: string; url: string }> }> {
+    const res = await apiClient.post<
+      ApiResponse<{ items: Array<{ path: string; url: string }> }>
+    >(`/conversation-v2/template-catalog/templates/${templateId}/preview/presign`, {
+      paths,
+    });
+    return res.data.data;
+  },
 };
 
 /** Super-admin-only catalog management. */

@@ -265,7 +265,9 @@ export class AdminTemplateController {
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @RequirePermissions(Permissions.SUPER_ADMIN)
-  @ApiOperation({ summary: 'Delete a template and its Ceph artifacts' })
+  @ApiOperation({
+    summary: 'Delete a template; Ceph cover/manifest cleanup continues in the background',
+  })
   @ApiParam({ name: 'id', description: 'Template ID' })
   async delete(
     @Param('id') id: string,

@@ -61,6 +61,18 @@
   --animate-agent-scan: agent-scan 2.4s ease-in-out infinite;
   --animate-shimmer: shimmer 2s linear infinite;
   --animate-fade-up: fade-up 0.3s ease-out both;
+  /*
+   * Preview "orb" animations (conversation-v2 NodePod boot).
+   * Colours are intentionally omitted: every rule animates `currentColor` only,
+   * so the element's own colour token drives the animation and the effect stays
+   * correct across the COLOR_THEMES (default | yellowsys | claude | kpmg).
+   */
+  --animate-orb-breathe: orb-breathe 4.5s ease-in-out infinite;
+  --animate-orb-orbit: orb-orbit 9s linear infinite;
+  --animate-orb-orbit-reverse: orb-orbit 16s linear infinite reverse;
+  --animate-orb-ping: orb-ping 2.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-orb-sweep: orb-sweep 2.2s ease-in-out infinite;
+  --animate-status-in: status-in 0.22s ease-out both;
 
   @keyframes shimmer {
     from {
@@ -108,12 +120,73 @@
   }
 
 
+  /*
+   * Was hardcoded to a fixed blue (oklch(0.62 0.19 250 / ...)), which broke the
+   * COLOR_THEMES contract and violated the "never hardcode brand colors" rule.
+   * currentColor lets the host element's colour token drive the glow.
+   */
   @keyframes running-node-glow {
     0%, 100% {
-      box-shadow: 0 0 0 2px oklch(0.62 0.19 250 / 0.4), 0 0 16px 2px oklch(0.62 0.19 250 / 0.2);
+      box-shadow: 0 0 0 2px currentColor, 0 0 16px 2px transparent;
     }
     50% {
-      box-shadow: 0 0 0 2px oklch(0.62 0.19 250 / 0.7), 0 0 24px 4px oklch(0.62 0.19 250 / 0.35);
+      box-shadow: 0 0 0 2px currentColor, 0 0 24px 4px transparent;
+    }
+  }
+
+  @keyframes orb-breathe {
+    0%, 100% {
+      transform: scale(0.92);
+      opacity: 0.45;
+    }
+    50% {
+      transform: scale(1.08);
+      opacity: 0.8;
+    }
+  }
+
+  @keyframes orb-orbit {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @keyframes orb-ping {
+    0% {
+      transform: scale(0.7);
+      opacity: 0.55;
+    }
+    80%, 100% {
+      transform: scale(1.5);
+      opacity: 0;
+    }
+  }
+
+  @keyframes orb-sweep {
+    0% {
+      transform: rotate(0deg);
+      opacity: 0;
+    }
+    12%, 78% {
+      opacity: 0.9;
+    }
+    100% {
+      transform: rotate(360deg);
+      opacity: 0;
+    }
+  }
+
+  @keyframes status-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
     }
   }
 
@@ -153,6 +226,24 @@
     to {
       height: 0;
     }
+  }
+}
+
+/*
+ * Honour the OS "reduce motion" setting for every animated utility in the app.
+ * Durations collapse to a hair rather than `none` so Radix-driven components
+ * (accordion, collapsible, dialog) still receive their `animationend` event and
+ * finish their open/close transition. Inert/decorative motion (the preview orb)
+ * additionally opts out per-element with Tailwind's `motion-reduce:animate-none`.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 

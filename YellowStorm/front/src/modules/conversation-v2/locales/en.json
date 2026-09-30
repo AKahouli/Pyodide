@@ -7,10 +7,22 @@
   "session": {
     "loading": "Loading session…",
     "notFound": "Session not found.",
+    "notFoundHint": "This conversation may have been deleted, or you may not have access to it.",
+    "back": "Go back",
+    "conversationError": "The conversation hit an unexpected error.",
+    "previewError": "The preview panel hit an unexpected error.",
     "errorTitle": "Stream error",
     "waitingForPreview": {
       "title": "Waiting for live preview",
       "body": "The agent starts once the preview finishes installing dependencies and Vite is ready."
+    },
+    "templateClone": {
+      "waitingTitle": "Preparing your app preview",
+      "waitingBody": "Please wait while we set up a live preview of the cloned template. Send is disabled until the preview is ready.",
+      "waitingBodyDraft": "Live preview is starting in the side panel. You can type a message now — Send unlocks when the preview is ready, then opens your Conversation V2 session with this template.",
+      "readyTitle": "Preview ready",
+      "readyBody": "Your template is loaded in the live preview. Send a message when you are ready to start editing and customizing it.",
+      "dismiss": "Got it"
     },
     "previewBootFailed": "The live preview could not start. Reload the page, then send your message again.",
     "previewBootTimeout": "The live preview took too long to become ready. Reload the page, then try again.",
@@ -40,7 +52,9 @@
   "conversation": {
     "emptyTitle": "Send a message to start",
     "emptyDescription": "The agent will respond and may use tools and a virtual machine to complete your task.",
-    "thinking": "Thinking"
+    "thinking": "Thinking",
+    "assistantName": "YelloStorm",
+    "fileOpenFailed": "Failed to open file"
   },
   "tool": {
     "running": "Running",
@@ -109,6 +123,20 @@
     "statusStarting": "Starting",
     "statusError": "Unavailable",
     "statusWaiting": "Waiting",
+    "phase": {
+      "connecting": "Starting your workspace",
+      "registering": "Preparing the runtime",
+      "hydrating": "Restoring your app files",
+      "installing": "Installing dependencies",
+      "starting": "Launching your app"
+    },
+    "hint": {
+      "connecting": "Opening a secure runtime for this session.",
+      "registering": "Handing over the session to the runtime.",
+      "hydrating": "Pulling the project files back from storage.",
+      "installing": "This can take a moment on the first run.",
+      "starting": "Your preview will appear in a moment."
+    },
     "bootHint": "YellowMind is preparing a live preview of your app. This usually takes a few moments.",
     "waitingHint": "Describe what you want in the conversation — your preview will appear here.",
     "loading": "Preparing your app preview…",
@@ -168,6 +196,8 @@
   "header": {
     "back": "Back",
     "readOnly": "Read-only",
+    "streaming": "Working",
+    "streamError": "Connection issue",
     "tooltips": {
       "workspaces": "Manage workspaces",
       "files": "Files"
@@ -195,6 +225,7 @@
   },
   "deploy": {
     "publish": "Deploy",
+    "error": "Deploy failed — try again.",
     "publishing": "Deploying…",
     "update": "Update",
     "liveUrl": "Live URL",

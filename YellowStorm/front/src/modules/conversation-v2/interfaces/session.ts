@@ -38,6 +38,8 @@ export interface SessionPointer {
   lastEventAt: string;
   eventCount: number;
   systemWorkspaceId: string | null;
+  /** Template `template_<id>` or system starter — used to restore clone preview after reload. */
+  starterRevisionId?: string | null;
   deployStatus: 'idle' | 'deploying' | 'deployed' | 'error';
   deployedUrl: string | null;
   lastDeployedAt: string | null;
@@ -51,4 +53,7 @@ export interface LocationState {
   model?: string;
   skillIds?: string[];
   connectorIds?: string[];
+  /** App Market template id when cloning or starting from a template. */
+  templateId?: string;
+  source?: 'new-conversation' | 'app-builder' | 'template-clone';
 }

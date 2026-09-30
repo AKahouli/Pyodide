@@ -3,6 +3,7 @@ import {
   BrowserRuntimeHost,
   getOrCreateHost,
   removeHost,
+  rebindHost,
   isAppDataPublicUrl,
   isAiProxyUrl,
   resolveAiProxyFetchUrl,
@@ -256,6 +257,16 @@ describe('BrowserRuntimeHost', () => {
     const newHost = getOrCreateHost('sess_y');
     expect(newHost).not.toBe(host);
     removeHost('sess_y');
+  });
+
+  it('rebindHost moves the same instance to a new registry key', () => {
+    const host = getOrCreateHost('template-clone-tpl');
+    const moved = rebindHost('template-clone-tpl', 'sess_real');
+    expect(moved).toBe(host);
+    expect(getOrCreateHost('sess_real')).toBe(host);
+    expect(getOrCreateHost('template-clone-tpl')).not.toBe(host);
+    removeHost('sess_real');
+    removeHost('template-clone-tpl');
   });
 
   it('seeds the local revision store at the ticket revision', async () => {

@@ -2,7 +2,8 @@ import React, { useCallback, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
-  AlertCircleIcon,
+  CheckCircleIcon,
+  CircleDotIcon,
   ColumnsIcon,
   EyeIcon,
   FileCodeIcon,
@@ -12,7 +13,7 @@ import {
   ExternalLinkIcon,
   SparklesIcon,
   PlaySquareIcon,
-  LightbulbIcon,
+  TriangleIcon,
 } from 'lucide-react';
 import {
   Tooltip,
@@ -38,13 +39,17 @@ import { useNodepodPreview, type NodepodPreviewStatus } from '../../hooks/useNod
 import { getOrCreateHost } from '../../runtime/BrowserRuntimeHost';
 import { AppSourceFileTree } from './AppSourceFileTree';
 import { AppSourceFileViewer } from './AppSourceFileViewer';
+import { PreviewCenteredStatus } from './preview/PreviewCenteredStatus';
+import { resolvePreviewPhase } from './preview/previewStateModel';
 import { resolveSourceFilesTree } from '../../utils/files-tree';
 
+// Semantic tokens only (never blue-500/green-500/red-500/zinc-500 literals):
+// the preview status must stay readable across every COLOR_THEME.
 const PRIMARY_BADGE_CLASS = 'bg-primary/15 text-primary';
-const RUNNING_BADGE_CLASS = 'bg-blue-500/15 text-blue-500';
-const SUCCESS_BADGE_CLASS = 'bg-green-500/15 text-green-500';
-const ERROR_BADGE_CLASS = 'bg-red-500/15 text-red-500';
-const IDLE_BADGE_CLASS = 'bg-zinc-500/15 text-zinc-500';
+const RUNNING_BADGE_CLASS = 'bg-primary/15 text-primary';
+const SUCCESS_BADGE_CLASS = 'bg-ok/15 text-ok';
+const ERROR_BADGE_CLASS = 'bg-fail/15 text-fail';
+const IDLE_BADGE_CLASS = 'bg-idle/15 text-idle';
 
 // Vague 5 contract: this view NEVER boots Nodepod.
 // BrowserRuntimeHost is started once in ConversationV2SessionPage; useNodepodPreview
@@ -184,7 +189,7 @@ export function ApplicationComponentView({
     (s) => s.previewRevisionId ?? s.applicationComponent?.workspaceRevisionId,
   );
   // The host is long-lived in ConversationV2SessionPage; this hook subscribes.
-  const { status, previewUrl, error, files, retry, previewIframeRef } = useNodepodPreview({
+  const { status, hostStatus, previewUrl, error, files, retry, previewIframeRef } = useNodepodPreview({
     sessionId,
   });
 
@@ -217,10 +222,19 @@ export function ApplicationComponentView({
     window.open(deployedSrc, '_blank', 'noopener,noreferrer');
   }, [deployedSrc]);
 
+  const busy = status === 'loading' || status === 'installing' || status === 'starting';
+  const previewPhase = useMemo(() => resolvePreviewPhase(hostStatus), [hostStatus]);
+
   const badgeKey = statusBadgeKey(status);
   const badgeClass = statusBadgeClass(status);
-  const badge = badgeKey && badgeClass ? { label: t(badgeKey), className: badgeClass } : null;
-  const busy = status === 'loading' || status === 'installing' || status === 'starting';
+  // While booting, name the exact phase in the toolbar so it agrees with the
+  // centred orb instead of showing a single generic "Preparing".
+  const badgeLabel = busy
+    ? t(previewPhase.labelKey as Parameters<typeof t>[0])
+    : badgeKey
+      ? t(badgeKey)
+      : null;
+  const badge = badgeLabel && badgeClass ? { label: badgeLabel, className: badgeClass } : null;
 
   const sourceTree = useMemo(
     () => resolveSourceFilesTree(filesTree, files),
@@ -242,25 +256,6 @@ export function ApplicationComponentView({
     }
     return null;
   }, [files, selectedPath]);
-
-  const statusLabel =
-    status === 'loading'
-      ? t('nodepod.loading')
-      : status === 'installing'
-        ? t('nodepod.installing')
-        : status === 'starting'
-          ? t('nodepod.starting')
-          : status === 'error'
-            ? t('nodepod.error')
-            : status === 'idle'
-              ? t('nodepod.waitingSources')
-              : null;
-
-  const statusHint = busy
-    ? t('nodepod.bootHint')
-    : status === 'idle'
-      ? t('nodepod.waitingHint')
-      : null;
 
   const safeError = useMemo(
     () => toUserFacingPreviewError(error, t('nodepod.errorDetail')),
@@ -322,41 +317,11 @@ export function ApplicationComponentView({
         sandbox='allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts'
       />
     ) : (
-      <div className='flex size-full flex-col items-center justify-center gap-4 bg-gradient-to-b from-muted/30 to-background px-6 text-center'>
-      <div className='flex size-20 items-center justify-center rounded-2xl border shadow-lg'>
-        {busy && <Loader2Icon className='size-8 animate-spin text-primary' />}
-        {!busy && status === 'error' && (
-          <AlertCircleIcon className='size-8 text-fail' />
-        )}
-        {!busy && status === 'idle' && (
-          <LightbulbIcon className='size-8 text-muted-foreground/70' />
-        )}
-      </div>
-      <div className='max-w-sm space-y-2'>
-        <p className='text-lg font-bold tracking-tight text-foreground'>
-          {statusLabel || t('nodepod.previewTitle')}
-        </p>
-        {status === 'error' && safeError && (
-          <p className='text-sm leading-relaxed text-fail'>{safeError}</p>
-        )}
-        {statusHint && (
-          <p className='text-sm leading-relaxed text-muted-foreground'>{statusHint}</p>
-        )}
-      </div>
-      {(status === 'error' || status === 'idle') && (
-        <Button
-          type='button'
-          variant='outline'
-          size='lg'
-          onClick={retry}
-          className='h-10 gap-2 px-6 text-sm font-medium
-            transition-transform duration-200 hover:scale-[1.01] active:scale-[0.99]'
-        >
-          <PlaySquareIcon className='size-4' />
-          {t('nodepod.retry')}
-        </Button>
-      )}
-      </div>
+      <PreviewCenteredStatus
+        phase={previewPhase}
+        errorDetail={safeError}
+        onRetry={retry}
+      />
     );
 
   const mainContent = (
@@ -398,11 +363,22 @@ export function ApplicationComponentView({
                   badge.className,
                 )}
               >
-                {busy && <Loader2Icon className='size-3.5 animate-spin' />}
-                {status === 'ready' && (
-                  <span className='size-2 rounded-full bg-ok' aria-hidden />
+                {busy ? (
+                  <Loader2Icon className='size-3.5 animate-spin motion-reduce:animate-none' aria-hidden />
+                ) : status === 'ready' ? (
+                  <CheckCircleIcon className='size-3.5' aria-hidden />
+                ) : status === 'error' ? (
+                  <TriangleIcon className='size-3.5' aria-hidden />
+                ) : (
+                  <CircleDotIcon className='size-3.5' aria-hidden />
                 )}
-                {badge.label}
+                <span className='relative flex items-center'>{badge.label}</span>
+                {busy && (
+                  <span
+                    aria-hidden
+                    className='absolute -left-1.5 size-1.5 animate-ping rounded-full bg-current opacity-60 motion-reduce:animate-none'
+                  />
+                )}
               </Badge>
             )}
 

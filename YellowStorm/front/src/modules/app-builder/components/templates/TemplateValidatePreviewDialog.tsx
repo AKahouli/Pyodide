@@ -255,13 +255,15 @@ export function TemplateValidatePreviewDialog({
 
           <div className='overflow-hidden rounded-xl border border-border/60 bg-muted/20'>
             {previewUrl ? (
-              <iframe
-                ref={attachIframe}
-                title={t('validation.previewTitle')}
-                className='h-[min(52vh,420px)] w-full bg-background'
-              />
+              <div className='aspect-[16/10] w-full overflow-hidden bg-background'>
+                <iframe
+                  ref={attachIframe}
+                  title={t('validation.previewTitle')}
+                  className='size-full bg-background'
+                />
+              </div>
             ) : (
-              <div className='flex h-[200px] items-center justify-center text-sm text-muted-foreground'>
+              <div className='flex aspect-[16/10] items-center justify-center text-sm text-muted-foreground'>
                 {running ? t('validation.preparing') : t('validation.noPreview')}
               </div>
             )}

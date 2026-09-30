@@ -35,8 +35,10 @@ interface ConversationV2HeaderProps {
 
 export function ConversationV2Header({ readOnly = false, permissions = [] }: ConversationV2HeaderProps) {
   const navigate = useNavigate();
-  const sessionId = useConversationV2Store((s) => s.sessionId);
-  const title = useConversationV2Store((s) => s.title);
+const sessionId = useConversationV2Store((s) => s.sessionId);
+const title = useConversationV2Store((s) => s.title);
+const streaming = useConversationV2Store((s) => s.streaming);
+const streamError = useConversationV2Store((s) => s.streamError);
   const workspaceIds = useConversationV2Store((s) => s.workspaceIds);
   const systemWorkspaceId = useConversationV2Store((s) => s.systemWorkspaceId);
   const setFilesSheetOpen = useConversationV2Store((s) => s.setFilesSheetOpen);
@@ -107,6 +109,28 @@ export function ConversationV2Header({ readOnly = false, permissions = [] }: Con
           <ArrowLeft className='h-4 w-4' />
         </Button>
         <h1 className='flex-1 truncate text-lg font-medium'>{displayedTitle}</h1>
+        {streaming && (
+          <Badge
+            variant='secondary'
+            className='shrink-0 gap-1.5'
+            data-testid='header-streaming'
+          >
+            <span
+              className='size-1.5 animate-pulse rounded-full bg-primary motion-reduce:animate-none'
+              aria-hidden
+            />
+            {t('header.streaming')}
+          </Badge>
+        )}
+        {streamError && !streaming && (
+          <Badge
+            variant='secondary'
+            className='shrink-0 border-fail/40 text-fail'
+            data-testid='header-stream-error'
+          >
+            {t('header.streamError')}
+          </Badge>
+        )}
         {readOnly && (
           <Badge variant='secondary' className='shrink-0'>
             {t('header.readOnly')}

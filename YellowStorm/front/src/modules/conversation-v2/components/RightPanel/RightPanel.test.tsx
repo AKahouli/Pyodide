@@ -6,6 +6,7 @@ import { useConversationV2Store } from '../../store';
 vi.mock('../../hooks/useNodepodPreview', () => ({
   useNodepodPreview: () => ({
     status: 'ready',
+    hostStatus: 'ready',
     previewUrl: 'https://nodepod.local/__virtual__/3000/',
     error: null,
     files: {

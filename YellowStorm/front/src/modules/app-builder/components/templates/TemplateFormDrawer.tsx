@@ -31,6 +31,7 @@ import { CoverImageGallery } from './cover/CoverImageGallery';
 import {
   COVER_MAX_IMAGES,
   defaultCoverFocus,
+  screenshotCoverFocus,
   exportPrimaryCoverFile,
   type CoverFocus,
   type CoverImageItem,
@@ -49,12 +50,16 @@ interface TemplateFormDrawerProps {
 const ACCEPT_IMAGE = 'image/png,image/jpeg,image/webp,image/svg+xml';
 const ACCEPT_ZIP = '.zip,application/zip';
 
-function createCoverItem(file: File, isPrimary: boolean): CoverImageItem {
+function createCoverItem(
+  file: File,
+  isPrimary: boolean,
+  focus = defaultCoverFocus(),
+): CoverImageItem {
   return {
     id: nanoid(),
     file,
     previewUrl: URL.createObjectURL(file),
-    focus: defaultCoverFocus(),
+    focus,
     isPrimary,
   };
 }
@@ -187,7 +192,7 @@ export function TemplateFormDrawer({
   const handleValidatedCover = useCallback((file: File) => {
     setCoverItems((prev) => {
       revokeCoverUrls(prev);
-      return [createCoverItem(file, true)];
+      return [createCoverItem(file, true, screenshotCoverFocus())];
     });
     setZipValidated(true);
     setValidateOpen(false);

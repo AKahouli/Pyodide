@@ -219,6 +219,8 @@
     "cloneAria": "Cloner l'application {{title}}",
     "freeBadge": "",
     "cloneFree": "Cloner l'app",
+    "cloneError": "Impossible de cloner ce modèle. Réessayez.",
+    "cloning": "Clonage…",
     "metaAria": "Détails du modèle",
     "metaPlatformFiles": "Fichiers du kit plateforme",
     "metaStarter": "Modèle d'application",

@@ -5,11 +5,19 @@ import {
   computeCoverCropRect,
   defaultCoverFocus,
   normalizeFocus,
+  screenshotCoverFocus,
 } from './cover-focus';
 
 describe('cover-focus', () => {
   it('keeps default focus centered at zoom 1', () => {
     expect(defaultCoverFocus()).toEqual({ cx: 0.5, cy: 0.5, zoom: 1 });
+  });
+
+  it('anchors auto screenshots near the top of the page', () => {
+    const focus = screenshotCoverFocus();
+    expect(focus.cx).toBe(0.5);
+    expect(focus.cy).toBeLessThan(0.5);
+    expect(focus.zoom).toBe(1);
   });
 
   it('computes a 16:10 crop that fits a landscape image', () => {

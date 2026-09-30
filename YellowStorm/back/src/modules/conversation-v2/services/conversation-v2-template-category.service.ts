@@ -86,12 +86,15 @@ export class ConversationV2TemplateCategoryService {
     return this.toResponse(updated, counts.get(id) ?? 0);
   }
 
-  /** Hard delete; templates cascade in the DB, their Ceph artifacts are cleaned here. */
+  /**
+   * Hard delete; templates cascade in the DB. Cover/manifest cleanup runs in
+   * the background so the admin confirm dialog is not blocked on Ceph.
+   */
   async delete(id: string): Promise<void> {
     await this.requireCategory(id);
     const templates = await this.templates.findByCategoryId(id);
     await this.categories.delete(id);
-    await this.publish.removeTemplateArtifacts(templates);
+    void this.publish.removeTemplateArtifacts(templates);
     this.logger.log(`Deleted template category ${id} with ${templates.length} template(s)`);
   }
 

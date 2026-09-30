@@ -297,6 +297,8 @@ export class ConversationV2Controller {
     lastEventAt: Date;
     eventCount: number;
     systemWorkspaceId: string | null;
+    /** Template `template_<id>` or system starter — needed so refresh keeps the clone preview. */
+    starterRevisionId: string | null;
     deployStatus: string;
     deployedUrl: string | null;
     lastDeployedAt: string | null;
@@ -317,6 +319,7 @@ export class ConversationV2Controller {
       lastEventAt: pointer.lastEventAt,
       eventCount: pointer.eventCount ?? 0,
       systemWorkspaceId: pointer.systemWorkspaceId ?? null,
+      starterRevisionId: pointer.starterRevisionId ?? null,
       deployStatus: pointer.deployStatus ?? 'idle',
       deployedUrl: pointer.deployedUrl ?? null,
       lastDeployedAt: pointer.lastDeployedAt
@@ -560,6 +563,11 @@ export class ConversationV2Controller {
   }> {
     const pointer = session.pointer;
     const ownerId = session.ownerId;
+    const startedAt = Date.now();
+    this.logger.log(
+      `[deploy] HTTP start session=${id} aiSessionId=${pointer.aiSessionId ?? 'none'} ` +
+        `requestedRevision=${body.revisionId?.trim() || 'latest'} title=${body.title?.trim() || 'none'}`,
+    );
     if (!pointer.aiSessionId) {
       throw new NotFoundException('Session not found');
     }
@@ -574,6 +582,9 @@ export class ConversationV2Controller {
         id,
         body.revisionId,
       );
+      this.logger.log(
+        `[deploy] HTTP resolved revision session=${id} revision=${resolvedRevisionId ?? 'none'}`,
+      );
       if (!resolvedRevisionId) {
         throw new BadRequestException(
           'No finalized revision is available to deploy. Wait until the app is ready.',
@@ -582,7 +593,16 @@ export class ConversationV2Controller {
       revisionId = resolvedRevisionId;
       const result = await this.deployment.deploy(pointer.aiSessionId, revisionId, ownerId);
       deployedUrl = result.url;
+      this.logger.log(
+        `[deploy] HTTP deployer ok session=${id} revision=${revisionId} url=${deployedUrl} ` +
+          `elapsedMs=${Date.now() - startedAt}`,
+      );
     } catch (err) {
+      this.logger.error(
+        `[deploy] HTTP failed session=${id} elapsedMs=${Date.now() - startedAt}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
       await this.sessions
         .setDeployState(ownerId, id, { deployStatus: 'error' })
         .catch(() => undefined);
@@ -625,6 +645,11 @@ export class ConversationV2Controller {
     } catch (err) {
       this.logger.warn(`Owner auto-invite failed for session ${id}: ${err}`);
     }
+
+    this.logger.log(
+      `[deploy] HTTP complete session=${id} revision=${revisionId} url=${deployedUrl} ` +
+        `invite=${Boolean(ownerInviteToken)} elapsedMs=${Date.now() - startedAt}`,
+    );
 
     return {
       deployStatus: 'deployed',

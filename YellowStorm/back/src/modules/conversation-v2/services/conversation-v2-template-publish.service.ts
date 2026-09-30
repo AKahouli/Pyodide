@@ -64,8 +64,13 @@ export class ConversationV2TemplatePublishService {
             await this.documents.upload(
               file.data,
               file.path.split('/').pop() || 'file',
-              'text/plain',
-              { generateUniqueName: false, customFileName: objectKey },
+              'application/octet-stream',
+              {
+                generateUniqueName: false,
+                customFileName: objectKey,
+                // Template ZIPs include arbitrary binaries; MIME whitelist is for user docs.
+                skipMimeValidation: true,
+              },
             );
           }
           return { path: file.path, sha256, objectKey, size: file.data.length };

@@ -1521,6 +1521,77 @@ export class BrowserRuntimeHost {
   }
 
   /**
+   * Point this host at a real Conversation V2 session id without touching NodePod.
+   * Used when a draft clone preview is promoted in-place on first Send.
+   */
+  adoptSessionId(sessionId: string): void {
+    this.sessionId = sessionId;
+  }
+
+  /**
+   * After a draft local preview (`startFromLocalFiles`), attach the live runtime
+   * ticket + Socket.IO register for a real session — without rebooting Vite/NodePod.
+   */
+  async attachLiveSession(sessionId: string): Promise<void> {
+    if (this._destroyed) return;
+    this.sessionId = sessionId;
+    this.reconnectAttempts = 0;
+    this.legacyMode = false;
+    this.setupAppDataFetchProxy();
+    setAppDataTicketFetcher((appDataId, force, env) => this.acquireAppDataTicket(appDataId, force, env));
+    setAiPreviewTicketFetcher((force) => this.acquireAiPreviewTicket(force));
+
+    const keepPreviewVisible = Boolean(this.previewCtrl.previewUrl);
+    try {
+      if (!keepPreviewVisible) this.setStatus('connecting');
+      this.ticket = await conversationV2Api.createRuntimeTicket(sessionId);
+      this.revisionId = this.ticket.revisionId;
+      this.workspaceId = this.ticket.workspaceId;
+      this.appDataTickets.clear();
+      this.aiPreviewTicketCache = null;
+
+      // Relabel the local history to the backend revision; files stay in the pod.
+      this.revisions.seed(await this.adapter.shaManifest(), this.revisionId);
+
+      await this.client.connect(this.ticket.ticket);
+      if (this._destroyed) return;
+
+      if (this.ticket.appDataRuntimeEnv) {
+        void this.acquireAppDataTicket(
+          this.ticket.appDataRuntimeEnv.appDataId,
+          false,
+          this.ticket.appDataRuntimeEnv.environment,
+        );
+      }
+      void this.acquireAiPreviewTicket(false);
+
+      this.wireClientEvents();
+
+      if (!keepPreviewVisible) this.setStatus('registering');
+      const ack = await this.client.register({
+        runtimeSessionId: this.ticket.runtimeSessionId,
+        workspaceId: this.ticket.workspaceId,
+        revisionId: this.revisionId,
+        capabilities: NODEPOD_CAPABILITIES,
+      });
+      if (!ack.ok) {
+        this.setStatus('error', `Registration failed: ${ack.error ?? 'unknown'}`);
+        return;
+      }
+
+      this.client.startHeartbeat(this.ticket.workspaceId, () => this.revisionId);
+      this.setStatus('ready');
+      console.log(LOG, 'attached live session', { sessionId, revisionId: this.revisionId });
+    } catch (err) {
+      if (this._destroyed) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(LOG, 'attachLiveSession failed', msg);
+      this.setStatus('error', msg);
+      throw err;
+    }
+  }
+
+  /**
    * Tear down sockets, preview, and pod state. Retry keeps React subscribers
    * so connecting/ready/error still reach the mounted preview hook.
    */
@@ -1565,6 +1636,29 @@ export function getOrCreateHost(sessionId: string): BrowserRuntimeHost {
     host = new BrowserRuntimeHost();
     hostRegistry.set(sessionId, host);
   }
+  return host;
+}
+
+/**
+ * Move an existing host to a new registry key without destroying the NodePod.
+ * Used to promote `template-clone-{id}` → real session id on first Send.
+ */
+export function rebindHost(fromSessionId: string, toSessionId: string): BrowserRuntimeHost | null {
+  if (!fromSessionId || !toSessionId) return null;
+  if (fromSessionId === toSessionId) return hostRegistry.get(toSessionId) ?? null;
+
+  const host = hostRegistry.get(fromSessionId);
+  if (!host) return null;
+
+  const existing = hostRegistry.get(toSessionId);
+  if (existing && existing !== host) {
+    existing.destroy();
+    hostRegistry.delete(toSessionId);
+  }
+
+  hostRegistry.delete(fromSessionId);
+  hostRegistry.set(toSessionId, host);
+  host.adoptSessionId(toSessionId);
   return host;
 }
 

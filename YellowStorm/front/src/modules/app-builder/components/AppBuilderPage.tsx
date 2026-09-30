@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { ChevronRight, Loader2, Plus, Search, Store, X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
@@ -16,6 +17,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { usePermissions } from '@/modules/admin/hooks/usePermissions';
+import { startTemplateSession } from '@/modules/conversation-v2/startAgentSession';
 import { adminTemplateApi } from '../api';
 import { useAppBuilderStore } from '../store';
 import type { AppTemplate, TemplateCategory } from '../types';
@@ -32,6 +34,7 @@ type PendingDelete =
 
 export function AppBuilderPage() {
   const { t } = useModuleTranslation('app-builder');
+  const navigate = useNavigate();
   const { hasPermission } = usePermissions();
   const isSuperAdmin = hasPermission('*');
 
@@ -50,6 +53,7 @@ export function AppBuilderPage() {
   const fetchTemplates = useAppBuilderStore((s) => s.fetchTemplates);
 
   const [activeTemplate, setActiveTemplate] = useState<AppTemplate | null>(null);
+  const [cloningTemplateId, setCloningTemplateId] = useState<string | null>(null);
   const [categoryForm, setCategoryForm] = useState<{
     open: boolean;
     category: TemplateCategory | null;
@@ -99,6 +103,26 @@ export function AppBuilderPage() {
     if (selectedCategoryId) fetchTemplates(selectedCategoryId);
   };
 
+  const refreshCatalog = () => {
+    fetchCategories();
+    refreshTemplates();
+  };
+
+  const handleCloneTemplate = async (template: AppTemplate) => {
+    if (cloningTemplateId) return;
+    setCloningTemplateId(template.id);
+    try {
+      await startTemplateSession({
+        templateId: template.id,
+        navigate,
+      });
+    } catch {
+      toast.error(t('templates.cloneError'));
+    } finally {
+      setCloningTemplateId(null);
+    }
+  };
+
   const confirmDelete = async () => {
     if (!pendingDelete) return;
     setDeleting(true);
@@ -109,7 +133,7 @@ export function AppBuilderPage() {
         fetchCategories();
       } else {
         await adminTemplateApi.deleteTemplate(pendingDelete.item.id);
-        refreshTemplates();
+        refreshCatalog();
       }
       toast.success(t('admin.deleteSuccess'));
     } catch {
@@ -257,6 +281,13 @@ export function AppBuilderPage() {
                     categoryName={selectedCategory?.name}
                     onRetry={refreshTemplates}
                     onOpen={setActiveTemplate}
+                    onClone={handleCloneTemplate}
+                    cloningTemplateId={cloningTemplateId}
+                    isSuperAdmin={isSuperAdmin}
+                    onEdit={(template) => setTemplateForm({ open: true, template })}
+                    onDelete={(template) =>
+                      setPendingDelete({ kind: 'template', item: template })
+                    }
                   />
                 </section>
               ) : null}
@@ -270,6 +301,8 @@ export function AppBuilderPage() {
         open={activeTemplate !== null}
         onOpenChange={(open) => !open && setActiveTemplate(null)}
         isSuperAdmin={isSuperAdmin}
+        onClone={handleCloneTemplate}
+        cloning={cloningTemplateId === activeTemplate?.id}
         onEdit={(template) => {
           setActiveTemplate(null);
           setTemplateForm({ open: true, template });
@@ -293,7 +326,7 @@ export function AppBuilderPage() {
         categories={categories}
         defaultCategoryId={selectedCategoryId}
         onOpenChange={(open) => setTemplateForm((prev) => ({ ...prev, open }))}
-        onSaved={refreshTemplates}
+        onSaved={refreshCatalog}
       />
 
       <AlertDialog open={pendingDelete !== null} onOpenChange={(open) => !open && setPendingDelete(null)}>

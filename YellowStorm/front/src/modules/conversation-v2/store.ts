@@ -24,6 +24,7 @@ import {
   shouldApplyTerminalEvent,
 } from './utils/session-reducer';
 import { normalizeFilesTree } from './utils/files-tree';
+import { deployError, deployLog, deployWarn } from './utils/deploy-log';
 import {
   syncHostRevisionSources,
   maybeRestartDevServerAfterAppDataTool,
@@ -762,9 +763,21 @@ export const useConversationV2Store = create<State & Actions>()(
       },
       deploy: async (revisionId) => {
         const id = get().sessionId;
-        if (!id) return;
+        if (!id) {
+          deployWarn('store:skip', { reason: 'no sessionId' });
+          return;
+        }
         const state = get();
         const deployRevisionId = resolveDeployRevisionId(state, revisionId);
+        deployLog('store:start', {
+          sessionId: id,
+          requestedRevisionId: revisionId ?? null,
+          deployRevisionId: deployRevisionId ?? null,
+          previewRevisionId: state.previewRevisionId,
+          latestFinalizedRevisionId: state.finalizedVersions[0]?.revisionId ?? null,
+          applicationRevisionId: state.applicationComponent?.workspaceRevisionId ?? null,
+          previousStatus: state.deployStatus,
+        });
         set({ deployStatus: 'deploying' }, false, 'deploy/start');
         try {
           const title =
@@ -773,6 +786,14 @@ export const useConversationV2Store = create<State & Actions>()(
           const r = await conversationV2Api.deploySession(id, {
             title,
             revisionId: deployRevisionId,
+          });
+          deployLog('store:done', {
+            sessionId: id,
+            deployRevisionId: deployRevisionId ?? null,
+            deployStatus: r.deployStatus,
+            deployedUrl: r.deployedUrl,
+            lastDeployedAt: r.lastDeployedAt,
+            hasOwnerInviteToken: Boolean(r.ownerInviteToken),
           });
           set(
             {
@@ -788,6 +809,10 @@ export const useConversationV2Store = create<State & Actions>()(
             'deploy/done',
           );
         } catch (err) {
+          deployError('store:error', err, {
+            sessionId: id,
+            deployRevisionId: deployRevisionId ?? null,
+          });
           set({ deployStatus: 'error' }, false, 'deploy/error');
           throw err;
         }

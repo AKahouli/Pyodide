@@ -78,6 +78,11 @@ export class ConversationV2DeployService {
     revisionId: string,
     ownerUserId?: string,
   ): Promise<DeployResponse> {
+    const startedAt = Date.now();
+    this.logger.log(
+      `[deploy] start session=${aiSessionId} revision=${revisionId} owner=${ownerUserId ?? 'none'}`,
+    );
+
     const productionEnv: Record<string, string> = {
       VITE_APP_BASE: this.resolveDeployAppBasePath(aiSessionId),
     };
@@ -85,11 +90,21 @@ export class ConversationV2DeployService {
     // Re-verify the platform baseline the workspace was seeded with. Missing
     // files are re-added deterministically; a platform file the agent rewrote
     // into something that cannot run in production is refused.
+    this.logger.log(
+      `[deploy] platform baseline plan mode=deploy session=${aiSessionId} revision=${revisionId}`,
+    );
     const baselinePlan = await this.baseline.planBaseline({
       workspaceId: aiSessionId,
       revisionId,
       mode: 'deploy',
     });
+    this.logger.log(
+      `[deploy] platform baseline result session=${aiSessionId} revision=${revisionId} ` +
+        `files=${baselinePlan.files.length} violations=${baselinePlan.violations.length}` +
+        (baselinePlan.violations.length
+          ? ` detail=${baselinePlan.violations.join(' | ')}`
+          : ''),
+    );
     if (baselinePlan.violations.length) {
       throw new ServiceUnavailableException(
         `This app does not meet the YellowStorm platform contract. ${baselinePlan.violations.join(
@@ -99,21 +114,29 @@ export class ConversationV2DeployService {
     }
 
     const usesAi = await detectRevisionUsesAi(this.revisions, aiSessionId, revisionId);
+    this.logger.log(
+      `[deploy] AI usage scan session=${aiSessionId} revision=${revisionId} usesAi=${usesAi}`,
+    );
     const backendUrl = this.resolveDeployBackendUrl();
     if (backendUrl && usesAi) {
       productionEnv.VITE_YM_API_BASE_URL = `${backendUrl}/api/v1`;
     }
 
     if (this.config.get<boolean>('appData.enabled', false) && this.appDataDeployment) {
+      this.logger.log(`[deploy] App Data PROD merge session=${aiSessionId} revision=${revisionId}`);
       await this.mergeAppDataProductionEnv(aiSessionId, revisionId, ownerUserId, productionEnv);
     }
     if (usesAi) {
       this.logger.log(
-        `Deploy revision ${revisionId} uses Conversation V2 AI proxy (session=${aiSessionId})`,
+        `[deploy] AI proxy enabled session=${aiSessionId} revision=${revisionId} ` +
+          `apiBaseConfigured=${Boolean(productionEnv.VITE_YM_API_BASE_URL)}`,
       );
     }
 
     let deployRevisionId = revisionId;
+    this.logger.log(
+      `[deploy] assert production env keys=[${Object.keys(productionEnv).sort().join(',')}]`,
+    );
     await this.assertProductionEnv(aiSessionId, revisionId, productionEnv, usesAi);
     try {
       deployRevisionId = await this.injectEnvProduction(
@@ -122,9 +145,12 @@ export class ConversationV2DeployService {
         productionEnv,
         baselinePlan.files,
       );
+      this.logger.log(
+        `[deploy] patched revision ready base=${revisionId} deployRevision=${deployRevisionId}`,
+      );
     } catch (err) {
       this.logger.error(
-        `Failed to inject .env.production into revision ${revisionId}: ${
+        `[deploy] Failed to inject .env.production into revision ${revisionId}: ${
           err instanceof Error ? err.message : String(err)
         }`,
       );
@@ -132,6 +158,12 @@ export class ConversationV2DeployService {
     }
 
     const runtime = this.getDeployRuntimeConfig();
+    this.logger.log(
+      `[deploy] launch app-builder baseUrl=${runtime.baseUrl} ` +
+        `timeoutMs=${runtime.deployTimeoutMs} pollMs=${runtime.statusPollIntervalMs} ` +
+        `tokenConfigured=${Boolean(runtime.token)} session=${aiSessionId} ` +
+        `deployRevision=${deployRevisionId}`,
+    );
     const deadline = Date.now() + runtime.deployTimeoutMs;
     const launchBody: Record<string, string> = {
       aiSessionId,
@@ -147,17 +179,34 @@ export class ConversationV2DeployService {
     });
     const launchStatus = this.extractString(launch, 'status');
     const launchAppId = this.extractString(launch, 'app_id') ?? aiSessionId;
+    this.logger.log(
+      `[deploy] launch response session=${aiSessionId} appId=${launchAppId} status=${launchStatus ?? 'none'}`,
+    );
 
     if (this.isReady(launchStatus)) {
-      return { ...this.extractDeployment(launch, launchAppId), runtimeEnv: productionEnv };
+      const ready = {
+        ...this.extractDeployment(launch, launchAppId),
+        runtimeEnv: productionEnv,
+      };
+      this.logger.log(
+        `[deploy] ready immediately session=${aiSessionId} appId=${ready.appId} ` +
+          `url=${ready.url} elapsedMs=${Date.now() - startedAt}`,
+      );
+      return ready;
     }
     if (launchStatus !== 'deploying') {
-      this.logger.warn('App-builder deploy response did not confirm a deploying app');
+      this.logger.warn(
+        `[deploy] App-builder deploy response did not confirm a deploying app status=${launchStatus ?? 'none'}`,
+      );
       throw new ServiceUnavailableException('Deployment service returned an invalid response');
     }
 
+    this.logger.log(
+      `[deploy] polling status session=${aiSessionId} appId=${launchAppId} ` +
+        `initialDelayMs=${runtime.initialStatusDelayMs}`,
+    );
     await this.waitForNextPoll(runtime.initialStatusDelayMs, deadline);
-    return this.pollUntilReady({
+    const polled = await this.pollUntilReady({
       baseUrl: runtime.baseUrl,
       token: runtime.token,
       aiSessionId,
@@ -167,6 +216,11 @@ export class ConversationV2DeployService {
       deployTimeoutMs: runtime.deployTimeoutMs,
       runtimeEnv: productionEnv,
     });
+    this.logger.log(
+      `[deploy] ready after poll session=${aiSessionId} appId=${polled.appId} ` +
+        `url=${polled.url} elapsedMs=${Date.now() - startedAt}`,
+    );
+    return polled;
   }
 
   /** Public URL path prefix for deployed apps, e.g. `/apps/{sessionId}/`. */
@@ -200,7 +254,13 @@ export class ConversationV2DeployService {
     const { baseUrl, token, aiSessionId, launchAppId, deadline, statusPollIntervalMs } =
       context;
     let lastStatus: string | null = null;
+    let pollCount = 0;
     while (Date.now() < deadline) {
+      pollCount += 1;
+      const remainingMs = deadline - Date.now();
+      this.logger.log(
+        `[deploy] status poll #${pollCount} session=${aiSessionId} appId=${launchAppId} remainingMs=${remainingMs}`,
+      );
       const statusBody = await this.requestAppBuilder({
         baseUrl,
         path: 'app/deploy/status',
@@ -210,11 +270,16 @@ export class ConversationV2DeployService {
       });
       const status = this.extractString(statusBody, 'status');
       lastStatus = status;
+      this.logger.log(
+        `[deploy] status poll #${pollCount} result session=${aiSessionId} status=${status ?? 'none'}`,
+      );
       if (this.isReady(status)) {
         return { ...this.extractDeployment(statusBody, launchAppId), runtimeEnv: context.runtimeEnv };
       }
       if (status !== 'deploying') {
-        this.logger.warn(`App-builder returned unsupported deployment status: ${status ?? 'none'}`);
+        this.logger.warn(
+          `[deploy] App-builder returned unsupported deployment status: ${status ?? 'none'}`,
+        );
         throw new ServiceUnavailableException('Deployment failed with an invalid status');
       }
       await this.waitForNextPoll(
@@ -225,7 +290,7 @@ export class ConversationV2DeployService {
     }
     return this.throwTimeout(
       context.deployTimeoutMs,
-      `session=${aiSessionId} appId=${launchAppId} lastStatus=${lastStatus ?? 'none'}`,
+      `session=${aiSessionId} appId=${launchAppId} lastStatus=${lastStatus ?? 'none'} polls=${pollCount}`,
     );
   }
 
@@ -240,6 +305,10 @@ export class ConversationV2DeployService {
       headers.Authorization = `Bearer ${token}`;
     }
 
+    this.logger.log(
+      `[deploy] POST ${endpoint.toString()} remainingMs=${remainingMs} ` +
+        `bodyKeys=[${Object.keys(body).sort().join(',')}]`,
+    );
     try {
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -248,18 +317,20 @@ export class ConversationV2DeployService {
         signal: AbortSignal.timeout(remainingMs),
       });
       const rawBody = await response.text();
-      this.logger.debug(
-        `App-builder ${path} response: status=${response.status} bodyChars=${rawBody.length}`,
+      this.logger.log(
+        `[deploy] App-builder ${path} response status=${response.status} bodyChars=${rawBody.length}`,
       );
       if (!response.ok) {
-        this.logger.warn(`App-builder ${path} failed with status ${response.status}`);
+        this.logger.warn(
+          `[deploy] App-builder ${path} failed status=${response.status} bodyPreview=${rawBody.slice(0, 300)}`,
+        );
         throw new ServiceUnavailableException('Deployment service rejected the request');
       }
       return this.parseResponse(rawBody);
     } catch (error) {
       if (error instanceof ServiceUnavailableException) throw error;
       if ((error as Error).name === 'TimeoutError') return this.throwTimeout();
-      this.logger.error(`App-builder ${path} request failed: ${(error as Error).message}`);
+      this.logger.error(`[deploy] App-builder ${path} request failed: ${(error as Error).message}`);
       throw new ServiceUnavailableException('Deployment service is unavailable');
     }
   }
@@ -383,7 +454,9 @@ export class ConversationV2DeployService {
 
     this.logger.log(
       `Injected .env.production into patched revision ${patchedRevisionId} (base ${baseRevisionId}) ` +
-        `with ${baselineFiles.length} restored platform file(s)`,
+        `with ${baselineFiles.length} restored platform file(s) envKeys=[${Object.keys(env)
+          .sort()
+          .join(',')}]`,
     );
     return patchedRevisionId;
   }

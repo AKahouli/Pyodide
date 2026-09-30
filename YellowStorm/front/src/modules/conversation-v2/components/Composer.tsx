@@ -46,11 +46,14 @@ import { useAuth } from '@/modules/auth/useAuth';
 
 interface ComposerProps {
   onSend: (text: string, model?: string) => void | Promise<void>;
-  /** Extra lock (e.g. waiting for NodePod ready before the first agent turn). */
-  disabled?: boolean;
+  /**
+   * Disables only the Send button (and Enter-to-send). Typing / model / tools
+   * stay available — used while NodePod preview is still booting.
+   */
+  sendDisabled?: boolean;
 }
 
-export function Composer({ onSend, disabled = false }: ComposerProps) {
+export function Composer({ onSend, sendDisabled = false }: ComposerProps) {
   const { user } = useAuth();
   const streaming = useConversationV2Store((s) => s.streaming);
   const events = useConversationV2Store((s) => s.events);
@@ -128,11 +131,13 @@ export function Composer({ onSend, disabled = false }: ComposerProps) {
   const status: 'ready' | 'streaming' = streaming ? 'streaming' : 'ready';
   const isPaused = !streaming && pointerStatus === 'paused';
   const turnOpen = isTurnOpen(events);
-  const inputLocked = streaming || turnOpen || isLimitExceeded || disabled;
+  // Full input lock (streaming / open turn / quota) vs Send-only lock (preview boot).
+  const inputLocked = streaming || turnOpen || isLimitExceeded;
+  const submitLocked = inputLocked || sendDisabled;
 
   const handleSubmit = (message: PromptInputMessage) => {
     const value = message.text?.trim() ?? '';
-    if (!value || inputLocked || isLimitExceeded) return;
+    if (!value || submitLocked || isLimitExceeded) return;
     onSend(value, activeModel?.litellmModel || undefined);
   };
 
@@ -235,7 +240,8 @@ export function Composer({ onSend, disabled = false }: ComposerProps) {
                 )}
               </PromptInputTools>
               <PromptInputSubmit
-                status={inputLocked ? 'streaming' : status}
+                status={status}
+                disabled={submitLocked && !streaming}
                 onStop={() => void stop()}
               />
             </PromptInputFooter>

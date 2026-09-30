@@ -216,10 +216,15 @@ export class ConversationV2TemplateService {
     return this.toResponse(confirmed, category?.name ?? '');
   }
 
+  /**
+   * Hard-delete the catalog row, then remove cover/manifest from Ceph in the
+   * background so the confirm dialog can close without waiting on storage I/O.
+   * Shared content-addressed blobs are intentionally kept.
+   */
   async delete(id: string): Promise<void> {
     const row = await this.templates.delete(id);
     if (!row) throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_FOUND);
-    await this.publish.removeTemplateArtifacts([row]);
+    void this.publish.removeTemplateArtifacts([row]);
   }
 
   /**

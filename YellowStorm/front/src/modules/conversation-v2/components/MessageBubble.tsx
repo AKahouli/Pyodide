@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { BotIcon } from 'lucide-react';
 import { Streamdown } from 'streamdown';
-import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
+import { showError } from '@/lib/notifications';
 import { openFileViewerFromUrlLoader, getMimeTypeFromFilename } from '@/modules/file-viewer';
 import { conversationV2Api } from '../api';
 import { useConversationV2Store } from '../store';
@@ -42,7 +42,7 @@ export function MessageBubble({
   const isUser = event.role === 'user';
   const attachments = event.attachments ?? [];
   const content = event.content ?? '';
-  const { language } = useConversationV2Translation();
+  const { language, t } = useConversationV2Translation();
   const timestamp = formatMessageTimestamp(event.timestamp, language);
 
   if (isUser) {
@@ -72,7 +72,7 @@ export function MessageBubble({
       {!hideAssistantHeader && (
         <div className='flex items-center gap-1.5 text-foreground'>
           <BotIcon className='size-5 shrink-0' />
-          <span className='text-sm font-medium leading-none'>YelloStorm</span>
+          <span className='text-sm font-medium leading-none'>{t('conversation.assistantName')}</span>
         </div>
       )}
       <TypewriterStreamdown text={content} enabled={!!animate} />
@@ -105,6 +105,7 @@ export function MessageBubble({
 function AttachmentChip({ file, canOpen = true }: { file: FileInfo; canOpen?: boolean }) {
   const [loading, setLoading] = useState(false);
   const closeRightPanel = useConversationV2Store((s) => s.closeRightPanel);
+  const { t } = useConversationV2Translation();
 
   const handleClick = async () => {
     if (!canOpen || loading) return;
@@ -130,7 +131,7 @@ function AttachmentChip({ file, canOpen = true }: { file: FileInfo; canOpen?: bo
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
-      toast.error('Failed to open file', { description: message });
+      showError(t('conversation.fileOpenFailed'), { description: message });
     } finally {
       setLoading(false);
     }

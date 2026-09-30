@@ -10,6 +10,8 @@ const removeAppMock = vi.hoisted(() => vi.fn());
 const navigateMock = vi.hoisted(() => vi.fn());
 const listCategoriesMock = vi.hoisted(() => vi.fn());
 const listTemplatesMock = vi.hoisted(() => vi.fn(async (): Promise<AppTemplate[]> => []));
+const deleteTemplateMock = vi.hoisted(() => vi.fn(async () => undefined));
+const hasPermissionMock = vi.hoisted(() => vi.fn((_permission: string) => false));
 
 vi.mock('../api', () => ({
   appBuilderApi: {
@@ -32,12 +34,12 @@ vi.mock('../api', () => ({
     updateTemplate: vi.fn(),
     replaceCover: vi.fn(),
     replaceSource: vi.fn(),
-    deleteTemplate: vi.fn(),
+    deleteTemplate: deleteTemplateMock,
   },
 }));
 
 vi.mock('@/modules/admin/hooks/usePermissions', () => ({
-  usePermissions: () => ({ hasPermission: () => false }),
+  usePermissions: () => ({ hasPermission: hasPermissionMock }),
 }));
 
 vi.mock('@/lib/notifications', () => ({
@@ -152,9 +154,36 @@ async function selectStatus(label: RegExp) {
 describe('AppBuilderPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    hasPermissionMock.mockReturnValue(false);
     listCategoriesMock.mockResolvedValue([]);
     listTemplatesMock.mockResolvedValue([]);
     useAppBuilderStore.setState(initialState);
+  });
+
+  it('lets a super-admin delete a template from the grid via the admin API', async () => {
+    hasPermissionMock.mockImplementation((permission: string) => permission === '*');
+    listCategoriesMock.mockResolvedValue(mockCategories);
+    listTemplatesMock.mockResolvedValue(mockTemplates);
+    listAppsMock.mockResolvedValue(fullCatalog);
+
+    renderPage();
+    await screen.findByText('Generated app');
+    fireEvent.click(screen.getByRole('button', { name: /^Business/ }));
+    expect(await screen.findByText('CRM starter')).toBeInTheDocument();
+
+    const categoriesCallsBeforeDelete = listCategoriesMock.mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: 'admin.deleteTemplate' }));
+    expect(await screen.findByText('admin.deleteTemplateTitle')).toBeInTheDocument();
+
+    listCategoriesMock.mockResolvedValueOnce([
+      { ...mockCategories[0]!, templateCount: 0 },
+      mockCategories[1]!,
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: 'admin.confirmDelete' }));
+    await waitFor(() => expect(deleteTemplateMock).toHaveBeenCalledWith('tpl-1'));
+    await waitFor(() =>
+      expect(listCategoriesMock.mock.calls.length).toBeGreaterThan(categoriesCallsBeforeDelete),
+    );
   });
 
   it('keeps the App Market chat and the app list visible when a category is selected', async () => {

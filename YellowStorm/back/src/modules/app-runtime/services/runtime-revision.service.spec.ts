@@ -372,7 +372,10 @@ describe('RuntimeRevisionService', () => {
       png,
       'hero.png',
       'application/octet-stream',
-      expect.objectContaining({ generateUniqueName: false }),
+      expect.objectContaining({
+        generateUniqueName: false,
+        skipMimeValidation: true,
+      }),
     );
   });
 

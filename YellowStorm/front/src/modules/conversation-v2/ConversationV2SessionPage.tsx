@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { X } from 'lucide-react';
 import { conversationV2Api } from './api';
@@ -11,11 +11,19 @@ import { ConversationV2Header } from './components/ConversationV2Header';
 import { FilesSheet } from './components/FilesSheet';
 import { PlanPanel } from './components/PlanPanel';
 import { RightPanel } from './components/RightPanel/RightPanel';
+import {
+  SessionLoadingSkeleton,
+  SessionNotFound,
+} from './components/SessionPlaceholderStates';
 import { useConversationV2Translation } from './translation';
 import { FileViewerSidebar, useFileViewerStore } from '@/modules/file-viewer';
 import { useModels, useDefaultModel, useConversationV2DefaultModel, useModelsStore } from '@/modules/models';
 import type { AgentEvent } from './types';
-import type { AgentSessionSource } from './startAgentSession';
+import {
+  commitCloneDraftSession,
+  type AgentSessionSource,
+} from './startAgentSession';
+import { isCloneDraftSearch } from './template-clone-draft';
 import {
   canWriteConversationV2Session,
   ConversationV2SessionPermissions,
@@ -27,7 +35,14 @@ import { mapHostStatusToRuntimeUi } from './runtime/runtime.types';
 import { waitForHostReady } from './runtime/wait-for-host-ready';
 import { appRuntimeEnabled } from './features';
 import { isTurnOpen } from './utils/session-reducer';
+import {
+  hasUserMessage,
+  isTemplateCloneNavigation,
+  isTemplateCloneSession as resolveTemplateCloneSession,
+  shouldGateTemplateClonePreview,
+} from './templateCloneGate';
 import { Button } from '@/components/ui/button';
+import { ErrorBoundary } from '@/components/ui/error-boundary';
 
 interface LocationState {
   initialMessage?: string;
@@ -43,26 +58,53 @@ interface LocationState {
   connectorIds?: string[];
   /** Entry point that created this session — drives transition UX. */
   source?: AgentSessionSource;
+  /** App Market template id when cloning without an auto-prompt. */
+  templateId?: string;
 }
 
 export default function ConversationV2SessionPage() {
-  const { sessionId } = useParams<{ sessionId: string }>();
+  const { sessionId: routeSessionId } = useParams<{ sessionId?: string }>();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const location = useLocation();
-  const initialMessage = (location.state as LocationState | null)?.initialMessage;
-  const initialModel = (location.state as LocationState | null)?.model;
-  const initialSkillIds = (location.state as LocationState | null)?.skillIds;
-  const initialConnectorIds = (location.state as LocationState | null)?.connectorIds;
-  const entrySource = (location.state as LocationState | null)?.source;
-  const [showAppBuilderBanner, setShowAppBuilderBanner] = useState(false);
-  const [waitingForPreview, setWaitingForPreview] = useState(false);
+  const locationState = location.state as LocationState | null;
 
-  // Latch from navigation state once per session. Do not depend on entrySource
-  // continuously — the initial-message effect clears history state and would
-  // otherwise dismiss the banner immediately.
+  const sessionId = routeSessionId?.trim() || null;
+  /** Draft until first Send: `/conversation-v2/{sessionId}?action=clone`. */
+  const isDraftClone = isCloneDraftSearch(searchParams);
+
+  const initialMessage = locationState?.initialMessage;
+  const initialModel = locationState?.model;
+  const initialSkillIds = locationState?.skillIds;
+  const initialConnectorIds = locationState?.connectorIds;
+  const [showAppBuilderBanner, setShowAppBuilderBanner] = useState(false);
+  /** Clone draft: gate Send immediately; other sessions wait for the gate effect. */
+  const [waitingForPreview, setWaitingForPreview] = useState(
+    () => isDraftClone && appRuntimeEnabled,
+  );
+  /** Clone-App / template-seeded sessions gate Send until NodePod is ready. */
+  const [previewPhase, setPreviewPhase] = useState<'none' | 'waiting' | 'ready'>(() =>
+    isDraftClone && appRuntimeEnabled ? 'waiting' : 'none',
+  );
+  const [starterRevisionId, setStarterRevisionId] = useState<string | null>(null);
+  /** Latched from nav so replaceState does not lose clone mode before getSession returns. */
+  const [latchedTemplateClone, setLatchedTemplateClone] = useState(
+    () => isDraftClone || isTemplateCloneNavigation(locationState),
+  );
+
   useEffect(() => {
-    setShowAppBuilderBanner(entrySource === 'app-builder');
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: read source only when session changes
-  }, [sessionId]);
+    const state = location.state as LocationState | null;
+    setShowAppBuilderBanner(state?.source === 'app-builder');
+    setLatchedTemplateClone(isDraftClone || isTemplateCloneNavigation(state));
+    if (isDraftClone && appRuntimeEnabled) {
+      setPreviewPhase('waiting');
+      setWaitingForPreview(true);
+    } else if (!isDraftClone) {
+      setPreviewPhase('none');
+      setWaitingForPreview(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: route key only
+  }, [sessionId, isDraftClone]);
 
   const {
     switchToSession,
@@ -81,6 +123,7 @@ export default function ConversationV2SessionPage() {
     pendingQuestion,
     streaming,
     selectedModelId,
+    workspaceIds,
   } = useConversationV2Store(
     useShallow((s) => ({
       switchToSession: s.switchToSession,
@@ -99,12 +142,17 @@ export default function ConversationV2SessionPage() {
       pendingQuestion: s.pendingQuestion,
       streaming: s.streaming,
       selectedModelId: s.selectedModelId,
+      workspaceIds: s.workspaceIds,
     })),
   );
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
-  const [sessionPermissions, setSessionPermissions] = useState<ConversationV2SessionPermission[]>([]);
+  const [sessionPermissions, setSessionPermissions] = useState<ConversationV2SessionPermission[]>(
+    [],
+  );
   const sentInitialForSession = useRef<string | null>(null);
+  const gatedPreviewForSession = useRef<string | null>(null);
+  const committedCloneDraftRef = useRef(false);
   const { t } = useConversationV2Translation();
   const canWrite = canWriteConversationV2Session(sessionPermissions);
   const canReadFiles = hasConversationV2SessionPermission(
@@ -125,8 +173,14 @@ export default function ConversationV2SessionPage() {
     defaultModel ||
     null;
 
-  const handleSend = (text: string) => {
-    return sendMessage(text, activeModel?.litellmModel || undefined);
+  const handleSend = async (text: string) => {
+    // First Send on draft: same session URL, drop ?action=clone, add History.
+    if (isDraftClone && sessionId && !committedCloneDraftRef.current) {
+      committedCloneDraftRef.current = true;
+      commitCloneDraftSession(sessionId, navigate, workspaceIds);
+    }
+    if (previewPhase === 'ready') setPreviewPhase('none');
+    await sendMessage(text, activeModel?.litellmModel || undefined);
   };
 
   const latestPlan = useMemo(() => {
@@ -137,8 +191,14 @@ export default function ConversationV2SessionPage() {
     return null;
   }, [events]);
 
+  const isTemplateCloneSession = resolveTemplateCloneSession({
+    latchedFromNav: latchedTemplateClone,
+    starterRevisionId,
+  });
+
   useEffect(() => {
     if (!sessionId) return;
+    committedCloneDraftRef.current = false;
     let cancelled = false;
     // Close the file viewer too — it's a global Zustand store, so a tab opened
     // in conversation A would otherwise stay open when navigating to B.
@@ -156,6 +216,21 @@ export default function ConversationV2SessionPage() {
     void useModelsStore.getState().fetchModels().catch(() => undefined);
     setNotFound(false);
     setSessionPermissions([]);
+    gatedPreviewForSession.current = null;
+
+    const applyPointer = (pointer: Awaited<ReturnType<typeof conversationV2Api.getSession>>) => {
+      setSessionPermissions(pointer.permissions ?? []);
+      setSystemWorkspaceId(pointer.systemWorkspaceId);
+      setWorkspaceIds(pointer.workspaceIds ?? []);
+      setDeployState({
+        deployStatus: pointer.deployStatus ?? 'idle',
+        deployedUrl: pointer.deployedUrl ?? null,
+        lastDeployedAt: pointer.lastDeployedAt ?? null,
+      });
+      setSelectedSkillIds(pointer.selectedSkillIds ?? []);
+      setSelectedConnectorIds(pointer.selectedConnectorIds ?? []);
+      setStarterRevisionId(pointer.starterRevisionId ?? null);
+    };
 
     if (hydratedFromCache) {
       // Live state already in memory; just refresh pointer metadata.
@@ -164,16 +239,7 @@ export default function ConversationV2SessionPage() {
         try {
           const pointer = await conversationV2Api.getSession(sessionId);
           if (cancelled) return;
-          setSessionPermissions(pointer.permissions ?? []);
-          setSystemWorkspaceId(pointer.systemWorkspaceId);
-          setWorkspaceIds(pointer.workspaceIds ?? []);
-          setDeployState({
-            deployStatus: pointer.deployStatus ?? 'idle',
-            deployedUrl: pointer.deployedUrl ?? null,
-            lastDeployedAt: pointer.lastDeployedAt ?? null,
-          });
-          setSelectedSkillIds(pointer.selectedSkillIds ?? []);
-          setSelectedConnectorIds(pointer.selectedConnectorIds ?? []);
+          applyPointer(pointer);
         } catch {
           /* keep the cached view */
         }
@@ -189,16 +255,7 @@ export default function ConversationV2SessionPage() {
         const pointer = await conversationV2Api.getSession(sessionId);
         if (cancelled) return;
 
-        setSessionPermissions(pointer.permissions ?? []);
-        setSystemWorkspaceId(pointer.systemWorkspaceId);
-        setWorkspaceIds(pointer.workspaceIds ?? []);
-        setDeployState({
-          deployStatus: pointer.deployStatus ?? 'idle',
-          deployedUrl: pointer.deployedUrl ?? null,
-          lastDeployedAt: pointer.lastDeployedAt ?? null,
-        });
-        setSelectedSkillIds(pointer.selectedSkillIds ?? []);
-        setSelectedConnectorIds(pointer.selectedConnectorIds ?? []);
+        applyPointer(pointer);
 
         const collected: AgentEvent[] = [];
         let since = 0;
@@ -237,6 +294,100 @@ export default function ConversationV2SessionPage() {
     };
   }, [sessionId, switchToSession, setSystemWorkspaceId, setWorkspaceIds, setDeployState, setSelectedSkillIds, setSelectedConnectorIds, replayEvents, loadFinalizedVersions, setStreaming, hydrateSelectedModelForSession]);
 
+  // Template clone: wait for NodePod ready, enable Send, do NOT auto-stream.
+  useEffect(() => {
+    if (loading || notFound || isReadOnlyViewer) return;
+    if (!sessionId) return;
+    if (
+      !shouldGateTemplateClonePreview({
+        isTemplateCloneSession,
+        hasInitialMessage: Boolean(initialMessage),
+        hasUserMessage: hasUserMessage(events),
+        canWrite: !isReadOnlyViewer,
+      })
+    ) {
+      if (isTemplateCloneSession && hasUserMessage(events)) {
+        setWaitingForPreview(false);
+        setPreviewPhase('none');
+      }
+      return;
+    }
+    if (gatedPreviewForSession.current === sessionId) return;
+    gatedPreviewForSession.current = sessionId;
+
+    let cancelled = false;
+
+    const gateUntilReady = async () => {
+      if (!appRuntimeEnabled) {
+        setWaitingForPreview(false);
+        setPreviewPhase('ready');
+        return;
+      }
+      setWaitingForPreview(true);
+      setPreviewPhase('waiting');
+      const host = getOrCreateHost(sessionId);
+      const outcome = await waitForHostReady(host);
+      if (cancelled) return;
+      setWaitingForPreview(false);
+      if (outcome === 'ready') {
+        setPreviewPhase('ready');
+        return;
+      }
+      setPreviewPhase('none');
+      if (outcome === 'error') {
+        useConversationV2Store.setState(
+          { streaming: false, streamError: t('session.previewBootFailed') },
+          false,
+          'templateClone/preview-error',
+        );
+      } else if (outcome === 'timeout') {
+        useConversationV2Store.setState(
+          { streaming: false, streamError: t('session.previewBootTimeout') },
+          false,
+          'templateClone/preview-timeout',
+        );
+      }
+    };
+
+    void gateUntilReady();
+
+    if (window.history.replaceState) {
+      window.history.replaceState({}, '');
+    }
+
+    return () => {
+      cancelled = true;
+      // Allow a remount (Strict Mode / dep change) to start a fresh wait.
+      // Without this, Send stays locked forever after a cancelled first wait.
+      if (gatedPreviewForSession.current === sessionId) {
+        gatedPreviewForSession.current = null;
+      }
+    };
+  }, [
+    loading,
+    notFound,
+    isReadOnlyViewer,
+    sessionId,
+    isTemplateCloneSession,
+    initialMessage,
+    events,
+    t,
+  ]);
+
+  // Safety net: if NodePod already reports ready/Live but the gate wait was
+  // cancelled (e.g. Strict Mode), unlock Send from the mirrored runtime status.
+  const runtimeStatus = useConversationV2Store((s) => s.runtimeStatus);
+  useEffect(() => {
+    if (!isDraftClone || !waitingForPreview) return;
+    if (runtimeStatus === 'browser_active') {
+      setWaitingForPreview(false);
+      setPreviewPhase('ready');
+    } else if (runtimeStatus === 'error') {
+      setWaitingForPreview(false);
+      setPreviewPhase('none');
+    }
+  }, [isDraftClone, waitingForPreview, runtimeStatus]);
+
   // Fire the landing-page initial message only after NodePod has registered
   // (host status `ready`), so the first agent tools do not hit RUNTIME_OFFLINE
   // while npm install / Vite are still running.
@@ -254,10 +405,12 @@ export default function ConversationV2SessionPage() {
     const sendWhenReady = async () => {
       if (appRuntimeEnabled) {
         setWaitingForPreview(true);
+        setPreviewPhase('waiting');
         const host = getOrCreateHost(sessionId);
         const outcome = await waitForHostReady(host);
         if (cancelled) return;
         setWaitingForPreview(false);
+        setPreviewPhase('none');
         if (outcome === 'error') {
           useConversationV2Store.setState(
             { streaming: false, streamError: t('session.previewBootFailed') },
@@ -332,33 +485,68 @@ export default function ConversationV2SessionPage() {
   }, [sessionId, loading, streaming, isReadOnlyViewer]);
 
   if (loading) {
-    return (
-      <div className='flex flex-1 items-center justify-center p-4 text-sm text-muted-foreground'>
-        {t('session.loading')}
-      </div>
-    );
+    return <SessionLoadingSkeleton />;
   }
   if (notFound) {
-    return (
-      <div className='flex flex-1 items-center justify-center p-4 text-sm text-muted-foreground'>
-        {t('session.notFound')}
-      </div>
-    );
+    return <SessionNotFound onRetry={() => window.location.reload()} />;
   }
+
+  const waitingCopy =
+    previewPhase === 'waiting' && isTemplateCloneSession
+      ? {
+          title: t('session.templateClone.waitingTitle'),
+          body: isDraftClone
+            ? t('session.templateClone.waitingBodyDraft')
+            : t('session.templateClone.waitingBody'),
+        }
+      : {
+          title: t('session.waitingForPreview.title'),
+          body: t('session.waitingForPreview.body'),
+        };
+
+  // Gate Send until NodePod preview is ready for clone sessions.
+  const lockSendForPreview = waitingForPreview;
 
   return (
     <div className='relative flex w-full min-h-0 flex-1'>
-      <div key={sessionId} className='flex min-w-0 flex-1 flex-col'>
+      <ErrorBoundary label={t('session.conversationError')}>
+        <div key={sessionId} className='flex min-w-0 flex-1 flex-col'>
         <ConversationV2Header
           readOnly={isReadOnlyViewer}
           permissions={sessionPermissions}
         />
-        {waitingForPreview && (
-          <div className='border-b border-border/60 bg-muted/40 px-4 py-3'>
-            <p className='text-sm font-medium'>{t('session.waitingForPreview.title')}</p>
-            <p className='mt-0.5 text-xs text-muted-foreground sm:text-sm'>
-              {t('session.waitingForPreview.body')}
-            </p>
+        {previewPhase === 'waiting' && (
+          <div
+            className='border-b border-border/60 bg-muted/40 px-4 py-3'
+            role='status'
+            data-testid='template-preview-waiting'
+          >
+            <p className='text-sm font-medium'>{waitingCopy.title}</p>
+            <p className='mt-0.5 text-xs text-muted-foreground sm:text-sm'>{waitingCopy.body}</p>
+          </div>
+        )}
+        {previewPhase === 'ready' && isTemplateCloneSession && (
+          <div
+            className='flex items-start gap-3 border-b border-border/60 bg-muted/40 px-4 py-3'
+            role='status'
+            data-testid='template-preview-ready'
+          >
+            <div className='min-w-0 flex-1'>
+              <p className='text-sm font-medium'>{t('session.templateClone.readyTitle')}</p>
+              <p className='mt-0.5 text-xs text-muted-foreground sm:text-sm'>
+                {t('session.templateClone.readyBody')}
+              </p>
+            </div>
+            <Button
+              type='button'
+              variant='ghost'
+              size='sm'
+              className='shrink-0'
+              onClick={() => setPreviewPhase('none')}
+            >
+              <X className='mr-1 h-3.5 w-3.5' aria-hidden />
+              {t('session.templateClone.dismiss')}
+            </Button>
           </div>
         )}
         {showAppBuilderBanner && (
@@ -395,13 +583,16 @@ export default function ConversationV2SessionPage() {
         {pendingQuestion && canWrite && (
           <QuestionChoices
             pendingQuestion={pendingQuestion}
-            disabled={streaming || waitingForPreview}
+            disabled={streaming || lockSendForPreview}
             onSelect={handleSend}
           />
         )}
-        {canWrite && <Composer onSend={handleSend} disabled={waitingForPreview} />}
-      </div>
-      {canWrite && <RightPanel />}
+        {canWrite && <Composer onSend={handleSend} sendDisabled={lockSendForPreview} />}
+        </div>
+      </ErrorBoundary>
+      <ErrorBoundary label={t('session.previewError')}>
+        {canWrite && <RightPanel />}
+      </ErrorBoundary>
       <FileViewerSidebar />
       {canBrowseFiles && <FilesSheet readOnly={isReadOnlyViewer} />}
     </div>

@@ -11,10 +11,20 @@ interface TypewriterStreamdownProps {
   charsPerFrame?: number;
 }
 
+function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || !window.matchMedia) return false;
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 /**
  * Progressively reveals markdown text through Streamdown to fake a streaming
  * typewriter effect. When `enabled` is false (replayed history) the full text
  * renders instantly.
+ *
+ * The reveal is skipped entirely for users who asked for reduced motion: a
+ * character-by-character trickle is exactly the kind of motion that setting is
+ * meant to suppress, and a screen reader announcing it token by token is worse
+ * than the full text arriving at once.
  */
 export function TypewriterStreamdown({
   text,
@@ -22,10 +32,11 @@ export function TypewriterStreamdown({
   className,
   charsPerFrame = 4,
 }: TypewriterStreamdownProps) {
-  const [revealed, setRevealed] = useState(enabled ? 0 : text.length);
+  const animate = enabled && !prefersReducedMotion();
+  const [revealed, setRevealed] = useState(animate ? 0 : text.length);
 
   useEffect(() => {
-    if (!enabled) {
+    if (!animate) {
       setRevealed(text.length);
       return;
     }
@@ -41,7 +52,7 @@ export function TypewriterStreamdown({
       });
     }, 16);
     return () => window.clearInterval(id);
-  }, [enabled, text, charsPerFrame]);
+  }, [animate, text, charsPerFrame]);
 
   const fullyRevealed = revealed >= text.length;
   const slice = fullyRevealed ? text : text.slice(0, revealed);
@@ -57,7 +68,7 @@ export function TypewriterStreamdown({
         {slice}
       </Streamdown>
       {!fullyRevealed && (
-        <span className='ml-0.5 inline-block h-3 w-[2px] animate-pulse bg-muted-foreground/60 align-baseline' />
+        <span className='ml-0.5 inline-block h-3 w-[2px] animate-pulse bg-muted-foreground/60 align-baseline motion-reduce:animate-none' />
       )}
     </div>
   );

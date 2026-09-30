@@ -158,7 +158,7 @@ describe('ConversationV2TemplateService', () => {
     await expect(svc.requireUsableForUser(TPL_ID, false)).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('deletes the row and cleans its Ceph artifacts', async () => {
+  it('deletes the row and kicks off Ceph artifact cleanup in the background', async () => {
     const row = { ...draftRow, coverImage: 'cover' };
     templates.delete.mockResolvedValueOnce(row);
 

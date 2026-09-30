@@ -23,8 +23,8 @@ let hostState: {
 };
 let listener: ((s: typeof hostState) => void) | null = null;
 
-vi.mock('../runtime/BrowserRuntimeHost', () => ({
-  getOrCreateHost: vi.fn(() => ({
+function makeHost() {
+  return {
     get state() {
       return hostState;
     },
@@ -39,9 +39,14 @@ vi.mock('../runtime/BrowserRuntimeHost', () => ({
     },
     attachPreviewIframe: mockAttach,
     detachPreviewIframe: mockDetach,
-  })),
+  };
+}
+
+vi.mock('../runtime/BrowserRuntimeHost', () => ({
+  getOrCreateHost: vi.fn(() => makeHost()),
 }));
 
+import { getOrCreateHost } from '../runtime/BrowserRuntimeHost';
 import { useNodepodPreview } from './useNodepodPreview';
 
 describe('useNodepodPreview', () => {
@@ -56,6 +61,7 @@ describe('useNodepodPreview', () => {
       revisionId: 'rev_0',
     };
     useConversationV2Store.setState({ runtimeStatus: 'idle', rightPanelMode: 'closed' });
+    vi.mocked(getOrCreateHost).mockImplementation(() => makeHost() as unknown as ReturnType<typeof getOrCreateHost>);
   });
 
   it('subscribes to the host and never calls start (no double boot)', () => {
@@ -120,6 +126,20 @@ describe('useNodepodPreview', () => {
 
     rerender({ sessionId: null });
     expect(useConversationV2Store.getState().runtimeStatus).toBe('browser_active');
+  });
+
+  it('does not detach the preview iframe when the same host is rebound to a new session id', () => {
+    const sharedHost = makeHost() as unknown as ReturnType<typeof getOrCreateHost>;
+    vi.mocked(getOrCreateHost).mockReturnValue(sharedHost);
+
+    const { rerender } = renderHook(
+      ({ sessionId }: { sessionId: string | null }) => useNodepodPreview({ sessionId }),
+      { initialProps: { sessionId: 'template-clone-tpl' as string | null } },
+    );
+
+    mockDetach.mockClear();
+    rerender({ sessionId: 'session-real' });
+    expect(mockDetach).not.toHaveBeenCalled();
   });
 });
 

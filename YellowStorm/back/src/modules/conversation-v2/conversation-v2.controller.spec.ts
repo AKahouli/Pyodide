@@ -273,6 +273,7 @@ describe('ConversationV2Controller', () => {
       lastEventAt: new Date('2024-01-01T00:00:00.000Z'),
       eventCount: 3,
       systemWorkspaceId: 'sysws',
+      starterRevisionId: 'template_tpl1',
     });
     const result = await controller.getSession(id, {
       conversationV2Access: {
@@ -283,6 +284,7 @@ describe('ConversationV2Controller', () => {
     expect(result.sessionId).toBe(id);
     expect(result.eventCount).toBe(3);
     expect(result.systemWorkspaceId).toBe('sysws');
+    expect(result.starterRevisionId).toBe('template_tpl1');
     expect(result.viewerRole).toBe('owner');
     expect(result.permissions).toContain('session.read');
   });

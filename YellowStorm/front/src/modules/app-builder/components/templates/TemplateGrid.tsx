@@ -12,6 +12,11 @@ interface TemplateGridProps {
   categoryName?: string;
   onRetry: () => void;
   onOpen: (template: AppTemplate) => void;
+  onClone?: (template: AppTemplate) => void;
+  cloningTemplateId?: string | null;
+  isSuperAdmin?: boolean;
+  onEdit?: (template: AppTemplate) => void;
+  onDelete?: (template: AppTemplate) => void;
 }
 
 export function TemplateGrid({
@@ -21,6 +26,11 @@ export function TemplateGrid({
   categoryName,
   onRetry,
   onOpen,
+  onClone,
+  cloningTemplateId = null,
+  isSuperAdmin = false,
+  onEdit,
+  onDelete,
 }: TemplateGridProps) {
   const { t } = useModuleTranslation('app-builder');
 
@@ -36,7 +46,10 @@ export function TemplateGrid({
             key={i}
             className='flex flex-col overflow-hidden rounded-2xl border border-border/60 bg-card shadow-sm'
           >
-            <Skeleton className='aspect-[16/10] w-full rounded-none' />
+            <div className='overflow-hidden'>
+              <Skeleton className='h-6 w-full rounded-none' />
+              <Skeleton className='aspect-[16/10] w-full rounded-none' />
+            </div>
             <div className='space-y-3 px-4 py-4'>
               <div className='flex gap-3'>
                 <Skeleton className='size-9 shrink-0 rounded-full' />
@@ -87,7 +100,16 @@ export function TemplateGrid({
   return (
     <div className='grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3'>
       {templates.map((template) => (
-        <TemplateCard key={template.id} template={template} onOpen={onOpen} />
+        <TemplateCard
+          key={template.id}
+          template={template}
+          onOpen={onOpen}
+          onClone={onClone}
+          cloning={cloningTemplateId === template.id}
+          isSuperAdmin={isSuperAdmin}
+          onEdit={onEdit}
+          onDelete={onDelete}
+        />
       ))}
     </div>
   );

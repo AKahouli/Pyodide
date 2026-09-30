@@ -219,6 +219,8 @@
     "cloneAria": "Clone App {{title}}",
     "freeBadge": "",
     "cloneFree": "Clone app",
+    "cloneError": "Could not clone this template. Please try again.",
+    "cloning": "Cloning…",
     "metaAria": "Template details",
     "metaPlatformFiles": "Platform kit files",
     "metaStarter": "App template",

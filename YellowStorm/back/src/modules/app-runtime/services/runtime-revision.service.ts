@@ -304,6 +304,9 @@ export class RuntimeRevisionService {
         await this.documents.upload(body, path.split('/').pop() || path, contentType, {
           generateUniqueName: false,
           customFileName: objectKey,
+          // Content-addressed appbuilder blobs may be fonts/wasm/png bytes; the
+          // document MIME whitelist is for user uploads, not revision commits.
+          skipMimeValidation: true,
         });
       }
 
@@ -410,6 +413,7 @@ export class RuntimeRevisionService {
         await this.documents.upload(body, path.split('/').pop() || path, 'text/plain', {
           generateUniqueName: false,
           customFileName: objectKey,
+          skipMimeValidation: true,
         });
       }
       newFiles.push({ path, sha256, objectKey, size: body.length });

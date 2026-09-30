@@ -50,7 +50,10 @@ function makeAdapter(initial: Record<string, string> = {}) {
     async readFileBytes(path: string) {
       const found = files.get(path);
       if (found === undefined) throw new Error(`ENOENT: ${path}`);
-      return new TextEncoder().encode(found);
+      // Copy into a fresh buffer: TS 5.7+ parameterises Uint8Array over its
+      // backing buffer, and the adapter contract requires a plain ArrayBuffer
+      // (not ArrayBufferLike / SharedArrayBuffer).
+      return new Uint8Array(new TextEncoder().encode(found));
     },
     async writeFile(path: string, content: string) {
       files.set(path, content);
@@ -424,7 +427,9 @@ describe('write', () => {
     const original = adapter.readFileBytes.bind(adapter);
     adapter.readFileBytes = vi.fn(async (path: string) => {
       if (path.endsWith('.png')) throw new Error('binary read failed');
-      return original(path);
+      // The adapter contract requires a plain-ArrayBuffer view; the bound
+      // original widens to ArrayBufferLike under TS 5.7+.
+      return new Uint8Array(await original(path));
     });
     // Force shaManifest to include the png without relying on readFileBytes success in commit.
     adapter.shaManifest = async () => {

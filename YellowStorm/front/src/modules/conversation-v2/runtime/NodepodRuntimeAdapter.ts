@@ -12,6 +12,7 @@ import type { VfsFiles } from './RevisionHydrator';
 import type { FileEntry } from './runtime.types';
 import { sha256 } from './hashing';
 import { toVfsPath } from './paths';
+import { detectDevCommand } from './dev-toolchain';
 import {
   IGNORED_DIRS,
   RUN_OUTPUT_MAX_BYTES,
@@ -19,6 +20,13 @@ import {
   boundOutput,
   preferCompleteOutput,
 } from './limits';
+import {
+  ROLLDOWN_WASM_PKG,
+  LIGHTNINGCSS_WASM_PKG,
+  OXIDE_WASM_PKG,
+  ensureWasiNativeBindings,
+  isFatalWasiToolchainError,
+} from './wasi-native-bindings';
 
 const LOG = '[NodepodAdapter]';
 
@@ -27,8 +35,6 @@ type NodepodProc = Awaited<ReturnType<NodepodInstance['spawn']>>;
 
 const VITE_PKG_PATH = '/node_modules/vite';
 const REACT_PKG_PATH = '/node_modules/react';
-const ROLLDOWN_PKG_PATH = '/node_modules/rolldown';
-const ROLLDOWN_WASM_PATH = '/node_modules/@rolldown/binding-wasm32-wasi';
 const READY_SOFT_MS = 20_000;
 /** Large templates (e.g. Material UI kits) can need several minutes for first Vite boot. */
 const READY_HARD_MS = 300_000;
@@ -98,37 +104,6 @@ if (typeof window !== 'undefined') {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-async function readPackageVersion(pod: NodepodInstance, pkgJsonPath: string): Promise<string | null> {
-  try {
-    const raw = await pod.fs.readFile(pkgJsonPath, 'utf-8');
-    const pkg = JSON.parse(raw) as { version?: string };
-    return pkg.version ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function detectDevCommand(files: VfsFiles): { cmd: string; args: string[] } {
-  const pkgRaw = files['/package.json'];
-  if (typeof pkgRaw === 'string') {
-    try {
-      const pkg = JSON.parse(pkgRaw) as { scripts?: Record<string, string> };
-      const scripts = pkg.scripts ?? {};
-      if (scripts.dev) {
-        const devScript = scripts.dev;
-        if (/\bvite\b/i.test(devScript) && !/--host/i.test(devScript)) {
-          return { cmd: 'npm', args: ['run', 'dev', '--', '--host', '0.0.0.0'] };
-        }
-        return { cmd: 'npm', args: ['run', 'dev'] };
-      }
-      if (scripts.start) return { cmd: 'npm', args: ['run', 'start'] };
-    } catch {
-      // fall through
-    }
-  }
-  return { cmd: 'npm', args: ['run', 'dev', '--', '--host', '0.0.0.0'] };
-}
 
 export interface StartDevServerOptions {
   softTimeoutMs?: number;
@@ -281,6 +256,7 @@ export class NodepodRuntimeAdapter {
 
     if (!opts.force && hasModules && fingerprint === this.lastInstallFingerprint) {
       log('npm-install:skip', { reason: 'fingerprint-unchanged' });
+      await this.ensureWasiBindings();
       return { installed: false };
     }
 
@@ -314,31 +290,29 @@ export class NodepodRuntimeAdapter {
       );
     }
 
-    await this.ensureRolldownWasi();
+    await this.ensureWasiBindings();
     log('npm-install:done');
   }
 
-  private async ensureRolldownWasi(): Promise<boolean> {
+  /**
+   * Install wasm32-wasi companions (Rolldown / LightningCSS / Tailwind Oxide) and
+   * alias `*.debug.wasm` onto the release artifacts NodePod's CDN proxy cannot find.
+   */
+  private async ensureWasiBindings(): Promise<boolean> {
     const pod = this.requirePod();
-    const hasRolldown = await pod.fs.exists(ROLLDOWN_PKG_PATH);
-    if (!hasRolldown) return false;
-    const already = await pod.fs.exists(ROLLDOWN_WASM_PATH);
-    if (already) return true;
-    const version = (await readPackageVersion(pod, `${ROLLDOWN_PKG_PATH}/package.json`)) ?? 'latest';
-    const spec = `@rolldown/binding-wasm32-wasi@${version}`;
-    log('rolldown-wasm:install', { spec });
-    const install = await pod.spawn('npm', ['install', spec, '--no-save', '--cpu=wasm32']);
-    install.on('output', (text: string) => console.log(`${LOG} [rolldown:stdout]`, text));
-    install.on('error', (text: string) => console.warn(`${LOG} [rolldown:stderr]`, text));
-    const result = await install.completion;
-    const present = await pod.fs.exists(ROLLDOWN_WASM_PATH);
-    if (result.exitCode !== 0 || !present) {
-      throw new Error(`Failed to install ${spec} for Nodepod.`);
+    const { prepared, failed } = await ensureWasiNativeBindings(pod, log);
+    if (failed.length) {
+      log('wasi-bindings:partial', { prepared, failed });
+    } else if (prepared.length) {
+      log('wasi-bindings:ready', { prepared });
     }
-    if (typeof SharedArrayBuffer === 'undefined') {
+    if (
+      prepared.some((p) => p.includes('rolldown')) &&
+      typeof SharedArrayBuffer === 'undefined'
+    ) {
       throw new Error('Vite/rolldown requires SharedArrayBuffer (COOP/COEP).');
     }
-    return true;
+    return prepared.length > 0;
   }
 
   /**
@@ -355,7 +329,10 @@ export class NodepodRuntimeAdapter {
     const pod = this.requirePod();
     const files = this._files ?? {};
     const { cmd, args } = detectDevCommand(files);
-    const needsWasi = await pod.fs.exists(ROLLDOWN_WASM_PATH);
+    const needsWasi =
+      (await pod.fs.exists(ROLLDOWN_WASM_PKG)) ||
+      (await pod.fs.exists(LIGHTNINGCSS_WASM_PKG)) ||
+      (await pod.fs.exists(OXIDE_WASM_PKG));
     const softTimeoutMs = serverOpts?.softTimeoutMs ?? READY_SOFT_MS;
     const hardTimeoutMs = serverOpts?.hardTimeoutMs ?? READY_HARD_MS;
     const promotePolicy = serverOpts?.promotePolicy ?? 'full';
@@ -385,6 +362,7 @@ export class NodepodRuntimeAdapter {
     let pendingUrl: string | null = this.pendingServerUrl;
     let devExited = false;
     let resolved = false;
+    let toolchainBroken = false;
     let promoteChain: Promise<void> = Promise.resolve();
 
     return new Promise<string | null>((resolve) => {
@@ -408,13 +386,29 @@ export class NodepodRuntimeAdapter {
         resolve(url);
       };
 
+      const noteToolchainError = (text: string) => {
+        if (!isFatalWasiToolchainError(text)) return;
+        if (!toolchainBroken) {
+          toolchainBroken = true;
+          log('dev-server:toolchain-broken', { sample: text.slice(0, 240) });
+        }
+      };
+
       const tryProbe = (url: string, port: number, source: string) => {
         promoteChain = promoteChain.then(async () => {
           if (resolved || isStale()) return;
+          if (toolchainBroken) {
+            log('promote:blocked-toolchain', { source, url, port });
+            return;
+          }
           log('promote:start', { source, url, port, promotePolicy });
           const result = await previewCtrl.probeAndPromote(pod, url, port, isStale, {
             promotePolicy,
           });
+          if (toolchainBroken) {
+            log('promote:blocked-toolchain-after-probe', { source });
+            return;
+          }
           if (result.ok) {
             finish(previewCtrl.previewUrl);
             return;
@@ -427,9 +421,9 @@ export class NodepodRuntimeAdapter {
       };
 
       const scanAllPorts = async (source: string, attemptsPerPort: number) => {
-        if (resolved || isStale()) return;
+        if (resolved || isStale() || toolchainBroken) return;
         for (const port of uniquePortCandidates(pendingUrl, pendingPort)) {
-          if (resolved || isStale()) return;
+          if (resolved || isStale() || toolchainBroken) return;
           const url = pod.port(port);
           if (!url) continue;
           const directOk = await waitUntilDirectServerReady(pod, port, isStale, attemptsPerPort);
@@ -450,13 +444,14 @@ export class NodepodRuntimeAdapter {
         }
 
         portScanTimer = setInterval(() => {
-          if (resolved || isStale() || devExited) return;
+          if (resolved || isStale() || devExited || toolchainBroken) return;
           void scanAllPorts('interval-scan', 6);
         }, PORT_SCAN_INTERVAL_MS);
 
         proc.on('output', (text: string) => {
           console.log(`${LOG} [dev:stdout]`, text);
-          if (!resolved && !isStale() && looksLikeDevServerReady(text)) {
+          noteToolchainError(text);
+          if (!resolved && !isStale() && !toolchainBroken && looksLikeDevServerReady(text)) {
             const port = resolvePreviewPort({
               previewUrl: pendingUrl,
               reportedPort: pendingPort ?? 5173,
@@ -474,26 +469,33 @@ export class NodepodRuntimeAdapter {
             }
           }
         });
-        proc.on('error', (text: string) => console.warn(`${LOG} [dev:stderr]`, text));
+        proc.on('error', (text: string) => {
+          console.warn(`${LOG} [dev:stderr]`, text);
+          noteToolchainError(text);
+        });
         proc.on('exit', (code: number) => {
           devExited = true;
           if (this.currentDevProc === proc) this.currentDevProc = null;
-          log('dev-server:exit', { code });
+          log('dev-server:exit', { code, toolchainBroken });
           if (!resolved) finish(null);
         });
       })();
 
       const softTimer = setTimeout(() => {
         if (resolved || isStale()) return;
+        if (toolchainBroken) {
+          finish(null);
+          return;
+        }
         void scanAllPorts('soft-timeout', 12).then(() => {
-          if (!resolved && devExited && !isStale()) finish(null);
+          if (!resolved && (devExited || toolchainBroken) && !isStale()) finish(null);
         });
       }, softTimeoutMs);
 
       const hardTimer = setTimeout(() => {
         if (resolved || isStale()) return;
         void (async () => {
-          await scanAllPorts('hard-timeout', 24);
+          if (!toolchainBroken) await scanAllPorts('hard-timeout', 24);
           if (!resolved && !isStale()) finish(null);
         })();
       }, hardTimeoutMs);
