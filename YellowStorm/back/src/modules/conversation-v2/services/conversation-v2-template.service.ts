@@ -1,5 +1,5 @@
 import { randomBytes } from 'crypto';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { isObjectId } from '@common/postgres';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
@@ -33,8 +33,6 @@ export interface MulterFile {
 
 @Injectable()
 export class ConversationV2TemplateService {
-  private readonly logger = new Logger(ConversationV2TemplateService.name);
-
   constructor(
     @Inject(CONVERSATION_V2_TEMPLATE_STORE)
     private readonly templates: ConversationV2TemplateStore,
@@ -70,14 +68,17 @@ export class ConversationV2TemplateService {
     });
 
     try {
-      const coverKey = await this.uploadCover(row.id, cover!);
-      const published = await this.publish.publish(row.id, zip!.buffer);
+      const coverKey = await this.uploadCover(row.id, cover);
+      const published = await this.publish.publish(row.id, zip.buffer);
       await this.templates.update(row.id, { coverImage: coverKey });
       const bound = await this.templates.setRevision(row.id, {
         revisionId: published.revisionId,
         manifestObjectKey: published.manifestObjectKey,
         platformReport: published.platformReport,
       });
+      if (!bound) {
+        throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_FOUND);
+      }
       await this.templates.upsertRevision({
         templateId: row.id,
         revisionId: published.revisionId,
@@ -90,7 +91,7 @@ export class ConversationV2TemplateService {
         throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_PUBLISHED);
       }
       await this.templates.markRevisionsPublished(row.id);
-      return this.toResponse(confirmed, category.name);
+      return await this.toResponse(confirmed, category.name);
     } catch (error) {
       await this.templates.delete(row.id).catch(() => undefined);
       throw error;
@@ -140,10 +141,7 @@ export class ConversationV2TemplateService {
     isSuperAdmin: boolean,
   ): Promise<ConversationV2TemplateRow> {
     const row = await this.requireTemplate(id);
-    if (!isSuperAdmin && (row.status !== 'published' || !row.revisionId)) {
-      throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_PUBLISHED);
-    }
-    if (!row.revisionId) {
+    if (!row.revisionId || (!isSuperAdmin && row.status !== 'published')) {
       throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_PUBLISHED);
     }
     return row;
@@ -182,7 +180,7 @@ export class ConversationV2TemplateService {
   async replaceCover(id: string, cover: MulterFile | undefined): Promise<ITemplateResponse> {
     const current = await this.requireTemplate(id);
     this.assertCover(cover);
-    const coverKey = await this.uploadCover(id, cover!);
+    const coverKey = await this.uploadCover(id, cover);
     const updated = await this.templates.update(id, { coverImage: coverKey });
     if (!updated) throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_FOUND);
     if (current.coverImage && current.coverImage !== coverKey) {
@@ -196,7 +194,7 @@ export class ConversationV2TemplateService {
   async replaceSource(id: string, zip: MulterFile | undefined): Promise<ITemplateResponse> {
     await this.requireTemplate(id);
     this.assertZip(zip);
-    const published = await this.publish.publish(id, zip!.buffer);
+    const published = await this.publish.publish(id, zip.buffer);
     const updated = await this.templates.setRevision(id, {
       revisionId: published.revisionId,
       manifestObjectKey: published.manifestObjectKey,
@@ -234,7 +232,7 @@ export class ConversationV2TemplateService {
   async publishStagingZip(zip: MulterFile | undefined): Promise<{ stagingTemplateId: string }> {
     this.assertZip(zip);
     const stagingTemplateId = randomBytes(12).toString('hex');
-    await this.publish.publish(stagingTemplateId, zip!.buffer);
+    await this.publish.publish(stagingTemplateId, zip.buffer);
     return { stagingTemplateId };
   }
 
@@ -294,8 +292,8 @@ export class ConversationV2TemplateService {
     return objectKey;
   }
 
-  private assertZip(zip: MulterFile | undefined): void {
-    if (!zip?.buffer?.length) {
+  private assertZip(zip: MulterFile | undefined): asserts zip is MulterFile {
+    if (!zip?.buffer.length) {
       throw new BadRequestException(
         ErrorCode.CONVERSATION_V2_TEMPLATE_ZIP_INVALID,
         'A template source ZIP is required.',
@@ -309,8 +307,8 @@ export class ConversationV2TemplateService {
     }
   }
 
-  private assertCover(cover: MulterFile | undefined): void {
-    if (!cover?.buffer?.length || !TEMPLATE_COVER_MIME_TYPES[cover.mimetype]) {
+  private assertCover(cover: MulterFile | undefined): asserts cover is MulterFile {
+    if (!cover?.buffer.length || !TEMPLATE_COVER_MIME_TYPES[cover.mimetype]) {
       throw new BadRequestException(
         ErrorCode.CONVERSATION_V2_TEMPLATE_COVER_INVALID,
         'A PNG, JPEG, WebP, or SVG cover image is required.',

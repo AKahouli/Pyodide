@@ -127,6 +127,19 @@ describe('ConversationV2TemplateService', () => {
     });
   });
 
+  it('rolls back the draft row when the revision binding disappears', async () => {
+    templates.setRevision.mockResolvedValueOnce(null);
+    templates.delete.mockResolvedValueOnce(draftRow);
+
+    await expect(
+      svc.create({ categoryId: 'c1', title: 'Landing' }, ZIP, COVER),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    expect(templates.upsertRevision).not.toHaveBeenCalled();
+    expect(templates.markPublished).not.toHaveBeenCalled();
+    expect(templates.delete).toHaveBeenCalledWith(TPL_ID);
+  });
+
   it('rejects a duplicate title within the category', async () => {
     templates.findByCategoryAndTitle.mockResolvedValueOnce(draftRow);
     await expect(
