@@ -1,4 +1,5 @@
-import { act, render, screen, fireEvent } from '@testing-library/react';
+import { act, render, screen, fireEvent, type RenderResult } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { RightPanel } from './RightPanel';
 import { useConversationV2Store } from '../../store';
@@ -18,6 +19,15 @@ vi.mock('../../hooks/useNodepodPreview', () => ({
   }),
 }));
 
+/** DeployControls reads `?action=clone` via useSearchParams — needs a Router. */
+function renderPanel(): RenderResult {
+  return render(
+    <MemoryRouter>
+      <RightPanel />
+    </MemoryRouter>,
+  );
+}
+
 describe('RightPanel', () => {
   beforeEach(() => {
     useConversationV2Store.getState().closeRightPanel();
@@ -34,19 +44,19 @@ describe('RightPanel', () => {
   });
 
   it('renders nothing when closed', () => {
-    const { container } = render(<RightPanel />);
+    const { container } = renderPanel();
     expect(container).toBeEmptyDOMElement();
   });
 
   it('renders nothing when there is no selected tool', () => {
     useConversationV2Store.setState({ rightPanelMode: 'tool', selectedToolCallId: null });
-    const { container } = render(<RightPanel />);
+    const { container } = renderPanel();
     expect(container).toBeEmptyDOMElement();
   });
 
   it('opens for the selected tool', () => {
     useConversationV2Store.setState({ rightPanelMode: 'tool', selectedToolCallId: 'tc1' });
-    render(<RightPanel />);
+    renderPanel();
     expect(screen.getByText(/rightPanel\.title/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /publish/i })).not.toBeInTheDocument();
   });
@@ -78,7 +88,7 @@ describe('RightPanel', () => {
       },
     });
 
-    render(<RightPanel />);
+    renderPanel();
 
     expect(screen.getByTitle('Generated app')).toBeInTheDocument();
     expect(document.querySelector('iframe')).toHaveAttribute(
@@ -98,7 +108,7 @@ describe('RightPanel', () => {
       },
     });
 
-    render(<RightPanel />);
+    renderPanel();
 
     expect(screen.getByRole('button', { name: /publish/i })).toBeEnabled();
   });
@@ -115,7 +125,7 @@ describe('RightPanel', () => {
       deployStatus: 'deploying',
     });
 
-    render(<RightPanel />);
+    renderPanel();
 
     const deployButton = screen.getByRole('button', { name: /publishing/i });
     expect(deployButton).toBeDisabled();
@@ -132,7 +142,7 @@ describe('RightPanel', () => {
       },
       appViewMode: 'nodepod',
     });
-    render(<RightPanel />);
+    renderPanel();
 
     expect(
       document.querySelector('iframe[src="https://nodepod.local/__virtual__/3000/"]'),
@@ -177,7 +187,7 @@ describe('RightPanel', () => {
       deployedUrl: 'https://apps.example/app-1',
       appViewMode: 'deployed',
     });
-    render(<RightPanel />);
+    renderPanel();
 
     expect(
       document.querySelector('iframe[src="https://apps.example/app-1"]'),
@@ -206,7 +216,7 @@ describe('RightPanel', () => {
       deployedUrl: 'https://apps.example/app-1',
       appViewMode: 'nodepod',
     });
-    render(<RightPanel />);
+    renderPanel();
 
     fireEvent.click(screen.getByRole('tab', { name: /modeDeploy/i }));
 
@@ -228,7 +238,7 @@ describe('RightPanel', () => {
       deployedUrl: null,
       appViewMode: 'nodepod',
     });
-    render(<RightPanel />);
+    renderPanel();
 
     expect(screen.queryByRole('tablist', { name: /modeSwitch/i })).not.toBeInTheDocument();
   });
@@ -240,7 +250,7 @@ describe('RightPanel', () => {
       liveToolCallId: 'live',
       streaming: true,
     });
-    render(<RightPanel />);
+    renderPanel();
     expect(screen.getByRole('button', { name: /jumpToLive/i })).toBeInTheDocument();
   });
 
@@ -251,7 +261,7 @@ describe('RightPanel', () => {
       liveToolCallId: 'live',
       streaming: true,
     });
-    render(<RightPanel />);
+    renderPanel();
     expect(screen.queryByRole('button', { name: /jumpToLive/i })).not.toBeInTheDocument();
   });
 
@@ -262,7 +272,7 @@ describe('RightPanel', () => {
       runtimeStatus: 'browser_active',
     });
 
-    render(<RightPanel />);
+    renderPanel();
 
     expect(document.querySelector('iframe')).toHaveAttribute(
       'src',
@@ -279,7 +289,7 @@ describe('RightPanel', () => {
       runtimeStatus: 'hydrating',
     });
 
-    render(<RightPanel />);
+    renderPanel();
     expect(document.querySelector('iframe')).toBeInTheDocument();
   });
 
@@ -290,13 +300,13 @@ describe('RightPanel', () => {
       appBuildProgress: null,
       runtimeStatus: 'idle',
     });
-    const { container } = render(<RightPanel />);
+    const { container } = renderPanel();
     expect(container).toBeEmptyDOMElement();
   });
 
   it('close button collapses the panel', () => {
     useConversationV2Store.setState({ rightPanelMode: 'tool', selectedToolCallId: 'tc1' });
-    render(<RightPanel />);
+    renderPanel();
     fireEvent.click(screen.getByRole('button', { name: /close/i }));
     expect(useConversationV2Store.getState().rightPanelMode).toBe('closed');
   });
@@ -310,7 +320,7 @@ describe('RightPanel', () => {
         revision: 'app-1',
       },
     });
-    const { container } = render(<RightPanel />);
+    const { container } = renderPanel();
     expect(container.querySelector('.cursor-ew-resize')).toBeInTheDocument();
     expect(container.querySelector('[aria-label], [aria-hidden="true"]')).toBeTruthy();
     expect(container.querySelector('.cursor-ew-resize svg')).toBeInTheDocument();
