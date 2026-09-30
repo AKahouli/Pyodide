@@ -60,7 +60,7 @@ export class AdminTemplateCategoryController {
   ): Promise<ITemplateCategoryResponse> {
     const category = await this.categories.create(dto);
     this.auditLogService.logSuccess({
-      actorId: user._id.toString(),
+      actorId: user._id,
       actorEmail: user.email,
       action: 'conversation_v2_template_categories.create',
       targetId: category.id,
@@ -84,7 +84,7 @@ export class AdminTemplateCategoryController {
   ): Promise<ITemplateCategoryResponse> {
     const category = await this.categories.update(id, dto);
     this.auditLogService.logSuccess({
-      actorId: user._id.toString(),
+      actorId: user._id,
       actorEmail: user.email,
       action: 'conversation_v2_template_categories.update',
       targetId: id,
@@ -111,7 +111,7 @@ export class AdminTemplateCategoryController {
   ): Promise<void> {
     await this.categories.delete(id);
     this.auditLogService.logSuccess({
-      actorId: user._id.toString(),
+      actorId: user._id,
       actorEmail: user.email,
       action: 'conversation_v2_template_categories.delete',
       targetId: id,

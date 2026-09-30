@@ -39,7 +39,10 @@ import { UpdateTemplateDto } from './dto/update-template.dto';
 import { ITemplateResponse } from './interfaces/template-catalog.interface';
 import { TEMPLATE_MAX_ZIP_BYTES } from './constants/template-catalog.constants';
 
-type TemplateFiles = { zip?: MulterFile[]; cover?: MulterFile[] };
+interface TemplateFiles {
+  zip?: MulterFile[];
+  cover?: MulterFile[];
+}
 
 const multipartLimits = {
   limits: { fileSize: TEMPLATE_MAX_ZIP_BYTES, files: 2, fields: 10 },
@@ -76,13 +79,13 @@ export class AdminTemplateController {
   })
   @ApiOperation({ summary: 'Publish a ZIP to Ceph for ephemeral NodePod validation' })
   async publishStaging(
-    @UploadedFiles() files: TemplateFiles,
+    @UploadedFiles() files: TemplateFiles | undefined,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<{ stagingTemplateId: string }> {
     const result = await this.templates.publishStagingZip(files?.zip?.[0]);
     this.auditLogService.logSuccess({
-      actorId: user._id.toString(),
+      actorId: user._id,
       actorEmail: user.email,
       action: 'conversation_v2_templates.staging_publish',
       targetId: result.stagingTemplateId,
@@ -106,7 +109,7 @@ export class AdminTemplateController {
   ): Promise<void> {
     await this.templates.discardStagingZip(stagingTemplateId);
     this.auditLogService.logSuccess({
-      actorId: user._id.toString(),
+      actorId: user._id,
       actorEmail: user.email,
       action: 'conversation_v2_templates.staging_discard',
       targetId: stagingTemplateId,
@@ -154,13 +157,13 @@ export class AdminTemplateController {
   @ApiOperation({ summary: 'Create a template from a source ZIP and a cover image' })
   async create(
     @Body() dto: CreateTemplateDto,
-    @UploadedFiles() files: TemplateFiles,
+    @UploadedFiles() files: TemplateFiles | undefined,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<ITemplateResponse> {
     const template = await this.templates.create(dto, files?.zip?.[0], files?.cover?.[0]);
     this.auditLogService.logSuccess({
-      actorId: user._id.toString(),
+      actorId: user._id,
       actorEmail: user.email,
       action: 'conversation_v2_templates.create',
       targetId: template.id,
@@ -184,7 +187,7 @@ export class AdminTemplateController {
   ): Promise<ITemplateResponse> {
     const template = await this.templates.update(id, dto);
     this.auditLogService.logSuccess({
-      actorId: user._id.toString(),
+      actorId: user._id,
       actorEmail: user.email,
       action: 'conversation_v2_templates.update',
       targetId: id,
@@ -211,13 +214,13 @@ export class AdminTemplateController {
   @ApiParam({ name: 'id', description: 'Template ID' })
   async replaceCover(
     @Param('id') id: string,
-    @UploadedFiles() files: TemplateFiles,
+    @UploadedFiles() files: TemplateFiles | undefined,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<ITemplateResponse> {
     const template = await this.templates.replaceCover(id, files?.cover?.[0]);
     this.auditLogService.logSuccess({
-      actorId: user._id.toString(),
+      actorId: user._id,
       actorEmail: user.email,
       action: 'conversation_v2_templates.replace_cover',
       targetId: id,
@@ -244,13 +247,13 @@ export class AdminTemplateController {
   @ApiParam({ name: 'id', description: 'Template ID' })
   async replaceSource(
     @Param('id') id: string,
-    @UploadedFiles() files: TemplateFiles,
+    @UploadedFiles() files: TemplateFiles | undefined,
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<ITemplateResponse> {
     const template = await this.templates.replaceSource(id, files?.zip?.[0]);
     this.auditLogService.logSuccess({
-      actorId: user._id.toString(),
+      actorId: user._id,
       actorEmail: user.email,
       action: 'conversation_v2_templates.replace_source',
       targetId: id,
@@ -276,7 +279,7 @@ export class AdminTemplateController {
   ): Promise<void> {
     await this.templates.delete(id);
     this.auditLogService.logSuccess({
-      actorId: user._id.toString(),
+      actorId: user._id,
       actorEmail: user.email,
       action: 'conversation_v2_templates.delete',
       targetId: id,
