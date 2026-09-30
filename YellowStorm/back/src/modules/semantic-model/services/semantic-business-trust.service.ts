@@ -42,6 +42,7 @@ interface ReadinessCounts {
   unhealthyMappingCount: string;
   openReviewCount: string;
   /** First data-bearing concept without an identity, so the readiness step can open it. */
+  unsourcedConceptId?: string | null;
   missingIdentityConceptId?: string | null;
   /** First relationship between data-bearing concepts without a way to link records. */
   unmatchedRelationId?: string | null;
@@ -159,12 +160,13 @@ export class SemanticBusinessTrustService {
         (SELECT count(*) FROM semantic_model.identity_rules i JOIN semantic_model.node_types n ON n.id=i.concept_id AND n.version_id=$2 WHERE i.model_id=$1 AND n.system_key IS NULL AND n.record_policy<>'none')::text AS "identityCount",
         (SELECT count(*) FROM semantic_model.relation_types relation ${DATA_RELATION_JOIN} WHERE relation.model_id=$1 AND relation.version_id=$2)::text AS "relationCount",
         (SELECT count(*) FROM semantic_model.relation_resolution_rules rule JOIN semantic_model.relation_types relation ON relation.id=rule.relation_id AND relation.version_id=$2 ${DATA_RELATION_JOIN} WHERE rule.model_id=$1)::text AS "ruleCount",
-        (SELECT count(*) FROM semantic_model.source_mappings m JOIN semantic_model.node_types n ON n.id=m.concept_id AND n.version_id=$2 LEFT JOIN semantic_model.workspace_links w ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id LEFT JOIN semantic_datasource.mapping_health h ON h.model_id=m.model_id AND h.mapping_id=m.id WHERE m.model_id=$1 AND (m.status<>'ready' OR NOT COALESCE(w.enabled,false) OR (CASE WHEN m.scope='workspace' THEN 'healthy' ELSE COALESCE(h.state,'checking') END)<>'healthy'))::text AS "unhealthyMappingCount",
+        (SELECT count(*) FROM semantic_model.source_mappings m JOIN semantic_model.node_types n ON n.id=m.concept_id AND n.version_id=$2 LEFT JOIN semantic_model.workspace_links w ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id LEFT JOIN semantic_datasource.mapping_health h ON h.model_id=m.model_id AND h.mapping_id=m.id WHERE m.model_id=$1 AND (m.status<>'ready' OR NOT COALESCE(w.enabled,false) OR (m.scope<>'workspace' AND h.state IN ('changed','broken','unavailable'))))::text AS "unhealthyMappingCount",
         (SELECT count(*) FROM semantic_model.review_items review WHERE review.model_id=$1 AND review.status='open' AND (
           (review.kind='ambiguous_relation' AND EXISTS (SELECT 1 FROM semantic_model.relation_types relation WHERE relation.version_id=$2 AND relation.id::text=review.target_id)) OR
           (review.kind='source_conflict' AND EXISTS (SELECT 1 FROM semantic_model.node_types node WHERE node.version_id=$2 AND node.id::text=review.details->>'conceptId')) OR
           (review.kind='broken_mapping' AND EXISTS (SELECT 1 FROM semantic_model.source_mappings mapping JOIN semantic_model.node_types node ON node.id=mapping.concept_id AND node.version_id=$2 WHERE mapping.id::text=review.target_id))
         ))::text AS "openReviewCount",
+        (SELECT n.id::text FROM semantic_model.node_types n WHERE n.model_id=$1 AND n.version_id=$2 AND n.system_key IS NULL AND n.record_policy<>'none' AND NOT EXISTS (SELECT 1 FROM semantic_model.source_mappings m JOIN semantic_model.workspace_links w ON w.model_id=m.model_id AND w.workspace_id=m.workspace_id AND w.enabled WHERE m.model_id=$1 AND m.concept_id=n.id AND m.status='ready') ORDER BY n.created_at LIMIT 1) AS "unsourcedConceptId",
         (SELECT n.id::text FROM semantic_model.node_types n WHERE n.model_id=$1 AND n.version_id=$2 AND n.system_key IS NULL AND n.record_policy<>'none' AND NOT EXISTS (SELECT 1 FROM semantic_model.identity_rules i WHERE i.model_id=$1 AND i.concept_id=n.id) ORDER BY n.created_at LIMIT 1) AS "missingIdentityConceptId",
         (SELECT relation.id::text FROM semantic_model.relation_types relation ${DATA_RELATION_JOIN} WHERE relation.model_id=$1 AND relation.version_id=$2 AND NOT EXISTS (SELECT 1 FROM semantic_model.relation_resolution_rules rule WHERE rule.model_id=$1 AND rule.relation_id=relation.id) ORDER BY relation.created_at LIMIT 1) AS "unmatchedRelationId"`,
       [model.id, model.currentDraftVersionId],
@@ -174,18 +176,17 @@ export class SemanticBusinessTrustService {
     const configured = number(counts.dataConceptCount) > 0;
     const areas = [
       this.area('structure', configured, 'Add at least one business concept.'),
-      this.area('sources', configured && number(counts.dataConceptCount) <= number(counts.sourcedConceptCount) && !number(counts.unhealthyMappingCount), 'Map every data-bearing concept to an available source.'),
+      this.area('sources', configured && number(counts.dataConceptCount) <= number(counts.sourcedConceptCount) && !number(counts.unhealthyMappingCount), 'Map every data-bearing concept to an available source.', counts.unsourcedConceptId),
       this.area('identity', configured && number(counts.dataConceptCount) <= number(counts.identityCount), 'Define an identity rule for every data-bearing concept.', counts.missingIdentityConceptId),
       this.area('relationships', configured && number(counts.relationCount) <= number(counts.ruleCount), 'Configure matching for every relationship.', counts.unmatchedRelationId),
       // Source health already counts under `sources`; quality is only about decisions left open.
       this.area('quality', configured && !number(counts.openReviewCount), 'Resolve open reviews.'),
     ];
     const completeAreas = areas.filter((area) => area.complete).length;
-    // The areas are steps: a later one only earns points once every earlier step is done, so an empty
-    // relationship list or review queue cannot make a model with no data look most of the way there.
-    const firstGap = areas.findIndex((area) => !area.complete);
-    const progress = firstGap === -1 ? areas.length : firstGap;
-    return { status: configured ? completeAreas === areas.length ? 'ready' : 'needs_review' : 'not_configured', score: progress * 20, completeAreas, totalAreas: areas.length, areas };
+    // The score says the same thing as "N of 5 areas ready"; a model with no concept scores nothing,
+    // so empty relationship and review lists cannot make it look most of the way there.
+    const score = configured ? Math.round((completeAreas / areas.length) * 100) : 0;
+    return { status: configured ? completeAreas === areas.length ? 'ready' : 'needs_review' : 'not_configured', score, completeAreas, totalAreas: areas.length, areas };
   }
 
   private area(key: string, complete: boolean, message: string, targetId?: string | null) {

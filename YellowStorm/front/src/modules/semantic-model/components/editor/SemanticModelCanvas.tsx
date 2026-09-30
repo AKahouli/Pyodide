@@ -252,7 +252,7 @@ const RelationEdge = memo(function RelationEdge({ id,sourceX,sourceY,targetX,tar
   return <>
     <BaseEdge id={id} path={path} markerEnd={markerEnd} style={{strokeWidth:selected?9:7,strokeDasharray:'0 14',strokeLinecap:'round',stroke:selected?EDGE_COLOR_SELECTED:EDGE_COLOR}} />
     <EdgeLabelRenderer>
-      <div style={{transform:`translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,zIndex:selected?1001:undefined}} className='nodrag nopan group pointer-events-auto absolute flex cursor-pointer flex-col items-center gap-0.5 p-2' onClick={()=>useSemanticModelEditorStore.getState().select(id)}>
+      <div style={{transform:`translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,zIndex:selected?1001:undefined}} className='nodrag nopan group pointer-events-auto absolute flex cursor-pointer flex-col items-center gap-0.5 p-2' onClick={()=>useSemanticModelEditorStore.getState().select(id,{details:true})}>
         {typeof data?.onDelete==='function'&&!selected&&<HoverDelete label={String(data?.deleteLabel??'')} className='-right-3 -top-2' onDelete={()=>(data.onDelete as (id:string)=>void)(id)} />}
         {label&&<span className={cn('max-w-40 truncate rounded-full border bg-background px-2 py-0.5 text-[11px] font-medium shadow-sm',selected?'border-primary text-primary':'border-border text-foreground')}>{label}</span>}
         {cardinality&&<span className='text-[10px] font-medium text-muted-foreground'>{cardinality}</span>}
@@ -546,10 +546,10 @@ export function SemanticModelCanvas({ sourceMappings,identityRules,recordCounts,
         setRecordOptions(options);
       }}
       nodeDragThreshold={5}
-      // A click selects and shows the item's actions on the canvas; a double-click opens it in full.
-      onNodeClick={(event,node)=>{if((event.target as Element).closest('.nodrag')||node.id===quickConcept?.id)return;select(node.id);}}
+      // A click opens the item's details in the side panel, replacing whatever panel was open.
+      onNodeClick={(event,node)=>{if((event.target as Element).closest('.nodrag')||node.id===quickConcept?.id)return;select(node.id,{details:!isDesignerSourceId(node.id)});}}
       onNodeDoubleClick={(event,node)=>{if((event.target as Element).closest('.nodrag')||node.id===quickConcept?.id)return;if(isDesignerSourceId(node.id)){const source=flow.sources.find((item)=>item.id===node.id);if(source)onOpenSource?.(source);return;}openDetails(node.id);}}
-      onEdgeClick={(_,edge)=>{const feed=flow.feeds.find((item)=>item.id===edge.id);if(feed){select(null);const source=flow.sources.find((item)=>item.id===feed.sourceId);if(source)onOpenSource?.(source,feed.mapping);return;}select(edge.id);}} onPaneClick={()=>select(null)}
+      onEdgeClick={(_,edge)=>{const feed=flow.feeds.find((item)=>item.id===edge.id);if(feed){select(null);const source=flow.sources.find((item)=>item.id===feed.sourceId);if(source)onOpenSource?.(source,feed.mapping);return;}select(edge.id,{details:true});}} onPaneClick={()=>select(null)}
       onNodesChange={followDrag}
       onNodeDragStop={(_,node)=>{setDragPositions((current)=>{const next={...current};delete next[node.id];return next;});if(isDesignerSourceId(node.id)){onMoveSource?.(node.id,node.position);return;}if(!graph||node.id===quickConcept?.id)return;const isRecord=mode==='records';if(!isRecord&&graph.nodes.some((item)=>item.id===node.id&&item.systemKey))return;commit({type:'layout.update',positions:[{id:node.id,position:node.position}]},(current)=>isRecord?{...current,records:current.records.map((item)=>item.id===node.id?{...item,position:node.position}:item)}:{...current,nodes:current.nodes.map((item)=>item.id===node.id?{...item,position:node.position}:item)});}}
     ><Background gap={24} size={1} color='hsl(var(--muted-foreground) / 0.18)' /><Controls showInteractive={false} /></ReactFlow>

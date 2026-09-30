@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { AlertTriangle, KeyRound, Loader2, LockKeyhole, Plus, Table2, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,6 +33,7 @@ export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowled
   const node = graph?.nodes.find((item) => item.id === selectedId);
   const relation = graph?.relations.find((item) => item.id === selectedId);
   const record = graph?.records.find((item) => item.id === selectedId);
+  useFocusSection();
   const knowledgePanel = <KnowledgePanel canEdit={canEdit} knowledge={knowledge} targetNodeId={knowledgeTargetId} onClose={onKnowledgeClose} onMapData={(resource)=>onMapData?.(sourceMappingTargetFromResource(resource, knowledgeTargetId ?? undefined))} onMapWorkspace={onMapData?(scope)=>onMapData(sourceMappingTargetFromWorkspace(scope, knowledgeTargetId ?? undefined)):undefined}/>;
   if (knowledgeOpen) return workspace
     ? <aside className='absolute inset-y-0 right-0 z-30 w-[min(26rem,100%)] border-l bg-background shadow-xl'>{knowledgePanel}</aside>
@@ -50,6 +51,25 @@ export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowled
   return workspace
     ? <aside className='min-w-0 flex-1 overflow-y-auto bg-background px-5 pt-6 pb-28 sm:px-8'>{content}</aside>
     : <ResizableSidePanel className='z-20 bg-background shadow-xl xl:shadow-none' bodyClassName='p-5 pb-28'>{content}</ResizableSidePanel>;
+}
+
+/** Brings the part of the details a review item points at into view, and marks it for a moment. */
+function useFocusSection() {
+  const focusRequest = useSemanticModelEditorStore((state) => state.focusRequest);
+  useEffect(() => {
+    const section = focusRequest?.section;
+    if (!section) return;
+    let timer: number | undefined;
+    // The panel renders the selection first; the section exists on the next frame.
+    const frame = window.requestAnimationFrame(() => {
+      const element = document.querySelector<HTMLElement>(`[data-focus-section="${section}"]`);
+      if (!element) return;
+      element.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      element.classList.add('rounded-xl', 'ring-2', 'ring-primary', 'ring-offset-4', 'ring-offset-background');
+      timer = window.setTimeout(() => element.classList.remove('rounded-xl', 'ring-2', 'ring-primary', 'ring-offset-4', 'ring-offset-background'), 2500);
+    });
+    return () => { window.cancelAnimationFrame(frame); window.clearTimeout(timer); };
+  }, [focusRequest]);
 }
 
 /** How many records the concept holds in the data in use, and the way to look through them. */
@@ -142,9 +162,9 @@ function NodeForm({ modelId, node: item,locked,canEdit,onMapData }: Readonly<{ m
     <Field label={t('field.description')}><Textarea value={item.description} disabled={locked||!canEdit} placeholder={t('concept.descriptionPlaceholder')} onChange={(event) => update({ description:event.target.value })} /></Field>
     {!locked && <div className='space-y-2'><Label>{t('aliases.title')}</Label><p className='text-xs text-muted-foreground'>{t('aliases.help', { name: item.label })}</p><AliasChips values={item.aliases ?? []} onChange={(aliases) => update({ aliases })} placeholder={t('aliases.placeholder')} /></div>}</div>
     {!locked&&canEdit && <section className='space-y-3 border-t pt-5'><AttributeEditor attributes={item.attributes} onChange={(attributes) => update({ attributes })} /></section>}
-    {!locked&&modelId && <section className='space-y-3 border-t pt-5'><IdentitySection modelId={modelId} node={item} canEdit={canEdit} /></section>}
+    {!locked&&modelId && <section data-focus-section='identity' className='space-y-3 border-t pt-5'><IdentitySection modelId={modelId} node={item} canEdit={canEdit} /></section>}
     <section className='space-y-3 border-t pt-5'><h3 className='font-semibold'>{t('workspaceUi.relationships')}</h3>{(graph?.relations.filter((relation) => relation.sourceNodeTypeId === item.id || relation.targetNodeTypeId === item.id) ?? []).map((relation) => { const other = graph?.nodes.find((node) => node.id === (relation.sourceNodeTypeId === item.id ? relation.targetNodeTypeId : relation.sourceNodeTypeId)); const labels = relation.sourceNodeTypeId === item.id ? { source: item.label, target: other?.label ?? '' } : { source: other?.label ?? '', target: item.label }; return <button key={relation.id} type='button' onClick={() => select(relation.id)} className='block w-full rounded-xl bg-muted/50 p-3 text-left text-sm hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary'>{relationSentence(relation, labels, item.id, t as (key: string, options?: Record<string, unknown>) => string)}</button>; })}{!graph?.relations.some((relation) => relation.sourceNodeTypeId === item.id || relation.targetNodeTypeId === item.id) && <p className='text-sm text-muted-foreground'>{t('workspaceUi.noRelationships')}</p>}</section>
-    {!locked&&canEdit && <section className='border-t pt-5'><SourceMappingsSection modelId={modelId} conceptId={item.id} onMapData={onMapData} /></section>}
+    {!locked&&canEdit && <section data-focus-section='sources' className='border-t pt-5'><SourceMappingsSection modelId={modelId} conceptId={item.id} onMapData={onMapData} /></section>}
     <details className='border-t pt-5'><summary className='cursor-pointer text-sm font-semibold'>{t('workspaceUi.advanced')}</summary><div className='mt-4 space-y-4'>
     <Field label={t('field.category')}><Select value={item.category} disabled={locked||!canEdit} onValueChange={(category: SemanticNodeType['category']) => update({ category })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value='business_object'>{t('category.business_object')}</SelectItem><SelectItem value='classification'>{t('category.classification')}</SelectItem></SelectContent></Select></Field>
     <Field label={t('field.recordPolicy')}><Select value={item.recordPolicy} disabled={locked||!canEdit} onValueChange={(recordPolicy: SemanticNodeType['recordPolicy']) => update({ recordPolicy })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(['none','optional','expected'] as const).map((policy) => <SelectItem key={policy} value={policy}>{t(`recordPolicy.${policy}`)}</SelectItem>)}</SelectContent></Select></Field>
@@ -255,7 +275,7 @@ function RelationForm({ modelId,relation: item,canEdit }: Readonly<{ modelId: st
   if (!canEdit) return <div className='space-y-4'><div className='space-y-1 rounded-xl bg-muted/50 p-3 text-sm'><p>{relationSentence(item, labels, item.sourceNodeTypeId, translate)}</p>{item.sourceNodeTypeId !== item.targetNodeTypeId && <p>{relationSentence(item, labels, item.targetNodeTypeId, translate)}</p>}</div>{item.description&&<ReadOnlyField label={t('field.description')} value={item.description} />}</div>;
   return <div className='space-y-6'>
     <RelationSentenceEditor relation={item} labels={labels} onChange={update} />
-    <section className='space-y-3 border-t pt-5'><div><h3 className='font-semibold'>{t('relationSentence.linkTitle')}</h3><p className='text-xs text-muted-foreground'>{t('relationSentence.linkHelp')}</p></div><RelationMatchingPanel modelId={modelId} relation={item} /></section>
+    <section data-focus-section='matching' className='space-y-3 border-t pt-5'><div><h3 className='font-semibold'>{t('relationSentence.linkTitle')}</h3><p className='text-xs text-muted-foreground'>{t('relationSentence.linkHelp')}</p></div><RelationMatchingPanel modelId={modelId} relation={item} /></section>
     <details className='border-t pt-5'><summary className='cursor-pointer text-sm font-semibold'>{t('workspaceUi.advanced')}</summary><div className='mt-4 space-y-4'>
       <Field label={t('field.description')}><Textarea value={item.description} onChange={(event) => update({description:event.target.value})} /></Field>
       <div className='flex items-center justify-between'><Label>{t('field.traversable')}</Label><Switch checked={item.traversable} onCheckedChange={(traversable) => update({traversable})} /></div>

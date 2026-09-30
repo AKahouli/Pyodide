@@ -114,6 +114,7 @@ const GovernancePage = React.lazy(() =>
 const SemanticModelCatalogPage = React.lazy(() => import('./modules/semantic-model').then((m) => ({ default: m.SemanticModelCatalogPage })));
 const SemanticModelEditorPage = React.lazy(() => import('./modules/semantic-model').then((m) => ({ default: m.SemanticModelEditorPage })));
 const WorkspaceSemanticModelPage = React.lazy(() => import('./modules/semantic-model').then((m) => ({ default: m.WorkspaceSemanticModelPage })));
+const SemanticModelSettingsPage = React.lazy(() => import('./modules/semantic-model').then((m) => ({ default: m.SemanticModelSettingsPage })));
 
 const AdminDashboard = React.lazy(() =>
   import('./modules/admin/components/AdminDashboard').then((m) => ({ default: m.AdminDashboard }))
@@ -453,6 +454,7 @@ export const router = createHashRouter([
           { path: "models", element: lazyPage(<ModelsPage />) },
           { path: "guardrails", element: lazyPage(<GuardrailsPage />) },
           { path: 'evaluation-settings', element: lazyPage(<PermissionGuard permissions={['admin.*', '*']}><EvaluationSettingsPage /></PermissionGuard>) },
+          { path: 'semantic-model-settings', element: lazyPage(<PermissionGuard permissions={['admin.*', '*']}><SemanticModelSettingsPage /></PermissionGuard>) },
           { path: "tools", element: lazyPage(<ToolsPage />) },
           { path: "skills", element: lazyPage(<SkillsPage />) },
           { path: "connectors", element: lazyPage(<ConnectorsPage />) },

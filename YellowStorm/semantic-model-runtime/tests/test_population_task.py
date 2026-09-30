@@ -237,7 +237,7 @@ async def test_task_reports_progress_source_by_source(monkeypatch: pytest.Monkey
     from app.workers.population_tasks import PopulationProgress
 
     async def populate(_connection, entry, _concept, _actor, **kwargs):
-        assert kwargs["cache"] == "cache"
+        assert kwargs["cache"] is cache
         return {"entities": [{"entityId": "crm:doc", "conceptId": entry["conceptId"],
                               "namespace": "crm", "identity": {"customer_id": "c-3"},
                               "label": "C-3", "attributes": {}, "provenance": {"sources": []}}],
@@ -255,6 +255,7 @@ async def test_task_reports_progress_source_by_source(monkeypatch: pytest.Monkey
         "mappingVersion": "map-v1",
     }]
     reports: list[dict] = []
+    cache = MemoryCache()
 
     async def report(snapshot: dict) -> None:
         reports.append(snapshot)
@@ -262,7 +263,7 @@ async def test_task_reports_progress_source_by_source(monkeypatch: pytest.Monkey
     outcome = await run_population_for_task(
         command(sources=sources), fetch=fake_fetch, prepare=fake_prepare, query=fake_query,
         index_connection=object(), progress=PopulationProgress(report, min_interval=0),
-        extraction_cache="cache")
+        extraction_cache=cache)
     assert outcome["ok"] is True
     assert reports[0] == {**reports[0], "phase": "reading", "total": 2, "done": 0}
     finished = [item for item in reports if item["done"] == 2][0]
@@ -386,13 +387,21 @@ def test_summarize_gaps_groups_missing_values_and_links():
                                    "identity": {"keyComponents": ["id"]}}]}
     outcome = {"entities": [{"conceptId": "c1", "attributes": {"name": "A"}},
                             {"conceptId": "c1", "attributes": {"name": "B", "city": "Paris"}}],
-               "gaps": [{"kind": "unresolved_reference", "relationId": "r1"},
+               "gaps": [{"kind": "unresolved_reference", "relationId": "r1", "sourceEntityId": "e1",
+                         "referenceField": "customer_id", "referenceValue": "C099", "targetField": "id"},
                         {"kind": "unresolved_reference", "relationId": "r1"},
-                        {"kind": "missing_identity", "conceptId": "c1"}]}
+                        {"kind": "missing_identity", "conceptId": "c1", "rowNumber": 4, "field": "id",
+                         "assetRef": {"workspaceId": "w1", "assetId": "a1", "assetVersionId": "v1"},
+                         "values": {"name": "C"}}]}
     assert summarize_gaps(outcome, specification) == {
         "missingValues": [{"conceptId": "c1", "attribute": "city", "missing": 1, "total": 2}],
         "unresolvedLinks": [{"relationId": "r1", "kind": "unresolved_reference", "count": 2}],
-        "other": [{"conceptId": "c1", "kind": "missing_identity", "count": 1}],
+        "other": [{"conceptId": "c1", "kind": "missing_identity", "count": 1, "fields": ["id"]}],
+        # Examples keep where each gap comes from; a link gap without its record is only counted.
+        "rowSamples": [{"conceptId": "c1", "kind": "missing_identity", "field": "id", "rowNumber": 4,
+                        "asset": {"workspaceId": "w1", "assetId": "a1"}, "values": {"name": "C"}}],
+        "linkSamples": [{"relationId": "r1", "kind": "unresolved_reference", "sourceEntityId": "e1",
+                         "referenceField": "customer_id", "referenceValue": "C099", "targetField": "id"}],
     }
 
 
@@ -548,3 +557,64 @@ async def test_a_partial_run_keeps_the_graph_in_use(monkeypatch: pytest.MonkeyPa
     assert completed["result"]["servingDecision"] == decision
     assert completed["result"]["dataRevisionId"] == "rev-2"
     assert ("boundEnvironment" in completed["result"]) is bool(finalized)
+
+
+class MemoryCache:
+    """Stands in for the stored readings: a JSON round trip, as the database does."""
+
+    def __init__(self):  # type: ignore[no-untyped-def]
+        self.rows: dict = {}
+
+    async def get(self, key):  # type: ignore[no-untyped-def]
+        import json
+        return json.loads(self.rows[key]) if key in self.rows else None
+
+    async def put(self, key, *, concept_id, asset_id, output):  # type: ignore[no-untyped-def]
+        import json
+        self.rows[key] = json.dumps(output, default=str)
+
+
+@pytest.mark.asyncio
+async def test_unchanged_sheet_reuses_its_reading():
+    from app.workers.population_tasks import PopulationProgress
+
+    cache = MemoryCache()
+    prepared: list[int] = []
+
+    def counting_prepare(*args, **kwargs):  # type: ignore[no-untyped-def]
+        prepared.append(1)
+        return fake_prepare(*args, **kwargs)
+
+    first = await run_population_for_task(command(), fetch=fake_fetch, prepare=counting_prepare,
+                                          query=fake_query, extraction_cache=cache)
+    progress = PopulationProgress()
+    second = await run_population_for_task(command(), fetch=fake_fetch, prepare=counting_prepare,
+                                           query=fake_query, extraction_cache=cache, progress=progress)
+    assert prepared == [1]
+    assert progress.reused == 1 and progress.recent[0]["reused"] is True
+    assert second["entities"] == first["entities"]
+    assert second["assertions"] == first["assertions"]
+    assert second["sourceObservations"] == first["sourceObservations"]
+
+    # A changed mapping reads the sheet again.
+    changed = command()
+    changed["payload"]["sources"][0]["mappingVersion"] = "map-v2"
+    await run_population_for_task(changed, fetch=fake_fetch, prepare=counting_prepare,
+                                  query=fake_query, extraction_cache=cache)
+    assert prepared == [1, 1]
+
+
+def test_compare_revisions_counts_changes_and_names_files_no_longer_read():
+    from app.workers.population_tasks import compare_revisions
+
+    def entity(entity_id, asset, **attributes):  # type: ignore[no-untyped-def]
+        return {"entityId": entity_id, "label": entity_id, "attributes": attributes,
+                "provenance": {"sources": [{"assetRef": {"assetId": asset}}]}}
+
+    before = [entity("a", "sheet", name="A"), entity("b", "sheet", name="B"),
+              entity("gone", "old.pdf", title="T"), entity("typed", "manual:1", name="X")]
+    after = [entity("a", "sheet", name="A"), entity("b", "sheet", name="B2"),
+             entity("new", "sheet", name="N")]
+    assert compare_revisions(before, after, {"sheet"}) == {
+        "added": 1, "removed": 2, "changed": 1,
+        "removedSources": [{"assetId": "old.pdf", "records": 1}]}

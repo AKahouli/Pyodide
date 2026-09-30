@@ -59,6 +59,20 @@ def match_value(value: Any, strategy: str) -> str | None:
     raise PopulationError("invalid_matching_strategy")
 
 
+MAX_SAMPLE_FIELDS = 20
+MAX_SAMPLE_TEXT = 200
+
+
+def row_sample(row: dict[str, Any]) -> dict[str, Any]:
+    """What a row held, bounded, so a person can see why it was left out."""
+    sample: dict[str, Any] = {}
+    for key, value in row.items():
+        if key.startswith("_") or len(sample) >= MAX_SAMPLE_FIELDS:
+            continue
+        sample[key] = value[:MAX_SAMPLE_TEXT] if isinstance(value, str) else value
+    return sample
+
+
 def populate_concept_rows(compiled: dict[str, Any], rows: list[dict[str, Any]],
                           source_ref: dict[str, Any]) -> dict[str, Any]:
     """Map prepared rows to entities and source assertions for one concept.
@@ -95,7 +109,9 @@ def populate_concept_rows(compiled: dict[str, Any], rows: list[dict[str, Any]],
             normalized = normalize_identity_value(row.get(component))
             if normalized is None:
                 gaps.append({"kind": "missing_identity", "conceptId": compiled["conceptId"],
-                             "rowNumber": row_number, "detail": f"identity component '{component}' is empty"})
+                             "rowNumber": row_number, "detail": f"identity component '{component}' is empty",
+                             "field": component, "assetRef": source_ref.get("assetRef"),
+                             "values": row_sample(row)})
                 missing = True
                 break
             identity[component] = normalized
@@ -245,7 +261,7 @@ def match_relationships(compiled: dict[str, Any], source_entities: list[dict[str
         reference = match_value(raw, strategy)
         if reference is None:
             gaps.append({"kind": "missing_reference", "relationId": compiled["relationId"],
-                         "sourceEntityId": source["entityId"],
+                         "sourceEntityId": source["entityId"], "referenceField": reference_field,
                          "detail": f"reference field '{reference_field}' is empty"})
             continue
         if from_identity:
@@ -254,7 +270,9 @@ def match_relationships(compiled: dict[str, Any], source_entities: list[dict[str
             candidates = exact_targets.get(reference, []) + identity_targets.get(reference.lower(), [])
         if not candidates:
             gaps.append({"kind": "unresolved_reference", "relationId": compiled["relationId"],
-                         "sourceEntityId": source["entityId"], "detail": "no approved target matches"})
+                         "sourceEntityId": source["entityId"], "referenceField": reference_field,
+                         "referenceValue": raw[:MAX_SAMPLE_TEXT] if isinstance(raw, str) else raw,
+                         "targetField": target_field, "detail": "no approved target matches"})
         elif len(candidates) > 1 and compiled["cardinality"] not in ("one_to_many", "many_to_many"):
             gaps.append({"kind": "ambiguous_reference", "relationId": compiled["relationId"],
                          "sourceEntityId": source["entityId"],

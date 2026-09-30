@@ -33,6 +33,22 @@ describe('RunProgress', () => {
     expect(screen.queryByText('stale.pdf')).not.toBeInTheDocument();
   });
 
+  it('shows what the run changed, and the files it no longer read', () => {
+    render(<RunProgress running={false} progress={{ phase: 'saving', total: 1, done: 1, reused: 1, records: 2, gaps: 0, current: null, recent: [],
+      changes: { added: 0, removed: 1, changed: 2, removedSources: [{ assetId: 'doc-1', name: 'amendment-01.pdf', records: 1 }] } }} />);
+    expect(screen.getByText('−population.progress.removed')).toBeInTheDocument();
+    expect(screen.getByText('population.progress.changed')).toBeInTheDocument();
+    expect(screen.queryByText('+population.progress.added')).not.toBeInTheDocument();
+    expect(screen.getByText('amendment-01.pdf')).toBeInTheDocument();
+    expect(screen.getByText('population.progress.recordsRemoved')).toBeInTheDocument();
+  });
+
+  it('says when a run changed nothing', () => {
+    render(<RunProgress running={false} progress={{ phase: 'saving', total: 1, done: 1, reused: 1, records: 2, gaps: 0, current: null, recent: [],
+      changes: { added: 0, removed: 0, changed: 0, removedSources: [] } }} />);
+    expect(screen.getByText('population.progress.noChanges')).toBeInTheDocument();
+  });
+
   it('rounds durations to what a person reads', () => {
     expect(durationParts(12.4)).toEqual({ unit: 'seconds', count: 12 });
     expect(durationParts(600)).toEqual({ unit: 'minutes', count: 10 });

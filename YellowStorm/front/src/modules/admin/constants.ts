@@ -2,7 +2,7 @@
  * Admin Module Constants
  */
 
-import { Users, Shield, FileText, CreditCard, BarChart3, Settings, ScrollText, Flag, Cpu, Wrench, Puzzle, Bot, KeyRound, Plug, Cable, Palette, Sparkles, FolderCog, Wand2, MessageSquare, Gauge } from 'lucide-react';
+import { Users, Shield, FileText, CreditCard, BarChart3, Settings, ScrollText, Flag, Cpu, Wrench, Puzzle, Bot, KeyRound, Plug, Cable, Palette, Sparkles, FolderCog, Wand2, MessageSquare, Gauge, Network } from 'lucide-react';
 import type { AdminMenuItem } from './types';
 import type { FeatureVisibility } from './types';
 import type { ModuleTranslationKey } from '@/modules/localization';
@@ -252,6 +252,16 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     permissions: ['admin.*', '*'],
     description: 'Configure runtime answer reliability evaluation',
     descriptionKey: 'menu.evaluationSettings.description',
+  },
+  {
+    id: 'semantic-model-settings',
+    label: 'Semantic models',
+    labelKey: 'menu.semanticModelSettings.label',
+    path: '/admin/semantic-model-settings',
+    icon: Network,
+    permissions: ['admin.*', '*'],
+    description: 'Set how documents are read into semantic models',
+    descriptionKey: 'menu.semanticModelSettings.description',
   },
   {
     id: 'agent-types',

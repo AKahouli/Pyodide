@@ -13,6 +13,9 @@ export type SemanticOperationGroup = SemanticGraphOperation[];
 export type HistoryEntry =
   | { kind: 'graph'; before: SemanticGraph; after: SemanticGraph; operations: SemanticOperationGroup }
   | { kind: 'action'; undo: () => Promise<void>; redo: () => Promise<void> };
+/** Parts of the details panel a review item can point at. */
+export type FocusSection = 'identity' | 'sources' | 'matching';
+
 interface SemanticModelEditorState {
   graph: SemanticGraph | null;
   mode: EditorMode;
@@ -26,7 +29,8 @@ interface SemanticModelEditorState {
   historyBusy: boolean;
   validation: ValidationIssue[];
   /** Last request to bring an element into view; `at` makes repeat requests for the same id distinct. */
-  focusRequest: { id: string; at: number } | null;
+  /** The part of the details to bring into view: where a review item is fixed. */
+  focusRequest: { id: string; at: number; section?: FocusSection } | null;
   /** Counts every selection, even of what is already selected, so panels can follow each click. */
   selectionTick: number;
   saveStatus: SaveStatus;
@@ -38,7 +42,7 @@ interface SemanticModelEditorState {
   select: (id: string | null, options?: { details?: boolean }) => void;
   openDetails: (open: boolean) => void;
   /** Select an element and bring it into view on the canvas. */
-  focus: (id: string) => void;
+  focus: (id: string, section?: FocusSection) => void;
   commit: (operation: SemanticGraphOperation, update: (graph: SemanticGraph) => SemanticGraph) => void;
   commitBatch: (operations: SemanticOperationGroup, update: (graph: SemanticGraph) => SemanticGraph) => void;
   replaceGraph: (graph: SemanticGraph) => void;
@@ -95,7 +99,7 @@ export const semanticModelEditorInitialState = {
   redoStack: [] as HistoryEntry[],
   historyBusy: false,
   validation: [] as ValidationIssue[],
-  focusRequest: null as { id: string; at: number } | null,
+  focusRequest: null as { id: string; at: number; section?: FocusSection } | null,
   selectionTick: 0,
   saveStatus: 'saved' as SaveStatus,
   saveInFlight: false,
@@ -172,7 +176,7 @@ export const useSemanticModelEditorStore = create<SemanticModelEditorState>()(de
   select: (selectedId, options) => set((state) => ({ selectedId, detailsOpen: selectedId ? Boolean(options?.details) || state.detailsOpen : false, selectionTick: state.selectionTick + 1 })),
   openDetails: (detailsOpen) => set({ detailsOpen }),
   // Focusing is a request to look at something in full (a finding, a new element), so it opens its details.
-  focus: (id) => set((state) => ({ selectedId: id, detailsOpen: true, focusRequest: { id, at: Date.now() }, selectionTick: state.selectionTick + 1 })),
+  focus: (id, section) => set((state) => ({ selectedId: id, detailsOpen: true, focusRequest: { id, at: Date.now(), section }, selectionTick: state.selectionTick + 1 })),
   commit: (operation, update) => get().commitBatch([operation], update),
   commitBatch: (operations, update) => set((state) => {
     if (!state.graph || !operations.length) return state;

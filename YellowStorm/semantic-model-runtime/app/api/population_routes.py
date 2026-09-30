@@ -411,3 +411,48 @@ async def commit_manual_snapshot(model_id: str, command: ManualCommitCommand, re
     except manual_store.ManualSnapshotError as exc:
         raise HTTPException(status_code=409, detail=exc.code) from exc
     return {"snapshotId": snapshot_id, "reused": not created}
+
+
+@router.post("/document-preview", status_code=status.HTTP_200_OK)
+async def preview_document_fields(body: dict, request: Request) -> dict[str, object]:
+    """Read one document's extracted fields exactly as a run would, and say for each one how it
+    was read or why it was not. Nothing is stored and no cache is used or filled."""
+    from app.population.document import read_document_values, resolve_indexed_document
+    from app.population.document_rules import RuleError, normalize_ai_settings, normalize_rules
+
+    actor = body.get("actorUserId")
+    entry = body.get("entry")
+    if not isinstance(actor, str) or not actor or not isinstance(entry, dict):
+        raise HTTPException(status_code=422, detail="invalid_preview")
+    source = entry.get("source")
+    mappings = entry.get("fieldMappings")
+    if (not isinstance(source, dict) or not source.get("assetId") or not isinstance(mappings, list)
+            or not 0 < len(mappings) <= 25 or not all(isinstance(item, dict) for item in mappings)):
+        raise HTTPException(status_code=422, detail="invalid_preview")
+    try:
+        mappings = [{**item, "rules": normalize_rules(item.get("rules"))} for item in mappings
+                    if item.get("mode") != "ignore"]
+        normalize_ai_settings((entry.get("options") or {}).get("aiSettings"))
+    except RuleError as exc:
+        raise HTTPException(status_code=422, detail=f"invalid_rules: {exc}") from exc
+    if any(item.get("mode") == "extract" and not str(item.get("sourceField") or "").strip() for item in mappings):
+        raise HTTPException(status_code=422, detail="invalid_preview")
+    pool = getattr(request.app.state, "index_pool", None)
+    if pool is None:
+        raise HTTPException(status_code=503, detail="index_unavailable")
+    entry = {**entry, "fieldMappings": mappings, "mappingVersion": entry.get("mappingVersion") or "preview",
+             "conceptId": entry.get("conceptId") or "preview"}
+    resolved = await resolve_indexed_document(pool, entry, actor)
+    if "gap" in resolved:
+        gap = resolved["gap"]["gaps"][0]
+        return {"status": gap["kind"], "detail": gap.get("detail"), "fields": {}}
+    read = await read_document_values(
+        pool, entry, resolved["assetRef"], resolved["capabilities"], resolved["candidate"]["documentPk"],
+        model_id=str(body.get("modelId") or ""), ai_extraction=body.get("aiExtraction"))
+    fields: dict[str, object] = {}
+    for key, outcome in read["fields"].items():
+        found = key in read["values"]
+        evidence = read["evidence"].get(key) or {}
+        fields[key] = {**outcome, **({"value": read["values"][key], "page": evidence.get("pageNumber"),
+                                      "quote": read["quotes"].get(key)} if found else {})}
+    return {"status": "read", "fields": fields, "aiSent": read["aiSent"]}

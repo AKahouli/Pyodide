@@ -114,6 +114,17 @@ describe('SemanticPopulationRefreshService', () => {
     await expect(service.getJob('u-1', 'model-1', 'j-2')).rejects.toThrow('Population job not found');
   });
 
+  it('names the files a run no longer read', async () => {
+    const { runtime, documents, service } = setup();
+    Object.assign(documents, { findByIds: jest.fn(async () => [{ id: 'doc-1', originalName: 'amendment-01.pdf' }]) });
+    runtime.getJob.mockResolvedValueOnce({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'completed',
+      progress: { done: 2, changes: { added: 0, removed: 1, changed: 0, removedSources: [{ assetId: 'doc-1', records: 1 }, { assetId: 'doc-gone', records: 2 }] } } } as any);
+    const job = await service.getJob('u-1', 'model-1', 'j-1') as any;
+    expect(job.progress.changes.removedSources).toEqual([
+      { assetId: 'doc-1', records: 1, name: 'amendment-01.pdf' }, { assetId: 'doc-gone', records: 2 }]);
+    expect(job.progress.done).toBe(2);
+  });
+
   it('shapes bound runtime entities as the existing Records contract', async () => {
     const { service } = setup();
     const result = await service.boundRecords('u-1', 'model-1', 25);
@@ -298,7 +309,7 @@ describe('SemanticPopulationRefreshService', () => {
       })),
       relationBindings: command.payload.relationBindings,
       aiExtraction: command.payload.aiExtraction,
-      populationEngineVersion: 'r1-mvp-5',
+      populationEngineVersion: 'r1-mvp-7',
     }));
   });
 

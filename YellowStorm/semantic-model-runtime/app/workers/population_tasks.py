@@ -17,6 +17,7 @@ import json
 from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
 from app.population.compiler import (canonical_spec_hash, compile_specification,
                                      filter_fields, validate_specification)
+from app.population.document_rules import RuleError, normalize_ai_settings, normalize_rules
 from app.population.serving_policy import blocking_gap_kinds, serving_decision
 from app.population.tabular import (match_relationships, merge_concept_results,
                                     normalize_identity_value, populate_concept_rows)
@@ -31,12 +32,16 @@ MAX_SOURCES_PER_TASK = 5000
 # How long each progress report keeps the lease alive: a long run stays owned while it reports.
 PROGRESS_LEASE_SECONDS = 900
 PROGRESS_RECENT = 8
+# Bump when the way a sheet is read changes, so earlier readings are not reused.
+TABULAR_READ_VERSION = "t1"
+# A sheet this large is read again each run rather than kept: its reading would be a large row.
+TABULAR_CACHE_MAX_RECORDS = 20000
 MAX_TOTAL_ENTITIES = 10000
 MAX_TOTAL_ASSERTIONS = 50000
 MAX_TOTAL_RELATIONSHIPS = 20000
 # Carries a manual row's display name; never a model attribute, so never asserted.
 MANUAL_LABEL_FIELD = "__manual_label"
-POPULATION_ENGINE_VERSION = "r1-mvp-5"
+POPULATION_ENGINE_VERSION = "r1-mvp-7"
 
 
 def population_execution_fingerprint(spec_hash: str, sources: list[dict],
@@ -91,11 +96,16 @@ class PopulationProgress:
         self.gaps = 0
         self.current: dict | None = None
         self.recent: list[dict] = []
+        # What the saved result changed in the data in use, once it is known.
+        self.changes: dict | None = None
 
     def snapshot(self) -> dict:
-        return {"phase": self.phase, "total": self.total, "done": self.done, "reused": self.reused,
-                "records": self.records, "gaps": self.gaps, "current": self.current,
-                "recent": list(self.recent), "startedAt": self.started_at}
+        snapshot = {"phase": self.phase, "total": self.total, "done": self.done, "reused": self.reused,
+                    "records": self.records, "gaps": self.gaps, "current": self.current,
+                    "recent": list(self.recent), "startedAt": self.started_at}
+        if self.changes is not None:
+            snapshot["changes"] = self.changes
+        return snapshot
 
     async def send(self, *, force: bool = False) -> None:
         if self._report is None:
@@ -218,9 +228,18 @@ def run_population_for_payload(command_dump: dict) -> dict:
                 if any(item.get("mode") == "metadata"
                        and item.get("sourceField") not in metadata_fields for item in active):
                     return {"ok": False, "errorCode": "invalid_document_mapping"}
-                if any(item.get("extractionStrategy") not in (None, "deterministic", "ai")
+                if any(item.get("extractionStrategy") not in (None, "deterministic", "ai", "rules_then_ai")
                        or (item.get("extractionStrategy") is not None
                            and item.get("mode") != "extract") for item in active):
+                    return {"ok": False, "errorCode": "invalid_document_mapping"}
+                # Rules are checked once here, so a bad pattern fails the run before any reading.
+                try:
+                    active = [{**item, "rules": normalize_rules(item["rules"])}
+                              if item.get("rules") is not None else item for item in active]
+                    if any(item.get("rules") is not None and item.get("mode") != "extract" for item in active):
+                        raise RuleError("rules only apply to extracted fields")
+                    normalize_ai_settings((entry.get("options") or {}).get("aiSettings"))
+                except RuleError:
                     return {"ok": False, "errorCode": "invalid_document_mapping"}
                 mapped_attributes = {item["targetAttribute"] for item in active}
                 if len(mapped_attributes) != len(active):
@@ -397,8 +416,36 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                 asset_ref = resolve_asset_ref(source)
             except ValueError as exc:
                 return {"ok": False, "errorCode": str(exc) or "invalid_source"}
+            # A sheet whose bytes, mapping and concept are unchanged yields what it yielded last time.
+            cache_key = None
+            if extraction_cache is not None:
+                from app.persistence.extraction_cache import extraction_cache_key
+                content = data if isinstance(data, (bytes, bytearray)) else str(data).encode("utf-8")
+                cache_key = extraction_cache_key({
+                    "engine": TABULAR_READ_VERSION, "modelId": str(command_dump.get("modelId") or ""),
+                    "concept": compiled["concepts"][entry["conceptId"]], "conceptId": entry["conceptId"],
+                    "columnMapping": entry["columnMapping"], "constantMapping": entry.get("constantMapping", {}),
+                    "options": options, "mappingVersion": entry["mappingVersion"],
+                    "labelField": entry.get("labelField"), "assetRef": asset_ref,
+                    "content": hashlib.sha256(content).hexdigest()})
+                cached = await extraction_cache.get(cache_key)
+                if cached is not None and isinstance(cached.get("outputs"), list):
+                    for output in cached["outputs"]:
+                        per_concept.setdefault(entry["conceptId"], []).append(output)
+                    if not cached.get("completeEnumeration", True):
+                        complete_enumeration = False
+                    observation = cached.get("observation") or {}
+                    if isinstance(observation.get("contentHash"), str) and observation["contentHash"]:
+                        dataset_fingerprints.add(observation["contentHash"])
+                    observations.append(observation)
+                    await progress.read(entry, records=sum(len(output["entities"]) for output in cached["outputs"]),
+                                        gaps=sum(len(output["gaps"]) for output in cached["outputs"]),
+                                        status="read", reused=True)
+                    continue
             temp_root = os.environ.get("SEMANTIC_TASK_TEMP_DIR")
             records = gaps = 0
+            outputs: list[dict] = []
+            sheet_complete = True
             try:
                 with tempfile.TemporaryDirectory(prefix="semantic-populate-",
                                                  dir=temp_root) as directory:
@@ -428,13 +475,14 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                                            "labelField": entry.get("labelField"),
                                            "constantFields": list(constants)})
                         per_concept.setdefault(entry["conceptId"], []).append(output)
+                        outputs.append(output)
                         records += len(output["entities"])
                         gaps += len(output["gaps"])
                         offset += page["returnedRows"]
                         if page["returnedRows"] < QUERY_ROW_LIMIT:
                             break
                         if offset >= MAX_TOTAL_ASSERTIONS:
-                            complete_enumeration = False
+                            complete_enumeration = sheet_complete = False
                             break
             except ValueError as exc:
                 return {"ok": False, "errorCode": str(exc) or "parser_failed"}
@@ -443,13 +491,21 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             fingerprint = manifest.get("contentHash") if isinstance(manifest, dict) else None
             if isinstance(fingerprint, str) and fingerprint:
                 dataset_fingerprints.add(fingerprint)
-            observations.append({
+            observation = {
                 "assetRef": {key: asset_ref[key] for key in
                              ("workspaceId", "assetId", "assetVersionId") if key in asset_ref},
                 "datasetId": manifest.get("datasetId"),
                 "contentHash": manifest.get("contentHash"),
                 "sizeBytes": manifest.get("sizeBytes"),
-                "rowCount": manifest.get("rowCount")})
+                "rowCount": manifest.get("rowCount")}
+            observations.append(observation)
+            if cache_key is not None and records <= TABULAR_CACHE_MAX_RECORDS:
+                sheet = (options or {}).get("sheetName") or ""
+                await extraction_cache.put(
+                    cache_key, concept_id=entry["conceptId"],
+                    asset_id=f"{asset_ref.get('assetId') or ''}#{sheet}",
+                    output={"outputs": outputs, "observation": observation,
+                            "completeEnumeration": sheet_complete})
             await progress.read(entry, records=records, gaps=gaps, status="read")
         return None
 
@@ -614,6 +670,50 @@ def summarize_job_result(revision_id: str, outcome: dict, persisted: dict) -> di
     }
 
 
+def _entity_assets(entity: dict) -> set[str]:
+    sources = (entity.get("provenance") or {}).get("sources") or []
+    return {str(asset) for source in sources
+            if (asset := (source.get("assetRef") or {}).get("assetId"))}
+
+
+def compare_revisions(before: list[dict], after: list[dict], current_assets: set[str]) -> dict:
+    """What a new result changes in the data in use: records added, removed and changed, and
+    the files that are no longer read with how many records came from them."""
+    old = {entity["entityId"]: entity for entity in before}
+    new = {entity["entityId"]: entity for entity in after}
+    changed = sum(1 for entity_id, entity in new.items() if entity_id in old
+                  and (entity.get("attributes") != old[entity_id].get("attributes")
+                       or entity.get("label") != old[entity_id].get("label")))
+    gone: dict[str, int] = {}
+    for entity in before:
+        for asset in _entity_assets(entity):
+            # Typed records are not files: they come and go with the records themselves.
+            if asset not in current_assets and not asset.startswith("manual:"):
+                gone[asset] = gone.get(asset, 0) + 1
+    return {"added": sum(1 for entity_id in new if entity_id not in old),
+            "removed": sum(1 for entity_id in old if entity_id not in new),
+            "changed": changed,
+            "removedSources": [{"assetId": asset, "records": count} for asset, count in sorted(gone.items())]}
+
+
+async def changes_from_data_in_use(pool, command_dump: dict, revision_id: str,  # type: ignore[no-untyped-def]
+                                   sources: list[dict]) -> dict | None:
+    """Compare a saved result with the draft data in use; None when there is nothing to compare with."""
+    from app.persistence.population_store import get_active_binding, list_revision_entities
+
+    model_id = str(command_dump.get("modelId") or command_dump.get("model_id") or "")
+    current = await get_active_binding(pool, model_id, "draft") if model_id else None
+    if current is None:
+        return None
+    previous_id = current["data_revision_id"]
+    if previous_id == revision_id:
+        return {"added": 0, "removed": 0, "changed": 0, "removedSources": []}
+    current_assets = {str(asset) for entry in sources
+                      if (asset := (entry.get("source") or {}).get("assetId"))}
+    return compare_revisions(await list_revision_entities(pool, previous_id),
+                             await list_revision_entities(pool, revision_id), current_assets)
+
+
 def is_whole_model_build(command_dump: dict) -> bool:
     payload = command_dump.get("payload", {})
     return payload.get("purpose") == "build" and (payload.get("scope") or {}).get("kind") == "model"
@@ -652,6 +752,14 @@ async def finalize_whole_model_build(pool, command_dump: dict,  # type: ignore[n
 
 
 MAX_GAP_GROUPS = 200
+# A few examples of each gap, with where they come from, so a person can look at the rows themselves.
+MAX_GAP_SAMPLES_PER_GROUP = 25
+MAX_GAP_SAMPLES = 500
+
+
+def _asset(gap: dict) -> dict:
+    ref = gap.get("assetRef") or {}
+    return {key: ref[key] for key in ("workspaceId", "assetId") if ref.get(key) is not None}
 
 
 def summarize_gaps(outcome: dict, specification: dict) -> dict:
@@ -676,21 +784,40 @@ def summarize_gaps(outcome: dict, specification: dict) -> dict:
                                        "missing": missing, "total": len(members)})
     links: dict[tuple, int] = {}
     other: dict[tuple, int] = {}
+    fields: dict[tuple, set] = {}
+    row_samples: list[dict] = []
+    link_samples: list[dict] = []
     for gap in outcome.get("gaps", []):
         kind = gap.get("kind")
         if gap.get("relationId") is not None:
             key = (gap["relationId"], kind)
             links[key] = links.get(key, 0) + 1
+            if links[key] <= MAX_GAP_SAMPLES_PER_GROUP and len(link_samples) < MAX_GAP_SAMPLES and gap.get("sourceEntityId"):
+                link_samples.append({"relationId": gap["relationId"], "kind": kind,
+                                     "sourceEntityId": gap["sourceEntityId"],
+                                     **{name: gap[name] for name in ("referenceField", "referenceValue", "targetField")
+                                        if name in gap}})
         else:
             key = (gap.get("conceptId"), kind)
             other[key] = other.get(key, 0) + 1
+            if gap.get("field"):
+                fields.setdefault(key, set()).add(gap["field"])
+            if other[key] <= MAX_GAP_SAMPLES_PER_GROUP and len(row_samples) < MAX_GAP_SAMPLES:
+                row_samples.append({"conceptId": gap.get("conceptId"), "kind": kind,
+                                    **({"field": gap["field"]} if gap.get("field") else {}),
+                                    **({"rowNumber": gap["rowNumber"]} if gap.get("rowNumber") is not None else {}),
+                                    **({"asset": _asset(gap)} if _asset(gap) else {}),
+                                    **({"values": gap["values"]} if gap.get("values") else {})})
     return {
         "missingValues": missing_values[:MAX_GAP_GROUPS],
         "unresolvedLinks": [{"relationId": r, "kind": k, "count": c}
                             for (r, k), c in sorted(links.items())][:MAX_GAP_GROUPS],
-        "other": [{"conceptId": cid, "kind": k, "count": c}
+        "other": [{"conceptId": cid, "kind": k, "count": c,
+                   **({"fields": sorted(fields[(cid, k)])} if (cid, k) in fields else {})}
                   for (cid, k), c in sorted(other.items(), key=lambda i: (str(i[0][0]), i[0][1]))
                   ][:MAX_GAP_GROUPS],
+        "rowSamples": row_samples,
+        "linkSamples": link_samples,
     }
 
 
@@ -845,6 +972,23 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
             revision_id = await persist_population_revision(pool, lease.payload, outcome)
             persisted = await count_revision_rows(pool, revision_id)
             result = summarize_job_result(revision_id, outcome, persisted)
+            # Measured against the data in use before this result can replace it.
+            if is_whole_model_build(lease.payload):
+                try:
+                    changes = await changes_from_data_in_use(
+                        pool, lease.payload, revision_id,
+                        run_population_for_payload(lease.payload).get("sources", []))
+                except Exception as exc:  # a missing comparison never fails a saved run
+                    logger.warning("Population change summary failed",
+                                   extra={"error_code": type(exc).__name__[:100]})
+                    changes = None
+                if changes is not None:
+                    result["changes"] = changes
+                    progress.changes = changes
+                    try:
+                        await progress.send(force=True)
+                    except RunCancelled:
+                        pass  # Already saved: a late stop request changes nothing.
             # A result missing data it should have is kept for diagnosis but does not
             # replace a graph already in use (see serving_policy).
             blocking = blocking_gap_kinds(outcome.get("gaps", []))

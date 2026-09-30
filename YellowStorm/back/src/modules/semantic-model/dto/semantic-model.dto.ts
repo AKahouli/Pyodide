@@ -311,6 +311,33 @@ export class UpdateBusinessRequirementsDto {
   businessRequirements!: Record<string, unknown>[];
 }
 
+/** Rules for reading one document field without AI. */
+export class ExtractionRulesDto {
+  @ApiPropertyOptional({ type: [String], maxItems: 10, description: 'Labels the value follows, e.g. "Contract No.", "N° de contrat"' })
+  @IsOptional() @IsArray() @ArrayMaxSize(10) @IsString({ each: true }) @MaxLength(200, { each: true })
+  labels?: string[];
+
+  @ApiPropertyOptional({ enum: ['auto', 'same_line', 'next_line', 'table', 'heading', 'anywhere'] })
+  @IsOptional() @IsIn(['auto', 'same_line', 'next_line', 'table', 'heading', 'anywhere'])
+  location?: 'auto' | 'same_line' | 'next_line' | 'table' | 'heading' | 'anywhere';
+
+  @ApiPropertyOptional({ maxLength: 200, description: 'Regular expression the value must match; its first group is kept when it has one' })
+  @IsOptional() @IsString() @MaxLength(200)
+  pattern?: string;
+
+  @ApiPropertyOptional({ enum: ['none', 'upper', 'lower', 'date_iso'] })
+  @IsOptional() @IsIn(['none', 'upper', 'lower', 'date_iso'])
+  transform?: 'none' | 'upper' | 'lower' | 'date_iso';
+
+  @ApiPropertyOptional({ enum: ['unique', 'first'], description: 'Keep a value only when every match agrees, or keep the first' })
+  @IsOptional() @IsIn(['unique', 'first'])
+  occurrence?: 'unique' | 'first';
+
+  @ApiPropertyOptional()
+  @IsOptional() @IsBoolean()
+  firstPageOnly?: boolean;
+}
+
 export class SourceFieldMappingDto {
   @ApiPropertyOptional()
   @IsOptional()
@@ -334,10 +361,35 @@ export class SourceFieldMappingDto {
   constantValue?: unknown;
 
   // Only meaningful for mode='extract'; ignored otherwise.
-  @ApiPropertyOptional({ enum: ['deterministic', 'ai'] })
+  @ApiPropertyOptional({ enum: ['deterministic', 'ai', 'rules_then_ai'] })
   @IsOptional()
-  @IsIn(['deterministic', 'ai'])
-  extractionStrategy?: 'deterministic' | 'ai';
+  @IsIn(['deterministic', 'ai', 'rules_then_ai'])
+  extractionStrategy?: 'deterministic' | 'ai' | 'rules_then_ai';
+
+  @ApiPropertyOptional({ type: () => ExtractionRulesDto, description: 'Where a document value is and what it looks like' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExtractionRulesDto)
+  rules?: ExtractionRulesDto;
+}
+
+/** Limits on how much of a document the AI reads. Each one left out uses the admin default. */
+export class AiExtractionSettingsDto {
+  @ApiPropertyOptional({ minimum: 10, maximum: 500, description: 'Most blocks sent for one document (the extraction agent reads at most 500)' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(10) @Max(500)
+  maxBlocks?: number;
+
+  @ApiPropertyOptional({ minimum: 2000, maximum: 400000, description: 'Most characters sent for one document' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(2000) @Max(400000)
+  maxCharacters?: number;
+
+  @ApiPropertyOptional({ minimum: 1000, maximum: 2000000, description: 'Above this length, only the blocks about each field are sent' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1000) @Max(2000000)
+  longDocumentCharacters?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 50, description: 'Blocks kept per field in a long document' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50)
+  blocksPerField?: number;
 }
 
 export class CreateSourceMappingDto {
@@ -386,6 +438,12 @@ export class CreateSourceMappingDto {
   @IsString({ each: true })
   @MaxLength(200, { each: true })
   identityFields?: string[];
+
+  @ApiPropertyOptional({ type: () => AiExtractionSettingsDto, description: 'Overrides the admin defaults for how much the AI reads' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AiExtractionSettingsDto)
+  aiSettings?: AiExtractionSettingsDto;
 }
 
 export class SourceMappingPreviewDto {
@@ -436,6 +494,12 @@ export class SourceMappingPreviewDto {
   @Min(1)
   @Max(200)
   limit?: number;
+
+  @ApiPropertyOptional({ type: () => AiExtractionSettingsDto, description: 'Overrides the admin defaults for how much the AI reads' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AiExtractionSettingsDto)
+  aiSettings?: AiExtractionSettingsDto;
 }
 
 export class DocumentSourceRefDto {
@@ -483,6 +547,12 @@ export class BulkDocumentSourceMappingDto {
   @IsString({ each: true })
   @MaxLength(200, { each: true })
   identityFields?: string[];
+
+  @ApiPropertyOptional({ type: () => AiExtractionSettingsDto, description: 'Overrides the admin defaults for how much the AI reads' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AiExtractionSettingsDto)
+  aiSettings?: AiExtractionSettingsDto;
 }
 
 /** One document mapping applied to every readable file of a workspace, or of one of its folders. */
@@ -545,6 +615,12 @@ export class WorkspaceSourceMappingDto {
   @IsString({ each: true })
   @MaxLength(200, { each: true })
   identityFields?: string[];
+
+  @ApiPropertyOptional({ type: () => AiExtractionSettingsDto, description: 'Overrides the admin defaults for how much the AI reads' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AiExtractionSettingsDto)
+  aiSettings?: AiExtractionSettingsDto;
 }
 
 /** A page of one concept's records, optionally narrowed by a search. */

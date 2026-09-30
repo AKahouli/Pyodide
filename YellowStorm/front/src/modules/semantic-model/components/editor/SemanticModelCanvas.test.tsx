@@ -302,15 +302,13 @@ describe('SemanticModelCanvas', () => {
     expect(showWarning).toHaveBeenCalledWith('knowledge.notReadableDrop');
   });
 
-  it('selects a concept on click and shows its actions, without opening the details panel', () => {
+  it('opens a concept details on one click, and shows its actions', () => {
     useSemanticModelEditorStore.getState().hydrate(contractGraph);
     renderCanvas();
     const onNodeClick = flow.props.onNodeClick as (event:unknown,node:{id:string})=>void;
     act(()=>onNodeClick({target:document.body},{id:'contract'}));
-    expect(useSemanticModelEditorStore.getState()).toMatchObject({ selectedId:'contract', detailsOpen:false });
+    expect(useSemanticModelEditorStore.getState()).toMatchObject({ selectedId:'contract', detailsOpen:true });
     expect(screen.getByRole('toolbar',{name:'canvasTools.conceptToolbar'})).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button',{name:'canvasTools.details'}));
-    expect(useSemanticModelEditorStore.getState().detailsOpen).toBe(true);
   });
 
   it('renames a concept in place from its toolbar', () => {

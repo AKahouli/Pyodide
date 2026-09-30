@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Loader2, RotateCcw } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Loader2, MinusCircle, RotateCcw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
-import type { PopulationProgress } from '../../types';
+import type { PopulationChanges, PopulationProgress } from '../../types';
 
 const ISSUE_STATUSES = new Set(['processed_with_gaps', 'budget_exhausted', 'unresolved_identity', 'index_unavailable',
   'index_ambiguous', 'source_unavailable']);
@@ -79,6 +79,8 @@ export function RunProgress({ progress, running, conceptLabels = {} }: Readonly<
       </div>
     </dl>
 
+    {!running && progress.changes && <RunChanges changes={progress.changes} />}
+
     {running && progress.current && <div className='flex items-center gap-2 rounded-lg bg-primary/5 p-2.5 text-xs'>
       <Loader2 className='h-3.5 w-3.5 shrink-0 animate-spin text-primary' />
       <div className='min-w-0'>
@@ -104,4 +106,30 @@ export function RunProgress({ progress, running, conceptLabels = {} }: Readonly<
       </ul>
     </div>}
   </section>;
+}
+
+/** After a run: what it changed in the data in use, and the files it no longer read. */
+function RunChanges({ changes }: Readonly<{ changes: PopulationChanges }>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const counts = [
+    { key: 'added', count: changes.added, tone: 'text-emerald-700 dark:text-emerald-400', sign: '+' },
+    { key: 'removed', count: changes.removed, tone: 'text-destructive', sign: '−' },
+    { key: 'changed', count: changes.changed, tone: 'text-amber-700 dark:text-amber-400', sign: '' },
+  ] as const;
+  const nothing = counts.every(({ count }) => count === 0) && changes.removedSources.length === 0;
+  return <div aria-label={t('population.progress.changesTitle')}>
+    <h3 className='mb-1.5 text-xs font-semibold text-muted-foreground'>{t('population.progress.changesTitle')}</h3>
+    {nothing ? <p className='text-xs text-muted-foreground'>{t('population.progress.noChanges')}</p>
+      : <p className='flex flex-wrap gap-x-3 gap-y-1 text-xs'>
+        {counts.filter(({ count }) => count > 0).map(({ key, count, tone, sign }) =>
+          <span key={key} className={cn('font-medium tabular-nums', tone)} title={t(`population.progress.${key}Hint`)}>{sign}{t(`population.progress.${key}`, { count })}</span>)}
+      </p>}
+    {changes.removedSources.length > 0 && <ul className='mt-1.5 space-y-1'>
+      {changes.removedSources.map((source) => <li key={source.assetId} className='flex items-center gap-2 rounded-md px-1.5 py-1 text-xs hover:bg-muted/50'>
+        <MinusCircle className='h-3.5 w-3.5 shrink-0 text-destructive' aria-label={t('population.progress.noLongerRead')} />
+        <span className='min-w-0 flex-1 truncate' title={source.name}>{source.name || t('population.progress.unknownFile')}</span>
+        <span className='shrink-0 tabular-nums text-muted-foreground'>{t('population.progress.recordsRemoved', { count: source.records })}</span>
+      </li>)}
+    </ul>}
+  </div>;
 }

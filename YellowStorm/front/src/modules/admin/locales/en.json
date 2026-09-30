@@ -1934,6 +1934,8 @@
   "menu.evaluationSettings.label": "Evaluation settings",
   "menu.evaluationSettings.description": "Configure runtime answer reliability evaluation",
   "evaluationSettings.title": "Evaluation settings",
+  "menu.semanticModelSettings.label": "Semantic models",
+  "menu.semanticModelSettings.description": "Set how documents are read into semantic models",
   "evaluationSettings.description": "Configure evidence-based reliability checks for completed AI answers.",
   "evaluationSettings.enable": "Enable answer reliability evaluation",
   "evaluationSettings.enableDescription": "Evaluate completed answers and optionally correct material reliability issues.",

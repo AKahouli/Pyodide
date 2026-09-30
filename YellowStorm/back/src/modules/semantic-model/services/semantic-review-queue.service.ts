@@ -12,7 +12,12 @@ export type ReviewQueueAction =
   | { kind: 'repair_mapping'; mappingId: string }
   | { kind: 'choose_unique_field'; conceptId: string }
   | { kind: 'set_up_link'; relationId: string }
-  | { kind: 'fix_values'; conceptId: string };
+  | { kind: 'fix_values'; conceptId: string; attribute: string }
+  | { kind: 'add_source'; conceptId: string }
+  | { kind: 'check_links'; relationId: string }
+  | { kind: 'open_sources'; conceptId: string }
+  | { kind: 'review_rows'; conceptId: string }
+  | { kind: 'view_data' };
 
 export type ReviewQueueGroup = 'decisions' | 'sources' | 'identity' | 'links' | 'data';
 
@@ -20,7 +25,7 @@ export interface ReviewQueueItem {
   /** Stable key for lists; never shown. */
   key: string;
   group: ReviewQueueGroup;
-  /** 1 blocks chat from answering correctly, 2 needs a decision, 3 improves completeness. */
+  /** 1 blocks chat from answering correctly, 2 needs a decision, 3 improves completeness (an optional field left empty). */
   priority: 1 | 2 | 3;
   kind: string;
   /** Business words to fill the explanation (labels, names, counts), never ids. */
@@ -29,6 +34,13 @@ export interface ReviewQueueItem {
 }
 
 const GROUP_ORDER: ReviewQueueGroup[] = ['sources', 'identity', 'decisions', 'links', 'data'];
+
+/** A field the reader could not find in a document: the same fact as the empty value it leaves. */
+const FIELD_NOT_FOUND = new Set(['unresolved_document_field', 'ai_extraction_unresolved']);
+/** Whole documents that could not be read. */
+const DOCUMENT_NOT_READ = new Set(['source_unavailable', 'index_unavailable', 'index_ambiguous', 'index_not_found', 'unresolved_identity']);
+/** A reading limit stopped the build before every row or document was read. */
+const READING_LIMIT = new Set(['materialization_cap', 'assertion_cap', 'relationship_cap', 'enumeration_capped', 'budget_exhausted']);
 
 /**
  * One list of everything that needs a person: ambiguous links and source conflicts, sources that
@@ -50,7 +62,7 @@ export class SemanticReviewQueueService {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
     const versionId = model.currentDraftVersionId;
-    const [reviews, health, identity, links, gaps] = await Promise.all([
+    const [reviews, health, identity, links, gaps, unsourced, unusable] = await Promise.all([
       this.openReviews(model.id, versionId),
       this.trust.mappingHealth(userId, model.id).catch(() => null),
       this.database.query<{ id: string; label: string }>(
@@ -70,7 +82,30 @@ export class SemanticReviewQueueService {
          ORDER BY relation.created_at`,
         [model.id, versionId],
       ).then((result) => result.rows),
-      this.missingValues(userId, model.id),
+      this.dataGaps(userId, model.id),
+      // Concepts that hold data but read it from nowhere: no ready source in a connected workspace.
+      this.database.query<{ id: string; label: string }>(
+        `SELECT n.id::text AS id, n.label FROM semantic_model.node_types n
+         WHERE n.model_id=$1 AND n.version_id=$2 AND n.system_key IS NULL AND n.record_policy<>'none'
+           AND NOT EXISTS (SELECT 1 FROM semantic_model.source_mappings sm
+             JOIN semantic_model.workspace_links w ON w.model_id=sm.model_id AND w.workspace_id=sm.workspace_id AND w.enabled
+             WHERE sm.model_id=$1 AND sm.concept_id=n.id AND sm.status='ready')
+         ORDER BY n.created_at`,
+        [model.id, versionId],
+      ).then((result) => result.rows),
+      // Sources that cannot be read: not finished, or their workspace is no longer connected.
+      this.database.query<{ id: string; concept: string; document: string; ready: boolean }>(
+        `SELECT sm.id::text AS id, n.label AS concept, COALESCE(sm.source_label, p.profile->'metadata'->>'originalName', '') AS document,
+                sm.status='ready' AS ready
+         FROM semantic_model.source_mappings sm
+         JOIN semantic_model.node_types n ON n.id=sm.concept_id AND n.version_id=$2
+         LEFT JOIN semantic_model.workspace_links w ON w.model_id=sm.model_id AND w.workspace_id=sm.workspace_id
+         LEFT JOIN LATERAL (SELECT profile FROM semantic_datasource.discovery_profiles
+           WHERE workspace_id=sm.workspace_id AND asset_id=sm.document_id ORDER BY completed_at DESC LIMIT 1) p ON true
+         WHERE sm.model_id=$1 AND (sm.status<>'ready' OR NOT COALESCE(w.enabled,false))
+         ORDER BY sm.created_at`,
+        [model.id, versionId],
+      ).then((result) => result.rows).catch(() => []),
     ]);
     const items: ReviewQueueItem[] = [...reviews];
     for (const mapping of health?.items ?? []) {
@@ -83,6 +118,16 @@ export class SemanticReviewQueueService {
         params: { document: mapping.documentName, concept: mapping.conceptLabel, fields: mapping.missingFields.join(', ') },
         action: { kind: 'repair_mapping', mappingId: mapping.id },
       });
+    }
+    const reported = new Set(items.map((item) => item.key));
+    for (const mapping of unusable) {
+      if (reported.has(`mapping:${mapping.id}`)) continue;
+      items.push({ key: `mapping:${mapping.id}`, group: 'sources', priority: 1, kind: mapping.ready ? 'source_workspace_off' : 'source_not_ready',
+        params: { document: mapping.document, concept: mapping.concept }, action: { kind: 'repair_mapping', mappingId: mapping.id } });
+    }
+    for (const concept of unsourced) {
+      items.push({ key: `unsourced:${concept.id}`, group: 'sources', priority: 1, kind: 'concept_without_source',
+        params: { concept: concept.label }, action: { kind: 'add_source', conceptId: concept.id } });
     }
     for (const concept of identity) {
       items.push({ key: `identity:${concept.id}`, group: 'identity', priority: 1, kind: 'missing_unique_field',
@@ -156,25 +201,71 @@ export class SemanticReviewQueueService {
     return names;
   }
 
-  /** Values missing from the prepared draft data; absent when nothing has been prepared yet. */
-  private async missingValues(userId: string, modelId: string): Promise<ReviewQueueItem[]> {
+  /**
+   * What the prepared draft data is missing: empty values, links that found no record, and rows that
+   * could not become records. The same list Explore data shows, so both count the same problems.
+   * Absent when nothing has been prepared yet.
+   */
+  private async dataGaps(userId: string, modelId: string): Promise<ReviewQueueItem[]> {
     try {
       const records = await this.runtime.getBoundRecords(modelId, userId, 1);
       const concepts = new Map(records.specification.concepts.map((concept) => [concept.conceptId, concept.label]));
-      const nodes = await this.database.query<{ id: string; attributes: Array<{ key: string; label: string }> }>(
+      const relations = new Map((records.specification.relations ?? []).map((relation) => [relation.relationId, relation.label]));
+      const nodes = await this.database.query<{ id: string; attributes: Array<{ key: string; label: string; required?: boolean }> }>(
         'SELECT n.id::text AS id, n.attributes FROM semantic_model.node_types n JOIN semantic_model.models m ON m.current_draft_version_id=n.version_id WHERE m.id=$1',
         [modelId],
       ).then((result) => result.rows);
-      const fieldLabel = (conceptId: string, attribute: string) => nodes.find((node) => node.id === conceptId)
-        ?.attributes?.find((field) => field.key === attribute)?.label || attribute;
-      return (records.gaps?.missingValues ?? []).map((gap): ReviewQueueItem => ({
-        key: `gap:${gap.conceptId}:${gap.attribute}`,
-        group: 'data',
-        priority: 3,
-        kind: 'missing_values',
-        params: { concept: concepts.get(gap.conceptId) ?? '', field: fieldLabel(gap.conceptId, gap.attribute), missing: gap.missing, total: gap.total },
-        action: { kind: 'fix_values', conceptId: gap.conceptId },
-      }));
+      const field = (conceptId: string, attribute: string) => nodes.find((node) => node.id === conceptId)
+        ?.attributes?.find((candidate) => candidate.key === attribute);
+      const gaps = records.gaps ?? { missingValues: [], unresolvedLinks: [], other: [] };
+      const emptyFields = new Set(gaps.missingValues.map((gap) => `${gap.conceptId}:${gap.attribute}`));
+      const otherItem = (gap: (typeof gaps.other)[number]): ReviewQueueItem | null => {
+        const concept = gap.conceptId ? concepts.get(gap.conceptId) ?? '' : '';
+        const key = `other:${gap.conceptId ?? 'model'}:${gap.kind}`;
+        if (FIELD_NOT_FOUND.has(gap.kind)) {
+          // Already listed as the values it leaves empty, which is where it is fixed.
+          const fields = gap.fields ?? [];
+          if (!gap.conceptId || !fields.length || fields.every((name) => emptyFields.has(`${gap.conceptId}:${name}`))) return null;
+          const name = fields.find((candidate) => !emptyFields.has(`${gap.conceptId}:${candidate}`))!;
+          return { key, group: 'data', priority: 2, kind: 'field_not_found', params: { concept, field: field(gap.conceptId, name)?.label || name, count: gap.count },
+            action: { kind: 'fix_values', conceptId: gap.conceptId, attribute: name } };
+        }
+        if (gap.kind === 'missing_identity' && gap.conceptId) {
+          return { key, group: 'sources', priority: 1, kind: 'rows_not_read', params: { concept, count: gap.count },
+            action: { kind: 'review_rows', conceptId: gap.conceptId } };
+        }
+        if (gap.kind === 'ai_extraction_unavailable' && gap.conceptId) {
+          return { key, group: 'sources', priority: 1, kind: 'extraction_failed', params: { concept, count: gap.count },
+            action: { kind: 'open_sources', conceptId: gap.conceptId } };
+        }
+        if (DOCUMENT_NOT_READ.has(gap.kind) && gap.conceptId) {
+          return { key, group: 'sources', priority: 1, kind: 'documents_not_read', params: { concept, count: gap.count },
+            action: { kind: 'open_sources', conceptId: gap.conceptId } };
+        }
+        if (READING_LIMIT.has(gap.kind)) return { key, group: 'sources', priority: 2, kind: 'reading_limit', params: { count: gap.count }, action: { kind: 'view_data' } };
+        if (gap.kind === 'conflicting_values') {
+          return { key, group: 'decisions', priority: 2, kind: 'values_disagree', params: { concept, count: gap.count }, action: { kind: 'view_data' } };
+        }
+        return { key, group: 'data', priority: 2, kind: 'data_gap_other', params: { count: gap.count }, action: { kind: 'view_data' } };
+      };
+      return [
+        // Rows that never became records hide data entirely and a link that found nothing loses a relationship;
+        // an empty required field is a gap, an empty optional one only makes the data less complete.
+        ...gaps.other.map(otherItem).filter((item): item is ReviewQueueItem => item !== null),
+        ...gaps.unresolvedLinks.map((gap): ReviewQueueItem => ({
+          key: `links:${gap.relationId}:${gap.kind}`, group: 'links', priority: 2, kind: 'unmatched_links',
+          params: { relationship: relations.get(gap.relationId) ?? '', count: gap.count },
+          action: { kind: 'check_links', relationId: gap.relationId },
+        })),
+        ...gaps.missingValues.map((gap): ReviewQueueItem => ({
+          key: `gap:${gap.conceptId}:${gap.attribute}`,
+          group: 'data',
+          priority: field(gap.conceptId, gap.attribute)?.required ? 2 : 3,
+          kind: 'missing_values',
+          params: { concept: concepts.get(gap.conceptId) ?? '', field: field(gap.conceptId, gap.attribute)?.label || gap.attribute, missing: gap.missing, total: gap.total },
+          action: { kind: 'fix_values', conceptId: gap.conceptId, attribute: gap.attribute },
+        })),
+      ];
     } catch (error) {
       this.logger.debug(`No prepared data to review for ${modelId}: ${(error as Error).message}`);
       return [];

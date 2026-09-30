@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import semanticModelConfig from '@config/semantic-model.config';
 import {
+  BadRequestException,
   ConflictException,
   NotFoundException,
   ServiceUnavailableException,
@@ -76,7 +77,12 @@ export interface RuntimeCorrection {
 export interface RuntimeRevisionGaps {
   missingValues: Array<{ conceptId: string; attribute: string; missing: number; total: number }>;
   unresolvedLinks: Array<{ relationId: string; kind: string; count: number }>;
-  other: Array<{ conceptId: string | null; kind: string; count: number }>;
+  other: Array<{ conceptId: string | null; kind: string; count: number; fields?: string[] }>;
+  /** A few rows behind each gap, with the file they come from; absent on data prepared before they were kept. */
+  rowSamples?: Array<{ conceptId: string | null; kind: string; field?: string; rowNumber?: number | string;
+    asset?: { workspaceId?: string; assetId?: string }; values?: Record<string, unknown> }>;
+  linkSamples?: Array<{ relationId: string; kind: string; sourceEntityId: string; referenceField?: string;
+    referenceValue?: unknown; targetField?: string }>;
 }
 
 export interface RuntimeConceptRecordsPage {
@@ -173,6 +179,35 @@ export interface RuntimeActivateRevisionCommand {
   environment?: string;
 }
 
+const DOCUMENT_PREVIEW_TIMEOUT_MS = 120_000;
+
+export interface RuntimeDocumentPreviewRequest {
+  actorUserId: string;
+  modelId: string;
+  entry: { conceptId: string; conceptLabel?: string; source: Record<string, unknown>; fieldMappings: unknown[]; options?: Record<string, unknown> };
+  aiExtraction?: { agentSlug: string; model: string | null; contractVersion: string } | null;
+}
+
+/** How each extracted field was read, or why it was not. */
+export interface RuntimeDocumentPreviewField {
+  method: 'rules' | 'ai';
+  reason: 'found' | 'label_not_found' | 'no_value' | 'several_values' | 'pattern_mismatch' | 'no_heading' | 'no_match' | 'ai_not_found' | 'ai_failed';
+  value?: unknown;
+  values?: string[];
+  page?: number | null;
+  quote?: string | null;
+  detail?: string;
+  rules?: Omit<RuntimeDocumentPreviewField, 'rules'>;
+}
+
+export interface RuntimeDocumentPreview {
+  /** `read`, or why the document could not be read at all (e.g. `index_unavailable`). */
+  status: string;
+  detail?: string;
+  fields: Record<string, RuntimeDocumentPreviewField>;
+  aiSent?: { documentCharacters: number; longDocument: boolean; blocksSent: number; charactersSent: number } | null;
+}
+
 @Injectable()
 export class SemanticRuntimeClientService {
   constructor(
@@ -240,6 +275,32 @@ export class SemanticRuntimeClientService {
         'Semantic runtime request failed',
       );
     }
+  }
+
+  /**
+   * Read one document's extracted fields as a run would, without storing anything. AI reading can
+   * take a while, so this waits longer than other calls; a rule the runtime rejects comes back as
+   * a validation error that names the problem.
+   */
+  async previewDocumentFields(body: RuntimeDocumentPreviewRequest): Promise<RuntimeDocumentPreview> {
+    const base = this.requireRuntime();
+    let res: Response;
+    try {
+      res = await fetch(`${base}/v1/semantic-model-population/document-preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Semantic-Service-Key': this.config.runtimeServiceKey },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(DOCUMENT_PREVIEW_TIMEOUT_MS),
+      });
+    } catch {
+      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    }
+    if (res.status === 422) {
+      const detail = this.errorDetail({ data: await this.readErrorPayload(res) });
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, detail || 'These reading rules cannot be used');
+    }
+    if (!res.ok) throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    return await res.json() as RuntimeDocumentPreview;
   }
 
   private async get<T>(path: string, actorUserId: string): Promise<T> {

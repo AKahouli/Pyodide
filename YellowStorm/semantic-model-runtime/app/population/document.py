@@ -15,6 +15,8 @@ from app.datasource.logical_search import LogicalSearchError, combine_hits, sear
 from app.datasource.section_reader import (MAX_CLOSURE_SECTIONS, SectionReadError,
                                            get_outline, read_complete_section_set)
 
+from .document_rules import (all_matches, clean, compile_pattern, label_found, next_line_values,
+                             normalize_ai_settings, same_line_values)
 from .tabular import populate_concept_rows
 
 # Bump when the way a document is read changes, so cached results are not reused.
@@ -160,32 +162,73 @@ def _evidence(block: dict[str, Any], section: dict[str, Any], raw_text: str,
     }
 
 
-async def _ai_evidence(connection: Any, document_pk: Any) -> tuple[list[dict[str, Any]],
-                                                                  dict[str, tuple[dict[str, Any], dict[str, Any]]]]:
-    """Whole-document evidence for AI extraction, independent of label search.
-
-    Label search would bias the model towards the fields the deterministic
-    extractor already finds, so the outline is read instead, bounded by the same
-    closure limits. Only blocks that really exist can ground a value.
-    """
+async def _whole_document(connection: Any, document_pk: Any) -> list[dict[str, Any]]:
+    """Every section of the document (bounded by the outline limit), in reading order."""
     outline = await get_outline(connection, document_pk=document_pk)
     section_pks = [section["sectionPk"] for section in outline["sections"]][:MAX_CLOSURE_SECTIONS]
     if not section_pks:
-        return [], {}
+        return []
     read = await read_complete_section_set(
         connection, document_pk=document_pk, section_pks=section_pks, include_descendants=True)
-    payload: list[dict[str, Any]] = []
-    by_reference: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
-    for section in read["sections"]:
+    return sorted(read["sections"], key=_section_position)
+
+
+def _section_position(section: dict[str, Any]) -> tuple[int, int]:
+    return min(((block.get("pageNumber") or 0, block.get("blockPk") or 0) for block in section["blocks"]),
+               default=(10 ** 9, 10 ** 9))
+
+
+def _usable_blocks(sections: list[dict[str, Any]], first_page_only: bool = False,
+                   ) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    blocks = []
+    for section in sections:
         for block in section["blocks"]:
             content = block.get("content")
             if not isinstance(content, str) or not content.strip():
                 continue
-            reference = f"section:{section['sectionPk']}/block:{block['blockPk']}"
-            payload.append({"sectionPk": section["sectionPk"], "blockPk": block["blockPk"],
-                            "content": content})
-            by_reference[reference] = (block, section)
-    return payload, by_reference
+            if block.get("origin") == "generated_visual_description":
+                continue
+            if first_page_only and block.get("pageNumber") not in (None, 1):
+                continue
+            blocks.append((block, section))
+    return blocks
+
+
+def _terms(labels: list[str]) -> set[str]:
+    return {word for label in labels for word in re.findall(r"\w+", label.lower()) if len(word) >= 3}
+
+
+def _select_ai_blocks(sections: list[dict[str, Any]], ai_mappings: list[dict[str, Any]],
+                      settings: dict[str, int],
+                      ) -> tuple[list[tuple[dict[str, Any], dict[str, Any]]], dict[str, Any]]:
+    """The blocks the AI reads: the whole document when it is short, otherwise the blocks that
+    mention each field (plus the opening of the document), always within the limits."""
+    blocks = _usable_blocks(sections)
+    total = sum(len(block["content"]) for block, _ in blocks)
+    long_document = total > settings["longDocumentCharacters"]
+    if long_document:
+        chosen: set[int] = set(range(min(3, len(blocks))))
+        for mapping in ai_mappings:
+            terms = _terms(_mapping_labels(mapping))
+            scored = []
+            for index, (block, section) in enumerate(blocks):
+                text = f"{section.get('title') or ''} {block['content']}".lower()
+                score = sum(text.count(term) for term in terms)
+                if score:
+                    scored.append((-score, index))
+            chosen.update(index for _, index in sorted(scored)[:settings["blocksPerField"]])
+        blocks = [blocks[index] for index in sorted(chosen)]
+    selected: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    used = 0
+    for block, section in blocks[:settings["maxBlocks"]]:
+        room = settings["maxCharacters"] - used
+        if room < 200:
+            break
+        content = block["content"][:min(room, 20000)]
+        selected.append(({**block, "content": content}, section))
+        used += len(content)
+    return selected, {"documentCharacters": total, "longDocument": long_document,
+                      "blocksSent": len(selected), "charactersSent": used}
 
 
 def _normalize_for_grounding(value: Any) -> str:
@@ -202,31 +245,47 @@ def _value_in_block(value: Any, content: Any) -> bool:
     return bool(normalized) and normalized in _normalize_for_grounding(content)
 
 
+def _mapping_labels(mapping: dict[str, Any]) -> list[str]:
+    rules = mapping.get("rules") or {}
+    return list(rules.get("labels") or []) or [mapping["sourceField"]]
+
+
+def _strategy(mapping: dict[str, Any]) -> str:
+    return mapping.get("extractionStrategy") or "deterministic"
+
+
 async def _apply_ai_extraction(
-    connection: Any, entry: dict[str, Any], asset_ref: dict[str, Any], document_pk: Any,
+    entry: dict[str, Any], asset_ref: dict[str, Any], sections: list[dict[str, Any]],
     ai_mappings: list[dict[str, Any]], model_id: str, ai_extraction: dict[str, Any] | None,
-    values: dict[str, Any], evidence_by_field: dict[str, dict[str, Any]],
-) -> str | None:
-    """Resolve AI-mapped fields; return a failure code or None when it ran."""
-    try:
-        sections, by_reference = await _ai_evidence(connection, document_pk)
-    except SectionReadError as exc:
-        return exc.code
-    if not sections:
-        return "no_evidence"
-    attributes = [{"key": mapping["targetAttribute"],
-                   "label": mapping.get("sourceField") or mapping["targetAttribute"]}
-                  for mapping in ai_mappings]
+    values: dict[str, Any], evidence_by_field: dict[str, dict[str, Any]], settings: dict[str, int],
+    quotes: dict[str, str] | None = None,
+) -> tuple[str | None, dict[str, Any]]:
+    """Resolve AI-mapped fields; return a failure code (None when it ran) and what was sent."""
+    selected, sent = _select_ai_blocks(sections, ai_mappings, settings)
+    if not selected:
+        return "no_evidence", sent
+    payload = [{"sectionPk": section["sectionPk"], "blockPk": block["blockPk"], "content": block["content"]}
+               for block, section in selected]
+    by_reference = {f"section:{section['sectionPk']}/block:{block['blockPk']}": (block, section)
+                    for block, section in selected}
+    attributes = []
+    for mapping in ai_mappings:
+        labels = _mapping_labels(mapping)
+        attribute = {"key": mapping["targetAttribute"], "label": labels[0]}
+        if len(labels) > 1:
+            attribute["description"] = "Also written as: " + ", ".join(labels[1:])
+        attributes.append(attribute)
     try:
         result = await extract_attributes(
             model_id=model_id, concept_id=entry["conceptId"],
             concept_label=entry.get("conceptLabel") or entry["conceptId"],
             document_id=str(entry["source"].get("assetId") or ""),
             file_name=str(entry["source"].get("originalName") or ""),
-            attributes=attributes, sections=sections, ai_extraction=ai_extraction)
+            attributes=attributes, sections=payload, ai_extraction=ai_extraction)
     except AttributeExtractionError as exc:
-        return exc.code
+        return exc.code, sent
     extractor_version = str(result.get("extractorVersion") or "ai-attribute-v1")
+    rules_by_key = {mapping["targetAttribute"]: mapping.get("rules") for mapping in ai_mappings}
     for item in result.get("values") or []:
         key = item.get("key") if isinstance(item, dict) else None
         if not key or key in values:
@@ -240,7 +299,13 @@ async def _apply_ai_extraction(
         # the block it cites, otherwise the model invented it.
         if not _value_in_block(item.get("value"), block.get("content")):
             continue
-        values[key] = item.get("value")
+        value = item.get("value")
+        rules = rules_by_key.get(key)
+        if rules and rules.get("transform") not in (None, "none") and isinstance(value, str):
+            value = clean(value, {**rules, "pattern": None}) or value
+        values[key] = value
+        if quotes is not None:
+            quotes[key] = str(block.get("content") or "")[:600]
         evidence = _evidence(block, section, str(block.get("content") or ""), asset_ref,
                              entry["mappingVersion"])
         evidence["origin"] = "ai"
@@ -248,27 +313,194 @@ async def _apply_ai_extraction(
         if result.get("model"):
             evidence["model"] = result["model"]
         evidence_by_field[key] = evidence
-    return None
+    return None, sent
 
 
-async def populate_document(
-    connection: Any, entry: dict[str, Any], concept: dict[str, Any], actor_user_id: str,
-    *, metadata_fetch: Callable[[dict[str, Any], str], Awaitable[dict[str, Any]]] | None = None,
-    model_id: str = "", ai_extraction: dict[str, Any] | None = None,
-    cache: Any | None = None,
+def _rule_candidates(mapping: dict[str, Any], rules: dict[str, Any] | None, label_sections: list[dict[str, Any]],
+                     whole: list[dict[str, Any]], all_labels: list[str],
+                     ) -> tuple[list[tuple[str, dict[str, Any], dict[str, Any]]], list[str]]:
+    """Values the rules find for one field, with where each came from, and the raw texts found
+    before the pattern and clean-up (to tell "nothing there" from "not what was expected")."""
+    location = rules["location"] if rules else "auto"
+    labels = _mapping_labels(mapping)
+    first_page_only = bool(rules and rules.get("firstPageOnly"))
+    raw: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+    if location == "auto":
+        record_rows = _record_row_blocks(label_sections, all_labels)
+        for label in labels:
+            raw += _line_anchored_candidates(label_sections, label)
+            raw += _record_row_candidates(record_rows, label, all_labels)
+        if first_page_only:
+            raw = [item for item in raw if item[1].get("pageNumber") in (None, 1)]
+    elif location in ("same_line", "next_line", "table"):
+        record_rows = _record_row_blocks(label_sections, all_labels) if location == "table" else []
+        for block, section in _usable_blocks(label_sections, first_page_only):
+            if location == "table" and "table" not in str(block.get("blockType") or ""):
+                continue
+            for label in labels:
+                found = (same_line_values(block["content"], label) if location != "next_line"
+                         else next_line_values(block["content"], label))
+                raw += [(value, block, section) for value in found]
+        for label in labels:
+            raw += [item for item in _record_row_candidates(record_rows, label, all_labels)
+                    if not first_page_only or item[1].get("pageNumber") in (None, 1)]
+    elif location == "heading":
+        for section in whole:
+            title = str(section.get("title") or "").strip()
+            if not title:
+                continue
+            block = section["blocks"][0] if section["blocks"] else {"blockPk": None, "pageNumber": None}
+            if first_page_only and block.get("pageNumber") not in (None, 1):
+                continue
+            raw.append((title, {**block, "content": title}, section))
+    elif location == "anywhere":
+        compiled = compile_pattern(rules["pattern"])
+        for block, section in _usable_blocks(whole, first_page_only):
+            raw += [(value, block, section) for value in all_matches(compiled, block["content"])]
+    cleaned = []
+    for value, block, section in raw:
+        value = clean(value, rules)
+        if value is not None:
+            cleaned.append((value, block, section))
+    return cleaned, [value for value, _, _ in raw]
+
+
+def _read_rules(mapping: dict[str, Any], label_sections: list[dict[str, Any]], whole: list[dict[str, Any]],
+                all_labels: list[str]) -> dict[str, Any]:
+    """One field read by its rules: its value and evidence, or why none was kept."""
+    rules = mapping.get("rules")
+    location = rules["location"] if rules else "auto"
+    candidates, raw = _rule_candidates(mapping, rules, label_sections, whole, all_labels)
+    candidates.sort(key=lambda item: (item[1].get("pageNumber") or 0, item[1].get("blockPk") or 0))
+    distinct = list(dict.fromkeys(value for value, _, _ in candidates))
+    # A document has many headings: the first one (matching the pattern, if any) is the one meant.
+    take_first = location == "heading" or bool(rules and rules.get("occurrence") == "first")
+    if len(distinct) == 1 or (distinct and take_first):
+        value, block, section = candidates[0]
+        return {"value": value, "block": block, "section": section, "reason": "found"}
+    if len(distinct) > 1:
+        return {"reason": "several_values", "values": distinct[:5]}
+    if raw:
+        return {"reason": "pattern_mismatch" if rules and rules.get("pattern") else "no_value",
+                "values": raw[:5]}
+    if location == "heading":
+        return {"reason": "no_heading"}
+    if location == "anywhere":
+        return {"reason": "no_match"}
+    labels = _mapping_labels(mapping)
+    mentioned = any(label_found(block["content"], labels) for block, _ in _usable_blocks(label_sections))
+    return {"reason": "no_value" if mentioned else "label_not_found"}
+
+
+async def read_document_values(
+    connection: Any, entry: dict[str, Any], asset_ref: dict[str, Any], capabilities: dict[str, Any],
+    document_pk: Any, *, model_id: str = "", ai_extraction: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Reauthorize, correlate, retrieve, and deterministically populate one mapped document.
+    """Read the extracted fields of one indexed document: by rules, by AI, or by rules then AI.
 
-    With a ``cache``, a document whose content, mapping, concept and extractor are unchanged
-    reuses its previous result (marked ``reused``). Access and index correlation are still
-    checked every time; only reading and extraction are skipped.
+    Returns the values, their evidence, and for each extracted field how it was read or why it
+    was not, so a person can see what to change.
     """
+    values: dict[str, Any] = {}
+    evidence_by_field: dict[str, dict[str, Any]] = {}
+    fields: dict[str, dict[str, Any]] = {}
+    quotes: dict[str, str] = {}
+    extract = [m for m in entry["fieldMappings"] if m["mode"] == "extract"]
+    rule_mappings = [m for m in extract if _strategy(m) in ("deterministic", "rules_then_ai")]
+    settings = normalize_ai_settings((entry.get("options") or {}).get("aiSettings"))
+
+    whole_cache: list[list[dict[str, Any]]] = []
+
+    async def whole() -> list[dict[str, Any]]:
+        if not whole_cache:
+            whole_cache.append(await _whole_document(connection, document_pk))
+        return whole_cache[0]
+
+    search_truncated = False
+    read = None
+    label_mappings = [m for m in rule_mappings
+                      if ((m.get("rules") or {}).get("location") or "auto") not in ("heading", "anywhere")]
+    hits: list[dict[str, Any]] = []
+    for mapping in label_mappings:
+        for label in _mapping_labels(mapping):
+            exact = await search_exact(connection, document_pk=document_pk, value=label)
+            search_truncated = search_truncated or exact["truncated"]
+            lexical_hits: list[dict[str, Any]] = []
+            if capabilities["capabilities"].get("lexical"):
+                try:
+                    lexical = await search_lexical(
+                        connection, document_pk=document_pk, query=label,
+                        capabilities=capabilities["capabilities"])
+                    lexical_hits = lexical["hits"]
+                    search_truncated = search_truncated or lexical["truncated"]
+                except LogicalSearchError:
+                    lexical_hits = []
+            hits = combine_hits(hits, exact["hits"], lexical_hits)
+    if len(hits) > MAX_CLOSURE_SECTIONS:
+        hits = hits[:MAX_CLOSURE_SECTIONS]
+        search_truncated = True
+    label_sections: list[dict[str, Any]] = []
+    if hits:
+        read = await read_complete_section_set(
+            connection, document_pk=document_pk,
+            section_pks=[hit["sectionPk"] for hit in hits], include_descendants=True)
+        label_sections = read["sections"]
+    all_labels = [label for mapping in label_mappings for label in _mapping_labels(mapping)]
+    for mapping in rule_mappings:
+        location = (mapping.get("rules") or {}).get("location") or "auto"
+        document = await whole() if location in ("heading", "anywhere") else []
+        outcome = _read_rules(mapping, label_sections, document, all_labels)
+        key = mapping["targetAttribute"]
+        if outcome["reason"] == "found":
+            values[key] = outcome["value"]
+            evidence_by_field[key] = _evidence(
+                outcome["block"], outcome["section"], str(outcome["block"].get("content") or ""),
+                asset_ref, entry["mappingVersion"])
+            fields[key] = {"method": "rules", "reason": "found"}
+            quotes[key] = str(outcome["block"].get("content") or "")[:600]
+        else:
+            fields[key] = {"method": "rules",
+                           **{name: item for name, item in outcome.items() if name in ("reason", "values")}}
+
+    ai_mappings = [m for m in extract if _strategy(m) == "ai"
+                   or (_strategy(m) == "rules_then_ai" and m["targetAttribute"] not in values)]
+    ai_failure: str | None = None
+    ai_sent: dict[str, Any] | None = None
+    if ai_mappings:
+        try:
+            document = await whole()
+        except SectionReadError as exc:
+            ai_failure, document = exc.code, []
+        if ai_failure is None:
+            ai_failure, ai_sent = await _apply_ai_extraction(
+                entry, asset_ref, document, ai_mappings, model_id, ai_extraction,
+                values, evidence_by_field, settings, quotes)
+        for mapping in ai_mappings:
+            key = mapping["targetAttribute"]
+            earlier = fields.get(key)
+            if key in values:
+                fields[key] = {"method": "ai", "reason": "found"}
+            else:
+                fields[key] = {"method": "ai", "reason": "ai_failed" if ai_failure else "ai_not_found",
+                               **({"detail": ai_failure} if ai_failure else {}),
+                               **({"rules": earlier} if earlier else {})}
+    return {"values": values, "evidence": evidence_by_field, "fields": fields, "quotes": quotes,
+            "aiMappings": ai_mappings, "aiFailure": ai_failure, "aiSent": ai_sent,
+            "readComplete": bool(read is None or read["coverage"]["directBlocksComplete"]),
+            "searchTruncated": search_truncated}
+
+
+async def resolve_indexed_document(
+    connection: Any, entry: dict[str, Any], actor_user_id: str,
+    metadata_fetch: Callable[[dict[str, Any], str], Awaitable[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
+    """Reauthorize a document and find it in the logical index; "gap" holds why it cannot be read."""
     source = entry["source"]
     asset_ref = resolve_asset_ref(source)
     try:
         current = await (metadata_fetch or fetch_workspace_asset_metadata)(source, actor_user_id)
     except AssetFetchError as exc:
-        return _gap(entry, "source_unavailable", exc.code, asset_ref)
+        return {"gap": _gap(entry, "source_unavailable", exc.code, asset_ref)}
     asset_ref = resolve_asset_ref(current)
     capabilities = await detect_capabilities(connection)
     if (not capabilities["capabilities"].get("structure")
@@ -278,7 +510,7 @@ async def populate_document(
             capabilities=capabilities["capabilities"], fingerprint=current.get("contentHash"))
         result = _gap(entry, "index_unavailable", "logical index is not ready", asset_ref)
         result["indexObservation"] = observation
-        return result
+        return {"gap": result}
     resolution = await resolve_document_candidates(
         connection, workspace_id=current["workspaceId"], file_name=current["originalName"],
         uploader_user_id=current.get("uploaderUserId"))
@@ -290,17 +522,40 @@ async def populate_document(
         status = "index_ambiguous" if resolution["resolution"] == "ambiguous" else "index_unavailable"
         result = _gap(entry, status, f"logical index correlation is {resolution['resolution']}", asset_ref)
         result["indexObservation"] = observation
-        return result
+        return {"gap": result}
+    return {"current": current, "assetRef": asset_ref, "capabilities": capabilities,
+            "candidate": candidate, "observation": observation, "resolution": resolution}
+
+
+async def populate_document(
+    connection: Any, entry: dict[str, Any], concept: dict[str, Any], actor_user_id: str,
+    *, metadata_fetch: Callable[[dict[str, Any], str], Awaitable[dict[str, Any]]] | None = None,
+    model_id: str = "", ai_extraction: dict[str, Any] | None = None,
+    cache: Any | None = None,
+) -> dict[str, Any]:
+    """Reauthorize, correlate, retrieve, and populate one mapped document.
+
+    With a cache, a document whose content, mapping, concept and extractor are unchanged
+    reuses its previous result (marked "reused"). Access and index correlation are still
+    checked every time; only reading and extraction are skipped.
+    """
+    resolved = await resolve_indexed_document(connection, entry, actor_user_id, metadata_fetch)
+    if "gap" in resolved:
+        return resolved["gap"]
+    current, asset_ref, capabilities = resolved["current"], resolved["assetRef"], resolved["capabilities"]
+    candidate, observation, resolution = resolved["candidate"], resolved["observation"], resolved["resolution"]
 
     cache_key = None
     if cache is not None:
         from app.persistence.extraction_cache import extraction_cache_key
+        options = entry.get("options") or {}
         cache_key = extraction_cache_key({
             "engine": DOCUMENT_EXTRACTION_VERSION, "modelId": model_id, "concept": concept,
             "conceptId": entry["conceptId"], "fieldMappings": entry["fieldMappings"],
             "mappingVersion": entry["mappingVersion"], "labelField": entry.get("labelField"),
             "assetRef": asset_ref, "contentHash": current.get("contentHash"),
-            "documentPk": candidate["documentPk"], "aiExtraction": ai_extraction})
+            "documentPk": candidate["documentPk"], "aiExtraction": ai_extraction,
+            **({"options": options} if options else {})})
         cached = await cache.get(cache_key)
         if cached is not None:
             cached["indexObservation"] = observation
@@ -309,10 +564,6 @@ async def populate_document(
 
     values: dict[str, Any] = {}
     evidence_by_field: dict[str, dict[str, Any]] = {}
-    extract_mappings = [m for m in entry["fieldMappings"] if m["mode"] == "extract"
-                        and m.get("extractionStrategy") != "ai"]
-    ai_mappings = [m for m in entry["fieldMappings"] if m["mode"] == "extract"
-                   and m.get("extractionStrategy") == "ai"]
     for mapping in entry["fieldMappings"]:
         if mapping["mode"] == "metadata":
             values[mapping["targetAttribute"]] = _metadata_value(current, mapping["sourceField"])
@@ -325,54 +576,15 @@ async def populate_document(
                 "assetRef": asset_ref, "origin": "human", "extractorVersion": "constant-v1",
                 "mappingVersion": entry["mappingVersion"]}
 
-    hits: list[dict[str, Any]] = []
-    search_truncated = False
-    document_pk = candidate["documentPk"]
-    for mapping in extract_mappings:
-        label = mapping["sourceField"]
-        exact = await search_exact(connection, document_pk=document_pk, value=label)
-        search_truncated = search_truncated or exact["truncated"]
-        lexical_hits: list[dict[str, Any]] = []
-        if capabilities["capabilities"].get("lexical"):
-            try:
-                lexical = await search_lexical(
-                    connection, document_pk=document_pk, query=label,
-                    capabilities=capabilities["capabilities"])
-                lexical_hits = lexical["hits"]
-                search_truncated = search_truncated or lexical["truncated"]
-            except LogicalSearchError:
-                lexical_hits = []
-        hits = combine_hits(hits, exact["hits"], lexical_hits)
-    if len(hits) > MAX_CLOSURE_SECTIONS:
-        hits = hits[:MAX_CLOSURE_SECTIONS]
-        search_truncated = True
-
-    read = None
-    if hits:
-        read = await read_complete_section_set(
-            connection, document_pk=document_pk,
-            section_pks=[hit["sectionPk"] for hit in hits], include_descendants=True)
-        extract_labels = [m["sourceField"] for m in extract_mappings]
-        record_rows = _record_row_blocks(read["sections"], extract_labels)
-        for mapping in extract_mappings:
-            label = mapping["sourceField"]
-            candidates = _line_anchored_candidates(read["sections"], label)
-            candidates += _record_row_candidates(record_rows, label, extract_labels)
-            unique = {value for value, _, _ in candidates}
-            if len(unique) == 1:
-                value, block, section = candidates[0]
-                values[mapping["targetAttribute"]] = value
-                evidence_by_field[mapping["targetAttribute"]] = _evidence(
-                    block, section, str(block.get("content") or ""), asset_ref,
-                    entry["mappingVersion"])
-
     # AI extraction must finish before the row is turned into entities, otherwise
     # the resolved values would never reach the assertions.
-    ai_failure: str | None = None
-    if ai_mappings:
-        ai_failure = await _apply_ai_extraction(
-            connection, entry, asset_ref, document_pk, ai_mappings, model_id, ai_extraction,
-            values, evidence_by_field)
+    extracted = await read_document_values(
+        connection, entry, asset_ref, capabilities, candidate["documentPk"],
+        model_id=model_id, ai_extraction=ai_extraction)
+    values.update(extracted["values"])
+    evidence_by_field.update(extracted["evidence"])
+    ai_failure = extracted["aiFailure"]
+    ai_keys = {mapping["targetAttribute"] for mapping in extracted["aiMappings"]}
 
     row = {**values, "_row": None}
     output = populate_concept_rows(
@@ -381,28 +593,31 @@ async def populate_document(
     for assertion in output["assertions"]:
         assertion["evidence"] = evidence_by_field[assertion["attribute"]]
         assertion["origin"] = "human" if assertion["evidence"]["origin"] == "human" else "source"
-    missing_fields = [m["targetAttribute"] for m in extract_mappings
-                      if m["targetAttribute"] not in values]
+    extract_mappings = [m for m in entry["fieldMappings"] if m["mode"] == "extract"]
+    missing_fields = [m["targetAttribute"] for m in extract_mappings if m["targetAttribute"] not in values]
     for field in missing_fields:
+        if field in ai_keys:
+            continue
         output["gaps"].append({"kind": "unresolved_document_field", "conceptId": entry["conceptId"],
-                               "rowNumber": None, "detail": f"field '{field}' was not resolved"})
-    for mapping in ai_mappings:
-        if mapping["targetAttribute"] in values:
+                               "rowNumber": None, "detail": f"field '{field}' was not resolved",
+                               "field": field, "assetRef": asset_ref})
+    for field in missing_fields:
+        if field not in ai_keys:
             continue
         # Never silently fall back to deterministic values when AI was requested.
         if ai_failure is not None:
             output["gaps"].append({"kind": "ai_extraction_unavailable", "conceptId": entry["conceptId"],
-                                   "rowNumber": None,
-                                   "detail": f"AI extraction failed for '{mapping['targetAttribute']}': {ai_failure}"})
+                                   "rowNumber": None, "field": field, "assetRef": asset_ref,
+                                   "detail": f"AI extraction failed for '{field}': {ai_failure}"})
         else:
             output["gaps"].append({"kind": "ai_extraction_unresolved", "conceptId": entry["conceptId"],
-                                   "rowNumber": None,
-                                   "detail": f"field '{mapping['targetAttribute']}' was not grounded by the extraction agent"})
-    complete = bool(read is None or read["coverage"]["directBlocksComplete"])
-    if read is not None and not complete:
+                                   "rowNumber": None, "field": field, "assetRef": asset_ref,
+                                   "detail": f"field '{field}' was not grounded by the extraction agent"})
+    complete = extracted["readComplete"]
+    if not complete:
         output["gaps"].append({"kind": "budget_exhausted", "conceptId": entry["conceptId"],
                                "rowNumber": None, "scope": "read", "detail": "section evidence exceeded the read budget"})
-    if search_truncated:
+    if extracted["searchTruncated"]:
         output["gaps"].append({"kind": "budget_exhausted", "conceptId": entry["conceptId"],
                                "rowNumber": None, "scope": "retrieval", "detail": "candidate search exceeded the retrieval budget"})
         complete = False
@@ -416,7 +631,8 @@ async def populate_document(
     else:
         status = "processed_complete"
     output.update({"coverage": {"assetRef": asset_ref, "status": status,
-                                "fieldsAccepted": sorted(values), "fieldsUnresolved": missing_fields},
+                                "fieldsAccepted": sorted(values), "fieldsUnresolved": missing_fields,
+                                **({"aiSent": extracted["aiSent"]} if extracted["aiSent"] else {})},
                    "sourceObservation": {"assetRef": asset_ref, "contentHash": current.get("contentHash"),
                                          "sizeBytes": current.get("sizeBytes"),
                                          "indexResolution": resolution["resolution"]},
@@ -430,7 +646,8 @@ async def populate_document(
 
 
 def _gap(entry: dict[str, Any], status: str, detail: str, asset_ref: dict[str, Any]) -> dict[str, Any]:
-    gap = {"kind": status, "conceptId": entry["conceptId"], "rowNumber": None, "detail": detail}
+    gap = {"kind": status, "conceptId": entry["conceptId"], "rowNumber": None, "detail": detail,
+           "assetRef": asset_ref}
     return {"entities": [], "assertions": [], "gaps": [gap],
             "counts": {"scanned": 1, "excluded": 0, "queryable": 0, "materialized": 0, "gaps": 1},
             "coverage": {"assetRef": asset_ref, "status": status,

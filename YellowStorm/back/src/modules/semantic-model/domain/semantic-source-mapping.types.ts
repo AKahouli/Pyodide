@@ -4,7 +4,18 @@ export type SourceAssetKind = 'excel_sheet' | 'csv' | 'document';
 export type SourceFieldMappingMode = 'direct' | 'extract' | 'metadata' | 'constant' | 'ignore';
 // How an `extract` mapping resolves its value. Deterministic is the default so
 // existing mappings keep their current behaviour without a migration.
-export type SourceExtractionStrategy = 'deterministic' | 'ai';
+// `rules_then_ai` reads a field by its rules and asks the AI only when they find nothing.
+export type SourceExtractionStrategy = 'deterministic' | 'ai' | 'rules_then_ai';
+
+/** Where a document value is and what it looks like; without rules, `Label: value` or a table row. */
+export interface ExtractionRules {
+  labels?: string[];
+  location?: 'auto' | 'same_line' | 'next_line' | 'table' | 'heading' | 'anywhere';
+  pattern?: string;
+  transform?: 'none' | 'upper' | 'lower' | 'date_iso';
+  occurrence?: 'unique' | 'first';
+  firstPageOnly?: boolean;
+}
 
 export interface SourceFieldMapping {
   sourceField: string | null;
@@ -12,6 +23,31 @@ export interface SourceFieldMapping {
   mode: SourceFieldMappingMode;
   constantValue?: unknown;
   extractionStrategy?: SourceExtractionStrategy;
+  rules?: ExtractionRules;
+}
+
+/** How much of a document the AI reads. */
+export interface AiExtractionSettings {
+  /** Most blocks sent for one document. */
+  maxBlocks: number;
+  /** Most characters sent for one document. */
+  maxCharacters: number;
+  /** Above this many characters, only the blocks about each field are sent. */
+  longDocumentCharacters: number;
+  /** Blocks kept per field in a long document. */
+  blocksPerField: number;
+}
+
+export const DEFAULT_AI_EXTRACTION_SETTINGS: AiExtractionSettings = {
+  maxBlocks: 400,
+  maxCharacters: 60000,
+  longDocumentCharacters: 30000,
+  blocksPerField: 8,
+};
+
+export function usesAiExtraction(mappings: SourceFieldMapping[] | null | undefined): boolean {
+  return (mappings ?? []).some((field) => field.mode === 'extract'
+    && (field.extractionStrategy === 'ai' || field.extractionStrategy === 'rules_then_ai'));
 }
 
 export interface SheetFieldProfile {
@@ -188,3 +224,9 @@ export function resolveSheetEntities(
   }
   return { entities, stats };
 }
+
+/**
+ * Version of the AI extraction contract (prompt + response shape). Must equal the ADK's reported
+ * extractorVersion; bump both together. A run and a preview bind the agent with it.
+ */
+export const AI_EXTRACTION_CONTRACT_VERSION = 'ai-attribute-v1';

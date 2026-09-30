@@ -8,7 +8,10 @@ const sourceIssues: Array<Record<string, unknown>> = [];
 const gaps = {
   missingValues: [{ conceptId: 'organization', conceptLabel: 'Organization', attribute: 'country', attributeLabel: 'Country', missing: 1, total: 2 }],
   unresolvedLinks: [{ relationId: 'partner', relationLabel: 'works with', kind: 'unresolved_reference', count: 3 }],
-  other: [],
+  other: [{ conceptId: 'organization', conceptLabel: 'Organization', kind: 'missing_identity', count: 1 }],
+  rowSamples: [{ conceptId: 'organization', kind: 'missing_identity', field: 'id', fieldLabel: 'Id', rowNumber: 7,
+    source: { mappingId: 'mapping-1', workspaceId: 'ws', documentId: 'doc-1', documentName: 'customers.csv', kind: 'csv' }, values: { country: 'FR' } }],
+  linkSamples: [{ relationId: 'partner', relationLabel: 'works with', kind: 'unresolved_reference', sourceEntityId: 'organization:c002', referenceField: 'partner_id', referenceValue: 'X9', targetField: 'id' }],
 };
 
 vi.mock('@/modules/file-viewer/store', () => ({ useFileViewerStore: { getState: () => ({ openFile }) } }));
@@ -23,7 +26,7 @@ vi.mock('../../hooks/use-record-corrections', () => ({
   }),
 }));
 vi.mock('../../query/hooks', () => ({
-  useSemanticGraph: () => ({ data: { relations: [{ id: 'partner', key: 'works_with', label: 'works with', inverseLabel: 'works with', sourceNodeTypeId: 'organization', targetNodeTypeId: 'organization' }] } }),
+  useSemanticGraph: () => ({ data: { nodes: [{ id: 'organization', label: 'Organization' }], relations: [{ id: 'partner', key: 'works_with', label: 'works with', inverseLabel: 'works with', sourceNodeTypeId: 'organization', targetNodeTypeId: 'organization' }] } }),
   useSemanticDataPreview: () => ({
     isLoading: false,
     isFetching: false,
@@ -155,15 +158,50 @@ describe('SemanticDataPreview', () => {
     expect(screen.getByText('dataPreview.typedByHand')).toBeInTheDocument();
   });
 
-  it('lists what is missing with a way to fix it', () => {
-    const onOpenItem = vi.fn();
-    render(<SemanticDataPreview modelId='model' onOpenItem={onOpenItem} />);
-    expect(screen.getByText('dataPreview.gapsTitle')).toBeInTheDocument();
-    expect(screen.getByText('dataPreview.gapMissingValue')).toBeInTheDocument();
-    expect(screen.getByText('dataPreview.gapUnresolvedLink')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'dataPreview.gapFixRelationship' }));
-    expect(onOpenItem).toHaveBeenCalledWith('partner');
-    fireEvent.click(screen.getByRole('button', { name: 'dataPreview.gapFixConcept' }));
-    expect(onOpenItem).toHaveBeenCalledWith('organization');
+  it('counts what is missing and sends it to the review list', () => {
+    const onOpenReview = vi.fn();
+    render(<SemanticDataPreview modelId='model' onOpenReview={onOpenReview} />);
+    // One missing value and one unmatched link: the same problems the Trust center lists.
+    expect(screen.getByText('dataPreview.gapsCount')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'dataPreview.reviewGaps' }));
+    expect(onOpenReview).toHaveBeenCalled();
+  });
+
+  it('opens on the records missing a value, with that value ready to fix', () => {
+    render(<SemanticDataPreview modelId='model' focus={{ conceptId: 'organization', attribute: 'country', at: 1 }} />);
+    expect(screen.getByText('dataPreview.missingFilter')).toBeInTheDocument();
+    // Only Contoso has no country; Sony Europe is filtered out.
+    expect(screen.getByRole('heading', { name: 'Contoso' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Sony Europe/ })).not.toBeInTheDocument();
+    expect(screen.getByText('dataPreview.noValue')).toBeInTheDocument();
+    // Contoso was typed by hand: no file to look in, so the guide says to type the value.
+    expect(screen.getByText('dataGuide.missingNoSource')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'dataPreview.showAllRecords' }));
+    expect(screen.queryByText('dataPreview.missingFilter')).not.toBeInTheDocument();
+  });
+  it('shows the rows left out, with their file and the empty field', () => {
+    const onOpenMapping = vi.fn(); const onOpenIdentity = vi.fn();
+    render(<SemanticDataPreview modelId='model' focus={{ conceptId: 'organization', rows: true, at: 1 }} onOpenMapping={onOpenMapping} onOpenIdentity={onOpenIdentity} />);
+    expect(screen.getByText('dataGuide.rowsTitle')).toBeInTheDocument();
+    expect(screen.getByText('customers.csv')).toBeInTheDocument();
+    expect(screen.getByText('dataGuide.empty')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'dataGuide.openFile' }));
+    expect(openFile).toHaveBeenCalledWith('ws', 'doc-1', '', 'customers.csv', '', { page: 1 });
+    fireEvent.click(screen.getByRole('button', { name: 'dataGuide.editMapping' }));
+    expect(onOpenMapping).toHaveBeenCalledWith('mapping-1');
+    fireEvent.click(screen.getByRole('button', { name: 'dataGuide.changeUnique' }));
+    expect(onOpenIdentity).toHaveBeenCalledWith('organization');
+  });
+
+  it('lists the records whose link found nothing and opens one to link it by hand', () => {
+    const onOpenMatching = vi.fn();
+    render(<SemanticDataPreview modelId='model' focus={{ relationId: 'partner', at: 1 }} onOpenMatching={onOpenMatching} />);
+    expect(screen.getByText('dataGuide.linksTitle')).toBeInTheDocument();
+    expect(screen.getByText('dataGuide.linkLookedFor')).toBeInTheDocument();
+    // Only Contoso's link found nothing, so it is the record shown.
+    fireEvent.click(screen.getByRole('button', { name: /Contoso.*dataGuide\.linkLookedFor/ }));
+    expect(screen.getByRole('heading', { name: 'Contoso' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'dataGuide.changeMatching' }));
+    expect(onOpenMatching).toHaveBeenCalledWith('partner');
   });
 });

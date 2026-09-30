@@ -1,3 +1,4 @@
+import { effectiveAiSettings, SemanticExtractionSettingsService } from './semantic-extraction-settings.service';
 import { createHash } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
@@ -5,7 +6,7 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import type { AttributeDefinition } from '../domain/semantic-model.types';
 import type { RelationResolutionRule } from '../domain/semantic-cross-source.types';
-import type { SourceFieldMapping } from '../domain/semantic-source-mapping.types';
+import { AI_EXTRACTION_CONTRACT_VERSION, usesAiExtraction, type AiExtractionSettings, type SourceFieldMapping } from '../domain/semantic-source-mapping.types';
 import type { ConceptSpec, RelationSpec } from '../domain/model-specification.types';
 import type { RecordCorrectionDto } from '../dto/semantic-model.dto';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
@@ -48,6 +49,8 @@ interface MappingRow {
   sheetName: string;
   assetKind: string;
   fieldMappings: SourceFieldMapping[];
+  /** This mapping's own AI reading limits, over the admin defaults. */
+  aiSettings?: Record<string, unknown> | null;
   status: string;
   identityFields: string[] | null;
   sourceEnabled: boolean;
@@ -63,6 +66,7 @@ interface RecordSource {
   workspaceId: string;
   documentId: string;
   documentName: string;
+  documentPath?: string;
   mimeType?: string;
   sheetName?: string;
   kind: string;
@@ -76,10 +80,7 @@ const MAX_REFRESH_SOURCES = 25;
 /** Files one run may read, workspace mappings expanded; matches the runtime's per-task limit. */
 const MAX_RUN_SOURCES = 5000;
 const MANUAL_BATCH_SIZE = 500;
-const POPULATION_ENGINE_VERSION = 'r1-mvp-5';
-// Version of the AI extraction contract (prompt + response shape). Must equal the
-// ADK's reported extractorVersion; bump both together.
-const AI_EXTRACTION_CONTRACT_VERSION = 'ai-attribute-v1';
+const POPULATION_ENGINE_VERSION = 'r1-mvp-7';
 
 @Injectable()
 export class SemanticPopulationRefreshService {
@@ -92,7 +93,19 @@ export class SemanticPopulationRefreshService {
     private readonly specifications: ModelSpecificationService,
     private readonly runtime: SemanticRuntimeClientService,
     private readonly aiExtractionAgent: SemanticAttributeExtractionService,
+    private readonly extractionSettings?: SemanticExtractionSettingsService,
   ) {}
+
+  private aiDefaults?: { at: number; value: Promise<Partial<AiExtractionSettings>> };
+
+  /** The admin's AI reading limits, read at most every few seconds: one run can cover thousands of files. */
+  private adminAiSettings(): Promise<Partial<AiExtractionSettings>> {
+    if (!this.extractionSettings) return Promise.resolve({});
+    if (!this.aiDefaults || Date.now() - this.aiDefaults.at > 10_000) {
+      this.aiDefaults = { at: Date.now(), value: this.extractionSettings.getDefaults().then((defaults) => defaults.configured).catch(() => ({})) };
+    }
+    return this.aiDefaults.value;
+  }
 
   /**
    * Identity of the AI extractor actually used, or null when no mapping needs
@@ -102,8 +115,7 @@ export class SemanticPopulationRefreshService {
   private async aiExtractionIdentity(
     sources: object[],
   ): Promise<{ agentSlug: string; model: string | null; contractVersion: string } | null> {
-    const usesAi = sources.some((source) => ((source as { fieldMappings?: SourceFieldMapping[] | null }).fieldMappings ?? [])
-      .some((field) => field.mode === 'extract' && field.extractionStrategy === 'ai'));
+    const usesAi = sources.some((source) => usesAiExtraction((source as { fieldMappings?: SourceFieldMapping[] | null }).fieldMappings));
     if (!usesAi) return null;
     const agent = await this.aiExtractionAgent.resolveAgent();
     return {
@@ -119,7 +131,18 @@ export class SemanticPopulationRefreshService {
     if (job.jobType !== 'population.run' || job.modelId !== modelId) {
       throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'Population job not found');
     }
-    return job;
+    return this.nameRemovedSources(job);
+  }
+
+  /** The runtime knows the files a run no longer read only by id: give them their names. */
+  private async nameRemovedSources<T extends { progress?: Record<string, unknown> }>(job: T): Promise<T> {
+    const changes = job.progress?.changes as { removedSources?: Array<{ assetId: string; name?: string }> } | undefined;
+    const removed = changes?.removedSources ?? [];
+    if (!removed.length) return job;
+    const files = await this.documents.findByIds(removed.map((source) => source.assetId)).catch(() => []);
+    const names = new Map(files.map((file) => [file.id, file.originalName]));
+    return { ...job, progress: { ...job.progress, changes: { ...changes,
+      removedSources: removed.map((source) => ({ ...source, name: names.get(source.assetId) ?? source.name })) } } };
   }
 
   /** The data update of this model still running for this person, or null. */
@@ -189,7 +212,11 @@ export class SemanticPopulationRefreshService {
         'SELECT id, key, label, attributes FROM semantic_model.node_types WHERE version_id=$1',
         [model.currentDraftVersionId],
       ).then((result) => result.rows),
-      this.recordSources(model.id, entities.flatMap((entity) => Object.values(entity.origins ?? {}))),
+      this.recordSources(model.id, [
+        ...entities.flatMap((entity) => Object.values(entity.origins ?? {})),
+        // The files behind gap examples are named like the files behind values.
+        ...(records.gaps?.rowSamples ?? []).map((sample): RuntimeValueOrigin => ({ kind: 'source', assetId: sample.asset?.assetId ?? null })),
+      ]),
     ]);
     const correctors = await this.correctorNames(model.id, userId,
       entities.flatMap((entity) => Object.values(entity.origins ?? {}).map((origin) => origin.correctedBy)));
@@ -247,6 +274,22 @@ export class SemanticPopulationRefreshService {
         other: gaps.other.map((gap) => ({
           ...gap,
           conceptLabel: gap.conceptId ? conceptLabels.get(gap.conceptId) ?? null : null,
+        })),
+        rowSamples: (gaps.rowSamples ?? []).map((sample) => {
+          const source = sample.asset?.assetId ? sources.get(sample.asset.assetId) : undefined;
+          return {
+            conceptId: sample.conceptId,
+            kind: sample.kind,
+            ...(sample.field ? { field: sample.field, fieldLabel: sample.conceptId ? attributeLabel(sample.conceptId, sample.field) : sample.field } : {}),
+            ...(sample.rowNumber != null ? { rowNumber: sample.rowNumber } : {}),
+            ...(source ? { source: { mappingId: source.mappingId, workspaceId: source.workspaceId, documentId: source.documentId,
+              documentName: source.documentName, documentPath: source.documentPath, mimeType: source.mimeType, sheetName: source.sheetName, kind: source.kind } } : {}),
+            values: sample.values ?? {},
+          };
+        }),
+        linkSamples: (gaps.linkSamples ?? []).map((sample) => ({
+          ...sample,
+          relationLabel: relationLabels.get(sample.relationId) ?? sample.relationId,
         })),
       },
       summary: {
@@ -397,6 +440,7 @@ export class SemanticPopulationRefreshService {
         workspaceId: mapping.workspaceId,
         documentId: mapping.documentId,
         documentName: document?.originalName ?? '',
+        documentPath: document?.path,
         mimeType: document?.mimeType,
         sheetName: mapping.assetKind === 'excel_sheet' ? mapping.sheetName || undefined : undefined,
         kind: mapping.assetKind,
@@ -420,6 +464,7 @@ export class SemanticPopulationRefreshService {
             workspaceId: file.workspaceId,
             documentId: file.id,
             documentName: file.originalName,
+            documentPath: file.path,
             mimeType: file.mimeType,
             kind: 'document',
           });
@@ -443,6 +488,7 @@ export class SemanticPopulationRefreshService {
         workspaceId: source.workspaceId,
         documentId: source.documentId,
         documentName: source.documentName,
+        documentPath: source.documentPath,
         mimeType: source.mimeType,
         sheetName: origin.sheet ?? source.sheetName,
       },
@@ -828,7 +874,7 @@ export class SemanticPopulationRefreshService {
       const result = await this.database.query<MappingRow>(
         `SELECT m.id, m.concept_id AS "conceptId", m.workspace_id AS "workspaceId",
                 m.document_id AS "documentId", m.sheet_name AS "sheetName",
-                m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings",
+                m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings", m.ai_settings AS "aiSettings",
                 m.status, i.fields AS "identityFields",
                 COALESCE(w.enabled, false) AS "sourceEnabled",
                 m.validated_source_version AS "validatedSourceVersion", m.updated_at AS "updatedAt",
@@ -847,7 +893,7 @@ export class SemanticPopulationRefreshService {
     const result = await this.database.query<MappingRow>(
       `SELECT m.id, m.concept_id AS "conceptId", m.workspace_id AS "workspaceId",
               m.document_id AS "documentId", m.sheet_name AS "sheetName",
-              m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings",
+              m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings", m.ai_settings AS "aiSettings",
               m.status, i.fields AS "identityFields",
               COALESCE(w.enabled, false) AS "sourceEnabled",
               m.validated_source_version AS "validatedSourceVersion", m.updated_at AS "updatedAt",
@@ -956,6 +1002,11 @@ export class SemanticPopulationRefreshService {
         fieldMappings: activeMappings.map((field) => field.mode === 'extract' && !field.sourceField
           ? { ...field, sourceField: labels.get(field.targetAttribute) || field.targetAttribute }
           : field),
+        // How much of the document the AI reads; only sent when a field is read by AI, so a change
+        // to these limits never reruns documents read by rules alone.
+        ...(usesAiExtraction(activeMappings)
+          ? { options: { aiSettings: effectiveAiSettings(await this.adminAiSettings(), mapping.aiSettings) } }
+          : {}),
         mappingVersion,
       };
     }

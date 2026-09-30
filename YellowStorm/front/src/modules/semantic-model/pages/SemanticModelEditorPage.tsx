@@ -55,7 +55,8 @@ import { SourceSuggestionsList, takeChosenSource, useSourceSuggestions } from '.
 import { SourceChooserDialog } from '../components/assistant/SourceChooser';
 import type { SourceSuggestion, SourceSuggestionOption } from "../types";
 import { SemanticMappingsView } from '../components/mapping/SemanticMappingsView';
-import { SemanticDataPreview } from '../components/preview/SemanticDataPreview';
+import { SemanticDataPreview, type DataPreviewFocus } from '../components/preview/SemanticDataPreview';
+import { ReviewFocusBar } from '../components/review/ReviewFocusBar';
 import { SemanticTrustPanel } from '../components/review/SemanticTrustPanel';
 import { PopulationStartedPanel, populationServing, type PopulationOutcome } from '../components/population/PopulationStartedPanel';
 import { VersionsPanel } from "../components/versions/VersionsPanel";
@@ -64,7 +65,7 @@ import { useAssistantSync } from "../hooks/use-assistant-sync";
 import { useCanvasPositions, useIdentityRules, useMappingHealth, usePopulationFreshness, useSemanticVersions, useVersionComparison, useSemanticDataPreview, useSemanticGraph, useSemanticModel, useReviewQueue, useSourceMappings } from "../query/hooks";
 import { semanticModelQueryKeys } from '../query/queryKeys';
 import { isPendingSaveCurrent, isSemanticGraphSaved, selectPendingOperations, useSemanticModelEditorStore } from "../store";
-import type { ConceptSourceMapping } from "../types";
+import type { ConceptSourceMapping, ReviewQueueItem } from "../types";
 import type { DesignerSource } from "../utils/designer-flow";
 import { layoutStructure } from "../utils/model-utils";
 
@@ -160,6 +161,9 @@ export function SemanticModelEditorPage() {
   const [population, setPopulation] = useState<PopulationOutcome | null>(null);
   const [stoppingRun, setStoppingRun] = useState(false);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
+  // The review item being fixed, and the records to show for a missing value.
+  const [reviewFocus, setReviewFocus] = useState<ReviewQueueItem | null>(null);
+  const [dataFocus, setDataFocus] = useState<DataPreviewFocus | null>(null);
   const [choosingFor, setChoosingFor] = useState<SourceSuggestion | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const sourceSuggestions = useSourceSuggestions(modelId);
@@ -307,12 +311,14 @@ export function SemanticModelEditorPage() {
     setLeaveOpen(blocker.state === "blocked");
   }, [blocker.state]);
 
-  // Selecting something on the canvas means "show me this", so details take the panel back —
-  // unless the selection came from a health finding, which should keep its list in view.
+  // Selecting something means "show me this", so its details take the side panel back. A review item
+  // opened this way stays named in the bar above the work area, with the way back to the list.
   useEffect(() => {
     if (!selectedId) return;
-    if (focusRequest?.id !== selectedId) setTrustOpen(false);
+    setTrustOpen(false);
     setPopulation(null);
+    setSuggestionsOpen(false);
+    setMappingTarget(null);
     // The knowledge list belongs to the concept it was opened for; picking something else closes it.
     if (knowledgeTargetId !== selectedId) { setKnowledgeOpen(false); setKnowledgeTargetId(null); }
     // An open records table follows the concept being looked at.
@@ -402,6 +408,12 @@ export function SemanticModelEditorPage() {
 
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
+      // Escape closes the details panel, unless a dialog or a field has it.
+      if (event.key === "Escape" && !event.ctrlKey && !event.metaKey && !isTextEntry(event.target)
+        && !document.querySelector('[role="dialog"]') && useSemanticModelEditorStore.getState().detailsOpen) {
+        useSemanticModelEditorStore.getState().openDetails(false);
+        return;
+      }
       if (!(event.ctrlKey || event.metaKey)) return;
       // Typing in a field keeps the field's own undo.
       if (isTextEntry(event.target) && event.key.toLowerCase() !== "s") return;
@@ -552,6 +564,34 @@ export function SemanticModelEditorPage() {
     setGraphViewerOpen(true);
   };
   const closeSidePanels = () => { setTrustOpen(false); setVersionsOpen(false); setPopulation(null); setSuggestionsOpen(false); };
+  const openReview = () => { setKnowledgeOpen(false); setPopulation(null); setVersionsOpen(false); setSuggestionsOpen(false); setMappingTarget(null); setTrustOpen(true); };
+  // A review list that names the field only by its label ("customer id") still leads to the right field.
+  const fieldKey = (conceptId: string, label: unknown) => {
+    const wanted = String(label ?? '').trim().toLocaleLowerCase().replaceAll(/[\s_-]+/g, ' ');
+    if (!wanted) return undefined;
+    const attribute = graph.nodes.find((node) => node.id === conceptId)?.attributes
+      .find((candidate) => [candidate.label, candidate.key].some((name) => name.toLocaleLowerCase().replaceAll(/[\s_-]+/g, ' ') === wanted));
+    return attribute?.key ?? wanted.replaceAll(' ', '_');
+  };
+  // Each item opens where it is fixed, and the bar above the work area keeps saying what and where.
+  const openIssue = (item: ReviewQueueItem) => {
+    setReviewFocus(item);
+    setTrustOpen(false);
+    const action = item.action;
+    switch (action.kind) {
+      case 'repair_mapping': repairMapping(action.mappingId); break;
+      case 'choose_unique_field': setMode('structure'); focus(action.conceptId, 'identity'); break;
+      case 'set_up_link': setMode('structure'); focus(action.relationId, 'matching'); break;
+      // Links that found nothing are looked at in the records: which ones, and the value they looked for.
+      case 'check_links': setMode('records'); setDataFocus({ relationId: action.relationId, at: Date.now() }); break;
+      case 'review_rows': setMode('records'); setDataFocus({ conceptId: action.conceptId, rows: true, at: Date.now() }); break;
+      case 'add_source':
+      case 'open_sources': setMode('structure'); focus(action.conceptId, 'sources'); break;
+      case 'fix_values': setMode('records'); setDataFocus({ conceptId: action.conceptId, attribute: action.attribute ?? fieldKey(action.conceptId, item.params.field), at: Date.now() }); break;
+      case 'view_data': setMode('records'); setDataFocus(null); break;
+      default: break;
+    }
+  };
   const openSource = (source: DesignerSource, mapping?: ConceptSourceMapping) => {
     if (source.kind === 'typed') {
       // One typed record opens for editing; several open the records list.
@@ -648,7 +688,7 @@ export function SemanticModelEditorPage() {
             {t('assistantSources.toolbar')}
             {pendingSuggestions > 0 && <span className='ml-2 rounded-full bg-primary/15 px-1.5 text-[11px] font-semibold text-primary' aria-label={t('assistantSources.pending', { count: pendingSuggestions })}>{pendingSuggestions}</span>}
           </Button>}
-          <Button variant='ghost' size='sm' onClick={() => { setKnowledgeOpen(false); setPopulation(null); setVersionsOpen(false); setSuggestionsOpen(false); setTrustOpen((open) => !open); }}>
+          <Button variant='ghost' size='sm' onClick={() => (trustOpen ? setTrustOpen(false) : openReview())}>
             {t('reviewQueue.button')}
             {reviewCount > 0 && <span className='ml-2 rounded-full bg-amber-500/15 px-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300' aria-label={t('reviewQueue.badge', { count: reviewCount })}>{reviewCount}</span>}
           </Button>
@@ -693,6 +733,7 @@ export function SemanticModelEditorPage() {
           <p className='mt-2 px-1 text-[11px] leading-snug text-muted-foreground'>{t('designer.palette.help')}</p>
         </nav>}
         <section className="relative flex min-w-0 flex-1 flex-col">
+          {reviewFocus && !trustOpen && <ReviewFocusBar item={reviewFocus} items={reviewQueue.data?.items ?? []} onOpen={openIssue} onBack={openReview} onClose={() => setReviewFocus(null)} />}
           {onCanvas && <div className='relative min-h-0 flex-1'><SemanticModelCanvas
             sourceMappings={sourceMappings.data}
             identityRules={identityRules.data}
@@ -721,7 +762,8 @@ export function SemanticModelEditorPage() {
             onClose={() => setRecordsConceptId(null)}
             onOpenSource={(mapping) => void openMappingTarget(mappingTarget_(mapping))}
           />}
-          {mode === 'records' && modelId && <SemanticDataPreview modelId={modelId} dataRevisionId={boundDataRevisionId} onDataRevision={setBoundDataRevisionId} onOpenItem={(id) => { setMode('structure'); focus(id); }} canEdit={canEdit} onRebuildStarted={setPopulationJobId} />}
+          {mode === 'records' && modelId && <SemanticDataPreview modelId={modelId} dataRevisionId={boundDataRevisionId} onDataRevision={setBoundDataRevisionId} onOpenReview={openReview} focus={dataFocus} canEdit={canEdit}
+            onOpenMapping={repairMapping} onOpenIdentity={(id) => { setMode('structure'); focus(id, 'identity'); }} onOpenMatching={(id) => { setMode('structure'); focus(id, 'matching'); }} onRebuildStarted={setPopulationJobId} />}
           {mode === 'mappings' && modelId && <SemanticMappingsView modelId={modelId} canEdit={canEdit} onOpenGraph={openGraphViewer} onPopulationAccepted={setPopulationJobId} onRepairMapping={(mapping) => void openMappingTarget(mappingTarget_(mapping))} onBulkEditMappings={(mapping) => void openMappingTarget({ ...mappingTarget_(mapping), bulkEdit: true })} />}
           {onCanvas && conceptCount === 0 && !hasSources && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
@@ -780,9 +822,8 @@ export function SemanticModelEditorPage() {
           checking={checking}
           onRunCheck={() => void validate()}
           onClose={() => setTrustOpen(false)}
-          onRepairMapping={(mappingId) => { setTrustOpen(false); repairMapping(mappingId); }}
-          onOpenItem={(id) => { setMode('structure'); focus(id); }}
-          onFixValues={() => setMode('records')}
+          activeKey={reviewFocus?.key}
+          onOpenIssue={openIssue}
         />}
         {(knowledgeOpen || (onCanvas && detailsOpen)) && !trustOpen && !population && !suggestionsOpen && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} onBrowseRecords={browseRecords} recordCounts={conceptRecordCounts} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} onMapData={(target) => void openMappingTarget(target)} />}
         {modelId && <SourceMappingDrawer modelId={modelId} target={mappingTarget} onClose={() => setMappingTarget(null)} onSuggestConcepts={canEdit ? (source) => { setMappingTarget(null); setSuggestSource(source); } : undefined} />}

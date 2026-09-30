@@ -139,6 +139,12 @@ export const API_ENDPOINTS = {
   adminEvaluationSettings: {
     base: '/admin/evaluation-settings',
   },
+  adminSemanticModelSettings: {
+    base: '/admin/semantic-model-settings',
+  },
+  semanticModelSettings: {
+    extraction: '/semantic-model-settings/extraction',
+  },
   adminTeamAutoBuilder: {
     config: '/admin/teams/auto-builder-config',
   },

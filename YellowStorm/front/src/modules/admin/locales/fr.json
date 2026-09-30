@@ -1932,6 +1932,8 @@
   "menu.evaluationSettings.label": "Paramètres d'évaluation",
   "menu.evaluationSettings.description": "Configurer l'évaluation de la fiabilité des réponses",
   "evaluationSettings.title": "Paramètres d'évaluation",
+  "menu.semanticModelSettings.label": "Modèles sémantiques",
+  "menu.semanticModelSettings.description": "Réglez la lecture des documents dans les modèles sémantiques",
   "evaluationSettings.description": "Configurez les contrôles de fiabilité fondés sur les preuves pour les réponses IA terminées.",
   "evaluationSettings.enable": "Activer l'évaluation de la fiabilité des réponses",
   "evaluationSettings.enableDescription": "Évaluer les réponses terminées et corriger éventuellement les problèmes de fiabilité importants.",

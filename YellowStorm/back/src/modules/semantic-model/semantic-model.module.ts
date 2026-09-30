@@ -1,3 +1,5 @@
+import { SemanticExtractionSettingsController } from './controllers/semantic-extraction-settings.controller';
+import { SemanticExtractionSettingsService } from './services/semantic-extraction-settings.service';
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import semanticModelConfig from '@config/semantic-model.config';
@@ -44,9 +46,9 @@ import { SemanticAssistantActorGuard, SemanticAssistantModelGuard } from './guar
 
 @Module({
   imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,UserModule,IntegrationEventsModule,forwardRef(() => WorkspaceModule)],
-  controllers: [SemanticModelController,WorkspaceSemanticModelController,SemanticDataTokenController,SemanticAttributeExtractionInternalController,SemanticModelAssistantInternalController],
+  controllers: [SemanticExtractionSettingsController,SemanticModelController,WorkspaceSemanticModelController,SemanticDataTokenController,SemanticAttributeExtractionInternalController,SemanticModelAssistantInternalController],
   providers: [
-    SemanticModelDatabaseService,SemanticModelRepository,SemanticGraphRepository,SemanticModelService,
+    SemanticModelDatabaseService,SemanticExtractionSettingsService,SemanticModelRepository,SemanticGraphRepository,SemanticModelService,
     SemanticGraphCommandService,SemanticModelValidationService,SemanticModelWorkspaceService,
     SemanticKnowledgeBindingService,SemanticModelVersionService,SemanticModelProvisioningService,
     SemanticModelNativeSearchClient,
