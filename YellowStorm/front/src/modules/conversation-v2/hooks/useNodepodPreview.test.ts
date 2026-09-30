@@ -128,17 +128,17 @@ describe('useNodepodPreview', () => {
     expect(useConversationV2Store.getState().runtimeStatus).toBe('browser_active');
   });
 
-  it('does not detach the preview iframe when the same host is rebound to a new session id', () => {
+  it('does not detach the preview iframe when getOrCreateHost returns the same host', () => {
     const sharedHost = makeHost() as unknown as ReturnType<typeof getOrCreateHost>;
     vi.mocked(getOrCreateHost).mockReturnValue(sharedHost);
 
     const { rerender } = renderHook(
       ({ sessionId }: { sessionId: string | null }) => useNodepodPreview({ sessionId }),
-      { initialProps: { sessionId: 'template-clone-tpl' as string | null } },
+      { initialProps: { sessionId: 'sess-a' as string | null } },
     );
 
     mockDetach.mockClear();
-    rerender({ sessionId: 'session-real' });
+    rerender({ sessionId: 'sess-b' });
     expect(mockDetach).not.toHaveBeenCalled();
   });
 });

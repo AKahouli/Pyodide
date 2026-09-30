@@ -1521,14 +1521,6 @@ export class BrowserRuntimeHost {
   }
 
   /**
-   * Point this host at a real Conversation V2 session id without touching NodePod.
-   * Used when a draft clone preview is promoted in-place on first Send.
-   */
-  adoptSessionId(sessionId: string): void {
-    this.sessionId = sessionId;
-  }
-
-  /**
    * After a draft local preview (`startFromLocalFiles`), attach the live runtime
    * ticket + Socket.IO register for a real session — without rebooting Vite/NodePod.
    */
@@ -1636,29 +1628,6 @@ export function getOrCreateHost(sessionId: string): BrowserRuntimeHost {
     host = new BrowserRuntimeHost();
     hostRegistry.set(sessionId, host);
   }
-  return host;
-}
-
-/**
- * Move an existing host to a new registry key without destroying the NodePod.
- * Used to promote `template-clone-{id}` → real session id on first Send.
- */
-export function rebindHost(fromSessionId: string, toSessionId: string): BrowserRuntimeHost | null {
-  if (!fromSessionId || !toSessionId) return null;
-  if (fromSessionId === toSessionId) return hostRegistry.get(toSessionId) ?? null;
-
-  const host = hostRegistry.get(fromSessionId);
-  if (!host) return null;
-
-  const existing = hostRegistry.get(toSessionId);
-  if (existing && existing !== host) {
-    existing.destroy();
-    hostRegistry.delete(toSessionId);
-  }
-
-  hostRegistry.delete(fromSessionId);
-  hostRegistry.set(toSessionId, host);
-  host.adoptSessionId(toSessionId);
   return host;
 }
 

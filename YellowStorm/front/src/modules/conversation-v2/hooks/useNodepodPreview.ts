@@ -99,8 +99,8 @@ export function useNodepodPreview({
     }
 
     const host = getOrCreateHost(sessionId);
-    // After template-clone promote, `rebindHost` moves the same instance to the
-    // real session id. Do not detach the iframe — that blanks the live preview.
+    // Only detach when switching to a different host instance; same reference
+    // must keep the live iframe (avoids a blank flash on remount).
     if (hostRef.current && hostRef.current !== host) {
       hostRef.current.detachPreviewIframe();
     }
