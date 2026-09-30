@@ -247,15 +247,15 @@
     "sourceReplaced": "Source republished.",
     "validateTemplate": "Validate template",
     "validationConfirmed": "Validation confirmed",
-    "coverFromValidation": "A cover was generated from the NodePod preview. Add more images or adjust the focus zone."
+    "coverFromValidation": "A cover was generated from the NodePod preview. Adjust the focus zone if needed."
   },
   "coverGallery": {
     "count": "{{count}} / {{max}}",
-    "listAria": "Cover image gallery",
+    "listAria": "Cover image",
     "add": "Add",
-    "addAria": "Add cover images",
-    "empty": "Add at least one cover image. The primary image is used on the template card.",
-    "tip": "Click an image to frame the focus zone. Mark one as primary for the marketplace card.",
+    "addAria": "Add cover image",
+    "empty": "Add a cover image. It is used on the template card.",
+    "tip": "Click the image to frame the focus zone for the marketplace card.",
     "primaryBadge": "Primary",
     "setPrimary": "Primary",
     "editFocusAria": "Adjust focus for {{name}}",

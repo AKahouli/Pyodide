@@ -89,12 +89,13 @@ export function CoverImageGallery({
                 />
               </button>
 
-              {item.isPrimary ? (
+              {COVER_MAX_IMAGES > 1 && item.isPrimary ? (
                 <Badge className='pointer-events-none absolute left-1.5 top-1.5 gap-1 border-0 bg-primary px-1.5 py-0 text-[10px] font-semibold text-primary-foreground shadow-sm'>
                   <Star className='size-2.5 fill-current' aria-hidden />
                   {t('coverGallery.primaryBadge')}
                 </Badge>
-              ) : (
+              ) : null}
+              {COVER_MAX_IMAGES > 1 && !item.isPrimary ? (
                 <Button
                   type='button'
                   size='sm'
@@ -108,7 +109,7 @@ export function CoverImageGallery({
                 >
                   {t('coverGallery.setPrimary')}
                 </Button>
-              )}
+              ) : null}
 
               <Button
                 type='button'
@@ -169,7 +170,7 @@ export function CoverImageGallery({
         id={inputId}
         type='file'
         accept={accept}
-        multiple
+        multiple={COVER_MAX_IMAGES > 1}
         className='sr-only'
         disabled={disabled || !canAdd}
         onChange={(event) => {

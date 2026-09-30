@@ -247,15 +247,15 @@
     "sourceReplaced": "Source republiée.",
     "validateTemplate": "Valider le template",
     "validationConfirmed": "Validation confirmée",
-    "coverFromValidation": "Une couverture a été générée depuis l’aperçu NodePod. Ajoutez d’autres images ou ajustez la zone de focus."
+    "coverFromValidation": "Une couverture a été générée depuis l’aperçu NodePod. Ajustez la zone de focus si besoin."
   },
   "coverGallery": {
     "count": "{{count}} / {{max}}",
-    "listAria": "Galerie d’images de couverture",
+    "listAria": "Image de couverture",
     "add": "Ajouter",
-    "addAria": "Ajouter des images de couverture",
-    "empty": "Ajoutez au moins une image de couverture. L’image principale apparaît sur la card du modèle.",
-    "tip": "Cliquez sur une image pour cadrer la zone de focus. Définissez une image principale pour la vitrine.",
+    "addAria": "Ajouter une image de couverture",
+    "empty": "Ajoutez une image de couverture. Elle apparaît sur la card du modèle.",
+    "tip": "Cliquez sur l’image pour cadrer la zone de focus de la card marketplace.",
     "primaryBadge": "Principale",
     "setPrimary": "Principale",
     "editFocusAria": "Ajuster le focus de {{name}}",

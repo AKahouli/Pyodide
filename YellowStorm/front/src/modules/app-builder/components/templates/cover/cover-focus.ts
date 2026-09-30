@@ -1,7 +1,7 @@
 /** Template card media aspect (matches TemplateCard `aspect-[16/10]`). */
 export const COVER_CARD_ASPECT = 16 / 10;
 
-export const COVER_MAX_IMAGES = 8;
+export const COVER_MAX_IMAGES = 1;
 export const COVER_MIN_ZOOM = 1;
 export const COVER_MAX_ZOOM = 3;
 

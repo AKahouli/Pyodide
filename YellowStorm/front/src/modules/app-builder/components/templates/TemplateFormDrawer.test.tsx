@@ -114,7 +114,7 @@ describe('TemplateFormDrawer', () => {
     await userEvent.click(screen.getByRole('button', { name: 'templates.validateTemplate' }));
     fireEvent.click(screen.getByText('mock-validate'));
     expect(await screen.findByText('templates.validationConfirmed')).toBeInTheDocument();
-    expect(screen.getByText('coverGallery.primaryBadge')).toBeInTheDocument();
+    expect(screen.getByText('coverGallery.tip')).toBeInTheDocument();
     expect(submit).toBeEnabled();
 
     fireEvent.submit(submit.closest('form')!);
