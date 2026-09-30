@@ -18,6 +18,7 @@ Backend counterpart:
 ## Table of Contents
 
 - [Overview](#overview)
+- [Template Clone draft](#template-clone-draft)
 - [Application preview (Nodepod)](#application-preview-nodepod)
 - [Runtime Browser Host](#runtime-browser-host)
   - [Architecture](#architecture)
@@ -62,6 +63,47 @@ Invite / register links use `buildAppRegisterInviteUrl` (hash route ending in `/
 
 The **Browser Runtime Host** enables OpenCode to execute file operations
 directly in the browser via Socket.IO — no server sandbox needed for most tasks.
+
+## Template Clone draft
+
+App Market **Clone App** (from `app-builder`) must open a real session immediately
+for NodePod, but must **not** appear in History until the user sends the first
+message.
+
+### Flow
+
+1. `startTemplateSession({ templateId, navigate })` → `POST …/sessions` with
+   `templateId` (backend seeds `starter_revision_id = template_<id>`).
+2. Navigate to `/conversation-v2/{sessionId}?action=clone` with
+   `location.state.source = 'template-clone'` — **no** template id in the path,
+   **no** History prepend.
+3. `ConversationV2SessionPage` detects draft via `isCloneDraftSearch` /
+   `template-clone-gate` (`isTemplateCloneNavigation` / `isTemplateCloneSession`).
+4. Send stays locked while `previewPhase === 'waiting'` until NodePod is ready
+   (`useTemplateClonePreview` + `useWaitForPreviewHost`). Deploy controls stay
+   hidden for draft clone.
+5. First Send → `commitCloneDraftSession`: prepend History, `navigate` replace to
+   the **same** `sessionId` **without** `?action=clone`.
+
+### Invariants
+
+| Rule | Detail |
+|---|---|
+| Same session id | Commit never creates a second session |
+| No History before Send | Draft path omits pointer prepend |
+| Gate Send | No auto-stream; user must type the first edit |
+| Reload | `starterRevisionId` matching `template_*` re-enters clone gate |
+
+### Key helpers
+
+| File | Role |
+|---|---|
+| `startAgentSession.ts` | `startTemplateSession`, `commitCloneDraftSession` |
+| `template-clone-draft.ts` | Path + `?action=clone` helpers |
+| `template-clone-gate.ts` | Nav / revision / Send-gate predicates |
+| `hooks/useTemplateClonePreview.ts` | `previewPhase`, lock Send, safety net |
+| `hooks/useWaitForPreviewHost.ts` | Shared NodePod wait + i18n stream errors |
+| `components/SessionStatusBanner.tsx` | Waiting / ready / App Builder banners |
 
 ## Application preview (Nodepod)
 
@@ -532,9 +574,11 @@ tool views, deploy controls).
 
 | Path | Role |
 |---|---|
-| `ConversationV2SessionPage.tsx` | Main session page (layout: header + messages + composer + right panel) |
+| `ConversationV2SessionPage.tsx` | Session page: composes bootstrap / clone-preview / runtime / reconcile hooks |
 | `ConversationV2Page.tsx` | Session list page |
 | `SharedConversationV2Page.tsx` | Read-only shared view |
+| `startAgentSession.ts` | New session, template clone, commit clone draft |
+| `template-clone-draft.ts` / `template-clone-gate.ts` | Clone draft URL + Send gate |
 | `store.ts` | Zustand store — session, messages, tools, deploy, SSE state |
 | `api.ts` | REST API client (all endpoints) |
 | `conversationV2Stream.ts` | Global SSE connection + event dispatch |
@@ -549,7 +593,7 @@ tool views, deploy controls).
 | Path | Role |
 |---|---|
 | `interfaces/events.ts` | Event types (message, tool, step, plan, wait, lifecycle, application) |
-| `interfaces/session.ts` | Session, pointer, status, deploy state types |
+| `interfaces/session.ts` | Session, pointer, `AgentSessionSource`, `AgentSessionLocationState` |
 | `interfaces/application.ts` | FilesTreeNode, ApplicationComponent types |
 | `interfaces/api.ts` | API response types |
 | `interfaces/permissions.ts` | Permission types |
@@ -572,6 +616,12 @@ tool views, deploy controls).
 
 | Path | Role |
 |---|---|
+| `hooks/useSessionBootstrap.ts` | Load/switch session pointer + event history |
+| `hooks/useTemplateClonePreview.ts` | Clone preview phase + Send lock |
+| `hooks/useWaitForPreviewHost.ts` | Wait for BrowserRuntimeHost ready |
+| `hooks/useInitialAgentMessage.ts` | Landing-page first message after NodePod ready |
+| `hooks/useBrowserRuntimeBoot.ts` | Boot/teardown BrowserRuntimeHost |
+| `hooks/useStreamingReconcile.ts` | Periodic SSE gap-fill while streaming |
 | `hooks/useNodepodPreview.ts` | Nodepod boot/teardown/file download lifecycle |
 | `hooks/useVncSession.ts` | VNC connection management |
 | `hooks/useTypewriter.ts` | Typewriter animation for streaming text |
@@ -584,6 +634,7 @@ tool views, deploy controls).
 | `components/MessageBubble.tsx` | Individual message (markdown, code blocks) |
 | `components/Composer.tsx` | Input + model/skill/connector selectors + send/stop |
 | `components/ConversationV2Header.tsx` | Title, status, pause/stop/share buttons |
+| `components/SessionStatusBanner.tsx` | Clone waiting/ready + App Builder + stream-error banners |
 | `components/ToolCallCard.tsx` | Tool call summary card |
 | `components/StepBlock.tsx` | Plan step with badge |
 | `components/ThinkingIndicator.tsx` | Thinking animation |

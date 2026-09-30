@@ -13,28 +13,40 @@ The App Builder module is a frontend hub that lets users **browse, manage, share
 ```
 app-builder/
 ├── index.ts                              # Public API: exports AppBuilderPage, AppBuilderButton, useAppBuilderStore, DeployedApp
-├── api.ts                                # REST API client for app catalog & end-user grants
-├── types.ts                              # All TypeScript interfaces & type aliases
-├── store.ts                              # Zustand global store (catalog state, fetch, remove)
+├── api.ts                                # REST: app catalog, end-user grants, template catalog + admin templates
+├── types.ts                              # All TypeScript interfaces & type aliases (apps + templates)
+├── store.ts                              # Zustand: apps catalog + template categories/templates
 ├── store.test.ts                         # Unit tests for the store
 ├── status-i18n.ts                        # Maps tab keys → i18n translation keys
 ├── hooks/
-│   └── useAppBuilderFilters.ts           # URL-synced filter/sort/view/search logic
+│   ├── useAppBuilderFilters.ts           # URL-synced filter/sort/view/search logic
+│   └── useCoverImageItems.ts             # Cover gallery blob URLs, primary, focus, revoke
 ├── components/
-│   ├── AppBuilderPage.tsx                # Main page component (entry point)
+│   ├── AppBuilderPage.tsx                # Hub: header, category sidebar, apps view, delete confirms
 │   ├── AppBuilderPage.test.tsx           # Integration tests for the page
 │   ├── AppBuilderButton.tsx              # Sidebar navigation button
+│   ├── AppMarketAppsView.tsx             # Deployed/draft apps + create-with-agent wrapper
 │   ├── DeployedAppCard.tsx              # Card for deployed & shared apps
 │   ├── DraftAppCard.tsx                 # Card for draft apps
 │   ├── DeleteDeployedAppButton.tsx       # Delete/unshare button with confirmation dialog
 │   ├── DeleteDraftAppButton.tsx          # Delete draft button with confirmation dialog
 │   ├── AppEndUsersDialog.tsx             # Dialog to manage end-user CRUD + useAi permissions
 │   ├── AppAiBadge.tsx                    # Badge when session/app has AI features
-│   └── hub/
-│       ├── AppBuilderCreateWithAgent.tsx # Inline Agent composer for creating new apps
-│       ├── AppBuilderFilters.tsx         # Search, tab, sort, view-mode, optional AI filter
-│       ├── AppBuilderGrid.tsx            # Grid/list layout with pagination
-│       └── AppBuilderPagination.tsx      # Previous/Next pagination controls
+│   ├── hub/
+│   │   ├── AppBuilderCreateWithAgent.tsx # Inline Agent composer for creating new apps
+│   │   ├── AppBuilderFilters.tsx         # Search, tab, sort, view-mode, optional AI filter
+│   │   ├── AppBuilderGrid.tsx            # Grid/list layout with pagination
+│   │   └── AppBuilderPagination.tsx      # Previous/Next pagination controls
+│   └── templates/
+│       ├── TemplatesMarketSection.tsx    # Category grid, Clone App, detail + create drawer
+│       ├── CategorySidebar.tsx           # Category list + admin CRUD entry points
+│       ├── TemplateGrid.tsx / TemplateCard.tsx
+│       ├── TemplateDetailDialog.tsx
+│       ├── TemplateFormDrawer.tsx        # Create/edit; ZIP validate + single cover
+│       ├── CategoryFormDialog.tsx
+│       ├── FileDropZone.tsx
+│       ├── TemplateValidatePreviewDialog.tsx
+│       └── cover/                        # Cover focus crop (COVER_MAX_IMAGES = 1)
 └── locales/
     ├── en.json                           # English translations
     └── fr.json                           # French translations
@@ -65,6 +77,9 @@ All defined in `types.ts`:
 | `AppBuilderCatalog` | `{ deployed: DeployedApp[], shared: DeployedApp[], drafts: DraftApp[] }` |
 | `AppEndUserGrants` | `{ create: boolean, read: boolean, update: boolean, delete: boolean }` |
 | `AppEndUserSummary` | `{ id, email, displayName, status, grants, createdAt }` |
+| `TemplateCategory` | Admin/catalog category (`id`, `name`, `slug`, `icon`, `templateCount`, …) |
+| `AppTemplate` | Published (or admin) template card payload (`coverImage`, `revisionId`, `platformReport`, …) |
+| `TemplatePreviewFilesResponse` / `TemplatePreviewPresignResponse` | Preview hydrate DTOs for NodePod (used by conversation-v2 `RevisionHydrator`) |
 
 Additional types exported from `hooks/useAppBuilderFilters.ts`:
 
@@ -91,6 +106,15 @@ Additional types exported from `hooks/useAppBuilderFilters.ts`:
   loading: boolean;
   error: boolean;
   deletingSessionId: string | null;  // tracks which app is being deleted (for spinner)
+
+  // Template catalog (App Market categories)
+  categories: TemplateCategory[];
+  categoriesLoading: boolean;
+  categoriesError: boolean;
+  templates: AppTemplate[];
+  templatesLoading: boolean;
+  templatesError: boolean;
+  selectedCategoryId: string | null;  // null = "all applications" (templates section hidden)
 }
 ```
 
@@ -101,6 +125,9 @@ Additional types exported from `hooks/useAppBuilderFilters.ts`:
 | `fetchApps()` | Calls `GET /conversation-v2/apps`, sets `deployed`, `shared`, `drafts`. Sets `loading`/`error` flags. |
 | `removeApp(sessionId)` | Calls `DELETE /conversation-v2/apps/:sessionId`. Removes from `deployed` and `shared` arrays locally. |
 | `removeDraft(sessionId)` | Calls `useConversationV2PointersStore.getState().remove(sessionId)` (soft-delete via conversation-v2). Removes from `drafts` locally. |
+| `fetchCategories()` | Loads template categories; selecting a category triggers `fetchTemplates`. |
+| `selectCategory(id \| null)` | Sets `selectedCategoryId` and loads templates for that category (or clears templates when `null`). |
+| `fetchTemplates(categoryId)` | Calls `templateCatalogApi.listTemplates(categoryId)` (published templates for the gallery). |
 
 **Key behavior:** After successful API call, items are removed from local state immediately (optimistic UI). On error, the action re-throws so the calling component can show a toast.
 
@@ -121,6 +148,25 @@ All requests go through `apiClient` (axios-based, from `@/lib/api/client`).
 | `listEndUsers(sessionId)` | `GET /conversation-v2/sessions/:sessionId/app-data/end-users` | Lists registered users of a deployed app |
 | `updateEndUserGrants(sessionId, userId, grants)` | `PUT /conversation-v2/sessions/:sessionId/app-data/end-users/:userId/grants` | Updates CRUD permissions for a specific user |
 
+### `templateCatalogApi` (read-only gallery)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `listCategories()` | `GET /conversation-v2/template-catalog/categories` | Published category list |
+| `listTemplates(categoryId?)` | `GET /conversation-v2/template-catalog/templates` | Published templates (optional category filter) |
+| `getTemplate(id)` | `GET /conversation-v2/template-catalog/templates/:id` | Single published template |
+| `listTemplatePreviewFiles(id)` / `presignTemplatePreviewFiles(id, paths)` | preview files + Ceph presign | Used by conversation-v2 NodePod hydrate for `template_<id>` revisions |
+
+### `adminTemplateApi` (super-admin)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `listAllTemplates()` | `GET /admin/conversation-v2/templates` | **All** templates (draft + published) — not the same as catalog `listTemplates` |
+| Category CRUD | `/admin/conversation-v2/template-categories` | Create / patch / delete categories |
+| `createTemplate` / `updateTemplate` / `deleteTemplate` | `/admin/conversation-v2/templates` | ZIP + cover create; metadata update; delete |
+| `replaceCover` / `replaceSource` | `…/cover`, `…/source` | Replace assets (ZIP uploads use a long HTTP timeout) |
+| Staging publish / discard | `…/templates/staging/…` | ZIP validation preview before create |
+
 **Response wrapper:** All endpoints return `ApiResponse<T>` where the payload is in `data.data`.
 
 ---
@@ -130,10 +176,22 @@ All requests go through `apiClient` (axios-based, from `@/lib/api/client`).
 ### `AppBuilderPage` (main entry)
 
 The root component rendered at `/app-builder`. Responsibilities:
-1. Fetches the catalog on mount via `fetchApps()`
-2. Applies filters via `useAppBuilderFilters(catalog)`
-3. Renders one of four states: error, loading, global-empty, or the filterable app grid
-4. Always shows `AppBuilderCreateWithAgent` when not in error state
+1. Fetches apps + template categories on mount
+2. Renders header, collapsible `CategorySidebar`, and `AppMarketAppsView` (apps grid / create-with-agent)
+3. Mounts `TemplatesMarketSection` inside the apps view when a category is selected
+4. Owns category form + shared delete confirmation for categories **and** templates
+
+### `TemplatesMarketSection`
+
+Owns the App Market templates UX for the selected category:
+- Search + filtered `TemplateGrid`
+- Single **Clone App** handler → `startTemplateSession` (conversation-v2)
+- `TemplateDetailDialog` and `TemplateFormDrawer` (create/edit)
+- Requests template delete via callback to the page AlertDialog
+
+### Cover images (`useCoverImageItems`)
+
+Create flow: ZIP → Validate (NodePod screenshot) → **one** cover (`COVER_MAX_IMAGES = 1`) with optional focus crop → submit. The hook owns blob URLs, primary selection, focus, and revoke on reset/unmount.
 
 ### `AppBuilderButton`
 
@@ -263,8 +321,9 @@ Translation keys are accessed via `useModuleTranslation('app-builder')`. The `st
 
 | Module | Usage |
 |---|---|
-| `conversation-v2` | `AgentComposer` component for the create-with-agent input; `startConversationV2AgentSession` to launch a new session; `useConversationV2Store` to clear skills/connectors; `useConversationV2PointersStore` to soft-delete drafts; `ShareDeployDialog` for sharing |
+| `conversation-v2` | `AgentComposer` for create-with-agent; `startConversationV2AgentSession` / `startTemplateSession` (Clone App); pointers store for draft soft-delete; `ShareDeployDialog` |
 | `localization` | `useModuleTranslation('app-builder')` throughout all components |
+| `admin` | `usePermissions` — super-admin (`*`) gates category/template admin UI |
 | `sidebar` | `AppBuilderButton` rendered in the sidebar; active state detection via `pathname.startsWith('/app-builder')` |
 | `platform-overview` | Links to `/app-builder` from quick actions and marketplace section |
 | `lib/api/client` | `apiClient` (axios) for all HTTP requests |
@@ -303,6 +362,10 @@ URL search params are used for filter state:
 4. **Pagination:** Client-side only, 9 items per page. Resets to page 1 on tab/data change.
 
 5. **Agent creation flow:** The inline agent creates a new `conversation-v2` session with `source: 'app-builder'`. The conversation page shows a special banner when entered from App Builder.
+
+6. **Clone App (templates):** `startTemplateSession` creates a real session seeded from `template_<id>`, then navigates to `/conversation-v2/{sessionId}?action=clone` **without** adding History and **without** putting the template id in the URL. First Send commits the draft (strip `?action=clone`, prepend History). See conversation-v2 README § Template Clone draft.
+
+7. **Template covers:** At most one cover image on create (`COVER_MAX_IMAGES = 1`). Validation screenshot becomes the cover when ZIP validation succeeds.
 
 ---
 
