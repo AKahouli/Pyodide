@@ -196,8 +196,11 @@ def _spawn_ops(caller_id: str, spawns: list, dependents: List[dict], base_ordina
     """Turn recorded spawns into (new_steps, updated_dependents).
 
     Default is a BLOCKING insert: the new work is placed AFTER the caller and
-    BEFORE the caller's dependents — i.e. each dependent is re-pointed to also
-    depend on the new step, so it waits for (and can see) the spawned result.
+    BEFORE the caller's dependents — i.e. each dependent is re-pointed FROM the
+    caller TO the new step, so it waits for (and can see) the spawned result.
+    The direct caller->dependent edge is dropped: the new step already depends
+    on the caller, so the chain stays intact (mirrors insert_before) instead of
+    leaving a redundant edge on the graph.
     That is the "put it between the steps" case (e.g. a manager validation must
     land before the ticket update). ponytail: blocking is the common need; add a
     `parallel`/`branch` flag on the tool if a non-blocking branch is ever wanted.
@@ -209,9 +212,10 @@ def _spawn_ops(caller_id: str, spawns: list, dependents: List[dict], base_ordina
     new_ids = [s["id"] for s in new_steps]
     updated = []
     for dep in dependents:
-        deps = list(dep.get("depends_on") or [])
-        merged = deps + [i for i in new_ids if i not in deps]
-        if merged != deps:
+        orig = list(dep.get("depends_on") or [])
+        kept = [i for i in orig if i != caller_id]  # route the edge through the new step
+        merged = kept + [i for i in new_ids if i not in kept]
+        if merged != orig:
             d = dict(dep)
             d["depends_on"] = merged
             updated.append(d)
