@@ -474,10 +474,11 @@ class OrchestratorService:
         The per-connector fire-and-forget `schedule_<connector>_task` tool is
         deliberately NOT granted. It was broken and dangerous:
 
-        - long_running.start_task (and poller._poll_task) hardcode
+        - its task launcher (and poller._poll_task) hardcoded
           streamablehttp_client and never read the connector's
           mcp_transport_type, so on an SSE connector — which Microsoft365 is —
-          it POSTs to the /sse endpoint and dies with 405. Seen live.
+          it POSTs to the /sse endpoint and dies with 405. Seen live. (The
+          launcher module has since been removed as dead code.)
         - Worse if that were merely fixed: models were choosing it to SEND
           MAIL, reading "their reply can take hours or days" next to the
           prompt's "for a LONG-RUNNING action call schedule_*_task". Mail sent

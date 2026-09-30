@@ -147,7 +147,6 @@ async def _run_with_concurrent_sibling(monkeypatch) -> dict:
     def tools_for_step(step, tools):
         if step.is_persona:
             tools = list(tools) + [
-                human_agents_mod.make_find_human_agents_tool(),
                 service._delegate_tool_for(
                     "sess1", "u1", plan, factory_holder, name_to_step, step.id)]
         return tools
