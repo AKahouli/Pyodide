@@ -1,6 +1,6 @@
 {
   "page": {
-    "title": "Conversation V2",
+    "title": "App Builder",
     "newChat": "Nouvelle conversation",
     "emptyState": "Démarrer une nouvelle conversation."
   },
@@ -19,7 +19,7 @@
     "templateClone": {
       "waitingTitle": "Préparation de l'aperçu de l'application",
       "waitingBody": "Veuillez patienter pendant que nous préparons un aperçu en direct du modèle cloné. L'envoi est désactivé jusqu'à ce que l'aperçu soit prêt.",
-      "waitingBodyDraft": "L'aperçu en direct démarre dans le panneau latéral. Vous pouvez saisir un message — Envoyer s'active dès que l'aperçu est prêt, puis ouvre votre session Conversation V2 avec ce modèle.",
+      "waitingBodyDraft": "L'aperçu en direct démarre dans le panneau latéral. Vous pouvez saisir un message — Envoyer s'active dès que l'aperçu est prêt, puis ouvre votre session App Builder avec ce modèle.",
       "readyTitle": "Aperçu prêt",
       "readyBody": "Votre modèle est chargé dans l'aperçu en direct. Envoyez un message lorsque vous êtes prêt à le modifier et le personnaliser.",
       "dismiss": "Compris"

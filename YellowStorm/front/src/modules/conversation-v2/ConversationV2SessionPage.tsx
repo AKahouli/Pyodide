@@ -18,11 +18,8 @@ import {
 import { useConversationV2Translation } from './translation';
 import { FileViewerSidebar, useFileViewerStore } from '@/modules/file-viewer';
 import { useModels, useDefaultModel, useConversationV2DefaultModel, useModelsStore } from '@/modules/models';
-import type { AgentEvent } from './types';
-import {
-  commitCloneDraftSession,
-  type AgentSessionSource,
-} from './startAgentSession';
+import type { AgentEvent, AgentSessionLocationState } from './types';
+import { commitCloneDraftSession } from './startAgentSession';
 import { isCloneDraftSearch } from './template-clone-draft';
 import {
   canWriteConversationV2Session,
@@ -40,34 +37,16 @@ import {
   isTemplateCloneNavigation,
   isTemplateCloneSession as resolveTemplateCloneSession,
   shouldGateTemplateClonePreview,
-} from './templateCloneGate';
+} from './template-clone-gate';
 import { Button } from '@/components/ui/button';
 import { ErrorBoundary } from '@/components/ui/error-boundary';
-
-interface LocationState {
-  initialMessage?: string;
-  /**
-   * LiteLLM model identifier (e.g. "azure/gpt-4.1") resolved on the
-   * new-conversation page. Avoids waiting for the models cache to load before
-   * we can fire off the first message.
-   */
-  model?: string;
-  /** Skill selection carried from the new-conversation page for the initial send. */
-  skillIds?: string[];
-  /** Connector selection carried from the new-conversation page for the initial send. */
-  connectorIds?: string[];
-  /** Entry point that created this session — drives transition UX. */
-  source?: AgentSessionSource;
-  /** App Market template id when cloning without an auto-prompt. */
-  templateId?: string;
-}
 
 export default function ConversationV2SessionPage() {
   const { sessionId: routeSessionId } = useParams<{ sessionId?: string }>();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const locationState = location.state as LocationState | null;
+  const locationState = location.state as AgentSessionLocationState | null;
 
   const sessionId = routeSessionId?.trim() || null;
   /** Draft until first Send: `/conversation-v2/{sessionId}?action=clone`. */
@@ -93,7 +72,7 @@ export default function ConversationV2SessionPage() {
   );
 
   useEffect(() => {
-    const state = location.state as LocationState | null;
+    const state = location.state as AgentSessionLocationState | null;
     setShowAppBuilderBanner(state?.source === 'app-builder');
     setLatchedTemplateClone(isDraftClone || isTemplateCloneNavigation(state));
     if (isDraftClone && appRuntimeEnabled) {

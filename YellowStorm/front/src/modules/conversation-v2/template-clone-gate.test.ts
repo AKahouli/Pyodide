@@ -5,9 +5,9 @@ import {
   isTemplateCloneNavigation,
   isTemplateCloneSession,
   shouldGateTemplateClonePreview,
-} from './templateCloneGate';
+} from './template-clone-gate';
 
-describe('templateCloneGate', () => {
+describe('template-clone-gate', () => {
   it('detects Clone App navigation without an auto-prompt', () => {
     expect(
       isTemplateCloneNavigation({

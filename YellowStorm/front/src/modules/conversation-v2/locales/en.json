@@ -1,6 +1,6 @@
 {
   "page": {
-    "title": "Conversation V2",
+    "title": "App Builder",
     "newChat": "New chat",
     "emptyState": "Start a new conversation."
   },
@@ -19,7 +19,7 @@
     "templateClone": {
       "waitingTitle": "Preparing your app preview",
       "waitingBody": "Please wait while we set up a live preview of the cloned template. Send is disabled until the preview is ready.",
-      "waitingBodyDraft": "Live preview is starting in the side panel. You can type a message now — Send unlocks when the preview is ready, then opens your Conversation V2 session with this template.",
+      "waitingBodyDraft": "Live preview is starting in the side panel. You can type a message now — Send unlocks when the preview is ready, then opens your App Builder session with this template.",
       "readyTitle": "Preview ready",
       "readyBody": "Your template is loaded in the live preview. Send a message when you are ready to start editing and customizing it.",
       "dismiss": "Got it"

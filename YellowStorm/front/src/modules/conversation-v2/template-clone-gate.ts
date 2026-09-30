@@ -1,4 +1,4 @@
-import type { AgentEvent } from './types';
+import type { AgentEvent, AgentSessionLocationState } from './types';
 import { isTemplateRevisionId } from './template-revision';
 
 /** True when events already include a user turn (first edit already started). */
@@ -6,11 +6,9 @@ export function hasUserMessage(events: AgentEvent[]): boolean {
   return events.some((ev) => ev.type === 'message' && ev.role === 'user');
 }
 
-export function isTemplateCloneNavigation(state: {
-  source?: string;
-  templateId?: string;
-  initialMessage?: string;
-} | null | undefined): boolean {
+export function isTemplateCloneNavigation(
+  state: AgentSessionLocationState | null | undefined,
+): boolean {
   if (!state) return false;
   return (
     state.source === 'template-clone' ||

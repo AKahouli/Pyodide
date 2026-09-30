@@ -3,9 +3,10 @@ import { conversationV2Api } from './api';
 import { writeSelectedModelForSession } from './selectedModelStorage';
 import { useConversationV2PointersStore, useConversationV2Store } from './store';
 import { useModelsStore } from '@/modules/models';
+import type { AgentSessionSource } from './interfaces';
 import { conversationV2CloneDraftPath } from './template-clone-draft';
 
-export type AgentSessionSource = 'new-conversation' | 'app-builder' | 'template-clone';
+export type { AgentSessionSource };
 
 export interface StartAgentSessionParams {
   text: string;
