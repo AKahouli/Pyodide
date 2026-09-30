@@ -142,12 +142,19 @@ class LgRunner:
                                checkpointer=checkpointer)
 
     async def _drive(self, app, session_id: str, inp) -> dict:
-        """Invoke once, then reconcile parked interrupts into the read model.
+        """Invoke once, then reconcile parked steps into the read model.
         Returns {parked:[(interrupt_id, step_id, kind)], values, done}.
 
-        Parked set comes from the invoke's `__interrupt__` (accurate for THIS
-        drive). A re-parked sibling gets a NEW interrupt id every drive, so its
-        mail wait is re-bound to the fresh id below — mandatory."""
+        Two kinds of pause:
+        - `ask` still uses interrupt() (a single user prompt) -> read from
+          `__interrupt__`.
+        - `await_reply` is STATE-DRIVEN: no interrupt, so the graph ends cleanly.
+          We find the awaits now waiting (deps satisfied, reply not yet in state)
+          from the final plan and mark them blocked. The mail_waits row's
+          interrupt_id column is reused as a plain "has parked" marker so
+          claim_mail_wait (which gates on interrupt_id IS NOT NULL) still lets a
+          reply through; the value is never used to resume — DeliverMailReply
+          routes by step_id."""
         config = {"configurable": {"thread_id": session_id},
                   "recursion_limit": _RECURSION_LIMIT}
         out = await app.ainvoke(inp, config)
@@ -161,8 +168,24 @@ class LgRunner:
             if self._rm and sid:
                 await self._rm.set_step_status(session_id, sid, "blocked",
                                                blocked_reason=kind, interrupt_id=it.id)
-                if kind == "await_reply":
-                    await self._rm.bind_mail_wait_interrupt(session_id, sid, it.id)
+
+        # State-driven awaits: not on an interrupt, so scan the final plan for the
+        # ones now waiting. Graph state keeps them `pending` (so a re-drive with the
+        # reply in state runs them); only the read model shows `blocked` for the UI.
+        values = snap.values or {}
+        results = values.get("results") or {}
+        replies = values.get("replies") or {}
+        for s in (values.get("plan") or []):
+            if (s.get("kind") == "await_reply"
+                    and s.get("status", "pending") == "pending"
+                    and all(d in results for d in (s.get("depends_on") or []))
+                    and s["id"] not in replies):
+                parked.append((None, s["id"], "await_reply"))
+                if self._rm:
+                    await self._rm.set_step_status(session_id, s["id"], "blocked",
+                                                   blocked_reason="await_reply")
+                    # non-null marker so claim_mail_wait can match an arriving reply
+                    await self._rm.bind_mail_wait_interrupt(session_id, s["id"], s["id"])
 
         if self._rm:
             if parked:
@@ -189,15 +212,23 @@ class LgRunner:
                                         [_dict_to_row(d) for d in _state_plan(plan)])
         app = self._compile(session_id, checkpointer, model)
         return await self._drive(app, session_id,
-                                 {"plan": _state_plan(plan), "results": {}})
+                                 {"plan": _state_plan(plan), "results": {}, "replies": {}})
 
     async def resume(self, session_id: str, interrupt_id: str, answer: str,
                      checkpointer, *, model=None) -> dict:
-        """Resume the parked interrupt with `answer`. The plan is in checkpoint
+        """Resume an `ask` interrupt with `answer`. The plan is in checkpoint
         state, so this just re-enters the same loop."""
         app = self._compile(session_id, checkpointer, model)
         return await self._drive(app, session_id,
                                  Command(resume={interrupt_id: answer}))
+
+    async def deliver_reply(self, session_id: str, step_id: str, reply: str,
+                            checkpointer, *, model=None) -> dict:
+        """Deliver a mail/Teams reply for a state-driven await_reply step: write it
+        into `replies` (merged via reducer) and re-drive. No interrupt() involved,
+        so only THIS step's branch advances — parallel awaits are untouched."""
+        app = self._compile(session_id, checkpointer, model)
+        return await self._drive(app, session_id, {"replies": {step_id: reply}})
 
     async def continue_run(self, session_id: str, checkpointer, *, model=None) -> dict:
         """Continue a paused plan from its checkpoint (no new input)."""

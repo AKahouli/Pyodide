@@ -35,9 +35,10 @@ from google.adk.agents import LlmAgent
 from google.genai import types
 from pydantic import BaseModel, Field
 
-from . import graph, hitl, human_agents, mail_token, nodes, scheduler
-from .plan import Plan, Status, Step
-from .readmodel import ReadModel
+from . import graph, hitl, nodes
+from .. import human_agents, mail_token, scheduler
+from ..plan import Plan, Status, Step
+from ..readmodel import ReadModel
 
 logger = logging.getLogger(__name__)
 
@@ -473,10 +474,11 @@ class OrchestratorService:
         The per-connector fire-and-forget `schedule_<connector>_task` tool is
         deliberately NOT granted. It was broken and dangerous:
 
-        - long_running.start_task (and poller._poll_task) hardcode
+        - its task launcher (and poller._poll_task) hardcoded
           streamablehttp_client and never read the connector's
           mcp_transport_type, so on an SSE connector — which Microsoft365 is —
-          it POSTs to the /sse endpoint and dies with 405. Seen live.
+          it POSTs to the /sse endpoint and dies with 405. Seen live. (The
+          launcher module has since been removed as dead code.)
         - Worse if that were merely fixed: models were choosing it to SEND
           MAIL, reading "their reply can take hours or days" next to the
           prompt's "for a LONG-RUNNING action call schedule_*_task". Mail sent
@@ -1762,8 +1764,13 @@ class OrchestratorService:
     async def resume_turn(self, *, session_id: str, user_id: str, answer: str,
                           model: str, connectors: Optional[List[dict]] = None,
                           interrupt_id: Optional[str] = None,
+                          step_id: Optional[str] = None,
                           executor_prompt: Optional[str] = None) -> Plan:
         """Resume a turn blocked on ask-the-user with the user's `answer`.
+
+        `step_id` is accepted for signature-compatibility with the LangGraph engine
+        (state-driven waits route by step id); the ADK engine resumes by
+        interrupt_id and ignores it.
 
         Reached from STEP 4 when the session is waiting; skips planning (STEP
         5-7 already happened on the original turn) and rejoins the sequence at

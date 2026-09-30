@@ -93,7 +93,7 @@ def _await_human(step: Step, reply: str, ctx: Dict[str, str]) -> str:
 # --------------------------------------------------------------------------- #
 async def _emit_artifacts(res, step_id, on_artifact) -> None:
     import json
-    from ..nodes import artifacts_from_tool_result
+    from ..adk.nodes import artifacts_from_tool_result
     payload = res
     if isinstance(res, str):
         try:
@@ -196,8 +196,11 @@ def _spawn_ops(caller_id: str, spawns: list, dependents: List[dict], base_ordina
     """Turn recorded spawns into (new_steps, updated_dependents).
 
     Default is a BLOCKING insert: the new work is placed AFTER the caller and
-    BEFORE the caller's dependents — i.e. each dependent is re-pointed to also
-    depend on the new step, so it waits for (and can see) the spawned result.
+    BEFORE the caller's dependents — i.e. each dependent is re-pointed FROM the
+    caller TO the new step, so it waits for (and can see) the spawned result.
+    The direct caller->dependent edge is dropped: the new step already depends
+    on the caller, so the chain stays intact (mirrors insert_before) instead of
+    leaving a redundant edge on the graph.
     That is the "put it between the steps" case (e.g. a manager validation must
     land before the ticket update). ponytail: blocking is the common need; add a
     `parallel`/`branch` flag on the tool if a non-blocking branch is ever wanted.
@@ -209,9 +212,10 @@ def _spawn_ops(caller_id: str, spawns: list, dependents: List[dict], base_ordina
     new_ids = [s["id"] for s in new_steps]
     updated = []
     for dep in dependents:
-        deps = list(dep.get("depends_on") or [])
-        merged = deps + [i for i in new_ids if i not in deps]
-        if merged != deps:
+        orig = list(dep.get("depends_on") or [])
+        kept = [i for i in orig if i != caller_id]  # route the edge through the new step
+        merged = kept + [i for i in new_ids if i not in kept]
+        if merged != orig:
             d = dict(dep)
             d["depends_on"] = merged
             updated.append(d)
@@ -247,12 +251,13 @@ def make_worker(model: ChatModel, project: Optional[ProjectFn],
             return {"results": {step.id: text},
                     "plan": [{**d, "status": "completed", "result": text}]}
 
-        # ---- await_reply: park, then an LLM acts on the reply (may spawn) ----
+        # ---- await_reply: state-driven — the reply is already in state (route only
+        # dispatches this step once replies[step.id] exists), so no interrupt(). An
+        # LLM then acts on the reply (may spawn). ----
         if step.kind == "await_reply":
-            reply = interrupt({"kind": "await_reply", "step_id": step.id,
-                               "message": step.description or step.title})
             if project:
                 await project(step.id, "running")
+            reply = payload.get("reply")
             text_reply = reply if isinstance(reply, str) else str(reply)
             human = _await_human(step, text_reply, ctx)
         else:
@@ -287,10 +292,21 @@ def make_worker(model: ChatModel, project: Optional[ProjectFn],
     return worker
 
 
-def _ready(plan: List[dict], results: Dict[str, str]) -> List[dict]:
-    return [s for s in plan
-            if s.get("status", "pending") == "pending"
-            and all(dep in results for dep in (s.get("depends_on") or []))]
+def _ready(plan: List[dict], results: Dict[str, str],
+           replies: Dict[str, str]) -> List[dict]:
+    out = []
+    for s in plan:
+        if s.get("status", "pending") != "pending":
+            continue
+        if not all(dep in results for dep in (s.get("depends_on") or [])):
+            continue
+        # State-driven wait: an await_reply step is ready only once its reply is in
+        # state. Until then it is simply "not ready" — no interrupt(), so the drive
+        # ends cleanly and other branches keep going independently.
+        if s.get("kind") == "await_reply" and s["id"] not in replies:
+            continue
+        out.append(s)
+    return out
 
 
 def build_graph(model: ChatModel, project: Optional[ProjectFn] = None,
@@ -307,7 +323,8 @@ def build_graph(model: ChatModel, project: Optional[ProjectFn] = None,
     def route(state: OrchState):
         plan = state["plan"]
         results = state.get("results", {})
-        ready = _ready(plan, results)
+        replies = state.get("replies", {})
+        ready = _ready(plan, results, replies)
         if not ready:
             return END
         dep_map = {x["id"]: (x.get("depends_on") or []) for x in plan}
@@ -335,7 +352,8 @@ def build_graph(model: ChatModel, project: Optional[ProjectFn] = None,
             dependents = [dict(x) for x in plan if s["id"] in (x.get("depends_on") or [])]
             sends.append(Send("worker", {"step": s, "ctx": ctx,
                                          "dependents": dependents,
-                                         "next_ordinal": max_ord + 1}))
+                                         "next_ordinal": max_ord + 1,
+                                         "reply": replies.get(s["id"])}))
         return sends
 
     g = StateGraph(OrchState)

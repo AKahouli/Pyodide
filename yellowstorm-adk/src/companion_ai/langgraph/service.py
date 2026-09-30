@@ -23,7 +23,7 @@ from typing import List, Optional
 
 from .. import scheduler
 from ..plan import Plan, Status, Step
-from ..service import DEFAULT_EXECUTOR_LABEL, _answer_target, _with_requester
+from ..adk.service import DEFAULT_EXECUTOR_LABEL, _answer_target, _with_requester
 from .runner import LgRunner, plan_from_snapshot
 from .tools import make_stamping_tools_for
 
@@ -102,21 +102,30 @@ class LgService:
     async def resume_turn(self, *, session_id: str, user_id: str, answer: str,
                           model: str, connectors: Optional[List[dict]] = None,
                           interrupt_id: Optional[str] = None,
+                          step_id: Optional[str] = None,
                           executor_prompt: Optional[str] = None) -> Plan:
         if self._rm is None:
             raise RuntimeError("resume requires the read model")
         snap = await self._rm.snapshot(session_id)
         if not snap:
             raise RuntimeError(f"session {session_id} unknown; nothing to resume")
-        interrupt_id = (_answer_target(answer) or interrupt_id
-                        or snap["session"].get("interrupt_id"))
-        if not interrupt_id:
-            raise RuntimeError(f"session {session_id} is not waiting on input")
-        logger.info("[worky-lg] resume_turn: iid=%s session=%s", interrupt_id, session_id)
         plan = plan_from_snapshot(snap)  # tools_for needs the plan's send->await edges
-        result = await self._runner(model, connectors, session_id, user_id, plan,
-                                    executor_prompt).resume(session_id, interrupt_id,
-                                                            answer, self._cp, model=self._model)
+        runner = self._runner(model, connectors, session_id, user_id, plan, executor_prompt)
+        if step_id:
+            # mail/Teams reply for a state-driven await_reply step: no interrupt,
+            # write the reply into state and re-drive (only this branch advances).
+            logger.info("[worky-lg] resume_turn: reply step=%s session=%s", step_id, session_id)
+            result = await runner.deliver_reply(session_id, step_id, answer, self._cp,
+                                                model=self._model)
+        else:
+            # ask / gate verdict: still an interrupt() -> resume it by id.
+            interrupt_id = (_answer_target(answer) or interrupt_id
+                            or snap["session"].get("interrupt_id"))
+            if not interrupt_id:
+                raise RuntimeError(f"session {session_id} is not waiting on input")
+            logger.info("[worky-lg] resume_turn: iid=%s session=%s", interrupt_id, session_id)
+            result = await runner.resume(session_id, interrupt_id, answer, self._cp,
+                                         model=self._model)
         await self._finalize(session_id, result)
         return plan_from_snapshot(await self._rm.snapshot(session_id))
 

@@ -102,7 +102,7 @@ def _stamp_email_call(call, token_provider, on_sent):
     the ADK gate wrapper (gate is a separate LG node). Deterministic: the executor
     LLM never sees the token."""
     from .. import mail_token
-    from ..nodes import _recipients
+    from ..adk.nodes import _recipients
 
     async def stamped(**kwargs):
         token = await token_provider()
@@ -129,7 +129,7 @@ def _record_teams_call(call, token_provider, on_sent):
     """Wrap a send_teams_message callable: nothing is stamped (Teams correlates by
     chat id), but the wait is bound to the chat the send returned. Mirrors
     nodes.record_send_teams_tool."""
-    from ..nodes import _teams_chat_id
+    from ..adk.nodes import _teams_chat_id
 
     async def recorded(**kwargs):
         result = await call(**kwargs)
@@ -159,7 +159,7 @@ def make_stamping_tools_for(connectors: Optional[List[dict]], session_id: str,
         return lambda _step: []
     from src.smart_rag.tools.utilities.connector_tools import (
         create_connector_tools, ConnectorToolContext)
-    from ..nodes import is_send_email_tool, is_send_teams_tool
+    from ..adk.nodes import is_send_email_tool, is_send_teams_tool
     raw = create_connector_tools(connectors, ConnectorToolContext(session_id=session_id))
     rm = read_model
 

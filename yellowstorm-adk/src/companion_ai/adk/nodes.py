@@ -20,9 +20,9 @@ from typing import Awaitable, Callable, List, Optional
 from google.adk.agents import LlmAgent
 from google.genai import types as genai_types
 
-from . import mail_token
+from .. import mail_token
 from .graph import NodeFactory
-from .plan import Status, Step
+from ..plan import Status, Step
 
 logger = logging.getLogger(__name__)
 

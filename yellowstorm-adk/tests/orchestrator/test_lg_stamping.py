@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 
 from src.companion_ai import mail_token
-from src.companion_ai.lg.tools import make_stamping_tools_for
+from src.companion_ai.langgraph.tools import make_stamping_tools_for
 from src.companion_ai.plan import Plan, Step
 
 _sent = []

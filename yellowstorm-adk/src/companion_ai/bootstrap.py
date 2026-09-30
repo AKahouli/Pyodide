@@ -17,7 +17,7 @@ from src.grpc_server.companion_ai_servicer import CompanionAiServicer
 from src.companion_ai import mcp_tasks, readmodel
 from src.companion_ai.config import OrchestratorSettings, get_orchestrator_settings
 from src.companion_ai.poller import MCPTaskPoller
-from src.companion_ai.service import OrchestratorService
+from src.companion_ai.adk.service import OrchestratorService
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ class OrchestratorRuntime:
         # its own psycopg pool + tables; created here and closed in stop().
         if s.ORCHESTRATOR_ENGINE.lower() == "langgraph":
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-            from src.companion_ai.lg.service import LgService
+            from src.companion_ai.langgraph.service import LgService
             self._checkpointer_cm = AsyncPostgresSaver.from_conn_string(s.readmodel_dsn())
             checkpointer = await self._checkpointer_cm.__aenter__()
             await checkpointer.setup()

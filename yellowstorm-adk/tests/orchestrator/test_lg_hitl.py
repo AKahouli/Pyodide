@@ -15,7 +15,7 @@ from email.utils import parseaddr
 
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from src.companion_ai.lg.runner import LgRunner
+from src.companion_ai.langgraph.runner import LgRunner
 from src.companion_ai.plan import Plan, Step
 
 
@@ -164,8 +164,8 @@ async def test_await_reply_claim_and_resume():
         wait = await rm.claim_mail_wait("YW-TOK", "Reviewer <reviewer@example.com>")
         assert wait and wait["step_id"] == "wait"
 
-        r2 = await runner.resume("s-mail", wait["interrupt_id"],
-                                 "REPLY_BODY", saver, model=model)
+        r2 = await runner.deliver_reply("s-mail", wait["step_id"],
+                                        "REPLY_BODY", saver, model=model)
         assert r2["done"]
         # the await step is now LLM-powered: it processes the reply itself
         assert "REPLY_BODY" in model.seen["WAIT"]           # await LLM saw the reply
@@ -176,11 +176,9 @@ async def test_await_reply_claim_and_resume():
 
 async def test_multi_await_join_targeted_resume():
     """Real worky shape: two parallel send->await branches fanning into a report
-    that needs BOTH replies. Replies arrive at different times; each resume is
-    targeted by interrupt id; the report runs only once both are in.
-
-    (A sibling re-parks under a NEW interrupt id after each drive, so the mail
-    wait is re-bound every drive — claim always returns the current id.)"""
+    that needs BOTH replies. Replies arrive at different times; each reply is
+    routed to its own step (state-driven, no interrupt); the report runs only once
+    both are in, and delivering one reply does NOT touch the other branch."""
     plan = Plan(id="p", title="t", goal="g", steps=[
         Step(id="asend", title="ASEND", description="mail A", depends_on=[]),
         Step(id="aw", title="AW", kind="await_reply", depends_on=["asend"]),
@@ -200,16 +198,16 @@ async def test_multi_await_join_targeted_resume():
 
         # reply A arrives first
         wa = await rm.claim_mail_wait("TOK-A")
-        r2 = await runner.resume("s2", wa["interrupt_id"], "REPLY_A", saver, model=model)
+        r2 = await runner.deliver_reply("s2", wa["step_id"], "REPLY_A", saver, model=model)
         assert not r2["done"]                          # report still waits for B
-        assert [p[1] for p in r2["parked"]] == ["bw"]  # only B parked now
+        assert [p[1] for p in r2["parked"]] == ["bw"]  # only B waiting now
         assert "REPLY_A" in model.seen["AW"]           # await A's LLM saw the reply
         assert rm.steps["aw"]["status"] == "completed"
         assert rm.steps["rep"]["status"] == "pending"
 
-        # reply B arrives; TOK-B was re-bound to bw's fresh id on the last drive
+        # reply B arrives; only B's branch advances
         wb = await rm.claim_mail_wait("TOK-B")
-        r3 = await runner.resume("s2", wb["interrupt_id"], "REPLY_B", saver, model=model)
+        r3 = await runner.deliver_reply("s2", wb["step_id"], "REPLY_B", saver, model=model)
         assert r3["done"]
         assert "REPLY_B" in model.seen["BW"]           # await B's LLM saw the reply
         assert rm.steps["rep"]["status"] == "completed"
@@ -263,8 +261,8 @@ async def test_await_spawn_inserts_before_dependent_and_reparents():
         r1 = await runner.run(plan, "s", saver, model=model)
         assert [p[1] for p in r1["parked"]] == ["aw"]
         w = await rm.claim_mail_wait("YW-AW")
-        r2 = await runner.resume("s", w["interrupt_id"],
-                                 "Il faut la validation du manager", saver, model=model)
+        r2 = await runner.deliver_reply("s", w["step_id"],
+                                        "Il faut la validation du manager", saver, model=model)
         assert r2["done"]
 
     # a manager step was spawned and ran
