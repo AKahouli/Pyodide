@@ -23,7 +23,7 @@ from typing import List, Optional
 
 from .. import scheduler
 from ..plan import Plan, Status, Step
-from ..service import DEFAULT_EXECUTOR_LABEL, _answer_target, _with_requester
+from ..adk.service import DEFAULT_EXECUTOR_LABEL, _answer_target, _with_requester
 from .runner import LgRunner, plan_from_snapshot
 from .tools import make_stamping_tools_for
 

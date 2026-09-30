@@ -26,7 +26,7 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from src.companion_ai import hitl, nodes as nodes_mod, service as svc
+from src.companion_ai.adk import hitl, nodes as nodes_mod, service as svc
 from src.companion_ai.plan import Plan, Step
 from src.smart_rag.tools.search.tools import SearchToolADK
 

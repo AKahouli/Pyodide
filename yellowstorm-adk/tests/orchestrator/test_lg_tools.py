@@ -11,7 +11,7 @@ from langchain_core.messages import AIMessage
 from langchain_core.tools import tool
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from src.companion_ai.lg.runner import LgRunner
+from src.companion_ai.langgraph.runner import LgRunner
 from src.companion_ai.plan import Plan, Step
 
 _calls = []
@@ -175,7 +175,7 @@ def test_injected_context_param_is_stripped():
     OpenAI tool schema (what bind_tools does) without choking on the non-JSON
     Context class, and the model-facing schema must NOT expose it."""
     from langchain_core.utils.function_calling import convert_to_openai_tool
-    from src.companion_ai.lg.tools import _to_lc_tool
+    from src.companion_ai.langgraph.tools import _to_lc_tool
 
     class ToolContext:  # stand-in for google.adk.agents.context.Context
         pass

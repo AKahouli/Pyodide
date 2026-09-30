@@ -9,7 +9,7 @@ import uuid
 
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from src.companion_ai.lg.service import LgService
+from src.companion_ai.langgraph.service import LgService
 from src.companion_ai.plan import Plan, Status, Step
 
 

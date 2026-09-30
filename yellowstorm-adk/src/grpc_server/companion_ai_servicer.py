@@ -21,7 +21,7 @@ from src.grpc_generated import companion_ai_pb2 as pb
 from src.grpc_generated import companion_ai_pb2_grpc as pb_grpc
 from src.companion_ai import mail_token
 from src.companion_ai.readmodel import ReadModel
-from src.companion_ai.service import OrchestratorService, _with_requester, active_turn_id
+from src.companion_ai.adk.service import OrchestratorService, _with_requester, active_turn_id
 
 logger = logging.getLogger(__name__)
 

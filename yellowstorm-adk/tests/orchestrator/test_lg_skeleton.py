@@ -13,7 +13,7 @@ import asyncio
 
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-from src.companion_ai.lg.runner import LgRunner
+from src.companion_ai.langgraph.runner import LgRunner
 from src.companion_ai.plan import Plan, Step
 
 

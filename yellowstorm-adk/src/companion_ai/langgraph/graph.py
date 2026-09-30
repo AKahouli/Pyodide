@@ -93,7 +93,7 @@ def _await_human(step: Step, reply: str, ctx: Dict[str, str]) -> str:
 # --------------------------------------------------------------------------- #
 async def _emit_artifacts(res, step_id, on_artifact) -> None:
     import json
-    from ..nodes import artifacts_from_tool_result
+    from ..adk.nodes import artifacts_from_tool_result
     payload = res
     if isinstance(res, str):
         try:

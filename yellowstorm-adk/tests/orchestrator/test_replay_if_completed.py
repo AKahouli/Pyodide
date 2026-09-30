@@ -3,7 +3,7 @@ result (no model call), not re-execute. Covers nodes._replay_if_completed."""
 import asyncio
 from types import SimpleNamespace
 from src.companion_ai.plan import Status
-from src.companion_ai import nodes
+from src.companion_ai.adk import nodes
 
 
 def _run(status, result):
