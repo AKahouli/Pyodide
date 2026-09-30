@@ -1,4 +1,4 @@
-import { ServiceUnavailableException } from '@nestjs/common';
+import { Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
 import { AppDataDeploymentService } from '@modules/app-data/services/app-data-deployment.service';
@@ -535,6 +535,89 @@ describe('ConversationV2DeployService', () => {
         },
       }),
     );
+  });
+
+  describe('deploy trace consolidation', () => {
+    let lines: string[];
+
+    beforeEach(() => {
+      lines = [];
+      const capture = (message: unknown) => {
+        lines.push(String(message));
+      };
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(capture);
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(capture);
+      jest.spyOn(Logger.prototype, 'error').mockImplementation(capture);
+    });
+
+    /** Every line must be greppable with a single `[deploy]` filter. */
+    const expectEveryLinePrefixed = () => {
+      expect(lines.length).toBeGreaterThan(0);
+      expect(lines.filter((line) => !line.startsWith('[deploy] '))).toEqual([]);
+    };
+
+    it('prefixes every line on the polling success path', async () => {
+      jest.useFakeTimers();
+      jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValueOnce(
+          jsonResponse({ status: 'deploying', app_id: '2e65d5fa87a0499f' }),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse({
+            status: 'ready',
+            app_id: '2e65d5fa87a0499f',
+            revision_id: 'rev_15',
+            url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+          }),
+        );
+
+      const deployment = service.deploy('2e65d5fa87a0499f', 'rev_15');
+      await jest.advanceTimersByTimeAsync(15_000);
+      await deployment;
+
+      expectEveryLinePrefixed();
+    });
+
+    it('prefixes every line when App Data provisioning fails', async () => {
+      configValues['appData.enabled'] = true;
+      service = new ConversationV2DeployService(
+        config as unknown as ConfigService,
+        revisions as unknown as RuntimeRevisionService,
+        baseline as unknown as PlatformBaselineService,
+        {
+          ensureDevProvisioned: jest.fn().mockResolvedValue(undefined),
+          prepareProduction: jest.fn().mockRejectedValue('app data offline'),
+          getRuntimeEnvForWorkspace: jest.fn(),
+        } as unknown as AppDataDeploymentService,
+      );
+
+      await expect(
+        service.deploy('2e65d5fa87a0499f', 'rev_15', 'owner-user-1'),
+      ).rejects.toThrow(/Provision App Data/);
+
+      // A non-Error rejection must still render its message, not "undefined".
+      expect(lines.join('\n')).toContain(
+        '[deploy] App Data prepareProduction failed session=2e65d5fa87a0499f ' +
+          'revision=rev_15 error=app data offline',
+      );
+      expectEveryLinePrefixed();
+    });
+
+    it('prefixes every line when the upstream reply is malformed', async () => {
+      jest.spyOn(global, 'fetch').mockResolvedValueOnce(
+        new Response('not json', { status: 200 }),
+      );
+
+      await expect(service.deploy('2e65d5fa87a0499f', 'rev_15')).rejects.toThrow(
+        /invalid response/,
+      );
+
+      expect(lines.join('\n')).toContain(
+        '[deploy] App-builder returned malformed JSON',
+      );
+      expectEveryLinePrefixed();
+    });
   });
 });
 

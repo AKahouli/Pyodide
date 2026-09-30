@@ -100,7 +100,7 @@ export class ConversationV2DeployService {
     });
     this.logger.log(
       `[deploy] platform baseline result session=${aiSessionId} revision=${revisionId} ` +
-        `files=${baselinePlan.files.length} violations=${baselinePlan.violations.length}` +
+        `files=${String(baselinePlan.files.length)} violations=${String(baselinePlan.violations.length)}` +
         (baselinePlan.violations.length
           ? ` detail=${baselinePlan.violations.join(' | ')}`
           : ''),
@@ -115,7 +115,7 @@ export class ConversationV2DeployService {
 
     const usesAi = await detectRevisionUsesAi(this.revisions, aiSessionId, revisionId);
     this.logger.log(
-      `[deploy] AI usage scan session=${aiSessionId} revision=${revisionId} usesAi=${usesAi}`,
+      `[deploy] AI usage scan session=${aiSessionId} revision=${revisionId} usesAi=${String(usesAi)}`,
     );
     const backendUrl = this.resolveDeployBackendUrl();
     if (backendUrl && usesAi) {
@@ -129,7 +129,7 @@ export class ConversationV2DeployService {
     if (usesAi) {
       this.logger.log(
         `[deploy] AI proxy enabled session=${aiSessionId} revision=${revisionId} ` +
-          `apiBaseConfigured=${Boolean(productionEnv.VITE_YM_API_BASE_URL)}`,
+          `apiBaseConfigured=${String(Boolean(productionEnv.VITE_YM_API_BASE_URL))}`,
       );
     }
 
@@ -150,9 +150,7 @@ export class ConversationV2DeployService {
       );
     } catch (err) {
       this.logger.error(
-        `[deploy] Failed to inject .env.production into revision ${revisionId}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        `[deploy] .env.production injection failed revision=${revisionId} error=${describeError(err)}`,
       );
       throw new ServiceUnavailableException('Failed to prepare deployment environment');
     }
@@ -160,8 +158,8 @@ export class ConversationV2DeployService {
     const runtime = this.getDeployRuntimeConfig();
     this.logger.log(
       `[deploy] launch app-builder baseUrl=${runtime.baseUrl} ` +
-        `timeoutMs=${runtime.deployTimeoutMs} pollMs=${runtime.statusPollIntervalMs} ` +
-        `tokenConfigured=${Boolean(runtime.token)} session=${aiSessionId} ` +
+        `timeoutMs=${String(runtime.deployTimeoutMs)} pollMs=${String(runtime.statusPollIntervalMs)} ` +
+        `tokenConfigured=${String(Boolean(runtime.token))} session=${aiSessionId} ` +
         `deployRevision=${deployRevisionId}`,
     );
     const deadline = Date.now() + runtime.deployTimeoutMs;
@@ -190,20 +188,20 @@ export class ConversationV2DeployService {
       };
       this.logger.log(
         `[deploy] ready immediately session=${aiSessionId} appId=${ready.appId} ` +
-          `url=${ready.url} elapsedMs=${Date.now() - startedAt}`,
+          `url=${ready.url} elapsedMs=${String(Date.now() - startedAt)}`,
       );
       return ready;
     }
     if (launchStatus !== 'deploying') {
       this.logger.warn(
-        `[deploy] App-builder deploy response did not confirm a deploying app status=${launchStatus ?? 'none'}`,
+        `[deploy] App-builder launch did not confirm deploying status=${launchStatus ?? 'none'}`,
       );
       throw new ServiceUnavailableException('Deployment service returned an invalid response');
     }
 
     this.logger.log(
       `[deploy] polling status session=${aiSessionId} appId=${launchAppId} ` +
-        `initialDelayMs=${runtime.initialStatusDelayMs}`,
+        `initialDelayMs=${String(runtime.initialStatusDelayMs)}`,
     );
     await this.waitForNextPoll(runtime.initialStatusDelayMs, deadline);
     const polled = await this.pollUntilReady({
@@ -218,7 +216,7 @@ export class ConversationV2DeployService {
     });
     this.logger.log(
       `[deploy] ready after poll session=${aiSessionId} appId=${polled.appId} ` +
-        `url=${polled.url} elapsedMs=${Date.now() - startedAt}`,
+        `url=${polled.url} elapsedMs=${String(Date.now() - startedAt)}`,
     );
     return polled;
   }
@@ -259,7 +257,7 @@ export class ConversationV2DeployService {
       pollCount += 1;
       const remainingMs = deadline - Date.now();
       this.logger.log(
-        `[deploy] status poll #${pollCount} session=${aiSessionId} appId=${launchAppId} remainingMs=${remainingMs}`,
+        `[deploy] status poll #${String(pollCount)} session=${aiSessionId} appId=${launchAppId} remainingMs=${String(remainingMs)}`,
       );
       const statusBody = await this.requestAppBuilder({
         baseUrl,
@@ -271,7 +269,7 @@ export class ConversationV2DeployService {
       const status = this.extractString(statusBody, 'status');
       lastStatus = status;
       this.logger.log(
-        `[deploy] status poll #${pollCount} result session=${aiSessionId} status=${status ?? 'none'}`,
+        `[deploy] status poll #${String(pollCount)} result session=${aiSessionId} status=${status ?? 'none'}`,
       );
       if (this.isReady(status)) {
         return { ...this.extractDeployment(statusBody, launchAppId), runtimeEnv: context.runtimeEnv };
@@ -290,7 +288,7 @@ export class ConversationV2DeployService {
     }
     return this.throwTimeout(
       context.deployTimeoutMs,
-      `session=${aiSessionId} appId=${launchAppId} lastStatus=${lastStatus ?? 'none'} polls=${pollCount}`,
+      `session=${aiSessionId} appId=${launchAppId} lastStatus=${lastStatus ?? 'none'} polls=${String(pollCount)}`,
     );
   }
 
@@ -306,7 +304,7 @@ export class ConversationV2DeployService {
     }
 
     this.logger.log(
-      `[deploy] POST ${endpoint.toString()} remainingMs=${remainingMs} ` +
+      `[deploy] POST ${endpoint.toString()} remainingMs=${String(remainingMs)} ` +
         `bodyKeys=[${Object.keys(body).sort().join(',')}]`,
     );
     try {
@@ -318,19 +316,21 @@ export class ConversationV2DeployService {
       });
       const rawBody = await response.text();
       this.logger.log(
-        `[deploy] App-builder ${path} response status=${response.status} bodyChars=${rawBody.length}`,
+        `[deploy] App-builder ${path} response status=${String(response.status)} bodyChars=${String(rawBody.length)}`,
       );
       if (!response.ok) {
         this.logger.warn(
-          `[deploy] App-builder ${path} failed status=${response.status} bodyPreview=${rawBody.slice(0, 300)}`,
+          `[deploy] App-builder ${path} failed status=${String(response.status)} bodyPreview=${rawBody.slice(0, 300)}`,
         );
         throw new ServiceUnavailableException('Deployment service rejected the request');
       }
       return this.parseResponse(rawBody);
     } catch (error) {
       if (error instanceof ServiceUnavailableException) throw error;
-      if ((error as Error).name === 'TimeoutError') return this.throwTimeout();
-      this.logger.error(`[deploy] App-builder ${path} request failed: ${(error as Error).message}`);
+      if (errorName(error) === 'TimeoutError') return this.throwTimeout();
+      this.logger.error(
+        `[deploy] App-builder ${path} request failed: ${describeError(error)}`,
+      );
       throw new ServiceUnavailableException('Deployment service is unavailable');
     }
   }
@@ -340,12 +340,12 @@ export class ConversationV2DeployService {
     try {
       body = JSON.parse(rawBody) as unknown;
     } catch {
-      this.logger.warn('App-builder returned malformed JSON');
+      this.logger.warn('[deploy] App-builder returned malformed JSON');
       throw new ServiceUnavailableException('Deployment service returned an invalid response');
     }
     const upstreamError = this.extractString(body, 'error');
     if (upstreamError) {
-      this.logger.warn(`App-builder deployment failed: ${upstreamError}`);
+      this.logger.warn(`[deploy] App-builder returned error upstreamError=${upstreamError}`);
       throw new ServiceUnavailableException(`Deployment failed: ${upstreamError}`);
     }
     return body;
@@ -356,7 +356,7 @@ export class ConversationV2DeployService {
     const previewUrl = this.extractString(body, 'preview_url');
     const url = previewUrl ?? this.extractString(body, 'url');
     if (!appId || !url) {
-      this.logger.warn('App-builder ready response did not include app_id and url');
+      this.logger.warn('[deploy] App-builder ready response missing app_id or url');
       throw new ServiceUnavailableException('Deployment service returned an invalid response');
     }
     return {
@@ -392,7 +392,9 @@ export class ConversationV2DeployService {
     const timeoutMs =
       deployTimeoutMs ?? this.config.get<number>('conversationV2.appBuilderDeployTimeoutMs') ?? 0;
     this.logger.error(
-      `App-builder deployment timed out after ${timeoutMs / 1000}s${details ? ` (${details})` : ''}`,
+      `[deploy] App-builder deployment timed out timeoutMs=${String(timeoutMs)}${
+        details ? ` detail=${details}` : ''
+      }`,
     );
     throw new ServiceUnavailableException(
       details ? `Deployment service timed out (${details})` : 'Deployment service timed out',
@@ -453,8 +455,8 @@ export class ConversationV2DeployService {
     });
 
     this.logger.log(
-      `Injected .env.production into patched revision ${patchedRevisionId} (base ${baseRevisionId}) ` +
-        `with ${baselineFiles.length} restored platform file(s) envKeys=[${Object.keys(env)
+      `[deploy] .env.production injected revision=${patchedRevisionId} base=${baseRevisionId} ` +
+        `platformFiles=${String(baselineFiles.length)} envKeys=[${Object.keys(env)
           .sort()
           .join(',')}]`,
     );
@@ -476,9 +478,7 @@ export class ConversationV2DeployService {
         await this.appDataDeployment!.ensureDevProvisioned(aiSessionId, ownerUserId);
       } catch (err) {
         this.logger.error(
-          `App Data DEV ensure failed for session=${aiSessionId}: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
+          `[deploy] App Data DEV ensure failed session=${aiSessionId} error=${describeError(err)}`,
         );
         throw new ServiceUnavailableException(
           'App Data could not be provisioned for this workspace. Check App Data service connectivity, then deploy again.',
@@ -494,13 +494,11 @@ export class ConversationV2DeployService {
         VITE_YM_APP_DATA_ENV: env.environment,
       });
       this.logger.log(
-        `App Data PROD env prepared for session=${aiSessionId}: URL=${env.publicUrl} appDataId=${env.appDataId}`,
+        `[deploy] App Data PROD env prepared session=${aiSessionId} url=${env.publicUrl} appDataId=${env.appDataId}`,
       );
     } catch (err) {
       this.logger.error(
-        `App Data prepareProduction failed for session=${aiSessionId} rev=${revisionId}: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
+        `[deploy] App Data prepareProduction failed session=${aiSessionId} revision=${revisionId} error=${describeError(err)}`,
       );
       throw new ServiceUnavailableException(
         'App Data could not be prepared for production. Provision App Data (OpenCode MCP yellowappdata_provision or deploy with owner context), then deploy again.',
@@ -556,4 +554,15 @@ export class ConversationV2DeployService {
 function quoteDotenvValue(value: string): string {
   if (/^[A-Za-z0-9_./:-]*$/.test(value)) return value;
   return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n')}"`;
+}
+
+/** Anything can be thrown or rejected, so fall back to its string form. */
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function errorName(error: unknown): string | undefined {
+  return typeof error === 'object' && error !== null && 'name' in error
+    ? String(error.name)
+    : undefined;
 }
