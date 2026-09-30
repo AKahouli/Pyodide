@@ -6,6 +6,8 @@ import type {
   AppTemplate,
   ListAppBuilderAppsResponse,
   TemplateCategory,
+  TemplatePreviewFilesResponse,
+  TemplatePreviewPresignResponse,
 } from './types';
 
 export type { AppEndUserGrants, AppEndUserSummary };
@@ -74,27 +76,22 @@ export const templateCatalogApi = {
     );
     return res.data.data;
   },
-  async listTemplatePreviewFiles(templateId: string): Promise<{
-    revisionId: string;
-    files: Array<{ path: string; sha256: string; size: number }>;
-  }> {
-    const res = await apiClient.get<
-      ApiResponse<{
-        revisionId: string;
-        files: Array<{ path: string; sha256: string; size: number }>;
-      }>
-    >(`/conversation-v2/template-catalog/templates/${templateId}/preview/files`);
+  async listTemplatePreviewFiles(
+    templateId: string,
+  ): Promise<TemplatePreviewFilesResponse> {
+    const res = await apiClient.get<ApiResponse<TemplatePreviewFilesResponse>>(
+      `/conversation-v2/template-catalog/templates/${templateId}/preview/files`,
+    );
     return res.data.data;
   },
   async presignTemplatePreviewFiles(
     templateId: string,
     paths: string[],
-  ): Promise<{ items: Array<{ path: string; url: string }> }> {
-    const res = await apiClient.post<
-      ApiResponse<{ items: Array<{ path: string; url: string }> }>
-    >(`/conversation-v2/template-catalog/templates/${templateId}/preview/presign`, {
-      paths,
-    });
+  ): Promise<TemplatePreviewPresignResponse> {
+    const res = await apiClient.post<ApiResponse<TemplatePreviewPresignResponse>>(
+      `/conversation-v2/template-catalog/templates/${templateId}/preview/presign`,
+      { paths },
+    );
     return res.data.data;
   },
 };
@@ -126,8 +123,11 @@ export const adminTemplateApi = {
   async deleteCategory(id: string): Promise<void> {
     await apiClient.delete(`/admin/conversation-v2/template-categories/${id}`);
   },
-  listTemplates: () => adminTemplateApi.fetchAllTemplates(),
-  async fetchAllTemplates(): Promise<AppTemplate[]> {
+  /**
+   * Admin catalog: every template (draft + published), not filtered by category.
+   * Distinct from `templateCatalogApi.listTemplates(categoryId)` (published only).
+   */
+  async listAllTemplates(): Promise<AppTemplate[]> {
     const res = await apiClient.get<ApiResponse<AppTemplate[]>>(
       '/admin/conversation-v2/templates',
     );

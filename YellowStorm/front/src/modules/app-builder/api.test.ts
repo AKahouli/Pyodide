@@ -14,7 +14,7 @@ vi.mock('@/lib/api/client', () => ({
   },
 }));
 
-import { adminTemplateApi, appBuilderApi } from './api';
+import { adminTemplateApi, appBuilderApi, templateCatalogApi } from './api';
 
 const template = { id: 'tpl_1' };
 const zip = new File(['zip'], 'template.zip', { type: 'application/zip' });
@@ -72,6 +72,52 @@ describe('adminTemplateApi source uploads', () => {
       '/admin/conversation-v2/templates/tpl_1/source',
       expect.any(FormData),
       { timeout: 300_000 },
+    );
+  });
+});
+
+describe('adminTemplateApi.listAllTemplates', () => {
+  beforeEach(() => getMock.mockReset());
+
+  it('loads the unfiltered admin template catalog', async () => {
+    getMock.mockResolvedValue({ data: { data: [template] } });
+
+    await expect(adminTemplateApi.listAllTemplates()).resolves.toEqual([template]);
+    expect(getMock).toHaveBeenCalledWith('/admin/conversation-v2/templates');
+  });
+});
+
+describe('templateCatalogApi preview DTOs', () => {
+  beforeEach(() => {
+    getMock.mockReset();
+    postMock.mockReset();
+  });
+
+  it('returns typed preview file listings', async () => {
+    const payload = {
+      revisionId: 'template_tpl_1',
+      files: [{ path: 'src/App.jsx', sha256: 'abc', size: 12 }],
+    };
+    getMock.mockResolvedValue({ data: { data: payload } });
+
+    await expect(templateCatalogApi.listTemplatePreviewFiles('tpl_1')).resolves.toEqual(
+      payload,
+    );
+    expect(getMock).toHaveBeenCalledWith(
+      '/conversation-v2/template-catalog/templates/tpl_1/preview/files',
+    );
+  });
+
+  it('returns typed preview presign items', async () => {
+    const payload = { items: [{ path: 'src/App.jsx', url: 'https://cdn/x' }] };
+    postMock.mockResolvedValue({ data: { data: payload } });
+
+    await expect(
+      templateCatalogApi.presignTemplatePreviewFiles('tpl_1', ['src/App.jsx']),
+    ).resolves.toEqual(payload);
+    expect(postMock).toHaveBeenCalledWith(
+      '/conversation-v2/template-catalog/templates/tpl_1/preview/presign',
+      { paths: ['src/App.jsx'] },
     );
   });
 });
