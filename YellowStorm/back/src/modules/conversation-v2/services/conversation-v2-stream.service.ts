@@ -1,10 +1,12 @@
 import {
+  Inject,
   Injectable,
   Logger,
   OnModuleDestroy,
   NotFoundException,
   BadRequestException,
   ConflictException,
+  forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
@@ -90,8 +92,13 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     private readonly skillService: SkillService,
     private readonly connectorService: ConnectorService,
     private readonly modelsService: ModelsService,
+    // forwardRef: App Runtime services inject Conversation V2 ports that depend
+    // on this stream service — breaks Nest's silent bootstrap deadlock (exit 0).
+    @Inject(forwardRef(() => RuntimeFinalizedRevisionService))
     private readonly finalizedRevisions: RuntimeFinalizedRevisionService,
+    @Inject(forwardRef(() => RuntimeRevisionService))
     private readonly runtimeRevisions: RuntimeRevisionService,
+    @Inject(forwardRef(() => RuntimeBindingService))
     private readonly runtimeBindings: RuntimeBindingService,
   ) {}
 

@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import type {
   ApplicationComponentEventPublisher,
   ApplicationComponentEventSource,
@@ -12,12 +12,16 @@ import { ConversationV2StreamService } from './conversation-v2-stream.service';
  * Bridges the App Runtime `application_component` ports to Conversation V2's
  * stream and event store, translating between the camelCase port inputs and
  * the snake_case wire payload.
+ *
+ * forwardRef: StreamService also depends on App Runtime services that inject
+ * this port — without it Nest deadlocks during bootstrap and exits 0.
  */
 @Injectable()
 export class ConversationV2ApplicationComponentEvents
   implements ApplicationComponentEventPublisher, ApplicationComponentEventSource
 {
   constructor(
+    @Inject(forwardRef(() => ConversationV2StreamService))
     private readonly stream: ConversationV2StreamService,
     @Inject(ConversationV2EventStoreService)
     private readonly eventStore: ConversationV2EventStoreService,

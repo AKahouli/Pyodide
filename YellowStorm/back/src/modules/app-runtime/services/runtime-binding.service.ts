@@ -52,8 +52,10 @@ export class RuntimeBindingService {
     private readonly revisions: RuntimeRevisionService,
     private readonly baseline: PlatformBaselineService,
     private readonly config: ConfigService,
+    // forwardRef: seed source lives in ConversationV2, which also injects this
+    // binding service through StreamService / controllers.
     @Optional()
-    @Inject(RUNTIME_SESSION_SEED_SOURCE)
+    @Inject(forwardRef(() => RUNTIME_SESSION_SEED_SOURCE))
     private readonly sessionSeeds?: RuntimeSessionSeedSource,
   ) {}
 

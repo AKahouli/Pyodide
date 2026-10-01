@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional, forwardRef } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { RuntimeBindingRecord } from '../persistence/runtime-binding.store';
 import {
@@ -48,7 +48,7 @@ export class AppRuntimeConversationNotifierService {
   constructor(
     private readonly finalizedRevisions: RuntimeFinalizedRevisionService,
     @Optional()
-    @Inject(APPLICATION_COMPONENT_EVENT_PUBLISHER)
+    @Inject(forwardRef(() => APPLICATION_COMPONENT_EVENT_PUBLISHER))
     private readonly components?: ApplicationComponentEventPublisher,
   ) {}
 
