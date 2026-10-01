@@ -189,6 +189,20 @@ class LgRunner:
                 continue   # already parked above
             kind = s.get("kind")
             if kind == "await_reply" and sid not in replies:
+                # Fail fast instead of hanging forever: the sends this await depends
+                # on already ran (its ancestors completed before it parks), so if no
+                # routable target got bound, no reply can ever match it.
+                if self._rm:
+                    target = await self._rm.mail_wait_target(session_id, sid)
+                    if target is not None and not target[0] and not target[1]:
+                        await self._rm.set_step_status(
+                            session_id, sid, "failed",
+                            result="Attente non routable : aucun envoi (mail/Teams) parmi "
+                                   "ses dépendances n'a lié de destinataire, donc aucune "
+                                   "réponse ne peut la débloquer.",
+                            blocked_reason="await_unroutable")
+                        await self._rm.cancel_mail_wait(session_id, sid)
+                        continue
                 parked.append((None, sid, "await_reply"))
                 if self._rm:
                     await self._rm.set_step_status(session_id, sid, "blocked",

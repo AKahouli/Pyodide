@@ -163,11 +163,25 @@ def make_stamping_tools_for(connectors: Optional[List[dict]], session_id: str,
     raw = create_connector_tools(connectors, ConnectorToolContext(session_id=session_id))
     rm = read_model
 
+    # Map every TRANSITIVE ancestor of an await to it, not just its direct deps:
+    # the step that actually sends may sit several hops above the await (e.g. a
+    # "place on hold" step wired between the send and the await). Whichever
+    # ancestor really sends gets the binding wrapper; non-sends ignore it.
+    # ponytail: any awaited send ancestor can resolve the wait — fine for worky's
+    # linear send->...->await chains.
+    dep_map = {s.id: list(s.depends_on or []) for s in plan.steps}
     await_step_for = {}
     for s in plan.steps:
         if s.kind == "await_reply":
-            for dep in s.depends_on:
-                await_step_for.setdefault(dep, s.id)  # first wins: one token per send
+            seen, stack = set(), list(dep_map.get(s.id, []))
+            while stack:
+                a = stack.pop()
+                if a in seen:
+                    continue
+                seen.add(a)
+                stack += dep_map.get(a, [])
+            for anc in seen:
+                await_step_for.setdefault(anc, s.id)  # first wins: one token per send
 
     def tools_for(step):
         await_id = await_step_for.get(step.id)

@@ -469,6 +469,17 @@ class ReadModel:
                 f"WHERE session_id=$1 AND step_id=$2 AND status='waiting'",
                 session_id, step_id, interrupt_id)
 
+    async def mail_wait_target(self, session_id: str, step_id: str):
+        """(conversation_id, expected_from) of a step's open wait, or None if it has
+        no waiting row. Both None means no send bound a routable target to it — a
+        reply can never be matched (the await would hang forever)."""
+        async with self._pool.acquire() as con:
+            row = await con.fetchrow(
+                f"SELECT conversation_id, expected_from FROM {_q(self._schema,'mail_waits')} "
+                f"WHERE session_id=$1 AND step_id=$2 AND status='waiting'",
+                session_id, step_id)
+        return (row["conversation_id"], row["expected_from"]) if row else None
+
     async def cancel_mail_wait(self, session_id: str, step_id: str) -> None:
         """Drop one step's wait — its reply can never arrive (e.g. the send it was
         waiting on failed). Scoped to the step, unlike cancel_mail_waits."""
