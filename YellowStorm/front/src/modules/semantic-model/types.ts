@@ -340,6 +340,30 @@ export interface SourceSuggestionsPage {
   suggestions: SourceSuggestion[];
 }
 
+/** How a derived record picks one value when the records it comes from disagree. */
+export type DerivedConflictRule = 'most_frequent' | 'latest' | 'longest' | 'leave_empty';
+
+/** A concept filled from another concept's records: one record per distinct key value they carry. */
+export interface DerivedSource {
+  id: string;
+  conceptId: string;
+  sourceConceptId: string;
+  fieldMappings: Array<{ sourceAttribute: string; targetAttribute: string }>;
+  conflictRule: DerivedConflictRule;
+  /** The source field ordering records for the most recent rule. */
+  orderBy: string | null;
+  updatedAt: string;
+}
+
+export interface DerivedSourceDraft {
+  conceptId: string;
+  sourceConceptId: string;
+  fieldMappings: DerivedSource['fieldMappings'];
+  identityFields: string[];
+  conflictRule: DerivedConflictRule;
+  orderBy?: string;
+}
+
 export interface ConceptSourceMapping {
   id: string;
   conceptId: string;
@@ -684,7 +708,8 @@ export interface VersionComparison {
 
 export type ReviewQueueAction =
   | { kind: 'choose_match'; reviewItemId: string; options: Array<{ value: string; label: string }>; select: 'target' | 'source' }
-  | { kind: 'repair_mapping'; mappingId: string }
+  | { kind: 'repair_mapping'; mappingId: string; bulkEdit?: boolean }
+  | { kind: 'repair_derived'; derivedSourceId: string; conceptId: string }
   | { kind: 'choose_unique_field'; conceptId: string }
   | { kind: 'set_up_link'; relationId: string }
   | { kind: 'fix_values'; conceptId: string; attribute?: string }

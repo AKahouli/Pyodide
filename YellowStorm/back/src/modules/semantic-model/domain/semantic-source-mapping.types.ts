@@ -230,3 +230,27 @@ export function resolveSheetEntities(
  * extractorVersion; bump both together. A run and a preview bind the agent with it.
  */
 export const AI_EXTRACTION_CONTRACT_VERSION = 'ai-attribute-v1';
+
+/**
+ * A document mapping kept in step with its concept: one row per concept field, in the concept's
+ * order. Saved rows are kept as they are; a field added to the concept gets a row read like most of
+ * the other fields, and a row for a field the concept no longer has is dropped. `changed` is false
+ * when the same fields are read, so an unrelated edit does not make the next run read again.
+ */
+export function withConceptFields(saved: SourceFieldMapping[], attributes: ReadonlyArray<{ key: string }>): { mappings: SourceFieldMapping[]; changed: boolean } {
+  const byKey = new Map(saved.map((mapping) => [mapping.targetAttribute, mapping]));
+  const counts = new Map<SourceExtractionStrategy, number>();
+  for (const mapping of saved) {
+    if (mapping.mode !== 'extract') continue;
+    const strategy = mapping.extractionStrategy ?? 'deterministic';
+    counts.set(strategy, (counts.get(strategy) ?? 0) + 1);
+  }
+  const strategy = [...counts].sort((left, right) => right[1] - left[1])[0]?.[0] ?? 'deterministic';
+  const mappings = attributes.map((attribute): SourceFieldMapping => byKey.get(attribute.key)
+    ?? (attribute.key === 'source_document'
+      ? { sourceField: 'document_name', targetAttribute: attribute.key, mode: 'metadata' }
+      : { sourceField: null, targetAttribute: attribute.key, mode: 'extract', extractionStrategy: strategy }));
+  const keys = new Set(attributes.map((attribute) => attribute.key));
+  const changed = mappings.length !== saved.length || saved.some((mapping) => !keys.has(mapping.targetAttribute));
+  return { mappings, changed };
+}

@@ -1,7 +1,7 @@
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type { ApiResponse } from '@/lib/api/client';
-import type { AiExtractionDefaults, AiExtractionSettings, AgeGraphEdge, AssistantChangesPage, SourceSuggestionsPage, SourceFileMatches, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
+import type { AiExtractionDefaults, DerivedSource, DerivedSourceDraft, AiExtractionSettings, AgeGraphEdge, AssistantChangesPage, SourceSuggestionsPage, SourceFileMatches, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
 SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, PopulationFreshness, DesignerBoxPosition, SemanticReviewItem, SemanticVersion,
 SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
 StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison, ReviewQueue, ConceptRecordsPage } from './types';
@@ -150,6 +150,21 @@ export const semanticModelApi = {
   async deleteSourceMapping(id: string, mappingId: string): Promise<{ revision: number }> {
     const model = await semanticModelApi.get(id);
     return unwrap(await apiClient.delete<ApiResponse<{ revision: number }>>(API_ENDPOINTS.semanticModels.sourceMapping(id, mappingId), { data: { expectedRevision: model.revision } }));
+  },
+  async listDerivedSources(id: string): Promise<DerivedSource[]> {
+    return unwrap(await apiClient.get<ApiResponse<DerivedSource[]>>(API_ENDPOINTS.semanticModels.derivedSources(id)));
+  },
+  /** Fill a concept from another concept's records; updates the one given, or adds a new one. */
+  async saveDerivedSource(id: string, draft: DerivedSourceDraft, derivedSourceId?: string): Promise<{ revision: number; derivedSource: DerivedSource }> {
+    const model = await semanticModelApi.get(id);
+    const body = { ...draft, expectedRevision: model.revision };
+    return unwrap(derivedSourceId
+      ? await apiClient.put<ApiResponse<{ revision: number; derivedSource: DerivedSource }>>(API_ENDPOINTS.semanticModels.derivedSource(id, derivedSourceId), body)
+      : await apiClient.post<ApiResponse<{ revision: number; derivedSource: DerivedSource }>>(API_ENDPOINTS.semanticModels.derivedSources(id), body));
+  },
+  async deleteDerivedSource(id: string, derivedSourceId: string): Promise<{ revision: number }> {
+    const model = await semanticModelApi.get(id);
+    return unwrap(await apiClient.delete<ApiResponse<{ revision: number }>>(API_ENDPOINTS.semanticModels.derivedSource(id, derivedSourceId), { data: { expectedRevision: model.revision } }));
   },
   async createBulkDocumentSourceMappings(id: string, payload: { conceptId: string; documents: Array<{ workspaceId: string; documentId: string }>; fieldMappings: SourceMappingDraft['fieldMappings']; identityFields: string[]; aiSettings?: SourceMappingDraft['aiSettings'] }): Promise<{ revision: number; mappingCount: number }> {
     const model = await semanticModelApi.get(id);

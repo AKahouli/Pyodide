@@ -30,6 +30,9 @@ export function SemanticTrustPanel({ modelId, canEdit, validation = [], canRunCh
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 639px)').matches);
   const readiness = useSemanticReadiness(modelId);
   const [area, setArea] = useState<string | null>(null);
+  const reviewRef = useRef<HTMLElement>(null);
+  // Picking an area narrows the list above it, so the list comes back into view.
+  useEffect(() => { if (area) reviewRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }); }, [area]);
   useEffect(() => {
     const media = window.matchMedia('(max-width: 639px)');
     const update = () => setIsMobile(media.matches);
@@ -42,7 +45,16 @@ export function SemanticTrustPanel({ modelId, canEdit, validation = [], canRunCh
   }, [isMobile]);
   const content = (closeControl?: ReactNode) => <>
     <div className='relative flex items-center justify-between border-b p-4 pr-20 sm:pr-4'><div><h2 className='flex items-center gap-2 font-semibold'><ShieldCheck className='h-4 w-4 text-primary' />{t('trust.title')}</h2><p className='text-xs text-muted-foreground'>{t('trust.description')}</p></div>{closeControl}</div>
-    <div className='min-h-0 flex-1 space-y-5 overflow-y-auto p-4'>
+    <div className='min-h-0 flex-1 space-y-5 overflow-y-auto p-4 pb-28'>
+      {/* What needs a decision comes first: this panel opens from the To review button. */}
+      <section ref={reviewRef} className='scroll-mt-4' aria-label={t('reviewQueue.title')}>
+        <div className='flex items-baseline justify-between gap-2'>
+          <h3 className='font-semibold'>{area ? t('reviewQueue.areaTitle', { area: (t as (key: string) => string)(`trust.area.${area}`) }) : t('reviewQueue.title')}</h3>
+          {area && <button type='button' className='text-xs text-primary' onClick={() => setArea(null)}>{t('trust.showAll')}</button>}
+        </div>
+        <p className='text-xs text-muted-foreground'>{t('reviewQueue.description')}</p>
+        <ReviewQueueList modelId={modelId} canEdit={canEdit} activeKey={activeKey} groups={area ? AREA_GROUPS[area] : undefined} onOpenIssue={onOpenIssue} />
+      </section>
       <section>{readiness.isLoading ? <div className='flex items-center gap-2 text-sm text-muted-foreground'><Loader2 className='h-5 w-5 animate-spin' />{t('readinessState.loading')}</div> : readiness.isError ? <p className='rounded-xl border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive'>{t('readinessState.unavailable')}</p> : readiness.data?.status === 'not_configured' ? <div className='rounded-xl border border-dashed p-4'><p className='font-semibold'>{t('readinessState.notConfigured')}</p><p className='mt-1 text-sm text-muted-foreground'>{t('readinessState.notConfiguredAction')}</p></div> : readiness.data && <><div className='flex items-end justify-between'><div><p className='text-xs font-medium uppercase tracking-wider text-muted-foreground'>{t('trust.readiness')}</p><p className='mt-1 text-3xl font-semibold'>{readiness.data.score}%</p></div><p className='text-xs text-muted-foreground'>{t('trust.areaCount', { complete: readiness.data.completeAreas, total: readiness.data.totalAreas })}</p></div><div className='mt-3 h-2 overflow-hidden rounded-full bg-muted'><div className='h-full rounded-full bg-primary transition-[width]' style={{ width: `${readiness.data.score}%` }} /></div><div className='mt-3 space-y-2'>{readiness.data.areas.map((item) => {
         const groups = AREA_GROUPS[item.key];
         const picked = area === item.key;
@@ -76,14 +88,6 @@ export function SemanticTrustPanel({ modelId, canEdit, validation = [], canRunCh
               </span>
             </button>)}</div>}
       </section>
-      <section aria-label={t('reviewQueue.title')}>
-        <div className='flex items-baseline justify-between gap-2'>
-          <h3 className='font-semibold'>{area ? t('reviewQueue.areaTitle', { area: (t as (key: string) => string)(`trust.area.${area}`) }) : t('reviewQueue.title')}</h3>
-          {area && <button type='button' className='text-xs text-primary' onClick={() => setArea(null)}>{t('trust.showAll')}</button>}
-        </div>
-        <p className='text-xs text-muted-foreground'>{t('reviewQueue.description')}</p>
-        <ReviewQueueList modelId={modelId} canEdit={canEdit} activeKey={activeKey} groups={area ? AREA_GROUPS[area] : undefined} onOpenIssue={onOpenIssue} />
-      </section>
     </div>
   </>;
 
@@ -95,7 +99,7 @@ export function SemanticTrustPanel({ modelId, canEdit, validation = [], canRunCh
     </SheetContent>
   </Sheet>;
 
-  return <aside className='relative z-20 flex w-96 shrink-0 flex-col border-l bg-background shadow-xl'>
+  return <aside className='relative z-20 flex w-[min(24rem,100%)] shrink-0 flex-col border-l bg-background shadow-xl'>
     {content(<Button size='icon' variant='ghost' onClick={onClose} aria-label={t('action.close')}><X className='h-4 w-4' /></Button>)}
   </aside>;
 }

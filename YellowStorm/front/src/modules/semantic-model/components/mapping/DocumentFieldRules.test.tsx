@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { SourceFieldMapping } from '../../types';
-import { AiLimitsEditor, FieldReadingResult, FieldRulesEditor, limitProblem, patternProblem, ReadAllFieldsBar } from './DocumentFieldRules';
+import { AiLimitsEditor, FieldReadingResult, FieldRulesEditor, limitProblem, patternProblem, ReadAllFieldsBar, withConceptFields } from './DocumentFieldRules';
 
 const field = (key: string, extractionStrategy?: SourceFieldMapping['extractionStrategy']): SourceFieldMapping =>
   ({ sourceField: null, targetAttribute: key, mode: 'extract', extractionStrategy });
@@ -49,6 +49,22 @@ describe('DocumentFieldRules', () => {
     expect(onChange).toHaveBeenLastCalledWith({ blocksPerField: 3 });
     expect(limitProblem({ blocksPerField: 3 })).toBeUndefined();
     expect(limitProblem({ maxBlocks: 900 })).toBeTruthy();
+  });
+
+  it('adds a concept field the saved mapping does not have, read like most other fields', () => {
+    const saved = [field('number', 'ai'), field('title', 'ai'), field('date', 'deterministic'), { ...field('old'), mode: 'ignore' as const, extractionStrategy: undefined }];
+    const { mappings, added } = withConceptFields(saved, [{ key: 'number' }, { key: 'customer_name' }, { key: 'title' }, { key: 'date' }, { key: 'old' }]);
+    expect(added).toEqual(['customer_name']);
+    expect(mappings.map((mapping) => mapping.targetAttribute)).toEqual(['number', 'customer_name', 'title', 'date', 'old']);
+    expect(mappings[1]).toEqual({ sourceField: null, targetAttribute: 'customer_name', mode: 'extract', extractionStrategy: 'ai' });
+    // A field left out on purpose stays left out.
+    expect(mappings[4].mode).toBe('ignore');
+  });
+
+  it('drops a row for a field the concept no longer has', () => {
+    const { mappings, added } = withConceptFields([field('number', 'ai'), field('gone', 'ai')], [{ key: 'number' }]);
+    expect(added).toEqual([]);
+    expect(mappings.map((mapping) => mapping.targetAttribute)).toEqual(['number']);
   });
 
   it('says why a field was not found and what to try', () => {

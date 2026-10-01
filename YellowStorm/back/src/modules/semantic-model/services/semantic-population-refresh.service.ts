@@ -12,6 +12,7 @@ import type { RecordCorrectionDto } from '../dto/semantic-model.dto';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
 import { ModelSpecificationService } from './model-specification.service';
 import { SemanticModelService } from './semantic-model.service';
+import { SemanticDerivedSourceService } from './semantic-derived-source.service';
 import { SemanticRuntimeClientService, type RuntimeValueOrigin } from './semantic-runtime-client.service';
 import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
 import { DOCUMENT_MIME_TYPES, STRUCTURED_MIME_PREFIXES } from './semantic-source-mapping.service';
@@ -94,6 +95,7 @@ export class SemanticPopulationRefreshService {
     private readonly runtime: SemanticRuntimeClientService,
     private readonly aiExtractionAgent: SemanticAttributeExtractionService,
     private readonly extractionSettings?: SemanticExtractionSettingsService,
+    private readonly derivedSources?: SemanticDerivedSourceService,
   ) {}
 
   private aiDefaults?: { at: number; value: Promise<Partial<AiExtractionSettings>> };
@@ -609,6 +611,12 @@ export class SemanticPopulationRefreshService {
       ? await this.manualSource(model.id, model.currentDraftVersionId, homeWorkspaceId, nodes)
       : null;
     if (manual) sources.push(...manual.sources);
+    // Concepts made from another concept's records, when that concept is read by this run.
+    const derivations = scope.kind === 'model' && this.derivedSources
+      ? this.derivedSources.runtimeDerivations(await this.derivedSources.forModel(model.id), nodes,
+        new Set(sources.map((source) => source.conceptId)), identityRules)
+      : [];
+    const derivedConceptIds = new Set(derivations.map((derivation) => derivation.conceptId));
     if (!sources.length) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'No usable source in the selected scope');
     }
@@ -619,9 +627,10 @@ export class SemanticPopulationRefreshService {
       );
     }
     const scopedConceptIds = new Set(usableMappings.map((mapping) => mapping.conceptId));
-    const manualOnly = new Set((manual?.sources ?? []).map((source) => source.conceptId).filter((id) => !scopedConceptIds.has(id)));
+    const manualOnly = new Set((manual?.sources ?? []).map((source) => source.conceptId)
+      .filter((id) => !scopedConceptIds.has(id) && !derivedConceptIds.has(id)));
     const concepts = nodes
-      .filter((node) => scopedConceptIds.has(node.id) || manualOnly.has(node.id))
+      .filter((node) => scopedConceptIds.has(node.id) || manualOnly.has(node.id) || derivedConceptIds.has(node.id))
       .map((node) => this.conceptSpec(node, identityRules.get(node.id) ?? [], manualOnly.has(node.id)));
     const inScope = new Set(concepts.map((concept) => concept.conceptId));
     const relations: RelationSpec[] = [];
@@ -640,12 +649,14 @@ export class SemanticPopulationRefreshService {
         matchingStrategy: rule?.strategy ?? 'normalized',
       });
       if (rule) {
-        const sourceFieldMapped = sources.some((source) => {
+        const derivedField = (conceptId: string, attribute: string) => derivations.some((derivation) =>
+          derivation.conceptId === conceptId && derivation.fieldMappings.some((field) => field.targetAttribute === attribute));
+        const sourceFieldMapped = derivedField(relation.sourceNodeTypeId, rule.sourceAttribute) || sources.some((source) => {
           if (source.conceptId !== relation.sourceNodeTypeId) return false;
           if ('columnMapping' in source) return Object.values(source.columnMapping).includes(rule.sourceAttribute);
           return source.fieldMappings.some((field) => field.targetAttribute === rule.sourceAttribute);
         });
-        const targetFieldMapped = sources.some((source) => {
+        const targetFieldMapped = derivedField(relation.targetNodeTypeId, rule.targetAttribute) || sources.some((source) => {
           if (source.conceptId !== relation.targetNodeTypeId) return false;
           if ('columnMapping' in source) return Object.values(source.columnMapping).includes(rule.targetAttribute);
           return source.fieldMappings.some((field) => field.targetAttribute === rule.targetAttribute);
@@ -711,12 +722,14 @@ export class SemanticPopulationRefreshService {
       relationBindings,
       aiExtraction,
       populationEngineVersion: POPULATION_ENGINE_VERSION,
+      // Only present when a concept is made from another, so other models keep their fingerprint.
+      ...(derivations.length ? { derivations } : {}),
     });
-    return { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, aiExtraction, populationExecutionFingerprint, skipped, waitingFiles };
+    return { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, populationExecutionFingerprint, skipped, waitingFiles };
   }
 
   async requestRefresh(userId: string, modelId: string, input: RequestPopulationRefreshInput) {
-    const { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, aiExtraction, populationExecutionFingerprint, skipped, waitingFiles }
+    const { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, populationExecutionFingerprint, skipped, waitingFiles }
       = await this.planRefresh(userId, modelId, input, 'run');
     await this.runtime.mirrorSpecification({
       homeWorkspaceId,
@@ -739,6 +752,7 @@ export class SemanticPopulationRefreshService {
         scope: scopeKey,
         sources: runtimeSources,
         relationBindings,
+        ...(derivations.length ? { derivations } : {}),
       }))
       .digest('hex');
     const accepted = await this.runtime.requestPopulationRun({
@@ -754,6 +768,7 @@ export class SemanticPopulationRefreshService {
         specification: snapshot,
         sources: runtimeSources,
         relationBindings,
+        ...(derivations.length ? { derivations } : {}),
         aiExtraction,
       },
     }, idempotencyKey);

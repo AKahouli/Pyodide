@@ -9,6 +9,7 @@ import {
   SemanticRecordRelation,
   SemanticRelationType,
 } from '../domain/semantic-model.types';
+import { SourceFieldMapping, withConceptFields } from '../domain/semantic-source-mapping.types';
 
 @Injectable()
 export class SemanticGraphRepository {
@@ -52,7 +53,7 @@ export class SemanticGraphRepository {
         await this.createNode(client, modelId, versionId, operation.entity);
         return;
       case 'node_type.update':
-        await this.updateNode(client, versionId, operation.id, operation.changes);
+        await this.updateNode(client, modelId, versionId, operation.id, operation.changes);
         return;
       case 'node_type.delete':
         await this.deleteEntity(client, 'node_types', versionId, operation.id);
@@ -113,7 +114,7 @@ export class SemanticGraphRepository {
     );
   }
 
-  private async updateNode(client: PoolClient, versionId: string, id: string, changes: Partial<SemanticNodeType>): Promise<void> {
+  private async updateNode(client: PoolClient, modelId: string, versionId: string, id: string, changes: Partial<SemanticNodeType>): Promise<void> {
     const current = await client.query<SemanticNodeType>(
       `SELECT id, key, label, description, category, record_policy AS "recordPolicy", system_key AS "systemKey", aliases, attributes, position
        FROM semantic_model.node_types WHERE version_id = $1 AND id = $2`, [versionId, id]);
@@ -123,6 +124,28 @@ export class SemanticGraphRepository {
        aliases=$8,attributes=$9,position=$10,updated_at=now() WHERE version_id=$1 AND id=$2`,
       [versionId, id, node.key, node.label, node.description, node.category, node.recordPolicy, JSON.stringify(node.aliases), JSON.stringify(node.attributes), JSON.stringify(node.position)],
     );
+    if (changes.attributes) await this.syncDocumentMappings(client, modelId, id, node.attributes ?? []);
+  }
+
+  /**
+   * A field added to or removed from a concept is read, or no longer read, by its document sources
+   * without saving each mapping again. Table sources keep their columns: a new field has no column
+   * to read until one is chosen.
+   */
+  private async syncDocumentMappings(client: PoolClient, modelId: string, conceptId: string, attributes: ReadonlyArray<{ key: string }>): Promise<void> {
+    const mappings = await client.query<{ id: string; fieldMappings: SourceFieldMapping[] }>(
+      `SELECT id::text AS id, field_mappings AS "fieldMappings" FROM semantic_model.source_mappings
+       WHERE model_id=$1 AND concept_id=$2 AND asset_kind='document' FOR UPDATE`,
+      [modelId, conceptId],
+    );
+    for (const mapping of mappings.rows ?? []) {
+      const synced = withConceptFields(mapping.fieldMappings ?? [], attributes);
+      if (!synced.changed) continue;
+      await client.query(
+        'UPDATE semantic_model.source_mappings SET field_mappings=$2::jsonb, updated_at=now() WHERE id=$1',
+        [mapping.id, JSON.stringify(synced.mappings)],
+      );
+    }
   }
 
   private async createRelation(client: PoolClient, modelId: string, versionId: string, relation: SemanticRelationType): Promise<void> {

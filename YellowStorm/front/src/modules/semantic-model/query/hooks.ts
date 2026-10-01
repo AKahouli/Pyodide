@@ -30,6 +30,9 @@ export function useSourceAssets(id: string | undefined) {
 export function useSourceMappings(id: string | undefined) {
   return useQuery({ queryKey: semanticModelQueryKeys.sourceMappings(id ?? 'none'), queryFn: () => semanticModelApi.listSourceMappings(id ?? ''), enabled: Boolean(id) });
 }
+export function useDerivedSources(id: string | undefined) {
+  return useQuery({ queryKey: semanticModelQueryKeys.derivedSources(id ?? 'none'), queryFn: () => semanticModelApi.listDerivedSources(id ?? ''), enabled: Boolean(id) });
+}
 export function useRelationResolutionRules(id: string | undefined) {
   return useQuery({ queryKey: semanticModelQueryKeys.relationRules(id ?? 'none'), queryFn: () => semanticModelApi.listRelationResolutionRules(id ?? ''), enabled: Boolean(id) });
 }

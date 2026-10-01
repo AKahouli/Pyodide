@@ -17,6 +17,7 @@ import json
 from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
 from app.population.compiler import (canonical_spec_hash, compile_specification,
                                      filter_fields, validate_specification)
+from app.population.derived import DerivationError, derive_concept, merge_derived, normalize_derivations
 from app.population.document_rules import RuleError, normalize_ai_settings, normalize_rules
 from app.population.serving_policy import blocking_gap_kinds, serving_decision
 from app.population.tabular import (match_relationships, merge_concept_results,
@@ -46,7 +47,8 @@ POPULATION_ENGINE_VERSION = "r1-mvp-7"
 
 def population_execution_fingerprint(spec_hash: str, sources: list[dict],
                                      relation_bindings: list[dict],
-                                     ai_extraction: dict | None = None) -> str:
+                                     ai_extraction: dict | None = None,
+                                     derivations: list[dict] | None = None) -> str:
     canonical_sources = [{
         "conceptId": source["conceptId"],
         "sourceKind": source["sourceKind"],
@@ -62,11 +64,14 @@ def population_execution_fingerprint(spec_hash: str, sources: list[dict],
     # The AI agent's effective model is part of revision identity: changing it in
     # the agent library must produce a new revision instead of reusing persisted
     # rows. Always present (null when unused) so both sides hash the same body.
-    body = json.dumps({"specHash": spec_hash, "sources": canonical_sources,
-                       "relationBindings": relation_bindings,
-                       "aiExtraction": ai_extraction,
-                       "populationEngineVersion": POPULATION_ENGINE_VERSION},
-                      sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    fingerprinted = {"specHash": spec_hash, "sources": canonical_sources,
+                     "relationBindings": relation_bindings,
+                     "aiExtraction": ai_extraction,
+                     "populationEngineVersion": POPULATION_ENGINE_VERSION}
+    # Only present when a concept is made from another, so other models keep their fingerprint.
+    if derivations:
+        fingerprinted["derivations"] = derivations
+    body = json.dumps(fingerprinted, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
@@ -284,6 +289,13 @@ def run_population_for_payload(command_dump: dict) -> dict:
                 "mappingVersion": entry.get("mappingVersion") or entry.get("mapping_version") or "v1",
             })
             mapped_fields.setdefault(entry.get("conceptId"), set()).update(mapped_attributes)
+        try:
+            derivations = normalize_derivations(payload.get("derivations"), compiled["concepts"])
+        except DerivationError as exc:
+            return {"ok": False, "errorCode": str(exc)}
+        for derivation in derivations:
+            mapped_fields.setdefault(derivation["conceptId"], set()).update(
+                field["targetAttribute"] for field in derivation["fieldMappings"])
         bindings = payload.get("relationBindings") or payload.get("relation_bindings") or []
         if not isinstance(bindings, list):
             return {"ok": False, "errorCode": "invalid_relation_bindings"}
@@ -311,13 +323,14 @@ def run_population_for_payload(command_dump: dict) -> dict:
         if ai_extraction is not None and not isinstance(ai_extraction, dict):
             return {"ok": False, "errorCode": "invalid_command"}
         execution_fingerprint = population_execution_fingerprint(
-            expected_hash, normalized, normalized_bindings, ai_extraction)
+            expected_hash, normalized, normalized_bindings, ai_extraction, derivations)
         supplied_fingerprint = (payload.get("populationExecutionFingerprint")
                                 or payload.get("population_execution_fingerprint"))
         if supplied_fingerprint is not None and supplied_fingerprint != execution_fingerprint:
             return {"ok": False, "errorCode": "execution_fingerprint_mismatch"}
         return {"ok": True, "compiled": compiled, "sources": normalized,
-                "relationBindings": normalized_bindings, "purpose": payload.get("purpose"),
+                "relationBindings": normalized_bindings, "derivations": derivations,
+                "purpose": payload.get("purpose"),
                 "specHash": expected_hash, "executionFingerprint": execution_fingerprint}
     except Exception:
         return {"ok": False, "errorCode": "invalid_command"}
@@ -525,6 +538,17 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         merged_by_concept[concept_id] = merged
         for key in counts:
             counts[key] += merged["counts"].get(key, 0)
+    # Concepts made from another concept's records, once every source has been read.
+    for derivation in validated["derivations"]:
+        source = merged_by_concept.get(derivation["sourceConceptId"])
+        if source is None:
+            continue
+        derived = derive_concept(compiled["concepts"][derivation["conceptId"]], derivation,
+                                 source["entities"], source["assertions"])
+        merged_by_concept[derivation["conceptId"]] = merge_derived(
+            merged_by_concept.get(derivation["conceptId"]), derived)
+        for key in counts:
+            counts[key] += derived["counts"].get(key, 0)
     # Bound the result before matching so relationships never reference dropped
     # entities and assertions never outlive their entity.
     kept: list[dict] = []

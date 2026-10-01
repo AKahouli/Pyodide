@@ -75,7 +75,7 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
     : tone === 'done' ? t(outcome.reused ? 'population.finishedHint' : 'population.doneHint')
     : t('population.startedHint', { count: readCount });
 
-  return <aside className='flex h-full w-full max-w-xs shrink-0 flex-col border-l bg-background'>
+  return <aside className='relative z-20 flex h-full w-full max-w-sm shrink-0 flex-col border-l bg-background shadow-xl'>
     <header className='flex items-start gap-3 border-b px-4 py-3'>
       {tone === 'running' || tone === 'stopping' ? <Loader2 className='mt-0.5 h-5 w-5 shrink-0 animate-spin text-primary' />
         : tone === 'stopped' ? <StopCircle className='mt-0.5 h-5 w-5 shrink-0 text-muted-foreground' />
@@ -91,7 +91,7 @@ export function PopulationStartedPanel({ outcome, sourceMappings, progress, conc
       </Button>
     </header>
 
-    <div className='min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3'>
+    <div className='min-h-0 flex-1 space-y-4 overflow-y-auto px-4 pt-3 pb-28'>
       {tone === 'running' && onStop && <Button variant='outline' size='sm' className='w-full' disabled={stopping} onClick={onStop}>
         {stopping ? <Loader2 className='mr-1.5 h-4 w-4 animate-spin' /> : <StopCircle className='mr-1.5 h-4 w-4' />}
         {stopping ? t('runStop.stopping') : t('runStop.stop')}

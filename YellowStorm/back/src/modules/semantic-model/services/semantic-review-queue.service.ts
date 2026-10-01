@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConflictException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { checkDerivedSource, type DerivedSource } from '../domain/semantic-derived-source.types';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
 import { SemanticBusinessTrustService } from './semantic-business-trust.service';
 import { SemanticModelService } from './semantic-model.service';
@@ -9,7 +10,8 @@ import { SemanticRuntimeClientService } from './semantic-runtime-client.service'
 /** What a person does to clear an item; each item carries exactly one. */
 export type ReviewQueueAction =
   | { kind: 'choose_match'; reviewItemId: string; options: Array<{ value: string; label: string }>; select: 'target' | 'source' }
-  | { kind: 'repair_mapping'; mappingId: string }
+  | { kind: 'repair_mapping'; mappingId: string; bulkEdit?: boolean }
+  | { kind: 'repair_derived'; derivedSourceId: string; conceptId: string }
   | { kind: 'choose_unique_field'; conceptId: string }
   | { kind: 'set_up_link'; relationId: string }
   | { kind: 'fix_values'; conceptId: string; attribute: string }
@@ -62,7 +64,7 @@ export class SemanticReviewQueueService {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
     const versionId = model.currentDraftVersionId;
-    const [reviews, health, identity, links, gaps, unsourced, unusable] = await Promise.all([
+    const [reviews, health, identity, links, gaps, unsourced, unusable, unread, underived] = await Promise.all([
       this.openReviews(model.id, versionId),
       this.trust.mappingHealth(userId, model.id).catch(() => null),
       this.database.query<{ id: string; label: string }>(
@@ -90,6 +92,7 @@ export class SemanticReviewQueueService {
            AND NOT EXISTS (SELECT 1 FROM semantic_model.source_mappings sm
              JOIN semantic_model.workspace_links w ON w.model_id=sm.model_id AND w.workspace_id=sm.workspace_id AND w.enabled
              WHERE sm.model_id=$1 AND sm.concept_id=n.id AND sm.status='ready')
+           AND NOT EXISTS (SELECT 1 FROM semantic_model.derived_sources d WHERE d.model_id=$1 AND d.concept_id=n.id)
          ORDER BY n.created_at`,
         [model.id, versionId],
       ).then((result) => result.rows),
@@ -106,8 +109,10 @@ export class SemanticReviewQueueService {
          ORDER BY sm.created_at`,
         [model.id, versionId],
       ).then((result) => result.rows).catch(() => []),
+      this.fieldsNotRead(model.id, versionId),
+      this.derivedNotMade(model.id, versionId),
     ]);
-    const items: ReviewQueueItem[] = [...reviews];
+    const items: ReviewQueueItem[] = [...reviews, ...unread, ...underived];
     for (const mapping of health?.items ?? []) {
       if (!['changed', 'broken', 'unavailable'].includes(mapping.state)) continue;
       items.push({
@@ -142,6 +147,80 @@ export class SemanticReviewQueueService {
     items.sort((left, right) => left.priority - right.priority
       || GROUP_ORDER.indexOf(left.group) - GROUP_ORDER.indexOf(right.group));
     return { count: items.length, items };
+  }
+
+  /**
+   * Concept fields a document source has no row for: added to the concept after the source was set
+   * up, so every run leaves them empty until the mapping is saved again. One item per concept and
+   * set of fields; several documents mapped one by one are updated together.
+   */
+  private async fieldsNotRead(modelId: string, versionId: string): Promise<ReviewQueueItem[]> {
+    const rows = await this.database.query<{ mappingId: string; conceptId: string; concept: string; scope: string; fields: string[]; keys: string[] }>(
+      `SELECT sm.id::text AS "mappingId", n.id::text AS "conceptId", n.label AS concept, sm.scope,
+              array_agg(COALESCE(NULLIF(a.attr->>'label',''), a.attr->>'key') ORDER BY a.position) AS fields,
+              array_agg(a.attr->>'key' ORDER BY a.position) AS keys
+       FROM semantic_model.source_mappings sm
+       JOIN semantic_model.node_types n ON n.id=sm.concept_id AND n.version_id=$2 AND n.system_key IS NULL
+       CROSS JOIN LATERAL jsonb_array_elements(n.attributes) WITH ORDINALITY AS a(attr, position)
+       WHERE sm.model_id=$1 AND sm.asset_kind='document' AND sm.status='ready'
+         AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(sm.field_mappings) f WHERE f->>'targetAttribute' = a.attr->>'key')
+       GROUP BY sm.id, n.id, n.label, sm.scope, sm.created_at
+       ORDER BY sm.created_at`,
+      [modelId, versionId],
+    ).then((result) => result.rows).catch(() => []);
+    const groups = new Map<string, { first: (typeof rows)[number]; count: number; oneByOne: number }>();
+    for (const row of rows) {
+      const key = `${row.conceptId}:${row.keys.join('|')}`;
+      const group = groups.get(key) ?? { first: row, count: 0, oneByOne: 0 };
+      group.count += 1;
+      if (row.scope !== 'workspace') group.oneByOne += 1;
+      groups.set(key, group);
+    }
+    return [...groups.entries()].map(([key, { first, count, oneByOne }]) => ({
+      key: `unread:${key}`,
+      group: 'sources',
+      priority: 1,
+      kind: 'fields_not_read',
+      params: { concept: first.concept, fields: first.fields.join(', '), count },
+      action: { kind: 'repair_mapping', mappingId: first.mappingId, ...(oneByOne > 1 ? { bulkEdit: true } : {}) },
+    }));
+  }
+
+  /**
+   * Derived sources that cannot make a record any more: a field removed from the source concept was
+   * the one a key field is copied from, or the one the most recent rule orders by. Runs leave the
+   * concept out until the derived source is changed.
+   */
+  private async derivedNotMade(modelId: string, versionId: string): Promise<ReviewQueueItem[]> {
+    type Row = Pick<DerivedSource, 'id' | 'conceptId' | 'fieldMappings' | 'conflictRule' | 'orderBy'> & {
+      concept: string; source: string; sourceFields: string[]; targetFields: string[]; identity: string[] | null;
+    };
+    const rows = await this.database.query<Row>(
+      `SELECT d.id::text AS id, d.concept_id::text AS "conceptId", d.field_mappings AS "fieldMappings",
+              d.conflict_rule AS "conflictRule", d.order_by AS "orderBy", t.label AS concept, s.label AS source,
+              ARRAY(SELECT a->>'key' FROM jsonb_array_elements(s.attributes) a) AS "sourceFields",
+              ARRAY(SELECT a->>'key' FROM jsonb_array_elements(t.attributes) a) AS "targetFields",
+              ARRAY(SELECT jsonb_array_elements_text(i.fields)) AS identity
+       FROM semantic_model.derived_sources d
+       JOIN semantic_model.node_types t ON t.id=d.concept_id AND t.version_id=$2
+       JOIN semantic_model.node_types s ON s.id=d.source_concept_id AND s.version_id=$2
+       LEFT JOIN semantic_model.identity_rules i ON i.model_id=d.model_id AND i.concept_id=d.concept_id
+       WHERE d.model_id=$1
+       ORDER BY d.created_at`,
+      [modelId, versionId],
+    ).then((result) => result.rows).catch(() => []);
+    return rows.flatMap((row) => {
+      const { missing } = checkDerivedSource(row, new Set(row.sourceFields), new Set(row.targetFields), row.identity ?? []);
+      if (!missing.length) return [];
+      return [{
+        key: `derived:${row.id}`,
+        group: 'sources' as const,
+        priority: 1 as const,
+        kind: 'derived_source_broken',
+        params: { concept: row.concept, source: row.source, fields: missing.map((field) => field.replaceAll('_', ' ')).join(', ') },
+        action: { kind: 'repair_derived' as const, derivedSourceId: row.id, conceptId: row.conceptId },
+      }];
+    });
   }
 
   /** Decisions left open on the current draft; items about removed concepts or mappings are stale. */

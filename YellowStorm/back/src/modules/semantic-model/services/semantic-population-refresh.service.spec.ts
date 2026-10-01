@@ -1,5 +1,6 @@
 import { ModelSpecificationService } from './model-specification.service';
 import { graphPropertyKey, SemanticPopulationRefreshService } from './semantic-population-refresh.service';
+import { SemanticDerivedSourceService } from './semantic-derived-source.service';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 
 const NODES = [
@@ -584,6 +585,45 @@ describe('SemanticPopulationRefreshService', () => {
     rule.sourceAttribute = 'contract_id';
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
     expect(calls[1][1]).not.toBe(calls[0][1]);
+  });
+
+  it('makes customers from the contracts that name them, and links them through the derived field', async () => {
+    const contract = MAPPING({
+      id: 'm-2', conceptId: 'c-contract', documentId: 'd-2', identityFields: ['contract_id'],
+      fieldMappings: [
+        { sourceField: 'contract_id', targetAttribute: 'contract_id', mode: 'direct' },
+        { sourceField: 'customer_ref', targetAttribute: 'customer_ref', mode: 'direct' },
+      ],
+    });
+    const relation = { id: 'r-1', key: 'belongs_to', sourceNodeTypeId: 'c-contract', targetNodeTypeId: 'c-customer', cardinality: 'many_to_one' };
+    const rule = { relationId: 'r-1', sourceAttribute: 'customer_ref', targetAttribute: 'customer_id', strategy: 'exact' };
+    const identity = { 'c-customer': ['customer_id'], 'c-contract': ['contract_id'] };
+    const derivedRow = {
+      id: 'dv-1', conceptId: 'c-customer', sourceConceptId: 'c-contract', conflictRule: 'latest', orderBy: 'contract_id',
+      fieldMappings: [{ sourceAttribute: 'customer_ref', targetAttribute: 'customer_id' }], updatedAt: new Date('2026-09-30T00:00:00.000Z'),
+    };
+    const withDerivation = (built: ReturnType<typeof setup>) => new SemanticPopulationRefreshService(
+      built.database as any, built.models as any, built.documents as any, new ModelSpecificationService(), built.runtime as any,
+      built.aiExtractionAgent as any, undefined,
+      new SemanticDerivedSourceService({ query: jest.fn(async () => ({ rows: [derivedRow] })) } as any, {} as any),
+    );
+    const built = setup([contract], identity, [relation], [rule]);
+    await withDerivation(built).requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const [[command]] = built.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    expect(command.payload.derivations).toEqual([{
+      derivationId: 'dv-1', conceptId: 'c-customer', sourceConceptId: 'c-contract', conflictRule: 'latest', orderBy: 'contract_id',
+      fieldMappings: [{ sourceAttribute: 'customer_ref', targetAttribute: 'customer_id' }], labelField: null,
+      mappingVersion: '2026-09-30T00:00:00.000Z',
+    }]);
+    expect(command.payload.specification.concepts.map((concept: { conceptId: string }) => concept.conceptId).sort()).toEqual(['c-contract', 'c-customer']);
+    expect(command.payload.relationBindings).toEqual([{ relationId: 'r-1', referenceField: 'customer_ref', targetField: 'customer_id' }]);
+    // Without it, customers have no source: they are left out of the run, and so is the link to them.
+    const plain = setup([contract], identity, [relation], [rule]);
+    await plain.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const [[plainCommand]] = plain.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    expect(plainCommand.payload).not.toHaveProperty('derivations');
+    expect(plainCommand.payload.relationBindings).toEqual([]);
+    expect(plainCommand.payload.populationExecutionFingerprint).not.toBe(command.payload.populationExecutionFingerprint);
   });
 
   it('binds one-to-many relations through one field of a composite target identity', async () => {

@@ -99,7 +99,7 @@ export function ReviewQueueList({ modelId, canEdit, onOpenIssue, activeKey, grou
                 : <Info className='mt-0.5 h-4 w-4 shrink-0 text-muted-foreground' aria-label={t('reviewQueue.priority.low')} />}
             <div className='min-w-0 flex-1'>
               <p className='break-words text-sm'>{reviewItemText(item, translate)}{item.priority === 3 && <span className='ml-2 rounded-full bg-muted px-1.5 py-0.5 align-middle text-[10px] font-medium text-muted-foreground'>{t('reviewQueue.optional')}</span>}</p>
-              <p className='mt-0.5 text-xs text-muted-foreground'>{translate(`reviewQueue.why.${item.kind}`)}</p>
+              <p className='mt-0.5 text-xs text-muted-foreground'>{translate(`reviewQueue.why.${item.kind}`, item.params)}</p>
               {actionButton(item)}
             </div>
           </div>

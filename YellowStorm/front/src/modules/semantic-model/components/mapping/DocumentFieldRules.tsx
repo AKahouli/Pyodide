@@ -33,6 +33,37 @@ export function usesAi(mappings: SourceFieldMapping[]) {
   return mappings.some((mapping) => mapping.mode === 'extract' && (mapping.extractionStrategy === 'ai' || mapping.extractionStrategy === 'rules_then_ai'));
 }
 
+/** How a document mapping reads a concept field it has no saved row for yet. */
+export function newDocumentField(key: string, strategy: SourceExtractionStrategy = 'deterministic'): SourceFieldMapping {
+  return key === 'source_document'
+    ? { sourceField: 'document_name', targetAttribute: key, mode: 'metadata' }
+    : { sourceField: null, targetAttribute: key, mode: 'extract', extractionStrategy: strategy };
+}
+
+/**
+ * One row per concept field, in the concept's order. Saved rows are kept as they are; a field added
+ * to the concept since the mapping was saved gets a row read like most of the other fields, and a
+ * row for a field the concept no longer has is dropped.
+ */
+export function withConceptFields(saved: SourceFieldMapping[], attributes: ReadonlyArray<{ key: string }>): { mappings: SourceFieldMapping[]; added: string[] } {
+  const byKey = new Map(saved.map((mapping) => [mapping.targetAttribute, mapping]));
+  const counts = new Map<SourceExtractionStrategy, number>();
+  for (const mapping of saved) {
+    if (mapping.mode !== 'extract') continue;
+    const strategy = mapping.extractionStrategy ?? 'deterministic';
+    counts.set(strategy, (counts.get(strategy) ?? 0) + 1);
+  }
+  const strategy = [...counts].sort((left, right) => right[1] - left[1])[0]?.[0];
+  const added: string[] = [];
+  const mappings = attributes.map((attribute) => {
+    const existing = byKey.get(attribute.key);
+    if (existing) return existing;
+    added.push(attribute.key);
+    return newDocumentField(attribute.key, strategy);
+  });
+  return { mappings, added };
+}
+
 /** A pattern the browser cannot read is very likely wrong for the runtime too. */
 export function patternProblem(pattern?: string) {
   if (!pattern?.trim()) return null;

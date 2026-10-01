@@ -15,8 +15,22 @@ describe('SemanticReviewQueueService', () => {
         if (sql.includes("sm.status<>'ready'")) return { rows: [{ id: 'm-6', concept: 'Order', document: 'old.csv', ready: true }, { id: 'm-3', concept: 'Order', document: 'orders.csv', ready: false }] };
         if (sql.includes('NOT EXISTS (SELECT 1 FROM semantic_model.source_mappings sm')) return { rows: [{ id: 'c-3', label: 'Supplier' }] };
         if (sql.includes('FROM semantic_model.source_mappings m')) return { rows: [{ id: 'm-1', name: 'crm.csv' }, { id: 'm-2', name: 'customers.xlsx' }] };
+        if (sql.includes('FROM semantic_model.derived_sources d')) {
+          const row = { conceptId: 'c-5', concept: 'Organization', source: 'Contract', targetFields: ['id', 'name'], identity: ['id'],
+            fieldMappings: [{ sourceAttribute: 'customer_id', targetAttribute: 'id' }], conflictRule: 'latest' };
+          return { rows: [
+            { ...row, id: 'dv-1', orderBy: 'effective_date', sourceFields: ['customer_id', 'date'] },
+            { ...row, id: 'dv-2', orderBy: 'date', sourceFields: ['customer_id', 'date'] },
+          ] };
+        }
         if (sql.includes('identity_rules')) return { rows: [{ id: 'c-2', label: 'Invoice' }] };
         if (sql.includes('relation_resolution_rules')) return { rows: [{ id: 'rel-2', label: 'bills', source: 'Invoice', target: 'Customer' }] };
+        if (sql.includes('jsonb_array_elements(sm.field_mappings)')) {
+          return { rows: [
+            { mappingId: 'd-1', conceptId: 'c-4', concept: 'Contract', scope: 'document', fields: ['Customer name'], keys: ['customer_name'] },
+            { mappingId: 'd-2', conceptId: 'c-4', concept: 'Contract', scope: 'document', fields: ['Customer name'], keys: ['customer_name'] },
+          ] };
+        }
         if (sql.includes('n.attributes')) return { rows: [{ id: 'c-1', attributes: [{ key: 'city', label: 'City' }, { key: 'name', label: 'Name', required: true }] }] };
         throw new Error(`unexpected query: ${sql}`);
       }),
@@ -48,9 +62,9 @@ describe('SemanticReviewQueueService', () => {
 
   it('combines every kind of item, blocking ones first, each with one action', async () => {
     const queue = await setup().reviewQueue('user', 'model');
-    expect(queue.count).toBe(12);
+    expect(queue.count).toBe(14);
     expect(queue.items.map((item) => item.kind)).toEqual([
-      'source_broken', 'source_workspace_off', 'concept_without_source', 'rows_not_read', 'missing_unique_field',
+      'fields_not_read', 'derived_source_broken', 'source_broken', 'source_workspace_off', 'concept_without_source', 'rows_not_read', 'missing_unique_field',
       'source_changed', 'ambiguous_link', 'source_conflict', 'relationship_not_linked', 'unmatched_links', 'missing_values',
       'missing_values',
     ]);
@@ -76,11 +90,21 @@ describe('SemanticReviewQueueService', () => {
     expect(queue.items.filter((item) => item.key === 'mapping:m-3')).toHaveLength(1);
     expect(queue.items.find((item) => item.kind === 'missing_unique_field')?.action).toEqual({ kind: 'choose_unique_field', conceptId: 'c-2' });
     expect(queue.items.find((item) => item.kind === 'source_broken')?.action).toEqual({ kind: 'repair_mapping', mappingId: 'm-3' });
+    // A field added after two documents were mapped one by one: both are updated together.
+    expect(queue.items.find((item) => item.kind === 'fields_not_read')).toMatchObject({
+      params: { concept: 'Contract', fields: 'Customer name', count: 2 },
+      action: { kind: 'repair_mapping', mappingId: 'd-1', bulkEdit: true },
+    });
+    // The date the most recent rule orders by was removed; the other derived source still works.
+    expect(queue.items.filter((item) => item.kind === 'derived_source_broken')).toEqual([expect.objectContaining({
+      params: { concept: 'Organization', source: 'Contract', fields: 'effective date' },
+      action: { kind: 'repair_derived', derivedSourceId: 'dv-1', conceptId: 'c-5' },
+    })]);
   });
 
   it('still lists the model decisions when no data has been prepared', async () => {
     const queue = await setup({ runtimeDown: true }).reviewQueue('user', 'model');
     expect(queue.items.some((item) => item.kind === 'missing_values')).toBe(false);
-    expect(queue.count).toBe(8);
+    expect(queue.count).toBe(10);
   });
 });

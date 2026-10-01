@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { AlertTriangle, KeyRound, Loader2, LockKeyhole, Plus, Table2, Trash2, X } from 'lucide-react';
+import { AlertTriangle, GitMerge, KeyRound, Loader2, LockKeyhole, Plus, Table2, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -19,13 +19,14 @@ import { KnowledgePanel } from '../knowledge/KnowledgePanel';
 import { semanticModelApi } from '../../api';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
-import { useIdentityRules, useSourceMappings } from '../../query/hooks';
+import { useDerivedSources, useIdentityRules, useSourceMappings } from '../../query/hooks';
+import type { DerivedSourceTarget } from '../mapping/DerivedSourceDrawer';
 import { parseApiError } from '@/lib/api-error';
 import { showError } from '@/lib/notifications';
 import { cn } from '@/lib/utils';
 import { RelationMatchingPanel } from '../mapping/RelationMatchingPanel';
 
-export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowledgeOpen,knowledgeTargetId,onKnowledgeClose,onMapData,onBrowseRecords,recordCounts,workspace = false }: Readonly<{ modelId?:string;canEdit:boolean;knowledge:KnowledgeLinkingController;knowledgeOpen:boolean;knowledgeTargetId:string|null;onKnowledgeClose:()=>void;onMapData?:(target:SourceMappingTarget)=>void;onBrowseRecords?:(conceptId:string)=>void;recordCounts?:Record<string,number>;workspace?:boolean }>) {
+export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowledgeOpen,knowledgeTargetId,onKnowledgeClose,onMapData,onDeriveData,onBrowseRecords,recordCounts,workspace = false }: Readonly<{ modelId?:string;canEdit:boolean;knowledge:KnowledgeLinkingController;knowledgeOpen:boolean;knowledgeTargetId:string|null;onKnowledgeClose:()=>void;onMapData?:(target:SourceMappingTarget)=>void;onDeriveData?:(target:DerivedSourceTarget)=>void;onBrowseRecords?:(conceptId:string)=>void;recordCounts?:Record<string,number>;workspace?:boolean }>) {
   const { t } = useModuleTranslation('semantic-model');
   const graph = useSemanticModelEditorStore((state) => state.graph);
   const selectedId = useSemanticModelEditorStore((state) => state.selectedId);
@@ -43,7 +44,7 @@ export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowled
     <div className={workspace ? 'mx-auto max-w-2xl' : undefined}>
     <div className='mb-6 flex items-center justify-between'><h2 className={workspace ? 'text-xl font-semibold' : 'font-semibold'}>{node?.label ?? relation?.label ?? record?.label}</h2>{!workspace && <Button size='icon' variant='ghost' onClick={() => select(null)} aria-label={t('action.close')}><X className='h-4 w-4' /></Button>}</div>
     {node && !node.systemKey && onBrowseRecords && <RecordsSummary count={recordCounts?.[node.id]} label={node.label} onBrowse={() => onBrowseRecords(node.id)} />}
-    {node && <NodeForm modelId={modelId} node={node} locked={Boolean(node.systemKey)} canEdit={canEdit} onMapData={onMapData} />}
+    {node && <NodeForm modelId={modelId} node={node} locked={Boolean(node.systemKey)} canEdit={canEdit} onMapData={onMapData} onDeriveData={onDeriveData} />}
     {relation && <RelationForm modelId={modelId} relation={relation} canEdit={canEdit} />}
     {record && <RecordForm record={record} canEdit={canEdit} />}
     </div>
@@ -142,7 +143,7 @@ export function ResizableSidePanel({ children, className, bodyClassName }: Reado
   </aside>;
 }
 
-function NodeForm({ modelId, node: item,locked,canEdit,onMapData }: Readonly<{ modelId:string; node: SemanticNodeType; locked: boolean; canEdit: boolean; onMapData?:(target:SourceMappingTarget)=>void }>) {
+function NodeForm({ modelId, node: item,locked,canEdit,onMapData,onDeriveData }: Readonly<{ modelId:string; node: SemanticNodeType; locked: boolean; canEdit: boolean; onMapData?:(target:SourceMappingTarget)=>void; onDeriveData?:(target:DerivedSourceTarget)=>void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const graph = useSemanticModelEditorStore((state) => state.graph);
   const commit = useSemanticModelEditorStore((state) => state.commit);
@@ -164,7 +165,7 @@ function NodeForm({ modelId, node: item,locked,canEdit,onMapData }: Readonly<{ m
     {!locked&&canEdit && <section className='space-y-3 border-t pt-5'><AttributeEditor attributes={item.attributes} onChange={(attributes) => update({ attributes })} /></section>}
     {!locked&&modelId && <section data-focus-section='identity' className='space-y-3 border-t pt-5'><IdentitySection modelId={modelId} node={item} canEdit={canEdit} /></section>}
     <section className='space-y-3 border-t pt-5'><h3 className='font-semibold'>{t('workspaceUi.relationships')}</h3>{(graph?.relations.filter((relation) => relation.sourceNodeTypeId === item.id || relation.targetNodeTypeId === item.id) ?? []).map((relation) => { const other = graph?.nodes.find((node) => node.id === (relation.sourceNodeTypeId === item.id ? relation.targetNodeTypeId : relation.sourceNodeTypeId)); const labels = relation.sourceNodeTypeId === item.id ? { source: item.label, target: other?.label ?? '' } : { source: other?.label ?? '', target: item.label }; return <button key={relation.id} type='button' onClick={() => select(relation.id)} className='block w-full rounded-xl bg-muted/50 p-3 text-left text-sm hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary'>{relationSentence(relation, labels, item.id, t as (key: string, options?: Record<string, unknown>) => string)}</button>; })}{!graph?.relations.some((relation) => relation.sourceNodeTypeId === item.id || relation.targetNodeTypeId === item.id) && <p className='text-sm text-muted-foreground'>{t('workspaceUi.noRelationships')}</p>}</section>
-    {!locked&&canEdit && <section data-focus-section='sources' className='border-t pt-5'><SourceMappingsSection modelId={modelId} conceptId={item.id} onMapData={onMapData} /></section>}
+    {!locked&&canEdit && <section data-focus-section='sources' className='border-t pt-5'><SourceMappingsSection modelId={modelId} conceptId={item.id} onMapData={onMapData} onDeriveData={onDeriveData} /></section>}
     <details className='border-t pt-5'><summary className='cursor-pointer text-sm font-semibold'>{t('workspaceUi.advanced')}</summary><div className='mt-4 space-y-4'>
     <Field label={t('field.category')}><Select value={item.category} disabled={locked||!canEdit} onValueChange={(category: SemanticNodeType['category']) => update({ category })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value='business_object'>{t('category.business_object')}</SelectItem><SelectItem value='classification'>{t('category.classification')}</SelectItem></SelectContent></Select></Field>
     <Field label={t('field.recordPolicy')}><Select value={item.recordPolicy} disabled={locked||!canEdit} onValueChange={(recordPolicy: SemanticNodeType['recordPolicy']) => update({ recordPolicy })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{(['none','optional','expected'] as const).map((policy) => <SelectItem key={policy} value={policy}>{t(`recordPolicy.${policy}`)}</SelectItem>)}</SelectContent></Select></Field>
@@ -211,11 +212,16 @@ export function IdentitySection({ modelId, node, canEdit }: Readonly<{ modelId: 
   </div>;
 }
 
-function SourceMappingsSection({ modelId,conceptId,onMapData }: Readonly<{ modelId:string;conceptId:string;onMapData?:(target:SourceMappingTarget)=>void }>) {
+function SourceMappingsSection({ modelId,conceptId,onMapData,onDeriveData }: Readonly<{ modelId:string;conceptId:string;onMapData?:(target:SourceMappingTarget)=>void;onDeriveData?:(target:DerivedSourceTarget)=>void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const client = useQueryClient();
   const mappingsQuery = useSourceMappings(modelId || undefined);
   const mappings = (mappingsQuery.data ?? []).filter((mapping) => mapping.conceptId === conceptId);
+  const graph = useSemanticModelEditorStore((state) => state.graph);
+  const derived = (useDerivedSources(modelId || undefined).data ?? []).filter((source) => source.conceptId === conceptId);
+  const conceptLabel = (id: string) => graph?.nodes.find((node) => node.id === id)?.label ?? '';
+  const fieldLabel = (id: string, key: string) => graph?.nodes.find((node) => node.id === id)?.attributes.find((field) => field.key === key)?.label ?? key;
+  const identity = useIdentityRules(modelId || undefined).data?.find((rule) => rule.conceptId === conceptId)?.fields ?? [];
   const remove = async (mappingId: string) => {
     try {
       const result = await semanticModelApi.deleteSourceMapping(modelId, mappingId);
@@ -229,7 +235,7 @@ function SourceMappingsSection({ modelId,conceptId,onMapData }: Readonly<{ model
     }
   };
   return <div className='space-y-2'>
-    <Label>{t('mapping.sourcesTitle', { count: mappings.length })}</Label>
+    <Label>{t('mapping.sourcesTitle', { count: mappings.length + derived.length })}</Label>
     <p className='text-xs text-muted-foreground'>{t('mapping.sourcesHelp')}</p>
     {mappingsQuery.isLoading ? <Loader2 className='h-4 w-4 animate-spin' />
       : mappingsQuery.isError ? (
@@ -251,7 +257,15 @@ function SourceMappingsSection({ modelId,conceptId,onMapData }: Readonly<{ model
           </div>
         ))}
       </div>
-    ) : <p className='rounded-xl bg-muted/50 p-3 text-xs text-muted-foreground'>{t('mapping.noSources')}</p>}
+    ) : !derived.length && <p className='rounded-xl bg-muted/50 p-3 text-xs text-muted-foreground'>{t('mapping.noSources')}</p>}
+    {derived.map((source) => <div key={source.id} className='rounded-xl border border-teal-500/40 p-2.5'>
+      <p className='flex items-center gap-1.5 truncate text-xs font-medium'><GitMerge className='h-3.5 w-3.5 shrink-0' />{t('derived.fromConcept', { source: conceptLabel(source.sourceConceptId) })}</p>
+      <p className='truncate text-[10px] text-muted-foreground'>{t('derived.summary', { fields: identity.map((key) => fieldLabel(conceptId, key)).join(', '), rule: t(`derived.rule.${source.conflictRule}`) })}</p>
+      {onDeriveData && <Button size='sm' variant='ghost' className='mt-1.5 h-7 px-2 text-[11px]' onClick={() => onDeriveData({ conceptId, derived: source })}>{t('mapping.edit')}</Button>}
+    </div>)}
+    {onDeriveData && !derived.length && <Button size='sm' variant='outline' className='h-8 w-full text-xs' onClick={() => onDeriveData({ conceptId })}>
+      <GitMerge className='mr-1.5 h-3.5 w-3.5' />{t('derived.add')}
+    </Button>}
   </div>;
 }
 

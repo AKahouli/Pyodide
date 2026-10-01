@@ -392,6 +392,57 @@ export class AiExtractionSettingsDto {
   blocksPerField?: number;
 }
 
+export class DerivedFieldMappingDto {
+  @ApiProperty({ description: 'A field of the source concept' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  sourceAttribute!: string;
+
+  @ApiProperty({ description: 'The field of the derived concept it fills' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  targetAttribute!: string;
+}
+
+export class SaveDerivedSourceDto extends ExpectedModelRevisionDto {
+  @ApiProperty({ description: 'The concept filled from another one' })
+  @IsUUID()
+  conceptId!: string;
+
+  @ApiProperty({ description: 'The concept whose records carry the values' })
+  @IsUUID()
+  sourceConceptId!: string;
+
+  @ApiProperty({ type: [DerivedFieldMappingDto], maxItems: 50 })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => DerivedFieldMappingDto)
+  fieldMappings!: DerivedFieldMappingDto[];
+
+  @ApiProperty({ type: [String], maxItems: 5, description: 'Fields of the derived concept that tell its records apart' })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(5)
+  @IsString({ each: true })
+  @MaxLength(200, { each: true })
+  identityFields!: string[];
+
+  @ApiProperty({ enum: ['most_frequent', 'latest', 'longest', 'leave_empty'] })
+  @IsIn(['most_frequent', 'latest', 'longest', 'leave_empty'])
+  conflictRule!: 'most_frequent' | 'latest' | 'longest' | 'leave_empty';
+
+  @ApiPropertyOptional({ description: 'The source field ordering records for the most recent rule' })
+  @ValidateIf((dto: SaveDerivedSourceDto) => dto.conflictRule === 'latest')
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  orderBy?: string;
+}
+
 export class CreateSourceMappingDto {
   @ApiProperty()
   @Type(() => Number)

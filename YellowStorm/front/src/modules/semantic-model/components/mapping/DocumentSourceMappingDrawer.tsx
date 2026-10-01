@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, ExternalLink, FolderOpen, Loader2 } from 'lucide-react';
+import { AlertTriangle, ExternalLink, FolderOpen, Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -18,7 +18,7 @@ import { semanticModelQueryKeys } from '../../query/queryKeys';
 import { useSourceMappings } from '../../query/hooks';
 import { useSemanticModelEditorStore } from '../../store';
 import type { AiExtractionSettings, SourceExtractionStrategy, SourceFieldMapping, SourceMappingPreviewResponse, StructuredSourceAsset } from '../../types';
-import { AiLimitsEditor, FieldReadingResult, FieldRulesEditor, limitProblem, patternProblem, ReadAllFieldsBar, STRATEGIES, usesAi as mappingsUseAi, usesRules } from './DocumentFieldRules';
+import { AiLimitsEditor, FieldReadingResult, FieldRulesEditor, limitProblem, newDocumentField, patternProblem, ReadAllFieldsBar, STRATEGIES, usesAi as mappingsUseAi, usesRules, withConceptFields } from './DocumentFieldRules';
 import type { SourceMappingTarget, WorkspaceSourceScope } from './SourceMappingDrawer';
 import { isReadableDocument, WorkspaceFilePicker, type WorkspacePick } from './WorkspaceFilePicker';
 
@@ -30,6 +30,10 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
   const graph = useSemanticModelEditorStore((state) => state.graph);
   const [conceptId, setConceptId] = useState('');
   const [mappings, setMappings] = useState<SourceFieldMapping[]>([]);
+  // Concept fields added after this mapping was saved: shown until it is saved, then read by the next run.
+  const [addedFields, setAddedFields] = useState<string[]>([]);
+  // The concept fields the rows were last built from, so a field added while the drawer is open gets a row too.
+  const rowsBuiltFor = useRef('');
   const [identityFields, setIdentityFields] = useState<string[]>([]);
   const [selectedDocuments, setSelectedDocuments] = useState<Set<string>>(new Set());
   const [documentSearch, setDocumentSearch] = useState('');
@@ -91,12 +95,11 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
     const nextConceptId = target.mapping?.conceptId ?? target.conceptId ?? '';
     const nextConcept = graph?.nodes.find((node) => node.id === nextConceptId);
     setConceptId(nextConceptId);
-    setMappings(target.mapping?.fieldMappings ?? (nextConcept?.attributes ?? []).map((attribute) => ({
-      sourceField: attribute.key === 'source_document' ? 'document_name' : null,
-      targetAttribute: attribute.key,
-      mode: attribute.key === 'source_document' ? 'metadata' : 'extract',
-      extractionStrategy: attribute.key === 'source_document' ? undefined : 'deterministic',
-    })));
+    const attributes = nextConcept?.attributes ?? [];
+    const rows = target.mapping ? withConceptFields(target.mapping.fieldMappings, attributes) : { mappings: attributes.map((attribute) => newDocumentField(attribute.key)), added: [] };
+    setMappings(rows.mappings);
+    setAddedFields(rows.added);
+    rowsBuiltFor.current = `${nextConceptId}:${attributes.map((attribute) => attribute.key).join('|')}`;
     setIdentityFields(target.mapping?.identityFields ?? sourceMappings.find((mapping) => mapping.conceptId === nextConceptId)?.identityFields ?? []);
     setSelectedDocuments(new Set([target.documentId, ...(target.bulkEdit ? sourceMappings.filter((mapping) => mapping.conceptId === nextConceptId && mapping.assetKind === 'document').map((mapping) => mapping.documentId) : [])]));
     setDocumentSearch('');
@@ -108,6 +111,15 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target?.documentId, target?.mapping?.id, graph?.versionId, sourceMappings.length]);
   useEffect(() => { saveWorkspace.reset(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [target?.documentId]);
+  const conceptFields = concept ? `${concept.id}:${concept.attributes.map((attribute) => attribute.key).join('|')}` : '';
+  useEffect(() => {
+    if (!target || !concept || !rowsBuiltFor.current || conceptFields === rowsBuiltFor.current) return;
+    rowsBuiltFor.current = conceptFields;
+    const rows = withConceptFields(mappings, concept.attributes);
+    setMappings(rows.mappings);
+    setAddedFields((current) => [...current.filter((key) => rows.mappings.some((mapping) => mapping.targetAttribute === key)), ...rows.added]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conceptFields]);
 
   const eligibleDocuments = target?.bulkEdit
     ? documentAssets.filter((asset) => sourceMappings.some((mapping) => mapping.conceptId === conceptId && mapping.assetKind === 'document' && mapping.documentId === asset.documentId))
@@ -124,6 +136,8 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
     } : null)).filter((asset): asset is StructuredSourceAsset => Boolean(asset));
   const selectedAssets = workspace ? samplesQuery.data ?? [] : pickedAssets;
   const activeMappings = mappings.filter((mapping) => mapping.mode !== 'ignore');
+  // Ignored fields are saved too, so a field left out on purpose is not offered again as a new one.
+  const savedMappings = mappings;
 
   const preview = useMutation({
     mutationFn: async (): Promise<PreviewItem[]> => {
@@ -151,7 +165,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
       workspaceId: workspace!.workspaceId,
       ...(coverage.whole ? {} : coverage.pick),
       mappingId: editingWorkspaceMapping,
-      fieldMappings: activeMappings,
+      fieldMappings: savedMappings,
       identityFields,
       aiSettings,
     }),
@@ -179,7 +193,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
         documentId: selectedAssets[0].documentId,
         sheetName: '',
         assetKind: 'document',
-        fieldMappings: activeMappings,
+        fieldMappings: savedMappings,
         identityFields,
         aiSettings,
       })).revision;
@@ -190,7 +204,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
           revision = (await semanticModelApi.createBulkDocumentSourceMappings(modelId, {
             conceptId,
             documents: batch.map((asset) => ({ workspaceId: asset.workspaceId, documentId: asset.documentId })),
-            fieldMappings: activeMappings,
+            fieldMappings: savedMappings,
             identityFields,
             aiSettings,
           })).revision;
@@ -277,7 +291,9 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
           <Select value={conceptId} disabled={Boolean(target.mapping)} onValueChange={(value) => {
             setConceptId(value);
             const next = graph?.nodes.find((node) => node.id === value);
-            setMappings((next?.attributes ?? []).map((attribute) => ({ sourceField: null, targetAttribute: attribute.key, mode: 'extract', extractionStrategy: 'deterministic' })));
+            setMappings((next?.attributes ?? []).map((attribute) => newDocumentField(attribute.key)));
+            setAddedFields([]);
+            rowsBuiltFor.current = `${value}:${(next?.attributes ?? []).map((attribute) => attribute.key).join('|')}`;
             setIdentityFields(sourceMappings.find((mapping) => mapping.conceptId === value)?.identityFields ?? []);
             preview.reset();
           }}>
@@ -322,10 +338,16 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
         {concept && concept.attributes.length > 0 && <div className='space-y-2'>
           <Label>{t('mapping.documentFields')}</Label>
           <ReadAllFieldsBar mappings={mappings} onApply={setAllStrategies} />
+          {addedFields.length > 0 && <p role='status' className='flex gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/5 p-2.5 text-xs text-sky-800 dark:text-sky-300'>
+            <Sparkles className='mt-0.5 h-3.5 w-3.5 shrink-0' />{t('mapping.newFields', { count: addedFields.length, fields: addedFields.map(attributeLabel).join(', ') })}
+          </p>}
           <div className='overflow-hidden rounded-xl border'>
             {mappings.map((mapping, index) => <div key={mapping.targetAttribute} className='space-y-2 border-b p-3 last:border-b-0'>
               <div className='flex items-center gap-3'>
-                <span className='min-w-0 flex-1 truncate text-xs font-medium'>{concept.attributes.find((attribute) => attribute.key === mapping.targetAttribute)?.label ?? mapping.targetAttribute}</span>
+                <span className='flex min-w-0 flex-1 items-center gap-1.5 text-xs font-medium'>
+                  <span className='truncate'>{concept.attributes.find((attribute) => attribute.key === mapping.targetAttribute)?.label ?? mapping.targetAttribute}</span>
+                  {addedFields.includes(mapping.targetAttribute) && <span className='shrink-0 rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-medium text-sky-800 dark:text-sky-300'>{t('mapping.newField')}</span>}
+                </span>
                 <Select value={mapping.mode} onValueChange={(value: SourceFieldMapping['mode']) => setMode(index, value)}>
                   <SelectTrigger className='h-8 w-44 text-xs' aria-label={t('mapping.methodFor', { field: mapping.targetAttribute })}><SelectValue /></SelectTrigger>
                   <SelectContent>

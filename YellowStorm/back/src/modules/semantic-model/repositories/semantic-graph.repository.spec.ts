@@ -40,3 +40,53 @@ describe('SemanticGraphRepository draft persistence', () => {
     expect(jest.mocked(client.query).mock.calls.some(([text]) => String(text).includes('ag_catalog.cypher'))).toBe(false);
   });
 });
+
+describe('SemanticGraphRepository concept fields and document sources', () => {
+  const repository = new SemanticGraphRepository({} as never);
+  const attribute = (key: string) => ({ key, label: key, type: 'text', required: false });
+
+  function client(fieldMappings: unknown[]) {
+    return {
+      query: jest.fn(async (text: string) => {
+        if (text.includes('FROM semantic_model.node_types')) {
+          return { rows: [{ id: 'contract', key: 'contract', label: 'Contract', attributes: [attribute('number'), attribute('status')] }] };
+        }
+        if (text.includes('FROM semantic_model.source_mappings')) return { rows: [{ id: 'm-1', fieldMappings }] };
+        return { rows: [], rowCount: 1 };
+      }),
+    } as unknown as PoolClient;
+  }
+  const updates = (target: PoolClient) => jest.mocked(target.query).mock.calls
+    .filter(([text]) => String(text).startsWith('UPDATE semantic_model.source_mappings'));
+
+  it('reads a new field and stops reading a removed one without saving the mapping again', async () => {
+    const target = client([
+      { sourceField: null, targetAttribute: 'number', mode: 'extract', extractionStrategy: 'ai' },
+      { sourceField: null, targetAttribute: 'status', mode: 'extract', extractionStrategy: 'ai' },
+    ]);
+    await repository.apply(target, 'model-1', 'version-1', {
+      type: 'node_type.update', id: 'contract',
+      changes: { attributes: [attribute('number'), attribute('document_status'), attribute('source_document')] as never },
+    });
+    const [[, params]] = updates(target);
+    expect(JSON.parse((params as string[])[1])).toEqual([
+      { sourceField: null, targetAttribute: 'number', mode: 'extract', extractionStrategy: 'ai' },
+      { sourceField: null, targetAttribute: 'document_status', mode: 'extract', extractionStrategy: 'ai' },
+      { sourceField: 'document_name', targetAttribute: 'source_document', mode: 'metadata' },
+    ]);
+  });
+
+  it('leaves the mapping alone when the same fields are read', async () => {
+    const target = client([
+      { sourceField: null, targetAttribute: 'status', mode: 'ignore' },
+      { sourceField: null, targetAttribute: 'number', mode: 'extract' },
+    ]);
+    await repository.apply(target, 'model-1', 'version-1', {
+      type: 'node_type.update', id: 'contract', changes: { attributes: [attribute('number'), attribute('status')] as never },
+    });
+    expect(updates(target)).toEqual([]);
+    const labelOnly = client([]);
+    await repository.apply(labelOnly, 'model-1', 'version-1', { type: 'node_type.update', id: 'contract', changes: { label: 'Deal' } });
+    expect(jest.mocked(labelOnly.query).mock.calls.some(([text]) => String(text).includes('source_mappings'))).toBe(false);
+  });
+});

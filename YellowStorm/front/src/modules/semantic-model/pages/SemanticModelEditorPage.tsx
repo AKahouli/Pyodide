@@ -10,6 +10,7 @@ import {
   History,
   Keyboard,
   LayoutDashboard,
+  ClipboardCheck,
   ListChecks,
   Loader2,
   Network,
@@ -51,6 +52,7 @@ import { ConceptRecordsPanel } from "../components/records/ConceptRecordsPanel";
 import { SemanticModelGraphViewer } from "../components/editor/SemanticModelGraphViewer";
 import { SemanticModelValidateDialog } from "../components/editor/SemanticModelValidateDialog";
 import { SourceMappingDrawer, sourceMappingTargetFromResource, sourceMappingTargetFromWorkspace, type SourceMappingTarget } from "../components/mapping/SourceMappingDrawer";
+import { DerivedSourceDrawer, type DerivedSourceTarget } from "../components/mapping/DerivedSourceDrawer";
 import { SourceSuggestionsList, takeChosenSource, useSourceSuggestions } from '../components/assistant/SourceSuggestions';
 import { SourceChooserDialog } from '../components/assistant/SourceChooser';
 import type { SourceSuggestion, SourceSuggestionOption } from "../types";
@@ -62,7 +64,7 @@ import { PopulationStartedPanel, populationServing, type PopulationOutcome } fro
 import { VersionsPanel } from "../components/versions/VersionsPanel";
 import { useKnowledgeLinking, type KnowledgeResource } from "../hooks/use-knowledge-linking";
 import { useAssistantSync } from "../hooks/use-assistant-sync";
-import { useCanvasPositions, useIdentityRules, useMappingHealth, usePopulationFreshness, useSemanticVersions, useVersionComparison, useSemanticDataPreview, useSemanticGraph, useSemanticModel, useReviewQueue, useSourceMappings } from "../query/hooks";
+import { useCanvasPositions, useDerivedSources, useIdentityRules, useMappingHealth, usePopulationFreshness, useSemanticVersions, useVersionComparison, useSemanticDataPreview, useSemanticGraph, useSemanticModel, useReviewQueue, useSourceMappings } from "../query/hooks";
 import { semanticModelQueryKeys } from '../query/queryKeys';
 import { isPendingSaveCurrent, isSemanticGraphSaved, selectPendingOperations, useSemanticModelEditorStore } from "../store";
 import type { ConceptSourceMapping, ReviewQueueItem } from "../types";
@@ -90,6 +92,7 @@ export function SemanticModelEditorPage() {
   const knowledge = useKnowledgeLinking(modelId);
   const sourceMappings = useSourceMappings(modelId);
   const identityRules = useIdentityRules(modelId);
+  const derivedSources = useDerivedSources(modelId);
   const canvasPositions = useCanvasPositions(modelId);
   // What publishing would change, so Publish can say when there is something to publish.
   const versionList = useSemanticVersions(modelId).data ?? [];
@@ -198,6 +201,8 @@ export function SemanticModelEditorPage() {
     setPopulationJobId(undefined);
   }, [populationJob.data]);
   const [mappingTarget, setMappingTarget] = useState<SourceMappingTarget | null>(null);
+  const [derivedTarget, setDerivedTarget] = useState<DerivedSourceTarget | null>(null);
+  const openDerived = (target: DerivedSourceTarget) => { setMappingTarget(null); setDerivedTarget(target); };
   const adoptRevision = useSemanticModelEditorStore((state) => state.adoptRevision);
   const pushAction = useSemanticModelEditorStore((state) => state.pushAction);
   // Removing a source happens at once, without asking: Undo puts it back with the same settings.
@@ -262,6 +267,7 @@ export function SemanticModelEditorPage() {
         void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.model(modelId) });
         void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.workspaces(modelId) });
       }
+      setDerivedTarget(null);
       setMappingTarget(target);
     } catch (error) {
       showError(t('sourceAnalysis.error'), { description: error instanceof Error ? error.message : undefined });
@@ -318,6 +324,7 @@ export function SemanticModelEditorPage() {
     setTrustOpen(false);
     setPopulation(null);
     setSuggestionsOpen(false);
+    setVersionsOpen(false);
     setMappingTarget(null);
     // The knowledge list belongs to the concept it was opened for; picking something else closes it.
     if (knowledgeTargetId !== selectedId) { setKnowledgeOpen(false); setKnowledgeTargetId(null); }
@@ -555,14 +562,15 @@ export function SemanticModelEditorPage() {
   const recordCount = designerRecords.data?.summary.entities;
   const reviewCount = reviewQueue.data?.count ?? 0;
   const published = Boolean(model.data?.currentPublishedVersionId);
-  const repairMapping = (mappingId: string) => {
+  const repairMapping = (mappingId: string, bulkEdit?: boolean) => {
     const mapping = sourceMappings.data?.find((candidate) => candidate.id === mappingId);
     if (!mapping) { setMode('mappings'); return; }
-    void openMappingTarget(mappingTarget_(mapping));
+    void openMappingTarget({ ...mappingTarget_(mapping), ...(bulkEdit ? { bulkEdit } : {}) });
   };
   const openGraphViewer = () => {
     setGraphViewerOpen(true);
   };
+  const openVersions = () => { setKnowledgeOpen(false); setTrustOpen(false); setPopulation(null); setSuggestionsOpen(false); setMappingTarget(null); setVersionsOpen(true); };
   const closeSidePanels = () => { setTrustOpen(false); setVersionsOpen(false); setPopulation(null); setSuggestionsOpen(false); };
   const openReview = () => { setKnowledgeOpen(false); setPopulation(null); setVersionsOpen(false); setSuggestionsOpen(false); setMappingTarget(null); setTrustOpen(true); };
   // A review list that names the field only by its label ("customer id") still leads to the right field.
@@ -579,7 +587,8 @@ export function SemanticModelEditorPage() {
     setTrustOpen(false);
     const action = item.action;
     switch (action.kind) {
-      case 'repair_mapping': repairMapping(action.mappingId); break;
+      case 'repair_mapping': repairMapping(action.mappingId, action.bulkEdit); break;
+      case 'repair_derived': openDerived({ conceptId: action.conceptId, derived: derivedSources.data?.find((source) => source.id === action.derivedSourceId) }); break;
       case 'choose_unique_field': setMode('structure'); focus(action.conceptId, 'identity'); break;
       case 'set_up_link': setMode('structure'); focus(action.relationId, 'matching'); break;
       // Links that found nothing are looked at in the records: which ones, and the value they looked for.
@@ -641,7 +650,8 @@ export function SemanticModelEditorPage() {
   const hasUnpublished = Boolean(draftVersionId) && (!publishedVersionId || unpublishedChanges > 0);
   return (
     <div className="flex h-[100dvh] w-full min-w-0 max-w-full flex-col overflow-hidden bg-muted/15">
-      <header className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-background px-4 py-2">
+      {/* One line at every width: labels give way to icons before anything wraps. */}
+      <header className="flex shrink-0 items-center gap-2 border-b bg-background px-4 py-2">
         <Button size="icon" variant="ghost" asChild aria-label={t("editor.back")}>
           <Link to="/semantic-models"><ArrowLeft className="h-4 w-4" /></Link>
         </Button>
@@ -651,9 +661,9 @@ export function SemanticModelEditorPage() {
             {t(model.data?.kind === "workspace_default" ? "editor.automaticModel" : "editor.designedModel")}
           </p>
         </div>
-        <div className="flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-[11px]">
+        <div className="flex shrink-0 items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-[11px]" title={statusLabel}>
           <Save className={`h-3.5 w-3.5 ${saveStatus === "saving" ? "animate-pulse text-primary" : saveStatus === "conflict" || saveStatus === "error" ? "text-destructive" : "text-muted-foreground"}`} />
-          {statusLabel}
+          <span className="hidden md:inline">{statusLabel}</span>
           {(saveStatus === "error" || saveStatus === "offline") && (
             <button type="button" className="ml-1 font-semibold text-primary underline-offset-2 hover:underline" onClick={retrySave}>{t("action.retry")}</button>
           )}
@@ -665,19 +675,18 @@ export function SemanticModelEditorPage() {
         </div>}
         <div className="flex-1" />
         {/* One line that says where the model stands, instead of steps and percentages. */}
-        <p className="hidden whitespace-nowrap text-xs text-muted-foreground lg:block" aria-live="polite">
+        <p className="hidden whitespace-nowrap text-xs text-muted-foreground xl:block" aria-live="polite">
           {t(published ? 'designer.status.published' : 'designer.status.draft')}
           {recordCount !== undefined && <> · {t('editor.recordCount', { count: recordCount })}</>}
           {freshnessState && freshnessState !== 'not_runnable' && <> · <span title={t(freshnessState === 'current' ? 'freshness.currentHint' : freshnessState === 'outdated' ? 'freshness.outdatedHint' : 'freshness.neverHint')}
             className={freshnessState === 'outdated' ? 'font-medium text-amber-700 dark:text-amber-400' : freshnessState === 'current' ? 'text-emerald-700 dark:text-emerald-400' : undefined}>
             <span className={`inline-block h-1.5 w-1.5 rounded-full align-middle ${freshnessState === 'current' ? 'bg-emerald-500' : freshnessState === 'outdated' ? 'bg-amber-500' : 'bg-muted-foreground/50'}`} aria-hidden />
             <span className='ml-1 hidden 2xl:inline'>{t(`freshness.${freshnessState}`)}</span><span className='sr-only 2xl:hidden'>{t(`freshness.${freshnessState}`)}</span></span></>}
-          {reviewCount > 0 && <> · <span className="text-amber-700 dark:text-amber-400">{t(reviewCount === 1 ? 'designer.status.issues_one' : 'designer.status.issues_other', { count: reviewCount })}</span></>}
         </p>
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex shrink-0 items-center gap-1.5">
           {!onCanvas && <Button size='sm' variant='outline' onClick={() => setMode('structure')}><Workflow className='mr-1.5 h-4 w-4' />{t('designer.backToCanvas')}</Button>}
           {onCanvas && <DropdownMenu>
-            <DropdownMenuTrigger asChild><Button size='sm' variant='ghost'><Table2 className='mr-1.5 h-4 w-4' />{t('designer.data')}<ChevronDown className='ml-1 h-3.5 w-3.5' /></Button></DropdownMenuTrigger>
+            <DropdownMenuTrigger asChild><Button size='sm' variant='ghost' aria-label={t('designer.data')} title={t('designer.data')}><Table2 className='h-4 w-4 xl:mr-1.5' /><span className='hidden xl:inline'>{t('designer.data')}</span><ChevronDown className='ml-1 h-3.5 w-3.5' /></Button></DropdownMenuTrigger>
             <DropdownMenuContent align='end' onCloseAutoFocus={(event) => event.preventDefault()}>
               <DropdownMenuItem onSelect={() => setMode('records')}><Table2 className='h-4 w-4' />{t('mode.records')}</DropdownMenuItem>
               <DropdownMenuItem onSelect={openGraphViewer}><Network className='h-4 w-4' />{t('dataWorkflow.dataGraph')}</DropdownMenuItem>
@@ -688,11 +697,11 @@ export function SemanticModelEditorPage() {
             {t('assistantSources.toolbar')}
             {pendingSuggestions > 0 && <span className='ml-2 rounded-full bg-primary/15 px-1.5 text-[11px] font-semibold text-primary' aria-label={t('assistantSources.pending', { count: pendingSuggestions })}>{pendingSuggestions}</span>}
           </Button>}
-          <Button variant='ghost' size='sm' onClick={() => (trustOpen ? setTrustOpen(false) : openReview())}>
-            {t('reviewQueue.button')}
+          <Button variant='ghost' size='sm' className={trustOpen ? 'bg-muted' : undefined} aria-pressed={trustOpen} title={t('reviewQueue.button')} onClick={() => (trustOpen ? setTrustOpen(false) : openReview())}>
+            <ClipboardCheck className='h-4 w-4 lg:hidden' /><span className='hidden lg:inline'>{t('reviewQueue.button')}</span>
             {reviewCount > 0 && <span className='ml-2 rounded-full bg-amber-500/15 px-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300' aria-label={t('reviewQueue.badge', { count: reviewCount })}>{reviewCount}</span>}
           </Button>
-          <Button variant='ghost' size='sm' onClick={() => { setKnowledgeOpen(false); setTrustOpen(false); setVersionsOpen((open) => !open); }} aria-label={t('designer.versions')}><History className='h-4 w-4' /></Button>
+          <Button variant='ghost' size='sm' className={versionsOpen ? 'bg-muted' : undefined} aria-pressed={versionsOpen} onClick={() => (versionsOpen ? setVersionsOpen(false) : openVersions())} aria-label={t('designer.versions')} title={t('designer.versions')}><History className='h-4 w-4' /></Button>
           {canEdit && <Button variant='outline' size='sm' disabled={!populationJobId && !canValidate}
             // While a run goes on, the button shows it (with Stop) instead of starting another one.
             onClick={() => populationJobId
@@ -702,9 +711,11 @@ export function SemanticModelEditorPage() {
             // Run says what it would do: generate the first data, bring stale data up to date, or just run again.
             className={!populationJobId && (freshnessState === 'outdated' || freshnessState === 'never_run') ? 'border-amber-500/60 text-amber-800 hover:bg-amber-500/10 dark:text-amber-300' : undefined}>
             {populationJobId ? <Loader2 className='mr-1.5 h-4 w-4 animate-spin' /> : <Play className='mr-1.5 h-4 w-4' />}
+            {/* The status line is hidden on narrower screens; the dot keeps telling whether the data is current. */}
+            {!populationJobId && freshnessState && freshnessState !== 'not_runnable' && <span aria-hidden className={`order-first mr-1.5 h-1.5 w-1.5 rounded-full xl:hidden ${freshnessState === 'current' ? 'bg-emerald-500' : freshnessState === 'outdated' ? 'bg-amber-500' : 'bg-muted-foreground/50'}`} />}
             {populationJobId ? t('designer.running') : freshnessState === 'outdated' ? t('freshness.runToUpdate') : freshnessState === 'never_run' ? t('freshness.generate') : t('designer.run')}
           </Button>}
-          {canEdit && <Button size='sm' className='relative' onClick={() => { setKnowledgeOpen(false); setTrustOpen(false); setVersionsOpen(true); }}
+          {canEdit && <Button size='sm' className='relative' onClick={() => (versionsOpen ? setVersionsOpen(false) : openVersions())}
             title={hasUnpublished ? (publishedVersionId ? t('publishState.changes', { count: unpublishedChanges }) : t('publishState.never')) : t('publishState.none')}>
             {t('workspaceUi.publishShort')}
             {hasUnpublished && <span className='absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border-2 border-background bg-amber-400' aria-label={publishedVersionId ? t('publishState.changes', { count: unpublishedChanges }) : t('publishState.never')} />}
@@ -712,18 +723,6 @@ export function SemanticModelEditorPage() {
         </div>
       </header>
       <main className="relative flex min-h-0 flex-1">
-        {versionsOpen && (
-          <VersionsPanel
-            modelId={modelId!}
-            canEdit={canEdit}
-            canPublish={canEdit && saveStatus === "saved"}
-            onPublished={() => {
-              hydratedVersionRef.current = null;
-              void graphQuery.refetch();
-              void model.refetch();
-            }}
-          />
-        )}
         {onCanvas && canEdit && <nav aria-label={t('designer.palette.title')} className='hidden w-44 shrink-0 flex-col gap-1.5 overflow-y-auto border-r bg-background p-3 md:flex'>
           <p className='px-1 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground'>{t('designer.palette.title')}</p>
           {palette.map((item) => <button key={item.key} type='button' onClick={item.onClick} title={item.hint} className='flex items-center gap-2 rounded-xl border bg-card px-2.5 py-2 text-left text-sm transition-colors hover:border-primary/50 hover:bg-primary/5'>
@@ -736,6 +735,8 @@ export function SemanticModelEditorPage() {
           {reviewFocus && !trustOpen && <ReviewFocusBar item={reviewFocus} items={reviewQueue.data?.items ?? []} onOpen={openIssue} onBack={openReview} onClose={() => setReviewFocus(null)} />}
           {onCanvas && <div className='relative min-h-0 flex-1'><SemanticModelCanvas
             sourceMappings={sourceMappings.data}
+            derivedSources={derivedSources.data}
+            onOpenDerived={canEdit ? (derived) => openDerived({ conceptId: derived.conceptId, derived }) : undefined}
             identityRules={identityRules.data}
             recordCounts={conceptRecordCounts}
             mappingHealth={mappingHealth.data?.items}
@@ -800,7 +801,7 @@ export function SemanticModelEditorPage() {
         />}
         {modelId && <SourceChooserDialog open={Boolean(choosingFor)} modelId={modelId} conceptLabel={choosingFor?.conceptLabel ?? ''} onClose={() => setChoosingFor(null)}
           onChoose={(option) => { const suggestion = choosingFor; setChoosingFor(null); if (suggestion) openSourceOption(suggestion, option); }} />}
-        {suggestionsOpen && modelId && !population && !trustOpen && <aside className='flex h-full w-full max-w-sm shrink-0 flex-col border-l bg-background' aria-label={t('assistantSources.panelTitle')}>
+        {suggestionsOpen && modelId && !population && !trustOpen && <aside className='relative z-20 flex h-full w-full max-w-sm shrink-0 flex-col border-l bg-background shadow-xl' aria-label={t('assistantSources.panelTitle')}>
           <header className='flex items-start gap-3 border-b px-4 py-3'>
             <div className='min-w-0 flex-1'>
               <h2 className='font-semibold'>{t('assistantSources.panelTitle')}</h2>
@@ -808,7 +809,7 @@ export function SemanticModelEditorPage() {
             </div>
             <Button variant='ghost' size='icon' className='h-8 w-8 shrink-0' onClick={() => setSuggestionsOpen(false)} aria-label={t('action.close')}><X className='h-4 w-4' /></Button>
           </header>
-          <div className='min-h-0 flex-1 overflow-y-auto px-4 py-3'>
+          <div className='min-h-0 flex-1 overflow-y-auto px-4 pt-3 pb-28'>
             {suggestionList.length
               ? <SourceSuggestionsList modelId={modelId} suggestions={suggestionList} canEdit={canEdit} onUse={useSuggestion} onBrowse={browseForSuggestion} />
               : <p className='text-sm text-muted-foreground'>{t('assistantSources.empty')}</p>}
@@ -825,7 +826,19 @@ export function SemanticModelEditorPage() {
           activeKey={reviewFocus?.key}
           onOpenIssue={openIssue}
         />}
-        {(knowledgeOpen || (onCanvas && detailsOpen)) && !trustOpen && !population && !suggestionsOpen && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} onBrowseRecords={browseRecords} recordCounts={conceptRecordCounts} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} onMapData={(target) => void openMappingTarget(target)} />}
+        {versionsOpen && modelId && !population && !trustOpen && !suggestionsOpen && <VersionsPanel
+          modelId={modelId}
+          canEdit={canEdit}
+          canPublish={canEdit && saveStatus === "saved"}
+          onClose={() => setVersionsOpen(false)}
+          onPublished={() => {
+            hydratedVersionRef.current = null;
+            void graphQuery.refetch();
+            void model.refetch();
+          }}
+        />}
+        {(knowledgeOpen || (onCanvas && detailsOpen)) && !trustOpen && !population && !suggestionsOpen && !versionsOpen && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} onBrowseRecords={browseRecords} recordCounts={conceptRecordCounts} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} onMapData={(target) => void openMappingTarget(target)} onDeriveData={openDerived} />}
+        {modelId && <DerivedSourceDrawer modelId={modelId} target={derivedTarget} onClose={() => setDerivedTarget(null)} />}
         {modelId && <SourceMappingDrawer modelId={modelId} target={mappingTarget} onClose={() => setMappingTarget(null)} onSuggestConcepts={canEdit ? (source) => { setMappingTarget(null); setSuggestSource(source); } : undefined} />}
       </main>
       <AddConceptDialog open={conceptOpen} onOpenChange={setConceptOpen} />

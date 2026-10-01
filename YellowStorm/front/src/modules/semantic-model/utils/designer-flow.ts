@@ -1,4 +1,4 @@
-import type { ConceptSourceMapping, MappingHealthItem, SemanticGraph } from '../types';
+import type { ConceptSourceMapping, DerivedSource, MappingHealthItem, SemanticGraph } from '../types';
 
 /**
  * A box on the designer canvas that feeds data into concepts: a spreadsheet, a set of documents, every file of
@@ -19,13 +19,15 @@ export interface DesignerSource {
 /** The line from a source to a concept: the mapping step, with how complete it is. */
 export interface DesignerFeed {
   id: string;
+  /** A source box, or for a derived feed the concept whose records carry the values. */
   sourceId: string;
   conceptId: string;
-  step: 'map' | 'extract' | 'typed';
+  step: 'map' | 'extract' | 'typed' | 'derived';
   mapped: number;
   total: number;
   tone: 'ok' | 'warn' | 'idle';
   mapping?: ConceptSourceMapping;
+  derived?: DerivedSource;
 }
 
 export const SOURCE_COLUMN_OFFSET = 260;
@@ -53,7 +55,7 @@ const worst = (tones: DesignerFeed['tone'][]): DesignerFeed['tone'] =>
  * Derive the source boxes and their lines from saved mappings and typed records. Each source is laid out
  * beside the first concept it feeds, so the canvas reads left to right: data in, concepts out.
  */
-export function designerFlow(graph: SemanticGraph, mappings: ConceptSourceMapping[] = [], health: MappingHealthItem[] = [], saved: Record<string, { x: number; y: number }> = {}): { sources: DesignerSource[]; feeds: DesignerFeed[] } {
+export function designerFlow(graph: SemanticGraph, mappings: ConceptSourceMapping[] = [], health: MappingHealthItem[] = [], saved: Record<string, { x: number; y: number }> = {}, derived: DerivedSource[] = []): { sources: DesignerSource[]; feeds: DesignerFeed[] } {
   const concepts = new Map(graph.nodes.map((node) => [node.id, node]));
   const groups = new Map<string, ConceptSourceMapping[]>();
   for (const mapping of mappings) {
@@ -120,6 +122,13 @@ export function designerFlow(graph: SemanticGraph, mappings: ConceptSourceMappin
     const id = typedSourceId(conceptId);
     sources.push({ id, kind: 'typed', label: '', detail: String(count), position: place(conceptId, id), tone: 'ok', mappings: [] });
     feeds.push({ id: `feed:${id}`, sourceId: id, conceptId, step: 'typed', mapped: count, total: count, tone: 'ok' });
+  }
+  // A concept made from another one: the line runs from that concept, no source box in between.
+  for (const source of derived) {
+    const concept = concepts.get(source.conceptId);
+    if (!concept || !concepts.has(source.sourceConceptId)) continue;
+    feeds.push({ id: `feed:derived:${source.id}`, sourceId: source.sourceConceptId, conceptId: source.conceptId, step: 'derived',
+      mapped: source.fieldMappings.length, total: concept.attributes.length, tone: 'ok', derived: source });
   }
   return { sources, feeds };
 }

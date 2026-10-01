@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { GitCompare, History, Loader2, RotateCcw, Send } from 'lucide-react';
+import { GitCompare, History, Loader2, RotateCcw, Send, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -9,7 +9,7 @@ import { semanticModelApi } from '../../api';
 import { useSemanticVersions, useVersionComparison } from '../../query/hooks';
 import type { VersionChange, VersionComparison } from '../../types';
 
-export function VersionsPanel({ modelId, canEdit, canPublish, onPublished }: Readonly<{ modelId: string; canEdit: boolean; canPublish: boolean; onPublished: () => void }>) {
+export function VersionsPanel({ modelId, canEdit, canPublish, onPublished, onClose }: Readonly<{ modelId: string; canEdit: boolean; canPublish: boolean; onPublished: () => void; onClose?: () => void }>) {
   const { t,language } = useModuleTranslation('semantic-model');
   const versions = useSemanticVersions(modelId);
   const list = versions.data ?? [];
@@ -30,8 +30,9 @@ export function VersionsPanel({ modelId, canEdit, canPublish, onPublished }: Rea
     try { const result = await semanticModelApi.publish(modelId); await versions.refetch(); onPublished(); if (result.data?.published === false) showWarning(t('versions.publishedWithoutData'), { description: t(result.data.reason === 'draft_data_outdated' ? 'versions.dataOutdated' : result.data.reason === 'no_draft_data' ? 'versions.noData' : 'versions.dataUnavailable') }); else showSuccess(t('versions.published')); }
     catch (error) { showError(t('versions.publishError'),{description:error instanceof Error ? error.message : undefined}); }
   };
-  return <aside className='w-80 shrink-0 overflow-y-auto border-r bg-background/90 p-4'>
-    <div className='mb-5 flex items-start gap-3'><div className='rounded-xl bg-primary/10 p-2 text-primary'><History className='h-5 w-5' /></div><div><h2 className='font-semibold'>{t('versions.title')}</h2><p className='text-xs text-muted-foreground'>{t('versions.description')}</p></div></div>
+  return <aside className='relative z-20 w-[min(24rem,100%)] shrink-0 overflow-y-auto border-l bg-background p-4 pb-28 shadow-xl' aria-label={t('versions.title')}>
+    <div className='mb-5 flex items-start gap-3'><div className='rounded-xl bg-primary/10 p-2 text-primary'><History className='h-5 w-5' /></div><div className='min-w-0 flex-1'><h2 className='font-semibold'>{t('versions.title')}</h2><p className='text-xs text-muted-foreground'>{t('versions.description')}</p></div>
+      {onClose && <Button size='icon' variant='ghost' className='h-8 w-8 shrink-0' onClick={onClose} aria-label={t('action.close')}><X className='h-4 w-4' /></Button>}</div>
     {canEdit && draft && latestPublished && <section className='mb-4 rounded-xl border bg-muted/30 p-3' aria-label={t('versionChanges.ifYouPublish')}>
       <h3 className='text-sm font-semibold'>{t('versionChanges.ifYouPublish')}</h3>
       <ChangeList comparison={publishChanges.data} loading={publishChanges.isLoading} failed={publishChanges.isError} />
