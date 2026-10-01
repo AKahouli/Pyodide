@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, ExternalLink, FileText, FolderOpen, ListChecks, Loader2, PanelLeftClose, PanelLeftOpen, RefreshCw, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -323,6 +323,10 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
   const [shownId, setShownId] = useState<string>();
   const shown = viewerDocuments.find((asset) => asset.documentId === shownId) ?? viewerDocuments[0];
   const [navigation, setNavigation] = useState<DocumentPreviewNavigation | null>(null);
+  // Pages of each document the viewer has opened, for the whole-pages control.
+  const [pageCounts, setPageCounts] = useState<Record<string, number>>({});
+  const notePageCount = useCallback((documentId: string, count: number) =>
+    setPageCounts((current) => current[documentId] === count ? current : { ...current, [documentId]: count }), []);
   const navigate = (next: Omit<DocumentPreviewNavigation, 'nonce'>) => {
     setNavigation({ ...next, nonce: Date.now() + Math.random() });
     if (narrow) setNarrowTab('document');
@@ -395,7 +399,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
         </TabsList>
       </Tabs>}
       {(() => {
-        const documentPane = <DocumentPreviewPane documents={viewerDocuments} shown={shown} onShow={showDocument} navigation={navigation} />;
+        const documentPane = <DocumentPreviewPane documents={viewerDocuments} shown={shown} onShow={showDocument} navigation={navigation} onPageCount={notePageCount} />;
         const fieldsPane = <div className='h-full min-h-0 space-y-5 overflow-y-auto p-5'>
         {viewerShown && shown && <div className='space-y-2' aria-live='polite'>
           <div className='flex items-center gap-2 rounded-lg bg-muted/40 px-2.5 py-1.5 text-[11px] text-muted-foreground'>
@@ -496,7 +500,13 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
                 labels={mapping.mode === 'extract' ? mapping.rules?.labels?.length ? mapping.rules.labels : [attributeLabel(mapping.targetAttribute)] : []}
                 onShow={showReading} onFindLabel={(label) => navigate({ highlightText: label })} />}
               {mapping.mode === 'extract' && usesRules(mapping.extractionStrategy) && <FieldRulesEditor fieldLabel={attributeLabel(mapping.targetAttribute)}
-                rules={mapping.rules} onChange={(rules) => setRules(index, rules)} suggestions={suggestions} />}
+                rules={mapping.rules} onChange={(rules) => setRules(index, rules)} suggestions={suggestions}
+                pageCount={shown ? pageCounts[shown.documentId] : undefined}
+                live={viewerShown && shown && canPreview && !liveStatus ? {
+                  reading: live.result?.fields?.[mapping.targetAttribute],
+                  pending: live.reading,
+                  onRead: () => void live.run(),
+                } : undefined} />}
               {mapping.mode === 'computed' && <ComputedFieldEditor modelId={modelId} fieldLabel={attributeLabel(mapping.targetAttribute)} rule={mapping.computed ?? newComputedRule()}
                 onChange={(computed) => changeMappings(mappings.map((item, itemIndex) => itemIndex === index ? { ...item, computed } : item))}
                 fields={computedInputs(mapping.targetAttribute).map((key) => ({ key, label: attributeLabel(key) }))}

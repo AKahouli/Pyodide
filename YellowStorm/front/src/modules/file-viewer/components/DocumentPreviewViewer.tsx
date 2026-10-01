@@ -26,12 +26,14 @@ export interface DocumentPreviewNavigation {
   nonce: number;
 }
 
-export function DocumentPreviewViewer({ workspaceId, documentId, fileName, mimeType, navigation }: Readonly<{
+export function DocumentPreviewViewer({ workspaceId, documentId, fileName, mimeType, navigation, onPageCount }: Readonly<{
   workspaceId: string;
   documentId: string;
   fileName: string;
   mimeType: string;
   navigation?: DocumentPreviewNavigation | null;
+  /** Told the number of pages, for the renderers that know it (PDF). */
+  onPageCount?: (count: number) => void;
 }>) {
   const { t } = useModuleTranslation('file-viewer');
   const registryRef = useRef<Map<string, PluginRegistry>>(new Map());
@@ -70,6 +72,6 @@ export function DocumentPreviewViewer({ workspaceId, documentId, fileName, mimeT
   const Renderer = getRenderer(mimeType);
   if (!Renderer) return <UnsupportedRenderer tab={tab} isActive />;
   return <Suspense fallback={loading}>
-    <Renderer key={tab.id} tab={tab} isActive registryRef={registryRef} navigation={pending} />
+    <Renderer key={tab.id} tab={tab} isActive registryRef={registryRef} navigation={pending} onPageCount={onPageCount} />
   </Suspense>;
 }

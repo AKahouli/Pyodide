@@ -96,3 +96,25 @@ def test_labels_recurring_across_documents_are_ranked_by_document_count() -> Non
 
 def test_before_a_label_starts_after_a_boundary_label_in_the_same_block() -> None:
     assert read(labels=["Date de création"], location="before_label", boundaryLabels=["Version"])["value"] == "1.0"
+
+
+def test_take_keeps_the_first_or_last_characters_words_or_lines() -> None:
+    from app.population.document_rules import take_part
+
+    text = "25/09/2017 Dernière date\nde mise à jour\n12/10/2017"
+    assert take_part(text, {"from": "start", "count": 10, "unit": "characters"}) == "25/09/2017"
+    assert take_part(text, {"from": "end", "count": 10, "unit": "characters"}) == "12/10/2017"
+    assert take_part(text, {"from": "start", "count": 2, "unit": "words"}) == "25/09/2017 Dernière"
+    assert take_part(text, {"from": "end", "count": 3, "unit": "words"}) == "à jour\n12/10/2017"
+    assert take_part(text, {"from": "start", "count": 1, "unit": "lines"}) == "25/09/2017 Dernière date\n"
+    assert take_part(text, {"from": "start", "count": 99, "unit": "words"}) == text
+
+
+def test_take_runs_before_the_pattern_and_the_clean_up_and_the_raw_text_is_kept() -> None:
+    outcome = read(labels=["Version"], location="after_label", take={"count": 3, "unit": "characters"})
+    assert outcome["value"] == "1.0"
+    assert outcome["raw"].startswith("1.0 Date de création")
+    with pytest.raises(RuleError):
+        normalize_rules({"take": {"count": 0}})
+    with pytest.raises(RuleError):
+        normalize_rules({"take": {"count": 5, "unit": "pages"}})

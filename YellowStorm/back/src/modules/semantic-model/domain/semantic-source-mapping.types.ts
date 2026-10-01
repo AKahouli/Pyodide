@@ -19,6 +19,8 @@ export interface ExtractionRules {
   boundaryLabels?: string[];
   /** The pages read whole when `location` is `pages`. */
   pages?: { from: number; to?: number };
+  /** Keep only the first or last characters, words or lines of what was found, like LEFT(value, n). */
+  take?: { from?: 'start' | 'end'; count: number; unit?: 'characters' | 'words' | 'lines' };
 }
 
 /** A document field derived from the file name or from another mapped field (runtime computes it). */

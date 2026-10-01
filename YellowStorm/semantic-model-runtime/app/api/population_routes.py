@@ -463,7 +463,8 @@ async def preview_document_fields(body: dict, request: Request) -> dict[str, obj
         found = key in read["values"]
         evidence = read["evidence"].get(key) or {}
         fields[key] = {**outcome, **({"value": read["values"][key], "page": evidence.get("pageNumber"),
-                                      "quote": read["quotes"].get(key)} if found else {})}
+                                      "quote": read["quotes"].get(key)} if found else {}),
+                       **({"raw": read["raws"][key]} if key in read["raws"] else {})}
     values = dict(read["values"])
     values.update({m["targetAttribute"]: m.get("constantValue") for m in mappings if m.get("mode") == "constant"})
     values.update({m["targetAttribute"]: _metadata_value(resolved["current"], m.get("sourceField"))

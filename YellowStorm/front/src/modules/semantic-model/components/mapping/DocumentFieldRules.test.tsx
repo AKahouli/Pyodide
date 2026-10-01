@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { SourceFieldMapping } from '../../types';
 import { AiLimitsEditor, FieldReadingResult, FieldRulesEditor, limitProblem, pagesProblem, patternProblem, ReadAllFieldsBar, rulesProblem, withConceptFields, type LabelSuggestions } from './DocumentFieldRules';
@@ -98,8 +98,7 @@ describe('DocumentFieldRules', () => {
     render(<FieldRulesEditor fieldLabel='Scope' rules={{ labels: ['Scope'], location: 'before_label', boundaryLabels: ['Intro'] }} onChange={onChange} />);
     fireEvent.click(screen.getByRole('button', { name: /mapping\.rules\.title/ }));
     expect(screen.getByLabelText('mapping.rules.boundary.before_label')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('combobox', { name: 'mapping.rules.locationFor' }));
-    fireEvent.click(screen.getByRole('option', { name: 'mapping.rules.where.same_line' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'mapping.rules.tile.same_line' }));
     expect(onChange).toHaveBeenLastCalledWith({ labels: ['Scope'], location: 'same_line' });
   });
 
@@ -124,8 +123,7 @@ describe('DocumentFieldRules', () => {
     const onChange = vi.fn();
     render(<FieldRulesEditor fieldLabel='Annex' onChange={onChange} />);
     fireEvent.click(screen.getByRole('button', { name: /mapping\.rules\.title/ }));
-    fireEvent.click(screen.getByRole('combobox', { name: 'mapping.rules.locationFor' }));
-    fireEvent.click(screen.getByRole('option', { name: 'mapping.rules.where.pages' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'mapping.rules.tile.pages' }));
     expect(onChange).toHaveBeenLastCalledWith({ location: 'pages', pages: { from: 1 } });
   });
 
@@ -133,18 +131,17 @@ describe('DocumentFieldRules', () => {
     const onChange = vi.fn();
     render(<FieldRulesEditor fieldLabel='Party' onChange={onChange} />);
     fireEvent.click(screen.getByRole('button', { name: /mapping\.rules\.title/ }));
-    fireEvent.click(screen.getByRole('combobox', { name: 'mapping.rules.transformFor' }));
-    const options = screen.getAllByRole('option').map((option) => option.textContent);
+    const cleanUp = screen.getByRole('radiogroup', { name: 'mapping.rules.transformFor' });
+    const options = within(cleanUp).getAllByRole('radio').map((option) => option.getAttribute('aria-label'));
     expect(options.slice(0, 2)).toEqual(['mapping.rules.transformOption.none', 'mapping.rules.transformOption.trim']);
-    fireEvent.click(screen.getByRole('option', { name: 'mapping.rules.transformOption.trim' }));
+    fireEvent.click(within(cleanUp).getByRole('radio', { name: 'mapping.rules.transformOption.trim' }));
     expect(onChange).toHaveBeenLastCalledWith({ transform: 'trim' });
   });
 
   it('keeps the custom pattern box open while it is empty', () => {
     render(<FieldRulesEditor fieldLabel='Number' onChange={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: /mapping\.rules\.title/ }));
-    fireEvent.click(screen.getByRole('combobox', { name: 'mapping.rules.patternFor' }));
-    fireEvent.click(screen.getByRole('option', { name: 'mapping.rules.preset.custom' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'mapping.rules.preset.custom' }));
     expect(screen.getByRole('textbox', { name: 'mapping.rules.patternText' })).toBeInTheDocument();
   });
 

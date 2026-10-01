@@ -17,7 +17,7 @@ from app.datasource.section_reader import (MAX_CLOSURE_SECTIONS, SectionReadErro
 
 from .document_rules import (PASSAGE_LOCATIONS, all_matches, clean, compile_pattern, fold,
                              folded_label_regex, heading_matches, heading_text, label_found,
-                             next_line_values, normalize_ai_settings, same_line_values)
+                             next_line_values, normalize_ai_settings, same_line_values, shaped_input)
 from .computed_fields import COMPUTED_VERSION, apply_computed, normalize_computed
 from .tabular import populate_concept_rows
 
@@ -26,6 +26,7 @@ DOCUMENT_EXTRACTION_VERSION = "document-v1"
 
 EXTRACTOR_VERSION = "label-value-v4"
 MAX_FIELD_VALUE_CHARS = 500
+MAX_RAW_CHARS = 3000
 RECORD_ROW_MIN_LABELS = 2
 
 
@@ -515,9 +516,9 @@ def _rule_candidates(mapping: dict[str, Any], rules: dict[str, Any] | None, labe
             raw += [(value, block, section) for value in all_matches(compiled, block["content"])]
     cleaned = []
     for value, block, section in raw:
-        value = clean(value, rules)
-        if value is not None:
-            cleaned.append((value, block, section))
+        kept = clean(value, rules)
+        if kept is not None:
+            cleaned.append((kept, block, section, shaped_input(value, rules)))
     return cleaned, [value for value, _, _ in raw]
 
 
@@ -528,12 +529,12 @@ def _read_rules(mapping: dict[str, Any], label_sections: list[dict[str, Any]], w
     location = rules["location"] if rules else "auto"
     candidates, raw = _rule_candidates(mapping, rules, label_sections, whole, all_labels)
     candidates.sort(key=lambda item: (item[1].get("pageNumber") or 0, item[1].get("blockPk") or 0))
-    distinct = list(dict.fromkeys(value for value, _, _ in candidates))
+    distinct = list(dict.fromkeys(value for value, *_ in candidates))
     # A document has many headings: the first one (matching the pattern, if any) is the one meant.
     take_first = location == "heading" or bool(rules and rules.get("occurrence") == "first")
     if len(distinct) == 1 or (distinct and take_first):
-        value, block, section = candidates[0]
-        return {"value": value, "block": block, "section": section, "reason": "found"}
+        value, block, section, source = candidates[0]
+        return {"value": value, "block": block, "section": section, "reason": "found", "raw": source}
     if len(distinct) > 1:
         return {"reason": "several_values", "values": distinct[:5]}
     if raw:
@@ -568,6 +569,8 @@ async def read_document_values(
     evidence_by_field: dict[str, dict[str, Any]] = {}
     fields: dict[str, dict[str, Any]] = {}
     quotes: dict[str, str] = {}
+    # The text each rule's location found, before it was shaped: shown when a person shapes the value.
+    raws: dict[str, str] = {}
     extract = [m for m in entry["fieldMappings"] if m["mode"] == "extract"]
     rule_mappings = [m for m in extract if _strategy(m) in ("deterministic", "rules_then_ai")]
     settings = normalize_ai_settings((entry.get("options") or {}).get("aiSettings"))
@@ -624,7 +627,10 @@ async def read_document_values(
                            **({"pageEnd": outcome["block"]["lastPageNumber"]}
                               if outcome["block"].get("lastPageNumber") is not None else {})}
             quotes[key] = str(outcome["block"].get("content") or "")[:600]
+            raws[key] = outcome["raw"][:MAX_RAW_CHARS]
         else:
+            if outcome.get("values"):
+                raws[key] = shaped_input(str(outcome["values"][0]), mapping.get("rules"))[:MAX_RAW_CHARS]
             fields[key] = {"method": "rules",
                            **{name: item for name, item in outcome.items() if name in ("reason", "values")}}
 
@@ -650,7 +656,7 @@ async def read_document_values(
                 fields[key] = {"method": "ai", "reason": "ai_failed" if ai_failure else "ai_not_found",
                                **({"detail": ai_failure} if ai_failure else {}),
                                **({"rules": earlier} if earlier else {})}
-    return {"values": values, "evidence": evidence_by_field, "fields": fields, "quotes": quotes,
+    return {"values": values, "evidence": evidence_by_field, "fields": fields, "quotes": quotes, "raws": raws,
             "aiMappings": ai_mappings, "aiFailure": ai_failure, "aiSent": ai_sent,
             "readComplete": bool(read is None or read["coverage"]["directBlocksComplete"]),
             "searchTruncated": search_truncated}

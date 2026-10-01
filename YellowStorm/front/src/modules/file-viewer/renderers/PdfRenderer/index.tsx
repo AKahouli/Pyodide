@@ -37,11 +37,13 @@ interface PdfRendererInternalProps extends RendererProps {
    * file window (e.g. a document preview). A new object re-runs the scroll and highlight.
    */
   navigation?: PendingNavigation | null;
+  /** Told the number of pages once the document is laid out. */
+  onPageCount?: (count: number) => void;
 }
 
 type PdfRendererProps = Readonly<PdfRendererInternalProps>;
 
-export function PdfRenderer({ tab, isActive, registryRef, navigation }: PdfRendererProps) {
+export function PdfRenderer({ tab, isActive, registryRef, navigation, onPageCount }: PdfRendererProps) {
   const initialPageRef = useRef<number>(FALLBACK_PAGE);
 
   const storeNavigation = useFileViewerPendingNavigation();
@@ -96,7 +98,7 @@ export function PdfRenderer({ tab, isActive, registryRef, navigation }: PdfRende
 
   return (
     <EmbedPDF key={`${tab.id}:${tab.url}`} engine={engine} plugins={plugins} autoMountDomElements={false}>
-      <HeadlessViewer tabId={tab.id} isActive={isActive} pendingNavigation={pendingNavigation} registryRef={registryRef} initialPage={initialPageRef.current} />
+      <HeadlessViewer tabId={tab.id} isActive={isActive} pendingNavigation={pendingNavigation} registryRef={registryRef} initialPage={initialPageRef.current} onPageCount={onPageCount} />
     </EmbedPDF>
   );
 }

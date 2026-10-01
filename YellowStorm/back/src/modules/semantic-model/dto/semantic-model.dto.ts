@@ -321,6 +321,20 @@ export class ExtractionPagesDto {
   to?: number;
 }
 
+export class ExtractionTakeDto {
+  @ApiPropertyOptional({ enum: ['start', 'end'], default: 'start' })
+  @IsOptional() @IsIn(['start', 'end'])
+  from?: 'start' | 'end';
+
+  @ApiProperty({ minimum: 1, maximum: 20000 })
+  @IsInt() @Min(1) @Max(20000)
+  count!: number;
+
+  @ApiPropertyOptional({ enum: ['characters', 'words', 'lines'], default: 'characters' })
+  @IsOptional() @IsIn(['characters', 'words', 'lines'])
+  unit?: 'characters' | 'words' | 'lines';
+}
+
 /** Rules for reading one document field without AI. */
 export class ExtractionRulesDto {
   @ApiPropertyOptional({ type: [String], maxItems: 10, description: 'Labels the value follows, e.g. "Contract No.", "N° de contrat"' })
@@ -355,6 +369,10 @@ export class ExtractionRulesDto {
   @ApiPropertyOptional({ type: ExtractionPagesDto })
   @IsOptional() @ValidateNested() @Type(() => ExtractionPagesDto)
   pages?: ExtractionPagesDto;
+
+  @ApiPropertyOptional({ type: ExtractionTakeDto, description: 'Keep only the first or last characters, words or lines of what was found' })
+  @IsOptional() @ValidateNested() @Type(() => ExtractionTakeDto)
+  take?: ExtractionTakeDto;
 }
 
 export class DocumentLabelsDto {

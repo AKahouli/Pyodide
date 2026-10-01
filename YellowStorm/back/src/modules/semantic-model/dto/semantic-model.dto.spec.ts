@@ -63,6 +63,13 @@ describe('Passage rules and document labels DTOs', () => {
     await expect(extract({ location: 'pages', pages: { from: 2, to: 4 } })).resolves.toMatchObject({ rules: { pages: { from: 2, to: 4 } } });
   });
 
+  it('keeps the first or last characters, words or lines, and refuses an empty or unknown cut', async () => {
+    await expect(extract({ labels: ['Version'], location: 'after_label', take: { from: 'start', count: 10, unit: 'characters' } }))
+      .resolves.toMatchObject({ rules: { take: { from: 'start', count: 10, unit: 'characters' } } });
+    await expect(extract({ take: { count: 0 } })).rejects.toBeDefined();
+    await expect(extract({ take: { count: 3, unit: 'pages' } })).rejects.toBeDefined();
+  });
+
   it('rejects page zero, an unknown location and too many boundary labels', async () => {
     await expect(extract({ location: 'pages', pages: { from: 0 } })).rejects.toBeDefined();
     await expect(extract({ location: 'everywhere' })).rejects.toBeDefined();

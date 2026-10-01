@@ -3,11 +3,12 @@ import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, ExternalLi
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { AiExtractionSettings, DocumentFieldReading, DocumentLabelSuggestion, ExtractionLocation, ExtractionRules, SourceExtractionStrategy, SourceFieldMapping } from '../../types';
+import { ChoiceGroup, LocationIcon, PageRangeControl } from './RuleControls';
+import { MAX_TAKE, ValueShaper, type ShaperAction } from './ValueShaper';
 
 export const STRATEGIES: SourceExtractionStrategy[] = ['deterministic', 'rules_then_ai', 'ai'];
 const LOCATIONS: ExtractionLocation[] = ['auto', 'same_line', 'next_line', 'table', 'after_label', 'before_label', 'heading', 'pages', 'anywhere'];
@@ -102,7 +103,15 @@ export function pagesProblem(pages?: ExtractionRules['pages']) {
 export function rulesProblem(rules?: ExtractionRules) {
   if (patternProblem(rules?.pattern)) return true;
   if (rules?.location === 'anywhere' && !rules.pattern?.trim()) return true;
+  if (rules?.take && (!Number.isInteger(rules.take.count) || rules.take.count < 1 || rules.take.count > MAX_TAKE)) return true;
   return rules?.location === 'pages' && Boolean(pagesProblem(rules.pages));
+}
+
+/** What a live read of the shown document gives for the field, to shape its value on. */
+export interface FieldLiveReading {
+  reading?: DocumentFieldReading;
+  pending: boolean;
+  onRead?: () => void;
 }
 
 /** Labels found across a few documents of the source, offered as labels a value follows. */
@@ -142,11 +151,14 @@ function StrategyIcon({ strategy }: Readonly<{ strategy: SourceExtractionStrateg
  * The rules of one field: which labels the value follows, where it sits, what it looks like and
  * how it is cleaned up. Collapsed to a one-line summary until opened.
  */
-export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions }: Readonly<{
+export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions, live, pageCount }: Readonly<{
   fieldLabel: string;
   rules?: ExtractionRules;
   onChange: (rules: ExtractionRules | undefined) => void;
   suggestions?: LabelSuggestions;
+  live?: FieldLiveReading;
+  /** Pages of the document shown beside the fields, when known. */
+  pageCount?: number;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
   const [open, setOpen] = useState(false);
@@ -169,8 +181,9 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions }: R
     ? ` · ${t(`mapping.rules.summaryBoundary.${location}`, { labels: boundaryLabels.map((label) => `“${label}”`).join(', ') })}` : '';
   const summaryPages = location === 'pages' && rules?.pages && !pagesProblem(rules.pages)
     ? ` · ${pageRange(t, rules.pages.from, rules.pages.to)}` : '';
+  const summaryTake = rules?.take ? ` · ${t(`mapping.rules.summaryTake.${rules.take.from}`, { amount: t(`mapping.rules.take.amount.${rules.take.unit}`, { count: rules.take.count }) })}` : '';
   const summary = (withoutLabels ? '' : `${t('mapping.rules.summaryLabels', { labels: summaryLabels })} · `)
-    + t(`mapping.rules.where.${location}`) + summaryBoundary + summaryPages
+    + t(`mapping.rules.where.${location}`) + summaryBoundary + summaryPages + summaryTake
     + (rules?.pattern ? ` · ${t('mapping.rules.summaryPattern', { pattern: preset !== 'custom' && preset !== 'none' ? t(`mapping.rules.preset.${preset}`) : rules.pattern })}` : '');
   const problem = patternProblem(rules?.pattern);
   const needsPattern = location === 'anywhere' && !rules?.pattern?.trim();
@@ -183,7 +196,7 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions }: R
     else delete next.pages;
     // Nothing set means the plain default reading: store no rules at all.
     const empty = !next.labels?.length && (next.location ?? 'auto') === 'auto' && !next.pattern
-      && (next.transform ?? 'none') === 'none' && (next.occurrence ?? 'unique') === 'unique' && !next.firstPageOnly;
+      && (next.transform ?? 'none') === 'none' && (next.occurrence ?? 'unique') === 'unique' && !next.firstPageOnly && !next.take;
     onChange(empty ? undefined : next);
   };
   const addLabel = (value = draftLabel) => {
@@ -191,21 +204,25 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions }: R
     if (label && !labels.includes(label) && labels.length < MAX_LABELS) update({ labels: [...labels, label] });
     setDraftLabel('');
   };
-  const addBoundary = () => {
-    const label = draftBoundary.trim().slice(0, 200);
+  const addBoundary = (value = draftBoundary) => {
+    const label = value.trim().slice(0, 200);
     if (label && !boundaryLabels.includes(label) && boundaryLabels.length < MAX_LABELS) update({ boundaryLabels: [...boundaryLabels, label] });
     setDraftBoundary('');
+  };
+  // A selection in the text found becomes a label, or where the passage stops or starts.
+  const onShaperAction = (action: ShaperAction, text: string) => {
+    if (action === 'label') addLabel(text);
+    else addBoundary(text);
   };
   const addSuggestion = (suggestion: DocumentLabelSuggestion) => {
     addLabel(suggestion.label);
     setHeadingHint(suggestion.kind === 'heading' && location === 'auto' ? suggestion.label : null);
   };
   // An emptied box is kept as 0 (from) or no end (to), so the inline error says what is missing.
-  const setPage = (key: 'from' | 'to', text: string) => {
-    const value = text === '' ? undefined : Number(text);
-    const from = key === 'from' ? value ?? 0 : rules?.pages?.from ?? 0;
-    const to = key === 'to' ? value : rules?.pages?.to;
-    update({ pages: to === undefined ? { from } : { from, to } });
+  const setPages = (from: number | undefined, to: number | undefined) => update({ pages: to === undefined ? { from: from ?? 0 } : { from: from ?? 0, to } });
+  const choosePattern = (value: PatternPreset | 'custom' | 'none') => {
+    setCustomPattern(value === 'custom');
+    update({ pattern: value === 'none' || value === 'custom' ? (value === 'custom' ? rules?.pattern || undefined : undefined) : PATTERN_PRESETS[value] });
   };
   const id = `rules-${fieldLabel.replaceAll(/\W+/g, '-')}`;
 
@@ -240,12 +257,10 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions }: R
         {suggestions && <LabelSuggestionChips suggestions={suggestions} added={labels} full={labels.length >= MAX_LABELS} onAdd={addSuggestion} />}
       </div>}
 
-      <div className='space-y-1.5'>
+      <div className='space-y-1.5 sm:col-span-2'>
         <Label className='text-xs'>{t('mapping.rules.location')}</Label>
-        <Select value={location} onValueChange={(value: ExtractionLocation) => update({ location: value })}>
-          <SelectTrigger className='h-8 text-xs' aria-label={t('mapping.rules.locationFor', { field: fieldLabel })}><SelectValue /></SelectTrigger>
-          <SelectContent>{LOCATIONS.map((item) => <SelectItem key={item} value={item}>{t(`mapping.rules.where.${item}`)}</SelectItem>)}</SelectContent>
-        </Select>
+        <ChoiceGroup variant='tiles' label={t('mapping.rules.locationFor', { field: fieldLabel })} value={location} onChange={(value) => update({ location: value })}
+          options={LOCATIONS.map((item) => ({ value: item, label: t(`mapping.rules.tile.${item}`), hint: t(`mapping.rules.tileHint.${item}`), icon: <LocationIcon location={item} /> }))} />
         <p className='text-[11px] text-muted-foreground'>{t(`mapping.rules.whereHelp.${location}`)}</p>
       </div>
 
@@ -259,39 +274,28 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions }: R
           <Input id={`${id}-boundary`} className='h-7 w-44 text-xs' value={draftBoundary} maxLength={200} placeholder={t('mapping.rules.boundaryPlaceholder')}
             onChange={(event) => setDraftBoundary(event.target.value)}
             onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addBoundary(); } }} />
-          <Button type='button' size='sm' variant='ghost' className='h-7 px-2 text-xs' disabled={!draftBoundary.trim() || boundaryLabels.length >= MAX_LABELS} onClick={addBoundary}><Plus className='mr-1 h-3 w-3' />{t('mapping.rules.add')}</Button>
+          <Button type='button' size='sm' variant='ghost' className='h-7 px-2 text-xs' disabled={!draftBoundary.trim() || boundaryLabels.length >= MAX_LABELS} onClick={() => addBoundary()}><Plus className='mr-1 h-3 w-3' />{t('mapping.rules.add')}</Button>
         </div>
         <p className='text-[11px] text-muted-foreground'>{t(`mapping.rules.boundaryHelp.${location}`)}</p>
       </div>}
 
-      {location === 'pages' && <div className='space-y-1.5'>
+      {location === 'pages' && <div className='space-y-1.5 sm:col-span-2'>
         <Label className='text-xs'>{t('mapping.rules.pages')}</Label>
-        <div className='flex items-center gap-2'>
-          <Input type='number' min={1} max={MAX_PAGES} className='h-8 w-20 text-xs' aria-label={t('mapping.rules.pagesFrom', { field: fieldLabel })}
-            aria-invalid={pagesError === 'mapping.rules.pagesFromRequired'}
-            value={rules?.pages?.from || ''} placeholder='1' onChange={(event) => setPage('from', event.target.value)} />
-          <span className='text-xs text-muted-foreground'>{t('mapping.rules.pagesTo')}</span>
-          <Input type='number' min={1} max={MAX_PAGES} className='h-8 w-20 text-xs' aria-label={t('mapping.rules.pagesToFor', { field: fieldLabel })}
-            aria-invalid={Boolean(pagesError) && pagesError !== 'mapping.rules.pagesFromRequired'}
-            value={rules?.pages?.to ?? ''} placeholder={String(rules?.pages?.from || 1)} onChange={(event) => setPage('to', event.target.value)} />
-        </div>
+        <PageRangeControl fieldLabel={fieldLabel} from={rules?.pages?.from} to={rules?.pages?.to} pageCount={pageCount} onChange={setPages}
+          invalidFrom={pagesError === 'mapping.rules.pagesFromRequired'} invalidTo={Boolean(pagesError) && pagesError !== 'mapping.rules.pagesFromRequired'} />
         {pagesError ? <p role='alert' className='text-[11px] text-destructive'>{t(pagesError, { max: MAX_PAGES, span: MAX_PAGE_SPAN })}</p>
           : <p className='text-[11px] text-muted-foreground'>{t('mapping.rules.pagesHelp', { span: MAX_PAGE_SPAN })}</p>}
       </div>}
 
-      <div className='space-y-1.5'>
+      <div className='space-y-1.5 sm:col-span-2'>
+        <ValueShaper fieldLabel={fieldLabel} reading={live?.reading} pending={live?.pending} onRead={live?.onRead} location={location}
+          take={rules?.take} pattern={problem ? undefined : rules?.pattern} onTake={(take) => update({ take })} onAction={onShaperAction} />
+      </div>
+
+      <div className='space-y-1.5 sm:col-span-2'>
         <Label className='text-xs'>{t('mapping.rules.pattern')}</Label>
-        <Select value={preset} onValueChange={(value) => {
-          setCustomPattern(value === 'custom');
-          update({ pattern: value === 'none' || value === 'custom' ? (value === 'custom' ? rules?.pattern || undefined : undefined) : PATTERN_PRESETS[value as PatternPreset] });
-        }}>
-          <SelectTrigger className='h-8 text-xs' aria-label={t('mapping.rules.patternFor', { field: fieldLabel })}><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value='none'>{t('mapping.rules.preset.none')}</SelectItem>
-            {(Object.keys(PATTERN_PRESETS) as PatternPreset[]).map((item) => <SelectItem key={item} value={item}>{t(`mapping.rules.preset.${item}`)}</SelectItem>)}
-            <SelectItem value='custom'>{t('mapping.rules.preset.custom')}</SelectItem>
-          </SelectContent>
-        </Select>
+        <ChoiceGroup variant='chips' label={t('mapping.rules.patternFor', { field: fieldLabel })} value={preset} onChange={choosePattern}
+          options={(['none', ...Object.keys(PATTERN_PRESETS) as PatternPreset[], 'custom'] as const).map((item) => ({ value: item, label: t(`mapping.rules.preset.${item}`) }))} />
         {preset !== 'none' && <Input className='h-8 font-mono text-xs' value={rules?.pattern ?? ''} aria-label={t('mapping.rules.patternText', { field: fieldLabel })}
           aria-invalid={Boolean(problem || needsPattern)} placeholder={String.raw`CNT-\d{4}-\d{4}`} maxLength={200}
           onChange={(event) => update({ pattern: event.target.value || undefined })} />}
@@ -300,20 +304,16 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions }: R
         {!problem && !needsPattern && <p className='text-[11px] text-muted-foreground'>{t('mapping.rules.patternHelp')}</p>}
       </div>
 
-      <div className='space-y-1.5'>
+      <div className='space-y-1.5 sm:col-span-2'>
         <Label className='text-xs'>{t('mapping.rules.transform')}</Label>
-        <Select value={rules?.transform ?? 'none'} onValueChange={(value: NonNullable<ExtractionRules['transform']>) => update({ transform: value })}>
-          <SelectTrigger className='h-8 text-xs' aria-label={t('mapping.rules.transformFor', { field: fieldLabel })}><SelectValue /></SelectTrigger>
-          <SelectContent>{TRANSFORMS.map((item) => <SelectItem key={item} value={item}>{t(`mapping.rules.transformOption.${item}`)}</SelectItem>)}</SelectContent>
-        </Select>
+        <ChoiceGroup variant='chips' label={t('mapping.rules.transformFor', { field: fieldLabel })} value={rules?.transform ?? 'none'} onChange={(value) => update({ transform: value })}
+          options={TRANSFORMS.map((item) => ({ value: item, label: t(`mapping.rules.transformOption.${item}`) }))} />
       </div>
 
-      <div className='space-y-1.5'>
+      <div className='space-y-1.5 sm:col-span-2'>
         <Label className='text-xs'>{t('mapping.rules.occurrence')}</Label>
-        <Select value={rules?.occurrence ?? 'unique'} onValueChange={(value: NonNullable<ExtractionRules['occurrence']>) => update({ occurrence: value })}>
-          <SelectTrigger className='h-8 text-xs' aria-label={t('mapping.rules.occurrenceFor', { field: fieldLabel })}><SelectValue /></SelectTrigger>
-          <SelectContent>{(['unique', 'first'] as const).map((item) => <SelectItem key={item} value={item}>{t(`mapping.rules.occurrenceOption.${item}`)}</SelectItem>)}</SelectContent>
-        </Select>
+        <ChoiceGroup variant='segmented' label={t('mapping.rules.occurrenceFor', { field: fieldLabel })} value={rules?.occurrence ?? 'unique'} onChange={(value) => update({ occurrence: value })}
+          options={(['unique', 'first'] as const).map((item) => ({ value: item, label: t(`mapping.rules.occurrenceOption.${item}`) }))} className='flex w-fit' />
       </div>
 
       <label className='flex items-center gap-2 text-xs sm:col-span-2'>

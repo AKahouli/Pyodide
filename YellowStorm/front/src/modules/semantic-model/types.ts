@@ -222,6 +222,15 @@ export type SourceExtractionStrategy = 'deterministic' | 'ai' | 'rules_then_ai';
 
 export type ExtractionLocation = 'auto' | 'same_line' | 'next_line' | 'table' | 'heading' | 'anywhere' | 'after_label' | 'before_label' | 'pages';
 
+export type ExtractionTakeUnit = 'characters' | 'words' | 'lines';
+
+/** Keep only the first or last `count` characters, words or lines of the text found (1..20000). */
+export interface ExtractionTake {
+  from: 'start' | 'end';
+  count: number;
+  unit: ExtractionTakeUnit;
+}
+
 /** Where a document value is and what it looks like. Without rules: `Label: value`, or a table row. */
 export interface ExtractionRules {
   /** Labels the value follows; empty means the field's name. */
@@ -231,6 +240,8 @@ export interface ExtractionRules {
   boundaryLabels?: string[];
   /** location 'pages' only: the pages read whole (at most 50). */
   pages?: { from: number; to?: number };
+  /** Part of the text found to keep, before the pattern and clean-up; absent keeps everything. */
+  take?: ExtractionTake;
   /** A regular expression the value must match; its first group is kept when it has one. */
   pattern?: string;
   transform?: 'none' | 'trim' | 'upper' | 'lower' | 'date_iso';
@@ -303,6 +314,8 @@ export interface DocumentFieldReading {
   page?: number | null;
   /** Last page of a passage that runs over several pages. */
   pageEnd?: number | null;
+  /** The text the place found, before the part kept, the pattern and clean-up (up to 3000 characters). */
+  raw?: string | null;
   quote?: string | null;
   detail?: string;
   /** For a field the rules missed before the AI was asked: why the rules missed it. */

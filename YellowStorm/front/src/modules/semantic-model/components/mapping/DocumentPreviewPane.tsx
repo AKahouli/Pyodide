@@ -68,11 +68,12 @@ export function useNarrow() {
  * The document beside the fields: a switcher over the source's documents and the file viewer,
  * scrolled and highlighted on request.
  */
-export function DocumentPreviewPane({ documents, shown, onShow, navigation }: Readonly<{
+export function DocumentPreviewPane({ documents, shown, onShow, navigation, onPageCount }: Readonly<{
   documents: StructuredSourceAsset[];
   shown?: StructuredSourceAsset;
   onShow: (documentId: string) => void;
   navigation: DocumentPreviewNavigation | null;
+  onPageCount?: (documentId: string, count: number) => void;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
   const index = shown ? documents.findIndex((asset) => asset.documentId === shown.documentId) : -1;
@@ -101,7 +102,8 @@ export function DocumentPreviewPane({ documents, shown, onShow, navigation }: Re
     </div>
     <div className='relative min-h-0 flex-1'>
       {shown
-        ? <DocumentPreviewViewer key={shown.documentId} workspaceId={shown.workspaceId} documentId={shown.documentId} fileName={shown.name} mimeType={shown.mimeType} navigation={navigation} />
+        ? <DocumentPreviewViewer key={shown.documentId} workspaceId={shown.workspaceId} documentId={shown.documentId} fileName={shown.name} mimeType={shown.mimeType} navigation={navigation}
+          onPageCount={onPageCount ? (count) => onPageCount(shown.documentId, count) : undefined} />
         : <div className='flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-sm text-muted-foreground'>
           <FileText className='h-6 w-6' />{t('mapping.live.noDocument')}
         </div>}

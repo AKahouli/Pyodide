@@ -27,6 +27,8 @@ MAX_VALUE_CHARS = 500
 MAX_PASSAGE_CHARS = 20000
 MAX_PAGE = 2000
 MAX_PAGE_SPAN = 50
+TAKE_UNITS = ("characters", "words", "lines")
+MAX_TAKE = 20000
 # A person's pattern runs on document text: it gets a short time per match, never a hang.
 PATTERN_TIMEOUT_SECONDS = 0.05
 MAX_SCAN_CHARS = 20000
@@ -81,6 +83,14 @@ def normalize_rules(raw: Any) -> dict[str, Any] | None:
                 or any(not isinstance(label, str) or len(label) > MAX_LABEL_CHARS for label in boundary)):
             raise RuleError("boundaryLabels must be at most 10 short texts")
         rules["boundaryLabels"] = [label.strip() for label in boundary if label.strip()]
+    take = raw.get("take")
+    if take is not None:
+        count = take.get("count") if isinstance(take, dict) else None
+        if (not isinstance(take, dict) or take.get("from", "start") not in ("start", "end")
+                or take.get("unit", "characters") not in TAKE_UNITS
+                or not isinstance(count, int) or isinstance(count, bool) or not 1 <= count <= MAX_TAKE):
+            raise RuleError(f"take keeps 1 to {MAX_TAKE} characters, words or lines from the start or the end")
+        rules["take"] = {"from": take.get("from", "start"), "count": count, "unit": take.get("unit", "characters")}
     if location == "pages":
         pages = raw.get("pages")
         start = pages.get("from") if isinstance(pages, dict) else None
@@ -193,12 +203,37 @@ def trim(value: str) -> str:
     return value[start:end]
 
 
-def clean(value: str, rules: dict[str, Any] | None) -> str | None:
-    """The value as the rules want it: matching the pattern, then transformed."""
+_WORD = re.compile(r"\S+")
+
+
+def take_part(text: str, take: dict[str, Any]) -> str:
+    """The first or last characters, words or lines of the text, like LEFT(text, n) or RIGHT(text, n).
+    Words and lines keep the spacing between them as written."""
+    count, from_end = take["count"], take["from"] == "end"
+    if take["unit"] == "characters":
+        return text[-count:] if from_end else text[:count]
+    if take["unit"] == "words":
+        words = list(_WORD.finditer(text))
+        if len(words) <= count:
+            return text
+        return text[words[-count].start():] if from_end else text[:words[count - 1].end()]
+    lines = text.splitlines(keepends=True)
+    return "".join(lines[-count:] if from_end else lines[:count])
+
+
+def shaped_input(value: str, rules: dict[str, Any] | None) -> str:
+    """The text a rule's location found, as the shaping steps see it (trimmed and bounded)."""
     passage = bool(rules) and rules["location"] in PASSAGE_LOCATIONS
-    value = value.strip()[:MAX_PASSAGE_CHARS if passage else MAX_VALUE_CHARS]
+    return value.strip()[:MAX_PASSAGE_CHARS if passage else MAX_VALUE_CHARS]
+
+
+def clean(value: str, rules: dict[str, Any] | None) -> str | None:
+    """The value as the rules want it: cut to its kept part, matching the pattern, then transformed."""
+    value = shaped_input(value, rules)
     if not rules:
         return value or None
+    if rules.get("take"):
+        value = take_part(value, rules["take"]).strip()
     if rules.get("pattern") and rules["location"] != "anywhere":
         value = match_pattern(compile_pattern(rules["pattern"]), value) or ""
     transform = rules.get("transform")

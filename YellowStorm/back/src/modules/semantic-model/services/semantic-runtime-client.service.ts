@@ -198,6 +198,8 @@ export interface RuntimeDocumentPreviewField {
   /** Last page of a passage read over several pages. */
   pageEnd?: number | null;
   quote?: string | null;
+  /** The text the rule's location found, before it was cut, matched and cleaned up. */
+  raw?: string;
   detail?: string;
   rules?: Omit<RuntimeDocumentPreviewField, 'rules'>;
 }
