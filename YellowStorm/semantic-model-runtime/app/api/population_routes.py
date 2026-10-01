@@ -11,6 +11,7 @@ import os
 
 from fastapi import APIRouter, Header, HTTPException, Path, Query, Request, status
 
+from app.graph_search.indexer import request_index_quietly
 from app.jobs.models import (ActivateRevisionCommand, CorrectionCommand, IdempotencyConflict,
                              ManualBatchCommand, ManualCommitCommand,
                              MirrorSpecificationCommand, PopulationCommand, PublishModelDataCommand,
@@ -338,6 +339,9 @@ async def publish_model_data(model_id: str, command: PublishModelDataCommand,
         raise HTTPException(status_code=409, detail=exc.code) from exc
     except ProjectionUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    # Published data is searched by chat: make sure its index exists (normally already built as draft).
+    service = getattr(request.app.state, "job_service", None)
+    await request_index_quietly(pool, service.admit if service else None, revision_id)
     current = await store.get_active_binding(pool, model_id, "production")
     if current is not None and current["data_revision_id"] == revision_id             and current["model_version_id"] == command.model_version_id:
         return {"modelId": model_id, "environment": "production", "active": current, "reused": True}

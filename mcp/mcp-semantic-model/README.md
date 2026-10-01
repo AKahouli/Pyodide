@@ -27,6 +27,8 @@ model editor. Nothing here touches a database.
 | Data | `run_data_update` / `get_run_status` | Rebuild the records and graph, and follow it |
 | | `stop_data_update` | Stop a running update; the data in use does not change |
 | | `search_records` | Look at a concept's records |
+| | `find_records` | Records matching a question, by key, words and meaning (published data by default) |
+| | `get_related_records` | Records linked to found records, one or two relationship steps away, with the path |
 | | `publish_semantic_model` | Make the model usable in chat |
 
 Concepts and fields are always named by their business names. Every design change is applied at once and is

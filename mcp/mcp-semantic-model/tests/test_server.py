@@ -51,6 +51,7 @@ async def test_registers_the_design_tools_with_the_versioned_envelope():
         "apply_model_changes", "list_model_changes", "undo_model_change",
         "list_workspaces", "list_workspace_files", "profile_spreadsheet", "map_spreadsheet", "map_documents", "remove_source",
         "run_data_update", "get_run_status", "stop_data_update", "search_records", "publish_semantic_model", "suggest_sources",
+        "find_records", "get_related_records",
     }
     for tool in tools:
         assert tool.outputSchema["properties"]["schemaVersion"]["const"] == "semantic_model.mcp.v1"
@@ -59,6 +60,8 @@ async def test_registers_the_design_tools_with_the_versioned_envelope():
     hints = {tool.name: tool.annotations for tool in tools}
     assert hints["get_semantic_model"].readOnlyHint is True
     assert hints["publish_semantic_model"].destructiveHint is True
+    assert hints["find_records"].readOnlyHint is True
+    assert hints["get_related_records"].readOnlyHint is True
 
 
 @pytest.mark.asyncio
@@ -191,3 +194,79 @@ async def test_data_update_can_be_followed_and_stopped_without_an_id(monkeypatch
         ("POST", "/api/v1/internal/semantic-model-assistant/models/m/runs/stop"),
         ("POST", "/api/v1/internal/semantic-model-assistant/models/m/runs/job%201/stop"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_find_records_searches_the_published_data_by_default(monkeypatch, actor):
+    backend = Recorder({"model": {"id": "m", "name": "Billing"}, "status": "found", "records": [], "notes": []})
+    monkeypatch.setattr(server, "backend", lambda: backend)
+    async with Client(mcp) as client:
+        result = result_dict(await client.call_tool("find_records", {"model_id": "Billing", "query": " Acme contracts ", "concepts": '["Contract"]'}))
+        await client.call_tool("find_records", {"model_id": "Billing", "query": "acme", "data": "draft", "limit": 3})
+    assert result["ok"] is True and result["meta"]["modelName"] == "Billing"
+    assert backend.calls == [
+        ("POST", "/api/v1/internal/semantic-model-assistant/models/Billing/graph-search", "user-1",
+         {"query": "Acme contracts", "concepts": ["Contract"], "data": "published", "limit": 10}),
+        ("POST", "/api/v1/internal/semantic-model-assistant/models/Billing/graph-search", "user-1",
+         {"query": "acme", "data": "draft", "limit": 3}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_find_records_refuses_bad_input_without_calling_the_backend(monkeypatch, actor):
+    backend = Recorder()
+    monkeypatch.setattr(server, "backend", lambda: backend)
+    async with Client(mcp) as client:
+        empty = result_dict(await client.call_tool("find_records", {"model_id": "m", "query": "  "}))
+        data = result_dict(await client.call_tool("find_records", {"model_id": "m", "query": "x", "data": "production"}))
+        limit = result_dict(await client.call_tool("find_records", {"model_id": "m", "query": "x", "limit": 26}))
+    assert empty["ok"] is False and "query" in empty["error"]["message"]
+    assert data["ok"] is False and "published, draft" in data["error"]["message"]
+    assert limit["ok"] is False and "limit" in limit["error"]["message"]
+    assert backend.calls == []
+
+
+@pytest.mark.asyncio
+async def test_get_related_records_builds_one_or_two_steps(monkeypatch, actor):
+    backend = Recorder({"status": "found", "truncated": False, "records": [], "links": [], "notes": []})
+    monkeypatch.setattr(server, "backend", lambda: backend)
+    async with Client(mcp) as client:
+        await client.call_tool("get_related_records", {"model_id": "m", "record_ids": ["e-1"]})
+        await client.call_tool("get_related_records", {
+            "model_id": "m", "record_ids": '["e-1", "e-2"]', "relations": ["signs"], "direction": "outgoing",
+            "then_relations": ["is billed by"], "concepts": ["Invoice"], "data": "draft", "max_records": 20,
+        })
+    assert backend.calls == [
+        ("POST", "/api/v1/internal/semantic-model-assistant/models/m/graph-expand", "user-1",
+         {"recordIds": ["e-1"], "direction": "both", "data": "published", "maxRecords": 50}),
+        ("POST", "/api/v1/internal/semantic-model-assistant/models/m/graph-expand", "user-1",
+         {"recordIds": ["e-1", "e-2"], "relations": ["signs"], "direction": "outgoing", "thenRelations": ["is billed by"],
+          "concepts": ["Invoice"], "data": "draft", "maxRecords": 20}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_related_records_refuses_bad_input_without_calling_the_backend(monkeypatch, actor):
+    backend = Recorder()
+    monkeypatch.setattr(server, "backend", lambda: backend)
+    async with Client(mcp) as client:
+        none = result_dict(await client.call_tool("get_related_records", {"model_id": "m", "record_ids": []}))
+        many = result_dict(await client.call_tool("get_related_records", {"model_id": "m", "record_ids": [f"e-{i}" for i in range(26)]}))
+        direction = result_dict(await client.call_tool("get_related_records", {"model_id": "m", "record_ids": ["e-1"], "direction": "up"}))
+        cap = result_dict(await client.call_tool("get_related_records", {"model_id": "m", "record_ids": ["e-1"], "max_records": 0}))
+    assert none["ok"] is False and "record_ids" in none["error"]["message"]
+    assert many["ok"] is False and "record_ids" in many["error"]["message"]
+    assert direction["ok"] is False and "direction" in direction["error"]["message"]
+    assert cap["ok"] is False and "max_records" in cap["error"]["message"]
+    assert backend.calls == []
+
+
+@pytest.mark.asyncio
+async def test_record_search_tools_tell_the_agent_how_to_read_results():
+    async with Client(mcp) as client:
+        tools = {tool.name: tool for tool in await client.list_tools()}
+    find = tools["find_records"].description
+    related = tools["get_related_records"].description
+    assert "NOT documents" in find and "index_not_ready" in find and "not_represented" in find and "Never infer" in find
+    assert "get_related_records" in find
+    assert "NOT because it matched" in related and "truncated" in related and "find_records" in related and "Never infer" in related

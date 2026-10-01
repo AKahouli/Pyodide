@@ -1,8 +1,8 @@
 # Start the semantic runtime Celery workers without the API.
-#   .\scripts\start-workers.ps1                      # datasource + population
+#   .\scripts\start-workers.ps1                      # datasource + population + search
 #   .\scripts\start-workers.ps1 -Only population     # one worker
 # Ctrl+C stops every worker this script started.
-param([ValidateSet('all', 'datasource', 'population')][string]$Only = 'all')
+param([ValidateSet('all', 'datasource', 'population', 'search')][string]$Only = 'all')
 
 $ErrorActionPreference = 'Stop'
 $runtimeRoot = Split-Path -Parent $PSScriptRoot
@@ -22,7 +22,9 @@ $definitions = @(
   @{ Name = 'datasource'; App = 'app.workers.datasource_tasks:celery_app'
      Queues = 'semantic-model-datasource.preview,semantic-model-datasource.batch' },
   @{ Name = 'population'; App = 'app.workers.population_tasks:celery_app'
-     Queues = 'semantic-model-population.batch,semantic-model-population.corrections' }
+     Queues = 'semantic-model-population.batch,semantic-model-population.corrections' },
+  @{ Name = 'search'; App = 'app.workers.graph_search_tasks:celery_app'
+     Queues = 'semantic-model-search.index' }
 ) | Where-Object { $Only -eq 'all' -or $_.Name -eq $Only }
 
 $workers = @()

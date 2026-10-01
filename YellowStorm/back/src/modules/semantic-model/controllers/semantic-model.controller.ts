@@ -46,6 +46,8 @@ import { SemanticPopulationRefreshService } from '../services/semantic-populatio
 import { SemanticReviewQueueService } from '../services/semantic-review-queue.service';
 import { SemanticModelAssistantService } from '../services/semantic-model-assistant.service';
 import { AssistantChangesQueryDto, SourceSuggestionStatusDto } from '../dto/semantic-model-assistant.dto';
+import { GraphExpandDto, GraphSearchDto, GraphSearchEnvironmentQueryDto, GraphSearchIndexDto } from '../dto/semantic-graph-search.dto';
+import { SemanticGraphSearchService } from '../services/semantic-graph-search.service';
 
 @ApiTags('Semantic Models')
 @ApiBearerAuth()
@@ -65,6 +67,7 @@ export class SemanticModelController {
     private readonly populationRefresh: SemanticPopulationRefreshService,
     private readonly reviewQueue: SemanticReviewQueueService,
     private readonly assistant: SemanticModelAssistantService,
+    private readonly graphSearch: SemanticGraphSearchService,
   ) {}
 
   @Get()
@@ -146,6 +149,40 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
   records(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Query() query: SemanticRecordQueryDto) {
     return this.graph.listRecords(user._id.toString(),modelId,query);
+  }
+
+  @Post(':modelId/search')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Find records in the model data by key, words and meaning' })
+  @RateLimit({ limit: 60, windowMs: 60_000, keyPrefix: 'semantic-model:graph-search' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  search(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: GraphSearchDto) {
+    return this.graphSearch.search(user._id.toString(),modelId,dto);
+  }
+
+  @Post(':modelId/search/expand')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Follow the real links of some records, one or two steps away' })
+  @RateLimit({ limit: 60, windowMs: 60_000, keyPrefix: 'semantic-model:graph-expand' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  expandSearch(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: GraphExpandDto) {
+    return this.graphSearch.expand(user._id.toString(),modelId,dto);
+  }
+
+  @Get(':modelId/search-index')
+  @ApiOperation({ summary: 'State of the search index of the data in use' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  searchIndex(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Query() query: GraphSearchEnvironmentQueryDto) {
+    return this.graphSearch.indexStatus(user._id.toString(),modelId,query.environment);
+  }
+
+  @Post(':modelId/search-index')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Build the search index of the data in use, in the background' })
+  @RateLimit({ limit: 10, windowMs: 60_000, keyPrefix: 'semantic-model:graph-search-index' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  ensureSearchIndex(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: GraphSearchIndexDto) {
+    return this.graphSearch.ensureIndex(user._id.toString(),modelId,dto.environment);
   }
 
   @Get(':modelId/workspaces')

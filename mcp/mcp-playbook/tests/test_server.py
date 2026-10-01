@@ -358,6 +358,32 @@ async def test_continue_clarification_forwards_skip_clarification(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_continue_clarification_hands_over_the_new_playbook_draft(monkeypatch):
+    class BackendStub(NoNameMatch):
+        async def post(self, path, user_id, payload):
+            return {"requestId": "request-1", "status": "ready_to_construct", "operationId": "operation-1",
+                    "playbookId": "playbook-1", "playbookName": "Lead qualification"}
+
+    monkeypatch.setattr(server, "backend", lambda: BackendStub())
+    token = actor_context.set(PlatformActorContext("user-1", "agent-1", "conversation-1", "ai-message-1"))
+    try:
+        async with Client(mcp) as client:
+            response = await client.call_tool("continue_playbook_clarification", {
+                "continuation_id": "continuation-1",
+                "answers": [{"questionId": "q1", "choice": "Manual"}],
+            })
+    finally:
+        actor_context.reset(token)
+
+    result = result_dict(response)
+    assert result["data"]["uiTarget"] == {
+        "surface": "playbook.editor.assistant",
+        "params": {"playbookId": "playbook-1", "operationId": "operation-1", "playbookName": "Lead qualification"},
+    }
+    assert result["data"]["publicationStatus"] == "draft"
+
+
+@pytest.mark.asyncio
 async def test_continue_clarification_rejects_malformed_string_answers(monkeypatch):
     class BackendStub(NoNameMatch):
         async def post(self, path, user_id, payload):

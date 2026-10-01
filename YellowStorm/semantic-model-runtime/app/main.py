@@ -20,7 +20,7 @@ import asyncpg
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from .api import datasource_routes, health_routes, job_routes, population_routes
+from .api import datasource_routes, graph_search_routes, health_routes, job_routes, population_routes
 from .jobs.dispatcher import OutboxDispatcher, OutboxRepository
 from .jobs.service import JobRepository, JobService
 from .persistence.postgres_jobs import PostgresJobRepository
@@ -115,11 +115,14 @@ def create_app(job_repository: JobRepository | None = None) -> FastAPI:
         app.state.index_pool = index_pool
         app.state.index_pool_owned = index_owned
         if getattr(app.state, "age_pool", None) is None and os.environ.get("SEMANTIC_AGEGRAPH_DATABASE_URL"):
+            from app.graph_search.traversal import init_age_connection
+
             age_pool = await asyncpg.create_pool(
                 os.environ["SEMANTIC_AGEGRAPH_DATABASE_URL"],
                 min_size=1,
                 max_size=int(os.environ.get("SEMANTIC_AGEGRAPH_POOL_MAX", "3")),
                 command_timeout=30,
+                init=init_age_connection,
                 server_settings={
                     "application_name": "semantic-model-runtime-age",
                     "search_path": 'ag_catalog, "$user", public',
@@ -205,6 +208,7 @@ def create_app(job_repository: JobRepository | None = None) -> FastAPI:
     app.include_router(datasource_routes.router)
     app.include_router(population_routes.router)
     app.include_router(job_routes.router)
+    app.include_router(graph_search_routes.router)
     return app
 
 

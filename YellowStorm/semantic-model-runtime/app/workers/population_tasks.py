@@ -1020,6 +1020,12 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
                 if finalized is not None:
                     result.update({"projectionRef": finalized["projectionRef"],
                                    "boundEnvironment": finalized["environment"]})
+                    # The new draft data gets its search index in its own job; a failure
+                    # here never fails the build (reads request it again).
+                    from app.graph_search.indexer import request_index_quietly
+                    from app.jobs.service import JobService
+
+                    await request_index_quietly(pool, JobService(repository).admit, revision_id)
         try:
             await repository.complete_task(task_id=task_id, lease_owner=lease_owner,
                                            lease_epoch=lease.lease_epoch,

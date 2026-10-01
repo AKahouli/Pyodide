@@ -487,7 +487,7 @@ describe('StreamService guardrail metadata buffering', () => {
         isAttachmentIntelligenceEnabled: jest.fn().mockResolvedValue(false),
       },
       teamService: { resolveExecutionDefinition },
-      semanticModelService: { resolveSearchSchema: jest.fn() },
+      semanticModelService: { resolveChatModel: jest.fn() },
       agentService: { buildGovernedAgentsForStream, buildGrpcAgentsForPlaybook },
       buildWorkspaceContexts: jest.fn().mockResolvedValue([]),
       buildAttachedFiles: jest.fn().mockResolvedValue({ attachedFiles: [], preparedDocuments: [] }),
@@ -537,6 +537,45 @@ describe('StreamService guardrail metadata buffering', () => {
       undefined,
       compaction,
     );
+  });
+
+  it('resolves a selected semantic model for chat and passes it to the agents instead of workspace contexts', async () => {
+    const service = Object.create(StreamService.prototype) as StreamService;
+    const agent = { id: 'agent-1', tools: [], brain_context: [] };
+    const buildAgentsForStream = jest.fn().mockResolvedValue([agent]);
+    const buildWorkspaceContexts = jest.fn().mockResolvedValue([{ workspace_id: 'workspace-1' }]);
+    const resolveChatModel = jest.fn().mockResolvedValue({ id: 'model-1', name: 'Contracts' });
+    Object.assign(service as object, {
+      conversationService: {
+        getConversationDocument: jest.fn().mockResolvedValue({ isGroup: false, systemWorkspaceId: 'system-1', groupTaggedAgentIds: [] }),
+      },
+      conversationSettings: {
+        getSettings: jest.fn().mockResolvedValue({ compaction: { enabled: false } }),
+        isAttachmentIntelligenceEnabled: jest.fn().mockResolvedValue(false),
+      },
+      semanticModelService: { resolveChatModel },
+      agentService: { buildAgentsForStream },
+      buildWorkspaceContexts,
+      buildAttachedFiles: jest.fn().mockResolvedValue({ attachedFiles: [], preparedDocuments: [] }),
+      buildPreviousAttachedFiles: jest.fn().mockResolvedValue([]),
+      skillService: { findByIdsForGrpc: jest.fn().mockResolvedValue([]) },
+      resolveAgentBrainContexts: jest.fn().mockResolvedValue(undefined),
+      attachRunCodeContexts: jest.fn().mockResolvedValue(undefined),
+      agentRequestBuilder: { build: jest.fn().mockReturnValue({ rpc: 'RunSingleAgent', payload: {} }) },
+    });
+
+    await service.buildAgentExecutionRequest('user-1', 'conversation-1', {
+      content: 'hello',
+      attachedFileIds: [],
+      agentIds: [],
+      skillIds: [],
+      semanticModelId: 'model-1',
+    } as any);
+
+    expect(resolveChatModel).toHaveBeenCalledWith('user-1', 'model-1');
+    expect(buildWorkspaceContexts).not.toHaveBeenCalled();
+    expect(buildAgentsForStream).toHaveBeenCalledTimes(1);
+    expect(buildAgentsForStream.mock.calls[0][6]).toEqual({ id: 'model-1', name: 'Contracts' });
   });
 
   it('does not create a gRPC call when the durable lease was lost during request preparation', async () => {

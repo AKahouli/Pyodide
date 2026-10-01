@@ -26,6 +26,7 @@ import { ConnectorAdminAuthService } from './services/connector-admin-auth.servi
 import { ConnectorPlaybookBindingSyncService } from './services/connector-playbook-binding-sync.service';
 import { ConnectorMcpRuntimeService } from './services/connector-mcp-runtime.service';
 import { AgentMcpConnectorBootstrapService } from './services/agent-mcp-connector-bootstrap.service';
+import { SemanticModelSearchMcpConnectorBootstrapService } from './services/semantic-model-search-mcp-connector-bootstrap.service';
 import { CatalogTransferService } from './services/catalog-transfer.service';
 import { AdminCatalogTransferController } from './admin-catalog-transfer.controller';
 import { SKILL_STORE } from '../skill/persistence/skill.store';
@@ -64,6 +65,7 @@ import { PgConnectedAppDefinitionStore, PgUserAppConnectionStore } from '../conn
     CryptoService,
     ConnectorService,
     AgentMcpConnectorBootstrapService,
+    SemanticModelSearchMcpConnectorBootstrapService,
     ConnectorCategoryService,
     ConnectorAdminAuthService,
     ConnectorCredentialService,

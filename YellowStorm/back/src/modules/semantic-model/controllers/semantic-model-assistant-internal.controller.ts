@@ -13,6 +13,7 @@ import {
   AssistantRecordsQueryDto,
   AssistantSuggestSourcesDto,
 } from '../dto/semantic-model-assistant.dto';
+import { AssistantFindRecordsDto, AssistantRelatedRecordsDto } from '../dto/semantic-graph-search.dto';
 import { SemanticAssistantActorGuard, SemanticAssistantModelGuard, assistantActorFrom } from '../guards/semantic-assistant-actor.guard';
 import { SemanticModelAssistantService } from '../services/semantic-model-assistant.service';
 
@@ -175,6 +176,22 @@ export class SemanticModelAssistantInternalController {
   @RequirePermissions(READ, 'any')
   searchRecords(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Param('concept') concept: string, @Query() query: AssistantRecordsQueryDto) {
     return this.assistant.searchRecords(assistantActorFrom(request.headers).userId, modelId, concept, query.q, query.limit);
+  }
+
+  @Post('models/:modelId/graph-search')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Find records of the model by key, words and meaning (published data unless data=draft)' })
+  @RequirePermissions(READ, 'any')
+  findRecords(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Body() dto: AssistantFindRecordsDto) {
+    return this.assistant.findRecords(assistantActorFrom(request.headers).userId, modelId, dto);
+  }
+
+  @Post('models/:modelId/graph-expand')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Follow the real links of some records, one or two steps away' })
+  @RequirePermissions(READ, 'any')
+  relatedRecords(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Body() dto: AssistantRelatedRecordsDto) {
+    return this.assistant.relatedRecords(assistantActorFrom(request.headers).userId, modelId, dto);
   }
 
   @Post('models/:modelId/publish')

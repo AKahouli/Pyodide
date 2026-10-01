@@ -36,7 +36,12 @@ own initiative: a wrong workspace can hold thousands of documents. Instead:
 - use map_spreadsheet, map_documents, run_data_update or publish_semantic_model only when the user asks
   for it in this conversation, or confirms after you named the exact workspace, folders or files;
 - stop_data_update stops a running data update when the user asks; the data in use does not change.
-If the user wants to skip these steps, stop proposing them: they continue in the designer."""
+If the user wants to skip these steps, stop proposing them: they continue in the designer.
+
+Answering from a model's data: find_records finds the records that match the question, then
+get_related_records follows their real links (with the entityId values find_records returned). These are
+records stored in the model, not documents. Say plainly when a result is incomplete or the model does not
+hold the information, and never state a fact that no returned field or link holds."""
 
 settings = Settings.from_env()
 mcp = FastMCP("Semantic Model MCP", instructions=INSTRUCTIONS)
@@ -393,6 +398,83 @@ async def search_records(model_id: str, concept: str, query: str | None = None, 
     """Look at the records a concept holds after the last data update, optionally searched by any value. No change is made."""
     path = with_query(f"{BASE}/models/{path_id(model_id)}/concepts/{path_id(concept)}/records", q=query, limit=limit)
     return await call(backend().get(path, require_acting_user_id()))
+
+
+DATA_CHOICES = ("published", "draft")
+DIRECTIONS = ("outgoing", "incoming", "both")
+
+
+def bounded(value: Any, name: str, low: int, high: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+        raise ValueError(f"{name} must be a whole number from {low} to {high}")
+    return value
+
+
+def choice(value: Any, name: str, allowed: tuple[str, ...]) -> str:
+    if value not in allowed:
+        raise ValueError(f"{name} must be one of: {', '.join(allowed)}")
+    return value
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def find_records(
+    model_id: str,
+    query: str,
+    concepts: list[str] | str | None = None,
+    data: str = "published",
+    limit: int = 10,
+) -> SemanticModelMcpResultV1:
+    """Find the records of a semantic model that match a question: by exact key or name first, then by words and meaning. Use it first to answer a question from a model's data, then get_related_records with the entityId of the records found. No change is made.
+    The results are records stored in the model (a customer, a contract, an invoice...) with their key fields and a snippet of their fields, NOT documents or document text. match says how a record was found (exact, lexical, vector, hybrid); a vector or hybrid match is a likely candidate, not proof: check its fields.
+    concepts: concept names (or keys) to search in, e.g. ["Contract"]. data: "published" (default, what chat uses) or "draft" (the data being built; only for the model's editors). limit: 1 to 25.
+    Report the result honestly, using notes: status index_not_ready means the search index is still being built and records may be missing; not_represented means the model has no such concept, so the information is not in the model; no_match means no record matches. Never infer a fact that is not in a field of a returned record."""
+    try:
+        payload = compact({
+            "query": query.strip() if isinstance(query, str) else query,
+            "concepts": string_list(concepts, "concepts") or None,
+            "data": choice(data, "data", DATA_CHOICES),
+            "limit": bounded(limit, "limit", 1, 25),
+        })
+    except ValueError as exc:
+        return fail(str(exc))
+    if not payload.get("query"):
+        return fail("query must not be empty")
+    return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/graph-search", require_acting_user_id(), payload))
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def get_related_records(
+    model_id: str,
+    record_ids: list[str] | str,
+    relations: list[str] | str | None = None,
+    direction: str = "both",
+    then_relations: list[str] | str | None = None,
+    concepts: list[str] | str | None = None,
+    data: str = "published",
+    max_records: int = 50,
+) -> SemanticModelMcpResultV1:
+    """Follow the real links (relationships of the model) from some records to the records linked to them. record_ids: the entityId of records returned by find_records (1 to 25). No change is made.
+    A related record is included because it is linked to a record you asked for, NOT because it matched anything: its path says through which relationship. Records come from the model, not from documents.
+    relations: the relationships to follow (names or keys from get_semantic_model); omitted means every relationship of these records, one step away. direction: outgoing, incoming or both (default).
+    then_relations: the relationships of an optional second step, followed from the records reached by the first (e.g. relations=["signs"], then_relations=["is billed by"] goes Customer -> Contract -> Invoice). A second step must name its relationships.
+    concepts: keep only related records of these concepts (applied to the last step). data: "published" (default) or "draft". max_records: 1 to 100.
+    Report the result honestly, using notes: truncated=true means more linked records exist than were returned; say the list is incomplete. Never infer a fact that is not in a field or a link of a returned record."""
+    try:
+        ids = string_list(record_ids, "record_ids") or []
+        payload = compact({
+            "recordIds": ids,
+            "relations": string_list(relations, "relations") or None,
+            "direction": choice(direction, "direction", DIRECTIONS),
+            "thenRelations": string_list(then_relations, "then_relations") or None,
+            "concepts": string_list(concepts, "concepts") or None,
+            "data": choice(data, "data", DATA_CHOICES),
+            "maxRecords": bounded(max_records, "max_records", 1, 100),
+        })
+    except ValueError as exc:
+        return fail(str(exc))
+    if not 1 <= len(ids) <= 25:
+        return fail("record_ids must hold 1 to 25 entityId values from find_records")
+    return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/graph-expand", require_acting_user_id(), payload))
 
 
 @mcp.tool(annotations=DESTRUCTIVE)

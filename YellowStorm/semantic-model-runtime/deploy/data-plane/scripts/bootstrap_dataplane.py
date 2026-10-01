@@ -34,6 +34,7 @@ SCHEMAS = [
     "semantic_runtime",
     "semantic_datasource",
     "semantic_population",
+    "semantic_graph_search",
     "semantic_api",
     "semantic_access",
 ]

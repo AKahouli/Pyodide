@@ -261,7 +261,7 @@ export class MessageController {
     const governedRuntime = unwrapSettled(governedRuntimeSettled);
     if (governedRuntime) this.governedRuntimeService.assertRuntimeRequestAllowed(governedRuntime, dto);
     if (!governedRuntime && dto.semanticModelId) {
-      await this.semanticModelService.resolveSearchSchema(user._id.toString(), dto.semanticModelId);
+      await this.semanticModelService.resolveChatModel(user._id.toString(), dto.semanticModelId);
     }
     const effectiveSemanticModelId = governedRuntime ? undefined : dto.semanticModelId;
 

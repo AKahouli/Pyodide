@@ -25,6 +25,8 @@ import { SemanticSourceMappingService, DOCUMENT_MIME_TYPES, STRUCTURED_MIME_PREF
 import { SemanticModelWorkspaceService } from './semantic-model-workspace.service';
 import { SemanticPopulationRefreshService } from './semantic-population-refresh.service';
 import { SemanticModelVersionService } from './semantic-model-version.service';
+import { SemanticGraphSearchService } from './semantic-graph-search.service';
+import type { RuntimeGraphExpandStep, RuntimeSearchEnvironment } from './semantic-runtime-client.service';
 
 /**
  * What an assistant (an agent using the semantic model MCP) can do to a model, as the person it acts for.
@@ -33,6 +35,10 @@ import { SemanticModelVersionService } from './semantic-model-version.service';
  */
 
 export type Cardinality = SemanticRelationType['cardinality'];
+
+/** Assistants read the published data unless they work on the draft. */
+export type AssistantDataChoice = 'published' | 'draft';
+const assistantEnvironment = (data: AssistantDataChoice): RuntimeSearchEnvironment => (data === 'draft' ? 'draft' : 'production');
 
 export interface AssistantFieldSpec {
   key?: string;
@@ -214,6 +220,7 @@ export class SemanticModelAssistantService {
     private readonly workspaces: WorkspaceService,
     private readonly workspaceShares: WorkspaceShareService,
     private readonly documents: WorkspaceDocumentService,
+    private readonly graphSearch: SemanticGraphSearchService,
   ) {}
 
   // ── Models ────────────────────────────────────────────────────────────────
@@ -945,6 +952,77 @@ export class SemanticModelAssistantService {
       total: number; records: Array<{ label: string; values: Record<string, unknown>; identity?: Record<string, unknown> }>;
     };
     return { concept: node.label, total: page.total, records: page.records.map((record) => ({ name: record.label, ...record.identity, ...record.values })) };
+  }
+
+  /**
+   * Records of the model found by key, words and meaning (find_records). They are records the model holds,
+   * not documents; notes say plainly when the index is not ready, nothing matched or the model has no such
+   * concept, so the assistant does not present a guess as a fact.
+   */
+  async findRecords(userId: string, modelId: string, input: { query: string; concepts?: string[]; data?: AssistantDataChoice; limit?: number }) {
+    const data = input.data ?? 'published';
+    const model = await this.models.get(userId, modelId);
+    const result = await this.graphSearch.search(userId, modelId, {
+      environment: assistantEnvironment(data), query: input.query, concepts: input.concepts, limit: input.limit ?? 10,
+    });
+    const notes: string[] = [];
+    if (result.status === 'index_not_ready') {
+      notes.push(`The search index of this data is not ready (${result.index.state}): ${String(result.coverage.indexedCount)} of ${String(result.coverage.expectedCount)} records can be found by meaning. Tell the user that records may be missing.`);
+    }
+    if (result.status === 'not_represented' || result.unknownConcepts.length) {
+      notes.push(`The model has no concept named ${result.unknownConcepts.map((name) => `"${name}"`).join(', ') || 'as asked'}: this information is not in the model.`);
+    }
+    if (result.status === 'no_match') notes.push('No record of the model matches this search.');
+    if (result.modeUsed === 'lexical_only') notes.push('Search by meaning was unavailable: only keys, names and words were matched, so a record worded differently may be missing.');
+    if (result.modeUsed === 'exact_only') notes.push('Only exact keys and names were matched.');
+    return {
+      model: this.modelRef(model), data, status: result.status, searchMode: result.modeUsed, indexState: result.index.state,
+      concepts: result.concepts.map((concept) => concept.label), unknownConcepts: result.unknownConcepts,
+      records: result.seeds.map((seed) => ({
+        entityId: seed.entityId, concept: seed.conceptLabel, name: seed.label, keyFields: seed.keyFields, snippet: seed.snippet,
+        match: seed.matchClass, sourceCount: seed.provenance.length,
+      })),
+      coverage: result.coverage, notes,
+    };
+  }
+
+  /**
+   * The records linked to some records along the model's real relationships (get_related_records): one step,
+   * or two when then_relations names the relationships of the second step. A related record is there because
+   * of a link, never because it matched anything.
+   */
+  async relatedRecords(userId: string, modelId: string, input: {
+    recordIds: string[]; relations?: string[]; direction?: RuntimeGraphExpandStep['direction']; thenRelations?: string[];
+    concepts?: string[]; data?: AssistantDataChoice; maxRecords?: number;
+  }) {
+    const data = input.data ?? 'published';
+    const direction = input.direction ?? 'both';
+    const twoSteps = Boolean(input.thenRelations?.length);
+    const concepts = input.concepts?.length ? input.concepts : undefined;
+    // The concept filter applies to the records returned (the last step), so the records in between stay reachable.
+    const steps: RuntimeGraphExpandStep[] = [{
+      ...(input.relations?.length ? { relations: input.relations } : {}), direction, ...(!twoSteps && concepts ? { concepts } : {}),
+    }];
+    if (twoSteps) steps.push({ relations: input.thenRelations, direction, ...(concepts ? { concepts } : {}) });
+    const model = await this.models.get(userId, modelId);
+    const result = await this.graphSearch.expand(userId, modelId, {
+      environment: assistantEnvironment(data), seedEntityIds: input.recordIds, steps, maxNodes: input.maxRecords ?? 50,
+    });
+    const notes: string[] = [];
+    if (result.truncated) notes.push(`The result stopped at ${String(result.nodes.length)} records: more linked records exist. Say that the list is incomplete.`);
+    if (result.hiddenSeeds) notes.push(`${String(result.hiddenSeeds)} of the records asked for come from sources the user cannot open, so they and their links are not shown.`);
+    if (result.status === 'no_match') notes.push('These records have no links of the kind asked for.');
+    if (result.status === 'partial') notes.push('Only part of the links could be followed. Say that the result may be incomplete.');
+    return {
+      model: this.modelRef(model), data, status: result.status, truncated: result.truncated,
+      records: result.nodes.map((node) => ({
+        entityId: node.entityId, concept: node.conceptLabel, name: node.label, keyFields: node.keyFields,
+        includedBecause: node.inclusionReason === 'seed' ? 'asked_for' : 'linked',
+        path: node.path.map((step) => ({ from: step.fromEntityId, relation: step.relationKey, direction: step.direction, to: step.toEntityId })),
+      })),
+      links: result.edges.map((edge) => ({ relation: edge.relationKey, from: edge.sourceEntityId, to: edge.targetEntityId })),
+      notes,
+    };
   }
 
   async publish(userId: string, modelId: string) {

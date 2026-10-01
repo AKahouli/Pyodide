@@ -47,6 +47,10 @@ import {
   PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG,
 } from './constants/platform-copilot.constants';
 import { AGENT_MCP_CONNECTOR_SLUG } from '../connector/constants/agent-mcp.constants';
+import {
+  SEMANTIC_MODEL_SEARCH_ACTION_KEYS,
+  SEMANTIC_MODEL_SEARCH_MCP_CONNECTOR_SLUG,
+} from '../connector/constants/semantic-model-search-mcp.constants';
 import { SystemService } from '../system/system.service';
 
 /** Agent-type slug of the orchestrating manager agent. */
@@ -59,7 +63,33 @@ const HUMAIN_AGENT_TYPE_SLUG = 'humain';
 const TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS = new Set([
   PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG,
   AGENT_MCP_CONNECTOR_SLUG,
+  SEMANTIC_MODEL_SEARCH_MCP_CONNECTOR_SLUG,
 ]);
+/** Search tool arguments the back fixes for a chat on a semantic model; hidden from the model so it cannot override them. */
+const SEMANTIC_MODEL_SEARCH_FIXED_PARAM_KEYS = ['model_id', 'data'];
+
+/** Runtime instructions for an agent answering from the records of a selected semantic model. */
+export function buildSemanticModelChatInstruction(
+  model: { id: string; name: string },
+  tools: { findRecords: string; getRelatedRecords: string } | null,
+): string {
+  const name = (model.name || '').replace(/\s+/g, ' ').replace(/"/g, "'").trim().slice(0, 200) || model.id;
+  const lines = [
+    '[Semantic model]',
+    `This conversation is about the semantic model "${name}" (model_id ${model.id}).`,
+  ];
+  if (tools) {
+    lines.push(
+      `Answer from its records: call ${tools.findRecords} (find_records) first, then ${tools.getRelatedRecords} (get_related_records) on the entity ids it returned to follow the real links between records.`,
+      'The results are records stored in the model, not documents.',
+      'Say so plainly when the status is index_not_ready (the search index is still being built), no_match (no record matches), not_represented (the model has no such information), or when a result is truncated (the list is incomplete).',
+    );
+  } else {
+    lines.push('Its record search tools are not available right now: say that you cannot read its records instead of answering from memory.');
+  }
+  lines.push('Never invent a value that is not in a field of a returned record.');
+  return lines.join('\n');
+}
 /** Compare MCP server URLs without case or trailing slash differences. */
 function normalizeMcpServerUrl(value: unknown): string {
   return typeof value === 'string' ? value.trim().toLowerCase().replace(/\/+$/, '') : '';
@@ -568,7 +598,7 @@ export class AgentService {
     sharedAgentIds?: string[],
     groupMembers?: any[],
     selectedConnectorId?: string,
-    semanticSchemaName?: string,
+    semanticModel?: { id: string; name: string },
     runtimeContext?: { conversationId: string; correlationId: string; playbookHandoffAttached?: boolean },
     reasoningEffort?: string,
     compaction?: IGrpcCompaction,
@@ -580,6 +610,7 @@ export class AgentService {
       agentIds,
       sharedAgentIds,
       selectedConnectorId,
+      semanticModelId: semanticModel?.id,
     });
 
     // Fetch personal + default agents. The untagged chat path also needs the
@@ -755,7 +786,7 @@ export class AgentService {
     // Every lookup below depends only on the filtered roster, not on each
     // other — run them in one round so the remote-DB latency stacks once
     // instead of once per lookup.
-    const [promptMap, fetchedTools, modelResults, connectorsMap, blockedConnectorIds, adminGuardrailsSettings, guardrailsClassifierModel, documentTreeSettings] = await Promise.all([
+    const [promptMap, fetchedTools, modelResults, connectorsMap, blockedConnectorIds, adminGuardrailsSettings, guardrailsClassifierModel, documentTreeSettings, semanticSearchConnector] = await Promise.all([
       this.agentTypeService.resolvePromptsInBatch(promptPairs),
       allToolIds.length > 0 ? this.toolService.findByIds(allToolIds) : Promise.resolve([] as IToolResponse[]),
       Promise.all(allModelIds.map((id) => this.modelsService.findById(id))),
@@ -766,8 +797,16 @@ export class AgentService {
       this.guardrailsSettingsService.getSettings(),
       this.modelsService.getGuardrailsClassifierModel(),
       this.systemService?.getDocumentTreeInjectionSettings() ?? Promise.resolve({ enabled: true }),
+      semanticModel ? this.resolveSemanticModelSearchConnector(semanticModel.id) : Promise.resolve(null),
     ]);
     for (const connectorId of blockedConnectorIds) connectorsMap.delete(connectorId);
+    // A selected semantic model binds the hidden search connector to every agent, restricted to the two
+    // search tools and pinned to the model's published data.
+    const semanticSearchConnectorId = semanticSearchConnector?.id;
+    if (semanticSearchConnector) connectorsMap.set(semanticSearchConnector.id, semanticSearchConnector);
+    const semanticSearchFixedParams = semanticModel && semanticSearchConnectorId
+      ? new Map<string, Record<string, unknown>>([[semanticSearchConnectorId, { model_id: semanticModel.id, data: 'published' }]])
+      : undefined;
     const guardrailsClassifierModelId = this.modelsService.getModelIdentifier(guardrailsClassifierModel);
 
     const toolsMap = new Map<string, IToolResponse>();
@@ -833,16 +872,30 @@ export class AgentService {
         : undefined;
       const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
       const effectiveConnectorIds = [
-        ...new Set([...(agent.connectorIds || []), ...(selectedConnectorId ? [selectedConnectorId] : [])]),
+        ...new Set([
+          ...(agent.connectorIds || []),
+          ...(selectedConnectorId ? [selectedConnectorId] : []),
+          ...(semanticSearchConnectorId ? [semanticSearchConnectorId] : []),
+        ]),
       ];
+      let actionKeysByConnectorId = this.buildRuntimeConnectorActionKeysByConnectorId(agent, effectiveConnectorIds, connectorsMap);
+      if (semanticSearchConnectorId) {
+        actionKeysByConnectorId = new Map(actionKeysByConnectorId ?? []);
+        actionKeysByConnectorId.set(semanticSearchConnectorId, new Set(SEMANTIC_MODEL_SEARCH_ACTION_KEYS));
+      }
       const connectorBindings = await this.buildConnectorBindings(
         connectorsMap,
         effectiveConnectorIds,
         userId,
-        this.buildRuntimeConnectorActionKeysByConnectorId(agent, effectiveConnectorIds, connectorsMap),
-        undefined,
+        actionKeysByConnectorId,
+        semanticSearchFixedParams,
         agent.id,
       );
+      if (semanticSearchConnectorId) {
+        for (const binding of connectorBindings) {
+          if (binding.connector_id === semanticSearchConnectorId) this.hideFixedParamsFromModel(binding, SEMANTIC_MODEL_SEARCH_FIXED_PARAM_KEYS);
+        }
+      }
       if (agent.agentTypeSlug === PLATFORM_COPILOT && runtimeContext) {
         for (const binding of connectorBindings) {
           binding.auth_headers = {
@@ -886,6 +939,17 @@ export class AgentService {
         && runtimeContext?.playbookHandoffAttached
         && !prompt.includes(PLATFORM_COPILOT_HANDOFF_RUNTIME_INSTRUCTION)) {
         prompt += `${prompt ? '\n\n' : ''}${PLATFORM_COPILOT_HANDOFF_RUNTIME_INSTRUCTION}`;
+      }
+      if (semanticModel) {
+        const searchBinding = connectorBindings.find((binding) => binding.connector_id === semanticSearchConnectorId);
+        const searchSlug = String(searchBinding?.connector_slug || '');
+        const searchTools = searchBinding
+          ? {
+              findRecords: this.getConnectorRuntime().buildConnectorToolName(searchSlug, 'find_records'),
+              getRelatedRecords: this.getConnectorRuntime().buildConnectorToolName(searchSlug, 'get_related_records'),
+            }
+          : null;
+        prompt += `${prompt ? '\n\n' : ''}${buildSemanticModelChatInstruction(semanticModel, searchTools)}`;
       }
 
       // Append Group Members info if provided
@@ -934,9 +998,7 @@ export class AgentService {
             guardrails_classifier_model: guardrailsClassifierModelId,
             platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
             platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
-            ...(semanticSchemaName ? {
-              semantic_model_schema_name: semanticSchemaName,
-            } : {}),
+            ...(semanticModel ? { semantic_model_id: semanticModel.id } : {}),
             ...(resolvedModel?.omitTemperature
               ? { omit_temperature: 'true' }
               : { temperature: String(agent.temperature) }),
@@ -2000,6 +2062,47 @@ export class AgentService {
     if (TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS.has(String(binding.connector_slug || '').toLowerCase())) return true;
     const url = normalizeMcpServerUrl(binding.mcp_server_url);
     return Boolean(url) && this.trustedMcpServerUrls().has(url);
+  }
+
+  /** The hidden semantic model search connector, or null (with a warning) when it is not seeded or cannot be read. */
+  private async resolveSemanticModelSearchConnector(semanticModelId: string): Promise<IConnectorResponse | null> {
+    try {
+      const connector = await this.connectorService.findActiveSystemBySlug(SEMANTIC_MODEL_SEARCH_MCP_CONNECTOR_SLUG);
+      if (!connector) {
+        this.logger.warn('Semantic model search connector is not available; chat on the model has no search tools', {
+          connectorSlug: SEMANTIC_MODEL_SEARCH_MCP_CONNECTOR_SLUG,
+          semanticModelId,
+        });
+      }
+      return connector;
+    } catch (error) {
+      this.logger.warn('Failed to resolve the semantic model search connector; chat on the model has no search tools', {
+        connectorSlug: SEMANTIC_MODEL_SEARCH_MCP_CONNECTOR_SLUG,
+        semanticModelId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }
+
+  /**
+   * Remove arguments the back fixes (fixed_params) from the schema the model sees. The runtime merges
+   * `{...fixed_params, ...llm_params}`, so an argument left in the schema could be overridden by the model.
+   */
+  private hideFixedParamsFromModel(binding: Record<string, unknown>, keys: string[]): void {
+    const actions = Array.isArray(binding.actions) ? binding.actions as Array<Record<string, unknown>> : [];
+    for (const action of actions) {
+      let schema: Record<string, unknown>;
+      try {
+        schema = JSON.parse(String(action.parameter_schema_json || '{}')) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      const properties = { ...((schema.properties as Record<string, unknown> | undefined) ?? {}) };
+      for (const key of keys) delete properties[key];
+      const required = Array.isArray(schema.required) ? (schema.required as string[]).filter((key) => !keys.includes(key)) : undefined;
+      action.parameter_schema_json = JSON.stringify({ ...schema, properties, ...(required ? { required } : {}) });
+    }
   }
 
   private trustedMcpServerUrls(): Set<string> {

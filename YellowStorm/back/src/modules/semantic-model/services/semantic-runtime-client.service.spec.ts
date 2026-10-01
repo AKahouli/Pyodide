@@ -95,4 +95,69 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  describe('graph search', () => {
+    const query = {
+      actorUserId: 'u1', modelId: 'm1', environment: 'production' as const, query: 'acme', allowedWorkspaceIds: ['ws-1'],
+    };
+
+    it('searches as the actor with a longer deadline, even while runtime writes are off', async () => {
+      const timeout = jest.spyOn(AbortSignal, 'timeout');
+      fetchMock.mockResolvedValueOnce(jsonResponse({ status: 'found', seeds: [] }));
+      const client = new SemanticRuntimeClientService(config({ runtimeWritesEnabled: false }) as any);
+      await expect(client.graphSearch(query)).resolves.toMatchObject({ status: 'found' });
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe('http://runtime:8000/v1/semantic-model-search/query');
+      expect(init.method).toBe('POST');
+      expect(JSON.parse(init.body)).toEqual(query);
+      expect(init.headers).toEqual(expect.objectContaining({ 'X-Semantic-Service-Key': 'secret', 'X-Actor-User-Id': 'u1' }));
+      expect(timeout).toHaveBeenCalledWith(15_000);
+      timeout.mockRestore();
+    });
+
+    it('expands and reads the index state', async () => {
+      const client = new SemanticRuntimeClientService(config() as any);
+      fetchMock.mockResolvedValueOnce(jsonResponse({ status: 'found', nodes: [], edges: [] }));
+      await client.graphExpand({ actorUserId: 'u1', modelId: 'm1', environment: 'draft', seedEntityIds: ['e1'], steps: [{ direction: 'both' }] });
+      expect(fetchMock.mock.calls[0][0]).toBe('http://runtime:8000/v1/semantic-model-search/expand');
+
+      fetchMock.mockResolvedValueOnce(jsonResponse({ index: { state: 'ready' } }));
+      await expect(client.getGraphSearchIndex('m/1', 'draft', 'u1')).resolves.toMatchObject({ index: { state: 'ready' } });
+      const [url, init] = fetchMock.mock.calls[1];
+      expect(url).toBe('http://runtime:8000/v1/semantic-model-search/models/m%2F1/index?environment=draft');
+      expect(init.method).toBe('GET');
+      expect(init.body).toBeUndefined();
+    });
+
+    it('builds an index only when runtime writes are on', async () => {
+      const disabled = new SemanticRuntimeClientService(config({ runtimeWritesEnabled: false }) as any);
+      await expect(disabled.ensureGraphSearchIndex({ actorUserId: 'u1', modelId: 'm1', environment: 'production' }))
+        .rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE });
+      expect(fetchMock).not.toHaveBeenCalled();
+
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ jobId: 'j1', index: { state: 'queued' } }), { status: 202 }));
+      const client = new SemanticRuntimeClientService(config() as any);
+      await expect(client.ensureGraphSearchIndex({ actorUserId: 'u1', modelId: 'm1', environment: 'production' }))
+        .resolves.toMatchObject({ jobId: 'j1' });
+      expect(fetchMock.mock.calls[0][0]).toBe('http://runtime:8000/v1/semantic-model-search/indexes');
+    });
+
+    it('maps refused requests, missing bindings, revision changes and outages', async () => {
+      const client = new SemanticRuntimeClientService(config() as any);
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'unknown_relation' }), { status: 422 }));
+      await expect(client.graphSearch(query)).rejects.toMatchObject({
+        code: ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, message: 'One of the relationships named is not in this model',
+      });
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: [{ loc: ['body', 'query'] }] }), { status: 422 }));
+      await expect(client.graphSearch(query)).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED });
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'model_not_published' }), { status: 404 }));
+      await expect(client.graphSearch(query)).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_NOT_FOUND });
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'active_binding_changed' }), { status: 409 }));
+      await expect(client.graphSearch(query)).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT });
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'age_projection_unavailable' }), { status: 503 }));
+      await expect(client.graphSearch(query)).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE });
+      fetchMock.mockRejectedValueOnce(new Error('timeout'));
+      await expect(client.graphSearch(query)).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE });
+    });
+  });
 });

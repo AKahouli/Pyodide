@@ -6,7 +6,7 @@
       "role": "authoritative relational store: semantic_model definitions, semantic_jobs, runtime schemas, semantic_api curated reads",
       "version": "PostgreSQL 17.6",
       "age": "not installed and not required here",
-      "extensions": ["pgcrypto (installed by bootstrap)"]
+      "extensions": ["pgcrypto (installed by bootstrap)", "vector 0.8.0 (installed; graph search halfvec(2560), migration 022)", "pg_trgm 1.6 (installed; graph search name similarity)"]
     },
     "semantic_graph": {
       "role": "AGE projections only, via SEMANTIC_AGEGRAPH_DATABASE_URL",

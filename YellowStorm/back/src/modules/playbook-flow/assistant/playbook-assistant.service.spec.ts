@@ -500,6 +500,33 @@ describe('PlaybookAssistantService.runTurn', () => {
     expect(constructionService.start.mock.calls[0][2].intent).toContain(workspaceId);
   });
 
+  it('creates the new playbook when its answers come through the generic clarification tool or a construction call', async () => {
+    const { service, requestService, flowService } = createService();
+    const actor = { ownerId: 'user-1', agentId: 'agent-1', conversationId: 'conversation-1', correlationId: 'ai-message-2' };
+    requestService.getByContinuation.mockResolvedValueOnce({
+      requestId: 'generation-request-1', ownerId: 'user-1', operationKind: 'generation',
+      status: 'awaiting_clarification', originalText: 'Create a leadgen pipeline', requestedName: 'Lead generation',
+      expectedDefinitionRevision: null, playbookId: null,
+      assessment: { status: 'needs_clarification', questions: [{ id: 'trigger', required: true }] },
+      answers: [], attachmentIds: [],
+    });
+    requestService.getBound.mockResolvedValue({
+      requestId: 'generation-request-1', ownerId: 'user-1', operationKind: 'generation',
+      status: 'ready', originalText: 'Create a leadgen pipeline', requestedName: 'Lead generation',
+      assessment: { status: 'ready_to_construct' }, answers: [{ questionId: 'trigger', choice: 'Manual' }],
+      mutationOperationId: null,
+    });
+
+    await expect(service.continueClarificationAndStart('continuation-1', actor, { answers: [{ questionId: 'trigger', choice: 'Manual' }] }))
+      .resolves.toEqual(expect.objectContaining({ status: 'planning', playbookId: 'playbook-1', requestId: 'generation-request-1' }));
+    expect(flowService.create).toHaveBeenCalledTimes(1);
+
+    flowService.create.mockClear();
+    await expect(service.startBoundConstruction('generation-request-1', actor))
+      .resolves.toEqual(expect.objectContaining({ status: 'planning', playbookId: 'playbook-1' }));
+    expect(flowService.create).toHaveBeenCalledTimes(1);
+  });
+
   it('shows the sources card for a question that asks for a source, with the choices by name only', async () => {
     const { service, requestService } = createService();
     const waiting = {

@@ -23,6 +23,7 @@ Any playbook_id parameter also accepts the Playbook's exact name, and any task_i
 
 Design: start_playbook_generation for a new Playbook, modify_playbook for a change. They may return
 clarification questions; ask them, then call the same tool again with the continuation_id and the answers.
+A new Playbook is created by start_playbook_generation only: never call start_playbook_construction for it.
 Changes are applied in the Playbook canvas through the returned handoff, with Undo there.
 
 Sources are the user's decision. Questions with a resourceSelector ask for a source or a destination: the
@@ -272,12 +273,29 @@ async def continue_playbook_clarification(
     answers: list[dict[str, Any]] | str,
     skip_clarification: bool = False,
 ) -> PlaybookMcpResultV1:
-    """Submit typed answers to the active trusted clarification continuation."""
-    return await call(backend().post(
-        f"/api/v1/internal/playbook-assistant/clarifications/{path_id(continuation_id)}",
-        require_acting_user_id(),
-        {"answers": coerce_answers(answers), "skip": skip_clarification},
-    ))
+    """Submit typed answers to the active trusted clarification continuation.
+
+    Prefer the tool that asked the questions: start_playbook_generation (new Playbook) or modify_playbook
+    (existing Playbook), with continuation_id and answers. For a new Playbook this tool also starts the draft
+    once the answers are complete and returns the canvas handoff; do not call start_playbook_construction after it.
+    """
+    def add_canvas_handoff(result: dict[str, Any]) -> dict[str, Any]:
+        operation_id = result.get("operationId")
+        playbook_id = result.get("playbookId")
+        if isinstance(operation_id, str) and isinstance(playbook_id, str):
+            result["uiTarget"] = canvas_target(result, playbook_id, operation_id)
+            result["eventStreamOwner"] = "playbook_canvas"
+            result["publicationStatus"] = "draft"
+        return result
+
+    return await call(
+        backend().post(
+            f"/api/v1/internal/playbook-assistant/clarifications/{path_id(continuation_id)}",
+            require_acting_user_id(),
+            {"answers": coerce_answers(answers), "skip": skip_clarification},
+        ),
+        add_canvas_handoff,
+    )
 
 
 @mcp.tool()
