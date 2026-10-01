@@ -1,10 +1,16 @@
 /** Conversation V2 template catalog limits and Ceph layout constants. */
 
+import {
+  SYSTEM_MANIFEST_PREFIX as TEMPLATE_MANIFEST_PREFIX,
+  templateRevisionId,
+  systemManifestKey as templateManifestKey,
+  TEMPLATE_REVISION_PREFIX,
+} from '@modules/app-runtime/constants/revision-id.constants';
+
+export { TEMPLATE_REVISION_PREFIX, TEMPLATE_MANIFEST_PREFIX };
+
 /** Slug charset enforced by the DB check constraint `c2_tpl_categories_slug_format`. */
 export const TEMPLATE_SLUG_REGEX = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-
-/** System manifest folder shared with the starter revisions. */
-export const TEMPLATE_MANIFEST_PREFIX = 'appbuilder/manifests/_system';
 
 /**
  * Synthetic workspace id used by the App Market clone preview. No session or
@@ -30,16 +36,10 @@ export const TEMPLATE_COVER_MIME_TYPES: Record<string, string> = {
 };
 
 /** Revision id for a template; resolved by RuntimeRevisionService. */
-export function templateRevisionId(templateId: string): string {
-  return `template_${templateId}`;
-}
+export { templateRevisionId };
 
-/** Prefix of every template revision id (`template_<templateId>`). */
-export const TEMPLATE_REVISION_PREFIX = 'template_';
-
-export function templateManifestKey(revisionId: string): string {
-  return `${TEMPLATE_MANIFEST_PREFIX}/${revisionId}.json`;
-}
+/** Manifest object key for a published template revision. */
+export { templateManifestKey };
 
 export function templateCoverKey(templateId: string, extension: string): string {
   return `${TEMPLATE_COVER_PREFIX}/${templateId}/cover${extension}`;

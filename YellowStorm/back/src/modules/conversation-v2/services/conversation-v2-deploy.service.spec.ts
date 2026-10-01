@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
 import { AppDataDeploymentService } from '@modules/app-data/services/app-data-deployment.service';
 import { PlatformBaselineService } from '@modules/app-runtime/platform-kit/platform-baseline.service';
+import { DEFAULT_STARTER_REVISION_ID } from '@modules/app-runtime/constants/starter-revisions';
 import { ConversationV2DeployService } from './conversation-v2-deploy.service';
 
 describe('ConversationV2DeployService', () => {
@@ -26,7 +27,7 @@ describe('ConversationV2DeployService', () => {
     getAuthorizedRevision: jest.fn(),
     readRevisionFileText: jest.fn(),
     listFiles: jest.fn(),
-    starterRevisionId: 'starter_react_vite_v6',
+    starterRevisionId: DEFAULT_STARTER_REVISION_ID,
   };
   let service: ConversationV2DeployService;
 

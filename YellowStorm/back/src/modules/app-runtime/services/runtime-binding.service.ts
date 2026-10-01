@@ -1,8 +1,11 @@
-import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomBytes } from 'crypto';
-import { PgConversationV2SessionStore } from '@modules/conversation-v2/persistence/postgres/pg-conversation-v2-session.store';
-import { TEMPLATE_REVISION_PREFIX } from '@modules/conversation-v2/constants/template-catalog.constants';
+import {
+  RUNTIME_SESSION_SEED_SOURCE,
+  type RuntimeSessionSeedSource,
+} from '../ports/runtime-session-seed.port';
+import { TEMPLATE_REVISION_PREFIX } from '../constants/revision-id.constants';
 import { type RuntimeBindingRecord } from '../persistence/runtime-binding.store';
 import { PlatformBaselineService } from '../platform-kit/platform-baseline.service';
 import { RuntimeRevisionService } from './runtime-revision.service';
@@ -49,8 +52,9 @@ export class RuntimeBindingService {
     private readonly revisions: RuntimeRevisionService,
     private readonly baseline: PlatformBaselineService,
     private readonly config: ConfigService,
-    @Inject(forwardRef(() => PgConversationV2SessionStore))
-    private readonly sessions: PgConversationV2SessionStore,
+    @Optional()
+    @Inject(RUNTIME_SESSION_SEED_SOURCE)
+    private readonly sessionSeeds?: RuntimeSessionSeedSource,
   ) {}
 
   /**
@@ -99,7 +103,7 @@ export class RuntimeBindingService {
     userId: string,
     mcpTokenHash: string | null,
   ): Promise<RuntimeBindingRecord> {
-    const session = await this.sessions.findByAiSessionId(conversationSessionId);
+    const session = await this.sessionSeeds?.findSeedByAiSessionId(conversationSessionId);
     const seedRevisionId = session?.starterRevisionId ?? undefined;
 
     let binding = await this.upsertWithRetry(

@@ -45,6 +45,10 @@ const COLUMN_PROBES: Record<string, Array<{ schema: string; table: string; colum
   '0030_conversation_v2_templates': [
     { schema: 'conversation_v2', table: 'sessions', column: 'starter_revision_id' },
   ],
+  // 0042 only adds a column; without this probe the entry would be recorded unverified.
+  '0042_template_platform_report': [
+    { schema: 'conversation_v2', table: 'templates', column: 'platform_report' },
+  ],
 };
 
 async function main(): Promise<void> {

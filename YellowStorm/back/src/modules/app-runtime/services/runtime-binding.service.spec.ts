@@ -1,6 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
-import { PgConversationV2SessionStore } from '@modules/conversation-v2/persistence/postgres/pg-conversation-v2-session.store';
+import {
+  RUNTIME_SESSION_SEED_SOURCE,
+  type RuntimeSessionSeedSource,
+} from '../ports/runtime-session-seed.port';
 import { type RuntimeBindingStore } from '../persistence/runtime-binding.store';
 import { RuntimeBindingService } from './runtime-binding.service';
 import { RuntimeRevisionService } from './runtime-revision.service';
@@ -26,7 +29,7 @@ describe('RuntimeBindingService', () => {
   });
   const revisionExists = jest.fn().mockResolvedValue(true);
 
-  const findByAiSessionId = jest.fn();
+  const findSeedByAiSessionId = jest.fn();
   const applyBaseline = jest.fn();
 
   const store: RuntimeBindingStore = {
@@ -49,7 +52,7 @@ describe('RuntimeBindingService', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     ensureWorkspaceRevision.mockResolvedValue({ revisionId: STARTER });
-    findByAiSessionId.mockResolvedValue(null);
+    findSeedByAiSessionId.mockResolvedValue(null);
     applyBaseline.mockResolvedValue({
       revisionId: 'rev_1',
       plan: { files: [], violations: [], warnings: [] },
@@ -69,7 +72,10 @@ describe('RuntimeBindingService', () => {
         },
         { provide: PlatformBaselineService, useValue: { applyBaseline } },
         { provide: ConfigService, useValue: config },
-        { provide: PgConversationV2SessionStore, useValue: { findByAiSessionId } },
+        {
+          provide: RUNTIME_SESSION_SEED_SOURCE,
+          useValue: { findSeedByAiSessionId } as unknown as RuntimeSessionSeedSource,
+        },
       ],
     }).compile();
 
@@ -181,7 +187,7 @@ describe('RuntimeBindingService', () => {
   });
 
   it('seeds the binding revision from the session template revision', async () => {
-    findByAiSessionId.mockResolvedValueOnce({ starterRevisionId: 'template_tpl_1' });
+    findSeedByAiSessionId.mockResolvedValueOnce({ starterRevisionId: 'template_tpl_1' });
     upsertByWorkspaceId.mockResolvedValueOnce({
       bindingId: 'arb_aabbccddeeff',
       workspaceId: 'sess_1',
@@ -190,7 +196,7 @@ describe('RuntimeBindingService', () => {
 
     const result = await svc.bind({ conversationSessionId: 'sess_1', userId: 'user_1' });
 
-    expect(findByAiSessionId).toHaveBeenCalledWith('sess_1');
+    expect(findSeedByAiSessionId).toHaveBeenCalledWith('sess_1');
     const call = upsertByWorkspaceId.mock.calls[0][0];
     expect(call.latestRevisionId).toBe('template_tpl_1');
     expect(ensureWorkspaceRevision).toHaveBeenCalledWith('sess_1', 'template_tpl_1');
@@ -207,7 +213,7 @@ describe('RuntimeBindingService', () => {
   });
 
   it('promotes a stale system-starter binding to the session template seed', async () => {
-    findByAiSessionId.mockResolvedValueOnce({ starterRevisionId: 'template_tpl_1' });
+    findSeedByAiSessionId.mockResolvedValueOnce({ starterRevisionId: 'template_tpl_1' });
     // Conflict upsert keeps the previous starter revision (by design).
     upsertByWorkspaceId.mockResolvedValueOnce({
       bindingId: 'arb_aabbccddeeff',
@@ -229,7 +235,7 @@ describe('RuntimeBindingService', () => {
   });
 
   it('does not promote when the agent already owns a workspace revision', async () => {
-    findByAiSessionId.mockResolvedValueOnce({ starterRevisionId: 'template_tpl_1' });
+    findSeedByAiSessionId.mockResolvedValueOnce({ starterRevisionId: 'template_tpl_1' });
     upsertByWorkspaceId.mockResolvedValueOnce({
       bindingId: 'arb_aabbccddeeff',
       workspaceId: 'sess_1',

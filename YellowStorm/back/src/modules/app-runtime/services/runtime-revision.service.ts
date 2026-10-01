@@ -10,13 +10,13 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { DocumentService } from '@modules/document/document.service';
 import {
-  CONVERSATION_V2_TEMPLATE_STORE,
-  type ConversationV2TemplateStore,
-} from '@modules/conversation-v2/persistence/conversation-v2-template.store';
+  SYSTEM_REVISION_SOURCE,
+  type SystemRevisionSource,
+} from '../ports/system-revision-source.port';
 import {
   TEMPLATE_REVISION_PREFIX,
-  templateManifestKey,
-} from '@modules/conversation-v2/constants/template-catalog.constants';
+  systemManifestKey as templateManifestKey,
+} from '../constants/revision-id.constants';
 import {
   DEFAULT_STARTER_MANIFEST_KEY,
   DEFAULT_STARTER_REVISION_ID,
@@ -59,8 +59,8 @@ export class RuntimeRevisionService {
     private readonly documents: DocumentService,
     private readonly config: ConfigService,
     @Optional()
-    @Inject(CONVERSATION_V2_TEMPLATE_STORE)
-    private readonly templateStore?: ConversationV2TemplateStore,
+    @Inject(SYSTEM_REVISION_SOURCE)
+    private readonly systemRevisions?: SystemRevisionSource,
   ) {}
 
   get starterRevisionId(): string {
@@ -224,7 +224,7 @@ export class RuntimeRevisionService {
       if (await this.store.existsByWorkspaceAndRevision(workspaceId, revisionId)) {
         return true;
       }
-      const template = await this.templateStore?.findByRevisionId(revisionId);
+      const template = await this.systemRevisions?.findByRevisionId(revisionId);
       if (template?.status === 'published' && template.manifestObjectKey) {
         return true;
       }
@@ -556,7 +556,7 @@ export class RuntimeRevisionService {
    * templates published before that table existed.
    */
   private async loadTemplateRevision(revisionId: string): Promise<RevisionManifest> {
-    const revisionRow = await this.templateStore?.findRevisionByRevisionId(revisionId);
+    const revisionRow = await this.systemRevisions?.findRevision(revisionId);
     if (revisionRow) {
       return {
         revisionId: revisionRow.revisionId,
@@ -568,7 +568,7 @@ export class RuntimeRevisionService {
       };
     }
 
-    const template = await this.templateStore?.findByRevisionId(revisionId);
+    const template = await this.systemRevisions?.findByRevisionId(revisionId);
     // Draft templates are loadable so a super-admin can run the NodePod
     // validation; user-facing use is gated to published elsewhere.
     if (template && !template.manifestObjectKey) {

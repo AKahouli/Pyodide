@@ -8,9 +8,9 @@ import {
 } from '../constants/starter-react-vite-v1';
 import { type RuntimeSourceRevisionStore } from '../persistence/runtime-source-revision.store';
 import {
-  CONVERSATION_V2_TEMPLATE_STORE,
-  type ConversationV2TemplateStore,
-} from '@modules/conversation-v2/persistence/conversation-v2-template.store';
+  SYSTEM_REVISION_SOURCE,
+  type SystemRevisionSource,
+} from '../ports/system-revision-source.port';
 import { RuntimeRevisionService } from './runtime-revision.service';
 import { PgRuntimeSourceRevisionStore } from '../persistence/pg-runtime-source-revision.store';
 
@@ -33,11 +33,8 @@ describe('RuntimeRevisionService', () => {
   };
 
   const findByRevisionId = jest.fn();
-  const findRevisionByRevisionId = jest.fn();
-  const templateStore = {
-    findByRevisionId,
-    findRevisionByRevisionId,
-  } as unknown as ConversationV2TemplateStore;
+  const findRevision = jest.fn();
+  const systemRevisions: SystemRevisionSource = { findByRevisionId, findRevision };
 
   const config = {
     get: jest.fn((key: string) => {
@@ -64,7 +61,7 @@ describe('RuntimeRevisionService', () => {
     exists.mockResolvedValue(true);
     upload.mockResolvedValue({});
     findByRevisionId.mockResolvedValue(null);
-    findRevisionByRevisionId.mockResolvedValue(null);
+    findRevision.mockResolvedValue(null);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -75,7 +72,7 @@ describe('RuntimeRevisionService', () => {
         },
         { provide: DocumentService, useValue: { download, exists, upload } },
         { provide: ConfigService, useValue: config },
-        { provide: CONVERSATION_V2_TEMPLATE_STORE, useValue: templateStore },
+        { provide: SYSTEM_REVISION_SOURCE, useValue: systemRevisions },
       ],
     }).compile();
 
@@ -180,7 +177,7 @@ describe('RuntimeRevisionService', () => {
     const files = [
       { path: 'package.json', sha256: 'a'.repeat(64), objectKey: 'blobs/template', size: 5 },
     ];
-    findRevisionByRevisionId.mockResolvedValueOnce({
+    findRevision.mockResolvedValueOnce({
       revisionId: 'template_tpl_1',
       manifestObjectKey: 'appbuilder/manifests/_system/template_tpl_1.json',
       manifestHash: 'template-hash',
@@ -458,7 +455,7 @@ describe('RuntimeRevisionService', () => {
     const files = [
       { path: 'package.json', sha256: 'a'.repeat(64), objectKey: 'blobs/db', size: 3 },
     ];
-    findRevisionByRevisionId.mockResolvedValueOnce({
+    findRevision.mockResolvedValueOnce({
       revisionId: 'template_tpl_1',
       manifestObjectKey: 'appbuilder/manifests/_system/template_tpl_1.json',
       manifestHash: 'db-hash',

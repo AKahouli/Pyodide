@@ -1,3 +1,8 @@
+import {
+  APPLICATION_COMPONENT_EVENT_PUBLISHER,
+  APPLICATION_COMPONENT_EVENT_SOURCE,
+} from '@modules/app-runtime/ports/application-component-events.port';
+import { RUNTIME_SESSION_SEED_SOURCE } from '@modules/app-runtime/ports/runtime-session-seed.port';
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
@@ -18,6 +23,8 @@ import { ConversationV2DeployService } from './services/conversation-v2-deploy.s
 import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
 import { ConversationV2AppAiFeaturesService } from './services/conversation-v2-app-ai-features.service';
 import { ConversationV2TemplatePublishService } from './services/conversation-v2-template-publish.service';
+import { ConversationV2ApplicationComponentEvents } from './services/conversation-v2-application-component-events';
+import { ConversationV2SessionSeedSource } from './persistence/conversation-v2-session-seed.source';
 import { ConversationV2TemplateCategoryService } from './services/conversation-v2-template-category.service';
 import { ConversationV2TemplateService } from './services/conversation-v2-template.service';
 import { ConversationV2OwnerGuard } from './guards/conversation-v2-owner.guard';
@@ -86,6 +93,17 @@ import { ConversationV2PersistenceModule } from './persistence/conversation-v2-p
     ConversationV2TemplatePublishService,
     ConversationV2TemplateCategoryService,
     ConversationV2TemplateService,
+    ConversationV2SessionSeedSource,
+    ConversationV2ApplicationComponentEvents,
+    { provide: RUNTIME_SESSION_SEED_SOURCE, useExisting: ConversationV2SessionSeedSource },
+    {
+      provide: APPLICATION_COMPONENT_EVENT_PUBLISHER,
+      useExisting: ConversationV2ApplicationComponentEvents,
+    },
+    {
+      provide: APPLICATION_COMPONENT_EVENT_SOURCE,
+      useExisting: ConversationV2ApplicationComponentEvents,
+    },
   ],
   exports: [
     ConversationV2PersistenceModule,
@@ -101,6 +119,9 @@ import { ConversationV2PersistenceModule } from './persistence/conversation-v2-p
     ConversationV2AppShareService,
     ConversationV2TemplateCategoryService,
     ConversationV2TemplateService,
+    RUNTIME_SESSION_SEED_SOURCE,
+    APPLICATION_COMPONENT_EVENT_PUBLISHER,
+    APPLICATION_COMPONENT_EVENT_SOURCE,
   ],
 })
 export class ConversationV2Module {}
