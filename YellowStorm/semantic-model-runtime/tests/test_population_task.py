@@ -341,7 +341,6 @@ async def test_persist_population_revision_writes_canonical_rows():
     assert any("semantic_population.entities" in sql for sql in statements)
     assert any("semantic_population.assertions" in sql for sql in statements)
     assert any("semantic_population.relationships" in sql for sql in statements)
-    assert any("semantic_search.entity_projections" in sql for sql in statements)
     assert any("validation_state" in sql for sql in statements)
 
 

@@ -936,10 +936,6 @@ export class AgentService {
             platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
             ...(semanticSchemaName ? {
               semantic_model_schema_name: semanticSchemaName,
-              // Published semantic graphs are searched by the semantic runtime, authenticated with its service key.
-              semantic_search_url: `${this.configService.get<string>('SEMANTIC_MODEL_RUNTIME_URL', '').replace(/\/$/, '')}/v1/graphs/search/fused`,
-              semantic_search_token: this.configService.get<string>('SEMANTIC_RUNTIME_SERVICE_KEY', ''),
-              semantic_search_timeout_seconds: String(this.configService.get<number>('SEMANTIC_SEARCH_TIMEOUT_SECONDS', 300)),
             } : {}),
             ...(resolvedModel?.omitTemperature
               ? { omit_temperature: 'true' }

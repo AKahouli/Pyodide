@@ -858,8 +858,6 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict) -
                                                   model_correction_sequence, revision_id_for,
                                                   set_revision_validation, store_assertions,
                                                   store_entities, store_relationships)
-    from app.persistence.search_store import store_entity_projections
-    from app.search.projections import build_entity_projections
     from app.population.corrections import apply_corrections
 
     payload = command_dump.get("payload", {})
@@ -901,9 +899,6 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict) -
     from app.persistence.index_observations import record_index_observation
     for observation in outcome.get("indexObservations", []):
         await record_index_observation(pool, observation)
-    await store_entity_projections(
-        pool, build_entity_projections(outcome.get("entities", []),
-                                       model_id=model_id, revision_id=revision_id))
     await set_revision_validation(pool, revision_id, "valid")
     return revision_id
 

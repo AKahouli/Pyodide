@@ -100,7 +100,6 @@ export const configValidationSchema = Joi.object({
   SEMANTIC_MODEL_NATIVE_SEARCH_LOG_QUERY: Joi.boolean().default(false),
   SEMANTIC_MODEL_DOCUMENT_EXTRACTION_AGENT_ID: Joi.string().allow('').optional(),
   SEMANTIC_MODEL_DOCUMENT_EXTRACTION_TIMEOUT_MS: Joi.number().min(5000).max(1800000).default(180000),
-  SEMANTIC_SEARCH_TIMEOUT_SECONDS: Joi.number().min(1).max(1800).default(300),
 
   // Encryption
   ENCRYPTION_KEY: Joi.string()

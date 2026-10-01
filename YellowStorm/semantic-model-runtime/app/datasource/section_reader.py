@@ -15,8 +15,6 @@ from typing import Any
 MAX_OUTLINE_NODES = 5000
 MAX_CLOSURE_SECTIONS = 500
 MAX_BLOCKS = 2000
-MAX_EVIDENCE_BLOCKS = 200
-MAX_EVIDENCE_CHARS = 4000
 MAX_COMPLETE_SECTION_BLOCKS = 5000
 
 
@@ -249,58 +247,3 @@ def _origin_for(block_type: Any) -> str:
     if "generated" in text:
         return "generated_visual_description"
     return "native_text"
-
-
-async def read_evidence(connection: Any, *, document_pk: Any, block_pks: list[int],
-                        max_chars: int = MAX_EVIDENCE_CHARS,
-                        visual_content_pending: bool = False) -> dict[str, Any]:
-    """Read bounded evidence packets for explicit block locators (P4.21).
-
-    Only directly assigned blocks are returned; section titles travel on their
-    own because headings may not exist as stored blocks. Zero packets is
-    reported as zero, never as proof nothing relevant exists (P4.20). The
-    ``blockPk`` is a database id that dies on reindex and is always paired with
-    the parser-local ``blockKey`` and ``sectionKey`` (P4.14).
-    """
-    if not _valid_document_pk(document_pk):
-        raise SectionReadError("invalid_document_pk")
-    if not isinstance(block_pks, list) or not block_pks:
-        raise SectionReadError("invalid_block_selection")
-    if len(block_pks) > MAX_EVIDENCE_BLOCKS:
-        raise SectionReadError("block_selection_too_large")
-    if any(isinstance(pk, bool) or not isinstance(pk, int) or pk <= 0 for pk in block_pks):
-        raise SectionReadError("invalid_block_selection")
-    _bounded_int(max_chars, "max_chars", maximum=MAX_EVIDENCE_CHARS)
-    wanted = list(dict.fromkeys(block_pks))
-    rows = await connection.fetch(
-        "SELECT b.id AS block_pk, b.block_id AS block_key, b.section_id AS section_key, "
-        "s.id AS section_pk, b.block_type, b.content, b.page_number "
-        "FROM logical_blocks b "
-        "LEFT JOIN logical_sections s "
-        "  ON s.document_id = b.document_id AND s.section_id = b.section_id "
-        "WHERE b.document_id = $1 AND b.id = ANY($2::bigint[]) "
-        "ORDER BY b.page_number NULLS LAST, b.id LIMIT $3",
-        document_pk, wanted, len(wanted),
-    )
-    packets = []
-    for row in rows:
-        content = row.get("content")
-        text = "" if content is None else str(content)
-        packets.append({
-            "locator": {"documentPk": document_pk, "sectionPk": row.get("section_pk"),
-                        "sectionKey": row.get("section_key"), "blockPk": row["block_pk"],
-                        "blockKey": row.get("block_key"), "pageNumber": row.get("page_number")},
-            "origin": _origin_for(row.get("block_type")),
-            "rawText": text[:max_chars],
-            "truncated": len(text) > max_chars,
-        })
-    return {
-        "documentPk": document_pk,
-        "packets": packets,
-        "coverage": {
-            "directBlocksComplete": len(packets) == len(wanted),
-            "requiredSubsectionsComplete": True,
-            "unresolvedReferences": [],
-            "visualContentPending": bool(visual_content_pending),
-        },
-    }

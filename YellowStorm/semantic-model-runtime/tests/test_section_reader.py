@@ -3,21 +3,18 @@ from __future__ import annotations
 import pytest
 
 from app.datasource.section_reader import (SectionReadError, analyze_outline, get_outline,
-                                           read_complete_section_set, read_evidence, read_sections,
+                                           read_complete_section_set, read_sections,
                                            structural_closure)
 
 
 class FakeConnection:
-    def __init__(self, *, sections=None, blocks=None, evidence=None) -> None:
+    def __init__(self, *, sections=None, blocks=None) -> None:
         self.sections = sections or []
         self.blocks = blocks or []
-        self.evidence = evidence or []
         self.calls: list[tuple[str, tuple]] = []
 
     async def fetch(self, sql: str, *params):  # type: ignore[no-untyped-def]
         self.calls.append((sql, params))
-        if "AS block_pk" in sql:
-            return self.evidence
         if "FROM logical_blocks" in sql:
             limit, offset = params[-2:]
             return self.blocks[offset:offset + limit]
@@ -124,39 +121,6 @@ async def test_complete_section_set_follows_continuations(monkeypatch: pytest.Mo
     assert [block["blockKey"] for block in result["sections"][0]["blocks"]] == ["b1", "b2", "b3"]
     assert result["sections"][0]["blocks"][0]["origin"] == "ocr"
     assert result["coverage"]["directBlocksComplete"] is True
-
-
-@pytest.mark.asyncio
-async def test_read_evidence_maps_origin_and_bounds_text():
-    conn = FakeConnection(evidence=[
-        {"block_pk": 10, "block_key": "p1_b1", "section_key": "sec_1", "section_pk": 1,
-         "block_type": "text/text", "content": "x" * 50, "page_number": 1},
-        {"block_pk": 11, "block_key": "p2_b1", "section_key": "sec_2", "section_pk": 2,
-         "block_type": "text/text/OCR", "content": "short", "page_number": 2},
-    ])
-    result = await read_evidence(conn, document_pk=42, block_pks=[10, 11, 99], max_chars=10)
-    assert result["packets"][0]["origin"] == "native_text"
-    assert result["packets"][0]["rawText"] == "x" * 10
-    assert result["packets"][0]["truncated"] is True
-    assert result["packets"][1]["origin"] == "ocr"
-    assert result["packets"][1]["truncated"] is False
-    assert result["packets"][0]["locator"] == {"documentPk": 42, "sectionPk": 1,
-                                               "sectionKey": "sec_1", "blockPk": 10,
-                                               "blockKey": "p1_b1", "pageNumber": 1}
-    assert result["coverage"]["directBlocksComplete"] is False
-    assert conn.calls[0][1] == (42, [10, 11, 99], 3)
-
-
-@pytest.mark.asyncio
-async def test_read_evidence_rejects_invalid_selection():
-    conn = FakeConnection()
-    with pytest.raises(SectionReadError):
-        await read_evidence(conn, document_pk=42, block_pks=[])
-    with pytest.raises(SectionReadError):
-        await read_evidence(conn, document_pk=42, block_pks=[0])
-    with pytest.raises(SectionReadError):
-        await read_evidence(conn, document_pk=42, block_pks=[1], max_chars=99999)
-    assert conn.calls == []
 
 
 @pytest.mark.asyncio
