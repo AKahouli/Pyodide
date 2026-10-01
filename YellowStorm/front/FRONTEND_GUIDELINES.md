@@ -150,7 +150,7 @@ Gated behind feature flags (e.g. `xstateExecutionEnabled`, `xstateAutosaveEnable
 
 ### Feature flags — two layers
 
-The frontend has two distinct feature-flag layers. Do not mix them. Both layers currently use Vite build-time environment substitution unless a separate `MY_APP_*` runtime placeholder is explicitly implemented.
+The frontend has two distinct feature-flag layers. Do not mix them. Both layers currently use Vite build-time environment substitution unless a runtime `/config.js` entry is added for container-only settings.
 
 **Shared cross-module rollout flags** live in `src/config/` as frozen objects backed by `import.meta.env.VITE_*`:
 
@@ -161,7 +161,7 @@ These are consumed across module boundaries (e.g. `workspace` reads Data Room fl
 
 **Module-local state-migration flags** live in `<module>/features.ts` (currently `playbook`, with a separate app-runtime rollout switch under `conversation-v2`). These gate staged migrations between Zustand and TanStack Query / XState. They are also build-time `VITE_*` values.
 
-When adding a flag: shared rollouts go in `src/config/<domain>Features.ts`; state-layer migrations go in `<module>/features.ts`. Declare the `VITE_*` env key in `src/vite-env.d.ts`, document how the build receives it, and list it in the deployment env template. If operations must change the value without rebuilding the image, use an explicit `MY_APP_*` placeholder handled by `env.sh` instead of `import.meta.env`.
+When adding a flag: shared rollouts go in `src/config/<domain>Features.ts`; state-layer migrations go in `<module>/features.ts`. Declare the `VITE_*` env key in `src/vite-env.d.ts`, document how the build receives it, and list it in the deployment env template. For runtime-only public settings (API URL), use `VITE_*` on the container and `env.sh` → `/config.js`.
 
 Example shared rollout pattern from `dataRoomFeatures.ts`:
 
@@ -392,9 +392,9 @@ Frontend configuration has two distinct delivery mechanisms:
 | Kind | Mechanism | Change time |
 |------|-----------|-------------|
 | Local and build-time flags | `import.meta.env.VITE_*` | Vite build |
-| Production API/socket URLs and other runtime settings | Literal `MY_APP_*` placeholders replaced by `env.sh` | Container startup |
+| Production API/socket URLs | Container `VITE_API_URL` / `VITE_SOCKET_BASE_URL` → `/config.js` via `env.sh` | Container startup |
 
-Vite substitutes `import.meta.env.VITE_*` while building. The production Dockerfile does not copy the repository `.env`, so a production flag must be supplied by the build environment or deliberately converted to a runtime placeholder. `env.sh` only replaces literals beginning with `MY_APP_`; it cannot update an already compiled `VITE_*` expression. Never put secrets in either mechanism — frontend configuration is public to the browser.
+Vite substitutes `import.meta.env.VITE_*` while building. The production Dockerfile does not copy the repository `.env`; supply values via build args and/or container env. At start, `env.sh` writes `window.__APP_CONFIG__` in `/config.js` from `VITE_API_URL` (runtime overrides build-time when both are set). Never put secrets in either mechanism — frontend configuration is public to the browser.
 
 Every `VITE_*` key read in code must be declared in `src/vite-env.d.ts` and listed in the deployment/build env template. Current debt extends beyond Data Room and governed-conversation flags: API/socket/app URLs, Worky MCP, Conversation V2 app runtime, and several Playbook migration flags are also undeclared or undocumented. Fix this when touching those areas; do not replicate the drift.
 
@@ -456,7 +456,7 @@ These patterns capture how specific modules extend or deviate from the base rule
 There is no separate React widget app on the frontend. The widget is **generated vanilla-JS output** administered from the agent module:
 
 - `AgentDeploymentSection` issues a one-time widget token then calls `buildWidgetCdnSnippet()` to produce a `<script>` snippet. The CDN host is the current origin or `VITE_APP_URL`.
-- `agent/constants/widget-template.ts` is a standalone DOM/CSS/JS runtime that builds its own launcher/dialog markup. It uses the runtime placeholder `MY_APP_VITE_API_URL` (same pattern as the rest of the frontend).
+- `agent/constants/widget-template.ts` is a standalone DOM/CSS/JS runtime that builds its own launcher/dialog markup. It resolves the API base from `window.__APP_CONFIG__.API_URL` (same as the SPA) or the script origin.
 - When extending the widget runtime, remember it is **not** React: no hooks, no JSX, no module bundler assumptions beyond what the template emits. Test the generated snippet in isolation.
 
 ### 20.4 Browser session viewer (workspace web import)
@@ -481,7 +481,7 @@ There is no separate React widget app on the frontend. The widget is **generated
 - [ ] Errors surfaced (toast or inline); error codes from `ErrorCode` enum.
 - [ ] Autosaved editors store editable data in one draft/form state object; no editable field is saved only through an ad-hoc dependency list.
 - [ ] Backend error codes mirrored in `src/lib/error-codes.ts` and EN + FR `errors.json` (see §13 parity rule).
-- [ ] Every `VITE_*` env key read in code is declared in `src/vite-env.d.ts`, supplied at build time, and listed in the deployment/build env template; runtime-configurable values use explicit `MY_APP_*` placeholders.
+- [ ] Every `VITE_*` env key read in code is declared in `src/vite-env.d.ts`, supplied at build time, and listed in the deployment/build env template; container runtime uses the same `VITE_*` names via `/config.js`.
 - [ ] Shared rollout flags live in `src/config/*Features.ts`; module state-migration flags live in `<module>/features.ts` — not mixed.
 - [ ] If touching streaming/realtime behavior: conversation-v2 connection hook mounted exactly once at the app shell; browser-session viewport constants match backend (Pattern 6); app-runtime ticket and registration semantics remain aligned (Pattern 7).
 - [ ] If touching the widget template (`agent/constants/widget-template.ts`): changes must work as standalone vanilla JS, no React/JSX.

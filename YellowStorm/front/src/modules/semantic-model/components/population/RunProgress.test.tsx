@@ -17,7 +17,8 @@ describe('RunProgress', () => {
     }} />);
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100');
     expect(screen.getByText('25%')).toBeInTheDocument();
-    expect(screen.getByText('1,234')).toBeInTheDocument();
+    // toLocaleString() groups with a comma or a (narrow) space per runner locale.
+    expect(screen.getByText(/^1[,\s]234$/)).toBeInTheDocument();
     expect(screen.getByText('agreement-101.pdf')).toBeInTheDocument();
     expect(screen.getByLabelText('population.progress.reusedOne')).toBeInTheDocument();
     expect(screen.getByLabelText('population.progress.issueOne')).toBeInTheDocument();

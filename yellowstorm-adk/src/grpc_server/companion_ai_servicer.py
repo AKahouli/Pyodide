@@ -21,7 +21,7 @@ from src.grpc_generated import companion_ai_pb2 as pb
 from src.grpc_generated import companion_ai_pb2_grpc as pb_grpc
 from src.companion_ai import mail_token
 from src.companion_ai.readmodel import ReadModel
-from src.companion_ai.service import OrchestratorService, _with_requester, active_turn_id
+from src.companion_ai.adk.service import OrchestratorService, _with_requester, active_turn_id
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +219,8 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         # STEP 1 — the user's message arrives. Everything downstream is driven by
         # this one request; the RPC itself only ever returns an ack.
         run_id = request.turn_id or uuid.uuid4().hex
+        _engine = "langgraph" if type(self._svc).__name__ == "LgService" else "adk"
+        logger.info("[worky] 1. RunTask ◄ engine=%s (%s)", _engine, type(self._svc).__name__)
         logger.info("[worky] 1. RunTask ◄ incoming request: %s", _describe_request(request))
         logger.info("[worky] 1. RunTask ◄ models: %s", _agent_models(request))
         # LOCAL CAPTURE (do NOT commit) — refresh connector tokens for the E2E
@@ -291,13 +293,21 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
         token = active_turn_id.set(run_id)
         try:
             planner = _agent_by_type(request.agents, PLANNER_AGENT_TYPE)
+            executor = _agent_by_type(request.agents, EXECUTOR_AGENT_TYPE)
+            requester = _requester(request)
+            # connectors/executor_prompt/model are used ONLY by the LangGraph engine
+            # (to drive amend-added steps itself); the ADK engine ignores them (its
+            # running drive loop already carries them).
             plan = await self._svc.converse_turn(
                 session_id=request.session_id, user_id=request.user_id,
                 message=request.message,
                 planner_model=planner.chatbot.model if planner else None,
                 planner_prompt=planner.prompt if planner else None,
                 planner_connectors=_agent_connector_bindings(planner),
-                requester=_requester(request))
+                requester=requester,
+                connectors=_agent_connector_bindings(executor),
+                executor_prompt=_with_requester(executor.prompt if executor else None, requester),
+                model=executor.chatbot.model if executor and executor.chatbot else None)
             logger.info("[worky] converse turn done (session=%s run=%s)",
                         request.session_id, run_id)
             # An amend that adds work to a PARKED plan promised "runs on resume",
@@ -647,6 +657,7 @@ class CompanionAiServicer(pb_grpc.CompanionAiServicer):
                 answer=answer, model=model,
                 connectors=_agent_connector_bindings(executor),
                 interrupt_id=wait["interrupt_id"],
+                step_id=wait["step_id"],
                 executor_prompt=executor.prompt if executor else None)
             logger.info("[worky] DeliverMailReply turn done (session=%s step=%s)",
                         session_id, wait["step_id"])

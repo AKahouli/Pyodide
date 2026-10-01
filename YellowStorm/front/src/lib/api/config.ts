@@ -2,41 +2,105 @@
  * API Configuration
  */
 
+declare global {
+  interface Window {
+    __APP_CONFIG__?: {
+      API_URL?: string;
+      SOCKET_BASE_URL?: string;
+      [key: string]: unknown;
+    };
+  }
+}
+
+const isDev = process.env.NODE_ENV === 'development';
+
+const LOOPBACK_BASE_URL = /^https?:\/\/(?:localhost|127\.0\.0\.1)(?::|\/|$)/i;
+
+/** HTTP(S) URL or root-relative path (e.g. /api/v1 behind a reverse proxy). */
+export function isValidApiUrl(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  return /^https?:\/\//i.test(trimmed) || trimmed.startsWith('/');
+}
+
+/**
+ * Resolve the public backend URL the browser must call.
+ *
+ * Precedence:
+ * 1. `window.__APP_CONFIG__.API_URL` from `/config.js` (container `VITE_API_URL` via env.sh)
+ * 2. Build-time `import.meta.env.VITE_API_URL` (`.env` or Docker `--build-arg`)
+ * 3. Dev default `http://localhost:3000/api/v1`
+ * 4. Empty string in production when unset
+ */
+export function resolveApiBaseUrl(
+  runtimeUrl: string = (typeof window !== 'undefined' && window.__APP_CONFIG__?.API_URL) || '',
+  buildTimeUrl: string = import.meta.env.VITE_API_URL ?? '',
+  dev: boolean = isDev,
+): string {
+  const runtimeValue = runtimeUrl.trim();
+  if (isValidApiUrl(runtimeValue)) {
+    return runtimeValue;
+  }
+
+  const buildTimeValue = buildTimeUrl.trim();
+  if (isValidApiUrl(buildTimeValue)) {
+    return buildTimeValue;
+  }
+
+  return dev ? 'http://localhost:3000/api/v1' : '';
+}
+
+const baseURL = resolveApiBaseUrl();
+
+export function isApiConfigured(): boolean {
+  return isValidApiUrl(API_CONFIG.baseURL);
+}
+
+if (import.meta.env.PROD && !isValidApiUrl(baseURL)) {
+  console.error(
+    '[api-config] No backend URL configured. Set VITE_API_URL on the container '
+      + '(e.g. -e VITE_API_URL=https://api.example.com/api/v1) or pass --build-arg VITE_API_URL=... when building the image.',
+  );
+} else if (import.meta.env.PROD && LOOPBACK_BASE_URL.test(baseURL)) {
+  console.error(
+    `[api-config] Production bundle is calling a loopback API URL (${baseURL}); the browser `
+      + 'cannot reach the backend. Set VITE_API_URL on the container or rebuild with a public API URL.',
+  );
+}
+
 export const API_CONFIG = {
-  baseURL: process.env.NODE_ENV === 'development'
-    ? import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1'
-    : 'MY_APP_VITE_API_URL',
+  baseURL,
   timeout: 30000,
   withCredentials: true, // Required for HTTP-only cookies (refresh token)
 } as const;
 
-/**
- * Prod: env.sh replaces this literal with a real origin (e.g. https://poc.back.yellowmind.ai).
- * Do not compare against another copy of the same placeholder — sed replaces both sides.
- * Prefer this over nginx /socket.io/ proxy: the image runs as `metafront` and cannot
- * sed /etc/nginx/conf.d/default.conf (Permission denied → container exit).
- */
-const SOCKET_BASE_INJECTED = 'MY_APP_SOCKET_BASE_URL';
-
-function isHttpUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value);
-}
-
 /** Origin for Socket.IO (app-runtime, browser-session). */
 export function getSocketBaseUrl(): string {
-  if (process.env.NODE_ENV === 'development') {
-    const devOverride = import.meta.env.VITE_SOCKET_BASE_URL?.trim();
-    if (devOverride && isHttpUrl(devOverride)) {
-      return new URL(devOverride).origin;
+  const windowSocketUrl = typeof window !== 'undefined'
+    ? window.__APP_CONFIG__?.SOCKET_BASE_URL?.trim()
+    : undefined;
+  if (windowSocketUrl && isValidApiUrl(windowSocketUrl)) {
+    try {
+      return new URL(windowSocketUrl, typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000').origin;
+    } catch {
+      /* fall through */
     }
-  } else if (isHttpUrl(SOCKET_BASE_INJECTED)) {
-    return new URL(SOCKET_BASE_INJECTED).origin;
+  }
+
+  const configured = (import.meta.env.VITE_SOCKET_BASE_URL ?? '').trim();
+  if (configured && isValidApiUrl(configured)) {
+    try {
+      return new URL(configured, typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000').origin;
+    } catch {
+      /* fall through */
+    }
   }
 
   const base = API_CONFIG.baseURL;
-  if (isHttpUrl(base)) {
+  if (isValidApiUrl(base)) {
     try {
-      return new URL(base).origin;
+      return new URL(base, typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000').origin;
     } catch {
       /* fall through */
     }

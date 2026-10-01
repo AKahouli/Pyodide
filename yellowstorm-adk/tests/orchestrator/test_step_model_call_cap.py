@@ -17,7 +17,7 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.tools import FunctionTool
 from google.genai import types
 
-from src.companion_ai import nodes as nodes_mod
+from src.companion_ai.adk import nodes as nodes_mod
 from src.companion_ai.plan import Step
 
 

@@ -2,17 +2,16 @@
 search over the platform's Postgres `agents` table), reached via a raw MCP
 client session per call.
 
-search_human_agents() backs two tools: `find_human_agents` (discovery — given
-to the planner and to any persona-assigned step, see service.py) and the
-resolution step inside `delegate_to_human_agent` (service.py:_delegate_tool_for).
+This is the CODE-side path to that directory. The LLM looks people up through
+the `human-agents_search_human_agents` connector tool; this module is for
+internal Python that must resolve a name/role OUTSIDE an agent's tool-call loop:
+- the planner projecting an `assignee` onto a step before any LLM runs, and
+- `delegate_to_human_agent` resolving who to contact (service.py:_delegate_tool_for).
+Both hit the SAME human-agents-mcp server; this just uses a raw MCP ClientSession
+instead of the agent's connector wrapper.
 
-The name-then-role-semantic-fallback policy (and the relevance floor) now
-lives server-side in human-agents-mcp — see its search_human_agents tool.
-
-Uses a raw MCP ClientSession rather than ADK's MCPToolset: this function is
-called directly by internal Python code (_delegate_tool_for, _make_plan), not
-only as an LLM-facing tool, so it needs to be callable outside an agent's
-tool-call loop.
+The name-then-role-semantic-fallback policy (and the relevance floor) lives
+server-side in human-agents-mcp — see its search_human_agents tool.
 
 ponytail: a fresh MCP session per call, no pooling — add one only if this
 endpoint turns out to be called often enough per turn to matter.
@@ -63,34 +62,3 @@ async def search_human_agents(*, name: Optional[str] = None, role: Optional[str]
     except Exception as e:
         logger.warning("search_human_agents failed name=%r role=%r: %s", name, role, e)
         return []
-
-
-def make_find_human_agents_tool():
-    """Discovery tool: given to the planner (to learn who exists before
-    writing a plan) and to persona-assigned steps (to find who to delegate
-    to) — see service.py's PLANNER_INSTRUCTION and _build_workflow."""
-    from src.smart_rag.tools.search.tools import SearchToolADK
-
-    async def find_human_agents(name: str = "", role: str = "") -> list:
-        logger.info("[worky] find_human_agents called name=%r role=%r", name, role)
-        agents = await search_human_agents(name=name or None, role=role or None)
-        logger.info("[worky] find_human_agents → %d match(es): %s", len(agents), agents)
-        return agents
-
-    schema = {"function": {
-        "name": "find_human_agents",
-        "description": (
-            "Look up available human agents by name and/or role. Use this to "
-            "find who a step/question should be assigned or delegated to — "
-            "there is no fixed roster, always check here first."),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "filter by (partial) name, or \"\" for any"},
-                "role": {"type": "string", "description": "filter by role, or \"\" for any"},
-            },
-            "required": [],
-            "additionalProperties": False,
-        },
-    }}
-    return SearchToolADK(find_human_agents, schema)

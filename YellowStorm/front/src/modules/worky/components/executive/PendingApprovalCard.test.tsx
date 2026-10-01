@@ -10,7 +10,8 @@ vi.mock('../../query/hooks', () => ({
   useSendMessage: () => ({ mutate, mutateAsync: vi.fn(), isPending: false }),
 }));
 vi.mock('../../store', () => ({
-  useWorkyStore: (selector: (s: unknown) => unknown) => selector({ beginTurn: vi.fn(), finishTurn: vi.fn() }),
+  useWorkyStore: (selector: (s: unknown) => unknown) =>
+    selector({ beginTurn: vi.fn(), finishTurn: vi.fn(), markConfirmSubmitted: vi.fn() }),
 }));
 vi.mock('../../uiStore', () => ({
   useWorkyUiStore: (selector: (s: unknown) => unknown) => selector({ notifySendError: vi.fn() }),

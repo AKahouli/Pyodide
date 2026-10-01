@@ -9,7 +9,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import pytest
 
-from src.companion_ai import scheduler, service as svc
+from src.companion_ai import scheduler
+from src.companion_ai.adk import service as svc
 from src.companion_ai.plan import Plan, Status, Step
 
 
@@ -1149,7 +1150,7 @@ def test_persona_create_task_await_reply_survives_a_real_turn_boundary():
     from google.adk.sessions import InMemorySessionService
     from google.genai import types
     import unittest.mock as mock
-    from src.companion_ai import nodes as nodes_mod
+    from src.companion_ai.adk import nodes as nodes_mod
 
     class _ScriptedLlm(BaseLlm):
         _n: int = PrivateAttr(default=0)
@@ -1290,7 +1291,7 @@ def test_mixed_planner_await_and_create_task_await_no_stuck_step_no_divergence()
     from google.adk.sessions import InMemorySessionService
     from google.genai import types
     import unittest.mock as mock
-    from src.companion_ai import nodes as nodes_mod
+    from src.companion_ai.adk import nodes as nodes_mod
 
     class _ScriptedLlm(BaseLlm):
         _n: int = PrivateAttr(default=0)
@@ -1787,7 +1788,7 @@ def test_a_step_producing_several_files_records_every_one():
 def test_a_single_file_result_is_captured_and_a_fileless_one_is_not():
     """send_file_to_user returns the path on the result itself, not in a list.
     Every other tool call returns no file at all and must produce no row."""
-    from src.companion_ai import nodes as n
+    from src.companion_ai.adk import nodes as n
 
     single = n.artifacts_from_tool_result(
         {"ceph_path": "ceph/x/report.pdf", "path": "/home/ubuntu/report.pdf"})
@@ -1802,7 +1803,7 @@ def test_a_single_file_result_is_captured_and_a_fileless_one_is_not():
 def test_a_projection_failure_never_fails_the_tool_call():
     """The file exists whether or not the row lands. Losing a step's real work
     because a read-model write failed is the worse trade."""
-    from src.companion_ai import nodes as n
+    from src.companion_ai.adk import nodes as n
 
     async def boom(_artifact):
         raise RuntimeError("read model down")

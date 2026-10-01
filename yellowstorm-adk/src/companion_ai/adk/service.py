@@ -35,9 +35,10 @@ from google.adk.agents import LlmAgent
 from google.genai import types
 from pydantic import BaseModel, Field
 
-from . import graph, hitl, human_agents, mail_token, nodes, scheduler
-from .plan import Plan, Status, Step
-from .readmodel import ReadModel
+from . import graph, hitl, nodes
+from .. import human_agents, mail_token, scheduler
+from ..plan import Plan, Status, Step
+from ..readmodel import ReadModel
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,8 @@ class _PlannerOp(BaseModel):
     op: str
     step_id: str
     description: str = ""
+    new: str = ""                                         # insert_before: the new gate step's id
+    depends_on: List[str] = Field(default_factory=list)   # reparent: the step's new dependencies
 
 
 class _PlannerOutput(BaseModel):
@@ -138,7 +141,7 @@ Rules:
   - "await_reply": pause until SOMEONE ELSE replies to an email a previous step
     sent. See below.
 - Use "await_reply" whenever the task depends on a REPLY to a mail you send to
-  a REAL external person (anyone find_human_agents does not find — see below) —
+  a REAL external person (anyone human-agents_search_human_agents does not find — see below) —
   "email X and then ...", "ask X by email and report back", "wait for their
   answer". Without it the plan would send the mail and carry on as if the answer
   had arrived, inventing one.
@@ -157,7 +160,7 @@ Rules:
   instead of leaving it as a restated pending item.
   Do NOT use it for mail you send that needs no answer (a notification, a
   report), and do NOT use it to wait for anything other than an email reply.
-  NEVER use it for a human agent found via find_human_agents — see below,
+  NEVER use it for a human agent found via human-agents_search_human_agents — see below,
   it is a completely different, single-step mechanism with no email involved.
 - ids are short unique strings. depends_on lists ids that MUST finish first;
   leave it [] for independent steps.
@@ -185,8 +188,8 @@ contacting them.
 
 MANDATORY FIRST CHECK — human agents, NO fixed roster: before you write ANY
 step whose job is to reach a named person, or a role (e.g. "the approver",
-"someone in support"), you MUST call find_human_agents(name=...) and/or
-find_human_agents(role=...) to check whether they are a human agent — never
+"someone in support"), you MUST call human-agents_search_human_agents(name=...) and/or
+human-agents_search_human_agents(role=...) to check whether they are a human agent — never
 assume, and never skip this because the wording sounds like a message to
 send. If the message names no one and implies no role at all, skip this
 check entirely.
@@ -199,13 +202,13 @@ an await_reply step around them yourself. Reach for email/a messaging
 connector (Teams, etc.) ONLY when the user explicitly says "email" / "send
 an email" / gives an actual email address — wording like "send it to X and
 ask her", "tell X", "ask X" is NOT an email instruction by itself; it means
-find_human_agents first, and if she's a match, delegate to her, full stop.
+human-agents_search_human_agents first, and if she's a match, delegate to her, full stop.
 Do not also try a connector's send_email/send_teams_message tool "just in
-case" — if find_human_agents found her, that IS the entire interaction, and
+case" — if human-agents_search_human_agents found her, that IS the entire interaction, and
 if it found no one, then and only then does an ordinary step / connector
 send make sense.
 
-When find_human_agents finds a match, that's ONE "execute" step: set
+When human-agents_search_human_agents finds a match, that's ONE "execute" step: set
 "assignee": "<their exact name>" and write "description" as the question/task
 addressed directly TO them (e.g. "Should we invest in Bitcoin today, given:
 <summary>?" — never "send/email/notify <name> and ask...", you are not
@@ -220,12 +223,12 @@ they handle actually reaching that person and getting their real decision
 themselves, inside their own step; from your plan's point of view, the
 single assignee step IS the question and IS the answer, both in that one
 step.
-If find_human_agents finds no match, treat it as an ordinary step (or, if the
+If human-agents_search_human_agents finds no match, treat it as an ordinary step (or, if the
 user clearly means to email a real external person by address, use the
 normal execute + await_reply pattern above).
 
 Example — "search bitcoin news, then send it to Rabeb and ask if we should
-invest today" — find_human_agents(name="Rabeb") found her, so this is
+invest today" — human-agents_search_human_agents(name="Rabeb") found her, so this is
 CORRECT (one assignee step, no email/Teams anywhere):
 {{"title": "Bitcoin investment check", "goal": "Get Rabeb's investment call on Bitcoin", "answer": "On it — I'll pull the latest Bitcoin news and get Rabeb's call.",
   "steps": [
@@ -236,7 +239,7 @@ WRONG for that same request (do NOT do this): a plain "execute" step titled
 something like "Send to Rabeb" with no "assignee", whose description tells
 the executor to email her or message her on Teams. The user never said
 "email" — that phrasing came only from misreading "send it to Rabeb" as a
-literal message to compose, instead of checking find_human_agents first.
+literal message to compose, instead of checking human-agents_search_human_agents first.
 
 Example — "email x asking which company she works for, then report on it":
 {{"title": "Company report", "goal": "Report on the company x works for", "answer": "Sure — I'll email x, wait for her reply, then research the company.",
@@ -471,10 +474,11 @@ class OrchestratorService:
         The per-connector fire-and-forget `schedule_<connector>_task` tool is
         deliberately NOT granted. It was broken and dangerous:
 
-        - long_running.start_task (and poller._poll_task) hardcode
+        - its task launcher (and poller._poll_task) hardcoded
           streamablehttp_client and never read the connector's
           mcp_transport_type, so on an SSE connector — which Microsoft365 is —
-          it POSTs to the /sse endpoint and dies with 405. Seen live.
+          it POSTs to the /sse endpoint and dies with 405. Seen live. (The
+          launcher module has since been removed as dead code.)
         - Worse if that were merely fixed: models were choosing it to SEND
           MAIL, reading "their reply can take hours or days" next to the
           prompt's "for a LONG-RUNNING action call schedule_*_task". Mail sent
@@ -663,8 +667,8 @@ class OrchestratorService:
                                           tool_context: ToolContext = None) -> str:
             matches = await human_agents.search_human_agents(name=agent_name)
             if not matches:
-                return (f"Unknown agent {agent_name!r} — no match via find_human_agents. "
-                        "Call find_human_agents first to discover who actually exists.")
+                return (f"Unknown agent {agent_name!r} — no match via human-agents_search_human_agents. "
+                        "Call human-agents_search_human_agents first to discover who actually exists.")
             agent = matches[0]
             agent_display_name = agent.get("name") or agent_name
             caller = plan.step(caller_step_id)
@@ -756,7 +760,7 @@ class OrchestratorService:
                     "later, so this does NOT hand their answer back to you: it becomes "
                     "its own step in the plan where their real answer lands. Call it, "
                     "then end your own turn reporting that you asked them — never wait "
-                    "for it and never guess what they will say. Use find_human_agents "
+                    "for it and never guess what they will say. Use human-agents_search_human_agents "
                     "first if you don't already know their exact name."),
                 "parameters": {
                     "type": "object",
@@ -1168,7 +1172,6 @@ class OrchestratorService:
             # not something to chain the next one after.
             siblings: set = set()
             return list(tools) + [
-                human_agents.make_find_human_agents_tool(),
                 self._delegate_tool_for(session_id, user_id, plan, factory_holder,
                                         name_to_step, step.id, siblings),
                 self._create_task_tool_for(session_id, user_id, plan, factory_holder,
@@ -1190,7 +1193,7 @@ class OrchestratorService:
                 "real work that was not part of your own step's original "
                 "description. Even when you already have the tool to do that "
                 "work yourself, spin it off instead of doing it inline: "
-                "find_human_agents + delegate_to_human_agent for a named "
+                "human-agents_search_human_agents + delegate_to_human_agent for a named "
                 "colleague's judgment, or create_task for anything else "
                 "(kind='await_reply' if it itself means emailing someone and "
                 "waiting on THEIR answer) — that keeps it tracked as its own "
@@ -1365,7 +1368,7 @@ class OrchestratorService:
                     session_id, plan.title, len(plan.steps))
         # A genuine direct reply (CASE A) has an ANSWER. Zero steps AND an empty
         # answer is a broken/empty planner response, not chit-chat — seen live:
-        # glm-5.3-go returned {steps:[], answer:"", ops:[{op:"find_human_agents"}]}
+        # glm-5.3-go returned {steps:[], answer:"", ops:[{op:"human-agents_search_human_agents"}]}
         # for "search solana and email Imed", so the turn silently 'completed'
         # having done and said nothing. Retry the planner once on a fresh session
         # (a flaky planner often succeeds on the second try); if it's STILL empty,
@@ -1463,7 +1466,13 @@ class OrchestratorService:
                             planner_model: Optional[str] = None,
                             planner_prompt: Optional[str] = None,
                             planner_connectors: Optional[List[dict]] = None,
-                            requester: Optional[dict] = None) -> Plan:
+                            requester: Optional[dict] = None,
+                            # Accepted for signature parity with the LangGraph engine
+                            # (LgService.converse_turn drives amend-added steps itself);
+                            # the ADK drive loop already carries these, so unused here.
+                            connectors: Optional[List[dict]] = None,
+                            executor_prompt: Optional[str] = None,
+                            model: Optional[str] = None) -> Plan:
         """A message that arrives WHILE a plan is executing.
 
         This is deliberately NOT the old supersede (cancel the running turn and
@@ -1581,33 +1590,46 @@ class OrchestratorService:
         lines = []
         for s in live.steps:
             label = s.title or (s.description[:60] if s.description else s.id)
-            lines.append(f"[{s.id}] {label} ({s.status.value})")
+            deps = ", ".join(s.depends_on) if s.depends_on else "—"
+            lines.append(f"[{s.id}] {label}  (status={s.status.value}; kind={s.kind}; "
+                         f"after=[{deps}])")
             if s.result:
                 lines.append(f"    result: {s.result}")
         context = "\n".join(lines)
         return (
-            "You are AMENDING a plan that is ALREADY RUNNING for the user. The "
-            "steps below already exist and their results (where produced) are "
-            "shown — they are DONE. Do NOT recreate or restate them.\n\n"
+            "You are AMENDING a plan that is ALREADY RUNNING for the user. Below is "
+            "the FULL current plan — every step with its status, kind, and its "
+            "dependencies, where after=[...] lists the step ids it runs AFTER. Steps "
+            "that show a result are DONE; never recreate or restate them.\n\n"
             f"--- running plan ---\n{context}\n--- end plan ---\n\n"
-            "The user now says the following. Usually you ADD work: return the "
-            "NEW step(s) needed for it as a normal plan. Where a new step needs an "
-            "existing result, paste that result directly into the step's "
-            "description (do not refer to it as 'the summary' — the executor can't "
-            "see other steps).\n\n"
-            "But if the user instead wants to CHANGE a step that is still "
-            "'pending' above, don't add a step — return an `ops` entry keyed by "
-            "that step's [id]:\n"
-            "  - to drop it:   {\"op\": \"cancel\", \"step_id\": \"<id>\"}\n"
-            "  - to reword it: {\"op\": \"modify\", \"step_id\": \"<id>\", "
-            "\"description\": \"<the step's full new instruction>\"}\n"
-            "Only a 'pending' step can be changed — a 'running' or 'completed' one "
-            "has already started, so amend it by adding a follow-up step instead. "
-            "You may combine `ops` and new `steps` in one response.\n\n"
-            "Give a short, friendly `answer`.\n\n"
+            "READ the structure above and decide WHERE the user's change belongs in "
+            "it, then return only the delta (new `steps` and/or `ops`). Placement:\n"
+            "- ADD work: return the new step(s). To run a new step AFTER an existing "
+            "one, set its \"depends_on\" to that step's [id]. If a new step needs an "
+            "existing result, paste that result into its description (the executor "
+            "can't see other steps).\n"
+            "- Run a new step BEFORE an existing PENDING step — i.e. gate/precede it "
+            "('ask me before X', 'check before the update', 'validate before sending', "
+            "'... avant X') — put the new step in `steps` AND add {\"op\": "
+            "\"insert_before\", \"step_id\": \"<the existing step's id>\", \"new\": "
+            "\"<the new step's id>\"}. The existing step will then wait for your new "
+            "step, and the new step automatically inherits that step's current "
+            "after=[...] (so any gate already before it stays intact). This is the "
+            "ONLY correct way to insert before a step — do NOT just add a standalone "
+            "step (it would run in parallel, not before), and do NOT cancel+recreate "
+            "it (that drops its dependencies).\n"
+            "- CHANGE a pending step in place: {\"op\": \"cancel\", \"step_id\": "
+            "\"<id>\"} to drop it; {\"op\": \"modify\", \"step_id\": \"<id>\", "
+            "\"description\": \"<new full instruction>\"} to reword it; {\"op\": "
+            "\"reparent\", \"step_id\": \"<id>\", \"depends_on\": [\"<ids>\"]} to "
+            "change what it waits on.\n"
+            "Only a PENDING step can be changed or gated — a running/completed one has "
+            "already started, so amend it by adding a follow-up step instead. Combine "
+            "`ops` and new `steps` freely. Give a short, friendly `answer`.\n\n"
             f"USER MESSAGE: {message}")
 
-    async def _inject_steps(self, session_id: str, user_id: str, live: Plan, new_steps: List[Step]) -> int:
+    async def _inject_steps(self, session_id: str, user_id: str, live: Plan, new_steps: List[Step],
+                            id_map_out: Optional[dict] = None) -> int:
         """Append planner-produced steps to a LIVE, executing plan.
 
         The drive loop (_drive_until_quiescent) rebuilds the workflow each pass
@@ -1642,6 +1664,8 @@ class OrchestratorService:
                            if s.status in (Status.COMPLETED, Status.RUNNING)
                            and not any(s.id in o.depends_on for o in live.steps)]
         id_map = {s.id: uuid.uuid4().hex[:12] for s in new_steps}
+        if id_map_out is not None:            # let converse resolve new ids for its ops
+            id_map_out.update(id_map)
         for s in new_steps:
             s.id = id_map[s.id]
             # Keep in-batch deps (remapped) AND planner-named live-plan deps; only
@@ -1668,7 +1692,8 @@ class OrchestratorService:
                     len(new_steps), session_id, [s.id for s in new_steps])
         return len(new_steps)
 
-    async def _apply_ops(self, session_id: str, live: Plan, ops: List[dict]) -> List[str]:
+    async def _apply_ops(self, session_id: str, live: Plan, ops: List[dict],
+                         id_map: Optional[dict] = None) -> List[str]:
         """Apply converse cancel/modify ops to a LIVE plan — PENDING steps only.
 
         This is the whole "safe subset" of amending a running plan: it never
@@ -1705,6 +1730,32 @@ class OrchestratorService:
                 # Only the description changed; upsert_steps DOES update that.
                 await self._project_step(session_id, live, step)
                 notes.append(f"updated '{label}'")
+            elif kind == "insert_before":
+                # Blocking insert (mirrors the executor's _spawn_ops): put a NEW
+                # step before this pending one — the gate inherits THIS step's
+                # current deps, and this step now waits on the gate. Preserves the
+                # existing chain (e.g. an approval gate stays), unlike cancel+recreate.
+                imap = id_map or {}
+                gate_id = imap.get(op.get("new", ""), op.get("new", ""))
+                gate = live.step(gate_id)
+                if gate is None:
+                    notes.append(f"couldn't gate '{label}' — new step not found")
+                    continue
+                gate.depends_on = list(step.depends_on)
+                step.depends_on = [gate_id]
+                await self._project_step(session_id, live, gate)
+                await self._project_step(session_id, live, step)
+                notes.append(f"inserted '{gate.title or gate.id}' before '{label}'")
+            elif kind == "reparent":
+                imap = id_map or {}
+                new_deps = []
+                for d in (op.get("depends_on") or []):
+                    rd = imap.get(d, d)
+                    if rd != step.id and live.step(rd) is not None:
+                        new_deps.append(rd)
+                step.depends_on = new_deps
+                await self._project_step(session_id, live, step)
+                notes.append(f"re-pointed '{label}'")
             else:
                 continue
             logger.info("[worky] converse op=%s step=%s session=%s", kind, step.id, session_id)
@@ -1713,8 +1764,13 @@ class OrchestratorService:
     async def resume_turn(self, *, session_id: str, user_id: str, answer: str,
                           model: str, connectors: Optional[List[dict]] = None,
                           interrupt_id: Optional[str] = None,
+                          step_id: Optional[str] = None,
                           executor_prompt: Optional[str] = None) -> Plan:
         """Resume a turn blocked on ask-the-user with the user's `answer`.
+
+        `step_id` is accepted for signature-compatibility with the LangGraph engine
+        (state-driven waits route by step id); the ADK engine resumes by
+        interrupt_id and ignores it.
 
         Reached from STEP 4 when the session is waiting; skips planning (STEP
         5-7 already happened on the original turn) and rejoins the sequence at
@@ -2256,10 +2312,11 @@ class OrchestratorService:
         # read the whole prompt twice, and its {{ }} JSON examples reached the
         # model as invalid doubled braces.)
         planner_instruction = (planner_prompt or PLANNER_INSTRUCTION)
-        # The planner runs on ITS OWN connectors (like the executor). find_human_agents
-        # stays the built-in until a human-agents MCP is linked to replace it.
-        planner_tools = [human_agents.make_find_human_agents_tool(),
-                         *self._tools_for(planner_connectors, session_id, user_id)]
+        # The planner runs on ITS OWN connectors (like the executor). Human-agent
+        # lookup comes from the human-agents connector's tool
+        # (human-agents_search_human_agents), attached to every agent — the old
+        # built-in human-agents_search_human_agents wrapper has been dropped to avoid a duplicate.
+        planner_tools = list(self._tools_for(planner_connectors, session_id, user_id))
 
         def _planner_agent(use_schema: bool) -> LlmAgent:
             kwargs = dict(name="planner", model=model_obj,
@@ -2448,7 +2505,7 @@ class OrchestratorService:
         return unmet
 
     def _build_planner_model(self, model_name: Optional[str] = None):
-        # Always has the find_human_agents discovery tool now.
+        # Always has the human-agents_search_human_agents discovery tool now.
         return nodes.build_llm(model_name or self._planner_model, with_tools=True, temperature=0.0)
 
     @staticmethod

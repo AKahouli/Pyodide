@@ -178,7 +178,7 @@ async def test_new_message_does_not_mutate_executed_steps(pool):
     title/description in place. _namespace_step_ids prefixes ids by plan.id; this
     proves the executed rows survive a second turn untouched. Drives the real
     OrchestratorService helpers (namespacing + row projection)."""
-    from src.companion_ai.service import OrchestratorService
+    from src.companion_ai.adk.service import OrchestratorService
     from src.companion_ai.plan import Plan, Step
 
     rm = readmodel.ReadModel(pool, schema=SCHEMA)
@@ -227,7 +227,7 @@ async def test_a_failed_turn_marks_the_session_and_running_step_failed(pool):
     session 'running' forever, one step falsely 'completed'). _drive_until_quiescent's
     fail-safe marks the running step + session 'failed' so the client sees a
     terminal state and a new message re-plans instead of routing to converse."""
-    from src.companion_ai.service import OrchestratorService
+    from src.companion_ai.adk.service import OrchestratorService
     from src.companion_ai.plan import Plan, Step, Status
 
     rm = readmodel.ReadModel(pool, schema=SCHEMA)
@@ -264,7 +264,7 @@ async def test_apply_event_marks_step_failed_on_an_error_event(pool):
     """When ADK reports a model/tool error as an EVENT (a final_response with no
     content), the step must be marked 'failed', not 'completed' with an empty
     result (the false-completion seen live on an executor model 401)."""
-    from src.companion_ai.service import OrchestratorService
+    from src.companion_ai.adk.service import OrchestratorService
     from src.companion_ai.plan import Plan, Step, Status
 
     class _NI:

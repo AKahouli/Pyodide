@@ -172,11 +172,13 @@ runtime**:
 ### Layer 3 — per-step tool assembly (`service.py::_tools_for`, `nodes.py`)
 
 `OrchestratorService._tools_for()` builds the **shared** tool list once per
-turn: `create_connector_tools(...)` plus, per connector, a fire-and-forget
-`schedule_*_task` tool (`long_running.make_schedule_tool`) for long-running
-actions — calling it records the task handle via `mcp_tasks.enqueue` so a
-background poller can pick up the result later, instead of the executor
-blocking on it.
+turn via `create_connector_tools(...)`.
+
+Note: the per-connector fire-and-forget `schedule_*_task` tool is deliberately
+NOT granted (see `_tools_for` in `service.py` for why — it was broken on SSE
+connectors and models mis-used it to send mail). Its launcher module has been
+removed as dead code; the `mcp_tasks`/`poller` durable-task plumbing remains,
+gated behind `MCP_TASKS_ENABLED`.
 
 Every step gets the **same** shared tool list — deliberately not
 tool-restricted per step (rejected fix, see §4). What *can* differ per step
