@@ -1,5 +1,5 @@
 import { memo, type MouseEvent } from 'react';
-import { Database, Layers, Pencil, Star, Trash2 } from 'lucide-react';
+import { Layers, Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
@@ -17,53 +17,8 @@ interface TemplateCardProps {
   onDelete?: (template: AppTemplate) => void;
 }
 
-function templateInitial(title: string): string {
-  const trimmed = title.trim();
-  return trimmed ? trimmed.charAt(0).toUpperCase() : '?';
-}
-
-function TemplateMeta({ template }: { template: AppTemplate }) {
-  const { t } = useModuleTranslation('app-builder');
-  const report = template.platformReport;
-  const platformFiles = report?.injectedFiles?.length ?? 1;
-  const kitVersion = report?.kitVersion ?? 1;
-
-  return (
-    <div
-      className='mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground'
-      aria-label={t('templates.metaAria')}
-    >
-      <span
-        className='inline-flex items-center gap-1 tabular-nums'
-        title={t('templates.metaPlatformFiles')}
-      >
-        <Database className='size-3.5 shrink-0 opacity-70' aria-hidden />
-        {platformFiles}
-      </span>
-      <span
-        className='inline-flex items-center gap-1 tabular-nums'
-        title={t('templates.metaStarter')}
-      >
-        <Layers className='size-3.5 shrink-0 opacity-70' aria-hidden />
-        1
-      </span>
-      <span
-        className='inline-flex items-center gap-1 tabular-nums'
-        title={
-          template.status === 'published'
-            ? t('templates.metaPublished')
-            : t('templates.metaDraft')
-        }
-      >
-        <Star className='size-3.5 shrink-0 opacity-70' aria-hidden />
-        {kitVersion}
-      </span>
-    </div>
-  );
-}
-
 /**
- * Marketplace-style card (preview badge + hover clone pill + footer meta).
+ * Marketplace-style card (preview badge + hover clone pill).
  * Preview/title open the detail modal; Clone App opens Conversation V2 without auto-prompt.
  */
 export const TemplateCard = memo(function TemplateCard({
@@ -168,34 +123,14 @@ export const TemplateCard = memo(function TemplateCard({
         </TemplatePreviewFrame>
       </div>
 
-      <div className='flex items-start gap-3 px-4 py-3.5'>
-        <div className='size-9 shrink-0 overflow-hidden rounded-full border border-border/50 bg-muted'>
-          {template.coverImage ? (
-            <img
-              src={template.coverImage}
-              alt=''
-              className='size-full object-cover object-[center_12%]'
-              loading='lazy'
-            />
-          ) : (
-            <span
-              aria-hidden
-              className='flex size-full items-center justify-center bg-primary/10 text-sm font-semibold text-primary'
-            >
-              {templateInitial(template.title)}
-            </span>
-          )}
-        </div>
-        <div className='min-w-0 flex-1'>
-          <button
-            type='button'
-            onClick={() => onOpen(template)}
-            className='block w-full truncate text-left text-[15px] font-semibold leading-snug tracking-tight text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-2 rounded-sm'
-          >
-            {template.title}
-          </button>
-          <TemplateMeta template={template} />
-        </div>
+      <div className='px-4 py-3.5'>
+        <button
+          type='button'
+          onClick={() => onOpen(template)}
+          className='block w-full truncate text-left text-[15px] font-semibold leading-snug tracking-tight text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30 focus-visible:ring-offset-2 rounded-sm'
+        >
+          {template.title}
+        </button>
       </div>
 
       <div className='border-t border-border/40 px-4 pb-3.5 pt-0 md:hidden'>

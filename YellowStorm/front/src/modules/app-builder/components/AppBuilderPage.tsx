@@ -118,11 +118,11 @@ export function AppBuilderPage() {
       <div className='flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row'>
         <div
           className={cn(
-            'shrink-0 bg-muted/15 transition-[width] duration-200 ease-out lg:bg-transparent',
-            categorySidebarCollapsed ? 'lg:w-[4.25rem]' : 'lg:w-72 xl:w-80',
+            'shrink-0 border-b border-border/60 bg-muted/20 transition-[width] duration-200 ease-out lg:border-b-0 lg:border-r lg:bg-muted/10',
+            categorySidebarCollapsed ? 'lg:w-[4.5rem]' : 'lg:w-64 xl:w-72',
           )}
         >
-          <div className='h-full overflow-y-auto px-3 py-4 lg:px-3 lg:py-4'>
+          <div className='h-full overflow-y-auto px-3 py-3 sm:px-3.5 sm:py-4'>
             <CategorySidebar
               categories={categories}
               loading={categoriesLoading}
