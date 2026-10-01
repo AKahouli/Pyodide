@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import {
   ChevronDown,
   ChevronLeft,
@@ -32,29 +32,17 @@ interface CategorySidebarProps {
   onRetry: () => void;
 }
 
-function NavItem({
+function AllAppsItem({
   active,
   onClick,
-  icon,
   label,
-  count,
   compact,
-  className,
-  emphasize,
 }: {
   active: boolean;
   onClick: () => void;
-  icon: ReactNode;
   label: string;
-  /** Template count for a category; omit for filters without a meaningful total. */
-  count?: number;
   compact?: boolean;
-  className?: string;
-  /** Stronger visual weight for primary filters (e.g. All applications). */
-  emphasize?: boolean;
 }) {
-  const showCount = typeof count === 'number' && count > 0;
-
   return (
     <button
       type='button'
@@ -63,46 +51,168 @@ function NavItem({
       aria-label={compact ? label : undefined}
       title={label}
       className={cn(
-        'group/nav relative flex w-full min-w-0 items-center rounded-lg text-left text-sm transition-colors duration-150',
+        'group/nav relative flex w-full min-w-0 items-center rounded-xl text-left text-sm transition-colors duration-150',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-        compact ? 'justify-center px-1.5 py-2' : 'gap-2.5 px-2.5 py-2',
+        compact ? 'justify-center px-1.5 py-2' : 'gap-3 px-2.5 py-2.5',
         active
-          ? 'bg-primary/[0.09] font-medium text-foreground shadow-[inset_3px_0_0_0_hsl(var(--primary))]'
-          : 'text-foreground/80 hover:bg-muted/55 hover:text-foreground',
-        emphasize && !active && 'font-medium text-foreground/90',
-        className,
+          ? 'bg-primary/[0.1] font-semibold text-foreground shadow-[inset_3px_0_0_0_hsl(var(--primary))]'
+          : 'font-medium text-foreground/85 hover:bg-muted/55 hover:text-foreground',
       )}
     >
       <span
         className={cn(
-          'flex shrink-0 items-center justify-center rounded-md transition-colors',
-          compact ? 'size-9' : 'size-7',
+          'flex shrink-0 items-center justify-center rounded-lg transition-colors',
+          compact ? 'size-9' : 'size-8',
           active
-            ? 'bg-primary/12 text-primary'
-            : 'bg-muted/50 text-muted-foreground group-hover/nav:bg-muted group-hover/nav:text-foreground',
+            ? 'bg-primary text-primary-foreground shadow-sm'
+            : 'bg-muted/70 text-muted-foreground group-hover/nav:bg-muted group-hover/nav:text-foreground',
         )}
         aria-hidden
       >
-        {icon}
+        <Store className={cn(compact ? 'size-4' : 'size-3.5')} />
       </span>
-      {!compact ? (
-        <>
-          <span className='min-w-0 flex-1 truncate leading-snug'>{label}</span>
-          {showCount ? (
-            <span
-              className={cn(
-                'shrink-0 rounded-md px-1.5 py-0.5 text-[11px] font-medium tabular-nums',
-                active
-                  ? 'bg-primary/10 text-primary'
-                  : 'bg-muted/70 text-muted-foreground',
-              )}
-            >
-              {count}
-            </span>
-          ) : null}
-        </>
-      ) : null}
+      {!compact ? <span className='min-w-0 flex-1 truncate leading-snug'>{label}</span> : null}
     </button>
+  );
+}
+
+function CategoryRow({
+  category,
+  active,
+  compact,
+  isSuperAdmin,
+  onSelect,
+  onEdit,
+  onDelete,
+  editLabel,
+  deleteLabel,
+}: {
+  category: TemplateCategory;
+  active: boolean;
+  compact: boolean;
+  isSuperAdmin: boolean;
+  onSelect: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+  editLabel: string;
+  deleteLabel: string;
+}) {
+  const showCount = category.templateCount > 0;
+
+  if (compact) {
+    return (
+      <button
+        type='button'
+        onClick={onSelect}
+        aria-current={active ? 'true' : undefined}
+        aria-label={category.name}
+        title={category.name}
+        className={cn(
+          'mx-auto flex size-9 items-center justify-center rounded-xl transition-colors',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35',
+          active
+            ? 'bg-primary/15 text-primary ring-1 ring-primary/25'
+            : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
+        )}
+      >
+        <CategoryIcon name={category.icon} className='size-4' />
+      </button>
+    );
+  }
+
+  return (
+    <div
+      className={cn(
+        'group/row relative flex items-center gap-0.5 rounded-xl p-0.5 transition-colors',
+        active ? 'bg-primary/[0.08]' : 'hover:bg-muted/40',
+      )}
+    >
+      <button
+        type='button'
+        onClick={onSelect}
+        aria-current={active ? 'true' : undefined}
+        className={cn(
+          'flex min-w-0 flex-1 items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-left text-sm transition-colors',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35',
+          active ? 'text-foreground' : 'text-foreground/85',
+          isSuperAdmin && 'pr-1',
+        )}
+      >
+        <span
+          className={cn(
+            'flex size-8 shrink-0 items-center justify-center rounded-lg border transition-colors',
+            active
+              ? 'border-primary/25 bg-primary/12 text-primary shadow-sm'
+              : 'border-border/60 bg-background/80 text-muted-foreground group-hover/row:border-border group-hover/row:text-foreground',
+          )}
+          aria-hidden
+        >
+          <CategoryIcon name={category.icon} className='size-3.5' />
+        </span>
+
+        <span className='min-w-0 flex-1'>
+          <span
+            className={cn(
+              'block truncate leading-snug tracking-tight',
+              active ? 'font-semibold' : 'font-medium',
+            )}
+          >
+            {category.name}
+          </span>
+        </span>
+
+        {showCount ? (
+          <span
+            className={cn(
+              'shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium tabular-nums',
+              isSuperAdmin &&
+                'transition-opacity group-hover/row:opacity-0 group-focus-within/row:opacity-0',
+              active
+                ? 'bg-primary/12 text-primary'
+                : 'bg-muted/80 text-muted-foreground',
+            )}
+          >
+            {category.templateCount}
+          </span>
+        ) : null}
+      </button>
+
+      {isSuperAdmin ? (
+        <div
+          className={cn(
+            'absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded-lg bg-background/95 p-0.5 shadow-sm ring-1 ring-border/60 backdrop-blur-sm',
+            'opacity-100 sm:opacity-0 sm:transition-opacity sm:group-hover/row:opacity-100 sm:group-focus-within/row:opacity-100',
+          )}
+        >
+          <Button
+            type='button'
+            variant='ghost'
+            size='icon'
+            className='size-7 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground'
+            aria-label={editLabel}
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit();
+            }}
+          >
+            <Pencil className='size-3.5' />
+          </Button>
+          <Button
+            type='button'
+            variant='ghost'
+            size='icon'
+            className='size-7 rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive'
+            aria-label={deleteLabel}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+          >
+            <Trash2 className='size-3.5' />
+          </Button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -165,13 +275,11 @@ export function CategorySidebar({
         </Button>
       </div>
 
-      <NavItem
+      <AllAppsItem
         active={allActive}
         onClick={onSelectAll}
         label={t('categories.allApps')}
         compact={collapsed}
-        emphasize
-        icon={<Store className='size-3.5' />}
       />
 
       <div
@@ -180,7 +288,7 @@ export function CategorySidebar({
       />
 
       {!collapsed ? (
-        <div className='mb-1 flex items-center gap-1 px-0.5'>
+        <div className='mb-1.5 flex items-center gap-1 px-0.5'>
           <button
             type='button'
             onClick={() => setCategoriesOpen((open) => !open)}
@@ -201,7 +309,7 @@ export function CategorySidebar({
             />
             <span className='truncate'>{t('categories.heading')}</span>
             {!loading && !error && categoryCount > 0 ? (
-              <span className='ml-auto shrink-0 rounded-md bg-muted/70 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground'>
+              <span className='ml-auto shrink-0 rounded-full bg-muted/70 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground'>
                 {categoryCount}
               </span>
             ) : null}
@@ -211,7 +319,7 @@ export function CategorySidebar({
               type='button'
               variant='ghost'
               size='icon'
-              className='size-7 shrink-0 rounded-md text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+              className='size-7 shrink-0 rounded-lg border border-transparent text-muted-foreground hover:border-border/70 hover:bg-background hover:text-foreground'
               aria-label={t('categories.add')}
               onClick={onAddCategory}
             >
@@ -228,7 +336,7 @@ export function CategorySidebar({
               {Array.from({ length: collapsed ? 4 : 5 }, (_, i) => (
                 <Skeleton
                   key={i}
-                  className={cn('w-full rounded-lg', collapsed ? 'mx-auto size-9' : 'h-9')}
+                  className={cn('w-full rounded-xl', collapsed ? 'mx-auto size-9' : 'h-11')}
                 />
               ))}
             </div>
@@ -254,57 +362,23 @@ export function CategorySidebar({
             ) : null
           ) : (
             <nav
-              className={cn('flex flex-col gap-0.5 pb-1', collapsed ? 'px-0' : 'px-0.5')}
+              className={cn('flex flex-col gap-1 pb-1', collapsed ? 'items-center px-0' : 'px-0')}
               aria-label={t('categories.heading')}
             >
-              {categories.map((category) => {
-                const active = category.id === selectedCategoryId;
-                return (
-                  <div key={category.id} className='group relative'>
-                    <NavItem
-                      active={active}
-                      onClick={() => onSelectCategory(category.id)}
-                      label={category.name}
-                      count={category.templateCount}
-                      compact={collapsed}
-                      icon={
-                        <CategoryIcon
-                          name={category.icon}
-                          className={cn(
-                            'size-3.5',
-                            active ? 'text-primary' : 'text-muted-foreground',
-                          )}
-                        />
-                      }
-                      className={!collapsed && isSuperAdmin ? 'pr-14' : undefined}
-                    />
-                    {!collapsed && isSuperAdmin ? (
-                      <div className='absolute right-0.5 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100'>
-                        <Button
-                          type='button'
-                          variant='ghost'
-                          size='icon'
-                          className='size-7 rounded-md text-muted-foreground hover:bg-muted/70 hover:text-foreground'
-                          aria-label={t('categories.edit')}
-                          onClick={() => onEditCategory(category)}
-                        >
-                          <Pencil className='size-3.5' />
-                        </Button>
-                        <Button
-                          type='button'
-                          variant='ghost'
-                          size='icon'
-                          className='size-7 rounded-md text-muted-foreground hover:bg-fail/10 hover:text-fail'
-                          aria-label={t('categories.delete')}
-                          onClick={() => onDeleteCategory(category)}
-                        >
-                          <Trash2 className='size-3.5' />
-                        </Button>
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
+              {categories.map((category) => (
+                <CategoryRow
+                  key={category.id}
+                  category={category}
+                  active={category.id === selectedCategoryId}
+                  compact={collapsed}
+                  isSuperAdmin={isSuperAdmin}
+                  onSelect={() => onSelectCategory(category.id)}
+                  onEdit={() => onEditCategory(category)}
+                  onDelete={() => onDeleteCategory(category)}
+                  editLabel={t('categories.edit')}
+                  deleteLabel={t('categories.delete')}
+                />
+              ))}
             </nav>
           )}
         </div>
