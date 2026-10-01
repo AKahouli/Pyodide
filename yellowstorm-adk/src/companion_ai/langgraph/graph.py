@@ -1,30 +1,36 @@
-"""Plan -> a fixed executor LOOP (not a per-plan topology).
+"""Plan -> a scheduler-driven Functional-API executor (not a StateGraph loop).
 
-The plan lives in state as an ordered list of step dicts; `tick` looks at which
-steps are READY (deps' results present) and fans them out to parallel `worker`
-invocations via Send; each worker runs one step and writes its result back; the
-loop repeats until nothing is ready. Because readiness is recomputed every tick,
-a worker can insert new work at runtime (a delegate/create_task) simply by adding
-a step to the plan and re-pointing the caller's dependents onto it — no graph
-reshape, which is what the old `depends_on`->edges build could not do (a node
-added after its parent finished never ran, and a spawn could only be a late
-sibling). Send fan-out gives real parallelism; multiple await workers can park
-multiple interrupts in one super-step (proven: no double post-interrupt run).
+The plan lives in the entrypoint's persisted state as an ordered list of step
+dicts. A single `@entrypoint` runs a plain async scheduler loop: find the READY
+steps (deps' results present), launch each as a `@task` (durable, memoized),
+`asyncio.wait(FIRST_COMPLETED)`, commit each result, recompute readiness, launch
+newly-ready work. Progress is driven by which future completes — NOT by a global
+super-step barrier — so an independent fast branch advances without waiting for a
+slow sibling in the same wave (the StateGraph tick/Send/worker BSP model could
+not: `worker -> tick` was a JOIN that blocked the next round on the slowest task;
+see langchain-ai/langgraph#6320). A worker inserts runtime work by returning new
+steps, which the loop merges into the plan and picks up on the next pass.
 
-Step kind routes inside the worker: ask -> pure interrupt (answer IS the result);
-await_reply -> interrupt then an LLM acts on the reply (can spawn); else an LLM
-execute step.
+No `interrupt()` anywhere: both pauses are STATE-DRIVEN. An `ask` step is not
+ready until its answer is in `answers`; an `await_reply` step is not ready until
+its reply is in `replies`. Until then the step is simply "not launched", the
+entrypoint returns cleanly, and the runner marks it blocked in the read model.
+A new answer/reply is a re-drive that advances only that branch — parallel waits
+never block each other, and there is no whole-graph halt to resume by id-map.
+
+Step kind routes inside the worker: ask -> the answer IS the result (no LLM);
+await_reply -> an LLM acts on the reply (can spawn); else an LLM execute step.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Callable, Dict, List, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
-from langgraph.graph import END, START, StateGraph
-from langgraph.types import Send, interrupt
+from langgraph.func import entrypoint, task
 
 from ..plan import Step
-from .graph_types import OrchState, ProjectFn
+from .graph_types import ProjectFn, merge_plan, merge_results
 
 # an object with .ainvoke([messages]) -> message-with-.content (a chat model or a fake)
 ChatModel = object
@@ -134,6 +140,34 @@ def _spawn_tools(caller_id: str) -> List:
                                          name="delegate_to_human_agent")]
 
 
+class _AskSuspend(Exception):
+    """Raised by the ask_user tool when the step needs a clarification the user
+    hasn't answered yet. Propagates out of the tool loop so the worker suspends the
+    step IN PLACE (no interrupt(), so sibling branches keep running); the step
+    re-runs on the answer re-drive with ask_user now returning the answer."""
+    def __init__(self, question: str):
+        super().__init__(question)
+        self.question = question
+
+
+def _ask_user_tool(answer: Optional[str]) -> "object":
+    """A step-scoped clarification tool. `answer` is the stored answer for THIS
+    step (answers[step_id]): None on the first pass -> raise to suspend; present on
+    the re-drive -> return it so the LLM continues. Distinct from
+    create_task(kind='ask'), which plans a DOWNSTREAM ask for a later step."""
+    from langchain_core.tools import StructuredTool
+
+    def ask_user(question: str) -> str:
+        """Ask the human user a clarifying question you NEED to finish THIS step
+        (e.g. a missing recipient/value). Call it BEFORE any send or irreversible
+        action. The step pauses; the user's answer comes back here and you continue."""
+        if answer is None:
+            raise _AskSuspend(question)
+        return answer
+
+    return StructuredTool.from_function(func=ask_user, name="ask_user")
+
+
 async def _run_tool_calls(tool_map: dict, tool_calls: list, step_id=None,
                           on_artifact=None, spawns=None) -> List[ToolMessage]:
     out = []
@@ -143,6 +177,8 @@ async def _run_tool_calls(tool_map: dict, tool_calls: list, step_id=None,
         t = tool_map.get(tc["name"])
         try:
             res = (await t.ainvoke(tc["args"])) if t is not None else f"unknown tool {tc['name']}"
+        except _AskSuspend:                # not a tool error — bubble up to suspend
+            raise
         except Exception as exc:  # a tool failure is data for the model, not a crash
             res = f"tool error: {exc}"
         if on_artifact is not None and step_id is not None:
@@ -152,10 +188,13 @@ async def _run_tool_calls(tool_map: dict, tool_calls: list, step_id=None,
 
 
 async def _run_llm(step: Step, model: ChatModel, tools: Optional[List],
-                   instruction: Optional[str], on_artifact, human: str):
-    """Shared tool-calling loop: build the prompt (persona-aware + spawn tools),
-    run the model until it stops calling tools. Returns (text, spawns)."""
-    tools = (tools or []) + _spawn_tools(step.id)
+                   instruction: Optional[str], on_artifact, human: str,
+                   answer: Optional[str] = None):
+    """Shared tool-calling loop: build the prompt (persona-aware + spawn/ask_user
+    tools), run the model until it stops calling tools. Returns (text, spawns).
+    May raise _AskSuspend (the LLM called ask_user with no answer yet) — the worker
+    catches it and suspends the step."""
+    tools = (tools or []) + _spawn_tools(step.id) + [_ask_user_tool(answer)]
     tool_map = {getattr(t, "name", None): t for t in tools}
     sys_instruction = instruction or _EXEC_INSTRUCTION  # agentstore prompt drives behavior
     human = _assignee_fact(step) + human                # factual only
@@ -223,14 +262,16 @@ def _spawn_ops(caller_id: str, spawns: list, dependents: List[dict], base_ordina
 
 
 # --------------------------------------------------------------------------- #
-# the worker (one node handles any step) + the loop
+# the worker (one @task handles any step)
 # --------------------------------------------------------------------------- #
-def make_worker(model: ChatModel, project: Optional[ProjectFn],
-                tools_for: Optional[ToolsFor], instruction: Optional[str],
-                on_artifact, on_insert):
-    """Run ONE step (from the Send payload). Never has side effects before an
-    interrupt(), so a re-run on resume (LangGraph re-runs pre-interrupt code each
-    drive) fires sends/spawns exactly once — verified in the spike."""
+def make_worker_fn(model: ChatModel, project: Optional[ProjectFn],
+                   tools_for: Optional[ToolsFor], instruction: Optional[str],
+                   on_artifact, on_insert):
+    """Run ONE step. Returns {step, result, new_steps, updated} — a plain dict the
+    entrypoint loop folds into plan+results. Runs to completion (no interrupt), so
+    once memoized by the checkpoint a resume/crash-restart never re-fires its
+    sends/spawns; only an in-flight (never-completed) worker re-runs — same
+    at-least-once as the ADK engine."""
     async def worker(payload: dict) -> dict:
         step = _from_state_step(payload["step"])
         d = payload["step"]
@@ -239,21 +280,22 @@ def make_worker(model: ChatModel, project: Optional[ProjectFn],
         base_ordinal = payload.get("next_ordinal", 1000)
         text_reply = ""
 
-        # ---- ask: the user's typed answer IS the result (no LLM) ----
+        # ---- ask: state-driven — the answer is already in state (the loop only
+        # launches this step once answers[step.id] exists), so no LLM, no interrupt.
+        # The user's typed answer IS the result. ----
         if step.kind == "ask":
-            answer = interrupt({"kind": "ask", "step_id": step.id,
-                                "question": step.question or step.title})
             if project:
                 await project(step.id, "running")
+            answer = payload.get("answer")
             text = answer if isinstance(answer, str) else str(answer)
             if project:
                 await project(step.id, "completed", result=text)
-            return {"results": {step.id: text},
-                    "plan": [{**d, "status": "completed", "result": text}]}
+            return {"step": {**d, "status": "completed", "result": text},
+                    "result": text, "new_steps": [], "updated": []}
 
-        # ---- await_reply: state-driven — the reply is already in state (route only
-        # dispatches this step once replies[step.id] exists), so no interrupt(). An
-        # LLM then acts on the reply (may spawn). ----
+        # ---- await_reply: state-driven — the reply is already in state (the loop
+        # only launches this step once replies[step.id] exists). An LLM then acts on
+        # the reply (may spawn). ----
         if step.kind == "await_reply":
             if project:
                 await project(step.id, "running")
@@ -266,7 +308,15 @@ def make_worker(model: ChatModel, project: Optional[ProjectFn],
             human = _exec_human(step, ctx)
 
         tools = tools_for(step) if tools_for else None
-        text, spawns = await _run_llm(step, model, tools, instruction, on_artifact, human)
+        try:
+            text, spawns = await _run_llm(step, model, tools, instruction,
+                                          on_artifact, human, payload.get("answer"))
+        except _AskSuspend as sus:
+            # The step needs a clarification the user hasn't answered yet. Suspend
+            # IN PLACE: no result, stay pending. The loop keeps driving siblings; the
+            # runner surfaces the question; the answer re-drive re-runs this worker
+            # with the answer, ask_user returns it, and the step finishes here.
+            return {"suspended": True, "step_id": step.id, "question": sus.question}
         failed = text.lstrip().upper().startswith("STEP_FAILED")
         status = "failed" if failed else "completed"
 
@@ -286,80 +336,115 @@ def make_worker(model: ChatModel, project: Optional[ProjectFn],
             # Upsert BEFORE the loop runs/updates them — set_step_status is
             # UPDATE-only, so a spawned step must have its row first.
             await on_insert(new_steps + updated)
-        plan_ops = [{**d, "status": status, "result": stored}, *new_steps, *updated]
-        return {"results": {step.id: stored}, "plan": plan_ops}
+        return {"step": {**d, "status": status, "result": stored},
+                "result": stored, "new_steps": new_steps, "updated": updated}
 
     return worker
 
 
-def _ready(plan: List[dict], results: Dict[str, str],
-           replies: Dict[str, str]) -> List[dict]:
+def _ready(plan: List[dict], results: Dict[str, str], replies: Dict[str, str],
+           answers: Dict[str, str]) -> List[dict]:
+    """Steps whose deps are all done and whose state-driven wait (if any) is
+    satisfied. An await_reply is ready only once its reply is in state; an ask only
+    once its answer is. Until then a step is simply not launched — the entrypoint
+    returns cleanly and the runner parks it, so parallel branches never block."""
     out = []
     for s in plan:
         if s.get("status", "pending") != "pending":
             continue
         if not all(dep in results for dep in (s.get("depends_on") or [])):
             continue
-        # State-driven wait: an await_reply step is ready only once its reply is in
-        # state. Until then it is simply "not ready" — no interrupt(), so the drive
-        # ends cleanly and other branches keep going independently.
-        if s.get("kind") == "await_reply" and s["id"] not in replies:
+        kind = s.get("kind")
+        if kind == "await_reply" and s["id"] not in replies:
+            continue
+        if kind == "ask" and s["id"] not in answers:
             continue
         out.append(s)
     return out
 
 
-def build_graph(model: ChatModel, project: Optional[ProjectFn] = None,
-                tools_for: Optional[ToolsFor] = None,
-                instruction: Optional[str] = None,
-                on_artifact=None, on_insert=None) -> StateGraph:
-    """The plan-independent executor loop. Same graph for every plan; the plan is
-    state. START -> tick -(Send per ready step)-> worker -> tick -> ... -> END."""
-    worker = make_worker(model, project, tools_for, instruction, on_artifact, on_insert)
+def _ctx_for(plan: List[dict], results: Dict[str, str], sid: str) -> Dict[str, str]:
+    """Transitive-ancestor closure of `sid`, in plan order — so a step late in a
+    chain still sees data an early step produced (e.g. a ticket id). ponytail: full
+    closure is fine for worky's small chains; cap/window it if a plan gets huge."""
+    dep_map = {x["id"]: (x.get("depends_on") or []) for x in plan}
+    seen, stack = set(), list(dep_map.get(sid, []))
+    while stack:
+        a = stack.pop()
+        if a in seen:
+            continue
+        seen.add(a)
+        stack += dep_map.get(a, [])
+    return {x["id"]: results[x["id"]] for x in plan
+            if x["id"] in seen and x["id"] in results}
 
-    async def tick(state: OrchState) -> dict:
-        return {}  # no-op; the conditional edge does the fan-out
 
-    def route(state: OrchState):
-        plan = state["plan"]
-        results = state.get("results", {})
-        replies = state.get("replies", {})
-        ready = _ready(plan, results, replies)
-        if not ready:
-            return END
-        dep_map = {x["id"]: (x.get("depends_on") or []) for x in plan}
+def build_executor(model: ChatModel, project: Optional[ProjectFn] = None,
+                   tools_for: Optional[ToolsFor] = None,
+                   instruction: Optional[str] = None,
+                   on_artifact=None, on_insert=None, *, checkpointer):
+    """Compile the plan-independent executor entrypoint (one per turn/resume; the
+    plan+results+replies+answers live in the checkpoint via `previous`). Input
+    merges into that state, so run seeds `plan`, deliver_reply adds a `reply`,
+    resume adds an `answer`, converse merges new `plan` steps, continue passes
+    None. Returns the compiled entrypoint (call .ainvoke/.aget_state on it)."""
+    worker_fn = make_worker_fn(model, project, tools_for, instruction,
+                               on_artifact, on_insert)
+    worker_task = task(worker_fn, name="worky_worker")
 
-        def ancestors(sid: str) -> set:
-            seen, stack = set(), list(dep_map.get(sid, []))
-            while stack:
-                a = stack.pop()
-                if a in seen:
+    @entrypoint(checkpointer=checkpointer)
+    async def run_plan(inp, *, previous=None) -> dict:
+        prev = previous or {}
+        inp = inp or {}
+        plan = merge_plan(prev.get("plan"), inp.get("plan"))
+        results = merge_results(prev.get("results"), inp.get("results"))
+        replies = merge_results(prev.get("replies"), inp.get("replies"))
+        answers = merge_results(prev.get("answers"), inp.get("answers"))
+
+        # DURABLE parked-on-ask_user set (step_id -> question), carried across drives
+        # in the checkpoint. A parked ask is NOT re-run until ITS answer arrives —
+        # exactly like await_reply waits on its reply. This is what stops answering
+        # one ask from re-running (and flickering/diverging) every OTHER parked ask.
+        asked: dict = dict(prev.get("asked") or {})
+        inflight: dict = {}   # step_id -> asyncio.Task wrapping the @task future
+
+        async def _await(fut):
+            return await fut
+
+        while True:
+            for s in _ready(plan, results, replies, answers):
+                sid = s["id"]
+                if sid in inflight or sid in results:
                     continue
-                seen.add(a)
-                stack += dep_map.get(a, [])
-            return seen
+                if sid in asked and sid not in answers:
+                    continue   # parked on ask_user; wait for its own answer to re-run
+                max_ord = max((x.get("ordinal", 0) for x in plan), default=0)
+                payload = {"step": s, "ctx": _ctx_for(plan, results, sid),
+                           "dependents": [dict(x) for x in plan
+                                          if sid in (x.get("depends_on") or [])],
+                           "next_ordinal": max_ord + 1,
+                           "reply": replies.get(sid), "answer": answers.get(sid)}
+                # wrap the langgraph future so asyncio.wait accepts it (task futures
+                # aren't asyncio.Futures)
+                t = asyncio.ensure_future(_await(worker_task(payload)))
+                t._sid = sid  # type: ignore[attr-defined]
+                inflight[sid] = t
+            if not inflight:
+                break
+            done, _pending = await asyncio.wait(
+                inflight.values(), return_when=asyncio.FIRST_COMPLETED)
+            for t in done:
+                sid = t._sid  # type: ignore[attr-defined]
+                res = await t
+                del inflight[sid]
+                if res.get("suspended"):     # ask_user, no answer yet -> park durably
+                    asked[sid] = res["question"]
+                    continue
+                results[sid] = res["result"]
+                asked.pop(sid, None)         # answered+done -> clear the parked marker
+                plan = merge_plan(plan, [res["step"], *res["new_steps"], *res["updated"]])
 
-        max_ord = max((s.get("ordinal", 0) for s in plan), default=0)
-        sends = []
-        for s in ready:
-            # Transitive ancestors (not just direct deps), in plan order, so a step
-            # late in a chain still sees data an early step produced (e.g. the ticket
-            # id). ponytail: full closure is fine for worky's small chains; cap/window
-            # it if a plan ever gets huge.
-            anc = ancestors(s["id"])
-            ctx = {x["id"]: results[x["id"]] for x in plan
-                   if x["id"] in anc and x["id"] in results}
-            dependents = [dict(x) for x in plan if s["id"] in (x.get("depends_on") or [])]
-            sends.append(Send("worker", {"step": s, "ctx": ctx,
-                                         "dependents": dependents,
-                                         "next_ordinal": max_ord + 1,
-                                         "reply": replies.get(s["id"])}))
-        return sends
+        return {"plan": plan, "results": results, "replies": replies,
+                "answers": answers, "asked": asked}
 
-    g = StateGraph(OrchState)
-    g.add_node("tick", tick)
-    g.add_node("worker", worker)
-    g.add_edge(START, "tick")
-    g.add_conditional_edges("tick", route, ["worker", END])
-    g.add_edge("worker", "tick")
-    return g
+    return run_plan

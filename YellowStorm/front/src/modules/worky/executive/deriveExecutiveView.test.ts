@@ -70,6 +70,17 @@ describe('deriveExecutiveView', () => {
     expect(view.runtimeAsks.map((ask) => [ask.taskId, ask.active])).toEqual([['a', true], ['b', false]]);
   });
 
+  it('surfaces a runtime ask_user (execute step, blockedReason "ask") as an answerable ask card', () => {
+    // an execute step that called ask_user: kind stays truthful, blockedReason='ask',
+    // the dynamic question lives on task.question.
+    const asking = task({ id: 'e', kind: 'execute', lane: 'blocked', blockedReason: 'ask',
+      interruptId: 'r1_email', question: 'Quel destinataire ?' });
+    const view = deriveExecutiveView(board([asking], { session: { status: 'waiting', activeInterruptId: 'r1_email' } }));
+    expect(view.runtimeAsks.map((ask) => [ask.taskId, ask.question, ask.active]))
+      .toEqual([['e', 'Quel destinataire ?', true]]);
+    expect(view.currentWork[0].status).toBe('needs_input');
+  });
+
   it('keeps an external await_reply on track and labels it separately', () => {
     const waiting = task({ kind: 'await_reply', lane: 'blocked', blockedReason: 'awaiting email reply' });
     const view = deriveExecutiveView(board([waiting], { session: { status: 'blocked', activeInterruptId: null } }));
