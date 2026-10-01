@@ -80,7 +80,7 @@ export class ConnectorService {
       actions,
       skillIds: dto.referencedSkillIds ?? [],
       isActive: dto.isActive ?? true,
-      isSystem: false,
+      isSystem: dto.isSystem ?? false,
       isHidden: dto.isHidden ?? false,
       createdBy,
     });

@@ -34,6 +34,7 @@ export interface ConnectorFormValues {
   referencedSkillIds: string[];
   isActive: boolean;
   isHidden: boolean;
+  isSystem: boolean;
 }
 
 export const defaultConnectorFormValues: ConnectorFormValues = {
@@ -63,4 +64,5 @@ export const defaultConnectorFormValues: ConnectorFormValues = {
   referencedSkillIds: [],
   isActive: true,
   isHidden: false,
+  isSystem: false,
 };

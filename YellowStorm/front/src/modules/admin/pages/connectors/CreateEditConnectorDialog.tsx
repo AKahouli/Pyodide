@@ -351,6 +351,7 @@ export function CreateEditConnectorDialog({
           referencedSkillIds: connector.referencedSkillIds || [],
           isActive: connector.isActive,
           isHidden: connector.isHidden ?? false,
+          isSystem: connector.isSystem ?? false,
         });
 
         if (connector.connectedAppKey) {
@@ -1167,6 +1168,11 @@ export function CreateEditConnectorDialog({
           <div className='flex items-center gap-2'>
             <Switch id='connector-hidden' checked={form.isHidden} onCheckedChange={(checked) => setForm({ ...form, isHidden: checked })} />
             <Label htmlFor='connector-hidden'>{t('connectors.form.fields.hidden.label')}</Label>
+          </div>
+
+          <div className='flex items-center gap-2'>
+            <Switch id='connector-system' checked={form.isSystem} onCheckedChange={(checked) => setForm({ ...form, isSystem: checked })} />
+            <Label htmlFor='connector-system'>{t('connectors.form.fields.system.label')}</Label>
           </div>
         </div>
         <DialogFooter>

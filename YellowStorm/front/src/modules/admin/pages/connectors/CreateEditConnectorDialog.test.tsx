@@ -84,6 +84,19 @@ describe('CreateEditConnectorDialog tool table', () => {
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ isHidden: true }));
   });
 
+  it('submits the system connector flag and round-trips an existing system connector', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<CreateEditConnectorDialog open onOpenChange={vi.fn()} connector={connector} onSave={onSave} />);
+
+    const systemSwitch = await screen.findByRole('switch', { name: 'connectors.form.fields.system.label' });
+    expect(systemSwitch).not.toBeChecked();
+    await user.click(systemSwitch);
+    await user.click(screen.getByRole('button', { name: 'connectors.form.dialog.update' }));
+
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ isSystem: true }));
+  });
+
   it('preserves server-managed Playbook MCP authentication when inspecting and saving', async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();

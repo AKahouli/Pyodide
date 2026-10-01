@@ -44,7 +44,7 @@ import { AgentGuardrailsTab } from './AgentGuardrailsTab';
 import { AgentReasoningEffortField } from './AgentReasoningEffortField';
 import { useAgentTypes, useAgentStore } from "../store";
 import { useModels, useModelsStore } from "@/modules/models";
-import { getActiveSkills, getActiveTools, getActiveConnectors, type ToolOption, type ConnectorOption } from "../api";
+import { getActiveSkills, getActiveTools, getActiveConnectors, getConnectorById, type ToolOption, type ConnectorOption } from "../api";
 import { getWorkspaces } from "@/modules/workspace";
 import type { Workspace } from "@/modules/workspace/types";
 import type { Agent } from "../types";
@@ -167,7 +167,19 @@ export function CreateEditAgentDialog({
         useModelsStore.getState().fetchModels().catch(() => { }),
         getActiveTools().catch(() => [] as ToolOption[]),
         getActiveSkills().catch(() => [] as SkillOption[]),
-        getActiveConnectors().catch(() => [] as ConnectorOption[]),
+        getActiveConnectors()
+          .then(async (connectors) => {
+            // The visible list filters out hidden connectors; re-fetch any
+            // hidden connector already attached to this agent so its chip
+            // renders and it can be detached.
+            const missing = (agent?.connectors || [])
+              .filter((id) => !connectors.some((c) => c.id === id));
+            const hidden = await Promise.all(
+              missing.map((id) => getConnectorById(id).catch(() => null)),
+            );
+            return [...connectors, ...hidden.filter((c): c is ConnectorOption => Boolean(c))];
+          })
+          .catch(() => [] as ConnectorOption[]),
         getWorkspaces({ limit: 100 }).then((res) => res.workspaces).catch(() => [] as Workspace[]),
         getAdminGuardrailsSettings().catch(() => null),
       ]).then(([, , tools, skills, connectors, ws, guardrailsSettings]) => {

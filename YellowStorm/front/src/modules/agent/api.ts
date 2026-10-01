@@ -221,6 +221,13 @@ export async function getActiveConnectors(): Promise<ConnectorOption[]> {
   return response.data.data;
 }
 
+export async function getConnectorById(id: string): Promise<ConnectorOption> {
+  const response = await apiClient.get<ApiResponse<ConnectorOption>>(
+    API_ENDPOINTS.connectors.byId(id)
+  );
+  return response.data.data;
+}
+
 export async function getAgentTelegramIntegration(
   agentId: string,
 ): Promise<AgentTelegramIntegration | null> {
