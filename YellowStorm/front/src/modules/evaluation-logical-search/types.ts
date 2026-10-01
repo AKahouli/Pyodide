@@ -54,6 +54,14 @@ export interface PrepareResult {
   status: string;
 }
 
+export interface EvaluationCitation {
+  reference: number;
+  fileName: string;
+  page?: number;
+  snippet: string;
+  source?: string;
+}
+
 export interface EvaluationQueryResult {
   query_id: string;
   query: string;
@@ -104,6 +112,7 @@ export interface EvaluationQueryResult {
   judge_score?: number;
   judge_faithfulness_score?: number;
   judge_reasoning?: string;
+  citations?: EvaluationCitation[];
   token_usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number };
 }
 

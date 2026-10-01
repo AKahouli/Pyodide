@@ -102,12 +102,10 @@
     "error": "Could not load results",
     "kpi": {
       "correctness": "Correctness",
-      "f1": "Answer F1",
       "semantic": "Semantic similarity",
       "factRecall": "Fact recall",
       "fileRecall": "File recall",
       "retrievalSuccess": "Retrieval success",
-      "exactMatch": "Exact match",
       "completed": "Completed"
     },
     "table": {
@@ -126,6 +124,10 @@
       "retrievedFiles": "Retrieved files",
       "judgeReasoning": "Judge reasoning",
       "error": "Error"
+    },
+    "citations": {
+      "page": "Page {{page}}",
+      "openError": "Could not open the source document."
     },
     "narrative": {
       "title": "Analysis",

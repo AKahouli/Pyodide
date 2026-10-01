@@ -6,6 +6,7 @@ import {
   buildExpectedSources,
   buildRetrievalMetrics,
   buildQueryResult,
+  buildCitations,
   normalizeFilename,
   extractFilePagePairs,
   selectBenchmarkQueries,
@@ -173,5 +174,31 @@ describe('buildQueryResult', () => {
     expect(result.token_usage?.total_tokens).toBe(300);
     expect(result.target_token_usage).toEqual({ total_tokens: 200, prompt_tokens: 190, completion_tokens: 10 });
     expect(result.judge_token_usage).toEqual({ total_tokens: 100, prompt_tokens: 90, completion_tokens: 10 });
+  });
+});
+
+describe('buildCitations', () => {
+  const call = (output: string) => ({
+    node_id: 'eval-target',
+    iteration: 0,
+    tool_name: 'smart-navigation-search_locate_answer_citations',
+    output_summary: output,
+  }) as unknown as Parameters<typeof buildCitations>[0][number];
+
+  it('extracts reference, file, page and snippet from the locate output', () => {
+    const output = JSON.stringify({
+      citations: [
+        { reference: '[1]', source: 's3://vectorstore/ws/bpce/Fiche_Produit_CAT_v1.0.pdf', page_number: 9, highlight_text: 'Création des comptes' },
+        { reference: [2], source: 'other/doc.pdf', page: '10', page_content: 'Saisie CAT' },
+      ],
+    });
+    expect(buildCitations([call(output)])).toEqual([
+      { reference: 1, fileName: 'Fiche_Produit_CAT_v1.0.pdf', page: 9, snippet: 'Création des comptes', source: 's3://vectorstore/ws/bpce/Fiche_Produit_CAT_v1.0.pdf' },
+      { reference: 2, fileName: 'doc.pdf', page: 10, snippet: 'Saisie CAT', source: 'other/doc.pdf' },
+    ]);
+  });
+
+  it('returns an empty list without a locate tool call', () => {
+    expect(buildCitations([])).toEqual([]);
   });
 });

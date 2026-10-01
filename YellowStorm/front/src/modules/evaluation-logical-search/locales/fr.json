@@ -102,12 +102,10 @@
     "error": "Impossible de charger les résultats",
     "kpi": {
       "correctness": "Exactitude",
-      "f1": "F1 de la réponse",
       "semantic": "Similarité sémantique",
       "factRecall": "Rappel des faits",
       "fileRecall": "Rappel des fichiers",
       "retrievalSuccess": "Succès de la recherche",
-      "exactMatch": "Correspondance exacte",
       "completed": "Terminées"
     },
     "table": {
@@ -126,6 +124,10 @@
       "retrievedFiles": "Fichiers récupérés",
       "judgeReasoning": "Raisonnement du juge",
       "error": "Erreur"
+    },
+    "citations": {
+      "page": "Page {{page}}",
+      "openError": "Impossible d'ouvrir le document source."
     },
     "narrative": {
       "title": "Analyse",

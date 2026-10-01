@@ -7,7 +7,7 @@ from langchain_core.messages import ToolMessage
 from langgraph.config import get_config
 
 from src.flow_engine.nodes.step_hitl import _build_interrupt_payload, extract_interrupt_message, normalize_interrupt_action
-from src.flow_engine.agent_runtime.tool_results import with_mcp_vision
+from src.flow_engine.agent_runtime.tool_results import with_mcp_vision, tool_text_content
 from src.flow_engine.agent_runtime.tool_context import last_mcp_actual_args
 from src.flow_engine.observability.redaction import redact_string
 from src.guardrails.models import GuardrailContext
@@ -219,7 +219,10 @@ def build_tool_wrapper():
             duration_ms = int((time.perf_counter() - started) * 1000)
             actual_args = last_mcp_actual_args.get() or args
             last_mcp_actual_args.set({})
-            preview = str(getattr(result, "content", result))
+            # Serialize MCP/structured results as JSON (or their text content) so
+            # the trace keeps real fields — `str()` collapsed dict/list payloads
+            # (including citation sources) to an unreadable value.
+            preview = tool_text_content(getattr(result, "content", result))
             if context.trace_collector is not None:
                 context.trace_collector.record_tool_call(tool_name=tool_name, args=actual_args, output_summary=preview, status="completed", duration_ms=duration_ms, agent_name=context.agent_name, agent_role=context.agent_role)
                 if context.on_trace_update is not None:

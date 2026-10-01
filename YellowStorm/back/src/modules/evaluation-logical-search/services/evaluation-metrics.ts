@@ -725,6 +725,92 @@ export interface EvaluationQueryResult {
   judge_score?: number;
   judge_faithfulness_score?: number;
   judge_reasoning?: string;
+  citations?: EvaluationCitation[];
+}
+
+export interface EvaluationCitation {
+  reference: number;
+  fileName: string;
+  page?: number;
+  snippet: string;
+  source?: string;
+}
+
+function parseJsonMaybe(value: unknown): Record<string, unknown> | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return null;
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  }
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+}
+
+function citationReference(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const parsed = citationReference(item);
+      if (parsed !== null) return parsed;
+    }
+    return null;
+  }
+  if (typeof value === 'string') {
+    const match = value.match(/\d+/);
+    return match ? Number(match[0]) : null;
+  }
+  return null;
+}
+
+function baseName(source: string): string {
+  return source.split(/[\\/]/).filter(Boolean).at(-1) ?? source;
+}
+
+/**
+ * Extract the citations the target agent grounded its answer on, from the
+ * `locate_answer_citations` tool call captured in the trace. Falls back to
+ * `citation_sources`, then to the tool call arguments.
+ */
+export function buildCitations(toolCalls: ToolCall[]): EvaluationCitation[] {
+  const locate = [...toolCalls]
+    .reverse()
+    .find((call) => String(call['tool_name'] || call['name'] || '').includes('locate_answer_citations'));
+  if (!locate) return [];
+
+  const output = parseJsonMaybe(locate['output_summary'] ?? locate['output'] ?? locate['result']);
+  const fromOutput = output && (Array.isArray(output['citations']) ? output['citations'] : output['citation_sources']);
+  const rawList = Array.isArray(fromOutput)
+    ? fromOutput
+    : (() => {
+        const args = parseJsonMaybe(locate['args'] ?? locate['input']);
+        const argsCitations = args && args['citations'];
+        return Array.isArray(argsCitations) ? argsCitations : [];
+      })();
+
+  const citations: EvaluationCitation[] = [];
+  const seen = new Set<number>();
+  for (const item of rawList) {
+    if (!item || typeof item !== 'object') continue;
+    const entry = item as Record<string, unknown>;
+    const reference = citationReference(entry['reference']);
+    if (reference === null || seen.has(reference)) continue;
+    const source = typeof entry['source'] === 'string' ? entry['source'] : '';
+    const pageValue = entry['page_number'] ?? entry['page'];
+    const page = typeof pageValue === 'number' ? pageValue : Number.parseInt(String(pageValue ?? ''), 10);
+    seen.add(reference);
+    citations.push({
+      reference,
+      fileName: source ? baseName(source) : String(entry['fileName'] ?? entry['file_name'] ?? ''),
+      page: Number.isFinite(page) ? page : undefined,
+      snippet: String(entry['highlight_text'] ?? entry['page_content'] ?? entry['evidence_text'] ?? ''),
+      source: source || undefined,
+    });
+  }
+  return citations;
 }
 
 export function buildQueryResult(input: {
@@ -759,6 +845,7 @@ export function buildQueryResult(input: {
   const { sources: expectedSources } = buildExpectedSources(input.requiredFile, input.page);
   const retrieval = buildRetrievalMetrics(expectedSources, toolCalls, input.generatedAnswer);
   const answer = buildAnswerMetrics(input.expectedAnswer, input.generatedAnswer);
+  const citations = buildCitations(toolCalls);
 
   return {
     query_id: input.queryId,
@@ -777,6 +864,7 @@ export function buildQueryResult(input: {
     retrieved_pages: retrieval.retrieved_pages,
     retrieved_sources: retrieval.retrieved_sources,
     tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
+    citations: citations.length > 0 ? citations : undefined,
     token_usage: input.tokenUsage,
     target_token_usage: input.targetTokenUsage,
     judge_token_usage: input.judgeTokenUsage,

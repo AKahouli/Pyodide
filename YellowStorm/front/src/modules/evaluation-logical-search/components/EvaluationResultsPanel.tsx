@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useModuleTranslation } from '@/modules/localization';
 import { EvaluationNarrativePanel } from './EvaluationNarrativePanel';
+import { EvaluationAnswerWithCitations } from './EvaluationAnswerWithCitations';
 import type { EvaluationQueryResult, EvaluationResultsResponse } from '../types';
 
 interface Props {
@@ -73,12 +74,10 @@ export function EvaluationResultsPanel({ evaluationId, status, evaluationName, d
         {summary && (
           <div className='grid grid-cols-2 gap-3 sm:grid-cols-4'>
             <Kpi label={t('results.kpi.correctness')} value={formatPct(summary.mean_answer_correctness)} />
-            <Kpi label={t('results.kpi.f1')} value={formatPct(summary.mean_answer_f1)} />
             <Kpi label={t('results.kpi.semantic')} value={formatPct(summary.mean_semantic_similarity)} />
             <Kpi label={t('results.kpi.factRecall')} value={formatPct(summary.mean_fact_recall)} />
             <Kpi label={t('results.kpi.fileRecall')} value={formatPct(summary.mean_file_recall)} />
             <Kpi label={t('results.kpi.retrievalSuccess')} value={formatPct(summary.retrieval_success_rate)} />
-            <Kpi label={t('results.kpi.exactMatch')} value={formatPct(summary.answer_exact_match_rate)} />
             <Kpi
               label={t('results.kpi.completed')}
               value={`${summary.completed_queries} / ${summary.query_count}${
@@ -137,7 +136,7 @@ export function EvaluationResultsPanel({ evaluationId, status, evaluationName, d
                               </div>
                               <div>
                                 <p className='font-medium text-muted-foreground'>{t('results.detail.generatedAnswer')}</p>
-                                <p className='whitespace-pre-wrap'>{r.generated_answer || '—'}</p>
+                                <EvaluationAnswerWithCitations content={r.generated_answer || '—'} citations={r.citations ?? []} />
                               </div>
                               <div>
                                 <p className='font-medium text-muted-foreground'>{t('results.detail.expectedFiles')}</p>
