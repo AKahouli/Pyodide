@@ -178,10 +178,10 @@ describe('buildQueryResult', () => {
 });
 
 describe('buildCitations', () => {
-  const call = (output: string) => ({
+  const call = (output: string, toolName = 'smart-navigation-search_locate_answer_citations') => ({
     node_id: 'eval-target',
     iteration: 0,
-    tool_name: 'smart-navigation-search_locate_answer_citations',
+    tool_name: toolName,
     output_summary: output,
   }) as unknown as Parameters<typeof buildCitations>[0][number];
 
@@ -200,5 +200,15 @@ describe('buildCitations', () => {
 
   it('returns an empty list without a locate tool call', () => {
     expect(buildCitations([])).toEqual([]);
+  });
+
+  it('detects the citation call when the tool name is truncated/hashed', () => {
+    const output = JSON.stringify({
+      citations: [{ reference: '[5]', source: 's3://vectorstore/ws/p/doc.pdf', page_number: 3, highlight_text: 'Extrait' }],
+    });
+    const hashedName = 'smart-navigation-search-no-document-strategy_lo_bd86f4bac10ba66a';
+    expect(buildCitations([call(output, hashedName)])).toEqual([
+      { reference: 5, fileName: 'doc.pdf', page: 3, snippet: 'Extrait', source: 's3://vectorstore/ws/p/doc.pdf' },
+    ]);
   });
 });

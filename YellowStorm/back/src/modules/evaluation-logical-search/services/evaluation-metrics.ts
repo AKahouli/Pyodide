@@ -776,9 +776,17 @@ function baseName(source: string): string {
  * `citation_sources`, then to the tool call arguments.
  */
 export function buildCitations(toolCalls: ToolCall[]): EvaluationCitation[] {
-  const locate = [...toolCalls]
-    .reverse()
-    .find((call) => String(call['tool_name'] || call['name'] || '').includes('locate_answer_citations'));
+  // Tool names are truncated/hashed when `{connector_slug}_{action_key}` exceeds
+  // 64 chars (e.g. `...-no-document-strategy_lo_<hash>`), so detect the citation
+  // call by its payload rather than by name.
+  const isCitationCall = (call: ToolCall): boolean => {
+    if (String(call['tool_name'] || call['name'] || '').includes('locate')) return true;
+    const output = parseJsonMaybe(call['output_summary'] ?? call['output'] ?? call['result']);
+    if (output && (Array.isArray(output['citations']) || Array.isArray(output['citation_sources']))) return true;
+    const args = parseJsonMaybe(call['args'] ?? call['input']);
+    return Boolean(args && Array.isArray(args['citations']));
+  };
+  const locate = [...toolCalls].reverse().find(isCitationCall);
   if (!locate) return [];
 
   const output = parseJsonMaybe(locate['output_summary'] ?? locate['output'] ?? locate['result']);
