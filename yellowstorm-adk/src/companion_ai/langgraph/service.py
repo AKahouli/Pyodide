@@ -118,7 +118,9 @@ class LgService:
             result = await runner.deliver_reply(session_id, step_id, answer, self._cp,
                                                 model=self._model)
         else:
-            # ask / gate verdict: still an interrupt() -> resume it by id.
+            # ask / gate verdict: state-driven too — interrupt_id IS the parked
+            # step's id (that is what _drive marked it as); runner.resume writes the
+            # answer into state keyed by it and re-drives that one branch.
             interrupt_id = (_answer_target(answer) or interrupt_id
                             or snap["session"].get("interrupt_id"))
             if not interrupt_id:
@@ -140,13 +142,11 @@ class LgService:
 
         parked = result.get("parked") or []
         if parked:
+            # An ask's question is shown ONLY on its answer CARD (RuntimeAskCard,
+            # driven by the blocked plan_step + its question), never posted to chat —
+            # so parallel asks each get their own answerable card and the chat isn't
+            # cluttered with questions/answers. Nothing to post here for a park.
             await self._rm.upsert_plan(session_id, plan.id, plan.title, plan.goal, "blocked")
-            for _iid, step_id, kind in parked:
-                if kind == "ask":               # a mail wait waits on the world, not the user
-                    step = plan.step(step_id)
-                    if step:
-                        await self._orch._add_message(
-                            session_id, "assistant", step.question or step.description or "")
             return
 
         # done — post the terminal answer, then an error card for any failed step

@@ -6,7 +6,7 @@ LangChain StructuredTool so it can be bound to a chat model. This keeps ONE
 connector implementation across both engines — we only re-wrap the callables.
 
 NOTE: exercised against the live backend only; the offline tests cover the tool
-LOOP (graph.make_worker) with fake tools, not real MCP I/O.
+LOOP (graph.make_worker_fn) with fake tools, not real MCP I/O.
 """
 from __future__ import annotations
 

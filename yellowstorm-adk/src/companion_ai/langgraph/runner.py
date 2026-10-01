@@ -16,10 +16,8 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from langgraph.types import Command
-
 from ..plan import Plan, Status, Step
-from .graph import build_graph, _to_state_step
+from .graph import build_executor, _to_state_step
 from .graph_types import ProjectFn
 
 _RECURSION_LIMIT = 250  # ponytail: fixed backstop (also caps runaway spawning); raise if huge plans need it
@@ -134,59 +132,79 @@ class LgRunner:
 
     def _compile(self, session_id: str, checkpointer, model):
         chat = model or build_chat_model(self._model_name)
-        return build_graph(chat, self._project_fn(session_id),
-                           tools_for=self._tools_for,
-                           instruction=self._instruction,
-                           on_artifact=self._artifact_fn(session_id),
-                           on_insert=self._insert_fn(session_id)).compile(
-                               checkpointer=checkpointer)
+        return build_executor(chat, self._project_fn(session_id),
+                              tools_for=self._tools_for,
+                              instruction=self._instruction,
+                              on_artifact=self._artifact_fn(session_id),
+                              on_insert=self._insert_fn(session_id),
+                              checkpointer=checkpointer)
 
     async def _drive(self, app, session_id: str, inp) -> dict:
         """Invoke once, then reconcile parked steps into the read model.
         Returns {parked:[(interrupt_id, step_id, kind)], values, done}.
 
-        Two kinds of pause:
-        - `ask` still uses interrupt() (a single user prompt) -> read from
-          `__interrupt__`.
-        - `await_reply` is STATE-DRIVEN: no interrupt, so the graph ends cleanly.
-          We find the awaits now waiting (deps satisfied, reply not yet in state)
-          from the final plan and mark them blocked. The mail_waits row's
-          interrupt_id column is reused as a plain "has parked" marker so
-          claim_mail_wait (which gates on interrupt_id IS NOT NULL) still lets a
-          reply through; the value is never used to resume — DeliverMailReply
-          routes by step_id."""
+        The executor uses NO interrupt() — both `ask` and `await_reply` are
+        state-driven, so the entrypoint always returns its final state cleanly.
+        We scan that final plan for steps now WAITING (deps satisfied, but the
+        state-driven answer/reply not yet in state) and mark them blocked. Graph
+        state keeps them `pending` (so a re-drive with the answer/reply runs them);
+        only the read model shows `blocked` for the UI. For an await the mail_waits
+        row's interrupt_id column is reused as a plain "has parked" marker (=step_id)
+        so claim_mail_wait (which gates on interrupt_id IS NOT NULL) lets a reply
+        through; for an ask the step_id is the interrupt_id the chat reply targets."""
         config = {"configurable": {"thread_id": session_id},
                   "recursion_limit": _RECURSION_LIMIT}
-        out = await app.ainvoke(inp, config)
-        snap = await app.aget_state(config)
+        state = await app.ainvoke(inp, config)   # no interrupt -> the state dict
+        plan = state.get("plan") or []
+        results = state.get("results") or {}
+        replies = state.get("replies") or {}
+        answers = state.get("answers") or {}
+        asked = state.get("asked") or {}   # DURABLE: step_id -> dynamic ask_user question
 
         parked = []
-        for it in (out.get("__interrupt__") or ()):
-            payload = it.value or {}
-            sid, kind = payload.get("step_id"), payload.get("kind")
-            parked.append((it.id, sid, kind))
-            if self._rm and sid:
+        questions = {}   # step_id -> the DYNAMIC question a suspended step is asking
+        # Steps parked on ask_user (any kind; they need input to finish their OWN
+        # work). Park exactly like an ask; the question is dynamic (from the LLM),
+        # carried in `questions`. resume writes answers[sid] and only THIS step
+        # re-runs — other parked asks are left untouched (no re-run, no flicker).
+        for sid, q in asked.items():
+            if sid in results:
+                continue
+            parked.append((sid, sid, "ask"))
+            questions[sid] = q
+            if self._rm:
+                # question= surfaces the DYNAMIC ask_user text so the UI renders it as
+                # a runtime ask card (its plan-time question is empty — it's e.g. a
+                # send step that asked). kind stays truthful.
                 await self._rm.set_step_status(session_id, sid, "blocked",
-                                               blocked_reason=kind, interrupt_id=it.id)
-
-        # State-driven awaits: not on an interrupt, so scan the final plan for the
-        # ones now waiting. Graph state keeps them `pending` (so a re-drive with the
-        # reply in state runs them); only the read model shows `blocked` for the UI.
-        values = snap.values or {}
-        results = values.get("results") or {}
-        replies = values.get("replies") or {}
-        for s in (values.get("plan") or []):
-            if (s.get("kind") == "await_reply"
-                    and s.get("status", "pending") == "pending"
-                    and all(d in results for d in (s.get("depends_on") or []))
-                    and s["id"] not in replies):
-                parked.append((None, s["id"], "await_reply"))
+                                               blocked_reason="ask", interrupt_id=sid,
+                                               question=q)
+        for s in plan:
+            if s.get("status", "pending") != "pending":
+                continue
+            if not all(d in results for d in (s.get("depends_on") or [])):
+                continue
+            sid = s["id"]
+            if sid in asked:
+                continue   # already parked above
+            kind = s.get("kind")
+            if kind == "await_reply" and sid not in replies:
+                parked.append((None, sid, "await_reply"))
                 if self._rm:
-                    await self._rm.set_step_status(session_id, s["id"], "blocked",
+                    await self._rm.set_step_status(session_id, sid, "blocked",
                                                    blocked_reason="await_reply")
                     # non-null marker so claim_mail_wait can match an arriving reply
-                    await self._rm.bind_mail_wait_interrupt(session_id, s["id"], s["id"])
+                    await self._rm.bind_mail_wait_interrupt(session_id, sid, sid)
+            elif kind == "ask" and sid not in answers:
+                # step_id IS the interrupt id the chat reply targets (resume writes
+                # the answer keyed by it).
+                parked.append((sid, sid, "ask"))
+                if self._rm:
+                    await self._rm.set_step_status(session_id, sid, "blocked",
+                                                   blocked_reason="ask", interrupt_id=sid)
 
+        terminal = {"completed", "failed", "cancelled"}
+        all_done = all(s.get("status", "pending") in terminal for s in plan)
         if self._rm:
             if parked:
                 # An ask makes the session `waiting` (chat-answerable) even when a
@@ -196,11 +214,11 @@ class LgRunner:
                     await self._rm.set_waiting(session_id, ask_iid)
                 else:
                     await self._rm.set_session_status(session_id, "blocked")
-            elif not snap.next:
+            elif all_done:
                 await self._rm.set_session_status(session_id, "completed")
 
-        return {"parked": parked, "values": snap.values,
-                "done": not snap.next and not parked}
+        return {"parked": parked, "values": state, "questions": questions,
+                "done": not parked and all_done}
 
     async def run(self, plan: Plan, session_id: str, checkpointer, *, model=None) -> dict:
         if self._rm is not None:
@@ -212,15 +230,16 @@ class LgRunner:
                                         [_dict_to_row(d) for d in _state_plan(plan)])
         app = self._compile(session_id, checkpointer, model)
         return await self._drive(app, session_id,
-                                 {"plan": _state_plan(plan), "results": {}, "replies": {}})
+                                 {"plan": _state_plan(plan), "results": {},
+                                  "replies": {}, "answers": {}})
 
     async def resume(self, session_id: str, interrupt_id: str, answer: str,
                      checkpointer, *, model=None) -> dict:
-        """Resume an `ask` interrupt with `answer`. The plan is in checkpoint
-        state, so this just re-enters the same loop."""
+        """Answer a state-driven `ask` step. `interrupt_id` is the step id (that is
+        what _drive parked it as); write the answer into `answers` and re-drive —
+        only that step's branch advances, other parked asks/awaits are untouched."""
         app = self._compile(session_id, checkpointer, model)
-        return await self._drive(app, session_id,
-                                 Command(resume={interrupt_id: answer}))
+        return await self._drive(app, session_id, {"answers": {interrupt_id: answer}})
 
     async def deliver_reply(self, session_id: str, step_id: str, reply: str,
                             checkpointer, *, model=None) -> dict:
@@ -255,8 +274,7 @@ class LgRunner:
         # updates only the changed fields (e.g. depends_on after insert_before).
         for s in (changed_steps or []):
             dicts.append(_to_state_step(s))
-        if not dicts:
-            return await self._drive(app, session_id, None)
-        config = {"configurable": {"thread_id": session_id}}
-        await app.aupdate_state(config, {"plan": dicts})
-        return await self._drive(app, session_id, None)
+        # The plan edit rides in as input: the entrypoint merges it into the
+        # checkpointed plan (merge_plan) and the loop runs whatever became ready —
+        # same mechanism as an executor spawn. None input just re-drives.
+        return await self._drive(app, session_id, {"plan": dicts} if dicts else None)

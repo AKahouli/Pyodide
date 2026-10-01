@@ -344,4 +344,28 @@ describe('ChatMessageThread', () => {
     expect(screen.queryByRole('radio', { name: 'Approuver' })).not.toBeInTheDocument();
     expect(screen.queryByText("Approuver l'envoi de cet e-mail ?")).not.toBeInTheDocument();
   });
+
+  it('hides an ask-card answer from the chat (it lives on the ask card)', () => {
+    mockedUseMessages.mockReturnValue([
+      {
+        id: 'm1',
+        role: 'owner',
+        content: JSON.stringify({ askInterruptId: 'r1_email', answer: 'boss@example.com' }),
+        planDeltaRef: null,
+        createdAt: '2026-09-03T10:00:00.000Z',
+        components: [],
+      },
+    ]);
+
+    render(
+      <TestProviders>
+        <ChatMessageThread streamId='stream-1' />
+      </TestProviders>,
+    );
+
+    // The card answer is the only message, so it's dropped — neither the raw
+    // payload nor the bare answer text appears in the thread.
+    expect(screen.queryByText(/askInterruptId/)).not.toBeInTheDocument();
+    expect(screen.queryByText('boss@example.com')).not.toBeInTheDocument();
+  });
 });
