@@ -87,7 +87,7 @@ const categoryStoreMock = (over: Record<string, jest.Mock> = {}): PgConnectorCat
   }) as unknown as PgConnectorCategoryStore;
 
 describe('ConnectorService findAllActive', () => {
-  it('includes hidden Playbook MCP while excluding other hidden connectors', async () => {
+  it('lists active visible connectors only, with no slug exception', async () => {
     const store = connectorStoreMock();
     const service = new ConnectorService(
       store,
@@ -100,9 +100,7 @@ describe('ConnectorService findAllActive', () => {
 
     await service.findAllActive();
 
-    // The active + visible filter (hidden excluded, playbook-mcp exception)
-    // lives in the store port; the service pins the exception slug.
-    expect(store.findAllActiveVisible).toHaveBeenCalledWith('playbook-mcp');
+    expect(store.findAllActiveVisible).toHaveBeenCalledWith();
   });
 });
 
@@ -840,76 +838,5 @@ describe('ConnectorService findIdsByCategoryName', () => {
       .resolves.toEqual([connectorId]);
     expect(categoryStore.findIdsByNameInsensitive).toHaveBeenCalledWith('Web Search');
     expect(store.findIdsInCategories).toHaveBeenCalledWith([connectorId], [categoryId]);
-  });
-});
-
-describe('ConnectorService semantic model search system connector', () => {
-  const logger = () => ({ setContext: jest.fn(), log: jest.fn(), error: jest.fn(), warn: jest.fn() }) as any;
-  const build = (store: PgConnectorStore, config: Record<string, string>) => new ConnectorService(
-    store,
-    categoryStoreMock(),
-    logger(),
-    null as any,
-    null as any,
-    createPlaybookBindingSyncServiceMock() as any,
-    { get: jest.fn((key: string, fallback?: string) => (key in config ? config[key] : fallback)) } as any,
-  );
-
-  it('seeds a hidden system connector with only the two read-only search tools, bearer server auth and the user identity header', async () => {
-    const upsertSystemActionsBySlug = jest.fn().mockImplementation(async (_slug: string, seed: Record<string, unknown>) => baseRow({
-      ...(seed as RowOver),
-      id: '507f1f77bcf86cd799439099',
-    }));
-    const service = build(connectorStoreMock({ upsertSystemActionsBySlug }), { 'semanticModel.mcpServerUrl': 'http://mcp-semantic:8027/mcp' });
-
-    const connector = await service.ensureSystemSemanticModelSearchMcpConnector();
-
-    expect(upsertSystemActionsBySlug).toHaveBeenCalledTimes(1);
-    const [slug, seed, actions] = upsertSystemActionsBySlug.mock.calls[0];
-    expect(slug).toBe('semantic-model-search-mcp');
-    expect(seed).toEqual(expect.objectContaining({
-      slug: 'semantic-model-search-mcp',
-      authSourceType: 'server_config',
-      runtimeAuthConfig: { strategy: 'http_header_bearer', secretKey: 'semantic_model_mcp_ingress' },
-      mcpTransportType: 'streamable_http',
-      mcpServerUrl: 'http://mcp-semantic:8027/mcp',
-      dynamicHeaders: [{ headerName: 'X-YellowStorm-User-Id', source: DynamicHeaderSource.USER_ID, enabled: true }],
-      isActive: true,
-      isSystem: true,
-      isHidden: true,
-    }));
-    expect(actions.map((action: { key: string }) => action.key)).toEqual(['find_records', 'get_related_records']);
-    expect(actions.every((action: { safety: string }) => action.safety === ConnectorActionSafety.READ)).toBe(true);
-    const [findRecords, getRelated] = actions as Array<{ parameterSchema: { properties: Record<string, unknown>; required: string[] } }>;
-    expect(Object.keys(findRecords.parameterSchema.properties)).toEqual(['model_id', 'query', 'concepts', 'data', 'limit']);
-    expect(findRecords.parameterSchema.required).toEqual(['model_id', 'query']);
-    expect(Object.keys(getRelated.parameterSchema.properties)).toEqual([
-      'model_id', 'record_ids', 'relations', 'direction', 'then_relations', 'concepts', 'data', 'max_records',
-    ]);
-    expect(getRelated.parameterSchema.required).toEqual(['model_id', 'record_ids']);
-    expect(connector?.slug).toBe('semantic-model-search-mcp');
-  });
-
-  it('skips seeding when SEMANTIC_MODEL_MCP_SERVER_URL is empty', async () => {
-    const upsertSystemActionsBySlug = jest.fn();
-    const service = build(connectorStoreMock({ upsertSystemActionsBySlug }), { 'semanticModel.mcpServerUrl': '' });
-
-    await expect(service.ensureSystemSemanticModelSearchMcpConnector()).resolves.toBeNull();
-    expect(upsertSystemActionsBySlug).not.toHaveBeenCalled();
-  });
-
-  it('finds a system connector only when the platform owns it and it is active', async () => {
-    const findBySlugAndOwner = jest.fn();
-    const service = build(connectorStoreMock({ findBySlugAndOwner }), {});
-
-    findBySlugAndOwner.mockResolvedValueOnce(baseRow({ slug: 'semantic-model-search-mcp', isSystem: true }));
-    await expect(service.findActiveSystemBySlug('semantic-model-search-mcp')).resolves.toMatchObject({ slug: 'semantic-model-search-mcp' });
-    expect(findBySlugAndOwner).toHaveBeenCalledWith('semantic-model-search-mcp', RESERVED_SYSTEM_OWNER_ID);
-
-    findBySlugAndOwner.mockResolvedValueOnce(baseRow({ slug: 'semantic-model-search-mcp', isSystem: false }));
-    await expect(service.findActiveSystemBySlug('semantic-model-search-mcp')).resolves.toBeNull();
-
-    findBySlugAndOwner.mockResolvedValueOnce(baseRow({ slug: 'semantic-model-search-mcp', isSystem: true, isActive: false }));
-    await expect(service.findActiveSystemBySlug('semantic-model-search-mcp')).resolves.toBeNull();
   });
 });

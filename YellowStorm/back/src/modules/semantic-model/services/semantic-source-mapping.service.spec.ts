@@ -279,6 +279,93 @@ describe('SemanticSourceMappingService boundaries', () => {
     expect(result.fields.title.rules.reason).toBe('label_not_found');
   });
 
+  it('passes computed fields to the document preview and maps the found ones', async () => {
+    const database = { query: jest.fn()
+      .mockResolvedValueOnce({ rows: [{}] })
+      .mockResolvedValueOnce({ rows: [{ label: 'Amendment', attributes: [
+        { key: 'number', label: 'Number', type: 'text' }, { key: 'year', label: 'Year', type: 'text' }, { key: 'code', label: 'Code', type: 'text' }] }] }) };
+    const models = { requireActiveRole: jest.fn().mockResolvedValue({ id: 'model-1', currentDraftVersionId: 'version-1' }) };
+    const documents = { findById: jest.fn().mockResolvedValue({ id: 'document-1', mimeType: 'application/pdf', originalName: 'ACME_2024.pdf',
+      size: 10, createdBy: 'u-2', indexingStatus: 'ready', contentHash: 'sha256:1' }) };
+    const runtime = { previewDocumentFields: jest.fn().mockResolvedValue({ status: 'read', aiSent: null, fields: {
+      number: { method: 'rules', reason: 'found', value: 'CNT-1' },
+      year: { method: 'computed', reason: 'found', input: 'ACME_2024', value: '2024' },
+      code: { method: 'computed', reason: 'no_match', input: 'CNT-1' } } }) };
+    const service = new SemanticSourceMappingService(database as never, models as never, documents as never, runtime as never, {} as never);
+    const year = { sourceField: null, targetAttribute: 'year', mode: 'computed' as const,
+      computed: { input: { kind: 'file' as const, name: 'document_name' as const }, method: 'split' as const, delimiter: '_', part: -1 } };
+    const code = { sourceField: null, targetAttribute: 'code', mode: 'computed' as const,
+      computed: { input: { kind: 'field' as const, name: 'number' }, method: 'regex' as const, pattern: '-(\\d+)' } };
+
+    const result = await service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
+      fieldMappings: [{ sourceField: null, targetAttribute: 'number', mode: 'extract' }, year, code], identityFields: ['number'],
+    }) as any;
+
+    expect(runtime.previewDocumentFields.mock.calls[0][0].entry.fieldMappings.slice(1)).toEqual([year, code]);
+    expect(result.entities[0].values).toEqual({ number: 'CNT-1', year: '2024' });
+    expect(result.entities[0].provenance.fields.year).toEqual({ method: 'computed_field' });
+  });
+
+  it('rejects a computed field reading a missing or computed field, and computed fields outside documents', async () => {
+    const computedFrom = (name: string) => ({ sourceField: null, targetAttribute: 'code', mode: 'computed' as const,
+      computed: { input: { kind: 'field' as const, name }, method: 'split' as const, delimiter: '_', part: 1 } });
+    const pdf = buildService();
+    pdf.database.query.mockResolvedValue({ rows: [{}] });
+    await expect(pdf.service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
+      fieldMappings: [computedFrom('missing')], identityFields: [],
+    })).rejects.toThrow('non-computed field');
+    await expect(pdf.service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
+      fieldMappings: [computedFrom('code')], identityFields: [],
+    })).rejects.toThrow('non-computed field');
+    const csv = buildService('text/csv');
+    csv.database.query.mockResolvedValue({ rows: [{}] });
+    await expect(csv.service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1', assetKind: 'csv', sheetName: 'CSV',
+      fieldMappings: [computedFrom('id')], identityFields: [],
+    })).rejects.toThrow('computed mappings are not supported');
+  });
+
+  it('reads document labels from the linked workspace documents, reauthorized by the runtime', async () => {
+    const database = { query: jest.fn().mockResolvedValue({ rows: [{}] }) };
+    const models = { requireActiveRole: jest.fn().mockResolvedValue({ id: 'model-1' }) };
+    const documents = { findById: jest.fn().mockImplementation(async (_workspace: string, id: string) => ({
+      id, originalName: `${id}.pdf`, createdBy: 'u-2', mimeType: 'application/pdf', size: 10, indexingStatus: 'ready', contentHash: 'h' })) };
+    const labels = { documentsRead: 2, unread: [], labels: [{ label: 'DEFINITION', kind: 'heading', documents: 2, page: 3, example: 'Un prêt' }] };
+    const runtime = { suggestDocumentLabels: jest.fn().mockResolvedValue(labels) };
+    const service = new SemanticSourceMappingService(database as never, models as never, documents as never, runtime as never, {} as never);
+
+    await expect(service.documentLabels('user-1', 'model-1', { workspaceId: 'workspace-1', documentIds: ['a', 'b', 'a'] })).resolves.toEqual(labels);
+    expect(models.requireActiveRole).toHaveBeenCalledWith('user-1', 'model-1', ['owner', 'editor']);
+    const request = runtime.suggestDocumentLabels.mock.calls[0][0];
+    expect(request.actorUserId).toBe('user-1');
+    expect(request.sources.map((source: { assetId: string }) => source.assetId)).toEqual(['a', 'b']);
+    expect(request.sources[0]).toMatchObject({ workspaceId: 'workspace-1', originalName: 'a.pdf', uploaderUserId: 'u-2', indexingStatus: 'ready' });
+  });
+
+  it('refuses whole pages without a usable page span', async () => {
+    const pdf = buildService();
+    pdf.database.query.mockResolvedValue({ rows: [{}] });
+    const pages = (span: { from: number; to?: number }) => pdf.service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
+      fieldMappings: [{ sourceField: 'Body', targetAttribute: 'body', mode: 'extract', rules: { location: 'pages', pages: span } }], identityFields: [],
+    });
+    await expect(pages({ from: 3, to: 2 })).rejects.toThrow('whole pages');
+    await expect(pages({ from: 1, to: 60 })).rejects.toThrow('whole pages');
+  });
+
+  it('previews a computed field for owners and editors only', async () => {
+    const models = { requireActiveRole: jest.fn().mockResolvedValue({ id: 'model-1' }) };
+    const runtime = { previewComputedField: jest.fn().mockResolvedValue({ results: [] }) };
+    const service = new SemanticSourceMappingService({} as never, models as never, {} as never, runtime as never, {} as never);
+    const dto = { computed: { input: { kind: 'file' as const, name: 'document_name' }, method: 'split' as const, delimiter: '_', part: 1 }, samples: ['a_b'] };
+    await expect(service.previewComputed('user-1', 'model-1', dto)).resolves.toEqual({ results: [] });
+    expect(models.requireActiveRole).toHaveBeenCalledWith('user-1', 'model-1', ['owner', 'editor']);
+    expect(runtime.previewComputedField).toHaveBeenCalledWith(dto);
+  });
+
   it('rejects reading rules outside a document, and reading anywhere without a pattern', async () => {
     const { service, database } = buildService('text/csv');
     database.query.mockResolvedValue({ rows: [{}] });

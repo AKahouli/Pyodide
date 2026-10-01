@@ -13,6 +13,7 @@ import {
   computeFieldProfiles,
   resolveSheetEntities,
   usesAiExtraction,
+  type ExtractionRules,
   type ResolvedEntity,
   type SourceAssetKind,
   type SourceFieldMapping,
@@ -27,6 +28,8 @@ import type {
   SourceAssetProfileQueryDto,
   WorkspaceSourceMappingDto,
   SourceMappingPreviewDto,
+  ComputedFieldPreviewDto,
+  DocumentLabelsDto,
 } from '../dto';
 import { DocumentExtractionConceptResolver } from './document-extraction-concept.resolver';
 import type { AttributeDefinition } from '../domain/semantic-model.types';
@@ -218,6 +221,30 @@ export class SemanticSourceMappingService {
   }
 
   /**
+   * Headings and `Label:` texts that recur across a few of a source's documents, so a person picks
+   * the labels the documents really use. Each document is reauthorized by the runtime, as a run does.
+   */
+  async documentLabels(userId: string, modelId: string, dto: DocumentLabelsDto) {
+    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    await this.requireLinkedWorkspace(model.id, dto.workspaceId);
+    const documents = await Promise.all([...new Set(dto.documentIds)].map((id) => this.documents.findById(dto.workspaceId, id)));
+    return this.runtime.suggestDocumentLabels({
+      actorUserId: userId,
+      sources: documents.map((document) => ({
+        workspaceId: dto.workspaceId, assetId: document.id, originalName: document.originalName,
+        uploaderUserId: document.createdBy, mimeType: document.mimeType, sizeBytes: document.size,
+        indexingStatus: document.indexingStatus, contentHash: document.contentHash, uploadedAt: document.uploadedAt,
+      })),
+    });
+  }
+
+  /** Try a computation on sample inputs (file names or field values) without a document. */
+  async previewComputed(userId: string, modelId: string, dto: ComputedFieldPreviewDto) {
+    await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    return this.runtime.previewComputedField({ computed: dto.computed, samples: dto.samples });
+  }
+
+  /**
    * Preview one document as a run reads it: the runtime applies the rules and the AI with the
    * limits this mapping would use, and says for each field how it was read or why it was not.
    */
@@ -270,6 +297,11 @@ export class SemanticSourceMappingService {
           ...(field.page != null ? { page: String(field.page) } : {}),
           ...(field.quote ? { quote: field.quote } : {}),
         };
+      } else if (mapping.mode === 'computed') {
+        const field = preview.fields[mapping.targetAttribute];
+        if (!field || field.reason !== 'found') continue;
+        values[mapping.targetAttribute] = field.value;
+        provenance[mapping.targetAttribute] = { method: 'computed_field' };
       }
     }
     const identityValues = input.identityFields.map((field) => values[field]);
@@ -847,14 +879,37 @@ export class SemanticSourceMappingService {
     return actualKind;
   }
 
+  private assertComputedInputs(mappings: SourceFieldMapping[]): void {
+    const misplaced = mappings.find((mapping) => mapping.computed !== undefined && mapping.mode !== 'computed');
+    if (misplaced) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A computation is only supported for computed fields');
+    }
+    const inputs = new Set(mappings.filter((mapping) => mapping.mode !== 'computed' && mapping.mode !== 'ignore')
+      .map((mapping) => mapping.targetAttribute));
+    for (const mapping of mappings) {
+      if (mapping.mode !== 'computed') continue;
+      const input = mapping.computed?.input;
+      if (!input) {
+        throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${mapping.targetAttribute}: a computed field needs a computation`);
+      }
+      const valid = input.kind === 'file' ? input.name === 'document_name'
+        : input.name !== mapping.targetAttribute && inputs.has(input.name);
+      if (!valid) {
+        throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+          `${mapping.targetAttribute}: a computed field reads the file name or another mapped, non-computed field`);
+      }
+    }
+  }
+
   private assertMappingModes(kind: SourceAssetKind, mappings: SourceFieldMapping[]): void {
     const allowed = kind === 'document'
-      ? new Set(['extract', 'metadata', 'constant', 'ignore'])
+      ? new Set(['extract', 'metadata', 'constant', 'computed', 'ignore'])
       : new Set(['direct', 'constant', 'ignore']);
     const invalidMode = mappings.find((mapping) => !allowed.has(mapping.mode));
     if (invalidMode) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${invalidMode.mode} mappings are not supported for ${kind} assets`);
     }
+    this.assertComputedInputs(mappings);
     const invalidMetadata = mappings.find((mapping) => mapping.mode === 'metadata'
       && !['document_name', 'document_id', 'workspace_id'].includes(mapping.sourceField ?? ''));
     if (invalidMetadata) {
@@ -878,7 +933,20 @@ export class SemanticSourceMappingService {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
         `${anywhereWithoutPattern.targetAttribute}: reading a value anywhere in the document needs a pattern`);
     }
+    const badPages = mappings.find((mapping) => mapping.rules?.location === 'pages' && !validPageSpan(mapping.rules.pages));
+    if (badPages) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+        `${badPages.targetAttribute}: whole pages need a first page, and a last page no more than ${MAX_PAGE_SPAN - 1} pages after it`);
+    }
   }
+}
+
+const MAX_PAGE_SPAN = 50;
+
+function validPageSpan(pages: ExtractionRules['pages']): boolean {
+  if (!pages || !Number.isInteger(pages.from) || pages.from < 1) return false;
+  const to = pages.to ?? pages.from;
+  return Number.isInteger(to) && to >= pages.from && to - pages.from < MAX_PAGE_SPAN;
 }
 
 /** "Legal", "Legal / Contracts", "Legal / Contracts, NDA.pdf" or "Legal / Contracts, NDA.pdf +3". */

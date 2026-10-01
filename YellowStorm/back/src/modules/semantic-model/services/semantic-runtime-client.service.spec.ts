@@ -160,4 +160,19 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
       await expect(client.graphSearch(query)).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE });
     });
   });
+
+  it('previews a computed field and maps a runtime 422 to a validation error', async () => {
+    const client = new SemanticRuntimeClientService(config() as any);
+    const body = { computed: { input: { kind: 'file', name: 'document_name' }, method: 'split', delimiter: '_', part: 1 }, samples: ['A_B.pdf'] };
+    fetchMock.mockResolvedValueOnce(jsonResponse({ results: [{ input: 'A_B.pdf', value: 'A', reason: 'found' }] }));
+    await expect(client.previewComputedField(body)).resolves.toEqual({ results: [{ input: 'A_B.pdf', value: 'A', reason: 'found' }] });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://runtime:8000/v1/semantic-model-population/computed-preview');
+    expect(JSON.parse(init.body)).toEqual(body);
+    expect(init.headers).toEqual(expect.objectContaining({ 'X-Semantic-Service-Key': 'secret' }));
+
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'invalid_computed: part must not be 0' }),
+      { status: 422, headers: { 'Content-Type': 'application/json' } }));
+    await expect(client.previewComputedField(body)).rejects.toMatchObject({ message: expect.stringContaining('invalid_computed') });
+  });
 });

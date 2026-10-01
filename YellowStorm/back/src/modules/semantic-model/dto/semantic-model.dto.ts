@@ -311,23 +311,34 @@ export class UpdateBusinessRequirementsDto {
   businessRequirements!: Record<string, unknown>[];
 }
 
+export class ExtractionPagesDto {
+  @ApiProperty({ minimum: 1, maximum: 2000 })
+  @IsInt() @Min(1) @Max(2000)
+  from!: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 2000, description: 'Last page read; the first one when omitted. At most 50 pages.' })
+  @IsOptional() @IsInt() @Min(1) @Max(2000)
+  to?: number;
+}
+
 /** Rules for reading one document field without AI. */
 export class ExtractionRulesDto {
   @ApiPropertyOptional({ type: [String], maxItems: 10, description: 'Labels the value follows, e.g. "Contract No.", "N° de contrat"' })
   @IsOptional() @IsArray() @ArrayMaxSize(10) @IsString({ each: true }) @MaxLength(200, { each: true })
   labels?: string[];
 
-  @ApiPropertyOptional({ enum: ['auto', 'same_line', 'next_line', 'table', 'heading', 'anywhere'] })
-  @IsOptional() @IsIn(['auto', 'same_line', 'next_line', 'table', 'heading', 'anywhere'])
-  location?: 'auto' | 'same_line' | 'next_line' | 'table' | 'heading' | 'anywhere';
+  @ApiPropertyOptional({ enum: ['auto', 'same_line', 'next_line', 'table', 'heading', 'anywhere', 'after_label', 'before_label', 'pages'],
+    description: 'after_label / before_label read the whole passage after or before a label or heading; pages reads whole pages' })
+  @IsOptional() @IsIn(['auto', 'same_line', 'next_line', 'table', 'heading', 'anywhere', 'after_label', 'before_label', 'pages'])
+  location?: 'auto' | 'same_line' | 'next_line' | 'table' | 'heading' | 'anywhere' | 'after_label' | 'before_label' | 'pages';
 
   @ApiPropertyOptional({ maxLength: 200, description: 'Regular expression the value must match; its first group is kept when it has one' })
   @IsOptional() @IsString() @MaxLength(200)
   pattern?: string;
 
-  @ApiPropertyOptional({ enum: ['none', 'upper', 'lower', 'date_iso'] })
-  @IsOptional() @IsIn(['none', 'upper', 'lower', 'date_iso'])
-  transform?: 'none' | 'upper' | 'lower' | 'date_iso';
+  @ApiPropertyOptional({ enum: ['none', 'trim', 'upper', 'lower', 'date_iso'], description: 'trim removes spaces, bullets and separators at both ends' })
+  @IsOptional() @IsIn(['none', 'trim', 'upper', 'lower', 'date_iso'])
+  transform?: 'none' | 'trim' | 'upper' | 'lower' | 'date_iso';
 
   @ApiPropertyOptional({ enum: ['unique', 'first'], description: 'Keep a value only when every match agrees, or keep the first' })
   @IsOptional() @IsIn(['unique', 'first'])
@@ -336,6 +347,79 @@ export class ExtractionRulesDto {
   @ApiPropertyOptional()
   @IsOptional() @IsBoolean()
   firstPageOnly?: boolean;
+
+  @ApiPropertyOptional({ type: [String], maxItems: 10, description: 'Where a passage stops (after_label) or starts (before_label)' })
+  @IsOptional() @IsArray() @ArrayMaxSize(10) @IsString({ each: true }) @MaxLength(200, { each: true })
+  boundaryLabels?: string[];
+
+  @ApiPropertyOptional({ type: ExtractionPagesDto })
+  @IsOptional() @ValidateNested() @Type(() => ExtractionPagesDto)
+  pages?: ExtractionPagesDto;
+}
+
+export class DocumentLabelsDto {
+  @ApiProperty()
+  @IsString() @MinLength(1)
+  workspaceId!: string;
+
+  @ApiProperty({ type: [String], minItems: 1, maxItems: 10, description: 'A few of the source\'s documents to read labels from' })
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(10) @IsString({ each: true }) @MinLength(1, { each: true })
+  documentIds!: string[];
+}
+
+export class ComputedFieldInputDto {
+  @ApiProperty({ enum: ['file', 'field'] })
+  @IsIn(['file', 'field'])
+  kind!: 'file' | 'field';
+
+  // 'document_name' for a file input, another mapping's targetAttribute for a field input.
+  @ApiProperty({ maxLength: 80 })
+  @IsString() @MinLength(1) @MaxLength(80)
+  name!: string;
+}
+
+export class ComputedFieldDto {
+  @ApiProperty({ type: () => ComputedFieldInputDto })
+  @IsDefined()
+  @ValidateNested()
+  @Type(() => ComputedFieldInputDto)
+  input!: ComputedFieldInputDto;
+
+  @ApiProperty({ enum: ['split', 'between', 'regex'] })
+  @IsIn(['split', 'between', 'regex'])
+  method!: 'split' | 'between' | 'regex';
+
+  @ApiPropertyOptional({ minLength: 1, maxLength: 10 })
+  @IsOptional() @IsString() @MinLength(1) @MaxLength(10)
+  delimiter?: string;
+
+  @ApiPropertyOptional({ minimum: -20, maximum: 20, description: 'Non-zero; negative counts from the end' })
+  @IsOptional() @IsInt() @Min(-20) @Max(20)
+  part?: number;
+
+  @ApiPropertyOptional({ maxLength: 50 })
+  @IsOptional() @IsString() @MaxLength(50)
+  after?: string;
+
+  @ApiPropertyOptional({ maxLength: 50 })
+  @IsOptional() @IsString() @MaxLength(50)
+  before?: string;
+
+  @ApiPropertyOptional({ maxLength: 200 })
+  @IsOptional() @IsString() @MaxLength(200)
+  pattern?: string;
+
+  @ApiPropertyOptional({ maxLength: 100 })
+  @IsOptional() @IsString() @MaxLength(100)
+  template?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional() @IsBoolean()
+  stripExtension?: boolean;
+
+  @ApiPropertyOptional({ enum: ['none', 'trim', 'upper', 'lower', 'date_iso', 'year', 'number'] })
+  @IsOptional() @IsIn(['none', 'trim', 'upper', 'lower', 'date_iso', 'year', 'number'])
+  transform?: 'none' | 'trim' | 'upper' | 'lower' | 'date_iso' | 'year' | 'number';
 }
 
 export class SourceFieldMappingDto {
@@ -352,9 +436,9 @@ export class SourceFieldMappingDto {
   @MaxLength(80)
   targetAttribute!: string;
 
-  @ApiProperty({ enum: ['direct', 'extract', 'metadata', 'constant', 'ignore'] })
-  @IsIn(['direct', 'extract', 'metadata', 'constant', 'ignore'])
-  mode!: 'direct' | 'extract' | 'metadata' | 'constant' | 'ignore';
+  @ApiProperty({ enum: ['direct', 'extract', 'metadata', 'constant', 'computed', 'ignore'] })
+  @IsIn(['direct', 'extract', 'metadata', 'constant', 'computed', 'ignore'])
+  mode!: 'direct' | 'extract' | 'metadata' | 'constant' | 'computed' | 'ignore';
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -371,6 +455,25 @@ export class SourceFieldMappingDto {
   @ValidateNested()
   @Type(() => ExtractionRulesDto)
   rules?: ExtractionRulesDto;
+
+  @ApiPropertyOptional({ type: () => ComputedFieldDto, description: 'How a computed document field is derived' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ComputedFieldDto)
+  computed?: ComputedFieldDto;
+}
+
+export class ComputedFieldPreviewDto {
+  @ApiProperty({ type: () => ComputedFieldDto })
+  @IsDefined()
+  @ValidateNested()
+  @Type(() => ComputedFieldDto)
+  computed!: ComputedFieldDto;
+
+  @ApiProperty({ type: [String], minItems: 1, maxItems: 20 })
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(20)
+  @IsString({ each: true }) @MaxLength(1000, { each: true })
+  samples!: string[];
 }
 
 /** Limits on how much of a document the AI reads. Each one left out uses the admin default. */

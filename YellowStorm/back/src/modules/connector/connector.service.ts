@@ -23,16 +23,6 @@ import { ConnectorAuthService } from './interfaces/connector-auth.interface';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
 import { ConnectorPlaybookBindingSyncService } from './services/connector-playbook-binding-sync.service';
 import { RESERVED_SYSTEM_OWNER_ID } from '../agent/constants/platform-copilot.constants';
-import {
-  AGENT_MCP_ACTIONS,
-  AGENT_MCP_CONNECTOR_SLUG,
-  AGENT_MCP_RUNTIME_AUTH_SECRET_KEY,
-} from './constants/agent-mcp.constants';
-import {
-  SEMANTIC_MODEL_SEARCH_MCP_ACTIONS,
-  SEMANTIC_MODEL_SEARCH_MCP_CONNECTOR_SLUG,
-  SEMANTIC_MODEL_SEARCH_MCP_RUNTIME_AUTH_SECRET_KEY,
-} from './constants/semantic-model-search-mcp.constants';
 import { PgConnectorCategoryStore } from './persistence/pg-connector.store';
 import { PgConnectorStore } from './persistence/pg-connector.store';
 
@@ -91,102 +81,6 @@ export class ConnectorService {
     });
 
     return this.toResponse(connector);
-  }
-
-  /**
-   * Idempotently seed the hidden system connector for the mcp-agent MCP server
-   * (agent/team CRUD over Streamable HTTP). Action snapshots are re-synced on
-   * every boot so they track the server tool inventory; connector-level admin
-   * edits are preserved via $setOnInsert.
-   */
-  async ensureSystemAgentMcpConnector(): Promise<IConnectorResponse> {
-    const connector = await this.connectorStore.upsertSystemActionsBySlug(
-      AGENT_MCP_CONNECTOR_SLUG,
-      {
-        slug: AGENT_MCP_CONNECTOR_SLUG,
-        name: 'Agent Management (MCP)',
-        description: 'Agent and team CRUD tools served by the mcp-agent MCP server.',
-        icon: '',
-        color: '',
-        iconColor: 'light',
-        categoryId: null,
-        authType: 'none',
-        authConfigSchema: {},
-        authSourceType: 'server_config',
-        connectedAppKey: '',
-        runtimeAuthConfig: { strategy: 'http_header_bearer', secretKey: AGENT_MCP_RUNTIME_AUTH_SECRET_KEY },
-        mcpTransportType: 'streamable_http',
-        mcpServerUrl: this.configService?.get<string>('agentMcp.mcpServerUrl', 'http://localhost:8026/mcp') ?? 'http://localhost:8026/mcp',
-        mcpServerConfig: {},
-        dynamicHeaders: this.normalizeDynamicHeaders([
-          { headerName: 'X-YellowStorm-User-Id', source: DynamicHeaderSource.USER_ID },
-        ]),
-        actions: this.normalizeConnectorActions(AGENT_MCP_ACTIONS),
-        skillIds: [],
-        isActive: true,
-        isSystem: true,
-        isHidden: true,
-        createdBy: RESERVED_SYSTEM_OWNER_ID,
-      },
-      this.normalizeConnectorActions(AGENT_MCP_ACTIONS),
-    );
-    return this.toResponse(connector);
-  }
-
-  /**
-   * Idempotently seed the hidden system connector for the record search tools
-   * of the mcp-semantic-model server (find_records, get_related_records). Chat
-   * binds it to the agents only when a message carries a semantic model. The
-   * action snapshot is re-synced on every boot; connector-level admin edits are
-   * preserved. Skipped (returns null) when SEMANTIC_MODEL_MCP_SERVER_URL is empty.
-   */
-  async ensureSystemSemanticModelSearchMcpConnector(): Promise<IConnectorResponse | null> {
-    const mcpServerUrl = (this.configService?.get<string>('semanticModel.mcpServerUrl', 'http://localhost:8027/mcp') ?? '').trim();
-    if (!mcpServerUrl) {
-      this.logger.log('SEMANTIC_MODEL_MCP_SERVER_URL is empty; semantic model search connector not seeded');
-      return null;
-    }
-    const actions = this.normalizeConnectorActions(SEMANTIC_MODEL_SEARCH_MCP_ACTIONS);
-    const connector = await this.connectorStore.upsertSystemActionsBySlug(
-      SEMANTIC_MODEL_SEARCH_MCP_CONNECTOR_SLUG,
-      {
-        slug: SEMANTIC_MODEL_SEARCH_MCP_CONNECTOR_SLUG,
-        name: 'Semantic Model Search (MCP)',
-        description: 'Record search tools of a semantic model, served by the mcp-semantic-model MCP server.',
-        icon: '',
-        color: '',
-        iconColor: 'light',
-        categoryId: null,
-        authType: 'none',
-        authConfigSchema: {},
-        authSourceType: 'server_config',
-        connectedAppKey: '',
-        runtimeAuthConfig: { strategy: 'http_header_bearer', secretKey: SEMANTIC_MODEL_SEARCH_MCP_RUNTIME_AUTH_SECRET_KEY },
-        mcpTransportType: 'streamable_http',
-        mcpServerUrl,
-        mcpServerConfig: {},
-        dynamicHeaders: this.normalizeDynamicHeaders([
-          { headerName: 'X-YellowStorm-User-Id', source: DynamicHeaderSource.USER_ID },
-        ]),
-        actions,
-        skillIds: [],
-        isActive: true,
-        isSystem: true,
-        isHidden: true,
-        createdBy: RESERVED_SYSTEM_OWNER_ID,
-      },
-      actions,
-    );
-    return this.toResponse(connector);
-  }
-
-  /**
-   * Active system connector seeded by the platform under `slug`. Looked up by the reserved system owner so a
-   * user connector that happens to reuse the slug is never returned.
-   */
-  async findActiveSystemBySlug(slug: string): Promise<IConnectorResponse | null> {
-    const connector = await this.connectorStore.findBySlugAndOwner(slug, RESERVED_SYSTEM_OWNER_ID);
-    return connector && connector.isSystem && connector.isActive ? this.toResponse(connector) : null;
   }
 
   async findAll(query: QueryConnectorDto): Promise<PaginatedResponseDto<IConnectorResponse>> {
@@ -321,7 +215,7 @@ export class ConnectorService {
   }
 
   async findAllActive(): Promise<IConnectorResponse[]> {
-    const connectors = await this.connectorStore.findAllActiveVisible('playbook-mcp');
+    const connectors = await this.connectorStore.findAllActiveVisible();
 
     const categoryNameById = await this.buildCategoryNameMap(connectors);
 

@@ -171,13 +171,13 @@ export class PgConnectorStore implements ConnectorStore {
     return this.hydrate(rows);
   }
 
-  async findAllActiveVisible(exceptionSlug: string): Promise<ConnectorRow[]> {
+  async findAllActiveVisible(): Promise<ConnectorRow[]> {
     const rows = await this.q
       .select()
       .from(schema.integrationsConnectors)
       .where(and(
         eq(schema.integrationsConnectors.isActive, true),
-        sql`(${schema.integrationsConnectors.isHidden} = false OR ${schema.integrationsConnectors.slug} = ${exceptionSlug})`,
+        eq(schema.integrationsConnectors.isHidden, false),
       ))
       .orderBy(asc(schema.integrationsConnectors.name));
     return this.hydrate(rows);
@@ -263,35 +263,6 @@ export class PgConnectorStore implements ConnectorStore {
       .where(eq(schema.integrationsConnectors.id, id))
       .returning();
     return row ? connectorToRow(row, []) : null;
-  }
-
-  async upsertSystemActionsBySlug(
-    slug: string,
-    seed: NewConnectorRow,
-    actions: ConnectorAction[],
-  ): Promise<ConnectorRow> {
-    const { skillIds: _skillIds, ...c } = seed;
-    return withTransaction(this.db, async (tx) => {
-      // Partial unique index (slug WHERE is_system): raw SQL for the conflict target.
-      await tx.execute(sql`
-        INSERT INTO integrations.connectors
-          (id, slug, name, description, icon, color, icon_color, category_id, auth_type,
-           auth_config_schema, auth_source_type, connected_app_key, runtime_auth_config,
-           mcp_transport_type, mcp_server_url, mcp_server_config, dynamic_headers, actions,
-           is_active, is_system, is_hidden, created_by)
-        VALUES (${newObjectId()}, ${slug}, ${c.name}, ${c.description}, ${c.icon}, ${c.color},
-                ${c.iconColor}, ${c.categoryId}, ${c.authType}, ${JSON.stringify(c.authConfigSchema)}::jsonb,
-                ${c.authSourceType}, ${c.connectedAppKey}, ${JSON.stringify(c.runtimeAuthConfig)}::jsonb,
-                ${c.mcpTransportType}, ${c.mcpServerUrl}, ${JSON.stringify(c.mcpServerConfig)}::jsonb,
-                ${JSON.stringify(c.dynamicHeaders)}::jsonb, ${JSON.stringify(actions)}::jsonb,
-                ${c.isActive}, ${c.isSystem}, ${c.isHidden}, ${c.createdBy})
-        ON CONFLICT (slug) WHERE is_system
-        DO UPDATE SET actions = EXCLUDED.actions, updated_at = now()
-      `);
-      const [row] = await tx.select().from(schema.integrationsConnectors).where(eq(schema.integrationsConnectors.slug, slug)).limit(1);
-      const skills = await hydrateSkills(tx, [row.id]);
-      return connectorToRow(row, skills.get(row.id) ?? []);
-    });
   }
 
   async findAllExport(ids?: string[]): Promise<ConnectorRow[]> {

@@ -23,6 +23,8 @@ import {
   SourceAssetProfileQueryDto,
   SaveCanvasPositionsDto,
   SourceMappingPreviewDto,
+  ComputedFieldPreviewDto,
+  DocumentLabelsDto,
   DataPreviewDto,
   SaveRelationResolutionRuleDto,
   SaveIdentityRuleDto,
@@ -313,10 +315,29 @@ export class SemanticModelController {
 
   @Post(':modelId/source-mappings/preview')
   @ApiOperation({ summary: 'Resolve entities from a spreadsheet or document using a draft field mapping' })
-  @RateLimit({ limit: 5, windowMs: 60_000, keyPrefix: 'semantic-model:source-preview' })
+  // The mapping editor previews the shown document again after each rule change (debounced).
+  @RateLimit({ limit: 40, windowMs: 60_000, keyPrefix: 'semantic-model:source-preview' })
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   previewSourceMapping(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: SourceMappingPreviewDto) {
     return this.sourceMappings.preview(user._id.toString(),modelId,dto);
+  }
+
+  @Post(':modelId/source-mappings/document-labels')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Headings and labels that recur across a few of a document source\'s files' })
+  @RateLimit({ limit: 20, windowMs: 60_000, keyPrefix: 'semantic-model:document-labels' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  suggestDocumentLabels(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: DocumentLabelsDto) {
+    return this.sourceMappings.documentLabels(user._id.toString(),modelId,dto);
+  }
+
+  @Post(':modelId/source-mappings/computed-preview')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Try a computed field on sample file names or field values' })
+  @RateLimit({ limit: 30, windowMs: 60_000, keyPrefix: 'semantic-model:computed-preview' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  previewComputedField(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: ComputedFieldPreviewDto) {
+    return this.sourceMappings.previewComputed(user._id.toString(),modelId,dto);
   }
 
   @Delete(':modelId/source-mappings/:mappingId')

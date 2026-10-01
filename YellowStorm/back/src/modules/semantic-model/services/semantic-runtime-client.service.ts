@@ -191,10 +191,12 @@ export interface RuntimeDocumentPreviewRequest {
 /** How each extracted field was read, or why it was not. */
 export interface RuntimeDocumentPreviewField {
   method: 'rules' | 'ai';
-  reason: 'found' | 'label_not_found' | 'no_value' | 'several_values' | 'pattern_mismatch' | 'no_heading' | 'no_match' | 'ai_not_found' | 'ai_failed';
+  reason: 'found' | 'label_not_found' | 'no_value' | 'several_values' | 'pattern_mismatch' | 'no_heading' | 'no_match' | 'no_page' | 'ai_not_found' | 'ai_failed';
   value?: unknown;
   values?: string[];
   page?: number | null;
+  /** Last page of a passage read over several pages. */
+  pageEnd?: number | null;
   quote?: string | null;
   detail?: string;
   rules?: Omit<RuntimeDocumentPreviewField, 'rules'>;
@@ -206,6 +208,26 @@ export interface RuntimeDocumentPreview {
   detail?: string;
   fields: Record<string, RuntimeDocumentPreviewField>;
   aiSent?: { documentCharacters: number; longDocument: boolean; blocksSent: number; charactersSent: number } | null;
+}
+
+export interface RuntimeDocumentLabelsRequest {
+  actorUserId: string;
+  sources: Array<Record<string, unknown>>;
+}
+
+export interface RuntimeDocumentLabels {
+  documentsRead: number;
+  unread: Array<{ assetId: string; status: string }>;
+  labels: Array<{ label: string; kind: 'heading' | 'label'; documents: number; page: number | null; example: string }>;
+}
+
+export interface RuntimeComputedPreviewRequest {
+  computed: unknown;
+  samples: string[];
+}
+
+export interface RuntimeComputedPreview {
+  results: Array<{ input: string; value: string | null; reason: 'found' | 'no_input' | 'no_match' | 'not_transformable' }>;
 }
 
 // ── Graph search (records of a bound data revision, found by meaning, then followed along real links) ──
@@ -415,6 +437,25 @@ export class SemanticRuntimeClientService {
    * take a while, so this waits longer than other calls; a rule the runtime rejects comes back as
    * a validation error that names the problem.
    */
+  async suggestDocumentLabels(body: RuntimeDocumentLabelsRequest): Promise<RuntimeDocumentLabels> {
+    const base = this.requireRuntime();
+    let res: Response;
+    try {
+      res = await fetch(`${base}/v1/semantic-model-population/document-labels`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Semantic-Service-Key': this.config.runtimeServiceKey },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(DOCUMENT_PREVIEW_TIMEOUT_MS),
+      });
+    } catch {
+      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    }
+    if (!res.ok) {
+      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, `Semantic runtime could not read the document labels (${res.status})`);
+    }
+    return await res.json() as RuntimeDocumentLabels;
+  }
+
   async previewDocumentFields(body: RuntimeDocumentPreviewRequest): Promise<RuntimeDocumentPreview> {
     const base = this.requireRuntime();
     let res: Response;
@@ -434,6 +475,27 @@ export class SemanticRuntimeClientService {
     }
     if (!res.ok) throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
     return await res.json() as RuntimeDocumentPreview;
+  }
+
+  async previewComputedField(body: RuntimeComputedPreviewRequest): Promise<RuntimeComputedPreview> {
+    const base = this.requireRuntime();
+    let res: Response;
+    try {
+      res = await fetch(`${base}/v1/semantic-model-population/computed-preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Semantic-Service-Key': this.config.runtimeServiceKey },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(this.config.runtimeRequestTimeoutMs),
+      });
+    } catch {
+      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    }
+    if (res.status === 422) {
+      const detail = this.errorDetail({ data: await this.readErrorPayload(res) });
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, detail || 'This computation cannot be used');
+    }
+    if (!res.ok) throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    return await res.json() as RuntimeComputedPreview;
   }
 
   private async get<T>(path: string, actorUserId: string): Promise<T> {

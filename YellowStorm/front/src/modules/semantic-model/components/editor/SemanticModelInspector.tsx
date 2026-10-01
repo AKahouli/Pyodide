@@ -35,7 +35,7 @@ export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowled
   const relation = graph?.relations.find((item) => item.id === selectedId);
   const record = graph?.records.find((item) => item.id === selectedId);
   useFocusSection();
-  const knowledgePanel = <KnowledgePanel canEdit={canEdit} knowledge={knowledge} targetNodeId={knowledgeTargetId} onClose={onKnowledgeClose} onMapData={(resource)=>onMapData?.(sourceMappingTargetFromResource(resource, knowledgeTargetId ?? undefined))} onMapWorkspace={onMapData?(scope)=>onMapData(sourceMappingTargetFromWorkspace(scope, knowledgeTargetId ?? undefined)):undefined}/>;
+  const knowledgePanel = <KnowledgePanel canEdit={canEdit} knowledge={knowledge} targetNodeId={knowledgeTargetId} onClose={onKnowledgeClose} onMapData={(resource)=>onMapData?.(sourceMappingTargetFromResource(resource, knowledgeTargetId ?? undefined))} onMapWorkspace={onMapData?(scope)=>onMapData(sourceMappingTargetFromWorkspace(scope, knowledgeTargetId ?? undefined)):undefined} onDeriveFrom={onDeriveData?(conceptId)=>onDeriveData({ conceptId }):undefined}/>;
   if (knowledgeOpen) return workspace
     ? <aside className='absolute inset-y-0 right-0 z-30 w-[min(26rem,100%)] border-l bg-background shadow-xl'>{knowledgePanel}</aside>
     : <ResizableSidePanel className='z-30 bg-background/95 shadow-2xl backdrop-blur xl:shadow-none'>{knowledgePanel}</ResizableSidePanel>;

@@ -973,7 +973,7 @@ export class SemanticPopulationRefreshService {
       );
     }
     const allowedModes = mapping.assetKind === 'document'
-      ? new Set(['extract', 'metadata', 'constant'])
+      ? new Set(['extract', 'metadata', 'constant', 'computed'])
       : new Set(['direct', 'constant']);
     if (activeMappings.some((field) => !allowedModes.has(field.mode))) {
       throw new BadRequestException(

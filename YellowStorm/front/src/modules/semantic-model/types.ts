@@ -220,16 +220,20 @@ export interface SheetProfile {
 /** Rules alone, AI alone, or the rules first and the AI only for what they did not find. */
 export type SourceExtractionStrategy = 'deterministic' | 'ai' | 'rules_then_ai';
 
-export type ExtractionLocation = 'auto' | 'same_line' | 'next_line' | 'table' | 'heading' | 'anywhere';
+export type ExtractionLocation = 'auto' | 'same_line' | 'next_line' | 'table' | 'heading' | 'anywhere' | 'after_label' | 'before_label' | 'pages';
 
 /** Where a document value is and what it looks like. Without rules: `Label: value`, or a table row. */
 export interface ExtractionRules {
   /** Labels the value follows; empty means the field's name. */
   labels?: string[];
   location?: ExtractionLocation;
+  /** after_label: where the passage stops; before_label: where it starts. Empty: the end/start of the section. */
+  boundaryLabels?: string[];
+  /** location 'pages' only: the pages read whole (at most 50). */
+  pages?: { from: number; to?: number };
   /** A regular expression the value must match; its first group is kept when it has one. */
   pattern?: string;
-  transform?: 'none' | 'upper' | 'lower' | 'date_iso';
+  transform?: 'none' | 'trim' | 'upper' | 'lower' | 'date_iso';
   /** Keep a value only when every match agrees, or keep the first one. */
   occurrence?: 'unique' | 'first';
   firstPageOnly?: boolean;
@@ -238,11 +242,40 @@ export interface ExtractionRules {
 export interface SourceFieldMapping {
   sourceField: string | null;
   targetAttribute: string;
-  mode: 'direct' | 'extract' | 'metadata' | 'constant' | 'ignore';
+  mode: 'direct' | 'extract' | 'metadata' | 'constant' | 'computed' | 'ignore';
   constantValue?: unknown;
+  /** Only for mode='computed' (document sources): a value taken from the file name or another field. */
+  computed?: ComputedFieldRule;
   // Only meaningful for mode='extract'; absent means deterministic.
   extractionStrategy?: SourceExtractionStrategy;
   rules?: ExtractionRules;
+}
+
+export type ComputedFieldInput = { kind: 'file'; name: 'document_name' } | { kind: 'field'; name: string };
+export type ComputedFieldMethod = 'split' | 'between' | 'regex';
+export type ComputedFieldTransform = 'none' | 'trim' | 'upper' | 'lower' | 'date_iso' | 'year' | 'number';
+
+/** How a computed field is cut out of its input, e.g. `ACME_2023_8K.pdf` split by `_`, 2nd part → `2023`. */
+export interface ComputedFieldRule {
+  input: ComputedFieldInput;
+  method: ComputedFieldMethod;
+  /** split: separator (1..10 characters) and position, non-zero, negative counts from the end. */
+  delimiter?: string;
+  part?: number;
+  /** between: the text the value follows and/or precedes. */
+  after?: string;
+  before?: string;
+  /** regex: a pattern with a group, and an optional output template (`{name}` / `{1}`). */
+  pattern?: string;
+  template?: string;
+  stripExtension?: boolean;
+  transform?: ComputedFieldTransform;
+}
+
+export interface ComputedPreviewResult {
+  input: string | null;
+  value: string | null;
+  reason: 'found' | 'no_input' | 'no_match' | 'not_transformable';
 }
 
 /** How much of a document the AI reads. */
@@ -261,11 +294,15 @@ export interface AiExtractionDefaults {
 
 /** How one extracted field was read in a preview, or why it was not. */
 export interface DocumentFieldReading {
-  method: 'rules' | 'ai';
-  reason: 'found' | 'label_not_found' | 'no_value' | 'several_values' | 'pattern_mismatch' | 'no_heading' | 'no_match' | 'ai_not_found' | 'ai_failed';
+  method: 'rules' | 'ai' | 'computed';
+  reason: 'found' | 'label_not_found' | 'no_value' | 'several_values' | 'pattern_mismatch' | 'no_heading' | 'no_match' | 'no_page' | 'ai_not_found' | 'ai_failed' | 'no_input' | 'not_transformable';
+  /** Computed fields: the text the value was taken from. */
+  input?: string | null;
   value?: unknown;
   values?: string[];
   page?: number | null;
+  /** Last page of a passage that runs over several pages. */
+  pageEnd?: number | null;
   quote?: string | null;
   detail?: string;
   /** For a field the rules missed before the AI was asked: why the rules missed it. */
@@ -511,6 +548,10 @@ export interface SourceMappingPreviewResponse {
   warnings: string[];
   /** Documents only: how each extracted field was read, or why it was not. */
   fields?: Record<string, DocumentFieldReading>;
+  /** Documents only: whether the whole document was read. */
+  complete?: boolean;
+  /** Documents only: 'read', or why the document could not be read (e.g. 'index_unavailable'). */
+  documentStatus?: string;
   /** Documents only: what the AI was sent. */
   aiSent?: { documentCharacters: number; longDocument: boolean; blocksSent: number; charactersSent: number } | null;
 }
@@ -524,6 +565,22 @@ export interface SourceMappingDraft {
   fieldMappings: SourceFieldMapping[];
   identityFields: string[];
   aiSettings?: Partial<AiExtractionSettings>;
+}
+
+/** Labels and section headings that recur across a few documents of a source. */
+export interface DocumentLabelSuggestion {
+  label: string;
+  kind: 'heading' | 'label';
+  /** How many of the documents read hold it. */
+  documents: number;
+  page: number | null;
+  example: string;
+}
+
+export interface DocumentLabelsResponse {
+  documentsRead: number;
+  unread: Array<{ assetId: string; status: string }>;
+  labels: DocumentLabelSuggestion[];
 }
 
 export interface SourceMappingPreviewDraft {

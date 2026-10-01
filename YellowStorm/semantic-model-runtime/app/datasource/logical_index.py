@@ -157,6 +157,10 @@ async def resolve_document_candidates(connection: Any, *, workspace_id: Any, fil
         sql += " AND user_id = $3"
     sql += f" ORDER BY id LIMIT {limit}"
     rows = await connection.fetch(sql, *params)
+    if not rows and " " in file_name:
+        # The indexer stores names with spaces replaced by underscores.
+        params[1] = file_name.replace(" ", "_")
+        rows = await connection.fetch(sql, *params)
     candidates = [
         {"documentPk": str(row["id"]), "workspaceId": row["workspace_id"],
          "fileName": row["file_name"], "uploaderUserId": row["user_id"]}

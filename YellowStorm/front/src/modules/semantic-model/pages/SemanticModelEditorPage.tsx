@@ -27,6 +27,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useOptionalSidebar } from "@/components/ui/sidebar";
 import {
   Dialog,
   DialogContent,
@@ -202,7 +203,7 @@ export function SemanticModelEditorPage() {
   }, [populationJob.data]);
   const [mappingTarget, setMappingTarget] = useState<SourceMappingTarget | null>(null);
   const [derivedTarget, setDerivedTarget] = useState<DerivedSourceTarget | null>(null);
-  const openDerived = (target: DerivedSourceTarget) => { setMappingTarget(null); setDerivedTarget(target); };
+  const openDerived = (target: DerivedSourceTarget) => { setMappingTarget(null); if (knowledgeOpen) closeKnowledge(); setDerivedTarget(target); };
   const adoptRevision = useSemanticModelEditorStore((state) => state.adoptRevision);
   const pushAction = useSemanticModelEditorStore((state) => state.pushAction);
   // Removing a source happens at once, without asking: Undo puts it back with the same settings.
@@ -333,6 +334,16 @@ export function SemanticModelEditorPage() {
   // Every click counts, including one on what is already selected, so the panel never stays on an earlier choice.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusRequest, selectedId, selectionTick]);
+
+  // A concept's properties open on the right; the app's left navigation folds away to leave the canvas room.
+  const appSidebar = useOptionalSidebar();
+  const setAppSidebarOpen = appSidebar?.setOpen;
+  const conceptDetailsShown = detailsOpen && Boolean(selectedId && graph?.nodes.some((node) => node.id === selectedId));
+  useEffect(() => {
+    if (conceptDetailsShown) { setAppSidebarOpen?.(false); appSidebar?.setOpenMobile(false); }
+  // Only opening a concept folds it; the user can unfold it again while the panel stays open.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conceptDetailsShown, selectedId, selectionTick]);
 
   useEffect(() => {
     if (!modelId || !graph || !pending.length || savingRef.current) return;

@@ -12,11 +12,17 @@ const api = vi.hoisted(() => ({
   createSourceMapping: vi.fn(),
   createBulkDocumentSourceMappings: vi.fn(),
   createWorkspaceSourceMapping: vi.fn(),
+  getDocumentLabels: vi.fn(),
 }));
 const workspaceApi = vi.hoisted(() => ({ getDocuments: vi.fn(), getFolderContents: vi.fn(), getDocument: vi.fn() }));
 
 vi.mock('../../api', () => ({ semanticModelApi: api }));
 vi.mock('@/modules/workspace/api', () => workspaceApi);
+// The real viewer loads the file; here it only shows where it was asked to go.
+vi.mock('@/modules/file-viewer/components/DocumentPreviewViewer', () => ({
+  DocumentPreviewViewer: ({ fileName, navigation }: { fileName: string; navigation?: { page?: number; highlightText?: string } | null }) =>
+    <div data-testid='viewer'>{fileName}|{navigation?.page ?? ''}|{navigation?.highlightText ?? ''}</div>,
+}));
 
 const graph: SemanticGraph = {
   modelId: 'model-1', versionId: 'version-1', revision: 0, relations: [], records: [], recordRelations: [],
@@ -29,6 +35,9 @@ const graph: SemanticGraph = {
 describe('DocumentSourceMappingDrawer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // These cases are about the fields alone: the document beside them is hidden.
+    localStorage.setItem('semantic-model.document-split', JSON.stringify({ collapsed: true, layout: { document: 55, fields: 45 } }));
+    api.getDocumentLabels.mockResolvedValue({ documentsRead: 1, unread: [], labels: [] });
     useSemanticModelEditorStore.getState().hydrate(graph);
     api.listSourceMappings.mockResolvedValue([]);
     api.listSourceAssets.mockResolvedValue({ assets: [

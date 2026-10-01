@@ -1,7 +1,7 @@
 import type { AttributeDefinition } from './semantic-model.types';
 
 export type SourceAssetKind = 'excel_sheet' | 'csv' | 'document';
-export type SourceFieldMappingMode = 'direct' | 'extract' | 'metadata' | 'constant' | 'ignore';
+export type SourceFieldMappingMode = 'direct' | 'extract' | 'metadata' | 'constant' | 'computed' | 'ignore';
 // How an `extract` mapping resolves its value. Deterministic is the default so
 // existing mappings keep their current behaviour without a migration.
 // `rules_then_ai` reads a field by its rules and asks the AI only when they find nothing.
@@ -10,11 +10,30 @@ export type SourceExtractionStrategy = 'deterministic' | 'ai' | 'rules_then_ai';
 /** Where a document value is and what it looks like; without rules, `Label: value` or a table row. */
 export interface ExtractionRules {
   labels?: string[];
-  location?: 'auto' | 'same_line' | 'next_line' | 'table' | 'heading' | 'anywhere';
+  location?: 'auto' | 'same_line' | 'next_line' | 'table' | 'heading' | 'anywhere' | 'after_label' | 'before_label' | 'pages';
   pattern?: string;
-  transform?: 'none' | 'upper' | 'lower' | 'date_iso';
+  transform?: 'none' | 'trim' | 'upper' | 'lower' | 'date_iso';
   occurrence?: 'unique' | 'first';
   firstPageOnly?: boolean;
+  /** Where a passage stops (after a label) or starts (before one); the section edge without any. */
+  boundaryLabels?: string[];
+  /** The pages read whole when `location` is `pages`. */
+  pages?: { from: number; to?: number };
+}
+
+/** A document field derived from the file name or from another mapped field (runtime computes it). */
+export interface ComputedFieldSpec {
+  // kind 'file' reads 'document_name'; kind 'field' reads another non-computed mapping's targetAttribute.
+  input: { kind: 'file' | 'field'; name: string };
+  method: 'split' | 'between' | 'regex';
+  delimiter?: string;
+  part?: number;
+  after?: string;
+  before?: string;
+  pattern?: string;
+  template?: string;
+  stripExtension?: boolean;
+  transform?: 'none' | 'trim' | 'upper' | 'lower' | 'date_iso' | 'year' | 'number';
 }
 
 export interface SourceFieldMapping {
@@ -24,6 +43,7 @@ export interface SourceFieldMapping {
   constantValue?: unknown;
   extractionStrategy?: SourceExtractionStrategy;
   rules?: ExtractionRules;
+  computed?: ComputedFieldSpec;
 }
 
 /** How much of a document the AI reads. */
@@ -65,7 +85,7 @@ export interface ResolvedEntity {
   provenance: {
     rowNumber?: number;
     fields?: Record<string, {
-      method: 'direct_mapping' | 'semantic_extraction' | 'document_metadata' | 'fixed_value';
+      method: 'direct_mapping' | 'semantic_extraction' | 'document_metadata' | 'fixed_value' | 'computed_field';
       page?: string;
       quote?: string;
       reference?: string;

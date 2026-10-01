@@ -74,6 +74,8 @@ export const CALL_CLASSIFICATION: Record<SemanticApiCall, ReadKind> = {
   getAdminExtractionSettings: 'curated-read',
   updateAdminExtractionSettings: 'command',
   previewSourceMapping: 'evidence-read',
+  getDocumentLabels: 'evidence-read',
+  previewComputedField: 'evidence-read',
   previewRelationResolutionRule: 'evidence-read',
   dataPreview: 'evidence-read',
   conceptRecords: 'evidence-read',

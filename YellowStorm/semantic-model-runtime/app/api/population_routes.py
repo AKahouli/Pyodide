@@ -422,6 +422,8 @@ async def preview_document_fields(body: dict, request: Request) -> dict[str, obj
     """Read one document's extracted fields exactly as a run would, and say for each one how it
     was read or why it was not. Nothing is stored and no cache is used or filled."""
     from app.population.document import read_document_values, resolve_indexed_document
+    from app.population.computed_fields import apply_computed, check_inputs, normalize_computed
+    from app.population.document import _metadata_value
     from app.population.document_rules import RuleError, normalize_ai_settings, normalize_rules
 
     actor = body.get("actorUserId")
@@ -436,6 +438,9 @@ async def preview_document_fields(body: dict, request: Request) -> dict[str, obj
     try:
         mappings = [{**item, "rules": normalize_rules(item.get("rules"))} for item in mappings
                     if item.get("mode") != "ignore"]
+        mappings = [{**item, "computed": normalize_computed(item.get("computed"))}
+                    if item.get("mode") == "computed" else item for item in mappings]
+        check_inputs(mappings)
         normalize_ai_settings((entry.get("options") or {}).get("aiSettings"))
     except RuleError as exc:
         raise HTTPException(status_code=422, detail=f"invalid_rules: {exc}") from exc
@@ -459,4 +464,66 @@ async def preview_document_fields(body: dict, request: Request) -> dict[str, obj
         evidence = read["evidence"].get(key) or {}
         fields[key] = {**outcome, **({"value": read["values"][key], "page": evidence.get("pageNumber"),
                                       "quote": read["quotes"].get(key)} if found else {})}
+    values = dict(read["values"])
+    values.update({m["targetAttribute"]: m.get("constantValue") for m in mappings if m.get("mode") == "constant"})
+    values.update({m["targetAttribute"]: _metadata_value(resolved["current"], m.get("sourceField"))
+                   for m in mappings if m.get("mode") == "metadata"})
+    computed = apply_computed(mappings, values, {"document_name": resolved["current"].get("originalName")})
+    for key, outcome in computed.items():
+        fields[key] = {**outcome, **({"value": values[key]} if outcome["reason"] == "found" else {})}
     return {"status": "read", "fields": fields, "aiSent": read["aiSent"]}
+
+
+@router.post("/computed-preview", status_code=status.HTTP_200_OK)
+async def preview_computed_field(body: dict) -> dict[str, object]:
+    """Run one computed field on sample values (file names, or values of the field it reads)."""
+    from app.population.computed_fields import MAX_PREVIEW_SAMPLES, compute, normalize_computed
+    from app.population.document_rules import RuleError
+
+    samples = body.get("samples")
+    if (not isinstance(samples, list) or not 0 < len(samples) <= MAX_PREVIEW_SAMPLES
+            or not all(isinstance(sample, str) and len(sample) <= 1000 for sample in samples)):
+        raise HTTPException(status_code=422, detail="invalid_samples")
+    try:
+        spec = normalize_computed(body.get("computed"))
+    except RuleError as exc:
+        raise HTTPException(status_code=422, detail=f"invalid_computed: {exc}") from exc
+    results = []
+    for sample in samples:
+        value, reason = compute(spec, sample)
+        results.append({"input": sample, "value": value, "reason": reason})
+    return {"results": results}
+
+
+@router.post("/document-labels", status_code=status.HTTP_200_OK)
+async def suggest_document_labels(body: dict, request: Request) -> dict[str, object]:
+    """Headings and ``Label:`` texts that recur across a few of a source's documents, with how many
+    documents hold each one. Every document is reauthorized for the actor, as a run does."""
+    from app.datasource.section_reader import SectionReadError
+    from app.population.document import _whole_document, resolve_indexed_document
+    from app.population.document_labels import MAX_DOCUMENTS, labels_in_document, recurring_labels
+
+    actor = body.get("actorUserId")
+    sources = body.get("sources")
+    if (not isinstance(actor, str) or not actor or not isinstance(sources, list)
+            or not 0 < len(sources) <= MAX_DOCUMENTS
+            or not all(isinstance(item, dict) and item.get("assetId") for item in sources)):
+        raise HTTPException(status_code=422, detail="invalid_label_request")
+    pool = getattr(request.app.state, "index_pool", None)
+    if pool is None:
+        raise HTTPException(status_code=503, detail="index_unavailable")
+    per_document: list[list[dict]] = []
+    unread: list[dict[str, object]] = []
+    for source in sources:
+        entry = {"source": source, "conceptId": "labels", "fieldMappings": []}
+        resolved = await resolve_indexed_document(pool, entry, actor)
+        if "gap" in resolved:
+            unread.append({"assetId": source.get("assetId"), "status": resolved["gap"]["gaps"][0]["kind"]})
+            continue
+        try:
+            sections = await _whole_document(pool, resolved["candidate"]["documentPk"])
+        except SectionReadError:
+            unread.append({"assetId": source.get("assetId"), "status": "index_unavailable"})
+            continue
+        per_document.append(labels_in_document(sections))
+    return {"documentsRead": len(per_document), "unread": unread, "labels": recurring_labels(per_document)}

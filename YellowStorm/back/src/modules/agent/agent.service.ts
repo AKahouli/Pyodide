@@ -44,13 +44,8 @@ import {
   PLATFORM_COPILOT,
   PLATFORM_COPILOT_AGENT_SLUG,
   PLATFORM_COPILOT_HANDOFF_RUNTIME_INSTRUCTION,
-  PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG,
 } from './constants/platform-copilot.constants';
-import { AGENT_MCP_CONNECTOR_SLUG } from '../connector/constants/agent-mcp.constants';
-import {
-  SEMANTIC_MODEL_SEARCH_ACTION_KEYS,
-  SEMANTIC_MODEL_SEARCH_MCP_CONNECTOR_SLUG,
-} from '../connector/constants/semantic-model-search-mcp.constants';
+import { isTrustedMcpServerUrl, normalizeMcpServerUrl } from '../connector/utils/trusted-mcp-server.util';
 import { SystemService } from '../system/system.service';
 
 /** Agent-type slug of the orchestrating manager agent. */
@@ -59,14 +54,10 @@ const MANAGER_SLUG = 'manager';
 const MONO_AGENT_SLUG = 'mono-agent';
 /** Agent-type slug for human agents exposed to third-party integrations. */
 const HUMAIN_AGENT_TYPE_SLUG = 'humain';
-/** Trusted system MCP connectors that receive runtime identity headers on their bindings. */
-const TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS = new Set([
-  PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG,
-  AGENT_MCP_CONNECTOR_SLUG,
-  SEMANTIC_MODEL_SEARCH_MCP_CONNECTOR_SLUG,
-]);
 /** Search tool arguments the back fixes for a chat on a semantic model; hidden from the model so it cannot override them. */
 const SEMANTIC_MODEL_SEARCH_FIXED_PARAM_KEYS = ['model_id', 'data'];
+/** Record search tools of the semantic model MCP, the only ones of its connector bound for a chat on a model. */
+const SEMANTIC_MODEL_SEARCH_ACTION_KEYS = ['find_records', 'get_related_records'];
 
 /** Runtime instructions for an agent answering from the records of a selected semantic model. */
 export function buildSemanticModelChatInstruction(
@@ -89,10 +80,6 @@ export function buildSemanticModelChatInstruction(
   }
   lines.push('Never invent a value that is not in a field of a returned record.');
   return lines.join('\n');
-}
-/** Compare MCP server URLs without case or trailing slash differences. */
-function normalizeMcpServerUrl(value: unknown): string {
-  return typeof value === 'string' ? value.trim().toLowerCase().replace(/\/+$/, '') : '';
 }
 const PLATFORM_COPILOT_LEGACY_PLAYBOOK_ACTIONS = new Set([
   'assess_playbook_request',
@@ -800,7 +787,7 @@ export class AgentService {
       semanticModel ? this.resolveSemanticModelSearchConnector(semanticModel.id) : Promise.resolve(null),
     ]);
     for (const connectorId of blockedConnectorIds) connectorsMap.delete(connectorId);
-    // A selected semantic model binds the hidden search connector to every agent, restricted to the two
+    // A selected semantic model binds the configured search connector to every agent, restricted to the two
     // search tools and pinned to the model's published data.
     const semanticSearchConnectorId = semanticSearchConnector?.id;
     if (semanticSearchConnector) connectorsMap.set(semanticSearchConnector.id, semanticSearchConnector);
@@ -1996,10 +1983,12 @@ export class AgentService {
     const selected = this.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections);
     if (agent.agentTypeSlug !== PLATFORM_COPILOT) return selected;
 
+    // The Copilot uses every current action of the playbook MCP (the connector pointing at PLAYBOOK_MCP_SERVER_URL).
+    const playbookMcpUrl = normalizeMcpServerUrl(this.configService.get<string>('PLAYBOOK_MCP_SERVER_URL', ''));
     const runtimeSelections = new Map(selected ?? []);
     for (const connectorId of connectorIds) {
       const connector = connectorsMap.get(connectorId);
-      if (connector?.slug?.toLowerCase() === PLATFORM_COPILOT_PLAYBOOK_CONNECTOR_SLUG) {
+      if (connector && playbookMcpUrl && normalizeMcpServerUrl(connector.mcpServerUrl) === playbookMcpUrl) {
         runtimeSelections.set(connectorId, new Set(
           connector.actions
             .filter((action) => action.isEnabled !== false && !PLATFORM_COPILOT_LEGACY_PLAYBOOK_ACTIONS.has(action.key))
@@ -2054,30 +2043,35 @@ export class AgentService {
   }
 
   /**
-   * Bindings that receive the acting user's identity: the built-in system MCP connectors, and connectors
-   * an admin created that point at a trusted internal MCP server (such as the semantic model MCP), matched
-   * by server URL so a connector pointing anywhere else never receives it.
+   * Bindings that receive the acting user's identity: connectors pointing at a trusted internal MCP server
+   * (playbook, agent, semantic model, TRUSTED_MCP_SERVER_URLS), matched by server URL, never by slug.
    */
   private isTrustedIdentityBinding(binding: Record<string, unknown>): boolean {
-    if (TRUSTED_SYSTEM_MCP_CONNECTOR_SLUGS.has(String(binding.connector_slug || '').toLowerCase())) return true;
-    const url = normalizeMcpServerUrl(binding.mcp_server_url);
-    return Boolean(url) && this.trustedMcpServerUrls().has(url);
+    return isTrustedMcpServerUrl(this.configService, binding.mcp_server_url);
   }
 
-  /** The hidden semantic model search connector, or null (with a warning) when it is not seeded or cannot be read. */
+  /**
+   * The connector-library connector named by SEMANTIC_MODEL_SEARCH_CONNECTOR_SLUG, or null (with a warning)
+   * when none is configured, active or readable. It receives the acting user only through the trusted-URL rule.
+   */
   private async resolveSemanticModelSearchConnector(semanticModelId: string): Promise<IConnectorResponse | null> {
+    const connectorSlug = this.configService.get<string>('semanticModel.searchConnectorSlug', '') ?? '';
+    if (!connectorSlug) {
+      this.logger.warn('SEMANTIC_MODEL_SEARCH_CONNECTOR_SLUG is not set; chat on the model has no search tools', { semanticModelId });
+      return null;
+    }
     try {
-      const connector = await this.connectorService.findActiveSystemBySlug(SEMANTIC_MODEL_SEARCH_MCP_CONNECTOR_SLUG);
+      const connector = await this.connectorService.findBySlug(connectorSlug);
       if (!connector) {
         this.logger.warn('Semantic model search connector is not available; chat on the model has no search tools', {
-          connectorSlug: SEMANTIC_MODEL_SEARCH_MCP_CONNECTOR_SLUG,
+          connectorSlug,
           semanticModelId,
         });
       }
       return connector;
     } catch (error) {
       this.logger.warn('Failed to resolve the semantic model search connector; chat on the model has no search tools', {
-        connectorSlug: SEMANTIC_MODEL_SEARCH_MCP_CONNECTOR_SLUG,
+        connectorSlug,
         semanticModelId,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -2103,14 +2097,6 @@ export class AgentService {
       const required = Array.isArray(schema.required) ? (schema.required as string[]).filter((key) => !keys.includes(key)) : undefined;
       action.parameter_schema_json = JSON.stringify({ ...schema, properties, ...(required ? { required } : {}) });
     }
-  }
-
-  private trustedMcpServerUrls(): Set<string> {
-    const configured = [
-      this.configService.get<string>('SEMANTIC_MODEL_MCP_SERVER_URL', ''),
-      ...this.configService.get<string>('TRUSTED_MCP_SERVER_URLS', '').split(','),
-    ];
-    return new Set(configured.map(normalizeMcpServerUrl).filter(Boolean));
   }
 
   private async buildConnectorBindings(

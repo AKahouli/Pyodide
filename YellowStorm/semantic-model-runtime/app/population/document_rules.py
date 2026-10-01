@@ -8,18 +8,25 @@ the start of a line (``Label: value``) or in a table row.
 from __future__ import annotations
 
 import re
+import unicodedata
 from datetime import datetime
 from typing import Any
 
 import regex
 
-LOCATIONS = ("auto", "same_line", "next_line", "table", "heading", "anywhere")
-TRANSFORMS = ("none", "upper", "lower", "date_iso")
+LOCATIONS = ("auto", "same_line", "next_line", "table", "heading", "anywhere",
+             "after_label", "before_label", "pages")
+# Locations whose value is a passage (whole paragraphs or pages), not a short value.
+PASSAGE_LOCATIONS = ("after_label", "before_label", "pages")
+TRANSFORMS = ("none", "trim", "upper", "lower", "date_iso")
 OCCURRENCES = ("unique", "first")
 MAX_LABELS = 10
 MAX_LABEL_CHARS = 200
 MAX_PATTERN_CHARS = 200
 MAX_VALUE_CHARS = 500
+MAX_PASSAGE_CHARS = 20000
+MAX_PAGE = 2000
+MAX_PAGE_SPAN = 50
 # A person's pattern runs on document text: it gets a short time per match, never a hang.
 PATTERN_TIMEOUT_SECONDS = 0.05
 MAX_SCAN_CHARS = 20000
@@ -65,8 +72,26 @@ def normalize_rules(raw: Any) -> dict[str, Any] | None:
     first_page_only = raw.get("firstPageOnly", False)
     if not isinstance(first_page_only, bool):
         raise RuleError("firstPageOnly must be true or false")
-    return {"labels": labels, "location": location, "pattern": pattern, "transform": transform,
-            "occurrence": occurrence, "firstPageOnly": first_page_only}
+    rules = {"labels": labels, "location": location, "pattern": pattern, "transform": transform,
+             "occurrence": occurrence, "firstPageOnly": first_page_only}
+    if location in ("after_label", "before_label"):
+        # Where the passage stops (after a label) or starts (before one); the section edge without any.
+        boundary = raw.get("boundaryLabels") or []
+        if (not isinstance(boundary, list) or len(boundary) > MAX_LABELS
+                or any(not isinstance(label, str) or len(label) > MAX_LABEL_CHARS for label in boundary)):
+            raise RuleError("boundaryLabels must be at most 10 short texts")
+        rules["boundaryLabels"] = [label.strip() for label in boundary if label.strip()]
+    if location == "pages":
+        pages = raw.get("pages")
+        start = pages.get("from") if isinstance(pages, dict) else None
+        end = pages.get("to", start) if isinstance(pages, dict) else None
+        end = start if end is None else end
+        if (not isinstance(start, int) or not isinstance(end, int) or isinstance(start, bool)
+                or isinstance(end, bool) or not 1 <= start <= end <= MAX_PAGE or end - start >= MAX_PAGE_SPAN):
+            raise RuleError(f"pages must run from page 1 or later, at most {MAX_PAGE_SPAN} pages")
+        rules["pages"] = {"from": start, "to": end}
+        rules["firstPageOnly"] = False
+    return rules
 
 
 def normalize_ai_settings(raw: Any) -> dict[str, int]:
@@ -149,16 +174,38 @@ def to_iso_date(value: str) -> str | None:
     return None
 
 
+# What "trim" removes at both ends: spaces (also non-breaking and zero-width), bullets and the
+# separators left over from a label (":", "-", ";"...). Full stops, quotes and brackets stay.
+_TRIMMED = " \t\r\n\u00a0\u200b\ufeff:;,-\u2013\u2014_*=>\u2022\u00b7\u25aa\u25ba\u25cf\u2023\u2043"
+
+
+def trim(value: str) -> str:
+    """The value without spaces, bullets or label separators at either end (left and right trim)."""
+    # Private-use characters are the bullets of PDF symbol fonts (shown as \uf0dc and the like).
+    def trimmed(char: str) -> bool:
+        return char in _TRIMMED or unicodedata.category(char) == "Co"
+
+    start, end = 0, len(value)
+    while start < end and trimmed(value[start]):
+        start += 1
+    while end > start and trimmed(value[end - 1]):
+        end -= 1
+    return value[start:end]
+
+
 def clean(value: str, rules: dict[str, Any] | None) -> str | None:
     """The value as the rules want it: matching the pattern, then transformed."""
-    value = value.strip()[:MAX_VALUE_CHARS]
+    passage = bool(rules) and rules["location"] in PASSAGE_LOCATIONS
+    value = value.strip()[:MAX_PASSAGE_CHARS if passage else MAX_VALUE_CHARS]
     if not rules:
         return value or None
     if rules.get("pattern") and rules["location"] != "anywhere":
         value = match_pattern(compile_pattern(rules["pattern"]), value) or ""
+    transform = rules.get("transform")
+    if transform == "trim":
+        value = trim(value)
     if not value:
         return None
-    transform = rules.get("transform")
     if transform == "upper":
         return value.upper()
     if transform == "lower":
@@ -203,3 +250,30 @@ def next_line_values(content: str, label: str) -> list[str]:
 
 def label_found(content: str, labels: list[str]) -> bool:
     return any(_label_regex(label).search(content) for label in labels)
+
+
+def fold(text: str) -> str:
+    """Text compared without case, accents or extra spaces: ``1.1. DÉFINITION`` reads ``1.1. definition``."""
+    decomposed = unicodedata.normalize("NFKD", text)
+    return " ".join("".join(char for char in decomposed if not unicodedata.combining(char)).lower().split())
+
+
+# "1.1. ", "1.2 ", "IV. ", "a) ": a numbering always ends in a dot, a bracket or a space.
+_NUMBERING = re.compile(r"^\s*(?:(?:(?:\d+|[ivxlc]+|[a-z])[.)])+\d*\s*|\d+(?:\.\d+)*\s+)", flags=re.IGNORECASE)
+
+
+def heading_text(title: str) -> str:
+    """A heading without its numbering: ``1.2.1. Pertinence`` gives ``Pertinence``."""
+    stripped = _NUMBERING.sub("", title, count=1).strip()
+    return stripped or title.strip()
+
+
+def heading_matches(title: str, labels: list[str]) -> bool:
+    """A section title that is one of the labels, numbering, case and accents aside."""
+    folded = fold(heading_text(title)).rstrip(" :")
+    return any(folded == fold(label).rstrip(" :") for label in labels)
+
+
+def folded_label_regex(label: str) -> re.Pattern[str]:
+    """The label found in folded text (see ``fold``), as a whole word."""
+    return re.compile(rf"(?<!\w){re.escape(fold(label))}(?!\w)")

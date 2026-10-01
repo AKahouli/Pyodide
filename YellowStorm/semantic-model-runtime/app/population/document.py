@@ -15,8 +15,10 @@ from app.datasource.logical_search import LogicalSearchError, combine_hits, sear
 from app.datasource.section_reader import (MAX_CLOSURE_SECTIONS, SectionReadError,
                                            get_outline, read_complete_section_set)
 
-from .document_rules import (all_matches, clean, compile_pattern, label_found, next_line_values,
-                             normalize_ai_settings, same_line_values)
+from .document_rules import (PASSAGE_LOCATIONS, all_matches, clean, compile_pattern, fold,
+                             folded_label_regex, heading_matches, heading_text, label_found,
+                             next_line_values, normalize_ai_settings, same_line_values)
+from .computed_fields import COMPUTED_VERSION, apply_computed, normalize_computed
 from .tabular import populate_concept_rows
 
 # Bump when the way a document is read changes, so cached results are not reused.
@@ -186,7 +188,9 @@ def _usable_blocks(sections: list[dict[str, Any]], first_page_only: bool = False
             content = block.get("content")
             if not isinstance(content, str) or not content.strip():
                 continue
-            if block.get("origin") == "generated_visual_description":
+            # Descriptions of pictures are written by the indexer, not by the document's author.
+            if (block.get("origin") == "generated_visual_description"
+                    or str(block.get("blockType") or "").startswith("image/image")):
                 continue
             if first_page_only and block.get("pageNumber") not in (None, 1):
                 continue
@@ -316,6 +320,156 @@ async def _apply_ai_extraction(
     return None, sent
 
 
+_PASSAGE_LEAD = re.compile(r"^[\s:\-\u2013\u2014=]+")
+
+
+def _reading_order(whole: list[dict[str, Any]], first_page_only: bool = False,
+                   ) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    """Every readable block once, in reading order, with its section."""
+    seen: set[Any] = set()
+    ordered = []
+    for block, section in _usable_blocks(whole, first_page_only):
+        key = block.get("blockPk")
+        if key is not None and key in seen:
+            continue
+        seen.add(key)
+        ordered.append((block, section))
+    return ordered
+
+
+def _numbering(title: str) -> str:
+    """The numbering of a heading (``1.2.`` of ``1.2. Données``), or "" when it has none."""
+    text = title.strip()
+    return text[:len(text) - len(heading_text(text))].strip()
+
+
+def _same_section(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    return left is right or (left.get("sectionPk") is not None and left.get("sectionPk") == right.get("sectionPk"))
+
+
+def _in_section(section: dict[str, Any], heading: dict[str, Any]) -> bool:
+    """The section is the heading's own, or one of its numbered subsections (``1.2.1.`` in ``1.2.``)."""
+    if _same_section(section, heading):
+        return True
+    prefix = _numbering(str(heading.get("title") or "")).rstrip(".") + "."
+    return prefix != "." and _numbering(str(section.get("title") or "")).startswith(prefix)
+
+
+def _label_at(content: str, labels: list[str]) -> tuple[int, int] | None:
+    """Where the first of the labels is in the text (case and accents aside), as (start, end)."""
+    folded = fold(content)
+    best: tuple[int, int] | None = None
+    for label in labels:
+        found = folded_label_regex(label).search(folded)
+        if found and (best is None or found.start() < best[0]):
+            best = (found.start(), found.end())
+    if best is None:
+        return None
+    # Folding drops accents and doubled spaces: map the folded positions back to the text.
+    start = next((index for index in range(len(content) + 1) if len(fold(content[:index] + "x")) - 1 >= best[0]), 0)
+    end = next((index for index in range(start, len(content) + 1) if len(fold(content[:index])) >= best[1]),
+               len(content))
+    return start, end
+
+
+def _is_heading_block(block: dict[str, Any], section: dict[str, Any]) -> bool:
+    return bool(section["blocks"]) and section["blocks"][0] is block
+
+
+def _passage(parts: list[tuple[str, dict[str, Any], dict[str, Any]]],
+             ) -> tuple[str, dict[str, Any], dict[str, Any]] | None:
+    """Pieces of text joined as one passage, attached to the block it starts in."""
+    kept = [(text.strip(), block, section) for text, block, section in parts if text and text.strip()]
+    if not kept:
+        return None
+    value = "\n\n".join(text for text, _, _ in kept)
+    _, block, section = kept[0]
+    pages = [item[1].get("pageNumber") for item in kept if item[1].get("pageNumber") is not None]
+    return value, {**block, "content": value, "lastPageNumber": max(pages) if pages else None}, section
+
+
+def _after(ordered: list[tuple[dict[str, Any], dict[str, Any]]], index: int, titled: bool,
+           at: tuple[int, int] | None, boundary: list[str]) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+    """The text after the label: to the first boundary label, or else to the end of its section."""
+    block, section = ordered[index]
+    # A section title is not a block: under a heading, the section's first block is already content.
+    first = block["content"] if titled else _PASSAGE_LEAD.sub("", block["content"][at[1]:])
+    stop = _label_at(first, boundary) if boundary else None
+    if stop is not None:
+        return [(first[:stop[0]], block, section)]
+    parts = [(first, block, section)]
+    for later, later_section in ordered[index + 1:]:
+        if boundary:
+            if (_is_heading_block(later, later_section) and not _same_section(later_section, section)
+                    and heading_matches(str(later_section.get("title") or ""), boundary)):
+                break
+            stop = _label_at(later["content"], boundary)
+            if stop is not None:
+                parts.append((later["content"][:stop[0]], later, later_section))
+                break
+        elif not _in_section(later_section, section):
+            break
+        parts.append((later["content"], later, later_section))
+    return parts
+
+
+def _before(ordered: list[tuple[dict[str, Any], dict[str, Any]]], index: int, titled: bool,
+            at: tuple[int, int] | None, boundary: list[str]) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+    """The text before the label: from the first boundary label before it, or else from the start of
+    its section (the section just before, when the label is a heading)."""
+    block, section = ordered[index]
+    if not titled and boundary:
+        start = _label_at(block["content"][:at[0]], boundary)
+        if start is not None:
+            return [(_PASSAGE_LEAD.sub("", block["content"][start[1]:at[0]]), block, section)]
+    parts = [] if titled else [(block["content"][:at[0]], block, section)]
+    home = section
+    if titled:
+        earlier = [item for item in ordered[:index] if not _same_section(item[1], section)]
+        if not earlier:
+            return []
+        home = earlier[-1][1]
+    for earlier_block, earlier_section in reversed(ordered[:index]):
+        if boundary:
+            start = _label_at(earlier_block["content"], boundary)
+            if start is not None:
+                parts.insert(0, (_PASSAGE_LEAD.sub("", earlier_block["content"][start[1]:]), earlier_block, earlier_section))
+                break
+            if (_is_heading_block(earlier_block, earlier_section)
+                    and heading_matches(str(earlier_section.get("title") or ""), boundary)):
+                parts.insert(0, (earlier_block["content"], earlier_block, earlier_section))
+                break
+        elif not _same_section(earlier_section, home):
+            break
+        parts.insert(0, (earlier_block["content"], earlier_block, earlier_section))
+    return parts
+
+
+def _passage_candidates(rules: dict[str, Any], labels: list[str], whole: list[dict[str, Any]],
+                        ) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+    """Whole passages: the text after or before a label (or under a heading), or whole pages."""
+    location = rules["location"]
+    ordered = _reading_order(whole, bool(rules.get("firstPageOnly")))
+    if location == "pages":
+        span = rules["pages"]
+        found = _passage([(block["content"], block, section) for block, section in ordered
+                          if span["from"] <= (block.get("pageNumber") or 0) <= span["to"]])
+        return [found] if found else []
+    boundary = rules.get("boundaryLabels") or []
+    reader = _after if location == "after_label" else _before
+    headings, mentions = [], []
+    for index, (block, section) in enumerate(ordered):
+        titled = _is_heading_block(block, section) and heading_matches(str(section.get("title") or ""), labels)
+        at = None if titled else _label_at(block["content"], labels)
+        if not titled and at is None:
+            continue
+        found = _passage(reader(ordered, index, titled, at, boundary))
+        if found:
+            (headings if titled else mentions).append(found)
+    # A heading named like the label is the section meant; a table of contents only mentions it.
+    return headings or mentions
+
+
 def _rule_candidates(mapping: dict[str, Any], rules: dict[str, Any] | None, label_sections: list[dict[str, Any]],
                      whole: list[dict[str, Any]], all_labels: list[str],
                      ) -> tuple[list[tuple[str, dict[str, Any], dict[str, Any]]], list[str]]:
@@ -353,6 +507,8 @@ def _rule_candidates(mapping: dict[str, Any], rules: dict[str, Any] | None, labe
             if first_page_only and block.get("pageNumber") not in (None, 1):
                 continue
             raw.append((title, {**block, "content": title}, section))
+    elif location in PASSAGE_LOCATIONS:
+        raw += _passage_candidates(rules, labels, whole)
     elif location == "anywhere":
         compiled = compile_pattern(rules["pattern"])
         for block, section in _usable_blocks(whole, first_page_only):
@@ -387,7 +543,14 @@ def _read_rules(mapping: dict[str, Any], label_sections: list[dict[str, Any]], w
         return {"reason": "no_heading"}
     if location == "anywhere":
         return {"reason": "no_match"}
+    if location == "pages":
+        return {"reason": "no_page"}
     labels = _mapping_labels(mapping)
+    if location in PASSAGE_LOCATIONS:
+        mentioned = any(label_found(block["content"], labels)
+                        or heading_matches(str(section.get("title") or ""), labels)
+                        for block, section in _usable_blocks(whole))
+        return {"reason": "no_value" if mentioned else "label_not_found"}
     mentioned = any(label_found(block["content"], labels) for block, _ in _usable_blocks(label_sections))
     return {"reason": "no_value" if mentioned else "label_not_found"}
 
@@ -419,7 +582,8 @@ async def read_document_values(
     search_truncated = False
     read = None
     label_mappings = [m for m in rule_mappings
-                      if ((m.get("rules") or {}).get("location") or "auto") not in ("heading", "anywhere")]
+                      if ((m.get("rules") or {}).get("location") or "auto")
+                      not in ("heading", "anywhere", *PASSAGE_LOCATIONS)]
     hits: list[dict[str, Any]] = []
     for mapping in label_mappings:
         for label in _mapping_labels(mapping):
@@ -448,7 +612,7 @@ async def read_document_values(
     all_labels = [label for mapping in label_mappings for label in _mapping_labels(mapping)]
     for mapping in rule_mappings:
         location = (mapping.get("rules") or {}).get("location") or "auto"
-        document = await whole() if location in ("heading", "anywhere") else []
+        document = await whole() if location in ("heading", "anywhere", *PASSAGE_LOCATIONS) else []
         outcome = _read_rules(mapping, label_sections, document, all_labels)
         key = mapping["targetAttribute"]
         if outcome["reason"] == "found":
@@ -456,7 +620,9 @@ async def read_document_values(
             evidence_by_field[key] = _evidence(
                 outcome["block"], outcome["section"], str(outcome["block"].get("content") or ""),
                 asset_ref, entry["mappingVersion"])
-            fields[key] = {"method": "rules", "reason": "found"}
+            fields[key] = {"method": "rules", "reason": "found",
+                           **({"pageEnd": outcome["block"]["lastPageNumber"]}
+                              if outcome["block"].get("lastPageNumber") is not None else {})}
             quotes[key] = str(outcome["block"].get("content") or "")[:600]
         else:
             fields[key] = {"method": "rules",
@@ -583,6 +749,15 @@ async def populate_document(
         model_id=model_id, ai_extraction=ai_extraction)
     values.update(extracted["values"])
     evidence_by_field.update(extracted["evidence"])
+    # Computed fields come last: they read the file name or a value read just above.
+    computed = [{**m, "computed": normalize_computed(m.get("computed"))}
+                for m in entry["fieldMappings"] if m["mode"] == "computed"]
+    computed_outcomes = apply_computed(computed, values, {"document_name": current.get("originalName")})
+    for field, outcome in computed_outcomes.items():
+        if outcome["reason"] == "found":
+            evidence_by_field[field] = {"assetRef": asset_ref, "origin": "metadata",
+                                        "extractorVersion": COMPUTED_VERSION,
+                                        "mappingVersion": entry["mappingVersion"]}
     ai_failure = extracted["aiFailure"]
     ai_keys = {mapping["targetAttribute"] for mapping in extracted["aiMappings"]}
 
@@ -595,6 +770,11 @@ async def populate_document(
         assertion["origin"] = "human" if assertion["evidence"]["origin"] == "human" else "source"
     extract_mappings = [m for m in entry["fieldMappings"] if m["mode"] == "extract"]
     missing_fields = [m["targetAttribute"] for m in extract_mappings if m["targetAttribute"] not in values]
+    for field, outcome in computed_outcomes.items():
+        if outcome["reason"] != "found":
+            output["gaps"].append({"kind": "unresolved_document_field", "conceptId": entry["conceptId"],
+                                   "rowNumber": None, "field": field, "assetRef": asset_ref,
+                                   "detail": f"field '{field}' could not be computed ({outcome['reason']})"})
     for field in missing_fields:
         if field in ai_keys:
             continue

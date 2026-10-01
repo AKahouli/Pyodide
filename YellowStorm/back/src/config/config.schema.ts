@@ -373,14 +373,13 @@ export const configValidationSchema = Joi.object({
   PLAYBOOK_EXECUTION_STARTUP_TIMEOUT_MS: Joi.number().min(1000).max(1800000).default(180000),
   PLAYBOOK_EXECUTION_DISPATCH_INTERVAL_MS: Joi.number().min(100).max(60000).default(1000),
   PLAYBOOK_QUEUE_POSITION_UPDATE_THROTTLE_MS: Joi.number().min(0).max(10000).default(500),
+  // Internal MCP servers: connectors created in the connector library that point at one of these URLs
+  // (or at TRUSTED_MCP_SERVER_URLS) receive the acting user's identity. Their bearer token is set on the connector.
   PLAYBOOK_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8025/mcp'),
-  PLAYBOOK_MCP_INGRESS_TOKEN: Joi.string().allow('').default(''),
   AGENT_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8026/mcp'),
-  AGENT_MCP_INGRESS_TOKEN: Joi.string().allow('').default(''),
-  // Internal MCP servers whose connectors (created by an admin) receive the acting user's identity.
   SEMANTIC_MODEL_MCP_SERVER_URL: Joi.string().allow('').default('http://localhost:8027/mcp'),
-  // Bearer token the back sends to the mcp-semantic-model server (its inbound ingress token).
-  SEMANTIC_MODEL_MCP_INGRESS_TOKEN: Joi.string().allow('').default(''),
+  // Connector-library slug whose find_records / get_related_records chat binds on a semantic model.
+  SEMANTIC_MODEL_SEARCH_CONNECTOR_SLUG: Joi.string().allow('').default(''),
   TRUSTED_MCP_SERVER_URLS: Joi.string().allow('').default(''),
   // Telegram
   TELEGRAM_ENABLED: Joi.boolean().default(true),

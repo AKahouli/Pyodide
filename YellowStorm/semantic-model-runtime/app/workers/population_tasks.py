@@ -18,6 +18,7 @@ from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
 from app.population.compiler import (canonical_spec_hash, compile_specification,
                                      filter_fields, validate_specification)
 from app.population.derived import DerivationError, derive_concept, merge_derived, normalize_derivations
+from app.population.computed_fields import check_inputs, normalize_computed
 from app.population.document_rules import RuleError, normalize_ai_settings, normalize_rules
 from app.population.serving_policy import blocking_gap_kinds, serving_decision
 from app.population.tabular import (match_relationships, merge_concept_results,
@@ -222,7 +223,7 @@ def run_population_for_payload(command_dump: dict) -> dict:
                           and item.get("mode") != "ignore"]
                 if len(active) != len(field_mappings):
                     return {"ok": False, "errorCode": "invalid_document_mapping"}
-                if any(item.get("mode") not in {"extract", "metadata", "constant"}
+                if any(item.get("mode") not in {"extract", "metadata", "constant", "computed"}
                        or item.get("targetAttribute") not in concept["allowedFields"] for item in active):
                     return {"ok": False, "errorCode": "invalid_document_mapping"}
                 if any(item.get("mode") == "extract"
@@ -243,6 +244,9 @@ def run_population_for_payload(command_dump: dict) -> dict:
                               if item.get("rules") is not None else item for item in active]
                     if any(item.get("rules") is not None and item.get("mode") != "extract" for item in active):
                         raise RuleError("rules only apply to extracted fields")
+                    active = [{**item, "computed": normalize_computed(item.get("computed"))}
+                              if item.get("mode") == "computed" else item for item in active]
+                    check_inputs(active)
                     normalize_ai_settings((entry.get("options") or {}).get("aiSettings"))
                 except RuleError:
                     return {"ok": False, "errorCode": "invalid_document_mapping"}
@@ -283,7 +287,7 @@ def run_population_for_payload(command_dump: dict) -> dict:
                 "conceptId": entry.get("conceptId"), "source": source,
                 "sourceKind": source_kind or "tabular",
                 "options": options if isinstance(options, dict) else {},
-                **({"fieldMappings": active} if source_kind == "document"
+                **({"fieldMappings": active, "receivedFieldMappings": field_mappings} if source_kind == "document"
                    else {"columnMapping": dict(mapping), "constantMapping": dict(constants)}),
                 "labelField": entry.get("labelField") or entry.get("label_field"),
                 "mappingVersion": entry.get("mappingVersion") or entry.get("mapping_version") or "v1",
@@ -322,8 +326,13 @@ def run_population_for_payload(command_dump: dict) -> dict:
         ai_extraction = payload.get("aiExtraction") or payload.get("ai_extraction")
         if ai_extraction is not None and not isinstance(ai_extraction, dict):
             return {"ok": False, "errorCode": "invalid_command"}
+        # The core hashes the mappings it sent, before the rules are normalized here.
+        received = [{**source, "fieldMappings": source["receivedFieldMappings"]}
+                    if "receivedFieldMappings" in source else source for source in normalized]
         execution_fingerprint = population_execution_fingerprint(
-            expected_hash, normalized, normalized_bindings, ai_extraction, derivations)
+            expected_hash, received, normalized_bindings, ai_extraction, derivations)
+        for source in normalized:
+            source.pop("receivedFieldMappings", None)
         supplied_fingerprint = (payload.get("populationExecutionFingerprint")
                                 or payload.get("population_execution_fingerprint"))
         if supplied_fingerprint is not None and supplied_fingerprint != execution_fingerprint:
