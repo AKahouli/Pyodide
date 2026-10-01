@@ -9,7 +9,7 @@ const customer = {
 };
 const documents = { ...customer, id: '00000000-0000-4000-8000-000000000009', key: 'documents', label: 'Documents', systemKey: 'workspace_documents', attributes: [] };
 
-type Deps = Partial<Record<'sourceMappings' | 'population' | 'workspaces' | 'workspaceShares' | 'documents', unknown>>;
+type Deps = Partial<Record<'sourceMappings' | 'population' | 'workspaces' | 'workspaceShares' | 'documents' | 'graphSearch', unknown>>;
 
 function setup(graph: SemanticGraph = { modelId: 'model-1', versionId: 'version-1', revision: 3, nodes: [customer, documents], relations: [], records: [], recordRelations: [] }, deps: Deps = {}) {
   const database = { query: jest.fn(async (sql: string, _params?: unknown[]) => sql.includes('INSERT INTO semantic_model.assistant_change_sets') ? { rows: [{ id: 'change-1' }] } : { rows: [] }) };
@@ -23,7 +23,7 @@ function setup(graph: SemanticGraph = { modelId: 'model-1', versionId: 'version-
   const service = new SemanticModelAssistantService(
     database as never, models as never, graphService as never, new SemanticModelValidationService(), crossSource as never,
     (deps.sourceMappings ?? {}) as never, {} as never, (deps.population ?? {}) as never, {} as never, (deps.workspaces ?? {}) as never,
-    (deps.workspaceShares ?? {}) as never, (deps.documents ?? {}) as never,
+    (deps.workspaceShares ?? {}) as never, (deps.documents ?? {}) as never, (deps.graphSearch ?? {}) as never,
   );
   return { service, database, graphService, crossSource, models };
 }
@@ -210,5 +210,82 @@ describe('SemanticModelAssistantService', () => {
     await expect(service.stopRun('user-1', 'model-1')).resolves.toMatchObject({ jobId: 'job-1', stopped: true, state: 'cancel_requested' });
     expect(population.stopJob).toHaveBeenCalledWith('user-1', 'model-1', 'job-1');
     await expect(service.stopRun('user-1', 'model-1')).resolves.toMatchObject({ stopped: false, state: 'none' });
+  });
+
+  it('finds records in the published data and says honestly when the index is not ready', async () => {
+    const graphSearch = {
+      search: jest.fn().mockResolvedValue({
+        status: 'index_not_ready', modeUsed: 'lexical_only', index: { state: 'indexing' },
+        concepts: [{ conceptId: 'c-1', key: 'customer', label: 'Customer' }], unknownConcepts: [],
+        seeds: [{ entityId: 'e-1', conceptId: 'c-1', conceptLabel: 'Customer', label: 'Acme', keyFields: { customer_number: 'C1' },
+          snippet: 'Acme, Paris', matchClass: 'lexical', rank: 1, diagnostics: { score: 0.4 }, provenance: [{ assetId: 'a-1', workspaceId: 'ws-1' }] }],
+        coverage: { expectedCount: 10, indexedCount: 4, exactOnlyCount: 0 },
+      }),
+    };
+    const { service } = setup(undefined, { graphSearch });
+    const result = await service.findRecords('user-1', 'model-1', { query: 'acme', concepts: ['Customer'] });
+    expect(graphSearch.search).toHaveBeenCalledWith('user-1', 'model-1', { environment: 'production', query: 'acme', concepts: ['Customer'], limit: 10 });
+    expect(result).toMatchObject({
+      model: { id: 'model-1', name: 'Billing' }, data: 'published', status: 'index_not_ready', searchMode: 'lexical_only', indexState: 'indexing',
+      concepts: ['Customer'],
+      records: [{ entityId: 'e-1', concept: 'Customer', name: 'Acme', keyFields: { customer_number: 'C1' }, match: 'lexical', sourceCount: 1 }],
+    });
+    expect(result.records[0]).not.toHaveProperty('diagnostics');
+    expect(result.notes.join(' ')).toMatch(/not ready.*4 of 10/);
+    expect(result.notes.join(' ')).toMatch(/Search by meaning was unavailable/);
+  });
+
+  it('reports concepts the model does not hold as not represented', async () => {
+    const graphSearch = {
+      search: jest.fn().mockResolvedValue({
+        status: 'not_represented', modeUsed: 'hybrid', index: { state: 'ready' }, concepts: [], unknownConcepts: ['Supplier'], seeds: [],
+        coverage: { expectedCount: 10, indexedCount: 10, exactOnlyCount: 0 },
+      }),
+    };
+    const { service } = setup(undefined, { graphSearch });
+    const result = await service.findRecords('user-1', 'model-1', { query: 'x', concepts: ['Supplier'], data: 'draft', limit: 3 });
+    expect(graphSearch.search).toHaveBeenCalledWith('user-1', 'model-1', expect.objectContaining({ environment: 'draft', limit: 3 }));
+    expect(result.notes).toEqual(['The model has no concept named "Supplier": this information is not in the model.']);
+  });
+
+  it('follows links in two steps, filtering concepts on the last one only', async () => {
+    const graphSearch = {
+      expand: jest.fn().mockResolvedValue({
+        status: 'found', truncated: true, hiddenSeeds: 1,
+        nodes: [
+          { entityId: 'e-1', conceptId: 'c-1', conceptLabel: 'Contract', label: 'K-1', keyFields: {}, inclusionReason: 'seed', path: [], provenance: [] },
+          { entityId: 'e-3', conceptId: 'c-3', conceptLabel: 'Invoice', label: 'F-9', keyFields: { number: 'F-9' }, inclusionReason: 'relationship', provenance: [],
+            path: [{ fromEntityId: 'e-1', relationId: 'r-1', relationKey: 'signed_by', direction: 'outgoing', toEntityId: 'e-2' },
+              { fromEntityId: 'e-2', relationId: 'r-2', relationKey: 'billed', direction: 'outgoing', toEntityId: 'e-3' }] },
+        ],
+        edges: [{ relationId: 'r-2', relationKey: 'billed', sourceEntityId: 'e-2', targetEntityId: 'e-3' }],
+      }),
+    };
+    const { service } = setup(undefined, { graphSearch });
+    const result = await service.relatedRecords('user-1', 'model-1', {
+      recordIds: ['e-1'], relations: ['signed_by'], thenRelations: ['billed'], direction: 'outgoing', concepts: ['Invoice'],
+    });
+    expect(graphSearch.expand).toHaveBeenCalledWith('user-1', 'model-1', {
+      environment: 'production', seedEntityIds: ['e-1'], maxNodes: 50,
+      steps: [{ relations: ['signed_by'], direction: 'outgoing' }, { relations: ['billed'], direction: 'outgoing', concepts: ['Invoice'] }],
+    });
+    expect(result.records[1]).toEqual({
+      entityId: 'e-3', concept: 'Invoice', name: 'F-9', keyFields: { number: 'F-9' }, includedBecause: 'linked',
+      path: [{ from: 'e-1', relation: 'signed_by', direction: 'outgoing', to: 'e-2' }, { from: 'e-2', relation: 'billed', direction: 'outgoing', to: 'e-3' }],
+    });
+    expect(result.records[0].includedBecause).toBe('asked_for');
+    expect(result.links).toEqual([{ relation: 'billed', from: 'e-2', to: 'e-3' }]);
+    expect(result.notes.join(' ')).toMatch(/stopped at 2 records/);
+    expect(result.notes.join(' ')).toMatch(/1 of the records asked for/);
+  });
+
+  it('follows every relationship of the records in one step when none is named', async () => {
+    const graphSearch = { expand: jest.fn().mockResolvedValue({ status: 'no_match', truncated: false, hiddenSeeds: 0, nodes: [], edges: [] }) };
+    const { service } = setup(undefined, { graphSearch });
+    const result = await service.relatedRecords('user-1', 'model-1', { recordIds: ['e-1'], concepts: ['Invoice'], data: 'draft', maxRecords: 5 });
+    expect(graphSearch.expand).toHaveBeenCalledWith('user-1', 'model-1', {
+      environment: 'draft', seedEntityIds: ['e-1'], maxNodes: 5, steps: [{ direction: 'both', concepts: ['Invoice'] }],
+    });
+    expect(result.notes).toEqual(['These records have no links of the kind asked for.']);
   });
 });

@@ -203,6 +203,12 @@ export const API_ENDPOINTS = {
   adminEvaluationSettings: {
     base: '/admin/evaluation-settings',
   },
+  adminSemanticModelSettings: {
+    base: '/admin/semantic-model-settings',
+  },
+  semanticModelSettings: {
+    extraction: '/semantic-model-settings/extraction',
+  },
   adminTeamAutoBuilder: {
     config: '/admin/teams/auto-builder-config',
   },
@@ -474,6 +480,8 @@ export const API_ENDPOINTS = {
     assistantChanges: (id: string) => `/semantic-models/${id}/assistant/changes`,
     assistantChange: (id: string, changeId: string, action: 'undo' | 'redo') => `/semantic-models/${id}/assistant/changes/${changeId}/${action}`,
     sourceMapping: (id: string, mappingId: string) => `/semantic-models/${id}/source-mappings/${mappingId}`,
+    derivedSources: (id: string) => `/semantic-models/${id}/derived-sources`,
+    derivedSource: (id: string, derivedSourceId: string) => `/semantic-models/${id}/derived-sources/${derivedSourceId}`,
     sourceMappingPreview: (id: string) => `/semantic-models/${id}/source-mappings/preview`,
     relationResolutionRules: (id: string) => `/semantic-models/${id}/relation-resolution-rules`,
     relationResolutionPreview: (id: string, ruleId: string) => `/semantic-models/${id}/relation-resolution-rules/${ruleId}/preview`,

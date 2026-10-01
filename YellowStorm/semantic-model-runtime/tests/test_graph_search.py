@@ -1,126 +1,139 @@
 from __future__ import annotations
 
+import json
+
+import httpx
 import pytest
 
-fastapi = pytest.importorskip("fastapi")
-TestClient = pytest.importorskip("starlette.testclient", reason="starlette TestClient required").TestClient
+from app.graph_search.documents import build_document, fold, query_terms
+from app.graph_search.embeddings import (STORAGE_DIMENSION, EmbeddingError, EmbeddingProfile, embed,
+                                         vector_literal)
+from app.graph_search.retrieval import is_visible, resolve_concepts, resolve_relations
+from app.graph_search.traversal import graph_of, step_query
+from app.population.compiler import PopulationError
 
-from app.main import create_app  # noqa: E402
-from app.search.fused import (graph_projection_ref, matching_concepts, query_terms,  # noqa: E402
-                              rank_results, SearchError)
-
-SPECIFICATION = {"concepts": [{"conceptId": "customer", "label": "Customer", "aliases": ["Client"]},
-                              {"conceptId": "contract", "label": "Contract"}]}
-BINDING = {"model_id": "m1", "model_version_id": "v2", "data_revision_id": "dr_1"}
-ENTITIES = [
-    {"id": "c1", "concept_id": "customer", "label": "Acme Corp", "attributes": {"city": "Lyon", "_entity_key": "x"},
-     "provenance": {"sources": [{"sourceName": "customers.xlsx"}]}},
-    {"id": "k1", "concept_id": "contract", "label": "Contract 12", "attributes": {"client": "Acme"},
-     "provenance": {}},
-    {"id": "z9", "concept_id": "customer", "label": "Other", "attributes": {}, "provenance": {}},
-]
-RELS = [{"relation_id": "signs", "source_entity_id": "c1", "target_entity_id": "k1",
-         "source_concept_id": "customer", "source_label": "Acme Corp",
-         "target_concept_id": "contract", "target_label": "Contract 12"}]
-
-
-class FakePool:
-    def __init__(self, binding=BINDING) -> None:
-        self.binding = binding
-        self.calls: list[tuple[str, tuple]] = []
-
-    async def fetchrow(self, sql: str, *params):  # type: ignore[no-untyped-def]
-        self.calls.append((sql, params))
-        if "specification" in sql:
-            return {"specification": SPECIFICATION}
-        return self.binding
-
-    async def fetch(self, sql: str, *params):  # type: ignore[no-untyped-def]
-        self.calls.append((sql, params))
-        return RELS if "relationships" in sql else ENTITIES
+CONCEPT = {"conceptId": "c-contract", "key": "contract", "label": "Contract",
+           "aliases": ["Agreement"], "keyComponents": ["contract_id"],
+           "allowedFields": ["contract_id", "title", "service_category", "notes"],
+           "fieldAliases": {"service_category": ["Domain"]}}
+ENTITY = {"entityId": "contracts:abc", "conceptId": "c-contract", "label": "Enterprise Desk",
+          "identity": {"contract_id": "ct001"},
+          "attributes": {"title": "Enterprise Service Desk", "service_category": "Managed IT", "notes": ""},
+          "provenance": {"sources": [{"assetRef": {"workspaceId": "ws1", "assetId": "a1"}},
+                                     {"assetRef": {"assetId": "manual:m1"}}]}}
+COMPILED = {"concepts": {"c-contract": CONCEPT,
+                         "c-customer": {"conceptId": "c-customer", "key": "customer", "label": "Customer",
+                                        "aliases": ["Client"]}},
+            "relations": {"r-1": {"relationId": "r-1", "key": "has_contract"}}}
 
 
-def make_client(monkeypatch, pool):  # type: ignore[no-untyped-def]
-    monkeypatch.setenv("SEMANTIC_RUNTIME_SERVICE_KEY", "test-key")
-    monkeypatch.setenv("SEMANTIC_MODEL_RUNTIME_ENABLED", "true")
-    app = create_app()
-    app.state.population_pool = pool
-    return TestClient(app)
+def test_search_text_is_deterministic_readable_and_bounded() -> None:
+    document = build_document(ENTITY, CONCEPT)
+    assert document["searchText"] == ("Type: Contract (Agreement)\nName: Enterprise Desk\n"
+                                      "Contract id: ct001\nTitle: Enterprise Service Desk\n"
+                                      "Service category (Domain): Managed IT")
+    assert build_document(ENTITY, CONCEPT) == document
+    assert document["sourceWorkspaces"] == ["ws1"]
+    assert document["exactOnly"] is False
+    edited = build_document({**ENTITY, "attributes": {**ENTITY["attributes"], "title": "Other"}}, CONCEPT)
+    assert edited["contentHash"] != document["contentHash"]
+    # Another record's attributes or provenance never change this record's text.
+    moved = build_document({**ENTITY, "provenance": {}}, CONCEPT)
+    assert moved["contentHash"] == document["contentHash"]
+    long = build_document({**ENTITY, "attributes": {"title": "x" * 900}}, CONCEPT)
+    assert long["diagnostics"] == {"shortenedFields": ["title"]}
+    assert len(long["searchText"]) < 500
 
 
-def test_query_terms_and_graph_ref():
-    assert query_terms("Which contracts does ACME hold? a") == ["contracts", "which", "does", "acme", "hold"]
-    assert graph_projection_ref("pop_dr_1") == "age:v1:pop_dr_1"
-    with pytest.raises(SearchError):
-        graph_projection_ref("sem_legacy")
+def test_a_record_with_only_keys_is_exact_only() -> None:
+    document = build_document({**ENTITY, "attributes": {}}, CONCEPT)
+    assert document["exactOnly"] is True
 
 
-def test_rank_results_orders_by_score_and_hides_internal_fields():
-    results = rank_results(ENTITIES, RELS, ["acme"])
-    assert [r["entityId"] for r in results] == ["c1", "k1"]
-    assert results[0]["attributes"] == {"city": "Lyon"}
-    assert results[0]["relationships"][0] == {"relation": "signs", "direction": "outgoing",
-                                               "entityId": "k1", "concept": "contract", "label": "Contract 12"}
+def test_folding_and_query_terms() -> None:
+    assert fold("  Société   GÉNÉRALE ") == "societe generale"
+    assert query_terms("Contrat d'assistance IT, IT!") == ["contrat", "assistance", "it"]
 
 
-def test_fused_search_reads_published_revision_with_bearer(monkeypatch):
-    pool = FakePool()
-    with make_client(monkeypatch, pool) as client:
-        response = client.post("/v1/graphs/search/fused", headers={"Authorization": "Bearer test-key"},
-                               json={"schema_name": "pop_dr_1", "query": "acme"})
-    assert response.status_code == 200
-    body = response.json()
-    assert body["dataRevisionId"] == "dr_1"
-    assert body["results"][0]["label"] == "Acme Corp"
-    assert body["retrieval_scope"] == {"file_names": ["customers.xlsx"]}
-    assert pool.calls[0][1] == ("age:v1:pop_dr_1",)
-    assert "environment = 'production'" in pool.calls[0][0]
+def test_concepts_and_relations_resolve_by_id_key_label_or_alias() -> None:
+    found, unknown = resolve_concepts(COMPILED, ["client", "c-contract", "Penalty"])
+    assert [c["conceptId"] for c in found] == ["c-customer", "c-contract"]
+    assert unknown == ["Penalty"]
+    assert resolve_relations(COMPILED, ["HAS_CONTRACT", "r-1", "owns"]) == (["r-1"], ["owns"])
 
 
-def test_fused_search_refuses_unpublished_graph(monkeypatch):
-    with make_client(monkeypatch, FakePool(binding=None)) as client:
-        response = client.post("/v1/graphs/search/fused", headers={"Authorization": "Bearer test-key"},
-                               json={"schema_name": "pop_draft", "query": "acme"})
-    assert response.status_code == 404
-    assert response.json()["detail"] == "model_not_published"
+def test_visibility_requires_every_source_workspace() -> None:
+    assert is_visible(ENTITY, None)
+    assert is_visible(ENTITY, ["ws1"])  # the manual source has no workspace
+    assert not is_visible(ENTITY, ["ws2"])
+    assert is_visible({"provenance": {}}, [])
 
 
-def test_bearer_is_only_accepted_on_graph_routes(monkeypatch):
-    with make_client(monkeypatch, FakePool()) as client:
-        denied = client.post("/v1/graphs/search/fused", headers={"Authorization": "Bearer wrong"},
-                             json={"schema_name": "pop_dr_1", "query": "acme"})
-        other = client.get("/v1/semantic-model-jobs/j1", headers={"Authorization": "Bearer test-key"})
-    assert denied.status_code == 401
-    assert other.status_code == 401
+def test_step_queries_are_fixed_shapes_with_bound_values() -> None:
+    sql = step_query("pop_dr_abc", "incoming", True, 11)
+    assert "MATCH (t:Entity)-[r:RELATED_TO]->(s:Entity)" in sql
+    assert "s.record_id IN $frontier AND r.relation_id IN $relations" in sql
+    assert sql.endswith("$1) AS (source_id ag_catalog.agtype, relation_id ag_catalog.agtype, "
+                        "target_id ag_catalog.agtype)")
+    assert "$relations" not in step_query("pop_dr_abc", "outgoing", False, 11)
+    for graph, direction, limit in (("pop_x'; drop", "outgoing", 5), ("pop_ok", "sideways", 5),
+                                    ("pop_ok", "outgoing", 0)):
+        with pytest.raises(PopulationError):
+            step_query(graph, direction, False, limit)
+    assert graph_of("age:v1:pop_dr_abc") == "pop_dr_abc"
+    with pytest.raises(PopulationError):
+        graph_of("legacy:pop_dr_abc")
 
 
-def test_concept_synonyms_match_the_query():
-    assert matching_concepts(SPECIFICATION, ["clients"]) == {"customer"}
-    assert matching_concepts(SPECIFICATION, ["customer", "lyon"]) == {"customer"}
-    assert matching_concepts(SPECIFICATION, ["acme"]) == set()
-    assert matching_concepts(None, ["clients"]) == set()
-    results = rank_results(ENTITIES, [], ["clients"], concepts={"customer"})
-    assert {r["entityId"] for r in results} == {"c1", "z9"}
+PROFILE = EmbeddingProfile(base_url="http://litellm", api_key="k", model="qwen3-embedding",
+                           dimension=STORAGE_DIMENSION)
 
 
-def test_fused_search_finds_concept_records_by_synonym(monkeypatch):
-    pool = FakePool()
-    with make_client(monkeypatch, pool) as client:
-        response = client.post("/v1/graphs/search/fused", headers={"Authorization": "Bearer test-key"},
-                               json={"schema_name": "pop_dr_1", "query": "clients"})
-    assert response.status_code == 200
-    assert {r["entityId"] for r in response.json()["results"]} == {"c1", "z9"}
-    entity_call = next(params for sql, params in pool.calls if "ILIKE" in sql)
-    assert entity_call[3] == ["customer"]
+def _client(handler) -> httpx.AsyncClient:  # type: ignore[no-untyped-def]
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
-def test_name_results_uses_business_names():
-    from app.search.fused import name_results
+@pytest.mark.asyncio
+async def test_embeddings_are_ordered_unit_vectors_and_queries_carry_the_instruction() -> None:
+    seen: list[dict] = []
 
-    results = rank_results(ENTITIES, RELS, ["acme"])
-    spec = {"concepts": [{"conceptId": "customer", "label": "Customer"},
-                         {"conceptId": "contract", "label": "Contract"}],
-            "relations": [{"relationId": "signs", "label": "signs"}]}
-    named = name_results(results, spec)
-    assert named[0]["concept"] == "Customer"
-    assert named[0]["relationships"][0]["concept"] == "Contract"
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen.append(body)
+        data = [{"index": i, "embedding": [float(i + 1)] + [0.0] * (STORAGE_DIMENSION - 1)}
+                for i in range(len(body["input"]))]
+        return httpx.Response(200, json={"data": list(reversed(data))})
+
+    async with _client(handler) as client:
+        vectors = await embed(PROFILE, ["a", "b"], client=client)
+        await embed(PROFILE, ["q"], query=True, client=client)
+    assert [vector[0] for vector in vectors] == [1.0, 1.0]
+    assert seen[0]["input"] == ["a", "b"] and seen[0]["model"] == "qwen3-embedding"
+    assert seen[1]["input"][0].startswith("Instruct: ") and seen[1]["input"][0].endswith("Query: q")
+    assert vector_literal([0.5, 0.25]) == "[0.5,0.25]"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response, code, retryable", [
+    (httpx.Response(503), "embedding_http_503", True),
+    (httpx.Response(429), "embedding_http_429", True),
+    (httpx.Response(400), "embedding_http_400", False),
+    (httpx.Response(200, json={"data": [{"index": 0, "embedding": [1.0, 2.0]}]}),
+     "embedding_dimension_mismatch", False),
+    (httpx.Response(200, json={"data": [{"index": 0, "embedding": [0.0] * STORAGE_DIMENSION}]}),
+     "embedding_zero_vector", False),
+    (httpx.Response(200, json={"data": []}), "embedding_count_mismatch", False),
+])
+async def test_bad_embedding_responses_fail_explicitly(response, code, retryable) -> None:  # type: ignore[no-untyped-def]
+    async with _client(lambda _request: response) as client:
+        with pytest.raises(EmbeddingError) as raised:
+            await embed(PROFILE, ["a"], client=client)
+    assert (raised.value.code, raised.value.retryable) == (code, retryable)
+
+
+def test_the_fingerprint_names_the_vector_space() -> None:
+    same = EmbeddingProfile(base_url="http://elsewhere", api_key="other", model="qwen3-embedding",
+                            dimension=STORAGE_DIMENSION)
+    other = EmbeddingProfile(base_url="http://litellm", api_key="k", model="another-model",
+                             dimension=STORAGE_DIMENSION)
+    assert PROFILE.fingerprint == same.fingerprint != other.fingerprint

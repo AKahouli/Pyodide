@@ -134,7 +134,7 @@ export class PlaybookAssistantInternalController {
     @Param('continuationId') continuationId: string,
     @Body() dto: ContinuePlaybookClarificationDto,
   ) {
-    return this.assistantService.continueClarification(continuationId, this.actor(headers), dto);
+    return this.assistantService.continueClarificationAndStart(continuationId, this.actor(headers), dto);
   }
 
   @Post('requests/:requestId/constructions')

@@ -14,6 +14,8 @@ from celery import Celery
 
 DATASOURCE_QUEUES = ("semantic-model-datasource.preview", "semantic-model-datasource.batch")
 POPULATION_QUEUES = ("semantic-model-population.corrections", "semantic-model-population.batch")
+# Search indexing has its own worker so a long embedding run never holds up population.
+SEARCH_QUEUES = ("semantic-model-search.index",)
 
 
 def make_celery() -> Celery:

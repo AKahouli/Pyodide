@@ -519,6 +519,11 @@ def _origin_of(evidence: dict[str, Any], origin: str | None) -> dict[str, Any]:
                            ("pageNumber", "pageNumber"), ("sheet", "sheet")):
         if evidence.get(source) is not None:
             result[target] = evidence[source]
+    # A value taken from another concept's record: which record, and how it was chosen.
+    derived = evidence.get("derivedFrom")
+    if isinstance(derived, dict):
+        result["derivedFrom"] = {key: derived.get(key) for key in (
+            "conceptId", "entityId", "label", "attribute", "rule", "distinctValues", "records")}
     return result
 
 

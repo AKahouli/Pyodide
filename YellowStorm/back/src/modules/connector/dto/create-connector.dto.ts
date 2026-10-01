@@ -212,4 +212,9 @@ export class CreateConnectorDto {
   @IsOptional()
   @IsBoolean()
   isHidden?: boolean;
+
+  @ApiPropertyOptional({ description: 'Whether the connector is a system-managed connector', default: false })
+  @IsOptional()
+  @IsBoolean()
+  isSystem?: boolean;
 }

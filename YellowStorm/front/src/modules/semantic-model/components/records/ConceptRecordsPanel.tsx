@@ -105,10 +105,10 @@ export function ConceptRecordsPanel({ modelId, conceptId, onClose, onOpenSource 
 
   return <section aria-label={t('records.table.title', { name: concept?.label ?? '' })} style={{ height }}
     className='relative flex shrink-0 flex-col border-t bg-background shadow-[0_-8px_24px_-16px_rgba(0,0,0,0.35)]'>
-    <div role='separator' aria-orientation='horizontal' aria-label={t('records.table.resize')} tabIndex={0}
+    <div role='separator' aria-orientation='horizontal' aria-label={t('records.table.resize')} title={t('records.table.resizeHint')} tabIndex={0}
       onPointerDown={startResize} onKeyDown={resizeWithKeys} onDoubleClick={() => { resizeTo(DEFAULT_HEIGHT); remember(); }}
-      className='group absolute inset-x-0 -top-1.5 z-10 flex h-3 cursor-row-resize items-center justify-center focus-visible:outline-none'>
-      <span className='h-1 w-12 rounded-full bg-border transition-colors group-hover:bg-primary/60 group-focus-visible:bg-primary' />
+      className='group absolute inset-x-0 -top-2 z-10 flex h-4 cursor-row-resize items-center justify-center focus-visible:outline-none'>
+      <span className='h-1.5 w-16 rounded-full bg-muted-foreground/40 transition-colors group-hover:bg-primary/60 group-focus-visible:bg-primary' />
     </div>
 
     <header className='flex flex-wrap items-center gap-x-3 gap-y-2 border-b px-4 py-2.5'>
@@ -143,7 +143,7 @@ export function ConceptRecordsPanel({ modelId, conceptId, onClose, onOpenSource 
       <Button variant='ghost' size='icon' className='h-8 w-8' onClick={onClose} aria-label={t('action.close')}><X className='h-4 w-4' /></Button>
     </header>
 
-    <div className='min-h-0 flex-1 overflow-auto'>
+    <div className='min-h-0 flex-1 overflow-auto pb-16 pr-16'>
       {records.isError ? <p role='alert' className='p-6 text-center text-sm text-destructive'>{t('records.table.error', { message: parseApiError(records.error).message })}</p>
         : records.isLoading ? <div className='flex justify-center p-8'><Loader2 className='h-5 w-5 animate-spin text-primary' /></div>
         : !data?.dataRevisionId ? <p className='p-6 text-center text-sm text-muted-foreground'>{t('records.table.noData')}</p>

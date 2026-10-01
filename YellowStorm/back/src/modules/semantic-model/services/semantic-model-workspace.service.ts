@@ -30,6 +30,15 @@ export class SemanticModelWorkspaceService {
     const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
     if (!await this.workspaceShares.hasAccess(userId, dto.workspaceId)) throw new ForbiddenException(ErrorCode.SEMANTIC_MODEL_WORKSPACE_INVALID);
     const workspace = await this.workspaces.findById(dto.workspaceId);
+    // Linking a workspace that is already linked changes nothing: answer without a revision check,
+    // so a repeated or simultaneous call does not fail as "changed elsewhere".
+    if (!dto.addToDocumentsFallback && model.originWorkspaceId) {
+      const existing = await this.database.query<{ revision: number }>(
+        `SELECT m.revision::int AS revision FROM semantic_model.workspace_links l
+         JOIN semantic_model.models m ON m.id=l.model_id
+         WHERE l.model_id=$1 AND l.workspace_id=$2 AND l.enabled`, [modelId,dto.workspaceId]);
+      if (existing.rows[0]) return { workspaceId: dto.workspaceId, enabled: true, revision: existing.rows[0].revision };
+    }
     const revision = await this.database.transaction(async (client) => {
       const revision = await this.models.advanceRevision(client,modelId,dto.expectedRevision);
       const role = !model.originWorkspaceId || model.originWorkspaceId === dto.workspaceId ? 'origin' : 'connected';

@@ -1749,6 +1749,7 @@ export interface CreateConnectorRequest {
   referencedSkillIds?: string[];
   isActive?: boolean;
   isHidden?: boolean;
+  isSystem?: boolean;
 }
 
 export interface UpdateConnectorRequest extends Partial<CreateConnectorRequest> { }

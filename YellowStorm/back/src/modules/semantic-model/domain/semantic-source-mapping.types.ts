@@ -4,7 +4,18 @@ export type SourceAssetKind = 'excel_sheet' | 'csv' | 'document';
 export type SourceFieldMappingMode = 'direct' | 'extract' | 'metadata' | 'constant' | 'ignore';
 // How an `extract` mapping resolves its value. Deterministic is the default so
 // existing mappings keep their current behaviour without a migration.
-export type SourceExtractionStrategy = 'deterministic' | 'ai';
+// `rules_then_ai` reads a field by its rules and asks the AI only when they find nothing.
+export type SourceExtractionStrategy = 'deterministic' | 'ai' | 'rules_then_ai';
+
+/** Where a document value is and what it looks like; without rules, `Label: value` or a table row. */
+export interface ExtractionRules {
+  labels?: string[];
+  location?: 'auto' | 'same_line' | 'next_line' | 'table' | 'heading' | 'anywhere';
+  pattern?: string;
+  transform?: 'none' | 'upper' | 'lower' | 'date_iso';
+  occurrence?: 'unique' | 'first';
+  firstPageOnly?: boolean;
+}
 
 export interface SourceFieldMapping {
   sourceField: string | null;
@@ -12,6 +23,31 @@ export interface SourceFieldMapping {
   mode: SourceFieldMappingMode;
   constantValue?: unknown;
   extractionStrategy?: SourceExtractionStrategy;
+  rules?: ExtractionRules;
+}
+
+/** How much of a document the AI reads. */
+export interface AiExtractionSettings {
+  /** Most blocks sent for one document. */
+  maxBlocks: number;
+  /** Most characters sent for one document. */
+  maxCharacters: number;
+  /** Above this many characters, only the blocks about each field are sent. */
+  longDocumentCharacters: number;
+  /** Blocks kept per field in a long document. */
+  blocksPerField: number;
+}
+
+export const DEFAULT_AI_EXTRACTION_SETTINGS: AiExtractionSettings = {
+  maxBlocks: 400,
+  maxCharacters: 60000,
+  longDocumentCharacters: 30000,
+  blocksPerField: 8,
+};
+
+export function usesAiExtraction(mappings: SourceFieldMapping[] | null | undefined): boolean {
+  return (mappings ?? []).some((field) => field.mode === 'extract'
+    && (field.extractionStrategy === 'ai' || field.extractionStrategy === 'rules_then_ai'));
 }
 
 export interface SheetFieldProfile {
@@ -187,4 +223,34 @@ export function resolveSheetEntities(
     stats.resolvedEntities += 1;
   }
   return { entities, stats };
+}
+
+/**
+ * Version of the AI extraction contract (prompt + response shape). Must equal the ADK's reported
+ * extractorVersion; bump both together. A run and a preview bind the agent with it.
+ */
+export const AI_EXTRACTION_CONTRACT_VERSION = 'ai-attribute-v1';
+
+/**
+ * A document mapping kept in step with its concept: one row per concept field, in the concept's
+ * order. Saved rows are kept as they are; a field added to the concept gets a row read like most of
+ * the other fields, and a row for a field the concept no longer has is dropped. `changed` is false
+ * when the same fields are read, so an unrelated edit does not make the next run read again.
+ */
+export function withConceptFields(saved: SourceFieldMapping[], attributes: ReadonlyArray<{ key: string }>): { mappings: SourceFieldMapping[]; changed: boolean } {
+  const byKey = new Map(saved.map((mapping) => [mapping.targetAttribute, mapping]));
+  const counts = new Map<SourceExtractionStrategy, number>();
+  for (const mapping of saved) {
+    if (mapping.mode !== 'extract') continue;
+    const strategy = mapping.extractionStrategy ?? 'deterministic';
+    counts.set(strategy, (counts.get(strategy) ?? 0) + 1);
+  }
+  const strategy = [...counts].sort((left, right) => right[1] - left[1])[0]?.[0] ?? 'deterministic';
+  const mappings = attributes.map((attribute): SourceFieldMapping => byKey.get(attribute.key)
+    ?? (attribute.key === 'source_document'
+      ? { sourceField: 'document_name', targetAttribute: attribute.key, mode: 'metadata' }
+      : { sourceField: null, targetAttribute: attribute.key, mode: 'extract', extractionStrategy: strategy }));
+  const keys = new Set(attributes.map((attribute) => attribute.key));
+  const changed = mappings.length !== saved.length || saved.some((mapping) => !keys.has(mapping.targetAttribute));
+  return { mappings, changed };
 }
