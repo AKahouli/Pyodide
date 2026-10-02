@@ -12,7 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 
 _APP = Path(__file__).resolve().parent.parent
-_PACKAGES = ("population", "datasource")
+_PACKAGES = ("population", "datasource", "workers")
 
 
 def _code_hash(packages: tuple[str, ...]) -> str:
