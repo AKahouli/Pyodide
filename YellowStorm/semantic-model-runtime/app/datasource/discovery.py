@@ -157,8 +157,10 @@ def parser_fingerprint(options: dict[str, Any] | None) -> str:
     return f"sha256:{digest}"
 
 
-def discovery_profile_id(asset_version_id: str, fingerprint: str) -> str:
-    digest = hashlib.sha256(f"{asset_version_id}|{fingerprint}".encode()).hexdigest()
+def discovery_profile_id(asset_ref: dict[str, Any], fingerprint: str) -> str:
+    """One profile per file and version: the same bytes uploaded twice are two files, two profiles."""
+    key = f"{asset_ref['workspaceId']}|{asset_ref['assetId']}|{asset_ref['assetVersionId']}|{fingerprint}"
+    digest = hashlib.sha256(key.encode()).hexdigest()
     return f"prof_{digest[:12]}"
 
 
@@ -264,7 +266,7 @@ def discover(source: dict[str, Any], options: dict[str, Any] | None = None) -> d
             detected_format=structure.get("kind", "unknown"),
             compressed_bytes=source.get("sizeBytes") if isinstance(source.get("sizeBytes"), int) else None))
     # ponytail: metadata-only slice ships no samples; file/index reads are later slices
-    return {"profileId": discovery_profile_id(asset_ref["assetVersionId"], fingerprint),
+    return {"profileId": discovery_profile_id(asset_ref, fingerprint),
             "profileRevision": 1, "assetRef": asset_ref, "parserFingerprint": fingerprint,
             "status": status, "metadata": _metadata(source),
             "structure": structure, "samples": [], "warnings": warnings,
