@@ -255,7 +255,11 @@ def _addresses(message: EmailMessage, name: str, anomalies: list[str]) -> list[t
         address = address.strip().strip("<>").lower()
         if "@" not in address:
             continue
-        result.append((re.sub(r"\s+", " ", display).strip().strip('"'), address))
+        display = re.sub(r"\s+", " ", display).strip().strip("\"'")
+        # Some clients repeat the address as the name ("agara@x.fr" <agara@x.fr>): that is no name.
+        if display.strip("<>").lower() == address:
+            display = ""
+        result.append((display, address))
     return result
 
 

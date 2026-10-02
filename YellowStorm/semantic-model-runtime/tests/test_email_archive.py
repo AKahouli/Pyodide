@@ -11,7 +11,7 @@ import pytest
 from app.datasource.dataset_query import query_parquet
 from app.datasource.datasets import prepare_parquet
 from app.datasource.discovery import discover, preview_source
-from app.datasource.email_archive import (iter_derived_files, iter_sheet_rows, read_messages,
+from app.datasource.email_archive import (_addresses, iter_derived_files, iter_sheet_rows, read_messages,
                                           read_tnef, split_new_text)
 
 ZIP = "application/zip"
@@ -149,6 +149,12 @@ def test_participants_and_attachments_tables(archive: bytes):
     assert attachments["logo.png"]["statut_lecture"] == "non prise en charge"
     assert attachments["contrat.pdf"]["type_fichier"] == "application/pdf"
     assert any(a["email_joint"] for a in attachments.values())
+
+
+def test_an_address_repeated_as_its_name_has_no_name():
+    message = EmailMessage()
+    message["To"] = '"agara@yellowsys.fr" <agara@yellowsys.fr>, Amine GARA <AGARA@yellowsys.fr>'
+    assert _addresses(message, "To", []) == [("", "agara@yellowsys.fr"), ("Amine GARA", "agara@yellowsys.fr")]
 
 
 def test_winmail_body_and_files_are_recovered():
