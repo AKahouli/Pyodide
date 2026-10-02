@@ -413,8 +413,9 @@ export class SemanticModelAssistantService {
         edits.push(`removed field ${field.label}`);
       }
       for (const fieldSpec of spec.fields ?? []) {
-        const { field, added } = this.upsertField(node, fieldSpec);
+        const { field, added, changed } = this.upsertField(node, fieldSpec);
         if (added) edits.push(`added field ${field.label}`);
+        else if (changed.length) edits.push(`changed field ${field.label} (${changed.join(', ')})`);
       }
       if (spec.keyFields) {
         identity[node.id] = spec.keyFields.map((reference) => {
@@ -460,13 +461,14 @@ export class SemanticModelAssistantService {
     return { after: graph, identity, summary };
   }
 
-  private upsertField(node: SemanticNodeType, spec: AssistantFieldSpec): { field: AttributeDefinition; added: boolean } {
+  private upsertField(node: SemanticNodeType, spec: AssistantFieldSpec): { field: AttributeDefinition; added: boolean; changed: string[] } {
     const label = spec.label?.trim();
     if (!label) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Each field of ${node.label} needs a name`);
     if (spec.type && !attributeTypes.includes(spec.type)) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Field type must be one of ${attributeTypes.join(', ')}`);
     }
     const existing = this.findField(node, spec.key ?? label);
+    const was: AttributeDefinition | null = existing ? structuredClone(existing) : null;
     const field: AttributeDefinition = existing ?? {
       key: this.uniqueKey(node.attributes.map((item) => item.key), businessKey(spec.key ?? label, 'field')), label, type: spec.type ?? 'text', required: false,
     };
@@ -478,7 +480,10 @@ export class SemanticModelAssistantService {
     if (field.type === 'enum') field.options = spec.options ?? field.options ?? [];
     else delete field.options;
     if (!existing) node.attributes = [...node.attributes, field];
-    return { field, added: !existing };
+    // What an edit of an existing field changed, so the summary does not read "no change".
+    const changed = was ? (['label', 'type', 'required', 'description', 'aliases', 'options'] as const)
+      .filter((name) => JSON.stringify(was[name] ?? null) !== JSON.stringify(field[name] ?? null)) : [];
+    return { field, added: !existing, changed };
   }
 
   private findConcept(graph: SemanticGraph, reference: string): SemanticNodeType | undefined {

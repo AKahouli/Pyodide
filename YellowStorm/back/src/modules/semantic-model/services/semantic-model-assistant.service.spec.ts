@@ -55,6 +55,18 @@ describe('SemanticModelAssistantService', () => {
     expect(database.query).not.toHaveBeenCalled();
   });
 
+  it('says which parts of an existing field an edit changed', async () => {
+    const { service } = setup();
+    const result = await service.applyChanges(actor, 'model-1', {
+      concepts: [{ concept: 'Customer', fields: [{ key: 'customer_number', label: 'Customer number', description: 'As printed on invoices' }] }],
+    }, true);
+    expect(result.summary.changed).toEqual(['Customer: changed field Customer number (description)']);
+    const unchanged = await service.applyChanges(actor, 'model-1', {
+      concepts: [{ concept: 'Customer', fields: [{ key: 'customer_number', label: 'Customer number' }] }],
+    }, true);
+    expect(unchanged.summary.changed).toEqual([]);
+  });
+
   it('applies the design as one graph change, saves key fields, and records how to undo it', async () => {
     const { service, graphService, crossSource, database } = setup();
     const result = await service.applyChanges(actor, 'model-1', {
