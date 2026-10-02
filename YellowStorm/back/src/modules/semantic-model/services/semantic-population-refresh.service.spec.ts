@@ -383,7 +383,7 @@ describe('SemanticPopulationRefreshService', () => {
 
     const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
     expect(calls[0][0].payload.sources[0].fieldMappings).toEqual([
-      { sourceField: 'Customer ID', targetAttribute: 'customer_id', mode: 'extract', extractionStrategy: 'ai' },
+      { sourceField: 'Customer ID', targetAttribute: 'customer_id', mode: 'extract', extractionStrategy: 'ai', valueType: 'text' },
       { sourceField: 'Name', targetAttribute: 'name', mode: 'extract', extractionStrategy: 'deterministic' },
     ]);
     expect(calls[0][0].payload.populationExecutionFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);

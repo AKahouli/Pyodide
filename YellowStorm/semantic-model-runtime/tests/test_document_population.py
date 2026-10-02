@@ -570,3 +570,21 @@ async def test_one_record_per_document_does_not_ask_for_several(monkeypatch: pyt
         {"sourceField": "effective date", "targetAttribute": "effective_date", "mode": "extract",
          "extractionStrategy": "ai"}), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata, model_id="model-1")
     assert asked["multiple"] is False
+
+
+@pytest.mark.asyncio
+async def test_ai_is_told_what_each_field_means(monkeypatch: pytest.MonkeyPatch, index_stubs):
+    asked = {}
+
+    async def extraction(**kwargs):
+        asked.update(kwargs)
+        return {"extractorVersion": "ai-attribute-v1", "failed": [], "values": []}
+
+    ai_stubs(monkeypatch, extraction)
+    await document.populate_document(object(), entry(
+        *AI_DETERMINISTIC,
+        {"sourceField": "Statut", "targetAttribute": "effective_date", "mode": "extract", "extractionStrategy": "ai",
+         "description": "Where the fact stands.", "valueType": "enum", "allowedValues": ["planned", "done"]},
+    ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata, model_id="model-1")
+    assert asked["attributes"] == [{"key": "effective_date", "label": "Statut", "type": "string",
+                                    "description": "Where the fact stands. One of: planned, done."}]

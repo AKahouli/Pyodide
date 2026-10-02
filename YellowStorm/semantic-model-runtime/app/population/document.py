@@ -280,10 +280,7 @@ async def _apply_ai_extraction(
     attributes = []
     for mapping in ai_mappings:
         labels = _mapping_labels(mapping)
-        attribute = {"key": mapping["targetAttribute"], "label": labels[0]}
-        if len(labels) > 1:
-            attribute["description"] = "Also written as: " + ", ".join(labels[1:])
-        attributes.append(attribute)
+        attributes.append(_ai_attribute(mapping, labels))
     try:
         result = await extract_attributes(
             model_id=model_id, concept_id=entry["conceptId"],
@@ -310,6 +307,27 @@ async def _apply_ai_extraction(
             if own:
                 records.append({"values": own, "evidence": own_evidence})
     return None, sent
+
+
+_AI_VALUE_TYPES = {"text": "string", "number": "number", "date": "date", "boolean": "boolean", "enum": "string"}
+
+
+def _ai_attribute(mapping: dict[str, Any], labels: list[str]) -> dict[str, Any]:
+    """How one field is described to the extraction agent: its meaning, other names and allowed values."""
+    parts = []
+    if isinstance(mapping.get("description"), str) and mapping["description"].strip():
+        parts.append(mapping["description"].strip())
+    allowed = [str(item) for item in mapping.get("allowedValues") or [] if str(item).strip()]
+    if allowed:
+        parts.append("One of: " + ", ".join(allowed) + ".")
+    if len(labels) > 1:
+        parts.append("Also written as: " + ", ".join(labels[1:]))
+    attribute: dict[str, Any] = {"key": mapping["targetAttribute"], "label": labels[0]}
+    if parts:
+        attribute["description"] = " ".join(parts)[:2000]
+    if mapping.get("valueType") in _AI_VALUE_TYPES:
+        attribute["type"] = _AI_VALUE_TYPES[mapping["valueType"]]
+    return attribute
 
 
 def _ground_values(

@@ -1023,14 +1023,22 @@ export class SemanticPopulationRefreshService {
     };
     const mappingVersion = mapping.updatedAt instanceof Date ? mapping.updatedAt.toISOString() : String(mapping.updatedAt);
     if (mapping.assetKind === 'document') {
-      const labels = new Map((node.attributes ?? []).map((attribute) => [attribute.key, attribute.label]));
+      const attributes = new Map((node.attributes ?? []).map((attribute) => [attribute.key, attribute]));
       return {
         sourceKind: 'document' as const,
         conceptId: mapping.conceptId,
         source,
-        fieldMappings: activeMappings.map((field) => field.mode === 'extract' && !field.sourceField
-          ? { ...field, sourceField: labels.get(field.targetAttribute) || field.targetAttribute }
-          : field),
+        fieldMappings: activeMappings.map((field) => {
+          if (field.mode !== 'extract') return field;
+          const attribute = attributes.get(field.targetAttribute);
+          return {
+            ...field,
+            ...(!field.sourceField ? { sourceField: attribute?.label || field.targetAttribute } : {}),
+            // What the AI is told about the field: its meaning, kind of value and allowed values.
+            ...(field.extractionStrategy && field.extractionStrategy !== 'deterministic' && attribute
+              ? aiFieldHints(attribute) : {}),
+          };
+        }),
         // How much of the document the AI reads; only sent when a field is read by AI, so a change
         // to these limits never reruns documents read by rules alone.
         ...(usesAiExtraction(activeMappings)
@@ -1072,4 +1080,13 @@ export class SemanticPopulationRefreshService {
 export function graphPropertyKey(field: string): string {
   const safe = field.replace(/[^a-zA-Z0-9_]/g, '_');
   return /^[0-9]/.test(safe) ? `_${safe}` : safe;
+}
+
+/** What the extraction agent is told about a field read by AI, beyond its label. Empty parts are left out. */
+export function aiFieldHints(attribute: AttributeDefinition): { description?: string; valueType?: string; allowedValues?: string[] } {
+  return {
+    ...(attribute.description?.trim() ? { description: attribute.description.trim() } : {}),
+    ...(attribute.type ? { valueType: attribute.type } : {}),
+    ...(attribute.options?.length ? { allowedValues: attribute.options } : {}),
+  };
 }
