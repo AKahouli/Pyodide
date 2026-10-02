@@ -429,9 +429,10 @@ export class WorkspaceDocumentWrite {
     const sourceFolderName = this.support.sanitizeFilename(params.sourceName) || sourceDocumentId;
     const folder = await this.ensureFolder(workspaceId, userId, sourceFolderName, root.id);
 
+    // Names are unique in a workspace and carry the message key, so the same name and size is the
+    // same message or attachment: an e-mail found in two archives is kept once, under the first.
     const existing = await this.documentStore.findFileByName(workspaceId, fileName);
-    if (existing && existing.parentId === folder.id && existing.size === file.length
-        && existing.status === DocumentStatus.COMPLETED) {
+    if (existing && existing.size === file.length && existing.status === DocumentStatus.COMPLETED) {
       return { document: this.support.mapToResponse(existing), created: false };
     }
 
