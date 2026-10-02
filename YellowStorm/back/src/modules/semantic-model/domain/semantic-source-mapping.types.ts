@@ -58,6 +58,8 @@ export interface AiExtractionSettings {
   longDocumentCharacters: number;
   /** Blocks kept per field in a long document. */
   blocksPerField: number;
+  /** One document gives several records (one per item the AI finds), e.g. each line of a table. Mapping only. */
+  manyRecords?: boolean;
 }
 
 /** How much one population run may read and keep. The runtime applies the same ranges. */

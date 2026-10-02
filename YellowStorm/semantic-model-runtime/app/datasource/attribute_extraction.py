@@ -35,9 +35,10 @@ async def extract_attributes(
     attributes: list[dict[str, Any]],
     sections: list[dict[str, Any]],
     ai_extraction: dict[str, Any] | None = None,
+    multiple: bool = False,
     client: httpx.AsyncClient | None = None,
 ) -> dict[str, Any]:
-    """Ask the extraction agent for one record's mapped attribute values."""
+    """Ask the extraction agent for one record's mapped attribute values, or every record's when ``multiple``."""
     token = os.environ.get("YELLOWSTORM_INTERNAL_SERVICE_TOKEN", "")
     if not token:
         raise AttributeExtractionError("internal_service_token_missing")
@@ -59,6 +60,7 @@ async def extract_attributes(
                 "attributes": attributes,
                 "sections": sections[:MAX_EVIDENCE_SECTIONS],
                 "aiExtraction": ai_extraction,
+                **({"multiple": True} if multiple else {}),
             },
             headers={"X-Internal-Token": token, "Accept-Encoding": "identity"},
         )

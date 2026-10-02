@@ -23,6 +23,15 @@ describe('AI reading limits', () => {
   });
 });
 
+describe('several records per document', () => {
+  it('is kept for a mapping but never taken from the admin defaults', () => {
+    expect(pickAiSettings({ manyRecords: true }).manyRecords).toBe(true);
+    expect(pickAiSettings({ manyRecords: 'yes' }).manyRecords).toBeUndefined();
+    expect(effectiveAiSettings({ manyRecords: true }).manyRecords).toBeUndefined();
+    expect(effectiveAiSettings({}, { manyRecords: true }).manyRecords).toBe(true);
+  });
+});
+
 describe('run limits', () => {
   it('keeps only whole numbers inside each range', () => {
     expect(pickRunLimits({ maxRecordsPerRun: 50000, maxValuesPerRun: 10, maxRunSources: 2.5, other: 4 }))

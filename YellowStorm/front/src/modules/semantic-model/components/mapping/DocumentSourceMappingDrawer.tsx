@@ -24,7 +24,7 @@ import { semanticModelQueryKeys } from '../../query/queryKeys';
 import { useSourceMappings } from '../../query/hooks';
 import { useSemanticModelEditorStore } from '../../store';
 import type { AiExtractionSettings, MappingSettings, DocumentFieldReading, DocumentLabelSuggestion, SourceExtractionStrategy, SourceFieldMapping, SourceMappingPreviewResponse, StructuredSourceAsset } from '../../types';
-import { AiLimitsEditor, FieldReadingResult, FieldRulesEditor, limitProblem, newDocumentField, ReadAllFieldsBar, rulesProblem, STRATEGIES, usesAi as mappingsUseAi, usesRules, withConceptFields, type LabelSuggestions } from './DocumentFieldRules';
+import { AiLimitsEditor, FieldReadingResult, ManyRecordsSwitch, FieldRulesEditor, limitProblem, newDocumentField, ReadAllFieldsBar, rulesProblem, STRATEGIES, usesAi as mappingsUseAi, usesRules, withConceptFields, type LabelSuggestions } from './DocumentFieldRules';
 import { DEFAULT_SPLIT, DocumentPreviewPane, documentStatusText, FieldLiveStatus, highlightOf, useNarrow, useSplitPrefs } from './DocumentPreviewPane';
 import { useLiveDocumentPreview } from './useLiveDocumentPreview';
 import type { SourceMappingTarget, WorkspaceSourceScope } from './SourceMappingDrawer';
@@ -531,6 +531,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
               {mapping.mode === 'constant' && <Input value={String(mapping.constantValue ?? '')} onChange={(event) => changeMappings(mappings.map((item, itemIndex) => itemIndex === index ? { ...item, constantValue: event.target.value } : item))} placeholder={t('mapping.constantPlaceholder')} />}
             </div>)}
           </div>
+          {usesAi && <ManyRecordsSwitch value={aiSettings} onChange={(next) => { setAiSettings(next); preview.reset(); }} />}
           {usesAi && <AiLimitsEditor defaults={defaultsQuery.data?.aiSettings} value={aiSettings} onChange={(next) => { setAiSettings(next); preview.reset(); }} />}
         </div>}
 

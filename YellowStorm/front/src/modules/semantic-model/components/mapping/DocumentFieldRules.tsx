@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { AiExtractionSettings, DocumentFieldReading, DocumentLabelSuggestion, ExtractionLocation, ExtractionRules, SourceExtractionStrategy, SourceFieldMapping } from '../../types';
@@ -398,7 +399,7 @@ export function LabelSuggestionChips({ suggestions, added, full, onAdd }: Readon
   </div>;
 }
 
-const LIMIT_KEYS: Array<{ key: keyof AiExtractionSettings; min: number; max: number }> = [
+const LIMIT_KEYS: Array<{ key: Exclude<keyof AiExtractionSettings, 'manyRecords'>; min: number; max: number }> = [
   { key: 'maxBlocks', min: 10, max: 500 },
   { key: 'maxCharacters', min: 2000, max: 400000 },
   { key: 'longDocumentCharacters', min: 1000, max: 2000000 },
@@ -446,7 +447,8 @@ export function AiLimitsEditor({ defaults, value, onChange }: Readonly<{
   onChange: (value: Partial<AiExtractionSettings>) => void;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
-  const overridden = Object.keys(value).length > 0;
+  // "Several records per document" lives in the same settings but is not a reading limit.
+  const overridden = Object.keys(value).some((key) => key !== 'manyRecords');
   const [open, setOpen] = useState(overridden);
   const effective = defaults ? { ...defaults, ...value } : undefined;
   return <div className='rounded-xl border'>
@@ -464,8 +466,30 @@ export function AiLimitsEditor({ defaults, value, onChange }: Readonly<{
     {open && <div className='space-y-3 border-t p-3'>
       <p className='text-[11px] text-muted-foreground'>{t('mapping.ai.help')}</p>
       <AiLimitFields idPrefix='mapping-ai' value={value} placeholder={defaults} onChange={onChange} />
-      {overridden && <Button type='button' size='sm' variant='ghost' className='h-7 px-2 text-xs' onClick={() => onChange({})}>{t('mapping.ai.reset')}</Button>}
+      {overridden && <Button type='button' size='sm' variant='ghost' className='h-7 px-2 text-xs' onClick={() => onChange(value.manyRecords ? { manyRecords: true } : {})}>{t('mapping.ai.reset')}</Button>}
     </div>}
+  </div>;
+}
+
+/** Whether one document gives one record or several (one per item the AI finds). */
+export function ManyRecordsSwitch({ value, onChange }: Readonly<{
+  value: Partial<AiExtractionSettings>;
+  onChange: (value: Partial<AiExtractionSettings>) => void;
+}>) {
+  const { t } = useModuleTranslation('semantic-model');
+  return <div className='flex items-start gap-3 rounded-xl border p-3'>
+    <Switch id='mapping-many-records' checked={value.manyRecords === true} className='mt-0.5'
+      onCheckedChange={(checked) => {
+        const { manyRecords: _previous, ...rest } = value;
+        onChange(checked ? { ...rest, manyRecords: true } : rest);
+      }} />
+    <div className='min-w-0 flex-1 space-y-0.5'>
+      <div className='flex items-center gap-1'>
+        <Label htmlFor='mapping-many-records' className='text-xs font-medium'>{t('mapping.manyRecords.label')}</Label>
+        <HelpTip text={t('mapping.manyRecords.tip')} />
+      </div>
+      <p className='text-[11px] text-muted-foreground'>{t(value.manyRecords ? 'mapping.manyRecords.on' : 'mapping.manyRecords.off')}</p>
+    </div>
   </div>;
 }
 

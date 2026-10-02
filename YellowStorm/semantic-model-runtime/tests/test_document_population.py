@@ -505,3 +505,68 @@ async def test_a_failed_extraction_call_is_not_kept_for_the_next_run(monkeypatch
          "extractionStrategy": "ai"},
     ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata, model_id="model-1", cache=cache)
     assert cache.rows == {}
+
+
+LINES_BLOCK = {"blockPk": 9, "blockKey": "b9", "origin": "native_text",
+               "content": "Contract number CNT-7 | Amendment 1 on 2026-01-01 | Amendment 2 on 2026-02-01"}
+
+
+@pytest.mark.asyncio
+async def test_many_records_gives_one_entity_per_item_found(monkeypatch: pytest.MonkeyPatch, index_stubs):
+    asked = {}
+
+    async def extraction(**kwargs):
+        asked.update(kwargs)
+        return {"extractorVersion": "ai-attribute-v1", "failed": [],
+                "values": [{"key": "amendment_number", "value": "1", "evidenceReferences": ["section:7/block:9"]}],
+                "records": [
+                    {"label": "1", "values": [
+                        {"key": "amendment_number", "value": "1", "evidenceReferences": ["section:7/block:9"]},
+                        {"key": "effective_date", "value": "2026-01-01", "evidenceReferences": ["section:7/block:9"]}]},
+                    {"label": "2", "values": [
+                        {"key": "amendment_number", "value": "2", "evidenceReferences": ["section:7/block:9"]},
+                        {"key": "effective_date", "value": "2026-02-01", "evidenceReferences": ["section:7/block:9"]}]},
+                    # Not in the block it cites: dropped, as for a single record.
+                    {"label": "9", "values": [
+                        {"key": "amendment_number", "value": "9", "evidenceReferences": ["section:7/block:9"]}]},
+                ]}
+
+    ai_stubs(monkeypatch, extraction)
+
+    async def read(*_args, **_kwargs):
+        return {"sections": [{"sectionPk": 7, "sectionKey": "s7", "blocks": [LINES_BLOCK]}],
+                "coverage": {"directBlocksComplete": True}}
+
+    monkeypatch.setattr(document, "read_complete_section_set", read)
+    mapping = entry(
+        {"sourceField": None, "targetAttribute": "contract_number", "mode": "constant", "constantValue": "CNT-7"},
+        {"sourceField": "amendment", "targetAttribute": "amendment_number", "mode": "extract", "extractionStrategy": "ai"},
+        {"sourceField": "date", "targetAttribute": "effective_date", "mode": "extract", "extractionStrategy": "ai"},
+    )
+    mapping["options"] = {"aiSettings": {"manyRecords": True}}
+    result = await document.populate_document(object(), mapping, AMENDMENT_CONCEPT, "u1",
+                                              metadata_fetch=metadata, model_id="model-1")
+
+    assert asked["multiple"] is True
+    assert sorted(e["identity"]["amendment_number"] for e in result["entities"]) == ["1", "2"]
+    dates = {a["entityId"]: (a["value"], a["evidence"]["rowNumber"]) for a in result["assertions"]
+             if a["attribute"] == "effective_date"}
+    assert sorted(dates.values()) == [("2026-01-01", 1), ("2026-02-01", 2)]
+    assert result["coverage"]["records"] == 2
+    assert result["coverage"]["status"] == "processed_complete"
+
+
+@pytest.mark.asyncio
+async def test_one_record_per_document_does_not_ask_for_several(monkeypatch: pytest.MonkeyPatch, index_stubs):
+    asked = {}
+
+    async def extraction(**kwargs):
+        asked.update(kwargs)
+        return {"extractorVersion": "ai-attribute-v1", "failed": [], "values": []}
+
+    ai_stubs(monkeypatch, extraction)
+    await document.populate_document(object(), entry(
+        *AI_DETERMINISTIC,
+        {"sourceField": "effective date", "targetAttribute": "effective_date", "mode": "extract",
+         "extractionStrategy": "ai"}), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata, model_id="model-1")
+    assert asked["multiple"] is False

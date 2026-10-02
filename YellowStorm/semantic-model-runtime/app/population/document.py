@@ -263,9 +263,13 @@ async def _apply_ai_extraction(
     entry: dict[str, Any], asset_ref: dict[str, Any], sections: list[dict[str, Any]],
     ai_mappings: list[dict[str, Any]], model_id: str, ai_extraction: dict[str, Any] | None,
     values: dict[str, Any], evidence_by_field: dict[str, dict[str, Any]], settings: dict[str, int],
-    quotes: dict[str, str] | None = None,
+    quotes: dict[str, str] | None = None, records: list[dict[str, Any]] | None = None,
 ) -> tuple[str | None, dict[str, Any]]:
-    """Resolve AI-mapped fields; return a failure code (None when it ran) and what was sent."""
+    """Resolve AI-mapped fields; return a failure code (None when it ran) and what was sent.
+
+    With ``records`` (a list to fill), the agent is asked for every item in the document and each
+    one is appended with its own grounded values and evidence.
+    """
     selected, sent = _select_ai_blocks(sections, ai_mappings, settings)
     if not selected:
         return "no_evidence", sent
@@ -286,14 +290,38 @@ async def _apply_ai_extraction(
             concept_label=entry.get("conceptLabel") or entry["conceptId"],
             document_id=str(entry["source"].get("assetId") or ""),
             file_name=str(entry["source"].get("originalName") or ""),
-            attributes=attributes, sections=payload, ai_extraction=ai_extraction)
+            attributes=attributes, sections=payload, ai_extraction=ai_extraction,
+            multiple=records is not None)
     except AttributeExtractionError as exc:
         return exc.code, sent
     extractor_version = str(result.get("extractorVersion") or "ai-attribute-v1")
     rules_by_key = {mapping["targetAttribute"]: mapping.get("rules") for mapping in ai_mappings}
-    for item in result.get("values") or []:
+    keys = set(rules_by_key)
+    _ground_values(result.get("values") or [], keys, by_reference, rules_by_key, entry, asset_ref,
+                   extractor_version, result.get("model"), values, evidence_by_field, quotes)
+    if records is not None:
+        for item in result.get("records") or []:
+            if not isinstance(item, dict):
+                continue
+            own: dict[str, Any] = {}
+            own_evidence: dict[str, dict[str, Any]] = {}
+            _ground_values(item.get("values") or [], keys, by_reference, rules_by_key, entry, asset_ref,
+                           extractor_version, result.get("model"), own, own_evidence, None)
+            if own:
+                records.append({"values": own, "evidence": own_evidence})
+    return None, sent
+
+
+def _ground_values(
+    items: list[Any], keys: set[str], by_reference: dict[str, tuple[dict[str, Any], dict[str, Any]]],
+    rules_by_key: dict[str, Any], entry: dict[str, Any], asset_ref: dict[str, Any],
+    extractor_version: str, model: Any, values: dict[str, Any],
+    evidence_by_field: dict[str, dict[str, Any]], quotes: dict[str, str] | None,
+) -> None:
+    """Keep each value the agent returned only when it occurs in a block the runtime sent."""
+    for item in items:
         key = item.get("key") if isinstance(item, dict) else None
-        if not key or key in values:
+        if not key or key not in keys or key in values:
             continue
         grounded = [reference for reference in (item.get("evidenceReferences") or [])
                     if reference in by_reference]
@@ -315,10 +343,9 @@ async def _apply_ai_extraction(
                              entry["mappingVersion"])
         evidence["origin"] = "ai"
         evidence["extractorVersion"] = extractor_version
-        if result.get("model"):
-            evidence["model"] = result["model"]
+        if model:
+            evidence["model"] = model
         evidence_by_field[key] = evidence
-    return None, sent
 
 
 _PASSAGE_LEAD = re.compile(r"^[\s:\-\u2013\u2014=]+")
@@ -638,6 +665,9 @@ async def read_document_values(
                    or (_strategy(m) == "rules_then_ai" and m["targetAttribute"] not in values)]
     ai_failure: str | None = None
     ai_sent: dict[str, Any] | None = None
+    # A mapping can read several records from one document (each line of a table, each message).
+    many = ((entry.get("options") or {}).get("aiSettings") or {}).get("manyRecords") is True
+    records: list[dict[str, Any]] | None = [] if ai_mappings and many else None
     if ai_mappings:
         try:
             document = await whole()
@@ -646,7 +676,7 @@ async def read_document_values(
         if ai_failure is None:
             ai_failure, ai_sent = await _apply_ai_extraction(
                 entry, asset_ref, document, ai_mappings, model_id, ai_extraction,
-                values, evidence_by_field, settings, quotes)
+                values, evidence_by_field, settings, quotes, records)
         for mapping in ai_mappings:
             key = mapping["targetAttribute"]
             earlier = fields.get(key)
@@ -657,7 +687,7 @@ async def read_document_values(
                                **({"detail": ai_failure} if ai_failure else {}),
                                **({"rules": earlier} if earlier else {})}
     return {"values": values, "evidence": evidence_by_field, "fields": fields, "quotes": quotes, "raws": raws,
-            "aiMappings": ai_mappings, "aiFailure": ai_failure, "aiSent": ai_sent,
+            "aiMappings": ai_mappings, "aiFailure": ai_failure, "aiSent": ai_sent, "records": records or [],
             "readComplete": bool(read is None or read["coverage"]["directBlocksComplete"]),
             "searchTruncated": search_truncated}
 
@@ -753,27 +783,54 @@ async def populate_document(
     extracted = await read_document_values(
         connection, entry, asset_ref, capabilities, candidate["documentPk"],
         model_id=model_id, ai_extraction=ai_extraction)
-    values.update(extracted["values"])
-    evidence_by_field.update(extracted["evidence"])
+    ai_failure = extracted["aiFailure"]
+    ai_keys = {mapping["targetAttribute"] for mapping in extracted["aiMappings"]}
     # Computed fields come last: they read the file name or a value read just above.
     computed = [{**m, "computed": normalize_computed(m.get("computed"))}
                 for m in entry["fieldMappings"] if m["mode"] == "computed"]
-    computed_outcomes = apply_computed(computed, values, {"document_name": current.get("originalName")})
-    for field, outcome in computed_outcomes.items():
-        if outcome["reason"] == "found":
-            evidence_by_field[field] = {"assetRef": asset_ref, "origin": "metadata",
-                                        "extractorVersion": COMPUTED_VERSION,
-                                        "mappingVersion": entry["mappingVersion"]}
-    ai_failure = extracted["aiFailure"]
-    ai_keys = {mapping["targetAttribute"] for mapping in extracted["aiMappings"]}
+    context = {"document_name": current.get("originalName")}
+    computed_evidence = {"assetRef": asset_ref, "origin": "metadata", "extractorVersion": COMPUTED_VERSION,
+                         "mappingVersion": entry["mappingVersion"]}
+    source_ref = {"assetRef": asset_ref, "mappingVersion": entry["mappingVersion"],
+                  "labelField": entry.get("labelField")}
 
-    row = {**values, "_row": None}
-    output = populate_concept_rows(
-        concept, [row], {"assetRef": asset_ref, "mappingVersion": entry["mappingVersion"],
-                         "labelField": entry.get("labelField")})
-    for assertion in output["assertions"]:
-        assertion["evidence"] = evidence_by_field[assertion["attribute"]]
-        assertion["origin"] = "human" if assertion["evidence"]["origin"] == "human" else "source"
+    if extracted["records"]:
+        # Several records: what the document says once (metadata, constants, rules) is shared by
+        # every record, and each item the AI found adds its own values. Row n is the n-th item.
+        values.update({key: value for key, value in extracted["values"].items() if key not in ai_keys})
+        evidence_by_field.update({key: item for key, item in extracted["evidence"].items() if key not in ai_keys})
+        shared, shared_evidence = dict(values), dict(evidence_by_field)
+        rows: list[dict[str, Any]] = []
+        evidence_by_row: dict[int, dict[str, dict[str, Any]]] = {}
+        computed_outcomes: dict[str, dict[str, Any]] = {}
+        for number, record in enumerate(extracted["records"], start=1):
+            row_values = {**shared, **record["values"]}
+            row_evidence = {**shared_evidence, **record["evidence"]}
+            for field, outcome in apply_computed(computed, row_values, context).items():
+                if outcome["reason"] == "found":
+                    row_evidence[field] = computed_evidence
+                # A computed field counts as found when any record found it.
+                if field not in computed_outcomes or outcome["reason"] == "found":
+                    computed_outcomes[field] = outcome
+            evidence_by_row[number] = {key: {**item, "rowNumber": number} for key, item in row_evidence.items()}
+            rows.append({**row_values, "_row": number})
+            for key, value in row_values.items():
+                values.setdefault(key, value)
+        output = populate_concept_rows(concept, rows, source_ref)
+        for assertion in output["assertions"]:
+            assertion["evidence"] = evidence_by_row[assertion["evidence"]["rowNumber"]][assertion["attribute"]]
+            assertion["origin"] = "human" if assertion["evidence"]["origin"] == "human" else "source"
+    else:
+        values.update(extracted["values"])
+        evidence_by_field.update(extracted["evidence"])
+        computed_outcomes = apply_computed(computed, values, context)
+        for field, outcome in computed_outcomes.items():
+            if outcome["reason"] == "found":
+                evidence_by_field[field] = computed_evidence
+        output = populate_concept_rows(concept, [{**values, "_row": None}], source_ref)
+        for assertion in output["assertions"]:
+            assertion["evidence"] = evidence_by_field[assertion["attribute"]]
+            assertion["origin"] = "human" if assertion["evidence"]["origin"] == "human" else "source"
     extract_mappings = [m for m in entry["fieldMappings"] if m["mode"] == "extract"]
     missing_fields = [m["targetAttribute"] for m in extract_mappings if m["targetAttribute"] not in values]
     for field, outcome in computed_outcomes.items():
@@ -818,6 +875,7 @@ async def populate_document(
         status = "processed_complete"
     output.update({"coverage": {"assetRef": asset_ref, "status": status,
                                 "fieldsAccepted": sorted(values), "fieldsUnresolved": missing_fields,
+                                **({"records": len(extracted["records"])} if extracted["records"] else {}),
                                 **({"aiSent": extracted["aiSent"]} if extracted["aiSent"] else {})},
                    "sourceObservation": {"assetRef": asset_ref, "contentHash": current.get("contentHash"),
                                          "sizeBytes": current.get("sizeBytes"),

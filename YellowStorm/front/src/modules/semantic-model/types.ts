@@ -308,6 +308,8 @@ export interface AiExtractionSettings {
   maxCharacters: number;
   longDocumentCharacters: number;
   blocksPerField: number;
+  /** One document gives several records, one per item the AI finds. Set on a mapping only. */
+  manyRecords?: boolean;
 }
 
 /** The admin defaults with every limit filled in, and which ones the admin set. */

@@ -5,7 +5,7 @@ import {
   type AiExtractionSettings, type RunLimits,
 } from '../domain/semantic-source-mapping.types';
 
-const KEYS = Object.keys(DEFAULT_AI_EXTRACTION_SETTINGS) as Array<keyof AiExtractionSettings>;
+const KEYS = Object.keys(DEFAULT_AI_EXTRACTION_SETTINGS) as Array<Exclude<keyof AiExtractionSettings, 'manyRecords'>>;
 
 /** Only the limits that were set, as whole numbers; anything else is dropped. */
 export function pickAiSettings(input: unknown): Partial<AiExtractionSettings> {
@@ -15,6 +15,7 @@ export function pickAiSettings(input: unknown): Partial<AiExtractionSettings> {
     const value = (input as Record<string, unknown>)[key];
     if (typeof value === 'number' && Number.isInteger(value)) picked[key] = value;
   }
+  if ((input as Record<string, unknown>).manyRecords === true) picked.manyRecords = true;
   return picked;
 }
 
@@ -32,7 +33,9 @@ export function pickRunLimits(input: unknown): Partial<RunLimits> {
 
 /** The limits a document is read with: the mapping's own, else the admin's, else the built-in ones. */
 export function effectiveAiSettings(defaults: Partial<AiExtractionSettings>, override?: unknown): AiExtractionSettings {
-  return { ...DEFAULT_AI_EXTRACTION_SETTINGS, ...pickAiSettings(defaults), ...pickAiSettings(override) };
+  // Several records per document is a choice of each mapping, never an admin default.
+  const { manyRecords: _ignored, ...shared } = pickAiSettings(defaults);
+  return { ...DEFAULT_AI_EXTRACTION_SETTINGS, ...shared, ...pickAiSettings(override) };
 }
 
 /**

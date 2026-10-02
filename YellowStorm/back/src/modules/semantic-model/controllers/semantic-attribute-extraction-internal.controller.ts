@@ -1,6 +1,6 @@
 import { Body, Controller, Post, UseGuards, VERSION_NEUTRAL } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
-import { Allow, IsArray, IsOptional, IsString, MaxLength, ArrayMaxSize, ArrayMinSize, ValidateNested } from 'class-validator';
+import { Allow, IsArray, IsBoolean, IsOptional, IsString, MaxLength, ArrayMaxSize, ArrayMinSize, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { Public } from '../../auth/decorators/public.decorator';
 import { InternalServiceGuard } from '../../auth/guards/internal-service.guard';
@@ -99,6 +99,11 @@ export class AttributeExtractionRequestDto {
   @ValidateNested({ each: true })
   @Type(() => AttributeExtractionSectionDto)
   sections!: AttributeExtractionSectionDto[];
+
+  /** The mapping reads several records from this document. */
+  @IsOptional()
+  @IsBoolean()
+  multiple?: boolean;
 }
 
 /**

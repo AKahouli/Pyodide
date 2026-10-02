@@ -511,6 +511,10 @@ export class AiExtractionSettingsDto {
   @ApiPropertyOptional({ minimum: 1, maximum: 50, description: 'Blocks kept per field in a long document' })
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50)
   blocksPerField?: number;
+
+  @ApiPropertyOptional({ description: 'One document gives several records, one per item the AI finds (mapping only)' })
+  @IsOptional() @IsBoolean()
+  manyRecords?: boolean;
 }
 
 export class RunLimitsDto {

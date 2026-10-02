@@ -35,6 +35,8 @@ export interface AttributeExtractionRequest {
   sections: AttributeExtractionSection[];
   /** Required: execution must run the exact extractor the revision was built for. */
   aiExtraction?: AiExtractionIdentity | null;
+  /** The mapping reads several records from this document. */
+  multiple?: boolean;
 }
 
 const ADK_TIMEOUT_MS = 240_000;
@@ -44,6 +46,8 @@ export interface AttributeExtractionResult {
   extractorVersion: string;
   values: Array<{ key: string; value: unknown; evidenceReferences: string[] }>;
   failed: string[];
+  /** Only when several records were asked for: every item found, with its own values. */
+  records?: Array<{ label: string; values: Array<{ key: string; value: unknown; evidenceReferences: string[] }> }>;
 }
 
 /**
