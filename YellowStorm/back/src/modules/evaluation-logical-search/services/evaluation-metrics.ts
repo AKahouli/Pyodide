@@ -29,6 +29,7 @@ export interface RetrievalMetrics {
   expected_sources: ExpectedSource[];
   retrieved_files: string[];
   retrieved_count: number;
+  retrieved_candidate_count: number;
   retrieved_pages: number[];
   retrieved_sources: FilePagePair[];
   required_files_found: string[];
@@ -593,6 +594,36 @@ export function buildExpectedSources(requiredFile: unknown, page: unknown): { so
   return { sources: uniqueSources };
 }
 
+/** Documents the answer was actually grounded on (locate_answer_citations output). */
+function extractCitedFileNames(toolCalls: ToolCall[]): string[] {
+  const files: string[] = [];
+  for (const call of toolCalls) {
+    const output = parseJsonMaybe(call.output_summary ?? call.output ?? call.result);
+    if (!output) continue;
+    const list = Array.isArray(output.citations) ? output.citations : Array.isArray(output.citation_sources) ? output.citation_sources : null;
+    if (!list) continue;
+    for (const item of list) {
+      if (!item || typeof item !== 'object') continue;
+      const entry = item as Record<string, unknown>;
+      const source = entry.source ?? entry.fileName ?? entry.file_name;
+      if (typeof source === 'string' && source) files.push(baseName(source));
+    }
+  }
+  return files;
+}
+
+/** Documents actually read (read_* / expand_context) when no citation is available. */
+function extractReadFileNames(toolCalls: ToolCall[]): string[] {
+  const values: unknown[] = [];
+  for (const call of toolCalls) {
+    const name = String(call.tool_name || call.name || '').toLowerCase();
+    if (name.includes('read') || name.includes('expand_context')) {
+      values.push(call.output_summary, call.output, call.result);
+    }
+  }
+  return extractPdfNames(values);
+}
+
 export function buildRetrievalMetrics(
   expectedSources: ExpectedSource[],
   toolCalls: ToolCall[],
@@ -602,9 +633,14 @@ export function buildRetrievalMetrics(
   for (const call of toolCalls) {
     traceValues.push(call.args, call.output_summary, call.result, call.output);
   }
+  const candidateFiles = uniquePreserveOrder(extractPdfNames(traceValues));
 
-  let retrievedFiles = extractPdfNames(traceValues);
-  retrievedFiles = uniquePreserveOrder(retrievedFiles);
+  // Precision must reflect the documents actually USED for the answer, not every
+  // candidate a search merely surfaced. Prefer cited documents, then documents
+  // that were read; fall back to all candidates only when neither is available.
+  const citedFiles = uniquePreserveOrder(extractCitedFileNames(toolCalls));
+  const readFiles = citedFiles.length === 0 ? uniquePreserveOrder(extractReadFileNames(toolCalls)) : [];
+  const retrievedFiles = citedFiles.length > 0 ? citedFiles : readFiles.length > 0 ? readFiles : candidateFiles;
   const retrievedKeys = new Set(retrievedFiles.map(normalizeFilename));
 
   const expectedFiles = uniquePreserveOrder(expectedSources.map((source) => source.file));
@@ -676,6 +712,7 @@ export function buildRetrievalMetrics(
     expected_sources: expectedSources,
     retrieved_files: retrievedFiles,
     retrieved_count: retrievedFiles.length,
+    retrieved_candidate_count: candidateFiles.length,
     retrieved_pages: retrievedPages,
     retrieved_sources: retrievedSources,
     required_files_found: requiredFilesFound,

@@ -212,3 +212,18 @@ describe('buildCitations', () => {
     ]);
   });
 });
+
+describe('buildRetrievalMetrics precision', () => {
+  it('computes file precision on cited documents, not on search candidates', () => {
+    const expected = buildExpectedSources('doc.pdf', null);
+    const calls = [
+      { node_id: 'eval-target', iteration: 0, tool_name: 'c_search', args: {}, output_summary: JSON.stringify({ documents: [{ file_name: 'other1.pdf' }, { file_name: 'other2.pdf' }] }) },
+      { node_id: 'eval-target', iteration: 0, tool_name: 'c_lo_deadbeef', output_summary: JSON.stringify({ citations: [{ reference: '[1]', source: 's3://b/x/doc.pdf', page_number: 5, highlight_text: 'x' }] }) },
+    ] as unknown as Parameters<typeof buildRetrievalMetrics>[1];
+
+    const metrics = buildRetrievalMetrics(expected.sources, calls);
+    expect(metrics.retrieved_files).toEqual(['doc.pdf']);
+    expect(metrics.file_precision).toBe(1);
+    expect(metrics.retrieved_candidate_count).toBe(3);
+  });
+});
