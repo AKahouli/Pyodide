@@ -23,7 +23,7 @@ export function isStructuredDocument(mimeType:string): boolean {
   return typeof mimeType==='string'&&STRUCTURED_DOCUMENT_MIME_PREFIXES.some((prefix)=>mimeType.startsWith(prefix));
 }
 
-const MAPPABLE_DOCUMENT_MIME_TYPES = new Set(['application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document']);
+const MAPPABLE_DOCUMENT_MIME_TYPES = new Set(['application/pdf','application/msword','application/vnd.openxmlformats-officedocument.wordprocessingml.document','text/plain']);
 
 export function isMappableDocument(mimeType:string): boolean {
   return isStructuredDocument(mimeType)||MAPPABLE_DOCUMENT_MIME_TYPES.has(mimeType);

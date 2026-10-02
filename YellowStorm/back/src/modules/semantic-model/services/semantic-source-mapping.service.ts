@@ -64,6 +64,8 @@ export const DOCUMENT_MIME_TYPES = new Set([
   'application/pdf',
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  // Plain text: the message texts derived from an e-mail archive are read like any document.
+  'text/plain',
 ]);
 const MAX_DOCUMENT_EXTRACTION_FIELDS = 25;
 const MAX_PREVIEW_MAPPINGS = 50;
