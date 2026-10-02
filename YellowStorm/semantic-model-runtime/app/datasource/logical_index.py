@@ -15,6 +15,7 @@ created by :func:`create_index_pool`.
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 MANIFEST_VERSION = "r1-index-v1"
@@ -158,9 +159,13 @@ async def resolve_document_candidates(connection: Any, *, workspace_id: Any, fil
     sql += f" ORDER BY id LIMIT {limit}"
     rows = await connection.fetch(sql, *params)
     if not rows and " " in file_name:
-        # The indexer stores names with spaces replaced by underscores.
-        params[1] = file_name.replace(" ", "_")
-        rows = await connection.fetch(sql, *params)
+        # The indexer stores names with spaces replaced by underscores, and a run of
+        # spaces and underscores ("UP_ REVERSE") as a single one ("UP_REVERSE").
+        for stored in dict.fromkeys((file_name.replace(" ", "_"), re.sub(r"[\s_]+", "_", file_name))):
+            params[1] = stored
+            rows = await connection.fetch(sql, *params)
+            if rows:
+                break
     candidates = [
         {"documentPk": str(row["id"]), "workspaceId": row["workspace_id"],
          "fileName": row["file_name"], "uploaderUserId": row["user_id"]}

@@ -1,6 +1,8 @@
 import { SemanticExtractionSettingsController } from './controllers/semantic-extraction-settings.controller';
 import { SemanticDerivedSourceController } from './controllers/semantic-derived-source.controller';
 import { SemanticDerivedSourceService } from './services/semantic-derived-source.service';
+import { SemanticMappingPresetController } from './controllers/semantic-mapping-preset.controller';
+import { SemanticMappingPresetService } from './services/semantic-mapping-preset.service';
 import { SemanticExtractionSettingsService } from './services/semantic-extraction-settings.service';
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
@@ -49,9 +51,9 @@ import { SemanticAssistantActorGuard, SemanticAssistantModelGuard } from './guar
 
 @Module({
   imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,UserModule,IntegrationEventsModule,forwardRef(() => WorkspaceModule)],
-  controllers: [SemanticExtractionSettingsController,SemanticDerivedSourceController,SemanticModelController,WorkspaceSemanticModelController,SemanticDataTokenController,SemanticAttributeExtractionInternalController,SemanticModelAssistantInternalController],
+  controllers: [SemanticExtractionSettingsController,SemanticDerivedSourceController,SemanticMappingPresetController,SemanticModelController,WorkspaceSemanticModelController,SemanticDataTokenController,SemanticAttributeExtractionInternalController,SemanticModelAssistantInternalController],
   providers: [
-    SemanticModelDatabaseService,SemanticExtractionSettingsService,SemanticDerivedSourceService,SemanticModelRepository,SemanticGraphRepository,SemanticModelService,
+    SemanticModelDatabaseService,SemanticExtractionSettingsService,SemanticDerivedSourceService,SemanticMappingPresetService,SemanticModelRepository,SemanticGraphRepository,SemanticModelService,
     SemanticGraphCommandService,SemanticModelValidationService,SemanticModelWorkspaceService,
     SemanticKnowledgeBindingService,SemanticModelVersionService,SemanticModelProvisioningService,
     SemanticModelNativeSearchClient,

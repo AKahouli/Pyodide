@@ -310,7 +310,7 @@ describe('SemanticPopulationRefreshService', () => {
       })),
       relationBindings: command.payload.relationBindings,
       aiExtraction: command.payload.aiExtraction,
-      populationEngineVersion: 'r1-mvp-7',
+      populationEngineVersion: 'r1-mvp-8',
     }));
   });
 

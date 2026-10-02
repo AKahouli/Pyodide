@@ -36,7 +36,6 @@ export class PlaybookFlowExecutionController {
   @Post('playbooks/:flowId/executions')
   @ApiOperation({ summary: 'Start a playbook flow execution' })
   @ApiHeader({ name: 'Idempotency-Key', required: false })
-  @RequirePermissions(Permissions.PLAYBOOK_EXECUTE)
   async start(
     @CurrentUser('_id') userId: string,
     @Param('flowId') flowId: string,
@@ -62,7 +61,6 @@ export class PlaybookFlowExecutionController {
 
   @Get('playbooks/:flowId/executions')
   @ApiOperation({ summary: 'List executions for a flow' })
-  @RequirePermissions(Permissions.PLAYBOOK_READ)
   async findAll(
     @CurrentUser('_id') userId: string,
     @Param('flowId') flowId: string,
@@ -74,7 +72,6 @@ export class PlaybookFlowExecutionController {
 
   @Get('executions/:executionId')
   @ApiOperation({ summary: 'Get execution detail with task results and router decisions' })
-  @RequirePermissions(Permissions.PLAYBOOK_READ)
   async findOne(
     @CurrentUser('_id') userId: string,
     @Param('executionId') executionId: string,
@@ -84,7 +81,6 @@ export class PlaybookFlowExecutionController {
 
   @Post('executions/:executionId/artifacts/:artifactId/access')
   @ApiOperation({ summary: 'Issue scoped access to a playbook artifact' })
-  @RequirePermissions(Permissions.PLAYBOOK_READ)
   async artifactAccess(
     @CurrentUser('_id') userId: string,
     @Param('executionId') executionId: string,
@@ -96,7 +92,6 @@ export class PlaybookFlowExecutionController {
 
   @Post('executions/:executionId/cancel')
   @ApiOperation({ summary: 'Cancel a running execution' })
-  @RequirePermissions(Permissions.PLAYBOOK_EXECUTE)
   async cancel(
     @CurrentUser('_id') userId: string,
     @Param('executionId') executionId: string,
@@ -106,7 +101,6 @@ export class PlaybookFlowExecutionController {
 
   @Post('executions/:executionId/resume-approval')
   @ApiOperation({ summary: 'Resume a pending-approval execution' })
-  @RequirePermissions(Permissions.PLAYBOOK_EXECUTE)
   async resumeApproval(
     @CurrentUser('_id') userId: string,
     @Param('executionId') executionId: string,
@@ -137,7 +131,6 @@ export class PlaybookFlowExecutionController {
 
   @Delete('executions/:executionId')
   @ApiOperation({ summary: 'Delete a single execution and its associated records' })
-  @RequirePermissions(Permissions.PLAYBOOK_EXECUTE)
   async delete(
     @CurrentUser('_id') userId: string,
     @Param('executionId') executionId: string,
@@ -148,7 +141,6 @@ export class PlaybookFlowExecutionController {
 
   @Delete('playbooks/:flowId/executions')
   @ApiOperation({ summary: 'Delete all executions for a flow' })
-  @RequirePermissions(Permissions.PLAYBOOK_EXECUTE)
   async deleteAll(
     @CurrentUser('_id') userId: string,
     @Param('flowId') flowId: string,
@@ -158,7 +150,6 @@ export class PlaybookFlowExecutionController {
 
   @Get('executions/:executionId/router-decisions')
   @ApiOperation({ summary: 'Get router decisions for trace replay' })
-  @RequirePermissions(Permissions.PLAYBOOK_READ)
   async getRouterDecisions(
     @CurrentUser('_id') userId: string,
     @Param('executionId') executionId: string,
@@ -171,7 +162,6 @@ export class PlaybookFlowExecutionController {
 
   @Post('playbooks/:flowId/resume')
   @ApiOperation({ summary: 'Resume a paused execution (compat)' })
-  @RequirePermissions(Permissions.PLAYBOOK_EXECUTE)
   async compatResume(
     @CurrentUser('_id') userId: string,
     @Param('flowId') flowId: string,
@@ -183,7 +173,6 @@ export class PlaybookFlowExecutionController {
 
   @Post('playbooks/:flowId/stop')
   @ApiOperation({ summary: 'Stop/cancel execution (compat)' })
-  @RequirePermissions(Permissions.PLAYBOOK_EXECUTE)
   async compatStop(
     @CurrentUser('_id') userId: string,
     @Param('flowId') flowId: string,
@@ -206,7 +195,6 @@ export class PlaybookFlowExecutionController {
 
   @Post('playbooks/:flowId/executions/:executionId/run-from-step')
   @ApiOperation({ summary: 'Run a new execution from a completed step' })
-  @RequirePermissions(Permissions.PLAYBOOK_EXECUTE)
   async runFromStep(
     @CurrentUser('_id') userId: string,
     @Param('flowId') flowId: string,
@@ -223,7 +211,6 @@ export class PlaybookFlowExecutionController {
 
   @Post('playbooks/:flowId/executions/:executionId/resume-from-step')
   @ApiOperation({ summary: 'Resume execution from a step' })
-  @RequirePermissions(Permissions.PLAYBOOK_EXECUTE)
   async compatResumeFromStep(
     @CurrentUser('_id') userId: string,
     @Param('flowId') flowId: string,
@@ -266,7 +253,6 @@ export class PlaybookFlowExecutionController {
 
   @Get('playbooks/:flowId/executions/:executionId')
   @ApiOperation({ summary: 'Get execution detail nested under playbook (compat)' })
-  @RequirePermissions(Permissions.PLAYBOOK_READ)
   async compatGetExecution(
     @CurrentUser('_id') userId: string,
     @Param('flowId') flowId: string,
@@ -277,7 +263,6 @@ export class PlaybookFlowExecutionController {
 
   @Delete('playbooks/:flowId/executions/:executionId')
   @ApiOperation({ summary: 'Delete execution nested under playbook (compat)' })
-  @RequirePermissions(Permissions.PLAYBOOK_EXECUTE)
   async compatDeleteExecution(
     @CurrentUser('_id') userId: string,
     @Param('flowId') flowId: string,

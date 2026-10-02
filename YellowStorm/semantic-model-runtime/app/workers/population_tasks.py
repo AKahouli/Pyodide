@@ -43,7 +43,7 @@ MAX_TOTAL_ASSERTIONS = 50000
 MAX_TOTAL_RELATIONSHIPS = 20000
 # Carries a manual row's display name; never a model attribute, so never asserted.
 MANUAL_LABEL_FIELD = "__manual_label"
-POPULATION_ENGINE_VERSION = "r1-mvp-7"
+POPULATION_ENGINE_VERSION = "r1-mvp-8"
 
 
 def population_execution_fingerprint(spec_hash: str, sources: list[dict],

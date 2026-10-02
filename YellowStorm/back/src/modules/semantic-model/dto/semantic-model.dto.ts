@@ -618,6 +618,52 @@ export class CreateSourceMappingDto {
   aiSettings?: AiExtractionSettingsDto;
 }
 
+/** A named copy of how a concept is read from documents, to reuse on other documents or workspaces. */
+export class SaveMappingPresetDto {
+  @ApiProperty()
+  @IsUUID()
+  conceptId!: string;
+
+  @ApiProperty({ minLength: 1, maxLength: 80 })
+  @IsString()
+  @Matches(/\S/, { message: 'name must not be blank' })
+  @MaxLength(80)
+  name!: string;
+
+  @ApiPropertyOptional({ maxLength: 500 })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  description?: string;
+
+  @ApiProperty({ type: [SourceFieldMappingDto], maxItems: 100 })
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => SourceFieldMappingDto)
+  fieldMappings!: SourceFieldMappingDto[];
+
+  @ApiPropertyOptional({ type: [String], maxItems: 5 })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsString({ each: true })
+  @MaxLength(200, { each: true })
+  identityFields?: string[];
+
+  @ApiPropertyOptional({ type: () => AiExtractionSettingsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AiExtractionSettingsDto)
+  aiSettings?: AiExtractionSettingsDto;
+}
+
+export class MappingPresetQueryDto {
+  @ApiProperty()
+  @IsUUID()
+  conceptId!: string;
+}
+
 export class SourceMappingPreviewDto {
   @ApiProperty()
   @IsUUID()

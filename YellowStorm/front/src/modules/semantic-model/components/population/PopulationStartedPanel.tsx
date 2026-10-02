@@ -14,6 +14,8 @@ export interface PopulationOutcome {
   sourceCount?: number;
   /** Last progress reported by the run, kept once it ends so the summary stays on screen. */
   progress?: Partial<PopulationProgress>;
+  /** Whether the result replaced the graph in use, kept once the run ends (the job is no longer followed then). */
+  serving?: PopulationServing;
 }
 
 type Tone = 'running' | 'stopping' | 'stopped' | 'done' | 'gaps' | 'failed';

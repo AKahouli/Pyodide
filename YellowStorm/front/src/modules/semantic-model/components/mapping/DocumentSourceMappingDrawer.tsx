@@ -23,13 +23,14 @@ import { semanticModelApi } from '../../api';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
 import { useSourceMappings } from '../../query/hooks';
 import { useSemanticModelEditorStore } from '../../store';
-import type { AiExtractionSettings, DocumentFieldReading, DocumentLabelSuggestion, SourceExtractionStrategy, SourceFieldMapping, SourceMappingPreviewResponse, StructuredSourceAsset } from '../../types';
+import type { AiExtractionSettings, MappingSettings, DocumentFieldReading, DocumentLabelSuggestion, SourceExtractionStrategy, SourceFieldMapping, SourceMappingPreviewResponse, StructuredSourceAsset } from '../../types';
 import { AiLimitsEditor, FieldReadingResult, FieldRulesEditor, limitProblem, newDocumentField, ReadAllFieldsBar, rulesProblem, STRATEGIES, usesAi as mappingsUseAi, usesRules, withConceptFields, type LabelSuggestions } from './DocumentFieldRules';
 import { DEFAULT_SPLIT, DocumentPreviewPane, documentStatusText, FieldLiveStatus, highlightOf, useNarrow, useSplitPrefs } from './DocumentPreviewPane';
 import { useLiveDocumentPreview } from './useLiveDocumentPreview';
 import type { SourceMappingTarget, WorkspaceSourceScope } from './SourceMappingDrawer';
 import { ComputedFieldEditor, computedPayload, computedProblem, newComputedRule } from './ComputedFieldEditor';
 import { isReadableDocument, WorkspaceFilePicker, type WorkspacePick } from './WorkspaceFilePicker';
+import { MappingPresetBar } from './MappingPresetBar';
 
 type PreviewItem = { asset: StructuredSourceAsset; result: SourceMappingPreviewResponse };
 
@@ -155,6 +156,19 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
   const activeMappings = mappings.filter((mapping) => mapping.mode !== 'ignore');
   // Ignored fields are saved too, so a field left out on purpose is not offered again as a new one.
   const savedMappings = mappings.map((mapping) => mapping.mode === 'computed' && mapping.computed ? { ...mapping, sourceField: null, computed: computedPayload(mapping.computed) } : mapping);
+
+  // A preset or the last mapping replaces the fields' settings; fields the concept no longer has are left out.
+  const applySettings = (settings: MappingSettings, exact: boolean) => {
+    const attributes = concept?.attributes ?? [];
+    const rows = withConceptFields(settings.fieldMappings, attributes);
+    setMappings(rows.mappings);
+    setAddedFields([]);
+    const keys = new Set(attributes.map((attribute) => attribute.key));
+    const identity = settings.identityFields.filter((key) => keys.has(key));
+    if (exact || identity.length) setIdentityFields(identity);
+    setAiSettings({ ...settings.aiSettings });
+    preview.reset();
+  };
 
   const preview = useMutation({
     mutationFn: async (): Promise<PreviewItem[]> => {
@@ -465,6 +479,9 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
 
         {concept && concept.attributes.length > 0 && <div className='space-y-2'>
           <Label>{t('mapping.documentFields')}</Label>
+          <MappingPresetBar modelId={modelId} conceptId={conceptId} attributes={concept.attributes}
+            current={{ fieldMappings: savedMappings, aiSettings, identityFields }} onApply={applySettings}
+            autoStart={Boolean(target && !target.mapping && !target.bulkEdit)} />
           <ReadAllFieldsBar mappings={mappings} onApply={setAllStrategies} />
           {addedFields.length > 0 && <p role='status' className='flex gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/5 p-2.5 text-xs text-sky-800 dark:text-sky-300'>
             <Sparkles className='mt-0.5 h-3.5 w-3.5 shrink-0' />{t('mapping.newFields', { count: addedFields.length, fields: addedFields.map(attributeLabel).join(', ') })}

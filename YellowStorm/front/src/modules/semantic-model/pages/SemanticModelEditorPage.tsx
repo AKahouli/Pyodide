@@ -197,8 +197,9 @@ export function SemanticModelEditorPage() {
     // Hand the final state to the run panel before we stop following the job, or it spins forever.
     const finalState = populationJob.data.state;
     const finalProgress = populationJob.data.progress;
+    const finalServing = populationServing(populationJob.data.result);
     setPopulation((current) => current && current.jobId === populationJobId
-      ? { ...current, status: finalState, progress: finalProgress ?? current.progress } : current);
+      ? { ...current, status: finalState, progress: finalProgress ?? current.progress, serving: finalServing ?? current.serving } : current);
     setPopulationJobId(undefined);
   }, [populationJob.data]);
   const [mappingTarget, setMappingTarget] = useState<SourceMappingTarget | null>(null);
@@ -808,7 +809,7 @@ export function SemanticModelEditorPage() {
           onOpenHealth={() => { setPopulation(null); setTrustOpen(true); }}
           onStop={canEdit ? () => void stopRun() : undefined}
           stopping={stoppingRun}
-          serving={populationJob.data?.jobId === population.jobId ? populationServing(populationJob.data?.result) : undefined}
+          serving={(populationJob.data?.jobId === population.jobId ? populationServing(populationJob.data?.result) : undefined) ?? population.serving}
         />}
         {modelId && <SourceChooserDialog open={Boolean(choosingFor)} modelId={modelId} conceptLabel={choosingFor?.conceptLabel ?? ''} onClose={() => setChoosingFor(null)}
           onChoose={(option) => { const suggestion = choosingFor; setChoosingFor(null); if (suggestion) openSourceOption(suggestion, option); }} />}

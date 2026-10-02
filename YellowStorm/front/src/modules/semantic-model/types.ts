@@ -394,6 +394,32 @@ export interface SourceSuggestionsPage {
 export type DerivedConflictRule = 'most_frequent' | 'latest' | 'longest' | 'leave_empty';
 
 /** A concept filled from another concept's records: one record per distinct key value they carry. */
+/** How a concept is read from documents: what a preset holds and a new mapping can start from. */
+export interface MappingSettings {
+  fieldMappings: SourceFieldMapping[];
+  aiSettings: Partial<AiExtractionSettings>;
+  identityFields: string[];
+}
+
+/** Named settings for reading a concept from documents, copied into a mapping when applied. */
+export interface MappingPreset extends MappingSettings {
+  id: string;
+  conceptId: string;
+  name: string;
+  description: string | null;
+  updatedAt: string;
+}
+
+/** The document mapping of a concept saved most recently, possibly in a workspace unlinked since. */
+export interface LastDocumentMapping extends MappingSettings {
+  mappingId: string;
+  scope: 'document' | 'workspace';
+  /** Null when its workspace is no longer linked. */
+  sourceName: string | null;
+  workspaceLinked: boolean;
+  updatedAt: string;
+}
+
 export interface DerivedSource {
   id: string;
   conceptId: string;

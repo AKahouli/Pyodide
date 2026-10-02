@@ -81,7 +81,7 @@ const MAX_REFRESH_SOURCES = 25;
 /** Files one run may read, workspace mappings expanded; matches the runtime's per-task limit. */
 const MAX_RUN_SOURCES = 5000;
 const MANUAL_BATCH_SIZE = 500;
-const POPULATION_ENGINE_VERSION = 'r1-mvp-7';
+const POPULATION_ENGINE_VERSION = 'r1-mvp-8';
 
 @Injectable()
 export class SemanticPopulationRefreshService {

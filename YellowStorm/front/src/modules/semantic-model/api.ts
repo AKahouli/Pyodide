@@ -1,7 +1,7 @@
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type { ApiResponse } from '@/lib/api/client';
-import type { ComputedFieldRule, DocumentLabelsResponse, ComputedPreviewResult, AiExtractionDefaults, DerivedSource, DerivedSourceDraft, AiExtractionSettings, AgeGraphEdge, AssistantChangesPage, SourceSuggestionsPage, SourceFileMatches, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
+import type { ComputedFieldRule, DocumentLabelsResponse, ComputedPreviewResult, AiExtractionDefaults, DerivedSource, DerivedSourceDraft, LastDocumentMapping, MappingPreset, MappingSettings, AiExtractionSettings, AgeGraphEdge, AssistantChangesPage, SourceSuggestionsPage, SourceFileMatches, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
 SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, PopulationFreshness, DesignerBoxPosition, SemanticReviewItem, SemanticVersion,
 SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
 StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison, ReviewQueue, ConceptRecordsPage } from './types';
@@ -150,6 +150,22 @@ export const semanticModelApi = {
   async deleteSourceMapping(id: string, mappingId: string): Promise<{ revision: number }> {
     const model = await semanticModelApi.get(id);
     return unwrap(await apiClient.delete<ApiResponse<{ revision: number }>>(API_ENDPOINTS.semanticModels.sourceMapping(id, mappingId), { data: { expectedRevision: model.revision } }));
+  },
+  async listMappingPresets(id: string, conceptId: string): Promise<MappingPreset[]> {
+    return unwrap(await apiClient.get<ApiResponse<MappingPreset[]>>(API_ENDPOINTS.semanticModels.mappingPresets(id), { params: { conceptId } }));
+  },
+  /** Saves the settings under a name; `presetId` replaces an existing preset. Presets do not change the model revision. */
+  async saveMappingPreset(id: string, draft: MappingSettings & { conceptId: string; name: string; description?: string }, presetId?: string): Promise<MappingPreset> {
+    return unwrap(presetId
+      ? await apiClient.put<ApiResponse<MappingPreset>>(API_ENDPOINTS.semanticModels.mappingPreset(id, presetId), draft)
+      : await apiClient.post<ApiResponse<MappingPreset>>(API_ENDPOINTS.semanticModels.mappingPresets(id), draft));
+  },
+  async deleteMappingPreset(id: string, presetId: string): Promise<{ deleted: boolean }> {
+    return unwrap(await apiClient.delete<ApiResponse<{ deleted: boolean }>>(API_ENDPOINTS.semanticModels.mappingPreset(id, presetId)));
+  },
+  /** The settings of the concept's document mapping saved most recently, or null. */
+  async lastUsedMapping(id: string, conceptId: string): Promise<LastDocumentMapping | null> {
+    return unwrap(await apiClient.get<ApiResponse<{ lastUsed: LastDocumentMapping | null }>>(API_ENDPOINTS.semanticModels.lastUsedMapping(id), { params: { conceptId } })).lastUsed;
   },
   async listDerivedSources(id: string): Promise<DerivedSource[]> {
     return unwrap(await apiClient.get<ApiResponse<DerivedSource[]>>(API_ENDPOINTS.semanticModels.derivedSources(id)));
