@@ -294,8 +294,12 @@ async def _apply_ai_extraction(
     extractor_version = str(result.get("extractorVersion") or "ai-attribute-v1")
     rules_by_key = {mapping["targetAttribute"]: mapping.get("rules") for mapping in ai_mappings}
     keys = set(rules_by_key)
+    choices = {mapping["targetAttribute"]: allowed for mapping in ai_mappings
+               if (allowed := [str(item) for item in mapping.get("allowedValues") or [] if str(item).strip()])}
+    summaries = {mapping["targetAttribute"] for mapping in ai_mappings
+                 if mapping.get("valueType") in (None, "text") and mapping["targetAttribute"] not in choices}
     _ground_values(result.get("values") or [], keys, by_reference, rules_by_key, entry, asset_ref,
-                   extractor_version, result.get("model"), values, evidence_by_field, quotes)
+                   extractor_version, result.get("model"), values, evidence_by_field, quotes, choices)
     if records is not None:
         for item in result.get("records") or []:
             if not isinstance(item, dict):
@@ -303,7 +307,7 @@ async def _apply_ai_extraction(
             own: dict[str, Any] = {}
             own_evidence: dict[str, dict[str, Any]] = {}
             _ground_values(item.get("values") or [], keys, by_reference, rules_by_key, entry, asset_ref,
-                           extractor_version, result.get("model"), own, own_evidence, None)
+                           extractor_version, result.get("model"), own, own_evidence, None, choices, summaries)
             if own:
                 records.append({"values": own, "evidence": own_evidence})
     return None, sent
@@ -330,13 +334,31 @@ def _ai_attribute(mapping: dict[str, Any], labels: list[str]) -> dict[str, Any]:
     return attribute
 
 
+def _choice(value: Any, allowed: list[str]) -> str | None:
+    """The allowed value the agent picked, ignoring case and spacing."""
+    if not isinstance(value, str):
+        return None
+    wanted = _normalize_for_grounding(value).strip('"\'')
+    return next((item for item in allowed if _normalize_for_grounding(item) == wanted), None)
+
+
 def _ground_values(
     items: list[Any], keys: set[str], by_reference: dict[str, tuple[dict[str, Any], dict[str, Any]]],
     rules_by_key: dict[str, Any], entry: dict[str, Any], asset_ref: dict[str, Any],
     extractor_version: str, model: Any, values: dict[str, Any],
     evidence_by_field: dict[str, dict[str, Any]], quotes: dict[str, str] | None,
+    choices: dict[str, list[str]] | None = None, summaries: set[str] | None = None,
 ) -> None:
-    """Keep each value the agent returned only when it occurs in a block the runtime sent."""
+    """Keep each value the agent returned only when it occurs in a block the runtime sent.
+
+    A field with allowed values keeps the allowed value the agent picked, from a block it really
+    sent. A text field in ``summaries`` (one item of a document read for several) may put the
+    cited block in its own words, but only when another value of the same item is quoted from
+    that block: the item itself is then proven to be in the document.
+    """
+    choices = choices or {}
+    rephrased: list[tuple[str, Any, tuple[dict[str, Any], dict[str, Any]]]] = []
+    quoted_blocks: set[str] = set()
     for item in items:
         key = item.get("key") if isinstance(item, dict) else None
         if not key or key not in keys or key in values:
@@ -346,24 +368,48 @@ def _ground_values(
         if not grounded:
             continue
         block, section = by_reference[grounded[0]]
+        value = item.get("value")
+        if key in choices:
+            value = _choice(value, choices[key])
+            if value is None:
+                continue
         # A real reference is not proof of a real value: the value must occur in
         # the block it cites, otherwise the model invented it.
-        if not _value_in_block(item.get("value"), block.get("content")):
+        elif not _value_in_block(value, block.get("content")):
+            if summaries and key in summaries and isinstance(value, str) and value.strip():
+                rephrased.append((key, value.strip(), (block, section)))
             continue
-        value = item.get("value")
-        rules = rules_by_key.get(key)
-        if rules and rules.get("transform") not in (None, "none") and isinstance(value, str):
-            value = clean(value, {**rules, "pattern": None}) or value
-        values[key] = value
-        if quotes is not None:
-            quotes[key] = str(block.get("content") or "")[:600]
-        evidence = _evidence(block, section, str(block.get("content") or ""), asset_ref,
-                             entry["mappingVersion"])
-        evidence["origin"] = "ai"
-        evidence["extractorVersion"] = extractor_version
-        if model:
-            evidence["model"] = model
-        evidence_by_field[key] = evidence
+        else:
+            quoted_blocks.add(grounded[0])
+        _keep_value(key, value, block, section, rules_by_key, entry, asset_ref, extractor_version,
+                    model, values, evidence_by_field, quotes)
+    for key, value, (block, section) in rephrased:
+        reference = f"section:{section['sectionPk']}/block:{block['blockPk']}"
+        if key in values or reference not in quoted_blocks:
+            continue
+        _keep_value(key, value, block, section, rules_by_key, entry, asset_ref, extractor_version,
+                    model, values, evidence_by_field, quotes)
+        evidence_by_field[key]["rephrased"] = True
+
+
+def _keep_value(
+    key: str, value: Any, block: dict[str, Any], section: dict[str, Any], rules_by_key: dict[str, Any],
+    entry: dict[str, Any], asset_ref: dict[str, Any], extractor_version: str, model: Any,
+    values: dict[str, Any], evidence_by_field: dict[str, dict[str, Any]], quotes: dict[str, str] | None,
+) -> None:
+    rules = rules_by_key.get(key)
+    if rules and rules.get("transform") not in (None, "none") and isinstance(value, str):
+        value = clean(value, {**rules, "pattern": None}) or value
+    values[key] = value
+    if quotes is not None:
+        quotes[key] = str(block.get("content") or "")[:600]
+    evidence = _evidence(block, section, str(block.get("content") or ""), asset_ref,
+                         entry["mappingVersion"])
+    evidence["origin"] = "ai"
+    evidence["extractorVersion"] = extractor_version
+    if model:
+        evidence["model"] = model
+    evidence_by_field[key] = evidence
 
 
 _PASSAGE_LEAD = re.compile(r"^[\s:\-\u2013\u2014=]+")

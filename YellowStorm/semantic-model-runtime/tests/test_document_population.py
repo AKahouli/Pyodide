@@ -556,6 +556,33 @@ async def test_many_records_gives_one_entity_per_item_found(monkeypatch: pytest.
     assert result["coverage"]["status"] == "processed_complete"
 
 
+def test_an_item_may_be_summed_up_and_classified_when_it_is_quoted():
+    reference = "section:7/block:9"
+    by_reference = {reference: (LINES_BLOCK, {"sectionPk": 7, "sectionKey": "s7"})}
+    keys = {"quote", "summary", "kind"}
+    entry_ = {"mappingVersion": "v1"}
+
+    def ground(items: list[dict]) -> tuple[dict, dict]:
+        values: dict = {}
+        evidence: dict = {}
+        document._ground_values(items, keys, by_reference, {}, entry_, {"assetId": "a"}, "v", None,
+                                values, evidence, None, {"kind": ["Amendment", "Renewal"]}, {"summary"})
+        return values, evidence
+
+    def item(key: str, value: str) -> dict:
+        return {"key": key, "value": value, "evidenceReferences": [reference]}
+
+    # The summary comes before its quote; the picked kind is written as the allowed value.
+    values, evidence = ground([item("summary", "The contract was amended twice"), item("kind", "amendment"),
+                               item("quote", "Amendment 1 on 2026-01-01")])
+    assert values == {"summary": "The contract was amended twice", "kind": "Amendment",
+                      "quote": "Amendment 1 on 2026-01-01"}
+    assert evidence["summary"]["rephrased"] is True
+    # With nothing quoted from the block, a summary is not proof the item is there; an unknown kind is dropped.
+    values, _ = ground([item("summary", "The contract was amended twice"), item("kind", "Termination")])
+    assert values == {}
+
+
 @pytest.mark.asyncio
 async def test_one_record_per_document_does_not_ask_for_several(monkeypatch: pytest.MonkeyPatch, index_stubs):
     asked = {}
