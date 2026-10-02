@@ -12,11 +12,10 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useApiAction } from '@/lib/use-api-action';
-import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { adminTemplateApi } from '../../api';
 import type { TemplateCategory } from '../../types';
-import { CATEGORY_ICON_NAMES, CategoryIcon } from './category-icons';
+import { CategoryIconPicker } from './CategoryIconPicker';
 
 interface CategoryFormDialogProps {
   open: boolean;
@@ -111,47 +110,8 @@ export function CategoryFormDialog({
             <p className='text-xs text-muted-foreground'>{t('categories.slugHint')}</p>
           </div>
           <div className='space-y-2'>
-            <div className='flex items-center justify-between gap-2'>
-              <Label>{t('categories.fieldIcon')}</Label>
-              {icon ? (
-                <span className='inline-flex items-center gap-1.5 text-xs text-muted-foreground'>
-                  <span className='flex size-6 items-center justify-center rounded-md border border-primary/25 bg-primary/10 text-primary'>
-                    <CategoryIcon name={icon} className='size-3.5' />
-                  </span>
-                  {icon}
-                </span>
-              ) : null}
-            </div>
-            <div
-              role='radiogroup'
-              aria-label={t('categories.fieldIcon')}
-              className='grid grid-cols-8 gap-1.5 rounded-xl border border-border/60 bg-muted/20 p-2'
-            >
-              {CATEGORY_ICON_NAMES.map((iconName) => {
-                const selected = icon === iconName;
-                return (
-                  <button
-                    key={iconName}
-                    type='button'
-                    role='radio'
-                    aria-checked={selected}
-                    aria-label={iconName}
-                    title={iconName}
-                    disabled={busy}
-                    onClick={() => setIcon(selected ? '' : iconName)}
-                    className={cn(
-                      'flex aspect-square items-center justify-center rounded-lg border transition-colors',
-                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
-                      selected
-                        ? 'border-primary bg-primary/15 text-primary shadow-sm'
-                        : 'border-transparent text-muted-foreground hover:border-border/70 hover:bg-background hover:text-foreground',
-                    )}
-                  >
-                    <CategoryIcon name={iconName} className='size-4' />
-                  </button>
-                );
-              })}
-            </div>
+            <Label htmlFor='category-icon'>{t('categories.fieldIcon')}</Label>
+            <CategoryIconPicker id='category-icon' value={icon} onChange={setIcon} disabled={busy} />
           </div>
 
           {error ? (

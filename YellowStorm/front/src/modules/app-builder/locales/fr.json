@@ -196,6 +196,18 @@
     "fieldName": "Nom",
     "fieldSlug": "Slug",
     "fieldIcon": "Icône",
+    "selectIcon": "Choisir une icône",
+    "noIcon": "Aucune icône",
+    "iconGroups": {
+      "general": "Général",
+      "business": "Business",
+      "files": "Fichiers et données",
+      "communication": "Communication",
+      "media": "Médias",
+      "technology": "Technologie",
+      "commerce": "Commerce",
+      "time": "Temps et planification"
+    },
     "slugPlaceholder": "généré automatiquement si vide",
     "slugHint": "Minuscules, séparées par des tirets. Utilisé dans les URL.",
     "create": "Créer",

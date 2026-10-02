@@ -44,6 +44,8 @@ app-builder/
 │       ├── TemplateDetailDialog.tsx
 │       ├── TemplateFormDrawer.tsx        # Create/edit; ZIP validate + single cover
 │       ├── CategoryFormDialog.tsx
+│       ├── CategoryIconPicker.tsx        # Grouped icon select for categories
+│       ├── category-icons.tsx            # Curated icon set + picker groups
 │       ├── FileDropZone.tsx
 │       ├── TemplateValidatePreviewDialog.tsx
 │       └── cover/                        # Cover focus crop (COVER_MAX_IMAGES = 1)

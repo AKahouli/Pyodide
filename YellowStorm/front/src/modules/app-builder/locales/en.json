@@ -196,6 +196,18 @@
     "fieldName": "Name",
     "fieldSlug": "Slug",
     "fieldIcon": "Icon",
+    "selectIcon": "Choose an icon",
+    "noIcon": "No icon",
+    "iconGroups": {
+      "general": "General",
+      "business": "Business",
+      "files": "Files & data",
+      "communication": "Communication",
+      "media": "Media",
+      "technology": "Technology",
+      "commerce": "Commerce",
+      "time": "Time & planning"
+    },
     "slugPlaceholder": "auto-generated if empty",
     "slugHint": "Lowercase, hyphen-separated. Used in URLs.",
     "create": "Create",
