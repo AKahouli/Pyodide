@@ -23,7 +23,7 @@ from .computed_fields import COMPUTED_VERSION, apply_computed, normalize_compute
 from .tabular import populate_concept_rows
 
 # Bump when the way a document is read changes, so cached results are not reused.
-DOCUMENT_EXTRACTION_VERSION = "document-v1"
+DOCUMENT_EXTRACTION_VERSION = "document-v2"  # v2: summaries, choices and ISO dates for AI fields
 
 EXTRACTOR_VERSION = "label-value-v4"
 MAX_FIELD_VALUE_CHARS = 500

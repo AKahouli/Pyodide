@@ -6,6 +6,7 @@ serving tuple. None of these write AGE or projections directly."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 
@@ -20,11 +21,18 @@ from app.persistence import manual_store
 from app.persistence import population_store as store
 from app.population.age_projection import (ProjectionUnavailable, ensure_revision_projection,
                                              is_live_projection_ref, read_projection_graph)
+from app.population.engine_version import population_engine_version
 from app.population.compiler import (PopulationError, canonical_spec_hash, validate_specification)
 from app.workers.celery_app import POPULATION_QUEUES
 
 router = APIRouter(prefix="/v1/semantic-model-population", tags=["population"])
 
+
+
+def _engine_key(idempotency_key: str) -> str:
+    """The caller's key for this runtime version; hashed when it would not fit the 200 characters."""
+    key = f"{idempotency_key}:{population_engine_version()}"
+    return key if len(key) <= 200 else "sha256:" + hashlib.sha256(key.encode()).hexdigest()
 
 @router.post("/runs", status_code=status.HTTP_202_ACCEPTED)
 async def request_run(
@@ -41,7 +49,8 @@ async def request_run(
         admission = await service.admit(
             job_type="population.run",
             command=command,
-            idempotency_key=idempotency_key,
+            # A changed runtime is a new build, not the same one again.
+            idempotency_key=_engine_key(idempotency_key),
             task_name="semantic-model-population.run",
             queue_name=POPULATION_QUEUES[1],
         )

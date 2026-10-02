@@ -23,7 +23,10 @@ def _json(value: Any) -> str:
 def revision_id_for(model_version_id: str, execution_fingerprint: str,
                     dataset_fingerprints: list[str], correction_sequence: int) -> str:
     """Deterministic data-revision id for a fixed spec, inputs and watermark."""
+    from app.population.engine_version import population_engine_version
+
     body = _json({"modelVersionId": model_version_id,
+                  "engine": population_engine_version(),
                   "executionFingerprint": execution_fingerprint,
                   "datasets": sorted(dataset_fingerprints),
                   "correctionSequence": correction_sequence})
