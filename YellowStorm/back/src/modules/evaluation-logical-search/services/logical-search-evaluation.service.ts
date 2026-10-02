@@ -855,7 +855,7 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     ownerId: string,
     evaluationId: string,
   ): Promise<{ buffer: Buffer; filename: string }> {
-    await this.getById(ownerId, evaluationId);
+    const evaluation = await this.getById(ownerId, evaluationId);
     const runDir = join(process.cwd(), 'uploads', 'eval', evaluationId);
     let results: EvaluationQueryResult[] = [];
     try {
@@ -963,6 +963,36 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       return { wch: Math.min(maxLength + 2, 60) };
     });
     XLSX.utils.book_append_sheet(workbook, detailsSheet, 'Detailed Results');
+
+    // Versioning: which model, connector and agents produced this run.
+    let evaluatorAgentId: string | null = null;
+    try {
+      const adhoc = await readJson<{ evaluatorAgentId?: string }>(join(runDir, 'adhoc-config.json'));
+      evaluatorAgentId = adhoc?.evaluatorAgentId ?? null;
+    } catch {
+      evaluatorAgentId = null;
+    }
+    const runMetadata = await this.repository.findRunMetadata({
+      agentId: evaluation.agentId ?? null,
+      evaluatorAgentId,
+    });
+    const targetAgent = runMetadata.agents.find((agent) => agent.id === evaluation.agentId);
+    const judgeAgent = runMetadata.agents.find((agent) => agent.id === evaluatorAgentId);
+    const versioningSheetData = [
+      { Field: 'Model', Value: targetAgent?.model || evaluation.modelId || '(default)' },
+      { Field: 'Temperature', Value: targetAgent?.temperature ?? '' },
+      { Field: 'Agent', Value: targetAgent?.name ?? evaluation.agentId ?? '' },
+      { Field: 'Connector', Value: runMetadata.connectors.join(', ') },
+      { Field: 'Judge agent', Value: judgeAgent?.name ?? '' },
+      { Field: 'Judge model', Value: judgeAgent?.model ?? '' },
+      { Field: 'Workspace', Value: evaluation.workspaceId ?? '' },
+      { Field: 'Answer node', Value: evaluation.answerNodeId ?? '' },
+      { Field: 'Evaluation id', Value: evaluationId },
+      { Field: 'Created at', Value: evaluation.createdAt instanceof Date ? evaluation.createdAt.toISOString() : '' },
+    ];
+    const versioningSheet = XLSX.utils.json_to_sheet(versioningSheetData);
+    versioningSheet['!cols'] = [{ wch: 18 }, { wch: 60 }];
+    XLSX.utils.book_append_sheet(workbook, versioningSheet, 'Versioning');
 
     const xlsxBuffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
     const logsJson = JSON.stringify(buildExecutionLogsExport(evaluationId, results), null, 2);

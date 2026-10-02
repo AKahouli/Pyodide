@@ -1,8 +1,14 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, count, desc, eq, lt, ne } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, lt, ne } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '../../postgres/postgres.constants';
-import { evaluationRuns, evaluationResults } from '../../postgres/schema';
+import {
+  evaluationRuns,
+  evaluationResults,
+  agents,
+  agentConnectors,
+  integrationsConnectors,
+} from '../../postgres/schema';
 import type { EvaluationQueryResult } from '../services/evaluation-metrics';
 
 export type EvaluationListScope = 'runs' | 'benchmarks';
@@ -147,8 +153,26 @@ export class LogicalSearchEvaluationRepository {
     return row ?? null;
   }
 
-  async applyNarrative(id: string, narrative: unknown) {
-    const [row] = await this.db
+  /** Agent names/models + connector names bound to the run's target agent. */
+  async findRunMetadata(input: { agentId: string | null; evaluatorAgentId: string | null }) {
+    const agentIds = [input.agentId, input.evaluatorAgentId].filter((id): id is string => Boolean(id));
+    const agentRows = agentIds.length > 0
+      ? await this.db
+          .select({ id: agents.id, name: agents.name, model: agents.llmModel, temperature: agents.temperature })
+          .from(agents)
+          .where(inArray(agents.id, agentIds))
+      : [];
+    const connectorRows = input.agentId
+      ? await this.db
+          .select({ name: integrationsConnectors.name })
+          .from(agentConnectors)
+          .innerJoin(integrationsConnectors, eq(agentConnectors.connectorId, integrationsConnectors.id))
+          .where(eq(agentConnectors.agentId, input.agentId))
+      : [];
+    return { agents: agentRows, connectors: connectorRows.map((row) => row.name) };
+  }
+
+  async applyNarrative(id: string, narrative: unknown) {    const [row] = await this.db
       .update(evaluationRuns)
       .set({ narrative, updatedAt: new Date() })
       .where(eq(evaluationRuns.id, id))
