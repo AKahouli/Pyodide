@@ -289,7 +289,10 @@ class PostgresJobRepository:
                     )
                     if existing is None or existing["command_hash"] != command_hash:
                         raise IdempotencyConflict("idempotency key already has a different payload")
-                    if job_type == "population.run" and existing["state"] in ("failed", "cancelled"):
+                    # A failed discovery is retried too: handing back the failure would leave the
+                    # file unreadable until its content changes, even once the cause is fixed.
+                    if (job_type in ("population.run", "datasource.discovery")
+                            and existing["state"] in ("failed", "cancelled")):
                         # A retry of a terminal failure or a stopped run needs a fresh durable job,
                         # while concurrent retries must converge on the same one.
                         effective_key = hashlib.sha256(
