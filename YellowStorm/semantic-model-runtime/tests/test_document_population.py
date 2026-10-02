@@ -562,12 +562,15 @@ def test_an_item_may_be_summed_up_and_classified_when_it_is_quoted():
     keys = {"quote", "summary", "kind"}
     entry_ = {"mappingVersion": "v1"}
 
-    def ground(items: list[dict]) -> tuple[dict, dict]:
+    def ground_with(summaries: set[str], items: list[dict]) -> tuple[dict, dict]:
         values: dict = {}
         evidence: dict = {}
         document._ground_values(items, keys, by_reference, {}, entry_, {"assetId": "a"}, "v", None,
-                                values, evidence, None, {"kind": ["Amendment", "Renewal"]}, {"summary"})
+                                values, evidence, None, {"kind": ["Amendment", "Renewal"]}, summaries)
         return values, evidence
+
+    def ground(items: list[dict]) -> tuple[dict, dict]:
+        return ground_with({"summary"}, items)
 
     def item(key: str, value: str) -> dict:
         return {"key": key, "value": value, "evidenceReferences": [reference]}
@@ -578,6 +581,12 @@ def test_an_item_may_be_summed_up_and_classified_when_it_is_quoted():
     assert values == {"summary": "The contract was amended twice", "kind": "Amendment",
                       "quote": "Amendment 1 on 2026-01-01"}
     assert evidence["summary"]["rephrased"] is True
+    # A date the text does not write that way is a rewrite too: kept only for a field allowed to rewrite.
+    keys.add("when")
+    values, _ = ground([item("quote", "Amendment 2 on 2026-02-01"), item("when", "2026-02-01T00:00")])
+    assert values == {"quote": "Amendment 2 on 2026-02-01"}
+    values, _ = ground_with({"summary", "when"}, [item("quote", "Amendment 2 on 2026-02-01"), item("when", "2026-02-01T00:00")])
+    assert values["when"] == "2026-02-01T00:00"
     # With nothing quoted from the block, a summary is not proof the item is there; an unknown kind is dropped.
     values, _ = ground([item("summary", "The contract was amended twice"), item("kind", "Termination")])
     assert values == {}

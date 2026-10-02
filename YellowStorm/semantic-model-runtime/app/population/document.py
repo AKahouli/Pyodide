@@ -297,7 +297,7 @@ async def _apply_ai_extraction(
     choices = {mapping["targetAttribute"]: allowed for mapping in ai_mappings
                if (allowed := [str(item) for item in mapping.get("allowedValues") or [] if str(item).strip()])}
     summaries = {mapping["targetAttribute"] for mapping in ai_mappings
-                 if mapping.get("valueType") in (None, "text") and mapping["targetAttribute"] not in choices}
+                 if mapping.get("valueType") in (None, "text", "date") and mapping["targetAttribute"] not in choices}
     _ground_values(result.get("values") or [], keys, by_reference, rules_by_key, entry, asset_ref,
                    extractor_version, result.get("model"), values, evidence_by_field, quotes, choices)
     if records is not None:
@@ -352,8 +352,8 @@ def _ground_values(
     """Keep each value the agent returned only when it occurs in a block the runtime sent.
 
     A field with allowed values keeps the allowed value the agent picked, from a block it really
-    sent. A text field in ``summaries`` (one item of a document read for several) may put the
-    cited block in its own words, but only when another value of the same item is quoted from
+    sent. A text or date field in ``summaries`` (one item of a document read for several) may put
+    the cited block in its own words (a date written as ISO, say), but only when another value of the same item is quoted from
     that block: the item itself is then proven to be in the document.
     """
     choices = choices or {}
