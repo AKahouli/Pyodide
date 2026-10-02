@@ -198,7 +198,7 @@ def to_iso_date_or_period(value: str) -> str | None:
     "Avril 2019 - Déc. 2022" gives 2019-04, "Depuis juin 2025" 2025-06, "mardi, 29 septembre 2026
     à 14:07" 2026-09-29. None when it is not a date (e.g. "mi-juin", which needs a year).
     """
-    text = " ".join(value.replace(",", " ").split()).strip()
+    text = " ".join(value.replace(",", " ").split()).strip().strip("()[]")
     iso = _ISO_PREFIX.match(text)
     if iso:
         return "-".join(part for part in iso.groups() if part)

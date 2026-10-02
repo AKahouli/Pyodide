@@ -115,7 +115,7 @@ def test_ai_reads_a_short_document_whole_and_a_long_one_by_field():
 
 
 @pytest.mark.parametrize(("written", "iso"), [
-    ("Avril 2019 - Déc. 2022", "2019-04"), ("Janv. 2023 - Mars 2024", "2023-01"), ("Sep 2025-Nov 2025", "2025-09"),
+    ("Avril 2019 - Déc. 2022", "2019-04"), ("Janv. 2023 - Mars 2024", "2023-01"), ("Sep 2025-Nov 2025", "2025-09"), ("(Sep 2025-Nov 2025)", "2025-09"),
     ("Depuis juin 2025", "2025-06"), ("mardi, 29 septembre 2026 à 14:07", "2026-09-29"),
     ("2026-07-16T15:47:08Z", "2026-07-16"), ("2026-06", "2026-06"), ("2021", "2021"),
     ("mi-juin", None), ("4-5 ans", None),
