@@ -60,6 +60,7 @@ describe('Passage rules and document labels DTOs', () => {
     await expect(extract({ labels: ['Définition'], location: 'after_label', boundaryLabels: ['Données de marché'], transform: 'trim' }))
       .resolves.toMatchObject({ rules: { location: 'after_label', boundaryLabels: ['Données de marché'], transform: 'trim' } });
     await expect(extract({ location: 'before_label', labels: ['Note'] })).resolves.toBeDefined();
+    await expect(extract({ transform: 'no_spaces' })).resolves.toMatchObject({ rules: { transform: 'no_spaces' } });
     await expect(extract({ location: 'pages', pages: { from: 2, to: 4 } })).resolves.toMatchObject({ rules: { pages: { from: 2, to: 4 } } });
   });
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
-import { BookOpen, Loader2, Ruler, Scissors, Tag } from 'lucide-react';
+import { BookOpen, Loader2, Ruler, Tag } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -218,25 +218,24 @@ export function ValueShaper({ fieldLabel, reading, pending, location, take, patt
   const status = reading && reading.reason !== 'found'
     ? t(`mapping.reading.reason.${reading.reason}`, { values: (reading.values ?? []).map((value) => `“${value}”`).join(', '), detail: reading.detail ?? '' }) : null;
 
-  return <div className='space-y-2 rounded-lg border bg-muted/20 p-2.5' role='group' aria-label={t('mapping.rules.take.title', { field: fieldLabel })}>
-    <div className='flex flex-wrap items-center gap-2'>
-      <span className='flex items-center gap-1 text-xs font-medium'><Scissors className='h-3.5 w-3.5 text-muted-foreground' />{t('mapping.rules.take.keep')}</span>
+  return <div className='space-y-1.5' role='group' aria-label={t('mapping.rules.take.title', { field: fieldLabel })}>
+    <div className='flex flex-wrap items-center gap-1.5'>
       <ChoiceGroup variant='segmented' label={t('mapping.rules.take.keepFor', { field: fieldLabel })} value={mode} onChange={setMode}
         options={(['all', 'start', 'end'] as const).map((item) => ({ value: item, label: t(`mapping.rules.take.mode.${item}`) }))} />
+      {take && <>
+        <Input type='number' min={1} max={MAX_TAKE} className='h-7 w-16 px-2 text-xs tabular-nums' value={take.count}
+          aria-label={t('mapping.rules.take.count', { field: fieldLabel })} onChange={(event) => setCount(Number(event.target.value))} />
+        <Select value={unit} onValueChange={(value: ExtractionTakeUnit) => onTake({ ...take, unit: value })}>
+          <SelectTrigger className='h-7 w-28 text-xs' aria-label={t('mapping.rules.take.unitFor', { field: fieldLabel })}><SelectValue /></SelectTrigger>
+          <SelectContent>{TAKE_UNITS.map((item) => <SelectItem key={item} value={item} className='text-xs'>{t(`mapping.rules.take.unit.${item}`)}</SelectItem>)}</SelectContent>
+        </Select>
+        <input type='range' min={1} max={sliderMax} value={Math.min(take.count, sliderMax)} className='h-1.5 min-w-20 flex-1 cursor-pointer accent-primary'
+          aria-label={t('mapping.rules.take.slider', { field: fieldLabel })} onChange={(event) => setCount(Number(event.target.value))} />
+      </>}
     </div>
-    {take && <div className='flex flex-wrap items-center gap-2'>
-      <Input type='number' min={1} max={MAX_TAKE} className='h-7 w-20 text-xs tabular-nums' value={take.count}
-        aria-label={t('mapping.rules.take.count', { field: fieldLabel })} onChange={(event) => setCount(Number(event.target.value))} />
-      <Select value={unit} onValueChange={(value: ExtractionTakeUnit) => onTake({ ...take, unit: value })}>
-        <SelectTrigger className='h-7 w-32 text-xs' aria-label={t('mapping.rules.take.unitFor', { field: fieldLabel })}><SelectValue /></SelectTrigger>
-        <SelectContent>{TAKE_UNITS.map((item) => <SelectItem key={item} value={item} className='text-xs'>{t(`mapping.rules.take.unit.${item}`)}</SelectItem>)}</SelectContent>
-      </Select>
-      <input type='range' min={1} max={sliderMax} value={Math.min(take.count, sliderMax)} className='h-1.5 min-w-24 flex-1 cursor-pointer accent-primary'
-        aria-label={t('mapping.rules.take.slider', { field: fieldLabel })} onChange={(event) => setCount(Number(event.target.value))} />
-    </div>}
 
     {raw ? <div ref={wrapperRef} className='relative'>
-      <div ref={textRef} data-testid='shaper-text' className={cn('max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md border bg-background p-2 text-xs leading-relaxed',
+      <div ref={textRef} data-testid='shaper-text' className={cn('max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-md border bg-background px-2 py-1.5 text-xs leading-relaxed',
         take && 'cursor-text')} onMouseUp={onMouseUp} onMouseMove={onMouseMove} onMouseLeave={() => setGhost(null)}>
         {pieces.map((piece) => <span key={piece.start}>
           {take?.from === 'end' && piece.start === cut && handle}
@@ -253,8 +252,7 @@ export function ValueShaper({ fieldLabel, reading, pending, location, take, patt
         {location !== 'pages' && location !== 'anywhere' && location !== 'heading' && <Button type='button' size='sm' variant='ghost' className='h-6 px-2 text-[11px]' onClick={() => act('label')}><Tag className='mr-1 h-3 w-3' />{t('mapping.rules.take.useAsLabel')}</Button>}
         <Button type='button' size='sm' variant='ghost' className='h-6 px-2 text-[11px]' onClick={keepSelection}><Ruler className='mr-1 h-3 w-3' />{t('mapping.rules.take.keepLength')}</Button>
       </div>}
-      <p className='mt-1 text-[11px] text-muted-foreground'>{take ? t('mapping.rules.take.clickHint') : t('mapping.rules.take.selectHint')}</p>
-    </div> : <div className='flex flex-wrap items-center gap-2 rounded-md border border-dashed p-3 text-[11px] text-muted-foreground'>
+    </div> : <div className='flex flex-wrap items-center gap-2 rounded-md border border-dashed px-2 py-1.5 text-[11px] text-muted-foreground'>
       <BookOpen className='h-3.5 w-3.5 shrink-0' />
       <span className='min-w-0 flex-1'>{status ?? t('mapping.rules.take.placeholder')}</span>
       {onRead && <Button type='button' size='sm' variant='outline' className='h-6 px-2 text-[11px]' disabled={pending} onClick={onRead}>

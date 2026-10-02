@@ -1,7 +1,8 @@
-import { useRef, type KeyboardEvent, type ReactNode } from 'react';
-import { Minus, Plus } from 'lucide-react';
+import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { AlertTriangle, ChevronRight, Info, Minus, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ExtractionLocation } from '../../types';
@@ -11,8 +12,84 @@ export interface Choice<T extends string> {
   label: string;
   /** A tile's picture. */
   icon?: ReactNode;
-  /** A tile's second line, e.g. “Label: value”. */
+  /** A short example, e.g. “Label: value”, shown first in the tooltip. */
   hint?: string;
+  /** What the choice does, shown in the tooltip. */
+  help?: string;
+}
+
+const TOOLTIP = 'max-w-xs border bg-popover px-2.5 py-1.5 text-[11px] font-normal leading-snug text-popover-foreground shadow-md';
+
+/** A small “i” showing help on hover, focus or click. Screen readers read the help as its name. */
+export function HelpTip({ text, className }: Readonly<{ text: string; className?: string }>) {
+  const [open, setOpen] = useState(false);
+  return <TooltipProvider delayDuration={150}>
+    <Tooltip open={open} onOpenChange={setOpen}>
+      <TooltipTrigger asChild>
+        <button type='button' onClick={() => setOpen(true)}
+          className={cn('inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', className)}>
+          <Info className='h-3.5 w-3.5' aria-hidden /><span className='sr-only'>{text}</span>
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side='top' className={TOOLTIP}>{text}</TooltipContent>
+    </Tooltip>
+  </TooltipProvider>;
+}
+
+/**
+ * One step of a field's rules, folded to a line with its current setting. Its help sits behind an
+ * “i”; a step with a problem stays open.
+ */
+export function RuleSection({ id, title, icon, summary, help, invalid, open, onToggle, children }: Readonly<{
+  id: string;
+  title: string;
+  icon: ReactNode;
+  summary?: ReactNode;
+  help?: string;
+  invalid?: boolean;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const shown = open || Boolean(invalid);
+  return <section className='border-b last:border-b-0'>
+    <div className='flex items-center gap-1 pr-1.5'>
+      <button type='button' aria-expanded={shown} aria-controls={id} aria-label={title} aria-describedby={summary ? `${id}-summary` : undefined} onClick={onToggle}
+        className='flex min-w-0 flex-1 items-center gap-1.5 px-2.5 py-1.5 text-left text-xs hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring'>
+        <ChevronRight className={cn('h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform', shown && 'rotate-90')} aria-hidden />
+        <span className='flex shrink-0 text-muted-foreground' aria-hidden>{icon}</span>
+        <span className='shrink-0 font-medium'>{title}</span>
+        {summary && <span id={`${id}-summary`} className={cn('min-w-0 truncate text-[11px] text-muted-foreground', shown && 'sr-only')}>{summary}</span>}
+        {invalid && <AlertTriangle className='ml-auto h-3.5 w-3.5 shrink-0 text-destructive' aria-label={t('mapping.rules.invalid')} />}
+      </button>
+      {help && <HelpTip text={help} />}
+    </div>
+    {shown && <div id={id} className='space-y-1.5 px-2.5 pb-2.5'>{children}</div>}
+  </section>;
+}
+
+const SECTIONS_KEY = 'semantic-model.rule-sections';
+
+/**
+ * Which rule steps are open. Shared by every field and kept in this browser, so a step opened on
+ * one field is open on the next.
+ */
+export function useOpenSections(defaults: readonly string[]) {
+  const [open, setOpen] = useState<Set<string>>(() => {
+    try {
+      const saved: unknown = JSON.parse(globalThis.localStorage?.getItem(SECTIONS_KEY) ?? 'null');
+      if (Array.isArray(saved)) return new Set(saved.filter((item): item is string => typeof item === 'string'));
+    } catch { /* Not stored, or not readable: the defaults. */ }
+    return new Set(defaults);
+  });
+  const toggle = (section: string) => setOpen((current) => {
+    const next = new Set(current);
+    if (next.has(section)) next.delete(section); else next.add(section);
+    try { globalThis.localStorage?.setItem(SECTIONS_KEY, JSON.stringify([...next])); } catch { /* Kept for this editor only. */ }
+    return next;
+  });
+  return { isOpen: (section: string) => open.has(section), toggle };
 }
 
 const VARIANTS = {
@@ -27,9 +104,9 @@ const VARIANTS = {
     checked: 'border-primary bg-primary/10 text-foreground ring-1 ring-primary',
   },
   tiles: {
-    group: 'grid grid-cols-3 gap-1.5',
-    item: 'flex min-h-16 flex-col items-center justify-start gap-1 rounded-lg border bg-background p-1.5 text-center hover:border-primary/50 hover:bg-primary/5',
-    checked: 'border-primary bg-primary/5 ring-2 ring-primary',
+    group: 'grid grid-cols-3 gap-1',
+    item: 'flex h-9 items-center gap-1.5 rounded-md border bg-background px-1.5 text-left hover:border-primary/50 hover:bg-primary/5',
+    checked: 'border-primary bg-primary/5 ring-1 ring-primary',
   },
 } as const;
 
@@ -58,19 +135,26 @@ export function ChoiceGroup<T extends string>({ label, value, options, onChange,
     onChange(options[next].value);
     refs.current[next]?.focus();
   };
-  return <div role='radiogroup' aria-label={label} className={cn(style.group, className)}>
+  return <TooltipProvider delayDuration={300}><div role='radiogroup' aria-label={label} className={cn(style.group, className)}>
     {options.map((option, index) => {
       const checked = option.value === value;
-      return <button key={option.value} ref={(element) => { refs.current[index] = element; }} type='button' role='radio' aria-checked={checked}
-        aria-label={option.label} tabIndex={index === current ? 0 : -1} title={option.hint}
+      const button = <button key={option.value} ref={(element) => { refs.current[index] = element; }} type='button' role='radio' aria-checked={checked}
+        aria-label={option.label} aria-description={option.help ?? option.hint} tabIndex={index === current ? 0 : -1}
         className={cn('transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', style.item, checked && style.checked)}
         onClick={() => onChange(option.value)} onKeyDown={(event) => onKeyDown(event, index)}>
         {option.icon}
-        <span className={cn(variant === 'tiles' && 'text-[11px] font-medium leading-tight')}>{option.label}</span>
-        {variant === 'tiles' && option.hint && <span className='text-[10px] leading-tight text-muted-foreground'>{option.hint}</span>}
+        <span className={cn(variant === 'tiles' && 'min-w-0 text-[11px] font-medium leading-tight')}>{option.label}</span>
       </button>;
+      if (!option.hint && !option.help) return button;
+      return <Tooltip key={option.value}>
+        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipContent side='bottom' className={TOOLTIP}>
+          {option.hint && <p className='font-medium'>{option.hint}</p>}
+          {option.help && <p className={cn(option.hint && 'mt-0.5 text-muted-foreground')}>{option.help}</p>}
+        </TooltipContent>
+      </Tooltip>;
     })}
-  </div>;
+  </div></TooltipProvider>;
 }
 
 // Tiny pictures of where a value sits: faint lines of text, the label in grey, the value in the accent colour.
@@ -78,7 +162,7 @@ const TEXT = 'fill-muted-foreground/25';
 const LABEL = 'fill-muted-foreground/70';
 const VALUE = 'fill-primary/80';
 
-export function LocationIcon({ location }: Readonly<{ location: ExtractionLocation }>) {
+export function LocationIcon({ location, className }: Readonly<{ location: ExtractionLocation; className?: string }>) {
   const lines = (rows: number[], from = 4) => rows.map((y) => <rect key={y} x={from} y={y} width={40 - from + 4} height={2.5} rx={1} className={TEXT} />);
   const pictures: Record<ExtractionLocation, ReactNode> = {
     auto: <>
@@ -102,7 +186,7 @@ export function LocationIcon({ location }: Readonly<{ location: ExtractionLocati
     pages: <>{[4, 17, 30].map((x, index) => <rect key={x} x={x} y={5} width={11} height={22} rx={1.5} className={index ? 'fill-primary/25 stroke-primary/80' : 'fill-none stroke-muted-foreground/40'} strokeWidth={1} />)}</>,
     anywhere: <>{lines([5, 11, 23])}<rect x={14} y={16} width={18} height={4} rx={1} className={VALUE} /><rect x={12} y={14.5} width={22} height={7} rx={2} className='fill-none stroke-primary/60' strokeDasharray='2 1.5' /></>,
   };
-  return <svg viewBox='0 0 48 32' className='h-7 w-11 shrink-0' aria-hidden focusable='false'>{pictures[location]}</svg>;
+  return <svg viewBox='0 0 48 32' className={cn('h-7 w-11 shrink-0', className)} aria-hidden focusable='false'>{pictures[location]}</svg>;
 }
 
 /** A number box with − and + buttons. */

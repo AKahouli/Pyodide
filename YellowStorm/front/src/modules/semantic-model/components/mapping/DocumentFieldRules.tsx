@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, Heading, ListChecks, Plus, RefreshCw, SlidersHorizontal, Sparkles, Tag, X } from 'lucide-react';
+import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, Eraser, ExternalLink, Heading, ListChecks, ListFilter, Plus, Regex, RefreshCw, Scissors, SlidersHorizontal, Sparkles, Tag, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -7,17 +7,19 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { AiExtractionSettings, DocumentFieldReading, DocumentLabelSuggestion, ExtractionLocation, ExtractionRules, SourceExtractionStrategy, SourceFieldMapping } from '../../types';
-import { ChoiceGroup, LocationIcon, PageRangeControl } from './RuleControls';
+import { ChoiceGroup, HelpTip, LocationIcon, PageRangeControl, RuleSection, useOpenSections } from './RuleControls';
 import { MAX_TAKE, ValueShaper, type ShaperAction } from './ValueShaper';
 
 export const STRATEGIES: SourceExtractionStrategy[] = ['deterministic', 'rules_then_ai', 'ai'];
 const LOCATIONS: ExtractionLocation[] = ['auto', 'same_line', 'next_line', 'table', 'after_label', 'before_label', 'heading', 'pages', 'anywhere'];
-const TRANSFORMS = ['none', 'trim', 'upper', 'lower', 'date_iso'] as const;
+const TRANSFORMS = ['none', 'trim', 'no_spaces', 'upper', 'lower', 'date_iso'] as const;
 const MAX_LABELS = 10;
 const MAX_PAGES = 2000;
 const MAX_PAGE_SPAN = 50;
 // Suggestions shown before "Show all".
 const SUGGESTIONS_SHOWN = 12;
+// Every step starts folded, its setting on its header line; afterwards, the ones the person left open.
+const DEFAULT_OPEN_SECTIONS: string[] = [];
 
 /** Locations reading a passage bounded by other labels. */
 function usesBoundary(location: ExtractionLocation) {
@@ -181,7 +183,8 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions, liv
     ? ` · ${t(`mapping.rules.summaryBoundary.${location}`, { labels: boundaryLabels.map((label) => `“${label}”`).join(', ') })}` : '';
   const summaryPages = location === 'pages' && rules?.pages && !pagesProblem(rules.pages)
     ? ` · ${pageRange(t, rules.pages.from, rules.pages.to)}` : '';
-  const summaryTake = rules?.take ? ` · ${t(`mapping.rules.summaryTake.${rules.take.from}`, { amount: t(`mapping.rules.take.amount.${rules.take.unit}`, { count: rules.take.count }) })}` : '';
+  const takeText = rules?.take ? t(`mapping.rules.summaryTake.${rules.take.from}`, { amount: t(`mapping.rules.take.amount.${rules.take.unit}`, { count: rules.take.count }) }) : '';
+  const summaryTake = takeText ? ` · ${takeText}` : '';
   const summary = (withoutLabels ? '' : `${t('mapping.rules.summaryLabels', { labels: summaryLabels })} · `)
     + t(`mapping.rules.where.${location}`) + summaryBoundary + summaryPages + summaryTake
     + (rules?.pattern ? ` · ${t('mapping.rules.summaryPattern', { pattern: preset !== 'custom' && preset !== 'none' ? t(`mapping.rules.preset.${preset}`) : rules.pattern })}` : '');
@@ -226,6 +229,12 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions, liv
   };
   const id = `rules-${fieldLabel.replaceAll(/\W+/g, '-')}`;
 
+  const sections = useOpenSections(DEFAULT_OPEN_SECTIONS);
+  const section = (key: string) => ({ id: `${id}-${key}`, open: sections.isOpen(key), onToggle: () => sections.toggle(key) });
+  const quoted = (items: string[]) => items.map((label) => `“${label}”`).join(', ');
+  const presetLabel = preset === 'custom' ? rules?.pattern ?? '' : t(`mapping.rules.preset.${preset}`);
+  const optionsSummary = t(`mapping.rules.occurrenceOption.${rules?.occurrence ?? 'unique'}`) + (rules?.firstPageOnly ? ` · ${t('mapping.rules.firstPageShort')}` : '');
+
   return <div className='rounded-lg border border-dashed'>
     <button type='button' className='flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-muted-foreground hover:bg-muted/50'
       aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
@@ -234,20 +243,19 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions, liv
       <span className='min-w-0 truncate'>{summary}</span>
       {(problem || needsPattern || pagesError) && <AlertTriangle className='ml-auto h-3.5 w-3.5 shrink-0 text-destructive' aria-label={t('mapping.rules.invalid')} />}
     </button>
-    {open && <div id={id} className='grid gap-3 border-t p-3 sm:grid-cols-2'>
-      {location !== 'pages' && <div className='space-y-1.5 sm:col-span-2'>
-        <Label className='text-xs' htmlFor={`${id}-label`}>{t('mapping.rules.labels')}</Label>
+    {open && <div id={id} className='border-t'>
+      {location !== 'pages' && <RuleSection {...section('labels')} title={t('mapping.rules.labels')} icon={<Tag className='h-3.5 w-3.5' />}
+        summary={labels.length ? quoted(labels) : t('mapping.rules.labelsDefault', { field: fieldLabel })} help={t('mapping.rules.labelsHelp', { field: fieldLabel })}>
         <div className='flex flex-wrap items-center gap-1.5'>
           {labels.map((label) => <span key={label} className='inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs'>
             {label}
             <button type='button' aria-label={t('mapping.rules.removeLabel', { label })} onClick={() => update({ labels: labels.filter((item) => item !== label) })}><X className='h-3 w-3' /></button>
           </span>)}
-          <Input id={`${id}-label`} className='h-7 w-44 text-xs' value={draftLabel} placeholder={labels.length ? t('mapping.rules.addLabel') : fieldLabel}
-            onChange={(event) => setDraftLabel(event.target.value)}
+          <Input className='h-7 w-44 text-xs' value={draftLabel} placeholder={labels.length ? t('mapping.rules.addLabel') : fieldLabel}
+            aria-label={t('mapping.rules.labels')} onChange={(event) => setDraftLabel(event.target.value)}
             onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addLabel(); } }} />
           <Button type='button' size='sm' variant='ghost' className='h-7 px-2 text-xs' disabled={!draftLabel.trim() || labels.length >= MAX_LABELS} onClick={() => addLabel()}><Plus className='mr-1 h-3 w-3' />{t('mapping.rules.add')}</Button>
         </div>
-        <p className='text-[11px] text-muted-foreground'>{t('mapping.rules.labelsHelp', { field: fieldLabel })}</p>
         {headingHint && location === 'auto' && <p role='status' className='flex flex-wrap items-center gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/5 px-2 py-1.5 text-[11px] text-sky-800 dark:text-sky-300'>
           <Heading className='h-3.5 w-3.5 shrink-0' />
           <span className='min-w-0 flex-1'>{t('mapping.rules.headingHint', { label: headingHint })}</span>
@@ -255,18 +263,16 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions, liv
           <button type='button' className='rounded p-0.5 hover:bg-sky-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring' aria-label={t('mapping.rules.headingHintDismiss')} onClick={() => setHeadingHint(null)}><X className='h-3 w-3' /></button>
         </p>}
         {suggestions && <LabelSuggestionChips suggestions={suggestions} added={labels} full={labels.length >= MAX_LABELS} onAdd={addSuggestion} />}
-      </div>}
+      </RuleSection>}
 
-      <div className='space-y-1.5 sm:col-span-2'>
-        <Label className='text-xs'>{t('mapping.rules.location')}</Label>
+      <RuleSection {...section('where')} title={t('mapping.rules.location')} icon={<LocationIcon location={location} className='h-3.5 w-5' />}
+        summary={t(`mapping.rules.tile.${location}`) + summaryBoundary + summaryPages} help={t(`mapping.rules.whereHelp.${location}`)} invalid={Boolean(pagesError)}>
         <ChoiceGroup variant='tiles' label={t('mapping.rules.locationFor', { field: fieldLabel })} value={location} onChange={(value) => update({ location: value })}
-          options={LOCATIONS.map((item) => ({ value: item, label: t(`mapping.rules.tile.${item}`), hint: t(`mapping.rules.tileHint.${item}`), icon: <LocationIcon location={item} /> }))} />
-        <p className='text-[11px] text-muted-foreground'>{t(`mapping.rules.whereHelp.${location}`)}</p>
-      </div>
+          options={LOCATIONS.map((item) => ({ value: item, label: t(`mapping.rules.tile.${item}`), hint: t(`mapping.rules.tileHint.${item}`), help: t(`mapping.rules.whereHelp.${item}`), icon: <LocationIcon location={item} className='h-5 w-7' /> }))} />
 
-      {usesBoundary(location) && <div className='space-y-1.5 sm:col-span-2'>
-        <Label className='text-xs' htmlFor={`${id}-boundary`}>{t(`mapping.rules.boundary.${location}`)}</Label>
-        <div className='flex flex-wrap items-center gap-1.5'>
+        {usesBoundary(location) && <div className='flex flex-wrap items-center gap-1.5 pt-1'>
+          <Label className='text-xs' htmlFor={`${id}-boundary`}>{t(`mapping.rules.boundary.${location}`)}</Label>
+          <HelpTip text={t(`mapping.rules.boundaryHelp.${location}`)} />
           {boundaryLabels.map((label) => <span key={label} className='inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs'>
             {label}
             <button type='button' aria-label={t('mapping.rules.removeBoundary', { label })} onClick={() => update({ boundaryLabels: boundaryLabels.filter((item) => item !== label) })}><X className='h-3 w-3' /></button>
@@ -275,51 +281,54 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions, liv
             onChange={(event) => setDraftBoundary(event.target.value)}
             onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addBoundary(); } }} />
           <Button type='button' size='sm' variant='ghost' className='h-7 px-2 text-xs' disabled={!draftBoundary.trim() || boundaryLabels.length >= MAX_LABELS} onClick={() => addBoundary()}><Plus className='mr-1 h-3 w-3' />{t('mapping.rules.add')}</Button>
-        </div>
-        <p className='text-[11px] text-muted-foreground'>{t(`mapping.rules.boundaryHelp.${location}`)}</p>
-      </div>}
+        </div>}
 
-      {location === 'pages' && <div className='space-y-1.5 sm:col-span-2'>
-        <Label className='text-xs'>{t('mapping.rules.pages')}</Label>
-        <PageRangeControl fieldLabel={fieldLabel} from={rules?.pages?.from} to={rules?.pages?.to} pageCount={pageCount} onChange={setPages}
-          invalidFrom={pagesError === 'mapping.rules.pagesFromRequired'} invalidTo={Boolean(pagesError) && pagesError !== 'mapping.rules.pagesFromRequired'} />
-        {pagesError ? <p role='alert' className='text-[11px] text-destructive'>{t(pagesError, { max: MAX_PAGES, span: MAX_PAGE_SPAN })}</p>
-          : <p className='text-[11px] text-muted-foreground'>{t('mapping.rules.pagesHelp', { span: MAX_PAGE_SPAN })}</p>}
-      </div>}
+        {location === 'pages' && <div className='space-y-1.5 pt-1'>
+          <div className='flex items-center gap-1'>
+            <span className='text-xs font-medium'>{t('mapping.rules.pages')}</span>
+            <HelpTip text={t('mapping.rules.pagesHelp', { span: MAX_PAGE_SPAN })} />
+          </div>
+          <PageRangeControl fieldLabel={fieldLabel} from={rules?.pages?.from} to={rules?.pages?.to} pageCount={pageCount} onChange={setPages}
+            invalidFrom={pagesError === 'mapping.rules.pagesFromRequired'} invalidTo={Boolean(pagesError) && pagesError !== 'mapping.rules.pagesFromRequired'} />
+          {pagesError && <p role='alert' className='text-[11px] text-destructive'>{t(pagesError, { max: MAX_PAGES, span: MAX_PAGE_SPAN })}</p>}
+        </div>}
+      </RuleSection>
 
-      <div className='space-y-1.5 sm:col-span-2'>
+      <RuleSection {...section('keep')} title={t('mapping.rules.take.keep')} icon={<Scissors className='h-3.5 w-3.5' />}
+        summary={takeText || t('mapping.rules.take.mode.all')}
+        help={rules?.take ? t('mapping.rules.take.clickHint') : t('mapping.rules.take.selectHint')}>
         <ValueShaper fieldLabel={fieldLabel} reading={live?.reading} pending={live?.pending} onRead={live?.onRead} location={location}
           take={rules?.take} pattern={problem ? undefined : rules?.pattern} onTake={(take) => update({ take })} onAction={onShaperAction} />
-      </div>
+      </RuleSection>
 
-      <div className='space-y-1.5 sm:col-span-2'>
-        <Label className='text-xs'>{t('mapping.rules.pattern')}</Label>
+      <RuleSection {...section('pattern')} title={t('mapping.rules.pattern')} icon={<Regex className='h-3.5 w-3.5' />}
+        summary={presetLabel} help={t('mapping.rules.patternHelp')} invalid={Boolean(problem || needsPattern)}>
         <ChoiceGroup variant='chips' label={t('mapping.rules.patternFor', { field: fieldLabel })} value={preset} onChange={choosePattern}
           options={(['none', ...Object.keys(PATTERN_PRESETS) as PatternPreset[], 'custom'] as const).map((item) => ({ value: item, label: t(`mapping.rules.preset.${item}`) }))} />
-        {preset !== 'none' && <Input className='h-8 font-mono text-xs' value={rules?.pattern ?? ''} aria-label={t('mapping.rules.patternText', { field: fieldLabel })}
+        {preset !== 'none' && <Input className='h-7 font-mono text-xs' value={rules?.pattern ?? ''} aria-label={t('mapping.rules.patternText', { field: fieldLabel })}
           aria-invalid={Boolean(problem || needsPattern)} placeholder={String.raw`CNT-\d{4}-\d{4}`} maxLength={200}
           onChange={(event) => update({ pattern: event.target.value || undefined })} />}
         {problem && <p role='alert' className='text-[11px] text-destructive'>{t('mapping.rules.patternInvalid', { problem })}</p>}
         {needsPattern && <p role='alert' className='text-[11px] text-destructive'>{t('mapping.rules.patternRequired')}</p>}
-        {!problem && !needsPattern && <p className='text-[11px] text-muted-foreground'>{t('mapping.rules.patternHelp')}</p>}
-      </div>
+      </RuleSection>
 
-      <div className='space-y-1.5 sm:col-span-2'>
-        <Label className='text-xs'>{t('mapping.rules.transform')}</Label>
+      <RuleSection {...section('transform')} title={t('mapping.rules.transform')} icon={<Eraser className='h-3.5 w-3.5' />}
+        summary={t(`mapping.rules.transformOption.${rules?.transform ?? 'none'}`)}>
         <ChoiceGroup variant='chips' label={t('mapping.rules.transformFor', { field: fieldLabel })} value={rules?.transform ?? 'none'} onChange={(value) => update({ transform: value })}
           options={TRANSFORMS.map((item) => ({ value: item, label: t(`mapping.rules.transformOption.${item}`) }))} />
-      </div>
+      </RuleSection>
 
-      <div className='space-y-1.5 sm:col-span-2'>
-        <Label className='text-xs'>{t('mapping.rules.occurrence')}</Label>
-        <ChoiceGroup variant='segmented' label={t('mapping.rules.occurrenceFor', { field: fieldLabel })} value={rules?.occurrence ?? 'unique'} onChange={(value) => update({ occurrence: value })}
-          options={(['unique', 'first'] as const).map((item) => ({ value: item, label: t(`mapping.rules.occurrenceOption.${item}`) }))} className='flex w-fit' />
-      </div>
-
-      <label className='flex items-center gap-2 text-xs sm:col-span-2'>
-        <input type='checkbox' checked={Boolean(rules?.firstPageOnly)} onChange={(event) => update({ firstPageOnly: event.target.checked })} />
-        {t('mapping.rules.firstPageOnly')}
-      </label>
+      <RuleSection {...section('options')} title={t('mapping.rules.options')} icon={<ListFilter className='h-3.5 w-3.5' />} summary={optionsSummary}>
+        <div className='flex flex-wrap items-center gap-x-3 gap-y-1.5'>
+          <span className='text-xs text-muted-foreground'>{t('mapping.rules.occurrence')}</span>
+          <ChoiceGroup variant='segmented' label={t('mapping.rules.occurrenceFor', { field: fieldLabel })} value={rules?.occurrence ?? 'unique'} onChange={(value) => update({ occurrence: value })}
+            options={(['unique', 'first'] as const).map((item) => ({ value: item, label: t(`mapping.rules.occurrenceOption.${item}`) }))} />
+        </div>
+        <label className='flex items-center gap-2 text-xs'>
+          <input type='checkbox' checked={Boolean(rules?.firstPageOnly)} onChange={(event) => update({ firstPageOnly: event.target.checked })} />
+          {t('mapping.rules.firstPageOnly')}
+        </label>
+      </RuleSection>
     </div>}
   </div>;
 }

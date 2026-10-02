@@ -173,10 +173,9 @@ async def test_invalid_repair_decision_emits_terminal_event(monkeypatch) -> None
         plan=plan,
     )
 
-    async def initial_decision(*_args, **_kwargs):
-        return initial
-
-    async def invalid_repair(*_args, **_kwargs):
+    async def fake_decide(planner, descriptor, envelope, repair_context=None):
+        if repair_context is None:
+            return initial
         raise PlannerDecisionError("raw invalid repair")
 
     child_called = False
@@ -187,8 +186,7 @@ async def test_invalid_repair_decision_emits_terminal_event(monkeypatch) -> None
         return {}
 
     events: list[dict] = []
-    monkeypatch.setattr("src.flow_engine.dynamic_reasoning.executor.decide", initial_decision)
-    monkeypatch.setattr("src.flow_engine.dynamic_reasoning.executor.repair_plan", invalid_repair)
+    monkeypatch.setattr("src.flow_engine.dynamic_reasoning.executor.decide", fake_decide)
 
     with pytest.raises(ValueError, match="invalid decision"):
         await run_dynamic_reasoning(
@@ -225,10 +223,9 @@ async def test_repaired_direct_decision_is_emitted_with_fallback(monkeypatch) ->
         directSafe=True,
     )
 
-    async def initial_decision(*_args, **_kwargs):
-        return initial
-
-    async def direct_repair(*_args, **_kwargs):
+    async def fake_decide(planner, descriptor, envelope, repair_context=None):
+        if repair_context is None:
+            return initial
         return repaired
 
     child_called = False
@@ -239,8 +236,7 @@ async def test_repaired_direct_decision_is_emitted_with_fallback(monkeypatch) ->
         return {}
 
     events: list[dict] = []
-    monkeypatch.setattr("src.flow_engine.dynamic_reasoning.executor.decide", initial_decision)
-    monkeypatch.setattr("src.flow_engine.dynamic_reasoning.executor.repair_plan", direct_repair)
+    monkeypatch.setattr("src.flow_engine.dynamic_reasoning.executor.decide", fake_decide)
 
     outcome = await run_dynamic_reasoning(
         node_id="step-1",

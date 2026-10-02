@@ -12,7 +12,7 @@ export interface ExtractionRules {
   labels?: string[];
   location?: 'auto' | 'same_line' | 'next_line' | 'table' | 'heading' | 'anywhere' | 'after_label' | 'before_label' | 'pages';
   pattern?: string;
-  transform?: 'none' | 'trim' | 'upper' | 'lower' | 'date_iso';
+  transform?: 'none' | 'trim' | 'no_spaces' | 'upper' | 'lower' | 'date_iso';
   occurrence?: 'unique' | 'first';
   firstPageOnly?: boolean;
   /** Where a passage stops (after a label) or starts (before one); the section edge without any. */

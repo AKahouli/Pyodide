@@ -172,5 +172,3 @@ export function isFlowScheduleDueThisMinute(
   }
   return false;
 }
-
-export const shouldRunFlowSchedule = isFlowScheduleDueThisMinute;

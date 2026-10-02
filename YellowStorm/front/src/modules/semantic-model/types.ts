@@ -244,7 +244,7 @@ export interface ExtractionRules {
   take?: ExtractionTake;
   /** A regular expression the value must match; its first group is kept when it has one. */
   pattern?: string;
-  transform?: 'none' | 'trim' | 'upper' | 'lower' | 'date_iso';
+  transform?: 'none' | 'trim' | 'no_spaces' | 'upper' | 'lower' | 'date_iso';
   /** Keep a value only when every match agrees, or keep the first one. */
   occurrence?: 'unique' | 'first';
   firstPageOnly?: boolean;

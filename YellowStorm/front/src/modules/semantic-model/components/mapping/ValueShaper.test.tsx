@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DocumentFieldReading, ExtractionTake } from '../../types';
 import { FieldRulesEditor } from './DocumentFieldRules';
 import { ChoiceGroup } from './RuleControls';
@@ -134,6 +134,8 @@ describe('ValueShaper', () => {
 });
 
 describe('graphical rule controls', () => {
+  beforeEach(() => localStorage.setItem('semantic-model.rule-sections', JSON.stringify(['labels', 'where', 'keep', 'pattern', 'transform', 'options'])));
+
   it('moves the choice with the arrow keys in a radio group', () => {
     const onChange = vi.fn();
     render(<ChoiceGroup variant='tiles' label='Where' value='b' onChange={onChange}

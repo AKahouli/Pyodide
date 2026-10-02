@@ -18,7 +18,7 @@ LOCATIONS = ("auto", "same_line", "next_line", "table", "heading", "anywhere",
              "after_label", "before_label", "pages")
 # Locations whose value is a passage (whole paragraphs or pages), not a short value.
 PASSAGE_LOCATIONS = ("after_label", "before_label", "pages")
-TRANSFORMS = ("none", "trim", "upper", "lower", "date_iso")
+TRANSFORMS = ("none", "trim", "no_spaces", "upper", "lower", "date_iso")
 OCCURRENCES = ("unique", "first")
 MAX_LABELS = 10
 MAX_LABEL_CHARS = 200
@@ -189,6 +189,15 @@ def to_iso_date(value: str) -> str | None:
 _TRIMMED = " \t\r\n\u00a0\u200b\ufeff:;,-\u2013\u2014_*=>\u2022\u00b7\u25aa\u25ba\u25cf\u2023\u2043"
 
 
+# Every space, including non-breaking and zero-width ones.
+_SPACES = re.compile(r"[\s\u200b\ufeff]+")
+
+
+def without_spaces(value: str) -> str:
+    """The value with no space at all: ``25 / 09 / 2017`` gives ``25/09/2017``."""
+    return _SPACES.sub("", value)
+
+
 def trim(value: str) -> str:
     """The value without spaces, bullets or label separators at either end (left and right trim)."""
     # Private-use characters are the bullets of PDF symbol fonts (shown as \uf0dc and the like).
@@ -239,6 +248,8 @@ def clean(value: str, rules: dict[str, Any] | None) -> str | None:
     transform = rules.get("transform")
     if transform == "trim":
         value = trim(value)
+    if transform == "no_spaces":
+        value = without_spaces(value)
     if not value:
         return None
     if transform == "upper":

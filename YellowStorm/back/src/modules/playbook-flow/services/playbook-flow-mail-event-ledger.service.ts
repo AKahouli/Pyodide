@@ -18,9 +18,4 @@ export class PlaybookFlowMailEventLedgerService {
       createdAt: new Date().toISOString(),
     };
   }
-
-  isDuplicate(existingEntries: Array<{ dedupeKey: string }>, event: FlowNormalizedMailEventData): boolean {
-    const dedupeKey = this.buildDedupeKey(event);
-    return existingEntries.some((entry) => entry.dedupeKey === dedupeKey);
-  }
 }

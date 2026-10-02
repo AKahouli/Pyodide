@@ -45,6 +45,8 @@ function renderDrawer() {
 describe('DocumentSourceMappingDrawer, document beside the fields', () => {
   const matchMedia = globalThis.matchMedia;
   beforeEach(() => {
+    // Every rule step open, as a person who opened them once would see them.
+    localStorage.setItem('semantic-model.rule-sections', JSON.stringify(['labels', 'where', 'keep', 'pattern', 'transform', 'options']));
     vi.clearAllMocks();
     localStorage.removeItem('semantic-model.document-split');
     useSemanticModelEditorStore.getState().hydrate(graph);

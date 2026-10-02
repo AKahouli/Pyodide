@@ -78,6 +78,11 @@ def test_trim_removes_spaces_bullets_and_separators_at_both_ends_only() -> None:
     assert clean("  - 12/06/2017 ;", normalize_rules({"transform": "trim"})) == "12/06/2017"
 
 
+def test_no_spaces_removes_every_space_inside_the_value() -> None:
+    assert clean(" 25 / 09 /\u00a02017\u200b ", normalize_rules({"transform": "no_spaces"})) == "25/09/2017"
+    assert clean("   ", normalize_rules({"transform": "no_spaces"})) is None
+
+
 def test_headings_match_without_numbering_case_or_accents() -> None:
     assert heading_text("1.2.1. Pertinence") == "Pertinence"
     assert heading_text("Version") == "Version"

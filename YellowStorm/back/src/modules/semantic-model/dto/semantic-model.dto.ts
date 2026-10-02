@@ -350,9 +350,9 @@ export class ExtractionRulesDto {
   @IsOptional() @IsString() @MaxLength(200)
   pattern?: string;
 
-  @ApiPropertyOptional({ enum: ['none', 'trim', 'upper', 'lower', 'date_iso'], description: 'trim removes spaces, bullets and separators at both ends' })
-  @IsOptional() @IsIn(['none', 'trim', 'upper', 'lower', 'date_iso'])
-  transform?: 'none' | 'trim' | 'upper' | 'lower' | 'date_iso';
+  @ApiPropertyOptional({ enum: ['none', 'trim', 'no_spaces', 'upper', 'lower', 'date_iso'], description: 'trim removes spaces, bullets and separators at both ends; no_spaces removes every space' })
+  @IsOptional() @IsIn(['none', 'trim', 'no_spaces', 'upper', 'lower', 'date_iso'])
+  transform?: 'none' | 'trim' | 'no_spaces' | 'upper' | 'lower' | 'date_iso';
 
   @ApiPropertyOptional({ enum: ['unique', 'first'], description: 'Keep a value only when every match agrees, or keep the first' })
   @IsOptional() @IsIn(['unique', 'first'])

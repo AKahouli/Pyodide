@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SourceFieldMapping } from '../../types';
 import { AiLimitsEditor, FieldReadingResult, FieldRulesEditor, limitProblem, pagesProblem, patternProblem, ReadAllFieldsBar, rulesProblem, withConceptFields, type LabelSuggestions } from './DocumentFieldRules';
 
@@ -7,6 +7,9 @@ const field = (key: string, extractionStrategy?: SourceFieldMapping['extractionS
   ({ sourceField: null, targetAttribute: key, mode: 'extract', extractionStrategy });
 
 describe('DocumentFieldRules', () => {
+  // The open rule steps are remembered in the browser: these tests start with all of them open.
+  beforeEach(() => localStorage.setItem('semantic-model.rule-sections', JSON.stringify(['labels', 'where', 'keep', 'pattern', 'transform', 'options'])));
+
   it('reads every extracted field the same way with one click', () => {
     const onApply = vi.fn();
     render(<ReadAllFieldsBar mappings={[field('a', 'deterministic'), field('b', 'ai')]} onApply={onApply} />);
@@ -127,22 +130,54 @@ describe('DocumentFieldRules', () => {
     expect(onChange).toHaveBeenLastCalledWith({ location: 'pages', pages: { from: 1 } });
   });
 
-  it('offers trimming both ends right after keeping the value as written', () => {
+  it('offers trimming both ends right after keeping the value as written, then removing every space', () => {
+    localStorage.clear();
     const onChange = vi.fn();
     render(<FieldRulesEditor fieldLabel='Party' onChange={onChange} />);
     fireEvent.click(screen.getByRole('button', { name: /mapping\.rules\.title/ }));
+    expect(screen.queryByRole('radiogroup', { name: 'mapping.rules.transformFor' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.rules.transform' }));
     const cleanUp = screen.getByRole('radiogroup', { name: 'mapping.rules.transformFor' });
     const options = within(cleanUp).getAllByRole('radio').map((option) => option.getAttribute('aria-label'));
-    expect(options.slice(0, 2)).toEqual(['mapping.rules.transformOption.none', 'mapping.rules.transformOption.trim']);
+    expect(options.slice(0, 3)).toEqual(['mapping.rules.transformOption.none', 'mapping.rules.transformOption.trim', 'mapping.rules.transformOption.no_spaces']);
     fireEvent.click(within(cleanUp).getByRole('radio', { name: 'mapping.rules.transformOption.trim' }));
     expect(onChange).toHaveBeenLastCalledWith({ transform: 'trim' });
   });
 
   it('keeps the custom pattern box open while it is empty', () => {
+    localStorage.clear();
     render(<FieldRulesEditor fieldLabel='Number' onChange={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: /mapping\.rules\.title/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.rules.pattern' }));
     fireEvent.click(screen.getByRole('radio', { name: 'mapping.rules.preset.custom' }));
     expect(screen.getByRole('textbox', { name: 'mapping.rules.patternText' })).toBeInTheDocument();
+  });
+
+  it('folds every rule step to its setting, keeps a step with a problem open and remembers what is open', () => {
+    localStorage.clear();
+    const { unmount } = render(<FieldRulesEditor fieldLabel='Number' rules={{ location: 'anywhere', transform: 'upper' }} onChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /mapping\.rules\.title/ }));
+    for (const step of ['mapping.rules.labels', 'mapping.rules.location', 'mapping.rules.take.keep', 'mapping.rules.options']) {
+      expect(screen.getByRole('button', { name: step })).toHaveAttribute('aria-expanded', 'false');
+    }
+    const cleanUp = screen.getByRole('button', { name: 'mapping.rules.transform' });
+    expect(cleanUp).toHaveAttribute('aria-expanded', 'false');
+    expect(cleanUp).toHaveAccessibleDescription('mapping.rules.transformOption.upper');
+    // Reading anywhere needs a pattern: that step cannot be folded away.
+    expect(screen.getByRole('button', { name: 'mapping.rules.pattern' })).toHaveAttribute('aria-expanded', 'true');
+    fireEvent.click(cleanUp);
+    expect(screen.getByRole('radiogroup', { name: 'mapping.rules.transformFor' })).toBeInTheDocument();
+    unmount();
+    render(<FieldRulesEditor fieldLabel='Other' onChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /mapping\.rules\.title/ }));
+    expect(screen.getByRole('button', { name: 'mapping.rules.transform' })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('puts the help behind an info button', () => {
+    render(<FieldRulesEditor fieldLabel='Number' onChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: /mapping\.rules\.title/ }));
+    expect(screen.getByRole('button', { name: 'mapping.rules.labelsHelp' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'mapping.rules.whereHelp.auto' })).toBeInTheDocument();
   });
 
   describe('labels found in the documents', () => {
