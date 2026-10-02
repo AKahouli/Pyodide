@@ -152,7 +152,9 @@ def requires_cross_workspace_authorization(home_workspace_id: Any,
 
 
 def parser_fingerprint(options: dict[str, Any] | None) -> str:
-    body = {"parser": PARSER_VERSION, "options": options or {}}
+    from app.population.engine_version import reader_version
+
+    body = {"parser": PARSER_VERSION, "reader": reader_version(), "options": options or {}}
     digest = hashlib.sha256(_canonical(body).encode()).hexdigest()
     return f"sha256:{digest}"
 

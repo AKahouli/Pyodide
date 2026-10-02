@@ -15,11 +15,21 @@ _APP = Path(__file__).resolve().parent.parent
 _PACKAGES = ("population", "datasource")
 
 
-@lru_cache(maxsize=1)
-def population_engine_version() -> str:
+def _code_hash(packages: tuple[str, ...]) -> str:
     digest = hashlib.sha256()
-    for package in _PACKAGES:
+    for package in packages:
         for path in sorted((_APP / package).rglob("*.py")):
             digest.update(path.relative_to(_APP).as_posix().encode())
             digest.update(path.read_bytes())
-    return "engine-" + digest.hexdigest()[:16]
+    return digest.hexdigest()[:16]
+
+
+@lru_cache(maxsize=1)
+def population_engine_version() -> str:
+    return "engine-" + _code_hash(_PACKAGES)
+
+
+@lru_cache(maxsize=1)
+def reader_version() -> str:
+    """The file readers alone: a changed reader prepares its tables again."""
+    return "reader-" + _code_hash(("datasource",))
