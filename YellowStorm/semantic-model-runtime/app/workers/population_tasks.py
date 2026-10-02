@@ -21,6 +21,7 @@ from app.population.derived import DerivationError, derive_concept, merge_derive
 from app.population.computed_fields import check_inputs, normalize_computed
 from app.population.document_rules import RuleError, normalize_ai_settings, normalize_rules
 from app.population.run_limits import run_limits
+from app.population.engine_version import reader_version
 from app.population.serving_policy import blocking_gap_kinds, serving_decision
 from app.population.tabular import (match_relationships, merge_concept_results,
                                     normalize_identity_value, populate_concept_rows)
@@ -525,7 +526,9 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                     content = data if isinstance(data, (bytes, bytearray)) else str(data).encode("utf-8")
                     content_digest = hashlib.sha256(content).hexdigest()
                 cache_key = extraction_cache_key({
-                    "engine": TABULAR_READ_VERSION, "modelId": str(command_dump.get("modelId") or ""),
+                    # A changed file reader reads the table again (reading a table is cheap).
+                    "engine": TABULAR_READ_VERSION, "reader": reader_version(),
+                    "modelId": str(command_dump.get("modelId") or ""),
                     "concept": compiled["concepts"][entry["conceptId"]], "conceptId": entry["conceptId"],
                     "columnMapping": entry["columnMapping"], "constantMapping": entry.get("constantMapping", {}),
                     "options": options, "mappingVersion": entry["mappingVersion"],
