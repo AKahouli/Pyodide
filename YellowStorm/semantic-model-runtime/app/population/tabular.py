@@ -260,15 +260,18 @@ def match_relationships(compiled: dict[str, Any], source_entities: list[dict[str
         raw, from_identity = _match_side(source, reference_field)
         reference = match_value(raw, strategy)
         if reference is None:
-            gaps.append({"kind": "missing_reference", "relationId": compiled["relationId"],
-                         "sourceEntityId": source["entityId"], "referenceField": reference_field,
-                         "detail": f"reference field '{reference_field}' is empty"})
+            # An empty reference means this record links to nothing (a message that answers
+            # no other one); a value that is required is already reported as a missing value.
             continue
         if from_identity:
             candidates = folded_targets.get(reference.lower(), [])
         else:
             candidates = exact_targets.get(reference, []) + identity_targets.get(reference.lower(), [])
         if not candidates:
+            # On the "one" side of a one-to-many link, finding nothing is normal: a message
+            # without attachments, an attachment that states no fact.
+            if compiled["cardinality"] == "one_to_many":
+                continue
             gaps.append({"kind": "unresolved_reference", "relationId": compiled["relationId"],
                          "sourceEntityId": source["entityId"], "referenceField": reference_field,
                          "referenceValue": raw[:MAX_SAMPLE_TEXT] if isinstance(raw, str) else raw,

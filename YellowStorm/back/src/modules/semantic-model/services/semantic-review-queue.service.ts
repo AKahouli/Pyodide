@@ -289,7 +289,13 @@ export class SemanticReviewQueueService {
     try {
       const records = await this.runtime.getBoundRecords(modelId, userId, 1);
       const concepts = new Map(records.specification.concepts.map((concept) => [concept.conceptId, concept.label]));
-      const relations = new Map((records.specification.relations ?? []).map((relation) => [relation.relationId, relation.label]));
+      // The prepared data names a link by its key ("repond_a"); a person reads its label ("répond à").
+      const relationLabels = await this.database.query<{ id: string; label: string }>(
+        'SELECT r.id::text AS id, r.label FROM semantic_model.relation_types r JOIN semantic_model.models m ON m.current_draft_version_id=r.version_id WHERE m.id=$1',
+        [modelId],
+      ).then((result) => new Map(result.rows.map((row) => [row.id, row.label])));
+      const relations = new Map((records.specification.relations ?? [])
+        .map((relation) => [relation.relationId, relationLabels.get(relation.relationId) || relation.label]));
       const nodes = await this.database.query<{ id: string; attributes: Array<{ key: string; label: string; required?: boolean }> }>(
         'SELECT n.id::text AS id, n.attributes FROM semantic_model.node_types n JOIN semantic_model.models m ON m.current_draft_version_id=n.version_id WHERE m.id=$1',
         [modelId],

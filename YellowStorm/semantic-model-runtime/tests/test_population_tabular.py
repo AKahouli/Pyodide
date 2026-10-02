@@ -115,6 +115,24 @@ def test_relationship_matching_requires_approved_role(plan: dict):
     assert [g["kind"] for g in twins["gaps"]] == ["ambiguous_reference"]
 
 
+def test_a_link_to_nothing_is_not_a_gap_when_nothing_is_normal(plan: dict):
+    relation = plan["relations"]["r1"]
+    targets = [{"entityId": "e1", "identity": {"agreement_no": "agr-2026-014"}, "attributes": {}}]
+    # An empty reference: this record links to nothing.
+    empty = match_relationships(relation, [{"entityId": "e2", "identity": {"agreement_no": "amd-1"},
+                                            "attributes": {}}],
+                                targets, reference_field="parent_ref", target_field="agreement_no")
+    assert empty == {"relationships": [], "gaps": []}
+    # The "one" side of a one-to-many link may have no "many".
+    unmatched = [{"entityId": "e3", "identity": {"agreement_no": "amd-2"}, "attributes": {"parent_ref": "AGR-9"}}]
+    one_to_many = match_relationships({**relation, "cardinality": "one_to_many"}, unmatched, targets,
+                                      reference_field="parent_ref", target_field="agreement_no")
+    assert one_to_many["gaps"] == []
+    many_to_one = match_relationships({**relation, "cardinality": "many_to_one"}, unmatched, targets,
+                                      reference_field="parent_ref", target_field="agreement_no")
+    assert [g["kind"] for g in many_to_one["gaps"]] == ["unresolved_reference"]
+
+
 def test_merge_keeps_first_value_and_both_provenances(plan: dict):
     first = populate_concept_rows(plan["concepts"]["c1"], [
         {"_row": 2, "customer_id": "C-1", "name": "Acme", "country": "FR"},

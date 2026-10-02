@@ -31,6 +31,7 @@ describe('SemanticReviewQueueService', () => {
             { mappingId: 'd-2', conceptId: 'c-4', concept: 'Contract', scope: 'document', fields: ['Customer name'], keys: ['customer_name'] },
           ] };
         }
+        if (sql.includes('FROM semantic_model.relation_types r')) return { rows: [{ id: 'rel-1', label: 'holds a contract' }] };
         if (sql.includes('n.attributes')) return { rows: [{ id: 'c-1', attributes: [{ key: 'city', label: 'City' }, { key: 'name', label: 'Name', required: true }] }] };
         throw new Error(`unexpected query: ${sql}`);
       }),
@@ -45,7 +46,7 @@ describe('SemanticReviewQueueService', () => {
     };
     const runtime = {
       getBoundRecords: options.runtimeDown ? jest.fn(async () => { throw new Error('no data'); }) : jest.fn(async () => ({
-        specification: { concepts: [{ conceptId: 'c-1', label: 'Customer' }], relations: [{ relationId: 'rel-1', label: 'holds' }] },
+        specification: { concepts: [{ conceptId: 'c-1', label: 'Customer' }], relations: [{ relationId: 'rel-1', label: 'holds_contract' }] },
         gaps: {
           missingValues: [{ conceptId: 'c-1', attribute: 'city', missing: 3, total: 10 }, { conceptId: 'c-1', attribute: 'name', missing: 1, total: 10 }],
           unresolvedLinks: [{ relationId: 'rel-1', kind: 'unmatched', count: 4 }],
@@ -81,7 +82,7 @@ describe('SemanticReviewQueueService', () => {
     // An empty required field matters more than an empty optional one.
     expect(queue.items.find((item) => item.key === 'gap:c-1:name')).toMatchObject({ priority: 2 });
     expect(queue.items.find((item) => item.kind === 'unmatched_links')).toMatchObject({
-      params: { relationship: 'holds', count: 4 }, action: { kind: 'check_links', relationId: 'rel-1' },
+      params: { relationship: 'holds a contract', count: 4 }, action: { kind: 'check_links', relationId: 'rel-1' },
     });
     expect(queue.items.find((item) => item.kind === 'rows_not_read')?.action).toEqual({ kind: 'review_rows', conceptId: 'c-1' });
     expect(queue.items.some((item) => item.kind === 'field_not_found')).toBe(false);
