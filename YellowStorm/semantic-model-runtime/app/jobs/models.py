@@ -152,6 +152,8 @@ class PopulationPayload(BaseModel):
         default=0, alias="expectedCorrectionSequence", ge=0)
     budget_profile_id: str = Field(
         default="default", alias="budgetProfileId", max_length=200)
+    # Run size limits set by an admin (app.population.run_limits); absent means the built-in ones.
+    limits: dict[str, int] | None = Field(default=None)
 
     @model_serializer(mode="wrap")
     def serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
@@ -160,6 +162,8 @@ class PopulationPayload(BaseModel):
         data = handler(self)
         if not self.derivations:
             data.pop("derivations", None)
+        if self.limits is None:
+            data.pop("limits", None)
         return data
 
 

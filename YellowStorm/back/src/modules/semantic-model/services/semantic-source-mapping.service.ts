@@ -55,6 +55,10 @@ export const STRUCTURED_MIME_PREFIXES = [
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.ms-excel',
   'text/csv',
+  // E-mail archives (.zip of .eml, or one .eml): read as three tables, messages, participants, attachments.
+  'application/zip',
+  'application/x-zip-compressed',
+  'message/rfc822',
 ];
 export const DOCUMENT_MIME_TYPES = new Set([
   'application/pdf',
@@ -158,7 +162,7 @@ export class SemanticSourceMappingService {
     await this.requireLinkedWorkspace(model.id, workspaceId);
     const document = await this.documents.findById(workspaceId, documentId);
     if (!STRUCTURED_MIME_PREFIXES.some((prefix) => document.mimeType.startsWith(prefix))) {
-      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Only Excel and CSV assets can be profiled');
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Only Excel, CSV and e-mail archive assets can be profiled');
     }
     const result = await this.database.query<{ profile: Record<string, unknown> }>(
       `SELECT profile FROM semantic_datasource.discovery_profiles
@@ -180,7 +184,7 @@ export class SemanticSourceMappingService {
     await this.requireLinkedWorkspace(model.id, workspaceId);
     const document = await this.documents.findById(workspaceId, documentId);
     if (!STRUCTURED_MIME_PREFIXES.some((prefix) => document.mimeType.startsWith(prefix))) {
-      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Only Excel and CSV assets can be profiled');
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Only Excel, CSV and e-mail archive assets can be profiled');
     }
     return this.requestDiscovery(userId, model.id, document, query.sheetName);
   }
@@ -422,9 +426,12 @@ export class SemanticSourceMappingService {
     }
     const label = workspaceSourceLabel(workspaceName, pickedNames);
     const files = workspaceMappingFiles(all, DOCUMENT_MIME_TYPES, selection);
-    if (files.readable.length + files.waiting.length > MAX_WORKSPACE_MAPPING_DOCUMENTS) {
+    const maxFiles = this.extractionSettings
+      ? (await this.extractionSettings.getRunLimits()).runLimits.maxRunSources
+      : MAX_WORKSPACE_MAPPING_DOCUMENTS;
+    if (files.readable.length + files.waiting.length > maxFiles) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
-        `A workspace source can cover at most ${MAX_WORKSPACE_MAPPING_DOCUMENTS} files; pick folders instead`);
+        `A workspace source can cover at most ${maxFiles} files; pick folders instead`);
     }
     const key = workspaceMappingKey(dto.workspaceId, selection);
     const storedSelection = selection ? JSON.stringify(selection) : null;

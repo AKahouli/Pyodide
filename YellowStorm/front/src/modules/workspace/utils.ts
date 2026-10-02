@@ -38,6 +38,10 @@ export const ALLOWED_MIME_TYPES = [
   'image/gif',
   'image/webp',
   'image/svg+xml',
+  // E-mail sources for semantic models
+  'application/zip',
+  'application/x-zip-compressed',
+  'message/rfc822',
 ] as const;
 
 /**
@@ -128,7 +132,7 @@ export interface FileValidationResult {
 export const ALLOWED_EXTENSIONS = [
   'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx',
   'txt', 'csv', 'md', 'html', 'htm', 'json',
-  'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg',
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'zip', 'eml',
 ] as const;
 
 /**

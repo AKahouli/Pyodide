@@ -13,6 +13,10 @@ export const STRUCTURED_DOCUMENT_MIME_PREFIXES = [
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.ms-excel',
   'text/csv',
+  // E-mail archives (.zip of .eml, or one .eml): read as three tables, messages, participants, attachments.
+  'application/zip',
+  'application/x-zip-compressed',
+  'message/rfc822',
 ];
 
 export function isStructuredDocument(mimeType:string): boolean {

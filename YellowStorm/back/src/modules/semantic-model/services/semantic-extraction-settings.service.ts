@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
-import { DEFAULT_AI_EXTRACTION_SETTINGS, type AiExtractionSettings } from '../domain/semantic-source-mapping.types';
+import {
+  DEFAULT_AI_EXTRACTION_SETTINGS, DEFAULT_RUN_LIMITS, RUN_LIMIT_RANGES,
+  type AiExtractionSettings, type RunLimits,
+} from '../domain/semantic-source-mapping.types';
 
 const KEYS = Object.keys(DEFAULT_AI_EXTRACTION_SETTINGS) as Array<keyof AiExtractionSettings>;
 
@@ -11,6 +14,18 @@ export function pickAiSettings(input: unknown): Partial<AiExtractionSettings> {
   for (const key of KEYS) {
     const value = (input as Record<string, unknown>)[key];
     if (typeof value === 'number' && Number.isInteger(value)) picked[key] = value;
+  }
+  return picked;
+}
+
+/** Only the run limits that were set and are in range, as whole numbers; anything else is dropped. */
+export function pickRunLimits(input: unknown): Partial<RunLimits> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const picked: Partial<RunLimits> = {};
+  for (const key of Object.keys(RUN_LIMIT_RANGES) as Array<keyof RunLimits>) {
+    const value = (input as Record<string, unknown>)[key];
+    const [low, high] = RUN_LIMIT_RANGES[key];
+    if (typeof value === 'number' && Number.isInteger(value) && value >= low && value <= high) picked[key] = value;
   }
   return picked;
 }
@@ -35,6 +50,26 @@ export class SemanticExtractionSettingsService {
     ).then((result) => pickAiSettings(result.rows[0]?.aiSettings))
       .catch(() => ({}));
     return { aiSettings: effectiveAiSettings(configured), configured };
+  }
+
+  /** The admin's run limits with every limit filled in, and which ones the admin set. */
+  async getRunLimits(): Promise<{ runLimits: RunLimits; configured: Partial<RunLimits> }> {
+    const configured = await this.database.query<{ runLimits: unknown }>(
+      'SELECT run_limits AS "runLimits" FROM semantic_model.extraction_settings WHERE singleton',
+    ).then((result) => pickRunLimits(result.rows[0]?.runLimits))
+      .catch(() => ({}));
+    return { runLimits: { ...DEFAULT_RUN_LIMITS, ...configured }, configured };
+  }
+
+  async updateRunLimits(userId: string, input: Partial<RunLimits>) {
+    await this.database.query(
+      `INSERT INTO semantic_model.extraction_settings (singleton, run_limits, updated_by, updated_at)
+       VALUES (true, $1::jsonb, $2, now())
+       ON CONFLICT (singleton) DO UPDATE SET run_limits = EXCLUDED.run_limits,
+         updated_by = EXCLUDED.updated_by, updated_at = now()`,
+      [JSON.stringify(pickRunLimits(input)), userId],
+    );
+    return this.getRunLimits();
   }
 
   async updateDefaults(userId: string, input: Partial<AiExtractionSettings>) {

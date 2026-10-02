@@ -25,6 +25,9 @@ import { GuardedUrlDownloaderService } from '../services/guarded-url-downloader.
 import { WorkspaceIntegrationEvents } from '../../integration-events/contracts';
 import { WorkspaceDocumentSupport, isUniqueDocumentNameViolation } from './document-support';
 
+/** Visible root folder holding files derived from workspace sources (e-mail texts, attachments). */
+export const DERIVED_FOLDER_NAME = 'derived';
+
 @Injectable()
 export class WorkspaceDocumentWrite {
   private readonly smallFileThresholdMb: number;
@@ -398,6 +401,101 @@ export class WorkspaceDocumentWrite {
     });
 
     return this.support.mapToResponse(document);
+  }
+
+  /**
+   * Store a file derived from a workspace source (an e-mail's text or one of its attachments)
+   * in the visible folder `derived/<source name>`, then index it like an upload.
+   *
+   * Derived names carry content keys, so a file already stored under the same name in that
+   * folder is returned as is: re-reading an archive does not duplicate or re-index anything.
+   * The blobs live under `<owner>/<prefix>/derived/<source>/` in storage, mirroring the folder.
+   */
+  async storeDerivedFile(params: {
+    workspaceId: string;
+    userId: string;
+    sourceDocumentId: string;
+    sourceName: string;
+    fileName: string;
+    mimeType: string;
+    file: Buffer;
+  }): Promise<{ document: DocumentResponse; created: boolean }> {
+    const { workspaceId, userId, sourceDocumentId, file, mimeType } = params;
+    const fileName = this.support.sanitizeFilename(params.fileName);
+    if (!fileName) throw new BadRequestException('A derived file needs a name');
+    await this.support.validateFile(fileName, mimeType, file.length);
+
+    const root = await this.ensureFolder(workspaceId, userId, DERIVED_FOLDER_NAME, null);
+    const sourceFolderName = this.support.sanitizeFilename(params.sourceName) || sourceDocumentId;
+    const folder = await this.ensureFolder(workspaceId, userId, sourceFolderName, root.id);
+
+    const existing = await this.documentStore.findFileByName(workspaceId, fileName);
+    if (existing && existing.parentId === folder.id && existing.size === file.length
+        && existing.status === DocumentStatus.COMPLETED) {
+      return { document: this.support.mapToResponse(existing), created: false };
+    }
+
+    const quota = await this.workspaceService.checkStorageQuota(workspaceId, file.length);
+    if (!quota.allowed) {
+      throw new ForbiddenException(
+        ErrorCode.WORKSPACE_STORAGE_QUOTA_EXCEEDED,
+        `Insufficient storage. Available: ${Math.round(quota.available / 1024 / 1024)}MB`,
+      );
+    }
+    const { ownerUserId, storagePrefix } = await this.workspaceService.getStorageContext(workspaceId);
+    const documentId = newObjectId();
+    const reserved = await this.support.createWithUniqueName(workspaceId, fileName, (effectiveName) => ({
+      id: documentId,
+      originalName: effectiveName,
+      mimeType,
+      size: file.length,
+      workspaceId,
+      createdBy: userId,
+      status: DocumentStatus.UPLOADING,
+      parentId: folder.id,
+      metadata: { autoIndexRequested: 'true', derivedFromDocumentId: sourceDocumentId },
+    }));
+    const storageFolder = `${ownerUserId}/${storagePrefix}/${DERIVED_FOLDER_NAME}/${this.support.sanitizeFilename(sourceFolderName)}`;
+    const document = await this.completeDirectUpload(reserved, file, mimeType, storageFolder);
+    await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.DocumentRegisteredV1, document);
+    await this.support.recordWorkspaceEvent(WorkspaceIntegrationEvents.ArtifactReadyV1, document);
+    this.indexingService.queueDocument(document.id, false).catch((err) => {
+      this.logger.warn('Failed to queue derived document for indexing', {
+        documentId: document.id,
+        error: err instanceof Error ? err.message : 'Unknown error',
+      });
+    });
+    await this.workspaceService.updateStorageUsage(workspaceId, file.length, 1);
+    return { document: this.support.mapToResponse(document), created: true };
+  }
+
+  /** The folder `name` under `parentId` (null: workspace root), created when missing. */
+  private async ensureFolder(workspaceId: string, userId: string, name: string, parentId: string | null) {
+    const probe = { workspaceId, createdBy: userId, folderName: name, parentId };
+    const existing = await this.documentStore.findFolderDuplicate(probe);
+    if (existing) return existing;
+    const folderId = newObjectId();
+    try {
+      return await this.documentStore.create({
+        id: folderId,
+        filename: '',
+        originalName: name,
+        mimeType: 'folder',
+        size: 0,
+        path: `folder:${folderId}`,
+        workspaceId,
+        createdBy: userId,
+        status: DocumentStatus.COMPLETED,
+        isFolder: true,
+        folderName: name,
+        parentId,
+      });
+    } catch (error) {
+      // A concurrent writer created it first.
+      const created = await this.documentStore.findFolderDuplicate(probe);
+      if (created) return created;
+      throw error;
+    }
   }
 
   /**

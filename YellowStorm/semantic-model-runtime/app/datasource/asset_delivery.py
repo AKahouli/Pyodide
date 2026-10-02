@@ -12,7 +12,14 @@ from urllib.parse import urlsplit
 import httpx
 
 from .datasets import MAX_DATASET_BYTES
-from .discovery import MAX_COMPRESSED_BYTES, resolve_asset_ref
+from .discovery import max_source_bytes, resolve_asset_ref
+
+
+def asset_fetch_wall_seconds(source: dict[str, Any]) -> int:
+    """35 s for an ordinary file; a large e-mail archive also gets 1 s per 10 MB."""
+    size = source.get("sizeBytes")
+    extra = size // (10 * 1024 * 1024) if isinstance(size, int) and not isinstance(size, bool) and size > 0 else 0
+    return 35 + min(extra, 600)
 
 
 class AssetFetchError(ValueError):
@@ -72,7 +79,7 @@ def _validate_metadata(expected: dict[str, Any], current: dict[str, Any],
     if current["mimeType"] != expected.get("mimeType"):
         raise AssetFetchError("asset_changed")
     size = current["sizeBytes"]
-    if size < 0 or size > MAX_COMPRESSED_BYTES:
+    if size < 0 or size > max_source_bytes(current["mimeType"]):
         raise AssetFetchError("source_too_large")
     expected_size = expected.get("sizeBytes")
     if isinstance(expected_size, int) and not isinstance(expected_size, bool) and size != expected_size:
@@ -108,9 +115,39 @@ def _verify_content_hash(body: bytes, fingerprint: Any) -> None:
         raise AssetFetchError("asset_changed")
 
 
+class _HashCheck:
+    """Incremental check of the stored content fingerprint, if there is one."""
+
+    def __init__(self, fingerprint: Any) -> None:
+        value = fingerprint.strip().lower() if isinstance(fingerprint, str) else ""
+        self.algorithm = self.expected = None
+        if value.startswith("md5:"):
+            self.algorithm, self.expected = "md5", value[4:]
+        elif value.startswith("sha256:"):
+            self.algorithm, self.expected = "sha256", value[7:]
+        elif len(value) == 32:
+            self.algorithm, self.expected = "md5", value
+        elif len(value) == 64:
+            self.algorithm, self.expected = "sha256", value
+        self.digest = hashlib.new(self.algorithm) if self.algorithm else None
+
+    def update(self, chunk: bytes) -> None:
+        if self.digest is not None:
+            self.digest.update(chunk)
+
+    def verify(self) -> None:
+        if self.digest is not None and self.digest.hexdigest() != self.expected:
+            raise AssetFetchError("asset_changed")
+
+
 async def fetch_workspace_asset(source: dict[str, Any], actor_user_id: str,
-                                *, client: httpx.AsyncClient | None = None) -> bytes:
-    """Stream an identity-bound asset with redirects disabled and a hard cap."""
+                                *, client: httpx.AsyncClient | None = None,
+                                target: Path | None = None) -> bytes | Path:
+    """Stream an identity-bound asset with redirects disabled and a hard cap.
+
+    With ``target`` the bytes go to that file and its path is returned: large
+    e-mail archives are never held in memory.
+    """
     token = os.environ.get("YELLOWSTORM_INTERNAL_SERVICE_TOKEN", "")
     if not token:
         raise RuntimeError("internal_service_token_missing")
@@ -144,9 +181,28 @@ async def fetch_workspace_asset(source: dict[str, Any], actor_user_id: str,
                 raise AssetFetchError("invalid_asset_response")
             current = _authoritative_source(response)
             expected_size = _validate_metadata(source, current, response)
+            limit = max_source_bytes(current["mimeType"])
+            check = _HashCheck(current.get("contentHash"))
+            if target is not None:
+                written = 0
+                try:
+                    with target.open("wb") as output:
+                        async for chunk in response.aiter_raw():
+                            written += len(chunk)
+                            if written > limit:
+                                raise AssetFetchError("source_too_large")
+                            check.update(chunk)
+                            await asyncio.to_thread(output.write, chunk)
+                    if written != expected_size:
+                        raise AssetFetchError("asset_changed")
+                    check.verify()
+                except BaseException:
+                    target.unlink(missing_ok=True)
+                    raise
+                return target
             body = bytearray()
             async for chunk in response.aiter_raw():
-                if len(body) + len(chunk) > MAX_COMPRESSED_BYTES:
+                if len(body) + len(chunk) > limit:
                     raise AssetFetchError("source_too_large")
                 body.extend(chunk)
             if len(body) != expected_size:
@@ -317,6 +373,47 @@ async def fetch_prepared_dataset(source: dict[str, Any], actor_user_id: str,
     except Exception:
         target.unlink(missing_ok=True)
         raise
+    finally:
+        if own_client:
+            await http.aclose()
+
+
+async def upload_derived_file(source: dict[str, Any], actor_user_id: str, entry: dict[str, Any],
+                              path: Path, *, client: httpx.AsyncClient | None = None) -> dict[str, Any]:
+    """Store one derived file (e-mail text or attachment) in the archive's workspace folder."""
+    token = os.environ.get("YELLOWSTORM_INTERNAL_SERVICE_TOKEN", "")
+    if not token:
+        raise RuntimeError("internal_service_token_missing")
+    body = await asyncio.to_thread(path.read_bytes)
+    if len(body) != entry.get("size") or hashlib.sha256(body).hexdigest() != entry.get("sha256"):
+        raise AssetFetchError("derived_file_changed")
+    own_client = client is None
+    http = client or httpx.AsyncClient(timeout=httpx.Timeout(60, connect=5), follow_redirects=False)
+    try:
+        response = await http.put(
+            f"{_backend_url()}/{_api_prefix()}/workspaces/internal/semantic-derived-file",
+            params={"actorUserId": actor_user_id, "workspaceId": source.get("workspaceId", ""),
+                    "documentId": source.get("assetId", ""), "fileName": entry.get("fileName", "")},
+            headers={"X-Internal-Token": token, "Content-Type": entry.get("mimeType", ""),
+                     "Content-Length": str(len(body)), "X-Content-SHA256": entry["sha256"]},
+            content=body,
+        )
+        if response.is_redirect:
+            raise AssetFetchError("derived_upload_redirected")
+        if response.status_code == 403:
+            raise AssetFetchError("workspace_forbidden")
+        if response.status_code == 413:
+            raise AssetFetchError("derived_file_too_large")
+        if response.status_code in {400, 404, 409, 422}:
+            raise AssetFetchError("derived_upload_rejected")
+        response.raise_for_status()
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise RuntimeError("invalid_derived_response") from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("documentId"), str):
+            raise RuntimeError("invalid_derived_response")
+        return payload
     finally:
         if own_client:
             await http.aclose()

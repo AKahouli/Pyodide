@@ -10,7 +10,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { getWorkspaceUploadSettings, type WorkspaceUploadSettings } from '../api';
 
-const FALLBACK_EXTENSIONS = '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.md,.html,.htm,.json,.png,.jpg,.jpeg,.gif,.webp,.svg';
+const FALLBACK_EXTENSIONS = '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.md,.html,.htm,.json,.png,.jpg,.jpeg,.gif,.webp,.svg,.zip,.eml';
 
 interface SharedState {
   status: 'idle' | 'loading' | 'ready' | 'error';

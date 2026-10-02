@@ -100,12 +100,29 @@ def _xlsx_rows(data: bytes, options: dict[str, Any]) -> tuple[list[str], Iterabl
     return headers, rows(), workbook
 
 
+def _email_rows(data: Any, mime: str, options: dict[str, Any]) -> tuple[list[str], Iterable[tuple[int, list[Any]]]]:
+    from .email_archive import COLUMNS, iter_sheet_rows, selected_sheet
+
+    sheet = selected_sheet(options)
+    headers = COLUMNS[sheet]
+
+    def rows() -> Iterable[tuple[int, list[Any]]]:
+        for number, row in enumerate(iter_sheet_rows(data, mime, sheet), start=2):
+            yield number, [row.get(name) for name in headers]
+
+    return headers, rows()
+
+
 def prepare_parquet(source: dict[str, Any], options: dict[str, Any] | None,
-                    data: bytes, output: Path) -> dict[str, Any]:
+                    data: Any, output: Path) -> dict[str, Any]:
+    from .discovery import is_email_archive
+
     opts = options or {}
     mime = source.get("mimeType")
     workbook = None
-    if mime == "text/csv":
+    if is_email_archive(mime):
+        headers, rows = _email_rows(data, mime, opts)
+    elif mime == "text/csv":
         headers, rows = _csv_rows(data, opts)
     elif mime == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
         headers, rows, workbook = _xlsx_rows(data, opts)

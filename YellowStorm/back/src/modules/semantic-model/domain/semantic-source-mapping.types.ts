@@ -60,6 +60,32 @@ export interface AiExtractionSettings {
   blocksPerField: number;
 }
 
+/** How much one population run may read and keep. The runtime applies the same ranges. */
+export interface RunLimits {
+  /** Most files (or sheets) one run reads; also the most files one workspace source covers. */
+  maxRunSources: number;
+  /** Most records one source (a sheet, an archive table) gives. */
+  maxRecordsPerSource: number;
+  /** Most records one run keeps, all concepts together. */
+  maxRecordsPerRun: number;
+  /** Most field values one run keeps, all records together. */
+  maxValuesPerRun: number;
+}
+
+export const DEFAULT_RUN_LIMITS: RunLimits = {
+  maxRunSources: 5000,
+  maxRecordsPerSource: 5000,
+  maxRecordsPerRun: 10000,
+  maxValuesPerRun: 50000,
+};
+
+export const RUN_LIMIT_RANGES: Record<keyof RunLimits, readonly [number, number]> = {
+  maxRunSources: [1, 50000],
+  maxRecordsPerSource: [100, 200000],
+  maxRecordsPerRun: [100, 200000],
+  maxValuesPerRun: [1000, 2000000],
+};
+
 export const DEFAULT_AI_EXTRACTION_SETTINGS: AiExtractionSettings = {
   maxBlocks: 400,
   maxCharacters: 60000,

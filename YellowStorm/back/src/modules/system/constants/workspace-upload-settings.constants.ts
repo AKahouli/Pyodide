@@ -27,6 +27,8 @@ export const DEFAULT_WORKSPACE_UPLOAD_EXTENSIONS: readonly string[] = [
   '.gif',
   '.webp',
   '.svg',
+  '.zip',
+  '.eml',
 ];
 
 const EXTENSION_PATTERN = /^\.[a-z0-9][a-z0-9+-]{0,15}$/;

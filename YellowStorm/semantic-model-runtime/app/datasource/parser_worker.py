@@ -41,17 +41,31 @@ def main() -> int:
         operation = request.get("operation", "preview")
         if not isinstance(source, dict) or (options is not None and not isinstance(options, dict)):
             raise ValueError("invalid_command")
-        data = Path(sys.argv[2]).read_bytes()
-        if operation == "preview":
-            from .discovery import preview_source
-            result = preview_source(source, options, data)
-        elif operation == "prepare":
-            from .datasets import prepare_parquet
-            from .discovery import preview_source
-            result = preview_source(source, options, data)
-            result["dataset"] = prepare_parquet(source, options, data, Path(sys.argv[3]))
-        else:
+        from .discovery import is_email_archive
+        if operation not in ("preview", "prepare", "derive"):
             raise ValueError("invalid_operation")
+        if operation == "derive":
+            if not is_email_archive(source.get("mimeType")):
+                raise ValueError("unsupported_format_for_derivation")
+            from .email_archive import derived_manifest
+            with open(sys.argv[2], "rb") as archive:
+                result = {"files": derived_manifest(archive, source["mimeType"], Path(sys.argv[3]))}
+            sys.stdout.write(json.dumps({"ok": True, "result": result}, separators=(",", ":")))
+            return 0
+        # An e-mail archive is read from disk entry by entry; it never sits in memory whole.
+        handle = open(sys.argv[2], "rb") if is_email_archive(source.get("mimeType")) else None
+        try:
+            data = handle if handle is not None else Path(sys.argv[2]).read_bytes()
+            from .discovery import preview_source
+            result = preview_source(source, options, data)
+            if operation == "prepare":
+                from .datasets import prepare_parquet
+                if handle is not None:
+                    handle.seek(0)
+                result["dataset"] = prepare_parquet(source, options, data, Path(sys.argv[3]))
+        finally:
+            if handle is not None:
+                handle.close()
         envelope = {"ok": True, "result": result}
     except ValueError as exc:
         envelope = {"ok": False, "errorCode": str(exc) or "parser_failed"}

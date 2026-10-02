@@ -698,3 +698,9 @@ CREATE TABLE IF NOT EXISTS semantic_model.mapping_presets (
 
 CREATE UNIQUE INDEX IF NOT EXISTS semantic_mapping_presets_name_idx
   ON semantic_model.mapping_presets (model_id, concept_id, lower(btrim(name)));
+
+-- 027 - How much one population run may read and keep, as an admin set it. Holds only the limits
+-- that were set: anything left out falls back to the built-in value.
+ALTER TABLE semantic_model.extraction_settings
+  ADD COLUMN IF NOT EXISTS run_limits JSONB NOT NULL DEFAULT '{}'::jsonb
+    CHECK (jsonb_typeof(run_limits) = 'object');

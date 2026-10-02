@@ -88,7 +88,7 @@ describe('WorkspaceUploadSettingsService', () => {
   it('normalizes, dedupes, and persists updates; logs rejections', async () => {
     await service.ensureDefaultSettings();
     const result = await service.updateSettings(
-      ['PDF', '.pdf', '.docx', 'exe', '.docx', '.zip', ''],
+      ['PDF', '.pdf', '.docx', 'exe', '.docx', '.rar', ''],
     );
     expect(result.allowedExtensions).toEqual(['.pdf', '.docx']);
   });

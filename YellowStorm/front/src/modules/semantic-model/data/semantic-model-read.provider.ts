@@ -77,6 +77,8 @@ export const CALL_CLASSIFICATION: Record<SemanticApiCall, ReadKind> = {
   getExtractionDefaults: 'curated-read',
   getAdminExtractionSettings: 'curated-read',
   updateAdminExtractionSettings: 'command',
+  getAdminRunLimits: 'curated-read',
+  updateAdminRunLimits: 'command',
   previewSourceMapping: 'evidence-read',
   getDocumentLabels: 'evidence-read',
   previewComputedField: 'evidence-read',

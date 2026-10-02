@@ -22,6 +22,10 @@ export const DEFAULT_ALLOWED_UPLOAD_MIME_TYPES = [
   'image/gif',
   'image/webp',
   'image/svg+xml',
+  // E-mail archives for semantic models (Windows browsers label a zip x-zip-compressed).
+  'application/zip',
+  'application/x-zip-compressed',
+  'message/rfc822',
 ] as const;
 
 export interface PlatformSettingsValue {

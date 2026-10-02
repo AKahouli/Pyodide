@@ -29,6 +29,19 @@ _TABULAR_MIMES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
     "text/csv": "csv",
 }
+# A zip of .eml files (or one .eml) is read as three tables, like a workbook.
+_EMAIL_ARCHIVE_MIMES = {"application/zip", "application/x-zip-compressed", "message/rfc822"}
+MAX_EMAIL_ARCHIVE_BYTES = 1024 * 1024 * 1024
+
+
+def max_source_bytes(mime_type: Any) -> int:
+    return MAX_EMAIL_ARCHIVE_BYTES if mime_type in _EMAIL_ARCHIVE_MIMES else MAX_COMPRESSED_BYTES
+
+
+def is_email_archive(mime_type: Any) -> bool:
+    return mime_type in _EMAIL_ARCHIVE_MIMES
+
+
 _DOCUMENT_MIMES = {
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -180,6 +193,8 @@ def _structure_hint(source: dict[str, Any], kind: str) -> dict[str, Any]:
         if isinstance(sheets, list) and sheets:
             return {"kind": "xlsx", "sheets": sheets}
         return {"kind": "xlsx"}
+    if kind == "email_archive":
+        return {"kind": "email_archive"}
     if kind == "csv":
         return {"kind": "csv", "delimiter": source.get("delimiter", ","),
                 "encoding": source.get("encoding", "utf-8-sig"),
@@ -217,6 +232,14 @@ def discover(source: dict[str, Any], options: dict[str, Any] | None = None) -> d
                              "message": "Preview is bounded; full preparation runs as a batch job."})
         else:
             status, structure = "ready", _structure_hint(source, kind)
+    elif mime in _EMAIL_ARCHIVE_MIMES:
+        size = source.get("sizeBytes")
+        if isinstance(size, int) and size > MAX_EMAIL_ARCHIVE_BYTES:
+            status, structure = "unsupported", {}
+            warnings.append({"code": "source_too_large",
+                             "message": "The e-mail archive exceeds the 1 GB reading budget; split it into several archives."})
+        else:
+            status, structure = "ready", _structure_hint(source, "email_archive")
     elif mime in _DOCUMENT_MIMES and indexing == "failed":
         status, structure = "indexing_required", {}
         warnings.append({"code": "indexing_required",
@@ -236,9 +259,10 @@ def discover(source: dict[str, Any], options: dict[str, Any] | None = None) -> d
     if not isinstance(source.get("contentHash"), str) or not source.get("contentHash"):
         warnings.append({"code": "unverified_version",
                          "message": "No content fingerprint; source-version-dependent acceptance requires review."})
-    warnings.extend(validate_archive_safety(
-        detected_format=structure.get("kind", "unknown"),
-        compressed_bytes=source.get("sizeBytes") if isinstance(source.get("sizeBytes"), int) else None))
+    if structure.get("kind") != "email_archive":
+        warnings.extend(validate_archive_safety(
+            detected_format=structure.get("kind", "unknown"),
+            compressed_bytes=source.get("sizeBytes") if isinstance(source.get("sizeBytes"), int) else None))
     # ponytail: metadata-only slice ships no samples; file/index reads are later slices
     return {"profileId": discovery_profile_id(asset_ref["assetVersionId"], fingerprint),
             "profileRevision": 1, "assetRef": asset_ref, "parserFingerprint": fingerprint,
@@ -282,7 +306,7 @@ def plan_ingestion(profile: dict[str, Any]) -> dict[str, str]:
         return {"decision": "require_indexing", "reason": "existing logical index is required first"}
     if status in ("unsupported", "protected", "corrupt"):
         return {"decision": status, "reason": f"source status is {status}"}
-    if status == "ready" and kind in ("xlsx", "csv"):
+    if status == "ready" and kind in ("xlsx", "csv", "email_archive"):
         return {"decision": "prepare_dataset", "reason": "approved tabular source prepares a versioned dataset"}
     if status == "ready" and kind == "document":
         return {"decision": "read_via_index", "reason": "document evidence reads go through the Phase 4 index adapter"}
@@ -314,6 +338,9 @@ def preview_source(source: dict[str, Any], options: dict[str, Any] | None = None
         parsed = parse_xlsx_preview(data, options)
     elif mime == "text/csv":
         parsed = parse_csv_preview(data, options)
+    elif mime in _EMAIL_ARCHIVE_MIMES:
+        from .email_archive import parse_email_archive_preview
+        parsed = parse_email_archive_preview(data, mime, options)
     else:
         raise ValueError("unsupported_format_for_bytes")
     profile = {**profile,

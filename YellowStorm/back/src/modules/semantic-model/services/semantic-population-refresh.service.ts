@@ -6,7 +6,7 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import type { AttributeDefinition } from '../domain/semantic-model.types';
 import type { RelationResolutionRule } from '../domain/semantic-cross-source.types';
-import { AI_EXTRACTION_CONTRACT_VERSION, usesAiExtraction, type AiExtractionSettings, type SourceFieldMapping } from '../domain/semantic-source-mapping.types';
+import { AI_EXTRACTION_CONTRACT_VERSION, DEFAULT_RUN_LIMITS, usesAiExtraction, type AiExtractionSettings, type RunLimits, type SourceFieldMapping } from '../domain/semantic-source-mapping.types';
 import type { ConceptSpec, RelationSpec } from '../domain/model-specification.types';
 import type { RecordCorrectionDto } from '../dto/semantic-model.dto';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
@@ -79,7 +79,6 @@ type RelationRuleRow =Pick<RelationResolutionRule,
 const POPULATION_KINDS = new Set(['excel_sheet', 'csv', 'document']);
 const MAX_REFRESH_SOURCES = 25;
 /** Files one run may read, workspace mappings expanded; matches the runtime's per-task limit. */
-const MAX_RUN_SOURCES = 5000;
 const MANUAL_BATCH_SIZE = 500;
 const POPULATION_ENGINE_VERSION = 'r1-mvp-8';
 
@@ -99,6 +98,16 @@ export class SemanticPopulationRefreshService {
   ) {}
 
   private aiDefaults?: { at: number; value: Promise<Partial<AiExtractionSettings>> };
+  private runLimitsCache?: { at: number; value: Promise<Partial<RunLimits>> };
+
+  /** The run limits an admin set (only those), read at most every few seconds. */
+  private adminRunLimits(): Promise<Partial<RunLimits>> {
+    if (!this.extractionSettings) return Promise.resolve({});
+    if (!this.runLimitsCache || Date.now() - this.runLimitsCache.at > 10_000) {
+      this.runLimitsCache = { at: Date.now(), value: this.extractionSettings.getRunLimits().then((limits) => limits.configured).catch(() => ({})) };
+    }
+    return this.runLimitsCache.value;
+  }
 
   /** The admin's AI reading limits, read at most every few seconds: one run can cover thousands of files. */
   private adminAiSettings(): Promise<Partial<AiExtractionSettings>> {
@@ -620,10 +629,13 @@ export class SemanticPopulationRefreshService {
     if (!sources.length) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'No usable source in the selected scope');
     }
-    if (sources.length > MAX_RUN_SOURCES) {
+    // Only the limits an admin set travel with the run, so other runs keep their fingerprint.
+    const limits = await this.adminRunLimits();
+    const maxRunSources = limits.maxRunSources ?? DEFAULT_RUN_LIMITS.maxRunSources;
+    if (sources.length > maxRunSources) {
       throw new BadRequestException(
         ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
-        `A run can read at most ${MAX_RUN_SOURCES} files; map a folder instead of the whole workspace`,
+        `A run can read at most ${maxRunSources} files; map a folder instead of the whole workspace, or raise the limit in Admin > Semantic models`,
       );
     }
     const scopedConceptIds = new Set(usableMappings.map((mapping) => mapping.conceptId));
@@ -724,12 +736,13 @@ export class SemanticPopulationRefreshService {
       populationEngineVersion: POPULATION_ENGINE_VERSION,
       // Only present when a concept is made from another, so other models keep their fingerprint.
       ...(derivations.length ? { derivations } : {}),
+      ...(Object.keys(limits).length ? { limits } : {}),
     });
-    return { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, populationExecutionFingerprint, skipped, waitingFiles };
+    return { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, limits, populationExecutionFingerprint, skipped, waitingFiles };
   }
 
   async requestRefresh(userId: string, modelId: string, input: RequestPopulationRefreshInput) {
-    const { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, populationExecutionFingerprint, skipped, waitingFiles }
+    const { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, limits, populationExecutionFingerprint, skipped, waitingFiles }
       = await this.planRefresh(userId, modelId, input, 'run');
     await this.runtime.mirrorSpecification({
       homeWorkspaceId,
@@ -770,6 +783,7 @@ export class SemanticPopulationRefreshService {
         relationBindings,
         ...(derivations.length ? { derivations } : {}),
         aiExtraction,
+        ...(Object.keys(limits).length ? { limits } : {}),
       },
     }, idempotencyKey);
     return { ...accepted, skipped, sourceCount: runtimeSources.length, waitingFiles };

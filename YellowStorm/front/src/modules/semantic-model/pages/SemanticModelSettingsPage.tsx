@@ -7,6 +7,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../api';
 import { AiLimitFields, limitProblem } from '../components/mapping/DocumentFieldRules';
 import type { AiExtractionSettings } from '../types';
+import { RunLimitsSettings } from '../components/settings/RunLimitsSettings';
 
 /** The limits every document mapping starts from when nothing else is set. */
 const BUILT_IN: AiExtractionSettings = { maxBlocks: 400, maxCharacters: 60000, longDocumentCharacters: 30000, blocksPerField: 8 };
@@ -61,5 +62,6 @@ export function SemanticModelSettingsPage() {
         {Object.keys(configured).length > 0 && <Button variant='ghost' onClick={() => setConfigured({})}>{t('settings.reset')}</Button>}
       </div>
     </section>
+    <RunLimitsSettings />
   </div>;
 }

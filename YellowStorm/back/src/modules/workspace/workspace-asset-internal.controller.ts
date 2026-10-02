@@ -14,7 +14,8 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
-import { IsMongoId, Matches } from 'class-validator';
+import { IsMongoId, IsString, Matches, MaxLength } from 'class-validator';
+import { createHash } from 'crypto';
 import type { Request, Response } from 'express';
 import { pipeline } from 'stream/promises';
 import { Public } from '../auth/decorators/public.decorator';
@@ -22,10 +23,18 @@ import { InternalServiceGuard } from '../auth/guards/internal-service.guard';
 import { DocumentService } from '../document/document.service';
 import { SkipResponseWrap } from '../response/decorators/skip-response-wrap.decorator';
 import { WorkspaceDocumentRead } from './document/document-read';
+import { WorkspaceDocumentWrite } from './document/document-write';
 import { DocumentStatus } from './interfaces/document-status.enum';
 import { WorkspaceShareService } from './workspace-share.service';
 
 const SEMANTIC_PREVIEW_MAX_BYTES = 50 * 1024 * 1024;
+// An e-mail archive is read entry by entry and streamed to disk by the runtime, never held in memory.
+const SEMANTIC_EMAIL_ARCHIVE_MAX_BYTES = 1024 * 1024 * 1024;
+const EMAIL_ARCHIVE_MIME_TYPES = new Set(['application/zip', 'application/x-zip-compressed', 'message/rfc822']);
+
+function semanticReadLimit(mimeType: string | undefined): number {
+  return mimeType && EMAIL_ARCHIVE_MIME_TYPES.has(mimeType) ? SEMANTIC_EMAIL_ARCHIVE_MAX_BYTES : SEMANTIC_PREVIEW_MAX_BYTES;
+}
 
 class SemanticAssetQueryDto {
   @ApiProperty()
@@ -40,6 +49,17 @@ class SemanticAssetQueryDto {
   @IsMongoId()
   documentId!: string;
 }
+
+class SemanticDerivedFileQueryDto extends SemanticAssetQueryDto {
+  /** Name of the derived file inside `derived/<source name>/`; no path separators. */
+  @ApiProperty()
+  @IsString()
+  @MaxLength(200)
+  @Matches(/^[^/\\\x00-\x1f]+$/)
+  fileName!: string;
+}
+
+const DERIVED_FILE_MAX_BYTES = 50 * 1024 * 1024;
 
 class SemanticDatasetQueryDto extends SemanticAssetQueryDto {
   @ApiProperty()
@@ -59,6 +79,7 @@ export class WorkspaceAssetInternalController {
     private readonly documents: WorkspaceDocumentRead,
     private readonly storage: DocumentService,
     config: ConfigService,
+    private readonly writer: WorkspaceDocumentWrite,
   ) {
     this.datasetPrefix = config.get<string>('storage.semanticDatasetPrefix', 'semantic-model/datasets')
       .replace(/^\/+|\/+$/g, '');
@@ -106,7 +127,7 @@ export class WorkspaceAssetInternalController {
     if (document.isFolder || document.status !== DocumentStatus.COMPLETED || !document.path) {
       throw new BadRequestException('Document is not available for semantic discovery');
     }
-    if (document.size > SEMANTIC_PREVIEW_MAX_BYTES) {
+    if (document.size > semanticReadLimit(document.mimeType)) {
       throw new PayloadTooLargeException('Document exceeds the semantic preview limit');
     }
 
@@ -142,6 +163,57 @@ export class WorkspaceAssetInternalController {
       }
       throw error;
     }
+  }
+
+  @Public()
+  @Put('semantic-derived-file')
+  @SkipResponseWrap()
+  @ApiOperation({ summary: 'Store a file derived from an e-mail archive (message text, attachment) and index it' })
+  async putDerivedFile(
+    @Query() query: SemanticDerivedFileQueryDto,
+    @Headers('content-type') rawType: string | undefined,
+    @Headers('content-length') rawLength: string | undefined,
+    @Headers('x-content-sha256') contentHash: string | undefined,
+    @Req() request: Request,
+  ): Promise<{ documentId: string; originalName: string; created: boolean; indexingStatus: string }> {
+    await this.shares.assertUserHasAccess(query.actorUserId, [query.workspaceId]);
+    const source = await this.documents.findById(query.workspaceId, query.documentId);
+    if (source.isFolder || source.status !== DocumentStatus.COMPLETED || !EMAIL_ARCHIVE_MIME_TYPES.has(source.mimeType)) {
+      throw new BadRequestException('Derived files can only come from an e-mail archive');
+    }
+    const size = Number(rawLength);
+    if (!Number.isSafeInteger(size) || size < 0) {
+      throw new BadRequestException('A valid Content-Length is required');
+    }
+    if (size > DERIVED_FILE_MAX_BYTES) {
+      throw new PayloadTooLargeException('Derived file exceeds the size limit');
+    }
+    if (!contentHash || !/^[a-f0-9]{64}$/.test(contentHash)) {
+      throw new BadRequestException('A lowercase SHA-256 content hash is required');
+    }
+    const chunks: Buffer[] = [];
+    let received = 0;
+    for await (const chunk of request) {
+      received += (chunk as Buffer).length;
+      if (received > size) throw new BadRequestException('Body is longer than Content-Length');
+      chunks.push(chunk as Buffer);
+    }
+    const body = Buffer.concat(chunks);
+    if (body.length !== size || createHash('sha256').update(body).digest('hex') !== contentHash) {
+      throw new BadRequestException('Body does not match its length or hash');
+    }
+    const mimeType = (rawType ?? '').split(';', 1)[0].trim();
+    const { document, created } = await this.writer.storeDerivedFile({
+      workspaceId: query.workspaceId,
+      userId: query.actorUserId,
+      sourceDocumentId: source.id,
+      sourceName: source.originalName,
+      fileName: query.fileName,
+      mimeType,
+      file: body,
+    });
+    return { documentId: document.id, originalName: document.originalName, created,
+      indexingStatus: String(document.indexingStatus ?? '') };
   }
 
   @Public()

@@ -20,6 +20,7 @@ from app.population.compiler import (canonical_spec_hash, compile_specification,
 from app.population.derived import DerivationError, derive_concept, merge_derived, normalize_derivations
 from app.population.computed_fields import check_inputs, normalize_computed
 from app.population.document_rules import RuleError, normalize_ai_settings, normalize_rules
+from app.population.run_limits import run_limits
 from app.population.serving_policy import blocking_gap_kinds, serving_decision
 from app.population.tabular import (match_relationships, merge_concept_results,
                                     normalize_identity_value, populate_concept_rows)
@@ -28,6 +29,9 @@ from .celery_app import POPULATION_QUEUES, celery_app
 
 logger = logging.getLogger(__name__)
 ASSET_FETCH_WALL_SECONDS = 35
+# Bump when the e-mail texts or attachment names written to the workspace change.
+EMAIL_DERIVATION_VERSION = "email-derived-v1"
+EMAIL_DERIVATION_CACHE_CONCEPT = "__email_derived_files__"
 QUERY_ROW_LIMIT = 1000
 # A workspace mapping expands to one source per document, so a run can read thousands of files.
 MAX_SOURCES_PER_TASK = 5000
@@ -152,6 +156,14 @@ class RunCancelled(Exception):
     """The run was asked to stop; it ends without saving what it read."""
 
 
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def source_display_name(entry: dict) -> str:
     if entry.get("sourceKind") == "manual":
         return "Typed records"
@@ -201,7 +213,7 @@ def run_population_for_payload(command_dump: dict) -> dict:
             return {"ok": False, "errorCode": "spec_hash_mismatch"}
         sources = payload.get("sources")
         if (not isinstance(sources, list) or not sources
-                or len(sources) > MAX_SOURCES_PER_TASK):
+                or len(sources) > min(MAX_SOURCES_PER_TASK, run_limits(payload)["maxRunSources"])):
             return {"ok": False, "errorCode": "invalid_sources"}
         compiled = compile_specification(spec)
         normalized: list[dict] = []
@@ -348,14 +360,16 @@ def run_population_for_payload(command_dump: dict) -> dict:
 async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=None,
                                   query=None, index_connection=None, metadata_fetch=None,
                                   manual_pool=None, progress: PopulationProgress | None = None,
-                                  extraction_cache=None) -> dict:
+                                  extraction_cache=None, upload_derived=None, derive=None) -> dict:
     """Fetch, prepare, query and populate every mapped source (bounded), reporting progress."""
     import asyncio
     import os
     import tempfile
     from pathlib import Path
 
-    from app.datasource.asset_delivery import AssetFetchError, fetch_workspace_asset
+    from app.datasource.asset_delivery import (AssetFetchError, asset_fetch_wall_seconds,
+                                                fetch_workspace_asset)
+    from app.datasource.discovery import is_email_archive
     from app.datasource.dataset_query import query_parquet
     from app.datasource.discovery import resolve_asset_ref
     from app.datasource.parsers import SHEET_ROW_KEY
@@ -367,6 +381,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     actor = command_dump.get("actorUserId") or command_dump.get("actor_user_id")
     ai_extraction = (command_dump.get("payload") or {}).get("aiExtraction")
     compiled = validated["compiled"]
+    limits = run_limits(command_dump.get("payload"))
     per_concept: dict[str, list[dict]] = {}
     dataset_fingerprints: set[str] = set()
     observations: list[dict] = []
@@ -385,6 +400,65 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             from app.datasource.logical_index import create_index_pool
             index_pool["owned"] = index_pool["connection"] = await create_index_pool()
         return index_pool["connection"]
+
+    # An e-mail archive is downloaded once per run to disk; its three tables read the same file.
+    archive_files: dict[tuple, Path] = {}
+    archive_dir: dict = {"path": None}
+
+    async def fetch_archive(source: dict) -> Path:
+        key = (source.get("workspaceId"), source.get("assetId"), resolve_asset_ref(source)["assetVersionId"])
+        if key not in archive_files:
+            if archive_dir["path"] is None:
+                archive_dir["path"] = Path(tempfile.mkdtemp(prefix="semantic-archive-",
+                                                            dir=os.environ.get("SEMANTIC_TASK_TEMP_DIR")))
+            target = archive_dir["path"] / f"{len(archive_files)}.bin"
+            async with asyncio.timeout(asset_fetch_wall_seconds(source)):
+                archive_files[key] = await (fetch or fetch_workspace_asset)(source, actor, target=target)
+            await derive_archive(source, archive_files[key])
+        return archive_files[key]
+
+    async def derive_archive(source: dict, path: Path) -> None:
+        """Store the e-mails' texts and readable attachments in the workspace, where they are indexed.
+
+        Once per archive version and model: a later run finds it in the extraction cache. A failure
+        here leaves the three tables readable, so it is logged instead of failing the run.
+        """
+        from app.datasource.asset_delivery import upload_derived_file
+        from app.datasource.parser_sandbox import derive_files_subprocess
+
+        cache_key = None
+        if extraction_cache is not None:
+            from app.persistence.extraction_cache import extraction_cache_key
+            cache_key = extraction_cache_key({
+                "engine": EMAIL_DERIVATION_VERSION, "workspaceId": source.get("workspaceId"),
+                "assetId": source.get("assetId"), "assetVersionId": resolve_asset_ref(source)["assetVersionId"]})
+            if await extraction_cache.get(cache_key) is not None:
+                return
+        phase = progress.phase
+        await progress.enter("deriving")
+        try:
+            with tempfile.TemporaryDirectory(prefix="semantic-derived-",
+                                             dir=os.environ.get("SEMANTIC_TASK_TEMP_DIR")) as directory:
+                files = await asyncio.to_thread(derive or derive_files_subprocess, source, path, Path(directory))
+                created = 0
+                for number, entry in enumerate(files, start=1):
+                    stored = Path(directory) / str(entry.get("stored", ""))
+                    result = await (upload_derived or upload_derived_file)(source, actor, entry, stored)
+                    created += bool(result.get("created"))
+                    if number % 100 == 0:
+                        await progress.send(force=True)
+            if cache_key is not None:
+                await extraction_cache.put(cache_key, concept_id=EMAIL_DERIVATION_CACHE_CONCEPT,
+                                           asset_id=str(source.get("assetId") or ""),
+                                           output={"files": len(files), "created": created})
+            logger.info("email archive derived", extra={"assetId": source.get("assetId"),
+                                                        "files": len(files), "created": created})
+        except (ValueError, RuntimeError, AssetFetchError, TimeoutError) as exc:
+            logger.warning("email archive derivation failed",
+                           extra={"assetId": source.get("assetId"), "error": str(exc)})
+        finally:
+            progress.phase = phase
+            await progress.send(force=True)
 
     async def read_sources() -> dict | None:
         """Read every source in turn; an error result stops the run."""
@@ -430,8 +504,11 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                                     status=output["coverage"]["status"], reused=reused)
                 continue
             try:
-                async with asyncio.timeout(ASSET_FETCH_WALL_SECONDS):
-                    data = await (fetch or fetch_workspace_asset)(source, actor)
+                if is_email_archive(source.get("mimeType")):
+                    data = await fetch_archive(source)
+                else:
+                    async with asyncio.timeout(ASSET_FETCH_WALL_SECONDS):
+                        data = await (fetch or fetch_workspace_asset)(source, actor)
             except AssetFetchError as exc:
                 return {"ok": False, "errorCode": exc.code}
             try:
@@ -442,14 +519,18 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             cache_key = None
             if extraction_cache is not None:
                 from app.persistence.extraction_cache import extraction_cache_key
-                content = data if isinstance(data, (bytes, bytearray)) else str(data).encode("utf-8")
+                if isinstance(data, Path):
+                    content_digest = await asyncio.to_thread(_file_sha256, data)
+                else:
+                    content = data if isinstance(data, (bytes, bytearray)) else str(data).encode("utf-8")
+                    content_digest = hashlib.sha256(content).hexdigest()
                 cache_key = extraction_cache_key({
                     "engine": TABULAR_READ_VERSION, "modelId": str(command_dump.get("modelId") or ""),
                     "concept": compiled["concepts"][entry["conceptId"]], "conceptId": entry["conceptId"],
                     "columnMapping": entry["columnMapping"], "constantMapping": entry.get("constantMapping", {}),
                     "options": options, "mappingVersion": entry["mappingVersion"],
                     "labelField": entry.get("labelField"), "assetRef": asset_ref,
-                    "content": hashlib.sha256(content).hexdigest()})
+                    "content": content_digest})
                 cached = await extraction_cache.get(cache_key)
                 if cached is not None and isinstance(cached.get("outputs"), list):
                     for output in cached["outputs"]:
@@ -490,6 +571,11 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                                 if source_column in raw:
                                     renamed[attribute] = raw[source_column]
                             rows.append(renamed)
+                        # The admin's per-source limit: the rest of the sheet is left unread.
+                        capped = len(rows) > limits["maxRecordsPerSource"] - records
+                        if capped:
+                            rows = rows[:max(0, limits["maxRecordsPerSource"] - records)]
+                            complete_enumeration = sheet_complete = False
                         concept = compiled["concepts"][entry["conceptId"]]
                         output = populate_concept_rows(
                             concept, rows, {"assetRef": asset_ref,
@@ -501,10 +587,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                         records += len(output["entities"])
                         gaps += len(output["gaps"])
                         offset += page["returnedRows"]
-                        if page["returnedRows"] < QUERY_ROW_LIMIT:
-                            break
-                        if offset >= MAX_TOTAL_ASSERTIONS:
-                            complete_enumeration = sheet_complete = False
+                        if capped or page["returnedRows"] < QUERY_ROW_LIMIT:
                             break
             except ValueError as exc:
                 return {"ok": False, "errorCode": str(exc) or "parser_failed"}
@@ -536,6 +619,9 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     finally:
         if index_pool["owned"] is not None:
             await index_pool["owned"].close()
+        if archive_dir["path"] is not None:
+            import shutil
+            shutil.rmtree(archive_dir["path"], ignore_errors=True)
     if failure is not None:
         return failure
     await progress.enter("linking")
@@ -565,10 +651,10 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         ordered = sorted(merged_by_concept[concept_id]["entities"],
                          key=lambda item: item["entityId"])
         for entity in ordered:
-            if len(kept) >= MAX_TOTAL_ENTITIES:
+            if len(kept) >= limits["maxRecordsPerRun"]:
                 break
             kept.append(entity)
-        if len(kept) >= MAX_TOTAL_ENTITIES:
+        if len(kept) >= limits["maxRecordsPerRun"]:
             break
     kept_ids = {entity["entityId"] for entity in kept}
     gaps: list[dict] = []
@@ -576,18 +662,18 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     for merged in merged_by_concept.values():
         gaps.extend(merged["gaps"])
         for assertion in merged["assertions"]:
-            if assertion["entityId"] in kept_ids and len(assertions) < MAX_TOTAL_ASSERTIONS:
+            if assertion["entityId"] in kept_ids and len(assertions) < limits["maxValuesPerRun"]:
                 assertions.append(assertion)
     dropped_entities = (sum(len(merged["entities"]) for merged in merged_by_concept.values())
                         - len(kept))
     if dropped_entities > 0:
         gaps.append({"kind": "materialization_cap", "conceptId": None, "rowNumber": None,
-                     "detail": f"bounded result capped at {MAX_TOTAL_ENTITIES} entities"})
+                     "detail": f"bounded result capped at {limits['maxRecordsPerRun']} entities"})
     dropped_assertions = (sum(len(merged["assertions"]) for merged in merged_by_concept.values())
                           - len(assertions))
     if dropped_assertions > 0:
         gaps.append({"kind": "assertion_cap", "conceptId": None, "rowNumber": None,
-                     "detail": f"bounded result capped at {MAX_TOTAL_ASSERTIONS} assertions"})
+                     "detail": f"bounded result capped at {limits['maxValuesPerRun']} assertions"})
     trimmed = {concept_id: [entity for entity in merged["entities"]
                             if entity["entityId"] in kept_ids]
                for concept_id, merged in merged_by_concept.items()}
@@ -604,13 +690,15 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         relationships.extend(matched["relationships"])
         gaps.extend(matched["gaps"])
     relationships.extend(manual_relationships(kept, manual_links, compiled["relations"]))
-    if len(relationships) > MAX_TOTAL_RELATIONSHIPS:
+    # Links grow with records: a run allowed more records may keep proportionally more links.
+    max_relationships = max(MAX_TOTAL_RELATIONSHIPS, 2 * limits["maxRecordsPerRun"])
+    if len(relationships) > max_relationships:
         relationships = sorted(relationships,
                                key=lambda item: (item.get("relationId", ""),
                                                  item.get("sourceEntityId", ""),
-                                                 item.get("targetEntityId", "")))[:MAX_TOTAL_RELATIONSHIPS]
+                                                 item.get("targetEntityId", "")))[:max_relationships]
         gaps.append({"kind": "relationship_cap", "conceptId": None, "rowNumber": None,
-                     "detail": f"bounded result capped at {MAX_TOTAL_RELATIONSHIPS} relationships"})
+                     "detail": f"bounded result capped at {max_relationships} relationships"})
     if not complete_enumeration:
         gaps.append({"kind": "enumeration_capped", "conceptId": None, "rowNumber": None,
                      "detail": f"per-source enumeration capped at {QUERY_ROW_LIMIT} rows"})

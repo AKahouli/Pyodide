@@ -290,6 +290,19 @@ export interface ComputedPreviewResult {
 }
 
 /** How much of a document the AI reads. */
+/** How much one population run may read and keep, set by an admin for every model. */
+export interface RunLimits {
+  maxRunSources: number;
+  maxRecordsPerSource: number;
+  maxRecordsPerRun: number;
+  maxValuesPerRun: number;
+}
+
+export interface RunLimitsDefaults {
+  runLimits: RunLimits;
+  configured: Partial<RunLimits>;
+}
+
 export interface AiExtractionSettings {
   maxBlocks: number;
   maxCharacters: number;

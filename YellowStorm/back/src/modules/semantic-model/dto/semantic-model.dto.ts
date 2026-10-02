@@ -513,6 +513,24 @@ export class AiExtractionSettingsDto {
   blocksPerField?: number;
 }
 
+export class RunLimitsDto {
+  @ApiPropertyOptional({ minimum: 1, maximum: 50000, description: 'Most files one run reads (and one workspace source covers)' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50000)
+  maxRunSources?: number;
+
+  @ApiPropertyOptional({ minimum: 100, maximum: 200000, description: 'Most records one source gives' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(100) @Max(200000)
+  maxRecordsPerSource?: number;
+
+  @ApiPropertyOptional({ minimum: 100, maximum: 200000, description: 'Most records one run keeps' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(100) @Max(200000)
+  maxRecordsPerRun?: number;
+
+  @ApiPropertyOptional({ minimum: 1000, maximum: 2000000, description: 'Most field values one run keeps' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1000) @Max(2000000)
+  maxValuesPerRun?: number;
+}
+
 export class DerivedFieldMappingDto {
   @ApiProperty({ description: 'A field of the source concept' })
   @IsString()

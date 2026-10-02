@@ -1,7 +1,7 @@
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type { ApiResponse } from '@/lib/api/client';
-import type { ComputedFieldRule, DocumentLabelsResponse, ComputedPreviewResult, AiExtractionDefaults, DerivedSource, DerivedSourceDraft, LastDocumentMapping, MappingPreset, MappingSettings, AiExtractionSettings, AgeGraphEdge, AssistantChangesPage, SourceSuggestionsPage, SourceFileMatches, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
+import type { ComputedFieldRule, DocumentLabelsResponse, ComputedPreviewResult, AiExtractionDefaults, RunLimits, RunLimitsDefaults, DerivedSource, DerivedSourceDraft, LastDocumentMapping, MappingPreset, MappingSettings, AiExtractionSettings, AgeGraphEdge, AssistantChangesPage, SourceSuggestionsPage, SourceFileMatches, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
 SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, PopulationFreshness, DesignerBoxPosition, SemanticReviewItem, SemanticVersion,
 SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
 StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison, ReviewQueue, ConceptRecordsPage } from './types';
@@ -224,6 +224,12 @@ export const semanticModelApi = {
   },
   async updateAdminExtractionSettings(settings: Partial<AiExtractionSettings>): Promise<AiExtractionDefaults> {
     return unwrap(await apiClient.put<ApiResponse<AiExtractionDefaults>>(API_ENDPOINTS.adminSemanticModelSettings.base, settings));
+  },
+  async getAdminRunLimits(): Promise<RunLimitsDefaults> {
+    return unwrap(await apiClient.get<ApiResponse<RunLimitsDefaults>>(API_ENDPOINTS.adminSemanticModelSettings.runLimits));
+  },
+  async updateAdminRunLimits(limits: Partial<RunLimits>): Promise<RunLimitsDefaults> {
+    return unwrap(await apiClient.put<ApiResponse<RunLimitsDefaults>>(API_ENDPOINTS.adminSemanticModelSettings.runLimits, limits));
   },
   async previewComputedField(id: string, payload: { computed: ComputedFieldRule; samples: string[] }): Promise<{ results: ComputedPreviewResult[] }> {
     return unwrap(await apiClient.post<ApiResponse<{ results: ComputedPreviewResult[] }>>(API_ENDPOINTS.semanticModels.computedFieldPreview(id), payload));

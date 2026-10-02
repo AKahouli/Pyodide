@@ -185,9 +185,9 @@ async def run_discovery_for_task(command_dump: dict, *, fetch=None, upload=None)
     import os
     import tempfile
 
-    from app.datasource.asset_delivery import (AssetFetchError, fetch_workspace_asset,
-                                                upload_prepared_dataset)
-    from app.datasource.parser_sandbox import prepare_dataset_subprocess
+    from app.datasource.asset_delivery import (AssetFetchError, asset_fetch_wall_seconds,
+                                                fetch_workspace_asset, upload_prepared_dataset)
+    from app.datasource.parser_sandbox import prepare_dataset_subprocess, run_preview_subprocess
 
     if not isinstance(command_dump, dict):
         return run_discovery_for_payload(command_dump)
@@ -200,20 +200,33 @@ async def run_discovery_for_task(command_dump: dict, *, fetch=None, upload=None)
     if not authorized_metadata.get("ok"):
         return authorized_metadata
     metadata_profile = authorized_metadata["profile"]
-    is_tabular = metadata_profile.get("structure", {}).get("kind") in {"csv", "xlsx"}
+    is_tabular = metadata_profile.get("structure", {}).get("kind") in {"csv", "xlsx", "email_archive"}
     if metadata_profile.get("status") != "ready" or not is_tabular:
         return run_discovery_for_payload(command_dump)
     actor = command_dump.get("actorUserId") or command_dump.get("actor_user_id")
     if not isinstance(actor, str) or not actor:
         return {"ok": False, "errorCode": "invalid_command"}
-    try:
-        async with asyncio.timeout(ASSET_FETCH_WALL_SECONDS):
-            data = await (fetch or fetch_workspace_asset)(source, actor)
-    except AssetFetchError as exc:
-        return {"ok": False, "errorCode": exc.code}
+    from app.datasource.discovery import is_email_archive
+
     temp_root = os.environ.get("SEMANTIC_TASK_TEMP_DIR")
     try:
         with tempfile.TemporaryDirectory(prefix="semantic-dataset-", dir=temp_root) as directory:
+            # An e-mail archive can be far larger than a workbook: it goes to disk, not memory.
+            to_file = {"target": Path(directory) / "source.bin"} if is_email_archive(source.get("mimeType")) else {}
+            try:
+                async with asyncio.timeout(asset_fetch_wall_seconds(source)):
+                    data = await (fetch or fetch_workspace_asset)(source, actor, **to_file)
+            except AssetFetchError as exc:
+                return {"ok": False, "errorCode": exc.code}
+            if to_file:
+                # Discovery of an archive previews its first e-mails; the full read happens at population.
+                preview = await asyncio.to_thread(
+                    run_preview_subprocess, source, options if isinstance(options, dict) else None, data)
+                profile = preview["profile"]
+                gaps = profile.get("status") in ("partial", "indexing_required")
+                return with_mapping_preview(
+                    {"ok": True, **preview, "jobState": "completed_with_gaps" if gaps else "completed"},
+                    command_dump)
             artifact = Path(directory) / "dataset.parquet"
             preview = await asyncio.to_thread(
                 prepare_dataset_subprocess, source,
