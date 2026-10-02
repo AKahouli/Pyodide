@@ -7,7 +7,8 @@ import pytest
 from app.population.document import _read_rules, _select_ai_blocks
 from app.population.document_rules import (RuleError, clean, compile_pattern, match_pattern,
                                            next_line_values, normalize_ai_settings, normalize_rules,
-                                           same_line_values, to_iso_date)
+                                           same_line_values, to_iso_date,
+                                           to_iso_date_or_period)
 
 
 def section(pk, title, *blocks):  # type: ignore[no-untyped-def]
@@ -111,3 +112,13 @@ def test_ai_reads_a_short_document_whole_and_a_long_one_by_field():
     tight = normalize_ai_settings({"maxCharacters": 2000})
     blocks, sent = _select_ai_blocks(document, [field("penalty", "Penalty")], tight)
     assert sent["charactersSent"] <= 2000
+
+
+@pytest.mark.parametrize(("written", "iso"), [
+    ("Avril 2019 - Déc. 2022", "2019-04"), ("Janv. 2023 - Mars 2024", "2023-01"), ("Sep 2025-Nov 2025", "2025-09"),
+    ("Depuis juin 2025", "2025-06"), ("mardi, 29 septembre 2026 à 14:07", "2026-09-29"),
+    ("2026-07-16T15:47:08Z", "2026-07-16"), ("2026-06", "2026-06"), ("2021", "2021"),
+    ("mi-juin", None), ("4-5 ans", None),
+])
+def test_a_date_or_period_is_written_as_iso_as_precise_as_the_text(written, iso):
+    assert to_iso_date_or_period(written) == iso

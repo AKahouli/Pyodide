@@ -17,7 +17,8 @@ from app.datasource.section_reader import (MAX_CLOSURE_SECTIONS, SectionReadErro
 
 from .document_rules import (PASSAGE_LOCATIONS, all_matches, clean, compile_pattern, fold,
                              folded_label_regex, heading_matches, heading_text, label_found,
-                             next_line_values, normalize_ai_settings, same_line_values, shaped_input)
+                             next_line_values, normalize_ai_settings, same_line_values, shaped_input,
+                             to_iso_date_or_period)
 from .computed_fields import COMPUTED_VERSION, apply_computed, normalize_computed
 from .tabular import populate_concept_rows
 
@@ -310,6 +311,13 @@ async def _apply_ai_extraction(
                            extractor_version, result.get("model"), own, own_evidence, None, choices, summaries)
             if own:
                 records.append({"values": own, "evidence": own_evidence})
+    # Dates read by AI are stored as ISO, as precise as the text (a period keeps its start);
+    # one that is not a date the runtime can read stays as written.
+    dates = {mapping["targetAttribute"] for mapping in ai_mappings if mapping.get("valueType") == "date"}
+    for found in [values, *(record["values"] for record in records or [])]:
+        for key in dates & set(found):
+            if isinstance(found[key], str):
+                found[key] = to_iso_date_or_period(found[key]) or found[key]
     return None, sent
 
 

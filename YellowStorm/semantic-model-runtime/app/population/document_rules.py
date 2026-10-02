@@ -154,7 +154,7 @@ def all_matches(compiled: Any, text: str) -> list[str]:
 
 
 _MONTHS = {name: index for index, names in enumerate((
-    ("january", "janvier", "jan"), ("february", "fevrier", "février", "feb", "fev", "fév"),
+    ("january", "janvier", "jan", "janv"), ("february", "fevrier", "février", "feb", "fev", "fév", "fevr", "févr"),
     ("march", "mars", "mar"), ("april", "avril", "apr", "avr"), ("may", "mai"),
     ("june", "juin", "jun"), ("july", "juillet", "jul", "juil"), ("august", "aout", "août", "aug"),
     ("september", "septembre", "sep", "sept"), ("october", "octobre", "oct"),
@@ -181,6 +181,40 @@ def to_iso_date(value: str) -> str | None:
                 return datetime(int(words[2]), _MONTHS[words[0]], int(words[1])).date().isoformat()
         except ValueError:
             return None
+    return None
+
+
+_ISO_PREFIX = re.compile(r"^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?(?:[T ][\d:.]+Z?)?$")
+_PERIOD_SPLIT = re.compile(r"\s+(?:-|–|—|à|au|to|until|jusqu'(?:à|au|en))\s+|\s*[–—]\s*|(?<=\d)-(?=[^\d\s])|(?<=[a-zé.])-(?=[a-zé])",
+                           flags=re.IGNORECASE)
+_DATE_LEAD = re.compile(r"^(?:depuis|since|from|de|du|dès|des|en|in|le|on)\s+", flags=re.IGNORECASE)
+_WEEKDAYS = {"lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche", "monday", "tuesday",
+             "wednesday", "thursday", "friday", "saturday", "sunday"}
+
+
+def to_iso_date_or_period(value: str) -> str | None:
+    """ISO as precise as the text: 2026-09-29, 2026-06 or 2026; a period gives its start.
+
+    "Avril 2019 - Déc. 2022" gives 2019-04, "Depuis juin 2025" 2025-06, "mardi, 29 septembre 2026
+    à 14:07" 2026-09-29. None when it is not a date (e.g. "mi-juin", which needs a year).
+    """
+    text = " ".join(value.replace(",", " ").split()).strip()
+    iso = _ISO_PREFIX.match(text)
+    if iso:
+        return "-".join(part for part in iso.groups() if part)
+    start = _PERIOD_SPLIT.split(text, maxsplit=1)[0].strip()
+    start = _DATE_LEAD.sub("", start)
+    start = re.sub(r"\s+(?:à|a|at)\s+\d{1,2}[:h]\d{2}.*$|\s+\d{1,2}:\d{2}.*$", "", start, flags=re.IGNORECASE)
+    words = [word.rstrip(".").lower() for word in start.split() if word.rstrip(".").lower() not in _WEEKDAYS]
+    if not words:
+        return None
+    day = to_iso_date(" ".join(words))
+    if day:
+        return day
+    if len(words) == 2 and words[0] in _MONTHS and re.fullmatch(r"\d{4}", words[1]):
+        return f"{words[1]}-{_MONTHS[words[0]]:02d}"
+    if len(words) == 1 and re.fullmatch(r"(?:19|20)\d{2}", words[0]):
+        return words[0]
     return None
 
 
