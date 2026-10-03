@@ -13,6 +13,7 @@ import logging
 import hashlib
 import json
 
+from app.datasource.email_archive import resolve_column
 from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
 
 from .celery_app import DATASOURCE_QUEUES, celery_app
@@ -50,7 +51,7 @@ def build_mapping_preview(profile: dict, draft: object) -> dict | None:
                 values[target] = mapping.get("constantValue")
                 fields[target] = {"method": "fixed_value"}
             elif mapping.get("mode") == "direct" and isinstance(mapping.get("sourceField"), str):
-                values[target] = row.get(mapping["sourceField"])
+                values[target] = row.get(resolve_column(mapping["sourceField"], row))
                 fields[target] = {"method": "direct_mapping"}
         identity = [str(values.get(key, "")).strip().lower() for key in identities]
         if identities and any(not value for value in identity):
@@ -71,6 +72,8 @@ def build_mapping_preview(profile: dict, draft: object) -> dict | None:
     for target in identities:
         source = next((item.get("sourceField") for item in mappings
                        if isinstance(item, dict) and item.get("targetAttribute") == target), None)
+        names = {item.get("name") for item in profiles if isinstance(item, dict)}
+        source = resolve_column(source, names) if isinstance(source, str) else source
         match = next((item for item in profiles
                       if isinstance(item, dict) and item.get("name") == source), None)
         if match:

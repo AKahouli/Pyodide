@@ -156,6 +156,20 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose, onSuggestConc
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fields.map((field) => field.name).join('|'), sheetName, conceptId, target?.documentId, target?.mapping?.id]);
 
+  // A saved mapping keeps only its mapped columns: list the sheet's other columns too (left unmapped),
+  // so a column ignored at first, or added by a newer reader, can still be mapped.
+  const fieldNames = fields.map((field) => field.name).join('|');
+  useEffect(() => {
+    if (!target?.mapping || !fieldNames) return;
+    setMappings((current) => {
+      const listed = new Set(current.map((mapping) => mapping.sourceField));
+      const unlisted = fieldNames.split('|').filter((name) => !listed.has(name));
+      return unlisted.length
+        ? [...current, ...unlisted.map((name): SourceFieldMapping => ({ sourceField: name, targetAttribute: '', mode: 'ignore' }))]
+        : current;
+    });
+  }, [fieldNames, target?.mapping]);
+
   const activeMappings = mappings.filter((mapping) => mapping.mode !== 'ignore');
 
   const preview = useMutation({

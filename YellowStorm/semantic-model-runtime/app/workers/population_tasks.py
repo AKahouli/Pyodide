@@ -21,6 +21,7 @@ from app.population.derived import DerivationError, derive_concept, merge_derive
 from app.population.computed_fields import check_inputs, normalize_computed
 from app.population.document_rules import RuleError, normalize_ai_settings, normalize_rules
 from app.population.run_limits import run_limits
+from app.datasource.email_archive import resolve_column
 from app.population.engine_version import reader_version
 from app.population.serving_policy import blocking_gap_kinds, serving_decision
 from app.population.tabular import (match_relationships, merge_concept_results,
@@ -566,13 +567,17 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                     manifest = await asyncio.to_thread(
                         prepare or prepare_dataset_subprocess, source, options, data, artifact)
                     asset_ref["datasetRevisionId"] = manifest.get("datasetId")
-                    columns = sorted(set(entry["columnMapping"]) | {SHEET_ROW_KEY})
+                    # A column a newer reader renamed is read under its new name.
+                    available = manifest.get("columns") if isinstance(manifest, dict) else None
+                    mapping = ({resolve_column(column, available): attribute
+                                for column, attribute in entry["columnMapping"].items()}
+                               if isinstance(available, list) else entry["columnMapping"])
+                    columns = sorted(set(mapping) | {SHEET_ROW_KEY})
                     offset = 0
                     while True:
                         page = await asyncio.to_thread(
                             query or query_parquet, artifact, columns=columns,
                             limit=QUERY_ROW_LIMIT, offset=offset)
-                        mapping = entry["columnMapping"]
                         constants = entry.get("constantMapping", {})
                         rows = []
                         for raw in page["rows"]:

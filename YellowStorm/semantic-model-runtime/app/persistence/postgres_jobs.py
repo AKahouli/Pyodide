@@ -8,6 +8,7 @@ from typing import Any
 import asyncpg
 
 from app.datasource.discovery import parser_fingerprint
+from app.datasource.email_archive import resolve_column
 from app.jobs.models import (
     Admission,
     IdempotencyConflict,
@@ -886,7 +887,8 @@ class PostgresJobRepository:
             required = [item.get("sourceField") for item in mappings or []
                         if isinstance(item, dict) and item.get("mode") == "direct"
                         and isinstance(item.get("sourceField"), str)]
-            missing = [field for field in required if field not in available_set]
+            missing = [field for field in required
+                       if resolve_column(field, available_set) not in available_set]
             if not row["source_enabled"]:
                 state = "unavailable"
             elif missing:

@@ -46,6 +46,20 @@ describe('SourceMappingDrawer repair', () => {
     expect(useSemanticModelEditorStore.getState().graph?.revision).toBe(0);
   });
 
+  it('lists the sheet columns a saved mapping left out, unmapped, and saves only the mapped ones', async () => {
+    api.profileSourceAsset.mockResolvedValue({ sheets: [{ name: 'Contracts', rowCount: 1, fieldCount: 2 }], fields: [
+      { name: 'contract_id', type: 'text', sample: 'C1', populatedRatio: 1, uniqueRatio: 1 },
+      { name: 'destinataires', type: 'text', sample: 'a@b.fr, c@d.fr', populatedRatio: 1, uniqueRatio: 0.5 },
+    ] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><SourceMappingDrawer modelId='model-1' target={{ workspaceId: mapping.workspaceId, documentId: mapping.documentId, documentName: mapping.documentName!, assetKind: mapping.assetKind, conceptId: mapping.conceptId, mapping }} onClose={vi.fn()} /></QueryClientProvider>);
+    expect(await screen.findByText('destinataires')).toBeInTheDocument();
+    expect(screen.getByText('a@b.fr, c@d.fr')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.save' }));
+    await waitFor(() => expect(api.createSourceMapping).toHaveBeenCalled());
+    expect(api.createSourceMapping.mock.calls[0][1].fieldMappings).toEqual(mapping.fieldMappings);
+  });
+
   it('reads a newly uploaded spreadsheet by itself, without asking for an analysis', async () => {
     api.profileSourceAsset.mockRejectedValue(new Error('This source has not been analyzed yet'));
     api.analyzeSourceAsset.mockResolvedValue({ sheets: [{ name: 'Customers', rowCount: 3, fieldCount: 2 }], fields: [] });
