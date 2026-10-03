@@ -12,6 +12,8 @@ export interface PopulationOutcome {
   reused: boolean;
   /** Files the run reads (a workspace source counts each of its files). */
   sourceCount?: number;
+  /** The model's generated data was cleared before this run, which builds it again from scratch. */
+  cleared?: boolean;
   /** Last progress reported by the run, kept once it ends so the summary stays on screen. */
   progress?: Partial<PopulationProgress>;
   /** Whether the result replaced the graph in use, kept once the run ends (the job is no longer followed then). */

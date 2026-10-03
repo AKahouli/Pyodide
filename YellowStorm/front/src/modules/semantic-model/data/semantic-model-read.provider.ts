@@ -64,6 +64,7 @@ export const CALL_CLASSIFICATION: Record<SemanticApiCall, ReadKind> = {
   createBulkDocumentSourceMappings: 'command',
   createWorkspaceSourceMapping: 'command',
   requestPopulationRefresh: 'command',
+  rebuildPopulation: 'command',
   getPopulationJob: 'curated-read',
   stopPopulationJob: 'command',
   sourceSuggestions: 'curated-read',

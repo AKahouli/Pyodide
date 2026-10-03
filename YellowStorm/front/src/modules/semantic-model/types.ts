@@ -516,6 +516,11 @@ export interface PopulationRefreshResponse {
   waitingFiles?: number;
 }
 
+/** A rebuild from scratch: what was cleared, then the build it started. */
+export interface PopulationRebuildResponse extends PopulationRefreshResponse {
+  cleared: { revisions: number; reviewItems: number; jobs: number; documentReadings: number };
+}
+
 export interface PopulationJob {
   jobId: string;
   jobType: string;

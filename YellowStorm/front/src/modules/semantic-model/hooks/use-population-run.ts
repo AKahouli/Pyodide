@@ -24,3 +24,23 @@ export function usePopulationRun(modelId: string | undefined) {
     },
   });
 }
+
+/**
+ * Repopulates the model from scratch: the runtime clears every record, link and review item earlier runs
+ * made, then reads every source again. The model's settings are left as they are.
+ */
+export function useRebuildFromScratch(modelId: string | undefined) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (options: { forgetDocumentReading: boolean }) => semanticModelApi.rebuildPopulation(modelId ?? '', options),
+    onSuccess: () => {
+      if (!modelId) return;
+      // Drop, not just invalidate: the data these were showing no longer exists.
+      queryClient.removeQueries({ queryKey: ['semantic-models', 'data-preview', modelId] });
+      queryClient.removeQueries({ queryKey: ['semantic-models', 'concept-records', modelId] });
+      for (const key of [semanticModelQueryKeys.readiness(modelId), semanticModelQueryKeys.reviewQueue(modelId), semanticModelQueryKeys.freshness(modelId)]) {
+        void queryClient.invalidateQueries({ queryKey: key });
+      }
+    },
+  });
+}

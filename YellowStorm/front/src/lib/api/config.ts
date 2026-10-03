@@ -499,6 +499,7 @@ export const API_ENDPOINTS = {
     corrections: (id: string) => `/semantic-models/${id}/corrections`,
     undoCorrection: (id: string, sequence: number) => `/semantic-models/${id}/corrections/${sequence}/undo`,
     populationRefresh: (id: string) => `/semantic-models/${id}/population/refresh`,
+    populationRebuild: (id: string) => `/semantic-models/${id}/population/rebuild`,
     populationJob: (id: string, jobId: string) => `/semantic-models/${id}/population/jobs/${jobId}`,
     populationJobStop: (id: string, jobId: string) => `/semantic-models/${id}/population/jobs/${jobId}/stop`,
     populationActive: (id: string) => `/semantic-models/${id}/population/active`,
