@@ -60,6 +60,7 @@ import type { SourceSuggestion, SourceSuggestionOption } from "../types";
 import { SemanticMappingsView } from '../components/mapping/SemanticMappingsView';
 import { SemanticDataPreview, type DataPreviewFocus } from '../components/preview/SemanticDataPreview';
 import { ReviewFocusBar } from '../components/review/ReviewFocusBar';
+import { CanvasPalette } from '../components/editor/CanvasPalette';
 import { SemanticTrustPanel } from '../components/review/SemanticTrustPanel';
 import { PopulationStartedPanel, populationServing, type PopulationOutcome } from '../components/population/PopulationStartedPanel';
 import { VersionsPanel } from "../components/versions/VersionsPanel";
@@ -735,17 +736,11 @@ export function SemanticModelEditorPage() {
         </div>
       </header>
       <main className="relative flex min-h-0 flex-1">
-        {onCanvas && canEdit && <nav aria-label={t('designer.palette.title')} className='hidden w-44 shrink-0 flex-col gap-1.5 overflow-y-auto border-r bg-background p-3 md:flex'>
-          <p className='px-1 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground'>{t('designer.palette.title')}</p>
-          {palette.map((item) => <button key={item.key} type='button' onClick={item.onClick} title={item.hint} className='flex items-center gap-2 rounded-xl border bg-card px-2.5 py-2 text-left text-sm transition-colors hover:border-primary/50 hover:bg-primary/5'>
-            <item.icon className={`h-4 w-4 shrink-0 ${item.key === 'source' || item.key === 'typed' ? 'text-teal-600 dark:text-teal-400' : 'text-primary'}`} />
-            <span className='min-w-0 truncate'>{item.label}</span>
-          </button>)}
-          <p className='mt-2 px-1 text-[11px] leading-snug text-muted-foreground'>{t('designer.palette.help')}</p>
-        </nav>}
         <section className="relative flex min-w-0 flex-1 flex-col">
           {reviewFocus && !trustOpen && <ReviewFocusBar item={reviewFocus} items={reviewQueue.data?.items ?? []} onOpen={openIssue} onBack={openReview} onClose={() => setReviewFocus(null)} />}
-          {onCanvas && <div className='relative min-h-0 flex-1'><SemanticModelCanvas
+          {onCanvas && <div className='relative min-h-0 flex-1'>
+            {canEdit && <CanvasPalette title={t('designer.palette.title')} help={t('designer.palette.help')} items={palette} />}
+            <SemanticModelCanvas
             sourceMappings={sourceMappings.data}
             derivedSources={derivedSources.data}
             onOpenDerived={canEdit ? (derived) => openDerived({ conceptId: derived.conceptId, derived }) : undefined}
@@ -768,7 +763,8 @@ export function SemanticModelEditorPage() {
             sourcePositions={sourcePositions}
             onMoveSource={canEdit ? moveSource : undefined}
             onBrowseRecords={browseRecords}
-          /></div>}
+          />
+          </div>}
           {onCanvas && modelId && recordsConceptId && graph.nodes.some((node) => node.id === recordsConceptId) && <ConceptRecordsPanel
             modelId={modelId}
             conceptId={recordsConceptId}
@@ -866,7 +862,7 @@ export function SemanticModelEditorPage() {
           open={validateOpen}
           onOpenChange={setValidateOpen}
           modelId={modelId}
-          onPopulationStarted={(outcome) => { setPopulation(outcome); setPopulationJobId(outcome.jobId); setTrustOpen(false); }}
+          onPopulationStarted={(outcome) => { setPopulation(outcome); setPopulationJobId(outcome.jobId); setTrustOpen(false); if (outcome.cleared) setBoundDataRevisionId(undefined); }}
         />
       )}
       {modelId && (

@@ -60,6 +60,16 @@ describe('SemanticModelInspector', () => {
     expect(useSemanticModelEditorStore.getState().graph?.nodes[0].attributes[0].required).toBe(true);
   });
 
+  it('opens a field row to describe the field for the AI', () => {
+    useSemanticModelEditorStore.getState().hydrate({ ...graph, nodes: [{ ...graph.nodes[0], attributes: [{ key: 'country', label: 'Country', type: 'text', required: false }] }] });
+    useSemanticModelEditorStore.getState().select('customer');
+    renderInspector(true);
+    expect(screen.queryByRole('textbox', { name: 'attributes.descriptionFor' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'attributes.moreFor' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'attributes.descriptionFor' }), { target: { value: 'Country of the billing address' } });
+    expect(useSemanticModelEditorStore.getState().graph?.nodes[0].attributes[0].description).toBe('Country of the billing address');
+  });
+
   it('asks what makes each concept unique and saves the chosen fields', async () => {
     useSemanticModelEditorStore.getState().hydrate({ ...graph, nodes: [{ ...graph.nodes[0], attributes: [{ key: 'number', label: 'Number', type: 'text', required: false }, { key: 'country', label: 'Country', type: 'text', required: false }] }] });
     useSemanticModelEditorStore.getState().select('customer');
