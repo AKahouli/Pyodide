@@ -130,28 +130,43 @@ async def build_index(pool: Any, *, index_id: str, owner: str,
         return {"state": "failed", "errorCode": "revision_too_large"}
     documents = [build_document(entity, concepts.get(entity["conceptId"])) for entity in entities]
     await search_store.insert_documents(pool, index_id, documents)
-    reused = await search_store.fill_from_cache(pool, index_id, generation["model_id"],
-                                                profile.fingerprint)
-    embedded = 0
-    await report({"stage": "embedding", "expected": expected, "reused": reused, "embedded": 0})
-    while True:
-        batch = await search_store.pending_documents(pool, index_id, profile.batch_size)
-        if not batch:
-            break
-        vectors = await embedder(profile, [row["search_text"] for row in batch])
-        await search_store.store_vectors(
-            pool, index_id=index_id, model_id=generation["model_id"], fingerprint=profile.fingerprint,
-            vectors=[(row["entity_id"], row["content_hash"], vector_literal(vector))
-                     for row, vector in zip(batch, vectors)])
-        embedded += len(batch)
-        if not await search_store.renew_generation(pool, index_id, owner, GENERATION_LEASE_SECONDS, 1):
-            return {"state": "lease_lost"}
-        await report({"stage": "embedding", "expected": expected, "reused": reused,
-                      "embedded": embedded})
+    passages = await search_store.insert_passages(pool, index_id, documents)
+    model_id = generation["model_id"]
+    reused = await search_store.fill_from_cache(pool, index_id, model_id, profile.fingerprint)
+    passages_reused = await search_store.fill_from_cache(pool, index_id, model_id, profile.fingerprint,
+                                                         kind="passages")
+    progress = {"stage": "embedding", "expected": expected, "reused": reused, "embedded": 0,
+                "passages": passages, "passagesReused": passages_reused, "passagesEmbedded": 0}
+    await report(dict(progress))
+    # Records first (the cards answer most requests), then the passages of long fields.
+    for kind in ("documents", "passages"):
+        while True:
+            if kind == "documents":
+                batch = await search_store.pending_documents(pool, index_id, profile.batch_size)
+            else:
+                batch = await search_store.pending_passages(pool, index_id, profile.batch_size)
+            if not batch:
+                break
+            vectors = await embedder(profile, [row["search_text"] for row in batch])
+            if kind == "documents":
+                await search_store.store_vectors(
+                    pool, index_id=index_id, model_id=model_id, fingerprint=profile.fingerprint,
+                    vectors=[(row["entity_id"], row["content_hash"], vector_literal(vector))
+                             for row, vector in zip(batch, vectors)])
+                progress["embedded"] += len(batch)
+            else:
+                await search_store.store_passage_vectors(
+                    pool, index_id=index_id, model_id=model_id, fingerprint=profile.fingerprint,
+                    vectors=[(row["entity_id"], row["ordinal"], row["content_hash"], vector_literal(vector))
+                             for row, vector in zip(batch, vectors)])
+                progress["passagesEmbedded"] += len(batch)
+            if not await search_store.renew_generation(pool, index_id, owner, GENERATION_LEASE_SECONDS, 1):
+                return {"state": "lease_lost"}
+            await report(dict(progress))
     state = await search_store.finish_generation(pool, index_id, owner, expected)
     if state == "ready":
-        await search_store.prune_generations(pool, generation["model_id"])
-    return {"state": state, "expected": expected, "reused": reused, "embedded": embedded}
+        await search_store.prune_generations(pool, model_id)
+    return {"state": state, **{key: value for key, value in progress.items() if key != "stage"}}
 
 
 __all__ = ["EmbeddingError", "IndexUnavailable", "build_index", "request_index",

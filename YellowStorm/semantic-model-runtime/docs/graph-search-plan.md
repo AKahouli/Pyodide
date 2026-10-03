@@ -166,6 +166,34 @@ Rules:
 - **Exact-only entities:** an entity with only a label and no descriptive field is `exact_only`. This is not a failure.
 - **Field policy v1:** all `allowedFields`. A per-concept `searchFields` override can come later as Advanced metadata **outside `specHash`**, so it doesn't force a population rebuild.
 
+### Passages of long fields (serializer v2, `gs-doc-v2`)
+The card above keeps only the first 300 characters of a value, so a long text (an e-mail `corps` of
+5,000 characters, a contract body) was almost invisible. v2 keeps the card unchanged and also splits
+every field the card **cut or left out** into passages, searched on their own (`documents.py`):
+
+- **Size:** target 1,000 characters (~170 words), between 700 and 1,200. A passage ends at the
+  boundary closest to the target, preferring a paragraph break, then a line break, then a sentence end
+  (`. ! ? ; : …`), then a space; a text without any is cut hard at 1,200.
+- **Overlap:** the next passage starts at the first sentence (else word) start in the last 150
+  characters (~15%), so a sentence on a cut is whole in one passage.
+- **Caps:** 20 passages per field, 50 per record (~20,000 characters of a field). A field not covered
+  to its end is listed in the document's `diagnostics.truncatedPassageFields` and counted in the
+  generation's `passage_truncated_count`; `diagnostics.passageFields` gives the count per field.
+- **Text:** offsets (`start`, `end`) are in the stored value; the passage text is that slice with
+  whitespace collapsed. What is embedded is a header plus the text:
+  `Type: {concept label}
+Name: {record name}
+Field: {field (aliases)}
+{text}` (no part number, so
+  a passage that does not change keeps its hash and its cached vector). The lexical vector holds the
+  passage words only (the header words are on the card).
+- **Cost:** one vector per passage, through the same `embedding_cache` (by content hash). Roughly one
+  embedding call input per 850 new characters of long text; rebuilds of unchanged texts are free.
+  Bumping the serializer to v2 changed the fingerprint: every model's next index is a new generation
+  and its cards are embedded once more. Reads look up the generation of the current fingerprint, so
+  until it is ready a search answers `index_not_ready` with exact matches only (the first read
+  requests it); run `scripts/backfill_graph_search.py` right after deploying.
+
 ### Embedding profile
 The profile is pinned, and its hash is the `embedding_fingerprint`:
 
@@ -239,6 +267,25 @@ CREATE TABLE semantic_graph_search.embedding_cache (
 );
 ```
 
+Passages (migration `024_graph_search_passages.sql`):
+
+```sql
+CREATE TABLE semantic_graph_search.entity_passages (
+  index_id, entity_id  -- FK to entity_documents (index_id, entity_id) ON DELETE CASCADE
+  ordinal INT,         -- per record, field order; PRIMARY KEY (index_id, entity_id, ordinal)
+  concept_id, field_key, field_label, start_offset, end_offset,
+  passage_text TEXT,   -- shown in answers
+  search_text TEXT,    -- header + passage, embedded
+  lexical tsvector, content_hash, embedding halfvec(2560), status ('pending'|'ready'),
+  source_workspaces TEXT[]   -- the record's, for the same access filter
+);
+-- B-tree (index_id, concept_id); partial (index_id) WHERE pending; GIN (lexical). No ANN index.
+ALTER TABLE index_generations ADD passage_count, passage_indexed_count, passage_truncated_count;
+```
+
+Passages live and die with their generation (and their record's document): pruning, a revision
+delete and the model purge remove them by cascade; a model clone copies no index.
+
 Notes:
 - **Cache scope:** the cache is scoped per model, so it can't reveal anything across models. A correction or rebuild creates a new revision and a new generation, and unchanged entities reuse their vectors at **zero embedding calls**.
 - **Accents:** `unaccent` is not installed, so accent folding (NFKD + strip) happens in Python for both stored text and queries. That avoids a new extension.
@@ -258,12 +305,15 @@ Notes:
 1. Resolve the revision and spec. Check that `projection_ref` is set and that `projection_exists`.
 2. Create or reuse the generation, keyed by `UNIQUE(data_revision_id, fingerprint)`. Return early if it is `ready`.
 3. Insert `entity_documents` (text, hash, keys, `source_refs`) in one pass, with status `pending`. Fill vectors from `embedding_cache` and mark those rows `ready`.
-4. Embed the remaining `pending` rows in batches.
+   Insert the passages of every document the same way, and fill theirs from the same cache.
+4. Embed the remaining `pending` rows in batches (records first, then passages; progress reports
+   `embedded` and `passagesEmbedded` beside `reused` / `passagesReused`).
    - Commit each batch, then write it into the cache. No transaction is held during HTTP calls.
    - Progress is just a count over `entity_documents`, so a crash or duplicate delivery resumes on the remaining `pending` rows.
 5. **Readiness check:**
    - the number of documents equals the number of entities in the revision;
-   - no row is `pending` or `failed`.
+   - no row is `pending` or `failed`;
+   - every passage has its vector.
 
    If both hold, CAS `state indexing → ready` fenced by the task lease epoch. Otherwise the state becomes `failed` with `last_error_code`, keeping its counts.
 
@@ -296,6 +346,17 @@ Graph readiness and index readiness are separate states. `graph ready + index pr
 3. **Lexical.** `ts_rank` over `lexical` plus trigram similarity on `label`, top 50.
 4. **Vector.** One query embedding, then exact `embedding <=> $q` over `index_id` with the concept and access filters applied **before** the top-k, top 50.
 5. **Fusion.** Reciprocal-rank fusion (k = 60) of lexical and vector **ranks**. Exact results stay in a separate, stronger class.
+   Passages take part in both methods (top 50 records by their best passage, each with its 2 best
+   passages). Within a method a passage stands for its record: the record's score there is the
+   **best of its card's and its passages' scores** (cosine, or `ts_rank_cd`), then records are ranked
+   and the two ranks fused as before. A long text is one more way to be found, not extra votes: an
+   e-mail is not ranked above a short record whose card matches as well. (Fusing passage *ranks* as
+   separate lists was tried first and failed: with few long records, the only one with passages is
+   trivially first in the passage lists.) The similarity floor applies to the best similarity.
+   Each seed gets `matchedIn` (`record` or `passage`: which gave its larger contribution) and
+   `passages` (up to 2: `fieldKey`, `field`, `start`, `end` of the passage in the field value, and
+   `text`, ~400 characters of the passage around the longest query words). `diagnostics` gains
+   `lexicalFrom` / `vectorFrom`.
 6. **Cutoff.** A calibrated minimum cosine (set during G5) produces an explicit `no_match` instead of a plausible-looking node. Default `limit` is 10, maximum 25.
 7. **Provider down.** Mode `lexical_only` is returned, explicitly flagged. Vectors from another revision are never mixed in.
 
@@ -363,17 +424,18 @@ Graph readiness and index readiness are separate states. `graph ready + index pr
 - A typed projection table (values are cast at query time; to add when volumes need it, reusing
   `typed_value_sql`).
 - Natural language → Cypher, and any language model inside the query path: the calling assistant plans.
-- Document text retrieval.
+- Document text retrieval (long text *fields* of records are searched through passages, §4).
 
 ### 7.5 Response contract
 
 ```text
 modelId, environment, modelVersionId, dataRevisionId, projectionRef, indexId, embeddingFingerprint, modeUsed
 status: found | no_match | not_represented | index_not_ready | partial
-seeds[]:  entityId, conceptId, label, keyFields, snippet, matchClass (exact|lexical|vector|hybrid), rank, diagnostics
+seeds[]:  entityId, conceptId, label, keyFields, snippet, matchClass (exact|lexical|vector|hybrid), rank, diagnostics,
+          matchedIn? (record|passage), passages? [{fieldKey, field, start, end, text}]
 nodes[] / edges[] (expand): entityId, conceptId, label, inclusionReason, path
 provenance[]: assetRef, rowNumbers | pageNumber (as stored; not re-verified)
-coverage: indexedCount, exactOnlyCount, materialization note, truncated
+coverage: indexedCount, exactOnlyCount, passageCount, passageIndexedCount, passageTruncatedCount, materialization note, truncated
 timings: embedMs, seedMs, expandMs
 ```
 

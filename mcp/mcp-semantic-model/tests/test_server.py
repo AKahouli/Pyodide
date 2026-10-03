@@ -272,6 +272,7 @@ async def test_record_search_tools_tell_the_agent_how_to_read_results():
     related = tools["get_related_records"].description
     assert "NOT documents" in find and "index_not_ready" in find and "not_represented" in find and "Never infer" in find
     assert "get_related_records" in find
+    assert "passages" in find and "query_records" in find and "evidence" in find
     assert "NOT because it matched" in related and "truncated" in related and "find_records" in related and "Never infer" in related
 
 

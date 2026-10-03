@@ -290,9 +290,24 @@ export interface RuntimeGraphSearchSeed {
   keyFields: Record<string, unknown>;
   snippet: string;
   matchClass: 'exact' | 'lexical' | 'vector' | 'hybrid';
+  /** Where the best matches were: the record's own search text, or a passage of a long field. */
+  matchedIn?: 'record' | 'passage';
+  /** Best matching passages of long fields (up to 2), quoted around the words of the query. */
+  passages?: RuntimeGraphSearchPassage[];
   rank: number;
   diagnostics: Record<string, unknown>;
   provenance: RuntimeRecordProvenance[];
+}
+
+export interface RuntimeGraphSearchPassage {
+  fieldKey: string;
+  /** Readable field name. */
+  field: string;
+  /** Offsets of the whole passage in the field value. */
+  start: number;
+  end: number;
+  /** About 400 characters of the passage around the match. */
+  text: string;
 }
 
 export interface RuntimeGraphSearchResult {
@@ -307,7 +322,10 @@ export interface RuntimeGraphSearchResult {
   concepts: Array<{ conceptId: string; key: string; label: string }>;
   unknownConcepts: string[];
   seeds: RuntimeGraphSearchSeed[];
-  coverage: { expectedCount: number; indexedCount: number; exactOnlyCount: number };
+  coverage: {
+    expectedCount: number; indexedCount: number; exactOnlyCount: number;
+    passageCount?: number; passageIndexedCount?: number; passageTruncatedCount?: number;
+  };
   timings: { embedMs: number; seedMs: number };
 }
 

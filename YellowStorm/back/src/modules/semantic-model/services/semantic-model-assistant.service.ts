@@ -1065,13 +1065,26 @@ export class SemanticModelAssistantService {
     if (result.status === 'no_match') notes.push('No record of the model matches this search.');
     if (result.modeUsed === 'lexical_only') notes.push('Search by meaning was unavailable: only keys, names and words were matched, so a record worded differently may be missing.');
     if (result.modeUsed === 'exact_only') notes.push('Only exact keys and names were matched.');
+    if (result.seeds.some((seed) => seed.passages?.length)) {
+      notes.push('passages quote the parts of long fields (an e-mail body, a contract text) that match the search: quote them as evidence. They are excerpts: to read a whole field, use query_records on that record with fields=[the field].');
+    }
+    if (result.coverage.passageTruncatedCount) {
+      notes.push(`${String(result.coverage.passageTruncatedCount)} records have fields too long to be searched to their end: words near the end of those fields may not be found.`);
+    }
     return {
       model: this.modelRef(model), data, status: result.status, searchMode: result.modeUsed, indexState: result.index.state,
       concepts: result.concepts.map((concept) => concept.label), unknownConcepts: result.unknownConcepts,
-      records: result.seeds.map((seed) => ({
-        entityId: seed.entityId, concept: seed.conceptLabel, name: seed.label, keyFields: seed.keyFields, snippet: seed.snippet,
-        match: seed.matchClass, sourceCount: seed.provenance.length,
-      })),
+      records: result.seeds.map((seed) => {
+        const passages = (seed.passages ?? []).map((passage) => ({ field: passage.field, fieldKey: passage.fieldKey, text: passage.text }));
+        // Found by words deep in a long field: the passage says why, the start of the record does not.
+        const fromPassage = seed.matchedIn === 'passage' && passages.length > 0;
+        return {
+          entityId: seed.entityId, concept: seed.conceptLabel, name: seed.label, keyFields: seed.keyFields,
+          snippet: fromPassage ? `${passages[0].field}: ${passages[0].text}` : seed.snippet,
+          match: seed.matchClass, ...(seed.matchedIn ? { matchedIn: seed.matchedIn } : {}),
+          ...(passages.length ? { passages } : {}), sourceCount: seed.provenance.length,
+        };
+      }),
       coverage: result.coverage, notes,
     };
   }

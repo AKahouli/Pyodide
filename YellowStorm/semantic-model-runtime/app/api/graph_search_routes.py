@@ -226,7 +226,10 @@ async def search_records(command: SearchQuery, request: Request) -> dict[str, ob
             "unknownConcepts": unknown,
             "coverage": {"expectedCount": index.get("expectedCount"),
                          "indexedCount": index.get("indexedCount"),
-                         "exactOnlyCount": index.get("exactOnlyCount")}}
+                         "exactOnlyCount": index.get("exactOnlyCount"),
+                         "passageCount": index.get("passageCount"),
+                         "passageIndexedCount": index.get("passageIndexedCount"),
+                         "passageTruncatedCount": index.get("passageTruncatedCount")}}
     if command.concepts and not concepts:
         # Every named concept is absent from the model: the data cannot hold the answer.
         return {**base, "modeUsed": "exact_only", "status": "not_represented", "seeds": [],

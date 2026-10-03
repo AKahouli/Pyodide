@@ -46,9 +46,19 @@ conversation shows as a button opening the model, or as the suggested-sources ca
 ## Answering from the data
 
 The calling assistant plans every query; nothing in this stack interprets language or calls a model to
-answer. `describe_model` gives the names it may use; `find_records` answers "which record is this";
+answer. `describe_model` gives the names it may use; `find_records` answers "which record is this"
+(also from words deep in a long text field such as an e-mail body: see below);
 `query_records` answers everything that filters, counts or compares, and fetches the records a summary is
 written from (the assistant writes the summary and cites the records).
+
+`find_records` matches each record's own search text (type, name, keys, and the start of each field)
+and, for a text field longer than 300 characters, overlapping passages of about 1000 characters that
+cover the whole field (up to 20 per field and 50 per record; a field longer than that is searched only
+up to there and the notes say so). A record found that way carries `passages`: up to two
+`{field, fieldKey, text}` excerpts (about 400 characters around the words of the question) and
+`matchedIn: "passage"`; its `snippet` is then the best passage. The assistant quotes passages as
+evidence; to read the whole field it calls `query_records` on the record (filter on `name` or a key
+field, `fields=[fieldKey]`; values longer than 1500 characters are cut).
 
 ```text
 query_records(model_id, concept, filters=None, match="all", group_by=None, aggregates=None,

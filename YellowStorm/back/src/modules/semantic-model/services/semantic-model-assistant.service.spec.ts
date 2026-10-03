@@ -247,6 +247,36 @@ describe('SemanticModelAssistantService', () => {
     expect(result.notes.join(' ')).toMatch(/Search by meaning was unavailable/);
   });
 
+  it('quotes the matching passage of a long field and uses it as the snippet when the match came from it', async () => {
+    const seed = (entityId: string, matchedIn: 'record' | 'passage', passages?: unknown[]) => ({
+      entityId, conceptId: 'c-1', conceptLabel: 'E-mail', label: `Mail ${entityId}`, keyFields: {}, snippet: 'Type: E-mail\nName: Mail',
+      matchClass: 'hybrid', matchedIn, rank: 1, diagnostics: {}, provenance: [], ...(passages ? { passages } : {}),
+    });
+    const graphSearch = {
+      search: jest.fn().mockResolvedValue({
+        status: 'found', modeUsed: 'hybrid', index: { state: 'ready' }, concepts: [], unknownConcepts: [],
+        seeds: [
+          seed('e-1', 'passage', [{ fieldKey: 'corps', field: 'Corps', start: 850, end: 1850, text: '…the rack keys are at the front desk…' },
+            { fieldKey: 'corps', field: 'Corps', start: 0, end: 1000, text: 'Hello team' }]),
+          seed('e-2', 'record', [{ fieldKey: 'corps', field: 'Corps', start: 0, end: 900, text: 'keys' }]),
+          seed('e-3', 'record'),
+        ],
+        coverage: { expectedCount: 3, indexedCount: 3, exactOnlyCount: 0, passageCount: 12, passageIndexedCount: 12, passageTruncatedCount: 1 },
+      }),
+    };
+    const { service } = setup(undefined, { graphSearch });
+    const result = await service.findRecords('user-1', 'model-1', { query: 'where are the rack keys' });
+    expect(result.records[0]).toEqual({
+      entityId: 'e-1', concept: 'E-mail', name: 'Mail e-1', keyFields: {}, snippet: 'Corps: …the rack keys are at the front desk…',
+      match: 'hybrid', matchedIn: 'passage', sourceCount: 0,
+      passages: [{ field: 'Corps', fieldKey: 'corps', text: '…the rack keys are at the front desk…' }, { field: 'Corps', fieldKey: 'corps', text: 'Hello team' }],
+    });
+    expect(result.records[1]).toMatchObject({ snippet: 'Type: E-mail\nName: Mail', matchedIn: 'record', passages: [{ field: 'Corps', text: 'keys' }] });
+    expect(result.records[2]).not.toHaveProperty('passages');
+    expect(result.notes.join(' ')).toMatch(/quote them as evidence.*query_records/);
+    expect(result.notes.join(' ')).toMatch(/1 records have fields too long/);
+  });
+
   it('reports concepts the model does not hold as not represented', async () => {
     const graphSearch = {
       search: jest.fn().mockResolvedValue({

@@ -28,6 +28,7 @@ TABLES = ("semantic_runtime.specifications", "semantic_population.data_revisions
           "semantic_runtime.active_bindings", "semantic_population.entities",
           "semantic_population.relationships", "semantic_population.model_data_resets",
           "semantic_graph_search.index_generations", "semantic_graph_search.entity_documents",
+          "semantic_graph_search.entity_passages",
           "semantic_jobs.jobs", "semantic_jobs.ui_signal_outbox")
 
 
@@ -61,6 +62,11 @@ async def _seed(connection: asyncpg.Connection, model: str) -> None:
         "search_text, lexical, content_hash, status) VALUES ($1, $2, 'c', 'A', 'a', 'a', to_tsvector('simple', 'a'), $3, 'exact_only')",
         index_id, f"{model[-1]}:a", SPEC_HASH)
     await connection.execute(
+        "INSERT INTO semantic_graph_search.entity_passages (index_id, entity_id, ordinal, concept_id, field_key, "
+        "start_offset, end_offset, passage_text, search_text, lexical, content_hash, status) VALUES "
+        "($1, $2, 0, 'c', 'body', 0, 1, 'a', 'a', to_tsvector('simple', 'a'), $3, 'pending')",
+        index_id, f"{model[-1]}:a", SPEC_HASH)
+    await connection.execute(
         "INSERT INTO semantic_jobs.jobs (id, job_type, actor_user_id, model_id, idempotency_key, command_hash, "
         "command, state) VALUES (gen_random_uuid(), 'population.run', 'u1', $1, $2, $3, '{}'::jsonb, 'completed')",
         model, f"key-{model}", SPEC_HASH)
@@ -90,7 +96,7 @@ async def pool():
 async def _counts(pool: asyncpg.Pool) -> dict[str, tuple[int, int]]:
     counts = {}
     for table in TABLES:
-        column = "entity_id" if table.endswith("entity_documents") else "model_id"
+        column = "entity_id" if table.endswith(("entity_documents", "entity_passages")) else "model_id"
         pattern = "LIKE" if column == "entity_id" else "="
         if column == "entity_id":
             gone, kept = "'a:%'", "'b:%'"
