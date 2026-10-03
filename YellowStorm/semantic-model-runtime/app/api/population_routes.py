@@ -636,7 +636,9 @@ async def preview_document_fields(body: dict, request: Request) -> dict[str, obj
 
 @router.post("/computed-preview", status_code=status.HTTP_200_OK)
 async def preview_computed_field(body: dict) -> dict[str, object]:
-    """Run one computed field on sample values (file names, or values of the field it reads)."""
+    """Run one computed field on sample values (file names, values of the field it reads, or cells of
+    the column it reads), with the value at each step. ``inputRecipe`` first shapes each sample, for a
+    sheet field taken from another field that has its own recipe."""
     from app.population.computed_fields import MAX_PREVIEW_SAMPLES, compute, normalize_computed
     from app.population.document_rules import RuleError
 
@@ -646,12 +648,17 @@ async def preview_computed_field(body: dict) -> dict[str, object]:
         raise HTTPException(status_code=422, detail="invalid_samples")
     try:
         spec = normalize_computed(body.get("computed"))
+        before = normalize_computed(body["inputRecipe"]) if body.get("inputRecipe") is not None else None
     except RuleError as exc:
         raise HTTPException(status_code=422, detail=f"invalid_computed: {exc}") from exc
     results = []
     for sample in samples:
-        value, reason = compute(spec, sample)
-        results.append({"input": sample, "value": value, "reason": reason})
+        source: str | None = sample
+        if before is not None:
+            source, _ = compute(before, sample)
+        steps: list[dict] = []
+        value, reason = compute(spec, source, steps)
+        results.append({"input": sample, "value": value, "reason": reason, "steps": steps})
     return {"results": results}
 
 

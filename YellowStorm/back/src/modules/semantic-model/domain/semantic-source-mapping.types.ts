@@ -23,11 +23,16 @@ export interface ExtractionRules {
   take?: { from?: 'start' | 'end'; count: number; unit?: 'characters' | 'words' | 'lines' };
 }
 
-/** A document field derived from the file name or from another mapped field (runtime computes it). */
+/**
+ * A field's recipe: take it from somewhere, cut it, keep a part, match a shape, clean it up (the runtime
+ * applies it). A document's computed field, or a spreadsheet's direct field that is transformed.
+ */
 export interface ComputedFieldSpec {
-  // kind 'file' reads 'document_name'; kind 'field' reads another non-computed mapping's targetAttribute.
-  input: { kind: 'file' | 'field'; name: string };
-  method: 'split' | 'between' | 'regex';
+  // kind 'file' reads 'document_name' (documents); kind 'field' reads another mapping's targetAttribute
+  // (not itself taken from a field); kind 'column' reads a column of the row (spreadsheets).
+  input: { kind: 'file' | 'field' | 'column'; name: string };
+  // 'whole' keeps the input as it is (no cut).
+  method: 'whole' | 'split' | 'between' | 'regex';
   delimiter?: string;
   part?: number;
   after?: string;
@@ -53,6 +58,7 @@ export interface SourceFieldMapping {
   /** AI reading only: the agent asked to read the field; absent means the platform's extraction agent. */
   agentId?: string;
   rules?: ExtractionRules;
+  /** mode 'computed' (documents) or 'direct' (spreadsheets: the column's value is transformed). */
   computed?: ComputedFieldSpec;
 }
 

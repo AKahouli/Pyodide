@@ -6,7 +6,7 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import type { AttributeDefinition } from '../domain/semantic-model.types';
 import type { RelationResolutionRule } from '../domain/semantic-cross-source.types';
-import { AI_EXTRACTION_CONTRACT_VERSION, aiFieldHints, DEFAULT_RUN_LIMITS, usesAiExtraction, type AiExtractionSettings, type RunLimits, type SourceFieldMapping } from '../domain/semantic-source-mapping.types';
+import { AI_EXTRACTION_CONTRACT_VERSION, aiFieldHints, DEFAULT_RUN_LIMITS, usesAiExtraction, type AiExtractionSettings, type ComputedFieldSpec, type RunLimits, type SourceFieldMapping } from '../domain/semantic-source-mapping.types';
 import type { ConceptSpec, RelationSpec } from '../domain/model-specification.types';
 import type { RecordCorrectionDto } from '../dto/semantic-model.dto';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
@@ -730,6 +730,8 @@ export class SemanticPopulationRefreshService {
         fieldMappings: 'fieldMappings' in source ? source.fieldMappings : null,
         options: 'options' in source ? source.options : {},
         labelField: 'labelField' in source ? source.labelField ?? null : null,
+        // Only present when a sheet field is transformed, so other sources keep their fingerprint.
+        ...('fieldRecipes' in source && source.fieldRecipes ? { fieldRecipes: source.fieldRecipes } : {}),
       })),
       relationBindings,
       aiExtraction,
@@ -1071,8 +1073,11 @@ export class SemanticPopulationRefreshService {
     }
     const columnMapping: Record<string, string> = {};
     const constantMapping: Record<string, unknown> = {};
+    // A field read from a column and then transformed: the runtime applies the same recipe as documents.
+    const fieldRecipes: Record<string, ComputedFieldSpec> = {};
     for (const field of mapping.fieldMappings ?? []) {
       if (field.mode === 'direct' && field.sourceField) columnMapping[field.sourceField] = field.targetAttribute;
+      if (field.mode === 'direct' && field.sourceField && field.computed) fieldRecipes[field.targetAttribute] = field.computed;
       if (field.mode === 'constant') constantMapping[field.targetAttribute] = field.constantValue;
     }
     if ((!Object.keys(columnMapping).length && !Object.keys(constantMapping).length)
@@ -1092,6 +1097,7 @@ export class SemanticPopulationRefreshService {
       options: mapping.sheetName ? { sheetName: mapping.sheetName } : {},
       columnMapping,
       ...(Object.keys(constantMapping).length ? { constantMapping } : {}),
+      ...(Object.keys(fieldRecipes).length ? { fieldRecipes } : {}),
       ...(labelField ? { labelField } : {}),
       mappingVersion,
     };

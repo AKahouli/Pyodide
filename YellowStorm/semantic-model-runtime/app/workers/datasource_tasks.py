@@ -34,6 +34,9 @@ def build_mapping_preview(profile: dict, draft: object) -> dict | None:
     limit = min(limit, 50) if isinstance(limit, int) and not isinstance(limit, bool) else 50
     samples = profile.get("samples", [])
     profiles = profile.get("fieldProfiles", [])
+    from app.population.computed_fields import apply_row_recipes
+
+    recipes, recipe_warning = _row_recipes(mappings)
     entities, seen = [], set()
     null_skipped = duplicate_skipped = 0
     for row in samples if isinstance(samples, list) else []:
@@ -53,7 +56,10 @@ def build_mapping_preview(profile: dict, draft: object) -> dict | None:
             elif mapping.get("mode") == "direct" and isinstance(mapping.get("sourceField"), str):
                 values[target] = row.get(resolve_column(mapping["sourceField"], row))
                 fields[target] = {"method": "direct_mapping"}
-        identity = [str(values.get(key, "")).strip().lower() for key in identities]
+        # The same recipes as a run, before the identity is read.
+        if recipes:
+            apply_row_recipes(recipes, values, row, lambda name: resolve_column(name, row))
+        identity = [("" if values.get(key) is None else str(values[key])).strip().lower() for key in identities]
         if identities and any(not value for value in identity):
             null_skipped += 1
             continue
@@ -80,11 +86,29 @@ def build_mapping_preview(profile: dict, draft: object) -> dict | None:
             evidence.append({**match, "name": target})
     warnings = [item.get("message") for item in profile.get("warnings", [])
                 if isinstance(item, dict) and isinstance(item.get("message"), str)]
+    if recipe_warning:
+        warnings.append(recipe_warning)
     return {"entities": entities,
             "stats": {"scannedRows": len(samples), "resolvedEntities": len(entities),
                       "duplicateKeysSkipped": duplicate_skipped,
                       "nullIdentitySkipped": null_skipped},
             "identityEvidence": evidence, "warnings": warnings}
+
+
+def _row_recipes(mappings: list) -> tuple[dict, str | None]:
+    """The recipes of the drafted sheet fields, or none and why when one cannot be used."""
+    from app.population.computed_fields import normalize_row_recipes
+    from app.population.document_rules import RuleError
+
+    direct = [item for item in mappings if isinstance(item, dict) and item.get("mode") == "direct"
+              and isinstance(item.get("targetAttribute"), str)]
+    raw = {item["targetAttribute"]: item["computed"] for item in direct if item.get("computed") is not None}
+    if not raw:
+        return {}, None
+    try:
+        return normalize_row_recipes(raw, {item["targetAttribute"] for item in direct}), None
+    except RuleError as exc:
+        return {}, f"A field's transformation cannot be used: {exc}"
 
 
 def with_mapping_preview(result: dict, command_dump: dict) -> dict:

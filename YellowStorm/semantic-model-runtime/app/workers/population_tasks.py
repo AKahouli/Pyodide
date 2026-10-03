@@ -18,7 +18,8 @@ from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
 from app.population.compiler import (canonical_spec_hash, compile_specification,
                                      filter_fields, validate_specification)
 from app.population.derived import DerivationError, derive_concept, merge_derived, normalize_derivations
-from app.population.computed_fields import check_inputs, normalize_computed
+from app.population.computed_fields import (apply_row_recipes, check_inputs, normalize_computed,
+                                            normalize_row_recipes, recipe_columns)
 from app.population.document_rules import RuleError, normalize_ai_settings, normalize_rules
 from app.population.run_limits import run_limits
 from app.datasource.email_archive import resolve_column
@@ -67,6 +68,8 @@ def population_execution_fingerprint(spec_hash: str, sources: list[dict],
         "fieldMappings": source.get("fieldMappings"),
         "options": source.get("options", {}),
         "labelField": source.get("labelField"),
+        # Only present when a sheet field has a recipe, so other sources keep their fingerprint.
+        **({"fieldRecipes": source["fieldRecipes"]} if source.get("fieldRecipes") else {}),
     } for source in sources]
     # The AI agent's effective model is part of revision identity: changing it in
     # the agent library must produce a new revision instead of reusing persisted
@@ -284,6 +287,12 @@ def run_population_for_payload(command_dump: dict) -> dict:
                 if set(mapping.values()) & set(constants):
                     return {"ok": False, "errorCode": "duplicate_column_mapping"}
                 mapped_attributes = set(mapping.values()) | set(constants)
+                # A field's recipe (take it from, cut, keep, shape, clean-up), as a document's computed field.
+                field_recipes = entry.get("fieldRecipes") or entry.get("field_recipes")
+                try:
+                    recipes = normalize_row_recipes(field_recipes, set(mapping.values()))
+                except RuleError:
+                    return {"ok": False, "errorCode": "invalid_column_mapping"}
             unmapped = [c for c in concept["keyComponents"] if c not in mapped_attributes]
             # Manual rows without a key value keep their own row key as identity.
             if unmapped and source_kind != "manual":
@@ -309,7 +318,8 @@ def run_population_for_payload(command_dump: dict) -> dict:
                 "sourceKind": source_kind or "tabular",
                 "options": options if isinstance(options, dict) else {},
                 **({"fieldMappings": active, "receivedFieldMappings": field_mappings} if source_kind == "document"
-                   else {"columnMapping": dict(mapping), "constantMapping": dict(constants)}),
+                   else {"columnMapping": dict(mapping), "constantMapping": dict(constants),
+                         **({"fieldRecipes": recipes, "receivedFieldRecipes": field_recipes} if recipes else {})}),
                 "labelField": entry.get("labelField") or entry.get("label_field"),
                 "mappingVersion": entry.get("mappingVersion") or entry.get("mapping_version") or "v1",
             })
@@ -350,10 +360,13 @@ def run_population_for_payload(command_dump: dict) -> dict:
         # The core hashes the mappings it sent, before the rules are normalized here.
         received = [{**source, "fieldMappings": source["receivedFieldMappings"]}
                     if "receivedFieldMappings" in source else source for source in normalized]
+        received = [{**source, "fieldRecipes": source["receivedFieldRecipes"]}
+                    if "receivedFieldRecipes" in source else source for source in received]
         execution_fingerprint = population_execution_fingerprint(
             expected_hash, received, normalized_bindings, ai_extraction, derivations)
         for source in normalized:
             source.pop("receivedFieldMappings", None)
+            source.pop("receivedFieldRecipes", None)
         supplied_fingerprint = (payload.get("populationExecutionFingerprint")
                                 or payload.get("population_execution_fingerprint"))
         if supplied_fingerprint is not None and supplied_fingerprint != execution_fingerprint:
@@ -541,7 +554,9 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                     "columnMapping": entry["columnMapping"], "constantMapping": entry.get("constantMapping", {}),
                     "options": options, "mappingVersion": entry["mappingVersion"],
                     "labelField": entry.get("labelField"), "assetRef": asset_ref,
-                    "content": content_digest})
+                    "content": content_digest,
+                    # Only present with a recipe, so a sheet without one keeps its cached reading.
+                    **({"fieldRecipes": entry["fieldRecipes"]} if entry.get("fieldRecipes") else {})})
                 cached = await extraction_cache.get(cache_key)
                 if cached is not None and isinstance(cached.get("outputs"), list):
                     for output in cached["outputs"]:
@@ -572,7 +587,11 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                     mapping = ({resolve_column(column, available): attribute
                                 for column, attribute in entry["columnMapping"].items()}
                                if isinstance(available, list) else entry["columnMapping"])
-                    columns = sorted(set(mapping) | {SHEET_ROW_KEY})
+                    recipes = entry.get("fieldRecipes") or {}
+                    # A column a recipe reads that the sheet does not have is left out (its input is empty).
+                    recipe_inputs = ({resolve_column(name, available) for name in recipe_columns(recipes)}
+                                     & set(available) if isinstance(available, list) else recipe_columns(recipes))
+                    columns = sorted(set(mapping) | recipe_inputs | {SHEET_ROW_KEY})
                     offset = 0
                     while True:
                         page = await asyncio.to_thread(
@@ -585,6 +604,10 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                             for source_column, attribute in mapping.items():
                                 if source_column in raw:
                                     renamed[attribute] = raw[source_column]
+                            # Shaped before the identity is read, so the key uses the shaped value.
+                            if recipes:
+                                apply_row_recipes(recipes, renamed, raw,
+                                                  lambda name: resolve_column(name, raw))
                             rows.append(renamed)
                         # The admin's per-source limit: the rest of the sheet is left unread.
                         capped = len(rows) > limits["maxRecordsPerSource"] - records

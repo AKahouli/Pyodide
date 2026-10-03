@@ -244,10 +244,16 @@ export interface RuntimeDocumentLabels {
 export interface RuntimeComputedPreviewRequest {
   computed: unknown;
   samples: string[];
+  /** Shapes each sample first (the recipe of the field this one is taken from). */
+  inputRecipe?: unknown;
 }
 
 export interface RuntimeComputedPreview {
-  results: Array<{ input: string; value: string | null; reason: 'found' | 'no_input' | 'no_match' | 'not_transformable' }>;
+  results: Array<{
+    input: string; value: string | null; reason: 'found' | 'no_input' | 'no_match' | 'not_transformable';
+    /** The value after each step that ran; null where the recipe stopped. */
+    steps?: Array<{ step: 'cut' | 'keep' | 'pattern' | 'transform'; value: string | null }>;
+  }>;
 }
 
 // ── Graph search (records of a bound data revision, found by meaning, then followed along real links) ──

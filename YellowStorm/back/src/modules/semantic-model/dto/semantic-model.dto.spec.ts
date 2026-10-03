@@ -48,6 +48,28 @@ describe('Computed field DTOs', () => {
       { type: 'body', metatype: ComputedFieldPreviewDto })).rejects.toBeDefined();
     await expect(pipe.transform({ computed, samples: [] }, { type: 'body', metatype: ComputedFieldPreviewDto })).rejects.toBeDefined();
   });
+
+  it('accepts a spreadsheet field transformed from a column, and a preview shaped by the input field recipe', async () => {
+    const recipe = { input: { kind: 'column', name: 'Date d’envoi' }, method: 'whole', take: { from: 'start', count: 10, unit: 'characters' }, transform: 'date_iso' };
+    const mapping = { sourceField: 'Date d’envoi', targetAttribute: 'sent', mode: 'direct', computed: recipe };
+    await expect(pipe.transform(mapping, { type: 'body', metatype: SourceFieldMappingDto })).resolves.toMatchObject({ computed: recipe });
+    // An old sheet mapping, without a recipe, is still valid as is.
+    const plain = await pipe.transform({ sourceField: 'id', targetAttribute: 'id', mode: 'direct' }, { type: 'body', metatype: SourceFieldMappingDto });
+    expect(plain).toMatchObject({ sourceField: 'id', mode: 'direct' });
+    expect(plain.computed).toBeUndefined();
+    const fromField = { input: { kind: 'field', name: 'sent' }, method: 'whole', transform: 'year' };
+    await expect(pipe.transform({ computed: fromField, inputRecipe: recipe, samples: ['2024-03-01 10:00'] }, { type: 'body', metatype: ComputedFieldPreviewDto }))
+      .resolves.toMatchObject({ inputRecipe: recipe });
+  });
+
+  it('rejects an unknown input kind, a too long column name and a bad input recipe', async () => {
+    const bad = (input: Record<string, unknown>) => pipe.transform({ sourceField: 'a', targetAttribute: 'a', mode: 'direct', computed: { input, method: 'whole' } },
+      { type: 'body', metatype: SourceFieldMappingDto });
+    await expect(bad({ kind: 'cell', name: 'a' })).rejects.toBeDefined();
+    await expect(bad({ kind: 'column', name: 'x'.repeat(201) })).rejects.toBeDefined();
+    await expect(pipe.transform({ computed, inputRecipe: { ...computed, method: 'eval' }, samples: ['a'] }, { type: 'body', metatype: ComputedFieldPreviewDto }))
+      .rejects.toBeDefined();
+  });
 });
 
 describe('Passage rules and document labels DTOs', () => {

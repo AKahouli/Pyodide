@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Sparkles, AlertTriangle } from 'lucide-react';
+import { Loader2, Sparkles, AlertTriangle, Pencil, Wand2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -16,8 +16,9 @@ import { semanticModelQueryKeys } from '../../query/queryKeys';
 import { useSourceMappings } from '../../query/hooks';
 import { useSemanticModelEditorStore } from '../../store';
 import type { KnowledgeResource } from '../../hooks/use-knowledge-linking';
-import type { ConceptSourceMapping, SourceFieldMapping, SheetProfile } from '../../types';
+import type { ComputedFieldRule, ConceptSourceMapping, SourceFieldMapping, SheetProfile } from '../../types';
 import { DocumentSourceMappingDrawer } from './DocumentSourceMappingDrawer';
+import { computedPayload, computedProblem, FieldRecipeEditor, newColumnRecipe, recipeStepCount, type RecipeSource } from './FieldRecipeEditor';
 import type { SuggestionSource } from '../editor/SuggestConceptsDialog';
 import { FORM_SECTION, FormField, INPUT, INPUT_COMPACT, ROW_LIST, SectionHeader } from '../form/FormParts';
 
@@ -74,6 +75,22 @@ export function sourceMappingTargetFromResource(resource: Extract<KnowledgeResou
 
 const normalizeName = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
 
+/**
+ * What a sheet field mapping saves: its recipe only when it changes the value, so a field read as it is
+ * saves exactly what it did before recipes existed.
+ */
+export function sheetFieldPayload(mapping: SourceFieldMapping): SourceFieldMapping {
+  const { computed, ...rest } = mapping;
+  return mapping.mode === 'direct' && computed && recipeStepCount(computed, mapping.sourceField) > 0
+    ? { ...rest, computed: computedPayload(computed) } : rest;
+}
+
+/** The fields a sheet field's recipe may be taken from: other fields read from a column, not themselves taken from a field. */
+function recipeInputFields(mappings: SourceFieldMapping[], targetAttribute: string) {
+  return mappings.filter((mapping) => mapping.mode === 'direct' && mapping.targetAttribute && mapping.targetAttribute !== targetAttribute
+    && !(mapping.computed && recipeStepCount(mapping.computed, mapping.sourceField) > 0 && mapping.computed.input.kind === 'field'));
+}
+
 export function SourceMappingDrawer({ onSuggestConcepts, ...props }: Readonly<{ modelId: string; target: SourceMappingTarget | null; onClose: () => void; onSuggestConcepts?: (source: SuggestionSource) => void }>) {
   if (props.target?.assetKind === 'document') return <DocumentSourceMappingDrawer {...props} />;
   return <StructuredSourceMappingDrawer {...props} onSuggestConcepts={onSuggestConcepts} />;
@@ -90,6 +107,8 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose, onSuggestConc
   const [mappings, setMappings] = useState<SourceFieldMapping[]>([]);
   const [identityField, setIdentityField] = useState('');
   const [suggestedKeys, setSuggestedKeys] = useState<Set<string>>(new Set());
+  // The column whose field's transformation is open.
+  const [editing, setEditing] = useState<string | null>(null);
 
   useEffect(() => {
     if (!target) return;
@@ -98,6 +117,7 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose, onSuggestConc
     setMappings(target.mapping?.fieldMappings ?? []);
     setIdentityField(target.mapping?.identityFields[0] ?? '');
     setSuggestedKeys(new Set());
+    setEditing(null);
     preview.reset();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target?.workspaceId, target?.documentId, target?.mapping?.id]);
@@ -170,7 +190,21 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose, onSuggestConc
     });
   }, [fieldNames, target?.mapping]);
 
-  const activeMappings = mappings.filter((mapping) => mapping.mode !== 'ignore');
+  const activeMappings = mappings.filter((mapping) => mapping.mode !== 'ignore').map(sheetFieldPayload);
+  const columnNames = fields.map((field) => field.name);
+  const attributeLabel = (key: string) => nodes.find((node) => node.id === conceptId)?.attributes.find((attribute) => attribute.key === key)?.label ?? key;
+  // A transformed field whose recipe cannot be used blocks saving, as a computed document field does.
+  const recipeProblems = activeMappings.filter((mapping) => mapping.computed && computedProblem(mapping.computed,
+    recipeInputFields(activeMappings, mapping.targetAttribute).map((item) => item.targetAttribute), columnNames.length ? columnNames : undefined));
+  const recipeSource: RecipeSource = {
+    kind: 'sheet', columns: columnNames, rows: profile.data?.sampleRows ?? [],
+    fieldInputs: Object.fromEntries(activeMappings.filter((mapping) => mapping.mode === 'direct' && mapping.sourceField)
+      .map((mapping) => [mapping.targetAttribute, { column: mapping.sourceField!, recipe: mapping.computed }])),
+  };
+  const setRecipe = (index: number, computed: ComputedFieldRule | undefined) => {
+    setMappings((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, computed } : item));
+    preview.reset();
+  };
 
   const preview = useMutation({
     mutationFn: () => semanticModelApi.previewSourceMapping(modelId, {
@@ -216,7 +250,7 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose, onSuggestConc
   });
 
   const identityValid = !identityField || activeMappings.some((mapping) => mapping.targetAttribute === identityField);
-  const canSave = Boolean(conceptId && sheetName && activeMappings.length && identityValid) && !save.isPending;
+  const canSave = Boolean(conceptId && sheetName && activeMappings.length && identityValid && !recipeProblems.length) && !save.isPending;
 
   return (
     <Sheet modal={false} open={Boolean(target)} onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -263,19 +297,27 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose, onSuggestConc
                 {mappings.length > 0 && <ul className={ROW_LIST}>
                   {mappings.map((mapping, index) => {
                     const suggested = suggestedKeys.has(mapping.sourceField ?? '');
+                    const direct = mapping.mode === 'direct' && Boolean(mapping.targetAttribute);
+                    const open = direct && editing !== null && editing === mapping.sourceField;
+                    const steps = direct ? recipeStepCount(mapping.computed, mapping.sourceField) : 0;
+                    const fieldLabel = attributeLabel(mapping.targetAttribute);
                     return (
-                      <li key={mapping.sourceField ?? index} className='flex items-center gap-2 px-3 py-1.5'>
+                      <li key={mapping.sourceField ?? index} className='px-3 py-1.5'>
+                       <div className='flex items-center gap-2'>
                         <div className='min-w-0 flex-1'>
                           <div className='flex items-center gap-1 truncate text-sm font-medium'>{mapping.sourceField}
                             {suggested && <Badge variant='outline' className='gap-0.5 px-1 py-0 text-[9px] text-primary'><Sparkles className='h-2.5 w-2.5' />{t('mapping.suggested')}</Badge>}
+                            {steps > 0 && <Badge variant='secondary' className='gap-0.5 px-1 py-0 text-[9px]' title={t('mapping.recipe.chipHelp', { summary: recipeSummary(mapping.computed!, mapping.sourceField) })}>
+                              <Wand2 className='h-2.5 w-2.5' />{t('mapping.recipe.chip', { count: steps })}</Badge>}
                           </div>
                           <p className='truncate text-[11px] text-muted-foreground'>{fields.find((field) => field.name === mapping.sourceField)?.sample}</p>
                         </div>
                         <Select value={mapping.mode === 'direct' ? mapping.targetAttribute : '__ignore'}
                           onValueChange={(value) => {
                             if (identityField === mapping.targetAttribute && value !== mapping.targetAttribute) setIdentityField('');
+                            if (value === '__ignore' && open) setEditing(null);
                             setMappings(mappings.map((item, itemIndex) => itemIndex === index
-                              ? value === '__ignore' ? { ...item, targetAttribute: '', mode: 'ignore' }
+                              ? value === '__ignore' ? { ...item, targetAttribute: '', mode: 'ignore', computed: undefined }
                                 : { ...item, targetAttribute: value, mode: 'direct' } : item));
                           }}>
                           <SelectTrigger className={cn(INPUT_COMPACT, 'w-44 shrink-0')} aria-label={t('mapping.targetFor', { field: mapping.sourceField ?? '' })}><SelectValue /></SelectTrigger>
@@ -286,10 +328,25 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose, onSuggestConc
                             ))}
                           </SelectContent>
                         </Select>
+                        <Button type='button' size='icon' variant={open ? 'secondary' : 'ghost'} className='h-7 w-7 shrink-0' disabled={!direct}
+                          aria-expanded={open} aria-label={open ? t('mapping.recipe.close', { field: fieldLabel }) : t('mapping.recipe.edit', { field: fieldLabel })}
+                          title={direct ? t('mapping.recipe.editHelp') : undefined}
+                          onClick={() => setEditing(open ? null : mapping.sourceField)}>
+                          <Pencil className='h-3.5 w-3.5' />
+                        </Button>
+                       </div>
+                        {open && mapping.sourceField && <div className='mt-2 space-y-1.5'>
+                          <FieldRecipeEditor modelId={modelId} fieldLabel={fieldLabel} rule={mapping.computed ?? newColumnRecipe(mapping.sourceField)}
+                            onChange={(computed) => setRecipe(index, computed)} source={recipeSource}
+                            fields={recipeInputFields(mappings, mapping.targetAttribute).map((item) => ({ key: item.targetAttribute, label: attributeLabel(item.targetAttribute) }))} />
+                          {steps > 0 && <button type='button' className='text-[11px] text-muted-foreground underline' onClick={() => setRecipe(index, undefined)}>{t('mapping.recipe.reset')}</button>}
+                        </div>}
                       </li>
                     );
                   })}
                 </ul>}
+                {recipeProblems.length > 0 && <p role='status' className='text-xs text-amber-700 dark:text-amber-400'>
+                  {t('mapping.recipe.saveBlocked', { fields: recipeProblems.map((mapping) => attributeLabel(mapping.targetAttribute)).join(', ') })}</p>}
               </section>
             )}
 
@@ -350,4 +407,15 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose, onSuggestConc
       )}
     </Sheet>
   );
+}
+
+/** “cut, keep, clean-up”: the steps a recipe applies, for the row's chip. */
+function recipeSummary(rule: ComputedFieldRule, ownColumn: string | null) {
+  return [
+    rule.input.kind === 'column' && rule.input.name !== ownColumn ? rule.input.name : rule.input.kind === 'field' ? rule.input.name : null,
+    rule.method !== 'whole' ? rule.method : null,
+    rule.take ? 'take' : null,
+    rule.valuePattern?.trim() ? 'pattern' : null,
+    (rule.transform ?? 'none') !== 'none' ? rule.transform : null,
+  ].filter(Boolean).join(' → ');
 }

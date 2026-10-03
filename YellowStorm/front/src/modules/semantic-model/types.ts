@@ -262,7 +262,10 @@ export interface SourceFieldMapping {
   targetAttribute: string;
   mode: 'direct' | 'extract' | 'metadata' | 'constant' | 'computed' | 'ignore';
   constantValue?: unknown;
-  /** Only for mode='computed' (document sources): a value taken from the file name or another field. */
+  /**
+   * mode='computed' (documents): a value taken from the file name or another field. mode='direct'
+   * (spreadsheets): the field's recipe, from its column (or another column or field); absent reads the column as is.
+   */
   computed?: ComputedFieldRule;
   // Only meaningful for mode='extract'; absent means deterministic.
   extractionStrategy?: SourceExtractionStrategy;
@@ -273,8 +276,9 @@ export interface SourceFieldMapping {
   rules?: ExtractionRules;
 }
 
-export type ComputedFieldInput = { kind: 'file'; name: 'document_name' } | { kind: 'field'; name: string };
-export type ComputedFieldMethod = 'split' | 'between' | 'regex';
+export type ComputedFieldInput = { kind: 'file'; name: 'document_name' } | { kind: 'field'; name: string } | { kind: 'column'; name: string };
+/** 'whole' keeps the input as it is (no cut). */
+export type ComputedFieldMethod = 'whole' | 'split' | 'between' | 'regex';
 export type ComputedFieldTransform = 'none' | 'trim' | 'no_spaces' | 'upper' | 'lower' | 'date_iso' | 'year' | 'number';
 
 /** How a computed field is cut out of its input, e.g. `ACME_2023_8K.pdf` split by `_`, 2nd part → `2023`. */
@@ -302,6 +306,8 @@ export interface ComputedPreviewResult {
   input: string | null;
   value: string | null;
   reason: 'found' | 'no_input' | 'no_match' | 'not_transformable';
+  /** The value after each step that ran; null where the recipe stopped. */
+  steps?: Array<{ step: 'cut' | 'keep' | 'pattern' | 'transform'; value: string | null }>;
 }
 
 /** How much of a document the AI reads. */

@@ -28,7 +28,7 @@ import { DEFAULT_SPLIT, DocumentPreviewPane, documentStatusText, FieldLiveStatus
 import { useLiveDocumentPreview } from './useLiveDocumentPreview';
 import type { SourceMappingTarget, WorkspaceSourceScope } from './SourceMappingDrawer';
 import { AiFieldSettings, withoutAiSettings } from './AiFieldSettings';
-import { ComputedFieldEditor, computedPayload, computedProblem, newComputedRule } from './ComputedFieldEditor';
+import { computedPayload, computedProblem, FieldRecipeEditor, newComputedRule } from './FieldRecipeEditor';
 import { isReadableDocument, WorkspaceFilePicker, type WorkspacePick } from './WorkspaceFilePicker';
 import { MappingPresetBar } from './MappingPresetBar';
 import { FORM_SECTION, FormField, INPUT, INPUT_COMPACT, ROW_LIST, SectionHeader } from '../form/FormParts';
@@ -546,10 +546,10 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
                 fieldLabel={attributeLabel(mapping.targetAttribute)} mapping={mapping}
                 attributeDescription={concept.attributes.find((attribute) => attribute.key === mapping.targetAttribute)?.description}
                 onChange={(patch) => setAiSettingsOf(index, patch)} />}
-              {mapping.mode === 'computed' && <ComputedFieldEditor modelId={modelId} fieldLabel={attributeLabel(mapping.targetAttribute)} rule={mapping.computed ?? newComputedRule()}
+              {mapping.mode === 'computed' && <FieldRecipeEditor modelId={modelId} fieldLabel={attributeLabel(mapping.targetAttribute)} rule={mapping.computed ?? newComputedRule()}
                 onChange={(computed) => changeMappings(mappings.map((item, itemIndex) => itemIndex === index ? { ...item, computed } : item))}
                 fields={computedInputs(mapping.targetAttribute).map((key) => ({ key, label: attributeLabel(key) }))}
-                fileSamples={fileSamples} fieldSamples={fieldSamples} />}
+                source={{ kind: 'document', fileSamples, fieldSamples }} />}
               {mapping.mode === 'constant' && <Input className={INPUT_COMPACT} value={String(mapping.constantValue ?? '')} onChange={(event) => changeMappings(mappings.map((item, itemIndex) => itemIndex === index ? { ...item, constantValue: event.target.value } : item))} placeholder={t('mapping.constantPlaceholder')} />}
             </div>)}
           </div>

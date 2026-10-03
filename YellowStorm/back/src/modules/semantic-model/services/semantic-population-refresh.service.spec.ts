@@ -702,6 +702,41 @@ describe('SemanticPopulationRefreshService', () => {
     }]);
   });
 
+  it('sends a transformed sheet field as its recipe, and fingerprints it only when there is one', async () => {
+    const recipe = { input: { kind: 'column' as const, name: 'customer_id' }, method: 'split' as const, delimiter: '-', part: 2, transform: 'upper' as const };
+    const mapping = MAPPING({ fieldMappings: [
+      { sourceField: 'customer_id', targetAttribute: 'customer_id', mode: 'direct', computed: recipe },
+      { sourceField: 'legal_name', targetAttribute: 'name', mode: 'direct' },
+    ] });
+    const { runtime, service } = setup([mapping]);
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const command = calls[0][0];
+    expect(command.payload.sources[0]).toMatchObject({
+      columnMapping: { customer_id: 'customer_id', legal_name: 'name' }, fieldRecipes: { customer_id: recipe },
+    });
+    const canonical = (entry: Record<string, any>, withRecipes: boolean) => ({
+      conceptId: entry.conceptId, sourceKind: entry.sourceKind, source: entry.source, mappingVersion: entry.mappingVersion,
+      columnMapping: entry.columnMapping ?? null, constantMapping: entry.constantMapping ?? null,
+      fieldMappings: entry.fieldMappings ?? null, options: entry.options ?? {}, labelField: entry.labelField ?? null,
+      ...(withRecipes ? { fieldRecipes: entry.fieldRecipes } : {}),
+    });
+    const fingerprint = (withRecipes: boolean) => new ModelSpecificationService().hashCanonical({
+      specHash: command.payload.specHash,
+      sources: command.payload.sources.map((entry: Record<string, any>) => canonical(entry, withRecipes)),
+      relationBindings: command.payload.relationBindings,
+      aiExtraction: command.payload.aiExtraction,
+      populationEngineVersion: 'r1-mvp-8',
+    });
+    expect(command.payload.populationExecutionFingerprint).toBe(fingerprint(true));
+    expect(fingerprint(true)).not.toBe(fingerprint(false));
+
+    const plain = setup();
+    await plain.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const plainCalls = plain.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    expect(plainCalls[0][0].payload.sources[0]).not.toHaveProperty('fieldRecipes');
+  });
+
   it('compiles structured constants without replacing direct fields', async () => {
     const mapping = MAPPING({ fieldMappings: [
       { sourceField: 'customer_id', targetAttribute: 'customer_id', mode: 'direct' },

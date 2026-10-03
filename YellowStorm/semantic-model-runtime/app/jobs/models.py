@@ -58,18 +58,29 @@ class PopulationSource(BaseModel):
     field_mappings: list[dict[str, Any]] | None = Field(
         default=None, alias="fieldMappings", min_length=1, max_length=25)
     label_field: str | None = Field(default=None, alias="labelField", max_length=200)
+    # Tabular only: a field's recipe (same shape as a document's computed field), by field.
+    field_recipes: dict[str, dict[str, Any]] | None = Field(default=None, alias="fieldRecipes", max_length=50)
     mapping_version: str = Field(default="v1", alias="mappingVersion", max_length=200)
 
     @model_validator(mode="after")
     def validate_mapping_shape(self):  # type: ignore[no-untyped-def]
         if self.source_kind == "document":
             if (self.field_mappings is None or self.column_mapping is not None
-                    or self.constant_mapping is not None):
+                    or self.constant_mapping is not None or self.field_recipes is not None):
                 raise ValueError("document sources require fieldMappings only")
         elif ((self.column_mapping is None and self.constant_mapping is None)
               or self.field_mappings is not None):
             raise ValueError("tabular sources require columnMapping only")
         return self
+
+    @model_serializer(mode="wrap")
+    def serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        # A source without recipes keeps its historical stored shape.
+        data = handler(self)
+        if self.field_recipes is None:
+            data.pop("fieldRecipes", None)
+            data.pop("field_recipes", None)
+        return data
 
 
 class RelationBinding(BaseModel):

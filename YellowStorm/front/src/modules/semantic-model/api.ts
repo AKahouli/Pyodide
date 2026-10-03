@@ -238,7 +238,7 @@ export const semanticModelApi = {
   async updateAdminRunLimits(limits: Partial<RunLimits>): Promise<RunLimitsDefaults> {
     return unwrap(await apiClient.put<ApiResponse<RunLimitsDefaults>>(API_ENDPOINTS.adminSemanticModelSettings.runLimits, limits));
   },
-  async previewComputedField(id: string, payload: { computed: ComputedFieldRule; samples: string[] }): Promise<{ results: ComputedPreviewResult[] }> {
+  async previewComputedField(id: string, payload: { computed: ComputedFieldRule; samples: string[]; inputRecipe?: ComputedFieldRule }): Promise<{ results: ComputedPreviewResult[] }> {
     return unwrap(await apiClient.post<ApiResponse<{ results: ComputedPreviewResult[] }>>(API_ENDPOINTS.semanticModels.computedFieldPreview(id), payload));
   },
   /** Labels and headings that recur across up to 10 documents of a source, to suggest as rule labels. */

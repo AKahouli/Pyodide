@@ -247,7 +247,9 @@ export class SemanticSourceMappingService {
   /** Try a computation on sample inputs (file names or field values) without a document. */
   async previewComputed(userId: string, modelId: string, dto: ComputedFieldPreviewDto) {
     await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
-    return this.runtime.previewComputedField({ computed: dto.computed, samples: dto.samples });
+    return this.runtime.previewComputedField({
+      computed: dto.computed, samples: dto.samples, ...(dto.inputRecipe ? { inputRecipe: dto.inputRecipe } : {}),
+    });
   }
 
   /**
@@ -896,6 +898,29 @@ export class SemanticSourceMappingService {
     return actualKind;
   }
 
+  /**
+   * A spreadsheet field's recipe reads a column of the row, or another directly mapped field that is not
+   * itself taken from a field (no chains), as a computed document field does.
+   */
+  private assertSheetRecipes(mappings: SourceFieldMapping[]): void {
+    const misplaced = mappings.find((mapping) => mapping.computed !== undefined && mapping.mode !== 'direct');
+    if (misplaced) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A transformation is only supported for fields read from a column');
+    }
+    const direct = new Map(mappings.filter((mapping) => mapping.mode === 'direct').map((mapping) => [mapping.targetAttribute, mapping]));
+    for (const mapping of direct.values()) {
+      const input = mapping.computed?.input;
+      if (!input) continue;
+      const other = input.kind === 'field' ? direct.get(input.name) : undefined;
+      const valid = input.kind === 'column'
+        || (input.kind === 'field' && input.name !== mapping.targetAttribute && other !== undefined && other.computed?.input.kind !== 'field');
+      if (!valid) {
+        throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+          `${mapping.targetAttribute}: a transformed field reads a column or another field read from a column`);
+      }
+    }
+  }
+
   private assertComputedInputs(mappings: SourceFieldMapping[]): void {
     const misplaced = mappings.find((mapping) => mapping.computed !== undefined && mapping.mode !== 'computed');
     if (misplaced) {
@@ -910,7 +935,7 @@ export class SemanticSourceMappingService {
         throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${mapping.targetAttribute}: a computed field needs a computation`);
       }
       const valid = input.kind === 'file' ? input.name === 'document_name'
-        : input.name !== mapping.targetAttribute && inputs.has(input.name);
+        : input.kind === 'field' && input.name !== mapping.targetAttribute && inputs.has(input.name);
       if (!valid) {
         throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
           `${mapping.targetAttribute}: a computed field reads the file name or another mapped, non-computed field`);
@@ -926,7 +951,8 @@ export class SemanticSourceMappingService {
     if (invalidMode) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${invalidMode.mode} mappings are not supported for ${kind} assets`);
     }
-    this.assertComputedInputs(mappings);
+    if (kind === 'document') this.assertComputedInputs(mappings);
+    else this.assertSheetRecipes(mappings);
     const invalidMetadata = mappings.find((mapping) => mapping.mode === 'metadata'
       && !['document_name', 'document_id', 'workspace_id'].includes(mapping.sourceField ?? ''));
     if (invalidMetadata) {

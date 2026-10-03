@@ -4,6 +4,7 @@ import {
   normalizeIdentityValue,
   resolveSheetEntities,
   suggestFieldMappings,
+  type SourceFieldMapping,
 } from '../domain/semantic-source-mapping.types';
 import { SemanticSourceMappingService } from './semantic-source-mapping.service';
 
@@ -366,6 +367,46 @@ describe('SemanticSourceMappingService boundaries', () => {
       conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1', assetKind: 'csv', sheetName: 'CSV',
       fieldMappings: [computedFrom('id')], identityFields: [],
     })).rejects.toThrow('computed mappings are not supported');
+  });
+
+  it('accepts a transformed spreadsheet field and rejects one misplaced or chained', async () => {
+    const csv = buildService('text/csv');
+    csv.database.query.mockResolvedValue({ rows: [{ label: 'Customer', attributes: [{ key: 'id' }, { key: 'name' }] }] });
+    const preview = (fieldMappings: SourceFieldMapping[]) => csv.service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1', assetKind: 'csv', sheetName: 'CSV',
+      fieldMappings, identityFields: [],
+    });
+    const fromColumn = { input: { kind: 'column' as const, name: 'ref' }, method: 'split' as const, delimiter: '-', part: 2 };
+    const fromField = (name: string) => ({ input: { kind: 'field' as const, name }, method: 'whole' as const, transform: 'upper' as const });
+    const id = { sourceField: 'id', targetAttribute: 'id', mode: 'direct' as const, computed: fromColumn };
+    // Past the checks: a recipe on a column, and one on a field read from a column, reach the runtime preview.
+    await preview([id, { sourceField: 'name', targetAttribute: 'name', mode: 'direct', computed: fromField('id') }]);
+    expect(csv.runtime.requestDatasourceDiscovery).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(csv.runtime.requestDatasourceDiscovery.mock.calls[0][0])).toContain('"kind":"column"');
+    await expect(preview([{ sourceField: null, targetAttribute: 'id', mode: 'constant', constantValue: 'x', computed: fromColumn }]))
+      .rejects.toThrow('only supported for fields read from a column');
+    await expect(preview([id, { sourceField: 'name', targetAttribute: 'name', mode: 'direct', computed: fromField('name') }]))
+      .rejects.toThrow('transformed field reads a column');
+    await expect(preview([{ ...id, computed: fromField('name') }, { sourceField: 'name', targetAttribute: 'name', mode: 'direct', computed: fromField('id') }]))
+      .rejects.toThrow('transformed field reads a column');
+    await expect(preview([id, { sourceField: 'name', targetAttribute: 'name', mode: 'direct', computed: fromField('gone') }]))
+      .rejects.toThrow('transformed field reads a column');
+    const pdf = buildService();
+    pdf.database.query.mockResolvedValue({ rows: [{}] });
+    await expect(pdf.service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
+      fieldMappings: [{ sourceField: null, targetAttribute: 'code', mode: 'computed', computed: fromColumn }], identityFields: [],
+    })).rejects.toThrow('non-computed field');
+  });
+
+  it('forwards the input field recipe to the computed preview', async () => {
+    const models = { requireActiveRole: jest.fn().mockResolvedValue({ id: 'model-1' }) };
+    const runtime = { previewComputedField: jest.fn().mockResolvedValue({ results: [] }) };
+    const service = new SemanticSourceMappingService({} as never, models as never, {} as never, runtime as never, {} as never);
+    const inputRecipe = { input: { kind: 'column' as const, name: 'ref' }, method: 'whole' as const, transform: 'trim' as const };
+    const dto = { computed: { input: { kind: 'field' as const, name: 'id' }, method: 'whole' as const }, samples: [' a '], inputRecipe };
+    await service.previewComputed('user-1', 'model-1', dto);
+    expect(runtime.previewComputedField).toHaveBeenCalledWith(dto);
   });
 
   it('reads document labels from the linked workspace documents, reauthorized by the runtime', async () => {

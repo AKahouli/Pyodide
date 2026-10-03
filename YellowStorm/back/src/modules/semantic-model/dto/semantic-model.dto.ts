@@ -409,13 +409,13 @@ export class DocumentLabelsDto {
 }
 
 export class ComputedFieldInputDto {
-  @ApiProperty({ enum: ['file', 'field'] })
-  @IsIn(['file', 'field'])
-  kind!: 'file' | 'field';
+  @ApiProperty({ enum: ['file', 'field', 'column'] })
+  @IsIn(['file', 'field', 'column'])
+  kind!: 'file' | 'field' | 'column';
 
-  // 'document_name' for a file input, another mapping's targetAttribute for a field input.
-  @ApiProperty({ maxLength: 80 })
-  @IsString() @MinLength(1) @MaxLength(80)
+  // 'document_name' for a file input, another mapping's targetAttribute for a field input, a sheet column.
+  @ApiProperty({ maxLength: 200 })
+  @IsString() @MinLength(1) @MaxLength(200)
   name!: string;
 }
 
@@ -426,9 +426,9 @@ export class ComputedFieldDto {
   @Type(() => ComputedFieldInputDto)
   input!: ComputedFieldInputDto;
 
-  @ApiProperty({ enum: ['split', 'between', 'regex'] })
-  @IsIn(['split', 'between', 'regex'])
-  method!: 'split' | 'between' | 'regex';
+  @ApiProperty({ enum: ['whole', 'split', 'between', 'regex'], description: "'whole' keeps the input as it is" })
+  @IsIn(['whole', 'split', 'between', 'regex'])
+  method!: 'whole' | 'split' | 'between' | 'regex';
 
   @ApiPropertyOptional({ minLength: 1, maxLength: 10 })
   @IsOptional() @IsString() @MinLength(1) @MaxLength(10)
@@ -513,7 +513,7 @@ export class SourceFieldMappingDto {
   @Type(() => ExtractionRulesDto)
   rules?: ExtractionRulesDto;
 
-  @ApiPropertyOptional({ type: () => ComputedFieldDto, description: 'How a computed document field is derived' })
+  @ApiPropertyOptional({ type: () => ComputedFieldDto, description: 'How a computed document field is derived, or how a spreadsheet field is transformed' })
   @IsOptional()
   @ValidateNested()
   @Type(() => ComputedFieldDto)
@@ -531,6 +531,10 @@ export class ComputedFieldPreviewDto {
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(20)
   @IsString({ each: true }) @MaxLength(1000, { each: true })
   samples!: string[];
+
+  @ApiPropertyOptional({ type: () => ComputedFieldDto, description: 'Applied to each sample first: the recipe of the field this one is taken from' })
+  @IsOptional() @ValidateNested() @Type(() => ComputedFieldDto)
+  inputRecipe?: ComputedFieldDto;
 }
 
 /** Limits on how much of a document the AI reads. Each one left out uses the admin default. */

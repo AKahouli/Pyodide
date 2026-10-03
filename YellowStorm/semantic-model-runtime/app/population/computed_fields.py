@@ -1,9 +1,12 @@
-"""Fields computed from another value of the same document: its file name or another mapped field.
+"""Fields computed from another value of the same record: a file name, another field or a sheet column.
 
 ``JOHNSON_JOHNSON_2023_8K_dated-2023-08-23.pdf`` gives a fiscal year of ``2023`` by splitting on
 ``_`` and taking the 3rd part from the end, by taking the text between ``dated-`` and ``-``, or by a
 pattern with a group. There is no script: a pattern runs on the same engine and time limit as the
 reading rules, and every step is bounded.
+
+The same recipe (take it from, cut, keep, value pattern, clean-up) shapes a spreadsheet field: its
+input is then a column of the row, or another field of the same row (see ``apply_row_recipes``).
 """
 
 from __future__ import annotations
@@ -16,7 +19,10 @@ from .document_rules import (MAX_PATTERN_CHARS, RuleError, compile_pattern, matc
 
 COMPUTED_VERSION = "computed-v1"
 FILE_INPUTS = ("document_name",)
-METHODS = ("split", "between", "regex")
+# "whole" keeps the input as it is, for a recipe that only keeps a part, matches a shape or cleans up.
+METHODS = ("whole", "split", "between", "regex")
+INPUT_KINDS = ("file", "field", "column")
+MAX_INPUT_NAME_CHARS = 200
 TRANSFORMS = ("none", "trim", "no_spaces", "upper", "lower", "date_iso", "year", "number")
 MAX_DELIMITER_CHARS = 10
 MAX_MARKER_CHARS = 50
@@ -48,11 +54,11 @@ def normalize_computed(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise RuleError("computed must be an object")
     source = raw.get("input")
-    if not isinstance(source, dict) or source.get("kind") not in ("file", "field"):
-        raise RuleError("input must name the file or a field")
+    if not isinstance(source, dict) or source.get("kind") not in INPUT_KINDS:
+        raise RuleError("input must name the file, a field or a column")
     name = source.get("name")
-    if not isinstance(name, str) or not name.strip():
-        raise RuleError("input must name the file or a field")
+    if not isinstance(name, str) or not name.strip() or len(name) > MAX_INPUT_NAME_CHARS:
+        raise RuleError("input must name the file, a field or a column")
     if source["kind"] == "file" and name not in FILE_INPUTS:
         raise RuleError("unknown file property")
     method = raw.get("method")
@@ -64,9 +70,13 @@ def normalize_computed(raw: Any) -> dict[str, Any]:
     strip_extension = raw.get("stripExtension", source["kind"] == "file")
     if not isinstance(strip_extension, bool):
         raise RuleError("stripExtension must be true or false")
-    spec: dict[str, Any] = {"input": {"kind": source["kind"], "name": name.strip()}, "method": method,
-                            "transform": transform, "stripExtension": strip_extension}
-    if method == "split":
+    # A column keeps its exact name (headers may carry spaces); a field or the file is trimmed.
+    spec: dict[str, Any] = {"input": {"kind": source["kind"],
+                                      "name": name if source["kind"] == "column" else name.strip()},
+                            "method": method, "transform": transform, "stripExtension": strip_extension}
+    if method == "whole":
+        pass
+    elif method == "split":
         spec["delimiter"] = _text(raw, "delimiter", MAX_DELIMITER_CHARS, required=True)
         part = raw.get("part")
         if not isinstance(part, int) or isinstance(part, bool) or part == 0 or abs(part) > MAX_PART:
@@ -120,15 +130,27 @@ def _transform(value: str, transform: str) -> str | None:
     return value
 
 
-def compute(spec: dict[str, Any], value: Any) -> tuple[str | None, str]:
-    """The computed value and why: ``found``, ``no_input``, ``no_match`` or ``not_transformable``."""
+def compute(spec: dict[str, Any], value: Any,
+            trace: list[dict[str, Any]] | None = None) -> tuple[str | None, str]:
+    """The computed value and why: ``found``, ``no_input``, ``no_match`` or ``not_transformable``.
+
+    With ``trace``, each step that ran appends ``{"step", "value"}`` (``cut``, ``keep``, ``pattern``,
+    ``transform``); the value is None at the step where the recipe stopped.
+    """
     if value is None or (isinstance(value, str) and not value.strip()):
         return None, "no_input"
+
+    def step(name: str, result: str | None) -> None:
+        if trace is not None:
+            trace.append({"step": name, "value": result[:MAX_VALUE_CHARS] if result else None})
+
     text = str(value)[:MAX_INPUT_CHARS]
     if spec.get("stripExtension"):
         text = _EXTENSION.sub("", text)
     result: str | None
-    if spec["method"] == "split":
+    if spec["method"] == "whole":
+        result = text
+    elif spec["method"] == "split":
         parts = text.split(spec["delimiter"])
         part = spec["part"]
         index = part - 1 if part > 0 else len(parts) + part
@@ -138,12 +160,14 @@ def compute(spec: dict[str, Any], value: Any) -> tuple[str | None, str]:
         if spec.get("after"):
             found = text.find(spec["after"])
             if found < 0:
+                step("cut", None)
                 return None, "no_match"
             start = found + len(spec["after"])
         end = len(text)
         if spec.get("before"):
             found = text.find(spec["before"], start)
             if found < 0:
+                step("cut", None)
                 return None, "no_match"
             end = found
         result = text[start:end]
@@ -153,6 +177,7 @@ def compute(spec: dict[str, Any], value: Any) -> tuple[str | None, str]:
         except TimeoutError:
             match = None
         if match is None:
+            step("cut", None)
             return None, "no_match"
         if spec.get("template"):
             def group(found: re.Match[str]) -> str:
@@ -163,15 +188,23 @@ def compute(spec: dict[str, Any], value: Any) -> tuple[str | None, str]:
             named = [name for name, captured in match.groupdict().items() if captured]
             result = match.group(named[0]) if named else next((g for g in match.groups() if g), None)
     if result is None or not result.strip():
+        if spec["method"] != "whole":
+            step("cut", None)
         return None, "no_match"
     result = result.strip()
+    if spec["method"] != "whole":
+        step("cut", result)
     if spec.get("take"):
         result = take_part(result, spec["take"]).strip()
+        step("keep", result)
     if spec.get("valuePattern"):
         result = match_pattern(compile_pattern(spec["valuePattern"]), result) or ""
+        step("pattern", result)
     if not result:
         return None, "no_match"
     transformed = _transform(result, spec["transform"])
+    if spec["transform"] != "none":
+        step("transform", transformed)
     if transformed is None:
         return None, "not_transformable"
     return transformed[:MAX_VALUE_CHARS], "found"
@@ -184,6 +217,8 @@ def check_inputs(mappings: list[dict[str, Any]]) -> None:
         if item.get("mode") != "computed":
             continue
         source = item["computed"]["input"]
+        if source["kind"] == "column":
+            raise RuleError(f"{item['targetAttribute']}: a document has no columns")
         if source["kind"] == "field" and (source["name"] not in plain or source["name"] == item["targetAttribute"]):
             raise RuleError(f"{item['targetAttribute']} is computed from a field that is not read from the document")
 
@@ -203,4 +238,65 @@ def apply_computed(mappings: list[dict[str, Any]], values: dict[str, Any],
             values[item["targetAttribute"]] = value
         outcomes[item["targetAttribute"]] = {"method": "computed", "reason": reason,
                                              "input": None if raw is None else str(raw)[:200]}
+    return outcomes
+
+
+# Spreadsheet rows: the same recipe on a column of the row, or on another field of the same row.
+
+MAX_ROW_RECIPES = 50
+
+
+def normalize_row_recipes(raw: Any, mapped: set[str]) -> dict[str, dict[str, Any]]:
+    """The recipes of a sheet mapping by field, or ``RuleError``.
+
+    A field input reads another mapped field of the row that is not itself taken from a field (no
+    chains), as a computed document field does; a column input reads any column of the sheet.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict) or len(raw) > MAX_ROW_RECIPES:
+        raise RuleError("fieldRecipes must map fields to recipes")
+    recipes: dict[str, dict[str, Any]] = {}
+    for attribute, recipe in raw.items():
+        if not isinstance(attribute, str) or attribute not in mapped:
+            raise RuleError(f"{attribute}: a recipe needs a mapped field")
+        spec = normalize_computed(recipe)
+        if spec["input"]["kind"] == "file":
+            raise RuleError(f"{attribute}: a sheet row has no file name")
+        recipes[attribute] = spec
+    for attribute, spec in recipes.items():
+        source = spec["input"]
+        if source["kind"] != "field":
+            continue
+        other = recipes.get(source["name"])
+        if (source["name"] == attribute or source["name"] not in mapped
+                or (other is not None and other["input"]["kind"] == "field")):
+            raise RuleError(f"{attribute} is taken from a field that is not read from a column")
+    return recipes
+
+
+def recipe_columns(recipes: dict[str, dict[str, Any]]) -> set[str]:
+    """The columns the recipes read, to query with the mapped ones."""
+    return {spec["input"]["name"] for spec in recipes.values() if spec["input"]["kind"] == "column"}
+
+
+def apply_row_recipes(recipes: dict[str, dict[str, Any]], values: dict[str, Any],
+                      raw_row: dict[str, Any], column: Any = None) -> dict[str, dict[str, Any]]:
+    """Shape the mapped ``values`` of one row in place and say for each recipe how it went.
+
+    Recipes on a column run first, then those on another field (which see the shaped value). A recipe
+    that finds nothing leaves its field empty (``None``), as a computed document field does, so an
+    identity field without a value is reported as a missing identity rather than read raw.
+    ``column`` resolves a column name against the row (a renamed column); identity by default.
+    """
+    resolve = column or (lambda name: name)
+    outcomes: dict[str, dict[str, Any]] = {}
+    ordered = sorted(recipes.items(), key=lambda item: item[1]["input"]["kind"] == "field")
+    for attribute, spec in ordered:
+        source = spec["input"]
+        raw = raw_row.get(resolve(source["name"])) if source["kind"] == "column" else values.get(source["name"])
+        value, reason = compute(spec, raw)
+        values[attribute] = value
+        outcomes[attribute] = {"method": "recipe", "reason": reason,
+                               "input": None if raw is None else str(raw)[:200]}
     return outcomes
