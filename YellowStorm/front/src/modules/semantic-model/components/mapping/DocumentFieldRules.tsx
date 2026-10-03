@@ -8,6 +8,7 @@ import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { AiExtractionSettings, DocumentFieldReading, DocumentLabelSuggestion, ExtractionLocation, ExtractionRules, SourceExtractionStrategy, SourceFieldMapping } from '../../types';
+import { FormField, INPUT } from '../form/FormParts';
 import { ChoiceGroup, HelpTip, LocationIcon, PageRangeControl, RuleSection, useOpenSections } from './RuleControls';
 import { MAX_TAKE, ValueShaper, type ShaperAction } from './ValueShaper';
 
@@ -134,8 +135,8 @@ export function ReadAllFieldsBar({ mappings, onApply }: Readonly<{ mappings: Sou
   if (!extracted.length) return null;
   const strategies = new Set(extracted.map((mapping) => mapping.extractionStrategy ?? 'deterministic'));
   const current = strategies.size === 1 ? [...strategies][0] : null;
-  return <div className='flex flex-wrap items-center gap-2 rounded-lg bg-muted/40 p-2' role='group' aria-label={t('mapping.readAll.label')}>
-    <span className='text-xs text-muted-foreground'>{t('mapping.readAll.label')}</span>
+  return <div className='flex flex-wrap items-center gap-2' role='group' aria-label={t('mapping.readAll.label')}>
+    <span className='text-xs font-medium text-muted-foreground'>{t('mapping.readAll.label')}</span>
     {STRATEGIES.map((strategy) => <Button key={strategy} type='button' size='sm' variant={current === strategy ? 'default' : 'outline'} className='h-7 px-2.5 text-xs'
       aria-pressed={current === strategy} onClick={() => onApply(strategy)}>
       <StrategyIcon strategy={strategy} />{t(`mapping.strategy.${strategy}`)}
@@ -272,7 +273,7 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions, liv
           options={LOCATIONS.map((item) => ({ value: item, label: t(`mapping.rules.tile.${item}`), hint: t(`mapping.rules.tileHint.${item}`), help: t(`mapping.rules.whereHelp.${item}`), icon: <LocationIcon location={item} className='h-5 w-7' /> }))} />
 
         {usesBoundary(location) && <div className='flex flex-wrap items-center gap-1.5 pt-1'>
-          <Label className='text-xs' htmlFor={`${id}-boundary`}>{t(`mapping.rules.boundary.${location}`)}</Label>
+          <Label className='text-xs font-medium text-muted-foreground' htmlFor={`${id}-boundary`}>{t(`mapping.rules.boundary.${location}`)}</Label>
           <HelpTip text={t(`mapping.rules.boundaryHelp.${location}`)} />
           {boundaryLabels.map((label) => <span key={label} className='inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs'>
             {label}
@@ -286,7 +287,7 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions, liv
 
         {location === 'pages' && <div className='space-y-1.5 pt-1'>
           <div className='flex items-center gap-1'>
-            <span className='text-xs font-medium'>{t('mapping.rules.pages')}</span>
+            <span className='text-xs font-medium text-muted-foreground'>{t('mapping.rules.pages')}</span>
             <HelpTip text={t('mapping.rules.pagesHelp', { span: MAX_PAGE_SPAN })} />
           </div>
           <PageRangeControl fieldLabel={fieldLabel} from={rules?.pages?.from} to={rules?.pages?.to} pageCount={pageCount} onChange={setPages}
@@ -422,9 +423,8 @@ export function AiLimitFields({ value, placeholder, onChange, idPrefix }: Readon
     {LIMIT_KEYS.map(({ key, min, max }) => {
       const current = value[key];
       const invalid = current !== undefined && (!Number.isInteger(current) || current < min || current > max);
-      return <div key={key} className='space-y-1'>
-        <Label htmlFor={`${idPrefix}-${key}`} className='text-xs'>{t(`mapping.ai.${key}`)}</Label>
-        <Input id={`${idPrefix}-${key}`} type='number' min={min} max={max} className='h-8 text-xs' aria-invalid={invalid}
+      return <FormField key={key} label={t(`mapping.ai.${key}`)} help={t(`mapping.ai.${key}Help`)} htmlFor={`${idPrefix}-${key}`}>
+        <Input id={`${idPrefix}-${key}`} type='number' min={min} max={max} className={cn(INPUT, 'tabular-nums')} aria-invalid={invalid}
           value={current ?? ''} placeholder={placeholder ? String(placeholder[key]) : undefined}
           onChange={(event) => {
             const text = event.target.value;
@@ -432,10 +432,8 @@ export function AiLimitFields({ value, placeholder, onChange, idPrefix }: Readon
             if (text === '') delete next[key]; else next[key] = Number(text);
             onChange(next);
           }} />
-        <p className={cn('text-[11px]', invalid ? 'text-destructive' : 'text-muted-foreground')}>
-          {invalid ? t('mapping.ai.range', { min: min.toLocaleString(), max: max.toLocaleString() }) : t(`mapping.ai.${key}Help`)}
-        </p>
-      </div>;
+        {invalid && <p role='alert' className='text-[11px] text-destructive'>{t('mapping.ai.range', { min: min.toLocaleString(), max: max.toLocaleString() })}</p>}
+      </FormField>;
     })}
   </div>;
 }
@@ -451,20 +449,22 @@ export function AiLimitsEditor({ defaults, value, onChange }: Readonly<{
   const overridden = Object.keys(value).some((key) => key !== 'manyRecords');
   const [open, setOpen] = useState(overridden);
   const effective = defaults ? { ...defaults, ...value } : undefined;
-  return <div className='rounded-xl border'>
-    <button type='button' className='flex w-full items-center gap-2 p-3 text-left text-xs hover:bg-muted/40' aria-expanded={open} onClick={() => setOpen(!open)}>
-      <SlidersHorizontal className='h-4 w-4 shrink-0 text-muted-foreground' />
-      <span className='font-medium'>{t('mapping.ai.title')}</span>
-      <span className='min-w-0 flex-1 truncate text-muted-foreground'>
-        {effective ? t(overridden ? 'mapping.ai.summaryChanged' : 'mapping.ai.summaryDefault', {
-          blocks: effective.maxBlocks.toLocaleString(), characters: effective.maxCharacters.toLocaleString(),
-          long: effective.longDocumentCharacters.toLocaleString(), perField: effective.blocksPerField,
-        }) : ''}
-      </span>
-      {open ? <ChevronDown className='h-4 w-4 shrink-0' /> : <ChevronRight className='h-4 w-4 shrink-0' />}
-    </button>
-    {open && <div className='space-y-3 border-t p-3'>
-      <p className='text-[11px] text-muted-foreground'>{t('mapping.ai.help')}</p>
+  return <div className='rounded-lg border'>
+    <div className='flex items-center gap-1 pr-2'>
+      <button type='button' className='flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left text-xs hover:bg-muted/40' aria-expanded={open} onClick={() => setOpen(!open)}>
+        {open ? <ChevronDown className='h-4 w-4 shrink-0 text-muted-foreground' /> : <ChevronRight className='h-4 w-4 shrink-0 text-muted-foreground' />}
+        <SlidersHorizontal className='h-4 w-4 shrink-0 text-muted-foreground' />
+        <span className='shrink-0 font-medium'>{t('mapping.ai.title')}</span>
+        <span className='min-w-0 flex-1 truncate text-muted-foreground'>
+          {effective ? t(overridden ? 'mapping.ai.summaryChanged' : 'mapping.ai.summaryDefault', {
+            blocks: effective.maxBlocks.toLocaleString(), characters: effective.maxCharacters.toLocaleString(),
+            long: effective.longDocumentCharacters.toLocaleString(), perField: effective.blocksPerField,
+          }) : ''}
+        </span>
+      </button>
+      <HelpTip text={t('mapping.ai.help')} />
+    </div>
+    {open && <div className='space-y-4 border-t p-4'>
       <AiLimitFields idPrefix='mapping-ai' value={value} placeholder={defaults} onChange={onChange} />
       {overridden && <Button type='button' size='sm' variant='ghost' className='h-7 px-2 text-xs' onClick={() => onChange(value.manyRecords ? { manyRecords: true } : {})}>{t('mapping.ai.reset')}</Button>}
     </div>}
@@ -477,7 +477,7 @@ export function ManyRecordsSwitch({ value, onChange }: Readonly<{
   onChange: (value: Partial<AiExtractionSettings>) => void;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
-  return <div className='flex items-start gap-3 rounded-xl border p-3'>
+  return <div className='flex items-start gap-3 rounded-lg border px-3 py-2.5'>
     <Switch id='mapping-many-records' checked={value.manyRecords === true} className='mt-0.5'
       onCheckedChange={(checked) => {
         const { manyRecords: _previous, ...rest } = value;

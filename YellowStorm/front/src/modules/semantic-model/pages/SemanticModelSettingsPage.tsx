@@ -3,11 +3,13 @@ import { Loader2, SlidersHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { parseApiError } from '@/lib/api-error';
 import { showError, showSuccess } from '@/lib/notifications';
+import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../api';
 import { AiLimitFields, limitProblem } from '../components/mapping/DocumentFieldRules';
 import type { AiExtractionSettings } from '../types';
 import { RunLimitsSettings } from '../components/settings/RunLimitsSettings';
+import { FORM_SECTION, SectionHeader } from '../components/form/FormParts';
 
 /** The limits every document mapping starts from when nothing else is set. */
 const BUILT_IN: AiExtractionSettings = { maxBlocks: 400, maxCharacters: 60000, longDocumentCharacters: 30000, blocksPerField: 8 };
@@ -49,11 +51,8 @@ export function SemanticModelSettingsPage() {
       <h1 className='text-2xl font-semibold'>{t('settings.title')}</h1>
       <p className='text-sm text-muted-foreground'>{t('settings.description')}</p>
     </div>
-    <section className='space-y-4 rounded-lg border p-5'>
-      <div className='space-y-1'>
-        <h2 className='flex items-center gap-2 font-semibold'><SlidersHorizontal className='h-4 w-4' />{t('settings.aiTitle')}</h2>
-        <p className='text-sm text-muted-foreground'>{t('settings.aiDescription')}</p>
-      </div>
+    <section className={cn(FORM_SECTION, 'space-y-4')}>
+      <SectionHeader title={t('settings.aiTitle')} help={t('settings.aiDescription')} icon={<SlidersHorizontal className='h-4 w-4 text-muted-foreground' aria-hidden />} />
       <AiLimitFields idPrefix='admin-ai' value={configured} placeholder={BUILT_IN} onChange={setConfigured} />
       <div className='flex flex-wrap items-center gap-2'>
         <Button className='bg-foreground text-background hover:bg-foreground/90' onClick={() => void save()} disabled={saving || Boolean(limitProblem(configured))}>

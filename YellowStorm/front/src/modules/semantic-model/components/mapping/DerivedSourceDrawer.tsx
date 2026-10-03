@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { GitMerge, KeyRound, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { parseApiError } from '@/lib/api-error';
@@ -14,6 +13,7 @@ import { useDerivedSources, useIdentityRules } from '../../query/hooks';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
 import { useSemanticModelEditorStore } from '../../store';
 import type { AttributeDefinition, DerivedConflictRule, DerivedSource } from '../../types';
+import { DELETE_BUTTON, FORM_SECTION, FormField, INPUT, INPUT_COMPACT, ROW_LIST, SectionHeader } from '../form/FormParts';
 
 export interface DerivedSourceTarget {
   conceptId: string;
@@ -146,68 +146,63 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
         <SheetTitle className='flex items-center gap-2'><GitMerge className='h-4 w-4' />{t('derived.title', { concept: concept.label })}</SheetTitle>
         <SheetDescription>{t('derived.description', { concept: concept.label })}</SheetDescription>
       </SheetHeader>
-      <div className='min-h-0 flex-1 space-y-5 overflow-y-auto p-5'>
-        <div className='space-y-2'>
-          <Label>{t('derived.source')}</Label>
+      <div className='min-h-0 flex-1 space-y-6 overflow-y-auto p-5'>
+        <FormField label={t('derived.source')} htmlFor='derived-source'>
           <Select value={sourceConceptId} onValueChange={(value) => { setSourceConceptId(value); setFields(suggest(value)); setOrderBy(''); }}>
-            <SelectTrigger aria-label={t('derived.source')}><SelectValue placeholder={t('derived.chooseSource')} /></SelectTrigger>
+            <SelectTrigger id='derived-source' className={INPUT} aria-label={t('derived.source')}><SelectValue placeholder={t('derived.chooseSource')} /></SelectTrigger>
             <SelectContent>{candidates.map((node) => <SelectItem key={node.id} value={node.id}>{node.label}</SelectItem>)}</SelectContent>
           </Select>
           {!candidates.length && <p className='text-xs text-muted-foreground'>{t('derived.noCandidate')}</p>}
-        </div>
+        </FormField>
 
-        {source && <div className='space-y-2'>
-          <Label>{t('derived.fields')}</Label>
-          <p className='text-xs text-muted-foreground'>{t('derived.fieldsHelp', { source: source.label })}</p>
-          <div className='overflow-hidden rounded-xl border'>
+        {source && <section className={FORM_SECTION}>
+          <SectionHeader title={t('derived.fields')} help={t('derived.fieldsHelp', { source: source.label })} count={mappedFields.length || undefined} />
+          <ul className={ROW_LIST}>
             {concept.attributes.map((field) => {
               const isKey = keys.includes(field.key);
-              return <div key={field.key} className='flex items-center gap-2 border-b p-2.5 last:border-b-0'>
-                <span className='min-w-0 flex-1 truncate text-xs font-medium'>{field.label}</span>
+              return <li key={field.key} className='flex items-center gap-2 py-1.5 pl-3 pr-1.5'>
+                <span className='min-w-0 flex-1 truncate text-sm' title={field.label}>{field.label}</span>
                 <Select value={fields[field.key] || NOT_FILLED} onValueChange={(value) => setFields((current) => ({ ...current, [field.key]: value === NOT_FILLED ? '' : value }))}>
-                  <SelectTrigger className='h-8 w-44 text-xs' aria-label={t('derived.fieldFor', { field: field.label })}><SelectValue /></SelectTrigger>
+                  <SelectTrigger className={cn(INPUT_COMPACT, 'w-44 shrink-0')} aria-label={t('derived.fieldFor', { field: field.label })}><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value={NOT_FILLED}>{t('derived.notFilled')}</SelectItem>
                     {source.attributes.map((item) => <SelectItem key={item.key} value={item.key}>{item.label}</SelectItem>)}
                   </SelectContent>
                 </Select>
                 <button type='button' aria-pressed={isKey} aria-label={t('derived.keyFor', { field: field.label })} title={t('derived.key')}
-                  className={cn('flex h-8 items-center gap-1 rounded-md border px-2 text-[11px]', isKey ? 'border-amber-500/60 bg-amber-500/10 text-amber-800 dark:text-amber-300' : 'text-muted-foreground hover:bg-muted')}
+                  className={cn('flex h-8 shrink-0 items-center gap-1 rounded-md border px-2 text-[11px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring', isKey ? 'border-amber-500/60 bg-amber-500/10 text-amber-800 dark:text-amber-300' : 'text-muted-foreground hover:bg-muted')}
                   onClick={() => toggleKey(field.key)}>
                   <KeyRound className='h-3.5 w-3.5' />{t('derived.key')}
                 </button>
-              </div>;
+              </li>;
             })}
-          </div>
-        </div>}
-
-        {source && <div className='space-y-3 rounded-xl border border-amber-500/40 bg-amber-500/5 p-3'>
-          <p className='flex items-center gap-1.5 text-xs font-medium'><KeyRound className='h-3.5 w-3.5' />
+          </ul>
+          <p className='flex items-center gap-1.5 text-xs text-muted-foreground'><KeyRound className='h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400' aria-hidden />
             {keys.length ? t('derived.keysSummary', { concept: concept.label, fields: keyLabels, source: source.label }) : t('derived.problem.noKey')}
           </p>
-          <div className='space-y-1.5'>
-            <Label htmlFor='derived-conflict' className='text-xs'>{t('derived.conflict')}</Label>
+        </section>}
+
+        {source && <section className={cn(FORM_SECTION, 'space-y-4')}>
+          <FormField label={t('derived.conflict')} help={t(`derived.ruleHelp.${rule}`)} htmlFor='derived-conflict'>
             <Select value={rule} onValueChange={(value: DerivedConflictRule) => setRule(value)}>
-              <SelectTrigger id='derived-conflict' className='h-9 text-xs'><SelectValue /></SelectTrigger>
+              <SelectTrigger id='derived-conflict' className={INPUT}><SelectValue /></SelectTrigger>
               <SelectContent>{CONFLICT_RULES.map((item) => <SelectItem key={item} value={item}>{t(`derived.rule.${item}`)}</SelectItem>)}</SelectContent>
             </Select>
-            <p className='text-xs text-muted-foreground'>{t(`derived.ruleHelp.${rule}`)}</p>
-          </div>
-          {rule === 'latest' && <div className='space-y-1.5'>
-            <Label htmlFor='derived-order' className='text-xs'>{t('derived.orderBy', { source: source.label })}</Label>
+          </FormField>
+          {rule === 'latest' && <FormField label={t('derived.orderBy', { source: source.label })} htmlFor='derived-order'>
             <Select value={orderBy} onValueChange={setOrderBy}>
-              <SelectTrigger id='derived-order' className='h-9 text-xs'><SelectValue placeholder={t('derived.chooseOrderBy')} /></SelectTrigger>
+              <SelectTrigger id='derived-order' className={INPUT}><SelectValue placeholder={t('derived.chooseOrderBy')} /></SelectTrigger>
               <SelectContent>{[...source.attributes].sort((left, right) => Number(right.type === 'date') - Number(left.type === 'date'))
                 .map((item) => <SelectItem key={item.key} value={item.key}>{item.label}</SelectItem>)}</SelectContent>
             </Select>
-          </div>}
-        </div>}
+          </FormField>}
+        </section>}
 
         {problem && source && <p role='alert' className='text-xs text-amber-700 dark:text-amber-400'>{problem}</p>}
         {fillsAnother && !source && <p role='alert' className='text-xs text-amber-700 dark:text-amber-400'>{problem}</p>}
       </div>
       <div className='flex items-center gap-2 border-t p-4'>
-        {target.derived && <Button variant='ghost' className='text-destructive' disabled={busy} onClick={() => remove.mutate()}>
+        {target.derived && <Button variant='outline' className={DELETE_BUTTON} disabled={busy} onClick={() => remove.mutate()}>
           <Trash2 className='mr-1.5 h-4 w-4' />{t('derived.remove')}
         </Button>}
         <div className='flex-1' />

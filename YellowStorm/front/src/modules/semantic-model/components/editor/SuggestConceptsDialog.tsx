@@ -2,9 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, KeyRound, Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { parseApiError } from '@/lib/api-error';
 import { showError, showSuccess } from '@/lib/notifications';
@@ -15,6 +14,7 @@ import { useSemanticModelEditorStore, waitForGraphSave } from '../../store';
 import type { SemanticNodeType, SemanticRelationType } from '../../types';
 import { nextConceptPosition, uniqueBusinessKey } from '../../utils/model-utils';
 import { suggestModel, type ConceptProposal, type RelationProposal, type SheetSample } from '../../utils/source-suggestions';
+import { FormField, HelpTip, INPUT, INPUT_COMPACT, ROW_LIST, SectionHeader } from '../form/FormParts';
 
 export interface SuggestionSource {
   workspaceId: string;
@@ -153,34 +153,37 @@ export function SuggestConceptsDialog({ modelId, open, onOpenChange, source: ini
   };
 
   return <Dialog open={open} onOpenChange={(next) => { if (!applying) onOpenChange(next); }}>
-    <DialogContent className='max-h-[90vh] overflow-y-auto sm:max-w-2xl'>
+    <DialogContent className='max-h-[90vh] overflow-y-auto sm:max-w-2xl' aria-describedby={undefined}>
       <DialogHeader>
-        <DialogTitle className='flex items-center gap-2'><Sparkles className='h-5 w-5 text-primary' />{t('suggest.title')}</DialogTitle>
-        <DialogDescription>{t('suggest.description')}</DialogDescription>
+        <div className='flex items-center gap-1'>
+          <DialogTitle className='flex items-center gap-2'><Sparkles className='h-5 w-5 text-primary' />{t('suggest.title')}</DialogTitle>
+          <HelpTip text={t('suggest.description')} />
+        </div>
       </DialogHeader>
-      {!initialSource && <div className='space-y-2'>
-        <Label>{t('suggest.chooseFile')}</Label>
+      <div className='space-y-6'>
+      {!initialSource && <FormField label={t('suggest.chooseFile')}>
         {assets.isLoading ? <Loader2 className='h-4 w-4 animate-spin' /> : spreadsheets.length === 0
-          ? <p className='rounded-xl bg-muted/50 p-3 text-sm text-muted-foreground'>{t('suggest.noFiles')}</p>
+          ? <p className='rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground'>{t('suggest.noFiles')}</p>
           : <Select value={source?.documentId ?? ''} onValueChange={(documentId) => {
             const asset = spreadsheets.find((item) => item.documentId === documentId);
             if (asset) setSource({ workspaceId: asset.workspaceId, documentId: asset.documentId, documentName: asset.name, assetKind: asset.kind as SuggestionSource['assetKind'] });
           }}>
-            <SelectTrigger aria-label={t('suggest.chooseFile')}><SelectValue placeholder={t('suggest.chooseFilePlaceholder')} /></SelectTrigger>
+            <SelectTrigger className={INPUT} aria-label={t('suggest.chooseFile')}><SelectValue placeholder={t('suggest.chooseFilePlaceholder')} /></SelectTrigger>
             <SelectContent>{spreadsheets.map((asset) => <SelectItem key={asset.documentId} value={asset.documentId}>{asset.name}</SelectItem>)}</SelectContent>
           </Select>}
-      </div>}
+      </FormField>}
       {source && samples.isLoading && <p className='flex items-center gap-2 text-sm text-muted-foreground'><Loader2 className='h-4 w-4 animate-spin' />{t('suggest.loading', { name: source.documentName })}</p>}
       {source && samples.isError && <p className='flex gap-2 rounded-lg bg-destructive/10 p-3 text-sm text-destructive'><AlertTriangle className='h-4 w-4 shrink-0' />{t('suggest.error')}</p>}
-      {samples.data && concepts.length === 0 && <p className='rounded-xl bg-muted/50 p-3 text-sm text-muted-foreground'>{t('suggest.empty')}</p>}
-      {concepts.length > 0 && <div className='space-y-3'>
-        {concepts.map((concept) => <section key={concept.sheet} className={`space-y-3 rounded-xl border p-3 ${concept.include ? '' : 'opacity-60'}`}>
+      {samples.data && concepts.length === 0 && <p className='rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground'>{t('suggest.empty')}</p>}
+      {concepts.length > 0 && <>
+        <ul className={ROW_LIST}>
+        {concepts.map((concept) => <li key={concept.sheet} className={`space-y-3 p-3 ${concept.include ? '' : 'opacity-60'}`}>
           <div className='flex flex-wrap items-center gap-2'>
             <input type='checkbox' checked={concept.include} onChange={(event) => editConcept(concept.sheet, { include: event.target.checked })} aria-label={t('suggest.includeConcept', { sheet: concept.sheet })} />
-            <Input className='h-9 max-w-xs flex-1' value={concept.label} disabled={!concept.include} onChange={(event) => editConcept(concept.sheet, { label: event.target.value })} aria-label={t('suggest.rename', { sheet: concept.sheet })} />
+            <Input className={`${INPUT} max-w-xs flex-1`} value={concept.label} disabled={!concept.include} onChange={(event) => editConcept(concept.sheet, { label: event.target.value })} aria-label={t('suggest.rename', { sheet: concept.sheet })} />
             <span className='text-xs text-muted-foreground'>{t('suggest.fromSheet', { sheet: concept.sheet })}</span>
           </div>
-          {concept.include && <>
+          {concept.include && <div className='space-y-3 pl-6'>
             <div className='flex flex-wrap gap-1.5'>{concept.fields.map((field) => {
               const excluded = concept.excluded.includes(field.column);
               return <button key={field.column} type='button' aria-pressed={!excluded}
@@ -189,28 +192,32 @@ export function SuggestConceptsDialog({ modelId, open, onOpenChange, source: ini
                 {field.column === concept.keyColumn && <KeyRound className='h-3 w-3 text-amber-600' />}{field.label}<span className='text-muted-foreground'>· {t(`attribute.type.${field.type}`)}</span>
               </button>;
             })}</div>
-            <div className='flex flex-wrap items-center gap-2 text-sm'>
-              <span>{t('identity.title', { name: concept.label || concept.sheet })}</span>
+            <div className='flex flex-wrap items-center gap-2'>
+              <span className='text-xs font-medium text-muted-foreground'>{t('identity.title', { name: concept.label || concept.sheet })}</span>
               <Select value={concept.keyColumn ?? '__none'} onValueChange={(value) => editConcept(concept.sheet, { keyColumn: value === '__none' ? null : value })}>
-                <SelectTrigger className='h-8 w-48' aria-label={t('identity.title', { name: concept.label || concept.sheet })}><SelectValue /></SelectTrigger>
+                <SelectTrigger className={`${INPUT_COMPACT} w-48`} aria-label={t('identity.title', { name: concept.label || concept.sheet })}><SelectValue /></SelectTrigger>
                 <SelectContent><SelectItem value='__none'>{t('suggest.noKey')}</SelectItem>{concept.fields.map((field) => <SelectItem key={field.column} value={field.column}>{field.label}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-          </>}
-        </section>)}
-        {relations.length > 0 && <section className='space-y-2'>
-          <h3 className='text-sm font-semibold'>{t('suggest.relations')}</h3>
+          </div>}
+        </li>)}
+        </ul>
+        {relations.length > 0 && <section className='space-y-3'>
+          <SectionHeader title={t('suggest.relations')} count={relations.length} />
+          <ul className={ROW_LIST}>
           {relations.map((relation, index) => {
             const from = bySheet.get(relation.fromSheet);
             const to = bySheet.get(relation.toSheet);
             const usable = usableRelations.includes(relation);
-            return <label key={`${relation.fromSheet}-${relation.fromColumn}-${relation.toSheet}`} className={`flex items-start gap-2 rounded-lg bg-muted/40 p-2 text-sm ${usable ? '' : 'opacity-60'}`}>
+            return <li key={`${relation.fromSheet}-${relation.fromColumn}-${relation.toSheet}`}><label className={`flex items-start gap-2 px-3 py-2 text-sm ${usable ? '' : 'opacity-60'}`}>
               <input type='checkbox' className='mt-1' checked={relation.include && usable} disabled={!usable} onChange={(event) => setRelations((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, include: event.target.checked } : item))} />
               <span>{t('suggest.relationSentence', { from: from?.label ?? relation.fromSheet, to: to?.label ?? relation.toSheet, column: from?.fields.find((field) => field.column === relation.fromColumn)?.label ?? relation.fromColumn })}</span>
-            </label>;
+            </label></li>;
           })}
+          </ul>
         </section>}
-      </div>}
+      </>}
+      </div>
       <DialogFooter>
         <Button variant='outline' disabled={applying} onClick={() => onOpenChange(false)}>{t('action.cancel')}</Button>
         <Button disabled={applying || !concepts.some((concept) => concept.include && concept.label.trim())} onClick={() => void apply()}>

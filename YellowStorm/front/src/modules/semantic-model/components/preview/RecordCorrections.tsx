@@ -2,8 +2,10 @@ import { useState } from 'react';
 import { Check, EyeOff, Link2, Pencil, Undo2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { useRecordCorrections } from '../../hooks/use-record-corrections';
+import { INPUT, INPUT_COMPACT, ROW_LIST, SectionHeader } from '../form/FormParts';
 import type { RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, ValueCorrection } from '../../types';
 
 type Corrections = ReturnType<typeof useRecordCorrections>;
@@ -54,7 +56,7 @@ export function FixValueButton({ value, onSave, busy, label }: Readonly<{ value:
     return <button type='button' className='inline-flex items-center gap-1 text-[11px] text-primary' onClick={() => { setDraft(value == null ? '' : String(value)); setEditing(true); }} aria-label={t('corrections.fixValueOf', { field: label })}><Pencil className='h-3 w-3' />{t('corrections.fixValue')}</button>;
   }
   return <form className='mt-1 flex items-center gap-1' onSubmit={(event) => { event.preventDefault(); onSave(draft); setEditing(false); }}>
-    <Input autoFocus className='h-8 text-sm' value={draft} onChange={(event) => setDraft(event.target.value)} aria-label={t('corrections.newValueOf', { field: label })} />
+    <Input autoFocus className={INPUT_COMPACT} value={draft} onChange={(event) => setDraft(event.target.value)} aria-label={t('corrections.newValueOf', { field: label })} />
     <Button type='submit' size='sm' className='h-8' disabled={busy}><Check className='mr-1 h-3.5 w-3.5' />{t('corrections.save')}</Button>
     <Button type='button' size='sm' variant='ghost' className='h-8' onClick={() => setEditing(false)} aria-label={t('action.cancel')}><X className='h-3.5 w-3.5' /></Button>
   </form>;
@@ -85,23 +87,23 @@ export function AddLinkForm({ options, onAdd, busy }: Readonly<{
   if (!usable.length) return null;
   if (!open) return <Button type='button' variant='outline' size='sm' onClick={() => setOpen(true)}><Link2 className='mr-1.5 h-3.5 w-3.5' />{t('corrections.addLink')}</Button>;
   const selected = usable.find((option) => `${option.relationId}|${option.direction}` === choice);
-  return <form className='mt-2 grid gap-2 rounded-lg border p-3 text-sm sm:grid-cols-[1fr_1fr_auto]' onSubmit={(event) => {
+  return <form className='mt-2 grid gap-2 text-sm sm:grid-cols-[1fr_1fr_auto]' onSubmit={(event) => {
     event.preventDefault();
     if (!selected || !target) return;
     onAdd(selected.relationId, target, selected.direction);
     setOpen(false); setChoice(''); setTarget('');
   }}>
-    <select className='h-9 rounded-md border bg-background px-2' value={choice} onChange={(event) => { setChoice(event.target.value); setTarget(''); }} aria-label={t('corrections.chooseRelationship')}>
+    <select className={cn(INPUT, 'rounded-md border bg-background px-2')} value={choice} onChange={(event) => { setChoice(event.target.value); setTarget(''); }} aria-label={t('corrections.chooseRelationship')}>
       <option value=''>{t('corrections.chooseRelationship')}</option>
       {usable.map((option) => <option key={`${option.relationId}|${option.direction}`} value={`${option.relationId}|${option.direction}`}>{option.label}</option>)}
     </select>
-    <select className='h-9 rounded-md border bg-background px-2' value={target} disabled={!selected} onChange={(event) => setTarget(event.target.value)} aria-label={t('corrections.chooseRecord')}>
+    <select className={cn(INPUT, 'rounded-md border bg-background px-2 disabled:opacity-50')} value={target} disabled={!selected} onChange={(event) => setTarget(event.target.value)} aria-label={t('corrections.chooseRecord')}>
       <option value=''>{t('corrections.chooseRecord')}</option>
       {selected?.targets.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.label}</option>)}
     </select>
     <div className='flex gap-1'>
-      <Button type='submit' size='sm' disabled={busy || !selected || !target}>{t('corrections.link')}</Button>
-      <Button type='button' size='sm' variant='ghost' onClick={() => setOpen(false)}>{t('action.cancel')}</Button>
+      <Button type='submit' size='sm' className='h-9' disabled={busy || !selected || !target}>{t('corrections.link')}</Button>
+      <Button type='button' size='sm' variant='ghost' className='h-9' onClick={() => setOpen(false)}>{t('action.cancel')}</Button>
     </div>
   </form>;
 }
@@ -129,12 +131,11 @@ export function CorrectionsList({ actions, recordLabel, fieldLabel, relationLabe
       default: return t('corrections.describeOther');
     }
   };
-  return <section className='rounded-2xl border bg-background p-4' aria-label={t('corrections.title')}>
-    <h3 className='text-sm font-semibold'>{t('corrections.title')}</h3>
-    <p className='text-xs text-muted-foreground'>{t('corrections.description')}</p>
-    <ul className='mt-2 divide-y'>{items.map((item) => <li key={item.sequence} className='flex flex-col gap-1 py-2 text-sm sm:flex-row sm:items-center sm:justify-between'>
-      <span className='break-words'>{describe(item)} <span className='text-xs text-muted-foreground'>· {item.correctedByYou ? t('corrections.byYou') : item.correctedBy || t('corrections.bySomeone')}</span></span>
-      <Button type='button' variant='ghost' size='sm' disabled={actions.busy} onClick={() => actions.revert(item.sequence)}><Undo2 className='mr-1 h-3.5 w-3.5' />{t('corrections.undo')}</Button>
+  return <section className='space-y-3 rounded-2xl border bg-background p-4' aria-label={t('corrections.title')}>
+    <SectionHeader title={t('corrections.title')} help={t('corrections.description')} count={items.length} />
+    <ul className={ROW_LIST}>{items.map((item) => <li key={item.sequence} className='flex items-center gap-2 py-1.5 pl-3 pr-1 text-sm'>
+      <span className='min-w-0 flex-1 break-words'>{describe(item)} <span className='text-xs text-muted-foreground'>· {item.correctedByYou ? t('corrections.byYou') : item.correctedBy || t('corrections.bySomeone')}</span></span>
+      <Button type='button' variant='ghost' size='sm' className='h-7 shrink-0 px-2 text-xs' disabled={actions.busy} onClick={() => actions.revert(item.sequence)}><Undo2 className='mr-1 h-3.5 w-3.5' />{t('corrections.undo')}</Button>
     </li>)}</ul>
   </section>;
 }

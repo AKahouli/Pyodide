@@ -218,8 +218,8 @@ export function ValueShaper({ fieldLabel, reading, pending, location, take, patt
   const status = reading && reading.reason !== 'found'
     ? t(`mapping.reading.reason.${reading.reason}`, { values: (reading.values ?? []).map((value) => `“${value}”`).join(', '), detail: reading.detail ?? '' }) : null;
 
-  return <div className='space-y-1.5' role='group' aria-label={t('mapping.rules.take.title', { field: fieldLabel })}>
-    <div className='flex flex-wrap items-center gap-1.5'>
+  return <div className='space-y-2' role='group' aria-label={t('mapping.rules.take.title', { field: fieldLabel })}>
+    <div className='flex flex-wrap items-center gap-2'>
       <ChoiceGroup variant='segmented' label={t('mapping.rules.take.keepFor', { field: fieldLabel })} value={mode} onChange={setMode}
         options={(['all', 'start', 'end'] as const).map((item) => ({ value: item, label: t(`mapping.rules.take.mode.${item}`) }))} />
       {take && <>
@@ -235,7 +235,7 @@ export function ValueShaper({ fieldLabel, reading, pending, location, take, patt
     </div>
 
     {raw ? <div ref={wrapperRef} className='relative'>
-      <div ref={textRef} data-testid='shaper-text' className={cn('max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-md border bg-background px-2 py-1.5 text-xs leading-relaxed',
+      <div ref={textRef} data-testid='shaper-text' className={cn('max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border bg-background px-2.5 py-2 text-xs leading-relaxed',
         take && 'cursor-text')} onMouseUp={onMouseUp} onMouseMove={onMouseMove} onMouseLeave={() => setGhost(null)}>
         {pieces.map((piece) => <span key={piece.start}>
           {take?.from === 'end' && piece.start === cut && handle}
@@ -252,7 +252,7 @@ export function ValueShaper({ fieldLabel, reading, pending, location, take, patt
         {location !== 'pages' && location !== 'anywhere' && location !== 'heading' && <Button type='button' size='sm' variant='ghost' className='h-6 px-2 text-[11px]' onClick={() => act('label')}><Tag className='mr-1 h-3 w-3' />{t('mapping.rules.take.useAsLabel')}</Button>}
         <Button type='button' size='sm' variant='ghost' className='h-6 px-2 text-[11px]' onClick={keepSelection}><Ruler className='mr-1 h-3 w-3' />{t('mapping.rules.take.keepLength')}</Button>
       </div>}
-    </div> : <div className='flex flex-wrap items-center gap-2 rounded-md border border-dashed px-2 py-1.5 text-[11px] text-muted-foreground'>
+    </div> : <div className='flex flex-wrap items-center gap-2 rounded-lg border border-dashed px-2.5 py-2 text-xs text-muted-foreground'>
       <BookOpen className='h-3.5 w-3.5 shrink-0' />
       <span className='min-w-0 flex-1'>{status ?? t('mapping.rules.take.placeholder')}</span>
       {onRead && <Button type='button' size='sm' variant='outline' className='h-6 px-2 text-[11px]' disabled={pending} onClick={onRead}>

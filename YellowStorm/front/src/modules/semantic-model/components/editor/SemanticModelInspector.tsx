@@ -25,7 +25,7 @@ import { parseApiError } from '@/lib/api-error';
 import { showError } from '@/lib/notifications';
 import { cn } from '@/lib/utils';
 import { RelationMatchingPanel } from '../mapping/RelationMatchingPanel';
-import { HelpTip } from '../mapping/RuleControls';
+import { DELETE_BUTTON, FORM_SECTION as SECTION, FormField as Field, HelpTip, SectionHeader } from '../form/FormParts';
 
 export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowledgeOpen,knowledgeTargetId,onKnowledgeClose,onMapData,onDeriveData,onBrowseRecords,recordCounts,workspace = false }: Readonly<{ modelId?:string;canEdit:boolean;knowledge:KnowledgeLinkingController;knowledgeOpen:boolean;knowledgeTargetId:string|null;onKnowledgeClose:()=>void;onMapData?:(target:SourceMappingTarget)=>void;onDeriveData?:(target:DerivedSourceTarget)=>void;onBrowseRecords?:(conceptId:string)=>void;recordCounts?:Record<string,number>;workspace?:boolean }>) {
   const { t } = useModuleTranslation('semantic-model');
@@ -84,21 +84,6 @@ function RecordsSummary({ count, label, onBrowse }: Readonly<{ count?: number; l
     <Button size='sm' variant='ghost' className='ml-auto h-7 shrink-0 px-2 text-xs' onClick={onBrowse}>{t('records.table.browse')}</Button>
   </div>;
 }
-
-/** A section's title, with what it is for behind an “i” rather than spelled out under it. */
-function SectionHeader({ title, help, count, children }: Readonly<{ title: string; help?: string; count?: number; children?: ReactNode }>) {
-  return <div className='flex min-h-7 items-center gap-1'>
-    <h3 className='text-sm font-semibold'>{title}</h3>
-    {count !== undefined && <span className='rounded-full bg-muted px-1.5 text-[11px] font-medium tabular-nums text-muted-foreground'>{count}</span>}
-    {help && <HelpTip text={help} />}
-    {children && <div className='ml-auto flex items-center gap-1'>{children}</div>}
-  </div>;
-}
-
-/** Each part of the details: a line above it, and room. */
-const SECTION = 'space-y-3 border-t pt-6';
-const SUMMARY = 'flex cursor-pointer list-none items-center gap-1 text-sm font-semibold [&::-webkit-details-marker]:hidden';
-const DELETE_BUTTON = 'border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive';
 
 const PANEL_WIDTH_KEY = 'semantic-model.side-panel-width';
 const PANEL_MIN = 320;
@@ -194,7 +179,7 @@ function NodeForm({ modelId, node: item,locked,canEdit,onMapData,onDeriveData }:
       })}</div> : <p className='text-xs text-muted-foreground'>{t('workspaceUi.noRelationships')}</p>}
     </section>
     {!locked&&canEdit && <section data-focus-section='sources' className={SECTION}><SourceMappingsSection modelId={modelId} conceptId={item.id} onMapData={onMapData} onDeriveData={onDeriveData} /></section>}
-    <details className='group border-t pt-6'><summary className={SUMMARY}><ChevronRight className='h-4 w-4 text-muted-foreground transition-transform group-open:rotate-90' aria-hidden />{t('workspaceUi.advanced')}</summary><div className='mt-4 space-y-4'>
+    <details className='group border-t pt-6'><summary className='flex cursor-pointer list-none items-center gap-1 text-sm font-semibold [&::-webkit-details-marker]:hidden'><ChevronRight className='h-4 w-4 text-muted-foreground transition-transform group-open:rotate-90' aria-hidden />{t('workspaceUi.advanced')}</summary><div className='mt-4 space-y-4'>
     <Field label={t('field.category')}><Select value={item.category} disabled={locked||!canEdit} onValueChange={(category: SemanticNodeType['category']) => update({ category })}><SelectTrigger className='h-9'><SelectValue /></SelectTrigger><SelectContent><SelectItem value='business_object'>{t('category.business_object')}</SelectItem><SelectItem value='classification'>{t('category.classification')}</SelectItem></SelectContent></Select></Field>
     <Field label={t('field.recordPolicy')}><Select value={item.recordPolicy} disabled={locked||!canEdit} onValueChange={(recordPolicy: SemanticNodeType['recordPolicy']) => update({ recordPolicy })}><SelectTrigger className='h-9'><SelectValue /></SelectTrigger><SelectContent>{(['none','optional','expected'] as const).map((policy) => <SelectItem key={policy} value={policy}>{t(`recordPolicy.${policy}`)}</SelectItem>)}</SelectContent></Select></Field>
     {!locked&&canEdit && <><Separator /><Button variant='outline' size='sm' className={DELETE_BUTTON} onClick={deleteNode}><Trash2 className='mr-2 h-4 w-4' />{t('inspector.deleteConcept')}</Button></>}
@@ -323,7 +308,7 @@ function RelationForm({ modelId,relation: item,canEdit }: Readonly<{ modelId: st
   return <div className='space-y-6'>
     <RelationSentenceEditor relation={item} labels={labels} onChange={update} />
     <section data-focus-section='matching' className={SECTION}><SectionHeader title={t('relationSentence.linkTitle')} help={t('relationSentence.linkHelp')} /><RelationMatchingPanel modelId={modelId} relation={item} /></section>
-    <details className='group border-t pt-6'><summary className={SUMMARY}><ChevronRight className='h-4 w-4 text-muted-foreground transition-transform group-open:rotate-90' aria-hidden />{t('workspaceUi.advanced')}</summary><div className='mt-4 space-y-4'>
+    <details className='group border-t pt-6'><summary className='flex cursor-pointer list-none items-center gap-1 text-sm font-semibold [&::-webkit-details-marker]:hidden'><ChevronRight className='h-4 w-4 text-muted-foreground transition-transform group-open:rotate-90' aria-hidden />{t('workspaceUi.advanced')}</summary><div className='mt-4 space-y-4'>
       <Field label={t('field.description')}><Textarea className='min-h-[4.5rem] resize-y text-sm' rows={3} value={item.description} onChange={(event) => update({description:event.target.value})} /></Field>
       <div className='flex items-center justify-between gap-3'><Label className='text-sm font-normal'>{t('field.traversable')}</Label><Switch checked={item.traversable} onCheckedChange={(traversable) => update({traversable})} /></div>
       <Separator /><Button variant='outline' size='sm' className={DELETE_BUTTON} onClick={deleteRelation}><Trash2 className='mr-2 h-4 w-4' />{t('inspector.deleteRelationship')}</Button>
@@ -366,9 +351,6 @@ function RecordForm({ record: item,canEdit }: Readonly<{ record: SemanticRecord;
   return <div className='space-y-5'><p className='rounded-xl bg-muted p-3 text-xs text-muted-foreground'>{t('records.instanceOf',{ name:type?.label ?? '' })}</p><Field label={t('field.label')}><Input value={item.label} disabled={!canEdit} onChange={(event) => update({label:event.target.value})} /></Field>{type?.attributes.map((attribute) => <Field key={attribute.key} label={attribute.label}><Input value={String(item.values[attribute.key] ?? '')} disabled={!canEdit} onChange={(event) => update({values:{...item.values,[attribute.key]:event.target.value}})} /></Field>)}{canEdit&&<><Separator /><Button variant='destructive' className='w-full' onClick={() => { commit({type:'record.delete',id:item.id},(current) => ({...current,records:current.records.filter((candidate) => candidate.id !== item.id),recordRelations:current.recordRelations.filter((candidate) => candidate.sourceRecordId !== item.id && candidate.targetRecordId !== item.id)})); select(null); }}><Trash2 className='mr-2 h-4 w-4' />{t('records.delete')}</Button></>}</div>;
 }
 
-function Field({ label,help,children }: Readonly<{ label: string; help?: string; children: React.ReactNode }>) {
-  return <div className='space-y-1.5'><div className='flex items-center gap-1'><Label className='text-xs font-medium text-muted-foreground'>{label}</Label>{help && <HelpTip text={help} />}</div>{children}</div>;
-}
 
 function ReadOnlyField({ label,value }: Readonly<{ label: string; value: string }>) { return <div><p className='text-xs font-medium text-muted-foreground'>{label}</p><p className='mt-1 text-sm'>{value}</p></div>; }
 

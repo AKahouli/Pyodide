@@ -1,28 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Check, Loader2, Trash2, UserPlus, Users } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Separator } from '@/components/ui/separator';
 import { showError, showSuccess } from '@/lib/notifications';
 import { searchUsers } from '@/modules/workspace/api';
 import type { UserSearchResult } from '@/modules/workspace/types';
 import { semanticModelApi } from '../../api';
 import type { SemanticModelMember, SemanticModelShareRole } from '../../types';
+import { FORM_SECTION, INPUT, INPUT_COMPACT, ROW_LIST, SectionHeader } from '../form/FormParts';
 
 interface PendingEntry {
   id: string;
   email: string;
   role: SemanticModelShareRole;
 }
-
-const ROLE_LABELS: Record<SemanticModelShareRole, string> = {
-  viewer: 'Lecture seule',
-  editor: 'Lecture / écriture',
-};
 
 function memberDisplayName(m: SemanticModelMember): string {
   const full = [m.firstName, m.lastName].filter(Boolean).join(' ');
@@ -149,8 +142,8 @@ export function ShareSemanticModelDialog({
         </DialogHeader>
 
         {/* ── Invite input ── */}
-        <div className='space-y-3'>
-          <Label>Inviter par email</Label>
+        <section className='space-y-3'>
+          <SectionHeader title='Inviter par email' />
           <div className='flex gap-2'>
             <div className='relative flex-1'>
               <Input
@@ -158,7 +151,7 @@ export function ShareSemanticModelDialog({
                 onChange={(e) => setEmailInput(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addPending(emailInput.trim()); } }}
                 placeholder="Email de l'utilisateur…"
-                className='pr-8'
+                className={`${INPUT} pr-8`}
                 autoComplete='off'
               />
               {searching && <Loader2 className='absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 animate-spin text-muted-foreground' />}
@@ -185,7 +178,7 @@ export function ShareSemanticModelDialog({
               )}
             </div>
             <Select value={pendingRole} onValueChange={(v) => setPendingRole(v as SemanticModelShareRole)}>
-              <SelectTrigger className='w-40'>
+              <SelectTrigger className={`${INPUT} w-40`}>
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -193,35 +186,37 @@ export function ShareSemanticModelDialog({
                 <SelectItem value='editor'>Lecture / écriture</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant='outline' size='icon' onClick={() => addPending(emailInput.trim())} disabled={!emailInput.trim()}>
+            <Button variant='outline' size='icon' className='h-9 w-9 shrink-0' onClick={() => addPending(emailInput.trim())} disabled={!emailInput.trim()} aria-label='Ajouter' title='Ajouter'>
               <UserPlus className='h-4 w-4' />
             </Button>
           </div>
 
           {/* Pending list */}
           {pending.length > 0 && (
-            <div className='space-y-1 rounded-lg border bg-muted/30 p-2'>
-              {pending.map((entry) => (
-                <div key={entry.id} className='flex items-center gap-2 rounded px-2 py-1'>
-                  <div className='flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[10px] font-bold text-primary'>
-                    {entry.email.charAt(0).toUpperCase()}
-                  </div>
-                  <span className='flex-1 truncate text-sm'>{entry.email}</span>
-                  <Select value={entry.role} onValueChange={(v) => updatePendingRole(entry.id, v as SemanticModelShareRole)}>
-                    <SelectTrigger className='h-7 w-36 text-xs'>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value='viewer'>Lecture seule</SelectItem>
-                      <SelectItem value='editor'>Lecture / écriture</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <Button variant='ghost' size='icon' className='h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive' onClick={() => removePending(entry.id)}>
-                    <Trash2 className='h-3.5 w-3.5' />
-                  </Button>
-                </div>
-              ))}
-              <div className='flex justify-end pt-1'>
+            <div className='space-y-2'>
+              <ul className={ROW_LIST}>
+                {pending.map((entry) => (
+                  <li key={entry.id} className='flex items-center gap-2 py-1.5 pl-3 pr-1'>
+                    <div className='flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[10px] font-bold text-primary'>
+                      {entry.email.charAt(0).toUpperCase()}
+                    </div>
+                    <span className='min-w-0 flex-1 truncate text-sm'>{entry.email}</span>
+                    <Select value={entry.role} onValueChange={(v) => updatePendingRole(entry.id, v as SemanticModelShareRole)}>
+                      <SelectTrigger className={`${INPUT_COMPACT} w-36 text-xs`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value='viewer'>Lecture seule</SelectItem>
+                        <SelectItem value='editor'>Lecture / écriture</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <Button variant='ghost' size='icon' className='h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive' onClick={() => removePending(entry.id)} aria-label='Retirer' title='Retirer'>
+                      <Trash2 className='h-3.5 w-3.5' />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+              <div className='flex justify-end'>
                 <Button size='sm' onClick={() => void handleSend()} disabled={saving}>
                   {saving ? <Loader2 className='mr-2 h-3.5 w-3.5 animate-spin' /> : <Check className='mr-2 h-3.5 w-3.5' />}
                   Envoyer {pending.length} invitation{pending.length > 1 ? 's' : ''}
@@ -229,35 +224,30 @@ export function ShareSemanticModelDialog({
               </div>
             </div>
           )}
-        </div>
-
-        <Separator />
+        </section>
 
         {/* ── Current members ── */}
-        <div className='space-y-2'>
-          <Label>Accès actuels</Label>
+        <section className={FORM_SECTION}>
+          <SectionHeader title='Accès actuels' count={loading ? undefined : members.length || undefined} />
           {loading ? (
             <div className='flex items-center justify-center py-6 text-muted-foreground'>
               <Loader2 className='mr-2 h-4 w-4 animate-spin' />Chargement…
             </div>
           ) : members.length === 0 ? (
-            <p className='py-4 text-center text-sm text-muted-foreground'>Aucun collaborateur pour l'instant.</p>
+            <p className='text-xs text-muted-foreground'>Aucun collaborateur pour l'instant.</p>
           ) : (
-            <div className='max-h-52 space-y-1 overflow-y-auto'>
+            <ul className={`${ROW_LIST} max-h-52 overflow-y-auto`}>
               {members.map((member) => (
-                <div key={member.userId} className='flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-muted/50'>
+                <li key={member.userId} className='flex items-center gap-2.5 py-1.5 pl-3 pr-1'>
                   <div className='flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground'>
                     {initials(member)}
                   </div>
                   <div className='min-w-0 flex-1'>
                     <p className='truncate text-sm font-medium'>{memberDisplayName(member)}</p>
-                    {member.email && <p className='truncate text-xs text-muted-foreground'>{member.email}</p>}
+                    {member.email && <p className='truncate text-[11px] text-muted-foreground'>{member.email}</p>}
                   </div>
-                  <Badge variant='outline' className='shrink-0 text-[10px]'>
-                    {ROLE_LABELS[member.role]}
-                  </Badge>
                   <Select value={member.role} onValueChange={(v) => void handleUpdateRole(member, v as SemanticModelShareRole)}>
-                    <SelectTrigger className='h-7 w-36 text-xs'>
+                    <SelectTrigger className={`${INPUT_COMPACT} w-36 text-xs`}>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -270,14 +260,16 @@ export function ShareSemanticModelDialog({
                     size='icon'
                     className='h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive'
                     onClick={() => void handleRevoke(member)}
+                    aria-label="Révoquer l'accès"
+                    title="Révoquer l'accès"
                   >
                     <Trash2 className='h-3.5 w-3.5' />
                   </Button>
-                </div>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
-        </div>
+        </section>
 
         <div className='flex justify-end'>
           <Button variant='outline' onClick={close}>Fermer</Button>

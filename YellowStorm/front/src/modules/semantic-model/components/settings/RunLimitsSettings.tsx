@@ -2,13 +2,12 @@ import { useEffect, useState } from 'react';
 import { Gauge } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { parseApiError } from '@/lib/api-error';
 import { showError, showSuccess } from '@/lib/notifications';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../../api';
-import { HelpTip } from '../mapping/RuleControls';
+import { FORM_SECTION, FormField, INPUT, SectionHeader } from '../form/FormParts';
 import type { RunLimits } from '../../types';
 
 /** Built-in limits and the ranges the back end and the runtime accept. */
@@ -49,21 +48,14 @@ export function RunLimitsSettings() {
     }
   };
 
-  return <section className='space-y-4 rounded-lg border p-5'>
-    <div className='space-y-1'>
-      <h2 className='flex items-center gap-2 font-semibold'><Gauge className='h-4 w-4' />{t('settings.runLimits.title')}</h2>
-      <p className='text-sm text-muted-foreground'>{t('settings.runLimits.description')}</p>
-    </div>
-    <div className='grid gap-3 sm:grid-cols-2'>
+  return <section className={cn(FORM_SECTION, 'space-y-4')}>
+    <SectionHeader title={t('settings.runLimits.title')} help={t('settings.runLimits.description')} icon={<Gauge className='h-4 w-4 text-muted-foreground' aria-hidden />} />
+    <div className='grid gap-x-6 gap-y-4 sm:grid-cols-2'>
       {RUN_LIMIT_FIELDS.map(({ key, builtIn, min, max }) => {
         const value = configured[key];
         const wrong = invalid(key, value);
-        return <div key={key} className='space-y-1'>
-          <div className='flex items-center gap-1'>
-            <Label htmlFor={`run-limit-${key}`} className='text-xs'>{t(`settings.runLimits.${key}`)}</Label>
-            <HelpTip text={t(`settings.runLimits.${key}Tip`)} />
-          </div>
-          <Input id={`run-limit-${key}`} type='number' min={min} max={max} className='h-8 text-xs' aria-invalid={wrong}
+        return <FormField key={key} label={t(`settings.runLimits.${key}`)} help={t(`settings.runLimits.${key}Tip`)} htmlFor={`run-limit-${key}`}>
+          <Input id={`run-limit-${key}`} type='number' min={min} max={max} className={INPUT} aria-invalid={wrong}
             value={value ?? ''} placeholder={String(builtIn)}
             onChange={(event) => {
               const next = { ...configured };
@@ -75,7 +67,7 @@ export function RunLimitsSettings() {
               ? t('mapping.ai.range', { min: min.toLocaleString(), max: max.toLocaleString() })
               : t('settings.builtIn', { value: builtIn.toLocaleString() })}
           </p>
-        </div>;
+        </FormField>;
       })}
     </div>
     <p className='text-xs text-muted-foreground'>{t('settings.runLimits.note')}</p>

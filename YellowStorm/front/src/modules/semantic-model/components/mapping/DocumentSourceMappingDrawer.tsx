@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, ExternalLink, FileText, FolderOpen, ListChecks, Loader2, PanelLeftClose, PanelLeftOpen, RefreshCw, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
@@ -31,6 +30,7 @@ import type { SourceMappingTarget, WorkspaceSourceScope } from './SourceMappingD
 import { ComputedFieldEditor, computedPayload, computedProblem, newComputedRule } from './ComputedFieldEditor';
 import { isReadableDocument, WorkspaceFilePicker, type WorkspacePick } from './WorkspaceFilePicker';
 import { MappingPresetBar } from './MappingPresetBar';
+import { FORM_SECTION, FormField, INPUT, INPUT_COMPACT, ROW_LIST, SectionHeader } from '../form/FormParts';
 
 type PreviewItem = { asset: StructuredSourceAsset; result: SourceMappingPreviewResponse };
 
@@ -414,7 +414,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
       </Tabs>}
       {(() => {
         const documentPane = <DocumentPreviewPane documents={viewerDocuments} shown={shown} onShow={showDocument} navigation={navigation} onPageCount={notePageCount} />;
-        const fieldsPane = <div className='h-full min-h-0 space-y-5 overflow-y-auto p-5'>
+        const fieldsPane = <div className='h-full min-h-0 space-y-6 overflow-y-auto p-5'>
         {viewerShown && shown && <div className='space-y-2' aria-live='polite'>
           <div className='flex items-center gap-2 rounded-lg bg-muted/40 px-2.5 py-1.5 text-[11px] text-muted-foreground'>
             {live.reading ? <Loader2 className='h-3.5 w-3.5 shrink-0 animate-spin' /> : <FileText className='h-3.5 w-3.5 shrink-0' />}
@@ -428,8 +428,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
           {liveStatus && <p role='alert' className='flex gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/5 p-2.5 text-xs text-amber-800 dark:text-amber-300'><AlertTriangle className='h-3.5 w-3.5 shrink-0' />{documentStatusText(t, liveStatus)}</p>}
           {live.result?.warnings.map((warning) => <p key={warning} className='flex gap-1.5 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400'><AlertTriangle className='h-3.5 w-3.5 shrink-0' />{warning}</p>)}
         </div>}
-        <div className='space-y-2'>
-          <Label>{t('mapping.concept')}</Label>
+        <FormField label={t('mapping.concept')}>
           <Select value={conceptId} disabled={Boolean(target.mapping)} onValueChange={(value) => {
             setConceptId(value);
             const next = graph?.nodes.find((node) => node.id === value);
@@ -439,31 +438,29 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
             setIdentityFields(sourceMappings.find((mapping) => mapping.conceptId === value)?.identityFields ?? []);
             preview.reset();
           }}>
-            <SelectTrigger aria-label={t('mapping.concept')}><SelectValue placeholder={t('mapping.chooseConcept')} /></SelectTrigger>
+            <SelectTrigger className={INPUT} aria-label={t('mapping.concept')}><SelectValue placeholder={t('mapping.chooseConcept')} /></SelectTrigger>
             <SelectContent>{(graph?.nodes ?? []).filter((node) => !node.systemKey).map((node) => <SelectItem key={node.id} value={node.id}>{node.label}</SelectItem>)}</SelectContent>
           </Select>
-        </div>
+        </FormField>
 
-        {workspace && <div className='space-y-2 rounded-xl border border-teal-500/40 bg-teal-500/5 p-3 text-xs'>
-          <p className='flex items-center gap-1.5 font-medium text-teal-800 dark:text-teal-300'><FolderOpen className='h-4 w-4' />{t('mapping.coverage')}</p>
+        {workspace && <section className={cn(FORM_SECTION, 'text-xs')}>
+          <SectionHeader title={t('mapping.coverage')} help={t('mapping.workspaceHelp')} icon={<FolderOpen className='mr-0.5 h-4 w-4 text-muted-foreground' />} />
           <WorkspaceFilePicker workspaceId={workspace.workspaceId} name={workspace.workspaceName ?? workspace.name} whole={coverage.whole} pick={coverage.pick}
             onChange={(next) => { setCoverage(next); preview.reset(); }} />
-          <p className='text-muted-foreground'>{t('mapping.workspaceHelp')}</p>
-          {usesAi && <p className='flex gap-1.5 text-amber-700 dark:text-amber-400'><AlertTriangle className='h-3.5 w-3.5 shrink-0' />{t('mapping.workspaceAiCost')}</p>}
+          {usesAi && <p className='flex gap-1.5 rounded-lg bg-amber-500/10 p-2 text-amber-700 dark:text-amber-400'><AlertTriangle className='h-3.5 w-3.5 shrink-0' />{t('mapping.workspaceAiCost')}</p>}
           {samplesQuery.isSuccess && !selectedAssets.length && <p className='text-muted-foreground'>{t('mapping.workspaceNoSample')}</p>}
-        </div>}
+        </section>}
 
-        {!workspace && ((target.bulkEdit && eligibleDocuments.length > 1) || (!target.mapping && eligibleDocuments.length > 1)) && <div className='space-y-2'>
-          <Label>{t('mapping.bulkDocuments', { count: selectedAssets.length })}</Label>
-          <p className='text-xs text-muted-foreground'>{t('mapping.bulkDocumentsHelp')}</p>
+        {!workspace && ((target.bulkEdit && eligibleDocuments.length > 1) || (!target.mapping && eligibleDocuments.length > 1)) && <section className={FORM_SECTION}>
+          <SectionHeader title={t('mapping.bulkDocuments', { count: selectedAssets.length })} help={t('mapping.bulkDocumentsHelp')} />
           {target.bulkEdit && <p className='text-xs text-muted-foreground'>{t('dataWorkflow.bulkReplaceHelp')}</p>}
           <div className='flex flex-wrap items-center gap-2'>
-            <Input className='min-w-40 flex-1' value={documentSearch} onChange={(event) => setDocumentSearch(event.target.value)} placeholder={t('dataWorkflow.searchDocuments')} aria-label={t('dataWorkflow.searchDocuments')} />
-            <Button size='sm' variant='outline' type='button' onClick={() => setSelectedDocuments((current) => new Set([...current, ...filteredDocuments.map((asset) => asset.documentId)]))}>{t('dataWorkflow.selectAll', { count: filteredDocuments.length })}</Button>
-            <Button size='sm' variant='ghost' type='button' onClick={() => setSelectedDocuments((current) => new Set([...current].filter((id) => !filteredDocuments.some((asset) => asset.documentId === id))))}>{t('dataWorkflow.clearSelection')}</Button>
+            <Input className={cn(INPUT, 'min-w-40 flex-1')} value={documentSearch} onChange={(event) => setDocumentSearch(event.target.value)} placeholder={t('dataWorkflow.searchDocuments')} aria-label={t('dataWorkflow.searchDocuments')} />
+            <Button size='sm' variant='outline' type='button' className='h-9' onClick={() => setSelectedDocuments((current) => new Set([...current, ...filteredDocuments.map((asset) => asset.documentId)]))}>{t('dataWorkflow.selectAll', { count: filteredDocuments.length })}</Button>
+            <Button size='sm' variant='ghost' type='button' className='h-9' onClick={() => setSelectedDocuments((current) => new Set([...current].filter((id) => !filteredDocuments.some((asset) => asset.documentId === id))))}>{t('dataWorkflow.clearSelection')}</Button>
           </div>
-          <div className='max-h-48 space-y-1 overflow-y-auto rounded-xl border p-2'>
-            {filteredDocuments.map((asset) => <label key={asset.documentId} className='flex min-h-10 items-center gap-2 rounded-lg px-2 text-xs hover:bg-muted/60'>
+          <div className={cn(ROW_LIST, 'max-h-48 overflow-y-auto')}>
+            {filteredDocuments.map((asset) => <label key={asset.documentId} className='flex min-h-9 items-center gap-2 px-3 text-xs hover:bg-muted/40'>
               <input type='checkbox' checked={selectedDocuments.has(asset.documentId)} onChange={(event) => setSelectedDocuments((current) => {
                 const next = new Set(current);
                 if (event.target.checked) next.add(asset.documentId); else next.delete(asset.documentId);
@@ -471,14 +468,14 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
               })} />
               <span className='truncate'>{asset.name}</span>
             </label>)}
-            {!filteredDocuments.length && <p className='p-2 text-xs text-muted-foreground'>{t('dataWorkflow.noDocumentsMatch')}</p>}
+            {!filteredDocuments.length && <p className='p-3 text-xs text-muted-foreground'>{t('dataWorkflow.noDocumentsMatch')}</p>}
           </div>
-        </div>}
+        </section>}
 
         {concept && !concept.attributes.length && <p className='rounded-xl border border-dashed p-4 text-sm text-muted-foreground'>{t('mapping.noFields', { name: concept.label })}</p>}
 
-        {concept && concept.attributes.length > 0 && <div className='space-y-2'>
-          <Label>{t('mapping.documentFields')}</Label>
+        {concept && concept.attributes.length > 0 && <section className={FORM_SECTION}>
+          <SectionHeader title={t('mapping.documentFields')} count={mappings.length} />
           <MappingPresetBar modelId={modelId} conceptId={conceptId} attributes={concept.attributes}
             current={{ fieldMappings: savedMappings, aiSettings, identityFields }} onApply={applySettings}
             autoStart={Boolean(target && !target.mapping && !target.bulkEdit)} />
@@ -486,15 +483,15 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
           {addedFields.length > 0 && <p role='status' className='flex gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/5 p-2.5 text-xs text-sky-800 dark:text-sky-300'>
             <Sparkles className='mt-0.5 h-3.5 w-3.5 shrink-0' />{t('mapping.newFields', { count: addedFields.length, fields: addedFields.map(attributeLabel).join(', ') })}
           </p>}
-          <div className='overflow-hidden rounded-xl border'>
-            {mappings.map((mapping, index) => <div key={mapping.targetAttribute} className='space-y-2 border-b p-3 last:border-b-0'>
-              <div className='flex items-center gap-3'>
+          <div className={ROW_LIST}>
+            {mappings.map((mapping, index) => <div key={mapping.targetAttribute} className='space-y-2 px-3 py-2.5'>
+              <div className='flex items-center gap-2'>
                 <span className='flex min-w-0 flex-1 items-center gap-1.5 text-xs font-medium'>
                   <span className='truncate'>{concept.attributes.find((attribute) => attribute.key === mapping.targetAttribute)?.label ?? mapping.targetAttribute}</span>
                   {addedFields.includes(mapping.targetAttribute) && <span className='shrink-0 rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-medium text-sky-800 dark:text-sky-300'>{t('mapping.newField')}</span>}
                 </span>
                 <Select value={mapping.mode} onValueChange={(value: SourceFieldMapping['mode']) => setMode(index, value)}>
-                  <SelectTrigger className='h-8 w-44 text-xs' aria-label={t('mapping.methodFor', { field: mapping.targetAttribute })}><SelectValue /></SelectTrigger>
+                  <SelectTrigger className={cn(INPUT_COMPACT, 'w-40 text-xs')} aria-label={t('mapping.methodFor', { field: mapping.targetAttribute })}><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value='extract'>{t('mapping.method.extract')}</SelectItem>
                     <SelectItem value='metadata'>{t('mapping.method.metadata')}</SelectItem>
@@ -504,7 +501,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
                   </SelectContent>
                 </Select>
                 {mapping.mode === 'extract' && <Select value={mapping.extractionStrategy ?? 'deterministic'} onValueChange={(value: SourceExtractionStrategy) => setStrategy(index, value)}>
-                  <SelectTrigger className='h-8 w-40 text-xs' aria-label={t('mapping.strategyFor', { field: mapping.targetAttribute })}><SelectValue /></SelectTrigger>
+                  <SelectTrigger className={cn(INPUT_COMPACT, 'w-40 text-xs')} aria-label={t('mapping.strategyFor', { field: mapping.targetAttribute })}><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {STRATEGIES.map((strategy) => <SelectItem key={strategy} value={strategy}>{t(`mapping.strategy.${strategy}`)}</SelectItem>)}
                   </SelectContent>
@@ -528,30 +525,30 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
                 onChange={(computed) => changeMappings(mappings.map((item, itemIndex) => itemIndex === index ? { ...item, computed } : item))}
                 fields={computedInputs(mapping.targetAttribute).map((key) => ({ key, label: attributeLabel(key) }))}
                 fileSamples={fileSamples} fieldSamples={fieldSamples} />}
-              {mapping.mode === 'constant' && <Input value={String(mapping.constantValue ?? '')} onChange={(event) => changeMappings(mappings.map((item, itemIndex) => itemIndex === index ? { ...item, constantValue: event.target.value } : item))} placeholder={t('mapping.constantPlaceholder')} />}
+              {mapping.mode === 'constant' && <Input className={INPUT_COMPACT} value={String(mapping.constantValue ?? '')} onChange={(event) => changeMappings(mappings.map((item, itemIndex) => itemIndex === index ? { ...item, constantValue: event.target.value } : item))} placeholder={t('mapping.constantPlaceholder')} />}
             </div>)}
           </div>
           {usesAi && <ManyRecordsSwitch value={aiSettings} onChange={(next) => { setAiSettings(next); preview.reset(); }} />}
           {usesAi && <AiLimitsEditor defaults={defaultsQuery.data?.aiSettings} value={aiSettings} onChange={(next) => { setAiSettings(next); preview.reset(); }} />}
-        </div>}
+        </section>}
 
-        {concept && concept.attributes.length > 0 && <div className='space-y-2'>
-          <Label>{t('mapping.identity')}</Label>
-          <div className='space-y-1 rounded-xl border p-2'>
+        {concept && concept.attributes.length > 0 && <section className={FORM_SECTION}>
+          <SectionHeader title={t('mapping.identity')} help={t('mapping.identityHelp')} />
+          <div className={ROW_LIST}>
             {activeMappings.map((mapping) => {
               const label = concept.attributes.find((attribute) => attribute.key === mapping.targetAttribute)?.label ?? mapping.targetAttribute;
-              return <label key={mapping.targetAttribute} className='flex min-h-10 items-center gap-2 rounded-lg px-2 text-xs hover:bg-muted/60'>
+              return <label key={mapping.targetAttribute} className='flex min-h-9 items-center gap-2 px-3 text-xs hover:bg-muted/40'>
                 <input type='checkbox' checked={identityFields.includes(mapping.targetAttribute)} onChange={(event) => setIdentityFields((current) => event.target.checked ? [...current, mapping.targetAttribute] : current.filter((field) => field !== mapping.targetAttribute))} />
                 <span>{label}</span>
               </label>;
             })}
           </div>
-        </div>}
+        </section>}
 
         {preview.isError && <p role='alert' className='flex gap-1.5 rounded-lg bg-destructive/10 p-3 text-xs text-destructive'><AlertTriangle className='h-3.5 w-3.5 shrink-0' />{isRetiredSearchFailure(preview.error) ? t('mapping.previewUnavailable') : `${t('mapping.previewError')}: ${parseApiError(preview.error).message}`}</p>}
 
-        {preview.data?.map(({ asset, result }) => <div key={asset.documentId} className='space-y-2 rounded-xl border p-3'>
-          <p className='text-xs font-semibold'>{asset.name}</p>
+        {preview.data?.map(({ asset, result }) => <section key={asset.documentId} className={FORM_SECTION}>
+          <SectionHeader title={asset.name} icon={<FileText className='mr-0.5 h-4 w-4 text-muted-foreground' />} />
           {result.warnings.map((warning) => <p key={warning} className='flex gap-1.5 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400'><AlertTriangle className='h-3.5 w-3.5 shrink-0' />{warning}</p>)}
           {result.aiSent && <p className='text-[11px] text-muted-foreground'>{t(result.aiSent.longDocument ? 'mapping.reading.aiSentLong' : 'mapping.reading.aiSent', {
             blocks: result.aiSent.blocksSent, characters: result.aiSent.charactersSent.toLocaleString(), total: result.aiSent.documentCharacters.toLocaleString() })}</p>}
@@ -566,7 +563,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
               {source?.quote && <button type='button' className='mt-1 flex w-full items-start gap-1 text-left text-[11px] text-primary hover:underline' onClick={() => void useFileViewerStore.getState().openFile(asset.workspaceId, asset.documentId, asset.path, asset.name, asset.mimeType, { page: Number.parseInt(source.page ?? '1', 10) || 1, highlightText: source.quote })}><ExternalLink className='mt-0.5 h-3 w-3 shrink-0' />{source.quote}</button>}
             </div>;
           }))}
-        </div>)}
+        </section>)}
         </div>;
         if (!viewerShown) return <div className='min-h-0 flex-1'>{fieldsPane}</div>;
         if (narrow) return <div className='min-h-0 flex-1'>{narrowTab === 'document' ? documentPane : fieldsPane}</div>;

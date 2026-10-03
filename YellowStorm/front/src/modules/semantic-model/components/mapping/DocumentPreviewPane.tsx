@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils';
 import { DocumentPreviewViewer, type DocumentPreviewNavigation } from '@/modules/file-viewer/components/DocumentPreviewViewer';
 import { useModuleTranslation } from '@/modules/localization';
 import type { DocumentFieldReading, StructuredSourceAsset } from '../../types';
+import { INPUT_COMPACT } from '../form/FormParts';
 import { pageRange } from './DocumentFieldRules';
 
 // A long passage is found in the viewer by its first words.
@@ -92,7 +93,7 @@ export function DocumentPreviewPane({ documents, shown, onShow, navigation, onPa
     <div className='flex min-h-12 items-center gap-1.5 border-b bg-background px-3 py-2' role='toolbar' aria-label={t('mapping.live.switcher')} onKeyDown={onKeyDown}>
       <Button type='button' size='icon' variant='ghost' className='h-7 w-7 shrink-0' disabled={index <= 0} aria-label={t('mapping.live.previous')} onClick={() => go(-1)}><ChevronLeft className='h-4 w-4' /></Button>
       {documents.length > 1 && shown ? <Select value={shown.documentId} onValueChange={onShow}>
-        <SelectTrigger className='h-8 min-w-0 flex-1 text-xs' aria-label={t('mapping.live.chooseDocument')}>
+        <SelectTrigger className={cn(INPUT_COMPACT, 'min-w-0 flex-1 text-xs')} aria-label={t('mapping.live.chooseDocument')}>
           <FileText className='mr-1.5 h-3.5 w-3.5 shrink-0 text-muted-foreground' /><span className='truncate'><SelectValue /></span>
         </SelectTrigger>
         <SelectContent>{documents.map((asset) => <SelectItem key={asset.documentId} value={asset.documentId} className='text-xs'>{asset.name}</SelectItem>)}</SelectContent>

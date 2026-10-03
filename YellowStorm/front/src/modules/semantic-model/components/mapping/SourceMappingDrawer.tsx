@@ -3,13 +3,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, Sparkles, AlertTriangle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { showError, showSuccess } from '@/lib/notifications';
 import { parseApiError } from '@/lib/api-error';
+import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../../api';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
@@ -19,6 +19,7 @@ import type { KnowledgeResource } from '../../hooks/use-knowledge-linking';
 import type { ConceptSourceMapping, SourceFieldMapping, SheetProfile } from '../../types';
 import { DocumentSourceMappingDrawer } from './DocumentSourceMappingDrawer';
 import type { SuggestionSource } from '../editor/SuggestConceptsDialog';
+import { FORM_SECTION, FormField, INPUT, INPUT_COMPACT, ROW_LIST, SectionHeader } from '../form/FormParts';
 
 export interface SourceMappingTarget {
   workspaceId: string;
@@ -212,50 +213,49 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose, onSuggestConc
             <SheetDescription>{t('mapping.description')}</SheetDescription>
             {onSuggestConcepts && !target.mapping && (target.assetKind === 'excel_sheet' || target.assetKind === 'csv') && <Button size='sm' variant='outline' className='mt-2 w-fit' onClick={() => onSuggestConcepts({ workspaceId: target.workspaceId, documentId: target.documentId, documentName: target.documentName, assetKind: target.assetKind as SuggestionSource['assetKind'] })}><Sparkles className='mr-2 h-4 w-4' />{t('suggest.openFromFile')}</Button>}
           </SheetHeader>
-          <div className='min-h-0 flex-1 space-y-5 overflow-y-auto p-5'>
-            <div className='space-y-2'>
-              <Label>{t('mapping.concept')}</Label>
-              <Select value={conceptId} onValueChange={(value) => { setConceptId(value); setMappings([]); setIdentityField(sourceMappings.find((mapping) => mapping.conceptId === value)?.identityFields[0] ?? ''); preview.reset(); }} disabled={Boolean(target.mapping)}>
-                <SelectTrigger aria-label={t('mapping.concept')}><SelectValue placeholder={t('mapping.chooseConcept')} /></SelectTrigger>
-                <SelectContent>{nodes.map((node) => <SelectItem key={node.id} value={node.id}>{node.label}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div className='space-y-2'>
-              <Label>{t('mapping.sheet')}</Label>
-              <Select value={sheetName} onValueChange={(value) => { setSheetName(value); setMappings([]); setIdentityField(''); preview.reset(); }} disabled={Boolean(target.mapping)}>
-                <SelectTrigger aria-label={t('mapping.sheet')}><SelectValue placeholder={t('mapping.chooseSheet')} /></SelectTrigger>
-                <SelectContent>{(profile.data?.sheets ?? []).map((sheet) => (
-                  <SelectItem key={sheet.name} value={sheet.name}>{sheet.name}{sheet.rowCount || sheet.fieldCount ? ` · ${t('mapping.sheetMeta', { rows: sheet.rowCount, fields: sheet.fieldCount })}` : ''}</SelectItem>
-                ))}</SelectContent>
-              </Select>
-              {reading && <div className='flex items-center gap-2 text-xs text-muted-foreground'><Loader2 className='h-3.5 w-3.5 animate-spin' />{t('sourceAnalysis.loading')}</div>}
-              {/* Shown once the file was read and still gave no sheets, or reading it failed. */}
-              {!reading && unread && (analyze.isError || autoRead === readKey) && (
-                <div className='flex items-start gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive'>
-                  <AlertTriangle className='mt-0.5 h-3.5 w-3.5 shrink-0' />
-                  <span className='min-w-0 flex-1'>{t('sourceAnalysis.readFailed')}</span>
-                  <Button size='sm' variant='ghost' className='h-6 shrink-0 px-2 text-[11px]' disabled={analyze.isPending} onClick={() => analyze.mutate()}>
-                    {analyze.isPending ? <Loader2 className='mr-1 h-3 w-3 animate-spin' /> : null}{t('sourceAnalysis.retry')}
-                  </Button>
-                </div>
-              )}
+          <div className='min-h-0 flex-1 space-y-6 overflow-y-auto p-5'>
+            <div className='space-y-4'>
+              <FormField label={t('mapping.concept')}>
+                <Select value={conceptId} onValueChange={(value) => { setConceptId(value); setMappings([]); setIdentityField(sourceMappings.find((mapping) => mapping.conceptId === value)?.identityFields[0] ?? ''); preview.reset(); }} disabled={Boolean(target.mapping)}>
+                  <SelectTrigger className={INPUT} aria-label={t('mapping.concept')}><SelectValue placeholder={t('mapping.chooseConcept')} /></SelectTrigger>
+                  <SelectContent>{nodes.map((node) => <SelectItem key={node.id} value={node.id}>{node.label}</SelectItem>)}</SelectContent>
+                </Select>
+              </FormField>
+              <FormField label={t('mapping.sheet')}>
+                <Select value={sheetName} onValueChange={(value) => { setSheetName(value); setMappings([]); setIdentityField(''); preview.reset(); }} disabled={Boolean(target.mapping)}>
+                  <SelectTrigger className={INPUT} aria-label={t('mapping.sheet')}><SelectValue placeholder={t('mapping.chooseSheet')} /></SelectTrigger>
+                  <SelectContent>{(profile.data?.sheets ?? []).map((sheet) => (
+                    <SelectItem key={sheet.name} value={sheet.name}>{sheet.name}{sheet.rowCount || sheet.fieldCount ? ` · ${t('mapping.sheetMeta', { rows: sheet.rowCount, fields: sheet.fieldCount })}` : ''}</SelectItem>
+                  ))}</SelectContent>
+                </Select>
+                {reading && <div className='flex items-center gap-2 text-xs text-muted-foreground'><Loader2 className='h-3.5 w-3.5 animate-spin' />{t('sourceAnalysis.loading')}</div>}
+                {/* Shown once the file was read and still gave no sheets, or reading it failed. */}
+                {!reading && unread && (analyze.isError || autoRead === readKey) && (
+                  <div className='flex items-start gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive'>
+                    <AlertTriangle className='mt-0.5 h-3.5 w-3.5 shrink-0' />
+                    <span className='min-w-0 flex-1'>{t('sourceAnalysis.readFailed')}</span>
+                    <Button size='sm' variant='ghost' className='h-6 shrink-0 px-2 text-[11px]' disabled={analyze.isPending} onClick={() => analyze.mutate()}>
+                      {analyze.isPending ? <Loader2 className='mr-1 h-3 w-3 animate-spin' /> : null}{t('sourceAnalysis.retry')}
+                    </Button>
+                  </div>
+                )}
+              </FormField>
             </div>
 
             {sheetName && (
-              <div className='space-y-2'>
-                <Label>{t('mapping.fields')}</Label>
-                <p className='text-xs text-muted-foreground'>{t('mapping.fieldsHelp')}</p>
+              <section className={FORM_SECTION}>
+                <SectionHeader title={t('mapping.fields')} help={t('mapping.fieldsHelp')} count={activeMappings.length || undefined} />
                 {profile.data && !profile.data.complete && <p className='text-xs text-amber-700 dark:text-amber-400'>{t('sourceAnalysis.boundedSample')}</p>}
-                <div className='overflow-hidden rounded-xl border'>
+                {mappings.length > 0 && <ul className={ROW_LIST}>
                   {mappings.map((mapping, index) => {
                     const suggested = suggestedKeys.has(mapping.sourceField ?? '');
                     return (
-                      <div key={mapping.sourceField ?? index} className='flex items-center gap-2 border-b p-2 last:border-b-0'>
+                      <li key={mapping.sourceField ?? index} className='flex items-center gap-2 px-3 py-1.5'>
                         <div className='min-w-0 flex-1'>
-                          <div className='flex items-center gap-1 truncate text-xs font-medium'>{mapping.sourceField}
+                          <div className='flex items-center gap-1 truncate text-sm font-medium'>{mapping.sourceField}
                             {suggested && <Badge variant='outline' className='gap-0.5 px-1 py-0 text-[9px] text-primary'><Sparkles className='h-2.5 w-2.5' />{t('mapping.suggested')}</Badge>}
                           </div>
-                          <p className='truncate text-[10px] text-muted-foreground'>{fields.find((field) => field.name === mapping.sourceField)?.sample}</p>
+                          <p className='truncate text-[11px] text-muted-foreground'>{fields.find((field) => field.name === mapping.sourceField)?.sample}</p>
                         </div>
                         <Select value={mapping.mode === 'direct' ? mapping.targetAttribute : '__ignore'}
                           onValueChange={(value) => {
@@ -264,7 +264,7 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose, onSuggestConc
                               ? value === '__ignore' ? { ...item, targetAttribute: '', mode: 'ignore' }
                                 : { ...item, targetAttribute: value, mode: 'direct' } : item));
                           }}>
-                          <SelectTrigger className='h-8 w-40 shrink-0 text-xs' aria-label={t('mapping.targetFor', { field: mapping.sourceField ?? '' })}><SelectValue /></SelectTrigger>
+                          <SelectTrigger className={cn(INPUT_COMPACT, 'w-44 shrink-0')} aria-label={t('mapping.targetFor', { field: mapping.sourceField ?? '' })}><SelectValue /></SelectTrigger>
                           <SelectContent>
                             <SelectItem value='__ignore'>{t('mapping.ignore')}</SelectItem>
                             {(nodes.find((node) => node.id === conceptId)?.attributes ?? []).map((attribute) => (
@@ -272,19 +272,18 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose, onSuggestConc
                             ))}
                           </SelectContent>
                         </Select>
-                      </div>
+                      </li>
                     );
                   })}
-                </div>
-              </div>
+                </ul>}
+              </section>
             )}
 
             {sheetName && (
-              <div className='space-y-2'>
-                <Label>{t('mapping.identity')}</Label>
-                <p className='text-xs text-muted-foreground'>{t('mapping.identityHelp')}</p>
+              <section className={FORM_SECTION}>
+                <SectionHeader title={t('mapping.identity')} help={t('mapping.identityHelp')} />
                 <Select value={identityField || '__none'} onValueChange={(value) => setIdentityField(value === '__none' ? '' : value)}>
-                  <SelectTrigger aria-label={t('mapping.identity')}><SelectValue /></SelectTrigger>
+                  <SelectTrigger className={INPUT} aria-label={t('mapping.identity')}><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value='__none'>{t('mapping.identityNone')}</SelectItem>
                     {mappings.filter((mapping) => mapping.mode === 'direct').map((mapping) => (
@@ -297,30 +296,30 @@ function StructuredSourceMappingDrawer({ modelId, target, onClose, onSuggestConc
                     {t('mapping.identityEvidence', { name: evidence.name, unique: Math.round(evidence.uniqueRatio * 100), populated: Math.round(evidence.populatedRatio * 100) })}
                   </p>
                 ))}
-              </div>
+              </section>
             )}
 
             {preview.data && (
-              <div className='space-y-2'>
-                <Label>{t('mapping.preview', { count: preview.data.stats.resolvedEntities })}</Label>
+              <section className={FORM_SECTION}>
+                <SectionHeader title={t('mapping.preview', { count: preview.data.stats.resolvedEntities })} />
                 {preview.data.warnings.map((warning) => (
                   <p key={warning} className='flex items-start gap-1.5 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400'><AlertTriangle className='mt-0.5 h-3.5 w-3.5 shrink-0' />{warning}</p>
                 ))}
-                <ScrollArea className='max-h-56 rounded-xl border'>
+                <ScrollArea className='max-h-56 rounded-lg border'>
                   <div className='divide-y'>
                     {preview.data.entities.map((entity) => (
-                      <div key={entity.entityKey} className='p-2'>
-                        <p className='truncate text-xs font-medium'>{entity.label || t('mapping.unnamedEntity')}</p>
-                        <p className='truncate text-[10px] text-muted-foreground'>
+                      <div key={entity.entityKey} className='px-3 py-2'>
+                        <p className='truncate text-sm font-medium'>{entity.label || t('mapping.unnamedEntity')}</p>
+                        <p className='truncate text-[11px] text-muted-foreground'>
                           {Object.entries(entity.values).filter(([key]) => key !== entity.label).slice(0, 4).map(([key, value]) => `${key}: ${String(value ?? '')}`).join(' · ')}
                         </p>
-                        <p className='text-[10px] text-muted-foreground'>{t('mapping.provenance', { row: entity.provenance.rowNumber })}</p>
+                        <p className='text-[11px] text-muted-foreground'>{t('mapping.provenance', { row: entity.provenance.rowNumber })}</p>
                       </div>
                     ))}
                     {!preview.data.entities.length && <p className='p-3 text-xs text-muted-foreground'>{t('mapping.noEntities')}</p>}
                   </div>
                 </ScrollArea>
-              </div>
+              </section>
             )}
           </div>
           <Separator />

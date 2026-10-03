@@ -8,6 +8,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useSemanticModelEditorStore } from '../../store';
 import type { AttributeDefinition } from '../../types';
 import { businessKey, guessAttributeType } from '../../utils/model-utils';
+import { INPUT_COMPACT, SectionHeader } from '../form/FormParts';
 
 /** One icon action in a canvas toolbar; the label is its tooltip and accessible name. */
 export function ToolButton({ label, onClick, children, tone = 'default', active = false }: Readonly<{ label: string; onClick?: () => void; children: ReactNode; tone?: 'default' | 'data' | 'danger'; active?: boolean }>) {
@@ -32,7 +33,7 @@ export function InlineRename({ value, onSubmit, onCancel, label }: Readonly<{ va
   useEffect(() => { const timer = window.setTimeout(() => { ref.current?.focus(); ref.current?.select(); }, 30); return () => window.clearTimeout(timer); }, []);
   const submit = (event?: FormEvent) => { event?.preventDefault(); const next = draft.trim(); if (next && next !== value) onSubmit(next); else onCancel(); };
   return <form className='nodrag nopan nowheel' onSubmit={submit} onClick={(event) => event.stopPropagation()}>
-    <Input ref={ref} value={draft} aria-label={label} className='h-8 w-44 text-center text-sm font-semibold'
+    <Input ref={ref} value={draft} aria-label={label} className={cn(INPUT_COMPACT, 'w-44 text-center font-semibold')}
       onChange={(event) => setDraft(event.target.value)} onBlur={() => submit()}
       onKeyDown={(event) => { event.stopPropagation(); if (event.key === 'Escape') { event.preventDefault(); onCancel(); } }} />
   </form>;
@@ -63,9 +64,8 @@ export function FieldsPopover({ conceptId, label, attributes, keyFields, onToggl
   return <Popover>
     <PopoverTrigger asChild>{trigger}</PopoverTrigger>
     <PopoverContent side='bottom' align='center' className='nodrag nopan nowheel w-72 p-3' onClick={(event) => event.stopPropagation()} onOpenAutoFocus={(event) => event.preventDefault()}>
-      <p className='text-sm font-semibold'>{t('canvasTools.fieldsTitle', { name: label })}</p>
-      <p className='mb-2 text-[11px] text-muted-foreground'>{t('canvasTools.fieldsHelp')}</p>
-      <ul className='max-h-56 space-y-1 overflow-y-auto'>
+      <SectionHeader title={t('canvasTools.fieldsTitle', { name: label })} help={t('canvasTools.fieldsHelp')} count={attributes.length || undefined} className='mb-2' />
+      <ul className='-mx-1 max-h-56 space-y-0.5 overflow-y-auto'>
         {attributes.map((attribute) => {
           const isKey = keyFields.includes(attribute.key);
           return <li key={attribute.key} className='group flex items-center gap-1 rounded-lg px-1.5 py-1 hover:bg-muted/60'>
@@ -82,10 +82,10 @@ export function FieldsPopover({ conceptId, label, attributes, keyFields, onToggl
         })}
         {!attributes.length && <li className='px-1.5 py-2 text-xs text-muted-foreground'>{t('canvasTools.noFields')}</li>}
       </ul>
-      <form className='mt-2 flex gap-1.5 border-t pt-2' onSubmit={add}>
-        <Input value={name} onChange={(event) => setName(event.target.value)} placeholder={t('attributes.placeholder')} aria-label={t('attributes.add')} className='h-8 text-sm'
+      <form className='mt-3 flex gap-1.5 border-t pt-3' onSubmit={add}>
+        <Input value={name} onChange={(event) => setName(event.target.value)} placeholder={t('attributes.placeholder')} aria-label={t('attributes.add')} className={INPUT_COMPACT}
           onKeyDown={(event) => { if (event.key !== 'Escape') event.stopPropagation(); }} autoFocus />
-        <Button type='submit' size='icon' className='h-8 w-8 shrink-0' disabled={!name.trim()} aria-label={t('attributes.add')}><Plus className='h-4 w-4' /></Button>
+        <Button type='submit' size='icon' className='h-8 w-8 shrink-0' disabled={!name.trim()} aria-label={t('attributes.add')} title={t('attributes.add')}><Plus className='h-4 w-4' /></Button>
       </form>
     </PopoverContent>
   </Popover>;

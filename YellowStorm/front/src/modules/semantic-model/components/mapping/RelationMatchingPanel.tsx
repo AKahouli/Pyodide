@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { showError, showSuccess } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
@@ -11,6 +10,7 @@ import { useRelationResolutionRules } from '../../query/hooks';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
 import { useSemanticModelEditorStore } from '../../store';
 import type { RelationMatchStrategy, SemanticRelationType } from '../../types';
+import { FormField, INPUT, ROW_LIST } from '../form/FormParts';
 
 export function RelationMatchingPanel({ modelId, relation }: Readonly<{ modelId: string; relation: SemanticRelationType }>) {
   const { t } = useModuleTranslation('semantic-model');
@@ -60,8 +60,10 @@ export function RelationMatchingPanel({ modelId, relation }: Readonly<{ modelId:
   });
   const canSave = Boolean(sourceAttribute && targetAttribute) && !save.isPending;
 
+  const idPrefix = `relation-matching-${relation.id}`;
+
   return <div className='space-y-4'>
-    <p className='rounded-xl bg-primary/5 p-3 text-sm'>
+    <p className='rounded-lg bg-muted/40 px-3 py-2 text-sm'>
       {sourceAttribute && targetAttribute
         ? t('relationSentence.matchSentence', {
           source: source?.label ?? '', sourceField: source?.attributes.find((attribute) => attribute.key === sourceAttribute)?.label ?? sourceAttribute,
@@ -69,54 +71,53 @@ export function RelationMatchingPanel({ modelId, relation }: Readonly<{ modelId:
         })
         : t('relationSentence.chooseBoth')}
     </p>
-    <div className='space-y-2'>
-      <Label>{source?.label}</Label>
+    <FormField label={source?.label}>
       <Select value={sourceAttribute} onValueChange={setSourceAttribute}>
-        <SelectTrigger aria-label={t('relationMatching.sourceField')}><SelectValue placeholder={t('relationMatching.chooseField')} /></SelectTrigger>
+        <SelectTrigger className={INPUT} aria-label={t('relationMatching.sourceField')}><SelectValue placeholder={t('relationMatching.chooseField')} /></SelectTrigger>
         <SelectContent>{source?.attributes.map((attribute) => <SelectItem key={attribute.key} value={attribute.key}>{attribute.label}</SelectItem>)}</SelectContent>
       </Select>
-    </div>
-    <div className='space-y-2'>
-      <Label>{target?.label}</Label>
+    </FormField>
+    <FormField label={target?.label}>
       <Select value={targetAttribute} onValueChange={setTargetAttribute}>
-        <SelectTrigger aria-label={t('relationMatching.targetField')}><SelectValue placeholder={t('relationMatching.chooseField')} /></SelectTrigger>
+        <SelectTrigger className={INPUT} aria-label={t('relationMatching.targetField')}><SelectValue placeholder={t('relationMatching.chooseField')} /></SelectTrigger>
         <SelectContent>{target?.attributes.map((attribute) => <SelectItem key={attribute.key} value={attribute.key}>{attribute.label}</SelectItem>)}</SelectContent>
       </Select>
-    </div>
-    <div className='space-y-2'>
-      <Label>{t('relationMatching.strategy')}</Label>
+    </FormField>
+    <FormField label={t('relationMatching.strategy')} htmlFor={`${idPrefix}-strategy`}>
       <Select value={strategy} onValueChange={(value: RelationMatchStrategy) => setStrategy(value)}>
-        <SelectTrigger><SelectValue /></SelectTrigger>
+        <SelectTrigger id={`${idPrefix}-strategy`} className={INPUT}><SelectValue /></SelectTrigger>
         <SelectContent>{(['exact', 'case_insensitive', 'normalized'] as const).map((value) => <SelectItem key={value} value={value}>{t(`relationMatching.strategyOption.${value}`)}</SelectItem>)}</SelectContent>
       </Select>
-    </div>
-    <div className='space-y-2'>
-      <Label>{t('relationMatching.ambiguity')}</Label>
+    </FormField>
+    <FormField label={t('relationMatching.ambiguity')} htmlFor={`${idPrefix}-ambiguity`}>
       <Select value={ambiguityPolicy} onValueChange={(value: 'review' | 'unresolved') => setAmbiguityPolicy(value)}>
-        <SelectTrigger><SelectValue /></SelectTrigger>
+        <SelectTrigger id={`${idPrefix}-ambiguity`} className={INPUT}><SelectValue /></SelectTrigger>
         <SelectContent><SelectItem value='review'>{t('relationMatching.review')}</SelectItem><SelectItem value='unresolved'>{t('relationMatching.leaveUnresolved')}</SelectItem></SelectContent>
       </Select>
+    </FormField>
+    <div className='flex gap-2 pt-1'>
+      <Button size='sm' className='h-9 flex-1' disabled={!canSave} onClick={() => save.mutate()}>{save.isPending && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}{t('relationMatching.save')}</Button>
+      <Button size='sm' className='h-9 flex-1' variant='outline' disabled={!ruleId || preview.isPending} onClick={() => preview.mutate()}>{preview.isPending && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}{t('relationMatching.preview')}</Button>
     </div>
-    <div className='flex gap-2'>
-      <Button className='flex-1' disabled={!canSave} onClick={() => save.mutate()}>{save.isPending && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}{t('relationMatching.save')}</Button>
-      <Button className='flex-1' variant='outline' disabled={!ruleId || preview.isPending} onClick={() => preview.mutate()}>{preview.isPending && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}{t('relationMatching.preview')}</Button>
-    </div>
-    {preview.data && <div className='space-y-2'>
+    {preview.data && <div className='space-y-3'>
       <div className='grid grid-cols-3 gap-2 text-center text-xs'>
         <Metric value={preview.data.summary.resolved} label={t('relationMatching.resolved')} good />
         <Metric value={preview.data.summary.ambiguous} label={t('relationMatching.ambiguous')} />
         <Metric value={preview.data.summary.unresolved} label={t('relationMatching.unresolved')} />
       </div>
       {preview.data.sourceIssues.map((issue) => <p key={`${issue.mappingId}-${issue.message}`} className='flex gap-2 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400'><AlertTriangle className='h-4 w-4 shrink-0' />{issue.message}</p>)}
-      {preview.data.matches.slice(0, 10).map((match) => <div key={match.sourceEntityId} className='rounded-xl border p-3 text-xs'>
-        <p className='font-medium'>{match.sourceLabel}</p>
-        <p className={match.status === 'resolved' ? 'text-emerald-600' : 'text-amber-600'}>{match.status === 'resolved' ? <CheckCircle2 className='mr-1 inline h-3.5 w-3.5' /> : <AlertTriangle className='mr-1 inline h-3.5 w-3.5' />}{t(`relationMatching.status.${match.status}`)}</p>
-        {match.targetLabels.length > 0 && <p className='text-muted-foreground'>{match.targetLabels.join(', ')}</p>}
-      </div>)}
+      {preview.data.matches.length > 0 && <ul className={ROW_LIST}>{preview.data.matches.slice(0, 10).map((match) => <li key={match.sourceEntityId} className='flex items-start gap-2 px-3 py-2 text-xs'>
+        {match.status === 'resolved' ? <CheckCircle2 className='mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600' aria-hidden /> : <AlertTriangle className='mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600' aria-hidden />}
+        <div className='min-w-0 flex-1'>
+          <p className='truncate font-medium' title={match.sourceLabel}>{match.sourceLabel}</p>
+          {match.targetLabels.length > 0 && <p className='truncate text-muted-foreground' title={match.targetLabels.join(', ')}>{match.targetLabels.join(', ')}</p>}
+        </div>
+        <span className={match.status === 'resolved' ? 'shrink-0 text-emerald-600' : 'shrink-0 text-amber-600'}>{t(`relationMatching.status.${match.status}`)}</span>
+      </li>)}</ul>}
     </div>}
   </div>;
 }
 
 function Metric({ value, label, good = false }: Readonly<{ value: number; label: string; good?: boolean }>) {
-  return <div className={`rounded-lg p-2 ${good ? 'bg-emerald-500/10' : 'bg-muted'}`}><p className='text-base font-semibold'>{value}</p><p className='text-muted-foreground'>{label}</p></div>;
+  return <div className={`rounded-lg p-2 ${good ? 'bg-emerald-500/10' : 'bg-muted/60'}`}><p className='text-base font-semibold'>{value}</p><p className='text-muted-foreground'>{label}</p></div>;
 }

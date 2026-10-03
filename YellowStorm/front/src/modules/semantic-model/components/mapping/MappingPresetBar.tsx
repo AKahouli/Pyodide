@@ -7,10 +7,12 @@ import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { parseApiError } from '@/lib/api-error';
 import { showError, showSuccess } from '@/lib/notifications';
+import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../../api';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
 import type { MappingPreset, MappingSettings } from '../../types';
+import { INPUT_COMPACT, ROW_LIST, SectionHeader } from '../form/FormParts';
 
 /** What the mapping was started from, and its settings right after, to tell when it was changed since. */
 interface Applied {
@@ -183,25 +185,24 @@ export function MappingPresetBar({ modelId, conceptId, attributes, current, onAp
           <PopoverTrigger asChild>
             <Button type='button' size='sm' variant='outline' className='h-7 px-2 text-xs'><BookmarkPlus className='mr-1 h-3.5 w-3.5' />{t('mapping.presets.save')}</Button>
           </PopoverTrigger>
-          <PopoverContent align='end' className='w-80 space-y-2 p-3'>
-            <form className='space-y-2' onSubmit={(event) => { event.preventDefault(); if (name.trim()) save.mutate(sameName?.id); }}>
-              <p className='text-xs font-medium'>{t('mapping.presets.save')}</p>
-              <Input className='h-8 text-xs' value={name} maxLength={80} autoFocus placeholder={t('mapping.presets.name')} aria-label={t('mapping.presets.name')} onChange={(event) => setName(event.target.value)} />
-              <Input className='h-8 text-xs' value={description} maxLength={500} placeholder={t('mapping.presets.description')} aria-label={t('mapping.presets.description')} onChange={(event) => setDescription(event.target.value)} />
-              <p className='text-[11px] text-muted-foreground'>{t('mapping.presets.saveHelp')}</p>
-              <Button type='submit' size='sm' className='h-7 w-full text-xs' disabled={!name.trim() || save.isPending}>
+          <PopoverContent align='end' className='w-80 space-y-4 p-4'>
+            <form className='space-y-3' onSubmit={(event) => { event.preventDefault(); if (name.trim()) save.mutate(sameName?.id); }}>
+              <SectionHeader title={t('mapping.presets.save')} help={t('mapping.presets.saveHelp')} />
+              <Input className={INPUT_COMPACT} value={name} maxLength={80} autoFocus placeholder={t('mapping.presets.name')} aria-label={t('mapping.presets.name')} onChange={(event) => setName(event.target.value)} />
+              <Input className={INPUT_COMPACT} value={description} maxLength={500} placeholder={t('mapping.presets.description')} aria-label={t('mapping.presets.description')} onChange={(event) => setDescription(event.target.value)} />
+              <Button type='submit' size='sm' className='h-8 w-full text-xs' disabled={!name.trim() || save.isPending}>
                 {save.isPending && <Loader2 className='mr-1 h-3 w-3 animate-spin' />}
                 {sameName ? t('mapping.presets.replace', { name: sameName.name }) : t('mapping.presets.saveButton')}
               </Button>
             </form>
-            {presets.length > 0 && <div className='space-y-1 border-t pt-2'>
-              <p className='text-[11px] font-medium text-muted-foreground'>{t('mapping.presets.presets')}</p>
-              <ul className='max-h-40 space-y-0.5 overflow-y-auto'>
-                {presets.map((preset) => <li key={preset.id} className='flex items-center gap-1 text-xs'>
+            {presets.length > 0 && <div className='space-y-2 border-t pt-4'>
+              <SectionHeader title={t('mapping.presets.presets')} count={presets.length} />
+              <ul className={cn(ROW_LIST, 'max-h-40 overflow-y-auto')}>
+                {presets.map((preset) => <li key={preset.id} className='flex items-center gap-1 py-1 pl-2.5 pr-1 text-xs'>
                   <span className='min-w-0 flex-1 truncate'>{preset.name}</span>
                   {confirmDelete === preset.id
                     ? <Button type='button' size='sm' variant='destructive' className='h-6 px-2 text-[11px]' disabled={remove.isPending} onClick={() => remove.mutate(preset)}>{t('mapping.presets.confirmDelete')}</Button>
-                    : <Button type='button' size='icon' variant='ghost' className='h-6 w-6' aria-label={t('mapping.presets.delete', { name: preset.name })} onClick={() => setConfirmDelete(preset.id)}><Trash2 className='h-3 w-3' /></Button>}
+                    : <Button type='button' size='icon' variant='ghost' className='h-6 w-6 text-muted-foreground hover:bg-destructive/10 hover:text-destructive' aria-label={t('mapping.presets.delete', { name: preset.name })} title={t('mapping.presets.delete', { name: preset.name })} onClick={() => setConfirmDelete(preset.id)}><Trash2 className='h-3 w-3' /></Button>}
                 </li>)}
               </ul>
             </div>}
