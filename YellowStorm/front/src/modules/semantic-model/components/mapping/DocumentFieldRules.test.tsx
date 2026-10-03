@@ -2,13 +2,14 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SourceFieldMapping } from '../../types';
 import { AiLimitsEditor, FieldReadingResult, FieldRulesEditor, limitProblem, pagesProblem, patternProblem, ReadAllFieldsBar, rulesProblem, withConceptFields, type LabelSuggestions } from './DocumentFieldRules';
+import { openRuleSectionsByDefault } from './RuleControls';
 
 const field = (key: string, extractionStrategy?: SourceFieldMapping['extractionStrategy']): SourceFieldMapping =>
   ({ sourceField: null, targetAttribute: key, mode: 'extract', extractionStrategy });
 
 describe('DocumentFieldRules', () => {
-  // The open rule steps are remembered in the browser: these tests start with all of them open.
-  beforeEach(() => localStorage.setItem('semantic-model.rule-sections', JSON.stringify(['labels', 'where', 'keep', 'pattern', 'transform', 'options'])));
+  // These tests start with every rule step open.
+  beforeEach(() => openRuleSectionsByDefault(['labels', 'where', 'keep', 'pattern', 'transform', 'options']));
 
   it('reads every extracted field the same way with one click', () => {
     const onApply = vi.fn();
@@ -131,7 +132,7 @@ describe('DocumentFieldRules', () => {
   });
 
   it('offers trimming both ends right after keeping the value as written, then removing every space', () => {
-    localStorage.clear();
+    openRuleSectionsByDefault(null);
     const onChange = vi.fn();
     render(<FieldRulesEditor fieldLabel='Party' onChange={onChange} />);
     fireEvent.click(screen.getByRole('button', { name: /mapping\.rules\.title/ }));
@@ -145,7 +146,7 @@ describe('DocumentFieldRules', () => {
   });
 
   it('keeps the custom pattern box open while it is empty', () => {
-    localStorage.clear();
+    openRuleSectionsByDefault(null);
     render(<FieldRulesEditor fieldLabel='Number' onChange={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: /mapping\.rules\.title/ }));
     fireEvent.click(screen.getByRole('button', { name: 'mapping.rules.pattern' }));
@@ -153,8 +154,8 @@ describe('DocumentFieldRules', () => {
     expect(screen.getByRole('textbox', { name: 'mapping.rules.patternText' })).toBeInTheDocument();
   });
 
-  it('folds every rule step to its setting, keeps a step with a problem open and remembers what is open', () => {
-    localStorage.clear();
+  it('folds every rule step to its setting, keeps a step with a problem open, and starts the next editor folded', () => {
+    openRuleSectionsByDefault(null);
     const { unmount } = render(<FieldRulesEditor fieldLabel='Number' rules={{ location: 'anywhere', transform: 'upper' }} onChange={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: /mapping\.rules\.title/ }));
     for (const step of ['mapping.rules.labels', 'mapping.rules.location', 'mapping.rules.take.keep', 'mapping.rules.options']) {
@@ -170,7 +171,7 @@ describe('DocumentFieldRules', () => {
     unmount();
     render(<FieldRulesEditor fieldLabel='Other' onChange={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name: /mapping\.rules\.title/ }));
-    expect(screen.getByRole('button', { name: 'mapping.rules.transform' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: 'mapping.rules.transform' })).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('puts the help behind an info button', () => {

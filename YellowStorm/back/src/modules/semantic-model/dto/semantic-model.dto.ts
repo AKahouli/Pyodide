@@ -435,9 +435,17 @@ export class ComputedFieldDto {
   @IsOptional() @IsBoolean()
   stripExtension?: boolean;
 
-  @ApiPropertyOptional({ enum: ['none', 'trim', 'upper', 'lower', 'date_iso', 'year', 'number'] })
-  @IsOptional() @IsIn(['none', 'trim', 'upper', 'lower', 'date_iso', 'year', 'number'])
-  transform?: 'none' | 'trim' | 'upper' | 'lower' | 'date_iso' | 'year' | 'number';
+  @ApiPropertyOptional({ type: ExtractionTakeDto, description: 'After the cut: keep only the first or last characters, words or lines' })
+  @IsOptional() @ValidateNested() @Type(() => ExtractionTakeDto)
+  take?: ExtractionTakeDto;
+
+  @ApiPropertyOptional({ maxLength: 200, description: 'After the cut and take: a regular expression the value must match; its first group is kept when it has one' })
+  @IsOptional() @IsString() @MaxLength(200)
+  valuePattern?: string;
+
+  @ApiPropertyOptional({ enum: ['none', 'trim', 'no_spaces', 'upper', 'lower', 'date_iso', 'year', 'number'] })
+  @IsOptional() @IsIn(['none', 'trim', 'no_spaces', 'upper', 'lower', 'date_iso', 'year', 'number'])
+  transform?: 'none' | 'trim' | 'no_spaces' | 'upper' | 'lower' | 'date_iso' | 'year' | 'number';
 }
 
 export class SourceFieldMappingDto {

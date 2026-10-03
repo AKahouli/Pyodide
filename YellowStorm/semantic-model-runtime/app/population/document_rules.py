@@ -85,12 +85,7 @@ def normalize_rules(raw: Any) -> dict[str, Any] | None:
         rules["boundaryLabels"] = [label.strip() for label in boundary if label.strip()]
     take = raw.get("take")
     if take is not None:
-        count = take.get("count") if isinstance(take, dict) else None
-        if (not isinstance(take, dict) or take.get("from", "start") not in ("start", "end")
-                or take.get("unit", "characters") not in TAKE_UNITS
-                or not isinstance(count, int) or isinstance(count, bool) or not 1 <= count <= MAX_TAKE):
-            raise RuleError(f"take keeps 1 to {MAX_TAKE} characters, words or lines from the start or the end")
-        rules["take"] = {"from": take.get("from", "start"), "count": count, "unit": take.get("unit", "characters")}
+        rules["take"] = normalize_take(take)
     if location == "pages":
         pages = raw.get("pages")
         start = pages.get("from") if isinstance(pages, dict) else None
@@ -102,6 +97,16 @@ def normalize_rules(raw: Any) -> dict[str, Any] | None:
         rules["pages"] = {"from": start, "to": end}
         rules["firstPageOnly"] = False
     return rules
+
+
+def normalize_take(take: Any) -> dict[str, Any]:
+    """A part to keep in one shape, or ``RuleError``: 1 to MAX_TAKE characters, words or lines."""
+    count = take.get("count") if isinstance(take, dict) else None
+    if (not isinstance(take, dict) or take.get("from", "start") not in ("start", "end")
+            or take.get("unit", "characters") not in TAKE_UNITS
+            or not isinstance(count, int) or isinstance(count, bool) or not 1 <= count <= MAX_TAKE):
+        raise RuleError(f"take keeps 1 to {MAX_TAKE} characters, words or lines from the start or the end")
+    return {"from": take.get("from", "start"), "count": count, "unit": take.get("unit", "characters")}
 
 
 def normalize_ai_settings(raw: Any) -> dict[str, int]:

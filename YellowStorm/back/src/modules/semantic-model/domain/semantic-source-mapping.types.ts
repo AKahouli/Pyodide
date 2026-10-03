@@ -35,7 +35,11 @@ export interface ComputedFieldSpec {
   pattern?: string;
   template?: string;
   stripExtension?: boolean;
-  transform?: 'none' | 'trim' | 'upper' | 'lower' | 'date_iso' | 'year' | 'number';
+  /** After the cut: keep only the first or last characters, words or lines (as the reading rules' take). */
+  take?: { from?: 'start' | 'end'; count: number; unit?: 'characters' | 'words' | 'lines' };
+  /** After the take: what the value looks like; its first group is kept when it has one. `pattern` is the cut's own. */
+  valuePattern?: string;
+  transform?: 'none' | 'trim' | 'no_spaces' | 'upper' | 'lower' | 'date_iso' | 'year' | 'number';
 }
 
 export interface SourceFieldMapping {

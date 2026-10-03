@@ -69,24 +69,22 @@ export function RuleSection({ id, title, icon, summary, help, invalid, open, onT
   </section>;
 }
 
-const SECTIONS_KEY = 'semantic-model.rule-sections';
+let openedByDefault: readonly string[] | null = null;
+
+/** Tests only: the steps every new editor starts with open; null for each editor's own defaults. */
+export function openRuleSectionsByDefault(sections: readonly string[] | null) {
+  openedByDefault = sections;
+}
 
 /**
- * Which rule steps are open. Shared by every field and kept in this browser, so a step opened on
- * one field is open on the next.
+ * Which rule steps are open. Every editor starts with its defaults (all folded, each step's
+ * setting on its header line); what is opened stays open while the editor is shown.
  */
 export function useOpenSections(defaults: readonly string[]) {
-  const [open, setOpen] = useState<Set<string>>(() => {
-    try {
-      const saved: unknown = JSON.parse(globalThis.localStorage?.getItem(SECTIONS_KEY) ?? 'null');
-      if (Array.isArray(saved)) return new Set(saved.filter((item): item is string => typeof item === 'string'));
-    } catch { /* Not stored, or not readable: the defaults. */ }
-    return new Set(defaults);
-  });
+  const [open, setOpen] = useState<Set<string>>(() => new Set(openedByDefault ?? defaults));
   const toggle = (section: string) => setOpen((current) => {
     const next = new Set(current);
     if (next.has(section)) next.delete(section); else next.add(section);
-    try { globalThis.localStorage?.setItem(SECTIONS_KEY, JSON.stringify([...next])); } catch { /* Kept for this editor only. */ }
     return next;
   });
   return { isOpen: (section: string) => open.has(section), toggle };

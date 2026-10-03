@@ -68,3 +68,32 @@ def test_a_computed_field_reads_a_read_field_never_another_computed_one() -> Non
     values = {"title": "Annual report 2022"}
     outcomes = apply_computed([title, year], values, {"document_name": NAME})
     assert values["year"] == "2022" and outcomes["year"]["reason"] == "found"
+
+
+def test_after_the_cut_the_value_is_kept_in_part_matched_then_cleaned_up() -> None:
+    dated = {"method": "split", "delimiter": "_", "part": -1}
+    assert run(**dated, take={"from": "end", "count": 10, "unit": "characters"}) == ("2023-08-23", "found")
+    assert run(**dated, take={"from": "start", "count": 5, "unit": "characters"}, transform="upper") == ("DATED", "found")
+    assert run(**dated, valuePattern=r"(\d{4})-\d{2}") == ("2023", "found")
+    assert run(**dated, valuePattern=r"\d{4}-\d{2}-\d{2}", transform="date_iso") == ("2023-08-23", "found")
+    assert run(**dated, valuePattern=r"@\w+") == (None, "no_match")
+    assert run(method="between", after="JOHNSON", before="2023", transform="no_spaces") == ("_JOHNSON_", "found")
+    assert compute(normalize_computed({"input": {"kind": "field", "name": "x"}, "method": "between", "after": "No",
+                                       "transform": "no_spaces"}), "Ref No 12 34 5") == ("12345", "found")
+
+
+def test_old_computations_without_shaping_are_read_as_before() -> None:
+    spec = normalize_computed({"input": FILE, "method": "split", "delimiter": "_", "part": -3})
+    assert "take" not in spec and "valuePattern" not in spec
+    assert compute(spec, NAME) == ("2023", "found")
+
+
+@pytest.mark.parametrize("extra", [
+    {"take": {"from": "middle", "count": 2, "unit": "words"}},
+    {"take": {"from": "start", "count": 0}},
+    {"valuePattern": "("},
+    {"transform": "title"},
+])
+def test_unusable_shaping_is_refused(extra) -> None:  # type: ignore[no-untyped-def]
+    with pytest.raises(RuleError):
+        normalize_computed({"input": FILE, "method": "split", "delimiter": "_", "part": 1, **extra})

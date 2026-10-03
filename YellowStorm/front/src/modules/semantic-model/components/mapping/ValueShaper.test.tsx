@@ -4,6 +4,7 @@ import type { DocumentFieldReading, ExtractionTake } from '../../types';
 import { FieldRulesEditor } from './DocumentFieldRules';
 import { ChoiceGroup } from './RuleControls';
 import { countForCut, keptRange, patternMatches, unitSpans, ValueShaper } from './ValueShaper';
+import { openRuleSectionsByDefault } from './RuleControls';
 
 const raw = 'alpha beta gamma\nsecond line\nthird';
 const found = (value: string): DocumentFieldReading => ({ method: 'rules', reason: 'found', value, raw });
@@ -134,7 +135,7 @@ describe('ValueShaper', () => {
 });
 
 describe('graphical rule controls', () => {
-  beforeEach(() => localStorage.setItem('semantic-model.rule-sections', JSON.stringify(['labels', 'where', 'keep', 'pattern', 'transform', 'options'])));
+  beforeEach(() => openRuleSectionsByDefault(['labels', 'where', 'keep', 'pattern', 'transform', 'options']));
 
   it('moves the choice with the arrow keys in a radio group', () => {
     const onChange = vi.fn();

@@ -264,7 +264,7 @@ export interface SourceFieldMapping {
 
 export type ComputedFieldInput = { kind: 'file'; name: 'document_name' } | { kind: 'field'; name: string };
 export type ComputedFieldMethod = 'split' | 'between' | 'regex';
-export type ComputedFieldTransform = 'none' | 'trim' | 'upper' | 'lower' | 'date_iso' | 'year' | 'number';
+export type ComputedFieldTransform = 'none' | 'trim' | 'no_spaces' | 'upper' | 'lower' | 'date_iso' | 'year' | 'number';
 
 /** How a computed field is cut out of its input, e.g. `ACME_2023_8K.pdf` split by `_`, 2nd part → `2023`. */
 export interface ComputedFieldRule {
@@ -280,6 +280,10 @@ export interface ComputedFieldRule {
   pattern?: string;
   template?: string;
   stripExtension?: boolean;
+  /** After the cut: keep only the first or last characters, words or lines, as the reading rules do. */
+  take?: ExtractionTake;
+  /** After the take: what the value looks like (a regular expression, first group kept). Distinct from `pattern`, the advanced cut. */
+  valuePattern?: string;
   transform?: ComputedFieldTransform;
 }
 

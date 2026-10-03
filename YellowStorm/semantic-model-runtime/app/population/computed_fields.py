@@ -11,12 +11,13 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from .document_rules import MAX_PATTERN_CHARS, RuleError, compile_pattern, to_iso_date
+from .document_rules import (MAX_PATTERN_CHARS, RuleError, compile_pattern, match_pattern, normalize_take,
+                             take_part, to_iso_date, without_spaces)
 
 COMPUTED_VERSION = "computed-v1"
 FILE_INPUTS = ("document_name",)
 METHODS = ("split", "between", "regex")
-TRANSFORMS = ("none", "trim", "upper", "lower", "date_iso", "year", "number")
+TRANSFORMS = ("none", "trim", "no_spaces", "upper", "lower", "date_iso", "year", "number")
 MAX_DELIMITER_CHARS = 10
 MAX_MARKER_CHARS = 50
 MAX_TEMPLATE_CHARS = 100
@@ -89,12 +90,21 @@ def normalize_computed(raw: Any) -> dict[str, Any]:
                         or placeholder in compiled.groupindex):
                     raise RuleError(f"the template names an unknown group: {placeholder}")
         spec["template"] = template
+    # After the cut, the same shaping as the reading rules: a part to keep, then a shape to match.
+    if raw.get("take") is not None:
+        spec["take"] = normalize_take(raw["take"])
+    value_pattern = _text(raw, "valuePattern", MAX_PATTERN_CHARS)
+    if value_pattern is not None and value_pattern.strip():
+        compile_pattern(value_pattern)
+        spec["valuePattern"] = value_pattern
     return spec
 
 
 def _transform(value: str, transform: str) -> str | None:
     if transform == "trim":
         return value.strip(" \t-_.,;") or None
+    if transform == "no_spaces":
+        return without_spaces(value) or None
     if transform == "upper":
         return value.upper()
     if transform == "lower":
@@ -154,7 +164,14 @@ def compute(spec: dict[str, Any], value: Any) -> tuple[str | None, str]:
             result = match.group(named[0]) if named else next((g for g in match.groups() if g), None)
     if result is None or not result.strip():
         return None, "no_match"
-    transformed = _transform(result.strip(), spec["transform"])
+    result = result.strip()
+    if spec.get("take"):
+        result = take_part(result, spec["take"]).strip()
+    if spec.get("valuePattern"):
+        result = match_pattern(compile_pattern(spec["valuePattern"]), result) or ""
+    if not result:
+        return None, "no_match"
+    transformed = _transform(result, spec["transform"])
     if transformed is None:
         return None, "not_transformable"
     return transformed[:MAX_VALUE_CHARS], "found"

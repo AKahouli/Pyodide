@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, Eraser, ExternalLink, Heading, ListChecks, ListFilter, Plus, Regex, RefreshCw, Scissors, SlidersHorizontal, Sparkles, Tag, X } from 'lucide-react';
+import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, Heading, ListChecks, ListFilter, Plus, RefreshCw, SlidersHorizontal, Sparkles, Tag, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,7 +10,8 @@ import { useModuleTranslation } from '@/modules/localization';
 import type { AiExtractionSettings, DocumentFieldReading, DocumentLabelSuggestion, ExtractionLocation, ExtractionRules, SourceExtractionStrategy, SourceFieldMapping } from '../../types';
 import { FormField, INPUT } from '../form/FormParts';
 import { ChoiceGroup, HelpTip, LocationIcon, PageRangeControl, RuleSection, useOpenSections } from './RuleControls';
-import { MAX_TAKE, ValueShaper, type ShaperAction } from './ValueShaper';
+import { ValueShaper, type ShaperAction } from './ValueShaper';
+import { CleanupSection, KeepSection, PATTERN_PRESETS, patternProblem, presetOf, takeProblem, useTakeSummary, ValuePatternSection } from './ValueShapeSections';
 
 export const STRATEGIES: SourceExtractionStrategy[] = ['deterministic', 'rules_then_ai', 'ai'];
 const LOCATIONS: ExtractionLocation[] = ['auto', 'same_line', 'next_line', 'table', 'after_label', 'before_label', 'heading', 'pages', 'anywhere'];
@@ -28,19 +29,7 @@ function usesBoundary(location: ExtractionLocation) {
   return location === 'after_label' || location === 'before_label';
 }
 
-/** Ready-made patterns; each also reads in the runtime's regular expressions. */
-export const PATTERN_PRESETS = {
-  date: String.raw`\d{4}-\d{2}-\d{2}|\d{1,2}[/.]\d{1,2}[/.]\d{4}|\d{1,2}(?:er)? [A-Za-zéû]+ \d{4}`,
-  amount: String.raw`[-+]?\d[\d .,]*\d(?: ?(?:€|EUR|\$|USD|%))?`,
-  reference: String.raw`[A-Z]{2,}[-_/]?\d[\w-]*`,
-  number: String.raw`\d+(?:[.,]\d+)?`,
-  email: String.raw`[\w.+-]+@[\w-]+\.[\w.-]+`,
-} as const;
-type PatternPreset = keyof typeof PATTERN_PRESETS;
-
-function presetOf(pattern?: string): PatternPreset | undefined {
-  return (Object.keys(PATTERN_PRESETS) as PatternPreset[]).find((key) => PATTERN_PRESETS[key] === pattern);
-}
+export { PATTERN_PRESETS, patternProblem };
 
 export function usesRules(strategy?: SourceExtractionStrategy) {
   return (strategy ?? 'deterministic') !== 'ai';
@@ -81,16 +70,6 @@ export function withConceptFields(saved: SourceFieldMapping[], attributes: Reado
   return { mappings, added };
 }
 
-/** A pattern the browser cannot read is very likely wrong for the runtime too. */
-export function patternProblem(pattern?: string) {
-  if (!pattern?.trim()) return null;
-  try {
-    new RegExp(pattern);
-    return null;
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
-  }
-}
 
 /** Why the pages to read are not valid, as a translation key, or null. */
 export function pagesProblem(pages?: ExtractionRules['pages']) {
@@ -107,7 +86,7 @@ export function pagesProblem(pages?: ExtractionRules['pages']) {
 export function rulesProblem(rules?: ExtractionRules) {
   if (patternProblem(rules?.pattern)) return true;
   if (rules?.location === 'anywhere' && !rules.pattern?.trim()) return true;
-  if (rules?.take && (!Number.isInteger(rules.take.count) || rules.take.count < 1 || rules.take.count > MAX_TAKE)) return true;
+  if (takeProblem(rules?.take)) return true;
   return rules?.location === 'pages' && Boolean(pagesProblem(rules.pages));
 }
 
@@ -173,11 +152,7 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions, liv
   const boundaryLabels = rules?.boundaryLabels ?? [];
   const labels = rules?.labels ?? [];
   const location = rules?.location ?? 'auto';
-  const [customPattern, setCustomPattern] = useState(false);
-  // An empty custom pattern is not stored, so "Custom" (and reading anywhere, which needs one) keeps the box open.
-  const preset: PatternPreset | 'custom' | 'none' = rules?.pattern
-    ? presetOf(rules.pattern) ?? 'custom'
-    : customPattern || location === 'anywhere' ? 'custom' : 'none';
+  const preset = rules?.pattern ? presetOf(rules.pattern) ?? 'custom' : 'none';
   // "After “Contract No.” · After the label, on the same line · matches A reference": the rules in one line.
   const summaryLabels = (labels.length ? labels : [fieldLabel]).map((label) => `“${label}”`).join(', ');
   const withoutLabels = location === 'heading' || location === 'anywhere' || location === 'pages';
@@ -185,7 +160,7 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions, liv
     ? ` · ${t(`mapping.rules.summaryBoundary.${location}`, { labels: boundaryLabels.map((label) => `“${label}”`).join(', ') })}` : '';
   const summaryPages = location === 'pages' && rules?.pages && !pagesProblem(rules.pages)
     ? ` · ${pageRange(t, rules.pages.from, rules.pages.to)}` : '';
-  const takeText = rules?.take ? t(`mapping.rules.summaryTake.${rules.take.from}`, { amount: t(`mapping.rules.take.amount.${rules.take.unit}`, { count: rules.take.count }) }) : '';
+  const takeText = useTakeSummary(rules?.take);
   const summaryTake = takeText ? ` · ${takeText}` : '';
   const summary = (withoutLabels ? '' : `${t('mapping.rules.summaryLabels', { labels: summaryLabels })} · `)
     + t(`mapping.rules.where.${location}`) + summaryBoundary + summaryPages + summaryTake
@@ -225,16 +200,11 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions, liv
   };
   // An emptied box is kept as 0 (from) or no end (to), so the inline error says what is missing.
   const setPages = (from: number | undefined, to: number | undefined) => update({ pages: to === undefined ? { from: from ?? 0 } : { from: from ?? 0, to } });
-  const choosePattern = (value: PatternPreset | 'custom' | 'none') => {
-    setCustomPattern(value === 'custom');
-    update({ pattern: value === 'none' || value === 'custom' ? (value === 'custom' ? rules?.pattern || undefined : undefined) : PATTERN_PRESETS[value] });
-  };
   const id = `rules-${fieldLabel.replaceAll(/\W+/g, '-')}`;
 
   const sections = useOpenSections(DEFAULT_OPEN_SECTIONS);
   const section = (key: string) => ({ id: `${id}-${key}`, open: sections.isOpen(key), onToggle: () => sections.toggle(key) });
   const quoted = (items: string[]) => items.map((label) => `“${label}”`).join(', ');
-  const presetLabel = preset === 'custom' ? rules?.pattern ?? '' : t(`mapping.rules.preset.${preset}`);
   const optionsSummary = t(`mapping.rules.occurrenceOption.${rules?.occurrence ?? 'unique'}`) + (rules?.firstPageOnly ? ` · ${t('mapping.rules.firstPageShort')}` : '');
 
   return <div className='rounded-lg border border-dashed'>
@@ -296,29 +266,17 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions, liv
         </div>}
       </RuleSection>
 
-      <RuleSection {...section('keep')} title={t('mapping.rules.take.keep')} icon={<Scissors className='h-3.5 w-3.5' />}
-        summary={takeText || t('mapping.rules.take.mode.all')}
+      <KeepSection section={section('keep')} fieldLabel={fieldLabel} take={rules?.take} onTake={(take) => update({ take })}
         help={rules?.take ? t('mapping.rules.take.clickHint') : t('mapping.rules.take.selectHint')}>
         <ValueShaper fieldLabel={fieldLabel} reading={live?.reading} pending={live?.pending} onRead={live?.onRead} location={location}
           take={rules?.take} pattern={problem ? undefined : rules?.pattern} onTake={(take) => update({ take })} onAction={onShaperAction} />
-      </RuleSection>
+      </KeepSection>
 
-      <RuleSection {...section('pattern')} title={t('mapping.rules.pattern')} icon={<Regex className='h-3.5 w-3.5' />}
-        summary={presetLabel} help={t('mapping.rules.patternHelp')} invalid={Boolean(problem || needsPattern)}>
-        <ChoiceGroup variant='chips' label={t('mapping.rules.patternFor', { field: fieldLabel })} value={preset} onChange={choosePattern}
-          options={(['none', ...Object.keys(PATTERN_PRESETS) as PatternPreset[], 'custom'] as const).map((item) => ({ value: item, label: t(`mapping.rules.preset.${item}`) }))} />
-        {preset !== 'none' && <Input className='h-7 font-mono text-xs' value={rules?.pattern ?? ''} aria-label={t('mapping.rules.patternText', { field: fieldLabel })}
-          aria-invalid={Boolean(problem || needsPattern)} placeholder={String.raw`CNT-\d{4}-\d{4}`} maxLength={200}
-          onChange={(event) => update({ pattern: event.target.value || undefined })} />}
-        {problem && <p role='alert' className='text-[11px] text-destructive'>{t('mapping.rules.patternInvalid', { problem })}</p>}
-        {needsPattern && <p role='alert' className='text-[11px] text-destructive'>{t('mapping.rules.patternRequired')}</p>}
-      </RuleSection>
+      <ValuePatternSection section={section('pattern')} fieldLabel={fieldLabel} pattern={rules?.pattern} required={location === 'anywhere'}
+        onPattern={(pattern) => update({ pattern })} />
 
-      <RuleSection {...section('transform')} title={t('mapping.rules.transform')} icon={<Eraser className='h-3.5 w-3.5' />}
-        summary={t(`mapping.rules.transformOption.${rules?.transform ?? 'none'}`)}>
-        <ChoiceGroup variant='chips' label={t('mapping.rules.transformFor', { field: fieldLabel })} value={rules?.transform ?? 'none'} onChange={(value) => update({ transform: value })}
-          options={TRANSFORMS.map((item) => ({ value: item, label: t(`mapping.rules.transformOption.${item}`) }))} />
-      </RuleSection>
+      <CleanupSection section={section('transform')} fieldLabel={fieldLabel} value={rules?.transform ?? 'none'} options={TRANSFORMS}
+        onChange={(value) => update({ transform: value })} />
 
       <RuleSection {...section('options')} title={t('mapping.rules.options')} icon={<ListFilter className='h-3.5 w-3.5' />} summary={optionsSummary}>
         <div className='flex flex-wrap items-center gap-x-3 gap-y-1.5'>

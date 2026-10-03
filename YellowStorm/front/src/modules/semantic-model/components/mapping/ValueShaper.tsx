@@ -90,7 +90,9 @@ export type ShaperAction = 'stop_at' | 'start_after' | 'label';
  * it. The cut is set with the controls, by clicking in the text, or by dragging its handle; a
  * selection offers to use it as a label or a boundary.
  */
-export function ValueShaper({ fieldLabel, reading, pending, location, take, pattern, onTake, onAction, onRead }: Readonly<{
+export function ValueShaper({ fieldLabel, reading, pending, location, take, pattern, onTake, onAction, onRead, textless }: Readonly<{
+  /** Only the controls, without the text to cut (a computed field has no single text to show). */
+  textless?: boolean;
   fieldLabel: string;
   reading?: DocumentFieldReading;
   /** The document is being read again with the current rules. */
@@ -234,7 +236,7 @@ export function ValueShaper({ fieldLabel, reading, pending, location, take, patt
       </>}
     </div>
 
-    {raw ? <div ref={wrapperRef} className='relative'>
+    {textless ? null : raw ? <div ref={wrapperRef} className='relative'>
       <div ref={textRef} data-testid='shaper-text' className={cn('max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border bg-background px-2.5 py-2 text-xs leading-relaxed',
         take && 'cursor-text')} onMouseUp={onMouseUp} onMouseMove={onMouseMove} onMouseLeave={() => setGhost(null)}>
         {pieces.map((piece) => <span key={piece.start}>

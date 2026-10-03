@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSemanticModelEditorStore } from '../../store';
 import type { SemanticGraph } from '../../types';
 import { DocumentSourceMappingDrawer } from './DocumentSourceMappingDrawer';
+import { openRuleSectionsByDefault } from './RuleControls';
 
 const api = vi.hoisted(() => ({
   listSourceAssets: vi.fn(),
@@ -46,7 +47,7 @@ describe('DocumentSourceMappingDrawer, document beside the fields', () => {
   const matchMedia = globalThis.matchMedia;
   beforeEach(() => {
     // Every rule step open, as a person who opened them once would see them.
-    localStorage.setItem('semantic-model.rule-sections', JSON.stringify(['labels', 'where', 'keep', 'pattern', 'transform', 'options']));
+    openRuleSectionsByDefault(['labels', 'where', 'keep', 'pattern', 'transform', 'options']);
     vi.clearAllMocks();
     localStorage.removeItem('semantic-model.document-split');
     useSemanticModelEditorStore.getState().hydrate(graph);
