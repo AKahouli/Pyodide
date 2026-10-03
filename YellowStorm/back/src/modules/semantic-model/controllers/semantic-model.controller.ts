@@ -31,7 +31,7 @@ import {
   SaveSourceResolutionPolicyDto,
   ListReviewItemsQueryDto,
   ResolveReviewItemDto,
-  RequestPopulationRefreshDto,
+  RequestPopulationRefreshDto, RebuildPopulationDto,
   RecordCorrectionDto,
 } from '../dto';
 import { ShareSemanticModelDto, UpdateSemanticModelShareDto } from '../dto/semantic-model-share.dto';
@@ -353,6 +353,15 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   requestPopulationRefresh(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: RequestPopulationRefreshDto) {
     return this.populationRefresh.requestRefresh(user._id.toString(),modelId,dto);
+  }
+
+  @Post(':modelId/population/rebuild')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: 'Clear all built data of the model and build it again from scratch; the model settings stay' })
+  @RateLimit({ limit: 3, windowMs: 60_000, keyPrefix: 'semantic-model:population-rebuild' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  rebuildPopulation(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: RebuildPopulationDto) {
+    return this.populationRefresh.rebuildFromScratch(user._id.toString(),modelId,dto);
   }
 
   @Get(':modelId/population/freshness')

@@ -790,6 +790,19 @@ export class SemanticPopulationRefreshService {
   }
 
   /**
+   * Repopulate from scratch: clear every record, link and review item earlier builds produced, then build
+   * again. The model stays as it is (concepts, sources, rules, fixes, typed records), and published data
+   * stays in use until the next publish.
+   */
+  async rebuildFromScratch(userId: string, modelId: string, options: { forgetDocumentReading?: boolean } = {}) {
+    const build: RequestPopulationRefreshInput = { purpose: 'build', scope: { kind: 'model' } };
+    // Check that a build can start before clearing anything, so a refused run never leaves the model empty.
+    await this.planRefresh(userId, modelId, build, 'run');
+    const cleared = await this.runtime.purgeModelData(modelId, userId, { forgetDocumentReading: Boolean(options.forgetDocumentReading) });
+    return { ...await this.requestRefresh(userId, modelId, build), cleared };
+  }
+
+  /**
    * Whether the records in use were built from the model as it is now. Compares the fingerprint a run would
    * have today (design, mappings and source file versions) with the one of the active data.
    */

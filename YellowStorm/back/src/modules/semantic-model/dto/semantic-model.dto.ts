@@ -1069,6 +1069,13 @@ export class RequestPopulationRefreshDto {
   scope!: PopulationRefreshScopeDto;
 }
 
+export class RebuildPopulationDto {
+  @ApiPropertyOptional({ description: 'Also read every document again with AI instead of reusing earlier readings' })
+  @IsOptional()
+  @IsBoolean()
+  forgetDocumentReading?: boolean;
+}
+
 export const RECORD_CORRECTION_ACTIONS = ['edit_entity', 'remove_entity', 'add_relationship', 'remove_relationship'] as const;
 export type RecordCorrectionAction = (typeof RECORD_CORRECTION_ACTIONS)[number];
 

@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 
 from fastapi import APIRouter, Header, HTTPException, Path, Query, Request, status
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.graph_search.indexer import request_index_quietly
 from app.jobs.models import (ActivateRevisionCommand, CorrectionCommand, IdempotencyConflict,
@@ -19,13 +21,16 @@ from app.jobs.models import (ActivateRevisionCommand, CorrectionCommand, Idempot
                              ReviewResolveCommand)
 from app.persistence import manual_store
 from app.persistence import population_store as store
-from app.population.age_projection import (ProjectionUnavailable, ensure_revision_projection,
-                                             is_live_projection_ref, read_projection_graph)
+from app.population.age_projection import (LIVE_PROJECTION_PREFIX, ProjectionUnavailable,
+                                             drop_projection, ensure_revision_projection,
+                                             is_live_projection_ref, projection_exists,
+                                             read_projection_graph)
 from app.population.engine_version import population_engine_version
 from app.population.compiler import (PopulationError, canonical_spec_hash, validate_specification)
 from app.workers.celery_app import POPULATION_QUEUES
 
 router = APIRouter(prefix="/v1/semantic-model-population", tags=["population"])
+logger = logging.getLogger(__name__)
 
 
 
@@ -271,6 +276,43 @@ async def resolve_review(review_id: str, command: ReviewResolveCommand,
     if not resolved:
         raise HTTPException(status_code=409, detail="review_resolution_conflict")
     return {"reviewId": review_id, "state": "resolved", "reused": False}
+
+
+class PurgeModelDataCommand(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    forget_document_reading: bool = Field(default=False, alias="forgetDocumentReading")
+
+
+@router.post("/models/{model_id}/purge", status_code=status.HTTP_200_OK)
+async def purge_model_data(model_id: str, command: PurgeModelDataCommand,
+                           request: Request) -> dict[str, object]:
+    """Clear a model's built data so the next build starts from nothing; its settings stay."""
+    if not model_id or len(model_id) > 200:
+        raise HTTPException(status_code=422, detail="invalid_model_id")
+    pool = _population_pool(request)
+    try:
+        result = await store.purge_model_data(
+            pool, model_id, forget_document_reading=command.forget_document_reading,
+            emit_signal=os.environ.get("SEMANTIC_MODEL_REALTIME_ENABLED") == "true")
+    except store.PopulationRunning as exc:
+        raise HTTPException(status_code=409, detail="population_running") from exc
+    # The graphs of the cleared revisions go too; one left behind is only unused space.
+    age_pool = getattr(request.app.state, "age_pool", None)
+    dropped = 0
+    for ref in result.pop("projections"):
+        if age_pool is None or not is_live_projection_ref(ref):
+            continue
+        graph = ref[len(LIVE_PROJECTION_PREFIX):]
+        try:
+            async with age_pool.acquire() as connection:
+                if await projection_exists(connection, graph):
+                    await drop_projection(connection, graph)
+                    dropped += 1
+        except Exception as exc:  # noqa: BLE001 - the data is already cleared
+            logger.warning("Could not drop graph %s of model %s: %s", graph, model_id,
+                           type(exc).__name__)
+    return {**result, "projectionsDropped": dropped}
 
 
 @router.post("/revisions/{revision_id}/project", status_code=status.HTTP_200_OK)

@@ -955,7 +955,8 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict) -
     """
     from app.persistence.population_store import (create_data_revision, list_model_corrections,
                                                   mirror_specification,
-                                                  model_correction_sequence, revision_id_for,
+                                                  model_correction_sequence,
+                                                  model_reset_generation, revision_id_for,
                                                   set_revision_validation, store_assertions,
                                                   store_entities, store_relationships)
     from app.population.corrections import apply_corrections
@@ -974,7 +975,8 @@ async def persist_population_revision(pool, command_dump: dict, outcome: dict) -
     execution_fingerprint = outcome["executionFingerprint"]
     revision_id = revision_id_for(model_version_id, execution_fingerprint,
                                   outcome.get("datasetFingerprints", []),
-                                  correction_sequence)
+                                  correction_sequence,
+                                  await model_reset_generation(pool, model_id))
     await mirror_specification(pool, home_workspace_id=home_ws, model_id=model_id,
                                model_version_id=model_version_id,
                                spec_hash=outcome["specHash"], specification=specification)

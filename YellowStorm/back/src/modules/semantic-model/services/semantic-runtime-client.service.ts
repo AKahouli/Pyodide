@@ -365,6 +365,17 @@ const GRAPH_SEARCH_REJECTIONS: Record<string, string> = {
   invalid_query: 'This search request is not valid',
 };
 
+export interface RuntimePurgedData {
+  modelId: string;
+  resetGeneration: number;
+  revisions: number;
+  keptRevisions: number;
+  reviewItems: number;
+  jobs: number;
+  documentReadings: number;
+  projectionsDropped: number;
+}
+
 @Injectable()
 export class SemanticRuntimeClientService {
   constructor(
@@ -549,6 +560,13 @@ export class SemanticRuntimeClientService {
   ): Promise<RuntimeAcceptedJob> {
     return this.post<RuntimeAcceptedJob>('/v1/semantic-model-population/runs', command, {
       'Idempotency-Key': idempotencyKey,
+    });
+  }
+
+  /** Clear a model's built data (records, links, review items, finished builds); its settings stay. */
+  async purgeModelData(modelId: string, actorUserId: string, options: { forgetDocumentReading: boolean }): Promise<RuntimePurgedData> {
+    return this.post<RuntimePurgedData>(`/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/purge`, options, {
+      'X-Actor-User-Id': actorUserId,
     });
   }
 

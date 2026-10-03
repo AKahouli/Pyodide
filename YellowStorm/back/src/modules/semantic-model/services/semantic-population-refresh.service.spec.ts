@@ -79,6 +79,7 @@ const setup = (
     appendManualRows: jest.fn(async () => undefined),
     commitManualSnapshot: jest.fn(async () => ({ reused: false })),
     requestPopulationRun: jest.fn(async () => ({ jobId: 'j-1', status: 'queued', reused: false })),
+    purgeModelData: jest.fn(async () => ({ modelId: 'model-1', revisions: 2, jobs: 1 })),
     getJob: jest.fn(async () => ({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'completed' })),
     getBoundRecords: jest.fn(async () => ({
       dataRevisionId: 'dr-1',
@@ -279,6 +280,22 @@ describe('SemanticPopulationRefreshService', () => {
     const ruleQuery = database.query.mock.calls.find(([sql]) =>
       sql.includes('FROM semantic_model.relation_resolution_rules'))?.[0] ?? '';
     expect(ruleQuery).not.toMatch(/source_concept_id|target_concept_id|cardinality/);
+  });
+
+  it('clears the built data, then builds again from scratch', async () => {
+    const { runtime, service } = setup();
+    const result = await service.rebuildFromScratch('u-1', 'model-1', { forgetDocumentReading: true });
+    expect(runtime.purgeModelData).toHaveBeenCalledWith('model-1', 'u-1', { forgetDocumentReading: true });
+    expect(runtime.purgeModelData.mock.invocationCallOrder[0]).toBeLessThan(runtime.requestPopulationRun.mock.invocationCallOrder[0]);
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    expect(calls[0][0].payload).toMatchObject({ purpose: 'build', scope: { kind: 'model' } });
+    expect(result).toMatchObject({ jobId: 'j-1', cleared: { revisions: 2 } });
+  });
+
+  it('clears nothing when the model cannot be built', async () => {
+    const { runtime, service } = setup([MAPPING()], {});
+    await expect(service.rebuildFromScratch('u-1', 'model-1')).rejects.toThrow();
+    expect(runtime.purgeModelData).not.toHaveBeenCalled();
   });
 
   it('fingerprints the JSON-normalized source payload', async () => {

@@ -21,15 +21,20 @@ def _json(value: Any) -> str:
 
 
 def revision_id_for(model_version_id: str, execution_fingerprint: str,
-                    dataset_fingerprints: list[str], correction_sequence: int) -> str:
-    """Deterministic data-revision id for a fixed spec, inputs and watermark."""
+                    dataset_fingerprints: list[str], correction_sequence: int,
+                    reset_generation: int = 0) -> str:
+    """Deterministic data-revision id for a fixed spec, inputs and watermark.
+
+    A model whose data was cleared counts its resets, so its next build is a
+    new revision rather than one kept for another environment."""
     from app.population.engine_version import population_engine_version
 
     body = _json({"modelVersionId": model_version_id,
                   "engine": population_engine_version(),
                   "executionFingerprint": execution_fingerprint,
                   "datasets": sorted(dataset_fingerprints),
-                  "correctionSequence": correction_sequence})
+                  "correctionSequence": correction_sequence,
+                  **({"resetGeneration": reset_generation} if reset_generation else {})})
     return "dr_" + hashlib.sha256(body.encode("utf-8")).hexdigest()[:24]
 
 
@@ -315,6 +320,91 @@ async def get_revision_specification(pool: Any, revision_id: str) -> dict[str, A
         return None
     value = row["specification"]
     return json.loads(value) if isinstance(value, str) else dict(value)
+
+
+async def model_reset_generation(pool: Any, model_id: str) -> int:
+    value = await pool.fetchval(
+        "SELECT generation FROM semantic_population.model_data_resets WHERE model_id = $1",
+        model_id,
+    )
+    return int(value or 0)
+
+
+_TERMINAL_JOB_STATES = ("completed", "completed_with_gaps", "failed", "cancelled", "superseded")
+
+
+class PopulationRunning(Exception):
+    """A build of the model is still going on; its data cannot be cleared under it."""
+
+
+async def purge_model_data(pool: Any, model_id: str, *,
+                           forget_document_reading: bool = False,
+                           emit_signal: bool = False) -> dict[str, Any]:
+    """Clear what builds produced for a model, so the next build starts from nothing.
+
+    The model's settings stay: specification, corrections and hand-typed records
+    (manual snapshots). Data served to another environment (published) stays
+    until that environment moves on. Returns the projection graphs no longer
+    referenced, for the caller to drop from the graph database."""
+    async with pool.acquire() as connection:
+        async with connection.transaction():
+            # One purge at a time per model, and none while a build runs.
+            await connection.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                                     f"purge:{model_id}")
+            running = await connection.fetchval(
+                "SELECT count(*) FROM semantic_jobs.jobs WHERE model_id = $1 "
+                "AND job_type = 'population.run' AND NOT (state = ANY($2::text[]))",
+                model_id, list(_TERMINAL_JOB_STATES),
+            )
+            if running:
+                raise PopulationRunning(model_id)
+            await connection.execute(
+                "DELETE FROM semantic_runtime.active_bindings "
+                "WHERE model_id = $1 AND environment = 'draft'", model_id)
+            kept = {row["data_revision_id"] for row in await connection.fetch(
+                "SELECT data_revision_id FROM semantic_runtime.active_bindings "
+                "WHERE model_id = $1", model_id)}
+            removed = await connection.fetch(
+                "DELETE FROM semantic_population.data_revisions "
+                "WHERE model_id = $1 AND NOT (id = ANY($2::text[])) "
+                "RETURNING id, projection_ref", model_id, sorted(kept))
+            review_items = await connection.fetchval(
+                "WITH gone AS (DELETE FROM semantic_population.review_items "
+                "WHERE model_id = $1 AND (data_revision_id IS NULL "
+                "OR NOT (data_revision_id = ANY($2::text[]))) RETURNING 1) "
+                "SELECT count(*) FROM gone", model_id, sorted(kept))
+            # Finished builds would otherwise be handed back as "already done".
+            jobs = await connection.fetchval(
+                "WITH gone AS (DELETE FROM semantic_jobs.jobs WHERE model_id = $1 "
+                "AND job_type = 'population.run' AND state = ANY($2::text[]) RETURNING 1) "
+                "SELECT count(*) FROM gone", model_id, list(_TERMINAL_JOB_STATES))
+            readings = 0
+            if forget_document_reading:
+                readings = await connection.fetchval(
+                    "WITH gone AS (DELETE FROM semantic_population.document_extractions "
+                    "WHERE model_id = $1 RETURNING 1) SELECT count(*) FROM gone", model_id)
+            generation = await connection.fetchval(
+                "INSERT INTO semantic_population.model_data_resets (model_id) VALUES ($1) "
+                "ON CONFLICT (model_id) DO UPDATE SET generation = "
+                "semantic_population.model_data_resets.generation + 1, reset_at = now() "
+                "RETURNING generation", model_id)
+            if emit_signal:
+                await enqueue_ui_signal(
+                    connection, model_id=model_id, event_type="data-revision-changed",
+                    resource="draft",
+                    payload={"resource": "draft", "status": "cleared", "reason": "data_cleared"},
+                )
+    return {
+        "modelId": model_id,
+        "resetGeneration": int(generation),
+        "revisions": len(removed),
+        "keptRevisions": len(kept),
+        "reviewItems": int(review_items or 0),
+        "jobs": int(jobs or 0),
+        "documentReadings": int(readings or 0),
+        "projections": sorted({row["projection_ref"] for row in removed
+                               if row["projection_ref"]}),
+    }
 
 
 async def get_active_binding(pool: Any, model_id: str,

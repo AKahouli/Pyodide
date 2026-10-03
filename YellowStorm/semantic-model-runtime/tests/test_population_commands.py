@@ -509,3 +509,56 @@ def test_revert_must_name_an_existing_correction(client: TestClient, monkeypatch
     response = client.post("/v1/semantic-model-population/corrections", headers=AUTH, json=body)
     assert response.status_code == 422
     assert response.json()["detail"] == "invalid_revert_target"
+
+
+class _GraphsPool:
+    """An AGE database holding the graphs named in ``existing``."""
+
+    def __init__(self, existing: set[str]) -> None:
+        self.existing = existing
+        self.dropped: list[str] = []
+
+    def acquire(self) -> AsyncContext:
+        return AsyncContext(self)
+
+    async def fetchval(self, sql: str, *params):  # type: ignore[no-untyped-def]
+        return params[0] in self.existing
+
+    async def execute(self, sql: str, *_params):  # type: ignore[no-untyped-def]
+        self.dropped.append(sql)
+
+
+def test_purge_clears_data_and_drops_its_graphs(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    from app.persistence import population_store as store
+
+    seen: dict = {}
+
+    async def purge(pool, model_id, *, forget_document_reading, emit_signal):  # type: ignore[no-untyped-def]
+        seen.update(model=model_id, forget=forget_document_reading)
+        return {"modelId": model_id, "resetGeneration": 1, "revisions": 2, "keptRevisions": 0,
+                "reviewItems": 0, "jobs": 1, "documentReadings": 0,
+                "projections": ["age:v1:pop_dr_a", "age:v1:pop_dr_gone"]}
+
+    monkeypatch.setattr(store, "purge_model_data", purge)
+    graphs = _GraphsPool({"pop_dr_a"})
+    _inject(client, ScriptedPool([]), graphs)
+    response = client.post("/v1/semantic-model-population/models/m1/purge", headers=AUTH,
+                           json={"forgetDocumentReading": True})
+    assert response.status_code == 200
+    assert response.json()["projectionsDropped"] == 1
+    assert "projections" not in response.json()
+    assert seen == {"model": "m1", "forget": True}
+    assert len(graphs.dropped) == 1 and "pop_dr_a" in graphs.dropped[0]
+
+
+def test_purge_waits_for_a_running_build(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    from app.persistence import population_store as store
+
+    async def purge(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise store.PopulationRunning("m1")
+
+    monkeypatch.setattr(store, "purge_model_data", purge)
+    _inject(client, ScriptedPool([]))
+    response = client.post("/v1/semantic-model-population/models/m1/purge", headers=AUTH, json={})
+    assert response.status_code == 409
+    assert response.json()["detail"] == "population_running"

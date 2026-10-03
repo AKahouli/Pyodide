@@ -102,7 +102,7 @@ async def test_persist_applies_corrections_and_records_watermark():
 
     class FakePool:
         async def fetchval(self, sql, *params):  # type: ignore[no-untyped-def]
-            return 4
+            return 0 if "model_data_resets" in sql else 4
 
         async def fetch(self, sql, *params):  # type: ignore[no-untyped-def]
             return [{"sequence": 4, "model_version_id": "v1", "actor_user_id": "u9",
