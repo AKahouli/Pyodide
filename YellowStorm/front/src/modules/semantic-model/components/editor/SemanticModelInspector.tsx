@@ -27,7 +27,7 @@ import { cn } from '@/lib/utils';
 import { RelationMatchingPanel } from '../mapping/RelationMatchingPanel';
 import { DELETE_BUTTON, FORM_SECTION as SECTION, FormField as Field, HelpTip, SectionHeader } from '../form/FormParts';
 
-export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowledgeOpen,knowledgeTargetId,onKnowledgeClose,onMapData,onDeriveData,onBrowseRecords,recordCounts,workspace = false }: Readonly<{ modelId?:string;canEdit:boolean;knowledge:KnowledgeLinkingController;knowledgeOpen:boolean;knowledgeTargetId:string|null;onKnowledgeClose:()=>void;onMapData?:(target:SourceMappingTarget)=>void;onDeriveData?:(target:DerivedSourceTarget)=>void;onBrowseRecords?:(conceptId:string)=>void;recordCounts?:Record<string,number>;workspace?:boolean }>) {
+export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowledgeOpen,knowledgeTargetId,onKnowledgeClose,onMapData,onDeriveData,onAddSource,onBrowseRecords,recordCounts,workspace = false }: Readonly<{ modelId?:string;canEdit:boolean;knowledge:KnowledgeLinkingController;knowledgeOpen:boolean;knowledgeTargetId:string|null;onKnowledgeClose:()=>void;onMapData?:(target:SourceMappingTarget)=>void;onDeriveData?:(target:DerivedSourceTarget)=>void;onAddSource?:(conceptId:string)=>void;onBrowseRecords?:(conceptId:string)=>void;recordCounts?:Record<string,number>;workspace?:boolean }>) {
   const { t } = useModuleTranslation('semantic-model');
   const graph = useSemanticModelEditorStore((state) => state.graph);
   const selectedId = useSemanticModelEditorStore((state) => state.selectedId);
@@ -45,7 +45,7 @@ export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowled
     <div className={workspace ? 'mx-auto max-w-2xl' : undefined}>
     <div className='mb-5 flex items-center justify-between gap-2'><h2 className={cn('min-w-0 truncate font-semibold', workspace ? 'text-xl' : 'text-base')}>{node?.label ?? relation?.label ?? record?.label}</h2>{!workspace && <Button size='icon' variant='ghost' className='-mr-2 h-8 w-8 shrink-0' onClick={() => select(null)} aria-label={t('action.close')}><X className='h-4 w-4' /></Button>}</div>
     {node && !node.systemKey && onBrowseRecords && <RecordsSummary count={recordCounts?.[node.id]} label={node.label} onBrowse={() => onBrowseRecords(node.id)} />}
-    {node && <NodeForm modelId={modelId} node={node} locked={Boolean(node.systemKey)} canEdit={canEdit} onMapData={onMapData} onDeriveData={onDeriveData} />}
+    {node && <NodeForm modelId={modelId} node={node} locked={Boolean(node.systemKey)} canEdit={canEdit} onMapData={onMapData} onDeriveData={onDeriveData} onAddSource={onAddSource} />}
     {relation && <RelationForm modelId={modelId} relation={relation} canEdit={canEdit} />}
     {record && <RecordForm record={record} canEdit={canEdit} />}
     </div>
@@ -143,7 +143,7 @@ export function ResizableSidePanel({ children, className, bodyClassName }: Reado
   </aside>;
 }
 
-function NodeForm({ modelId, node: item,locked,canEdit,onMapData,onDeriveData }: Readonly<{ modelId:string; node: SemanticNodeType; locked: boolean; canEdit: boolean; onMapData?:(target:SourceMappingTarget)=>void; onDeriveData?:(target:DerivedSourceTarget)=>void }>) {
+function NodeForm({ modelId, node: item,locked,canEdit,onMapData,onDeriveData,onAddSource }: Readonly<{ modelId:string; node: SemanticNodeType; locked: boolean; canEdit: boolean; onMapData?:(target:SourceMappingTarget)=>void; onDeriveData?:(target:DerivedSourceTarget)=>void; onAddSource?:(conceptId:string)=>void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const graph = useSemanticModelEditorStore((state) => state.graph);
   const commit = useSemanticModelEditorStore((state) => state.commit);
@@ -178,7 +178,7 @@ function NodeForm({ modelId, node: item,locked,canEdit,onMapData,onDeriveData }:
         </button>;
       })}</div> : <p className='text-xs text-muted-foreground'>{t('workspaceUi.noRelationships')}</p>}
     </section>
-    {!locked&&canEdit && <section data-focus-section='sources' className={SECTION}><SourceMappingsSection modelId={modelId} conceptId={item.id} onMapData={onMapData} onDeriveData={onDeriveData} /></section>}
+    {!locked&&canEdit && <section data-focus-section='sources' className={SECTION}><SourceMappingsSection modelId={modelId} conceptId={item.id} onMapData={onMapData} onDeriveData={onDeriveData} onAddSource={onAddSource} /></section>}
     <details className='group border-t pt-6'><summary className='flex cursor-pointer list-none items-center gap-1 text-sm font-semibold [&::-webkit-details-marker]:hidden'><ChevronRight className='h-4 w-4 text-muted-foreground transition-transform group-open:rotate-90' aria-hidden />{t('workspaceUi.advanced')}</summary><div className='mt-4 space-y-4'>
     <Field label={t('field.category')}><Select value={item.category} disabled={locked||!canEdit} onValueChange={(category: SemanticNodeType['category']) => update({ category })}><SelectTrigger className='h-9'><SelectValue /></SelectTrigger><SelectContent><SelectItem value='business_object'>{t('category.business_object')}</SelectItem><SelectItem value='classification'>{t('category.classification')}</SelectItem></SelectContent></Select></Field>
     <Field label={t('field.recordPolicy')}><Select value={item.recordPolicy} disabled={locked||!canEdit} onValueChange={(recordPolicy: SemanticNodeType['recordPolicy']) => update({ recordPolicy })}><SelectTrigger className='h-9'><SelectValue /></SelectTrigger><SelectContent>{(['none','optional','expected'] as const).map((policy) => <SelectItem key={policy} value={policy}>{t(`recordPolicy.${policy}`)}</SelectItem>)}</SelectContent></Select></Field>
@@ -224,7 +224,7 @@ export function IdentitySection({ modelId, node, canEdit }: Readonly<{ modelId: 
   </div>;
 }
 
-function SourceMappingsSection({ modelId,conceptId,onMapData,onDeriveData }: Readonly<{ modelId:string;conceptId:string;onMapData?:(target:SourceMappingTarget)=>void;onDeriveData?:(target:DerivedSourceTarget)=>void }>) {
+function SourceMappingsSection({ modelId,conceptId,onMapData,onDeriveData,onAddSource }: Readonly<{ modelId:string;conceptId:string;onMapData?:(target:SourceMappingTarget)=>void;onDeriveData?:(target:DerivedSourceTarget)=>void;onAddSource?:(conceptId:string)=>void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const client = useQueryClient();
   const mappingsQuery = useSourceMappings(modelId || undefined);
@@ -281,6 +281,9 @@ function SourceMappingsSection({ modelId,conceptId,onMapData,onDeriveData }: Rea
       </div>
       {onDeriveData && <Button size='icon' variant='ghost' className='h-7 w-7 shrink-0' aria-label={t('mapping.edit')} title={t('mapping.edit')} onClick={() => onDeriveData({ conceptId, derived: source })}><Pencil className='h-3.5 w-3.5' /></Button>}
     </div>)}
+    {onAddSource && <Button size='sm' variant='outline' className='h-8 w-full text-xs' onClick={() => onAddSource(conceptId)}>
+      <Plus className='mr-1.5 h-3.5 w-3.5' />{t('workspaceUi.addSourceShort')}
+    </Button>}
     {onDeriveData && !derived.length && <Button size='sm' variant='outline' className='h-8 w-full text-xs' onClick={() => onDeriveData({ conceptId })}>
       <GitMerge className='mr-1.5 h-3.5 w-3.5' />{t('derived.add')}
     </Button>}

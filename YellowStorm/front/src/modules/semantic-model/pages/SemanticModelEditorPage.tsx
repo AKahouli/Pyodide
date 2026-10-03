@@ -757,6 +757,7 @@ export function SemanticModelEditorPage() {
             onMapStructuredDrop={(resource, nodeId) => void openMappingTarget(sourceMappingTargetFromResource(resource, nodeId))}
             onOpenSource={openSource}
             onPaneDrop={dropOnCanvas}
+            onPaneClick={() => { closeSidePanels(); if (knowledgeOpen) closeKnowledge(); setMappingTarget(null); setDerivedTarget(null); }}
             onRemoveSource={(source, mapping) => void removeSource(source.label, mapping ? [mapping] : source.mappings)}
             onAddFeed={(source) => { const first = source.mappings[0]; if (first) void openMappingTarget({ ...mappingTarget_(first), mapping: undefined, conceptId: undefined }); }}
             onToggleKey={canEdit ? toggleKey : undefined}
@@ -845,7 +846,7 @@ export function SemanticModelEditorPage() {
             void model.refetch();
           }}
         />}
-        {(knowledgeOpen || (onCanvas && detailsOpen)) && !trustOpen && !population && !suggestionsOpen && !versionsOpen && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} onBrowseRecords={browseRecords} recordCounts={conceptRecordCounts} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} onMapData={(target) => void openMappingTarget(target)} onDeriveData={openDerived} />}
+        {(knowledgeOpen || (onCanvas && detailsOpen)) && !trustOpen && !population && !suggestionsOpen && !versionsOpen && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} onBrowseRecords={browseRecords} recordCounts={conceptRecordCounts} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} onMapData={(target) => void openMappingTarget(target)} onDeriveData={openDerived} onAddSource={(conceptId) => { closeSidePanels(); openKnowledge(conceptId); }} />}
         {modelId && <DerivedSourceDrawer modelId={modelId} target={derivedTarget} onClose={() => setDerivedTarget(null)} />}
         {modelId && <SourceMappingDrawer modelId={modelId} target={mappingTarget} onClose={() => setMappingTarget(null)} onSuggestConcepts={canEdit ? (source) => { setMappingTarget(null); setSuggestSource(source); } : undefined} />}
       </main>

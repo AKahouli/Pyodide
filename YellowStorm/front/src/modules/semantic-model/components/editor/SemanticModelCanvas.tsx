@@ -284,7 +284,7 @@ const FeedEdge = memo(function FeedEdge({ id,sourceX,sourceY,targetX,targetY,sou
 
 const edgeTypes = { relation:RelationEdge, feed:FeedEdge };
 
-export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerived,identityRules,recordCounts,mappingHealth,canEdit,onConnectRequest,knowledge,onOpenKnowledge,onMapStructuredDrop,onOpenSource,onPaneDrop,onAddFeed,onRemoveSource,onToggleKey,sourcePositions,onMoveSource,onBrowseRecords }: Readonly<{ sourceMappings?:ConceptSourceMapping[];
+export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerived,identityRules,recordCounts,mappingHealth,canEdit,onConnectRequest,knowledge,onOpenKnowledge,onMapStructuredDrop,onOpenSource,onPaneDrop,onAddFeed,onRemoveSource,onToggleKey,sourcePositions,onMoveSource,onBrowseRecords,onPaneClick }: Readonly<{ sourceMappings?:ConceptSourceMapping[];
   /** Unique fields chosen on the concept itself, so its key badge shows before any source is mapped. */
   identityRules?:{conceptId:string;fields:string[]}[];
   /** Concepts made from another concept's records; each draws a line from that concept. */
@@ -295,6 +295,8 @@ export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerive
   onOpenSource?:(source:DesignerSource,mapping?:ConceptSourceMapping)=>void;
   /** A document from the knowledge panel was dropped on empty canvas, not on a concept. */
   onPaneDrop?:(resource:KnowledgeResource)=>void;
+  /** A click on the empty canvas, after the selection is cleared. */
+  onPaneClick?:()=>void;
   /** The + on a source: map the same file onto another concept. */
   onAddFeed?:(source:DesignerSource)=>void;
   /** Stop feeding concepts from a source, or from one of its lines when the mapping is given. */
@@ -594,7 +596,7 @@ export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerive
       // A click opens the item's details in the side panel, replacing whatever panel was open.
       onNodeClick={(event,node)=>{if((event.target as Element).closest('.nodrag')||node.id===quickConcept?.id)return;select(node.id,{details:!isDesignerSourceId(node.id)});}}
       onNodeDoubleClick={(event,node)=>{if((event.target as Element).closest('.nodrag')||node.id===quickConcept?.id)return;if(isDesignerSourceId(node.id)){const source=flow.sources.find((item)=>item.id===node.id);if(source)onOpenSource?.(source);return;}openDetails(node.id);}}
-      onEdgeClick={(_,edge)=>{const feed=flow.feeds.find((item)=>item.id===edge.id);if(feed?.derived){select(null);onOpenDerived?.(feed.derived);return;}if(feed){select(null);const source=flow.sources.find((item)=>item.id===feed.sourceId);if(source)onOpenSource?.(source,feed.mapping);return;}select(edge.id,{details:true});}} onPaneClick={()=>select(null)}
+      onEdgeClick={(_,edge)=>{const feed=flow.feeds.find((item)=>item.id===edge.id);if(feed?.derived){select(null);onOpenDerived?.(feed.derived);return;}if(feed){select(null);const source=flow.sources.find((item)=>item.id===feed.sourceId);if(source)onOpenSource?.(source,feed.mapping);return;}select(edge.id,{details:true});}} onPaneClick={()=>{select(null);onPaneClick?.();}}
       onNodesChange={followDrag}
       onNodeDragStop={(_,node)=>{setDragPositions((current)=>{const next={...current};delete next[node.id];return next;});if(isDesignerSourceId(node.id)){onMoveSource?.(node.id,node.position);return;}if(!graph||node.id===quickConcept?.id)return;const isRecord=mode==='records';if(!isRecord&&graph.nodes.some((item)=>item.id===node.id&&item.systemKey))return;commit({type:'layout.update',positions:[{id:node.id,position:node.position}]},(current)=>isRecord?{...current,records:current.records.map((item)=>item.id===node.id?{...item,position:node.position}:item)}:{...current,nodes:current.nodes.map((item)=>item.id===node.id?{...item,position:node.position}:item)});}}
     ><Background gap={24} size={1} color='hsl(var(--muted-foreground) / 0.18)' /><Controls showInteractive={false} /></ReactFlow>
