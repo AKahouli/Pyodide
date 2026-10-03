@@ -62,3 +62,8 @@ CREATE INDEX IF NOT EXISTS idx_root_evidence_execution
   ON conversation.root_evidence_records (execution_id);
 
 ALTER TABLE conversation.conversations ADD COLUMN IF NOT EXISTS root_work_last_stop_request_id uuid;
+
+-- Backport note (WP08 rollout): environments that applied the original
+-- char(36) version of this file must also run, per database:
+--   ALTER TABLE conversation.root_executions ALTER COLUMN stop_request_id TYPE uuid USING stop_request_id::uuid;
+--   ALTER TABLE conversation.conversations ALTER COLUMN root_work_last_stop_request_id TYPE uuid USING root_work_last_stop_request_id::uuid;
