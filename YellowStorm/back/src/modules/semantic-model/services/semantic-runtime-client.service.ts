@@ -357,12 +357,105 @@ export interface RuntimeGraphSearchIndexStatus {
   index: RuntimeGraphSearchIndex;
 }
 
+export interface RuntimeRecordsFilter { field: string; op: string; value?: unknown; as?: string }
+export interface RuntimeRecordsGroupBy { field: string; bucket?: string; as?: string }
+export interface RuntimeRecordsAggregate { op: string; field?: string; as?: string }
+export interface RuntimeRecordsOrderBy { field: string; direction?: 'asc' | 'desc'; as?: string }
+
+/** The model's names and types for the fields a query may name (the runtime's specification has keys only). */
+export interface RuntimeRecordsCatalog {
+  concepts: { key: string; label: string; aliases: string[]; fields: { key: string; label: string; type: string; aliases: string[] }[] }[];
+  relations: { key: string; label: string; inverseLabel: string }[];
+}
+
+export interface RuntimeRecordsQueryRequest {
+  actorUserId: string;
+  modelId: string;
+  environment: RuntimeSearchEnvironment;
+  allowedWorkspaceIds?: string[] | null;
+  concept: string;
+  filters?: RuntimeRecordsFilter[];
+  match?: 'all' | 'any';
+  groupBy?: RuntimeRecordsGroupBy[];
+  aggregates?: RuntimeRecordsAggregate[];
+  orderBy?: RuntimeRecordsOrderBy[];
+  fields?: string[];
+  limit?: number;
+  offset?: number;
+  catalog: RuntimeRecordsCatalog;
+}
+
+/** One wrong part of a records query, named so the assistant can correct it. */
+export interface RuntimeRecordsQueryError {
+  code: 'invalid_query';
+  part: string;
+  reason: string;
+  message: string;
+  value?: unknown;
+  available?: string[];
+}
+
+export interface RuntimeQueriedRecord {
+  entityId: string;
+  name: string;
+  keyFields: Record<string, unknown>;
+  values: Record<string, unknown>;
+  truncated?: boolean;
+  truncatedFields?: string[];
+}
+
+export interface RuntimeRecordsAppliedQuery {
+  concept?: unknown;
+  timezone?: string;
+  now?: string;
+  match?: string;
+  filters?: (Record<string, unknown> & { field?: string | null; fieldLabel?: string; type?: string })[];
+  groupBy?: { name: string; field: string; label: string; type: string; bucket?: string }[];
+  aggregates?: { name: string; op: string; field?: string; label?: string }[];
+  orderBy?: { by: string; direction: string }[];
+  fields?: { key: string; label: string }[];
+  limit?: number;
+  offset?: number;
+}
+
+export interface RuntimeRecordsQueryResult {
+  modelId: string;
+  environment: RuntimeSearchEnvironment;
+  modelVersionId: string;
+  dataRevisionId: string;
+  status: 'ok' | 'invalid_query' | 'not_represented';
+  errors?: RuntimeRecordsQueryError[];
+  appliedQuery: RuntimeRecordsAppliedQuery;
+  concept?: { conceptId: string; key: string; label: string };
+  total?: number;
+  hiddenRecords?: number;
+  unparsable?: Record<string, number>;
+  records?: RuntimeQueriedRecord[];
+  returned?: number;
+  offset?: number;
+  nextOffset?: number | null;
+  pageCutShort?: boolean;
+  buckets?: Record<string, unknown>[];
+  bucketsTruncated?: boolean;
+  aggregates?: Record<string, unknown>;
+}
+
+export interface RuntimeRecordsOverview {
+  modelId: string;
+  environment: RuntimeSearchEnvironment;
+  modelVersionId: string;
+  dataRevisionId: string;
+  concepts: { conceptId: string; key: string; label: string; keyFields: string[]; fields: string[]; recordCount: number; hiddenRecords: number }[];
+  relations: { relationId: string; key: string; from: string; to: string; cardinality: string | null }[];
+}
+
 /** Why the runtime refused a search request (422), said in words a person or an agent can act on. */
 const GRAPH_SEARCH_REJECTIONS: Record<string, string> = {
   unknown_relation: 'One of the relationships named is not in this model',
   unknown_concept: 'One of the concepts named is not in this model',
   relations_required_for_second_step: 'The second step must name the relationships to follow',
   invalid_query: 'This search request is not valid',
+  query_too_slow: 'This query took too long: add filters, or group by fewer or coarser values',
 };
 
 export interface RuntimePurgedData {
@@ -717,6 +810,17 @@ export class SemanticRuntimeClientService {
   /** The records linked to some records along real relationships, one or two steps away. */
   async graphExpand(body: RuntimeGraphExpandRequest): Promise<RuntimeGraphExpandResult> {
     return this.graphSearchCall('POST', '/v1/semantic-model-search/expand', body.actorUserId, body, GRAPH_SEARCH_TIMEOUT_MS);
+  }
+
+  /** Filters, counts, groups and lists the records of one concept in the data bound to one environment. */
+  async recordsQuery(body: RuntimeRecordsQueryRequest): Promise<RuntimeRecordsQueryResult> {
+    return this.graphSearchCall('POST', '/v1/semantic-model-search/records-query', body.actorUserId, body, GRAPH_SEARCH_TIMEOUT_MS);
+  }
+
+  /** The concepts and relations of the bound data, with the number of records the actor may see. */
+  async recordsOverview(body: { actorUserId: string; modelId: string; environment: RuntimeSearchEnvironment; allowedWorkspaceIds?: string[] | null }):
+    Promise<RuntimeRecordsOverview> {
+    return this.graphSearchCall('POST', '/v1/semantic-model-search/records-overview', body.actorUserId, body, GRAPH_SEARCH_TIMEOUT_MS);
   }
 
   /** Builds (or reuses) the search index of the data bound to one environment, in the background. */

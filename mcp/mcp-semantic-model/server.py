@@ -38,10 +38,22 @@ own initiative: a wrong workspace can hold thousands of documents. Instead:
 - stop_data_update stops a running data update when the user asks; the data in use does not change.
 If the user wants to skip these steps, stop proposing them: they continue in the designer.
 
-Answering from a model's data: find_records finds the records that match the question, then
-get_related_records follows their real links (with the entityId values find_records returned). These are
-records stored in the model, not documents. Say plainly when a result is incomplete or the model does not
-hold the information, and never state a fact that no returned field or link holds."""
+Answering from a model's data (records stored in the model, not documents):
+- describe_model first when you do not know the model's concepts and fields: it gives each field's key,
+  label and type, the relationships, and how many records each concept holds. Never invent a concept or
+  a field: use only the names it returns.
+- find_records for "which record is this": a name, a key or a fuzzy description; then get_related_records
+  follows the real links of the records found (with their entityId).
+- query_records for everything that filters, counts or compares: "all X where...", how many, totals,
+  stats per month or per value, dates and amounts compared, records linked to a record matching a field.
+  The total and the groups are exact counts over the whole data, not samples.
+- for a summary of a set of records, fetch them with query_records (only the text fields you need),
+  write the summary from the returned values, and cite the records you rely on; page with offset when
+  nextOffset is set, or say that the summary covers only part of the records.
+State the exact filter you used (appliedQuery shows how it was read, with absolute date ranges). Read
+the notes and say plainly when values could not be read, records are hidden, or a list is truncated or
+incomplete. Say when the model does not hold the information, and never state a fact that no returned
+field or link holds."""
 
 settings = Settings.from_env()
 mcp = FastMCP("Semantic Model MCP", instructions=INSTRUCTIONS)
@@ -475,6 +487,100 @@ async def get_related_records(
     if not 1 <= len(ids) <= 25:
         return fail("record_ids must hold 1 to 25 entityId values from find_records")
     return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/graph-expand", require_acting_user_id(), payload))
+
+
+MATCH_CHOICES = ("all", "any")
+
+
+def filter_spec(item: Any) -> dict[str, Any]:
+    if not isinstance(item, dict) or not isinstance(item.get("field"), str) or not isinstance(item.get("op"), str):
+        raise ValueError('each filter must be an object {"field": ..., "op": ..., "value": ...}')
+    spec: dict[str, Any] = {"field": item["field"], "op": item["op"]}
+    if "value" in item and item["value"] is not None:
+        spec["value"] = item["value"]
+    if item.get("as") is not None:
+        spec["as"] = item["as"]
+    return spec
+
+
+def group_spec(item: Any) -> dict[str, Any]:
+    if isinstance(item, str):
+        return {"field": item}
+    if not isinstance(item, dict) or not isinstance(item.get("field"), str):
+        raise ValueError('each group_by item must be a field name or {"field": ..., "bucket": ...}')
+    return compact({"field": item["field"], "bucket": item.get("bucket"), "as": item.get("as")})
+
+
+def aggregate_spec(item: Any) -> dict[str, Any]:
+    if isinstance(item, str):
+        return {"op": item}
+    if not isinstance(item, dict) or not isinstance(item.get("op"), str):
+        raise ValueError('each aggregate must be an op name or {"op": ..., "field": ...}')
+    return compact({"op": item["op"], "field": item.get("field"), "as": item.get("as")})
+
+
+def order_spec(item: Any) -> dict[str, Any]:
+    if isinstance(item, str):
+        return {"field": item}
+    if not isinstance(item, dict) or not isinstance(item.get("field"), str):
+        raise ValueError('each order_by item must be a field name or {"field": ..., "direction": "asc" or "desc"}')
+    return compact({"field": item["field"], "direction": item.get("direction"), "as": item.get("as")})
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def describe_model(model_id: str, data: str = "published") -> SemanticModelMcpResultV1:
+    """Describe the data of a model before querying it: each concept with its key, label, aliases, description, key fields and number of records, its fields (key, label, type text/number/boolean/date/enum, options, description, aliases), and the relationships (key, label, inverse label, from, to, cardinality). No change is made.
+    Use it first when you do not know the model: query_records and find_records accept only the concept and field names it returns (key or label). A field with inData: false was added after the last data update and holds no value yet.
+    data: "published" (default, what chat uses) or "draft" (the data being built; only for the model's editors). howToQuery recalls the query_records syntax."""
+    try:
+        environment = choice(data, "data", DATA_CHOICES)
+    except ValueError as exc:
+        return fail(str(exc))
+    return await call(backend().get(with_query(f"{BASE}/models/{path_id(model_id)}/data-description", data=environment), require_acting_user_id()))
+
+
+@mcp.tool(annotations=READ_ONLY)
+async def query_records(
+    model_id: str,
+    concept: str,
+    filters: list[dict[str, Any]] | str | None = None,
+    match: str = "all",
+    group_by: list[Any] | str | None = None,
+    aggregates: list[Any] | str | None = None,
+    order_by: list[Any] | str | None = None,
+    fields: list[str] | str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    data: str = "published",
+) -> SemanticModelMcpResultV1:
+    """Filter, count, group and list the records of ONE concept, with exact totals over all its data. Use it for "all X where...", how many, totals, stats per month or per value, date and amount comparisons, and to fetch the records a summary is written from. No change is made.
+    concept: a concept key or label (from describe_model). Fields are named by key or label; "name" is the record name.
+    filters: [{"field": "Sender domain", "op": "eq", "value": "acme.com"}]. ops: eq, ne, contains, starts_with, ends_with, in (list), gt, gte, lt, lte, between ([from, to] or one relative period), is_empty, not_empty. Text compares ignore case and accents; ne also keeps records with no value.
+    Dates (date fields): an ISO date "2026-07-14", a month "2026-07" or a year "2026" (each covers the whole period), or a period resolved on the server in UTC: today, yesterday, last_7_days, last_N_days|weeks|months|years (N units up to today), this_week|month|quarter|year, last_week|month|quarter|year. Numbers compare as numbers on number fields.
+    A linked record: "field": "<relation>.<field>" keeps the records linked through that relation (key, label or inverse label) to a record whose field matches, e.g. {"field": "sent by.domain", "op": "eq", "value": "acme.com"}; "field": "<relation>" with is_empty / not_empty keeps the records with no / some linked record.
+    "as": "date"|"number"|"text"|"boolean" in a filter, group or aggregate reads a field with another type than declared (dates kept in a text field). match: "all" (default) or "any" of the filters.
+    group_by: up to 2 fields, e.g. [{"field": "Received", "bucket": "month"}, "Sender"]; bucket (date fields): day, week, month, quarter, year. aggregates: [{"op": "count"}, {"op": "count_distinct", "field": "Sender"}, {"op": "sum", "field": "Amount"}] with count, count_distinct, sum, avg, min, max; [count] by default with group_by. Groups come back sorted (dates in order, otherwise largest count first), at most 500.
+    Without group_by: total (exact) and a page of records {entityId, name, keyFields, values}, ordered by order_by [{"field": "Received", "direction": "desc"}]; fields: the fields to return (default all; ask only for what you need); long values are cut at 1500 characters (truncated). limit: 0 to 200 (0 returns only total and totals); offset pages through: call again with offset=nextOffset.
+    data: "published" (default) or "draft".
+    Report honestly: status invalid_query or not_represented comes with errors naming the wrong part and the names available: fix the query from them, never guess. appliedQuery shows how the query was read (field keys, absolute date ranges): state the filter you used. notes say when values could not be read (unparsable), records are hidden from the user, or groups or records were left out: say so in the answer."""
+    try:
+        payload = compact({
+            "concept": concept.strip() if isinstance(concept, str) else concept,
+            "filters": [filter_spec(item) for item in parse_json(filters, "filters", list) or []] or None,
+            "match": choice(match, "match", MATCH_CHOICES),
+            "groupBy": [group_spec(item) for item in parse_json(group_by, "group_by", list) or []] or None,
+            "aggregates": [aggregate_spec(item) for item in parse_json(aggregates, "aggregates", list) or []] or None,
+            "orderBy": [order_spec(item) for item in parse_json(order_by, "order_by", list) or []] or None,
+            "fields": string_list(fields, "fields") or None,
+            "limit": bounded(limit, "limit", 0, 200),
+            "offset": bounded(offset, "offset", 0, 100000),
+            "data": choice(data, "data", DATA_CHOICES),
+        })
+    except ValueError as exc:
+        return fail(str(exc))
+    if not payload.get("concept"):
+        return fail("concept must name one concept of the model")
+    return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/records-query", require_acting_user_id(), payload))
 
 
 @mcp.tool(annotations=DESTRUCTIVE)

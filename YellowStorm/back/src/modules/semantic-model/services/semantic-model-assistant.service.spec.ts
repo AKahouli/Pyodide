@@ -291,6 +291,106 @@ describe('SemanticModelAssistantService', () => {
     expect(result.notes.join(' ')).toMatch(/1 of the records asked for/);
   });
 
+  it('lists records of a concept with how the query was read and what was left out', async () => {
+    const graphSearch = {
+      queryRecords: jest.fn().mockResolvedValue({
+        status: 'ok', modelVersionId: 'v-1', definitionsVersionId: 'v-1', dataRevisionId: 'dr-1',
+        concept: { conceptId: 'c-1', key: 'invoice', label: 'Invoice' }, total: 120, hiddenRecords: 3, unparsable: { issued: 2 },
+        appliedQuery: { filters: [{ field: 'issued', fieldLabel: 'Issue date', type: 'date', op: 'between', value: 'last_3_months',
+          range: { from: '2026-07-04T00:00:00Z', to: '2026-10-04T00:00:00Z' } }] },
+        records: [{ entityId: 'e-1', name: 'F-1', keyFields: { number: 'F-1' }, values: { notes: 'x…' }, truncated: true, truncatedFields: ['notes'] }],
+        returned: 1, offset: 0, nextOffset: 1, pageCutShort: false,
+      }),
+    };
+    const { service } = setup(undefined, { graphSearch });
+    const result = await service.queryRecords('user-1', 'model-1', {
+      concept: 'Invoice', filters: [{ field: 'issued', op: 'between', value: 'last_3_months' }], limit: 1,
+    });
+    expect(graphSearch.queryRecords).toHaveBeenCalledWith('user-1', 'model-1', {
+      environment: 'production', concept: 'Invoice', filters: [{ field: 'issued', op: 'between', value: 'last_3_months' }], limit: 1,
+    });
+    expect(result).toMatchObject({
+      model: { id: 'model-1', name: 'Billing' }, data: 'published', status: 'ok', concept: 'Invoice', total: 120,
+      unparsable: { issued: 2 }, offset: 0, nextOffset: 1, truncated: true,
+      records: [{ entityId: 'e-1', name: 'F-1', values: { notes: 'x…' }, truncated: true }],
+    });
+    expect(result.appliedQuery.filters?.[0]).toMatchObject({ range: { from: '2026-07-04T00:00:00Z' } });
+    const notes = result.notes.join(' ');
+    expect(notes).toMatch(/2 values of "Issue date" could not be read as dates/);
+    expect(notes).toMatch(/3 records of this concept come from sources the user cannot open/);
+    expect(notes).toMatch(/Records 1 to 1 of 120 .* offset=1/);
+    expect(notes).toMatch(/cut at 1500 characters/);
+  });
+
+  it('returns groups, and says when only part of them came back', async () => {
+    const graphSearch = {
+      queryRecords: jest.fn().mockResolvedValue({
+        status: 'ok', modelVersionId: 'v-2', definitionsVersionId: 'v-1', concept: { label: 'Invoice' }, total: 900, hiddenRecords: 0,
+        unparsable: {}, appliedQuery: { groupBy: [{ name: 'issued:month', field: 'issued', label: 'Issue date', type: 'date', bucket: 'month' }] },
+        buckets: [{ 'issued:month': '2026-07', count: 12 }], bucketsTruncated: true,
+      }),
+    };
+    const { service } = setup(undefined, { graphSearch });
+    const result = await service.queryRecords('user-1', 'model-1', { concept: 'Invoice', groupBy: [{ field: 'issued', bucket: 'month' }], data: 'draft' });
+    expect(graphSearch.queryRecords).toHaveBeenCalledWith('user-1', 'model-1', expect.objectContaining({ environment: 'draft' }));
+    expect(result).toMatchObject({ data: 'draft', total: 900, groups: [{ 'issued:month': '2026-07', count: 12 }], truncated: true });
+    expect(result).not.toHaveProperty('records');
+    expect(result).not.toHaveProperty('unparsable');
+    expect(result.notes.join(' ')).toMatch(/Only the first 1 groups/);
+    expect(result.notes.join(' ')).toMatch(/another version of the model/);
+  });
+
+  it('hands back what is wrong in a query so the assistant can fix it', async () => {
+    const errors = [{ code: 'invalid_query', part: 'filters[0].field', reason: 'unknown_field', message: 'Invoice has no field "colour"', available: ['Amount'] }];
+    const graphSearch = { queryRecords: jest.fn()
+      .mockResolvedValueOnce({ status: 'invalid_query', errors, appliedQuery: { filters: [{ field: 'colour', op: 'eq' }] } })
+      .mockResolvedValueOnce({ status: 'not_represented', errors: [{ ...errors[0], part: 'concept', reason: 'unknown_concept', available: ['Invoice', 'Customer'] }], appliedQuery: {} }) };
+    const { service } = setup(undefined, { graphSearch });
+    const invalid = await service.queryRecords('user-1', 'model-1', { concept: 'Invoice', filters: [{ field: 'colour', op: 'eq', value: 'red' }] });
+    expect(invalid).toMatchObject({ status: 'invalid_query', errors, appliedQuery: { filters: [{ field: 'colour' }] } });
+    expect(invalid.notes[0]).toMatch(/fix the parts listed in errors/);
+    const missing = await service.queryRecords('user-1', 'model-1', { concept: 'Supplier' });
+    expect(missing.notes[0]).toBe('The model has no concept "Supplier": this information is not in the model. Its concepts: Invoice, Customer.');
+  });
+
+  it('describes the data to query: fields with types, key fields, relationships and record counts', async () => {
+    const invoice = { ...customer, id: 'n-inv', key: 'invoice', label: 'Invoice', description: 'A bill', aliases: ['Bill'],
+      attributes: [
+        { key: 'number', label: 'Invoice number', type: 'text' as const, required: true },
+        { key: 'status', label: 'Status', type: 'enum' as const, required: false, options: ['paid', 'sent'], description: 'Where it stands' },
+        { key: 'later', label: 'Added later', type: 'date' as const, required: false, aliases: ['New'] },
+      ] };
+    const graph = { modelId: 'model-1', versionId: 'v-1', revision: 0, records: [], recordRelations: [], nodes: [invoice, customer, documents],
+      relations: [{ id: 'r-1', key: 'billed_to', label: 'billed to', inverseLabel: 'receives', description: '', sourceNodeTypeId: 'n-inv',
+        targetNodeTypeId: customer.id, cardinality: 'many_to_one' as const, traversable: true, filterable: true, attributes: [] }] };
+    const graphSearch = {
+      dataOverview: jest.fn().mockResolvedValue({
+        versionId: 'v-1', graph,
+        overview: { modelVersionId: 'v-1', dataRevisionId: 'dr-1', relations: [],
+          concepts: [{ conceptId: 'c-1', key: 'invoice', label: 'Invoice', keyFields: ['number'], fields: ['number', 'status'], recordCount: 42, hiddenRecords: 2 }] },
+      }),
+    };
+    const { service } = setup(undefined, { graphSearch });
+    const result = await service.describeData('user-1', 'model-1');
+    expect(graphSearch.dataOverview).toHaveBeenCalledWith('user-1', 'model-1', 'production');
+    expect(result.concepts[0]).toEqual({
+      key: 'invoice', label: 'Invoice', description: 'A bill', aliases: ['Bill'], recordCount: 42, keyFields: ['number'],
+      fields: [
+        { key: 'number', label: 'Invoice number', type: 'text' },
+        { key: 'status', label: 'Status', type: 'enum', options: ['paid', 'sent'], description: 'Where it stands' },
+        { key: 'later', label: 'Added later', type: 'date', aliases: ['New'], inData: false },
+      ],
+    });
+    expect(result.concepts[1]).toMatchObject({ key: 'customer', recordCount: 0, keyFields: [] });
+    expect(result.concepts.map((concept) => concept.key)).not.toContain('documents');
+    expect(result.relations).toEqual([{ key: 'billed_to', label: 'billed to', inverseLabel: 'receives', from: 'invoice', to: 'customer', cardinality: 'many_to_one' }]);
+    expect(result.howToQuery).toMatch(/query_records/);
+    const notes = result.notes.join(' ');
+    expect(notes).toMatch(/"Customer" has no data yet/);
+    expect(notes).toMatch(/2 records of "Invoice" come from sources the user cannot open/);
+    expect(notes).toMatch(/inData: false/);
+  });
+
   it('follows every relationship of the records in one step when none is named', async () => {
     const graphSearch = { expand: jest.fn().mockResolvedValue({ status: 'no_match', truncated: false, hiddenSeeds: 0, nodes: [], edges: [] }) };
     const { service } = setup(undefined, { graphSearch });

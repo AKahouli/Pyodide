@@ -327,13 +327,43 @@ Graph readiness and index readiness are separate states. `graph ready + index pr
   - when a cap or the deadline is hit, the response says `truncated: true`.
 - **Neighbour scoring:** neighbours are never scored as semantic matches. Their reason for inclusion is the edge.
 
-### 7.4 Not supported (explicit errors)
-- Date, amount or status comparisons: values are TEXT and fields are untyped.
-- Counts or "all X" questions.
-- Natural language → Cypher.
-- Document text retrieval.
+### 7.4 Structured record queries (`POST /v1/semantic-model-search/records-query`)
 
-Each returns `unsupported_query` with a reason, never an approximate answer.
+**Now supported** (`app/graph_search/record_query.py`, MCP `query_records` and `describe_model`):
+- Filters on one concept: `eq ne contains starts_with ends_with in gt gte lt lte between is_empty
+  not_empty`, combined with `all` or `any`. Text compares are case- and accent-insensitive.
+- Date, number and yes/no comparisons with the field's declared type. Values stay TEXT; they are read at
+  query time by one function (`typed_value_sql` in `typed_values.py`): ISO dates and datetimes, a month or
+  a year alone (first day), `dd/mm/yyyy`, written French/English dates with weekday, time and zone
+  (e-mail header dates), numbers with spaces, currencies and `,`/`.` decimals. A value that cannot be read
+  is left out of the comparison and counted in `unparsable`. `as` reads a field with another type.
+- Relative dates resolved in the runtime, UTC: `today`, `yesterday`, `last_N_days|weeks|months|years`
+  (N units up to today), `this_/last_week|month|quarter|year`; a day, month or year value covers the whole
+  period. The resolved range is echoed in `appliedQuery`.
+- Counts and "all X": exact `total`, pages of records (≤ 200, `offset`/`nextOffset`, values cut at 1500
+  characters), `group_by` up to two fields with date buckets, `count count_distinct sum avg min max`, at
+  most 500 groups.
+- One-hop relation filters: `<relation>.<field>` (relation key, label or inverse label) matches records
+  linked through `semantic_population.relationships` (accepted links) to a readable record whose field
+  matches; `<relation>` with `is_empty`/`not_empty` tests for a linked record.
+- Same pinning as §7.1 and access as §8: the visibility filter runs in SQL before counting and paging; a
+  linked record must be readable too. Every value and field key is a bound parameter; field keys come from
+  the revision's allowed fields only; `statement_timeout` 10 s (`query_too_slow` past it).
+- Field labels, aliases and types come from the back with each query (the version bound to the
+  environment), since the specification holds keys only. Wrong names come back as `invalid_query` /
+  `not_represented` with the part that is wrong and the names available.
+- `POST /v1/semantic-model-search/records-overview`: concepts with key fields, queryable fields and the
+  records the actor may see; relations with their two concepts (behind `describe_model`).
+
+**Still not supported** (explicit errors, never an approximate answer):
+- Grouping, sorting or totals on a linked record's field, and relation filters beyond one hop.
+- Unparsable-value counts for linked records' fields.
+- Time zones other than UTC for relative dates and buckets; periods written as ranges in one value
+  ("June 2022 - July 2022") are unreadable dates.
+- A typed projection table (values are cast at query time; to add when volumes need it, reusing
+  `typed_value_sql`).
+- Natural language → Cypher, and any language model inside the query path: the calling assistant plans.
+- Document text retrieval.
 
 ### 7.5 Response contract
 

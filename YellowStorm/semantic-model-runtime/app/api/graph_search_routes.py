@@ -10,14 +10,18 @@ requested (a durable job) and the answer says so.
 
 from __future__ import annotations
 
+import asyncio
 import os
-from typing import Literal
+from datetime import datetime, timezone
+from typing import Any, Literal
 
+import asyncpg
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.graph_search.embeddings import profile_from_env
 from app.graph_search.indexer import IndexUnavailable, request_index, request_index_quietly
+from app.graph_search.record_query import compile_query, overview, run_query
 from app.graph_search.retrieval import find_seeds, resolve_concepts, resolve_relations
 from app.graph_search.traversal import MAX_STEPS, expand
 from app.persistence import graph_search_store as search_store
@@ -67,6 +71,91 @@ class ExpandQuery(_Pinned):
     seed_entity_ids: list[str] = Field(alias="seedEntityIds", min_length=1, max_length=25)
     steps: list[ExpandStep] = Field(min_length=1, max_length=MAX_STEPS)
     max_nodes: int = Field(default=50, alias="maxNodes", ge=1, le=100)
+
+
+class RecordFilter(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    field: str = Field(max_length=300)
+    op: str = Field(max_length=30)
+    value: Any = None
+    as_: str | None = Field(default=None, alias="as", max_length=20)
+
+
+class GroupBy(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    field: str = Field(max_length=300)
+    bucket: str | None = Field(default=None, max_length=20)
+    as_: str | None = Field(default=None, alias="as", max_length=20)
+
+
+class Aggregate(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    op: str = Field(max_length=30)
+    field: str | None = Field(default=None, max_length=300)
+    as_: str | None = Field(default=None, alias="as", max_length=20)
+
+
+class OrderBy(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    field: str = Field(max_length=300)
+    direction: str = Field(default="asc", max_length=10)
+    as_: str | None = Field(default=None, alias="as", max_length=20)
+
+
+class CatalogField(BaseModel):
+    """A field definition from the model (NestJS): what a query may call it, and its type."""
+    model_config = ConfigDict(extra="ignore")
+
+    key: str = Field(min_length=1, max_length=200)
+    label: str | None = Field(default=None, max_length=300)
+    type: str | None = Field(default=None, max_length=20)
+    aliases: list[str] | None = Field(default=None, max_length=50)
+
+
+class CatalogConcept(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    key: str = Field(min_length=1, max_length=200)
+    label: str | None = Field(default=None, max_length=300)
+    aliases: list[str] | None = Field(default=None, max_length=50)
+    fields: list[CatalogField] = Field(default_factory=list, max_length=1000)
+
+
+class CatalogRelation(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    key: str = Field(min_length=1, max_length=200)
+    label: str | None = Field(default=None, max_length=300)
+    inverse_label: str | None = Field(default=None, alias="inverseLabel", max_length=300)
+
+
+class Catalog(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    concepts: list[CatalogConcept] = Field(default_factory=list, max_length=500)
+    relations: list[CatalogRelation] = Field(default_factory=list, max_length=1000)
+
+
+class RecordsQuery(_Pinned):
+    """Checked part by part by ``compile_query``; here only sizes are bounded."""
+    concept: str = Field(min_length=1, max_length=300)
+    filters: list[RecordFilter] = Field(default_factory=list, max_length=50)
+    match: str = Field(default="all", max_length=10)
+    group_by: list[GroupBy] = Field(default_factory=list, alias="groupBy", max_length=10)
+    aggregates: list[Aggregate] = Field(default_factory=list, max_length=30)
+    order_by: list[OrderBy] = Field(default_factory=list, alias="orderBy", max_length=10)
+    fields: list[str] | None = Field(default=None, max_length=200)
+    limit: int = 50
+    offset: int = 0
+    catalog: Catalog = Field(default_factory=Catalog)
+
+
+class OverviewQuery(_Pinned):
+    pass
 
 
 class IndexCommand(BaseModel):
@@ -191,6 +280,59 @@ async def expand_records(command: ExpandQuery, request: Request) -> dict[str, ob
     else:
         outcome = "found"
     return {**_pinned(binding, command.environment), **result, "status": outcome}
+
+
+@router.post("/records-query", status_code=status.HTTP_200_OK)
+async def query_records(command: RecordsQuery, request: Request) -> dict[str, object]:
+    """Filter, count, group and list the records of one concept (see ``record_query``).
+    A request naming something the model does not hold is answered (200) with
+    ``status`` invalid_query or not_represented and the errors, part by part."""
+    pool = _pool(request)
+    binding = await _pin(pool, command.model_id, command.environment, command.expected_data_revision_id)
+    compiled = await _compiled(pool, binding["data_revision_id"])
+    query = command.model_dump(by_alias=True, exclude_none=True,
+                               include={"concept", "filters", "match", "group_by", "aggregates",
+                                        "order_by", "fields", "limit", "offset"})
+    plan, errors, applied = compile_query(
+        compiled, command.catalog.model_dump(by_alias=True), query, model_id=command.model_id,
+        revision_id=binding["data_revision_id"], allowed_workspaces=command.allowed_workspace_ids,
+        now=datetime.now(timezone.utc))
+    pinned = _pinned(binding, command.environment)
+    if plan is None:
+        outcome = "not_represented" if errors and errors[0]["reason"] == "unknown_concept" else "invalid_query"
+        return {**pinned, "status": outcome, "errors": errors, "appliedQuery": applied}
+    try:
+        result = await run_query(pool, plan)
+    except (asyncpg.QueryCanceledError, asyncio.TimeoutError) as exc:
+        raise HTTPException(status_code=422, detail="query_too_slow") from exc
+    return {**pinned, **result}
+
+
+@router.post("/records-overview", status_code=status.HTTP_200_OK)
+async def records_overview(command: OverviewQuery, request: Request) -> dict[str, object]:
+    """Concepts of the pinned revision with their key fields, queryable fields and the
+    number of records the actor may see; relations with their two concepts."""
+    pool = _pool(request)
+    binding = await _pin(pool, command.model_id, command.environment, command.expected_data_revision_id)
+    compiled = await _compiled(pool, binding["data_revision_id"])
+    counts = await overview(pool, model_id=command.model_id, revision_id=binding["data_revision_id"],
+                            allowed_workspaces=command.allowed_workspace_ids)
+    concepts = compiled["concepts"]
+    return {
+        **_pinned(binding, command.environment),
+        "concepts": [{"conceptId": concept_id, "key": concept.get("key", ""), "label": concept.get("label", ""),
+                      "keyFields": concept.get("keyComponents") or [],
+                      "fields": concept.get("allowedFields") or [],
+                      "recordCount": (counts.get(concept_id) or {}).get("visible", 0),
+                      "hiddenRecords": ((counts.get(concept_id) or {}).get("stored", 0)
+                                        - (counts.get(concept_id) or {}).get("visible", 0))}
+                     for concept_id, concept in concepts.items()],
+        "relations": [{"relationId": relation_id, "key": relation.get("key", ""),
+                       "from": (concepts.get(relation["sourceConceptId"]) or {}).get("key", ""),
+                       "to": (concepts.get(relation["targetConceptId"]) or {}).get("key", ""),
+                       "cardinality": relation.get("cardinality")}
+                      for relation_id, relation in compiled["relations"].items()],
+    }
 
 
 @router.post("/indexes", status_code=status.HTTP_202_ACCEPTED)

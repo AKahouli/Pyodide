@@ -51,7 +51,7 @@ async def test_registers_the_design_tools_with_the_versioned_envelope():
         "apply_model_changes", "list_model_changes", "undo_model_change",
         "list_workspaces", "list_workspace_files", "profile_spreadsheet", "map_spreadsheet", "map_documents", "remove_source",
         "run_data_update", "get_run_status", "stop_data_update", "search_records", "publish_semantic_model", "suggest_sources",
-        "find_records", "get_related_records",
+        "find_records", "get_related_records", "describe_model", "query_records",
     }
     for tool in tools:
         assert tool.outputSchema["properties"]["schemaVersion"]["const"] == "semantic_model.mcp.v1"
@@ -62,6 +62,8 @@ async def test_registers_the_design_tools_with_the_versioned_envelope():
     assert hints["publish_semantic_model"].destructiveHint is True
     assert hints["find_records"].readOnlyHint is True
     assert hints["get_related_records"].readOnlyHint is True
+    assert hints["describe_model"].readOnlyHint is True
+    assert hints["query_records"].readOnlyHint is True
 
 
 @pytest.mark.asyncio
@@ -270,3 +272,81 @@ async def test_record_search_tools_tell_the_agent_how_to_read_results():
     assert "NOT documents" in find and "index_not_ready" in find and "not_represented" in find and "Never infer" in find
     assert "get_related_records" in find
     assert "NOT because it matched" in related and "truncated" in related and "find_records" in related and "Never infer" in related
+
+
+@pytest.mark.asyncio
+async def test_describe_model_reads_the_published_data_by_default(monkeypatch, actor):
+    backend = Recorder({"model": {"id": "m", "name": "Mail"}, "concepts": [], "relations": [], "notes": []})
+    monkeypatch.setattr(server, "backend", lambda: backend)
+    async with Client(mcp) as client:
+        await client.call_tool("describe_model", {"model_id": "Mail archive"})
+        await client.call_tool("describe_model", {"model_id": "m", "data": "draft"})
+        bad = result_dict(await client.call_tool("describe_model", {"model_id": "m", "data": "live"}))
+    assert [call[1] for call in backend.calls] == [
+        "/api/v1/internal/semantic-model-assistant/models/Mail%20archive/data-description?data=published",
+        "/api/v1/internal/semantic-model-assistant/models/m/data-description?data=draft",
+    ]
+    assert bad["ok"] is False and "data" in bad["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_query_records_sends_one_structured_query(monkeypatch, actor):
+    backend = Recorder({"model": {"id": "m", "name": "Mail"}, "status": "ok", "total": 3, "groups": [], "notes": []})
+    monkeypatch.setattr(server, "backend", lambda: backend)
+    async with Client(mcp) as client:
+        result = result_dict(await client.call_tool("query_records", {
+            "model_id": "Mail", "concept": " Message ",
+            "filters": '[{"field": "Received", "op": "between", "value": "last_3_months"}, {"field": "sent by.domain", "op": "eq", "value": "acme.com"},'
+                       ' {"field": "Attachments", "op": "not_empty", "value": null}, {"field": "Paid", "op": "eq", "value": false}]',
+            "group_by": ["Sender", {"field": "Received", "bucket": "month"}],
+            "aggregates": ["count", {"op": "count_distinct", "field": "Sender"}],
+            "order_by": [{"field": "count", "direction": "desc"}], "limit": 0, "match": "any",
+        }))
+        await client.call_tool("query_records", {"model_id": "Mail", "concept": "Message", "fields": '["Subject"]', "offset": 50, "data": "draft"})
+    assert result["ok"] is True
+    assert backend.calls == [
+        ("POST", "/api/v1/internal/semantic-model-assistant/models/Mail/records-query", "user-1", {
+            "concept": "Message",
+            "filters": [{"field": "Received", "op": "between", "value": "last_3_months"}, {"field": "sent by.domain", "op": "eq", "value": "acme.com"},
+                        {"field": "Attachments", "op": "not_empty"}, {"field": "Paid", "op": "eq", "value": False}],
+            "match": "any",
+            "groupBy": [{"field": "Sender"}, {"field": "Received", "bucket": "month"}],
+            "aggregates": [{"op": "count"}, {"op": "count_distinct", "field": "Sender"}],
+            "orderBy": [{"field": "count", "direction": "desc"}],
+            "limit": 0, "offset": 0, "data": "published",
+        }),
+        ("POST", "/api/v1/internal/semantic-model-assistant/models/Mail/records-query", "user-1",
+         {"concept": "Message", "match": "all", "fields": ["Subject"], "limit": 50, "offset": 50, "data": "draft"}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_query_records_refuses_bad_input_without_calling_the_backend(monkeypatch, actor):
+    backend = Recorder()
+    monkeypatch.setattr(server, "backend", lambda: backend)
+    async with Client(mcp) as client:
+        outcomes = [result_dict(await client.call_tool("query_records", {"model_id": "m", **arguments})) for arguments in (
+            {"concept": "  "},
+            {"concept": "X", "filters": '[{"field": "a"}]'},
+            {"concept": "X", "filters": "not json"},
+            {"concept": "X", "group_by": [42]},
+            {"concept": "X", "limit": 201},
+            {"concept": "X", "offset": -1},
+            {"concept": "X", "match": "some"},
+            {"concept": "X", "data": "production"},
+        )]
+    assert all(outcome["ok"] is False and outcome["error"]["category"] == "validation" for outcome in outcomes)
+    assert backend.calls == []
+
+
+@pytest.mark.asyncio
+async def test_data_tools_tell_the_agent_when_to_use_them_and_how_to_report():
+    async with Client(mcp) as client:
+        tools = {tool.name: tool for tool in await client.list_tools()}
+    query = tools["query_records"].description
+    describe = tools["describe_model"].description
+    assert "exact totals" in query and "last_N_days" in query and "<relation>.<field>" in query
+    assert "invalid_query" in query and "appliedQuery" in query and "unparsable" in query and "nextOffset" in query
+    assert "first" in describe and "type" in describe and "inData" in describe
+    assert "describe_model first" in server.INSTRUCTIONS and "query_records" in server.INSTRUCTIONS
+    assert "Never invent" in server.INSTRUCTIONS and "cite the records" in server.INSTRUCTIONS

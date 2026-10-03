@@ -159,6 +159,26 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
       fetchMock.mockRejectedValueOnce(new Error('timeout'));
       await expect(client.graphSearch(query)).rejects.toMatchObject({ code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE });
     });
+
+    it('queries and describes records as the actor, and says when a query is too slow', async () => {
+      const client = new SemanticRuntimeClientService(config({ runtimeWritesEnabled: false }) as any);
+      const body = {
+        actorUserId: 'u1', modelId: 'm1', environment: 'draft' as const, allowedWorkspaceIds: ['ws-1'], concept: 'Invoice',
+        filters: [{ field: 'amount', op: 'gt', value: 10 }], catalog: { concepts: [], relations: [] },
+      };
+      fetchMock.mockResolvedValueOnce(jsonResponse({ status: 'ok', total: 0 }));
+      await expect(client.recordsQuery(body)).resolves.toMatchObject({ status: 'ok' });
+      expect(fetchMock.mock.calls[0][0]).toBe('http://runtime:8000/v1/semantic-model-search/records-query');
+      expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(body);
+      expect(fetchMock.mock.calls[0][1].headers).toEqual(expect.objectContaining({ 'X-Actor-User-Id': 'u1' }));
+      fetchMock.mockResolvedValueOnce(jsonResponse({ concepts: [], relations: [] }));
+      await client.recordsOverview({ actorUserId: 'u1', modelId: 'm1', environment: 'production', allowedWorkspaceIds: [] });
+      expect(fetchMock.mock.calls[1][0]).toBe('http://runtime:8000/v1/semantic-model-search/records-overview');
+      fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'query_too_slow' }), { status: 422 }));
+      await expect(client.recordsQuery(body)).rejects.toMatchObject({
+        code: ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, message: expect.stringMatching(/took too long/),
+      });
+    });
   });
 
   it('previews a computed field and maps a runtime 422 to a validation error', async () => {

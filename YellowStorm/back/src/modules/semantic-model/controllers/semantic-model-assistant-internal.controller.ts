@@ -13,7 +13,7 @@ import {
   AssistantRecordsQueryDto,
   AssistantSuggestSourcesDto,
 } from '../dto/semantic-model-assistant.dto';
-import { AssistantFindRecordsDto, AssistantRelatedRecordsDto } from '../dto/semantic-graph-search.dto';
+import { AssistantDescribeDataQueryDto, AssistantFindRecordsDto, AssistantQueryRecordsDto, AssistantRelatedRecordsDto } from '../dto/semantic-graph-search.dto';
 import { SemanticAssistantActorGuard, SemanticAssistantModelGuard, assistantActorFrom } from '../guards/semantic-assistant-actor.guard';
 import { SemanticModelAssistantService } from '../services/semantic-model-assistant.service';
 
@@ -192,6 +192,21 @@ export class SemanticModelAssistantInternalController {
   @RequirePermissions(READ, 'any')
   relatedRecords(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Body() dto: AssistantRelatedRecordsDto) {
     return this.assistant.relatedRecords(assistantActorFrom(request.headers).userId, modelId, dto);
+  }
+
+  @Get('models/:modelId/data-description')
+  @ApiOperation({ summary: 'Concepts, fields with types, relationships and record counts of the published (or draft) data' })
+  @RequirePermissions(READ, 'any')
+  describeData(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Query() query: AssistantDescribeDataQueryDto) {
+    return this.assistant.describeData(assistantActorFrom(request.headers).userId, modelId, query.data ?? 'published');
+  }
+
+  @Post('models/:modelId/records-query')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Filter, count, group and list the records of one concept (published data unless data=draft)' })
+  @RequirePermissions(READ, 'any')
+  queryRecords(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Body() dto: AssistantQueryRecordsDto) {
+    return this.assistant.queryRecords(assistantActorFrom(request.headers).userId, modelId, dto);
   }
 
   @Post('models/:modelId/publish')

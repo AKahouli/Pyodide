@@ -26,7 +26,8 @@ import { SemanticModelWorkspaceService } from './semantic-model-workspace.servic
 import { SemanticPopulationRefreshService } from './semantic-population-refresh.service';
 import { SemanticModelVersionService } from './semantic-model-version.service';
 import { SemanticGraphSearchService } from './semantic-graph-search.service';
-import type { RuntimeGraphExpandStep, RuntimeSearchEnvironment } from './semantic-runtime-client.service';
+import type { RecordsQuery } from './semantic-graph-search.service';
+import type { RuntimeGraphExpandStep, RuntimeRecordsQueryResult, RuntimeSearchEnvironment } from './semantic-runtime-client.service';
 
 /**
  * What an assistant (an agent using the semantic model MCP) can do to a model, as the person it acts for.
@@ -202,6 +203,64 @@ export function businessKey(label: string, fallback = 'item'): string {
 }
 
 const normalize = (value: string) => value.trim().toLowerCase();
+
+/** A field as an assistant needs it to query: names, type, allowed values and meaning. */
+function describeField(field: AttributeDefinition) {
+  return {
+    key: field.key, label: field.label, type: field.type,
+    ...(field.options?.length ? { options: field.options } : {}),
+    ...(field.description ? { description: field.description } : {}),
+    ...(field.aliases?.length ? { aliases: field.aliases } : {}),
+  };
+}
+
+const HOW_TO_QUERY = 'query_records(concept, filters=[{field, op, value}], match="all"|"any", group_by=[field | {field, bucket}], '
+  + 'aggregates=[{op, field}], order_by=[{field, direction}], fields, limit, offset). Name concepts and fields by key or label from '
+  + 'this description; "name" is the record name; "<relation>.<field>" filters on a linked record (relation by key, label or inverse label). '
+  + 'ops: eq, ne, contains, starts_with, ends_with, in, gt, gte, lt, lte, between, is_empty, not_empty; text ignores case and accents. '
+  + 'Dates: ISO (2026-07-14, 2026-07, 2026) or today, yesterday, last_N_days|weeks|months|years, this_/last_week|month|quarter|year (UTC); '
+  + 'buckets: day, week, month, quarter, year. aggregates: count, count_distinct, sum, avg, min, max. limit 0 returns only counts.';
+
+/** The answer of a valid records query: groups, or a page of records with optional totals. */
+function queryResultBody(result: RuntimeRecordsQueryResult) {
+  const common = { total: result.total ?? 0, ...(result.unparsable && Object.keys(result.unparsable).length ? { unparsable: result.unparsable } : {}) };
+  if (result.buckets) return { ...common, groups: result.buckets, truncated: Boolean(result.bucketsTruncated) };
+  const more = result.nextOffset !== null && result.nextOffset !== undefined;
+  return {
+    ...common, ...(result.aggregates ? { totals: result.aggregates } : {}),
+    records: result.records ?? [], offset: result.offset ?? 0, nextOffset: more ? result.nextOffset : null, truncated: more,
+  };
+}
+
+/** What a records query left out or could not read, said so the assistant reports it. */
+function queryNotes(result: RuntimeRecordsQueryResult): string[] {
+  const notes: string[] = [];
+  const applied = result.appliedQuery;
+  const fields = new Map<string, { label: string; type: string }>();
+  for (const filter of applied.filters ?? []) {
+    if (filter.field && !filter.relation) fields.set(filter.field, { label: filter.fieldLabel ?? filter.field, type: filter.type ?? 'text' });
+  }
+  for (const group of applied.groupBy ?? []) fields.set(group.field, { label: group.label, type: group.type });
+  for (const aggregate of applied.aggregates ?? []) {
+    if (aggregate.field && !fields.has(aggregate.field)) {
+      fields.set(aggregate.field, { label: aggregate.label ?? aggregate.field, type: aggregate.op === 'sum' || aggregate.op === 'avg' ? 'number' : 'value' });
+    }
+  }
+  const kinds: Record<string, string> = { date: 'dates', number: 'numbers', boolean: 'yes/no values' };
+  for (const [key, count] of Object.entries(result.unparsable ?? {})) {
+    const field = fields.get(key) ?? { label: key, type: 'value' };
+    notes.push(`${String(count)} value${count > 1 ? 's' : ''} of "${field.label}" could not be read as ${kinds[field.type] ?? 'typed values'} and ${count > 1 ? 'were' : 'was'} left out of the comparisons, groups and totals on this field. Say so in the answer.`);
+  }
+  if (result.hiddenRecords) notes.push(`${String(result.hiddenRecords)} records of this concept come from sources the user cannot open: they are not counted or shown.`);
+  if (result.total === 0) notes.push('No record matches this query.');
+  if (result.bucketsTruncated) notes.push(`Only the first ${String(result.buckets?.length ?? 0)} groups are returned: more exist. Say the list is incomplete, or narrow the query.`);
+  if (!result.buckets && result.nextOffset !== null && result.nextOffset !== undefined) {
+    const first = (result.offset ?? 0) + 1;
+    notes.push(`Records ${String(first)} to ${String(first + (result.returned ?? 0) - 1)} of ${String(result.total ?? 0)} are returned${result.pageCutShort ? ' (the page stopped early: the values are long)' : ''}; call again with offset=${String(result.nextOffset)} for the next ones, or say the list is incomplete.`);
+  }
+  if (result.records?.some((record) => record.truncated)) notes.push('Some long values were cut at 1500 characters (truncated: true): say so if they matter.');
+  return notes;
+}
 
 @Injectable()
 export class SemanticModelAssistantService {
@@ -1028,6 +1087,80 @@ export class SemanticModelAssistantService {
       links: result.edges.map((edge) => ({ relation: edge.relationKey, from: edge.sourceEntityId, to: edge.targetEntityId })),
       notes,
     };
+  }
+
+  /**
+   * The data's shape for an assistant about to query it (describe_model): concepts with their fields and
+   * types, key fields, relationships, and how many records the person can see in each concept, from the
+   * version whose data is bound (published unless data=draft).
+   */
+  async describeData(userId: string, modelId: string, data: AssistantDataChoice = 'published') {
+    const model = await this.models.get(userId, modelId);
+    const { overview, graph, versionId } = await this.graphSearch.dataOverview(userId, modelId, assistantEnvironment(data));
+    const inData = new Map(overview.concepts.map((concept) => [concept.key, concept]));
+    const nodes = (graph?.nodes ?? []).filter((node) => !node.systemKey);
+    const byId = new Map((graph?.nodes ?? []).map((node) => [node.id, node]));
+    const notes: string[] = [];
+    const concepts: (Record<string, unknown> & { fields: Record<string, unknown>[] })[] = nodes.map((node) => {
+      const stored = inData.get(node.key);
+      if (!stored) notes.push(`"${node.label}" has no data yet (added after the last data update): it cannot be queried.`);
+      else if (stored.hiddenRecords) notes.push(`${String(stored.hiddenRecords)} records of "${node.label}" come from sources the user cannot open: they are not counted or shown.`);
+      const queryable = new Set(stored?.fields ?? []);
+      return {
+        key: node.key, label: node.label, ...(node.description ? { description: node.description } : {}),
+        ...(node.aliases.length ? { aliases: node.aliases } : {}),
+        recordCount: stored?.recordCount ?? 0, keyFields: stored?.keyFields ?? [],
+        fields: node.attributes.map((field) => ({
+          ...describeField(field), ...(stored && !queryable.has(field.key) ? { inData: false } : {}),
+        })),
+      };
+    });
+    for (const stored of overview.concepts) {
+      if (!nodes.some((node) => node.key === stored.key)) {
+        concepts.push({ key: stored.key, label: stored.label, recordCount: stored.recordCount, keyFields: stored.keyFields,
+          fields: stored.fields.map((key) => ({ key, label: key, type: 'text' })) });
+      }
+    }
+    if (concepts.some((concept) => concept.fields.some((field) => field.inData === false))) {
+      notes.push('Fields marked inData: false were added after the last data update: they hold no value yet and cannot be queried.');
+    }
+    if (versionId && overview.modelVersionId !== versionId) {
+      notes.push('The data was built from another version of the model: some definitions may differ from the data.');
+    }
+    const relations = (graph?.relations ?? []).map((relation) => ({
+      key: relation.key, label: relation.label, ...(relation.inverseLabel ? { inverseLabel: relation.inverseLabel } : {}),
+      from: byId.get(relation.sourceNodeTypeId)?.key ?? relation.sourceNodeTypeId,
+      to: byId.get(relation.targetNodeTypeId)?.key ?? relation.targetNodeTypeId,
+      cardinality: relation.cardinality, ...(relation.description ? { description: relation.description } : {}),
+    }));
+    return { model: this.modelRef(model), data, dataRevisionId: overview.dataRevisionId, concepts, relations, howToQuery: HOW_TO_QUERY, notes };
+  }
+
+  /**
+   * Records of one concept filtered, counted, grouped or listed (query_records). The assistant plans the
+   * query; the result echoes how it was read (field keys, absolute date ranges) and notes say plainly what
+   * was left out (unreadable values, hidden records, more groups or pages), so nothing is presented as
+   * complete when it is not.
+   */
+  async queryRecords(userId: string, modelId: string, input: Omit<RecordsQuery, 'environment'> & { data?: AssistantDataChoice }) {
+    const { data = 'published', ...query } = input;
+    const model = await this.models.get(userId, modelId);
+    const result = await this.graphSearch.queryRecords(userId, modelId, { ...query, environment: assistantEnvironment(data) });
+    const base = { model: this.modelRef(model), data, status: result.status, appliedQuery: result.appliedQuery };
+    if (result.status !== 'ok') {
+      const unknownConcept = result.status === 'not_represented';
+      return {
+        ...base, errors: result.errors ?? [],
+        notes: [unknownConcept
+          ? `The model has no concept "${input.concept}": this information is not in the model. Its concepts: ${(result.errors?.[0]?.available ?? []).join(', ')}.`
+          : 'The query is not valid: fix the parts listed in errors, using the concept and field names from describe_model, and call again.'],
+      };
+    }
+    const notes = queryNotes(result);
+    if (result.definitionsVersionId && result.modelVersionId !== result.definitionsVersionId) {
+      notes.push('The data was built from another version of the model: field names or types may differ from the data.');
+    }
+    return { ...base, concept: result.concept?.label, ...queryResultBody(result), notes };
   }
 
   async publish(userId: string, modelId: string) {
