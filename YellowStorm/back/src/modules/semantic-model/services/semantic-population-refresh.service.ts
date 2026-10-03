@@ -126,7 +126,10 @@ export class SemanticPopulationRefreshService {
   private async aiExtractionIdentity(
     sources: object[],
   ): Promise<{ agentSlug: string; model: string | null; contractVersion: string } | null> {
-    const usesAi = sources.some((source) => usesAiExtraction((source as { fieldMappings?: SourceFieldMapping[] | null }).fieldMappings));
+    const usesAi = sources.some((source) => usesAiExtraction((source as { fieldMappings?: SourceFieldMapping[] | null }).fieldMappings)
+      // A sheet field read out of a cell by AI.
+      || Object.values((source as { fieldExtractions?: Record<string, { extractionStrategy?: string }> }).fieldExtractions ?? {})
+        .some((field) => field.extractionStrategy === 'ai' || field.extractionStrategy === 'rules_then_ai'));
     if (!usesAi) return null;
     const agent = await this.aiExtractionAgent.resolveAgent();
     return {
@@ -732,6 +735,8 @@ export class SemanticPopulationRefreshService {
         labelField: 'labelField' in source ? source.labelField ?? null : null,
         // Only present when a sheet field is transformed, so other sources keep their fingerprint.
         ...('fieldRecipes' in source && source.fieldRecipes ? { fieldRecipes: source.fieldRecipes } : {}),
+        // Only present when a sheet field is read out of a cell, so other sources keep their fingerprint.
+        ...('fieldExtractions' in source && source.fieldExtractions ? { fieldExtractions: source.fieldExtractions } : {}),
       })),
       relationBindings,
       aiExtraction,
@@ -1012,7 +1017,7 @@ export class SemanticPopulationRefreshService {
     }
     const allowedModes = mapping.assetKind === 'document'
       ? new Set(['extract', 'metadata', 'constant', 'computed'])
-      : new Set(['direct', 'constant']);
+      : new Set(['direct', 'extract', 'constant', 'computed']);
     if (activeMappings.some((field) => !allowedModes.has(field.mode))) {
       throw new BadRequestException(
         ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
@@ -1075,29 +1080,42 @@ export class SemanticPopulationRefreshService {
     const constantMapping: Record<string, unknown> = {};
     // A field read from a column and then transformed: the runtime applies the same recipe as documents.
     const fieldRecipes: Record<string, ComputedFieldSpec> = {};
+    // A field read out of a cell's text, as a document field is read: the runtime applies the same rules and AI.
+    const fieldExtractions: Record<string, Record<string, unknown>> = {};
+    const attributes = new Map((node.attributes ?? []).map((attribute) => [attribute.key, attribute]));
     for (const field of mapping.fieldMappings ?? []) {
       if (field.mode === 'direct' && field.sourceField) columnMapping[field.sourceField] = field.targetAttribute;
-      if (field.mode === 'direct' && field.sourceField && field.computed) fieldRecipes[field.targetAttribute] = field.computed;
+      if ((field.mode === 'direct' && field.sourceField && field.computed) || (field.mode === 'computed' && field.computed)) {
+        fieldRecipes[field.targetAttribute] = field.computed!;
+      }
+      if (field.mode === 'extract' && field.sourceField) fieldExtractions[field.targetAttribute] = cellExtraction(field, attributes.get(field.targetAttribute));
       if (field.mode === 'constant') constantMapping[field.targetAttribute] = field.constantValue;
     }
-    if ((!Object.keys(columnMapping).length && !Object.keys(constantMapping).length)
+    if ((!Object.keys(columnMapping).length && !Object.keys(constantMapping).length
+        && !Object.keys(fieldExtractions).length && !Object.keys(fieldRecipes).length)
       || [...identityFields].some((field) => !mappedAttributes.has(field))) {
       throw new BadRequestException(
         ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
         'The mapping must directly map every identity field',
       );
     }
-    const labelField = (mapping.fieldMappings ?? []).find(
-      (field) => field.mode === 'direct' && !identityFields.has(field.targetAttribute),
-    )?.targetAttribute;
+    const fields = mapping.fieldMappings ?? [];
+    const labelField = (fields.find((field) => field.mode === 'direct' && !identityFields.has(field.targetAttribute))
+      ?? fields.find((field) => (field.mode === 'extract' || field.mode === 'computed') && !identityFields.has(field.targetAttribute)))?.targetAttribute;
+    const usesCellAi = Object.values(fieldExtractions).some((field) => field.extractionStrategy !== 'deterministic');
     return {
       sourceKind: mapping.assetKind,
       conceptId: mapping.conceptId,
       source,
-      options: mapping.sheetName ? { sheetName: mapping.sheetName } : {},
+      // How much of a cell the AI reads; only sent when a cell is read by AI, so other sheets keep their options.
+      options: {
+        ...(mapping.sheetName ? { sheetName: mapping.sheetName } : {}),
+        ...(usesCellAi ? { aiSettings: effectiveAiSettings(await this.adminAiSettings(), mapping.aiSettings) } : {}),
+      },
       columnMapping,
       ...(Object.keys(constantMapping).length ? { constantMapping } : {}),
       ...(Object.keys(fieldRecipes).length ? { fieldRecipes } : {}),
+      ...(Object.keys(fieldExtractions).length ? { fieldExtractions } : {}),
       ...(labelField ? { labelField } : {}),
       mappingVersion,
     };
@@ -1112,3 +1130,19 @@ export function graphPropertyKey(field: string): string {
 
 /** What the extraction agent is told about a field read by AI, beyond its label. Empty parts are left out. */
 export { aiFieldHints };
+
+/**
+ * How the runtime reads a sheet field out of its column's cell: the column, the field's label (the label its
+ * rules look for by default), the strategy, the rules and, for AI, what the agent is told. Absent parts are left out.
+ */
+export function cellExtraction(field: SourceFieldMapping, attribute?: AttributeDefinition): Record<string, unknown> {
+  const strategy = field.extractionStrategy ?? 'deterministic';
+  return {
+    column: field.sourceField,
+    label: attribute?.label || field.targetAttribute,
+    extractionStrategy: strategy,
+    ...(field.rules ? { rules: field.rules } : {}),
+    ...(strategy !== 'deterministic' && field.agentId ? { agentId: field.agentId } : {}),
+    ...(strategy !== 'deterministic' && attribute ? aiFieldHints(attribute, field) : {}),
+  };
+}

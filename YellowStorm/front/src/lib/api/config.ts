@@ -489,6 +489,7 @@ export const API_ENDPOINTS = {
     sourceMappingPreview: (id: string) => `/semantic-models/${id}/source-mappings/preview`,
     sourceMappingDocumentLabels: (id: string) => `/semantic-models/${id}/source-mappings/document-labels`,
     computedFieldPreview: (id: string) => `/semantic-models/${id}/source-mappings/computed-preview`,
+    sheetFieldPreview: (id: string) => `/semantic-models/${id}/source-mappings/sheet-preview`,
     relationResolutionRules: (id: string) => `/semantic-models/${id}/relation-resolution-rules`,
     relationResolutionPreview: (id: string, ruleId: string) => `/semantic-models/${id}/relation-resolution-rules/${ruleId}/preview`,
     identityRules: (id: string) => `/semantic-models/${id}/identity-rules`,

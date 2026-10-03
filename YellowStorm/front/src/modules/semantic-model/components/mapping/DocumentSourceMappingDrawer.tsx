@@ -22,16 +22,16 @@ import { semanticModelApi } from '../../api';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
 import { useSourceMappings } from '../../query/hooks';
 import { useSemanticModelEditorStore } from '../../store';
-import type { AiExtractionSettings, MappingSettings, DocumentFieldReading, DocumentLabelSuggestion, SourceExtractionStrategy, SourceFieldMapping, SourceMappingPreviewResponse, StructuredSourceAsset } from '../../types';
-import { AiLimitsEditor, FieldReadingResult, ManyRecordsSwitch, FieldRulesEditor, limitProblem, newDocumentField, ReadAllFieldsBar, rulesProblem, STRATEGIES, usesAi as mappingsUseAi, usesRules, withConceptFields, type LabelSuggestions } from './DocumentFieldRules';
+import type { AiExtractionSettings, MappingSettings, DocumentFieldReading, DocumentLabelSuggestion, SourceFieldMapping, SourceMappingPreviewResponse, StructuredSourceAsset } from '../../types';
+import { AiLimitsEditor, FieldReadingResult, ManyRecordsSwitch, limitProblem, newDocumentField, ReadAllFieldsBar, rulesProblem, usesAi as mappingsUseAi, usesRules, withConceptFields, type LabelSuggestions } from './DocumentFieldRules';
 import { DEFAULT_SPLIT, DocumentPreviewPane, documentStatusText, FieldLiveStatus, highlightOf, useNarrow, useSplitPrefs } from './DocumentPreviewPane';
 import { useLiveDocumentPreview } from './useLiveDocumentPreview';
 import type { SourceMappingTarget, WorkspaceSourceScope } from './SourceMappingDrawer';
-import { AiFieldSettings, withoutAiSettings } from './AiFieldSettings';
-import { computedPayload, computedProblem, FieldRecipeEditor, newComputedRule } from './FieldRecipeEditor';
+import { computedPayload, computedProblem } from './FieldRecipeEditor';
+import { FieldMappingList, readAllWith, recipeInputs } from './FieldMappingList';
 import { isReadableDocument, WorkspaceFilePicker, type WorkspacePick } from './WorkspaceFilePicker';
 import { MappingPresetBar } from './MappingPresetBar';
-import { FORM_SECTION, FormField, INPUT, INPUT_COMPACT, ROW_LIST, SectionHeader } from '../form/FormParts';
+import { FORM_SECTION, FormField, INPUT, ROW_LIST, SectionHeader } from '../form/FormParts';
 
 type PreviewItem = { asset: StructuredSourceAsset; result: SourceMappingPreviewResponse };
 
@@ -286,7 +286,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
   const rulesValid = activeMappings.every((mapping) => mapping.mode !== 'extract' || !usesRules(mapping.extractionStrategy) || !rulesProblem(mapping.rules));
   const limitsValid = !usesAi || !limitProblem(aiSettings);
   // Fields a computed field can be taken from: the other mapped fields that are not computed themselves.
-  const computedInputs = (self: string) => activeMappings.filter((mapping) => mapping.mode !== 'computed' && mapping.targetAttribute !== self).map((mapping) => mapping.targetAttribute);
+  const computedInputs = (self: string) => recipeInputs(activeMappings, self, 'document');
   const computedProblems = activeMappings.filter((mapping) => mapping.mode === 'computed')
     .map((mapping) => ({ field: mapping.targetAttribute, problem: computedProblem(mapping.computed, computedInputs(mapping.targetAttribute)) }))
     .filter((item) => item.problem);
@@ -312,40 +312,6 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
   // Results read with other rules would mislead: they are cleared as soon as the mapping changes.
   const changeMappings = (next: SourceFieldMapping[]) => { setMappings(next); preview.reset(); };
 
-  const setMode = (index: number, mode: SourceFieldMapping['mode']) => {
-    if (mode === 'ignore') setIdentityFields((current) => current.filter((field) => field !== mappings[index]?.targetAttribute));
-    changeMappings(mappings.map((mapping, itemIndex) => itemIndex === index ? {
-      ...mapping,
-      mode,
-      sourceField: mode === 'metadata' ? 'document_name' : null,
-      constantValue: mode === 'constant' ? mapping.constantValue ?? '' : undefined,
-      computed: mode === 'computed' ? mapping.computed ?? newComputedRule() : undefined,
-      // A strategy only applies to extracted fields.
-      extractionStrategy: mode === 'extract' ? mapping.extractionStrategy ?? 'deterministic' : undefined,
-      rules: mode === 'extract' ? mapping.rules : undefined,
-    } : mapping).map((mapping, itemIndex) => itemIndex === index && mode !== 'extract' ? withoutAiSettings(mapping) : mapping));
-  };
-
-  const setStrategy = (index: number, strategy: SourceExtractionStrategy) => {
-    changeMappings(mappings.map((mapping, itemIndex) => itemIndex === index ? withStrategy(mapping, strategy) : mapping));
-  };
-  const setAllStrategies = (strategy: SourceExtractionStrategy) => {
-    changeMappings(mappings.map((mapping) => mapping.mode === 'extract' ? withStrategy(mapping, strategy) : mapping));
-  };
-  const setAiSettingsOf = (index: number, patch: Pick<SourceFieldMapping, 'semanticDefinition' | 'agentId'>) => {
-    changeMappings(mappings.map((mapping, itemIndex) => itemIndex === index ? {
-      ...withoutAiSettings(mapping),
-      ...(patch.semanticDefinition ? { semanticDefinition: patch.semanticDefinition } : {}),
-      ...(patch.agentId ? { agentId: patch.agentId } : {}),
-    } : mapping));
-  };
-  const setRules = (index: number, rules: SourceFieldMapping['rules']) => {
-    changeMappings(mappings.map((mapping, itemIndex) => {
-      if (itemIndex !== index) return mapping;
-      const { rules: _previous, ...rest } = mapping;
-      return rules ? { ...rest, rules } : rest;
-    }));
-  };
   const openQuote = (asset: StructuredSourceAsset, quote: string, page?: number | null) =>
     void useFileViewerStore.getState().openFile(asset.workspaceId, asset.documentId, asset.path, asset.name, asset.mimeType, { page: page ?? 1, highlightText: quote });
 
@@ -500,59 +466,28 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
           <MappingPresetBar modelId={modelId} conceptId={conceptId} attributes={concept.attributes}
             current={{ fieldMappings: savedMappings, aiSettings, identityFields }} onApply={applySettings}
             autoStart={Boolean(target && !target.mapping && !target.bulkEdit)} />
-          <ReadAllFieldsBar mappings={mappings} onApply={setAllStrategies} />
+          <ReadAllFieldsBar mappings={mappings} onApply={(choice) => changeMappings(readAllWith(mappings, choice, 'document'))} />
           {addedFields.length > 0 && <p role='status' className='flex gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/5 p-2.5 text-xs text-sky-800 dark:text-sky-300'>
             <Sparkles className='mt-0.5 h-3.5 w-3.5 shrink-0' />{t('mapping.newFields', { count: addedFields.length, fields: addedFields.map(attributeLabel).join(', ') })}
           </p>}
-          <div className={ROW_LIST}>
-            {mappings.map((mapping, index) => <div key={mapping.targetAttribute} className='space-y-2 px-3 py-2.5'>
-              <div className='flex items-center gap-2'>
-                <span className='flex min-w-0 flex-1 items-center gap-1.5 text-xs font-medium'>
-                  <span className='truncate'>{concept.attributes.find((attribute) => attribute.key === mapping.targetAttribute)?.label ?? mapping.targetAttribute}</span>
-                  {addedFields.includes(mapping.targetAttribute) && <span className='shrink-0 rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-medium text-sky-800 dark:text-sky-300'>{t('mapping.newField')}</span>}
-                </span>
-                <Select value={mapping.mode} onValueChange={(value: SourceFieldMapping['mode']) => setMode(index, value)}>
-                  <SelectTrigger className={cn(INPUT_COMPACT, 'w-40 text-xs')} aria-label={t('mapping.methodFor', { field: mapping.targetAttribute })}><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value='extract'>{t('mapping.method.extract')}</SelectItem>
-                    <SelectItem value='metadata'>{t('mapping.method.metadata')}</SelectItem>
-                    <SelectItem value='constant'>{t('mapping.method.constant')}</SelectItem>
-                    <SelectItem value='computed'>{t('mapping.method.computed')}</SelectItem>
-                    <SelectItem value='ignore'>{t('mapping.method.ignore')}</SelectItem>
-                  </SelectContent>
-                </Select>
-                {mapping.mode === 'extract' && <Select value={mapping.extractionStrategy ?? 'deterministic'} onValueChange={(value: SourceExtractionStrategy) => setStrategy(index, value)}>
-                  <SelectTrigger className={cn(INPUT_COMPACT, 'w-40 text-xs')} aria-label={t('mapping.strategyFor', { field: mapping.targetAttribute })}><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {STRATEGIES.map((strategy) => <SelectItem key={strategy} value={strategy}>{t(`mapping.strategy.${strategy}`)}</SelectItem>)}
-                  </SelectContent>
-                </Select>}
-              </div>
-              {viewerShown && shown && (mapping.mode === 'extract' || mapping.mode === 'computed') && !liveStatus && <FieldLiveStatus
+          <FieldMappingList kind='document' modelId={modelId} attributes={concept.attributes} mappings={mappings} onChange={changeMappings}
+            onIgnore={(field) => setIdentityFields((current) => current.filter((item) => item !== field))} addedFields={addedFields}
+            recipeSource={{ kind: 'document', fileSamples, fieldSamples }}
+            extras={(mapping) => ({
+              live: viewerShown && shown && (mapping.mode === 'extract' || mapping.mode === 'computed') && !liveStatus ? <FieldLiveStatus
                 reading={live.result?.fields?.[mapping.targetAttribute]}
                 pending={live.reading && (!live.result || live.changed.has(mapping.targetAttribute) || live.changed.size === 0)}
                 stale={live.changed.has(mapping.targetAttribute)}
                 labels={mapping.mode === 'extract' ? mapping.rules?.labels?.length ? mapping.rules.labels : [attributeLabel(mapping.targetAttribute)] : []}
-                onShow={showReading} onFindLabel={(label) => navigate({ highlightText: label })} />}
-              {mapping.mode === 'extract' && usesRules(mapping.extractionStrategy) && <FieldRulesEditor fieldLabel={attributeLabel(mapping.targetAttribute)}
-                rules={mapping.rules} onChange={(rules) => setRules(index, rules)} suggestions={suggestions}
-                pageCount={shown ? pageCounts[shown.documentId] : undefined}
-                live={viewerShown && shown && canPreview && !liveStatus ? {
-                  reading: live.result?.fields?.[mapping.targetAttribute],
-                  pending: live.reading,
-                  onRead: () => void live.run(),
-                } : undefined} />}
-              {mapping.mode === 'extract' && (mapping.extractionStrategy === 'ai' || mapping.extractionStrategy === 'rules_then_ai') && <AiFieldSettings
-                fieldLabel={attributeLabel(mapping.targetAttribute)} mapping={mapping}
-                attributeDescription={concept.attributes.find((attribute) => attribute.key === mapping.targetAttribute)?.description}
-                onChange={(patch) => setAiSettingsOf(index, patch)} />}
-              {mapping.mode === 'computed' && <FieldRecipeEditor modelId={modelId} fieldLabel={attributeLabel(mapping.targetAttribute)} rule={mapping.computed ?? newComputedRule()}
-                onChange={(computed) => changeMappings(mappings.map((item, itemIndex) => itemIndex === index ? { ...item, computed } : item))}
-                fields={computedInputs(mapping.targetAttribute).map((key) => ({ key, label: attributeLabel(key) }))}
-                source={{ kind: 'document', fileSamples, fieldSamples }} />}
-              {mapping.mode === 'constant' && <Input className={INPUT_COMPACT} value={String(mapping.constantValue ?? '')} onChange={(event) => changeMappings(mappings.map((item, itemIndex) => itemIndex === index ? { ...item, constantValue: event.target.value } : item))} placeholder={t('mapping.constantPlaceholder')} />}
-            </div>)}
-          </div>
+                onShow={showReading} onFindLabel={(label) => navigate({ highlightText: label })} /> : null,
+              suggestions,
+              pageCount: shown ? pageCounts[shown.documentId] : undefined,
+              reading: viewerShown && shown && canPreview && !liveStatus ? {
+                reading: live.result?.fields?.[mapping.targetAttribute],
+                pending: live.reading,
+                onRead: () => void live.run(),
+              } : undefined,
+            })} />
           {usesAi && <ManyRecordsSwitch value={aiSettings} onChange={(next) => { setAiSettings(next); preview.reset(); }} />}
           {usesAi && <AiLimitsEditor defaults={defaultsQuery.data?.aiSettings} value={aiSettings} onChange={(next) => { setAiSettings(next); preview.reset(); }} />}
         </section>}
@@ -617,9 +552,4 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
 /** True when the preview failed because the retired document search service is gone, which the user cannot fix. */
 function isRetiredSearchFailure(error: unknown) {
   return /native search/i.test(parseApiError(error).message);
-}
-
-/** A field read by rules alone keeps no AI settings. */
-function withStrategy(mapping: SourceFieldMapping, strategy: SourceExtractionStrategy): SourceFieldMapping {
-  return strategy === 'deterministic' ? { ...withoutAiSettings(mapping), extractionStrategy: strategy } : { ...mapping, extractionStrategy: strategy };
 }

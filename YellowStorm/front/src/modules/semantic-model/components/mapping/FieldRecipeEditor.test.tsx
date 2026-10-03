@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ComputedFieldRule } from '../../types';
 import { computedPayload, computedProblem, FieldRecipeEditor, newColumnRecipe, recipeStepCount, type RecipeSource } from './FieldRecipeEditor';
-import { sheetFieldPayload } from './SourceMappingDrawer';
+import { sheetPayload, sheetRows } from './sheetMapping';
 
 const api = vi.hoisted(() => ({ previewComputedField: vi.fn() }));
 vi.mock('../../api', () => ({ semanticModelApi: api }));
@@ -92,14 +92,23 @@ describe('FieldRecipeEditor on a sheet', () => {
       .toEqual({ input: { kind: 'column', name: 'ref' }, method: 'whole', transform: 'none', take: { from: 'end', count: 4, unit: 'characters' } });
   });
 
-  it('counts the steps that change the value, and saves a field read as it is without a recipe', () => {
+  it('counts the steps that change the value; a column transformed before the field modes becomes a field taken from it', () => {
     expect(recipeStepCount(newColumnRecipe('ref'), 'ref')).toBe(0);
     expect(recipeStepCount(newColumnRecipe('other'), 'ref')).toBe(1);
     expect(recipeStepCount({ ...newColumnRecipe('ref'), method: 'split', delimiter: '_', part: 1, transform: 'upper' }, 'ref')).toBe(2);
-    expect(sheetFieldPayload({ sourceField: 'ref', targetAttribute: 'year', mode: 'direct', computed: newColumnRecipe('ref') }))
-      .toEqual({ sourceField: 'ref', targetAttribute: 'year', mode: 'direct' });
-    expect(sheetFieldPayload({ sourceField: 'ref', targetAttribute: 'year', mode: 'direct', computed: { ...newColumnRecipe('ref'), transform: 'year' } }).computed)
-      .toEqual({ input: { kind: 'column', name: 'ref' }, method: 'whole', transform: 'year' });
+    const attributes = [{ key: 'year' }];
+    expect(sheetPayload(sheetRows([{ sourceField: 'ref', targetAttribute: 'year', mode: 'direct', computed: newColumnRecipe('ref') }], attributes)))
+      .toEqual([{ sourceField: 'ref', targetAttribute: 'year', mode: 'direct' }]);
+    expect(sheetPayload(sheetRows([{ sourceField: 'ref', targetAttribute: 'year', mode: 'direct', computed: { ...newColumnRecipe('ref'), transform: 'year' } }], attributes)))
+      .toEqual([{ sourceField: null, targetAttribute: 'year', mode: 'computed', computed: { input: { kind: 'column', name: 'ref' }, method: 'whole', transform: 'year' } }]);
+  });
+
+  it('taken from a field read out of a cell, tries the values the row preview read for it', () => {
+    render(<Harness source={{ ...sheet(2, {}), fieldValues: { id: [{ row: 4, value: 'A-12' }] } } as RecipeSource}
+      initial={{ input: { kind: 'field', name: 'id' }, method: 'whole', transform: 'number' }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.recipe.previewRows' }));
+    expect(screen.getAllByRole('checkbox', { name: 'mapping.recipe.rowFor' })).toHaveLength(1);
+    expect(screen.getByText('A-12')).toBeTruthy();
   });
 
   it('before the sheet is read, still offers its own column and asks nothing', () => {

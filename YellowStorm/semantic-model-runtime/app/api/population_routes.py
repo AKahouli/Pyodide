@@ -634,6 +634,70 @@ async def preview_document_fields(body: dict, request: Request) -> dict[str, obj
     return {"status": "read", "fields": fields, "aiSent": read["aiSent"]}
 
 
+@router.post("/cell-preview", status_code=status.HTTP_200_OK)
+async def preview_cell_fields(body: dict) -> dict[str, object]:
+    """Read a few sheet rows' fields exactly as a run would: a column as it is, a value read out of a
+    cell with the document rules and/or AI (with the row, column and span it was found at), a recipe.
+    The rows are sample rows the person picked. Nothing is stored and no cache is used or filled."""
+    from app.population.cell_fields import (MAX_CELL_CHARS, MAX_PREVIEW_ROWS, CellReader, extraction_columns,
+                                            extractions_from_mappings, normalize_field_extractions)
+    from app.population.computed_fields import apply_row_recipes, normalize_row_recipes
+    from app.population.document_rules import RuleError, normalize_ai_settings
+
+    entry = body.get("entry")
+    rows = body.get("rows")
+    if (not isinstance(entry, dict) or not isinstance(rows, list) or not 0 < len(rows) <= MAX_PREVIEW_ROWS
+            or not all(isinstance(row, dict) and isinstance(row.get("values"), dict) and len(row["values"]) <= 200
+                       for row in rows)):
+        raise HTTPException(status_code=422, detail="invalid_preview")
+    mappings = entry.get("fieldMappings")
+    if (not isinstance(mappings, list) or not 0 < len(mappings) <= 100
+            or not all(isinstance(item, dict) for item in mappings)):
+        raise HTTPException(status_code=422, detail="invalid_preview")
+    active = [item for item in mappings if item.get("mode") != "ignore" and isinstance(item.get("targetAttribute"), str)]
+    try:
+        extractions = normalize_field_extractions(extractions_from_mappings(active))
+        shaped = [item for item in active if item.get("mode") in ("direct", "computed") and item.get("computed") is not None]
+        recipes = normalize_row_recipes({item["targetAttribute"]: item["computed"] for item in shaped},
+                                        {item["targetAttribute"] for item in active if item.get("mode") in ("direct", "computed", "extract")})
+        settings = normalize_ai_settings((entry.get("options") or {}).get("aiSettings"))
+    except RuleError as exc:
+        raise HTTPException(status_code=422, detail=f"invalid_rules: {exc}") from exc
+    reader = CellReader(extractions, {
+        "conceptId": entry.get("conceptId") or "preview", "conceptLabel": entry.get("conceptLabel"),
+        "source": entry.get("source") or {}, "assetRef": {"assetId": (entry.get("source") or {}).get("assetId")},
+        "mappingVersion": "preview", "modelId": str(body.get("modelId") or ""),
+        "aiExtraction": body.get("aiExtraction"), "settings": settings}, ai_rows=MAX_PREVIEW_ROWS)
+    texts = [{str(column): "" if value is None else str(value)[:MAX_CELL_CHARS] for column, value in row["values"].items()}
+             for row in rows]
+    columns = extraction_columns(extractions)
+    read = await reader.read_rows([(row.get("rowNumber"), {column: cells.get(column, "") for column in columns})
+                                   for row, cells in zip(rows, texts)]) if extractions else [None] * len(rows)
+    results = []
+    for row, cells, outcome in zip(rows, texts, read):
+        values: dict[str, object] = {}
+        fields: dict[str, object] = {}
+        for item in active:
+            target = item["targetAttribute"]
+            if item.get("mode") == "direct" and isinstance(item.get("sourceField"), str):
+                value = row["values"].get(item["sourceField"])
+                values[target] = value
+                fields[target] = {"method": "direct", "column": item["sourceField"],
+                                  "reason": "no_input" if value is None or str(value).strip() == "" else "found",
+                                  **({"value": value} if value is not None and str(value).strip() else {})}
+            elif item.get("mode") == "constant":
+                values[target] = item.get("constantValue")
+        if outcome is not None:
+            for target in extractions:
+                values[target] = outcome["values"].get(target)
+                fields[target] = outcome["fields"].get(target) or {"method": "rules", "reason": "no_input"}
+        for target, recipe in apply_row_recipes(recipes, values, cells).items():
+            fields[target] = {"method": "computed", "reason": recipe["reason"], "input": recipe["input"],
+                              **({"value": values[target]} if recipe["reason"] == "found" else {})}
+        results.append({"rowNumber": row.get("rowNumber"), "fields": fields})
+    return {"rows": results, "ai": {key: reader.stats[key] for key in ("aiRows", "aiCalls", "aiSkippedRows", "aiFailedRows")}}
+
+
 @router.post("/computed-preview", status_code=status.HTTP_200_OK)
 async def preview_computed_field(body: dict) -> dict[str, object]:
     """Run one computed field on sample values (file names, values of the field it reads, or cells of

@@ -124,7 +124,9 @@ export function documentStatusText(t: (key: `mapping.live.status.${KnownStatus |
  * What the shown document gives for one field: found (with the value and its page), or why not,
  * with a way to see it in the document.
  */
-export function FieldLiveStatus({ reading: current, pending, stale, labels, onShow, onFindLabel }: Readonly<{
+export function FieldLiveStatus({ reading: current, pending, stale, labels, onShow, onFindLabel, findLabelText }: Readonly<{
+  /** The "Find label" button's text: in the document (default), or in a sheet's cells. */
+  findLabelText?: string;
   reading?: DocumentFieldReading;
   /** The document is being read again for this field. */
   pending: boolean;
@@ -158,9 +160,10 @@ export function FieldLiveStatus({ reading: current, pending, stale, labels, onSh
         : <p className='text-foreground/80'>{t(`mapping.reading.reason.${current.reason}`, { values: (current.values ?? []).map((item) => `“${item}”`).join(', '), detail: current.detail ?? '' })}</p>}
     </div>
     {found && current.page ? <span className='shrink-0 tabular-nums text-muted-foreground'>{pageRange(t, current.page, current.pageEnd)}</span> : null}
-    {canShow && <Button type='button' size='sm' variant='ghost' className='h-5 shrink-0 px-1.5 text-[11px]' onClick={() => onShow(current)}>{t('mapping.live.show')}</Button>}
+    {found && !current.page && current.column ? <span className='max-w-[8rem] shrink-0 truncate text-muted-foreground'>{current.column}</span> : null}
+    {canShow &&<Button type='button' size='sm' variant='ghost' className='h-5 shrink-0 px-1.5 text-[11px]' onClick={() => onShow(current)}>{t('mapping.live.show')}</Button>}
     {!found && labels.length > 0 && <Button type='button' size='sm' variant='ghost' className='h-5 shrink-0 px-1.5 text-[11px]' onClick={() => onFindLabel(labels[0])}>
-      <Search className='mr-1 h-3 w-3' />{t('mapping.live.findLabel')}
+      <Search className='mr-1 h-3 w-3' />{findLabelText ?? t('mapping.live.findLabel')}
     </Button>}
   </div>;
 }

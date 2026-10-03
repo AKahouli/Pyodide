@@ -24,6 +24,7 @@ import {
   SaveCanvasPositionsDto,
   SourceMappingPreviewDto,
   ComputedFieldPreviewDto,
+  SheetFieldPreviewDto,
   DocumentLabelsDto,
   DataPreviewDto,
   SaveRelationResolutionRuleDto,
@@ -344,6 +345,15 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   suggestDocumentLabels(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: DocumentLabelsDto) {
     return this.sourceMappings.documentLabels(user._id.toString(),modelId,dto);
+  }
+
+  @Post(':modelId/source-mappings/sheet-preview')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Read a few picked sheet rows as a run would: as is, out of a cell (rules, AI) or by a recipe' })
+  @RateLimit({ limit: 20, windowMs: 60_000, keyPrefix: 'semantic-model:sheet-preview' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  previewSheetFields(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: SheetFieldPreviewDto) {
+    return this.sourceMappings.previewSheetFields(user._id.toString(),modelId,dto);
   }
 
   @Post(':modelId/source-mappings/computed-preview')

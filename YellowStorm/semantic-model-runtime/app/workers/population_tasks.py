@@ -20,6 +20,8 @@ from app.population.compiler import (canonical_spec_hash, compile_specification,
 from app.population.derived import DerivationError, derive_concept, merge_derived, normalize_derivations
 from app.population.computed_fields import (apply_row_recipes, check_inputs, normalize_computed,
                                             normalize_row_recipes, recipe_columns)
+from app.population.cell_fields import (CellReader, cell_gaps, cell_text, extraction_columns,
+                                        normalize_field_extractions, uses_ai as uses_cell_ai)
 from app.population.document_rules import RuleError, normalize_ai_settings, normalize_rules
 from app.population.run_limits import run_limits
 from app.datasource.email_archive import resolve_column
@@ -70,6 +72,8 @@ def population_execution_fingerprint(spec_hash: str, sources: list[dict],
         "labelField": source.get("labelField"),
         # Only present when a sheet field has a recipe, so other sources keep their fingerprint.
         **({"fieldRecipes": source["fieldRecipes"]} if source.get("fieldRecipes") else {}),
+        # Only present when a sheet field is read out of a cell, so other sources keep their fingerprint.
+        **({"fieldExtractions": source["fieldExtractions"]} if source.get("fieldExtractions") else {}),
     } for source in sources]
     # The AI agent's effective model is part of revision identity: changing it in
     # the agent library must produce a new revision instead of reusing persisted
@@ -281,18 +285,32 @@ def run_population_for_payload(command_dump: dict) -> dict:
             else:
                 mapping = entry.get("columnMapping") or entry.get("column_mapping")
                 constants = entry.get("constantMapping") or entry.get("constant_mapping") or {}
-                if (not isinstance(mapping, dict) or not isinstance(constants, dict)
-                        or (not mapping and not constants)):
-                    return {"ok": False, "errorCode": "invalid_column_mapping"}
-                if set(mapping.values()) & set(constants):
-                    return {"ok": False, "errorCode": "duplicate_column_mapping"}
-                mapped_attributes = set(mapping.values()) | set(constants)
-                # A field's recipe (take it from, cut, keep, shape, clean-up), as a document's computed field.
                 field_recipes = entry.get("fieldRecipes") or entry.get("field_recipes")
+                field_extractions = entry.get("fieldExtractions") or entry.get("field_extractions")
+                if (not isinstance(mapping, dict) or not isinstance(constants, dict)
+                        or (not mapping and not constants and not field_extractions and not field_recipes)):
+                    return {"ok": False, "errorCode": "invalid_column_mapping"}
+                # A field read out of a cell's text with the document rules and/or AI.
                 try:
-                    recipes = normalize_row_recipes(field_recipes, set(mapping.values()))
+                    extractions = normalize_field_extractions(field_extractions)
+                    if uses_cell_ai(extractions):
+                        normalize_ai_settings((entry.get("options") or {}).get("aiSettings"))
                 except RuleError:
                     return {"ok": False, "errorCode": "invalid_column_mapping"}
+                if (set(mapping.values()) & set(constants) or set(extractions) & set(mapping.values())
+                        or set(extractions) & set(constants)):
+                    return {"ok": False, "errorCode": "duplicate_column_mapping"}
+                # A field's recipe (take it from, cut, keep, shape, clean-up), as a document's computed field:
+                # on a column it shapes, or on its own (a field taken from a column or another field).
+                recipe_fields = set(field_recipes) if isinstance(field_recipes, dict) else set()
+                if recipe_fields & (set(constants) | set(extractions)):
+                    return {"ok": False, "errorCode": "duplicate_column_mapping"}
+                try:
+                    recipes = normalize_row_recipes(
+                        field_recipes, set(mapping.values()) | set(extractions) | recipe_fields)
+                except RuleError:
+                    return {"ok": False, "errorCode": "invalid_column_mapping"}
+                mapped_attributes = set(mapping.values()) | set(constants) | set(extractions) | set(recipes)
             unmapped = [c for c in concept["keyComponents"] if c not in mapped_attributes]
             # Manual rows without a key value keep their own row key as identity.
             if unmapped and source_kind != "manual":
@@ -319,7 +337,9 @@ def run_population_for_payload(command_dump: dict) -> dict:
                 "options": options if isinstance(options, dict) else {},
                 **({"fieldMappings": active, "receivedFieldMappings": field_mappings} if source_kind == "document"
                    else {"columnMapping": dict(mapping), "constantMapping": dict(constants),
-                         **({"fieldRecipes": recipes, "receivedFieldRecipes": field_recipes} if recipes else {})}),
+                         **({"fieldRecipes": recipes, "receivedFieldRecipes": field_recipes} if recipes else {}),
+                         **({"fieldExtractions": extractions, "receivedFieldExtractions": field_extractions}
+                            if extractions else {})}),
                 "labelField": entry.get("labelField") or entry.get("label_field"),
                 "mappingVersion": entry.get("mappingVersion") or entry.get("mapping_version") or "v1",
             })
@@ -362,11 +382,14 @@ def run_population_for_payload(command_dump: dict) -> dict:
                     if "receivedFieldMappings" in source else source for source in normalized]
         received = [{**source, "fieldRecipes": source["receivedFieldRecipes"]}
                     if "receivedFieldRecipes" in source else source for source in received]
+        received = [{**source, "fieldExtractions": source["receivedFieldExtractions"]}
+                    if "receivedFieldExtractions" in source else source for source in received]
         execution_fingerprint = population_execution_fingerprint(
             expected_hash, received, normalized_bindings, ai_extraction, derivations)
         for source in normalized:
             source.pop("receivedFieldMappings", None)
             source.pop("receivedFieldRecipes", None)
+            source.pop("receivedFieldExtractions", None)
         supplied_fingerprint = (payload.get("populationExecutionFingerprint")
                                 or payload.get("population_execution_fingerprint"))
         if supplied_fingerprint is not None and supplied_fingerprint != execution_fingerprint:
@@ -556,7 +579,9 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                     "labelField": entry.get("labelField"), "assetRef": asset_ref,
                     "content": content_digest,
                     # Only present with a recipe, so a sheet without one keeps its cached reading.
-                    **({"fieldRecipes": entry["fieldRecipes"]} if entry.get("fieldRecipes") else {})})
+                    **({"fieldRecipes": entry["fieldRecipes"]} if entry.get("fieldRecipes") else {}),
+                    **({"fieldExtractions": entry["fieldExtractions"], "aiExtraction": ai_extraction}
+                       if entry.get("fieldExtractions") else {})})
                 cached = await extraction_cache.get(cache_key)
                 if cached is not None and isinstance(cached.get("outputs"), list):
                     for output in cached["outputs"]:
@@ -591,35 +616,72 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                     # A column a recipe reads that the sheet does not have is left out (its input is empty).
                     recipe_inputs = ({resolve_column(name, available) for name in recipe_columns(recipes)}
                                      & set(available) if isinstance(available, list) else recipe_columns(recipes))
-                    columns = sorted(set(mapping) | recipe_inputs | {SHEET_ROW_KEY})
+                    extractions = entry.get("fieldExtractions") or {}
+                    extraction_inputs = ({resolve_column(name, available) for name in extraction_columns(extractions)}
+                                         & set(available) if isinstance(available, list)
+                                         else extraction_columns(extractions))
+                    columns = sorted(set(mapping) | recipe_inputs | extraction_inputs | {SHEET_ROW_KEY})
+                    concept = compiled["concepts"][entry["conceptId"]]
+                    # Fields read out of a cell's text, as a document's: rules on every row, AI on a bounded few.
+                    cells = CellReader(extractions, {
+                        "conceptId": entry["conceptId"], "conceptLabel": concept.get("label") or entry["conceptId"],
+                        "source": source, "assetRef": asset_ref, "mappingVersion": entry["mappingVersion"],
+                        "modelId": str(command_dump.get("modelId") or ""), "aiExtraction": ai_extraction,
+                        "settings": normalize_ai_settings((options or {}).get("aiSettings"))},
+                        cache=extraction_cache) if extractions else None
+                    missing_cells: dict[str, int] = {}
+                    read_rows = 0
                     offset = 0
                     while True:
                         page = await asyncio.to_thread(
                             query or query_parquet, artifact, columns=columns,
                             limit=QUERY_ROW_LIMIT, offset=offset)
                         constants = entry.get("constantMapping", {})
+                        raws = page["rows"]
+                        # The admin's per-source limit: the rest of the sheet is left unread.
+                        capped = len(raws) > limits["maxRecordsPerSource"] - records
+                        if capped:
+                            raws = raws[:max(0, limits["maxRecordsPerSource"] - records)]
+                            complete_enumeration = sheet_complete = False
                         rows = []
-                        for raw in page["rows"]:
+                        for raw in raws:
                             renamed: dict = {"_row": raw.get(SHEET_ROW_KEY), **constants}
                             for source_column, attribute in mapping.items():
                                 if source_column in raw:
                                     renamed[attribute] = raw[source_column]
-                            # Shaped before the identity is read, so the key uses the shaped value.
-                            if recipes:
-                                apply_row_recipes(recipes, renamed, raw,
-                                                  lambda name: resolve_column(name, raw))
                             rows.append(renamed)
-                        # The admin's per-source limit: the rest of the sheet is left unread.
-                        capped = len(rows) > limits["maxRecordsPerSource"] - records
-                        if capped:
-                            rows = rows[:max(0, limits["maxRecordsPerSource"] - records)]
-                            complete_enumeration = sheet_complete = False
-                        concept = compiled["concepts"][entry["conceptId"]]
+                        cell_evidence: dict = {}
+                        if cells is not None:
+                            outcomes = await cells.read_rows([
+                                (raw.get(SHEET_ROW_KEY), {column: cell_text(raw.get(resolve_column(column, raw)))
+                                                          for column in extraction_columns(extractions)})
+                                for raw in raws])
+                            for renamed, outcome in zip(rows, outcomes):
+                                for attribute in extractions:
+                                    renamed[attribute] = outcome["values"].get(attribute)
+                                    if attribute not in outcome["values"]:
+                                        missing_cells[attribute] = missing_cells.get(attribute, 0) + 1
+                                cell_evidence[renamed["_row"]] = outcome["evidence"]
+                            read_rows += len(raws)
+                        # Shaped before the identity is read, so the key uses the shaped value.
+                        if recipes:
+                            for raw, renamed in zip(raws, rows):
+                                apply_row_recipes(recipes, renamed, raw,
+                                                  lambda name, raw=raw: resolve_column(name, raw))
                         output = populate_concept_rows(
                             concept, rows, {"assetRef": asset_ref,
                                            "mappingVersion": entry["mappingVersion"],
                                            "labelField": entry.get("labelField"),
                                            "constantFields": list(constants)})
+                        # A value read out of a cell keeps where it was found: row, column and span.
+                        for assertion in output["assertions"]:
+                            found = cell_evidence.get(assertion["evidence"].get("rowNumber"), {}).get(assertion["attribute"])
+                            if found is not None:
+                                assertion["evidence"] = found
+                        if cells is not None and (capped or page["returnedRows"] < QUERY_ROW_LIMIT):
+                            output["gaps"].extend(cell_gaps(entry["conceptId"], asset_ref, extractions,
+                                                            missing_cells, read_rows, cells.stats))
+                            output["counts"]["gaps"] = len(output["gaps"])
                         per_concept.setdefault(entry["conceptId"], []).append(output)
                         outputs.append(output)
                         records += len(output["entities"])
@@ -642,7 +704,9 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                 "sizeBytes": manifest.get("sizeBytes"),
                 "rowCount": manifest.get("rowCount")}
             observations.append(observation)
-            if cache_key is not None and records <= TABULAR_CACHE_MAX_RECORDS:
+            # A failed call to the extraction agent is worth retrying next run.
+            ai_failed = cells is not None and cells.stats["aiFailedRows"] > 0
+            if cache_key is not None and records <= TABULAR_CACHE_MAX_RECORDS and not ai_failed:
                 sheet = (options or {}).get("sheetName") or ""
                 await extraction_cache.put(
                     cache_key, concept_id=entry["conceptId"],

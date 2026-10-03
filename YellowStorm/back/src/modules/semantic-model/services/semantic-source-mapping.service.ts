@@ -30,6 +30,7 @@ import type {
   SourceMappingPreviewDto,
   ComputedFieldPreviewDto,
   DocumentLabelsDto,
+  SheetFieldPreviewDto,
 } from '../dto';
 import { DocumentExtractionConceptResolver } from './document-extraction-concept.resolver';
 import type { AttributeDefinition } from '../domain/semantic-model.types';
@@ -219,10 +220,52 @@ export class SemanticSourceMappingService {
       limit: dto.limit,
     };
     if (kind === 'document') return this.previewDocument(input, document, dto.aiSettings);
+    const labels = new Map(concept.attributes.map((attribute) => [attribute.key, attribute.label || attribute.key]));
     return this.requestDiscovery(userId, model.id, document, dto.sheetName, {
-      fieldMappings: dto.fieldMappings,
+      // A field read out of a cell looks for its own label by default, as a document field does.
+      fieldMappings: dto.fieldMappings.map((field) => field.mode === 'extract' ? { ...field, label: labels.get(field.targetAttribute) } : field),
       identityFields: dto.identityFields ?? [],
       limit: dto.limit,
+    });
+  }
+
+  /**
+   * Read a few picked sheet rows as a run would: each field read from its column as is, out of its cell's
+   * text by the document rules and/or AI (with where it was found), or by its recipe. AI is only asked for
+   * these rows, so a person sees what a run would read before saving.
+   */
+  async previewSheetFields(userId: string, modelId: string, dto: SheetFieldPreviewDto) {
+    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    await this.requireLinkedWorkspace(model.id, dto.workspaceId);
+    const document = await this.documents.findById(dto.workspaceId, dto.documentId);
+    const kind = this.requireAssetKind(document.mimeType);
+    if (kind === 'document') throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Only spreadsheet and e-mail archive rows can be previewed here');
+    this.assertMappingModes(kind, dto.fieldMappings);
+    const concept = await this.assertConceptInDraft(model.id, model.currentDraftVersionId, dto.conceptId, dto.fieldMappings);
+    const attributes = new Map(concept.attributes.map((attribute) => [attribute.key, attribute]));
+    const fieldMappings = dto.fieldMappings.filter((field) => field.mode !== 'ignore').map((field) => {
+      if (field.mode !== 'extract') return field;
+      const attribute = attributes.get(field.targetAttribute);
+      return {
+        ...field,
+        label: attribute?.label || field.targetAttribute,
+        ...(field.extractionStrategy && field.extractionStrategy !== 'deterministic' && attribute ? aiFieldHints(attribute, field) : {}),
+      };
+    });
+    const usesAi = usesAiExtraction(fieldMappings);
+    const defaults = usesAi && this.extractionSettings ? (await this.extractionSettings.getDefaults()).configured : {};
+    const agent = usesAi && this.aiExtractionAgent ? await this.aiExtractionAgent.resolveAgent() : null;
+    return this.runtime.previewSheetFields({
+      modelId: model.id,
+      entry: {
+        conceptId: concept.id ?? dto.conceptId,
+        conceptLabel: concept.label,
+        source: { workspaceId: dto.workspaceId, assetId: dto.documentId, originalName: document.originalName },
+        fieldMappings,
+        ...(usesAi ? { options: { aiSettings: effectiveAiSettings(defaults, dto.aiSettings) } } : {}),
+      },
+      rows: dto.rows.map((row) => ({ rowNumber: row.rowNumber, values: row.values })),
+      aiExtraction: agent ? { agentSlug: agent.slug, model: agent.llmModel ?? null, contractVersion: AI_EXTRACTION_CONTRACT_VERSION } : null,
     });
   }
 
@@ -645,7 +688,8 @@ export class SemanticSourceMappingService {
            validated_source_version=EXCLUDED.validated_source_version,ai_settings=EXCLUDED.ai_settings,validated_at=now(),updated_at=now()`,
           [model.id, dto.conceptId, dto.workspaceId, dto.documentId, dto.sheetName ?? '', kind,
            JSON.stringify(dto.fieldMappings), userId, this.sourceVersion(document),
-           kind === 'document' ? storedAiSettings(dto.aiSettings) : null],
+           // A sheet keeps AI limits only when one of its cells is read by AI.
+           kind === 'document' || usesAiExtraction(dto.fieldMappings) ? storedAiSettings(dto.aiSettings) : null],
       );
       if (dto.identityFields?.length) {
         await client.query(
@@ -903,21 +947,39 @@ export class SemanticSourceMappingService {
    * itself taken from a field (no chains), as a computed document field does.
    */
   private assertSheetRecipes(mappings: SourceFieldMapping[]): void {
-    const misplaced = mappings.find((mapping) => mapping.computed !== undefined && mapping.mode !== 'direct');
+    const misplaced = mappings.find((mapping) => mapping.computed !== undefined && mapping.mode !== 'direct' && mapping.mode !== 'computed');
     if (misplaced) {
-      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A transformation is only supported for fields read from a column');
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A transformation is only supported for fields read from a column or taken from another field');
     }
-    const direct = new Map(mappings.filter((mapping) => mapping.mode === 'direct').map((mapping) => [mapping.targetAttribute, mapping]));
-    for (const mapping of direct.values()) {
+    const missing = mappings.find((mapping) => mapping.mode === 'computed' && !mapping.computed);
+    if (missing) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${missing.targetAttribute}: a field taken from another field needs a recipe`);
+    }
+    // The fields a recipe may read: read from a column (as is, or out of its cell), or taken from a column.
+    const read = new Map(mappings.filter((mapping) => mapping.mode === 'direct' || mapping.mode === 'extract' || mapping.mode === 'computed')
+      .map((mapping) => [mapping.targetAttribute, mapping]));
+    for (const mapping of read.values()) {
       const input = mapping.computed?.input;
       if (!input) continue;
-      const other = input.kind === 'field' ? direct.get(input.name) : undefined;
+      const other = input.kind === 'field' ? read.get(input.name) : undefined;
       const valid = input.kind === 'column'
         || (input.kind === 'field' && input.name !== mapping.targetAttribute && other !== undefined && other.computed?.input.kind !== 'field');
       if (!valid) {
         throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
           `${mapping.targetAttribute}: a transformed field reads a column or another field read from a column`);
       }
+    }
+  }
+
+  /** A sheet field read out of a cell reads a column, and a cell has no pages, headings or tables. */
+  private assertCellExtractions(mappings: SourceFieldMapping[]): void {
+    const noColumn = mappings.find((mapping) => mapping.mode === 'extract' && !mapping.sourceField?.trim());
+    if (noColumn) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${noColumn.targetAttribute}: choose the column whose text the value is read from`);
+    }
+    const documentOnly = mappings.find((mapping) => mapping.rules && (['pages', 'heading', 'table'].includes(mapping.rules.location ?? '') || mapping.rules.firstPageOnly));
+    if (documentOnly) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${documentOnly.targetAttribute}: a cell has no pages, headings or tables`);
     }
   }
 
@@ -944,37 +1006,40 @@ export class SemanticSourceMappingService {
   }
 
   private assertMappingModes(kind: SourceAssetKind, mappings: SourceFieldMapping[]): void {
+    // A sheet field is read from a column as is, or out of its cell's text as a document field is read
+    // (rules and/or AI), or taken from a column or another field (a recipe), or fixed.
     const allowed = kind === 'document'
       ? new Set(['extract', 'metadata', 'constant', 'computed', 'ignore'])
-      : new Set(['direct', 'constant', 'ignore']);
+      : new Set(['direct', 'extract', 'constant', 'computed', 'ignore']);
     const invalidMode = mappings.find((mapping) => !allowed.has(mapping.mode));
     if (invalidMode) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${invalidMode.mode} mappings are not supported for ${kind} assets`);
     }
     if (kind === 'document') this.assertComputedInputs(mappings);
-    else this.assertSheetRecipes(mappings);
+    else {
+      this.assertSheetRecipes(mappings);
+      this.assertCellExtractions(mappings);
+    }
     const invalidMetadata = mappings.find((mapping) => mapping.mode === 'metadata'
       && !['document_name', 'document_id', 'workspace_id'].includes(mapping.sourceField ?? ''));
     if (invalidMetadata) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Document metadata mappings require document_name, document_id, or workspace_id');
     }
-    if (kind === 'document' && mappings.filter((mapping) => mapping.mode === 'extract').length > MAX_DOCUMENT_EXTRACTION_FIELDS) {
-      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Document mappings support at most ${MAX_DOCUMENT_EXTRACTION_FIELDS} extracted fields`);
+    if (mappings.filter((mapping) => mapping.mode === 'extract').length > MAX_DOCUMENT_EXTRACTION_FIELDS) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Mappings support at most ${MAX_DOCUMENT_EXTRACTION_FIELDS} extracted fields`);
     }
-    const invalidStrategy = mappings.find((mapping) => mapping.extractionStrategy !== undefined
-      && (kind !== 'document' || mapping.mode !== 'extract'));
+    const invalidStrategy = mappings.find((mapping) => mapping.extractionStrategy !== undefined && mapping.mode !== 'extract');
     if (invalidStrategy) {
-      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'An extraction strategy is only supported for extracted document fields');
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'An extraction strategy is only supported for extracted fields');
     }
     const invalidAi = mappings.find((mapping) => (mapping.semanticDefinition !== undefined || mapping.agentId !== undefined)
-      && (kind !== 'document' || mapping.mode !== 'extract'));
+      && mapping.mode !== 'extract');
     if (invalidAi) {
-      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A semantic definition or an extraction agent is only supported for extracted document fields');
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A semantic definition or an extraction agent is only supported for extracted fields');
     }
-    const invalidRules = mappings.find((mapping) => mapping.rules !== undefined
-      && (kind !== 'document' || mapping.mode !== 'extract'));
+    const invalidRules = mappings.find((mapping) => mapping.rules !== undefined && mapping.mode !== 'extract');
     if (invalidRules) {
-      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Reading rules are only supported for extracted document fields');
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Reading rules are only supported for extracted fields');
     }
     const anywhereWithoutPattern = mappings.find((mapping) => mapping.rules?.location === 'anywhere' && !mapping.rules.pattern?.trim());
     if (anywhereWithoutPattern) {

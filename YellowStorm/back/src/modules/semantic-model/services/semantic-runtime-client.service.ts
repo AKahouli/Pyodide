@@ -256,6 +256,22 @@ export interface RuntimeComputedPreview {
   }>;
 }
 
+export interface RuntimeSheetPreviewRequest {
+  modelId: string;
+  entry: { conceptId: string; conceptLabel?: string; source: Record<string, unknown>; fieldMappings: unknown[]; options?: Record<string, unknown> };
+  rows: Array<{ rowNumber: number; values: Record<string, unknown> }>;
+  aiExtraction?: { agentSlug: string; model: string | null; contractVersion: string } | null;
+}
+
+/** How each field of a few sheet rows was read: as is, out of its cell (rules, AI) or by its recipe, or why not. */
+export interface RuntimeSheetPreview {
+  rows: Array<{
+    rowNumber: number;
+    fields: Record<string, Record<string, unknown> & { method: string; reason: string; column?: string; span?: { start: number; end: number } }>;
+  }>;
+  ai: { aiRows: number; aiCalls: number; aiSkippedRows: number; aiFailedRows: number };
+}
+
 // ── Graph search (records of a bound data revision, found by meaning, then followed along real links) ──
 
 /** Query embedding can take a few seconds; seeds and expansion get a fixed, longer deadline. */
@@ -623,6 +639,28 @@ export class SemanticRuntimeClientService {
     }
     if (!res.ok) throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
     return await res.json() as RuntimeDocumentPreview;
+  }
+
+  /** Read a few sheet rows' fields as a run would; AI can take a while, so this waits as long as a document preview. */
+  async previewSheetFields(body: RuntimeSheetPreviewRequest): Promise<RuntimeSheetPreview> {
+    const base = this.requireRuntime();
+    let res: Response;
+    try {
+      res = await fetch(`${base}/v1/semantic-model-population/cell-preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Semantic-Service-Key': this.config.runtimeServiceKey },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(DOCUMENT_PREVIEW_TIMEOUT_MS),
+      });
+    } catch {
+      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    }
+    if (res.status === 422) {
+      const detail = this.errorDetail({ data: await this.readErrorPayload(res) });
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, detail || 'These reading rules cannot be used');
+    }
+    if (!res.ok) throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    return await res.json() as RuntimeSheetPreview;
   }
 
   async previewComputedField(body: RuntimeComputedPreviewRequest): Promise<RuntimeComputedPreview> {

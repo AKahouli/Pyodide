@@ -366,7 +366,7 @@ describe('SemanticSourceMappingService boundaries', () => {
     await expect(csv.service.preview('user-1', 'model-1', {
       conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1', assetKind: 'csv', sheetName: 'CSV',
       fieldMappings: [computedFrom('id')], identityFields: [],
-    })).rejects.toThrow('computed mappings are not supported');
+    })).rejects.toThrow('transformed field reads a column');
   });
 
   it('accepts a transformed spreadsheet field and rejects one misplaced or chained', async () => {
@@ -397,6 +397,63 @@ describe('SemanticSourceMappingService boundaries', () => {
       conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
       fieldMappings: [{ sourceField: null, targetAttribute: 'code', mode: 'computed', computed: fromColumn }], identityFields: [],
     })).rejects.toThrow('non-computed field');
+  });
+
+  it('lets a sheet field be read out of its cell like a document field, and keeps old sheet mappings valid', async () => {
+    const csv = buildService('text/csv');
+    csv.database.query.mockResolvedValue({ rows: [{ label: 'Message', attributes: [{ key: 'id' }, { key: 'reference', label: 'Référence' }, { key: 'code' }] }] });
+    const preview = (fieldMappings: SourceFieldMapping[]) => csv.service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1', assetKind: 'csv', sheetName: 'CSV',
+      fieldMappings, identityFields: ['id'],
+    });
+    const id = { sourceField: 'id', targetAttribute: 'id', mode: 'direct' as const };
+    // An old mapping (columns read as they are) passes and reaches the runtime unchanged.
+    await preview([id]);
+    expect(csv.runtime.requestDatasourceDiscovery.mock.calls[0][0].payload.mappingPreview.fieldMappings).toEqual([id]);
+    const reference = { sourceField: 'corps', targetAttribute: 'reference', mode: 'extract' as const, extractionStrategy: 'rules_then_ai' as const,
+      rules: { labels: ['Réf'], location: 'same_line' as const }, semanticDefinition: 'The order reference' };
+    const code = { sourceField: null, targetAttribute: 'code', mode: 'computed' as const,
+      computed: { input: { kind: 'field' as const, name: 'reference' }, method: 'whole' as const, transform: 'upper' as const } };
+    await preview([id, reference, code]);
+    const sent = csv.runtime.requestDatasourceDiscovery.mock.calls[1][0].payload.mappingPreview.fieldMappings;
+    // The field's label is what its rules look for by default, as for a document.
+    expect(sent[1]).toEqual({ ...reference, label: 'Référence' });
+    expect(sent[2]).toEqual(code);
+    await expect(preview([id, { ...reference, sourceField: null }])).rejects.toThrow('choose the column');
+    await expect(preview([id, { ...reference, rules: { location: 'pages', pages: { from: 1 } } }])).rejects.toThrow('no pages, headings or tables');
+    await expect(preview([id, { ...reference, rules: { firstPageOnly: true } }])).rejects.toThrow('no pages, headings or tables');
+    await expect(preview([id, { ...code, computed: undefined }])).rejects.toThrow('needs a recipe');
+    await expect(preview([id, { ...id, targetAttribute: 'code', extractionStrategy: 'ai' }])).rejects.toThrow('only supported for extracted fields');
+    await expect(preview([id, { sourceField: null, targetAttribute: 'code', mode: 'metadata' }])).rejects.toThrow('metadata mappings are not supported');
+  });
+
+  it('reads picked sheet rows through the runtime with what the AI is told', async () => {
+    const database = { query: jest.fn().mockResolvedValue({ rows: [{ label: 'Message', attributes: [
+      { key: 'id', label: 'Id' }, { key: 'reference', label: 'Référence', type: 'text', description: 'Order reference' }] }] }) };
+    const models = { requireActiveRole: jest.fn().mockResolvedValue({ id: 'model-1', currentDraftVersionId: 'version-1' }) };
+    const documents = { findById: jest.fn().mockResolvedValue({ id: 'document-1', mimeType: 'application/zip', originalName: 'mails.zip' }) };
+    const runtime = { previewSheetFields: jest.fn().mockResolvedValue({ rows: [], ai: { aiRows: 1, aiCalls: 1, aiSkippedRows: 0, aiFailedRows: 0 } }) };
+    const agent = { resolveAgent: jest.fn().mockResolvedValue({ slug: 'extractor', llmModel: 'm' }) };
+    const settings = { getDefaults: jest.fn().mockResolvedValue({ configured: { maxCharacters: 9000 } }) };
+    const service = new SemanticSourceMappingService(database as never, models as never, documents as never, runtime as never, {} as never,
+      undefined, agent as never, settings as never);
+    const reference = { sourceField: 'corps', targetAttribute: 'reference', mode: 'extract' as const, extractionStrategy: 'ai' as const };
+    await service.previewSheetFields('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
+      fieldMappings: [{ sourceField: 'id', targetAttribute: 'id', mode: 'direct' }, reference, { sourceField: 'x', targetAttribute: '', mode: 'ignore' }],
+      rows: [{ rowNumber: 2, values: { id: 'M1', corps: 'Réf: A-1' } }],
+    });
+    const request = runtime.previewSheetFields.mock.calls[0][0];
+    expect(request.entry.fieldMappings).toEqual([{ sourceField: 'id', targetAttribute: 'id', mode: 'direct' },
+      { ...reference, label: 'Référence', description: 'Order reference', valueType: 'text' }]);
+    expect(request.entry.options.aiSettings.maxCharacters).toBe(9000);
+    expect(request.rows).toEqual([{ rowNumber: 2, values: { id: 'M1', corps: 'Réf: A-1' } }]);
+    expect(request.aiExtraction).toMatchObject({ agentSlug: 'extractor', model: 'm' });
+    const pdf = buildService();
+    pdf.database.query.mockResolvedValue({ rows: [{}] });
+    await expect(pdf.service.previewSheetFields('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1', fieldMappings: [], rows: [{ rowNumber: 1, values: {} }],
+    })).rejects.toThrow('Only spreadsheet');
   });
 
   it('forwards the input field recipe to the computed preview', async () => {

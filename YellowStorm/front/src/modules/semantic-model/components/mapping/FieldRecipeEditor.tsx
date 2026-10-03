@@ -48,8 +48,10 @@ export type RecipeSource =
     columns: string[];
     /** A bounded sample of the sheet's rows (the source analysis), to try the recipe on. */
     rows: Array<Record<string, unknown>>;
-    /** The other mapped fields of the row: the column each is read from, and its own recipe if any. */
+    /** The other mapped fields of the row read from a column as it is: the column, and its own recipe if any. */
     fieldInputs: Record<string, { column: string; recipe?: ComputedFieldRule }>;
+    /** Fields read out of a cell (rules, AI): their values on the rows of the last row preview. */
+    fieldValues?: Record<string, Array<{ row: number; value: string }>>;
   };
 
 /** What a new computed document field starts with: the file name, cut at each `_`. */
@@ -166,6 +168,11 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
   const available: PreviewItem[] = (() => {
     if (source.kind === 'sheet') {
       const column = rule.input.kind === 'column' ? rule.input.name : fieldInput?.column;
+      // A field read out of a cell: the values the last row preview read for it.
+      if (!column && rule.input.kind === 'field') {
+        return (source.fieldValues?.[rule.input.name] ?? []).map((item) => ({
+          key: `row-${item.row}`, label: t('mapping.recipe.rowLabel', { row: item.row }), input: cellText(item.value) }));
+      }
       if (!column) return [];
       return source.rows.map((row, index) => {
         const number = typeof row.__sheetRow === 'number' ? row.__sheetRow : index + 2;

@@ -17,10 +17,28 @@ import {
   Matches,
   Min,
   MinLength,
+  Validate,
   ValidateNested,
   ValidateIf,
+  ValidatorConstraint,
+  type ValidatorConstraintInterface,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+/** A sample row's cells: at most 200 columns, each a short name and a text, number, true/false or empty value. */
+@ValidatorConstraint({ name: 'sheetRowValues', async: false })
+export class SheetRowValuesConstraint implements ValidatorConstraintInterface {
+  validate(value: unknown): boolean {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const entries = Object.entries(value as Record<string, unknown>);
+    return entries.length <= 200 && entries.every(([column, cell]) => column.length <= 200
+      && (cell === null || typeof cell === 'number' || typeof cell === 'boolean' || (typeof cell === 'string' && cell.length <= 20000)));
+  }
+
+  defaultMessage(): string {
+    return 'values must map at most 200 columns to texts of at most 20000 characters';
+  }
+}
 
 export class CreateSemanticModelDto {
   @ApiProperty({ maxLength: 160 })
@@ -777,6 +795,55 @@ export class SourceMappingPreviewDto {
   @Min(1)
   @Max(200)
   limit?: number;
+
+  @ApiPropertyOptional({ type: () => AiExtractionSettingsDto, description: 'Overrides the admin defaults for how much the AI reads' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AiExtractionSettingsDto)
+  aiSettings?: AiExtractionSettingsDto;
+}
+
+/** One sample row of a sheet, as its cells' texts by column, to read a mapping's fields on. */
+export class SheetPreviewRowDto {
+  @ApiProperty({ description: 'The row number in the sheet, shown with what was read' })
+  @Type(() => Number) @IsInt() @Min(0) @Max(10_000_000)
+  rowNumber!: number;
+
+  @ApiProperty({ description: 'Cell values by column (at most 200 columns, 20000 characters each)' })
+  @IsObject()
+  @Validate(SheetRowValuesConstraint)
+  values!: Record<string, string | number | boolean | null>;
+}
+
+export class SheetFieldPreviewDto {
+  @ApiProperty()
+  @IsUUID()
+  conceptId!: string;
+
+  @ApiProperty()
+  @IsString()
+  @MinLength(1)
+  workspaceId!: string;
+
+  @ApiProperty()
+  @IsString()
+  @MinLength(1)
+  documentId!: string;
+
+  @ApiProperty({ type: [SourceFieldMappingDto], maxItems: 100 })
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => SourceFieldMappingDto)
+  fieldMappings!: SourceFieldMappingDto[];
+
+  @ApiProperty({ type: [SheetPreviewRowDto], minItems: 1, maxItems: 20 })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => SheetPreviewRowDto)
+  rows!: SheetPreviewRowDto[];
 
   @ApiPropertyOptional({ type: () => AiExtractionSettingsDto, description: 'Overrides the admin defaults for how much the AI reads' })
   @IsOptional()

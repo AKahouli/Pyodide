@@ -85,6 +85,7 @@ export const CALL_CLASSIFICATION: Record<SemanticApiCall, ReadKind> = {
   previewSourceMapping: 'evidence-read',
   getDocumentLabels: 'evidence-read',
   previewComputedField: 'evidence-read',
+  previewSheetFields: 'evidence-read',
   previewRelationResolutionRule: 'evidence-read',
   dataPreview: 'evidence-read',
   conceptRecords: 'evidence-read',

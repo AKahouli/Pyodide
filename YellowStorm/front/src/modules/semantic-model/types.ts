@@ -263,8 +263,8 @@ export interface SourceFieldMapping {
   mode: 'direct' | 'extract' | 'metadata' | 'constant' | 'computed' | 'ignore';
   constantValue?: unknown;
   /**
-   * mode='computed' (documents): a value taken from the file name or another field. mode='direct'
-   * (spreadsheets): the field's recipe, from its column (or another column or field); absent reads the column as is.
+   * mode='computed': a value taken from the file name (documents), a column (sheets) or another field.
+   * mode='direct' (sheets, mappings saved before the field modes): the column's recipe; absent reads it as is.
    */
   computed?: ComputedFieldRule;
   // Only meaningful for mode='extract'; absent means deterministic.
@@ -341,7 +341,11 @@ export interface AiExtractionDefaults {
 
 /** How one extracted field was read in a preview, or why it was not. */
 export interface DocumentFieldReading {
-  method: 'rules' | 'ai' | 'computed';
+  /** `direct`: a sheet column read as it is. */
+  method: 'rules' | 'ai' | 'computed' | 'direct';
+  /** Sheets: the column whose cell the value was read from, and where in its text. */
+  column?: string;
+  span?: { start: number; end: number } | null;
   reason: 'found' | 'label_not_found' | 'no_value' | 'several_values' | 'pattern_mismatch' | 'no_heading' | 'no_match' | 'no_page' | 'ai_not_found' | 'ai_failed' | 'no_input' | 'not_transformable';
   /** Computed fields: the text the value was taken from. */
   input?: string | null;
@@ -634,6 +638,23 @@ export interface SourceMappingPreviewResponse {
   documentStatus?: string;
   /** Documents only: what the AI was sent. */
   aiSent?: { documentCharacters: number; longDocument: boolean; blocksSent: number; charactersSent: number } | null;
+}
+
+/** A few picked sheet rows, read as a run would read them. */
+export interface SheetFieldPreviewRequest {
+  conceptId: string;
+  workspaceId: string;
+  documentId: string;
+  fieldMappings: SourceFieldMapping[];
+  rows: Array<{ rowNumber: number; values: Record<string, string | number | boolean | null> }>;
+  aiSettings?: Partial<AiExtractionSettings>;
+}
+
+export interface SheetFieldPreviewResponse {
+  /** For each row, how each field was read (or why not): as is, out of its cell (rules, AI), or by its recipe. */
+  rows: Array<{ rowNumber: number; fields: Record<string, DocumentFieldReading> }>;
+  /** How many rows the AI was asked about. */
+  ai: { aiRows: number; aiCalls: number; aiSkippedRows: number; aiFailedRows: number };
 }
 
 export interface SourceMappingDraft {
