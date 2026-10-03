@@ -16,6 +16,7 @@ import {
   ExecutionRole,
   RootEvidenceRecord,
   RootExecutionRecord,
+  isStopRequestId,
   evidenceDedupKey,
 } from './root-work.types';
 
@@ -111,8 +112,12 @@ export class RootWorkService {
     if (!OBJECT_ID_RE.test(input.conversationId)) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'conversationId must be a 24-char hex id');
     }
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(input.stopRequestId)) {
-      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'stopRequestId must be a UUID');
+    // Time-ordered ids are what let the store fence a retried old Stop.
+    if (!isStopRequestId(input.stopRequestId)) {
+      throw new BadRequestException(
+        ErrorCode.VALIDATION_ERROR,
+        'stopRequestId must be a UUIDv7 (use newStopRequestId())',
+      );
     }
     return this.store.stopRootWork(input);
   }

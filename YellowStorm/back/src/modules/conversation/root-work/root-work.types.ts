@@ -7,6 +7,8 @@
  * conversation/proto/chatbot.proto (ExecutionScope / ExecutionTrace).
  */
 
+import { createHash, randomBytes } from 'crypto';
+
 export const EXECUTION_ROLES = ['root', 'library_worker', 'temporary_worker', 'fanout_driver', 'followup'] as const;
 export type ExecutionRole = (typeof EXECUTION_ROLES)[number];
 
@@ -125,13 +127,55 @@ export interface RootEvidenceRecord {
   createdAt: Date;
 }
 
-/** Build the idempotent evidence dedup key (plan §12.2). */
+/** Build the idempotent evidence dedup key (plan §12.2). Hashed so a long
+ * native identity cannot overflow the varchar(128) dedup_key column. */
 export function evidenceDedupKey(
   executionId: string,
   nativeIdentity: string,
   outputOrdinal: number,
 ): string {
-  return `${executionId}|${nativeIdentity}|${outputOrdinal}`;
+  return createHash('sha256')
+    .update(`${executionId}|${nativeIdentity}|${outputOrdinal}`)
+    .digest('hex');
+}
+
+/**
+ * Generate a time-ordered (UUIDv7) stop request id. Ordering is what makes
+ * the Stop barrier fenceable: a retried OLD stop id (lexicographically less
+ * than the anchored one) is ignored instead of cancelling newer work.
+ *
+ * ponytail ceiling: strictly monotonic only within this process (lastId bump
+ * on collision). Two different replicas emitting in the same millisecond can
+ * interleave — WP08's control lock makes Stop single-writer per conversation.
+ */
+let lastStopId = '';
+export function newStopRequestId(): string {
+  let ts = Date.now();
+  let id = buildV7(ts);
+  while (id <= lastStopId) {
+    ts += 1;
+    id = buildV7(ts);
+  }
+  lastStopId = id;
+  return id;
+}
+
+function buildV7(ts: number): string {
+  const rand = randomBytes(10);
+  const bytes = Buffer.alloc(16);
+  bytes.writeUInt32BE(Math.floor(ts / 2 ** 16), 0);
+  bytes.writeUInt16BE(ts % 2 ** 16, 4);
+  rand.copy(bytes, 6);
+  bytes[6] = (bytes[6] & 0x0f) | 0x70; // version 7
+  bytes[8] = (bytes[8] & 0x3f) | 0x80; // RFC 4122 variant
+  const hex = bytes.toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+const UUID_V7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+export function isStopRequestId(value: string): boolean {
+  return UUID_V7_RE.test(value);
 }
 
 /** Derive a child request id from the parent execution and native call id. */

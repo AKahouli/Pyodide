@@ -730,6 +730,23 @@ class ChatbotServicer(
                 self.agent_team_service.process_team_request(internal_request, queue)
             )
 
+            # WP03 native abort wiring: scoped root runs register an asyncio
+            # abort event; a Stop barrier flips it and this watcher cancels the
+            # workflow task so the stream ends in an honest cancelled state.
+            # Legacy requests register nothing and keep the exact prior path.
+            root_scope = getattr(internal_request, "execution_scope", None)
+            if root_scope is not None and root_scope.is_set:
+                registry = get_root_cancellation_registry()
+                # Plan §11.3: the barrier applies before model invocation too.
+                check_admission_barrier(root_scope, request.conversation_id, registry)
+                root_handle = registry.register(request.conversation_id, root_scope)
+
+                async def _abort_on_stop(handle, workflow_task):
+                    await handle.abort_event.wait()
+                    workflow_task.cancel()
+
+                abort_watcher = asyncio.create_task(_abort_on_stop(root_handle, bg_task))
+
             while True:
                 if get_task is None:
                     get_task = asyncio.create_task(queue.get())

@@ -45,6 +45,8 @@ export interface AgentExecutionSnapshotV1 {
     connectorActionScopes: ConnectorActionScope[];
     rootPolicyRevision: string | null;
     definitionUpdatedAt: Date;
+    /** Digest input mirror of definitionUpdatedAt (Date serializes as {}). */
+    updatedAtMs: number;
   };
   createdAt: Date;
 }
@@ -80,14 +82,16 @@ function policyRevision(policy: AgentRecord['rootExecutionPolicy']): string | nu
 }
 
 function connectorActionScopes(agent: AgentRecord): ConnectorActionScope[] {
-  return (agent.connectorActionSelections ?? []).map((selection) => ({
-    connectorId: selection.connector,
-    // Selections are always explicit key lists; the ADK side intersects them
-    // with the approved set where empty means deny, never "all actions"
-    // (plan §6.4).
-    decision: 'SELECTED',
-    actionKeys: [...selection.actionKeys].sort(),
-  }));
+  return (agent.connectorActionSelections ?? [])
+    .map((selection) => ({
+      connectorId: selection.connector,
+      // Selections are always explicit key lists; the ADK side intersects them
+      // with the approved set where empty means deny, never "all actions"
+      // (plan §6.4).
+      decision: 'SELECTED' as const,
+      actionKeys: [...selection.actionKeys].sort(),
+    }))
+    .sort((a, b) => (a.connectorId < b.connectorId ? -1 : a.connectorId > b.connectorId ? 1 : 0));
 }
 
 @Injectable()
@@ -147,7 +151,10 @@ export class AgentExecutionSnapshotService {
       knowledgeBaseIds: [...(agent.knowledgeBases ?? [])].sort(),
       connectorActionScopes: connectorActionScopes(agent),
       rootPolicyRevision: policyRevision(agent.rootExecutionPolicy),
+      // Epoch ms: stableStringify(Date) would serialize as {} and stop
+      // busting the digest on definition changes.
       definitionUpdatedAt: agent.updatedAt,
+      updatedAtMs: agent.updatedAt.getTime(),
     };
   }
 }

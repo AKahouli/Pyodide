@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS conversation.root_executions (
   attempt             integer NOT NULL DEFAULT 1,
   status              varchar(32) NOT NULL DEFAULT 'running',
   conversation_epoch  integer NOT NULL DEFAULT 0,
-  stop_request_id     char(36),
+  stop_request_id     uuid,
   result_payload      jsonb,
   created_at          timestamptz NOT NULL DEFAULT now(),
   updated_at          timestamptz NOT NULL DEFAULT now(),
@@ -61,4 +61,4 @@ CREATE TABLE IF NOT EXISTS conversation.root_evidence_records (
 CREATE INDEX IF NOT EXISTS idx_root_evidence_execution
   ON conversation.root_evidence_records (execution_id);
 
-ALTER TABLE conversation.conversations ADD COLUMN IF NOT EXISTS root_work_last_stop_request_id char(36);
+ALTER TABLE conversation.conversations ADD COLUMN IF NOT EXISTS root_work_last_stop_request_id uuid;

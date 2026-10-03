@@ -66,11 +66,7 @@ export class PostgresRootWorkStore implements RootWorkStore {
   }
 
   async registerExecution(input: RegisterExecutionInput): Promise<RootExecutionRecord> {
-    const existing = await this.getExecution(input.executionId);
-    if (existing) {
-      return existing;
-    }
-    const [row] = await this.db
+    const inserted = await this.db
       .insert(schema.rootExecutions)
       .values({
         id: input.executionId,
@@ -84,8 +80,17 @@ export class PostgresRootWorkStore implements RootWorkStore {
         status: 'running',
         conversationEpoch: input.conversationEpoch,
       })
+      .onConflictDoNothing({ target: schema.rootExecutions.id })
       .returning();
-    return toRecord(row);
+    if (inserted.length > 0) {
+      return toRecord(inserted[0]);
+    }
+    // Concurrent duplicate registration: return the winning row.
+    const existing = await this.getExecution(input.executionId);
+    if (!existing) {
+      throw new Error(`root execution ${input.executionId} conflicted but was not found`);
+    }
+    return existing;
   }
 
   async getExecution(executionId: string): Promise<RootExecutionRecord | null> {
@@ -179,9 +184,14 @@ export class PostgresRootWorkStore implements RootWorkStore {
       if (!conversation) {
         throw new Error(`conversation ${input.conversationId} not found`);
       }
-      // Idempotent replay of the same Stop; an older request id arriving after
-      // a newer one is ignored so a retried Stop cannot cancel newer work.
-      if (conversation.lastStopRequestId === input.stopRequestId) {
+      // Stop ids are UUIDv7 (time-ordered, see newStopRequestId), so
+      // lexicographic order is chronological. Equal id = idempotent replay;
+      // a smaller id arriving after a newer one is a stale/retried Stop and
+      // is ignored so it cannot cancel work admitted under the newer barrier.
+      if (
+        conversation.lastStopRequestId !== null &&
+        conversation.lastStopRequestId >= input.stopRequestId
+      ) {
         return { barrierEpoch: conversation.epoch, applied: false, markedCount: 0 };
       }
       const barrierEpoch = conversation.epoch + 1;

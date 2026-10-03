@@ -1,7 +1,7 @@
 import { BadRequestException } from '../../exceptions';
 import { RootWorkService } from './root-work.service';
 import { RootWorkStore } from './root-work.store';
-import { RootEvidenceRecord, RootExecutionRecord } from './root-work.types';
+import { RootEvidenceRecord, RootExecutionRecord, newStopRequestId } from './root-work.types';
 
 /** In-memory fake standing in for the postgres store (unit-scope only). */
 class FakeRootWorkStore implements RootWorkStore {
@@ -88,7 +88,12 @@ class FakeRootWorkStore implements RootWorkStore {
   ): Promise<{ barrierEpoch: number; applied: boolean; markedCount: number }> {
     const conversation = this.conversations.get(input.conversationId);
     if (!conversation) throw new Error('conversation missing');
-    if (conversation.lastStopRequestId === input.stopRequestId) {
+    // Mirrors the real store's UUIDv7 ordering fence: equal id = replay;
+    // smaller (older) id after a newer one is stale and ignored.
+    if (
+      conversation.lastStopRequestId !== null &&
+      conversation.lastStopRequestId >= input.stopRequestId
+    ) {
       return { barrierEpoch: conversation.epoch, applied: false, markedCount: 0 };
     }
     let markedCount = 0;
@@ -227,7 +232,7 @@ describe('RootWorkService', () => {
       attempt: 1,
       conversationEpoch: 2,
     });
-    const result = await service.stopRootWork({ conversationId: CONVERSATION_ID, stopRequestId: '11111111-1111-4111-8111-111111111111' });
+    const result = await service.stopRootWork({ conversationId: CONVERSATION_ID, stopRequestId: newStopRequestId() });
     expect(result).toMatchObject({ applied: true, barrierEpoch: 3, markedCount: 1 });
     const record = await service.getExecution(EXECUTION_ID);
     expect(record?.status).toBe('cancellation_requested');
@@ -247,7 +252,7 @@ describe('RootWorkService', () => {
       conversationEpoch: 2,
     });
     await service.completeExecution(EXECUTION_ID, 'completed', null);
-    const stopRequestId = '22222222-2222-4222-8222-222222222222';
+    const stopRequestId = newStopRequestId();
     const first = await service.stopRootWork({ conversationId: CONVERSATION_ID, stopRequestId });
     expect(first.markedCount).toBe(0);
     const replay = await service.stopRootWork({ conversationId: CONVERSATION_ID, stopRequestId });
@@ -261,5 +266,42 @@ describe('RootWorkService', () => {
     await expect(
       service.stopRootWork({ conversationId: CONVERSATION_ID, stopRequestId: 'not-a-uuid' }),
     ).rejects.toThrow(BadRequestException);
+    // v4 ids are rejected too: the fence needs the time-ordered format.
+    await expect(
+      service.stopRootWork({ conversationId: CONVERSATION_ID, stopRequestId: '11111111-1111-4111-8111-111111111111' }),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('a different OLDER stop id arriving after a newer one is ignored (no epoch churn)', async () => {
+    const { service } = makeService();
+    await service.registerExecution({
+      executionId: EXECUTION_ID,
+      conversationId: CONVERSATION_ID,
+      rootAgentId: null,
+      workGroupId: null,
+      parentExecutionId: null,
+      role: 'root',
+      depth: 0,
+      attempt: 1,
+      conversationEpoch: 2,
+    });
+    await service.stopRootWork({ conversationId: CONVERSATION_ID, stopRequestId: newStopRequestId() });
+    const epochAfterFirst = (await service.getExecution(EXECUTION_ID))?.conversationEpoch ?? 0;
+    // A v7 id that sorts BEFORE the anchored one: build one with a past timestamp.
+    const staleId = '00000000-0000-7000-8000-000000000000';
+    const stale = await service.stopRootWork({ conversationId: CONVERSATION_ID, stopRequestId: staleId });
+    expect(stale).toMatchObject({ applied: false, markedCount: 0 });
+    // A genuinely NEW stop still applies and marks the (still nonterminal) execution.
+    const fresh = await service.stopRootWork({ conversationId: CONVERSATION_ID, stopRequestId: newStopRequestId() });
+    expect(fresh.applied).toBe(true);
+    const record = await service.getExecution(EXECUTION_ID);
+    expect(record?.status).toBe('cancellation_requested');
+    expect(epochAfterFirst).toBe(2);
+  });
+
+  it('newStopRequestId generates time-ordered v7 ids', () => {
+    const first = newStopRequestId();
+    const second = newStopRequestId();
+    expect(second > first).toBe(true);
   });
 });
