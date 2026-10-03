@@ -311,6 +311,13 @@ async def _apply_ai_extraction(
                            extractor_version, result.get("model"), own, own_evidence, None, choices, summaries)
             if own:
                 records.append({"values": own, "evidence": own_evidence})
+    # The agent chosen for a field is recorded with its evidence. Only the platform extraction agent
+    # can read fields today, so a chosen agent is noted, not yet called.
+    agents = {mapping["targetAttribute"]: mapping["agentId"] for mapping in ai_mappings
+              if isinstance(mapping.get("agentId"), str) and mapping["agentId"].strip()}
+    for found in [evidence_by_field, *(record["evidence"] for record in records or [])]:
+        for key in agents.keys() & set(found):
+            found[key]["requestedAgentId"] = agents[key]
     # Dates read by AI are stored as ISO, as precise as the text (a period keeps its start);
     # one that is not a date the runtime can read stays as written.
     dates = {mapping["targetAttribute"] for mapping in ai_mappings if mapping.get("valueType") == "date"}
@@ -327,8 +334,11 @@ _AI_VALUE_TYPES = {"text": "string", "number": "number", "date": "date", "boolea
 def _ai_attribute(mapping: dict[str, Any], labels: list[str]) -> dict[str, Any]:
     """How one field is described to the extraction agent: its meaning, other names and allowed values."""
     parts = []
-    if isinstance(mapping.get("description"), str) and mapping["description"].strip():
-        parts.append(mapping["description"].strip())
+    # The field's own definition wins over the attribute description the backend may have put there.
+    definition = next((text.strip() for text in (mapping.get("semanticDefinition"), mapping.get("description"))
+                       if isinstance(text, str) and text.strip()), None)
+    if definition:
+        parts.append(definition)
     allowed = [str(item) for item in mapping.get("allowedValues") or [] if str(item).strip()]
     if allowed:
         parts.append("One of: " + ", ".join(allowed) + ".")

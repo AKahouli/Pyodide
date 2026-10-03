@@ -27,6 +27,7 @@ import { AiLimitsEditor, FieldReadingResult, ManyRecordsSwitch, FieldRulesEditor
 import { DEFAULT_SPLIT, DocumentPreviewPane, documentStatusText, FieldLiveStatus, highlightOf, useNarrow, useSplitPrefs } from './DocumentPreviewPane';
 import { useLiveDocumentPreview } from './useLiveDocumentPreview';
 import type { SourceMappingTarget, WorkspaceSourceScope } from './SourceMappingDrawer';
+import { AiFieldSettings, withoutAiSettings } from './AiFieldSettings';
 import { ComputedFieldEditor, computedPayload, computedProblem, newComputedRule } from './ComputedFieldEditor';
 import { isReadableDocument, WorkspaceFilePicker, type WorkspacePick } from './WorkspaceFilePicker';
 import { MappingPresetBar } from './MappingPresetBar';
@@ -322,14 +323,21 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
       // A strategy only applies to extracted fields.
       extractionStrategy: mode === 'extract' ? mapping.extractionStrategy ?? 'deterministic' : undefined,
       rules: mode === 'extract' ? mapping.rules : undefined,
-    } : mapping));
+    } : mapping).map((mapping, itemIndex) => itemIndex === index && mode !== 'extract' ? withoutAiSettings(mapping) : mapping));
   };
 
   const setStrategy = (index: number, strategy: SourceExtractionStrategy) => {
-    changeMappings(mappings.map((mapping, itemIndex) => itemIndex === index ? { ...mapping, extractionStrategy: strategy } : mapping));
+    changeMappings(mappings.map((mapping, itemIndex) => itemIndex === index ? withStrategy(mapping, strategy) : mapping));
   };
   const setAllStrategies = (strategy: SourceExtractionStrategy) => {
-    changeMappings(mappings.map((mapping) => mapping.mode === 'extract' ? { ...mapping, extractionStrategy: strategy } : mapping));
+    changeMappings(mappings.map((mapping) => mapping.mode === 'extract' ? withStrategy(mapping, strategy) : mapping));
+  };
+  const setAiSettingsOf = (index: number, patch: Pick<SourceFieldMapping, 'semanticDefinition' | 'agentId'>) => {
+    changeMappings(mappings.map((mapping, itemIndex) => itemIndex === index ? {
+      ...withoutAiSettings(mapping),
+      ...(patch.semanticDefinition ? { semanticDefinition: patch.semanticDefinition } : {}),
+      ...(patch.agentId ? { agentId: patch.agentId } : {}),
+    } : mapping));
   };
   const setRules = (index: number, rules: SourceFieldMapping['rules']) => {
     changeMappings(mappings.map((mapping, itemIndex) => {
@@ -534,6 +542,10 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
                   pending: live.reading,
                   onRead: () => void live.run(),
                 } : undefined} />}
+              {mapping.mode === 'extract' && (mapping.extractionStrategy === 'ai' || mapping.extractionStrategy === 'rules_then_ai') && <AiFieldSettings
+                fieldLabel={attributeLabel(mapping.targetAttribute)} mapping={mapping}
+                attributeDescription={concept.attributes.find((attribute) => attribute.key === mapping.targetAttribute)?.description}
+                onChange={(patch) => setAiSettingsOf(index, patch)} />}
               {mapping.mode === 'computed' && <ComputedFieldEditor modelId={modelId} fieldLabel={attributeLabel(mapping.targetAttribute)} rule={mapping.computed ?? newComputedRule()}
                 onChange={(computed) => changeMappings(mappings.map((item, itemIndex) => itemIndex === index ? { ...item, computed } : item))}
                 fields={computedInputs(mapping.targetAttribute).map((key) => ({ key, label: attributeLabel(key) }))}
@@ -605,4 +617,9 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
 /** True when the preview failed because the retired document search service is gone, which the user cannot fix. */
 function isRetiredSearchFailure(error: unknown) {
   return /native search/i.test(parseApiError(error).message);
+}
+
+/** A field read by rules alone keeps no AI settings. */
+function withStrategy(mapping: SourceFieldMapping, strategy: SourceExtractionStrategy): SourceFieldMapping {
+  return strategy === 'deterministic' ? { ...withoutAiSettings(mapping), extractionStrategy: strategy } : { ...mapping, extractionStrategy: strategy };
 }

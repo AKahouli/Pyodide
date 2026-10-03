@@ -476,6 +476,14 @@ export class SourceFieldMappingDto {
   @IsIn(['deterministic', 'ai', 'rules_then_ai'])
   extractionStrategy?: 'deterministic' | 'ai' | 'rules_then_ai';
 
+  @ApiPropertyOptional({ maxLength: 2000, description: 'AI reading: what the value means and what to look for; empty uses the attribute description' })
+  @IsOptional() @IsString() @MaxLength(2000)
+  semanticDefinition?: string;
+
+  @ApiPropertyOptional({ maxLength: 64, description: 'AI reading: the agent asked to read the field; absent means the platform extraction agent' })
+  @IsOptional() @IsString() @Matches(/^[A-Za-z0-9_-]{1,64}$/)
+  agentId?: string;
+
   @ApiPropertyOptional({ type: () => ExtractionRulesDto, description: 'Where a document value is and what it looks like' })
   @IsOptional()
   @ValidateNested()

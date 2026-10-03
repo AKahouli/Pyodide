@@ -18,6 +18,7 @@ const workspaceApi = vi.hoisted(() => ({ getDocuments: vi.fn(), getFolderContent
 
 vi.mock('../../api', () => ({ semanticModelApi: api }));
 vi.mock('@/modules/workspace/api', () => workspaceApi);
+vi.mock('@/modules/agent', () => ({ useAgents: () => [], useAgentStore: { getState: () => ({ isInitialized: true, isLoading: false, fetchAgents: vi.fn() }) } }));
 // The real viewer loads the file; here it only shows where it was asked to go.
 vi.mock('@/modules/file-viewer/components/DocumentPreviewViewer', () => ({
   DocumentPreviewViewer: ({ fileName, navigation }: { fileName: string; navigation?: { page?: number; highlightText?: string } | null }) =>
@@ -99,6 +100,37 @@ describe('DocumentSourceMappingDrawer', () => {
         expect.objectContaining({ targetAttribute: 'amendment_number', mode: 'extract', extractionStrategy: 'deterministic' }),
       ],
     })));
+  });
+
+  it('saves the meaning an AI-read field is given, and drops it when rules read the field again', async () => {
+    api.createSourceMapping.mockResolvedValue({ revision: 1, mappingCount: 1 });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><DocumentSourceMappingDrawer modelId='model-1' target={{
+      workspaceId: 'workspace-1', documentId: 'document-1', documentName: 'One.pdf', assetKind: 'document', conceptId: 'concept-1', mimeType: 'application/pdf', path: 'one.pdf',
+    }} onClose={vi.fn()} /></QueryClientProvider>);
+
+    const strategyTriggers = await screen.findAllByRole('combobox', { name: 'mapping.strategyFor' });
+    fireEvent.click(strategyTriggers[0]);
+    fireEvent.click(await screen.findByRole('option', { name: 'mapping.strategy.ai' }));
+    fireEvent.click(strategyTriggers[1]);
+    fireEvent.click(await screen.findByRole('option', { name: 'mapping.strategy.ai' }));
+    const panes = screen.getAllByRole('button', { name: /mapping\.aiField\.title/ });
+    expect(panes).toHaveLength(2);
+    fireEvent.click(panes[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.aiField.definition' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'mapping.aiField.definitionFor' }), { target: { value: 'The number on the cover page' } });
+    fireEvent.click(panes[1]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'mapping.aiField.definition' })[1]);
+    fireEvent.change(screen.getAllByRole('textbox', { name: 'mapping.aiField.definitionFor' })[1], { target: { value: 'Dropped' } });
+    fireEvent.click(strategyTriggers[1]);
+    fireEvent.click(await screen.findByRole('option', { name: 'mapping.strategy.deterministic' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.save' }));
+    await waitFor(() => expect(api.createSourceMapping).toHaveBeenCalled());
+    const [first, second] = api.createSourceMapping.mock.calls[0][1].fieldMappings;
+    expect(first).toEqual(expect.objectContaining({ extractionStrategy: 'ai', semanticDefinition: 'The number on the cover page' }));
+    expect(first.agentId).toBeUndefined();
+    expect(second.semanticDefinition).toBeUndefined();
   });
 
   it('applies shared extraction and identity settings to more than 50 existing documents', async () => {

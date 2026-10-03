@@ -251,6 +251,13 @@ def run_population_for_payload(command_dump: dict) -> dict:
                        or (item.get("extractionStrategy") is not None
                            and item.get("mode") != "extract") for item in active):
                     return {"ok": False, "errorCode": "invalid_document_mapping"}
+                # The AI reading settings of a field: a definition (text) and an agent (an id).
+                if any((item.get("semanticDefinition") is not None
+                        and not isinstance(item["semanticDefinition"], str))
+                       or (item.get("agentId") is not None and not isinstance(item["agentId"], str))
+                       or ((item.get("semanticDefinition") is not None or item.get("agentId") is not None)
+                           and item.get("mode") != "extract") for item in active):
+                    return {"ok": False, "errorCode": "invalid_document_mapping"}
                 # Rules are checked once here, so a bad pattern fails the run before any reading.
                 try:
                     active = [{**item, "rules": normalize_rules(item["rules"])}

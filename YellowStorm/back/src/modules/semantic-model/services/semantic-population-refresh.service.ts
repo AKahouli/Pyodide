@@ -6,7 +6,7 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import type { AttributeDefinition } from '../domain/semantic-model.types';
 import type { RelationResolutionRule } from '../domain/semantic-cross-source.types';
-import { AI_EXTRACTION_CONTRACT_VERSION, DEFAULT_RUN_LIMITS, usesAiExtraction, type AiExtractionSettings, type RunLimits, type SourceFieldMapping } from '../domain/semantic-source-mapping.types';
+import { AI_EXTRACTION_CONTRACT_VERSION, aiFieldHints, DEFAULT_RUN_LIMITS, usesAiExtraction, type AiExtractionSettings, type RunLimits, type SourceFieldMapping } from '../domain/semantic-source-mapping.types';
 import type { ConceptSpec, RelationSpec } from '../domain/model-specification.types';
 import type { RecordCorrectionDto } from '../dto/semantic-model.dto';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
@@ -1049,7 +1049,7 @@ export class SemanticPopulationRefreshService {
             ...(!field.sourceField ? { sourceField: attribute?.label || field.targetAttribute } : {}),
             // What the AI is told about the field: its meaning, kind of value and allowed values.
             ...(field.extractionStrategy && field.extractionStrategy !== 'deterministic' && attribute
-              ? aiFieldHints(attribute) : {}),
+              ? aiFieldHints(attribute, field) : {}),
           };
         }),
         // How much of the document the AI reads; only sent when a field is read by AI, so a change
@@ -1096,10 +1096,4 @@ export function graphPropertyKey(field: string): string {
 }
 
 /** What the extraction agent is told about a field read by AI, beyond its label. Empty parts are left out. */
-export function aiFieldHints(attribute: AttributeDefinition): { description?: string; valueType?: string; allowedValues?: string[] } {
-  return {
-    ...(attribute.description?.trim() ? { description: attribute.description.trim() } : {}),
-    ...(attribute.type ? { valueType: attribute.type } : {}),
-    ...(attribute.options?.length ? { allowedValues: attribute.options } : {}),
-  };
-}
+export { aiFieldHints };

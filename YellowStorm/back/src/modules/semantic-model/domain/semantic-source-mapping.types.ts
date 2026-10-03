@@ -48,6 +48,10 @@ export interface SourceFieldMapping {
   mode: SourceFieldMappingMode;
   constantValue?: unknown;
   extractionStrategy?: SourceExtractionStrategy;
+  /** AI reading only: what the value means and what to look for; empty uses the attribute's description. */
+  semanticDefinition?: string;
+  /** AI reading only: the agent asked to read the field; absent means the platform's extraction agent. */
+  agentId?: string;
   rules?: ExtractionRules;
   computed?: ComputedFieldSpec;
 }
@@ -307,4 +311,20 @@ export function withConceptFields(saved: SourceFieldMapping[], attributes: Reado
   const keys = new Set(attributes.map((attribute) => attribute.key));
   const changed = mappings.length !== saved.length || saved.some((mapping) => !keys.has(mapping.targetAttribute));
   return { mappings, changed };
+}
+
+/**
+ * What the AI is told about a field. The field's own semantic definition wins; without one, the
+ * concept attribute's description is used, so rules saved before definitions existed read as before.
+ */
+export function aiFieldHints(
+  attribute: AttributeDefinition,
+  field?: Pick<SourceFieldMapping, 'semanticDefinition'>,
+): { description?: string; valueType?: string; allowedValues?: string[] } {
+  const description = field?.semanticDefinition?.trim() || attribute.description?.trim();
+  return {
+    ...(description ? { description } : {}),
+    ...(attribute.type ? { valueType: attribute.type } : {}),
+    ...(attribute.options?.length ? { allowedValues: attribute.options } : {}),
+  };
 }

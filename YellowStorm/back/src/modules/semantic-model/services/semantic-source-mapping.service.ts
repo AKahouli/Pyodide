@@ -8,7 +8,7 @@ import {
   type ResolvedMappingEntity,
   type SourcePreviewIssue,
 } from '../domain/semantic-cross-source.types';
-import {
+import { aiFieldHints,
   AI_EXTRACTION_CONTRACT_VERSION,
   computeFieldProfiles,
   resolveSheetEntities,
@@ -261,10 +261,18 @@ export class SemanticSourceMappingService {
     aiSettings: unknown,
   ) {
     const active = input.fieldMappings.filter((mapping) => mapping.mode !== 'ignore');
-    const labels = new Map(input.concept.attributes.map((attribute) => [attribute.key, attribute.label]));
-    const fieldMappings = active.map((field) => field.mode === 'extract' && !field.sourceField
-      ? { ...field, sourceField: labels.get(field.targetAttribute) || field.targetAttribute }
-      : field);
+    const attributes = new Map(input.concept.attributes.map((attribute) => [attribute.key, attribute]));
+    const fieldMappings = active.map((field) => {
+      if (field.mode !== 'extract') return field;
+      const attribute = attributes.get(field.targetAttribute);
+      return {
+        ...field,
+        ...(!field.sourceField ? { sourceField: attribute?.label || field.targetAttribute } : {}),
+        // The preview tells the AI what the run will: the field's definition, kind of value and allowed values.
+        ...(field.extractionStrategy && field.extractionStrategy !== 'deterministic' && attribute
+          ? aiFieldHints(attribute, field) : {}),
+      };
+    });
     const usesAi = usesAiExtraction(fieldMappings);
     const defaults = usesAi && this.extractionSettings ? (await this.extractionSettings.getDefaults()).configured : {};
     const agent = usesAi && this.aiExtractionAgent ? await this.aiExtractionAgent.resolveAgent() : null;
@@ -931,6 +939,11 @@ export class SemanticSourceMappingService {
       && (kind !== 'document' || mapping.mode !== 'extract'));
     if (invalidStrategy) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'An extraction strategy is only supported for extracted document fields');
+    }
+    const invalidAi = mappings.find((mapping) => (mapping.semanticDefinition !== undefined || mapping.agentId !== undefined)
+      && (kind !== 'document' || mapping.mode !== 'extract'));
+    if (invalidAi) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A semantic definition or an extraction agent is only supported for extracted document fields');
     }
     const invalidRules = mappings.find((mapping) => mapping.rules !== undefined
       && (kind !== 'document' || mapping.mode !== 'extract'));

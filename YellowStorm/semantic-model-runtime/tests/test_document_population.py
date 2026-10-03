@@ -624,3 +624,39 @@ async def test_ai_is_told_what_each_field_means(monkeypatch: pytest.MonkeyPatch,
     ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata, model_id="model-1")
     assert asked["attributes"] == [{"key": "effective_date", "label": "Statut", "type": "string",
                                     "description": "Where the fact stands. One of: planned, done."}]
+
+
+@pytest.mark.asyncio
+async def test_a_field_definition_wins_over_the_attribute_description(monkeypatch: pytest.MonkeyPatch, index_stubs):
+    asked = {}
+
+    async def extraction(**kwargs):
+        asked.update(kwargs)
+        return {"extractorVersion": "ai-attribute-v1", "failed": [], "values": []}
+
+    ai_stubs(monkeypatch, extraction)
+    await document.populate_document(object(), entry(
+        *AI_DETERMINISTIC,
+        {"sourceField": "Date", "targetAttribute": "effective_date", "mode": "extract", "extractionStrategy": "ai",
+         "description": "Attribute description.", "semanticDefinition": "  The day the amendment takes effect.  "},
+    ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata, model_id="model-1")
+    assert asked["attributes"][0]["description"] == "The day the amendment takes effect."
+
+
+@pytest.mark.asyncio
+async def test_the_agent_chosen_for_a_field_is_recorded_with_its_evidence(
+        monkeypatch: pytest.MonkeyPatch, index_stubs):
+    async def extraction(**_kwargs):
+        return {"model": "gpt-test", "extractorVersion": "ai-attribute-v1",
+                "values": [{"key": "effective_date", "value": "2026-04-01",
+                            "evidenceReferences": ["section:7/block:9"]}],
+                "failed": []}
+
+    ai_stubs(monkeypatch, extraction)
+    result = await document.populate_document(object(), ai_amendment_entry(
+        *AI_DETERMINISTIC,
+        {"sourceField": "effective date", "targetAttribute": "effective_date", "mode": "extract",
+         "extractionStrategy": "ai", "agentId": "agent-7"},
+    ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata, model_id="model-1")
+    assertion = next(item for item in result["assertions"] if item["attribute"] == "effective_date")
+    assert assertion["evidence"]["requestedAgentId"] == "agent-7"

@@ -259,6 +259,10 @@ export interface SourceFieldMapping {
   computed?: ComputedFieldRule;
   // Only meaningful for mode='extract'; absent means deterministic.
   extractionStrategy?: SourceExtractionStrategy;
+  /** AI reading only: what the value means and what to look for; empty uses the attribute's description. */
+  semanticDefinition?: string;
+  /** AI reading only: the agent asked to read the field; absent means the platform's extraction agent. */
+  agentId?: string;
   rules?: ExtractionRules;
 }
 

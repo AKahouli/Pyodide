@@ -279,6 +279,46 @@ describe('SemanticSourceMappingService boundaries', () => {
     expect(result.fields.title.rules.reason).toBe('label_not_found');
   });
 
+  it('tells the preview AI the field definition, or the attribute description when the field has none', async () => {
+    const database = { query: jest.fn()
+      .mockResolvedValueOnce({ rows: [{}] })
+      .mockResolvedValueOnce({ rows: [{ label: 'Amendment', attributes: [
+        { key: 'number', label: 'Contract number', type: 'text', description: 'The reference of the contract' },
+        { key: 'title', label: 'Title', type: 'text', description: 'Attribute description' }] }] }) };
+    const models = { requireActiveRole: jest.fn().mockResolvedValue({ id: 'model-1', currentDraftVersionId: 'version-1' }) };
+    const documents = { findById: jest.fn().mockResolvedValue({ id: 'document-1', mimeType: 'application/pdf', originalName: 'a.pdf', size: 10, indexingStatus: 'ready' }) };
+    const runtime = { previewDocumentFields: jest.fn().mockResolvedValue({ status: 'read', aiSent: null, fields: {} }) };
+    const agent = { resolveAgent: jest.fn().mockResolvedValue({ slug: 'semantic-field-extraction', llmModel: 'gpt' }) };
+    const service = new SemanticSourceMappingService(database as never, models as never, documents as never,
+      runtime as never, {} as never, undefined, agent as never, undefined);
+
+    await service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
+      fieldMappings: [
+        { sourceField: null, targetAttribute: 'number', mode: 'extract', extractionStrategy: 'ai' },
+        { sourceField: null, targetAttribute: 'title', mode: 'extract', extractionStrategy: 'ai',
+          semanticDefinition: '  The amendment heading, not the contract name  ', agentId: 'agent-7' }],
+      identityFields: ['number'],
+    });
+
+    const [number, title] = runtime.previewDocumentFields.mock.calls[0][0].entry.fieldMappings;
+    expect(number.description).toBe('The reference of the contract');
+    expect(title).toMatchObject({ description: 'The amendment heading, not the contract name', agentId: 'agent-7', valueType: 'text' });
+  });
+
+  it('rejects a semantic definition or an agent outside an extracted document field', async () => {
+    const { service, database } = buildService('text/csv');
+    database.query
+      .mockResolvedValueOnce({ rows: [{}] })
+      .mockResolvedValueOnce({ rows: [{ label: 'Customer', attributes: [{ key: 'id', label: 'ID', type: 'text', required: true }] }] });
+
+    await expect(service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1', assetKind: 'csv', sheetName: 'CSV',
+      fieldMappings: [{ sourceField: 'customer_id', targetAttribute: 'id', mode: 'direct', agentId: 'agent-7' }],
+      identityFields: ['customer_id'],
+    })).rejects.toThrow('semantic definition or an extraction agent');
+  });
+
   it('passes computed fields to the document preview and maps the found ones', async () => {
     const database = { query: jest.fn()
       .mockResolvedValueOnce({ rows: [{}] })
