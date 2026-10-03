@@ -654,7 +654,7 @@ class AgentRunner:
                         )
 
                         recorder.record_function_call(
-                            func_name, dict(part.function_call.args), tool_category
+                            func_name, dict(part.function_call.args or {}), tool_category
                         )
                         tool_args = dict(part.function_call.args or {})
                         presentation = present_tool_call(func_name, tool_args)
@@ -1270,7 +1270,7 @@ class AgentRunner:
         # Create specialized search event if applicable
         search_event = self.streaming_formatter.create_search_events_for_function(
             func_name,
-            dict(part.function_call.args),
+            dict(part.function_call.args or {}),
             agent_name,
             session_id,
             agent_id,

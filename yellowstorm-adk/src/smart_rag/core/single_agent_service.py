@@ -140,7 +140,7 @@ class SingleAgentService:
                     # Handle function calls
                     if part.function_call:
                         func_name = part.function_call.name
-                        func_args = dict(part.function_call.args)
+                        func_args = dict(part.function_call.args or {})
 
                         # Stream function call info to client
                         func_output = self.streaming_formatter.format_streaming_event(
