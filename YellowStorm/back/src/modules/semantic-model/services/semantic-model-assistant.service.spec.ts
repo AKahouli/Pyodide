@@ -401,3 +401,21 @@ describe('SemanticModelAssistantService', () => {
     expect(result.notes).toEqual(['These records have no links of the kind asked for.']);
   });
 });
+
+describe('SemanticModelAssistantService deleteModel', () => {
+  it('refuses unless the exact model name is repeated', async () => {
+    const { service, models } = setup();
+    Object.assign(models, { deletePermanently: jest.fn() });
+    await expect(service.deleteModel('user-1', 'model-1', 'billing')).rejects.toMatchObject({ status: 400 });
+    await expect(service.deleteModel('user-1', 'model-1', undefined)).rejects.toMatchObject({ status: 400 });
+    expect((models as unknown as { deletePermanently: jest.Mock }).deletePermanently).not.toHaveBeenCalled();
+  });
+
+  it('deletes the model when the name matches', async () => {
+    const { service, models } = setup();
+    const deletePermanently = jest.fn().mockResolvedValue(undefined);
+    Object.assign(models, { deletePermanently });
+    await expect(service.deleteModel('user-1', 'model-1', 'Billing')).resolves.toEqual({ deleted: true, modelId: 'model-1', name: 'Billing' });
+    expect(deletePermanently).toHaveBeenCalledWith('user-1', 'model-1');
+  });
+});

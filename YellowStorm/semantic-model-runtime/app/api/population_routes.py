@@ -11,7 +11,7 @@ import json
 import logging
 import os
 
-from fastapi import APIRouter, Header, HTTPException, Path, Query, Request, status
+from fastapi import APIRouter, Header, HTTPException, Path, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.graph_search.indexer import request_index_quietly
@@ -313,6 +313,39 @@ async def purge_model_data(model_id: str, command: PurgeModelDataCommand,
             logger.warning("Could not drop graph %s of model %s: %s", graph, model_id,
                            type(exc).__name__)
     return {**result, "projectionsDropped": dropped}
+
+
+@router.delete("/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_model(model_id: str, request: Request) -> Response:
+    """Delete everything the runtime holds for a model: data, review items, search index,
+    jobs, specifications and its graphs. Idempotent; refused while one of its jobs runs.
+    Source documents belong to workspaces and are never touched."""
+    if not model_id or len(model_id) > 200:
+        raise HTTPException(status_code=422, detail="invalid_model_id")
+    pool = getattr(request.app.state, "population_pool", None)
+    if pool is None:
+        raise HTTPException(status_code=503, detail="population_store_unavailable")
+    try:
+        result = await store.delete_model(pool, model_id)
+    except store.ModelJobsRunning as exc:
+        raise HTTPException(status_code=409, detail="model_jobs_running") from exc
+    age_pool = getattr(request.app.state, "age_pool", None)
+    failed = 0
+    for ref in result["projections"]:
+        if age_pool is None or not is_live_projection_ref(ref):
+            continue
+        graph = ref[len(LIVE_PROJECTION_PREFIX):]
+        try:
+            async with age_pool.acquire() as connection:
+                if await projection_exists(connection, graph):
+                    await drop_projection(connection, graph)
+        except Exception as exc:  # noqa: BLE001 - the rows are already gone
+            failed += 1
+            logger.warning("Could not drop graph %s of deleted model %s: %s", graph, model_id,
+                           type(exc).__name__)
+    logger.info("Deleted runtime data of model %s: %s (graphs not dropped: %d)",
+                model_id, result["deleted"], failed)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/revisions/{revision_id}/project", status_code=status.HTTP_200_OK)

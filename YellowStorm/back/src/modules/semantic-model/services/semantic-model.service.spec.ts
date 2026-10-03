@@ -1,4 +1,4 @@
-import { NotFoundException } from '@modules/exceptions';
+import { ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { SemanticModelService } from './semantic-model.service';
 
@@ -108,5 +108,45 @@ describe('SemanticModelService clone', () => {
     expect(graphRepository.apply).toHaveBeenCalledTimes(6);
     expect(graphRepository.apply.mock.calls[2][3].entity.sourceNodeTypeId).not.toBe('node-a');
     expect(graphRepository.apply.mock.calls[5][3].entity.sourceRecordId).not.toBe('record-a');
+  });
+});
+
+describe('SemanticModelService permanent delete', () => {
+  const repository = { findAccessible: jest.fn() };
+  const runtime = { deleteModel: jest.fn() };
+  const queries: string[] = [];
+  const client = { query: jest.fn(async (sql: string) => { queries.push(sql); return { rows: [], rowCount: 1 }; }) };
+  const database = { transaction: jest.fn(async (work: (c: typeof client) => Promise<unknown>) => work(client)) };
+  const service = new SemanticModelService(database as never, repository as never, {} as never, {} as never, {} as never, runtime as never);
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    queries.length = 0;
+  });
+
+  it('lets only the owner delete', async () => {
+    repository.findAccessible.mockResolvedValue({ id: 'model-id', role: 'editor', status: 'draft' });
+    await expect(service.deletePermanently('user-id', 'model-id')).rejects.toMatchObject({ status: 403 });
+    expect(runtime.deleteModel).not.toHaveBeenCalled();
+    expect(database.transaction).not.toHaveBeenCalled();
+  });
+
+  it('purges the runtime first, then deletes every row of the model here', async () => {
+    repository.findAccessible.mockResolvedValue({ id: 'model-id', role: 'owner', status: 'archived' });
+    const order: string[] = [];
+    runtime.deleteModel.mockImplementation(async () => { order.push('runtime'); return true; });
+    database.transaction.mockImplementationOnce(async (work) => { order.push('back'); return work(client); });
+    await service.deletePermanently('user-id', 'model-id');
+    expect(order).toEqual(['runtime', 'back']);
+    expect(runtime.deleteModel).toHaveBeenCalledWith('model-id', 'user-id');
+    expect(queries.at(-1)).toContain('DELETE FROM semantic_model.models WHERE id=$1');
+    expect(queries.findIndex((q) => q.includes('relation_types'))).toBeLessThan(queries.findIndex((q) => q.includes('node_types')));
+  });
+
+  it('keeps the model when a job is still running in the runtime', async () => {
+    repository.findAccessible.mockResolvedValue({ id: 'model-id', role: 'owner', status: 'draft' });
+    runtime.deleteModel.mockRejectedValue(new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT, 'job running'));
+    await expect(service.deletePermanently('user-id', 'model-id')).rejects.toMatchObject({ status: 409 });
+    expect(database.transaction).not.toHaveBeenCalled();
   });
 });

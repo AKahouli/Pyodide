@@ -196,3 +196,39 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
     await expect(client.previewComputedField(body)).rejects.toMatchObject({ message: expect.stringContaining('invalid_computed') });
   });
 });
+
+describe('SemanticRuntimeClientService deleteModel', () => {
+  let fetchMock: jest.Mock;
+  beforeEach(() => {
+    fetchMock = jest.fn();
+    global.fetch = fetchMock as unknown as typeof fetch;
+  });
+
+  it('sends a service-key DELETE for the model', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const client = new SemanticRuntimeClientService(config() as any);
+    await expect(client.deleteModel('m 1', 'u1')).resolves.toBe(true);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://runtime:8000/v1/semantic-model-population/models/m%201');
+    expect(init.method).toBe('DELETE');
+    expect(init.headers).toEqual(expect.objectContaining({ 'X-Semantic-Service-Key': 'secret', 'X-Actor-User-Id': 'u1' }));
+  });
+
+  it('turns a running job into a clear 409', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'model_jobs_running' }), { status: 409 }));
+    const client = new SemanticRuntimeClientService(config() as any);
+    await expect(client.deleteModel('m1', 'u1')).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('fails closed when the runtime cannot purge', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('boom', { status: 500 }));
+    const client = new SemanticRuntimeClientService(config() as any);
+    await expect(client.deleteModel('m1', 'u1')).rejects.toMatchObject({ status: 503 });
+  });
+
+  it('skips when no runtime is configured', async () => {
+    const client = new SemanticRuntimeClientService(config({ runtimeEnabled: false }) as any);
+    await expect(client.deleteModel('m1', 'u1')).resolves.toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

@@ -562,3 +562,41 @@ def test_purge_waits_for_a_running_build(client: TestClient, monkeypatch: pytest
     response = client.post("/v1/semantic-model-population/models/m1/purge", headers=AUTH, json={})
     assert response.status_code == 409
     assert response.json()["detail"] == "population_running"
+
+
+def test_delete_model_drops_its_graphs_and_returns_no_content(client: TestClient,
+                                                              monkeypatch: pytest.MonkeyPatch):
+    from app.persistence import population_store as store
+
+    seen: list[str] = []
+
+    async def delete(pool, model_id):  # type: ignore[no-untyped-def]
+        seen.append(model_id)
+        return {"modelId": model_id, "deleted": {},
+                "projections": ["age:v1:pop_dr_a", "age:v1:pop_dr_gone"]}
+
+    monkeypatch.setattr(store, "delete_model", delete)
+    graphs = _GraphsPool({"pop_dr_a"})
+    _inject(client, ScriptedPool([]), graphs)
+    response = client.delete("/v1/semantic-model-population/models/m1", headers=AUTH)
+    assert response.status_code == 204
+    assert seen == ["m1"]
+    assert len(graphs.dropped) == 1 and "pop_dr_a" in graphs.dropped[0]
+
+
+def test_delete_model_refuses_while_a_job_runs(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    from app.persistence import population_store as store
+
+    async def delete(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise store.ModelJobsRunning("m1")
+
+    monkeypatch.setattr(store, "delete_model", delete)
+    _inject(client, ScriptedPool([]))
+    response = client.delete("/v1/semantic-model-population/models/m1", headers=AUTH)
+    assert response.status_code == 409
+    assert response.json()["detail"] == "model_jobs_running"
+
+
+def test_delete_model_needs_the_service_key(client: TestClient):
+    _inject(client, ScriptedPool([]))
+    assert client.delete("/v1/semantic-model-population/models/m1").status_code in (401, 403)

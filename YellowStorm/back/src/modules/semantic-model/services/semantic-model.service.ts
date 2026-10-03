@@ -169,6 +169,31 @@ export class SemanticModelService {
     });
   }
 
+  /**
+   * Delete a model for good: its runtime data first, then every row of it here, in one transaction.
+   *
+   * Order: the runtime purge is idempotent and refuses (409) while a build or index job of the model
+   * runs, so it goes first; nothing is deleted here unless it succeeded. Should the deletion here then
+   * fail, the model stays with no data and can simply be deleted again; the reverse order would
+   * leave runtime rows no model points to any more. Workspace documents are never touched.
+   */
+  async deletePermanently(userId: string, modelId: string): Promise<void> {
+    const model = await this.requireRole(userId, modelId, ['owner']);
+    await this.runtime.deleteModel(model.id, userId);
+    await this.database.transaction(async (client) => {
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [model.id]);
+      // Rows that point at concepts and relations without cascading go first; every other table
+      // keyed by the model (versions, links, bindings, mappings, shares, review, history, grants…)
+      // cascades from the model row.
+      await client.query('DELETE FROM semantic_model.record_relations WHERE model_id=$1', [model.id]);
+      await client.query('DELETE FROM semantic_model.records WHERE model_id=$1', [model.id]);
+      await client.query('DELETE FROM semantic_model.relation_types WHERE model_id=$1', [model.id]);
+      await client.query('DELETE FROM semantic_model.node_types WHERE model_id=$1', [model.id]);
+      await client.query('DELETE FROM semantic_model.models WHERE id=$1', [model.id]);
+    });
+    this.logger.log(`Semantic model ${model.id} deleted permanently by ${userId}`);
+  }
+
   async clone(userId: string, modelId: string, name: string): Promise<SemanticModelRow> {
     const source = await this.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     const versionId = source.currentDraftVersionId ?? source.currentPublishedVersionId;

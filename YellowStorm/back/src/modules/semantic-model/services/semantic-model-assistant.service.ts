@@ -294,6 +294,17 @@ export class SemanticModelAssistantService {
     };
   }
 
+  /** Delete a model for good (owner only), once its exact name is repeated. Workspace documents stay. */
+  async deleteModel(userId: string, modelId: string, confirmName: string | undefined) {
+    const model = await this.models.get(userId, modelId);
+    if ((confirmName ?? '').trim() !== model.name.trim()) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+        'confirm_name must be the exact model name; ask the user to confirm the permanent deletion first');
+    }
+    await this.models.deletePermanently(userId, model.id);
+    return { deleted: true, modelId: model.id, name: model.name };
+  }
+
   async createModel(actor: AssistantActor, name: string, description?: string) {
     const model = await this.models.create(actor.userId, { name, description });
     return { modelId: model.id, name: model.name, model: this.modelRef(model), editorPath: this.editorPath(model.id), uiTarget: this.uiTarget(model) };

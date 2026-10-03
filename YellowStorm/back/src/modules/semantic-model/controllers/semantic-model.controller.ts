@@ -96,7 +96,15 @@ export class SemanticModelController {
     return this.models.update(user._id.toString(),modelId,dto);
   }
 
+  /** Delete the model and all its data for good (owner only). Workspace documents stay. */
   @Delete(':modelId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_DELETE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  deletePermanently(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
+    return this.models.deletePermanently(user._id.toString(),modelId);
+  }
+
+  @Post(':modelId/archive')
   @HttpCode(HttpStatus.NO_CONTENT)
   @RequirePermissions([Permissions.SEMANTIC_MODELS_DELETE,Permissions.SEMANTIC_MODELS_ALL],'any')
   archive(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: ExpectedModelRevisionDto) {

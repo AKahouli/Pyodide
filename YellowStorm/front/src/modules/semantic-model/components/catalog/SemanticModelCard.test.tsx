@@ -20,6 +20,10 @@ vi.mock('../../api', () => ({
   },
 }));
 
+vi.mock('./DeleteSemanticModelDialog', () => ({
+  DeleteSemanticModelDialog: ({ open }: { open: boolean }) => (open ? <div>delete-dialog-open</div> : null),
+}));
+
 vi.mock('./ShareSemanticModelDialog', () => ({
   ShareSemanticModelDialog: () => null,
 }));
@@ -39,12 +43,12 @@ const model = {
   brokenBindingCount: 0,
 };
 
-function renderCard() {
+function renderCard(overrides: Record<string, unknown> = {}) {
   const client = new QueryClient();
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <SemanticModelCard model={{ ...model } as never} />
+        <SemanticModelCard model={{ ...model, ...overrides } as never} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -77,5 +81,19 @@ describe('SemanticModelCard rename', () => {
     await userEvent.click(screen.getByRole('button', { name: 'catalog.rename.button' }));
     expect(await screen.findByRole('button', { name: 'catalog.rename.submit' })).toBeDisabled();
     expect(semanticModelApi.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('SemanticModelCard delete', () => {
+  it('opens the delete dialog from the trash button for the owner', async () => {
+    renderCard();
+    await userEvent.click(screen.getByRole('button', { name: 'deleteModel.button' }));
+    expect(screen.getByText('delete-dialog-open')).toBeInTheDocument();
+  });
+
+  it('disables the trash button for other roles', () => {
+    renderCard({ role: 'editor' });
+    expect(screen.getByRole('button', { name: 'deleteModel.button' })).toBeDisabled();
+    expect(screen.getByTitle('deleteModel.ownerOnly')).toBeInTheDocument();
   });
 });

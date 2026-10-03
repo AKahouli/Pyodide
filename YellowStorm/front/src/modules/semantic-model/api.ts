@@ -45,7 +45,9 @@ export const semanticModelApi = {
   async update(id: string, payload: { expectedRevision: number; name?: string; description?: string }): Promise<SemanticModel> {
     return unwrap(await apiClient.patch<ApiResponse<SemanticModel>>(API_ENDPOINTS.semanticModels.byId(id), payload));
   },
-  async archive(id: string): Promise<void> { const model = await semanticModelApi.get(id); await apiClient.delete(API_ENDPOINTS.semanticModels.byId(id), { data: { expectedRevision: model.revision } }); },
+  async archive(id: string): Promise<void> { const model = await semanticModelApi.get(id); await apiClient.post(`${API_ENDPOINTS.semanticModels.byId(id)}/archive`, { expectedRevision: model.revision }); },
+  /** Delete the model and all its data for good (owner only); workspace documents stay. */
+  async deletePermanently(id: string): Promise<void> { await apiClient.delete(API_ENDPOINTS.semanticModels.byId(id)); },
   async clone(id: string, name: string): Promise<SemanticModel> {
     return unwrap(await apiClient.post<ApiResponse<SemanticModel>>(API_ENDPOINTS.semanticModels.clone(id), { name }));
   },

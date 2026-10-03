@@ -663,6 +663,33 @@ export class SemanticRuntimeClientService {
     });
   }
 
+  /**
+   * Delete everything the runtime holds for a model (data, review items, search index, jobs,
+   * specifications, graphs). Idempotent. A job still running for the model comes back as a 409.
+   * Returns false when no runtime is configured at all: then it holds nothing for the model.
+   */
+  async deleteModel(modelId: string, actorUserId: string): Promise<boolean> {
+    if (!this.config.runtimeEnabled) return false;
+    const base = this.requireWrites();
+    let res: Response;
+    try {
+      res = await fetch(`${base}/v1/semantic-model-population/models/${encodeURIComponent(modelId)}`, {
+        method: 'DELETE',
+        headers: { 'X-Semantic-Service-Key': this.config.runtimeServiceKey, 'X-Actor-User-Id': actorUserId },
+        signal: AbortSignal.timeout(this.config.runtimeRequestTimeoutMs),
+      });
+    } catch {
+      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    }
+    if (res.ok) return true;
+    if (res.status === 409) {
+      throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT,
+        'A build or index job is still running for this model. Wait for it to finish or cancel it, then delete again.');
+    }
+    throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
+      'The model data could not be deleted from the semantic runtime; nothing was deleted, try again.');
+  }
+
   async requestDatasourceDiscovery(
     command: RuntimeDiscoveryCommand,
     idempotencyKey: string,

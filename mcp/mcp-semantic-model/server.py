@@ -235,6 +235,12 @@ async def create_semantic_model(name: str, description: str | None = None) -> Se
     return await call(backend().post(f"{BASE}/models", require_acting_user_id(), compact({"name": name, "description": description})))
 
 
+@mcp.tool(annotations=DESTRUCTIVE)
+async def delete_semantic_model(model_id: str, confirm_name: str) -> SemanticModelMcpResultV1:
+    """PERMANENTLY delete a model and all its data (concepts, fields, source links, records, review items, search index, history). Cannot be undone; workspace documents stay. Only the owner can. First ask the user to confirm explicitly, then pass the model's exact name as confirm_name."""
+    return await call(backend().delete(with_query(f"{BASE}/models/{path_id(model_id)}", confirmName=confirm_name), require_acting_user_id()))
+
+
 @mcp.tool(annotations=READ_ONLY)
 async def get_semantic_model(model_id: str) -> SemanticModelMcpResultV1:
     """Describe a model: its concepts with fields and key fields, relationships, sources feeding each concept, and whether its data is up to date. No change is made."""

@@ -25,6 +25,7 @@ import {
   Undo2,
   Workflow,
   X,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useOptionalSidebar } from "@/components/ui/sidebar";
@@ -36,6 +37,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { DeleteSemanticModelDialog } from "../components/catalog/DeleteSemanticModelDialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { showError, showSuccess } from "@/lib/notifications";
 import { parseApiError } from "@/lib/api-error";
@@ -89,6 +91,7 @@ export function SemanticModelEditorPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const model = useSemanticModel(modelId);
+  const [deleteModelOpen, setDeleteModelOpen] = useState(false);
   const graphQuery = useSemanticGraph(modelId);
   const reviewQueue = useReviewQueue(modelId);
   const knowledge = useKnowledgeLinking(modelId);
@@ -715,6 +718,7 @@ export function SemanticModelEditorPage() {
             {reviewCount > 0 && <span className='ml-2 rounded-full bg-amber-500/15 px-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300' aria-label={t('reviewQueue.badge', { count: reviewCount })}>{reviewCount}</span>}
           </Button>
           <Button variant='ghost' size='sm' className={versionsOpen ? 'bg-muted' : undefined} aria-pressed={versionsOpen} onClick={() => (versionsOpen ? setVersionsOpen(false) : openVersions())} aria-label={t('designer.versions')} title={t('designer.versions')}><History className='h-4 w-4' /></Button>
+          {model.data?.role === 'owner' && <Button variant='ghost' size='sm' className='text-muted-foreground hover:text-destructive' onClick={() => setDeleteModelOpen(true)} aria-label={t('deleteModel.button')} title={t('deleteModel.button')}><Trash2 className='h-4 w-4' /></Button>}
           {canEdit && <Button variant='outline' size='sm' disabled={!populationJobId && !canValidate}
             // While a run goes on, the button shows it (with Stop) instead of starting another one.
             onClick={() => populationJobId
@@ -940,6 +944,8 @@ export function SemanticModelEditorPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {model.data?.role === 'owner' && <DeleteSemanticModelDialog model={model.data} open={deleteModelOpen} onOpenChange={setDeleteModelOpen}
+        onDeleted={() => navigate('/semantic-models', { replace: true })} />}
     </div>
   );
 }

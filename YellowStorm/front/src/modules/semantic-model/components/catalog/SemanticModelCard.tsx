@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, ArrowRight, Boxes, Copy, Database, FileText, Network, Pencil, Share2, Sparkles } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Boxes, Copy, Database, FileText, Network, Pencil, Share2, Sparkles, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
@@ -12,7 +12,9 @@ import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../../api';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
 import type { SemanticModel } from '../../types';
+import { DeleteSemanticModelDialog } from './DeleteSemanticModelDialog';
 import { ShareSemanticModelDialog } from './ShareSemanticModelDialog';
+import { DELETE_BUTTON } from '../form/FormParts';
 
 export function SemanticModelCard({ model }: Readonly<{ model: SemanticModel }>) {
   const { t } = useModuleTranslation('semantic-model');
@@ -25,6 +27,7 @@ export function SemanticModelCard({ model }: Readonly<{ model: SemanticModel }>)
   const [cloneOpen, setCloneOpen] = useState(false);
   const [cloneName, setCloneName] = useState(`${model.name} ${t('clone.copySuffix')}`.trim());
   const [renameOpen, setRenameOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [renameName, setRenameName] = useState(model.name);
   const queryClient = useQueryClient();
   const renameAction = useApiAction(
@@ -111,12 +114,20 @@ export function SemanticModelCard({ model }: Readonly<{ model: SemanticModel }>)
             <Copy className='mr-1.5 h-4 w-4' />
             {t('clone.button')}
           </Button>
+          {/* Only the owner deletes; others see why the button is off. */}
+          <span title={model.role === 'owner' ? t('deleteModel.button') : t('deleteModel.ownerOnly')}>
+            <Button variant='outline' size='icon' className={DELETE_BUTTON} aria-label={t('deleteModel.button')}
+              disabled={model.role !== 'owner'} onClick={() => setDeleteOpen(true)}>
+              <Trash2 className='h-4 w-4' />
+            </Button>
+          </span>
           <Button className='flex-1 justify-between' variant='ghost' onClick={() => navigate(`/semantic-models/${model.id}`)}>
             {t('catalog.open')}<ArrowRight className='h-4 w-4 transition group-hover:translate-x-1' />
           </Button>
         </CardFooter>
       </Card>
 
+      {model.role === 'owner' && <DeleteSemanticModelDialog model={model} open={deleteOpen} onOpenChange={setDeleteOpen} />}
       {isOwner && (
         <ShareSemanticModelDialog
           open={shareOpen}
