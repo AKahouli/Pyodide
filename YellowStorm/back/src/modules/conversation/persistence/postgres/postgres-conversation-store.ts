@@ -148,13 +148,13 @@ export class PostgresConversationStore implements ConversationStore {
       skillIds: sql<string[]>`COALESCE((SELECT array_agg(cs.skill_id ORDER BY cs.position) FROM conversation.conversation_selected_skills cs WHERE cs.conversation_id = ${schema.conversations.id}), ARRAY[]::bpchar[])`,
       taggedIds: sql<string[]>`COALESCE((SELECT array_agg(ca.agent_id ORDER BY ca.position) FROM conversation.conversation_tagged_agents ca WHERE ca.conversation_id = ${schema.conversations.id}), ARRAY[]::bpchar[])`,
       groupTaggedIds: sql<string[]>`COALESCE((SELECT array_agg(cga.agent_id ORDER BY cga.position) FROM conversation.conversation_group_tagged_agents cga WHERE cga.conversation_id = ${schema.conversations.id}), ARRAY[]::bpchar[])`,
-      memberRows: sql<Array<{
+      memberRows: sql<{
         userId: string;
         joinedAt: string;
         status: 'owner' | 'member';
         job: string | null;
-        mentions: Array<{ messageId: string; seenAt: string | null }>;
-      }>>`COALESCE((
+        mentions: { messageId: string; seenAt: string | null }[];
+      }[]>`COALESCE((
         SELECT jsonb_agg(jsonb_build_object(
           'userId', gm.user_id,
           'joinedAt', gm.joined_at,
@@ -169,12 +169,12 @@ export class PostgresConversationStore implements ConversationStore {
         FROM conversation.conversation_group_members gm
         WHERE gm.conversation_id = ${schema.conversations.id}
       ), '[]'::jsonb)`,
-      inviteRows: sql<Array<{
+      inviteRows: sql<{
         email: string;
         status: 'Confirmed' | 'Guest';
         invitedAt: string;
         job: string | null;
-      }>>`COALESCE((
+      }[]>`COALESCE((
         SELECT jsonb_agg(jsonb_build_object(
           'email', gi.email,
           'status', gi.status,
@@ -193,19 +193,19 @@ export class PostgresConversationStore implements ConversationStore {
       skillIds: string[];
       taggedIds: string[];
       groupTaggedIds: string[];
-      memberRows: Array<{
+      memberRows: {
         userId: string;
         joinedAt: string;
         status: 'owner' | 'member';
         job: string | null;
-        mentions: Array<{ messageId: string; seenAt: string | null }>;
-      }>;
-      inviteRows: Array<{
+        mentions: { messageId: string; seenAt: string | null }[];
+      }[];
+      inviteRows: {
         email: string;
         status: 'Confirmed' | 'Guest';
         invitedAt: string;
         job: string | null;
-      }>;
+      }[];
       activeShareCount: number;
     },
   ): ConversationRecord {
@@ -263,7 +263,7 @@ export class PostgresConversationStore implements ConversationStore {
   }
 
   private async hydrateMany(
-    rows: Array<typeof schema.conversations.$inferSelect>,
+    rows: typeof schema.conversations.$inferSelect[],
   ): Promise<ConversationRecord[]> {
     if (!rows.length) return [];
     const ids = rows.map((row) => row.id.trim());
@@ -358,13 +358,13 @@ export class PostgresConversationStore implements ConversationStore {
   private mapHydratedRow(
     row: typeof schema.conversations.$inferSelect,
     related: {
-      workspaces: Array<typeof schema.conversationWorkspaces.$inferSelect>;
-      skills: Array<typeof schema.conversationSelectedSkills.$inferSelect>;
-      tagged: Array<typeof schema.conversationTaggedAgents.$inferSelect>;
-      groupTagged: Array<typeof schema.conversationGroupTaggedAgents.$inferSelect>;
-      members: Array<typeof schema.conversationGroupMembers.$inferSelect>;
-      invites: Array<typeof schema.conversationGroupInvites.$inferSelect>;
-      mentions: Array<typeof schema.conversationMemberMentions.$inferSelect>;
+      workspaces: typeof schema.conversationWorkspaces.$inferSelect[];
+      skills: typeof schema.conversationSelectedSkills.$inferSelect[];
+      tagged: typeof schema.conversationTaggedAgents.$inferSelect[];
+      groupTagged: typeof schema.conversationGroupTaggedAgents.$inferSelect[];
+      members: typeof schema.conversationGroupMembers.$inferSelect[];
+      invites: typeof schema.conversationGroupInvites.$inferSelect[];
+      mentions: typeof schema.conversationMemberMentions.$inferSelect[];
     },
   ): ConversationRecord {
     const id = row.id.trim();
@@ -373,6 +373,8 @@ export class PostgresConversationStore implements ConversationStore {
       runtimeMode: row.runtimeMode as ConversationRecord['runtimeMode'],
       runtimePurpose: row.runtimePurpose as ConversationRecord['runtimePurpose'],
       pinnedAgentId: row.pinnedAgentId?.trim() ?? null,
+      rootAgentId: row.rootAgentId?.trim() ?? null,
+      rootWorkEpoch: row.rootWorkEpoch,
       platformCopilotCreationRequestId: row.platformCopilotCreationRequestId ?? undefined,
       governedCreationRequestId: row.governedCreationRequestId ?? undefined,
       title: row.title,
@@ -441,6 +443,7 @@ export class PostgresConversationStore implements ConversationStore {
         runtimeMode: input.runtimeMode ?? 'standard',
         runtimePurpose: input.runtimePurpose ?? 'chat',
         pinnedAgentId: input.pinnedAgentId,
+        rootAgentId: input.rootAgentId,
         platformCopilotCreationRequestId: input.platformCopilotCreationRequestId,
         governedCreationRequestId: input.governedCreationRequestId,
         governanceContext: input.governanceContext,
@@ -734,6 +737,7 @@ export class PostgresConversationStore implements ConversationStore {
         runtimeMode: schema.conversations.runtimeMode,
         runtimePurpose: schema.conversations.runtimePurpose,
         pinnedAgentId: schema.conversations.pinnedAgentId,
+        rootAgentId: schema.conversations.rootAgentId,
         createdAt: schema.conversations.createdAt,
         updatedAt: schema.conversations.updatedAt,
       })
@@ -749,6 +753,7 @@ export class PostgresConversationStore implements ConversationStore {
       createdBy: row.createdBy.trim(),
       projectId: row.projectId?.trim() ?? null,
       pinnedAgentId: row.pinnedAgentId?.trim() ?? null,
+      rootAgentId: row.rootAgentId?.trim() ?? null,
       runtimeMode: row.runtimeMode as ConversationRecord['runtimeMode'],
       runtimePurpose: row.runtimePurpose as ConversationRecord['runtimePurpose'],
       lastMessageAt: row.lastMessageAt ?? undefined,

@@ -8,6 +8,7 @@ import { AgentA2AController } from './controllers/agent-a2a.controller';
 import { AgentShareController } from './controllers/agent-share.controller';
 import { AgentCrudInternalController } from './controllers/agent-crud-internal.controller';
 import { AgentService } from './agent.service';
+import { RootPolicyService } from './services/root-policy.service';
 import { AgentShareService } from './services/agent-share.service';
 import { AgentConnectorRuntimeService } from './services/agent-connector-runtime.service';
 import { AgentPermissionGuard } from './guards/agent-permission.guard';
@@ -76,6 +77,7 @@ import { PgWidgetTokenStore } from '../widget-chat/persistence/pg-widget.store';
       inject: [TelegramChannelTeardown, WidgetChannelTeardown],
     },
     AgentService,
+    RootPolicyService,
     AgentShareService,
     AgentConnectorRuntimeService,
     AgentPermissionGuard,
@@ -84,6 +86,6 @@ import { PgWidgetTokenStore } from '../widget-chat/persistence/pg-widget.store';
     AgentTaskExecutionService,
     { provide: AGENT_TASK_EXECUTION, useExisting: AgentTaskExecutionService },
   ],
-  exports: [AgentService, AgentShareService, AgentConnectorRuntimeService, AgentPermissionGuard, PgAgentShareStore, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService, AGENT_TASK_EXECUTION],
+  exports: [AgentService, RootPolicyService, AgentShareService, AgentConnectorRuntimeService, AgentPermissionGuard, PgAgentShareStore, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService, AGENT_TASK_EXECUTION],
 })
 export class AgentModule {}

@@ -12,6 +12,12 @@ export const conversations = conversationSchema.table(
     runtimeMode: varchar('runtime_mode', { length: 20 }).notNull().default('standard'),
     runtimePurpose: varchar('runtime_purpose', { length: 30 }).notNull().default('chat'),
     pinnedAgentId: char('pinned_agent_id', { length: 24 }),
+    // Root binding (WP01), separate from platform-copilot pinning: the bound
+    // root for standard untagged conversations. epoch fences cancellation and
+    // admission for root work (WP03/WP08); it increments under the control
+    // lock when Stop-all runs.
+    rootAgentId: char('root_agent_id', { length: 24 }),
+    rootWorkEpoch: integer('root_work_epoch').notNull().default(0),
     platformCopilotCreationRequestId: text('platform_copilot_creation_request_id'),
     governedCreationRequestId: text('governed_creation_request_id'),
     title: varchar('title', { length: 200 }).notNull().default('New Conversation'),

@@ -1,307 +1,314 @@
 {
-  "version": "7",
-  "dialect": "postgresql",
-  "entries": [
-    {
-      "idx": 0,
-      "version": "7",
-      "when": 1785916711240,
-      "tag": "0000_agents_init",
-      "breakpoints": true
-    },
-    {
-      "idx": 1,
-      "version": "7",
-      "when": 1785916711241,
-      "tag": "0001_agent_role_embedding",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "7",
-      "when": 1787227200000,
-      "tag": "0002_platform_copilot_identity",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "7",
-      "when": 1787263200000,
-      "tag": "0003_platform_copilot_agent_slug",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "7",
-      "when": 1787306574328,
-      "tag": "0004_platform_copilot_agent_type_slug",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "7",
-      "when": 1788071920611,
-      "tag": "0005_conversation",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "7",
-      "when": 1788091200000,
-      "tag": "0006_conversation_scalability",
-      "breakpoints": true
-    },
-    {
-      "idx": 7,
-      "version": "7",
-      "when": 1788177600000,
-      "tag": "0007_conversation_latency_metrics",
-      "breakpoints": true
-    },
-    {
-      "idx": 8,
-      "version": "7",
-      "when": 1788780169077,
-      "tag": "0008_agent_reasoning_effort",
-      "breakpoints": true
-    },
-    {
-      "idx": 9,
-      "version": "7",
-      "when": 1788818236176,
-      "tag": "0009_conversation_turn_order_fix",
-      "breakpoints": true
-    },
-    {
-      "idx": 10,
-      "version": "7",
-      "when": 1788950400000,
-      "tag": "0010_conversation_execution_state",
-      "breakpoints": true
-    },
-    {
-      "idx": 11,
-      "version": "7",
-      "when": 1788950500000,
-      "tag": "0011_conversation_executions",
-      "breakpoints": true
-    },
-    {
-      "idx": 12,
-      "version": "7",
-      "when": 1789132471601,
-      "tag": "0012_conversation_direct_share_recipients",
-      "breakpoints": true
-    },
-    {
-      "idx": 13,
-      "version": "7",
-      "when": 1789214400000,
-      "tag": "0013_conversation_usage",
-      "breakpoints": true
-    },
-    {
-      "idx": 14,
-      "version": "7",
-      "when": 1789220000000,
-      "tag": "0014_conversation_usage_metrics",
-      "breakpoints": true
-    },
-    {
-      "idx": 15,
-      "version": "7",
-      "when": 1789221000000,
-      "tag": "0015_conversation_carbon_baseline",
-      "breakpoints": true
-    },
-    {
-      "idx": 16,
-      "version": "7",
-      "when": 1789746000000,
-      "tag": "0016_app_builder_ai_usage_windows",
-      "breakpoints": true
-    },
-    {
-      "idx": 17,
-      "version": "7",
-      "when": 1789785600000,
-      "tag": "0016_project",
-      "breakpoints": true
-    },
-    {
-      "idx": 18,
-      "version": "7",
-      "when": 1789785700000,
-      "tag": "0017_workspace_artifacts",
-      "breakpoints": true
-    },
-    {
-      "idx": 19,
-      "version": "7",
-      "when": 1789785800000,
-      "tag": "0018_workspace",
-      "breakpoints": true
-    },
-    {
-      "idx": 20,
-      "version": "7",
-      "when": 1789785900000,
-      "tag": "0019_governance",
-      "breakpoints": true
-    },
-    {
-      "idx": 21,
-      "version": "7",
-      "when": 1789871000000,
-      "tag": "0020_fk_actions_and_missing_indexes",
-      "breakpoints": true
-    },
-    {
-      "idx": 22,
-      "version": "7",
-      "when": 1789871100000,
-      "tag": "0021_identity",
-      "breakpoints": true
-    },
-    {
-      "idx": 23,
-      "version": "7",
-      "when": 1789871200000,
-      "tag": "0022_catalog_ops",
-      "breakpoints": true
-    },
-    {
-      "idx": 24,
-      "version": "7",
-      "when": 1789871300000,
-      "tag": "0023_integrations",
-      "breakpoints": true
-    },
-    {
-      "idx": 25,
-      "version": "7",
-      "when": 1789871400000,
-      "tag": "0024_agent_ecosystem",
-      "breakpoints": true
-    },
-    {
-      "idx": 26,
-      "version": "7",
-      "when": 1790019745486,
-      "tag": "0025_cross_schema_fks",
-      "statements": []
-    },
-    {
-      "idx": 27,
-      "version": "7",
-      "when": 1790100000000,
-      "tag": "0026_conversation_v2",
-      "breakpoints": true
-    },
-    {
-      "idx": 28,
-      "version": "7",
-      "when": 1790200000000,
-      "tag": "0027_app_builder_ai_offers",
-      "breakpoints": true
-    },
-    {
-      "idx": 29,
-      "version": "7",
-      "when": 1790300000000,
-      "tag": "0028_app_runtime",
-      "breakpoints": true
-    },
-    {
-      "idx": 30,
-      "version": "7",
-      "when": 1790400000000,
-      "tag": "0029_telegram_evolutions",
-      "breakpoints": true
-    },
-    {
-      "idx": 31,
-      "version": "7",
-      "when": 1790600000000,
-      "tag": "0031_agent_evaluation",
-      "breakpoints": true
-    },
-    {
-      "idx": 32,
-      "version": "7",
-      "when": 1790784000000,
-      "tag": "0026_model_drop_params",
-      "breakpoints": true
-    },
-    {
-      "idx": 33,
-      "version": "7",
-      "when": 1790790000000,
-      "tag": "0032_drop_whatsapp_channels",
-      "breakpoints": true
-    },
-    {
-      "idx": 34,
-      "version": "7",
-      "when": 1790800000000,
-      "tag": "0033_knowledge_intelligence",
-      "breakpoints": true
-    },
-    {
-      "idx": 35,
-      "version": "7",
-      "when": 1790900000000,
-      "tag": "0034_classifier",
-      "breakpoints": true
-    },
-    {
-      "idx": 36,
-      "version": "7",
-      "when": 1791000000000,
-      "tag": "0035_integration_events",
-      "breakpoints": true
-    },
-    {
-      "idx": 37,
-      "version": "7",
-      "when": 1791100000000,
-      "tag": "0036_logs",
-      "breakpoints": true
-    },
-    {
-      "idx": 38,
-      "version": "7",
-      "when": 1791200000000,
-      "tag": "0037_conversation_app_runtime_fks",
-      "breakpoints": true
-    },
-    {
-      "idx": 39,
-      "version": "7",
-      "when": 1791300000000,
-      "tag": "0038_worky",
-      "breakpoints": true
-    },
-    {
-      "idx": 40,
-      "version": "7",
-      "when": 1791400000000,
-      "tag": "0039_fk_leading_indexes",
-      "breakpoints": true
-    },
-    {
-      "idx": 41,
-      "version": "7",
-      "when": 1791500000000,
-      "tag": "0040_playbook",
-      "breakpoints": true
-    },
-    {
-      "idx": 42,
-      "version": "7",
-      "when": 1791600000000,
-      "tag": "0041_classifier_runs_playbook_fk",
-      "breakpoints": true
-    }
-  ]
+	"version": "7",
+	"dialect": "postgresql",
+	"entries": [
+		{
+			"idx": 0,
+			"version": "7",
+			"when": 1785916711240,
+			"tag": "0000_agents_init",
+			"breakpoints": true
+		},
+		{
+			"idx": 1,
+			"version": "7",
+			"when": 1785916711241,
+			"tag": "0001_agent_role_embedding",
+			"breakpoints": true
+		},
+		{
+			"idx": 2,
+			"version": "7",
+			"when": 1787227200000,
+			"tag": "0002_platform_copilot_identity",
+			"breakpoints": true
+		},
+		{
+			"idx": 3,
+			"version": "7",
+			"when": 1787263200000,
+			"tag": "0003_platform_copilot_agent_slug",
+			"breakpoints": true
+		},
+		{
+			"idx": 4,
+			"version": "7",
+			"when": 1787306574328,
+			"tag": "0004_platform_copilot_agent_type_slug",
+			"breakpoints": true
+		},
+		{
+			"idx": 5,
+			"version": "7",
+			"when": 1788071920611,
+			"tag": "0005_conversation",
+			"breakpoints": true
+		},
+		{
+			"idx": 6,
+			"version": "7",
+			"when": 1788091200000,
+			"tag": "0006_conversation_scalability",
+			"breakpoints": true
+		},
+		{
+			"idx": 7,
+			"version": "7",
+			"when": 1788177600000,
+			"tag": "0007_conversation_latency_metrics",
+			"breakpoints": true
+		},
+		{
+			"idx": 8,
+			"version": "7",
+			"when": 1788780169077,
+			"tag": "0008_agent_reasoning_effort",
+			"breakpoints": true
+		},
+		{
+			"idx": 9,
+			"version": "7",
+			"when": 1788818236176,
+			"tag": "0009_conversation_turn_order_fix",
+			"breakpoints": true
+		},
+		{
+			"idx": 10,
+			"version": "7",
+			"when": 1788950400000,
+			"tag": "0010_conversation_execution_state",
+			"breakpoints": true
+		},
+		{
+			"idx": 11,
+			"version": "7",
+			"when": 1788950500000,
+			"tag": "0011_conversation_executions",
+			"breakpoints": true
+		},
+		{
+			"idx": 12,
+			"version": "7",
+			"when": 1789132471601,
+			"tag": "0012_conversation_direct_share_recipients",
+			"breakpoints": true
+		},
+		{
+			"idx": 13,
+			"version": "7",
+			"when": 1789214400000,
+			"tag": "0013_conversation_usage",
+			"breakpoints": true
+		},
+		{
+			"idx": 14,
+			"version": "7",
+			"when": 1789220000000,
+			"tag": "0014_conversation_usage_metrics",
+			"breakpoints": true
+		},
+		{
+			"idx": 15,
+			"version": "7",
+			"when": 1789221000000,
+			"tag": "0015_conversation_carbon_baseline",
+			"breakpoints": true
+		},
+		{
+			"idx": 16,
+			"version": "7",
+			"when": 1789746000000,
+			"tag": "0016_app_builder_ai_usage_windows",
+			"breakpoints": true
+		},
+		{
+			"idx": 17,
+			"version": "7",
+			"when": 1789785600000,
+			"tag": "0016_project",
+			"breakpoints": true
+		},
+		{
+			"idx": 18,
+			"version": "7",
+			"when": 1789785700000,
+			"tag": "0017_workspace_artifacts",
+			"breakpoints": true
+		},
+		{
+			"idx": 19,
+			"version": "7",
+			"when": 1789785800000,
+			"tag": "0018_workspace",
+			"breakpoints": true
+		},
+		{
+			"idx": 20,
+			"version": "7",
+			"when": 1789785900000,
+			"tag": "0019_governance",
+			"breakpoints": true
+		},
+		{
+			"idx": 21,
+			"version": "7",
+			"when": 1789871000000,
+			"tag": "0020_fk_actions_and_missing_indexes",
+			"breakpoints": true
+		},
+		{
+			"idx": 22,
+			"version": "7",
+			"when": 1789871100000,
+			"tag": "0021_identity",
+			"breakpoints": true
+		},
+		{
+			"idx": 23,
+			"version": "7",
+			"when": 1789871200000,
+			"tag": "0022_catalog_ops",
+			"breakpoints": true
+		},
+		{
+			"idx": 24,
+			"version": "7",
+			"when": 1789871300000,
+			"tag": "0023_integrations",
+			"breakpoints": true
+		},
+		{
+			"idx": 25,
+			"version": "7",
+			"when": 1789871400000,
+			"tag": "0024_agent_ecosystem",
+			"breakpoints": true
+		},
+		{
+			"idx": 26,
+			"version": "7",
+			"when": 1790019745486,
+			"tag": "0025_cross_schema_fks",
+			"statements": []
+		},
+		{
+			"idx": 27,
+			"version": "7",
+			"when": 1790100000000,
+			"tag": "0026_conversation_v2",
+			"breakpoints": true
+		},
+		{
+			"idx": 28,
+			"version": "7",
+			"when": 1790200000000,
+			"tag": "0027_app_builder_ai_offers",
+			"breakpoints": true
+		},
+		{
+			"idx": 29,
+			"version": "7",
+			"when": 1790300000000,
+			"tag": "0028_app_runtime",
+			"breakpoints": true
+		},
+		{
+			"idx": 30,
+			"version": "7",
+			"when": 1790400000000,
+			"tag": "0029_telegram_evolutions",
+			"breakpoints": true
+		},
+		{
+			"idx": 31,
+			"version": "7",
+			"when": 1790600000000,
+			"tag": "0031_agent_evaluation",
+			"breakpoints": true
+		},
+		{
+			"idx": 32,
+			"version": "7",
+			"when": 1790784000000,
+			"tag": "0026_model_drop_params",
+			"breakpoints": true
+		},
+		{
+			"idx": 33,
+			"version": "7",
+			"when": 1790790000000,
+			"tag": "0032_drop_whatsapp_channels",
+			"breakpoints": true
+		},
+		{
+			"idx": 34,
+			"version": "7",
+			"when": 1790800000000,
+			"tag": "0033_knowledge_intelligence",
+			"breakpoints": true
+		},
+		{
+			"idx": 35,
+			"version": "7",
+			"when": 1790900000000,
+			"tag": "0034_classifier",
+			"breakpoints": true
+		},
+		{
+			"idx": 36,
+			"version": "7",
+			"when": 1791000000000,
+			"tag": "0035_integration_events",
+			"breakpoints": true
+		},
+		{
+			"idx": 37,
+			"version": "7",
+			"when": 1791100000000,
+			"tag": "0036_logs",
+			"breakpoints": true
+		},
+		{
+			"idx": 38,
+			"version": "7",
+			"when": 1791200000000,
+			"tag": "0037_conversation_app_runtime_fks",
+			"breakpoints": true
+		},
+		{
+			"idx": 39,
+			"version": "7",
+			"when": 1791300000000,
+			"tag": "0038_worky",
+			"breakpoints": true
+		},
+		{
+			"idx": 40,
+			"version": "7",
+			"when": 1791400000000,
+			"tag": "0039_fk_leading_indexes",
+			"breakpoints": true
+		},
+		{
+			"idx": 41,
+			"version": "7",
+			"when": 1791500000000,
+			"tag": "0040_playbook",
+			"breakpoints": true
+		},
+		{
+			"idx": 42,
+			"version": "7",
+			"when": 1791600000000,
+			"tag": "0041_classifier_runs_playbook_fk",
+			"breakpoints": true
+		},
+		{
+			"idx": 43,
+			"version": "7",
+			"when": 1791700000000,
+			"tag": "0042_root_execution_policy",
+			"breakpoints": true
+		}
+	]
 }

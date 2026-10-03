@@ -41,13 +41,13 @@ const AGENT_TEMPLATE_STRIP_FIELDS = new Set([
 ]);
 
 /** Subset of agent fields surfaced on populated org-chart members. */
-type MemberAgentInfo = {
+interface MemberAgentInfo {
   id: string;
   name: string;
   agentType: { id: string; name: string; slug: string };
   role: string;
   description: string;
-};
+}
 
 /**
  * Teams are user-owned groups of agents organised as a hierarchy (org-chart).
@@ -128,6 +128,14 @@ export class TeamService {
    * Accessible to the owner and to users it has been shared with (read/write);
    * for shared viewers, agent details are loaded without an ownership filter.
    */
+  /** Existence/activity check for root-delegation allowlists (WP01) — no ownership semantics. */
+  async findTeamBasicById(teamId: string): Promise<{ id: string; isActive: boolean } | null> {
+    if (!isObjectId(teamId)) return null;
+    const team = await this.teamStore.findById(teamId);
+    if (!team) return null;
+    return { id: team.id, isActive: team.isActive };
+  }
+
   async findUserTeamById(userId: string, teamId: string): Promise<ITeamWithAgentsResponse> {
     if (!isObjectId(teamId)) {
       throw new NotFoundException(ErrorCode.TEAM_NOT_FOUND);
@@ -257,7 +265,7 @@ export class TeamService {
    */
   async generateTeam(userId: string, dto: GenerateTeamDto): Promise<ITeamWithAgentsResponse> {
     const config = await this.autoBuilderConfigService.getConfig();
-    if (!config || !config.isEnabled) {
+    if (!config?.isEnabled) {
       throw new BadRequestException(ErrorCode.TEAM_AUTO_BUILDER_NOT_CONFIGURED);
     }
 
@@ -316,8 +324,8 @@ export class TeamService {
     }
 
     let parsed: {
-      newAgents: Array<{ tempId: string; [key: string]: unknown }>;
-      members: Array<{ agentId: string; parentAgentId: string | null; order: number }>;
+      newAgents: { tempId: string; [key: string]: unknown }[];
+      members: { agentId: string; parentAgentId: string | null; order: number }[];
     };
     try {
       parsed = this.parseAiResponse(aiContent);
@@ -470,9 +478,9 @@ export class TeamService {
 
   private buildOutputFormatInstruction(
     agentTemplate: string,
-    agentTypes: Array<{ id: string; name: string; slug: string }>,
-    tools: Array<{ id: string; name: string; description: string }>,
-    models: Array<{ id: string; name: string }>,
+    agentTypes: { id: string; name: string; slug: string }[],
+    tools: { id: string; name: string; description: string }[],
+    models: { id: string; name: string }[],
   ): string {
     const agentTypeList = agentTypes
       .map((t) => `  - ID: "${t.id}", Name: "${t.name}", Slug: "${t.slug}"`)
@@ -531,8 +539,8 @@ Rules:
   }
 
   private parseAiResponse(content: string): {
-    newAgents: Array<{ tempId: string; [key: string]: unknown }>;
-    members: Array<{ agentId: string; parentAgentId: string | null; order: number }>;
+    newAgents: { tempId: string; [key: string]: unknown }[];
+    members: { agentId: string; parentAgentId: string | null; order: number }[];
   } {
     let jsonStr = content.trim();
     const fencedContent = this.extractMarkdownCodeFenceContent(jsonStr);
@@ -581,7 +589,7 @@ Rules:
   async resolveExecutionDefinition(userId: string, teamId: string): Promise<TeamExecutionDefinition> {
     if (!isObjectId(teamId)) throw new NotFoundException(ErrorCode.TEAM_NOT_FOUND);
     const team = await this.teamStore.findById(teamId);
-    if (!team || !team.isActive) throw new NotFoundException(ErrorCode.TEAM_NOT_FOUND);
+    if (!team?.isActive) throw new NotFoundException(ErrorCode.TEAM_NOT_FOUND);
 
     if (team.createdBy !== userId) {
       const permission = await this.teamShareService.getSharePermission(userId, teamId);
@@ -722,7 +730,7 @@ Rules:
     return result;
   }
 
-  private detectCycle(members: Array<{ agentId: string; parentAgentId?: string | null }>): boolean {
+  private detectCycle(members: { agentId: string; parentAgentId?: string | null }[]): boolean {
     const parentMap = new Map<string, string | null>();
     for (const m of members) {
       parentMap.set(m.agentId, m.parentAgentId ?? null);
@@ -808,7 +816,7 @@ Rules:
     if ('members' in team && 'createdBy' in team && !('agentIds' in team)) {
       return (team as TeamRow).members;
     }
-    const members = (team as Record<string, unknown>).members as TeamMemberRow[] | undefined;
+    const members = (team).members as TeamMemberRow[] | undefined;
     if (members && members.length > 0) return members;
     const legacy = team.agentIds as string[] | undefined;
     if (legacy && legacy.length > 0) {
@@ -846,7 +854,7 @@ Rules:
     const base = this.toResponse(team);
     return {
       ...base,
-      members: base.members.map((m) => ({ ...m, agent: agentMap.get(m.agentId) } as ITeamMemberWithAgentResponse)),
+      members: base.members.map((m) => ({ ...m, agent: agentMap.get(m.agentId) })),
     };
   }
 

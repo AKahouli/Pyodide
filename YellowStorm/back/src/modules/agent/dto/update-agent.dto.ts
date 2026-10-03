@@ -16,6 +16,7 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { AgentConnectorActionSelectionDto } from './connector-action-selection.dto';
 import { AgentDeploymentSettingsDto, AgentGuardrailsDto } from './create-agent.dto';
+import { RootExecutionPolicyDto } from './root-execution-policy.dto';
 
 export class UpdateAgentDto {
   @ApiPropertyOptional({ description: 'Agent name (alphanumeric and spaces)', minLength: 2, maxLength: 50 })
@@ -154,4 +155,22 @@ export class UpdateAgentDto {
   @Min(1)
   @Max(8)
   max_temporary_child_agents?: number;
+
+  @ApiPropertyOptional({ description: 'Root-delegation policy (mono-agent roots only). Omit to leave unchanged.' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => RootExecutionPolicyDto)
+  rootExecutionPolicy?: RootExecutionPolicyDto;
+
+  @ApiPropertyOptional({ description: 'Direct specialist ids the root may delegate to' })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  delegateAgentIds?: string[];
+
+  @ApiPropertyOptional({ description: 'Team ids whose members feed the root delegation pool' })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  delegateTeamIds?: string[];
 }

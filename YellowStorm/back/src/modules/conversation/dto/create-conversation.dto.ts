@@ -57,4 +57,9 @@ export class CreateConversationDto {
   @IsOptional()
   @IsMongoId()
   projectId?: string;
+
+  @ApiPropertyOptional({ description: 'Root agent id to bind at creation (mono-agent roots only)' })
+  @IsOptional()
+  @IsMongoId()
+  rootAgentId?: string;
 }

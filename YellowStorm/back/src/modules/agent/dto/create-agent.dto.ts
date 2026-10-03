@@ -17,6 +17,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { AgentConnectorActionSelectionDto } from './connector-action-selection.dto';
 import { AgentWidgetSettingsDto } from './widget-settings.dto';
+import { RootExecutionPolicyDto } from './root-execution-policy.dto';
 
 export class PromptInjectionGuardrailsDto {
   @ApiPropertyOptional({ description: 'Enable input prompt injection guardrail', default: false })
@@ -242,4 +243,25 @@ export class CreateAgentDto {
   @Min(1)
   @Max(8)
   max_temporary_child_agents?: number;
+
+  @ApiPropertyOptional({
+    description: 'Root-delegation policy (mono-agent roots only). Presence enrolls the agent as a root.',
+    type: RootExecutionPolicyDto,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => RootExecutionPolicyDto)
+  rootExecutionPolicy?: RootExecutionPolicyDto;
+
+  @ApiPropertyOptional({ description: 'Direct specialist ids the root may delegate to' })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  delegateAgentIds?: string[];
+
+  @ApiPropertyOptional({ description: 'Team ids whose members feed the root delegation pool' })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  delegateTeamIds?: string[];
 }

@@ -62,6 +62,11 @@ CREATE TABLE IF NOT EXISTS agents (
   max_temporary_child_agents    smallint     NOT NULL DEFAULT 4
                                   CHECK (max_temporary_child_agents BETWEEN 1 AND 8),
 
+  -- Root-delegation policy (WP01). NULL = not enrolled as a root; only
+  -- mono-agent records may carry one (service validated). See the jsonb
+  -- shape documented at the bottom of this file.
+  root_execution_policy         jsonb,
+
   -- Flags
   is_default                    boolean      NOT NULL DEFAULT false,
   is_active                     boolean      NOT NULL DEFAULT true,
@@ -196,3 +201,41 @@ CREATE INDEX IF NOT EXISTS idx_agent_connector_actions_connector_id ON agent_con
 --     "widget":       object | null   -- free-form Record<string, unknown>
 --   }
 -- =============================================================================
+
+-- =============================================================================
+-- WP01 root delegation: allowlist junctions + policy jsonb shape
+-- =============================================================================
+
+-- Agent.rootDelegateAgentIds[] — direct specialist allowlist of an enrolled
+-- root. Membership alone is not authorization (resolver re-checks grants).
+CREATE TABLE IF NOT EXISTS agent_root_delegate_agents (
+  root_agent_id     object_id NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  delegate_agent_id object_id NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  PRIMARY KEY (root_agent_id, delegate_agent_id)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_root_delegate_agents_delegate ON agent_root_delegate_agents (delegate_agent_id);
+
+-- Agent.rootDelegateTeamIds[] — source Teams whose members feed the pool.
+-- No FK to teams.teams: a deleted Team only stops supplying members.
+CREATE TABLE IF NOT EXISTS agent_root_delegate_teams (
+  root_agent_id object_id NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  team_id       object_id NOT NULL,
+  PRIMARY KEY (root_agent_id, team_id)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_root_delegate_teams_team ON agent_root_delegate_teams (team_id);
+
+-- root_execution_policy jsonb shape (documented, not enforced; version 1):
+--   {
+--     "version": 1,
+--     "delegation":  { "enabled": boolean, "defaultConfigurationMode": "native" | "root_constrained" },
+--     "temporaryWorkers": { "enabled": boolean, "maxPerWorkGroup": number },
+--     "fanout":      { "enabled": boolean, "maxItems": number, "allowBackground": boolean },
+--     "background":  { "enabled": boolean, "maxOutstandingPerConversation": number,
+--                      "taskTimeoutSeconds": number, "maxAttempts": number },
+--     "limits":      { "maxDepth": 1, "maxParallelWorkers": number,
+--                      "maxChildExecutionsPerWorkGroup": number,
+--                      "maxWorkGroupDurationSeconds": number }
+--   }
+-- Per-agent configuration-mode overrides live with the allowlist selection in
+-- the API payload and are stored inside this policy object under
+-- "perAgentModeOverrides": [{ "agentId", "configurationMode" }].

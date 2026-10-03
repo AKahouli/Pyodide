@@ -46,6 +46,7 @@ describe('AgentService.findHumainAgentsPublic', () => {
       {} as never, // agentShareService
       {} as never, // guardrailsSettingsService
       agentRepository as never,
+      { isEligibleRootType: jest.fn(() => true), requireEligibleRootType: jest.fn(), normalizePolicy: jest.fn(), validateAllowlist: jest.fn() } as never, // rootPolicyService
       { reindexHumainRole: jest.fn() } as never, // agentRoleEmbedding
     );
     return { service, agentRepository, agentTypeService };
@@ -115,7 +116,9 @@ describe('AgentService.resolveHumainByIds', () => {
     const service = new AgentService(
       logger as never, {} as never, {} as never, {} as never, {} as never, {} as never,
       {} as never, {} as never, {} as never, {} as never, {} as never, {} as never,
-      agentRepository as never, { reindexHumainRole: jest.fn() } as never,
+      agentRepository as never,
+      { isEligibleRootType: jest.fn(() => true), requireEligibleRootType: jest.fn(), normalizePolicy: jest.fn(), validateAllowlist: jest.fn() } as never,
+      { reindexHumainRole: jest.fn() } as never,
     );
     return { service, agentRepository };
   };

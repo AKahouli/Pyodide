@@ -1,3 +1,4 @@
+import { ForbiddenException, NotFoundException } from '../exceptions';
 import { ConfigService } from '@nestjs/config';
 import { Types } from 'mongoose';
 import { AgentService } from './agent.service';
@@ -93,6 +94,7 @@ describe('AgentService connector skill inheritance', () => {
       findByIds: jest.fn().mockResolvedValue([]),
       findByIdsForUser: jest.fn().mockResolvedValue([]),
       findDefaultByType: jest.fn().mockResolvedValue(null),
+      findPersonalDefaultByType: jest.fn().mockResolvedValue(null),
       findDefaultByNameActive: jest.fn().mockResolvedValue(null),
       findActiveDefaults: jest.fn().mockResolvedValue([]),
       findActiveDefaultsByTypeSlug: jest.fn().mockResolvedValue([]),
@@ -195,6 +197,7 @@ describe('AgentService connector skill inheritance', () => {
       agentShareService as any,
       guardrailsSettingsService as any,
       agentRepository as any,
+      { isEligibleRootType: jest.fn(() => true), requireEligibleRootType: jest.fn(), normalizePolicy: jest.fn(), validateAllowlist: jest.fn() } as any,
       agentRoleEmbedding as any,
       [],
       new AgentConnectorRuntimeService(
@@ -487,7 +490,7 @@ describe('AgentService connector skill inheritance', () => {
     const result = await service.buildAgentsForStream(userId, undefined, ['designer-agent'], undefined, undefined, undefined, undefined,
       { conversationId: 'conversation-1', correlationId: 'message-1' });
 
-    const bindings = JSON.parse(result[0].agent_params?.params.connector_bindings_json as string) as Array<{ connector_slug: string; auth_headers?: Record<string, string> }>;
+    const bindings = JSON.parse(result[0].agent_params?.params.connector_bindings_json as string) as { connector_slug: string; auth_headers?: Record<string, string> }[];
     expect(bindings.find((binding) => binding.connector_slug === 'semantic-models')?.auth_headers).toEqual(expect.objectContaining({
       'X-YellowStorm-User-Id': userId, 'X-YellowStorm-Agent-Id': 'designer-agent', 'X-Correlation-Id': 'message-1',
     }));
@@ -546,7 +549,7 @@ describe('AgentService connector skill inheritance', () => {
       const params = result[0].agent_params?.params ?? {};
       expect(params.semantic_model_id).toBe('model-1');
       expect(params).not.toHaveProperty('semantic_model_schema_name');
-      const bindings = JSON.parse(params.connector_bindings_json as string) as Array<Record<string, any>>;
+      const bindings = JSON.parse(params.connector_bindings_json as string) as Record<string, any>[];
       const search = bindings.find((binding) => binding.connector_slug === 'mcp-semantic-search');
       expect(search).toBeDefined();
       expect(search!.actions.map((action: { action_key: string }) => action.action_key)).toEqual(['find_records', 'get_related_records']);
@@ -1359,5 +1362,81 @@ describe('AgentService connector skill inheritance', () => {
       reserved._id,
       expect.objectContaining({ instruction: 'Admin-managed instruction' }),
     );
+  });
+});
+
+describe('AgentService root binding resolution (WP01)', () => {
+  const userId = 'user-1';
+  const monoTypeId = '507f1f77bcf86cd799439011';
+
+  const createService = () => {
+    const agentRepository = {
+      findById: jest.fn().mockResolvedValue(null),
+      findPersonalDefaultByType: jest.fn().mockResolvedValue(null),
+      findDefaultByType: jest.fn().mockResolvedValue(null),
+    };
+    const agentTypeService = { findAllActive: jest.fn().mockResolvedValue([
+      { id: monoTypeId, name: 'Mono Agent', slug: 'mono-agent', isActive: true },
+    ]) };
+    const service = new AgentService(
+      { setContext: jest.fn(), log: jest.fn(), debug: jest.fn(), warn: jest.fn() } as never,
+      {} as never, agentTypeService as never, {} as never, {} as never, {} as never, {} as never,
+      {} as never, {} as never, {} as never, {} as never, {} as never,
+      agentRepository as never,
+      { isEligibleRootType: (slug: string) => slug.toLowerCase().replace(/[-_\s]+/g, '_') === 'mono_agent',
+        requireEligibleRootType: jest.fn(), normalizePolicy: jest.fn(), validateAllowlist: jest.fn() } as never,
+      { reindexHumainRole: jest.fn() } as never,
+    );
+    return { service, agentRepository, agentTypeService };
+  };
+
+  const root = (over: Partial<AgentRecord> = {}): AgentRecord => ({
+    _id: 'root-1', name: 'Root', slug: 'root', agentType: monoTypeId, agentTypeSlug: 'mono-agent',
+    role: '', description: '', temperature: 0, instruction: '', ignorePrePrompt: false,
+    knowledgeBases: [], tools: [], skills: [], disabledSkills: [], connectors: [],
+    connectorActionSelections: [], guardrails: {}, deploymentSettings: {},
+    enable_temporary_child_agents: false, max_temporary_child_agents: 4,
+    isDefault: false, isActive: true, isDefaultForType: false, createdBy: userId,
+    a2aPublished: false, createdAt: new Date(), updatedAt: new Date(), ...over,
+  });
+
+  it('binds an explicit own root; rejects unknown or ineligible selections (A03/A08)', async () => {
+    const { service, agentRepository } = createService();
+    agentRepository.findById.mockResolvedValue(root());
+    await expect(service.resolveRootForConversation(userId, 'root-1')).resolves.toEqual(
+      expect.objectContaining({ _id: 'root-1' }),
+    );
+    agentRepository.findById.mockResolvedValue(null);
+    await expect(service.resolveRootForConversation(userId, 'missing'))
+      .rejects.toBeInstanceOf(NotFoundException);
+    agentRepository.findById.mockResolvedValue(root({ agentTypeSlug: 'humain' }));
+    await expect(service.resolveRootForConversation(userId, 'root-1'))
+      .rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('forbids an explicit non-owned, non-default selection', async () => {
+    const { service, agentRepository } = createService();
+    agentRepository.findById.mockResolvedValue(root({ createdBy: 'someone-else' }));
+    await expect(service.resolveRootForConversation(userId, 'root-1'))
+      .rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('prefers the personal default, then the administrator default (A01/A02)', async () => {
+    const { service, agentRepository } = createService();
+    agentRepository.findPersonalDefaultByType.mockResolvedValue(root({ _id: 'personal-root' }));
+    await expect(service.resolveRootForConversation(userId)).resolves.toEqual(
+      expect.objectContaining({ _id: 'personal-root' }),
+    );
+    expect(agentRepository.findPersonalDefaultByType).toHaveBeenCalledWith(userId, monoTypeId);
+    expect(agentRepository.findDefaultByType).not.toHaveBeenCalled();
+
+    agentRepository.findPersonalDefaultByType.mockResolvedValue(null);
+    agentRepository.findDefaultByType.mockResolvedValue(root({ _id: 'admin-root', isDefault: true }));
+    await expect(service.resolveRootForConversation(userId)).resolves.toEqual(
+      expect.objectContaining({ _id: 'admin-root' }),
+    );
+
+    agentRepository.findDefaultByType.mockResolvedValue(null);
+    await expect(service.resolveRootForConversation(userId)).resolves.toBeNull();
   });
 });

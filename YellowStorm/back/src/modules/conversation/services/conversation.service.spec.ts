@@ -86,6 +86,7 @@ describe('ConversationService neutral persistence', () => {
       {} as never,
       emailService as never,
       agentRepository as never,
+      { resolveRootForConversation: jest.fn().mockResolvedValue(null) } as never,
       featureVisibility as never,
       {
         hasAccess: jest.fn().mockResolvedValue(false),
@@ -265,6 +266,20 @@ describe('ConversationService neutral persistence', () => {
         'Yellowmind is currently unavailable',
       );
       expect(agentRepository.findActiveDefaultIdBySlugAndType).not.toHaveBeenCalled();
+    });
+
+    it('binds the resolved root agent on standard creation (WP01)', async () => {
+      const ownerId = new Types.ObjectId().toString();
+      const rootId = new Types.ObjectId().toString();
+      conversationStore.create.mockImplementation(async (input) => record(input));
+      (service as any).agentService.resolveRootForConversation.mockResolvedValue({ _id: rootId });
+
+      await service.create(ownerId, {});
+
+      expect((service as any).agentService.resolveRootForConversation).toHaveBeenCalledWith(ownerId, undefined);
+      expect(conversationStore.create).toHaveBeenCalledWith(
+        expect.objectContaining({ rootAgentId: rootId }),
+      );
     });
 
     it('creates distinct conversations idempotently by creation request', async () => {
@@ -464,6 +479,7 @@ describe('ConversationService neutral persistence', () => {
         workspaceDocumentService as never,
         emailService as never,
         agentRepository as never,
+        { resolveRootForConversation: jest.fn().mockResolvedValue(null) } as never,
         featureVisibility as never,
         {} as never,
         pool as never,

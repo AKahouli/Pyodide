@@ -8,7 +8,9 @@ export interface AgentJunctions {
   disabledSkills: string[];
   connectors: string[];
   knowledgeBases: string[];
-  connectorActions: Array<{ connectorId: string; actionKeys: string[] }>;
+  connectorActions: { connectorId: string; actionKeys: string[] }[];
+  delegateAgents: string[];
+  delegateTeams: string[];
 }
 
 export interface AgentRecord {
@@ -30,11 +32,14 @@ export interface AgentRecord {
   skills: string[];
   disabledSkills: string[];
   connectors: string[];
-  connectorActionSelections: Array<{ connector: string; actionKeys: string[] }>;
+  connectorActionSelections: { connector: string; actionKeys: string[] }[];
   guardrails: Record<string, unknown>;
   deploymentSettings: Record<string, unknown>;
   enable_temporary_child_agents: boolean;
   max_temporary_child_agents: number;
+  rootExecutionPolicy?: Record<string, unknown>;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
   isDefault: boolean;
   isActive: boolean;
   isDefaultForType: boolean;
@@ -81,6 +86,9 @@ export function rowToRecord(row: AgentRow, j: AgentJunctions): AgentRecord {
     deploymentSettings: (row.deploymentSettings as Record<string, unknown>) ?? {},
     enable_temporary_child_agents: row.enableTemporaryChildAgents,
     max_temporary_child_agents: row.maxTemporaryChildAgents,
+    rootExecutionPolicy: (row.rootExecutionPolicy as Record<string, unknown>) ?? undefined,
+    delegateAgentIds: j.delegateAgents.map(trim24),
+    delegateTeamIds: j.delegateTeams.map(trim24),
     isDefault: row.isDefault,
     isActive: row.isActive,
     isDefaultForType: row.isDefaultForType,

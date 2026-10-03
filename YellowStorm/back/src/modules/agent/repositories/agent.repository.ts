@@ -8,6 +8,7 @@ import { AgentRecord, AgentJunctions, rowToRecord, trim24 } from './agent-record
 const {
   agents, agentTools, agentSkills, agentDisabledSkills,
   agentConnectors, agentKnowledgeBases, agentConnectorActions,
+  agentRootDelegateAgents, agentRootDelegateTeams,
 } = schema;
 
 export interface CreateAgentInput {
@@ -29,11 +30,14 @@ export interface CreateAgentInput {
   skills: string[];
   disabledSkills: string[];
   connectors: string[];
-  connectorActionSelections: Array<{ connectorId: string; actionKeys: string[] }>;
+  connectorActionSelections: { connectorId: string; actionKeys: string[] }[];
   guardrails: Record<string, unknown>;
   deploymentSettings: Record<string, unknown>;
   enable_temporary_child_agents: boolean;
   max_temporary_child_agents: number;
+  rootExecutionPolicy?: Record<string, unknown> | null;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
   isDefault: boolean;
   isActive: boolean;
   isDefaultForType: boolean;
@@ -52,12 +56,15 @@ export interface UpdateAgentInput {
   description?: string; temperature?: number; llmModel?: string | null; reasoningEffort?: string | null; email?: string | null;
   instruction?: string; ignorePrePrompt?: boolean;
   enable_temporary_child_agents?: boolean; max_temporary_child_agents?: number;
+  rootExecutionPolicy?: Record<string, unknown> | null;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
   isDefault?: boolean; isActive?: boolean; isDefaultForType?: boolean;
   guardrails?: Record<string, unknown>; deploymentSettings?: Record<string, unknown>;
   a2aPublished?: boolean; a2aAgentId?: string | null; a2aAgentCardUrl?: string | null;
   a2aApiKeyHeader?: string | null; a2aPublishedAt?: Date | null;
   tools?: string[]; skills?: string[]; disabledSkills?: string[]; connectors?: string[];
-  knowledgeBases?: string[]; connectorActionSelections?: Array<{ connectorId: string; actionKeys: string[] }>;
+  knowledgeBases?: string[]; connectorActionSelections?: { connectorId: string; actionKeys: string[] }[];
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -165,6 +172,17 @@ export class AgentRepository {
     return this.one(and(eq(agents.agentTypeId, agentTypeId), eq(agents.isDefault, true), eq(agents.isActive, true))!);
   }
 
+  /** Owner-scoped default (isDefaultForType) — the personal default root. */
+  async findPersonalDefaultByType(userId: string, agentTypeId: string): Promise<AgentRecord | null> {
+    return this.one(and(
+      eq(agents.createdBy, userId),
+      eq(agents.agentTypeId, agentTypeId),
+      eq(agents.isDefaultForType, true),
+      eq(agents.isDefault, false),
+      eq(agents.isActive, true),
+    )!);
+  }
+
   async findDefaultByNameActive(name: string): Promise<AgentRecord | null> {
     return this.one(and(sql`lower(${agents.name}) = lower(${name})`, eq(agents.isDefault, true), eq(agents.isActive, true))!);
   }
@@ -266,11 +284,12 @@ export class AgentRepository {
 
     await this.db.transaction(async (tx: Tx) => {
       const set: Record<string, unknown> = { updatedAt: new Date() };
-      const scalarMap: Array<[keyof UpdateAgentInput, string]> = [
+      const scalarMap: [keyof UpdateAgentInput, string][] = [
         ['name', 'name'], ['slug', 'slug'], ['agentType', 'agentTypeId'], ['agentTypeSlug', 'agentTypeSlug'],
         ['role', 'role'], ['description', 'description'], ['temperature', 'temperature'], ['llmModel', 'llmModel'],
         ['reasoningEffort', 'reasoningEffort'], ['email', 'email'], ['instruction', 'instruction'], ['ignorePrePrompt', 'ignorePrePrompt'],
         ['enable_temporary_child_agents', 'enableTemporaryChildAgents'], ['max_temporary_child_agents', 'maxTemporaryChildAgents'],
+        ['rootExecutionPolicy', 'rootExecutionPolicy'],
         ['isDefault', 'isDefault'], ['isActive', 'isActive'], ['isDefaultForType', 'isDefaultForType'],
         ['guardrails', 'guardrails'], ['deploymentSettings', 'deploymentSettings'],
         ['a2aPublished', 'a2aPublished'], ['a2aAgentId', 'a2aAgentId'], ['a2aAgentCardUrl', 'a2aAgentCardUrl'],
@@ -344,7 +363,7 @@ export class AgentRepository {
   private async insertJunctions(
     tx: Tx,
     agentId: string,
-    j: Pick<CreateAgentInput, 'tools' | 'skills' | 'disabledSkills' | 'connectors' | 'knowledgeBases' | 'connectorActionSelections'>,
+    j: Pick<CreateAgentInput, 'tools' | 'skills' | 'disabledSkills' | 'connectors' | 'knowledgeBases' | 'connectorActionSelections' | 'delegateAgentIds' | 'delegateTeamIds'>,
   ): Promise<void> {
     if (j.tools.length) await tx.insert(agentTools).values(dedupe(j.tools).map((toolId) => ({ agentId, toolId })));
     if (j.skills.length) await tx.insert(agentSkills).values(dedupe(j.skills).map((skillId) => ({ agentId, skillId })));
@@ -354,6 +373,12 @@ export class AgentRepository {
     const actions = (j.connectorActionSelections || []).filter((a) => a.connectorId && a.actionKeys?.length);
     if (actions.length) {
       await tx.insert(agentConnectorActions).values(actions.map((a) => ({ agentId, connectorId: a.connectorId, actionKeys: a.actionKeys })));
+    }
+    if (j.delegateAgentIds?.length) {
+      await tx.insert(agentRootDelegateAgents).values(dedupe(j.delegateAgentIds).map((delegateAgentId) => ({ rootAgentId: agentId, delegateAgentId })));
+    }
+    if (j.delegateTeamIds?.length) {
+      await tx.insert(agentRootDelegateTeams).values(dedupe(j.delegateTeamIds).map((teamId) => ({ rootAgentId: agentId, teamId })));
     }
   }
 
@@ -382,6 +407,18 @@ export class AgentRepository {
       await tx.delete(agentConnectorActions).where(eq(agentConnectorActions.agentId, agentId));
       const actions = patch.connectorActionSelections.filter((a) => a.connectorId && a.actionKeys?.length);
       if (actions.length) await tx.insert(agentConnectorActions).values(actions.map((a) => ({ agentId, connectorId: a.connectorId, actionKeys: a.actionKeys })));
+    }
+    if (patch.delegateAgentIds !== undefined) {
+      await tx.delete(agentRootDelegateAgents).where(eq(agentRootDelegateAgents.rootAgentId, agentId));
+      if (patch.delegateAgentIds.length) {
+        await tx.insert(agentRootDelegateAgents).values(dedupe(patch.delegateAgentIds).map((delegateAgentId) => ({ rootAgentId: agentId, delegateAgentId })));
+      }
+    }
+    if (patch.delegateTeamIds !== undefined) {
+      await tx.delete(agentRootDelegateTeams).where(eq(agentRootDelegateTeams.rootAgentId, agentId));
+      if (patch.delegateTeamIds.length) {
+        await tx.insert(agentRootDelegateTeams).values(dedupe(patch.delegateTeamIds).map((teamId) => ({ rootAgentId: agentId, teamId })));
+      }
     }
   }
 
@@ -412,13 +449,15 @@ export class AgentRepository {
     ids.forEach((id) => map.set(id, emptyJunctions()));
     if (ids.length === 0) return map;
 
-    const [tools, skills, disabled, connectors, kbs, actions] = await Promise.all([
+    const [tools, skills, disabled, connectors, kbs, actions, delegateAgents, delegateTeams] = await Promise.all([
       this.db.select().from(agentTools).where(inArray(agentTools.agentId, ids)),
       this.db.select().from(agentSkills).where(inArray(agentSkills.agentId, ids)),
       this.db.select().from(agentDisabledSkills).where(inArray(agentDisabledSkills.agentId, ids)),
       this.db.select().from(agentConnectors).where(inArray(agentConnectors.agentId, ids)),
       this.db.select().from(agentKnowledgeBases).where(inArray(agentKnowledgeBases.agentId, ids)),
       this.db.select().from(agentConnectorActions).where(inArray(agentConnectorActions.agentId, ids)),
+      this.db.select().from(agentRootDelegateAgents).where(inArray(agentRootDelegateAgents.rootAgentId, ids)),
+      this.db.select().from(agentRootDelegateTeams).where(inArray(agentRootDelegateTeams.rootAgentId, ids)),
     ]);
     for (const t of tools) map.get(trim24(t.agentId))!.tools.push(trim24(t.toolId));
     for (const s of skills) map.get(trim24(s.agentId))!.skills.push(trim24(s.skillId));
@@ -426,12 +465,14 @@ export class AgentRepository {
     for (const c of connectors) map.get(trim24(c.agentId))!.connectors.push(trim24(c.connectorId));
     for (const w of kbs) map.get(trim24(w.agentId))!.knowledgeBases.push(trim24(w.workspaceId));
     for (const a of actions) map.get(trim24(a.agentId))!.connectorActions.push({ connectorId: trim24(a.connectorId), actionKeys: a.actionKeys });
+    for (const d of delegateAgents) map.get(trim24(d.rootAgentId))!.delegateAgents.push(trim24(d.delegateAgentId));
+    for (const t of delegateTeams) map.get(trim24(t.rootAgentId))!.delegateTeams.push(trim24(t.teamId));
     return map;
   }
 }
 
 function emptyJunctions(): AgentJunctions {
-  return { tools: [], skills: [], disabledSkills: [], connectors: [], knowledgeBases: [], connectorActions: [] };
+  return { tools: [], skills: [], disabledSkills: [], connectors: [], knowledgeBases: [], connectorActions: [], delegateAgents: [], delegateTeams: [] };
 }
 function dedupe(v: string[]): string[] {
   return [...new Set(v)];
