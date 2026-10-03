@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 import { Background, BaseEdge, Controls, EdgeLabelRenderer, Handle, MarkerType, NodeToolbar, Position, ReactFlow, getBezierPath, type Connection, type Edge, type EdgeProps, type Node, type NodeChange, type NodeProps, type ReactFlowInstance } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { BookOpen, Briefcase, Check, FileStack, FileText, FolderOpen, KeyRound, Keyboard, Library, PanelRight, Plus, Sheet, Tag, Trash2, X } from 'lucide-react';
+import { BookOpen, Briefcase, Check, FileStack, FileText, FolderOpen, KeyRound, Keyboard, Library, PanelRight, Pencil, Plus, Sheet, Tag, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -216,6 +216,7 @@ const SourceNode = memo(function SourceNode({ data,selected }: NodeProps<Node<So
       {source.tone!=='idle'&&<span className={cn('absolute -right-0.5 -top-0.5 h-4 w-4 rounded-full border-2 border-background',source.tone==='ok'?'bg-emerald-500':'bg-amber-500')} role='img' aria-label={t(`designer.tone.${source.tone}`)} />}
       <Handle type='source' position={Position.Right} isConnectable={false} className='!h-2 !w-2 !border-0 !bg-teal-500' />
     </div>
+    {data.onOpen&&source.kind!=='typed'&&<button type='button' className='nodrag nopan absolute left-2 top-[26px] z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 border-teal-500/60 bg-background text-teal-600 opacity-70 transition hover:scale-110 hover:opacity-100 dark:text-teal-400' onClick={(event)=>{event.stopPropagation();data.onOpen?.(source);}} aria-label={t('designer.editSource',{name:title})} title={t('designer.editSource',{name:title})}><Pencil className='h-3.5 w-3.5' /></button>}
     {data.onAddFeed&&source.kind!=='typed'&&<button type='button' className='nodrag nopan absolute right-2 top-[26px] z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 border-teal-500/60 bg-background text-teal-600 opacity-70 transition hover:scale-110 hover:opacity-100 dark:text-teal-400' onClick={(event)=>{event.stopPropagation();data.onAddFeed?.(source);}} aria-label={t('designer.plus.feed',{name:title})} title={t('designer.plus.feed',{name:title})}><Plus className='h-4 w-4' /></button>}
     <div className='mt-3 w-full text-center'><p className='truncate text-sm font-semibold' title={title}>{title}</p><p className='truncate text-[11px] text-muted-foreground'>{detail}</p></div>
     {recordInputOpen&&typedConceptId&&<div className='absolute left-0 right-0 top-full z-20 mt-2 rounded-xl border bg-card p-3 shadow-xl'><QuickRecordForm nodeId={typedConceptId} onClose={()=>setRecordInputOpen(false)} /></div>}

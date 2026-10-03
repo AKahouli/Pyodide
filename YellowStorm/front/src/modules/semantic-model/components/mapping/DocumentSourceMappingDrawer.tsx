@@ -36,6 +36,8 @@ type PreviewItem = { asset: StructuredSourceAsset; result: SourceMappingPreviewR
 
 // Documents offered in the viewer's switcher, and how many are read for label suggestions.
 const VIEWER_DOCUMENTS = 15;
+/** How many folders are opened looking for sample files. */
+const MAX_SAMPLE_FOLDERS = 12;
 const LABEL_DOCUMENTS = 10;
 
 export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readonly<{ modelId: string; target: SourceMappingTarget | null; onClose: () => void }>) {
@@ -98,11 +100,20 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
         return picked.flatMap((result) => result.status === 'fulfilled' ? [asset(result.value)] : []);
       }
       if (!coverage.whole && !coverage.pick.folderIds.length) return [];
-      const folderId = coverage.whole ? undefined : coverage.pick.folderIds[0];
-      const page = folderId
-        ? await getFolderContents(workspace!.workspaceId, folderId, { limit: 50, page: 1 })
-        : await getDocuments(workspace!.workspaceId, { limit: 50, page: 1 });
-      return page.documents.filter((document) => !document.isFolder && isReadableDocument(document.mimeType)).slice(0, VIEWER_DOCUMENTS).map(asset);
+      // Files of the workspace (or of the picked folders), looking into subfolders until there are enough.
+      const found: StructuredSourceAsset[] = [];
+      const folders: (string | undefined)[] = coverage.whole ? [undefined] : [...coverage.pick.folderIds];
+      for (let opened = 0; folders.length && found.length < VIEWER_DOCUMENTS && opened < MAX_SAMPLE_FOLDERS; opened += 1) {
+        const folderId = folders.shift();
+        const page = folderId
+          ? await getFolderContents(workspace!.workspaceId, folderId, { limit: 50, page: 1 })
+          : await getDocuments(workspace!.workspaceId, { limit: 50, page: 1 });
+        for (const document of page.documents) {
+          if (document.isFolder) folders.push(document.id);
+          else if (isReadableDocument(document.mimeType) && !found.some((item) => item.documentId === document.id)) found.push(asset(document));
+        }
+      }
+      return found.slice(0, VIEWER_DOCUMENTS);
     },
     enabled: Boolean(workspace),
   });
@@ -283,7 +294,9 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
   const canSave = Boolean(conceptId && (workspace ? coverage.whole || pickCount > 0 : selectedAssets.length) && activeMappings.length && identityValid && rulesValid && limitsValid && computedValid) && !saving;
   const canPreview = canSave && selectedAssets.length > 0;
   // File names the computed fields are tried on: the picked or sample documents first, then the others known here.
-  const fileSamples = [...new Set([...selectedAssets.map((asset) => asset.name), target?.documentName ?? '', ...eligibleDocuments.map((asset) => asset.name)].filter(Boolean))].slice(0, 20);
+  // A workspace mapping is tried on its own files only; its name is a folder, not a file.
+  const fileSamples = workspace ? selectedAssets.map((asset) => asset.name).slice(0, 20)
+    : [...new Set([...selectedAssets.map((asset) => asset.name), target?.documentName ?? '', ...eligibleDocuments.map((asset) => asset.name)].filter(Boolean))].slice(0, 20);
   // Values of each field read by the last document preview, to try a computed field taken from another field.
   useEffect(() => {
     if (!preview.data) return;
