@@ -18,6 +18,9 @@ export const conversations = conversationSchema.table(
     // lock when Stop-all runs.
     rootAgentId: char('root_agent_id', { length: 24 }),
     rootWorkEpoch: integer('root_work_epoch').notNull().default(0),
+    // Last accepted Stop-all request (WP03/WP08): a retried old Stop with a
+    // different request id must not cancel a newer request's work.
+    rootWorkLastStopRequestId: uuid('root_work_last_stop_request_id'),
     platformCopilotCreationRequestId: text('platform_copilot_creation_request_id'),
     governedCreationRequestId: text('governed_creation_request_id'),
     title: varchar('title', { length: 200 }).notNull().default('New Conversation'),
@@ -359,6 +362,73 @@ export const conversationExecutions = conversationSchema.table(
     index('idx_conversation_executions_user_running')
       .on(t.userId, t.id)
       .where(sql`${t.status} = 'running'`),
+  ],
+);
+
+// Root-delegation execution tree (WP03, plan §9.1): one row per logical
+// execution (root, worker, fan-out driver, follow-up). Deliberately separate
+// from conversation_executions above, which enforces a single running
+// foreground run per conversation and keys on messageId.
+export const rootExecutions = conversationSchema.table(
+  'root_executions',
+  {
+    id: char('id', { length: 24 }).primaryKey(),
+    conversationId: char('conversation_id', { length: 24 })
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    rootAgentId: char('root_agent_id', { length: 24 }),
+    workGroupId: char('work_group_id', { length: 24 }),
+    parentExecutionId: char('parent_execution_id', { length: 24 }),
+    role: varchar('role', { length: 32 }).notNull(),
+    depth: integer('depth').notNull().default(0),
+    attempt: integer('attempt').notNull().default(1),
+    status: varchar('status', { length: 32 }).notNull().default('running'),
+    conversationEpoch: integer('conversation_epoch').notNull().default(0),
+    stopRequestId: uuid('stop_request_id'),
+    resultPayload: jsonb('result_payload'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    terminalAt: timestamp('terminal_at', { withTimezone: true }),
+  },
+  (t) => [
+    check('root_executions_role', sql`${t.role} IN ('root', 'library_worker', 'temporary_worker', 'fanout_driver', 'followup')`),
+    check(
+      'root_executions_status',
+      sql`${t.status} IN ('running', 'waiting', 'completed', 'cancelled', 'cancellation_requested', 'failed', 'outcome_unknown')`,
+    ),
+    check('root_executions_depth_non_negative', sql`${t.depth} >= 0`),
+    index('idx_root_executions_conversation_epoch').on(t.conversationId, t.conversationEpoch),
+    index('idx_root_executions_parent').on(t.parentExecutionId),
+    index('idx_root_executions_work_group').on(t.workGroupId),
+    index('idx_root_executions_nonterminal')
+      .on(t.conversationId)
+      .where(sql`${t.status} IN ('running', 'waiting', 'cancellation_requested')`),
+  ],
+);
+
+// Durable citation/artifact reference registry (WP03, plan §12): producers
+// commit here before returning references to the parent. dedupKey =
+// hash(producer execution, native tool/event identity, output ordinal) so a
+// replayed registration returns the same identity.
+export const rootEvidenceRecords = conversationSchema.table(
+  'root_evidence_records',
+  {
+    id: char('id', { length: 24 }).primaryKey(),
+    executionId: char('execution_id', { length: 24 })
+      .notNull()
+      .references(() => rootExecutions.id, { onDelete: 'cascade' }),
+    conversationId: char('conversation_id', { length: 24 })
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    kind: varchar('kind', { length: 32 }).notNull(),
+    producerAgentId: char('producer_agent_id', { length: 24 }),
+    payload: jsonb('payload').notNull().default({}),
+    dedupKey: varchar('dedup_key', { length: 128 }).notNull().unique(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('root_evidence_kind', sql`${t.kind} IN ('citation', 'artifact')`),
+    index('idx_root_evidence_execution').on(t.executionId),
   ],
 );
 

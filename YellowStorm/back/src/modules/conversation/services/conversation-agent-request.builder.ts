@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { CorrectionReplayContext, MessageReplayContext } from '../interfaces/message.interface';
 import type { TeamExecutionDefinition } from '../../team/team-execution';
+import { ExecutionScopeV1, executionScopeToWire } from '../root-work/root-work.types';
 
 export interface BuildAgentExecutionRequestInput {
   userId: string;
@@ -16,6 +17,8 @@ export interface BuildAgentExecutionRequestInput {
   teamDefinition?: TeamExecutionDefinition;
   /** Bounded attachment context text; sent out-of-band, never merged into the query. */
   attachmentContext?: string;
+  /** Trusted execution context (WP03); absent = legacy request. */
+  executionScope?: ExecutionScopeV1;
 }
 
 export interface BuiltAgentExecutionRequest {
@@ -57,6 +60,7 @@ export class ConversationAgentRequestBuilder {
         },
       } : {}),
       ...(input.attachmentContext ? { attachment_context: { text: input.attachmentContext } } : {}),
+      ...(input.executionScope ? { execution_scope: executionScopeToWire(input.executionScope) } : {}),
     };
 
     if (input.teamDefinition) {

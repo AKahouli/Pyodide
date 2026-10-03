@@ -204,6 +204,63 @@ message AgentTeamDefinition {
     repeated AgentTeamNode nodes = 2;
 }
 
+// ===== ROOT DELEGATION EXECUTION CONTEXT =====
+// Trusted execution metadata (plan §9.2). Only backend code fills these after
+// authorization; worker roles never activate root behavior. Absent/unspecified
+// fields keep exact legacy semantics for existing callers.
+
+enum ExecutionRole {
+    EXECUTION_ROLE_UNSPECIFIED = 0;      // absent = legacy semantics
+    EXECUTION_ROLE_ROOT = 1;
+    EXECUTION_ROLE_LIBRARY_WORKER = 2;
+    EXECUTION_ROLE_TEMPORARY_WORKER = 3;
+    EXECUTION_ROLE_FANOUT_DRIVER = 4;
+    EXECUTION_ROLE_FOLLOWUP = 5;
+}
+
+enum InvocationLifecycleState {
+    INVOCATION_LIFECYCLE_STATE_UNSPECIFIED = 0;
+    INVOCATION_LIFECYCLE_STATE_STARTED = 1;
+    INVOCATION_LIFECYCLE_STATE_WAITING = 2;
+    INVOCATION_LIFECYCLE_STATE_COMPLETED = 3;
+    INVOCATION_LIFECYCLE_STATE_CANCELLED = 4;
+    INVOCATION_LIFECYCLE_STATE_RETRYABLE_INTERRUPTION = 5;
+    INVOCATION_LIFECYCLE_STATE_FAILED = 6;
+}
+
+// Request-path execution scope: role, lineage, control fence/epoch, explicit
+// start/resume/attach intent and the frozen worker snapshot reference.
+// Never model-authored; the fence/epoch must match the conversation control
+// state or the ADK side rejects the request.
+message ExecutionScope {
+    ExecutionRole execution_role = 1;
+    string execution_id = 2;                  // logical execution ID
+    string parent_execution_id = 3;           // empty for root executions
+    string work_group_id = 4;
+    int32 depth = 5;
+    int32 attempt = 6;
+    int64 conversation_epoch = 7;             // root-work epoch at admission
+    string expected_fence = 8;                // control fence; mismatch => reject
+    string resume_intent = 9;                 // "start" | "resume" | "attach"
+    string immutable_snapshot_ref = 10;       // digest of the frozen definition
+    string native_invocation_id = 11;         // optional existing invocation to resume/attach
+    string native_session_id = 12;            // dedicated native session (durable roles)
+    int64 deadline_epoch_ms = 13;             // wall-clock deadline for this execution
+}
+
+// Stream-side lineage for producer-aware events. Absence means the legacy
+// single-producer stream; unknown fields stay safe for legacy readers.
+message ExecutionTrace {
+    string work_group_id = 1;
+    string execution_id = 2;
+    string parent_execution_id = 3;
+    string native_invocation_id = 4;
+    string source_event_id = 5;               // origin native event / call ID
+    string producer_agent_id = 6;
+    ExecutionRole producer_role = 7;
+    InvocationLifecycleState lifecycle = 8;
+}
+
 message RunAgentTeamRequest {
     UserContext user_context = 1;
     string conversation_id = 2;
@@ -222,6 +279,7 @@ message RunAgentTeamRequest {
     LatencyTraceContext latency_trace_context = 20;
     AgentTeamDefinition team_definition = 21;
     AttachmentContext attachment_context = 18;   // Bounded attachment text; managers receive manifests only
+    ExecutionScope execution_scope = 22;         // Trusted execution context; unset = legacy
 }
 
 // Mono-agent request: a single specialized agent runs directly with its own
@@ -243,6 +301,7 @@ message RunSingleAgentRequest {
     bool web_search_enabled = 13;
     LatencyTraceContext latency_trace_context = 20;
     AttachmentContext attachment_context = 14;   // Bounded attachment text for the single agent
+    ExecutionScope execution_scope = 22;         // Trusted execution context; unset = legacy
 }
 
 message GenerateConversationNameRequest {
@@ -601,6 +660,7 @@ message StreamChunk {
     Metadata metadata = 3;       // Metadata about the chunk
     Usage usage = 4;             // Token usage data (optional)
     LatencyTrace latency_trace = 5; // One-time timing envelope on the first post-model chunk
+    ExecutionTrace execution_trace = 6; // Producer lineage + lifecycle; unset = legacy
 }
 
 enum ConversationHistoryRole {

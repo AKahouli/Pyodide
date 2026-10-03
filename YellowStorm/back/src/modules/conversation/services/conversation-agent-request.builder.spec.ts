@@ -66,4 +66,46 @@ describe('ConversationAgentRequestBuilder', () => {
     expect(result.payload.query).toContain('It is not an authorization source.');
     expect(result.payload.query).toContain('"hasUnsavedChanges":true');
   });
+  it('omits execution_scope for legacy requests and attaches the wire shape when trusted scope is present', () => {
+    const base = {
+      userId: 'user-1', conversationId: 'shadow-1', request,
+      workspaceContexts: [], agents: [{ id: 'agent-1' }], attachedFiles: [], previousAttachedFiles: [], skills: [],
+    };
+    const legacy = new ConversationAgentRequestBuilder().build(base);
+    expect(legacy.payload.execution_scope).toBeUndefined();
+
+    const scoped = new ConversationAgentRequestBuilder().build({
+      ...base,
+      executionScope: {
+        role: 'root',
+        executionId: 'e'.repeat(24),
+        parentExecutionId: null,
+        workGroupId: null,
+        depth: 0,
+        attempt: 1,
+        conversationEpoch: 4,
+        expectedFence: 'fence-1',
+        resumeIntent: 'start',
+        immutableSnapshotRef: null,
+        nativeInvocationId: null,
+        nativeSessionId: null,
+        deadlineEpochMs: null,
+      },
+    });
+    expect(scoped.payload.execution_scope).toEqual({
+      execution_role: 1,
+      execution_id: 'e'.repeat(24),
+      parent_execution_id: '',
+      work_group_id: '',
+      depth: 0,
+      attempt: 1,
+      conversation_epoch: 4,
+      expected_fence: 'fence-1',
+      resume_intent: 'start',
+      immutable_snapshot_ref: '',
+      native_invocation_id: '',
+      native_session_id: '',
+      deadline_epoch_ms: null,
+    });
+  });
 });

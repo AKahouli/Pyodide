@@ -115,11 +115,37 @@ async def _append_recovery_response(
     return session
 
 
+def _is_native_resume(invocation_context: InvocationContext, session) -> bool:
+    """True when this invocation resumes a previous one (plan §9.4).
+
+    On a resumed invocation ADK back-fills ``user_content`` from an existing
+    session event (``_find_user_message_for_invocation``), so the content
+    object identity-matches an earlier event. On a fresh invocation the user
+    content is a new object appended as the last event. Conservative by
+    design: when detection is uncertain we keep the legacy repair behavior.
+    """
+    user_content = getattr(invocation_context, "user_content", None)
+    if user_content is None:
+        return False
+    events = list(getattr(session, "events", None) or [])
+    for event in events[:-1]:
+        if getattr(event, "content", None) is user_content:
+            return True
+    return False
+
+
 async def clean_session_case_bad_request(invocation_context: InvocationContext, user_message) -> Optional[dict]:
     session = getattr(invocation_context, "session", None)
     session_service = getattr(invocation_context, "session_service", None)
 
     if not (session and getattr(session, "events", None)):
+        return None
+
+    # Never manufacture failure responses for pending calls while ADK is
+    # natively resuming an interrupted invocation: the replay machinery owns
+    # those tool calls and a synthetic "interrupted" response would corrupt
+    # the resumable state (plan §9.4 / R17).
+    if _is_native_resume(invocation_context, session):
         return None
 
     events = session.events

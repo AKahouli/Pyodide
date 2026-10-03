@@ -57,6 +57,7 @@ import { ConversationAgentRequestBuilder } from './services/conversation-agent-r
 import { ConversationAttachmentResolverService } from './services/conversation-attachment-resolver.service';
 import { ConversationAttachmentService } from './services/conversation-attachment.service';
 import { ConversationAttachmentContextService } from './services/conversation-attachment-context.service';
+import { RootWorkService } from './root-work/root-work.service';
 import { CorrectiveReplayContextService } from './services/corrective-replay-context.service';
 import { CorrectiveReplayPromptBuilder } from './services/corrective-replay-prompt.builder';
 import { CorrectiveReplayRunnerService } from './services/corrective-replay-runner.service';
@@ -81,7 +82,7 @@ import { ConversationNameService } from './services/conversation-name.service';
     ReportController,
     ConversationFileController,
   ],
-  providers: [ConversationService, MessageService, StreamService, StreamGatewayService, ConversationNameService, ConversationRecoveryService, ShareService, ReportService, ComposerSuggestionsService, ChoiceInteractionService, ConversationBranchService, ConversationPlaybookContextProjectorService, ConversationPlaybookHandoffService, ResponseReliabilityService, ResponseReliabilityEvidenceBuilder, ResponseReliabilityScoringService, ResponseCorrectionPolicyService, ResponseCorrectionPlannerService, CorrectedResponseComponentBuilder, ResponseCorrectionService, ConversationAgentRequestBuilder, ConversationAttachmentResolverService, ConversationAttachmentService, ConversationAttachmentContextService, CorrectiveReplayContextService, CorrectiveReplayPromptBuilder, CorrectiveReplayRunnerService, ConversationArtifactService, ModelPricingService, CarbonEstimatorService, ConversationUsageAccountingService, ConversationOwnerGuard, SseAuthGuard, ComposerSuggestionsRateLimitGuard],
+  providers: [ConversationService, MessageService, StreamService, StreamGatewayService, ConversationNameService, ConversationRecoveryService, ShareService, ReportService, ComposerSuggestionsService, ChoiceInteractionService, ConversationBranchService, ConversationPlaybookContextProjectorService, ConversationPlaybookHandoffService, ResponseReliabilityService, ResponseReliabilityEvidenceBuilder, ResponseReliabilityScoringService, ResponseCorrectionPolicyService, ResponseCorrectionPlannerService, CorrectedResponseComponentBuilder, ResponseCorrectionService, ConversationAgentRequestBuilder, ConversationAttachmentResolverService, ConversationAttachmentService, ConversationAttachmentContextService, CorrectiveReplayContextService, CorrectiveReplayPromptBuilder, CorrectiveReplayRunnerService, ConversationArtifactService, ModelPricingService, CarbonEstimatorService, ConversationUsageAccountingService, ConversationOwnerGuard, SseAuthGuard, ComposerSuggestionsRateLimitGuard, RootWorkService],
   exports: [ConversationService, MessageService, StreamService, StreamGatewayService, ConversationPlaybookHandoffService],
 })
 export class ConversationModule {}

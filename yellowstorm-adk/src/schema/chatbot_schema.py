@@ -2,7 +2,9 @@
 
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
+
+from src.root_runtime.contracts import ExecutionScopeV1
 
 
 def _sync_workspace_aliases(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -141,6 +143,11 @@ class RunAgentTeamRequest(BaseModel):
     deep_search_enabled: bool = False
     correction_replay_context: Optional[CorrectionReplayContext] = None
     team_definition: Optional[AgentTeamDefinition] = None
+    # Trusted execution scope (WP03); frozen dataclass from src.root_runtime.
+    # None/unset = legacy semantics. Never model-authored.
+    execution_scope: Optional[ExecutionScopeV1] = None
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     def __init__(self, **data: Any) -> None:
         super().__init__(**_sync_workspace_aliases(data))

@@ -9,6 +9,7 @@ import { AgentShareController } from './controllers/agent-share.controller';
 import { AgentCrudInternalController } from './controllers/agent-crud-internal.controller';
 import { AgentService } from './agent.service';
 import { RootPolicyService } from './services/root-policy.service';
+import { AgentExecutionSnapshotService } from './services/agent-execution-snapshot.service';
 import { RootDelegateResolverService } from './services/root-delegate-resolver.service';
 import { AgentShareService } from './services/agent-share.service';
 import { AgentConnectorRuntimeService } from './services/agent-connector-runtime.service';
@@ -79,6 +80,7 @@ import { PgWidgetTokenStore } from '../widget-chat/persistence/pg-widget.store';
     },
     AgentService,
     RootPolicyService,
+    AgentExecutionSnapshotService,
     RootDelegateResolverService,
     AgentShareService,
     AgentConnectorRuntimeService,
@@ -88,6 +90,6 @@ import { PgWidgetTokenStore } from '../widget-chat/persistence/pg-widget.store';
     AgentTaskExecutionService,
     { provide: AGENT_TASK_EXECUTION, useExisting: AgentTaskExecutionService },
   ],
-  exports: [AgentService, RootPolicyService, RootDelegateResolverService, AgentShareService, AgentConnectorRuntimeService, AgentPermissionGuard, PgAgentShareStore, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService, AGENT_TASK_EXECUTION],
+  exports: [AgentService, RootPolicyService, AgentExecutionSnapshotService, RootDelegateResolverService, AgentShareService, AgentConnectorRuntimeService, AgentPermissionGuard, PgAgentShareStore, A2AAdminGrpcClientService, A2APublishService, AgentTaskExecutionService, AGENT_TASK_EXECUTION],
 })
 export class AgentModule {}

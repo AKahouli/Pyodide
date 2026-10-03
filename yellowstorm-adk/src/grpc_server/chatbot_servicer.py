@@ -37,6 +37,12 @@ from src.smart_rag.core import AgentTeamService
 from src.smart_rag.tools.infrastructure.common_helpers import CommonHelpers
 from src.evaluation.semantic_match import evaluate_semantic_match
 from src.schema.chatbot_schema import RunAgentTeamRequest, AgentSuggestion
+from src.root_runtime.contracts import ExecutionScopeV1, InvocationLifecycleState, ExecutionEventV1
+from src.root_runtime.cancellation import (
+    RootWorkCancelled,
+    check_admission_barrier,
+    get_root_cancellation_registry,
+)
 from src.temporary_child_summary import pop_temporary_child_summary
 from src.flow_engine.advisor.playbook_node_advisor import advise_playbook_node
 from src.flow_engine.advisor.execution_advisor_service import evaluate_task_execution
@@ -659,6 +665,8 @@ class ChatbotServicer(
         """
         # Latency boundary: must precede request serialization/logging below.
         latency_trace_token = self._begin_conversation_latency_trace(request)
+        abort_watcher: Optional[asyncio.Task] = None
+        root_handle = None
         try:
             request_payload = _message_to_dict(request)
         except BaseException:
@@ -802,6 +810,12 @@ class ChatbotServicer(
             )
             return
         finally:
+            if abort_watcher is not None:
+                abort_watcher.cancel()
+            if root_handle is not None:
+                get_root_cancellation_registry().unregister(
+                    request.conversation_id, root_handle.scope.execution_id
+                )
             self._reset_latency_trace(latency_trace_token)
             try:
                 user_ctx.reset(user_token)
@@ -1310,10 +1324,20 @@ class ChatbotServicer(
             )
             raise ValueError("No chatbot model was provided for the single agent")
 
+        # Trusted execution scope (WP03): parsed typed object; unset keeps
+        # exact legacy semantics. External callers cannot grant themselves a
+        # privileged role here — fence/epoch validation happens at dispatch.
+        execution_scope = (
+            ExecutionScopeV1.from_proto(pb_request.execution_scope)
+            if pb_request.HasField("execution_scope")
+            else None
+        )
+
         return RunAgentTeamRequest(
             user_id=pb_request.user_context.user_id,
             session_id=pb_request.conversation_id,
             message=pb_request.query,
+            execution_scope=execution_scope,
             task_summary=getattr(pb_request, "task_summary", "") or None,
             image_input=ctx["image_input"] or None,
             attached_files=ctx["attached_documents"] or None,
@@ -1903,6 +1927,27 @@ class ChatbotServicer(
         except (TypeError, ValueError):
             return []
 
+    @staticmethod
+    def _build_execution_trace(
+        trace_dict: Optional[Dict[str, Any]],
+    ) -> Optional["chatbot_pb2.ExecutionTrace"]:
+        """Map a producer lineage dict (WP03) to the proto ExecutionTrace.
+
+        Absent/empty input returns None so legacy chunks stay byte-identical.
+        """
+        if not trace_dict or not trace_dict.get("execution_id"):
+            return None
+        return chatbot_pb2.ExecutionTrace(
+            work_group_id=str(trace_dict.get("work_group_id", "") or ""),
+            execution_id=str(trace_dict.get("execution_id", "") or ""),
+            parent_execution_id=str(trace_dict.get("parent_execution_id", "") or ""),
+            native_invocation_id=str(trace_dict.get("native_invocation_id", "") or ""),
+            source_event_id=str(trace_dict.get("source_event_id", "") or ""),
+            producer_agent_id=str(trace_dict.get("producer_agent_id", "") or ""),
+            producer_role=int(trace_dict.get("producer_role", 0) or 0),
+            lifecycle=int(trace_dict.get("lifecycle", 0) or 0),
+        )
+
     def _dict_to_stream_chunk(
         self, chunk_dict: Dict[str, Any]
     ) -> "chatbot_pb2.StreamChunk":
@@ -1916,6 +1961,8 @@ class ChatbotServicer(
         Returns:
             StreamChunk: Protobuf message
         """
+        trace_pb = self._build_execution_trace(chunk_dict.get("execution_trace"))
+
         # Check if this is a usage-only chunk (no component)
         if "usage" in chunk_dict and "component" not in chunk_dict:
             usage_data = chunk_dict["usage"]
@@ -1936,6 +1983,7 @@ class ChatbotServicer(
                     cached_input_tokens=usage_data.get("cached_input_tokens", 0),
                     reasoning_tokens=usage_data.get("reasoning_tokens", 0),
                 ),
+                execution_trace=trace_pb,
             )
 
         # Check if this is the new component-based format
@@ -1963,6 +2011,7 @@ class ChatbotServicer(
                     agent_id=metadata.get("agent_id", ""),
                     guardrail_decision_json=self._guardrail_decision_json(metadata),
                 ),
+                execution_trace=trace_pb,
             )
         else:
             # Old format (backward compatibility) - convert to new format
