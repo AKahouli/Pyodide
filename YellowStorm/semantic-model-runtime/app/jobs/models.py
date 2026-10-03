@@ -109,12 +109,32 @@ class RelationBinding(BaseModel):
 
 
 class DerivationField(BaseModel):
-    """A field of the source concept copied into a field of the derived concept."""
+    """A field of the derived concept: copied from a field of the source concept (the default), read
+    out of its text with rules and/or AI (``extract``), taken from a field by a recipe (``computed``),
+    or fixed (``constant``). Checked in depth by ``app.population.derived.normalize_derivations``."""
 
     model_config = ConfigDict(extra="forbid")
 
-    source_attribute: str = Field(alias="sourceAttribute", min_length=1, max_length=200)
+    source_attribute: str | None = Field(default=None, alias="sourceAttribute", min_length=1, max_length=200)
     target_attribute: str = Field(alias="targetAttribute", min_length=1, max_length=200)
+    mode: Literal["direct", "extract", "computed", "constant"] | None = None
+    label: str | None = Field(default=None, max_length=200)
+    extraction_strategy: Literal["deterministic", "ai", "rules_then_ai"] | None = Field(
+        default=None, alias="extractionStrategy")
+    rules: dict[str, Any] | None = None
+    semantic_definition: str | None = Field(default=None, alias="semanticDefinition", max_length=2000)
+    agent_id: str | None = Field(default=None, alias="agentId", max_length=64)
+    description: str | None = Field(default=None, max_length=2000)
+    value_type: str | None = Field(default=None, alias="valueType", max_length=50)
+    allowed_values: list[str] | None = Field(default=None, alias="allowedValues", max_length=200)
+    computed: dict[str, Any] | None = None
+    constant_value: str | int | float | bool | None = Field(default=None, alias="constantValue")
+
+    @model_serializer(mode="wrap")
+    def serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        # A field copied as it is serializes as it did before the field modes existed.
+        data = handler(self)
+        return {key: value for key, value in data.items() if value is not None}
 
 
 class Derivation(BaseModel):
@@ -131,6 +151,16 @@ class Derivation(BaseModel):
     order_by: str | None = Field(default=None, alias="orderBy", max_length=200)
     label_field: str | None = Field(default=None, alias="labelField", max_length=200)
     mapping_version: str = Field(default="v1", alias="mappingVersion", max_length=200)
+    # How much of a field's text the AI reads; only present when a field is read by AI.
+    ai_settings: dict[str, Any] | None = Field(default=None, alias="aiSettings")
+
+    @model_serializer(mode="wrap")
+    def serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data = handler(self)
+        if self.ai_settings is None:
+            data.pop("aiSettings", None)
+            data.pop("ai_settings", None)
+        return data
 
 
 class PopulationScope(BaseModel):

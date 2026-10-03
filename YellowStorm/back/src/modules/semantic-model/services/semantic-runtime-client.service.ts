@@ -202,7 +202,8 @@ const DOCUMENT_PREVIEW_TIMEOUT_MS = 120_000;
 export interface RuntimeDocumentPreviewRequest {
   actorUserId: string;
   modelId: string;
-  entry: { conceptId: string; conceptLabel?: string; source: Record<string, unknown>; fieldMappings: unknown[]; options?: Record<string, unknown> };
+  /** `unit`: what a row is (a sheet's row, or another concept's record for a derived source). */
+  entry: { conceptId: string; conceptLabel?: string; source: Record<string, unknown>; fieldMappings: unknown[]; options?: Record<string, unknown>; unit?: 'row' | 'record' };
   aiExtraction?: { agentSlug: string; model: string | null; contractVersion: string } | null;
 }
 
@@ -258,7 +259,8 @@ export interface RuntimeComputedPreview {
 
 export interface RuntimeSheetPreviewRequest {
   modelId: string;
-  entry: { conceptId: string; conceptLabel?: string; source: Record<string, unknown>; fieldMappings: unknown[]; options?: Record<string, unknown> };
+  /** `unit`: what a row is (a sheet's row, or another concept's record for a derived source). */
+  entry: { conceptId: string; conceptLabel?: string; source: Record<string, unknown>; fieldMappings: unknown[]; options?: Record<string, unknown>; unit?: 'row' | 'record' };
   rows: Array<{ rowNumber: number; values: Record<string, unknown> }>;
   aiExtraction?: { agentSlug: string; model: string | null; contractVersion: string } | null;
 }

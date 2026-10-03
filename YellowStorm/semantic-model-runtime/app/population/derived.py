@@ -9,13 +9,20 @@ Derived records use the target concept's own entity ids, so they merge with reco
 source gives the same concept: a direct value always wins, a derived one only fills a gap. Every
 derived value keeps the evidence of the source value it was taken from (the file, page and quote),
 so a person can still open the document it came from.
+
+A field is copied from a field of the source record by default. It can instead be read out of that
+field's text with the document rules and/or AI (``mode: extract``, the same readers a sheet cell
+uses: the text is a one-section document), taken from a field by a recipe (``mode: computed``, the
+same recipe a sheet field uses; a ``column`` input names a field of the source record), or fixed
+(``mode: constant``). Such a value keeps the source value's evidence and adds which part of the
+source field it was read from (``derivedFrom.attribute``, ``span``, ``method``).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from .document_rules import to_iso_date
+from .document_rules import RuleError, normalize_ai_settings, to_iso_date
 from .tabular import MAX_ASSERTIONS, MAX_MATERIALIZED_ENTITIES, entity_key, normalize_identity_value
 
 CONFLICT_RULES = ("most_frequent", "latest", "longest", "leave_empty")
@@ -24,8 +31,67 @@ MAX_DERIVATIONS = 50
 MAX_DERIVED_FROM_IDS = 50
 
 
+FIELD_MODES = ("direct", "extract", "computed", "constant")
+# What a derived field mapping may carry, kept as received so both sides hash the same body.
+_FIELD_KEYS = ("sourceAttribute", "targetAttribute", "mode", "label", "extractionStrategy", "rules",
+               "semanticDefinition", "agentId", "description", "valueType", "allowedValues", "computed",
+               "constantValue")
+
+
 class DerivationError(ValueError):
     """A derivation that cannot run as described; the message is an error code."""
+
+
+def _mode(field: dict) -> str:
+    return field.get("mode") or "direct"
+
+
+def field_plan(derivation: dict) -> dict[str, Any]:
+    """How a derivation's fields that are not copied as they are get their value, in the shapes the
+    sheet readers use: cell extractions (the source field is the "column"), row recipes and constants.
+
+    Raises ``RuleError`` for settings the readers refuse.
+    """
+    from .cell_fields import normalize_field_extractions
+    from .computed_fields import normalize_row_recipes
+
+    fields = derivation["fieldMappings"]
+    extractions = normalize_field_extractions({
+        field["targetAttribute"]: {"column": field.get("sourceAttribute"),
+                                   **{key: field[key] for key in _FIELD_KEYS
+                                      if key not in ("sourceAttribute", "targetAttribute", "mode", "computed",
+                                                     "constantValue") and field.get(key) is not None}}
+        for field in fields if _mode(field) == "extract"} or None)
+    mapped = {field["targetAttribute"] for field in fields if _mode(field) != "constant"}
+    recipes = normalize_row_recipes({field["targetAttribute"]: field.get("computed")
+                                     for field in fields if _mode(field) == "computed"} or None, mapped)
+    constants = {field["targetAttribute"]: field.get("constantValue")
+                 for field in fields if _mode(field) == "constant"}
+    return {"extractions": extractions, "recipes": recipes, "constants": constants}
+
+
+def _normalize_field(field: Any, source: dict, target: dict) -> dict:
+    if not isinstance(field, dict):
+        raise DerivationError("invalid_derivations")
+    mode = _mode(field)
+    target_attribute = field.get("targetAttribute")
+    if mode not in FIELD_MODES or target_attribute not in target["allowedFields"]:
+        raise DerivationError("invalid_derivations")
+    if mode in ("direct", "extract") and field.get("sourceAttribute") not in source["allowedFields"]:
+        raise DerivationError("invalid_derivations")
+    if mode == "direct" and "mode" not in field:
+        # A field copied as it is: the shape every derivation had before the field modes.
+        return {"sourceAttribute": field["sourceAttribute"], "targetAttribute": target_attribute}
+    if mode == "constant" and not isinstance(field.get("constantValue"), (str, int, float, bool)):
+        raise DerivationError("invalid_derivations")
+    if mode == "computed":
+        computed = field.get("computed")
+        name = (computed.get("input") or {}).get("name") if isinstance(computed, dict) else None
+        kind = (computed.get("input") or {}).get("kind") if isinstance(computed, dict) else None
+        # A "column" of a source record is one of its fields.
+        if kind not in ("column", "field") or (kind == "column" and name not in source["allowedFields"]):
+            raise DerivationError("invalid_derivations")
+    return {key: field[key] for key in _FIELD_KEYS if key in field}
 
 
 def _text(value: Any) -> str | None:
@@ -59,15 +125,7 @@ def normalize_derivations(entries: Any, concepts: dict[str, dict]) -> list[dict]
         fields = entry.get("fieldMappings")
         if not isinstance(fields, list) or not fields:
             raise DerivationError("invalid_derivations")
-        mapped: list[dict] = []
-        for field in fields:
-            if not isinstance(field, dict):
-                raise DerivationError("invalid_derivations")
-            source_attribute, target_attribute = field.get("sourceAttribute"), field.get("targetAttribute")
-            if (source_attribute not in source["allowedFields"]
-                    or target_attribute not in target["allowedFields"]):
-                raise DerivationError("invalid_derivations")
-            mapped.append({"sourceAttribute": source_attribute, "targetAttribute": target_attribute})
+        mapped = [_normalize_field(field, source, target) for field in fields]
         targets = [field["targetAttribute"] for field in mapped]
         if len(set(targets)) != len(targets):
             raise DerivationError("invalid_derivations")
@@ -85,12 +143,24 @@ def normalize_derivations(entries: Any, concepts: dict[str, dict]) -> list[dict]
         if label_field is not None and label_field not in targets:
             raise DerivationError("invalid_derivations")
         mapping_version = entry.get("mappingVersion")
-        normalized.append({
+        derivation = {
             "derivationId": derivation_id, "conceptId": target["conceptId"],
             "sourceConceptId": source["conceptId"], "fieldMappings": mapped,
             "conflictRule": rule, "orderBy": order_by, "labelField": label_field,
             "mappingVersion": mapping_version if isinstance(mapping_version, str) and mapping_version else "v1",
-        })
+        }
+        # How much of a field's text the AI reads; only sent when a field is read by AI.
+        ai_settings = entry.get("aiSettings")
+        if ai_settings is not None:
+            if not isinstance(ai_settings, dict):
+                raise DerivationError("invalid_derivations")
+            derivation["aiSettings"] = ai_settings
+        try:
+            field_plan(derivation)
+            normalize_ai_settings(ai_settings)
+        except RuleError as exc:
+            raise DerivationError("invalid_derivations") from exc
+        normalized.append(derivation)
     targets = {derivation["conceptId"] for derivation in normalized}
     if any(derivation["sourceConceptId"] in targets for derivation in normalized):
         raise DerivationError("chained_derivation")
@@ -134,11 +204,100 @@ def _first_index(candidates: list[tuple[str, dict]], value: str) -> int:
     return next(index for index, (candidate, _entity) in enumerate(candidates) if candidate == value)
 
 
+_READ_KEYS = ("span", "quote", "extractorVersion", "rawEvidenceHash", "model", "requestedAgentId")
+_METHODS = {"extract": "rules", "computed": "recipe", "constant": "constant"}
+
+
+def _recipe_attribute(field: dict, by_field: dict[str, dict]) -> str | None:
+    """The source field a recipe reads: its column, or the source field of the field it is taken from."""
+    source = (field.get("computed") or {}).get("input") or {}
+    if source.get("kind") == "column":
+        return source.get("name")
+    other = by_field.get(source.get("name")) if source.get("kind") == "field" else None
+    return other.get("sourceAttribute") if other else None
+
+
+async def read_derived_fields(derivation: dict, source_entities: list[dict], context: dict[str, Any], *,
+                              cache: Any = None, extract: Any = None, ai_records: int | None = None) -> dict:
+    """The fields of a derivation that are not copied as they are, read on every source record with the
+    sheet readers: a source field's text read by the document rules and/or AI (``CellReader``: AI once
+    per record for all its AI fields, at most ``ai_records`` records per run, unchanged texts reuse
+    their answer from ``cache``), then recipes (``apply_row_recipes``), then fixed values.
+
+    ``context`` is the ``CellReader`` context (``conceptId``, ``conceptLabel``, ``source``, ``modelId``,
+    ``aiExtraction``). Returns ``readings`` (per source record id: ``values`` and ``evidence`` by field),
+    ``gaps`` and the AI ``stats``. Nothing is read when every field is copied as it is.
+    """
+    from .cell_fields import CellReader, cell_gaps, cell_text, extraction_columns
+    from .computed_fields import apply_row_recipes, recipe_columns
+
+    plan = field_plan(derivation)
+    if not (plan["extractions"] or plan["recipes"] or plan["constants"]):
+        return {"readings": {}, "gaps": [], "stats": {}}
+    by_field = {field["targetAttribute"]: field for field in derivation["fieldMappings"]}
+    ordered = sorted(source_entities, key=lambda entity: entity["entityId"])
+    outcomes: list[dict | None] = [None] * len(ordered)
+    reader = None
+    if plan["extractions"]:
+        reader = CellReader(plan["extractions"], {
+            **context, "unit": "record", "mappingVersion": derivation["mappingVersion"],
+            "settings": normalize_ai_settings(derivation.get("aiSettings"))},
+            cache=cache, ai_rows=ai_records, extract=extract)
+        columns = extraction_columns(plan["extractions"])
+        outcomes = list(await reader.read_rows([
+            (entity["entityId"], {column: cell_text(_source_value(entity, column)) for column in columns})
+            for entity in ordered]))
+    readings: dict[str, dict] = {}
+    missing: dict[str, int] = {}
+    for entity, outcome in zip(ordered, outcomes):
+        values: dict[str, Any] = {field: _source_value(entity, item["sourceAttribute"])
+                                  for field, item in by_field.items() if _mode(item) == "direct"}
+        evidence: dict[str, dict] = {}
+        if outcome is not None:
+            for attribute in plan["extractions"]:
+                values[attribute] = outcome["values"].get(attribute)
+                found = outcome["evidence"].get(attribute)
+                if found is None:
+                    missing[attribute] = missing.get(attribute, 0) + 1
+                    continue
+                evidence[attribute] = {"method": "ai" if found.get("origin") == "ai" else "rules",
+                                       "attribute": found.get("column"),
+                                       **{key: found[key] for key in _READ_KEYS if found.get(key) is not None}}
+        values.update(plan["constants"])
+        raw = {column: _source_value(entity, column) for column in recipe_columns(plan["recipes"])}
+        for attribute, recipe in apply_row_recipes(plan["recipes"], values, raw).items():
+            if recipe["reason"] == "found":
+                evidence[attribute] = {"method": "recipe",
+                                       "attribute": _recipe_attribute(by_field[attribute], by_field)}
+        readings[entity["entityId"]] = {
+            "values": {field: values.get(field) for field, item in by_field.items() if _mode(item) != "direct"},
+            "evidence": evidence}
+    gaps = cell_gaps(derivation["conceptId"], None, plan["extractions"], missing, len(ordered),
+                     reader.stats, unit="records") if reader is not None else []
+    for gap in gaps:
+        gap["derivationId"] = derivation["derivationId"]
+    return {"readings": readings, "gaps": gaps, "stats": reader.stats if reader is not None else {}}
+
+
 def derive_concept(target: dict, derivation: dict, source_entities: list[dict],
-                   source_assertions: list[dict]) -> dict:
-    """One target record per distinct key found in the source records, shaped like a source's output."""
+                   source_assertions: list[dict], readings: dict[str, dict] | None = None) -> dict:
+    """One target record per distinct key found in the source records, shaped like a source's output.
+
+    ``readings`` (from :func:`read_derived_fields`) holds, per source record, the values and evidence
+    of the fields that are not copied as they are; a copied field reads the source record itself.
+    """
     fields = derivation["fieldMappings"]
-    by_target = {field["targetAttribute"]: field["sourceAttribute"] for field in fields}
+    by_field = {field["targetAttribute"]: field for field in fields}
+    # The source field each field reads, for its evidence and the reports; none for a fixed value.
+    by_target = {field["targetAttribute"]: field.get("sourceAttribute") or _recipe_attribute(field, by_field)
+                 for field in fields}
+    readings = readings or {}
+
+    def value_of(entity: dict, attribute: str) -> Any:
+        field = by_field[attribute]
+        if _mode(field) == "direct":
+            return _source_value(entity, field["sourceAttribute"])
+        return ((readings.get(entity["entityId"]) or {}).get("values") or {}).get(attribute)
     key_components: list[str] = target["keyComponents"]
     rule = derivation["conflictRule"]
     evidence_of = {(assertion["entityId"], assertion["attribute"]): assertion for assertion in source_assertions}
@@ -155,14 +314,14 @@ def derive_concept(target: dict, derivation: dict, source_entities: list[dict],
         counts["scanned"] += 1
         identity: dict[str, str] = {}
         for component in key_components:
-            normalized = normalize_identity_value(_source_value(entity, by_target[component]))
+            normalized = normalize_identity_value(value_of(entity, component))
             if normalized is None:
                 break
             identity[component] = normalized
         if len(identity) != len(key_components):
             missing = next(component for component in key_components if component not in identity)
             gaps.append({"kind": "missing_identity", "conceptId": target["conceptId"], "rowNumber": None,
-                         "detail": f"{entity.get('label') or entity['entityId']} has no value for '{by_target[missing]}'",
+                         "detail": f"{entity.get('label') or entity['entityId']} has no value for '{by_target[missing] or missing}'",
                          "field": missing, "derivationId": derivation["derivationId"],
                          "values": {"record": entity.get("label") or entity["entityId"]}})
             continue
@@ -185,7 +344,7 @@ def derive_concept(target: dict, derivation: dict, source_entities: list[dict],
             if target_attribute in key_components:
                 continue
             candidates = [(text, member) for member in members
-                          if (text := _text(_source_value(member, source_attribute))) is not None]
+                          if (text := _text(value_of(member, target_attribute))) is not None]
             if not candidates:
                 continue
             value = _choose(candidates, rule)
@@ -200,7 +359,9 @@ def derive_concept(target: dict, derivation: dict, source_entities: list[dict],
                              "detail": "bounded assertion budget reached"})
                 continue
             member = next(member for candidate, member in candidates if candidate == value)
-            source_assertion = evidence_of.get((member["entityId"], source_attribute))
+            read = ((readings.get(member["entityId"]) or {}).get("evidence") or {}).get(target_attribute) or {}
+            source_attribute = read.get("attribute", source_attribute)
+            source_assertion = evidence_of.get((member["entityId"], source_attribute)) if source_attribute else None
             evidence = dict(source_assertion["evidence"]) if source_assertion else {
                 "assetRef": ((member.get("provenance") or {}).get("sources") or [{}])[0].get("assetRef")}
             evidence["mappingVersion"] = derivation["mappingVersion"]
@@ -208,12 +369,18 @@ def derive_concept(target: dict, derivation: dict, source_entities: list[dict],
                 "derivationId": derivation["derivationId"], "conceptId": derivation["sourceConceptId"],
                 "entityId": member["entityId"], "label": member.get("label"), "attribute": source_attribute,
                 "rule": rule, "distinctValues": distinct, "records": len(candidates)}
+            if _mode(by_field[target_attribute]) != "direct":
+                # Read out of the source field's text, by a recipe, or fixed: how, and where in the text.
+                evidence["derivedFrom"].update({key: read[key] for key in _READ_KEYS if read.get(key) is not None})
+                evidence["derivedFrom"]["method"] = read.get("method") or _METHODS[_mode(by_field[target_attribute])]
+                if read.get("method") == "ai":
+                    evidence["origin"] = "ai"
             attributes[target_attribute] = value
             assertions.append({"entityId": key, "attribute": target_attribute, "value": value,
                                "origin": "human" if source_assertion and source_assertion.get("origin") == "human" else "source",
                                "evidence": evidence})
         label_field = derivation.get("labelField")
-        first_key_value = _text(_source_value(members[0], by_target[key_components[0]]))
+        first_key_value = _text(value_of(members[0], key_components[0]))
         label = attributes.get(label_field) if label_field else None
         sources: list[dict] = []
         seen: set[tuple[Any, Any]] = set()

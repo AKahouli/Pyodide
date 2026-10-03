@@ -8,6 +8,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../../api';
 import type { ComputedFieldInput, ComputedFieldMethod, ComputedFieldRule, ComputedFieldTransform, ComputedPreviewResult } from '../../types';
 import { FormField, INPUT_COMPACT, ROW_LIST } from '../form/FormParts';
+import { useReadingText } from './readingText';
 import { RuleSection, useOpenSections } from './RuleControls';
 import { CleanupSection, KeepSection, patternProblem, takeProblem, ValuePatternSection } from './ValueShapeSections';
 
@@ -52,6 +53,23 @@ export type RecipeSource =
     fieldInputs: Record<string, { column: string; recipe?: ComputedFieldRule }>;
     /** Fields read out of a cell (rules, AI): their values on the rows of the last row preview. */
     fieldValues?: Record<string, Array<{ row: number; value: string }>>;
+  }
+  | {
+    /**
+     * Another concept's records (a derived source): a recipe takes a field of the source record (stored as a
+     * `column` input, the record's fields being its columns) or another field of the derived record.
+     */
+    kind: 'record';
+    /** The source concept's name. */
+    sourceLabel: string;
+    /** The source concept's fields, and their names. */
+    columns: string[];
+    columnLabels: Record<string, string>;
+    /** Sample records, as their values by field, each named by `__recordLabel`. */
+    rows: Array<Record<string, unknown>>;
+    fieldInputs: Record<string, { column: string; recipe?: ComputedFieldRule }>;
+    /** Fields read out of a source field (rules, AI): their values on the records of the last preview. */
+    fieldValues?: Record<string, Array<{ row: number; value: string; label?: string }>>;
   };
 
 /** What a new computed document field starts with: the file name, cut at each `_`. */
@@ -139,8 +157,17 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
   source: RecipeSource;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
+  const readingText = useReadingText();
   const id = useId();
-  const sheet = source.kind === 'sheet';
+  // A sheet's rows and another concept's records are tried on alike; only their wording differs.
+  const table = source.kind === 'document' ? null : source;
+  const sheet = table !== null;
+  const record = source.kind === 'record' ? source : null;
+  const rowsText = (key: string, options?: Record<string, unknown>) => t((record ? `derived.recipe.${key}` : `mapping.recipe.${key}`) as never, options as never);
+  const columnOption = (column: string) => record
+    ? t('derived.recipe.sourceFieldOption', { field: record.columnLabels[column] ?? column, source: record.sourceLabel })
+    : t('mapping.recipe.columnOption', { column });
+  const fieldOption = (field: string) => record ? t('derived.recipe.fieldOption', { field }) : t('mapping.recipe.fieldOption', { field });
   const [advanced, setAdvanced] = useState(rule.method === 'regex');
   const [preview, setPreview] = useState<{ results?: ComputedPreviewResult[]; error?: string; loading?: boolean }>({});
   const [picked, setPicked] = useState<{ key: string; items: string[] }>({ key: '', items: [] });
@@ -153,32 +180,34 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
   const fromFile = rule.input.kind === 'file';
 
   // The sheet's columns once it has been read; until then, the column the recipe reads is still offered.
-  const knownColumns = sheet && source.columns.length ? source.columns : undefined;
-  const columnChoices = sheet ? [...new Set([...source.columns, ...(rule.input.kind === 'column' ? [rule.input.name] : [])])] : [];
+  const knownColumns = table && table.columns.length ? table.columns : undefined;
+  const columnChoices = table ? [...new Set([...table.columns, ...(rule.input.kind === 'column' ? [rule.input.name] : [])])] : [];
   // “Take it from”: per source; a later input kind (AI on a column) is one more option here.
   const inputOptions: Array<{ value: string; label: string }> = sheet
-    ? [...columnChoices.map((column) => ({ value: `column:${column}`, label: t('mapping.recipe.columnOption', { column }) })),
-      ...fields.map((field) => ({ value: `field:${field.key}`, label: t('mapping.recipe.fieldOption', { field: field.label }) }))]
+    ? [...columnChoices.map((column) => ({ value: `column:${column}`, label: columnOption(column) })),
+      ...fields.map((field) => ({ value: `field:${field.key}`, label: fieldOption(field.label) }))]
     : [{ value: FILE_INPUT, label: t('mapping.computed.fileName') }, ...fields.map((field) => ({ value: `field:${field.key}`, label: field.label }))];
 
   // What it can be tried on.
-  const fieldInput = sheet && rule.input.kind === 'field' ? source.fieldInputs[rule.input.name] : undefined;
+  const fieldInput = table && rule.input.kind === 'field' ? table.fieldInputs[rule.input.name] : undefined;
   const inputRecipe = fieldInput?.recipe && recipeStepCount(fieldInput.recipe, fieldInput.column) > 0 && !computedProblem(fieldInput.recipe, [], knownColumns)
     ? computedPayload(fieldInput.recipe) : undefined;
   const available: PreviewItem[] = (() => {
-    if (source.kind === 'sheet') {
+    if (table) {
       const column = rule.input.kind === 'column' ? rule.input.name : fieldInput?.column;
       // A field read out of a cell: the values the last row preview read for it.
       if (!column && rule.input.kind === 'field') {
-        return (source.fieldValues?.[rule.input.name] ?? []).map((item) => ({
-          key: `row-${item.row}`, label: t('mapping.recipe.rowLabel', { row: item.row }), input: cellText(item.value) }));
+        return (table.fieldValues?.[rule.input.name] ?? []).map((item: { row: number; value: string; label?: string }) => ({
+          key: `row-${item.row}`, label: item.label ?? t('mapping.recipe.rowLabel', { row: item.row }), input: cellText(item.value) }));
       }
       if (!column) return [];
-      return source.rows.map((row, index) => {
+      return table.rows.map((row, index) => {
+        if (record) return { key: `row-${index}`, label: String(row.__recordLabel ?? index + 1), input: cellText(row[column]) };
         const number = typeof row.__sheetRow === 'number' ? row.__sheetRow : index + 2;
         return { key: `row-${index}`, label: t('mapping.recipe.rowLabel', { row: number }), input: cellText(row[column]) };
       });
     }
+    if (source.kind !== 'document') return [];
     const values = fromFile ? source.fileSamples : source.fieldSamples?.[rule.input.name] ?? [];
     return [...new Set(values.filter(Boolean))].map((value) => ({ key: value, label: value, input: value }));
   })();
@@ -198,7 +227,7 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
   const listed = query ? available.filter((item) => `${item.label} ${item.input}`.toLocaleLowerCase().includes(query)) : available;
   const problem = computedProblem(rule, fields.map((field) => field.key), knownColumns);
   // A sheet field reads a column or a field of the row, not a document.
-  const problemText = (key: string) => sheet && key === 'mapping.computed.problem.input' ? t('mapping.recipe.problemInput') : t(key as never);
+  const problemText = (key: string) => sheet && key === 'mapping.computed.problem.input' ? rowsText('problemInput') : t(key as never);
   const payload = JSON.stringify(computedPayload(rule));
   const inputRecipeKey = inputRecipe ? JSON.stringify(inputRecipe) : '';
   const sampleKey = samples.join('\n');
@@ -222,9 +251,9 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
   const setMethod = (method: ComputedFieldMethod) => update(method === 'split' ? { method, delimiter: rule.delimiter ?? '_', part: rule.part ?? 1 } : { method });
   const inputLabel = (() => {
     if (fromFile) return t('mapping.computed.fileName');
-    if (rule.input.kind === 'column') return t('mapping.recipe.columnOption', { column: rule.input.name });
+    if (rule.input.kind === 'column') return columnOption(rule.input.name);
     const label = fields.find((field) => field.key === rule.input.name)?.label ?? rule.input.name;
-    return sheet ? t('mapping.recipe.fieldOption', { field: label }) : label;
+    return sheet ? fieldOption(label) : label;
   })();
   const methodSummary = (() => {
     if (rule.method === 'whole') return t('mapping.recipe.methodSummary.whole');
@@ -244,17 +273,17 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
   const cutProblem = problem !== null && CUT_PROBLEMS.some((key) => problem === `mapping.computed.problem.${key}`);
   const found = preview.results?.filter((result) => result.value !== null).length ?? 0;
   const pickedText = sheet
-    ? t('mapping.recipe.rowsPicked', { count: samples.length, total: available.length })
+    ? rowsText('rowsPicked', { count: samples.length, total: available.length })
     : t(fromFile ? 'mapping.computed.filesPicked' : 'mapping.computed.valuesPicked', { count: samples.length, total: available.length });
   const previewSummary = preview.results && !problem ? t('mapping.computed.previewSummary', { found, count: preview.results.length }) : pickedText;
   const errorLine = preview.error ? <p role='alert' className='flex gap-1.5 text-destructive'><AlertTriangle className='h-3.5 w-3.5 shrink-0' />{preview.error}</p> : null;
-  const emptyText = sheet ? t('mapping.recipe.noRows') : t(fromFile ? 'mapping.computed.noFiles' : 'mapping.computed.noFieldValues');
-  const toTryText = sheet ? t('mapping.recipe.rowsToTry') : t(fromFile ? 'mapping.computed.filesToTry' : 'mapping.computed.valuesToTry');
+  const emptyText = sheet ? rowsText('noRows') : t(fromFile ? 'mapping.computed.noFiles' : 'mapping.computed.noFieldValues');
+  const toTryText = sheet ? rowsText('rowsToTry') : t(fromFile ? 'mapping.computed.filesToTry' : 'mapping.computed.valuesToTry');
 
   return <div className='space-y-2 text-xs' aria-label={t('mapping.computed.editorFor', { field: fieldLabel })} role='group'>
     <div className='rounded-lg border'>
       <RuleSection {...section('input')} title={t('mapping.computed.input')} icon={<FileText className='h-3.5 w-3.5' />} summary={inputLabel}
-        help={sheet ? t('mapping.recipe.inputHelp') : t('mapping.computed.inputHelp')} invalid={problem === 'mapping.computed.problem.input'}>
+        help={sheet ? rowsText('inputHelp') : t('mapping.computed.inputHelp')} invalid={problem === 'mapping.computed.problem.input'}>
         <Select value={inputValue(rule.input)} onValueChange={(value) => update({ input: inputFromValue(value) })}>
           <SelectTrigger className={cn(INPUT_COMPACT, 'w-56')} aria-label={t('mapping.computed.input')}><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -305,10 +334,10 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
       <CleanupSection section={section('transform')} fieldLabel={fieldLabel} value={rule.transform ?? 'none'} options={COMPUTED_TRANSFORMS}
         onChange={(transform) => update({ transform })} />
 
-      <RuleSection {...section('preview')} title={sheet ? t('mapping.recipe.previewRows') : t('mapping.computed.preview')}
+      <RuleSection {...section('preview')} title={sheet ? rowsText('previewRows') : t('mapping.computed.preview')}
         icon={preview.loading ? <Loader2 className='h-3.5 w-3.5 animate-spin' /> : <Play className='h-3.5 w-3.5' />}
         summary={available.length ? previewSummary : undefined}
-        help={sheet ? t('mapping.recipe.rowsHelp', { max: MAX_SAMPLES }) : t('mapping.computed.filesHelp', { max: MAX_SAMPLES })}>
+        help={sheet ? rowsText('rowsHelp', { max: MAX_SAMPLES }) : t('mapping.computed.filesHelp', { max: MAX_SAMPLES })}>
         {!available.length && <p className='text-muted-foreground'>{emptyText}</p>}
         {available.length > 0 && <div className='space-y-1'>
           <div className='flex items-center gap-2'>
@@ -316,22 +345,22 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
             <span className='text-[11px] tabular-nums text-muted-foreground'>{pickedText}</span>
           </div>
           {available.length > FILTER_FROM && <Input className='h-7 text-xs' value={filter} onChange={(event) => setFilter(event.target.value)}
-            placeholder={sheet ? t('mapping.recipe.rowsFilter') : t('mapping.computed.filesFilter')} aria-label={sheet ? t('mapping.recipe.rowsFilter') : t('mapping.computed.filesFilter')} />}
+            placeholder={sheet ? rowsText('rowsFilter') : t('mapping.computed.filesFilter')} aria-label={sheet ? rowsText('rowsFilter') : t('mapping.computed.filesFilter')} />}
           <ul className={cn(ROW_LIST, 'max-h-36 overflow-y-auto')}>
             {listed.map((item) => {
               const checked = chosenKeys.includes(item.key);
               return <li key={item.key}><label className='flex items-center gap-2 px-2 py-1 hover:bg-muted/40' title={item.input || item.label}>
                 <input type='checkbox' checked={checked} disabled={!checked && chosenKeys.length >= MAX_SAMPLES}
-                  aria-label={sheet ? t('mapping.recipe.rowFor', { row: item.label }) : t('mapping.computed.fileFor', { name: item.label })}
+                  aria-label={sheet ? rowsText('rowFor', { row: item.label }) : t('mapping.computed.fileFor', { name: item.label })}
                   onChange={() => togglePicked(item.key)} />
                 {sheet
                   ? <><span className='shrink-0 tabular-nums text-muted-foreground'>{item.label}</span><span className='min-w-0 truncate'>{item.input || '—'}</span></>
                   : <span className='min-w-0 truncate'>{item.label}</span>}
               </label></li>;
             })}
-            {!listed.length && <li className='px-2 py-1 text-muted-foreground'>{sheet ? t('mapping.recipe.rowsNoMatch') : t('mapping.computed.filesNoMatch')}</li>}
+            {!listed.length && <li className='px-2 py-1 text-muted-foreground'>{sheet ? rowsText('rowsNoMatch') : t('mapping.computed.filesNoMatch')}</li>}
           </ul>
-          {!samples.length && <p className='text-muted-foreground'>{sheet ? t('mapping.recipe.rowsNone') : t('mapping.computed.filesNone')}</p>}
+          {!samples.length && <p className='text-muted-foreground'>{sheet ? rowsText('rowsNone') : t('mapping.computed.filesNone')}</p>}
         </div>}
         {errorLine}
         {!problem && samples.length > 0 && preview.results?.map((result, index) => {
@@ -343,7 +372,7 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
               {sheet && item && <span className='shrink-0 tabular-nums text-muted-foreground'>{item.label}</span>}
               <span className='max-w-full truncate text-muted-foreground'>{(result.input ?? samples[index]) || '—'}</span><ArrowRight className='h-3 w-3 shrink-0' />
               {result.value === null
-                ? <span className='text-amber-700 dark:text-amber-400'>{t(`mapping.reading.reason.${result.reason}`, { values: '', detail: '' })}</span>
+                ? <span className='text-amber-700 dark:text-amber-400'>{readingText.reason({ reason: result.reason })}</span>
                 : <span className='font-medium'>{result.value}</span>}
             </div>
             {steps.length > 0 && <p className='truncate pl-3 text-[11px] text-muted-foreground' aria-label={t('mapping.recipe.stepsFor', { value: result.input ?? '' })}>

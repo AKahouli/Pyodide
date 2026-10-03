@@ -112,7 +112,8 @@ describe('Sheet mapping with the document field mapping', () => {
     expect(await screen.findAllByText('CMD-42')).not.toHaveLength(0);
     expect(screen.getByLabelText('mapping.cell.cellOf').querySelector('mark')?.textContent).toBe('CMD-42');
     expect(screen.getByText('mapping.cell.resultTitle')).toBeInTheDocument();
-    expect(screen.getByText('mapping.reading.reason.label_not_found')).toBeInTheDocument();
+    // A label missing from a cell is worded for a cell, not a document.
+    expect(screen.getByText('mapping.reading.in.cell.reason.label_not_found')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'mapping.save' }));
     await waitFor(() => expect(api.createSourceMapping).toHaveBeenCalled());
     expect(api.createSourceMapping.mock.calls[0][1].fieldMappings).toEqual(saved.fieldMappings);

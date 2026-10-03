@@ -23,6 +23,7 @@ import { FieldLiveStatus } from './DocumentPreviewPane';
 import { computedProblem } from './FieldRecipeEditor';
 import { FieldMappingList, readAllWith, recipeInputs } from './FieldMappingList';
 import { MappingPresetBar } from './MappingPresetBar';
+import { ReadingTextContext } from './readingText';
 import { adaptToSheet, cellLabelSuggestions, cellValue, newSheetRows, sampleRowNumber, sheetPayload, sheetRows } from './sheetMapping';
 import type { SourceMappingTarget } from './SourceMappingDrawer';
 
@@ -33,10 +34,11 @@ const MAX_ROWS = 20;
 const MAX_AI_ROWS = 500;
 
 type Span = { start: number; end: number };
-type Highlight = { text?: string; column?: string; span?: Span | null; spans?: Span[] } | null;
+/** What is marked in a shown text: a searched label, or where values were found (a column's span). */
+export type Highlight = { text?: string; column?: string; span?: Span | null; spans?: Span[] } | null;
 
 /** Without a highlight asked for, the values the shown row gave are marked in the cell they were found in. */
-function foundSpans(readings: Record<string, DocumentFieldReading> | undefined, column: string): Highlight {
+export function foundSpans(readings: Record<string, DocumentFieldReading> | undefined, column: string): Highlight {
   const spans = Object.values(readings ?? {}).filter((reading) => reading.reason === 'found' && reading.column === column && reading.span)
     .map((reading) => reading.span!).sort((left, right) => left.start - right.start)
     .filter((span, index, all) => index === 0 || span.start >= all[index - 1].end);
@@ -393,7 +395,7 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSuggestCo
           </p>)}
         </section>}
 
-        {live.result && concept && <section className={cn(FORM_SECTION, stale && 'opacity-60')} aria-label={t('mapping.cell.resultTitle')}>
+        {live.result && concept && <ReadingTextContext.Provider value='cell'><section className={cn(FORM_SECTION, stale && 'opacity-60')} aria-label={t('mapping.cell.resultTitle')}>
           <SectionHeader title={t('mapping.cell.resultTitle')} count={live.result.rows.length} />
           {live.result.ai.aiCalls > 0 && <p className='text-[11px] text-muted-foreground'>{t('mapping.cell.aiPreview', { count: live.result.ai.aiCalls })}</p>}
           {live.result.rows.map((row) => <div key={row.rowNumber} className='space-y-1.5 rounded-lg border p-2'>
@@ -406,7 +408,7 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSuggestCo
               </Fragment>)}
             </div>
           </div>)}
-        </section>}
+        </section></ReadingTextContext.Provider>}
 
         {preview.data && <section className={FORM_SECTION}>
           <SectionHeader title={t('mapping.preview', { count: preview.data.stats.resolvedEntities })} />
@@ -438,7 +440,7 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSuggestCo
 }
 
 /** The cell's text with what was found (a span of this column) or a searched label marked. */
-function markText(text: string, highlight: Highlight, column: string): ReactNode {
+export function markText(text: string, highlight: Highlight, column: string): ReactNode {
   if (!text) return '—';
   const spans = highlight?.span ? [highlight.span] : highlight?.spans ?? [];
   if (spans.length && highlight?.column === column && spans.every((span) => span.end <= text.length)) {

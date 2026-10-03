@@ -10,6 +10,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import type { AiExtractionSettings, DocumentFieldReading, DocumentLabelSuggestion, ExtractionLocation, ExtractionRules, SourceExtractionStrategy, SourceFieldMapping } from '../../types';
 import { FormField, INPUT } from '../form/FormParts';
 import { ChoiceGroup, HelpTip, LocationIcon, PageRangeControl, RuleSection, useOpenSections } from './RuleControls';
+import { useReadingText } from './readingText';
 import { ValueShaper, type ShaperAction } from './ValueShaper';
 import { CleanupSection, KeepSection, PATTERN_PRESETS, patternProblem, presetOf, takeProblem, useTakeSummary, ValuePatternSection } from './ValueShapeSections';
 
@@ -107,8 +108,8 @@ export interface LabelSuggestions {
   onRetry?: () => void;
   /** Hovering or focusing a suggestion shows where it is in the document. */
   onPreview?: (suggestion: DocumentLabelSuggestion) => void;
-  /** What was read: documents, or a sheet's cells. */
-  unit?: 'documents' | 'cells';
+  /** What was read: documents, a sheet's cells, or the fields of another concept's records. */
+  unit?: 'documents' | 'cells' | 'records';
 }
 
 /**
@@ -337,9 +338,10 @@ export function LabelSuggestionChips({ suggestions, added, full, onAdd }: Readon
 
   return <div className='space-y-1.5 rounded-lg bg-muted/30 p-2' role='group' aria-label={t('mapping.suggestions.title')}>
     <div className='flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground'>
-      <Sparkles className='h-3 w-3' />{suggestions.unit === 'cells' ? t('mapping.cell.suggestionsTitle') : t('mapping.suggestions.title')}
+      <Sparkles className='h-3 w-3' />{suggestions.unit === 'cells' ? t('mapping.cell.suggestionsTitle') : suggestions.unit === 'records' ? t('derived.suggestionsTitle') : t('mapping.suggestions.title')}
       {suggestions.status === 'ready' && suggestions.documentsRead > 0 && <span className='font-normal'>· {suggestions.unit === 'cells'
-        ? t('mapping.cell.suggestionsRead', { count: suggestions.documentsRead }) : t('mapping.suggestions.read', { count: suggestions.documentsRead })}</span>}
+        ? t('mapping.cell.suggestionsRead', { count: suggestions.documentsRead })
+        : suggestions.unit === 'records' ? t('derived.suggestionsRead', { count: suggestions.documentsRead }) : t('mapping.suggestions.read', { count: suggestions.documentsRead })}</span>}
     </div>
     {suggestions.status === 'loading' && <div className='flex flex-wrap gap-1.5' aria-busy='true' aria-label={t('mapping.suggestions.loading')}>
       {[64, 96, 80, 112, 72].map((width) => <Skeleton key={width} className='h-6 rounded-full' style={{ width }} />)}
@@ -475,18 +477,18 @@ export function FieldReadingResult({ fieldLabel, reading, onOpenQuote }: Readonl
   onOpenQuote?: (quote: string, page?: number | null) => void;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
+  const text = useReadingText();
   const found = reading.reason === 'found';
   const computed = reading.method === 'computed';
-  const method = reading.method === 'direct' ? t('mapping.reading.method.direct') : t(`mapping.reading.method.${reading.method}`);
-  const values = (reading.values ?? []).map((value) => `“${value}”`).join(', ');
+  const method = reading.method === 'direct' ? text.direct() : t(`mapping.reading.method.${reading.method}`);
   return <div className={cn('rounded-lg p-2 text-xs', found ? 'bg-muted/50' : 'border border-amber-500/40 bg-amber-500/5')}>
     <div className='flex items-start justify-between gap-2'>
       <div className='min-w-0'>
         <p className='font-medium'>{fieldLabel}</p>
         {found ? <p className='break-words'>{String(reading.value ?? '')}</p>
-          : <p className='text-amber-800 dark:text-amber-300'>{t(`mapping.reading.reason.${reading.reason}`, { values, detail: reading.detail ?? '' })}</p>}
-        {!found && reading.rules && <p className='mt-0.5 text-muted-foreground'>{t('mapping.reading.rulesFirst', { reason: t(`mapping.reading.reason.${reading.rules.reason}`, { values: (reading.rules.values ?? []).map((value) => `“${value}”`).join(', '), detail: '' }) })}</p>}
-        {!found && <p className='mt-0.5 text-muted-foreground'>{t(`mapping.reading.hint.${reading.reason}`)}</p>}
+          : <p className='text-amber-800 dark:text-amber-300'>{text.reason(reading)}</p>}
+        {!found && reading.rules && <p className='mt-0.5 text-muted-foreground'>{t('mapping.reading.rulesFirst', { reason: text.reason({ ...reading.rules, detail: '' }) })}</p>}
+        {!found && <p className='mt-0.5 text-muted-foreground'>{text.hint(reading)}</p>}
         {computed && reading.input && <p className='mt-0.5 truncate text-muted-foreground'>{t('mapping.reading.computedFrom', { input: reading.input })}</p>}
       </div>
       <span className={cn('inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px]', found ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-muted text-muted-foreground')}>

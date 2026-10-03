@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import type { AuthUser } from '@common/auth/auth-user';
 import { Permissions, PermissionsGuard, RequirePermissions } from '@modules/authorization';
-import { ExpectedModelRevisionDto, SaveDerivedSourceDto } from '../dto';
+import { DerivedFieldPreviewDto, ExpectedModelRevisionDto, SaveDerivedSourceDto } from '../dto';
 import { SemanticDerivedSourceService } from '../services/semantic-derived-source.service';
 
 @ApiTags('Semantic Models')
@@ -25,6 +25,14 @@ export class SemanticDerivedSourceController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE, Permissions.SEMANTIC_MODELS_ALL], 'any')
   create(@CurrentUser() user: AuthUser, @Param('modelId') modelId: string, @Body() dto: SaveDerivedSourceDto) {
     return this.derivedSources.save(user._id.toString(), modelId, dto);
+  }
+
+  @Post(':modelId/derived-sources/preview')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Read the fields of a concept filled from another one on a few of its records' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE, Permissions.SEMANTIC_MODELS_ALL], 'any')
+  preview(@CurrentUser() user: AuthUser, @Param('modelId') modelId: string, @Body() dto: DerivedFieldPreviewDto) {
+    return this.derivedSources.previewFields(user._id.toString(), modelId, dto);
   }
 
   @Put(':modelId/derived-sources/:derivedSourceId')

@@ -17,7 +17,8 @@ import json
 from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
 from app.population.compiler import (canonical_spec_hash, compile_specification,
                                      filter_fields, validate_specification)
-from app.population.derived import DerivationError, derive_concept, merge_derived, normalize_derivations
+from app.population.derived import (DerivationError, derive_concept, merge_derived, normalize_derivations,
+                                    read_derived_fields)
 from app.population.computed_fields import (apply_row_recipes, check_inputs, normalize_computed,
                                             normalize_row_recipes, recipe_columns)
 from app.population.cell_fields import (CellReader, cell_gaps, cell_text, extraction_columns,
@@ -740,8 +741,20 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         source = merged_by_concept.get(derivation["sourceConceptId"])
         if source is None:
             continue
-        derived = derive_concept(compiled["concepts"][derivation["conceptId"]], derivation,
-                                 source["entities"], source["assertions"])
+        target = compiled["concepts"][derivation["conceptId"]]
+        # Fields read out of a source field's text (rules, AI), taken by a recipe or fixed, with the
+        # same readers as a sheet cell; a field copied as it is needs no reading.
+        read = await read_derived_fields(derivation, source["entities"], {
+            "conceptId": derivation["conceptId"], "conceptLabel": target.get("label") or derivation["conceptId"],
+            "source": {"assetId": f"derived:{derivation['derivationId']}",
+                       "originalName": compiled["concepts"][derivation["sourceConceptId"]].get("label")
+                       or derivation["sourceConceptId"]},
+            "assetRef": {}, "modelId": str(command_dump.get("modelId") or ""), "aiExtraction": ai_extraction},
+            cache=extraction_cache)
+        derived = derive_concept(target, derivation, source["entities"], source["assertions"], read["readings"])
+        if read["gaps"]:
+            derived["gaps"].extend(read["gaps"])
+            derived["counts"]["gaps"] = len(derived["gaps"])
         merged_by_concept[derivation["conceptId"]] = merge_derived(
             merged_by_concept.get(derivation["conceptId"]), derived)
         for key in counts:

@@ -9,6 +9,7 @@ import { INPUT_COMPACT, ROW_LIST } from '../form/FormParts';
 import { AiFieldSettings, withoutAiSettings } from './AiFieldSettings';
 import { FieldRulesEditor, STRATEGIES, usesRules, type FieldLiveReading, type LabelSuggestions } from './DocumentFieldRules';
 import { FieldRecipeEditor, newColumnRecipe, newComputedRule, recipeStepCount, type RecipeSource } from './FieldRecipeEditor';
+import { ReadingTextContext, type ReadingTextKind } from './readingText';
 
 /**
  * The fields of one mapping, one row each, whatever the source: how the field is read (its mode), and for a
@@ -16,9 +17,13 @@ import { FieldRecipeEditor, newColumnRecipe, newComputedRule, recipeStepCount, t
  * field reads the document's text; a sheet field reads the text of one column's cell, row by row, with the
  * same rules and the same AI (the runtime runs the same functions on both). A field can also be taken from
  * another field (a recipe), be fixed, or be left out; a sheet field can also be read from its column as is.
+ * A field of a concept filled from another concept's records (`record`) reads a field of the source record
+ * as a sheet field reads a column: as it is, out of its text, by a recipe; the record's fields are its columns.
  */
 
-export type MappingSourceKind = 'document' | 'sheet';
+export type MappingSourceKind = 'document' | 'sheet' | 'record';
+
+const TEXT_KIND: Record<MappingSourceKind, ReadingTextKind> = { document: 'document', sheet: 'cell', record: 'record' };
 
 /** "Read all fields with": a strategy, or (sheets) reading each column as it is. */
 export type ReadAllChoice = SourceExtractionStrategy | 'direct';
@@ -26,6 +31,7 @@ export type ReadAllChoice = SourceExtractionStrategy | 'direct';
 const MODES: Record<MappingSourceKind, SourceFieldMapping['mode'][]> = {
   document: ['extract', 'metadata', 'constant', 'computed', 'ignore'],
   sheet: ['direct', 'extract', 'computed', 'constant', 'ignore'],
+  record: ['direct', 'extract', 'computed', 'constant', 'ignore'],
 };
 const NO_COLUMN = '__none';
 
@@ -108,10 +114,10 @@ export function withMode(mapping: SourceFieldMapping, mode: SourceFieldMapping['
  */
 export function readAllWith(mappings: SourceFieldMapping[], choice: ReadAllChoice, kind: MappingSourceKind): SourceFieldMapping[] {
   return mappings.map((mapping) => {
-    if (kind === 'sheet' && choice === 'direct') return mapping.mode === 'extract' ? withMode(mapping, 'direct', kind) : mapping;
+    if (kind !== 'document' && choice === 'direct') return mapping.mode === 'extract' ? withMode(mapping, 'direct', kind) : mapping;
     if (choice === 'direct') return mapping;
     if (mapping.mode === 'extract') return withStrategy(mapping, choice);
-    if (kind === 'sheet' && mapping.mode === 'direct' && mapping.sourceField) return withStrategy(withMode(mapping, 'extract', kind), choice);
+    if (kind !== 'document' && mapping.mode === 'direct' && mapping.sourceField) return withStrategy(withMode(mapping, 'extract', kind), choice);
     return mapping;
   });
 }
@@ -119,7 +125,7 @@ export function readAllWith(mappings: SourceFieldMapping[], choice: ReadAllChoic
 /** The other fields a field may be taken from: read from the source (or, on a sheet, taken from a column). */
 export function recipeInputs(mappings: SourceFieldMapping[], self: string, kind: MappingSourceKind): string[] {
   return mappings.filter((mapping) => mapping.targetAttribute !== self && mapping.mode !== 'ignore'
-    && (mapping.mode !== 'computed' || (kind === 'sheet' && mapping.computed?.input.kind === 'column')))
+    && (mapping.mode !== 'computed' || (kind !== 'document' && mapping.computed?.input.kind === 'column')))
     .map((mapping) => mapping.targetAttribute);
 }
 
@@ -140,7 +146,7 @@ export interface FieldRowExtras {
   pageCount?: number;
 }
 
-export function FieldMappingList({ kind, modelId, attributes, mappings, onChange, onIgnore, addedFields = [], columns = [], columnSamples, extras, recipeSource }: Readonly<{
+export function FieldMappingList({ kind, modelId, attributes, mappings, onChange, onIgnore, addedFields = [], columns = [], columnLabels, columnSamples, extras, recipeSource }: Readonly<{
   kind: MappingSourceKind;
   modelId: string;
   attributes: ReadonlyArray<{ key: string; label: string; description?: string }>;
@@ -152,6 +158,8 @@ export function FieldMappingList({ kind, modelId, attributes, mappings, onChange
   addedFields?: string[];
   /** Sheets: the columns a field can be read from, and a sample of each. */
   columns?: string[];
+  /** Records: the names of the source concept's fields, shown instead of their keys. */
+  columnLabels?: Record<string, string>;
   columnSamples?: Record<string, string>;
   extras?: (mapping: SourceFieldMapping, index: number) => FieldRowExtras;
   recipeSource: RecipeSource;
@@ -166,11 +174,13 @@ export function FieldMappingList({ kind, modelId, attributes, mappings, onChange
     update(index, withMode(mapping, mode, kind, attribute ? sameNamedColumn(attribute, columns) : undefined));
   };
   const modeLabel = (mode: SourceFieldMapping['mode']) => t(`mapping.method.${mode}`);
+  const record = kind === 'record';
+  const columnName = (column: string) => columnLabels?.[column] ?? column;
 
-  return <div className={ROW_LIST}>
+  return <ReadingTextContext.Provider value={TEXT_KIND[kind]}><div className={ROW_LIST}>
     {mappings.map((mapping, index) => {
       const fieldLabel = attributeLabel(mapping.targetAttribute);
-      const readsColumn = kind === 'sheet' && (mapping.mode === 'direct' || mapping.mode === 'extract');
+      const readsColumn = kind !== 'document' && (mapping.mode === 'direct' || mapping.mode === 'extract');
       const row = extras?.(mapping, index) ?? {};
       const columnChoices = [...new Set([...columns, ...(mapping.sourceField ? [mapping.sourceField] : [])])];
       const sample = readsColumn && mapping.sourceField ? columnSamples?.[mapping.sourceField] : undefined;
@@ -181,12 +191,13 @@ export function FieldMappingList({ kind, modelId, attributes, mappings, onChange
             {addedFields.includes(mapping.targetAttribute) && <span className='shrink-0 rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-medium text-sky-800 dark:text-sky-300'>{t('mapping.newField')}</span>}
           </span>
           {readsColumn && <Select value={mapping.sourceField ?? NO_COLUMN} onValueChange={(value) => update(index, { ...mapping, sourceField: value === NO_COLUMN ? null : value })}>
-            <SelectTrigger className={cn(INPUT_COMPACT, 'w-36 text-xs', !mapping.sourceField && 'border-amber-500/60')} aria-label={t('mapping.cell.columnFor', { field: fieldLabel })}>
-              <Columns className='mr-1 h-3.5 w-3.5 shrink-0 text-muted-foreground' /><SelectValue placeholder={t('mapping.cell.chooseColumn')} />
+            <SelectTrigger className={cn(INPUT_COMPACT, 'w-36 text-xs', !mapping.sourceField && 'border-amber-500/60')}
+              aria-label={record ? t('derived.sourceFieldFor', { field: fieldLabel }) : t('mapping.cell.columnFor', { field: fieldLabel })}>
+              <Columns className='mr-1 h-3.5 w-3.5 shrink-0 text-muted-foreground' /><SelectValue placeholder={record ? t('derived.chooseSourceField') : t('mapping.cell.chooseColumn')} />
             </SelectTrigger>
             <SelectContent>
-              {!mapping.sourceField && <SelectItem value={NO_COLUMN}>{t('mapping.cell.chooseColumn')}</SelectItem>}
-              {columnChoices.map((column) => <SelectItem key={column} value={column}>{column}</SelectItem>)}
+              {!mapping.sourceField && <SelectItem value={NO_COLUMN}>{record ? t('derived.chooseSourceField') : t('mapping.cell.chooseColumn')}</SelectItem>}
+              {columnChoices.map((column) => <SelectItem key={column} value={column}>{columnName(column)}</SelectItem>)}
             </SelectContent>
           </Select>}
           <Select value={mapping.mode} onValueChange={(value: SourceFieldMapping['mode']) => setMode(index, value)}>
@@ -202,10 +213,10 @@ export function FieldMappingList({ kind, modelId, attributes, mappings, onChange
             </SelectContent>
           </Select>}
         </div>
-        {readsColumn && !mapping.sourceField && <p role='status' className='text-[11px] text-amber-700 dark:text-amber-400'>{t('mapping.cell.noColumn')}</p>}
+        {readsColumn && !mapping.sourceField && <p role='status' className='text-[11px] text-amber-700 dark:text-amber-400'>{record ? t('derived.noSourceField') : t('mapping.cell.noColumn')}</p>}
         {sample && <p className='truncate text-[11px] text-muted-foreground' title={sample}>{sample}</p>}
         {row.live}
-        {mapping.mode === 'extract' && usesRules(mapping.extractionStrategy) && <FieldRulesEditor fieldLabel={fieldLabel} textKind={kind === 'sheet' ? 'cell' : 'document'}
+        {mapping.mode === 'extract' && usesRules(mapping.extractionStrategy) && <FieldRulesEditor fieldLabel={fieldLabel} textKind={kind === 'document' ? 'document' : 'cell'}
           rules={mapping.rules} onChange={(rules) => update(index, withRules(mapping, rules))} suggestions={row.suggestions}
           pageCount={row.pageCount} live={row.reading} />}
         {mapping.mode === 'extract' && (mapping.extractionStrategy === 'ai' || mapping.extractionStrategy === 'rules_then_ai') && <AiFieldSettings
@@ -213,7 +224,7 @@ export function FieldMappingList({ kind, modelId, attributes, mappings, onChange
           attributeDescription={attributes.find((attribute) => attribute.key === mapping.targetAttribute)?.description}
           onChange={(patch) => update(index, withAiPatch(mapping, patch))} />}
         {mapping.mode === 'computed' && <FieldRecipeEditor modelId={modelId} fieldLabel={fieldLabel}
-          rule={mapping.computed ?? (kind === 'sheet' ? newColumnRecipe(columns[0] ?? '') : newComputedRule())}
+          rule={mapping.computed ?? (kind !== 'document' ? newColumnRecipe(columns[0] ?? '') : newComputedRule())}
           onChange={(computed) => update(index, { ...mapping, computed })}
           fields={recipeInputs(mappings, mapping.targetAttribute, kind).map((key) => ({ key, label: attributeLabel(key) }))}
           source={recipeSource} />}
@@ -221,5 +232,5 @@ export function FieldMappingList({ kind, modelId, attributes, mappings, onChange
           onChange={(event) => update(index, { ...mapping, constantValue: event.target.value })} placeholder={t('mapping.constantPlaceholder')} />}
       </div>;
     })}
-  </div>;
+  </div></ReadingTextContext.Provider>;
 }

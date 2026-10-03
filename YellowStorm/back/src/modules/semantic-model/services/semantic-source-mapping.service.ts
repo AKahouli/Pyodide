@@ -206,7 +206,7 @@ export class SemanticSourceMappingService {
     await this.requireLinkedWorkspace(model.id, dto.workspaceId);
     const document = await this.documents.findById(dto.workspaceId, dto.documentId);
     const kind = this.requireAssetKind(document.mimeType, dto.assetKind);
-    this.assertMappingModes(kind, dto.fieldMappings);
+    SemanticSourceMappingService.assertMappingModes(kind, dto.fieldMappings);
     const concept = await this.assertConceptInDraft(model.id, model.currentDraftVersionId, dto.conceptId, dto.fieldMappings, dto.identityFields ?? []);
     const input = {
       userId,
@@ -240,7 +240,7 @@ export class SemanticSourceMappingService {
     const document = await this.documents.findById(dto.workspaceId, dto.documentId);
     const kind = this.requireAssetKind(document.mimeType);
     if (kind === 'document') throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Only spreadsheet and e-mail archive rows can be previewed here');
-    this.assertMappingModes(kind, dto.fieldMappings);
+    SemanticSourceMappingService.assertMappingModes(kind, dto.fieldMappings);
     const concept = await this.assertConceptInDraft(model.id, model.currentDraftVersionId, dto.conceptId, dto.fieldMappings);
     const attributes = new Map(concept.attributes.map((attribute) => [attribute.key, attribute]));
     const fieldMappings = dto.fieldMappings.filter((field) => field.mode !== 'ignore').map((field) => {
@@ -452,7 +452,7 @@ export class SemanticSourceMappingService {
   async createWorkspace(userId: string, modelId: string, dto: WorkspaceSourceMappingDto) {
     const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
     await this.requireLinkedWorkspace(model.id, dto.workspaceId);
-    this.assertMappingModes('document', dto.fieldMappings);
+    SemanticSourceMappingService.assertMappingModes('document', dto.fieldMappings);
     await this.assertConceptInDraft(model.id, model.currentDraftVersionId, dto.conceptId, dto.fieldMappings, dto.identityFields ?? []);
     let workspaceName = dto.workspaceId;
     try {
@@ -591,7 +591,7 @@ export class SemanticSourceMappingService {
         if (!sampleId) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'This workspace has no readable file yet');
         const document = await this.documents.findById(mapping.workspaceId, sampleId);
         const kind = this.requireAssetKind(document.mimeType, mapping.assetKind);
-        this.assertMappingModes(kind, mapping.fieldMappings);
+        SemanticSourceMappingService.assertMappingModes(kind, mapping.fieldMappings);
         const concept = await this.assertConceptInDraft(
           model.id,
           model.currentDraftVersionId,
@@ -674,7 +674,7 @@ export class SemanticSourceMappingService {
     await this.requireLinkedWorkspace(model.id, dto.workspaceId);
     const document = await this.documents.findById(dto.workspaceId, dto.documentId);
     const kind = this.requireAssetKind(document.mimeType, dto.assetKind);
-    this.assertMappingModes(kind, dto.fieldMappings);
+    SemanticSourceMappingService.assertMappingModes(kind, dto.fieldMappings);
     if (kind !== 'document' && !dto.sheetName) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A sheet is required for spreadsheet mappings');
     await this.assertConceptInDraft(model.id, model.currentDraftVersionId, dto.conceptId, dto.fieldMappings, dto.identityFields ?? []);
     const revision = await this.database.transaction(async (client) => {
@@ -725,7 +725,7 @@ export class SemanticSourceMappingService {
 
   async createBulkDocuments(userId: string, modelId: string, dto: BulkDocumentSourceMappingDto) {
     const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
-    this.assertMappingModes('document', dto.fieldMappings);
+    SemanticSourceMappingService.assertMappingModes('document', dto.fieldMappings);
     await this.assertConceptInDraft(model.id, model.currentDraftVersionId, dto.conceptId, dto.fieldMappings, dto.identityFields ?? []);
     const uniqueDocuments = [...new Map(dto.documents.map((document) => [`${document.workspaceId}:${document.documentId}`, document])).values()];
     const documents = new Map<string, Awaited<ReturnType<WorkspaceDocumentService['findById']>>>();
@@ -946,7 +946,7 @@ export class SemanticSourceMappingService {
    * A spreadsheet field's recipe reads a column of the row, or another directly mapped field that is not
    * itself taken from a field (no chains), as a computed document field does.
    */
-  private assertSheetRecipes(mappings: SourceFieldMapping[]): void {
+  private static assertSheetRecipes(mappings: SourceFieldMapping[]): void {
     const misplaced = mappings.find((mapping) => mapping.computed !== undefined && mapping.mode !== 'direct' && mapping.mode !== 'computed');
     if (misplaced) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A transformation is only supported for fields read from a column or taken from another field');
@@ -972,7 +972,7 @@ export class SemanticSourceMappingService {
   }
 
   /** A sheet field read out of a cell reads a column, and a cell has no pages, headings or tables. */
-  private assertCellExtractions(mappings: SourceFieldMapping[]): void {
+  private static assertCellExtractions(mappings: SourceFieldMapping[]): void {
     const noColumn = mappings.find((mapping) => mapping.mode === 'extract' && !mapping.sourceField?.trim());
     if (noColumn) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${noColumn.targetAttribute}: choose the column whose text the value is read from`);
@@ -983,7 +983,7 @@ export class SemanticSourceMappingService {
     }
   }
 
-  private assertComputedInputs(mappings: SourceFieldMapping[]): void {
+  private static assertComputedInputs(mappings: SourceFieldMapping[]): void {
     const misplaced = mappings.find((mapping) => mapping.computed !== undefined && mapping.mode !== 'computed');
     if (misplaced) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A computation is only supported for computed fields');
@@ -1005,7 +1005,8 @@ export class SemanticSourceMappingService {
     }
   }
 
-  private assertMappingModes(kind: SourceAssetKind, mappings: SourceFieldMapping[]): void {
+  /** Whether field mappings use only the modes, recipes and rules their kind of source allows; throws when not. */
+  static assertMappingModes(kind: SourceAssetKind, mappings: SourceFieldMapping[]): void {
     // A sheet field is read from a column as is, or out of its cell's text as a document field is read
     // (rules and/or AI), or taken from a column or another field (a recipe), or fixed.
     const allowed = kind === 'document'
@@ -1015,10 +1016,10 @@ export class SemanticSourceMappingService {
     if (invalidMode) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${invalidMode.mode} mappings are not supported for ${kind} assets`);
     }
-    if (kind === 'document') this.assertComputedInputs(mappings);
+    if (kind === 'document') SemanticSourceMappingService.assertComputedInputs(mappings);
     else {
-      this.assertSheetRecipes(mappings);
-      this.assertCellExtractions(mappings);
+      SemanticSourceMappingService.assertSheetRecipes(mappings);
+      SemanticSourceMappingService.assertCellExtractions(mappings);
     }
     const invalidMetadata = mappings.find((mapping) => mapping.mode === 'metadata'
       && !['document_name', 'document_id', 'workspace_id'].includes(mapping.sourceField ?? ''));

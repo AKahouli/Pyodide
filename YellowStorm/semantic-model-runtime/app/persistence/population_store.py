@@ -677,6 +677,8 @@ def _origin_of(evidence: dict[str, Any], origin: str | None) -> dict[str, Any]:
     if isinstance(derived, dict):
         result["derivedFrom"] = {key: derived.get(key) for key in (
             "conceptId", "entityId", "label", "attribute", "rule", "distinctValues", "records")}
+        # A value read out of the source field's text (rules, AI), by a recipe or fixed: how, and where.
+        result["derivedFrom"].update({key: derived[key] for key in ("method", "span") if derived.get(key) is not None})
     return result
 
 

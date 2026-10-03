@@ -460,11 +460,43 @@ export interface LastDocumentMapping extends MappingSettings {
   updatedAt: string;
 }
 
+/**
+ * A field of a concept filled from another concept's records, filled as a sheet field is from a row: copied
+ * from a source field as it is (no `mode`, the shape every derived field had before), read out of a source
+ * field's text with rules and/or AI (`extract`), taken by a recipe (`computed`; a `column` input names a
+ * field of the source record), or fixed (`constant`).
+ */
+export interface DerivedFieldMapping {
+  sourceAttribute?: string;
+  targetAttribute: string;
+  mode?: 'extract' | 'computed' | 'constant';
+  extractionStrategy?: SourceExtractionStrategy;
+  rules?: ExtractionRules;
+  semanticDefinition?: string;
+  agentId?: string;
+  computed?: ComputedFieldRule;
+  constantValue?: string | number | boolean;
+}
+
+/** Sample records of the source concept read with a derived source's fields, as a run would. */
+export interface DerivedFieldPreviewRequest {
+  conceptId: string;
+  sourceConceptId: string;
+  fieldMappings: DerivedFieldMapping[];
+  records: Array<{ entityId: string; values: Record<string, string | number | boolean | null> }>;
+}
+
+export interface DerivedFieldPreviewResponse {
+  /** For each record, how each field was read (or why not); `column` is the source field read. */
+  records: Array<{ entityId: string; fields: Record<string, DocumentFieldReading> }>;
+  ai: { aiRows: number; aiCalls: number; aiSkippedRows: number; aiFailedRows: number };
+}
+
 export interface DerivedSource {
   id: string;
   conceptId: string;
   sourceConceptId: string;
-  fieldMappings: Array<{ sourceAttribute: string; targetAttribute: string }>;
+  fieldMappings: DerivedFieldMapping[];
   conflictRule: DerivedConflictRule;
   /** The source field ordering records for the most recent rule. */
   orderBy: string | null;

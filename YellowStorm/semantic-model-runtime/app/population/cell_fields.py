@@ -213,8 +213,8 @@ class CellReader:
     """Reads the extracted fields of a sheet's rows: rules on every row, AI on at most ``ai_rows`` rows.
 
     ``context`` carries what the AI and the evidence need: ``conceptId``, ``conceptLabel``, ``source``
-    (``assetId``, ``originalName``), ``assetRef``, ``mappingVersion``, ``modelId``, ``aiExtraction``
-    and the normalized AI ``settings``. ``stats`` counts the AI calls made, reused and left out.
+    (``assetId``, ``originalName``), ``assetRef``, ``mappingVersion``, ``modelId``, ``aiExtraction``,
+    the normalized AI ``settings`` and the ``unit`` a row is called by (``row``, or ``record``). ``stats`` counts the AI calls made, reused and left out.
     """
 
     def __init__(self, specs: dict[str, dict[str, Any]], context: dict[str, Any], *, cache: Any = None,
@@ -282,7 +282,8 @@ class CellReader:
             for index, column in enumerate(columns, start=1):
                 sections += cell_sections(cells[column], column, index)
             source = dict(self.context.get("source") or {})
-            source["originalName"] = f"{source.get('originalName') or 'sheet'} Â· row {number}"
+            # The text the AI reads is named after its row (a sheet) or its record (another concept's).
+            source["originalName"] = f"{source.get('originalName') or 'sheet'} · {self.context.get('unit') or 'row'} {number}"
             entry = {"conceptId": self.context.get("conceptId"), "conceptLabel": self.context.get("conceptLabel"),
                      "source": source, "mappingVersion": self.context.get("mappingVersion")}
             values: dict[str, Any] = {}
@@ -327,23 +328,24 @@ class CellReader:
                                            **({"span": evidence["span"]} if "span" in evidence else {})}
 
 
-def cell_gaps(concept_id: str, asset_ref: dict[str, Any], specs: dict[str, dict[str, Any]],
-              missing: dict[str, int], rows: int, stats: dict[str, Any]) -> list[dict[str, Any]]:
-    """What a source's cell extractions left unread, once per field rather than once per row."""
+def cell_gaps(concept_id: str, asset_ref: dict[str, Any] | None, specs: dict[str, dict[str, Any]],
+              missing: dict[str, int], rows: int, stats: dict[str, Any], *, unit: str = "rows") -> list[dict[str, Any]]:
+    """What a source's cell extractions left unread, once per field rather than once per row (or per
+    record, for fields read out of another concept's records)."""
     gaps: list[dict[str, Any]] = []
     for attribute in specs:
         count = missing.get(attribute, 0)
         if count:
             gaps.append({"kind": "unresolved_document_field", "conceptId": concept_id, "rowNumber": None,
                          "field": attribute, "assetRef": asset_ref,
-                         "detail": f"field '{attribute}' was not found in {count} of {rows} rows"})
+                         "detail": f"field '{attribute}' was not found in {count} of {rows} {unit}"})
     if stats.get("aiFailedRows"):
         gaps.append({"kind": "ai_extraction_unavailable", "conceptId": concept_id, "rowNumber": None,
                      "assetRef": asset_ref,
-                     "detail": f"AI extraction failed for {stats['aiFailedRows']} rows: {stats.get('lastFailure')}"})
+                     "detail": f"AI extraction failed for {stats['aiFailedRows']} {unit}: {stats.get('lastFailure')}"})
     if stats.get("aiSkippedRows"):
         gaps.append({"kind": "budget_exhausted", "conceptId": concept_id, "rowNumber": None, "scope": "ai",
                      "assetRef": asset_ref,
-                     "detail": f"AI read {stats.get('aiRows', 0)} rows; {stats['aiSkippedRows']} more rows were "
+                     "detail": f"AI read {stats.get('aiRows', 0)} {unit}; {stats['aiSkippedRows']} more {unit} were "
                                "left to the rules"})
     return gaps

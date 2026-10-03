@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { DocumentFieldReading, ExtractionLocation, ExtractionTake, ExtractionTakeUnit } from '../../types';
+import { useReadingText } from './readingText';
 import { ChoiceGroup } from './RuleControls';
 
 export const TAKE_UNITS: ExtractionTakeUnit[] = ['characters', 'words', 'lines'];
@@ -105,6 +106,7 @@ export function ValueShaper({ fieldLabel, reading, pending, location, take, patt
   onRead?: () => void;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
+  const readingText = useReadingText();
   const raw = reading?.raw ?? '';
   const textRef = useRef<HTMLDivElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -217,8 +219,7 @@ export function ValueShaper({ fieldLabel, reading, pending, location, take, patt
     onKeyDown={onHandleKey} onPointerDown={(event) => { event.preventDefault(); setDragging(true); }}
     className='relative mx-px inline-block h-[1.1em] w-1 cursor-ew-resize rounded-full bg-primary align-text-bottom outline-none ring-offset-1 focus-visible:ring-2 focus-visible:ring-ring' /> : null;
   const ghostMark = <span aria-hidden className='inline-block h-[1.1em] w-0 border-l border-dashed border-primary/70 align-text-bottom' />;
-  const status = reading && reading.reason !== 'found'
-    ? t(`mapping.reading.reason.${reading.reason}`, { values: (reading.values ?? []).map((value) => `“${value}”`).join(', '), detail: reading.detail ?? '' }) : null;
+  const status = reading && reading.reason !== 'found' ? readingText.reason(reading) : null;
 
   return <div className='space-y-2' role='group' aria-label={t('mapping.rules.take.title', { field: fieldLabel })}>
     <div className='flex flex-wrap items-center gap-2'>

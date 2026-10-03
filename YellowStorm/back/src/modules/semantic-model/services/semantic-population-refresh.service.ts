@@ -13,6 +13,7 @@ import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-d
 import { ModelSpecificationService } from './model-specification.service';
 import { SemanticModelService } from './semantic-model.service';
 import { SemanticDerivedSourceService } from './semantic-derived-source.service';
+import type { RuntimeDerivation } from '../domain/semantic-derived-source.types';
 import { SemanticRuntimeClientService, type RuntimeValueOrigin } from './semantic-runtime-client.service';
 import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
 import { DOCUMENT_MIME_TYPES, STRUCTURED_MIME_PREFIXES } from './semantic-source-mapping.service';
@@ -125,8 +126,11 @@ export class SemanticPopulationRefreshService {
    */
   private async aiExtractionIdentity(
     sources: object[],
+    derivations: RuntimeDerivation[] = [],
   ): Promise<{ agentSlug: string; model: string | null; contractVersion: string } | null> {
-    const usesAi = sources.some((source) => usesAiExtraction((source as { fieldMappings?: SourceFieldMapping[] | null }).fieldMappings)
+    // A derived field read out of a source field's text by AI.
+    const usesAi = derivations.some((derivation) => derivation.aiSettings !== undefined)
+      || sources.some((source) => usesAiExtraction((source as { fieldMappings?: SourceFieldMapping[] | null }).fieldMappings)
       // A sheet field read out of a cell by AI.
       || Object.values((source as { fieldExtractions?: Record<string, { extractionStrategy?: string }> }).fieldExtractions ?? {})
         .some((field) => field.extractionStrategy === 'ai' || field.extractionStrategy === 'rules_then_ai'));
@@ -626,7 +630,8 @@ export class SemanticPopulationRefreshService {
     // Concepts made from another concept's records, when that concept is read by this run.
     const derivations = scope.kind === 'model' && this.derivedSources
       ? this.derivedSources.runtimeDerivations(await this.derivedSources.forModel(model.id), nodes,
-        new Set(sources.map((source) => source.conceptId)), identityRules)
+        new Set(sources.map((source) => source.conceptId)), identityRules,
+        effectiveAiSettings(await this.adminAiSettings()))
       : [];
     const derivedConceptIds = new Set(derivations.map((derivation) => derivation.conceptId));
     if (!sources.length) {
@@ -720,7 +725,7 @@ export class SemanticPopulationRefreshService {
     const runtimeSources = JSON.parse(JSON.stringify(sources)) as typeof sources;
     // The AI agent's effective model is part of revision identity, so an admin
     // changing it produces a new revision instead of reusing persisted rows.
-    const aiExtraction = await this.aiExtractionIdentity(runtimeSources);
+    const aiExtraction = await this.aiExtractionIdentity(runtimeSources, derivations);
     const populationExecutionFingerprint = this.specifications.hashCanonical({
       specHash,
       sources: runtimeSources.map((source) => ({

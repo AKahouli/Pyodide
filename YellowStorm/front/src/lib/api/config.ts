@@ -482,6 +482,7 @@ export const API_ENDPOINTS = {
     assistantChange: (id: string, changeId: string, action: 'undo' | 'redo') => `/semantic-models/${id}/assistant/changes/${changeId}/${action}`,
     sourceMapping: (id: string, mappingId: string) => `/semantic-models/${id}/source-mappings/${mappingId}`,
     derivedSources: (id: string) => `/semantic-models/${id}/derived-sources`,
+    derivedSourcePreview: (id: string) => `/semantic-models/${id}/derived-sources/preview`,
     derivedSource: (id: string, derivedSourceId: string) => `/semantic-models/${id}/derived-sources/${derivedSourceId}`,
     mappingPresets: (id: string) => `/semantic-models/${id}/mapping-presets`,
     mappingPreset: (id: string, presetId: string) => `/semantic-models/${id}/mapping-presets/${presetId}`,

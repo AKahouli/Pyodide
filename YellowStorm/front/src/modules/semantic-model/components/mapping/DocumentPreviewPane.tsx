@@ -8,6 +8,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import type { DocumentFieldReading, StructuredSourceAsset } from '../../types';
 import { INPUT_COMPACT } from '../form/FormParts';
 import { pageRange } from './DocumentFieldRules';
+import { useReadingText } from './readingText';
 
 // A long passage is found in the viewer by its first words.
 const HIGHLIGHT_CHARACTERS = 120;
@@ -137,6 +138,7 @@ export function FieldLiveStatus({ reading: current, pending, stale, labels, onSh
   onFindLabel: (label: string) => void;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
+  const text = useReadingText();
   if (!current) {
     return pending ? <div className='flex h-7 items-center gap-1.5 rounded-md bg-muted/40 px-2 text-[11px] text-muted-foreground' role='status'>
       <Loader2 className='h-3 w-3 animate-spin' />{t('mapping.live.reading')}
@@ -157,7 +159,7 @@ export function FieldLiveStatus({ reading: current, pending, stale, labels, onSh
         aria-label={t('mapping.live.showValue', { value: value.slice(0, 80) })} onClick={() => onShow(current)}>
         <span className='line-clamp-2 break-words'>{value}</span>
       </button>
-        : <p className='text-foreground/80'>{t(`mapping.reading.reason.${current.reason}`, { values: (current.values ?? []).map((item) => `“${item}”`).join(', '), detail: current.detail ?? '' })}</p>}
+        : <p className='text-foreground/80'>{text.reason(current)}</p>}
     </div>
     {found && current.page ? <span className='shrink-0 tabular-nums text-muted-foreground'>{pageRange(t, current.page, current.pageEnd)}</span> : null}
     {found && !current.page && current.column ? <span className='max-w-[8rem] shrink-0 truncate text-muted-foreground'>{current.column}</span> : null}

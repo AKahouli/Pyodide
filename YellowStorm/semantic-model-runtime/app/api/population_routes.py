@@ -667,7 +667,9 @@ async def preview_cell_fields(body: dict) -> dict[str, object]:
         "conceptId": entry.get("conceptId") or "preview", "conceptLabel": entry.get("conceptLabel"),
         "source": entry.get("source") or {}, "assetRef": {"assetId": (entry.get("source") or {}).get("assetId")},
         "mappingVersion": "preview", "modelId": str(body.get("modelId") or ""),
-        "aiExtraction": body.get("aiExtraction"), "settings": settings}, ai_rows=MAX_PREVIEW_ROWS)
+        "aiExtraction": body.get("aiExtraction"), "settings": settings,
+        # Rows of a sheet, or records of another concept (a derived source's sample records).
+        "unit": "record" if entry.get("unit") == "record" else "row"}, ai_rows=MAX_PREVIEW_ROWS)
     texts = [{str(column): "" if value is None else str(value)[:MAX_CELL_CHARS] for column, value in row["values"].items()}
              for row in rows]
     columns = extraction_columns(extractions)

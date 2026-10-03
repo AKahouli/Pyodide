@@ -597,17 +597,52 @@ export class RunLimitsDto {
 }
 
 export class DerivedFieldMappingDto {
-  @ApiProperty({ description: 'A field of the source concept' })
+  @ApiPropertyOptional({ description: 'The field of the source concept it is copied from or read out of; absent for a recipe or a fixed value' })
+  @ValidateIf((field: DerivedFieldMappingDto) => (field.mode ?? 'direct') === 'direct' || field.mode === 'extract' || field.sourceAttribute !== undefined)
   @IsString()
   @MinLength(1)
   @MaxLength(200)
-  sourceAttribute!: string;
+  sourceAttribute?: string;
 
   @ApiProperty({ description: 'The field of the derived concept it fills' })
   @IsString()
   @MinLength(1)
   @MaxLength(200)
   targetAttribute!: string;
+
+  @ApiPropertyOptional({ enum: ['direct', 'extract', 'computed', 'constant'], description: 'Absent: copied as it is' })
+  @IsOptional()
+  @IsIn(['direct', 'extract', 'computed', 'constant'])
+  mode?: 'direct' | 'extract' | 'computed' | 'constant';
+
+  @ApiPropertyOptional({ enum: ['deterministic', 'ai', 'rules_then_ai'], description: 'extract: rules, AI, or rules then AI' })
+  @IsOptional()
+  @IsIn(['deterministic', 'ai', 'rules_then_ai'])
+  extractionStrategy?: 'deterministic' | 'ai' | 'rules_then_ai';
+
+  @ApiPropertyOptional({ maxLength: 2000, description: 'AI reading: what the value means and what to look for' })
+  @IsOptional() @IsString() @MaxLength(2000)
+  semanticDefinition?: string;
+
+  @ApiPropertyOptional({ maxLength: 64, description: 'AI reading: the agent asked to read the field' })
+  @IsOptional() @IsString() @Matches(/^[A-Za-z0-9_-]{1,64}$/)
+  agentId?: string;
+
+  @ApiPropertyOptional({ type: () => ExtractionRulesDto, description: 'extract: where the value is in the source field text and what it looks like' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExtractionRulesDto)
+  rules?: ExtractionRulesDto;
+
+  @ApiPropertyOptional({ type: () => ComputedFieldDto, description: 'computed: the recipe; a column input names a field of the source concept' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ComputedFieldDto)
+  computed?: ComputedFieldDto;
+
+  @ApiPropertyOptional({ description: 'constant: the fixed value' })
+  @IsOptional()
+  constantValue?: string | number | boolean;
 }
 
 export class SaveDerivedSourceDto extends ExpectedModelRevisionDto {
@@ -850,6 +885,44 @@ export class SheetFieldPreviewDto {
   @ValidateNested()
   @Type(() => AiExtractionSettingsDto)
   aiSettings?: AiExtractionSettingsDto;
+}
+
+/** A sample record of the source concept: its values by field, to read a derived source's fields on. */
+export class DerivedPreviewRecordDto {
+  @ApiProperty({ description: 'The source record' })
+  @IsString() @MinLength(1) @MaxLength(300)
+  entityId!: string;
+
+  @ApiProperty({ description: 'Values by source field (at most 200 fields, 20000 characters each)' })
+  @IsObject()
+  @Validate(SheetRowValuesConstraint)
+  values!: Record<string, string | number | boolean | null>;
+}
+
+export class DerivedFieldPreviewDto {
+  @ApiProperty({ description: 'The concept filled from another one' })
+  @IsUUID()
+  conceptId!: string;
+
+  @ApiProperty({ description: 'The concept whose records carry the values' })
+  @IsUUID()
+  sourceConceptId!: string;
+
+  @ApiProperty({ type: [DerivedFieldMappingDto], maxItems: 50 })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => DerivedFieldMappingDto)
+  fieldMappings!: DerivedFieldMappingDto[];
+
+  @ApiProperty({ type: [DerivedPreviewRecordDto], minItems: 1, maxItems: 20 })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => DerivedPreviewRecordDto)
+  records!: DerivedPreviewRecordDto[];
 }
 
 export class DocumentSourceRefDto {
