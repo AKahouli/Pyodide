@@ -102,6 +102,14 @@ describe('FieldRecipeEditor on a sheet', () => {
       .toEqual({ input: { kind: 'column', name: 'ref' }, method: 'whole', transform: 'year' });
   });
 
+  it('before the sheet is read, still offers its own column and asks nothing', () => {
+    render(<Harness source={{ kind: 'sheet', columns: [], rows: [], fieldInputs: {} }} />);
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('mapping.recipe.columnOption')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.recipe.previewRows' }));
+    expect(screen.getByText('mapping.recipe.noRows')).toBeTruthy();
+  });
+
   it('refuses a column the sheet does not have', () => {
     expect(computedProblem(newColumnRecipe('gone'), [], ['ref'])).toBe('mapping.computed.problem.input');
     expect(computedProblem(newColumnRecipe('ref'), [], ['ref'])).toBeNull();

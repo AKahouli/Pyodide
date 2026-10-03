@@ -150,15 +150,18 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
   const position = Math.abs(rule.part ?? 1) || 1;
   const fromFile = rule.input.kind === 'file';
 
+  // The sheet's columns once it has been read; until then, the column the recipe reads is still offered.
+  const knownColumns = sheet && source.columns.length ? source.columns : undefined;
+  const columnChoices = sheet ? [...new Set([...source.columns, ...(rule.input.kind === 'column' ? [rule.input.name] : [])])] : [];
   // “Take it from”: per source; a later input kind (AI on a column) is one more option here.
   const inputOptions: Array<{ value: string; label: string }> = sheet
-    ? [...source.columns.map((column) => ({ value: `column:${column}`, label: t('mapping.recipe.columnOption', { column }) })),
+    ? [...columnChoices.map((column) => ({ value: `column:${column}`, label: t('mapping.recipe.columnOption', { column }) })),
       ...fields.map((field) => ({ value: `field:${field.key}`, label: t('mapping.recipe.fieldOption', { field: field.label }) }))]
     : [{ value: FILE_INPUT, label: t('mapping.computed.fileName') }, ...fields.map((field) => ({ value: `field:${field.key}`, label: field.label }))];
 
   // What it can be tried on.
   const fieldInput = sheet && rule.input.kind === 'field' ? source.fieldInputs[rule.input.name] : undefined;
-  const inputRecipe = fieldInput?.recipe && recipeStepCount(fieldInput.recipe, fieldInput.column) > 0 && !computedProblem(fieldInput.recipe, [], source.kind === 'sheet' ? source.columns : undefined)
+  const inputRecipe = fieldInput?.recipe && recipeStepCount(fieldInput.recipe, fieldInput.column) > 0 && !computedProblem(fieldInput.recipe, [], knownColumns)
     ? computedPayload(fieldInput.recipe) : undefined;
   const available: PreviewItem[] = (() => {
     if (source.kind === 'sheet') {
@@ -186,7 +189,9 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
   };
   const query = filter.trim().toLocaleLowerCase();
   const listed = query ? available.filter((item) => `${item.label} ${item.input}`.toLocaleLowerCase().includes(query)) : available;
-  const problem = computedProblem(rule, fields.map((field) => field.key), sheet ? source.columns : undefined);
+  const problem = computedProblem(rule, fields.map((field) => field.key), knownColumns);
+  // A sheet field reads a column or a field of the row, not a document.
+  const problemText = (key: string) => sheet && key === 'mapping.computed.problem.input' ? t('mapping.recipe.problemInput') : t(key as never);
   const payload = JSON.stringify(computedPayload(rule));
   const inputRecipeKey = inputRecipe ? JSON.stringify(inputRecipe) : '';
   const sampleKey = samples.join('\n');
@@ -342,7 +347,7 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
       </RuleSection>
     </div>
 
-    {problem && <p role='alert' className='flex gap-1.5 text-amber-700 dark:text-amber-400'><AlertTriangle className='h-3.5 w-3.5 shrink-0' />{t(problem as never)}</p>}
+    {problem && <p role='alert' className='flex gap-1.5 text-amber-700 dark:text-amber-400'><AlertTriangle className='h-3.5 w-3.5 shrink-0' />{problemText(problem)}</p>}
     {!problem && !sections.isOpen('preview') && errorLine}
   </div>;
 }
