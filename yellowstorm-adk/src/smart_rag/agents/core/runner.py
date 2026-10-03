@@ -634,7 +634,14 @@ class AgentRunner:
                             await q.put(output)
                             accumulated_text += text_to_send
 
-                    if part.function_call:
+                    # ADK 2.11 streams function calls progressively: every
+                    # partial event re-carries the in-progress function_call
+                    # with args still filling in. ADK itself executes tools
+                    # only on the non-partial event (flows/llm_flows/functions.py
+                    # "Only execute function calls in the non-partial events"),
+                    # so observing partials here would queue each call once per
+                    # streamed chunk (seen: 670 observations for 1 execution).
+                    if part.function_call and not event.partial:
                         if accumulated_text != "":
                             recorder.record_chunk(accumulated_text)
                             accumulated_text = ""
