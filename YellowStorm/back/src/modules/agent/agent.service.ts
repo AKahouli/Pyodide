@@ -358,7 +358,8 @@ export class AgentService {
     const agentTypeSlug = dto.agentType ? await this.resolveAgentTypeSlug(dto.agentType) : undefined;
     const patch = this.dtoToUpdateInput(dto, agent, { agentTypeSlug, normalizedSlug });
     if (dto.rootExecutionPolicy !== undefined || dto.delegateAgentIds !== undefined || dto.delegateTeamIds !== undefined) {
-      this.rootPolicyService.requireEligibleRootType(agent.agentTypeSlug);
+      // The effective type is the retyped slug when the same request changes it.
+      this.rootPolicyService.requireEligibleRootType(agentTypeSlug ?? agent.agentTypeSlug);
       await this.rootPolicyService.validateAllowlist(
         agent._id,
         patch.delegateAgentIds ?? agent.delegateAgentIds ?? [],
@@ -1716,8 +1717,13 @@ export class AgentService {
     if (dto.rootExecutionPolicy !== undefined) {
       this.rootPolicyUpdateFields(patch, dto, existing);
     }
-    if (dto.delegateAgentIds !== undefined) patch.delegateAgentIds = this.normalizeIdList(dto.delegateAgentIds);
-    if (dto.delegateTeamIds !== undefined) patch.delegateTeamIds = this.normalizeIdList(dto.delegateTeamIds);
+    // Un-enrolling in the same request also drops any explicitly sent ids.
+    if (dto.delegateAgentIds !== undefined && patch.rootExecutionPolicy !== null) {
+      patch.delegateAgentIds = this.normalizeIdList(dto.delegateAgentIds);
+    }
+    if (dto.delegateTeamIds !== undefined && patch.rootExecutionPolicy !== null) {
+      patch.delegateTeamIds = this.normalizeIdList(dto.delegateTeamIds);
+    }
     if (dto.isActive !== undefined) patch.isActive = dto.isActive;
     if (dto.isDefaultForType !== undefined) patch.isDefaultForType = dto.isDefaultForType;
     if (dto.knowledgeBases !== undefined) patch.knowledgeBases = dto.knowledgeBases;

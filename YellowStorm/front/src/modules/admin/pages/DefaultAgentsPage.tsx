@@ -102,6 +102,9 @@ export function DefaultAgentsPage() {
           deploymentSettings: data.deploymentSettings,
           enable_temporary_child_agents: data.enable_temporary_child_agents,
           max_temporary_child_agents: data.max_temporary_child_agents,
+          rootExecutionPolicy: data.rootExecutionPolicy,
+          delegateAgentIds: data.delegateAgentIds,
+          delegateTeamIds: data.delegateTeamIds,
         });
         showSuccess(t('defaultAgents.toasts.updated.title'), {
           description: t('defaultAgents.toasts.updated.description', { name: data.name }),
@@ -128,6 +131,9 @@ export function DefaultAgentsPage() {
           deploymentSettings: data.deploymentSettings,
           enable_temporary_child_agents: data.enable_temporary_child_agents,
           max_temporary_child_agents: data.max_temporary_child_agents,
+          rootExecutionPolicy: data.rootExecutionPolicy,
+          delegateAgentIds: data.delegateAgentIds,
+          delegateTeamIds: data.delegateTeamIds,
         });
         showSuccess(t('defaultAgents.toasts.created.title'), {
           description: t('defaultAgents.toasts.created.description', { name: data.name }),

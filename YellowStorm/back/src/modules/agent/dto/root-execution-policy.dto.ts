@@ -6,6 +6,8 @@ import {
   IsInt,
   IsObject,
   IsOptional,
+  IsString,
+  Matches,
   Max,
   Min,
   ValidateNested,
@@ -116,6 +118,8 @@ export class RootLimitsDto {
 
 export class RootDelegateModeOverrideDto {
   @ApiProperty({ description: 'Delegate agent id (24-char hex)' })
+  @IsString()
+  @Matches(/^[0-9a-fA-F]{24}$/)
   agentId!: string;
 
   @ApiProperty({ enum: ['native', 'root_constrained'] })
@@ -172,16 +176,3 @@ export class RootExecutionPolicyDto {
   perAgentModeOverrides?: RootDelegateModeOverrideDto[];
 }
 
-/** Payload carrying the policy plus the raw allowlist selection. */
-export class RootExecutionConfigDto {
-  @ApiProperty({ type: RootExecutionPolicyDto })
-  @ValidateNested()
-  @Type(() => RootExecutionPolicyDto)
-  rootExecutionPolicy!: RootExecutionPolicyDto;
-
-  @ApiProperty({ type: [String], description: 'Direct specialist agent ids' })
-  delegateAgentIds: string[] = [];
-
-  @ApiProperty({ type: [String], description: 'Source Team ids feeding the pool' })
-  delegateTeamIds: string[] = [];
-}

@@ -2,6 +2,34 @@
  * Agent Module Types
  */
 
+export type RootConfigurationMode = 'native' | 'root_constrained';
+
+export interface RootDelegateModeOverride {
+  agentId: string;
+  configurationMode: RootConfigurationMode;
+}
+
+/** Mirrors the backend RootExecutionPolicyV1 (WP01); version 1 only. */
+export interface RootExecutionPolicy {
+  version: 1;
+  delegation: { enabled: boolean; defaultConfigurationMode: RootConfigurationMode };
+  temporaryWorkers: { enabled: boolean; maxPerWorkGroup: number };
+  fanout: { enabled: boolean; maxItems: number; allowBackground: boolean };
+  background: {
+    enabled: boolean;
+    maxOutstandingPerConversation: number;
+    taskTimeoutSeconds: number;
+    maxAttempts: number;
+  };
+  limits: {
+    maxDepth: 1;
+    maxParallelWorkers: number;
+    maxChildExecutionsPerWorkGroup: number;
+    maxWorkGroupDurationSeconds: number;
+  };
+  perAgentModeOverrides?: RootDelegateModeOverride[];
+}
+
 export interface Agent {
   id: string;
   name: string;
@@ -24,6 +52,10 @@ export interface Agent {
   deploymentSettings?: AgentDeploymentSettings;
   enable_temporary_child_agents?: boolean;
   max_temporary_child_agents?: number;
+  /** Root-delegation policy; present only when the agent is enrolled as a root. */
+  rootExecutionPolicy?: RootExecutionPolicy;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
   /** True when the agent has the "smart-memory" connector. */
   hasSmartMemory?: boolean;
   isDefault: boolean;
@@ -491,6 +523,9 @@ export interface CreateAgentData {
   deploymentSettings?: AgentDeploymentSettings;
   enable_temporary_child_agents?: boolean;
   max_temporary_child_agents?: number;
+  rootExecutionPolicy?: RootExecutionPolicy;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
 }
 
 export interface UpdateAgentData {
@@ -516,4 +551,7 @@ export interface UpdateAgentData {
   deploymentSettings?: AgentDeploymentSettings;
   enable_temporary_child_agents?: boolean;
   max_temporary_child_agents?: number;
+  rootExecutionPolicy?: RootExecutionPolicy;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
 }

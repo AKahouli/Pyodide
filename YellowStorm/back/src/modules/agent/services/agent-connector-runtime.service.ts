@@ -37,7 +37,7 @@ export class AgentConnectorRuntimeService {
   }> {
     const normalizedBindings = toolBindings
       .filter((binding) => binding && typeof binding === 'object')
-      .map((binding) => binding as Record<string, unknown>);
+      .map((binding) => binding);
 
     if (normalizedBindings.length === 0) {
       return { connectorIds: [], connector_bindings: [], tools: [], skills: [] };
@@ -90,7 +90,7 @@ export class AgentConnectorRuntimeService {
 
       const allowedActionKeys = actionKeysByConnectorId.get(connectorId);
       const selectedActions = (connector.actions || [])
-        .filter((action) => action.isEnabled !== false)
+        .filter((action) => action.isEnabled)
         .filter((action) => !allowedActionKeys || allowedActionKeys.has(action.key))
         .map((action) => ({
           key: action.key,
@@ -142,7 +142,7 @@ export class AgentConnectorRuntimeService {
       connectorIds
         .map((connectorId) => connectorsMap.get(connectorId)?.referencedSkillIds || [])
         .flat()
-        .filter(Boolean) as string[],
+        .filter(Boolean),
     )];
   }
 
@@ -220,8 +220,8 @@ export class AgentConnectorRuntimeService {
         mcp_transport_type: connector.mcpTransportType || '',
         mcp_server_url: connector.mcpServerUrl || '',
         mcp_server_config: connector.mcpServerConfig || {},
-        auth_headers: {} as Record<string, string>,
-        auth_env: {} as Record<string, string>,
+        auth_headers: {},
+        auth_env: {},
         dynamic_headers: (connector.dynamicHeaders || [])
           .filter((header: any) => header.enabled !== false && header.source === 'workspace')
           .map((header: any) => ({ header_name: header.headerName, source: header.source })),
@@ -274,10 +274,11 @@ export class AgentConnectorRuntimeService {
     if (mcpLogicalSearchKey) {
       for (const binding of bindings) {
         const transport = String(binding.mcp_transport_type || '');
-        const hasAuth = Boolean((binding.auth_headers as Record<string, string>)?.Authorization);
+        const authHeaders = binding.auth_headers as Record<string, unknown> | undefined;
+        const hasAuth = Boolean(authHeaders?.['Authorization']);
         if (transport === 'streamable_http' && !hasAuth) {
           binding.auth_headers = {
-            ...(binding.auth_headers as Record<string, string>),
+            ...(binding.auth_headers),
             Authorization: `Bearer ${mcpLogicalSearchKey}`,
           };
         }

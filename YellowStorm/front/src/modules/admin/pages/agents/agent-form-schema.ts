@@ -1,5 +1,7 @@
 import * as z from 'zod';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
+import { rootExecutionPolicySchema } from '@/modules/agent/components/root-execution-policy-schema';
+import type { RootExecutionPolicyFormValues } from '@/modules/agent/components/root-execution-policy-schema';
 
 type Translator = (key: ModuleTranslationKey<'admin'>, params?: TranslationParams) => string;
 
@@ -22,6 +24,9 @@ export interface AgentFormValues {
   isDefaultForType: boolean;
   enable_temporary_child_agents: boolean;
   max_temporary_child_agents: number;
+  rootExecutionPolicy?: RootExecutionPolicyFormValues;
+  delegateAgentIds: string[];
+  delegateTeamIds: string[];
 }
 
 export function createAgentFormSchema(t: Translator) {
@@ -57,6 +62,9 @@ export function createAgentFormSchema(t: Translator) {
     isDefaultForType: z.boolean().default(false),
     enable_temporary_child_agents: z.boolean().default(false),
     max_temporary_child_agents: z.number().int().min(1).max(8).default(4),
+    rootExecutionPolicy: rootExecutionPolicySchema.optional(),
+    delegateAgentIds: z.array(z.string()).default([]),
+    delegateTeamIds: z.array(z.string()).default([]),
   });
 }
 
@@ -79,4 +87,7 @@ export const defaultFormValues: AgentFormValues = {
   isDefaultForType: false,
   enable_temporary_child_agents: false,
   max_temporary_child_agents: 4,
+  rootExecutionPolicy: undefined,
+  delegateAgentIds: [],
+  delegateTeamIds: [],
 };

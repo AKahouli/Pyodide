@@ -483,5 +483,63 @@
   "library.clearSearch": "Clear search",
   "library.actions": "Actions for {{name}}",
   "library.details": "View profile",
-  "library.memories": "Memories"
+  "library.memories": "Memories",
+  "createEdit": {
+    "tabs": {
+      "delegation": "Delegation & execution",
+      "delegationTip": "Allowlist of specialists this root may delegate to, temporary workers, fan-out and background work"
+    },
+    "rootExecution": {
+      "delegation": {
+        "enabled": "Delegation enabled",
+        "enabledHint": "This root may delegate work to the specialists below. An empty pool means no library delegation — never all agents.",
+        "defaultMode": "Default capability mode",
+        "agents": "Specialist agents",
+        "agentsPlaceholder": "Select agents…",
+        "teams": "Source teams",
+        "teamsPlaceholder": "Select teams…",
+        "teamsHint": "Team members feed the pool; the team's own hierarchy is never executed. Membership is re-checked against your execution grants at run time.",
+        "searchPlaceholder": "Search…",
+        "empty": "No entries"
+      },
+      "mode": {
+        "native": "Native (specialist's own tools)",
+        "rootConstrained": "Root-constrained (intersected with root capabilities)"
+      },
+      "pool": {
+        "title": "Effective pool (selection preview)",
+        "empty": "No specialists selected. The root will answer directly with its own tools.",
+        "sourceDirect": "direct",
+        "sourceTeam": "team",
+        "unknownAgent": "Unknown or unavailable agent",
+        "unknownTeam": "Unknown or unavailable team"
+      },
+      "temporaryWorkers": {
+        "enabled": "Temporary workers",
+        "enabledHint": "Runtime-only workers derived from this root; they cannot delegate, spawn or start background work. Default on for new roots.",
+        "max": "Max per work group"
+      },
+      "fanout": {
+        "enabled": "Fan-out",
+        "enabledHint": "Deterministic batch execution of one task template over a frozen item list (currently disabled platform-wide until qualified).",
+        "maxItems": "Max items per manifest",
+        "allowBackground": "Allow background",
+        "allowBackgroundHint": "Permit fan-out manifests to run as background jobs."
+      },
+      "background": {
+        "enabled": "Background tasks",
+        "enabledHint": "Durable background work that outlives the browser session (currently disabled platform-wide until qualified).",
+        "maxOutstanding": "Max outstanding per conversation",
+        "timeout": "Task timeout (seconds)",
+        "maxAttempts": "Max safe attempts"
+      },
+      "limits": {
+        "title": "Shared limits",
+        "depthNote": "Delegation depth is fixed at 1: workers can never delegate further, including through imported skills or connectors.",
+        "maxParallelWorkers": "Max simultaneous workers",
+        "maxChildExecutions": "Total child executions per work group",
+        "maxDuration": "Work-group deadline (seconds)"
+      }
+    }
+  }
 }

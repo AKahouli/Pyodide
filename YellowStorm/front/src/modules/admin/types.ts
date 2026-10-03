@@ -1358,6 +1358,9 @@ export interface AgentResponse {
   connectorActionSelections?: AgentConnectorActionSelection[];
   guardrails?: AgentGuardrails;
   deploymentSettings?: AgentDeploymentSettings;
+  rootExecutionPolicy?: import('@/modules/agent/types').RootExecutionPolicy;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
   enable_temporary_child_agents?: boolean;
   max_temporary_child_agents?: number;
   isDefault: boolean;
@@ -1400,6 +1403,9 @@ export interface CreateAgentRequest {
   isDefaultForType?: boolean;
   guardrails?: AgentGuardrails;
   deploymentSettings?: AgentDeploymentSettings;
+  rootExecutionPolicy?: import('@/modules/agent/types').RootExecutionPolicy;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
 }
 
 export interface UpdateAgentRequest {
@@ -1424,6 +1430,9 @@ export interface UpdateAgentRequest {
   isDefaultForType?: boolean;
   guardrails?: AgentGuardrails;
   deploymentSettings?: AgentDeploymentSettings;
+  rootExecutionPolicy?: import('@/modules/agent/types').RootExecutionPolicy;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
 }
 
 export interface AgentQueryParams {

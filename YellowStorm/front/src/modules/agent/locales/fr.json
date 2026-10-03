@@ -483,5 +483,63 @@
   "library.clearSearch": "Effacer la recherche",
   "library.actions": "Actions pour {{name}}",
   "library.details": "Voir le profil",
-  "library.memories": "Mémoires"
+  "library.memories": "Mémoires",
+  "createEdit": {
+    "tabs": {
+      "delegation": "Délégation & exécution",
+      "delegationTip": "Spécialistes autorisés, travailleurs temporaires, fan-out et tâches de fond"
+    },
+    "rootExecution": {
+      "delegation": {
+        "enabled": "Délégation activée",
+        "enabledHint": "Cette racine peut déléguer aux spécialistes ci-dessous. Un pool vide signifie aucune délégation — jamais tous les agents.",
+        "defaultMode": "Mode de capacité par défaut",
+        "agents": "Agents spécialistes",
+        "agentsPlaceholder": "Sélectionner des agents…",
+        "teams": "Équipes sources",
+        "teamsPlaceholder": "Sélectionner des équipes…",
+        "teamsHint": "Les membres des équipes alimentent le pool ; la hiérarchie de l'équipe n'est jamais exécutée. L'appartenance est revérifiée avec vos droits d'exécution à l'exécution.",
+        "searchPlaceholder": "Rechercher…",
+        "empty": "Aucune entrée"
+      },
+      "mode": {
+        "native": "Natif (outils propres au spécialiste)",
+        "rootConstrained": "Contraint par la racine (intersection avec ses capacités)"
+      },
+      "pool": {
+        "title": "Pool effectif (aperçu de la sélection)",
+        "empty": "Aucun spécialiste sélectionné. La racine répondra directement avec ses propres outils.",
+        "sourceDirect": "direct",
+        "sourceTeam": "équipe",
+        "unknownAgent": "Agent inconnu ou indisponible",
+        "unknownTeam": "Équipe inconnue ou indisponible"
+      },
+      "temporaryWorkers": {
+        "enabled": "Travailleurs temporaires",
+        "enabledHint": "Travailleurs éphémères dérivés de cette racine ; ils ne peuvent ni déléguer, ni engendrer, ni lancer de travail en arrière-plan. Activé par défaut pour les nouvelles racines.",
+        "max": "Max par groupe de travail"
+      },
+      "fanout": {
+        "enabled": "Fan-out",
+        "enabledHint": "Exécution par lot déterministe d'un modèle de tâche sur une liste figée (désactivé à l'échelle de la plateforme jusqu'à qualification).",
+        "maxItems": "Max d'éléments par manifeste",
+        "allowBackground": "Autoriser en arrière-plan",
+        "allowBackgroundHint": "Permettre l'exécution des manifestes en tâche de fond."
+      },
+      "background": {
+        "enabled": "Tâches en arrière-plan",
+        "enabledHint": "Travail durable qui survit à la fermeture du navigateur (désactivé à l'échelle de la plateforme jusqu'à qualification).",
+        "maxOutstanding": "Max en cours par conversation",
+        "timeout": "Délai d'expiration (secondes)",
+        "maxAttempts": "Max de tentatives sûres"
+      },
+      "limits": {
+        "title": "Limites partagées",
+        "depthNote": "La profondeur de délégation est fixée à 1 : les travailleurs ne peuvent jamais déléguer davantage, y compris via des compétences ou connecteurs importés.",
+        "maxParallelWorkers": "Max de travailleurs simultanés",
+        "maxChildExecutions": "Total d'exécutions enfants par groupe de travail",
+        "maxDuration": "Échéance du groupe de travail (secondes)"
+      }
+    }
+  }
 }

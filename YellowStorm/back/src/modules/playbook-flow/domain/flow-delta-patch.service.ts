@@ -67,7 +67,7 @@ export class FlowDeltaPatchService {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Delta patch is empty.');
     }
 
-    const candidateNodesById = new Map(
+    const candidateNodesById = new Map<string, FlowNode>(
       flow.nodes.map((node) => [
         node.id,
         { ...node, metadata: { ...(node.metadata ?? {}) } } as FlowNode,
@@ -114,8 +114,8 @@ export class FlowDeltaPatchService {
       .filter((node): node is FlowNode => Boolean(node));
     const sanitizedGraph = this.graphSanitizer.sanitize({
       nodes,
-      controlEdges: (controlEdgesPatch ?? flow.controlEdges.map((edge) => ({ ...edge }))) as ControlEdge[],
-      dataBindings: (dataBindingsPatch ?? flow.dataBindings.map((binding) => ({ ...binding }))) as DataBinding[],
+      controlEdges: (controlEdgesPatch ?? flow.controlEdges.map((edge) => ({ ...edge }))),
+      dataBindings: (dataBindingsPatch ?? flow.dataBindings.map((binding) => ({ ...binding }))),
     });
 
     const normalizedWorkspaces = this.workspacePolicy.normalizeWorkspaces(fields?.workspaces ?? flow.workspaces);

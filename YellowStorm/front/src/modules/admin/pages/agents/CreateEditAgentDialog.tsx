@@ -27,6 +27,10 @@ import { useModels } from '@/modules/models/store';
 import { useModelsStore } from '@/modules/models/store';
 import { scrollToFirstError } from '@/lib/form-utils';
 import { useModuleTranslation } from '@/modules/localization';
+import { RootExecutionPolicyFields, type SelectOption } from '@/modules/agent/components/RootExecutionPolicyFields';
+import { defaultRootExecutionPolicy, toRootPolicyFormValues } from '@/modules/agent/components/root-execution-policy-schema';
+import { getAllTeams } from '@/modules/team/api';
+import { getAllAgents } from '@/modules/agent/api';
 
 function slugifyAgentName(value: string): string {
   return value
@@ -50,6 +54,7 @@ interface CreateEditAgentDialogProps {
 
 export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, saving }: CreateEditAgentDialogProps) {
   const { t } = useModuleTranslation('admin');
+  const { t: tAgent } = useModuleTranslation('agent');
   const { t: tCommon } = useModuleTranslation('common');
   const [agentTypes, setAgentTypes] = useState<AgentTypeResponse[]>([]);
   const [availableTools, setAvailableTools] = useState<ToolOption[]>([]);
@@ -115,6 +120,11 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
               isDefaultForType: agent.isDefaultForType || false,
               enable_temporary_child_agents: agent.enable_temporary_child_agents ?? false,
               max_temporary_child_agents: agent.max_temporary_child_agents ?? 4,
+              rootExecutionPolicy: agent.rootExecutionPolicy
+                ? toRootPolicyFormValues((agent as unknown as { rootExecutionPolicy?: unknown }).rootExecutionPolicy)
+                : undefined,
+              delegateAgentIds: (agent as unknown as { delegateAgentIds?: string[] }).delegateAgentIds ?? [],
+              delegateTeamIds: (agent as unknown as { delegateTeamIds?: string[] }).delegateTeamIds ?? [],
             });
           } else {
             reset(defaultFormValues);
@@ -127,6 +137,44 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
   }, [open, agent, reset]);
 
   const selectedAgentTypeId = watch('agentType');
+  const watchRootPolicy = watch('rootExecutionPolicy');
+  const watchDelegateAgents = watch('delegateAgentIds');
+  const watchDelegateTeams = watch('delegateTeamIds');
+
+  const [teamOptions, setTeamOptions] = useState<SelectOption[]>([]);
+  const [agentIdOptions, setAgentIdOptions] = useState<SelectOption[]>([]);
+
+  // Root candidacy (WP02): edited agent's type or the type picked in create mode.
+  const isRootCandidate = (() => {
+    if (agent) return (((agent.agentType as unknown as { slug?: string }).slug) || '') === 'mono-agent';
+    const picked = agentTypes.find((at) => at.id === selectedAgentTypeId);
+    return (picked?.slug || '') === 'mono-agent';
+  })();
+
+  useEffect(() => {
+    if (!open || !isRootCandidate) return;
+    let cancelled = false;
+    Promise.all([
+      getAllTeams().catch(() => []),
+      getAllAgents().catch(() => []),
+    ]).then(([teams, agents]) => {
+      if (cancelled) return;
+      setTeamOptions((teams || [])
+        .filter((team) => team.isActive)
+        .map((team) => ({ value: team.id, label: team.name, description: team.description || undefined })));
+      setAgentIdOptions((agents || [])
+        .filter((candidate) => candidate.id !== agent?.id && candidate.isActive)
+        .filter((candidate) => {
+          const slug = candidate.agentType.slug || '';
+          return slug !== 'mono-agent' && slug !== 'humain' && slug !== 'platform_copilot';
+        })
+        .map((candidate) => ({ value: candidate.id, label: candidate.name, description: candidate.description || undefined })));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, isRootCandidate, agent]);
+
   const watchedName = watch('name');
   useEffect(() => {
     if (!selectedAgentTypeId || !availableTools.length) return;
@@ -201,6 +249,9 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
                 <TabsTrigger value='tools'>{t('defaultAgents.form.tabs.tools')}</TabsTrigger>
                 <TabsTrigger value='skills'>{t('defaultAgents.form.tabs.skills')}</TabsTrigger>
                 <TabsTrigger value='connectors'>{t('defaultAgents.form.tabs.connectors')}</TabsTrigger>
+                {isRootCandidate && (
+                  <TabsTrigger value='delegation'>{tAgent('createEdit.tabs.delegation')}</TabsTrigger>
+                )}
               </TabsList>
 
               <ScrollArea className='flex-1 min-h-0 mt-4'>
@@ -253,6 +304,8 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
                         <Switch checked={watch('isDefaultForType')} onCheckedChange={(checked) => setValue('isDefaultForType', checked)} />
                       </div>
 
+                      {!isRootCandidate && (
+                      <>
                       <div className='flex items-center justify-between'>
                         <div className='space-y-0.5'>
                           <Label>{t('defaultAgents.form.temporaryChildAgents.label')}</Label>
@@ -276,6 +329,8 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
                         <p className='text-xs text-muted-foreground'>{t('defaultAgents.form.maxTemporaryChildAgents.description')}</p>
                         {errors.max_temporary_child_agents && <p className='text-xs text-destructive'>{errors.max_temporary_child_agents.message}</p>}
                       </div>
+                      </>
+                      )}
 
                       <div className='space-y-2'>
                         <Label htmlFor='agent-role'>{t('defaultAgents.form.role.label')}</Label>
@@ -389,6 +444,22 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
                       />
                     </div>
                   </TabsContent>
+
+                  {isRootCandidate && (
+                    <TabsContent value='delegation' forceMount className='mt-0 data-[state=inactive]:hidden'>
+                      <RootExecutionPolicyFields
+                        policy={watchRootPolicy ?? defaultRootExecutionPolicy}
+                        delegateAgentIds={watchDelegateAgents ?? []}
+                        delegateTeamIds={watchDelegateTeams ?? []}
+                        onPolicyChange={(policy) => setValue('rootExecutionPolicy', policy, { shouldDirty: true })}
+                        onDelegateAgentsChange={(ids) => setValue('delegateAgentIds', ids, { shouldDirty: true })}
+                        onDelegateTeamsChange={(ids) => setValue('delegateTeamIds', ids, { shouldDirty: true })}
+                        agentOptions={agentIdOptions}
+                        teamOptions={teamOptions}
+                        readOnly={false}
+                      />
+                    </TabsContent>
+                  )}
 
                   <TabsContent value='skills' forceMount className='mt-0 data-[state=inactive]:hidden'>
                     <div className='grid gap-4'>

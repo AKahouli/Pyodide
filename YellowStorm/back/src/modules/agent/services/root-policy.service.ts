@@ -15,6 +15,10 @@ export const MONO_AGENT_SLUG = 'mono-agent';
 
 const OBJECT_ID_RE = /^[0-9a-fA-F]{24}$/;
 
+/** Write-time bounds for the raw allowlist (runtime pool bound: 64 entries). */
+const MAX_DIRECT_DELEGATES = 64;
+const MAX_DELEGATE_TEAMS = 16;
+
 /**
  * Normalizes and validates the root-execution policy and its allowlist
  * selection (WP01). The HTTP boundary validates DTO shape; this service owns
@@ -75,6 +79,9 @@ export class RootPolicyService {
    */
   async validateAllowlist(rootAgentId: string, delegateAgentIds: string[], delegateTeamIds: string[]): Promise<void> {
     const agentIds = dedupe(delegateAgentIds.map((id) => (id || '').trim()).filter(Boolean));
+    if (agentIds.length > MAX_DIRECT_DELEGATES) {
+      throw new BadRequestException(`delegateAgentIds exceeds the ${MAX_DIRECT_DELEGATES}-entry limit`);
+    }
     if (agentIds.some((id) => !OBJECT_ID_RE.test(id))) {
       throw new BadRequestException('delegateAgentIds contains a malformed agent id');
     }
@@ -90,6 +97,9 @@ export class RootPolicyService {
       }
     }
     const teamIds = dedupe(delegateTeamIds.map((id) => (id || '').trim()).filter(Boolean));
+    if (teamIds.length > MAX_DELEGATE_TEAMS) {
+      throw new BadRequestException(`delegateTeamIds exceeds the ${MAX_DELEGATE_TEAMS}-entry limit`);
+    }
     if (teamIds.some((id) => !OBJECT_ID_RE.test(id))) {
       throw new BadRequestException('delegateTeamIds contains a malformed team id');
     }

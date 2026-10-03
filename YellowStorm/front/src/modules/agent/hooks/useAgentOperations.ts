@@ -107,6 +107,9 @@ export function useAgentOperations(): UseAgentOperationsResult {
           isActive: data.isActive,
           enable_temporary_child_agents: data.enable_temporary_child_agents,
           max_temporary_child_agents: data.max_temporary_child_agents,
+          rootExecutionPolicy: data.rootExecutionPolicy,
+          delegateAgentIds: data.delegateAgentIds,
+          delegateTeamIds: data.delegateTeamIds,
           deploymentSettings: data.deploymentSettings,
           guardrails: data.guardrails,
         };
