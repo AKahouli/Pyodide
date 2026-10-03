@@ -18,6 +18,7 @@ import { useFileViewerDisplayMode } from '@/components/ai-elements/message-conte
 import type { DisplayedAnswerVersion, Message } from '../types';
 import { ReportDialog } from './ReportDialog';
 import { TimingIndicator } from './TimingIndicator';
+import { usePermissions } from '@/modules/admin/hooks/usePermissions';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { PdfExportPortal } from './PdfExportPortal';
@@ -58,6 +59,8 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
   }>();
   const openHandoff = usePlatformCopilotPanelStore((state) => state.openHandoff);
   const playbookMcpAssistant = useFeatureVisibilityStore((state) => state.visibility.playbookMcpAssistant);
+  const platformCopilotEnabled = useFeatureVisibilityStore((state) => state.visibility.platformCopilot);
+  const { canUseFeature } = usePermissions();
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isExportingDocx, setIsExportingDocx] = useState(false);
   const { t, language } = useModuleTranslation('conversation');
@@ -82,7 +85,7 @@ export const MessageActions = memo(function MessageActions({ message, isLastAiMe
       openHandoff(handoff);
     },
   });
-  const canPrepareHandoff = playbookMcpAssistant && message.isComplete && !message.isStreaming;
+  const canPrepareHandoff = playbookMcpAssistant && platformCopilotEnabled && canUseFeature('platformCopilot') && message.isComplete && !message.isStreaming;
   const createdAt = new Date(message.createdAt);
   const formattedCreatedAt = Number.isNaN(createdAt.getTime())
     ? t('messageActions.dateUnavailable')
