@@ -232,3 +232,37 @@ describe('SemanticRuntimeClientService deleteModel', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
+
+describe('SemanticRuntimeClientService cloneModelData', () => {
+  let fetchMock: jest.Mock;
+  const command = { targetModelId: 't1', targetModelVersionId: 'v1', idMap: { concepts: { a: 'b' }, relations: {}, mappings: {} } };
+  beforeEach(() => {
+    fetchMock = jest.fn();
+    global.fetch = fetchMock as unknown as typeof fetch;
+  });
+
+  it('posts the id map to the clone-data route with the service key', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ copied: true, counts: { entities: 2, relationships: 1 } }), { status: 200 }));
+    const client = new SemanticRuntimeClientService(config() as any);
+    await expect(client.cloneModelData('s1', command, 'u1')).resolves.toMatchObject({ copied: true });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://runtime:8000/v1/semantic-model-population/models/s1/clone-data');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body)).toEqual(command);
+    expect(init.headers).toEqual(expect.objectContaining({ 'X-Semantic-Service-Key': 'secret', 'X-Actor-User-Id': 'u1' }));
+  });
+
+  it('turns a running source job into a 409 and other failures into a 503', async () => {
+    const client = new SemanticRuntimeClientService(config() as any);
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: 'model_jobs_running' }), { status: 409 }));
+    await expect(client.cloneModelData('s1', command, 'u1')).rejects.toMatchObject({ status: 409 });
+    fetchMock.mockResolvedValueOnce(new Response('boom', { status: 500 }));
+    await expect(client.cloneModelData('s1', command, 'u1')).rejects.toMatchObject({ status: 503 });
+  });
+
+  it('skips when no runtime is configured', async () => {
+    const client = new SemanticRuntimeClientService(config({ runtimeEnabled: false }) as any);
+    await expect(client.cloneModelData('s1', command, 'u1')).resolves.toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});

@@ -741,6 +741,15 @@ export class SemanticPopulationRefreshService {
     return { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, limits, populationExecutionFingerprint, skipped, waitingFiles };
   }
 
+  /**
+   * What a full build of the model would run with now (specification, hash, execution fingerprint),
+   * without running it. A clone that copies data stamps its revision with these so it reads as current.
+   */
+  async plannedExecution(userId: string, modelId: string) {
+    const plan = await this.planRefresh(userId, modelId, { purpose: 'build', scope: { kind: 'model' } }, 'read');
+    return { homeWorkspaceId: plan.homeWorkspaceId, specHash: plan.specHash, specification: plan.specification, executionFingerprint: plan.populationExecutionFingerprint };
+  }
+
   async requestRefresh(userId: string, modelId: string, input: RequestPopulationRefreshInput) {
     const { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, limits, populationExecutionFingerprint, skipped, waitingFiles }
       = await this.planRefresh(userId, modelId, input, 'run');

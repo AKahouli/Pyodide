@@ -24,6 +24,10 @@ vi.mock('./DeleteSemanticModelDialog', () => ({
   DeleteSemanticModelDialog: ({ open }: { open: boolean }) => (open ? <div>delete-dialog-open</div> : null),
 }));
 
+vi.mock('./CloneSemanticModelDialog', () => ({
+  CloneSemanticModelDialog: ({ open }: { open: boolean }) => (open ? <div>clone-dialog-open</div> : null),
+}));
+
 vi.mock('./ShareSemanticModelDialog', () => ({
   ShareSemanticModelDialog: () => null,
 }));
@@ -85,6 +89,12 @@ describe('SemanticModelCard rename', () => {
 });
 
 describe('SemanticModelCard delete', () => {
+  it('opens the clone dialog from the copy button', async () => {
+    renderCard();
+    await userEvent.click(screen.getByRole('button', { name: /clone.button/ }));
+    expect(screen.getByText('clone-dialog-open')).toBeInTheDocument();
+  });
+
   it('opens the delete dialog from the trash button for the owner', async () => {
     renderCard();
     await userEvent.click(screen.getByRole('button', { name: 'deleteModel.button' }));

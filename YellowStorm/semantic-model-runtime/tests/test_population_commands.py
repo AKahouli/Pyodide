@@ -600,3 +600,141 @@ def test_delete_model_refuses_while_a_job_runs(client: TestClient, monkeypatch: 
 def test_delete_model_needs_the_service_key(client: TestClient):
     _inject(client, ScriptedPool([]))
     assert client.delete("/v1/semantic-model-population/models/m1").status_code in (401, 403)
+
+
+def _clone_body() -> dict:
+    return {"targetModelId": "m2", "targetModelVersionId": "v2",
+            "idMap": {"concepts": {"c1": "c2"}, "relations": {"r1": "r2"}}}
+
+
+def test_clone_data_projects_activates_and_requests_the_index(client: TestClient,
+                                                             monkeypatch: pytest.MonkeyPatch):
+    from app.api import population_routes as routes
+    from app.persistence import model_clone_store as clone_store
+
+    calls: dict[str, object] = {}
+
+    async def copy(pool, **kwargs):  # type: ignore[no-untyped-def]
+        calls["copy"] = kwargs
+        return {"copied": True, "revisionId": "dr_new", "correctionSequence": 0, "counts": {"entities": 2}}
+
+    async def project(pool, age_pool, revision_id):  # type: ignore[no-untyped-def]
+        calls["project"] = revision_id
+        return {"projectionRef": "age:v1:pop_dr_new"}
+
+    async def activate(pool, **kwargs):  # type: ignore[no-untyped-def]
+        calls["activate"] = kwargs
+
+    async def index(pool, admit, revision_id):  # type: ignore[no-untyped-def]
+        calls["index"] = revision_id
+
+    monkeypatch.setattr(clone_store, "clone_model_data", copy)
+    monkeypatch.setattr(clone_store, "activate_cloned_revision", activate)
+    monkeypatch.setattr(routes, "ensure_revision_projection", project)
+    monkeypatch.setattr(routes, "request_index_quietly", index)
+    _inject(client, ScriptedPool([]), _GraphsPool(set()))
+    response = client.post("/v1/semantic-model-population/models/m1/clone-data", headers=AUTH,
+                           json=_clone_body())
+    assert response.status_code == 200, response.text
+    assert response.json()["projectionRef"] == "age:v1:pop_dr_new"
+    assert calls["copy"] == {"source_model_id": "m1", "target_model_id": "m2",
+                             "target_model_version_id": "v2", "id_map": {"c1": "c2", "r1": "r2"},
+                             "planned": None}
+    assert calls["project"] == "dr_new" and calls["index"] == "dr_new"
+    assert calls["activate"]["projection_ref"] == "age:v1:pop_dr_new"  # type: ignore[index]
+
+
+def test_clone_data_refuses_while_a_source_job_runs(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    from app.persistence import model_clone_store as clone_store
+    from app.persistence import population_store as store
+
+    async def copy(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise store.ModelJobsRunning("m1")
+
+    monkeypatch.setattr(clone_store, "clone_model_data", copy)
+    _inject(client, ScriptedPool([]), _GraphsPool(set()))
+    response = client.post("/v1/semantic-model-population/models/m1/clone-data", headers=AUTH,
+                           json=_clone_body())
+    assert response.status_code == 409
+    assert response.json()["detail"] == "model_jobs_running"
+
+
+def test_clone_data_removes_the_copy_when_the_graph_fails(client: TestClient,
+                                                          monkeypatch: pytest.MonkeyPatch):
+    from app.api import population_routes as routes
+    from app.persistence import model_clone_store as clone_store
+    from app.persistence import population_store as store
+    from app.population.age_projection import ProjectionUnavailable
+
+    removed: list[str] = []
+
+    async def copy(pool, **kwargs):  # type: ignore[no-untyped-def]
+        return {"copied": True, "revisionId": "dr_new", "correctionSequence": 0, "counts": {}}
+
+    async def project(*_args):  # type: ignore[no-untyped-def]
+        raise ProjectionUnavailable("age_projection_failed")
+
+    async def delete(pool, model_id):  # type: ignore[no-untyped-def]
+        removed.append(model_id)
+        return {"projections": []}
+
+    monkeypatch.setattr(clone_store, "clone_model_data", copy)
+    monkeypatch.setattr(routes, "ensure_revision_projection", project)
+    monkeypatch.setattr(store, "delete_model", delete)
+    _inject(client, ScriptedPool([]), _GraphsPool(set()))
+    response = client.post("/v1/semantic-model-population/models/m1/clone-data", headers=AUTH,
+                           json=_clone_body())
+    assert response.status_code == 503
+    assert removed == ["m2"]
+
+
+def test_clone_data_without_source_data_copies_nothing(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    from app.persistence import model_clone_store as clone_store
+
+    async def copy(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        return {"copied": False, "reason": "no_data"}
+
+    monkeypatch.setattr(clone_store, "clone_model_data", copy)
+    _inject(client, ScriptedPool([]), _GraphsPool(set()))
+    response = client.post("/v1/semantic-model-population/models/m1/clone-data", headers=AUTH,
+                           json=_clone_body())
+    assert response.status_code == 200
+    assert response.json() == {"copied": False, "reason": "no_data"}
+
+
+def test_id_remapper_rewrites_mapped_uuids_in_text_and_json():
+    from app.persistence.model_clone_store import IdRemapper
+
+    old, new = "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"
+    other = "33333333-3333-4333-8333-333333333333"
+    remap = IdRemapper({old: new})
+    assert remap.text(f"typed:{old.upper()}:{other}") == f"typed:{new}:{other}"
+    assert remap.json({"conceptId": old, "list": [old, {"k": other}]}) == {
+        "conceptId": new, "list": [new, {"k": other}]}
+
+
+def test_clone_data_takes_the_clone_plan_only_when_its_hash_matches(client: TestClient,
+                                                                     monkeypatch: pytest.MonkeyPatch):
+    from app.api import population_routes as routes
+    from app.persistence import model_clone_store as clone_store
+    from app.population.compiler import canonical_spec_hash
+
+    seen: dict[str, object] = {}
+
+    async def copy(pool, **kwargs):  # type: ignore[no-untyped-def]
+        seen.update(kwargs)
+        return {"copied": False, "reason": "no_data"}
+
+    monkeypatch.setattr(clone_store, "clone_model_data", copy)
+    monkeypatch.setattr(routes, "ensure_revision_projection", None)
+    _inject(client, ScriptedPool([]), _GraphsPool(set()))
+    spec = {"concepts": [], "relations": [], "sourceScope": []}
+    body = {**_clone_body(), "homeWorkspaceId": "ws1", "specification": spec, "specHash": "sha256:" + "0" * 64}
+    response = client.post("/v1/semantic-model-population/models/m1/clone-data", headers=AUTH, json=body)
+    assert response.status_code == 422
+    body["specHash"] = canonical_spec_hash(spec)
+    body["executionFingerprint"] = "sha256:fp"
+    response = client.post("/v1/semantic-model-population/models/m1/clone-data", headers=AUTH, json=body)
+    assert response.status_code == 200
+    assert seen["planned"] == {"homeWorkspaceId": "ws1", "specHash": body["specHash"], "specification": spec,
+                               "executionFingerprint": "sha256:fp"}

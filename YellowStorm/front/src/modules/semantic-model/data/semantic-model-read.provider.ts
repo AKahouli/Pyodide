@@ -42,6 +42,8 @@ export const CALL_CLASSIFICATION: Record<SemanticApiCall, ReadKind> = {
   update: 'command',
   archive: 'command',
   clone: 'command',
+  clonePreview: 'curated-read',
+  deletePermanently: 'command',
   applyOperations: 'command',
   validate: 'command',
   createBinding: 'command',

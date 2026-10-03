@@ -63,6 +63,24 @@ export interface RuntimeDataSummary {
   production: { modelVersionId: string; records: number; links: number } | null;
 }
 
+export interface RuntimeCloneDataCommand {
+  targetModelId: string;
+  targetModelVersionId: string;
+  idMap: { concepts: Record<string, string>; relations: Record<string, string>; mappings: Record<string, string> };
+  /** The clone's own build plan, when the source data is current: the copy then reads as current. */
+  homeWorkspaceId?: string;
+  specHash?: string;
+  specification?: Record<string, unknown>;
+  executionFingerprint?: string;
+}
+
+export interface RuntimeClonedData {
+  copied: boolean;
+  reason?: string;
+  revisionId?: string;
+  counts?: { entities: number; relationships: number; assertions?: number; reviewItems?: number; corrections?: number };
+}
+
 export interface RuntimeCorrection {
   sequence: number;
   modelVersionId: string | null;
@@ -688,6 +706,38 @@ export class SemanticRuntimeClientService {
     }
     throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
       'The model data could not be deleted from the semantic runtime; nothing was deleted, try again.');
+  }
+
+  /**
+   * Copy the source model's draft data into a fresh clone (ids remapped by the caller). The
+   * runtime projects the graph and requests the search index. A job running on the source comes
+   * back as a 409. Returns null when no runtime is configured. Copies can be large, so the
+   * deadline is longer than for ordinary calls.
+   */
+  async cloneModelData(sourceModelId: string, command: RuntimeCloneDataCommand, actorUserId: string): Promise<RuntimeClonedData | null> {
+    if (!this.config.runtimeEnabled) return null;
+    const base = this.requireWrites();
+    let res: Response;
+    try {
+      res = await fetch(`${base}/v1/semantic-model-population/models/${encodeURIComponent(sourceModelId)}/clone-data`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Semantic-Service-Key': this.config.runtimeServiceKey,
+          'X-Actor-User-Id': actorUserId,
+        },
+        body: JSON.stringify(command),
+        signal: AbortSignal.timeout(Math.max(this.config.runtimeRequestTimeoutMs, 300_000)),
+      });
+    } catch {
+      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    }
+    if (res.ok) return await res.json() as RuntimeClonedData;
+    if (res.status === 409) {
+      throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT,
+        'A build or index job is running on this model. Wait for it to finish, then copy it again with its data.');
+    }
+    throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'The model data could not be copied.');
   }
 
   async requestDatasourceDiscovery(

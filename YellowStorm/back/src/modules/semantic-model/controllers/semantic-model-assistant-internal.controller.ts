@@ -4,6 +4,7 @@ import { Public } from '@modules/auth/decorators/public.decorator';
 import { InternalServiceGuard } from '@modules/auth/guards/internal-service.guard';
 import { Permissions, PermissionsGuard, RequirePermissions } from '@modules/authorization';
 import {
+  AssistantCloneModelDto,
   AssistantCreateModelDto,
   AssistantListQueryDto,
   AssistantMapDocumentsDto,
@@ -48,6 +49,13 @@ export class SemanticModelAssistantInternalController {
   @RequirePermissions(CREATE, 'any')
   createModel(@Req() request: ActorRequest, @Body() dto: AssistantCreateModelDto) {
     return this.assistant.createModel(assistantActorFrom(request.headers), dto.name, dto.description);
+  }
+
+  /** Copy a model: structure always, sources/data/shares as asked. */
+  @Post('models/:modelId/clone')
+  @RequirePermissions(CREATE, 'any')
+  cloneModel(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Body() dto: AssistantCloneModelDto) {
+    return this.assistant.cloneModel(assistantActorFrom(request.headers), modelId, dto);
   }
 
   /** Delete a model and all its data for good; the exact model name must be repeated. */

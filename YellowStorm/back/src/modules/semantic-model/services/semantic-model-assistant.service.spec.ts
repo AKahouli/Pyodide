@@ -419,3 +419,22 @@ describe('SemanticModelAssistantService deleteModel', () => {
     expect(deletePermanently).toHaveBeenCalledWith('user-1', 'model-1');
   });
 });
+
+describe('SemanticModelAssistantService cloneModel', () => {
+  it('names the copy after the source and passes the include options', async () => {
+    const { service, models } = setup();
+    const clone = jest.fn().mockResolvedValue({ id: 'copy-1', name: 'Billing (copy)', status: 'draft', role: 'owner', dataCopy: { status: 'copied', records: 5 } });
+    Object.assign(models, { clone });
+    const result = await service.cloneModel(actor, 'model-1', { includeData: true });
+    expect(clone).toHaveBeenCalledWith('user-1', 'model-1', 'Billing (copy)', { sources: true, data: true, shares: false });
+    expect(result).toMatchObject({ modelId: 'copy-1', sourceModelId: 'model-1', dataCopy: { status: 'copied' } });
+  });
+
+  it('keeps a given name and leaves out what is not asked', async () => {
+    const { service, models } = setup();
+    const clone = jest.fn().mockResolvedValue({ id: 'copy-2', name: 'Lean', status: 'draft', role: 'owner', dataCopy: { status: 'skipped' } });
+    Object.assign(models, { clone });
+    await service.cloneModel(actor, 'model-1', { name: ' Lean ', includeSources: false });
+    expect(clone).toHaveBeenCalledWith('user-1', 'model-1', 'Lean', { sources: false, data: false, shares: false });
+  });
+});

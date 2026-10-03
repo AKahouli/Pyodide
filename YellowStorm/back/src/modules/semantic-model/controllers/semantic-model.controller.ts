@@ -114,7 +114,14 @@ export class SemanticModelController {
   @Post(':modelId/clone')
   @RequirePermissions([Permissions.SEMANTIC_MODELS_CREATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   clone(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: CloneSemanticModelDto) {
-    return this.models.clone(user._id.toString(),modelId,dto.name);
+    return this.models.clone(user._id.toString(),modelId,dto.name,dto.include ?? {});
+  }
+
+  /** Counts shown next to the clone options (source links, built records, people). */
+  @Get(':modelId/clone-preview')
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_CREATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  clonePreview(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
+    return this.models.clonePreview(user._id.toString(),modelId);
   }
 
   @Get(':modelId/overview')

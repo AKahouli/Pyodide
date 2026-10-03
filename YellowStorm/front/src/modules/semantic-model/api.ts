@@ -4,7 +4,7 @@ import type { ApiResponse } from '@/lib/api/client';
 import type { ComputedFieldRule, DocumentLabelsResponse, ComputedPreviewResult, AiExtractionDefaults, RunLimits, RunLimitsDefaults, DerivedSource, DerivedSourceDraft, LastDocumentMapping, MappingPreset, MappingSettings, AiExtractionSettings, AgeGraphEdge, AssistantChangesPage, SourceSuggestionsPage, SourceFileMatches, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRebuildResponse, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
 SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, PopulationFreshness, DesignerBoxPosition, SemanticReviewItem, SemanticVersion,
 SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
-StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison, ReviewQueue, ConceptRecordsPage } from './types';
+StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison, ReviewQueue, ConceptRecordsPage, SemanticModelCloneInclude, SemanticModelCloneResult } from './types';
 import type { SemanticDataTokenResponse } from './data-plane/semantic-api.types';
 
 const unwrap = <T>(response: { data: ApiResponse<T> }): T => response.data.data;
@@ -48,8 +48,13 @@ export const semanticModelApi = {
   async archive(id: string): Promise<void> { const model = await semanticModelApi.get(id); await apiClient.post(`${API_ENDPOINTS.semanticModels.byId(id)}/archive`, { expectedRevision: model.revision }); },
   /** Delete the model and all its data for good (owner only); workspace documents stay. */
   async deletePermanently(id: string): Promise<void> { await apiClient.delete(API_ENDPOINTS.semanticModels.byId(id)); },
-  async clone(id: string, name: string): Promise<SemanticModel> {
-    return unwrap(await apiClient.post<ApiResponse<SemanticModel>>(API_ENDPOINTS.semanticModels.clone(id), { name }));
+  /** Copy a model; the structure always comes along, the rest as ticked (data needs the sources). */
+  async clone(id: string, name: string, include?: SemanticModelCloneInclude): Promise<SemanticModelCloneResult> {
+    return unwrap(await apiClient.post<ApiResponse<SemanticModelCloneResult>>(API_ENDPOINTS.semanticModels.clone(id), include ? { name, include } : { name }));
+  },
+  /** Counts shown next to the clone options; records is null when the data cannot be counted right now. */
+  async clonePreview(id: string): Promise<{ sources: number; records: number | null; people: number }> {
+    return unwrap(await apiClient.get<ApiResponse<{ sources: number; records: number | null; people: number }>>(`${API_ENDPOINTS.semanticModels.clone(id)}-preview`));
   },
   async graph(id: string, layer = 'combined'): Promise<SemanticGraph> {
     return unwrap(await apiClient.get<ApiResponse<SemanticGraph>>(API_ENDPOINTS.semanticModels.graph(id), { params: { layer } }));

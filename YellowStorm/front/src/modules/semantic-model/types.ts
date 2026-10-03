@@ -45,6 +45,13 @@ export interface SemanticModel {
   updatedAt: string;
 }
 
+/** What a clone copies besides the structure; data needs the sources. */
+export interface SemanticModelCloneInclude { sources: boolean; data: boolean; shares: boolean }
+
+export type SemanticModelCloneResult = SemanticModel & {
+  dataCopy?: { status: 'copied' | 'skipped' | 'failed'; reason?: string; records?: number; links?: number };
+};
+
 export interface AttributeDefinition {
   key: string;
   label: string;

@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Path, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -346,6 +347,80 @@ async def delete_model(model_id: str, request: Request) -> Response:
     logger.info("Deleted runtime data of model %s: %s (graphs not dropped: %d)",
                 model_id, result["deleted"], failed)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class CloneDataIdMap(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    concepts: dict[str, str] = Field(default_factory=dict)
+    attributes: dict[str, str] = Field(default_factory=dict)
+    relations: dict[str, str] = Field(default_factory=dict)
+    mappings: dict[str, str] = Field(default_factory=dict)
+
+
+class CloneDataCommand(BaseModel):
+    """Copy a model's draft data into a clone whose ids the back already remapped."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    target_model_id: str = Field(alias="targetModelId", min_length=1, max_length=200)
+    target_model_version_id: str = Field(alias="targetModelVersionId", min_length=1, max_length=200)
+    id_map: CloneDataIdMap = Field(alias="idMap", default_factory=CloneDataIdMap)
+    # The clone's own build plan, sent when the source data is current, so the copy reads as current.
+    home_workspace_id: str | None = Field(default=None, alias="homeWorkspaceId", max_length=200)
+    spec_hash: str | None = Field(default=None, alias="specHash", pattern=r"^sha256:[0-9a-f]{64}$")
+    specification: dict[str, Any] | None = None
+    execution_fingerprint: str | None = Field(default=None, alias="executionFingerprint", max_length=200)
+
+
+@router.post("/models/{model_id}/clone-data", status_code=status.HTTP_200_OK)
+async def clone_model_data(model_id: str, command: CloneDataCommand,
+                           request: Request) -> dict[str, object]:
+    """Copy the draft data revision of ``model_id`` into the (empty) clone, project its
+    graph and serve it as the clone's draft data. The search index is requested, not copied.
+    Refused (409) while a job of the source runs. Source documents are never copied."""
+    from app.persistence import model_clone_store as clone_store
+
+    if not model_id or len(model_id) > 200 or command.target_model_id == model_id:
+        raise HTTPException(status_code=422, detail="invalid_model_id")
+    planned = None
+    if command.specification is not None or command.spec_hash is not None:
+        if (command.specification is None or command.spec_hash is None or not command.home_workspace_id
+                or canonical_spec_hash(command.specification) != command.spec_hash):
+            raise HTTPException(status_code=422, detail="spec_hash_mismatch")
+        planned = {"homeWorkspaceId": command.home_workspace_id, "specHash": command.spec_hash,
+                   "specification": command.specification,
+                   "executionFingerprint": command.execution_fingerprint}
+    pool = _population_pool(request)
+    age_pool = _age_pool(request)
+    id_map = {**command.id_map.concepts, **command.id_map.attributes,
+              **command.id_map.relations, **command.id_map.mappings}
+    try:
+        result = await clone_store.clone_model_data(
+            pool, source_model_id=model_id, target_model_id=command.target_model_id,
+            target_model_version_id=command.target_model_version_id, id_map=id_map, planned=planned)
+    except store.ModelJobsRunning as exc:
+        raise HTTPException(status_code=409, detail="model_jobs_running") from exc
+    except clone_store.CloneTargetNotEmpty as exc:
+        raise HTTPException(status_code=409, detail="target_has_data") from exc
+    if not result["copied"]:
+        return result
+    try:
+        projection = await ensure_revision_projection(pool, age_pool, result["revisionId"])
+    except (PopulationError, ProjectionUnavailable) as exc:
+        # Leave no half-copied data behind: the clone simply has none.
+        await store.delete_model(pool, command.target_model_id)
+        logger.warning("Clone of %s into %s: graph not built (%s); copied data removed",
+                       model_id, command.target_model_id, getattr(exc, "code", type(exc).__name__))
+        raise HTTPException(status_code=503, detail="clone_projection_failed") from exc
+    await clone_store.activate_cloned_revision(
+        pool, model_id=command.target_model_id, model_version_id=command.target_model_version_id,
+        revision_id=result["revisionId"], projection_ref=projection["projectionRef"],
+        correction_sequence=result["correctionSequence"])
+    service = getattr(request.app.state, "job_service", None)
+    await request_index_quietly(pool, service.admit if service else None, result["revisionId"])
+    logger.info("Cloned data of model %s into %s: %s", model_id, command.target_model_id, result["counts"])
+    return {**result, "projectionRef": projection["projectionRef"]}
 
 
 @router.post("/revisions/{revision_id}/project", status_code=status.HTTP_200_OK)

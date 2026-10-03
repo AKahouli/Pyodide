@@ -235,6 +235,15 @@ async def create_semantic_model(name: str, description: str | None = None) -> Se
     return await call(backend().post(f"{BASE}/models", require_acting_user_id(), compact({"name": name, "description": description})))
 
 
+@mcp.tool()
+async def clone_semantic_model(model_id: str, name: str | None = None, include_sources: bool = True,
+                               include_data: bool = False, include_shares: bool = False) -> SemanticModelMcpResultV1:
+    """Copy a model into a new one the user owns (default name "<name> (copy)"). The structure (concepts, fields, relationships, key fields, layout) is always copied.
+    include_sources: source links and extraction rules (default yes). include_data: the data already built, so the copy is usable without a new build (forces the sources). include_shares: the same people keep their access (owner only). Source files are never duplicated. The conversation shows a button that opens the copy."""
+    return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/clone", require_acting_user_id(), compact({
+        "name": name, "includeSources": include_sources, "includeData": include_data, "includeShares": include_shares})))
+
+
 @mcp.tool(annotations=DESTRUCTIVE)
 async def delete_semantic_model(model_id: str, confirm_name: str) -> SemanticModelMcpResultV1:
     """PERMANENTLY delete a model and all its data (concepts, fields, source links, records, review items, search index, history). Cannot be undone; workspace documents stay. Only the owner can. First ask the user to confirm explicitly, then pass the model's exact name as confirm_name."""

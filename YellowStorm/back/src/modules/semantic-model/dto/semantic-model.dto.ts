@@ -210,6 +210,23 @@ export class UpdateBindingDto {
   enabled?: boolean;
 }
 
+export class CloneSemanticModelIncludeDto {
+  @ApiPropertyOptional({ default: true, description: 'Source links and extraction rules' })
+  @IsOptional()
+  @IsBoolean()
+  sources?: boolean;
+
+  @ApiPropertyOptional({ default: false, description: 'Data already built (forces sources)' })
+  @IsOptional()
+  @IsBoolean()
+  data?: boolean;
+
+  @ApiPropertyOptional({ default: false, description: 'People the model is shared with (owner only)' })
+  @IsOptional()
+  @IsBoolean()
+  shares?: boolean;
+}
+
 export class CloneSemanticModelDto {
   @ApiProperty({ maxLength: 160 })
   @IsString()
@@ -217,6 +234,12 @@ export class CloneSemanticModelDto {
   @MaxLength(160)
   @Matches(/\S/)
   name!: string;
+
+  @ApiPropertyOptional({ type: CloneSemanticModelIncludeDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CloneSemanticModelIncludeDto)
+  include?: CloneSemanticModelIncludeDto;
 }
 
 export class SemanticRecordQueryDto {

@@ -51,7 +51,7 @@ async def test_registers_the_design_tools_with_the_versioned_envelope():
         "apply_model_changes", "list_model_changes", "undo_model_change",
         "list_workspaces", "list_workspace_files", "profile_spreadsheet", "map_spreadsheet", "map_documents", "remove_source",
         "run_data_update", "get_run_status", "stop_data_update", "search_records", "publish_semantic_model", "suggest_sources",
-        "find_records", "get_related_records", "describe_model", "query_records", "delete_semantic_model",
+        "find_records", "get_related_records", "describe_model", "query_records", "delete_semantic_model", "clone_semantic_model",
     }
     for tool in tools:
         assert tool.outputSchema["properties"]["schemaVersion"]["const"] == "semantic_model.mcp.v1"
@@ -361,3 +361,14 @@ async def test_delete_semantic_model_passes_the_confirmed_name(monkeypatch, acto
         response = await client.call_tool("delete_semantic_model", {"model_id": "m/1", "confirm_name": "Billing models"})
     assert result_dict(response)["ok"] is True
     assert backend.calls == [("DELETE", "/api/v1/internal/semantic-model-assistant/models/m%2F1?confirmName=Billing+models", "user-1", None)]
+
+
+@pytest.mark.asyncio
+async def test_clone_semantic_model_sends_the_include_options(monkeypatch, actor):
+    backend = Recorder({"modelId": "copy-1"})
+    monkeypatch.setattr(server, "backend", lambda: backend)
+    async with Client(mcp) as client:
+        response = await client.call_tool("clone_semantic_model", {"model_id": "m/1", "include_data": True})
+    assert result_dict(response)["ok"] is True
+    assert backend.calls == [("POST", "/api/v1/internal/semantic-model-assistant/models/m%2F1/clone", "user-1",
+                              {"includeSources": True, "includeData": True, "includeShares": False})]
