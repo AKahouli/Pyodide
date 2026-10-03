@@ -553,8 +553,9 @@ def _parse(raw: bytes, path: str, key: str, *, parent: str | None, depth: int,
         attachments.append(_attachment(key, index, filename, content_type, payload,
                                        inline=inline, is_email=False, with_payloads=with_payloads))
 
-    body = _bounded_body(new_text, anomalies, "corps")
     full_body = _bounded_body(text, anomalies, "corps complet")
+    # A forward or reply that adds nothing of its own: its body is the quoted message.
+    body = _bounded_body(new_text, anomalies, "corps") if new_text.strip() else full_body
     recipients = [p["adresse"] for p in participants if p["role"] in ("destinataire", "copie")]
     row = {
         "cle_message": key,

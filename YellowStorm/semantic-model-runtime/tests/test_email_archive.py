@@ -378,3 +378,11 @@ async def test_admin_limit_on_records_per_source_stops_reading_that_source():
     limited["payload"]["limits"] = {"maxRecordsPerSource": 100}
     outcome = await run_population_for_task(limited, fetch=fetch, upload_derived=upload)
     assert outcome["counts"]["materialized"] == 100 and outcome["completeEnumeration"] is False
+
+
+def test_corps_falls_back_to_full_text_when_nothing_new() -> None:
+    raw = (b"From: a@x.fr\r\nTo: b@y.fr\r\nSubject: TR: devis\r\nDate: Mon, 27 Jul 2026 09:31:28 +0000\r\n\r\n"
+           b"-----Original Message-----\r\nFrom: c@z.fr\r\nSent: Monday\r\n\r\nLe devis est joint.\r\n")
+    row = next(read_messages(raw, "message/rfc822")).row
+    assert row["corps"] == row["corps_complet"]
+    assert "Le devis est joint." in row["corps"]
