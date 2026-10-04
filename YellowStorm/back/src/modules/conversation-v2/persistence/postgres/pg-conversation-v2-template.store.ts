@@ -374,4 +374,32 @@ export class PgConversationV2TemplateStore implements ConversationV2TemplateStor
       .orderBy(desc(schema.conversationV2TemplateRevisions.createdAt));
     return rows.map(toRevision);
   }
+
+  async filterUnreferencedBlobKeys(candidates: string[]): Promise<string[]> {
+    if (candidates.length === 0) return [];
+    const wanted = new Set(candidates);
+    const referenced = new Set<string>();
+
+    const mark = (files: Array<{ objectKey?: string }> | null | undefined): void => {
+      for (const file of files ?? []) {
+        if (file?.objectKey && wanted.has(file.objectKey)) {
+          referenced.add(file.objectKey);
+        }
+      }
+    };
+
+    // Remaining template revisions (other catalog entries).
+    const templateRows = await this.q
+      .select({ files: schema.conversationV2TemplateRevisions.files })
+      .from(schema.conversationV2TemplateRevisions);
+    for (const row of templateRows) mark(row.files);
+
+    // Workspace revisions share the same content-addressed blob pool.
+    const workspaceRows = await this.q
+      .select({ files: schema.appRuntimeSourceRevisions.files })
+      .from(schema.appRuntimeSourceRevisions);
+    for (const row of workspaceRows) mark(row.files);
+
+    return candidates.filter((key) => !referenced.has(key));
+  }
 }

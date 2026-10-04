@@ -1,5 +1,9 @@
 import { PLATFORM_KIT_VERSION } from './platform-kit';
-import { planPlatformBaseline, type BaselineSource } from './platform-baseline.planner';
+import {
+  planPlatformBaseline,
+  type BaselineSource,
+  type PlatformBaselinePlan,
+} from './platform-baseline.planner';
 
 /**
  * `ready`: nothing to inject.
@@ -30,7 +34,11 @@ export interface TemplatePlatformReport {
 export async function analyzeTemplatePlatform(
   source: BaselineSource,
 ): Promise<TemplatePlatformReport> {
-  const plan = await planPlatformBaseline(source, 'seed');
+  return buildTemplatePlatformReport(await planPlatformBaseline(source, 'seed'));
+}
+
+/** Derive the admin-facing report from an already-computed seed plan. */
+export function buildTemplatePlatformReport(plan: PlatformBaselinePlan): TemplatePlatformReport {
   const status: TemplatePlatformStatus = plan.violations.length
     ? 'incompatible'
     : plan.files.length

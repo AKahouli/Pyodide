@@ -7,7 +7,6 @@ import {
   HttpCode,
   HttpStatus,
   Logger,
-  ForbiddenException,
   NotFoundException,
   NotImplementedException,
   Param,
@@ -138,23 +137,9 @@ export class ConversationV2Controller {
     }
 
     // Optional template seed: the session (and therefore the browser runtime
-    // binding) boots on the template's published revision. Super admins may
-    // also seed a legacy draft that already has a revision binding, or a
-    // staging manifest from template ZIP validation (no catalog row).
+    // binding) boots on the template's published revision.
     let starterRevisionId: string | undefined;
-    if (body.templateId && body.stagingTemplateId) {
-      throw new BadRequestException(
-        ErrorCode.VALIDATION_ERROR,
-        'Provide either templateId or stagingTemplateId, not both.',
-      );
-    }
-    if (body.stagingTemplateId) {
-      const isSuperAdmin = user.permissions?.includes(Permissions.SUPER_ADMIN) ?? false;
-      if (!isSuperAdmin) {
-        throw new ForbiddenException(ErrorCode.FORBIDDEN);
-      }
-      starterRevisionId = await this.templates.resolveStagingRevisionId(body.stagingTemplateId);
-    } else if (body.templateId) {
+    if (body.templateId) {
       const isSuperAdmin = user.permissions?.includes(Permissions.SUPER_ADMIN) ?? false;
       const template = await this.templates.requireUsableForUser(body.templateId, isSuperAdmin);
       starterRevisionId = template.revisionId ?? undefined;
@@ -182,7 +167,11 @@ export class ConversationV2Controller {
 
     let aiSessionId: string;
     try {
-      aiSessionId = await this.grpcClient.createSession(user.id, workspaceIds);
+      aiSessionId = await this.grpcClient.createSession(
+        user.id,
+        workspaceIds,
+        body.capability ?? 'web_app',
+      );
     } catch (err) {
       this.discardDraft(draftId, systemWorkspaceId);
       throw err;

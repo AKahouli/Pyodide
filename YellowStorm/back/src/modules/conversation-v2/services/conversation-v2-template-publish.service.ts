@@ -1,16 +1,19 @@
 import { createHash } from 'crypto';
 import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException } from '@modules/exceptions';
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { DocumentService } from '@modules/document/document.service';
 import { blobObjectKey } from '@modules/app-runtime/utils/blob-object-key';
+import {
+  analyzeTemplatePlatform,
+  type TemplatePlatformReport,
+} from '@modules/app-runtime/platform-kit/platform-template-report';
 import {
   templateManifestKey,
   templateRevisionId,
 } from '../constants/template-catalog.constants';
 import { extractTemplateArchive } from '../utils/template-zip.util';
-import {
-  analyzeTemplatePlatform,
-  type TemplatePlatformReport,
-} from '@modules/app-runtime/platform-kit/platform-template-report';
+
 export interface PublishedTemplateRevision {
   revisionId: string;
   manifestObjectKey: string;
@@ -18,7 +21,7 @@ export interface PublishedTemplateRevision {
   fileCount: number;
   /** Manifest file list, also persisted to `conversation_v2.template_revisions`. */
   files: TemplateManifestFile[];
-  /** What the Platform Kit will have to inject when a session uses this template. */
+  /** Compatibility snapshot kept for catalog rows; not exposed by admin analyze APIs. */
   platformReport: TemplatePlatformReport;
 }
 
@@ -33,6 +36,8 @@ interface TemplateManifestFile {
 export interface TemplateArtifactRefs {
   coverImage?: string | null;
   manifestObjectKey?: string | null;
+  /** Extra keys (revision manifests, unreferenced content-addressed blobs). */
+  objectKeys?: string[];
 }
 
 /** Ceph round trips per template file are the publish bottleneck; bound the fan-out. */
@@ -55,6 +60,14 @@ export class ConversationV2TemplatePublishService {
     const files = extractTemplateArchive(zip);
     const manifestFiles: TemplateManifestFile[] = [];
     const platformReport = await this.analyze(files);
+
+    // An incompatible template must never reach the market — refuse before Ceph writes.
+    if (platformReport.status === 'incompatible') {
+      throw new BadRequestException(
+        ErrorCode.CONVERSATION_V2_TEMPLATE_PLATFORM_INCOMPATIBLE,
+        `Template is not platform-compatible: ${platformReport.violations.join('; ')}`,
+      );
+    }
 
     // Blob uploads dominate publish latency (one exists + one put per file), so
     // they run in bounded parallel batches; order stays ZIP order.
@@ -115,26 +128,21 @@ export class ConversationV2TemplatePublishService {
     };
   }
 
-  /** Runs the Platform Kit baseline against the ZIP contents, before upload. */
-  private analyze(
-    files: { path: string; data: Buffer }[],
-  ): Promise<TemplatePlatformReport> {
-    const byPath = new Map(files.map((file) => [file.path.replace(/\\/g, '/'), file.data]));
-    return analyzeTemplatePlatform({
-      paths: [...byPath.keys()],
-      read: (path) => Promise.resolve(byPath.get(path)?.toString('utf8') ?? null),
-    });
-  }
-
   /**
-   * Best-effort removal of a template's cover and manifest objects. Shared,
-   * content-addressed blobs are intentionally left in place. Never throws:
-   * a Ceph hiccup must not fail an already-committed DB delete.
+   * Best-effort removal of template Ceph objects (cover, manifests, and any
+   * caller-supplied blob keys). Never throws: a Ceph hiccup must not fail an
+   * already-committed DB delete. Callers must only pass content-addressed
+   * blobs that are no longer referenced by other revisions.
    */
   async removeTemplateArtifacts(templates: TemplateArtifactRefs[]): Promise<void> {
     const keys = [
-      ...templates.map((t) => t.coverImage ?? ''),
-      ...templates.map((t) => t.manifestObjectKey ?? ''),
+      ...new Set(
+        templates.flatMap((t) => [
+          t.coverImage ?? '',
+          t.manifestObjectKey ?? '',
+          ...(t.objectKeys ?? []),
+        ]),
+      ),
     ].filter((key) => key.length > 0);
     if (keys.length === 0) return;
     try {
@@ -144,6 +152,17 @@ export class ConversationV2TemplatePublishService {
         `Failed to remove ${String(keys.length)} template artifact(s) from Ceph: ${describeError(error)}`,
       );
     }
+  }
+
+  /** Runs the Platform Kit baseline against the ZIP contents, before upload. */
+  private analyze(
+    files: { path: string; data: Buffer }[],
+  ): Promise<TemplatePlatformReport> {
+    const byPath = new Map(files.map((file) => [file.path.replace(/\\/g, '/'), file.data]));
+    return analyzeTemplatePlatform({
+      paths: [...byPath.keys()],
+      read: (path) => Promise.resolve(byPath.get(path)?.toString('utf8') ?? null),
+    });
   }
 }
 

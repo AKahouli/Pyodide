@@ -117,4 +117,10 @@ export interface ConversationV2TemplateStore {
   /** Flip every revision row of the template to published (validation confirmed). */
   markRevisionsPublished(templateId: string): Promise<void>;
   listRevisionsByTemplate(templateId: string): Promise<ConversationV2TemplateRevisionRow[]>;
+  /**
+   * Of the candidate content-addressed blob keys, return those that no longer
+   * appear in any remaining template revision or workspace source revision.
+   * Call after the deleted template's revision rows have already cascaded away.
+   */
+  filterUnreferencedBlobKeys(candidates: string[]): Promise<string[]>;
 }

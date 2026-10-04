@@ -215,7 +215,7 @@ describe('ConversationV2Controller', () => {
       systemWorkspaceId: 'sysws',
     });
     // Empty selection expands to the owner's workspaces, which are forwarded to gRPC.
-    expect(mockClient.createSession).toHaveBeenCalledWith('u1', ['w1']);
+    expect(mockClient.createSession).toHaveBeenCalledWith('u1', ['w1'], 'web_app');
     expect(mockSessions.attachAiSession).toHaveBeenCalledWith(draftId, 'ai-1', 'sysws');
   });
 

@@ -35,7 +35,12 @@ message DeployResponse { string url = 1; int64 deployed_at = 2; }
 // AI service uses these as List-prefix bases when scanning the workspace's
 // documents. Note: path roots under the workspace OWNER, not the current
 // user — collaborator uploads share the same prefix as the owner's files.
-message CreateSessionRequest  { string user_id = 1; repeated string workspace_paths = 2; }
+message CreateSessionRequest  {
+  string user_id = 1;
+  repeated string workspace_paths = 2;
+  // Session capability: "web_app" (default) or "database_design".
+  optional string capability = 3;
+}
 message CreateSessionResponse { string session_id = 1; }
 
 message GetSessionRequest  { string user_id = 1; string session_id = 2; }

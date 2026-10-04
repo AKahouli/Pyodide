@@ -14,6 +14,7 @@ import { UpdateTemplateCategoryDto } from '../dto/update-template-category.dto';
 import { ITemplateCategoryResponse } from '../interfaces/template-catalog.interface';
 import { slugifyCategoryName, isValidTemplateSlug } from '../utils/template-slug.util';
 import { ConversationV2TemplatePublishService } from './conversation-v2-template-publish.service';
+import { collectTemplateCephKeys } from '../utils/template-ceph-cleanup.util';
 
 @Injectable()
 export class ConversationV2TemplateCategoryService {
@@ -87,14 +88,43 @@ export class ConversationV2TemplateCategoryService {
   }
 
   /**
-   * Hard delete; templates cascade in the DB. Cover/manifest cleanup runs in
-   * the background so the admin confirm dialog is not blocked on Ceph.
+   * Hard delete; templates cascade in the DB. Cover/manifests/unreferenced
+   * blobs are removed from Ceph in the background so the admin confirm dialog
+   * is not blocked on storage I/O.
    */
   async delete(id: string): Promise<void> {
     await this.requireCategory(id);
     const templates = await this.templates.findByCategoryId(id);
+    const pending = await Promise.all(
+      templates.map(async (template) => {
+        const revisions = await this.templates.listRevisionsByTemplate(template.id);
+        return collectTemplateCephKeys(template, revisions);
+      }),
+    );
     await this.categories.delete(id);
-    void this.publish.removeTemplateArtifacts(templates);
+    void (async () => {
+      try {
+        const blobCandidates = [...new Set(pending.flatMap((item) => item.blobKeys))];
+        const unreferencedBlobs =
+          await this.templates.filterUnreferencedBlobKeys(blobCandidates);
+        const unreferenced = new Set(unreferencedBlobs);
+        await this.publish.removeTemplateArtifacts(
+          pending.map((item) => ({
+            coverImage: item.coverImage,
+            objectKeys: [
+              ...item.manifestKeys,
+              ...item.blobKeys.filter((key) => unreferenced.has(key)),
+            ],
+          })),
+        );
+      } catch (error) {
+        this.logger.warn(
+          `Background Ceph cleanup failed after deleting category ${id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    })();
     this.logger.log(`Deleted template category ${id} with ${templates.length} template(s)`);
   }
 

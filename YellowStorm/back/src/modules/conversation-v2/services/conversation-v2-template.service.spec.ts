@@ -45,6 +45,7 @@ describe('ConversationV2TemplateService', () => {
     upsertRevision: jest.fn(),
     markRevisionsPublished: jest.fn(),
     listRevisionsByTemplate: jest.fn(),
+    filterUnreferencedBlobKeys: jest.fn(),
     delete: jest.fn(),
   };
   const categories = { findById: jest.fn(), findAll: jest.fn() };
@@ -78,6 +79,8 @@ describe('ConversationV2TemplateService', () => {
     templates.upsertRevision.mockResolvedValue({});
     templates.markRevisionsPublished.mockResolvedValue(undefined);
     publish.removeTemplateArtifacts.mockResolvedValue(undefined);
+    templates.listRevisionsByTemplate.mockResolvedValue([]);
+    templates.filterUnreferencedBlobKeys.mockResolvedValue([]);
     documents.upload.mockResolvedValue({});
     documents.generateSasUrl.mockResolvedValue('https://ceph/signed');
 
@@ -174,11 +177,41 @@ describe('ConversationV2TemplateService', () => {
   });
 
   it('deletes the row and kicks off Ceph artifact cleanup in the background', async () => {
-    const row = { ...draftRow, coverImage: 'cover' };
+    const row = {
+      ...draftRow,
+      coverImage: 'cover',
+      manifestObjectKey: 'manifest',
+      revisionId: `template_${TPL_ID}`,
+    };
+    templates.findById.mockResolvedValueOnce(row);
+    templates.listRevisionsByTemplate.mockResolvedValueOnce([
+      {
+        id: 'r1',
+        templateId: TPL_ID,
+        revisionId: `template_${TPL_ID}`,
+        manifestObjectKey: 'manifest',
+        manifestHash: 'h',
+        files: [
+          { path: 'a', sha256: 'a'.repeat(64), objectKey: 'blobs/a', size: 1 },
+          { path: 'b', sha256: 'b'.repeat(64), objectKey: 'blobs/b', size: 1 },
+        ],
+        fileCount: 2,
+        status: 'published' as const,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+      },
+    ]);
+    templates.filterUnreferencedBlobKeys.mockResolvedValueOnce(['blobs/a']);
     templates.delete.mockResolvedValueOnce(row);
 
     await svc.delete(TPL_ID);
+    await Promise.resolve();
+    await Promise.resolve();
 
-    expect(publish.removeTemplateArtifacts).toHaveBeenCalledWith([row]);
+    expect(templates.delete).toHaveBeenCalledWith(TPL_ID);
+    expect(templates.filterUnreferencedBlobKeys).toHaveBeenCalledWith(['blobs/a', 'blobs/b']);
+    expect(publish.removeTemplateArtifacts).toHaveBeenCalledWith([
+      { coverImage: 'cover', objectKeys: ['manifest', 'blobs/a'] },
+    ]);
   });
 });

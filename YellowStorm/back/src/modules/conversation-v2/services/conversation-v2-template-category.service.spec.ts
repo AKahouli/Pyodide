@@ -11,6 +11,8 @@ describe('ConversationV2TemplateCategoryService', () => {
   const deleteCategory = jest.fn();
   const countTemplatesByCategoryIds = jest.fn();
   const findByCategoryId = jest.fn();
+  const listRevisionsByTemplate = jest.fn();
+  const filterUnreferencedBlobKeys = jest.fn();
   const removeTemplateArtifacts = jest.fn();
 
   let svc: ConversationV2TemplateCategoryService;
@@ -22,6 +24,8 @@ describe('ConversationV2TemplateCategoryService', () => {
     countTemplatesByCategoryIds.mockResolvedValue(new Map());
     removeTemplateArtifacts.mockResolvedValue(undefined);
     findByCategoryId.mockResolvedValue([]);
+    listRevisionsByTemplate.mockResolvedValue([]);
+    filterUnreferencedBlobKeys.mockResolvedValue([]);
 
     svc = new ConversationV2TemplateCategoryService(
       {
@@ -34,7 +38,7 @@ describe('ConversationV2TemplateCategoryService', () => {
         delete: deleteCategory,
         countTemplatesByCategoryIds,
       },
-      { findByCategoryId } as never,
+      { findByCategoryId, listRevisionsByTemplate, filterUnreferencedBlobKeys } as never,
       { removeTemplateArtifacts } as never,
     );
   });
@@ -77,13 +81,27 @@ describe('ConversationV2TemplateCategoryService', () => {
   it('cascades a delete and cleans the templates Ceph artifacts', async () => {
     const catId = 'b'.repeat(24);
     findById.mockResolvedValueOnce({ id: catId, name: 'A', slug: 'a', icon: '' });
-    findByCategoryId.mockResolvedValueOnce([{ id: 't1', coverImage: 'cover' }]);
+    findByCategoryId.mockResolvedValueOnce([
+      { id: 't1', coverImage: 'cover', manifestObjectKey: 'manifest' },
+    ]);
+    listRevisionsByTemplate.mockResolvedValueOnce([
+      {
+        manifestObjectKey: 'manifest',
+        files: [{ objectKey: 'blobs/a' }],
+      },
+    ]);
+    filterUnreferencedBlobKeys.mockResolvedValueOnce(['blobs/a']);
     deleteCategory.mockResolvedValueOnce(true);
 
     await svc.delete(catId);
+    await Promise.resolve();
+    await Promise.resolve();
 
     expect(deleteCategory).toHaveBeenCalledWith(catId);
-    expect(removeTemplateArtifacts).toHaveBeenCalledWith([{ id: 't1', coverImage: 'cover' }]);
+    expect(filterUnreferencedBlobKeys).toHaveBeenCalledWith(['blobs/a']);
+    expect(removeTemplateArtifacts).toHaveBeenCalledWith([
+      { coverImage: 'cover', objectKeys: ['manifest', 'blobs/a'] },
+    ]);
   });
 
   it('rejects an invalid category id', async () => {

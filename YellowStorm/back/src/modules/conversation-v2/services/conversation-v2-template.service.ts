@@ -1,4 +1,3 @@
-import { randomBytes } from 'crypto';
 import { Inject, Injectable } from '@nestjs/common';
 import { isObjectId } from '@common/postgres';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
@@ -20,10 +19,9 @@ import {
   TEMPLATE_COVER_MIME_TYPES,
   TEMPLATE_MAX_ZIP_BYTES,
   templateCoverKey,
-  templateManifestKey,
-  templateRevisionId,
 } from '../constants/template-catalog.constants';
 import { ConversationV2TemplatePublishService } from './conversation-v2-template-publish.service';
+import { collectTemplateCephKeys } from '../utils/template-ceph-cleanup.util';
 
 @Injectable()
 export class ConversationV2TemplateService {
@@ -209,48 +207,52 @@ export class ConversationV2TemplateService {
   }
 
   /**
-   * Hard-delete the catalog row, then remove cover/manifest from Ceph in the
-   * background so the confirm dialog can close without waiting on storage I/O.
-   * Shared content-addressed blobs are intentionally kept.
+   * Hard-delete the catalog row, then remove cover/manifests/unreferenced
+   * blobs from Ceph in the background so the confirm dialog is not blocked
+   * on storage I/O.
    */
   async delete(id: string): Promise<void> {
+    const current = await this.requireTemplate(id);
+    const pending = await this.collectCephCleanup(current);
     const row = await this.templates.delete(id);
     if (!row) throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_FOUND);
-    void this.publish.removeTemplateArtifacts([row]);
+    this.scheduleCephCleanup(pending);
+  }
+
+  /** Gather cover + revision manifests/blobs before the DB cascade drops them. */
+  private async collectCephCleanup(template: ConversationV2TemplateRow): Promise<{
+    coverImage: string;
+    manifestKeys: string[];
+    blobKeys: string[];
+  }> {
+    const revisions = await this.templates.listRevisionsByTemplate(template.id);
+    return collectTemplateCephKeys(template, revisions);
   }
 
   /**
-   * Publish a ZIP to Ceph under a throwaway template id (no DB row). Used to
-   * boot NodePod for admin validation before catalog create.
+   * Fire-and-forget Ceph cleanup. Blobs are deleted only when no other
+   * template or workspace revision still references them.
    */
-  async publishStagingZip(zip: MulterFile | undefined): Promise<{ stagingTemplateId: string }> {
-    this.assertZip(zip);
-    const stagingTemplateId = randomBytes(12).toString('hex');
-    await this.publish.publish(stagingTemplateId, zip.buffer);
-    return { stagingTemplateId };
-  }
-
-  /** Manifest revision id for a staging publish; 404 when the manifest is missing. */
-  async resolveStagingRevisionId(stagingTemplateId: string): Promise<string> {
-    if (!isObjectId(stagingTemplateId)) {
-      throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_FOUND);
-    }
-    const revisionId = templateRevisionId(stagingTemplateId);
-    const manifestObjectKey = templateManifestKey(revisionId);
-    const exists = await this.documents.exists(manifestObjectKey);
-    if (!exists) {
-      throw new NotFoundException(ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_FOUND);
-    }
-    return revisionId;
-  }
-
-  /** Drop the staging manifest after validation (shared blobs are kept). */
-  async discardStagingZip(stagingTemplateId: string): Promise<void> {
-    if (!isObjectId(stagingTemplateId)) return;
-    const revisionId = templateRevisionId(stagingTemplateId);
-    await this.publish.removeTemplateArtifacts([
-      { manifestObjectKey: templateManifestKey(revisionId) },
-    ]);
+  private scheduleCephCleanup(pending: {
+    coverImage: string;
+    manifestKeys: string[];
+    blobKeys: string[];
+  }): void {
+    void (async () => {
+      try {
+        const unreferencedBlobs = await this.templates.filterUnreferencedBlobKeys(
+          pending.blobKeys,
+        );
+        await this.publish.removeTemplateArtifacts([
+          {
+            coverImage: pending.coverImage,
+            objectKeys: [...pending.manifestKeys, ...unreferencedBlobs],
+          },
+        ]);
+      } catch {
+        // Best-effort: DB delete already committed; Ceph cleanup must not surface.
+      }
+    })();
   }
 
   private async requireTemplate(id: string): Promise<ConversationV2TemplateRow> {

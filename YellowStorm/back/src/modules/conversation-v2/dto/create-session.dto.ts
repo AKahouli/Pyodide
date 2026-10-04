@@ -1,5 +1,13 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { ArrayMaxSize, ArrayUnique, IsArray, IsMongoId, IsOptional } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayUnique,
+  IsArray,
+  IsIn,
+  IsMongoId,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 
 export class CreateSessionDto {
   @ApiPropertyOptional({
@@ -24,9 +32,11 @@ export class CreateSessionDto {
 
   @ApiPropertyOptional({
     description:
-      'Super-admin only: ephemeral template id from POST …/templates/staging/publish. Seeds the session from that Ceph manifest without a catalog row.',
+      'OpenCode session capability. `web_app` (default) builds a Vite app; `database_design` drives the schema designer.',
+    enum: ['web_app', 'database_design'],
   })
   @IsOptional()
-  @IsMongoId()
-  stagingTemplateId?: string;
+  @IsString()
+  @IsIn(['web_app', 'database_design'])
+  capability?: 'web_app' | 'database_design';
 }

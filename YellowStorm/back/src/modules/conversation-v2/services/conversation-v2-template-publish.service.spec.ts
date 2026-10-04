@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import AdmZip = require('adm-zip');
+import { BadRequestException } from '@modules/exceptions';
 import { DocumentService } from '@modules/document/document.service';
 import { blobObjectKey } from '@modules/app-runtime/utils/blob-object-key';
 import { ConversationV2TemplatePublishService } from './conversation-v2-template-publish.service';
@@ -11,6 +12,34 @@ function buildZip(entries: Record<string, string>): Buffer {
   }
   return zip.toBuffer();
 }
+
+const PLAIN_VITE: Record<string, string> = {
+  'package.json': JSON.stringify({
+    name: 'tpl',
+    scripts: { dev: 'vite' },
+    devDependencies: { vite: '^6.3.5' },
+  }),
+  'index.html': '<script type="module" src="/src/main.jsx"></script>',
+  'vite.config.js': "import { defineConfig } from 'vite';\nexport default defineConfig({});\n",
+  'src/main.jsx': "import App from './App';\ncreateRoot(root).render(<App />);\n",
+  'src/App.jsx': 'export default function App() { return <div />; }\n',
+};
+
+/** Smallest archive that clears the publish gate, for the storage mechanics. */
+const GATE_OK: Record<string, string> = {
+  'package.json': JSON.stringify({ name: 'a', devDependencies: { vite: '^6.3.5' } }),
+  'index.html': '<script type="module" src="/src/main.jsx"></script>',
+  'src/App.jsx': 'app',
+};
+
+const NEXT_JS: Record<string, string> = {
+  'package.json': JSON.stringify({
+    name: 'next-app',
+    scripts: { dev: 'next dev' },
+    dependencies: { next: '14.0.0' },
+  }),
+  'src/App.jsx': 'export default function App() { return <div />; }\n',
+};
 
 describe('ConversationV2TemplatePublishService', () => {
   const exists = jest.fn();
@@ -31,19 +60,19 @@ describe('ConversationV2TemplatePublishService', () => {
   });
 
   it('uploads content-addressed blobs and the system manifest', async () => {
-    const result = await svc.publish(
-      'tpl_1',
-      buildZip({ 'package.json': '{"name":"a"}', 'src/App.jsx': 'app' }),
-    );
+    const result = await svc.publish('tpl_1', buildZip(GATE_OK));
 
     expect(result.revisionId).toBe('template_tpl_1');
     expect(result.manifestObjectKey).toBe(
       'appbuilder/manifests/_system/template_tpl_1.json',
     );
-    expect(result.fileCount).toBe(2);
+    expect(result.fileCount).toBe(3);
     expect(result.manifestHash).toMatch(/^[0-9a-f]{64}$/);
-    expect(result.files).toHaveLength(2);
-    expect(result.files.map((file) => file.path)).toEqual(['package.json', 'src/App.jsx']);
+    expect(result.files.map((file) => file.path)).toEqual([
+      'index.html',
+      'package.json',
+      'src/App.jsx',
+    ]);
 
     const sha = createHash('sha256').update('app').digest('hex');
     expect(upload).toHaveBeenCalledWith(
@@ -67,13 +96,22 @@ describe('ConversationV2TemplatePublishService', () => {
     );
   });
 
+  it('stores the template source without the Platform Kit', async () => {
+    const result = await svc.publish('tpl_kit', buildZip(PLAIN_VITE));
+
+    expect(result.files.map((file) => file.path)).not.toContain('src/AppRouter.tsx');
+    expect(result.files.map((file) => file.path)).not.toContain('yellowstorm.platform.json');
+    expect(result.platformReport.injectedFiles).toContain('src/AppRouter.tsx');
+  });
+
   it('publishes a nested GitHub ZIP with flattened project-root paths', async () => {
     const result = await svc.publish(
       'tpl_nested',
       buildZip({
-        'material-kit-react-main/package.json': '{"name":"mk"}',
+        'material-kit-react-main/package.json':
+          '{"name":"mk","devDependencies":{"vite":"^6.3.5"}}',
         'material-kit-react-main/src/App.jsx': 'export default function App() { return null; }',
-        'material-kit-react-main/index.html': '<html><body><div id="root"></div></body></html>',
+        'material-kit-react-main/index.html': '<script type="module" src="/src/main.jsx"></script>',
       }),
     );
 
@@ -87,13 +125,15 @@ describe('ConversationV2TemplatePublishService', () => {
 
   it('reuses a blob that already exists in Ceph', async () => {
     exists.mockResolvedValue(true);
-    await svc.publish('tpl_2', buildZip({ 'package.json': '{}' }));
+    const result = await svc.publish('tpl_2', buildZip(GATE_OK));
 
-    const blobUploads = upload.mock.calls.filter((call) => call[2] === 'text/plain');
-    expect(blobUploads).toHaveLength(0);
+    // Only the system manifest is written; every blob is already addressable.
+    expect(result.fileCount).toBe(3);
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(upload.mock.calls[0]?.[1]).toBe('template_tpl_2.json');
   });
 
-  it('uploads blobs in bounded parallel batches and keeps ZIP order', async () => {
+  it('uploads blobs in bounded parallel batches and keeps a stable order', async () => {
     let inFlight = 0;
     let peak = 0;
     exists.mockImplementation(async () => {
@@ -104,30 +144,42 @@ describe('ConversationV2TemplatePublishService', () => {
       return false;
     });
 
-    const entries: Record<string, string> = {};
+    const entries: Record<string, string> = { ...GATE_OK };
     for (let i = 0; i < 20; i += 1) {
       entries[`src/file${String(i).padStart(2, '0')}.js`] = `content-${String(i)}`;
     }
     const result = await svc.publish('tpl_4', buildZip(entries));
 
-    expect(result.fileCount).toBe(20);
-    expect(result.files.map((file) => file.path)).toEqual(Object.keys(entries));
-    expect(upload).toHaveBeenCalledTimes(21); // 20 blobs + manifest
+    expect(result.fileCount).toBe(23);
+    expect(result.files.map((file) => file.path)).toEqual(
+      Object.keys(entries).sort((a, b) => a.localeCompare(b)),
+    );
+    expect(upload).toHaveBeenCalledTimes(24); // 23 blobs + manifest
     expect(peak).toBeGreaterThan(1);
     expect(peak).toBeLessThanOrEqual(8);
   });
 
-  it('removes cover and manifest artifacts without touching blobs', async () => {
+  it('blocks an incompatible publish before any Ceph write', async () => {
+    await expect(svc.publish('tpl_next', buildZip(NEXT_JS))).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(upload).not.toHaveBeenCalled();
+    expect(exists).not.toHaveBeenCalled();
+  });
+
+  it('removes cover, manifest, and caller-supplied blob keys', async () => {
     await svc.removeTemplateArtifacts([
       {
         coverImage: 'appbuilder/templates/tpl_3/cover.png',
         manifestObjectKey: 'appbuilder/manifests/_system/template_tpl_3.json',
+        objectKeys: ['appbuilder/blobs/sha256/aa/aabb'],
       },
     ]);
 
     expect(deleteMany).toHaveBeenCalledWith([
       'appbuilder/templates/tpl_3/cover.png',
       'appbuilder/manifests/_system/template_tpl_3.json',
+      'appbuilder/blobs/sha256/aa/aabb',
     ]);
   });
 

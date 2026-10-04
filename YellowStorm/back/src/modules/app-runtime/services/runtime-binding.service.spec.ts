@@ -212,6 +212,26 @@ describe('RuntimeBindingService', () => {
     expect(result.latestRevisionId).toBe('rev_1');
   });
 
+  it('leaves the raw template revision when the Platform Kit reports violations', async () => {
+    findSeedByAiSessionId.mockResolvedValueOnce({ starterRevisionId: 'template_tpl_1' });
+    upsertByWorkspaceId.mockResolvedValueOnce({
+      bindingId: 'arb_aabbccddeeff',
+      workspaceId: 'sess_1',
+      latestRevisionId: 'template_tpl_1',
+    });
+    applyBaseline.mockResolvedValueOnce({
+      revisionId: 'template_tpl_1',
+      plan: { files: [], violations: ['src/App.jsx: data router'], warnings: [] },
+    });
+
+    const result = await svc.bind({ conversationSessionId: 'sess_1', userId: 'user_1' });
+
+    expect(applyBaseline).toHaveBeenCalled();
+    // A blocked normalization must not bind the browser to a half-built revision.
+    expect(updateRevision).not.toHaveBeenCalledWith('sess_1', 'rev_1');
+    expect(result.latestRevisionId).toBe('template_tpl_1');
+  });
+
   it('promotes a stale system-starter binding to the session template seed', async () => {
     findSeedByAiSessionId.mockResolvedValueOnce({ starterRevisionId: 'template_tpl_1' });
     // Conflict upsert keeps the previous starter revision (by design).

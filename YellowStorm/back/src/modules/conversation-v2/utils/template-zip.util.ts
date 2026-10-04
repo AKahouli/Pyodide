@@ -1,4 +1,4 @@
-import AdmZip = require('adm-zip');
+﻿import AdmZip = require('adm-zip');
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import {
@@ -13,6 +13,15 @@ export interface TemplateArchiveFile {
 
 const EXCLUDED_DIRS = new Set(['node_modules', 'dist', '.git']);
 const EXCLUDED_BASENAMES = new Set(['manifest.json', 'README.md', 'package-lock.json']);
+
+/** Extensions treated as text when returning a normalized tree for NodePod preview. */
+const TEXT_SOURCE_EXT =
+  /\.(tsx?|jsx?|mjs|cjs|json|md|mdx|css|scss|sass|less|html?|svg|txt|yml|yaml|toml|env|gitignore|npmrc|prettierrc|eslintrc)$/i;
+
+export function isTextSourcePath(path: string): boolean {
+  const name = path.split('/').pop() ?? path;
+  return TEXT_SOURCE_EXT.test(path) || name === 'Dockerfile' || name.startsWith('.');
+}
 
 /**
  * Extract the shippable source files from a template ZIP, mirroring the

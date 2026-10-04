@@ -213,7 +213,11 @@ export class ConversationV2GrpcClientService
     return { deadline: Date.now() + ms };
   }
 
-  async createSession(userId: string, workspaceIds: string[] = []): Promise<string> {
+  async createSession(
+    userId: string,
+    workspaceIds: string[] = [],
+    capability: 'web_app' | 'database_design' = 'web_app',
+  ): Promise<string> {
     // Translate workspaceIds → `{ownerUserId}/{storagePrefix}` paths. Note the
     // path root is the workspace OWNER, not the current user, so a session that
     // attaches a shared workspace points the AI service at the owner's prefix
@@ -221,7 +225,7 @@ export class ConversationV2GrpcClientService
     const workspacePaths = await this.workspaceService.getStoragePathsByIds(workspaceIds);
     return new Promise((resolve, reject) => {
       this.client.CreateSession(
-        { user_id: userId, workspace_paths: workspacePaths },
+        { user_id: userId, workspace_paths: workspacePaths, capability },
         createGrpcMetadata(this.config, V2_GRPC_SECURITY_NS),
         this.unaryDeadline,
         (err: grpc.ServiceError | null, response: { session_id: string }) => {

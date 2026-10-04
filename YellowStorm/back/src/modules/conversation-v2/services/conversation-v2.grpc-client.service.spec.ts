@@ -67,7 +67,21 @@ describe('ConversationV2GrpcClientService', () => {
     const id = await service.createSession('u1');
     expect(id).toBe('sess-1');
     expect(mockGrpcClient.CreateSession).toHaveBeenCalledWith(
-      expect.objectContaining({ user_id: 'u1' }),
+      expect.objectContaining({ user_id: 'u1', capability: 'web_app' }),
+      expect.anything(),
+      expect.anything(),
+      expect.any(Function),
+    );
+  });
+
+  it('createSession forwards database_design capability', async () => {
+    mockGrpcClient.CreateSession.mockImplementation(
+      (_req, _meta, _opts, cb) => cb(null, { session_id: 'sess-schema' }),
+    );
+    const id = await service.createSession('u1', [], 'database_design');
+    expect(id).toBe('sess-schema');
+    expect(mockGrpcClient.CreateSession).toHaveBeenCalledWith(
+      expect.objectContaining({ user_id: 'u1', capability: 'database_design' }),
       expect.anything(),
       expect.anything(),
       expect.any(Function),

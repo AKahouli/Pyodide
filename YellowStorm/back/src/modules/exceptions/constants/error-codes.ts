@@ -418,6 +418,7 @@ export enum ErrorCode {
   CONVERSATION_V2_TEMPLATE_ZIP_INVALID = 'ERR_3804',
   CONVERSATION_V2_TEMPLATE_NOT_PUBLISHED = 'ERR_3805',
   CONVERSATION_V2_TEMPLATE_COVER_INVALID = 'ERR_3806',
+  CONVERSATION_V2_TEMPLATE_PLATFORM_INCOMPATIBLE = 'ERR_3807',
 
   // Semantic Model errors (3700-3799)
   SEMANTIC_MODEL_NOT_FOUND = 'ERR_3700',
@@ -750,6 +751,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.CONVERSATION_V2_TEMPLATE_ZIP_INVALID]: 'The template source ZIP is invalid or empty.',
   [ErrorCode.CONVERSATION_V2_TEMPLATE_NOT_PUBLISHED]: 'This template is not published yet.',
   [ErrorCode.CONVERSATION_V2_TEMPLATE_COVER_INVALID]: 'The template cover image is invalid.',
+  [ErrorCode.CONVERSATION_V2_TEMPLATE_PLATFORM_INCOMPATIBLE]:
+    'This template is not compatible with the platform runtime and cannot be published.',
 
   [ErrorCode.SEMANTIC_MODEL_NOT_FOUND]: 'Semantic Model not found.',
   [ErrorCode.SEMANTIC_MODEL_NAME_EXISTS]: 'A Semantic Model with this name already exists.',
