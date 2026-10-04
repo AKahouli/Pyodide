@@ -36,7 +36,7 @@ Both files are 500+ lines with numbered sections. Grep the `^## ` headings, then
 
 ## Context Retrieval
 
-1. Graph first: code-review-graph MCP tools before Grep, Glob, or Read (`semantic_search_nodes_tool`, `query_graph_tool`, `get_impact_radius_tool`, `get_affected_flows_tool`, `get_minimal_context_tool`, `detect_changes_tool`). Load the `crg-navigation` skill for recipes. Fall back to file scanning only when the graph has no answer.
+1. Graph first for code investigation: start with `get_minimal_context_tool(task=..., repo_root=<active worktree absolute path>)`, then use targeted CRG queries before structural Grep/Glob/Read. Load the global `crg-navigation` skill for accurate tool recipes. Refresh missing/stale graphs before relying on them; source wins when results disagree. Skip pure prose and git-only chores. Fall back to focused file scanning when indexing/static analysis cannot answer, and record the limitation in the handoff.
 2. Read only the line ranges the change needs.
 3. Vault memory (`obsidian_vault`, `strategy: "semantic"`) only for Tier 3 work, or when a Tier 2 task depends on historical decisions or invariants that code does not explain. Never for Tier 0 or 1.
 4. Context7 only for external library behavior local code cannot establish.
