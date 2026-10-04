@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type KeyboardEvent } from 'react';
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, FileText, Loader2, Search, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/modules/semantic-model/components/common/Select';
 import { cn } from '@/lib/utils';
 import { DocumentPreviewViewer, type DocumentPreviewNavigation } from '@/modules/file-viewer/components/DocumentPreviewViewer';
 import { useModuleTranslation } from '@/modules/localization';

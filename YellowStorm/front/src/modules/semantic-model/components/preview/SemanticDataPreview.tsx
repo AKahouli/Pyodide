@@ -3,7 +3,7 @@ import { AlertTriangle, ExternalLink, Loader2, RefreshCw, Search, Database, X } 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/modules/semantic-model/components/common/Select';
 import { parseApiError } from '@/lib/api-error';
 import { useFileViewerStore } from '@/modules/file-viewer/store';
 import { useModuleTranslation } from '@/modules/localization';
@@ -152,7 +152,7 @@ export function SemanticDataPreview({ modelId, dataRevisionId, onDataRevision, o
       <CorrectionNotice actions={fixes} />
       {canEdit && <CorrectionsList actions={fixes} recordLabel={entityName} fieldLabel={readableLabel} relationLabel={relationName} />}
       {selectedEntity ? <div className='grid gap-4 min-[900px]:grid-cols-[15rem_minmax(0,1fr)]'>
-        <select className='h-11 w-full rounded-lg border bg-background px-3 text-sm min-[900px]:hidden' value={selectedEntity.id} onChange={(event) => setSelectedEntityId(event.target.value)} aria-label={t('dataPreview.chooseRecord')}>{concepts.filter((concept) => concept.entities.length > 0).map((concept) => <optgroup key={concept.id} label={concept.label}>{concept.entities.map((entity) => <option key={entity.id} value={entity.id}>{concept.label}: {entity.label || t('mapping.unnamedEntity')}{recordDetail(entity) ? ` · ${recordDetail(entity)}` : ''}</option>)}</optgroup>)}</select>
+        <Select value={selectedEntity.id} onValueChange={setSelectedEntityId}><SelectTrigger className='h-11 rounded-lg px-3 min-[900px]:hidden' aria-label={t('dataPreview.chooseRecord')}><SelectValue /></SelectTrigger><SelectContent>{concepts.filter((concept) => concept.entities.length > 0).map((concept) => <SelectGroup key={concept.id}><SelectLabel>{concept.label}</SelectLabel>{concept.entities.map((entity) => <SelectItem key={entity.id} value={entity.id}>{concept.label}: {entity.label || t('mapping.unnamedEntity')}{recordDetail(entity) ? ` · ${recordDetail(entity)}` : ''}</SelectItem>)}</SelectGroup>)}</SelectContent></Select>
         <nav className='hidden space-y-4 rounded-2xl border bg-background p-3 min-[900px]:block' aria-label={t('dataPreview.entities')}>{concepts.filter((concept) => concept.entities.length > 0).map((concept) => <section key={concept.id}><h3 className='px-2 py-1 text-xs font-semibold text-muted-foreground'>{concept.label} · {concept.entities.length}</h3><div className='space-y-1'>{concept.entities.map((entity) => <button key={entity.id} type='button' onClick={() => setSelectedEntityId(entity.id)} aria-current={selectedEntity.id === entity.id ? 'true' : undefined} className={`w-full rounded-lg px-3 py-2 text-left text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${selectedEntity.id === entity.id ? 'bg-primary/10 font-medium' : 'hover:bg-muted'}`}><span className='block truncate'>{entity.label || t('mapping.unnamedEntity')}</span>{recordDetail(entity) && <span className='block text-xs text-muted-foreground'>{recordDetail(entity)}</span>}</button>)}</div></section>)}</nav>
         <article className='min-w-0 rounded-2xl border bg-background p-5'>
           <p className='text-xs text-muted-foreground'>{selectedConcept?.label}</p>

@@ -9,6 +9,7 @@ import { parseApiError } from '@/lib/api-error';
 import { showError, showSuccess } from '@/lib/notifications';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
+import { SEARCH_THRESHOLD } from '../common/Select';
 import { semanticModelApi } from '../../api';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
 import type { MappingPreset, MappingSettings } from '../../types';
@@ -69,6 +70,9 @@ export function MappingPresetBar({ modelId, conceptId, attributes, current, onAp
     staleTime: 30_000,
   });
   const presets = presetsQuery.data ?? [];
+  const [presetSearch, setPresetSearch] = useState('');
+  const presetQuery = presetSearch.trim().toLowerCase();
+  const shownPresets = presetQuery ? presets.filter((preset) => `${preset.name} ${preset.description ?? ''}`.toLowerCase().includes(presetQuery)) : presets;
   const last = lastQuery.data;
   const currentKey = settingsKey(current);
   const label = (key: string) => attributes.find((attribute) => attribute.key === key)?.label ?? key;
@@ -157,7 +161,7 @@ export function MappingPresetBar({ modelId, conceptId, attributes, current, onAp
             {(presetsQuery.isFetching || lastQuery.isFetching) ? <Loader2 className='h-3 w-3 shrink-0 animate-spin' /> : <ChevronDown className='h-3 w-3 shrink-0' />}
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align='start' className='w-72'>
+        <DropdownMenuContent align='start' className='flex max-h-[min(24rem,var(--radix-dropdown-menu-content-available-height))] w-72 flex-col overflow-hidden'>
           {canEdit && <>
             <DropdownMenuLabel className='text-[11px] font-medium text-muted-foreground'>{t('mapping.presets.lastUsed')}</DropdownMenuLabel>
             {last ? <DropdownMenuItem className='text-xs' onSelect={() => apply(last, lastName)}>
@@ -166,13 +170,24 @@ export function MappingPresetBar({ modelId, conceptId, attributes, current, onAp
             <DropdownMenuSeparator />
           </>}
           <DropdownMenuLabel className='text-[11px] font-medium text-muted-foreground'>{t('mapping.presets.presets')}</DropdownMenuLabel>
-          {presets.map((preset) => <DropdownMenuItem key={preset.id} className='items-start text-xs' onSelect={() => apply(preset, preset.name, preset.id)}>
+          {presets.length > SEARCH_THRESHOLD && <input
+            className='mx-1 mb-1 h-8 rounded-md border bg-transparent px-2 text-xs outline-none placeholder:text-muted-foreground'
+            value={presetSearch}
+            placeholder={t('action.searchList')}
+            aria-label={t('action.searchList')}
+            onChange={(event) => setPresetSearch(event.target.value)}
+            onKeyDown={(event) => { if (event.key !== 'Escape' && event.key !== 'ArrowDown') event.stopPropagation(); }}
+          />}
+          <div className='min-h-0 flex-1 overflow-y-auto'>
+          {shownPresets.map((preset) => <DropdownMenuItem key={preset.id} className='items-start text-xs' onSelect={() => apply(preset, preset.name, preset.id)}>
             {applied?.presetId === preset.id ? <Check className='mr-2 mt-0.5 h-3.5 w-3.5 shrink-0' /> : <span className='mr-2 w-3.5 shrink-0' />}
             <span className='min-w-0'>
               <span className='block truncate'>{preset.name}</span>
               {preset.description && <span className='block truncate text-[11px] text-muted-foreground'>{preset.description}</span>}
             </span>
           </DropdownMenuItem>)}
+          {presets.length > 0 && !shownPresets.length && <p className='px-2 py-1 text-[11px] text-muted-foreground'>{t('action.noListMatch')}</p>}
+          </div>
           {!presets.length && <p className='px-2 py-1 text-[11px] text-muted-foreground'>{presetsQuery.isError ? t('mapping.presets.loadError') : t('mapping.presets.noPresets')}</p>}
         </DropdownMenuContent>
       </DropdownMenu>

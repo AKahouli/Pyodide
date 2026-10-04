@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Columns } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/modules/semantic-model/components/common/Select';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ComputedFieldRule, SourceExtractionStrategy, SourceFieldMapping } from '../../types';

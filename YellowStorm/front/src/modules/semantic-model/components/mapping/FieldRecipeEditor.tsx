@@ -2,7 +2,7 @@ import { useEffect, useId, useState } from 'react';
 import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, FileText, Loader2, Play, Plus, Split, Type, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/modules/semantic-model/components/common/Select';
 import { parseApiError } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';

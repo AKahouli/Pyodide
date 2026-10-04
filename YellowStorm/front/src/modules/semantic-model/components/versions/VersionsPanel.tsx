@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { GitCompare, History, Loader2, RotateCcw, Send, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/modules/semantic-model/components/common/Select';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { showError, showSuccess, showWarning } from '@/lib/notifications';
@@ -41,8 +42,8 @@ export function VersionsPanel({ modelId, canEdit, canPublish, onPublished, onClo
     {list.length > 1 && <section className='mb-5 rounded-xl border p-3' aria-label={t('versionChanges.compareTitle')}>
       <h3 className='flex items-center gap-2 text-sm font-semibold'><GitCompare className='h-4 w-4' />{t('versionChanges.compareTitle')}</h3>
       <div className='mt-2 grid gap-2 text-xs'>
-        <label className='grid gap-1'>{t('versionChanges.from')}<select className='h-9 rounded-md border bg-background px-2 text-sm' value={left ?? ''} onChange={(event) => setLeft(event.target.value)}>{list.map((version) => <option key={version.id} value={version.id}>{versionName(version.id)}</option>)}</select></label>
-        <label className='grid gap-1'>{t('versionChanges.to')}<select className='h-9 rounded-md border bg-background px-2 text-sm' value={right ?? ''} onChange={(event) => setRight(event.target.value)}>{list.map((version) => <option key={version.id} value={version.id}>{versionName(version.id)}</option>)}</select></label>
+        <label className='grid gap-1'>{t('versionChanges.from')}<Select value={left ?? undefined} onValueChange={setLeft}><SelectTrigger className='px-2'><SelectValue /></SelectTrigger><SelectContent>{list.map((version) => <SelectItem key={version.id} value={version.id}>{versionName(version.id)}</SelectItem>)}</SelectContent></Select></label>
+        <label className='grid gap-1'>{t('versionChanges.to')}<Select value={right ?? undefined} onValueChange={setRight}><SelectTrigger className='px-2'><SelectValue /></SelectTrigger><SelectContent>{list.map((version) => <SelectItem key={version.id} value={version.id}>{versionName(version.id)}</SelectItem>)}</SelectContent></Select></label>
       </div>
       {left && right && left === right ? <p className='mt-2 text-xs text-muted-foreground'>{t('versionChanges.sameVersion')}</p> : <ChangeList comparison={comparison.data} loading={comparison.isLoading} failed={comparison.isError} />}
     </section>}

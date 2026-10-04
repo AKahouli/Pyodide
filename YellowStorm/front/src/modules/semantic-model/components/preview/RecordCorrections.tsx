@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Check, EyeOff, Link2, Pencil, Undo2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/modules/semantic-model/components/common/Select';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
@@ -93,14 +94,14 @@ export function AddLinkForm({ options, onAdd, busy }: Readonly<{
     onAdd(selected.relationId, target, selected.direction);
     setOpen(false); setChoice(''); setTarget('');
   }}>
-    <select className={cn(INPUT, 'rounded-md border bg-background px-2')} value={choice} onChange={(event) => { setChoice(event.target.value); setTarget(''); }} aria-label={t('corrections.chooseRelationship')}>
-      <option value=''>{t('corrections.chooseRelationship')}</option>
-      {usable.map((option) => <option key={`${option.relationId}|${option.direction}`} value={`${option.relationId}|${option.direction}`}>{option.label}</option>)}
-    </select>
-    <select className={cn(INPUT, 'rounded-md border bg-background px-2 disabled:opacity-50')} value={target} disabled={!selected} onChange={(event) => setTarget(event.target.value)} aria-label={t('corrections.chooseRecord')}>
-      <option value=''>{t('corrections.chooseRecord')}</option>
-      {selected?.targets.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.label}</option>)}
-    </select>
+    <Select value={choice || undefined} onValueChange={(value) => { setChoice(value); setTarget(''); }}>
+      <SelectTrigger className={cn(INPUT, 'px-2')} aria-label={t('corrections.chooseRelationship')}><SelectValue placeholder={t('corrections.chooseRelationship')} /></SelectTrigger>
+      <SelectContent>{usable.map((option) => <SelectItem key={`${option.relationId}|${option.direction}`} value={`${option.relationId}|${option.direction}`}>{option.label}</SelectItem>)}</SelectContent>
+    </Select>
+    <Select value={target || undefined} disabled={!selected} onValueChange={setTarget}>
+      <SelectTrigger className={cn(INPUT, 'px-2')} aria-label={t('corrections.chooseRecord')}><SelectValue placeholder={t('corrections.chooseRecord')} /></SelectTrigger>
+      <SelectContent>{selected?.targets.map((candidate) => <SelectItem key={candidate.id} value={candidate.id}>{candidate.label}</SelectItem>)}</SelectContent>
+    </Select>
     <div className='flex gap-1'>
       <Button type='submit' size='sm' className='h-9' disabled={busy || !selected || !target}>{t('corrections.link')}</Button>
       <Button type='button' size='sm' variant='ghost' className='h-9' onClick={() => setOpen(false)}>{t('action.cancel')}</Button>
