@@ -10,11 +10,13 @@ describe('RootDelegateResolverService', () => {
   const agentShareService = { getSharePermission: jest.fn() };
   const teamService = { findUserTeamById: jest.fn() };
   const rootPolicyService = { isEligibleRootType: (slug: string) => slug === 'mono-agent' };
+  const snapshotService = { computeDigest: jest.fn().mockReturnValue('digest-1') };
 
   const resolver = new RootDelegateResolverService(
     agentRepository as never,
     agentShareService as never,
     rootPolicyService as never,
+    snapshotService as never,
     teamService as never,
   );
 

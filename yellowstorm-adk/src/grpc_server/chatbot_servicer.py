@@ -1354,11 +1354,27 @@ class ChatbotServicer(
             else None
         )
 
+        # WP04 root delegation payload: compact authorized catalog + frozen
+        # candidate definitions. Both unset = legacy request. The catalog rides
+        # as a plain dict (trusted backend-generated metadata).
+        root_context = (
+            _message_to_dict(pb_request.root_context)
+            if pb_request.HasField("root_context")
+            else None
+        )
+        delegate_candidates = (
+            [self._convert_agent(candidate) for candidate in pb_request.delegate_candidates]
+            if pb_request.delegate_candidates
+            else None
+        )
+
         return RunAgentTeamRequest(
             user_id=pb_request.user_context.user_id,
             session_id=pb_request.conversation_id,
             message=pb_request.query,
             execution_scope=execution_scope,
+            root_context=root_context,
+            delegate_candidates=delegate_candidates,
             task_summary=getattr(pb_request, "task_summary", "") or None,
             image_input=ctx["image_input"] or None,
             attached_files=ctx["attached_documents"] or None,
@@ -1983,6 +1999,18 @@ class ChatbotServicer(
             StreamChunk: Protobuf message
         """
         trace_pb = self._build_execution_trace(chunk_dict.get("execution_trace"))
+
+        # WP04 lifecycle-only chunk (producer lineage without UI content)
+        if trace_pb is not None and "component" not in chunk_dict and "usage" not in chunk_dict:
+            metadata = chunk_dict.get("metadata", {})
+            return chatbot_pb2.StreamChunk(
+                action=str(chunk_dict.get("action", "update")),
+                metadata=chatbot_pb2.Metadata(
+                    message_id=metadata.get("message_id", ""),
+                    agent_id=metadata.get("agent_id", ""),
+                ),
+                execution_trace=trace_pb,
+            )
 
         # Check if this is a usage-only chunk (no component)
         if "usage" in chunk_dict and "component" not in chunk_dict:

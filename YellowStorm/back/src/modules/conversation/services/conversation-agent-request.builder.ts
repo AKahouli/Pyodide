@@ -2,6 +2,41 @@ import { Injectable } from '@nestjs/common';
 import type { CorrectionReplayContext, MessageReplayContext } from '../interfaces/message.interface';
 import type { TeamExecutionDefinition } from '../../team/team-execution';
 import { ExecutionScopeV1, executionScopeToWire } from '../root-work/root-work.types';
+import type { IGrpcAgent } from '../../agent/interfaces/agent.interface';
+
+/**
+ * WP04 root delegation payload pieces: the trusted root scope, the compact
+ * authorized catalog/policy and the (already ceiling-scoped) candidate
+ * definitions. Absent = legacy request.
+ */
+export interface RootDelegationContext {
+  scope: ExecutionScopeV1;
+  /** Pre-generated UUIDv7 stop id for this root execution (WP08 consumes). */
+  stopRequestId: string;
+  rootContext: Record<string, unknown>;
+  candidates: unknown[];
+}
+
+/**
+ * Narrow a candidate specialist to the root's resolved capability ceiling
+ * (plan §6.4): intersect connector actions, tools, knowledge workspaces and
+ * skills with the root's own set. Empty intersection = that capability is
+ * denied (no tool), never "all actions". Does NOT clone the root prompt over
+ * the specialist and does not weaken the specialist's mandatory guards.
+ */
+export function scopeCandidateToRootCeiling(candidate: IGrpcAgent, root: IGrpcAgent): IGrpcAgent {
+  const rootToolNames = new Set(root.tools.map((tool) => tool.name));
+  const rootWorkspaceIds = new Set(root.brain_context.map((b) => b.workspace_id));
+  const rootSkillIds = new Set(
+    (root.skills ?? []).map((skill) => String(skill.id ?? '')).filter(Boolean),
+  );
+  return {
+    ...candidate,
+    tools: candidate.tools.filter((tool) => rootToolNames.has(tool.name)),
+    brain_context: candidate.brain_context.filter((b) => rootWorkspaceIds.has(b.workspace_id)),
+    skills: (candidate.skills ?? []).filter((skill) => rootSkillIds.has(String(skill.id ?? ''))),
+  };
+}
 
 export interface BuildAgentExecutionRequestInput {
   userId: string;
@@ -19,6 +54,8 @@ export interface BuildAgentExecutionRequestInput {
   attachmentContext?: string;
   /** Trusted execution context (WP03); absent = legacy request. */
   executionScope?: ExecutionScopeV1;
+  /** WP04 root delegation payload; absent = legacy request. */
+  rootDelegation?: RootDelegationContext;
 }
 
 export interface BuiltAgentExecutionRequest {
@@ -61,6 +98,10 @@ export class ConversationAgentRequestBuilder {
       } : {}),
       ...(input.attachmentContext ? { attachment_context: { text: input.attachmentContext } } : {}),
       ...(input.executionScope ? { execution_scope: executionScopeToWire(input.executionScope) } : {}),
+      ...(input.rootDelegation ? { root_context: input.rootDelegation.rootContext } : {}),
+      ...(input.rootDelegation && input.rootDelegation.candidates.length
+        ? { delegate_candidates: input.rootDelegation.candidates }
+        : {}),
     };
 
     if (input.teamDefinition) {

@@ -410,6 +410,11 @@ class AgentRunner:
             if agent_config and agent_config.get("_is_temporary_child_agent")
             else "parent"
         )
+        # WP04: when this run is an enrolled root with the delegation
+        # dispatcher, text emitted by delegated specialists (different event
+        # author) must never stream as the root's public answer — the bounded
+        # result reaches the root through the tool response instead (plan §9.3).
+        delegation_root_active = bool((agent_config or {}).get("_delegation_root"))
         activity_actor_name = str((agent_config or {}).get("display_name") or agent_name or "")
         accumulated_text = ""
         # Citation buffering using MessageTransformer
@@ -489,6 +494,17 @@ class AgentRunner:
                         thought_activity_tracker.end_for_visible_text()
                     if part.function_call or part.function_response:
                         thought_activity_tracker.end_for_tool_boundary()
+
+                    if (
+                        delegation_root_active
+                        and part.text
+                        and not part.function_call
+                        and not part.function_response
+                        and (getattr(event, "author", "") or "") != agent.name
+                    ):
+                        # Delegated specialist's narrative text is not the
+                        # root's answer and not root activity.
+                        continue
 
                     if is_thought:
                         observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -971,7 +987,15 @@ class AgentRunner:
                             )
 
 
-                if event.is_final_response() and event.content and event.content.parts:
+                if (
+                    event.is_final_response()
+                    and event.content
+                    and event.content.parts
+                    # A delegated specialist's final event is not the root's:
+                    # returning here would tear down the invocation before the
+                    # dispatcher hands the result back (plan 9.3).
+                    and (not delegation_root_active or (getattr(event, 'author', '') or '') == agent.name)
+                ):
                     final_text_for_citations = "".join(
                         (part.text or "")
                         for part in event.content.parts

@@ -717,7 +717,9 @@ Do not render charts for single values or non-numeric content.
     async def run_single_agent(self, user_prompt: str, session_id: str,
                                q: Optional[asyncio.Queue[dict]] = None,
                                image_input: Optional[List[Dict]] = None,
-                               task_summary: Optional[str] = None) -> Optional[str]:
+                               task_summary: Optional[str] = None,
+                               delegation_tool: Optional[Any] = None,
+                               delegation_instruction: str = "") -> Optional[str]:
         """Run a single specialized agent directly, with no manager/delegation.
 
         The one agent registered in the repository is built with its real tools
@@ -775,6 +777,18 @@ Do not render charts for single values or non-numeric content.
                 user_prompt,
                 image_input=image_input,
             )
+
+            # WP04: expose the one bounded delegation operation to the enrolled
+            # root. The dispatcher is a Workflow; ADK converts it to a tool the
+            # same way the temporary-child callable attaches here.
+            if delegation_tool is not None:
+                agent.tools = [*(agent.tools or []), delegation_tool]
+                agent.instruction = agent.instruction + chr(10) + delegation_instruction
+                agent_config["_delegation_root"] = True
+                logger.info(
+                    "[DELEGATE] dispatcher attached session_id=%s agent=%s",
+                    session_id, agent_name,
+                )
 
             # Persist the mono conversation so memory carries across turns, keyed
             # on the conversation's session_id.

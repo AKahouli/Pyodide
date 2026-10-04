@@ -146,6 +146,10 @@ class RunAgentTeamRequest(BaseModel):
     # Trusted execution scope (WP03); frozen dataclass from src.root_runtime.
     # None/unset = legacy semantics. Never model-authored.
     execution_scope: Optional[ExecutionScopeV1] = None
+    # WP04 root delegation: compact authorized catalog + frozen candidate
+    # definitions. None/unset = legacy request.
+    root_context: Optional[Dict[str, Any]] = None
+    delegate_candidates: Optional[List[AgentSuggestion]] = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 

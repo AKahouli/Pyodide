@@ -7,7 +7,8 @@ import { AgentRepository } from '../repositories/agent.repository';
 import { AgentRecord } from '../repositories/agent-record.mapper';
 import { AgentShareService } from './agent-share.service';
 import { RootPolicyService } from './root-policy.service';
-import { RootConfigurationMode, RootExecutionPolicy } from '../interfaces/root-execution-policy.interface';
+import { AgentExecutionSnapshotService } from './agent-execution-snapshot.service';
+import { RootConfigurationMode, RootExecutionPolicy, newRootExecutionPolicy } from '../interfaces/root-execution-policy.interface';
 import { TeamService } from '../../team/team.service';
 
 /** Upper bound on the effective catalog — matches ROOT_POLICY_CEILINGS-scale budgets. */
@@ -29,6 +30,8 @@ export interface RootDelegatePoolEntry {
   description: string;
   agentTypeSlug: string;
   configurationMode: RootConfigurationMode;
+  /** Digest of the candidate's frozen definition (WP04 catalog). */
+  snapshotDigest: string;
   /** Where the membership came from; a direct entry also lists the teams supplying it. */
   source: { direct: boolean; teamIds: string[] };
 }
@@ -37,6 +40,8 @@ export interface RootDelegatePool {
   rootAgentId: string;
   delegationEnabled: boolean;
   defaultConfigurationMode: RootConfigurationMode;
+  /** The root's stored policy (WP04 runtime reads limits from here). */
+  policy: RootExecutionPolicy;
   entries: RootDelegatePoolEntry[];
   /** Saved selections that yielded nothing (deleted/inactive/ineligible) — names withheld. */
   unavailableCounts: { agents: number; teams: number };
@@ -56,6 +61,7 @@ export class RootDelegateResolverService {
     @Inject(forwardRef(() => AgentShareService))
     private readonly agentShareService: AgentShareService,
     private readonly rootPolicyService: RootPolicyService,
+    private readonly snapshotService: AgentExecutionSnapshotService,
     // TeamService (forwardRef) supplies flattened, access-checked Team membership.
     @Inject(forwardRef(() => TeamService))
     private readonly teamService: TeamService,
@@ -105,6 +111,7 @@ export class RootDelegateResolverService {
           description: agent.description,
           agentTypeSlug: agent.agentTypeSlug,
           configurationMode: modeFor(agent._id),
+          snapshotDigest: this.snapshotService.computeDigest(agent),
           source: { direct: true, teamIds: [] },
         });
       }
@@ -137,6 +144,7 @@ export class RootDelegateResolverService {
           description: agent.description,
           agentTypeSlug: agent.agentTypeSlug,
           configurationMode: modeFor(agent._id),
+          snapshotDigest: this.snapshotService.computeDigest(agent),
           source: { direct: false, teamIds: [teamId] },
         });
       }
@@ -146,6 +154,7 @@ export class RootDelegateResolverService {
       rootAgentId: root._id,
       delegationEnabled: policy?.delegation.enabled ?? false,
       defaultConfigurationMode: policy?.delegation.defaultConfigurationMode ?? 'native',
+      policy: policy ?? newRootExecutionPolicy(false),
       entries: [...entries.values()],
       unavailableCounts: { agents: unavailableAgents, teams: unavailableTeams },
     };

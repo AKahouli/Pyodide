@@ -1,4 +1,9 @@
-import { ConversationAgentRequestBuilder } from './conversation-agent-request.builder';
+import {
+  ConversationAgentRequestBuilder,
+  scopeCandidateToRootCeiling,
+  type RootDelegationContext,
+} from './conversation-agent-request.builder';
+import type { IGrpcAgent } from '../../agent/interfaces/agent.interface';
 
 describe('ConversationAgentRequestBuilder', () => {
   const request = {
@@ -107,5 +112,60 @@ describe('ConversationAgentRequestBuilder', () => {
       native_session_id: '',
       deadline_epoch_ms: null,
     });
+  });
+  it('scopes a root_constrained candidate to the root ceiling; empty intersection denies', () => {
+    const root = {
+      tools: [{ name: 'search' }, { name: 'crm_list_contacts' }],
+      brain_context: [{ workspace_id: 'ws-shared' }],
+      skills: [{ id: 'sk-1', name: 'S' }],
+    } as unknown as IGrpcAgent;
+    const candidate = {
+      id: 'a1',
+      tools: [{ name: 'search' }, { name: 'crm_get_contact' }, { name: 'python_interpreter' }],
+      brain_context: [{ workspace_id: 'ws-shared' }, { workspace_id: 'ws-private' }],
+      skills: [{ id: 'sk-1', name: 'S' }, { id: 'sk-2', name: 'T' }],
+    } as unknown as IGrpcAgent;
+
+    const scoped = scopeCandidateToRootCeiling(candidate, root);
+    expect(scoped.tools.map((t) => t.name)).toEqual(['search']);
+    expect(scoped.brain_context.map((b) => b.workspace_id)).toEqual(['ws-shared']);
+    expect(scoped.skills.map((sk) => sk.id)).toEqual(['sk-1']);
+
+    // A candidate with NO overlap keeps nothing (empty = deny, not all).
+    const foreign = {
+      id: 'a2',
+      tools: [{ name: 'python_interpreter' }],
+      brain_context: [{ workspace_id: 'ws-other' }],
+      skills: [{ id: 'sk-9', name: 'X' }],
+    } as unknown as IGrpcAgent;
+    const denied = scopeCandidateToRootCeiling(foreign, root);
+    expect(denied.tools).toEqual([]);
+    expect(denied.brain_context).toEqual([]);
+    expect(denied.skills).toEqual([]);
+  });
+
+  it('attaches root_context and delegate_candidates when delegation is present', () => {
+    const rootDelegation: RootDelegationContext = {
+      scope: {
+        role: 'root', executionId: 'e'.repeat(24), parentExecutionId: null, workGroupId: null,
+        depth: 0, attempt: 1, conversationEpoch: 3, expectedFence: null, resumeIntent: 'start',
+        immutableSnapshotRef: null, nativeInvocationId: null, nativeSessionId: null, deadlineEpochMs: null,
+      },
+      stopRequestId: '018f0000-0000-7000-8000-000000000000',
+      rootContext: {
+        root_agent_id: 'r1', policy_version: '1', max_depth: 1,
+        catalog: [{ agent_id: 'a1', name: 'S', configuration_mode: 'native' }],
+      },
+      candidates: [{ id: 'a1', name: 'S' }],
+    };
+    const result = new ConversationAgentRequestBuilder().build({
+      userId: 'user-1', conversationId: 'conv-1', request,
+      workspaceContexts: [], agents: [{ id: 'root-1' }], attachedFiles: [], previousAttachedFiles: [], skills: [],
+      rootDelegation,
+    });
+    expect(result.rpc).toBe('RunSingleAgent');
+    expect(result.payload.root_context).toEqual(rootDelegation.rootContext);
+    expect(result.payload.delegate_candidates).toEqual([{ id: 'a1', name: 'S' }]);
+    expect(result.payload.execution_scope).toEqual(expect.objectContaining({ execution_role: 1, conversation_epoch: 3 }));
   });
 });

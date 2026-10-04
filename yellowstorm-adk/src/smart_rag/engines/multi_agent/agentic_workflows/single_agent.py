@@ -63,6 +63,29 @@ async def handle_single_agent_workflow(
         agent_data = team.agent_helper._prepare_agent_data(agents[0], user_request, team)
         team.agent_repository.add_agent(agent_data)
         image_input = user_request.image_input if hasattr(user_request, 'image_input') else None
+
+        # WP04: when the backend attached a root delegation context, build the
+        # replayable dispatcher so the root can delegate to allowlisted
+        # specialists. Candidates stay data until the root chooses one.
+        delegation_tool = None
+        delegation_instruction = ""
+        root_context = getattr(user_request, "root_context", None)
+        if root_context and root_context.get("catalog"):
+            from src.root_runtime.dispatcher import (
+                build_delegate_dispatcher,
+                build_delegation_instruction,
+            )
+
+            delegation_tool = build_delegate_dispatcher(
+                team,
+                user_request,
+                root_context,
+                getattr(user_request, "delegate_candidates", None),
+                root_scope=getattr(user_request, "execution_scope", None),
+            )
+            if delegation_tool is not None:
+                delegation_instruction = build_delegation_instruction(root_context["catalog"])
+
         await team.run_single_agent(
             user_prompt=build_corrective_replay_user_message(
                 user_request.message,
@@ -72,6 +95,8 @@ async def handle_single_agent_workflow(
             q=q,
             image_input=image_input,
             task_summary=user_request.task_summary,
+            delegation_tool=delegation_tool,
+            delegation_instruction=delegation_instruction,
         )
         logger.info(f"[MONO WORKFLOW] Completed single-agent workflow - session_id: {session_id}")
 
