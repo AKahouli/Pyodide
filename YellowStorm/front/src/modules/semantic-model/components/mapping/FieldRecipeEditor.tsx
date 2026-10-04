@@ -76,8 +76,10 @@ export type RecipeSource =
     rows: Array<Record<string, unknown>>;
     /** The other mapped fields of the row read from a column as it is: the column, and its own recipe if any. */
     fieldInputs: Record<string, { column: string; recipe?: ComputedFieldRule }>;
-    /** Fields read out of a cell (rules, AI): their values on the rows of the last row preview. */
+    /** Fields read out of a cell (rules, AI) or taken from other fields: their values on the rows of the last row preview. */
     fieldValues?: Record<string, Array<{ row: number; value: string }>>;
+    /** Fixed fields of the row, and their value. */
+    fieldConstants?: Record<string, string>;
   }
   | {
     /**
@@ -262,6 +264,8 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
           if (ref.kind === 'column') return cellText(row[ref.name]);
           const column = fieldColumnOf(ref.name)?.column;
           if (column) return cellText(row[column]);
+          const fixed = table.kind === 'sheet' ? table.fieldConstants?.[ref.name] : undefined;
+          if (fixed !== undefined) return fixed;
           const read = (table.fieldValues?.[ref.name] ?? []) as Array<{ row: number; value: string; label?: string }>;
           return cellText(read.find((item) => record ? item.label === label : item.row === number)?.value);
         };

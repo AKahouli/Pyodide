@@ -176,6 +176,10 @@ export interface ResolvedEntity {
       quote?: string;
       reference?: string;
       confidence?: number;
+      /** A recipe: the columns or fields it read, in order. */
+      sources?: string[];
+      /** Taken from another concept's record: that concept, the record's label, and the field(s) read. */
+      derivedFrom?: { conceptId?: string; label?: string; attribute?: string; attributes?: string[]; method?: string; records?: number };
     }>;
   };
 }
@@ -288,18 +292,23 @@ export function resolveSheetEntities(
   fieldMappings: SourceFieldMapping[],
   identityFields: string[],
   limit = 50,
+  /** The rows already read as a run reads them (recipes, rules), in the same order as `rows`. */
+  shaped?: Array<{ values: Record<string, unknown>; fields: NonNullable<ResolvedEntity['provenance']['fields']> }>,
 ): { entities: ResolvedEntity[]; stats: ResolutionStats } {
   const active = fieldMappings.filter((mapping) => mapping.mode !== 'ignore');
   const stats: ResolutionStats = { scannedRows: 0, resolvedEntities: 0, duplicateKeysSkipped: 0, nullIdentitySkipped: 0 };
   const seen = new Set<string>();
   const entities: ResolvedEntity[] = [];
-  for (const row of rows) {
+  for (const [index, row] of rows.entries()) {
     if (entities.length >= limit || stats.scannedRows >= PREVIEW_ROW_SCAN_LIMIT) break;
     stats.scannedRows += 1;
-    const values: Record<string, unknown> = {};
-    for (const mapping of active) {
-      values[mapping.targetAttribute] = mapping.mode === 'constant' ? mapping.constantValue
-        : mapping.sourceField ? row[mapping.sourceField] : undefined;
+    const read = shaped?.[index];
+    const values: Record<string, unknown> = read ? { ...read.values } : {};
+    if (!read) {
+      for (const mapping of active) {
+        values[mapping.targetAttribute] = mapping.mode === 'constant' ? mapping.constantValue
+          : mapping.sourceField ? row[mapping.sourceField] : undefined;
+      }
     }
     const key = identityFields.length ? identityKeyOf(values, identityFields) : `row:${stats.scannedRows}`;
     if (identityFields.length && !key.replace(/\u0000/g, '')) {
@@ -313,7 +322,7 @@ export function resolveSheetEntities(
     if (identityFields.length) seen.add(key);
     const labelField = identityFields.find((field) => normalizeIdentityValue(values[field]) !== '')
       ?? active.find((mapping) => normalizeIdentityValue(values[mapping.targetAttribute]) !== '')?.targetAttribute;
-    const fields = Object.fromEntries(active.map((mapping) => [mapping.targetAttribute, {
+    const fields = read?.fields ?? Object.fromEntries(active.map((mapping) => [mapping.targetAttribute, {
       method: mapping.mode === 'constant' ? 'fixed_value' as const : 'direct_mapping' as const,
       reference: mapping.sourceField ?? undefined,
     }]));

@@ -308,7 +308,7 @@ def run_population_for_payload(command_dump: dict) -> dict:
                     return {"ok": False, "errorCode": "duplicate_column_mapping"}
                 try:
                     recipes = normalize_row_recipes(
-                        field_recipes, set(mapping.values()) | set(extractions) | recipe_fields)
+                        field_recipes, set(mapping.values()) | set(constants) | set(extractions) | recipe_fields)
                 except RuleError:
                     return {"ok": False, "errorCode": "invalid_column_mapping"}
                 mapped_attributes = set(mapping.values()) | set(constants) | set(extractions) | set(recipes)

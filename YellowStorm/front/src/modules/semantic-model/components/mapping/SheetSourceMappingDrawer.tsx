@@ -366,7 +366,9 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSuggestCo
             recipeSource={{
               kind: 'sheet', columns, rows: profile.data?.sampleRows ?? [], fieldValues,
               fieldInputs: Object.fromEntries(payload.filter((mapping) => mapping.mode === 'direct' && mapping.sourceField)
-                .map((mapping) => [mapping.targetAttribute, { column: mapping.sourceField! }])),
+                .map((mapping) => [mapping.targetAttribute, { column: mapping.sourceField!, ...(mapping.computed ? { recipe: mapping.computed } : {}) }])),
+              fieldConstants: Object.fromEntries(payload.filter((mapping) => mapping.mode === 'constant')
+                .map((mapping) => [mapping.targetAttribute, String(mapping.constantValue ?? '')])),
             }}
             extras={(mapping) => ({
               live: canRead && shown && (mapping.mode === 'extract' || mapping.mode === 'computed') ? <FieldLiveStatus

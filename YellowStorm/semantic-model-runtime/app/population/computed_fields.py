@@ -351,8 +351,9 @@ MAX_ROW_RECIPES = 50
 def normalize_row_recipes(raw: Any, mapped: set[str]) -> dict[str, dict[str, Any]]:
     """The recipes of a sheet mapping by field, or ``RuleError``.
 
-    A field input reads another mapped field of the row that is not itself taken from a field (no
-    chains), as a computed document field does; a column input reads any column of the sheet.
+    A field input reads another mapped field of the row: read from a column, out of a cell, fixed, or
+    itself taken from other fields (applied first), as long as no field ends up reading itself. A
+    column input reads any column of the sheet.
     """
     if raw is None:
         return {}
@@ -368,13 +369,34 @@ def normalize_row_recipes(raw: Any, mapped: set[str]) -> dict[str, dict[str, Any
         recipes[attribute] = spec
     for attribute, spec in recipes.items():
         for source in input_refs(spec):
-            if source["kind"] != "field":
-                continue
-            other = recipes.get(source["name"])
-            if (source["name"] == attribute or source["name"] not in mapped
-                    or (other is not None and reads_field(other))):
-                raise RuleError(f"{attribute} is taken from a field that is not read from a column")
+            if source["kind"] == "field" and (source["name"] == attribute or source["name"] not in mapped):
+                raise RuleError(f"{attribute} is taken from a field that is not mapped")
+    recipe_order(recipes)
     return recipes
+
+
+def recipe_order(recipes: dict[str, dict[str, Any]]) -> list[str]:
+    """The recipes in the order they run: a field after every recipe field it reads. ``RuleError`` on a
+    loop (a field that ends up reading itself)."""
+    order: list[str] = []
+    state: dict[str, str] = {}
+
+    def visit(attribute: str, path: tuple[str, ...]) -> None:
+        if state.get(attribute) == "done":
+            return
+        if state.get(attribute) == "visiting":
+            loop = " → ".join((*path[path.index(attribute):], attribute))
+            raise RuleError(f"these fields read each other in a loop: {loop}")
+        state[attribute] = "visiting"
+        for ref in input_refs(recipes[attribute]):
+            if ref["kind"] == "field" and ref["name"] in recipes:
+                visit(ref["name"], (*path, attribute))
+        state[attribute] = "done"
+        order.append(attribute)
+
+    for attribute in recipes:
+        visit(attribute, ())
+    return order
 
 
 def recipe_columns(recipes: dict[str, dict[str, Any]]) -> set[str]:
@@ -386,16 +408,15 @@ def apply_row_recipes(recipes: dict[str, dict[str, Any]], values: dict[str, Any]
                       raw_row: dict[str, Any], column: Any = None) -> dict[str, dict[str, Any]]:
     """Shape the mapped ``values`` of one row in place and say for each recipe how it went.
 
-    Recipes on columns run first, then those reading another field, alone or joined (which see the
-    shaped value). A recipe
+    A recipe runs after the recipe fields it reads, alone or joined (so it sees their shaped value). A recipe
     that finds nothing leaves its field empty (``None``), as a computed document field does, so an
     identity field without a value is reported as a missing identity rather than read raw.
     ``column`` resolves a column name against the row (a renamed column); identity by default.
     """
     resolve = column or (lambda name: name)
     outcomes: dict[str, dict[str, Any]] = {}
-    ordered = sorted(recipes.items(), key=lambda item: reads_field(item[1]))
-    for attribute, spec in ordered:
+    for attribute in recipe_order(recipes):
+        spec = recipes[attribute]
         value, reason, raw = compute_from(
             spec, lambda kind, name: raw_row.get(resolve(name)) if kind == "column" else values.get(name))
         values[attribute] = value

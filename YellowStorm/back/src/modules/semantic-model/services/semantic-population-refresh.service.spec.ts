@@ -174,6 +174,8 @@ describe('SemanticPopulationRefreshService', () => {
         origins: {
           name: { kind: 'source', assetId: 'd-1', rowNumber: 4, column: 'name' },
           customer_id: { kind: 'source', assetId: 'manual:snap-1', rowNumber: 'r1', column: 'customer_id' },
+          segment: { kind: 'source', assetId: 'd-1', recipeSources: ['first', 'last'],
+            derivedFrom: { conceptId: 'c-contact', entityId: 'e-9', label: 'Ada', attribute: 'email', method: 'rules', records: 2, rule: 'most_frequent' } },
         },
       }],
       relationships: [],
@@ -196,6 +198,11 @@ describe('SemanticPopulationRefreshService', () => {
       field: { method: 'direct_mapping', reference: 'name' },
     });
     expect(entity.provenance.customer_id).toEqual({ mappingId: '', source: { kind: 'manual', documentName: '' } });
+    expect(entity.provenance.segment).toHaveProperty('field');
+    expect((entity.provenance.segment as { field?: unknown }).field).toMatchObject({
+      sources: ['first', 'last'],
+      derivedFrom: { conceptId: 'c-contact', label: 'Ada', attribute: 'email', method: 'rules', records: 2 },
+    });
     expect(result.gaps.missingValues[0]).toMatchObject({ conceptLabel: 'Customer', attributeLabel: 'Name', missing: 2 });
     expect(result.gaps.unresolvedLinks[0]).toMatchObject({ relationLabel: 'belongs to', count: 3 });
     expect(result.summary.unresolvedRelations).toBe(3);

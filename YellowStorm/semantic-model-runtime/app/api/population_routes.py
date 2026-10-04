@@ -659,7 +659,7 @@ async def preview_cell_fields(body: dict) -> dict[str, object]:
         extractions = normalize_field_extractions(extractions_from_mappings(active))
         shaped = [item for item in active if item.get("mode") in ("direct", "computed") and item.get("computed") is not None]
         recipes = normalize_row_recipes({item["targetAttribute"]: item["computed"] for item in shaped},
-                                        {item["targetAttribute"] for item in active if item.get("mode") in ("direct", "computed", "extract")})
+                                        {item["targetAttribute"] for item in active if item.get("mode") in ("direct", "computed", "extract", "constant")})
         settings = normalize_ai_settings((entry.get("options") or {}).get("aiSettings"))
     except RuleError as exc:
         raise HTTPException(status_code=422, detail=f"invalid_rules: {exc}") from exc
@@ -698,6 +698,25 @@ async def preview_cell_fields(body: dict) -> dict[str, object]:
                               **({"value": values[target]} if recipe["reason"] == "found" else {})}
         results.append({"rowNumber": row.get("rowNumber"), "fields": fields})
     return {"rows": results, "ai": {key: reader.stats[key] for key in ("aiRows", "aiCalls", "aiSkippedRows", "aiFailedRows")}}
+
+
+MAX_SHAPED_ROWS = 500
+
+
+@router.post("/sheet-rows", status_code=status.HTTP_200_OK)
+async def shape_sheet_rows_route(body: dict) -> dict[str, object]:
+    """A sheet's sample rows with its fields read as a run reads them (columns, fixed values, rules on a
+    cell, recipes and joins), for the data preview. AI is not run. Nothing is stored."""
+    from app.workers.datasource_tasks import shape_sheet_rows
+
+    rows = body.get("rows")
+    mappings = body.get("fieldMappings")
+    if (not isinstance(rows, list) or len(rows) > MAX_SHAPED_ROWS
+            or not all(isinstance(row, dict) and len(row) <= 201 for row in rows)
+            or not isinstance(mappings, list) or not 0 < len(mappings) <= 100
+            or not all(isinstance(item, dict) for item in mappings)):
+        raise HTTPException(status_code=422, detail="invalid_preview")
+    return shape_sheet_rows(mappings, rows)
 
 
 @router.post("/computed-preview", status_code=status.HTTP_200_OK)

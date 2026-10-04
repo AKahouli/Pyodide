@@ -96,6 +96,9 @@ interface SourceMappingRow {
   sourceLabel?: string | null;
 }
 
+/** Sample rows read by the runtime for the data preview (its own cap). */
+const SHAPED_ROW_LIMIT = 500;
+
 @Injectable()
 export class SemanticSourceMappingService {
   private readonly logger = new Logger(SemanticSourceMappingService.name);
@@ -906,7 +909,14 @@ export class SemanticSourceMappingService {
     const profile = result.rows[0]?.profile;
     if (!profile) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'Source analysis is not ready');
     const rows = Array.isArray(profile.samples) ? profile.samples as Record<string, unknown>[] : [];
-    const { entities, stats } = resolveSheetEntities(rows, mapping.fieldMappings, mapping.identityFields ?? [], limit);
+    // Recipes, joins and fields read out of a cell are read by the runtime, as a run reads them.
+    const shapes = mapping.fieldMappings.some((item) => item.mode !== 'ignore'
+      && (item.mode === 'extract' || item.mode === 'computed' || item.computed != null));
+    const shaped = shapes
+      ? await this.runtime.shapeSheetRows({ rows: rows.slice(0, SHAPED_ROW_LIMIT), fieldMappings: mapping.fieldMappings })
+      : undefined;
+    const { entities, stats } = resolveSheetEntities(shaped ? rows.slice(0, SHAPED_ROW_LIMIT) : rows,
+      mapping.fieldMappings, mapping.identityFields ?? [], limit, shaped?.rows);
     const profiles = computeFieldProfiles(rows);
     return {
       entities,
@@ -916,7 +926,7 @@ export class SemanticSourceMappingService {
         const evidence = profiles.find((item) => item.name === sourceField);
         return evidence ? [{ ...evidence, name: targetAttribute }] : [];
       }),
-      warnings: ['Preview uses the persisted bounded source sample.'],
+      warnings: ['Preview uses the persisted bounded source sample.', ...(shaped?.warnings ?? [])],
       complete: false,
     };
   }
@@ -963,8 +973,8 @@ export class SemanticSourceMappingService {
   }
 
   /**
-   * A spreadsheet field's recipe reads a column of the row, or another directly mapped field that is not
-   * itself taken from a field (no chains), as a computed document field does.
+   * A spreadsheet field's recipe reads a column of the row, or another mapped field: read from a column,
+   * out of a cell, fixed, or itself taken from other fields, as long as no field ends up reading itself.
    */
   private static assertSheetRecipes(mappings: SourceFieldMapping[]): void {
     const misplaced = mappings.find((mapping) => mapping.computed !== undefined && mapping.mode !== 'direct' && mapping.mode !== 'computed');
@@ -975,25 +985,25 @@ export class SemanticSourceMappingService {
     if (missing) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${missing.targetAttribute}: a field taken from another field needs a recipe`);
     }
-    // The fields a recipe may read: read from a column (as is, or out of its cell), or taken from a column.
-    const read = new Map(mappings.filter((mapping) => mapping.mode === 'direct' || mapping.mode === 'extract' || mapping.mode === 'computed')
-      .map((mapping) => [mapping.targetAttribute, mapping]));
-    const readsField = (other: SourceFieldMapping) => computedInputRefs(other.computed?.input).some((ref) => ref.kind === 'field');
+    // The fields a recipe may read: every mapped field but itself.
+    const read = new Map(mappings.filter((mapping) => mapping.mode === 'direct' || mapping.mode === 'extract'
+      || mapping.mode === 'computed' || mapping.mode === 'constant').map((mapping) => [mapping.targetAttribute, mapping]));
     for (const mapping of read.values()) {
       const input = mapping.computed?.input;
       if (!input) continue;
       const joinProblem = joinInputProblem(input);
       if (joinProblem) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${mapping.targetAttribute}: ${joinProblem}`);
       // Every part of a joined input is checked as a single input is.
-      const valid = computedInputRefs(input).every((ref) => {
-        if (ref.kind === 'column') return true;
-        const other = ref.kind === 'field' ? read.get(ref.name) : undefined;
-        return ref.kind === 'field' && ref.name !== mapping.targetAttribute && other !== undefined && !readsField(other);
-      });
+      const valid = computedInputRefs(input).every((ref) => ref.kind === 'column'
+        || (ref.kind === 'field' && ref.name !== mapping.targetAttribute && read.has(ref.name)));
       if (!valid) {
         throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
-          `${mapping.targetAttribute}: a transformed field reads a column or another field read from a column`);
+          `${mapping.targetAttribute}: a transformed field reads a column or another mapped field`);
       }
+    }
+    const loop = recipeLoop(mappings);
+    if (loop) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `These fields read each other in a loop: ${loop.join(' → ')}`);
     }
   }
 
@@ -1096,4 +1106,28 @@ export function workspaceSourceLabel(workspaceName: string, picked: string[]): s
   if (!picked.length) return workspaceName;
   const shown = picked.slice(0, 2).join(', ');
   return `${workspaceName} / ${shown}${picked.length > 2 ? ` +${picked.length - 2}` : ''}`;
+}
+
+/** The first loop of recipe fields reading each other (`a → b → a`), or null. */
+export function recipeLoop(mappings: SourceFieldMapping[]): string[] | null {
+  const recipes = new Map(mappings.filter((mapping) => mapping.computed && mapping.mode !== 'ignore')
+    .map((mapping) => [mapping.targetAttribute, mapping.computed!]));
+  const done = new Set<string>();
+  const visit = (field: string, path: string[]): string[] | null => {
+    if (done.has(field)) return null;
+    const at = path.indexOf(field);
+    if (at >= 0) return [...path.slice(at), field];
+    for (const ref of computedInputRefs(recipes.get(field)?.input)) {
+      if (ref.kind !== 'field' || !recipes.has(ref.name)) continue;
+      const loop = visit(ref.name, [...path, field]);
+      if (loop) return loop;
+    }
+    done.add(field);
+    return null;
+  };
+  for (const field of recipes.keys()) {
+    const loop = visit(field, []);
+    if (loop) return loop;
+  }
+  return null;
 }

@@ -8,7 +8,7 @@ import type { ComputedFieldRule, SourceExtractionStrategy, SourceFieldMapping } 
 import { INPUT_COMPACT, ROW_LIST } from '../form/FormParts';
 import { AiFieldSettings, withoutAiSettings } from './AiFieldSettings';
 import { FieldRulesEditor, STRATEGIES, usesRules, type FieldLiveReading, type LabelSuggestions } from './DocumentFieldRules';
-import { FieldRecipeEditor, newColumnRecipe, newComputedRule, recipeReadsField, recipeStepCount, type RecipeSource } from './FieldRecipeEditor';
+import { FieldRecipeEditor, newColumnRecipe, newComputedRule, recipeRefs, recipeStepCount, type RecipeSource } from './FieldRecipeEditor';
 import { ReadingTextContext, type ReadingTextKind } from './readingText';
 
 /**
@@ -122,10 +122,28 @@ export function readAllWith(mappings: SourceFieldMapping[], choice: ReadAllChoic
   });
 }
 
-/** The other fields a field may be taken from: read from the source (or, on a sheet, taken from columns without reading another field). */
+/**
+ * The other fields a field may be taken from. A document's: the fields read from it. A sheet row's or a
+ * record's: every mapped field (on a sheet a fixed one too) but those that already read this one,
+ * directly or through other fields, which would make a loop.
+ */
 export function recipeInputs(mappings: SourceFieldMapping[], self: string, kind: MappingSourceKind): string[] {
+  if (kind === 'document') {
+    return mappings.filter((mapping) => mapping.targetAttribute !== self && mapping.mode !== 'ignore' && mapping.mode !== 'computed')
+      .map((mapping) => mapping.targetAttribute);
+  }
+  const recipes = new Map(mappings.filter((mapping) => mapping.computed && mapping.mode !== 'ignore')
+    .map((mapping) => [mapping.targetAttribute, mapping.computed!]));
+  // Whether `field` reads `self`, directly or through the fields its recipe reads.
+  const readsSelf = (field: string, seen = new Set<string>()): boolean => {
+    if (seen.has(field)) return false;
+    seen.add(field);
+    return recipeRefs(recipes.get(field)?.input).some((ref) => ref.kind === 'field' && (ref.name === self || readsSelf(ref.name, seen)));
+  };
   return mappings.filter((mapping) => mapping.targetAttribute !== self && mapping.mode !== 'ignore'
-    && (mapping.mode !== 'computed' || (kind !== 'document' && !recipeReadsField(mapping.computed))))
+    // A record's fixed values are set after its recipes run.
+    && (kind === 'sheet' || mapping.mode !== 'constant')
+    && !readsSelf(mapping.targetAttribute))
     .map((mapping) => mapping.targetAttribute);
 }
 

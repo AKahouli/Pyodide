@@ -184,3 +184,20 @@ def test_an_admitted_source_without_recipes_keeps_its_stored_shape() -> None:
     with pytest.raises(ValueError):
         PopulationSource.model_validate({"conceptId": "c1", "source": dict(SOURCE), "sourceKind": "document",
                                          "fieldMappings": [{"mode": "extract"}], "fieldRecipes": {}})
+
+
+def test_shape_sheet_rows_applies_recipes_and_says_what_they_read():
+    from app.workers.datasource_tasks import shape_sheet_rows
+
+    shaped = shape_sheet_rows([
+        {"sourceField": "First", "targetAttribute": "first", "mode": "direct"},
+        {"sourceField": "Last", "targetAttribute": "last", "mode": "direct"},
+        {"targetAttribute": "full", "mode": "computed", "computed": {
+            "input": {"kind": "join", "parts": [{"kind": "column", "name": "First"}, {"kind": "column", "name": "Last"}],
+                      "separator": " "}, "method": "whole"}},
+    ], [{"__sheetRow": 2, "First": "Ada", "Last": "Lovelace"}])
+    row = shaped["rows"][0]
+    assert row["rowNumber"] == 2
+    assert row["values"]["full"] == "Ada Lovelace"
+    assert row["fields"]["full"]["sources"] == ["First", "Last"]
+    assert row["fields"]["first"] == {"method": "direct_mapping", "reference": "First"}

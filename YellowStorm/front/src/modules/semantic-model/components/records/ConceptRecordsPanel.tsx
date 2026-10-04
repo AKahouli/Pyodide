@@ -9,7 +9,8 @@ import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../../api';
 import { useSourceMappings } from '../../query/hooks';
 import { useSemanticModelEditorStore } from '../../store';
-import type { ConceptRecordsPage, ConceptSourceMapping } from '../../types';
+import type { ConceptRecordsPage, ConceptSourceMapping, SemanticNodeType } from '../../types';
+import { valueReadingParts, type ValueReadingKey } from '../../utils/value-reading';
 
 const PAGE_SIZE = 50;
 const HEIGHT_KEY = 'semantic-model.records-panel-height';
@@ -24,14 +25,16 @@ function storedHeight() {
 }
 
 /** Where one value came from, in words: "customers.xlsx · Sheet1 · row 4", or who fixed it. */
-function originText(origin: ValueOrigin | undefined, t: (key: 'records.table.row' | 'records.table.page' | 'records.table.typed' | 'records.table.fixedBy', options?: Record<string, string | number | boolean | null | undefined>) => string) {
+function originText(origin: ValueOrigin | undefined, t: (key: 'records.table.row' | 'records.table.page' | 'records.table.typed' | 'records.table.fixedBy' | ValueReadingKey, options?: Record<string, string | number | boolean | null | undefined>) => string, concepts: SemanticNodeType[] = []) {
   if (!origin) return '';
   if (origin.correction) return t('records.table.fixedBy', { name: origin.correction.correctedBy || '—' });
   if (origin.source.kind === 'manual') return t('records.table.typed');
   const parts = [origin.source.documentName, origin.source.sheetName].filter(Boolean) as string[];
   if (origin.rowNumber !== undefined) parts.push(t('records.table.row', { row: origin.rowNumber }));
   else if (origin.field?.page) parts.push(t('records.table.page', { page: origin.field.page }));
-  return parts.join(' · ');
+  const built = valueReadingParts(origin.field, t, (id) => concepts.find((node) => node.id === id)?.label,
+    (id, key) => concepts.find((node) => node.id === id)?.attributes.find((attribute) => attribute.key === key)?.label || key);
+  return [parts.join(' · '), built.join(' · ')].filter(Boolean).join('\n');
 }
 
 function display(value: unknown): string {
@@ -52,6 +55,7 @@ export function ConceptRecordsPanel({ modelId, conceptId, onClose, onOpenSource 
 }>) {
   const { t } = useModuleTranslation('semantic-model');
   const concept = useSemanticModelEditorStore((state) => state.graph?.nodes.find((node) => node.id === conceptId));
+  const concepts = useSemanticModelEditorStore((state) => state.graph?.nodes) ?? [];
   const typedCount = useSemanticModelEditorStore((state) => state.graph?.records.filter((record) => record.nodeTypeId === conceptId).length ?? 0);
   const mappings = (useSourceMappings(modelId).data ?? []).filter((mapping) => mapping.conceptId === conceptId);
   const [search, setSearch] = useState('');
@@ -169,7 +173,7 @@ export function ConceptRecordsPanel({ modelId, conceptId, onClose, onOpenSource 
                   const key = own ? '' : display(record.identity?.[column.key]);
                   const value = own || key;
                   const origin = record.provenance[column.key];
-                  return <td key={column.key} title={own ? [own, originText(origin, t)].filter(Boolean).join('\n') : key ? t('records.table.keyValue') : t('records.table.missing')}
+                  return <td key={column.key} title={own ? [own, originText(origin, t, concepts)].filter(Boolean).join('\n') : key ? t('records.table.keyValue') : t('records.table.missing')}
                     className={cn('max-w-[18rem] truncate border-b px-3 py-1.5', origin?.correction && 'text-primary', key && 'font-mono text-xs text-amber-800 dark:text-amber-300')}>
                     {value || <span className='text-muted-foreground/60'>—</span>}
                   </td>;

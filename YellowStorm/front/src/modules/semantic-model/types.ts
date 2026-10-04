@@ -675,7 +675,7 @@ export interface SourceMappingPreviewResponse {
     values: Record<string, unknown>;
     provenance: {
       rowNumber?: number;
-      fields?: Record<string, { method: 'direct_mapping' | 'semantic_extraction' | 'document_metadata' | 'fixed_value'; page?: string; quote?: string; reference?: string; confidence?: number }>;
+      fields?: Record<string, ValueReading>;
     };
   }>;
   stats: { scannedRows: number; resolvedEntities: number; duplicateKeysSkipped: number; nullIdentitySkipped: number };
@@ -689,6 +689,19 @@ export interface SourceMappingPreviewResponse {
   documentStatus?: string;
   /** Documents only: what the AI was sent. */
   aiSent?: { documentCharacters: number; longDocument: boolean; blocksSent: number; charactersSent: number } | null;
+}
+
+/** How one value was read: the method, where (page, quote, column), and what it was built from. */
+export interface ValueReading {
+  method: 'direct_mapping' | 'semantic_extraction' | 'document_metadata' | 'fixed_value' | 'computed_field';
+  page?: string;
+  quote?: string;
+  reference?: string;
+  confidence?: number;
+  /** A recipe: the columns or fields it read, in order. */
+  sources?: string[];
+  /** Taken from another concept's record: that concept, the record, the field(s) read and how. */
+  derivedFrom?: { conceptId?: string; label?: string; attribute?: string; attributes?: string[]; method?: string; records?: number };
 }
 
 /** A few picked sheet rows, read as a run would read them. */

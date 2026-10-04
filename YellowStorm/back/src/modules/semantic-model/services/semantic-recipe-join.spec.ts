@@ -49,18 +49,25 @@ describe('Joined recipe inputs', () => {
     }
   });
 
-  it('a sheet join reads columns and fields read from a column, with no chains', () => {
+  it('a sheet join reads columns and any other field, chains included, but never in a loop', () => {
     const first = mapping('first', 'direct', { sourceField: 'First' });
     const last = mapping('last', 'direct', { sourceField: 'Last', computed: computed(column('Last')) });
     const full = mapping('full', 'computed', { computed: computed(join([field('first'), field('last'), column('Title')])) });
     expect(() => SemanticSourceMappingService.assertMappingModes('excel_sheet', [first, last, full])).not.toThrow();
-    const chained = [
-      mapping('initials', 'computed', { computed: computed(field('full')) }),
-      mapping('initials', 'computed', { computed: computed(join([field('full'), column('x')])) }),
+    const fixed = mapping('country', 'constant', { constantValue: 'FR' });
+    for (const item of [mapping('initials', 'computed', { computed: computed(field('full')) }),
+      mapping('initials', 'computed', { computed: computed(join([field('full'), field('country')])) })]) {
+      expect(() => SemanticSourceMappingService.assertMappingModes('excel_sheet', [first, last, full, fixed, item])).not.toThrow();
+    }
+    const refused = [
       mapping('initials', 'computed', { computed: computed(join([column('x'), { kind: 'file', name: 'document_name' }])) }),
       mapping('initials', 'computed', { computed: computed(join([column('x'), field('initials')])) }),
+      mapping('initials', 'computed', { computed: computed(join([column('x'), field('gone')])) }),
     ];
-    for (const item of chained) {
+    const loop = mapping('full', 'computed', { computed: computed(join([field('first'), field('initials')])) });
+    expect(() => SemanticSourceMappingService.assertMappingModes('excel_sheet',
+      [first, last, loop, mapping('initials', 'computed', { computed: computed(field('full')) })])).toThrow('loop');
+    for (const item of refused) {
       expect(() => SemanticSourceMappingService.assertMappingModes('excel_sheet', [first, last, full, item])).toThrow();
     }
   });

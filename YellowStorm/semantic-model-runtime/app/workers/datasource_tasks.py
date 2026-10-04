@@ -34,9 +34,6 @@ def build_mapping_preview(profile: dict, draft: object) -> dict | None:
     limit = min(limit, 50) if isinstance(limit, int) and not isinstance(limit, bool) else 50
     samples = profile.get("samples", [])
     profiles = profile.get("fieldProfiles", [])
-    from app.population.cell_fields import cell_text, extraction_columns, read_row_rules
-    from app.population.computed_fields import apply_row_recipes
-
     extractions, extraction_warning = _cell_extractions(mappings)
     recipes, recipe_warning = _row_recipes(mappings, set(extractions))
     entities, seen = [], set()
@@ -44,32 +41,7 @@ def build_mapping_preview(profile: dict, draft: object) -> dict | None:
     for row in samples if isinstance(samples, list) else []:
         if not isinstance(row, dict) or len(entities) >= limit:
             continue
-        values: dict[str, object] = {}
-        fields: dict[str, dict[str, str]] = {}
-        for mapping in mappings:
-            if not isinstance(mapping, dict) or mapping.get("mode") == "ignore":
-                continue
-            target = mapping.get("targetAttribute")
-            if not isinstance(target, str) or not target:
-                continue
-            if mapping.get("mode") == "constant":
-                values[target] = mapping.get("constantValue")
-                fields[target] = {"method": "fixed_value"}
-            elif mapping.get("mode") == "direct" and isinstance(mapping.get("sourceField"), str):
-                values[target] = row.get(resolve_column(mapping["sourceField"], row))
-                fields[target] = {"method": "direct_mapping"}
-        # Fields read out of a cell by rules, as a run reads them; AI is only run by the field preview.
-        if extractions:
-            cells = {column: cell_text(row.get(resolve_column(column, row))) for column in extraction_columns(extractions)}
-            read = read_row_rules(extractions, cells, row_number=row.get("__sheetRow"))
-            for target in extractions:
-                values[target] = read["values"].get(target)
-                found = read["evidence"].get(target)
-                fields[target] = {"method": "semantic_extraction",
-                                  **({"quote": found["quote"]} if found and found.get("quote") else {})}
-        # The same recipes as a run, before the identity is read.
-        if recipes:
-            apply_row_recipes(recipes, values, row, lambda name: resolve_column(name, row))
+        values, fields = shape_row(mappings, extractions, recipes, row)
         identity = [("" if values.get(key) is None else str(values[key])).strip().lower() for key in identities]
         if identities and any(not value for value in identity):
             null_skipped += 1
@@ -110,6 +82,64 @@ def build_mapping_preview(profile: dict, draft: object) -> dict | None:
             "identityEvidence": evidence, "warnings": warnings}
 
 
+def shape_row(mappings: list, extractions: dict, recipes: dict, row: dict) -> tuple[dict, dict]:
+    """One sheet row's field values as a run reads them, without AI: a column as it is, a fixed value,
+    a value read out of a cell by rules, then the recipes. Says per field how it was read and, for a
+    recipe, the columns or fields it read."""
+    from app.population.cell_fields import cell_text, extraction_columns, read_row_rules
+    from app.population.computed_fields import apply_row_recipes, recipe_sources
+
+    values: dict[str, object] = {}
+    fields: dict[str, dict] = {}
+    for mapping in mappings:
+        if not isinstance(mapping, dict) or mapping.get("mode") == "ignore":
+            continue
+        target = mapping.get("targetAttribute")
+        if not isinstance(target, str) or not target:
+            continue
+        if mapping.get("mode") == "constant":
+            values[target] = mapping.get("constantValue")
+            fields[target] = {"method": "fixed_value"}
+        elif mapping.get("mode") == "direct" and isinstance(mapping.get("sourceField"), str):
+            column = resolve_column(mapping["sourceField"], row)
+            values[target] = row.get(column)
+            fields[target] = {"method": "direct_mapping", "reference": column}
+    # Fields read out of a cell by rules, as a run reads them; AI is only run by the field preview.
+    if extractions:
+        cells = {column: cell_text(row.get(resolve_column(column, row))) for column in extraction_columns(extractions)}
+        read = read_row_rules(extractions, cells, row_number=row.get("__sheetRow"))
+        for target, spec in extractions.items():
+            values[target] = read["values"].get(target)
+            found = read["evidence"].get(target)
+            fields[target] = {"method": "semantic_extraction",
+                              **({"reference": spec["column"]} if spec.get("column") else {}),
+                              **({"quote": found["quote"]} if found and found.get("quote") else {})}
+    # The same recipes as a run, before the identity is read.
+    if recipes:
+        apply_row_recipes(recipes, values, row, lambda name: resolve_column(name, row))
+        for target, spec in recipes.items():
+            sources = recipe_sources(spec)
+            fields[target] = {**{key: value for key, value in fields.get(target, {}).items() if key != "quote"},
+                              "method": fields.get(target, {}).get("method", "direct_mapping"), "sources": sources}
+            if len(sources) == 1 and spec["input"]["kind"] == "column":
+                fields[target]["reference"] = resolve_column(sources[0], row)
+    return values, fields
+
+
+def shape_sheet_rows(mappings: list, rows: list) -> dict:
+    """Sample rows of a sheet shaped as a run would (no AI): values and how each was read, per row."""
+    extractions, extraction_warning = _cell_extractions(mappings)
+    recipes, recipe_warning = _row_recipes(mappings, set(extractions))
+    shaped = []
+    for row in rows:
+        values, fields = shape_row(mappings, extractions, recipes, row)
+        shaped.append({"rowNumber": row.get("__sheetRow"), "values": values, "fields": fields})
+    warnings = [warning for warning in (recipe_warning, extraction_warning) if warning]
+    if not extraction_warning and any(spec["extractionStrategy"] == "ai" for spec in extractions.values()):
+        warnings.append("Fields read with AI are left empty in this preview: they are read when the data is updated.")
+    return {"rows": shaped, "warnings": warnings}
+
+
 def _row_recipes(mappings: list, extracted: set | None = None) -> tuple[dict, str | None]:
     """The recipes of the drafted sheet fields (a transformed column, or a field taken from a column or
     another field), or none and why when one cannot be used."""
@@ -122,7 +152,9 @@ def _row_recipes(mappings: list, extracted: set | None = None) -> tuple[dict, st
     if not raw:
         return {}, None
     try:
-        return normalize_row_recipes(raw, {item["targetAttribute"] for item in shaped} | (extracted or set())), None
+        fixed = {item["targetAttribute"] for item in mappings if isinstance(item, dict) and item.get("mode") == "constant"
+                 and isinstance(item.get("targetAttribute"), str)}
+        return normalize_row_recipes(raw, {item["targetAttribute"] for item in shaped} | fixed | (extracted or set())), None
     except RuleError as exc:
         return {}, f"A field's transformation cannot be used: {exc}"
 

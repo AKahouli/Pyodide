@@ -8,6 +8,7 @@ import {
   ServiceUnavailableException,
 } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import type { ResolvedEntity } from '../domain/semantic-source-mapping.types';
 
 // Thin NestJS client for the merged semantic-model-runtime (P2.11). Single
 // shot per call with the configured deadline; no retries without the caller's
@@ -55,6 +56,13 @@ export interface RuntimeValueOrigin {
   correctedBy?: string | null;
   originalValue?: unknown;
   correctionSequence?: number | null;
+  /** A value taken from another concept's record: which record, which field, and how it was read. */
+  derivedFrom?: {
+    conceptId?: string | null; entityId?: string | null; label?: string | null; attribute?: string | null;
+    attributes?: string[]; method?: string; rule?: string | null; records?: number | null;
+  };
+  /** A recipe joining several columns or fields: every one it read. */
+  recipeSources?: string[];
 }
 
 export interface RuntimeDataSummary {
@@ -259,6 +267,12 @@ export interface RuntimeComputedPreview {
     /** The value after each step that ran; null where the recipe stopped. */
     steps?: Array<{ step: 'join' | 'cut' | 'keep' | 'pattern' | 'transform'; value: string | null }>;
   }>;
+}
+
+/** Sheet rows read as a run reads them: per row, the values and how each field was read. */
+export interface RuntimeShapedSheetRows {
+  rows: Array<{ rowNumber?: number; values: Record<string, unknown>; fields: NonNullable<ResolvedEntity['provenance']['fields']> }>;
+  warnings: string[];
 }
 
 export interface RuntimeSheetPreviewRequest {
@@ -667,6 +681,28 @@ export class SemanticRuntimeClientService {
     }
     if (!res.ok) throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
     return await res.json() as RuntimeSheetPreview;
+  }
+
+  /** A sheet's sample rows with its fields read as a run reads them (no AI), for the data preview. */
+  async shapeSheetRows(body: { rows: Record<string, unknown>[]; fieldMappings: unknown[] }): Promise<RuntimeShapedSheetRows> {
+    const base = this.requireRuntime();
+    let res: Response;
+    try {
+      res = await fetch(`${base}/v1/semantic-model-population/sheet-rows`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Semantic-Service-Key': this.config.runtimeServiceKey },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(this.config.runtimeRequestTimeoutMs),
+      });
+    } catch {
+      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    }
+    if (res.status === 422) {
+      const detail = this.errorDetail({ data: await this.readErrorPayload(res) });
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, detail || 'This mapping cannot be previewed');
+    }
+    if (!res.ok) throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    return await res.json() as RuntimeShapedSheetRows;
   }
 
   async previewComputedField(body: RuntimeComputedPreviewRequest): Promise<RuntimeComputedPreview> {

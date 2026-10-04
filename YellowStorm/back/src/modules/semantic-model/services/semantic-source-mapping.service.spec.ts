@@ -6,7 +6,7 @@ import {
   suggestFieldMappings,
   type SourceFieldMapping,
 } from '../domain/semantic-source-mapping.types';
-import { SemanticSourceMappingService } from './semantic-source-mapping.service';
+import { SemanticSourceMappingService, recipeLoop } from './semantic-source-mapping.service';
 
 describe('semantic source mapping domain', () => {
   describe('normalizeIdentityValue / identityKeyOf', () => {
@@ -45,7 +45,36 @@ describe('semantic source mapping domain', () => {
     });
   });
 
+  describe('recipeLoop', () => {
+    const recipe = (...fields: string[]) => ({ input: { kind: 'join' as const, parts: fields.map((name) => ({ kind: 'field' as const, name })) }, method: 'whole' as const });
+    it('lets a field read another field taken from fields, and finds a loop', () => {
+      const chain = [
+        { sourceField: null, targetAttribute: 'full', mode: 'computed' as const, computed: recipe('first', 'last') },
+        { sourceField: null, targetAttribute: 'label', mode: 'computed' as const, computed: recipe('full', 'city') },
+      ];
+      expect(recipeLoop(chain as never)).toBeNull();
+      const loop = [
+        { sourceField: null, targetAttribute: 'a', mode: 'computed' as const, computed: recipe('b', 'x') },
+        { sourceField: null, targetAttribute: 'b', mode: 'computed' as const, computed: recipe('a', 'y') },
+      ];
+      expect(recipeLoop(loop as never)).toEqual(['a', 'b', 'a']);
+    });
+  });
+
   describe('resolveSheetEntities', () => {
+    it('uses the rows the runtime already read, recipes included, for values and keys', () => {
+      const shaped = [
+        { values: { id: 'C001', name: 'Sony Europe' }, fields: { name: { method: 'direct_mapping' as const, sources: ['legal_name', 'suffix'] } } },
+        { values: { id: 'c001', name: 'again' }, fields: { name: { method: 'direct_mapping' as const } } },
+      ];
+      const { entities, stats } = resolveSheetEntities([{ customer_id: 'x' }, { customer_id: 'y' }],
+        [{ sourceField: 'customer_id', targetAttribute: 'id', mode: 'direct' as const }], ['id'], 50, shaped);
+      expect(entities).toHaveLength(1);
+      expect(entities[0].values).toEqual({ id: 'C001', name: 'Sony Europe' });
+      expect(entities[0].provenance.fields?.name).toEqual({ method: 'direct_mapping', sources: ['legal_name', 'suffix'] });
+      expect(stats.duplicateKeysSkipped).toBe(1);
+    });
+
     const mappings = [
       { sourceField: 'customer_id', targetAttribute: 'id', mode: 'direct' as const },
       { sourceField: 'legal_name', targetAttribute: 'name', mode: 'direct' as const },
@@ -369,7 +398,7 @@ describe('SemanticSourceMappingService boundaries', () => {
     })).rejects.toThrow('transformed field reads a column');
   });
 
-  it('accepts a transformed spreadsheet field and rejects one misplaced or chained', async () => {
+  it('accepts a transformed spreadsheet field and rejects one misplaced or in a loop', async () => {
     const csv = buildService('text/csv');
     csv.database.query.mockResolvedValue({ rows: [{ label: 'Customer', attributes: [{ key: 'id' }, { key: 'name' }] }] });
     const preview = (fieldMappings: SourceFieldMapping[]) => csv.service.preview('user-1', 'model-1', {
@@ -388,7 +417,7 @@ describe('SemanticSourceMappingService boundaries', () => {
     await expect(preview([id, { sourceField: 'name', targetAttribute: 'name', mode: 'direct', computed: fromField('name') }]))
       .rejects.toThrow('transformed field reads a column');
     await expect(preview([{ ...id, computed: fromField('name') }, { sourceField: 'name', targetAttribute: 'name', mode: 'direct', computed: fromField('id') }]))
-      .rejects.toThrow('transformed field reads a column');
+      .rejects.toThrow('read each other in a loop: id → name → id');
     await expect(preview([id, { sourceField: 'name', targetAttribute: 'name', mode: 'direct', computed: fromField('gone') }]))
       .rejects.toThrow('transformed field reads a column');
     const pdf = buildService();

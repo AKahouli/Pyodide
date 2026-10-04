@@ -515,6 +515,8 @@ export class SemanticPopulationRefreshService {
         method,
         ...(origin.column && method === 'direct_mapping' ? { reference: origin.column } : {}),
         ...(origin.pageNumber != null ? { page: String(origin.pageNumber) } : {}),
+        ...(origin.recipeSources?.length ? { sources: origin.recipeSources.map(String) } : {}),
+        ...(origin.derivedFrom ? { derivedFrom: derivedProvenance(origin.derivedFrom) } : {}),
       },
     };
   }
@@ -1149,5 +1151,17 @@ export function cellExtraction(field: SourceFieldMapping, attribute?: AttributeD
     ...(field.rules ? { rules: field.rules } : {}),
     ...(strategy !== 'deterministic' && field.agentId ? { agentId: field.agentId } : {}),
     ...(strategy !== 'deterministic' && attribute ? aiFieldHints(attribute, field) : {}),
+  };
+}
+
+/** What the records table says about a value taken from another concept's record. */
+function derivedProvenance(derived: NonNullable<RuntimeValueOrigin['derivedFrom']>) {
+  return {
+    ...(derived.conceptId ? { conceptId: derived.conceptId } : {}),
+    ...(derived.label ? { label: String(derived.label) } : {}),
+    ...(derived.attribute ? { attribute: derived.attribute } : {}),
+    ...(derived.attributes?.length ? { attributes: derived.attributes.map(String) } : {}),
+    ...(derived.method ? { method: derived.method } : {}),
+    ...(typeof derived.records === 'number' ? { records: derived.records } : {}),
   };
 }

@@ -123,14 +123,19 @@ describe('FieldRecipeEditor: join several', () => {
     expect(computedProblem(join([{ kind: 'field', name: 'name' }, { kind: 'column', name: 'x' }], { separator: 'x'.repeat(11) }), ['name'])).toBe('mapping.computed.problem.joinSeparator');
   });
 
-  it('a field joining another field cannot be read by a third (no chains); its columns count as read', () => {
+  it('a field joining another field can be read by a third, but never in a loop; its columns count as read', () => {
     const mappings: SourceFieldMapping[] = [
       { sourceField: 'First', targetAttribute: 'first', mode: 'direct' },
       { sourceField: null, targetAttribute: 'full', mode: 'computed', computed: { input: { kind: 'join', parts: [{ kind: 'field', name: 'first' }, { kind: 'column', name: 'Last' }] }, method: 'whole' } },
       { sourceField: null, targetAttribute: 'cols', mode: 'computed', computed: { input: { kind: 'join', parts: [{ kind: 'column', name: 'A' }, { kind: 'column', name: 'B' }] }, method: 'whole' } },
     ];
     expect(recipeReadsField(mappings[1].computed)).toBe(true);
-    expect(recipeInputs(mappings, 'other', 'sheet')).toEqual(['first', 'cols']);
+    expect(recipeInputs(mappings, 'other', 'sheet')).toEqual(['first', 'full', 'cols']);
+    // `full` reads `first`, so `first` cannot read `full` back; a fixed field is read on a sheet, not on a record.
+    expect(recipeInputs(mappings, 'first', 'sheet')).toEqual(['cols']);
+    const fixed: SourceFieldMapping[] = [...mappings, { sourceField: null, targetAttribute: 'country', mode: 'constant', constantValue: 'FR' }];
+    expect(recipeInputs(fixed, 'other', 'sheet')).toContain('country');
+    expect(recipeInputs(fixed, 'other', 'record')).not.toContain('country');
     expect(recipeColumns(mappings[1].computed)).toEqual(['Last']);
     expect(usedSourceFields([{ targetAttribute: 'cols', mode: 'computed', computed: mappings[2].computed }])).toEqual(['A', 'B']);
   });

@@ -129,7 +129,7 @@ def test_a_join_never_reads_another_computed_field_or_a_column_of_a_document() -
             {"input": join(field("name"), column("x")), "method": "whole"})}])
 
 
-def test_sheet_joins_refuse_chains_and_the_file_name() -> None:
+def test_sheet_joins_run_chains_in_order_and_refuse_loops_and_the_file_name() -> None:
     mapped = {"first", "last", "full", "initials"}
     # A join may read a field read from a column, even one shaped by its own column recipe.
     recipes = normalize_row_recipes({
@@ -139,16 +139,22 @@ def test_sheet_joins_refuse_chains_and_the_file_name() -> None:
     values = {"first": "Ada"}
     apply_row_recipes(recipes, values, {"Last": "Lovelace"})
     assert values["full"] == "Ada LOVELACE"
-    # ...but not a field that itself reads a field (alone or joined), nor itself.
-    for chained in ({"full": {"input": join(field("first"), field("last")), "method": "whole"},
-                     "initials": {"input": field("full"), "method": "whole"}},
-                    {"full": {"input": field("first"), "method": "whole"},
+    # A field taken from other fields can be read in turn: it runs first, whatever the order given.
+    recipes = normalize_row_recipes({
+        "initials": {"input": join(field("full"), column("x")), "method": "whole"},
+        "full": {"input": join(field("first"), field("last")), "method": "whole"},
+    }, mapped)
+    values = {"first": "Ada", "last": "Lovelace"}
+    apply_row_recipes(recipes, values, {"x": "!"})
+    assert values["initials"] == "Ada Lovelace !"
+    # ...but no field may read itself, directly or in a loop, nor an unmapped field or a file name.
+    for refused in ({"full": {"input": join(field("full"), column("x")), "method": "whole"}},
+                    {"full": {"input": field("initials"), "method": "whole"},
                      "initials": {"input": join(field("full"), column("x")), "method": "whole"}},
-                    {"full": {"input": join(field("full"), column("x")), "method": "whole"}},
                     {"full": {"input": join(column("x"), field("unknown")), "method": "whole"}},
                     {"full": {"input": join(column("x"), {"kind": "file", "name": "document_name"}), "method": "whole"}}):
         with pytest.raises(RuleError):
-            normalize_row_recipes(chained, mapped)
+            normalize_row_recipes(refused, mapped)
 
 
 @pytest.mark.asyncio
