@@ -678,7 +678,11 @@ def _origin_of(evidence: dict[str, Any], origin: str | None) -> dict[str, Any]:
         result["derivedFrom"] = {key: derived.get(key) for key in (
             "conceptId", "entityId", "label", "attribute", "rule", "distinctValues", "records")}
         # A value read out of the source field's text (rules, AI), by a recipe or fixed: how, and where.
-        result["derivedFrom"].update({key: derived[key] for key in ("method", "span") if derived.get(key) is not None})
+        result["derivedFrom"].update({key: derived[key] for key in ("method", "span", "attributes")
+                                      if derived.get(key) is not None})
+    # A recipe joining several fields or columns: every one it read.
+    if isinstance(evidence.get("recipeSources"), list):
+        result["recipeSources"] = evidence["recipeSources"]
     return result
 
 

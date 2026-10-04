@@ -19,7 +19,7 @@ from .document_rules import (PASSAGE_LOCATIONS, all_matches, clean, compile_patt
                              folded_label_regex, heading_matches, heading_text, label_found,
                              next_line_values, normalize_ai_settings, same_line_values, shaped_input,
                              to_iso_date_or_period)
-from .computed_fields import COMPUTED_VERSION, apply_computed, normalize_computed
+from .computed_fields import COMPUTED_VERSION, apply_computed, normalize_computed, recipe_sources
 from .tabular import populate_concept_rows
 
 # Bump when the way a document is read changes, so cached results are not reused.
@@ -873,6 +873,13 @@ async def populate_document(
     context = {"document_name": current.get("originalName")}
     computed_evidence = {"assetRef": asset_ref, "origin": "metadata", "extractorVersion": COMPUTED_VERSION,
                          "mappingVersion": entry["mappingVersion"]}
+    # A recipe joining several parts names every field (or the file) it read.
+    joined_sources = {m["targetAttribute"]: recipe_sources(m["computed"]) for m in computed
+                      if m["computed"]["input"]["kind"] == "join"}
+
+    def computed_evidence_of(field: str) -> dict[str, Any]:
+        return ({**computed_evidence, "recipeSources": joined_sources[field]} if field in joined_sources
+                else computed_evidence)
     source_ref = {"assetRef": asset_ref, "mappingVersion": entry["mappingVersion"],
                   "labelField": entry.get("labelField")}
 
@@ -890,7 +897,7 @@ async def populate_document(
             row_evidence = {**shared_evidence, **record["evidence"]}
             for field, outcome in apply_computed(computed, row_values, context).items():
                 if outcome["reason"] == "found":
-                    row_evidence[field] = computed_evidence
+                    row_evidence[field] = computed_evidence_of(field)
                 # A computed field counts as found when any record found it.
                 if field not in computed_outcomes or outcome["reason"] == "found":
                     computed_outcomes[field] = outcome
@@ -908,7 +915,7 @@ async def populate_document(
         computed_outcomes = apply_computed(computed, values, context)
         for field, outcome in computed_outcomes.items():
             if outcome["reason"] == "found":
-                evidence_by_field[field] = computed_evidence
+                evidence_by_field[field] = computed_evidence_of(field)
         output = populate_concept_rows(concept, [{**values, "_row": None}], source_ref)
         for assertion in output["assertions"]:
             assertion["evidence"] = evidence_by_field[assertion["attribute"]]

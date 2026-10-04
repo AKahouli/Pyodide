@@ -27,10 +27,52 @@ export interface ExtractionRules {
  * A field's recipe: take it from somewhere, cut it, keep a part, match a shape, clean it up (the runtime
  * applies it). A document's computed field, or a spreadsheet's direct field that is transformed.
  */
+/** One input a recipe reads: kind 'file' reads 'document_name' (documents); kind 'field' reads another
+ * mapping's targetAttribute (not itself taken from a field); kind 'column' reads a column of the row. */
+export interface ComputedInputRef { kind: 'file' | 'field' | 'column'; name: string }
+
+/**
+ * What a recipe reads: a single input (`name`), or kind 'join': several `parts` (inputs and fixed texts,
+ * in order) joined into one text with `separator` (' ' when absent); `skipEmpty` (the default) leaves an
+ * empty part out with its separator.
+ */
+export interface ComputedFieldInput {
+  kind: 'file' | 'field' | 'column' | 'join';
+  name?: string;
+  parts?: Array<{ kind: 'file' | 'field' | 'column' | 'text'; name?: string; value?: string }>;
+  separator?: string;
+  skipEmpty?: boolean;
+}
+
+export const MAX_JOIN_PARTS = 10;
+export const MAX_JOIN_TEXT_CHARS = 100;
+export const MAX_JOIN_SEPARATOR_CHARS = 10;
+
+/** What a recipe reads: its input, or every part of a join that is not a fixed text. */
+export function computedInputRefs(input: ComputedFieldInput | undefined): ComputedInputRef[] {
+  if (!input) return [];
+  const refs = input.kind === 'join' ? (input.parts ?? []) : [input];
+  return refs.filter((part) => part.kind !== 'text' && part.kind !== 'join')
+    .map((part) => ({ kind: part.kind as ComputedInputRef['kind'], name: part.name ?? '' }));
+}
+
+/** Why a joined input cannot be used (beyond its DTO checks), or null. */
+export function joinInputProblem(input: ComputedFieldInput | undefined): string | null {
+  if (input?.kind !== 'join') return null;
+  const parts = input.parts ?? [];
+  if (parts.length < 2 || parts.length > MAX_JOIN_PARTS) return `a join needs 2 to ${MAX_JOIN_PARTS} parts`;
+  if (parts.some((part) => !['file', 'field', 'column', 'text'].includes(part.kind))) return 'a join cannot hold another join';
+  if (parts.some((part) => part.kind === 'text' && (!part.value || part.value.length > MAX_JOIN_TEXT_CHARS))) {
+    return `a fixed text part needs 1 to ${MAX_JOIN_TEXT_CHARS} characters`;
+  }
+  if ((input.separator?.length ?? 0) > MAX_JOIN_SEPARATOR_CHARS) return `the separator is at most ${MAX_JOIN_SEPARATOR_CHARS} characters`;
+  if (!computedInputRefs(input).length) return 'a join needs at least one part read from the record';
+  return null;
+}
+
 export interface ComputedFieldSpec {
-  // kind 'file' reads 'document_name' (documents); kind 'field' reads another mapping's targetAttribute
-  // (not itself taken from a field); kind 'column' reads a column of the row (spreadsheets).
-  input: { kind: 'file' | 'field' | 'column'; name: string };
+  // A single input, or several parts joined into one text.
+  input: ComputedFieldInput;
   // 'whole' keeps the input as it is (no cut).
   method: 'whole' | 'split' | 'between' | 'regex';
   delimiter?: string;

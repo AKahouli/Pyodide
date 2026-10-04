@@ -704,19 +704,46 @@ async def preview_cell_fields(body: dict) -> dict[str, object]:
 async def preview_computed_field(body: dict) -> dict[str, object]:
     """Run one computed field on sample values (file names, values of the field it reads, or cells of
     the column it reads), with the value at each step. ``inputRecipe`` first shapes each sample, for a
-    sheet field taken from another field that has its own recipe."""
-    from app.population.computed_fields import MAX_PREVIEW_SAMPLES, compute, normalize_computed
+    sheet field taken from another field that has its own recipe.
+
+    A recipe joining several parts is tried on ``partSamples`` instead: per sample, the value of each
+    part by ``"<kind>:<name>"``; ``partRecipes`` first shapes a part (a field with its own recipe)."""
+    from app.population.computed_fields import (MAX_JOIN_PARTS, MAX_PREVIEW_SAMPLES, compute, compute_from,
+                                                normalize_computed)
     from app.population.document_rules import RuleError
 
+    try:
+        spec = normalize_computed(body.get("computed"))
+        before = normalize_computed(body["inputRecipe"]) if body.get("inputRecipe") is not None else None
+        part_recipes = body.get("partRecipes") or {}
+        if not isinstance(part_recipes, dict) or len(part_recipes) > MAX_JOIN_PARTS:
+            raise RuleError("partRecipes must map parts to recipes")
+        part_recipes = {str(key): normalize_computed(recipe) for key, recipe in part_recipes.items()}
+    except RuleError as exc:
+        raise HTTPException(status_code=422, detail=f"invalid_computed: {exc}") from exc
+    if spec["input"]["kind"] == "join":
+        part_samples = body.get("partSamples")
+        if (not isinstance(part_samples, list) or not 0 < len(part_samples) <= MAX_PREVIEW_SAMPLES
+                or not all(isinstance(sample, dict) and len(sample) <= MAX_JOIN_PARTS * 2
+                           and all(isinstance(key, str) and len(key) <= 220 and isinstance(value, str) and len(value) <= 1000
+                                   for key, value in sample.items()) for sample in part_samples)):
+            raise HTTPException(status_code=422, detail="invalid_samples")
+        joined = []
+        for sample in part_samples:
+            def lookup(kind: str, name: str, sample: dict = sample) -> str | None:
+                key = f"{kind}:{name}"
+                value = sample.get(key)
+                if value is not None and key in part_recipes:
+                    value, _ = compute(part_recipes[key], value)
+                return value
+            steps: list[dict] = []
+            value, reason, text = compute_from(spec, lookup, steps)
+            joined.append({"input": text, "value": value, "reason": reason, "steps": steps})
+        return {"results": joined}
     samples = body.get("samples")
     if (not isinstance(samples, list) or not 0 < len(samples) <= MAX_PREVIEW_SAMPLES
             or not all(isinstance(sample, str) and len(sample) <= 1000 for sample in samples)):
         raise HTTPException(status_code=422, detail="invalid_samples")
-    try:
-        spec = normalize_computed(body.get("computed"))
-        before = normalize_computed(body["inputRecipe"]) if body.get("inputRecipe") is not None else None
-    except RuleError as exc:
-        raise HTTPException(status_code=422, detail=f"invalid_computed: {exc}") from exc
     results = []
     for sample in samples:
         source: str | None = sample

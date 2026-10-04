@@ -247,13 +247,17 @@ export interface RuntimeComputedPreviewRequest {
   samples: string[];
   /** Shapes each sample first (the recipe of the field this one is taken from). */
   inputRecipe?: unknown;
+  /** A joined input: per sample, the value of each part by "<kind>:<name>". */
+  partSamples?: Array<Record<string, string>>;
+  /** Shapes a part first (a field with its own recipe), by "<kind>:<name>". */
+  partRecipes?: Record<string, unknown>;
 }
 
 export interface RuntimeComputedPreview {
   results: Array<{
     input: string; value: string | null; reason: 'found' | 'no_input' | 'no_match' | 'not_transformable';
     /** The value after each step that ran; null where the recipe stopped. */
-    steps?: Array<{ step: 'cut' | 'keep' | 'pattern' | 'transform'; value: string | null }>;
+    steps?: Array<{ step: 'join' | 'cut' | 'keep' | 'pattern' | 'transform'; value: string | null }>;
   }>;
 }
 

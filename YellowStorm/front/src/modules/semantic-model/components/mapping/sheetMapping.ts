@@ -1,5 +1,5 @@
 import type { DocumentLabelSuggestion, SourceFieldMapping } from '../../types';
-import { computedPayload } from './FieldRecipeEditor';
+import { computedPayload, recipeRefs } from './FieldRecipeEditor';
 import { fieldColumn, recipeChangesValue, sameNamedColumn } from './FieldMappingList';
 
 /**
@@ -70,7 +70,7 @@ export function adaptToSheet(applied: SourceFieldMapping[], current: SourceField
     const attribute = attributes.find((item) => item.key === row.targetAttribute) ?? { key: row.targetAttribute };
     const column = (mapping.sourceField && columns.includes(mapping.sourceField) ? mapping.sourceField : null)
       ?? fieldColumn(row) ?? sameNamedColumn(attribute, columns) ?? null;
-    if (mapping.mode === 'metadata' || (mapping.mode === 'computed' && mapping.computed?.input.kind === 'file')) return row;
+    if (mapping.mode === 'metadata' || (mapping.mode === 'computed' && recipeRefs(mapping.computed?.input).some((ref) => ref.kind === 'file'))) return row;
     if (mapping.mode === 'ignore') return { sourceField: column, targetAttribute: row.targetAttribute, mode: 'ignore' };
     if (mapping.mode === 'direct' || mapping.mode === 'extract') return { ...mapping, sourceField: column };
     return { ...mapping, sourceField: null };

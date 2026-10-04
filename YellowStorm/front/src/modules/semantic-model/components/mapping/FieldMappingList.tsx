@@ -8,7 +8,7 @@ import type { ComputedFieldRule, SourceExtractionStrategy, SourceFieldMapping } 
 import { INPUT_COMPACT, ROW_LIST } from '../form/FormParts';
 import { AiFieldSettings, withoutAiSettings } from './AiFieldSettings';
 import { FieldRulesEditor, STRATEGIES, usesRules, type FieldLiveReading, type LabelSuggestions } from './DocumentFieldRules';
-import { FieldRecipeEditor, newColumnRecipe, newComputedRule, recipeStepCount, type RecipeSource } from './FieldRecipeEditor';
+import { FieldRecipeEditor, newColumnRecipe, newComputedRule, recipeReadsField, recipeStepCount, type RecipeSource } from './FieldRecipeEditor';
 import { ReadingTextContext, type ReadingTextKind } from './readingText';
 
 /**
@@ -122,10 +122,10 @@ export function readAllWith(mappings: SourceFieldMapping[], choice: ReadAllChoic
   });
 }
 
-/** The other fields a field may be taken from: read from the source (or, on a sheet, taken from a column). */
+/** The other fields a field may be taken from: read from the source (or, on a sheet, taken from columns without reading another field). */
 export function recipeInputs(mappings: SourceFieldMapping[], self: string, kind: MappingSourceKind): string[] {
   return mappings.filter((mapping) => mapping.targetAttribute !== self && mapping.mode !== 'ignore'
-    && (mapping.mode !== 'computed' || (kind !== 'document' && mapping.computed?.input.kind === 'column')))
+    && (mapping.mode !== 'computed' || (kind !== 'document' && !recipeReadsField(mapping.computed))))
     .map((mapping) => mapping.targetAttribute);
 }
 

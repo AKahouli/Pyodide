@@ -380,6 +380,21 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
     auto: !usesAi,
   });
   const liveStatus = live.result?.documentStatus && live.result.documentStatus !== 'read' ? live.result.documentStatus : null;
+  // The documents read so far (the one shown, then the last previewed ones), with each field's value: a recipe
+  // joining several fields is tried on these.
+  const documentRows = useMemo(() => {
+    const rows: Array<{ key: string; label: string; fileName: string; values: Record<string, string> }> = [];
+    const add = (asset: StructuredSourceAsset | undefined, result: SourceMappingPreviewResponse | undefined) => {
+      if (!asset || !result || rows.some((row) => row.key === asset.documentId)) return;
+      const values: Record<string, string> = {};
+      for (const [field, reading] of Object.entries(result.fields ?? {})) if (reading.reason === 'found' && reading.value != null) values[field] = String(reading.value);
+      for (const [field, value] of Object.entries(result.entities[0]?.values ?? {})) if (value != null && values[field] === undefined) values[field] = String(value);
+      rows.push({ key: asset.documentId, label: asset.name, fileName: asset.name, values });
+    };
+    add(shown, live.result ?? undefined);
+    for (const { asset, result } of preview.data ?? []) add(asset, result);
+    return rows;
+  }, [shown, live.result, preview.data]);
   const showReading = (reading: DocumentFieldReading) => navigate({ page: reading.page ?? undefined, highlightText: highlightOf(reading.quote) });
 
   return <Sheet modal={false} open={Boolean(target)} onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -472,7 +487,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
           </p>}
           <FieldMappingList kind='document' modelId={modelId} attributes={concept.attributes} mappings={mappings} onChange={changeMappings}
             onIgnore={(field) => setIdentityFields((current) => current.filter((item) => item !== field))} addedFields={addedFields}
-            recipeSource={{ kind: 'document', fileSamples, fieldSamples }}
+            recipeSource={{ kind: 'document', fileSamples, fieldSamples, documentRows }}
             extras={(mapping) => ({
               live: viewerShown && shown && (mapping.mode === 'extract' || mapping.mode === 'computed') && !liveStatus ? <FieldLiveStatus
                 reading={live.result?.fields?.[mapping.targetAttribute]}

@@ -276,7 +276,13 @@ export interface SourceFieldMapping {
   rules?: ExtractionRules;
 }
 
-export type ComputedFieldInput = { kind: 'file'; name: 'document_name' } | { kind: 'field'; name: string } | { kind: 'column'; name: string };
+/** One input a recipe reads: the file name (documents), another field, or a column (sheets; a source field for records). */
+export type ComputedInputRef = { kind: 'file'; name: 'document_name' } | { kind: 'field'; name: string } | { kind: 'column'; name: string };
+/** One part of a joined input: an input, or a fixed text. */
+export type ComputedJoinPart = ComputedInputRef | { kind: 'text'; value: string };
+/** Several parts joined into one text; `separator` defaults to ' ', `skipEmpty` (default true) leaves an empty part out. */
+export interface ComputedJoinInput { kind: 'join'; parts: ComputedJoinPart[]; separator?: string; skipEmpty?: boolean }
+export type ComputedFieldInput = ComputedInputRef | ComputedJoinInput;
 /** 'whole' keeps the input as it is (no cut). */
 export type ComputedFieldMethod = 'whole' | 'split' | 'between' | 'regex';
 export type ComputedFieldTransform = 'none' | 'trim' | 'no_spaces' | 'upper' | 'lower' | 'date_iso' | 'year' | 'number';
@@ -307,7 +313,7 @@ export interface ComputedPreviewResult {
   value: string | null;
   reason: 'found' | 'no_input' | 'no_match' | 'not_transformable';
   /** The value after each step that ran; null where the recipe stopped. */
-  steps?: Array<{ step: 'cut' | 'keep' | 'pattern' | 'transform'; value: string | null }>;
+  steps?: Array<{ step: 'join' | 'cut' | 'keep' | 'pattern' | 'transform'; value: string | null }>;
 }
 
 /** How much of a document the AI reads. */

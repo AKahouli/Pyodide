@@ -242,7 +242,11 @@ export const semanticModelApi = {
   async updateAdminRunLimits(limits: Partial<RunLimits>): Promise<RunLimitsDefaults> {
     return unwrap(await apiClient.put<ApiResponse<RunLimitsDefaults>>(API_ENDPOINTS.adminSemanticModelSettings.runLimits, limits));
   },
-  async previewComputedField(id: string, payload: { computed: ComputedFieldRule; samples: string[]; inputRecipe?: ComputedFieldRule }): Promise<{ results: ComputedPreviewResult[] }> {
+  async previewComputedField(id: string, payload: {
+    computed: ComputedFieldRule; samples?: string[]; inputRecipe?: ComputedFieldRule;
+    /** A joined input: per sample, each part's value by "<kind>:<name>", and recipes shaping a part first. */
+    partSamples?: Array<Record<string, string>>; partRecipes?: Record<string, ComputedFieldRule>;
+  }): Promise<{ results: ComputedPreviewResult[] }> {
     return unwrap(await apiClient.post<ApiResponse<{ results: ComputedPreviewResult[] }>>(API_ENDPOINTS.semanticModels.computedFieldPreview(id), payload));
   },
   /** Read a few picked sheet rows as a run would (columns, cells read by rules or AI, recipes). AI can take a while. */

@@ -1,15 +1,15 @@
 import { useEffect, useId, useState } from 'react';
-import { AlertTriangle, ArrowRight, FileText, Loader2, Play, Split } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, FileText, Loader2, Play, Plus, Split, Type, X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { parseApiError } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../../api';
-import type { ComputedFieldInput, ComputedFieldMethod, ComputedFieldRule, ComputedFieldTransform, ComputedPreviewResult } from '../../types';
+import type { ComputedFieldInput, ComputedFieldMethod, ComputedFieldRule, ComputedFieldTransform, ComputedInputRef, ComputedJoinInput, ComputedJoinPart, ComputedPreviewResult } from '../../types';
 import { FormField, INPUT_COMPACT, ROW_LIST } from '../form/FormParts';
 import { useReadingText } from './readingText';
-import { RuleSection, useOpenSections } from './RuleControls';
+import { HelpTip, RuleSection, useOpenSections } from './RuleControls';
 import { CleanupSection, KeepSection, patternProblem, takeProblem, ValuePatternSection } from './ValueShapeSections';
 
 /**
@@ -20,6 +20,8 @@ import { CleanupSection, KeepSection, patternProblem, takeProblem, ValuePatternS
  *
  * The "Take it from" choices are a list per source (`inputOptions`): a later input kind (e.g. an AI
  * reading of a column) adds an option there and, if it needs settings, its own pane after this one.
+ * "Join several" takes several of these inputs and fixed texts, in order, joined into one text that the
+ * next steps then shape (`{ kind: 'join', parts, separator, skipEmpty }`).
  */
 
 // The reading rules' clean-ups, then the two only a recipe has.
@@ -33,6 +35,27 @@ const FILTER_FROM = 8;
 const MAX_SAMPLE_CHARS = 1000;
 // Problems shown on the “How to cut it” step.
 const CUT_PROBLEMS = ['delimiter', 'part', 'between', 'betweenLength', 'pattern', 'group', 'template'];
+// Problems shown on the “Take it from” step.
+const INPUT_PROBLEMS = ['input', 'joinParts', 'joinText', 'joinSeparator'];
+/** A joined input: its parts, the fixed text a part may be, and its separator. */
+export const MAX_JOIN_PARTS = 10;
+const MAX_JOIN_TEXT = 100;
+const MAX_SEPARATOR = 10;
+
+/** What a recipe reads: its input, or each part of a join that is not a fixed text. */
+export function recipeRefs(input: ComputedFieldInput | undefined): ComputedInputRef[] {
+  if (!input) return [];
+  return input.kind === 'join' ? input.parts.filter((part): part is ComputedInputRef => part.kind !== 'text') : [input];
+}
+
+/** Whether a recipe reads another field (alone or joined): no other recipe may then read it (no chains). */
+export const recipeReadsField = (rule?: ComputedFieldRule) => recipeRefs(rule?.input).some((ref) => ref.kind === 'field');
+
+/** The columns a recipe reads (a joined input's too). */
+export const recipeColumns = (rule?: ComputedFieldRule) => recipeRefs(rule?.input).filter((ref) => ref.kind === 'column').map((ref) => ref.name);
+
+/** How a part's value is named in a joined preview sample. */
+const partKey = (ref: ComputedInputRef) => `${ref.kind}:${ref.name}`;
 
 /** Where a field's recipe takes its value from, and what it can be tried on. */
 export type RecipeSource =
@@ -42,6 +65,8 @@ export type RecipeSource =
     fileSamples: string[];
     /** Values read for each field in the last document preview, when there is one. */
     fieldSamples?: Record<string, string[]>;
+    /** The documents read by the last previews, each with its file name and the value of each field: a joined input is tried on these. */
+    documentRows?: Array<{ key: string; label: string; fileName: string; values: Record<string, string> }>;
   }
   | {
     kind: 'sheet';
@@ -96,10 +121,13 @@ export function recipeStepCount(rule: ComputedFieldRule | undefined, ownColumn: 
 
 /** Keeps only the settings of the chosen method, so the payload matches what the runtime expects. */
 export function computedPayload(rule: ComputedFieldRule): ComputedFieldRule {
-  const base: ComputedFieldRule = { input: rule.input, method: rule.method, transform: rule.transform ?? 'none' };
+  const input: ComputedFieldInput = rule.input.kind === 'join'
+    ? { kind: 'join', parts: rule.input.parts, separator: rule.input.separator ?? ' ', skipEmpty: rule.input.skipEmpty ?? true }
+    : rule.input;
+  const base: ComputedFieldRule = { input, method: rule.method, transform: rule.transform ?? 'none' };
   if (rule.take) base.take = rule.take;
   if (rule.valuePattern?.trim()) base.valuePattern = rule.valuePattern;
-  if (rule.input.kind === 'file') base.stripExtension = rule.stripExtension ?? true;
+  if (recipeRefs(rule.input).some((ref) => ref.kind === 'file')) base.stripExtension = rule.stripExtension ?? true;
   if (rule.method === 'whole') return base;
   if (rule.method === 'split') return { ...base, delimiter: rule.delimiter, part: rule.part };
   if (rule.method === 'between') return { ...base, ...(rule.after ? { after: rule.after } : {}), ...(rule.before ? { before: rule.before } : {}) };
@@ -112,8 +140,17 @@ export function computedPayload(rule: ComputedFieldRule): ComputedFieldRule {
  */
 export function computedProblem(rule?: ComputedFieldRule, otherFields: string[] = [], columns?: string[]): string | null {
   if (!rule) return 'mapping.computed.problem.missing';
-  if (rule.input.kind === 'field' && !otherFields.includes(rule.input.name)) return 'mapping.computed.problem.input';
-  if (rule.input.kind === 'column' && columns && !columns.includes(rule.input.name)) return 'mapping.computed.problem.input';
+  if (rule.input.kind === 'join') {
+    const { parts } = rule.input;
+    if (parts.length < 2 || parts.length > MAX_JOIN_PARTS || !recipeRefs(rule.input).length) return 'mapping.computed.problem.joinParts';
+    if (parts.some((part) => part.kind === 'text' && (!part.value || part.value.length > MAX_JOIN_TEXT))) return 'mapping.computed.problem.joinText';
+    if ((rule.input.separator?.length ?? 0) > MAX_SEPARATOR) return 'mapping.computed.problem.joinSeparator';
+  }
+  for (const ref of recipeRefs(rule.input)) {
+    if (!ref.name) return 'mapping.computed.problem.input';
+    if (ref.kind === 'field' && !otherFields.includes(ref.name)) return 'mapping.computed.problem.input';
+    if (ref.kind === 'column' && columns && !columns.includes(ref.name)) return 'mapping.computed.problem.input';
+  }
   if (rule.method === 'split') {
     if (!rule.delimiter || rule.delimiter.length > 10) return 'mapping.computed.problem.delimiter';
     if (!Number.isInteger(rule.part) || !rule.part || Math.abs(rule.part) > 20) return 'mapping.computed.problem.part';
@@ -134,8 +171,12 @@ export function computedProblem(rule?: ComputedFieldRule, otherFields: string[] 
 }
 
 const FILE_INPUT = '__file';
-const inputValue = (input: ComputedFieldInput) => input.kind === 'file' ? FILE_INPUT : `${input.kind}:${input.name}`;
-function inputFromValue(value: string): ComputedFieldInput {
+const JOIN_INPUT = '__join';
+const inputValue = (input: ComputedFieldInput) => {
+  if (input.kind === 'join') return JOIN_INPUT;
+  return input.kind === 'file' ? FILE_INPUT : `${input.kind}:${input.name}`;
+};
+function inputFromValue(value: string): ComputedInputRef {
   if (value === FILE_INPUT) return { kind: 'file', name: 'document_name' };
   const at = value.indexOf(':');
   const kind = value.slice(0, at);
@@ -144,8 +185,8 @@ function inputFromValue(value: string): ComputedFieldInput {
 
 const cellText = (value: unknown) => value === null || value === undefined ? '' : String(value).slice(0, MAX_SAMPLE_CHARS);
 
-/** Something the recipe can be tried on: a file name, a value read, or a row of the sheet. */
-interface PreviewItem { key: string; label: string; input: string }
+/** Something the recipe can be tried on: a file name, a value read, or a row of the sheet; for a join, each part's value. */
+interface PreviewItem { key: string; label: string; input: string; parts?: Record<string, string> }
 
 export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields, source }: Readonly<{
   modelId: string;
@@ -177,27 +218,62 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
   const update = (patch: Partial<ComputedFieldRule>) => onChange({ ...rule, ...patch });
   const fromEnd = (rule.part ?? 1) < 0;
   const position = Math.abs(rule.part ?? 1) || 1;
-  const fromFile = rule.input.kind === 'file';
+  const join: ComputedJoinInput | null = rule.input.kind === 'join' ? rule.input : null;
+  const single: ComputedInputRef | null = rule.input.kind === 'join' ? null : rule.input;
+  const refs = recipeRefs(rule.input);
+  const fromFile = single?.kind === 'file';
+  const readsFile = refs.some((ref) => ref.kind === 'file');
 
-  // The sheet's columns once it has been read; until then, the column the recipe reads is still offered.
+  // The sheet's columns once it has been read; until then, the columns the recipe reads are still offered.
   const knownColumns = table && table.columns.length ? table.columns : undefined;
-  const columnChoices = table ? [...new Set([...table.columns, ...(rule.input.kind === 'column' ? [rule.input.name] : [])])] : [];
+  const columnChoices = table ? [...new Set([...table.columns, ...refs.filter((ref) => ref.kind === 'column' && ref.name).map((ref) => ref.name)])] : [];
   // “Take it from”: per source; a later input kind (AI on a column) is one more option here.
   const inputOptions: Array<{ value: string; label: string }> = sheet
     ? [...columnChoices.map((column) => ({ value: `column:${column}`, label: columnOption(column) })),
       ...fields.map((field) => ({ value: `field:${field.key}`, label: fieldOption(field.label) }))]
     : [{ value: FILE_INPUT, label: t('mapping.computed.fileName') }, ...fields.map((field) => ({ value: `field:${field.key}`, label: field.label }))];
+  const firstOption = inputOptions[0]?.value;
+  // A recipe never starts with nothing to take its value from: the first input offered is picked.
+  const noInput = single !== null && !single.name;
+  useEffect(() => {
+    if (noInput && firstOption) update({ input: inputFromValue(firstOption) });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noInput, firstOption]);
 
+  // A field of the row taken from a column (with its own recipe, applied first).
+  const fieldColumnOf = (name: string) => table?.fieldInputs[name];
+  const shapedBy = (name: string) => {
+    const input = fieldColumnOf(name);
+    return input?.recipe && recipeStepCount(input.recipe, input.column) > 0 && !computedProblem(input.recipe, [], knownColumns)
+      ? computedPayload(input.recipe) : undefined;
+  };
   // What it can be tried on.
-  const fieldInput = table && rule.input.kind === 'field' ? table.fieldInputs[rule.input.name] : undefined;
-  const inputRecipe = fieldInput?.recipe && recipeStepCount(fieldInput.recipe, fieldInput.column) > 0 && !computedProblem(fieldInput.recipe, [], knownColumns)
-    ? computedPayload(fieldInput.recipe) : undefined;
+  const fieldInput = table && single?.kind === 'field' ? table.fieldInputs[single.name] : undefined;
+  const inputRecipe = single?.kind === 'field' ? shapedBy(single.name) : undefined;
+  const partRecipes = join ? Object.fromEntries(refs.filter((ref) => ref.kind === 'field')
+    .flatMap((ref) => { const recipe = shapedBy(ref.name); return recipe ? [[partKey(ref), recipe]] : []; })) : {};
   const available: PreviewItem[] = (() => {
+    if (table && join) {
+      // Each row (or record) gives every part its value: a column, a field taken from a column, or a field read out of a cell.
+      return table.rows.map((row, index) => {
+        const number = typeof row.__sheetRow === 'number' ? row.__sheetRow : index + 2;
+        const label = record ? String(row.__recordLabel ?? index + 1) : t('mapping.recipe.rowLabel', { row: number });
+        const valueOf = (ref: ComputedInputRef) => {
+          if (ref.kind === 'column') return cellText(row[ref.name]);
+          const column = fieldColumnOf(ref.name)?.column;
+          if (column) return cellText(row[column]);
+          const read = (table.fieldValues?.[ref.name] ?? []) as Array<{ row: number; value: string; label?: string }>;
+          return cellText(read.find((item) => record ? item.label === label : item.row === number)?.value);
+        };
+        const parts = Object.fromEntries(refs.map((ref) => [partKey(ref), valueOf(ref)]));
+        return { key: `row-${index}`, label, input: Object.values(parts).filter(Boolean).join(' · '), parts };
+      });
+    }
     if (table) {
-      const column = rule.input.kind === 'column' ? rule.input.name : fieldInput?.column;
+      const column = single?.kind === 'column' ? single.name : fieldInput?.column;
       // A field read out of a cell: the values the last row preview read for it.
-      if (!column && rule.input.kind === 'field') {
-        return (table.fieldValues?.[rule.input.name] ?? []).map((item: { row: number; value: string; label?: string }) => ({
+      if (!column && single?.kind === 'field') {
+        return (table.fieldValues?.[single.name] ?? []).map((item: { row: number; value: string; label?: string }) => ({
           key: `row-${item.row}`, label: item.label ?? t('mapping.recipe.rowLabel', { row: item.row }), input: cellText(item.value) }));
       }
       if (!column) return [];
@@ -208,7 +284,16 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
       });
     }
     if (source.kind !== 'document') return [];
-    const values = fromFile ? source.fileSamples : source.fieldSamples?.[rule.input.name] ?? [];
+    if (join) {
+      // The documents read by the last previews; without one, file names alone when only the file name is joined.
+      const rows = source.documentRows?.length ? source.documentRows
+        : refs.every((ref) => ref.kind === 'file') ? source.fileSamples.map((name) => ({ key: name, label: name, fileName: name, values: {} as Record<string, string> })) : [];
+      return rows.map((row) => {
+        const parts = Object.fromEntries(refs.map((ref) => [partKey(ref), cellText(ref.kind === 'file' ? row.fileName : row.values[ref.name])]));
+        return { key: row.key, label: row.label, input: Object.values(parts).filter(Boolean).join(' · '), parts };
+      });
+    }
+    const values = fromFile ? source.fileSamples : source.fieldSamples?.[single?.name ?? ''] ?? [];
     return [...new Set(values.filter(Boolean))].map((value) => ({ key: value, label: value, input: value }));
   })();
   const availableKey = available.map((item) => `${item.key}\u0000${item.input}`).join('\n');
@@ -217,6 +302,7 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
     : available.slice(0, DEFAULT_PICKED);
   const chosenKeys = chosen.map((item) => item.key);
   const samples = chosen.map((item) => item.input);
+  const partSamples = join ? chosen.map((item) => item.parts ?? {}) : [];
   const togglePicked = (key: string) => {
     let next = chosenKeys;
     if (chosenKeys.includes(key)) next = chosenKeys.filter((other) => other !== key);
@@ -230,31 +316,61 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
   const problemText = (key: string) => sheet && key === 'mapping.computed.problem.input' ? rowsText('problemInput') : t(key as never);
   const payload = JSON.stringify(computedPayload(rule));
   const inputRecipeKey = inputRecipe ? JSON.stringify(inputRecipe) : '';
-  const sampleKey = samples.join('\n');
+  const partRecipesKey = Object.keys(partRecipes).length ? JSON.stringify(partRecipes) : '';
+  const sampleKey = join ? JSON.stringify(partSamples) : samples.join('\n');
 
   useEffect(() => {
     if (problem || !samples.length) { setPreview({}); return; }
     let cancelled = false;
     setPreview((current) => ({ ...current, loading: true }));
     const timer = setTimeout(() => {
-      semanticModelApi.previewComputedField(modelId, {
-        computed: JSON.parse(payload) as ComputedFieldRule, samples,
-        ...(inputRecipeKey ? { inputRecipe: JSON.parse(inputRecipeKey) as ComputedFieldRule } : {}),
-      })
+      semanticModelApi.previewComputedField(modelId, join
+        ? { computed: JSON.parse(payload) as ComputedFieldRule, partSamples,
+          ...(partRecipesKey ? { partRecipes: JSON.parse(partRecipesKey) as Record<string, ComputedFieldRule> } : {}) }
+        : {
+          computed: JSON.parse(payload) as ComputedFieldRule, samples,
+          ...(inputRecipeKey ? { inputRecipe: JSON.parse(inputRecipeKey) as ComputedFieldRule } : {}),
+        })
         .then((result) => { if (!cancelled) setPreview({ results: result.results }); })
         .catch((error) => { if (!cancelled) setPreview({ error: parseApiError(error).message }); });
     }, 400);
     return () => { cancelled = true; clearTimeout(timer); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelId, payload, sampleKey, problem, inputRecipeKey]);
+  }, [modelId, payload, sampleKey, problem, inputRecipeKey, partRecipesKey]);
 
   const setMethod = (method: ComputedFieldMethod) => update(method === 'split' ? { method, delimiter: rule.delimiter ?? '_', part: rule.part ?? 1 } : { method });
-  const inputLabel = (() => {
-    if (fromFile) return t('mapping.computed.fileName');
-    if (rule.input.kind === 'column') return columnOption(rule.input.name);
-    const label = fields.find((field) => field.key === rule.input.name)?.label ?? rule.input.name;
+  const refLabel = (ref: ComputedInputRef) => {
+    if (ref.kind === 'file') return t('mapping.computed.fileName');
+    if (ref.kind === 'column') return columnOption(ref.name);
+    const label = fields.find((field) => field.key === ref.name)?.label ?? ref.name;
     return sheet ? fieldOption(label) : label;
-  })();
+  };
+  // A join's summary names its parts briefly: “Join · First name + “ ” + Last name”.
+  const shortLabel = (part: ComputedJoinPart) => {
+    if (part.kind === 'text') return `“${part.value}”`;
+    if (part.kind === 'file') return t('mapping.recipe.join.fileName');
+    if (part.kind === 'column') return record?.columnLabels[part.name] ?? part.name;
+    return fields.find((field) => field.key === part.name)?.label ?? part.name;
+  };
+  const inputLabel = join ? t('mapping.recipe.join.summary', { parts: join.parts.map(shortLabel).join(' + ') }) : refLabel(single!);
+
+  // Join several: the current input and the next one offered start the list.
+  const chooseInput = (value: string) => {
+    if (value !== JOIN_INPUT) { update({ input: inputFromValue(value) }); return; }
+    const first = single?.name ? single : inputFromValue(firstOption ?? FILE_INPUT);
+    const at = inputOptions.findIndex((option) => option.value === inputValue(first));
+    const nextValue = inputOptions.length > 1 ? inputOptions[(at + 1) % inputOptions.length].value : undefined;
+    const second: ComputedJoinPart = nextValue ? inputFromValue(nextValue) : { kind: 'text', value: '-' };
+    update({ input: { kind: 'join', parts: [first, second], separator: ' ', skipEmpty: true } });
+  };
+  const setParts = (parts: ComputedJoinPart[]) => { if (join) update({ input: { ...join, parts } }); };
+  const movePart = (index: number, by: number) => {
+    if (!join) return;
+    const parts = [...join.parts];
+    const [moved] = parts.splice(index, 1);
+    parts.splice(index + by, 0, moved);
+    setParts(parts);
+  };
   const methodSummary = (() => {
     if (rule.method === 'whole') return t('mapping.recipe.methodSummary.whole');
     if (rule.method === 'split') return t(fromEnd ? 'mapping.computed.methodSummary.splitEnd' : 'mapping.computed.methodSummary.split', { delimiter: rule.delimiter ?? '', position });
@@ -271,26 +387,75 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
   const methodLabel = (method: ComputedFieldMethod) => method === 'whole' ? t('mapping.recipe.methods.whole') : t(`mapping.computed.methods.${method}`);
   const methodHelp = rule.method === 'whole' ? t('mapping.recipe.help.whole') : t(`mapping.computed.help.${rule.method}`);
   const cutProblem = problem !== null && CUT_PROBLEMS.some((key) => problem === `mapping.computed.problem.${key}`);
+  const inputProblem = problem !== null && INPUT_PROBLEMS.some((key) => problem === `mapping.computed.problem.${key}`);
+  const iconButton = 'inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted disabled:opacity-40';
   const found = preview.results?.filter((result) => result.value !== null).length ?? 0;
+  // A document join is tried on whole documents, as a file name is.
+  const byFile = fromFile || Boolean(join);
   const pickedText = sheet
     ? rowsText('rowsPicked', { count: samples.length, total: available.length })
-    : t(fromFile ? 'mapping.computed.filesPicked' : 'mapping.computed.valuesPicked', { count: samples.length, total: available.length });
+    : t(byFile ? 'mapping.computed.filesPicked' : 'mapping.computed.valuesPicked', { count: samples.length, total: available.length });
   const previewSummary = preview.results && !problem ? t('mapping.computed.previewSummary', { found, count: preview.results.length }) : pickedText;
   const errorLine = preview.error ? <p role='alert' className='flex gap-1.5 text-destructive'><AlertTriangle className='h-3.5 w-3.5 shrink-0' />{preview.error}</p> : null;
   const emptyText = sheet ? rowsText('noRows') : t(fromFile ? 'mapping.computed.noFiles' : 'mapping.computed.noFieldValues');
-  const toTryText = sheet ? rowsText('rowsToTry') : t(fromFile ? 'mapping.computed.filesToTry' : 'mapping.computed.valuesToTry');
+  const toTryText = sheet ? rowsText('rowsToTry') : t(byFile ? 'mapping.computed.filesToTry' : 'mapping.computed.valuesToTry');
 
   return <div className='space-y-2 text-xs' aria-label={t('mapping.computed.editorFor', { field: fieldLabel })} role='group'>
     <div className='rounded-lg border'>
       <RuleSection {...section('input')} title={t('mapping.computed.input')} icon={<FileText className='h-3.5 w-3.5' />} summary={inputLabel}
-        help={sheet ? rowsText('inputHelp') : t('mapping.computed.inputHelp')} invalid={problem === 'mapping.computed.problem.input'}>
-        <Select value={inputValue(rule.input)} onValueChange={(value) => update({ input: inputFromValue(value) })}>
+        help={join ? t('mapping.recipe.join.help') : sheet ? rowsText('inputHelp') : t('mapping.computed.inputHelp')} invalid={inputProblem}>
+        <Select value={inputValue(rule.input)} onValueChange={chooseInput}>
           <SelectTrigger className={cn(INPUT_COMPACT, 'w-56')} aria-label={t('mapping.computed.input')}><SelectValue /></SelectTrigger>
           <SelectContent>
             {inputOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
+            <SelectItem value={JOIN_INPUT}>{t('mapping.recipe.join.option')}</SelectItem>
           </SelectContent>
         </Select>
-        {fromFile && <label className='flex items-center gap-2'>
+        {join && <div className='space-y-1.5' role='group' aria-label={t('mapping.recipe.join.title')}>
+          <ol className='space-y-1'>
+            {join.parts.map((part, index) => {
+              const number = index + 1;
+              return <li key={index} className='flex items-center gap-1'>
+                <span className='w-4 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground'>{number}</span>
+                {part.kind === 'text'
+                  ? <Input className={cn(INPUT_COMPACT, 'w-56 font-mono')} maxLength={MAX_JOIN_TEXT} value={part.value} placeholder={t('mapping.recipe.join.textPlaceholder')}
+                    aria-label={t('mapping.recipe.join.textFor', { index: number })}
+                    onChange={(event) => setParts(join.parts.map((other, at) => at === index ? { kind: 'text', value: event.target.value } : other))} />
+                  : <Select value={inputValue(part)} onValueChange={(value) => setParts(join.parts.map((other, at) => at === index ? inputFromValue(value) : other))}>
+                    <SelectTrigger className={cn(INPUT_COMPACT, 'w-56')} aria-label={t('mapping.recipe.join.partFor', { index: number })}><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {inputOptions.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>}
+                <button type='button' className={iconButton} disabled={index === 0} onClick={() => movePart(index, -1)}
+                  aria-label={t('mapping.recipe.join.moveUp', { index: number })} title={t('mapping.recipe.join.moveUp', { index: number })}><ArrowUp className='h-3.5 w-3.5' /></button>
+                <button type='button' className={iconButton} disabled={index === join.parts.length - 1} onClick={() => movePart(index, 1)}
+                  aria-label={t('mapping.recipe.join.moveDown', { index: number })} title={t('mapping.recipe.join.moveDown', { index: number })}><ArrowDown className='h-3.5 w-3.5' /></button>
+                <button type='button' className={iconButton} disabled={join.parts.length <= 2} onClick={() => setParts(join.parts.filter((_, at) => at !== index))}
+                  aria-label={t('mapping.recipe.join.remove', { index: number })} title={t('mapping.recipe.join.remove', { index: number })}><X className='h-3.5 w-3.5' /></button>
+              </li>;
+            })}
+          </ol>
+          <div className='flex flex-wrap items-center gap-1.5 pl-5'>
+            <button type='button' className='inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[11px] hover:bg-muted disabled:opacity-40' disabled={join.parts.length >= MAX_JOIN_PARTS}
+              onClick={() => setParts([...join.parts, inputFromValue(firstOption ?? FILE_INPUT)])}><Plus className='h-3 w-3' />{t('mapping.recipe.join.addPart')}</button>
+            <button type='button' className='inline-flex h-6 items-center gap-1 rounded-full border px-2 text-[11px] hover:bg-muted disabled:opacity-40' disabled={join.parts.length >= MAX_JOIN_PARTS}
+              onClick={() => setParts([...join.parts, { kind: 'text', value: '' }])}><Type className='h-3 w-3' />{t('mapping.recipe.join.addText')}</button>
+          </div>
+          <div className='flex flex-wrap items-center gap-3 pl-5'>
+            <label className='flex items-center gap-1.5'>
+              <span className='text-muted-foreground'>{t('mapping.recipe.join.separator')}</span>
+              <Input className={cn(INPUT_COMPACT, 'w-16 font-mono')} maxLength={MAX_SEPARATOR} value={join.separator ?? ' '} placeholder={t('mapping.recipe.join.separatorNone')}
+                aria-label={t('mapping.recipe.join.separator')} onChange={(event) => update({ input: { ...join, separator: event.target.value } })} />
+              <HelpTip text={t('mapping.recipe.join.separatorHelp')} />
+            </label>
+            <label className='flex items-center gap-1.5'>
+              <input type='checkbox' checked={join.skipEmpty ?? true} onChange={(event) => update({ input: { ...join, skipEmpty: event.target.checked } })} />{t('mapping.recipe.join.skipEmpty')}
+              <HelpTip text={t('mapping.recipe.join.skipEmptyHelp')} />
+            </label>
+          </div>
+        </div>}
+        {readsFile && <label className='flex items-center gap-2'>
           <input type='checkbox' checked={rule.stripExtension ?? true} onChange={(event) => update({ stripExtension: event.target.checked })} />{t('mapping.computed.stripExtension')}
         </label>}
       </RuleSection>
@@ -353,8 +518,8 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
                 <input type='checkbox' checked={checked} disabled={!checked && chosenKeys.length >= MAX_SAMPLES}
                   aria-label={sheet ? rowsText('rowFor', { row: item.label }) : t('mapping.computed.fileFor', { name: item.label })}
                   onChange={() => togglePicked(item.key)} />
-                {sheet
-                  ? <><span className='shrink-0 tabular-nums text-muted-foreground'>{item.label}</span><span className='min-w-0 truncate'>{item.input || '—'}</span></>
+                {sheet || (join && item.input !== item.label)
+                  ? <><span className={cn('shrink-0 text-muted-foreground', sheet ? 'tabular-nums' : 'max-w-[40%] truncate')}>{item.label}</span><span className='min-w-0 truncate'>{item.input || '—'}</span></>
                   : <span className='min-w-0 truncate'>{item.label}</span>}
               </label></li>;
             })}
@@ -369,7 +534,7 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
           const steps = (result.steps ?? []).length > 1 || (result.steps?.length === 1 && result.value === null) ? result.steps! : [];
           return <div key={`${item?.key ?? result.input}-${index}`} className='space-y-0.5'>
             <div className='flex flex-wrap items-center gap-1.5'>
-              {sheet && item && <span className='shrink-0 tabular-nums text-muted-foreground'>{item.label}</span>}
+              {(sheet || join) && item && <span className={cn('shrink-0 text-muted-foreground', sheet ? 'tabular-nums' : 'max-w-[30%] truncate')}>{item.label}</span>}
               <span className='max-w-full truncate text-muted-foreground'>{(result.input ?? samples[index]) || '—'}</span><ArrowRight className='h-3 w-3 shrink-0' />
               {result.value === null
                 ? <span className='text-amber-700 dark:text-amber-400'>{readingText.reason({ reason: result.reason })}</span>

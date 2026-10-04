@@ -1,5 +1,5 @@
 import type { ConceptRecordsPage, DerivedFieldMapping, SourceFieldMapping } from '../../types';
-import { computedPayload } from './FieldRecipeEditor';
+import { computedPayload, recipeColumns } from './FieldRecipeEditor';
 
 /**
  * A derived source's fields as the shared field list's rows (one per concept field, a source field being the
@@ -63,7 +63,7 @@ export function derivedPayload(rows: readonly SourceFieldMapping[], savedOrder: 
 export function usedSourceFields(payload: readonly DerivedFieldMapping[]): string[] {
   return [...new Set(payload.flatMap((field) => [
     field.mode !== 'computed' && field.mode !== 'constant' ? field.sourceAttribute ?? '' : '',
-    field.mode === 'computed' && field.computed?.input.kind === 'column' ? field.computed.input.name : '',
+    ...(field.mode === 'computed' ? recipeColumns(field.computed) : []),
   ]).filter(Boolean))];
 }
 

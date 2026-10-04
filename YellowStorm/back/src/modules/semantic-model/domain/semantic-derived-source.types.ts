@@ -1,5 +1,5 @@
 import type { AttributeDefinition } from './semantic-model.types';
-import { aiFieldHints, type ComputedFieldSpec, type ExtractionRules, type SourceExtractionStrategy, type SourceFieldMapping } from './semantic-source-mapping.types';
+import { aiFieldHints, computedInputRefs, type ComputedFieldSpec, type ExtractionRules, type SourceExtractionStrategy, type SourceFieldMapping } from './semantic-source-mapping.types';
 
 /** How a derived record picks one value when the records it comes from disagree. */
 export const DERIVED_CONFLICT_RULES = ['most_frequent', 'latest', 'longest', 'leave_empty'] as const;
@@ -98,10 +98,13 @@ export function asSheetFieldMappings(fields: DerivedFieldMapping[]): SourceField
 export function derivedFieldInputs(field: DerivedFieldMapping, fields: readonly DerivedFieldMapping[]): string[] {
   if (field.mode === 'constant') return [];
   if (field.mode !== 'computed') return field.sourceAttribute ? [field.sourceAttribute] : [];
-  const input = field.computed?.input;
-  if (input?.kind === 'column') return [input.name];
-  const other = input?.kind === 'field' ? fields.find((item) => item.targetAttribute === input.name && item !== field) : undefined;
-  return other && other.mode !== 'computed' ? derivedFieldInputs(other, fields) : [];
+  // Every part of a joined input, in order and once each.
+  const names = computedInputRefs(field.computed?.input).flatMap((ref) => {
+    if (ref.kind === 'column') return [ref.name];
+    const other = ref.kind === 'field' ? fields.find((item) => item.targetAttribute === ref.name && item !== field) : undefined;
+    return other && other.mode !== 'computed' ? derivedFieldInputs(other, fields) : [];
+  });
+  return [...new Set(names)];
 }
 
 /**
@@ -134,9 +137,14 @@ export function checkDerivedSource(source: Pick<DerivedSource, 'fieldMappings' |
   const readable = (field: DerivedFieldMapping): boolean => {
     if (!targetFields.has(field.targetAttribute)) return false;
     if (field.mode === 'constant') return true;
-    if (field.mode === 'computed' && field.computed?.input.kind === 'field') {
-      const other = source.fieldMappings.find((item) => item.targetAttribute === field.computed!.input.name && item !== field);
-      return Boolean(other && other.mode !== 'computed' && readable(other));
+    if (field.mode === 'computed') {
+      // Each part it reads: a source field the concept still has, or a field that is itself readable.
+      const refs = computedInputRefs(field.computed?.input);
+      return refs.length > 0 && refs.every((ref) => {
+        if (ref.kind === 'column') return sourceFields.has(ref.name);
+        const other = ref.kind === 'field' ? source.fieldMappings.find((item) => item.targetAttribute === ref.name && item !== field) : undefined;
+        return Boolean(other && other.mode !== 'computed' && readable(other));
+      });
     }
     const inputs = derivedFieldInputs(field, source.fieldMappings);
     return inputs.length > 0 && inputs.every((input) => sourceFields.has(input));

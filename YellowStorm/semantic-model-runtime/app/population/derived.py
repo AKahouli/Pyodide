@@ -15,7 +15,8 @@ field's text with the document rules and/or AI (``mode: extract``, the same read
 uses: the text is a one-section document), taken from a field by a recipe (``mode: computed``, the
 same recipe a sheet field uses; a ``column`` input names a field of the source record), or fixed
 (``mode: constant``). Such a value keeps the source value's evidence and adds which part of the
-source field it was read from (``derivedFrom.attribute``, ``span``, ``method``).
+source field it was read from (``derivedFrom.attribute``, ``span``, ``method``); a recipe joining several
+source fields lists them all in ``derivedFrom.attributes``.
 """
 
 from __future__ import annotations
@@ -86,11 +87,17 @@ def _normalize_field(field: Any, source: dict, target: dict) -> dict:
         raise DerivationError("invalid_derivations")
     if mode == "computed":
         computed = field.get("computed")
-        name = (computed.get("input") or {}).get("name") if isinstance(computed, dict) else None
-        kind = (computed.get("input") or {}).get("kind") if isinstance(computed, dict) else None
-        # A "column" of a source record is one of its fields.
-        if kind not in ("column", "field") or (kind == "column" and name not in source["allowedFields"]):
+        source_input = (computed.get("input") or {}) if isinstance(computed, dict) else {}
+        # A joined input reads each of its parts; a fixed text part reads nothing.
+        parts = source_input.get("parts") if source_input.get("kind") == "join" else [source_input]
+        if not isinstance(parts, list):
             raise DerivationError("invalid_derivations")
+        for part in parts:
+            kind = part.get("kind") if isinstance(part, dict) else None
+            # A "column" of a source record is one of its fields.
+            if (kind not in ("column", "field", "text") or (kind == "text" and part is source_input)
+                    or (kind == "column" and part.get("name") not in source["allowedFields"])):
+                raise DerivationError("invalid_derivations")
     return {key: field[key] for key in _FIELD_KEYS if key in field}
 
 
@@ -208,13 +215,29 @@ _READ_KEYS = ("span", "quote", "extractorVersion", "rawEvidenceHash", "model", "
 _METHODS = {"extract": "rules", "computed": "recipe", "constant": "constant"}
 
 
-def _recipe_attribute(field: dict, by_field: dict[str, dict]) -> str | None:
-    """The source field a recipe reads: its column, or the source field of the field it is taken from."""
+def _recipe_attributes(field: dict, by_field: dict[str, dict]) -> list[str]:
+    """The source fields a recipe reads, in order and once each: its column, or the source field of the
+    field it is taken from, for every part of a joined input."""
     source = (field.get("computed") or {}).get("input") or {}
-    if source.get("kind") == "column":
-        return source.get("name")
-    other = by_field.get(source.get("name")) if source.get("kind") == "field" else None
-    return other.get("sourceAttribute") if other else None
+    parts = (source.get("parts") or []) if source.get("kind") == "join" else [source]
+    names: list[str] = []
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        if part.get("kind") == "column":
+            name = part.get("name")
+        else:
+            other = by_field.get(part.get("name")) if part.get("kind") == "field" else None
+            name = other.get("sourceAttribute") if other else None
+        if isinstance(name, str) and name not in names:
+            names.append(name)
+    return names
+
+
+def _recipe_attribute(field: dict, by_field: dict[str, dict]) -> str | None:
+    """The (first) source field a recipe reads, for the evidence of the value it gives."""
+    names = _recipe_attributes(field, by_field)
+    return names[0] if names else None
 
 
 async def read_derived_fields(derivation: dict, source_entities: list[dict], context: dict[str, Any], *,
@@ -267,8 +290,10 @@ async def read_derived_fields(derivation: dict, source_entities: list[dict], con
         raw = {column: _source_value(entity, column) for column in recipe_columns(plan["recipes"])}
         for attribute, recipe in apply_row_recipes(plan["recipes"], values, raw).items():
             if recipe["reason"] == "found":
-                evidence[attribute] = {"method": "recipe",
-                                       "attribute": _recipe_attribute(by_field[attribute], by_field)}
+                names = _recipe_attributes(by_field[attribute], by_field)
+                # A joined input names every source field it read; ``attribute`` stays the first one.
+                evidence[attribute] = {"method": "recipe", "attribute": names[0] if names else None,
+                                       **({"attributes": names} if len(names) > 1 else {})}
         readings[entity["entityId"]] = {
             "values": {field: values.get(field) for field, item in by_field.items() if _mode(item) != "direct"},
             "evidence": evidence}
@@ -373,6 +398,8 @@ def derive_concept(target: dict, derivation: dict, source_entities: list[dict],
                 # Read out of the source field's text, by a recipe, or fixed: how, and where in the text.
                 evidence["derivedFrom"].update({key: read[key] for key in _READ_KEYS if read.get(key) is not None})
                 evidence["derivedFrom"]["method"] = read.get("method") or _METHODS[_mode(by_field[target_attribute])]
+                if read.get("attributes"):
+                    evidence["derivedFrom"]["attributes"] = list(read["attributes"])
                 if read.get("method") == "ai":
                     evidence["origin"] = "ai"
             attributes[target_attribute] = value

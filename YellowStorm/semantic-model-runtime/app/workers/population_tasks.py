@@ -20,7 +20,7 @@ from app.population.compiler import (canonical_spec_hash, compile_specification,
 from app.population.derived import (DerivationError, derive_concept, merge_derived, normalize_derivations,
                                     read_derived_fields)
 from app.population.computed_fields import (apply_row_recipes, check_inputs, normalize_computed,
-                                            normalize_row_recipes, recipe_columns)
+                                            normalize_row_recipes, recipe_columns, recipe_sources)
 from app.population.cell_fields import (CellReader, cell_gaps, cell_text, extraction_columns,
                                         normalize_field_extractions, uses_ai as uses_cell_ai)
 from app.population.document_rules import RuleError, normalize_ai_settings, normalize_rules
@@ -614,6 +614,8 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                                 for column, attribute in entry["columnMapping"].items()}
                                if isinstance(available, list) else entry["columnMapping"])
                     recipes = entry.get("fieldRecipes") or {}
+                    joined_sources = {attribute: recipe_sources(spec) for attribute, spec in recipes.items()
+                                      if spec["input"]["kind"] == "join"}
                     # A column a recipe reads that the sheet does not have is left out (its input is empty).
                     recipe_inputs = ({resolve_column(name, available) for name in recipe_columns(recipes)}
                                      & set(available) if isinstance(available, list) else recipe_columns(recipes))
@@ -679,6 +681,9 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                             found = cell_evidence.get(assertion["evidence"].get("rowNumber"), {}).get(assertion["attribute"])
                             if found is not None:
                                 assertion["evidence"] = found
+                            elif assertion["attribute"] in joined_sources:
+                                # A recipe joining several columns or fields: every one it read.
+                                assertion["evidence"]["recipeSources"] = joined_sources[assertion["attribute"]]
                         if cells is not None and (capped or page["returnedRows"] < QUERY_ROW_LIMIT):
                             output["gaps"].extend(cell_gaps(entry["conceptId"], asset_ref, extractions,
                                                             missing_cells, read_rows, cells.stats))

@@ -10,7 +10,10 @@ import {
 } from '../domain/semantic-cross-source.types';
 import { aiFieldHints,
   AI_EXTRACTION_CONTRACT_VERSION,
+  computedInputRefs,
   computeFieldProfiles,
+  joinInputProblem,
+  MAX_JOIN_PARTS,
   resolveSheetEntities,
   usesAiExtraction,
   type ExtractionRules,
@@ -290,6 +293,23 @@ export class SemanticSourceMappingService {
   /** Try a computation on sample inputs (file names or field values) without a document. */
   async previewComputed(userId: string, modelId: string, dto: ComputedFieldPreviewDto) {
     await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    const joinProblem = joinInputProblem(dto.computed.input);
+    if (joinProblem) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, joinProblem);
+    // A joined input is tried on the value of each part per sample, by "<kind>:<name>".
+    if (dto.computed.input.kind === 'join') {
+      const samples = dto.partSamples ?? [];
+      const badSample = !samples.length || samples.some((sample) => typeof sample !== 'object' || sample === null || Array.isArray(sample)
+        || Object.entries(sample).length > MAX_JOIN_PARTS * 2
+        || Object.entries(sample).some(([key, value]) => key.length > 220 || typeof value !== 'string' || value.length > 1000));
+      const recipes = Object.keys(dto.partRecipes ?? {});
+      if (badSample || recipes.length > MAX_JOIN_PARTS) {
+        throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Each sample gives a text of at most 1000 characters per part');
+      }
+      return this.runtime.previewComputedField({
+        computed: dto.computed, samples: [], partSamples: samples, ...(recipes.length ? { partRecipes: dto.partRecipes } : {}),
+      });
+    }
+    if (!dto.samples?.length) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Pick a few samples to try the recipe on');
     return this.runtime.previewComputedField({
       computed: dto.computed, samples: dto.samples, ...(dto.inputRecipe ? { inputRecipe: dto.inputRecipe } : {}),
     });
@@ -958,12 +978,18 @@ export class SemanticSourceMappingService {
     // The fields a recipe may read: read from a column (as is, or out of its cell), or taken from a column.
     const read = new Map(mappings.filter((mapping) => mapping.mode === 'direct' || mapping.mode === 'extract' || mapping.mode === 'computed')
       .map((mapping) => [mapping.targetAttribute, mapping]));
+    const readsField = (other: SourceFieldMapping) => computedInputRefs(other.computed?.input).some((ref) => ref.kind === 'field');
     for (const mapping of read.values()) {
       const input = mapping.computed?.input;
       if (!input) continue;
-      const other = input.kind === 'field' ? read.get(input.name) : undefined;
-      const valid = input.kind === 'column'
-        || (input.kind === 'field' && input.name !== mapping.targetAttribute && other !== undefined && other.computed?.input.kind !== 'field');
+      const joinProblem = joinInputProblem(input);
+      if (joinProblem) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${mapping.targetAttribute}: ${joinProblem}`);
+      // Every part of a joined input is checked as a single input is.
+      const valid = computedInputRefs(input).every((ref) => {
+        if (ref.kind === 'column') return true;
+        const other = ref.kind === 'field' ? read.get(ref.name) : undefined;
+        return ref.kind === 'field' && ref.name !== mapping.targetAttribute && other !== undefined && !readsField(other);
+      });
       if (!valid) {
         throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
           `${mapping.targetAttribute}: a transformed field reads a column or another field read from a column`);
@@ -996,8 +1022,10 @@ export class SemanticSourceMappingService {
       if (!input) {
         throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${mapping.targetAttribute}: a computed field needs a computation`);
       }
-      const valid = input.kind === 'file' ? input.name === 'document_name'
-        : input.kind === 'field' && input.name !== mapping.targetAttribute && inputs.has(input.name);
+      const joinProblem = joinInputProblem(input);
+      if (joinProblem) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${mapping.targetAttribute}: ${joinProblem}`);
+      const valid = computedInputRefs(input).every((ref) => ref.kind === 'file' ? ref.name === 'document_name'
+        : ref.kind === 'field' && ref.name !== mapping.targetAttribute && inputs.has(ref.name));
       if (!valid) {
         throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
           `${mapping.targetAttribute}: a computed field reads the file name or another mapped, non-computed field`);

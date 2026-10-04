@@ -20,7 +20,7 @@ import type { SuggestionSource } from '../editor/SuggestConceptsDialog';
 import { FORM_SECTION, FormField, INPUT, ROW_LIST, SectionHeader } from '../form/FormParts';
 import { AiLimitsEditor, FieldReadingResult, limitProblem, ReadAllFieldsBar, rulesProblem, usesAi as mappingsUseAi, usesRules, type LabelSuggestions } from './DocumentFieldRules';
 import { FieldLiveStatus } from './DocumentPreviewPane';
-import { computedProblem } from './FieldRecipeEditor';
+import { computedProblem, recipeColumns } from './FieldRecipeEditor';
 import { FieldMappingList, readAllWith, recipeInputs } from './FieldMappingList';
 import { MappingPresetBar } from './MappingPresetBar';
 import { ReadingTextContext } from './readingText';
@@ -159,7 +159,7 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSuggestCo
     setPicked(next);
   };
   // The columns the fields read, sent for the picked rows; those read out of a cell are shown beside the fields.
-  const usedColumns = [...new Set(payload.flatMap((mapping) => [mapping.sourceField ?? '', mapping.computed?.input.kind === 'column' ? mapping.computed.input.name : '']).filter(Boolean))];
+  const usedColumns = [...new Set(payload.flatMap((mapping) => [mapping.sourceField ?? '', ...recipeColumns(mapping.computed)]).filter(Boolean))];
   const textColumns = [...new Set(payload.filter((mapping) => mapping.mode === 'extract' && mapping.sourceField).map((mapping) => mapping.sourceField!))];
   const canRead = canSave && pickedNumbers.length > 0;
   const draftKey = canRead ? JSON.stringify([payload, pickedNumbers, usesAi ? aiSettings : null, conceptId]) : '';

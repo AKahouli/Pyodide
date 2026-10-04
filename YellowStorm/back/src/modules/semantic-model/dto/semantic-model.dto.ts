@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -426,15 +426,47 @@ export class DocumentLabelsDto {
   documentIds!: string[];
 }
 
+/** One part of a joined input: an input (as a single input names it) or a fixed text. */
+export class ComputedJoinPartDto {
+  @ApiProperty({ enum: ['file', 'field', 'column', 'text'] })
+  @IsIn(['file', 'field', 'column', 'text'])
+  kind!: 'file' | 'field' | 'column' | 'text';
+
+  @ApiPropertyOptional({ maxLength: 200, description: 'file, field or column: what it reads' })
+  @ValidateIf((part: ComputedJoinPartDto) => part.kind !== 'text')
+  @IsString() @MinLength(1) @MaxLength(200)
+  name?: string;
+
+  @ApiPropertyOptional({ maxLength: 100, description: 'text: the fixed text' })
+  @ValidateIf((part: ComputedJoinPartDto) => part.kind === 'text')
+  @IsString() @MinLength(1) @MaxLength(100)
+  value?: string;
+}
+
 export class ComputedFieldInputDto {
-  @ApiProperty({ enum: ['file', 'field', 'column'] })
-  @IsIn(['file', 'field', 'column'])
-  kind!: 'file' | 'field' | 'column';
+  @ApiProperty({ enum: ['file', 'field', 'column', 'join'], description: "'join' joins several parts into one text" })
+  @IsIn(['file', 'field', 'column', 'join'])
+  kind!: 'file' | 'field' | 'column' | 'join';
 
   // 'document_name' for a file input, another mapping's targetAttribute for a field input, a sheet column.
-  @ApiProperty({ maxLength: 200 })
+  @ApiPropertyOptional({ maxLength: 200 })
+  @ValidateIf((input: ComputedFieldInputDto) => input.kind !== 'join')
   @IsString() @MinLength(1) @MaxLength(200)
-  name!: string;
+  name?: string;
+
+  @ApiPropertyOptional({ type: () => [ComputedJoinPartDto], minItems: 2, maxItems: 10, description: 'join: the parts, in order' })
+  @ValidateIf((input: ComputedFieldInputDto) => input.kind === 'join')
+  @IsArray() @ArrayMinSize(2) @ArrayMaxSize(10)
+  @ValidateNested({ each: true }) @Type(() => ComputedJoinPartDto)
+  parts?: ComputedJoinPartDto[];
+
+  @ApiPropertyOptional({ maxLength: 10, description: "join: put between two parts; ' ' when absent" })
+  @IsOptional() @IsString() @MaxLength(10)
+  separator?: string;
+
+  @ApiPropertyOptional({ description: 'join: leave an empty part out with its separator (default true)' })
+  @IsOptional() @IsBoolean()
+  skipEmpty?: boolean;
 }
 
 export class ComputedFieldDto {
@@ -545,14 +577,26 @@ export class ComputedFieldPreviewDto {
   @Type(() => ComputedFieldDto)
   computed!: ComputedFieldDto;
 
-  @ApiProperty({ type: [String], minItems: 1, maxItems: 20 })
+  @ApiPropertyOptional({ type: [String], minItems: 1, maxItems: 20, description: 'A single input: the values to try it on' })
+  @ValidateIf((dto: ComputedFieldPreviewDto) => dto.partSamples === undefined)
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(20)
   @IsString({ each: true }) @MaxLength(1000, { each: true })
-  samples!: string[];
+  samples?: string[];
 
   @ApiPropertyOptional({ type: () => ComputedFieldDto, description: 'Applied to each sample first: the recipe of the field this one is taken from' })
   @IsOptional() @ValidateNested() @Type(() => ComputedFieldDto)
   inputRecipe?: ComputedFieldDto;
+
+  @ApiPropertyOptional({ type: 'array', items: { type: 'object', additionalProperties: { type: 'string' } }, maxItems: 20,
+    description: 'A joined input: per sample, the value of each part by "<kind>:<name>"' })
+  // Each sample's shape (an object of texts) is checked by the service: implicit conversion would turn it into a string here.
+  @IsOptional() @IsArray() @ArrayMinSize(1) @ArrayMaxSize(20)
+  @Transform(({ obj }) => (obj as { partSamples?: unknown }).partSamples)
+  partSamples?: Array<Record<string, string>>;
+
+  @ApiPropertyOptional({ type: 'object', additionalProperties: true, description: 'A joined input: recipes applied first to a part, by "<kind>:<name>"' })
+  @IsOptional() @IsObject()
+  partRecipes?: Record<string, ComputedFieldDto>;
 }
 
 /** Limits on how much of a document the AI reads. Each one left out uses the admin default. */
