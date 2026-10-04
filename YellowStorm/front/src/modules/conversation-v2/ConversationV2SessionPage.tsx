@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { MessageList } from './components/MessageList';
 import { Composer } from './components/Composer';
@@ -37,8 +37,13 @@ export default function ConversationV2SessionPage() {
   const locationState = location.state as AgentSessionLocationState | null;
 
   const sessionId = routeSessionId?.trim() || null;
-  /** Draft until first Send: `/conversation-v2/{sessionId}?action=clone`. */
+  /** Draft until first Send: `/studio/{sessionId}?action=clone`. */
   const isDraftClone = isCloneDraftSearch(searchParams);
+
+  // Capture once: history.replaceState clears location.state after the first send.
+  const [sessionCapability] = useState(
+    () => locationState?.capability ?? 'web_app',
+  );
 
   const initialMessage = locationState?.initialMessage;
   const initialModel = locationState?.model;
@@ -93,13 +98,14 @@ export default function ConversationV2SessionPage() {
     initialModel,
     initialSkillIds,
     initialConnectorIds,
+    capability: sessionCapability,
     setSelectedSkillIds,
     setSelectedConnectorIds,
     sendMessage,
     setPreviewPhase,
   });
 
-  useBrowserRuntimeBoot(sessionId, loading, isReadOnlyViewer);
+  useBrowserRuntimeBoot(sessionId, loading, isReadOnlyViewer, sessionCapability);
   useStreamingReconcile(sessionId, loading, streaming, isReadOnlyViewer);
 
   const committedCloneDraftRef = useRef(false);
@@ -143,9 +149,13 @@ export default function ConversationV2SessionPage() {
   }
 
   return (
-    <div className='relative flex w-full min-h-0 flex-1'>
+    <div className='relative flex min-h-0 w-full flex-1 overflow-hidden bg-background'>
+      <div
+        aria-hidden
+        className='pointer-events-none absolute inset-x-0 top-0 h-40 bg-[radial-gradient(ellipse_at_top,hsl(var(--primary)/0.06),transparent_70%)]'
+      />
       <ErrorBoundary label={t('session.conversationError')}>
-        <div key={sessionId} className='flex min-w-0 flex-1 flex-col'>
+        <div key={sessionId} className='relative flex min-w-0 flex-1 flex-col'>
           <ConversationV2Header
             readOnly={isReadOnlyViewer}
             permissions={sessionPermissions}

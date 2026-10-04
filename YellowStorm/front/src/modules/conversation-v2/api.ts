@@ -56,14 +56,14 @@ export const conversationV2Api = {
   async createSession(
     workspaceIds: string[] = [],
     templateId?: string,
-    stagingTemplateId?: string,
+    capability: 'web_app' | 'database_design' = 'web_app',
   ): Promise<CreateSessionResponse> {
     const res = await apiClient.post<ApiResponse<CreateSessionResponse>>(
       '/conversation-v2/sessions',
       {
         workspaceIds,
         ...(templateId ? { templateId } : {}),
-        ...(stagingTemplateId ? { stagingTemplateId } : {}),
+        capability,
       },
     );
     return res.data.data;

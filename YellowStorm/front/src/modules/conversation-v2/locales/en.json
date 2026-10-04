@@ -1,17 +1,24 @@
 {
   "page": {
-    "title": "App Builder",
-    "newChat": "New chat",
-    "emptyState": "Start a new conversation."
+    "eyebrow": "App Builder Studio",
+    "title": "Build apps with your Agent",
+    "newChat": "New project",
+    "emptyState": "Describe what you want to build. Studio opens a live preview beside the chat so you can iterate until it’s ready to deploy.",
+    "backToMarket": "Back to App Market",
+    "highlights": {
+      "agent": "Guided by Agent",
+      "preview": "Live preview",
+      "deploy": "One-click deploy"
+    }
   },
   "session": {
-    "loading": "Loading session…",
-    "notFound": "Session not found.",
-    "notFoundHint": "This conversation may have been deleted, or you may not have access to it.",
+    "loading": "Loading Studio…",
+    "notFound": "Project not found.",
+    "notFoundHint": "This project may have been deleted, or you may not have access to it.",
     "back": "Go back",
-    "conversationError": "The conversation hit an unexpected error.",
+    "conversationError": "Studio hit an unexpected error.",
     "previewError": "The preview panel hit an unexpected error.",
-    "errorTitle": "Stream error",
+    "errorTitle": "Connection error",
     "waitingForPreview": {
       "title": "Waiting for live preview",
       "body": "The agent starts once the preview finishes installing dependencies and Vite is ready."
@@ -19,7 +26,7 @@
     "templateClone": {
       "waitingTitle": "Preparing your app preview",
       "waitingBody": "Please wait while we set up a live preview of the cloned template. Send is disabled until the preview is ready.",
-      "waitingBodyDraft": "Live preview is starting in the side panel. You can type a message now — Send unlocks when the preview is ready, then opens your App Builder session with this template.",
+      "waitingBodyDraft": "Live preview is starting in the side panel. You can type a message now — Send unlocks when the preview is ready, then opens Studio with this template.",
       "readyTitle": "Preview ready",
       "readyBody": "Your template is loaded in the live preview. Send a message when you are ready to start editing and customizing it.",
       "dismiss": "Got it"
@@ -27,13 +34,13 @@
     "previewBootFailed": "The live preview could not start. Reload the page, then send your message again.",
     "previewBootTimeout": "The live preview took too long to become ready. Reload the page, then try again.",
     "fromAppBuilder": {
-      "title": "Building from App Builder",
-      "body": "Your prompt was sent to the Agent. Keep chatting here to refine the app — the live preview opens in the side panel when a version is ready. Return to App Builder anytime from the sidebar.",
+      "title": "Welcome to Studio",
+      "body": "Your brief was sent to the Agent. Keep refining here — the live preview opens in the side panel when a version is ready. Return to App Market anytime from the header.",
       "dismiss": "Got it"
     }
   },
   "composer": {
-    "placeholder": "Type a message…",
+    "placeholder": "Describe a change — e.g. “Add a dark mode toggle to the settings page”…",
     "send": "Send",
     "connectors": "Connectors",
     "noConnectors": "No connectors available",
@@ -44,16 +51,16 @@
     }
   },
   "agentComposer": {
-    "placeholder": "Give the agent a task — e.g. \"find the current Bitcoin price\""
+    "placeholder": "Describe the app you want to build…"
   },
   "questionChoices": {
     "fallbackTitle": "Choose an option to continue"
   },
   "conversation": {
-    "emptyTitle": "Send a message to start",
-    "emptyDescription": "The agent will respond and may use tools and a virtual machine to complete your task.",
+    "emptyTitle": "Tell Studio what to build",
+    "emptyDescription": "Ask for screens, flows, or fixes. The Agent edits your app and the live preview updates beside you.",
     "thinking": "Thinking",
-    "assistantName": "YelloStorm",
+    "assistantName": "YellowStorm",
     "fileOpenFailed": "Failed to open file"
   },
   "tool": {
@@ -64,7 +71,7 @@
     "openDetails": "Open tool details"
   },
   "rightPanel": {
-    "title": "Yellowstorm computer",
+    "title": "Studio workspace",
     "subtitle": "Agent is using",
     "close": "Close panel",
     "empty": "Select a tool to inspect.",
@@ -95,6 +102,8 @@
     "inBrowser": "Live preview",
     "previewTitle": "App preview",
     "toolbarLabel": "Preview toolbar",
+    "addressLocal": "localhost · preview",
+    "addressDeployed": "Published app",
     "fileCount": "{{count}} files",
     "files": "Files",
     "noFiles": "No files yet — they will appear as the app is generated.",
@@ -102,13 +111,13 @@
     "binaryFile": "This file can’t be previewed ({{size}})",
     "readOnly": "Read-only",
     "tabPreview": "Preview",
-    "tabSource": "Source",
+    "tabSource": "Code",
     "layoutPreviewOnly": "Preview",
     "layoutPreviewOnlyHint": "Show the live app full width",
     "layoutSplit": "Files",
     "layoutSplitHint": "Browse project files beside the preview",
-    "explorer": "Project files",
-    "explorerHint": "Browse generated files. Editing happens through the conversation.",
+    "explorer": "Files",
+    "explorerHint": "Browse generated files. Ask the Agent in chat to edit them.",
     "searchFiles": "Search files…",
     "clearSearch": "Clear search",
     "expandAll": "Expand all folders",
@@ -183,9 +192,9 @@
   },
   "controls": { "stop": "Stop", "pause": "Pause", "resume": "Resume" },
   "files": {
-    "title": "Files in this conversation",
+    "title": "Project files",
     "button": "Files",
-    "unavailable": "No workspace attached to this session.",
+    "unavailable": "No workspace attached to this project.",
     "loading": "Loading files…",
     "empty": "No files yet.",
     "view": {
@@ -194,17 +203,18 @@
     }
   },
   "header": {
-    "back": "Back",
+    "back": "Back to App Market",
+    "backToMarket": "App Market",
     "readOnly": "Read-only",
-    "streaming": "Working",
+    "streaming": "Building",
     "streamError": "Connection issue",
     "tooltips": {
       "workspaces": "Manage workspaces",
-      "files": "Files"
+      "files": "Project files"
     },
     "actions": {
-      "rename": "Rename",
-      "delete": "Delete",
+      "rename": "Rename project",
+      "delete": "Delete project",
       "more": "More actions"
     }
   },
@@ -242,7 +252,7 @@
     "embedUnavailableHint": "Open it in a new tab to continue."
   },
   "share": {
-    "title": "Share app & conversation",
+    "title": "Share app",
     "searchPlaceholder": "Search or enter an email address…",
     "searching": "Searching…",
     "noResults": "Enter a valid email address",
@@ -253,13 +263,13 @@
   },
   "dialogs": {
     "rename": {
-      "title": "Rename conversation",
-      "placeholder": "Conversation title",
+      "title": "Rename project",
+      "placeholder": "Project title",
       "saving": "Saving..."
     },
     "delete": {
-      "title": "Delete conversation?",
-      "description": "This will permanently delete this conversation.",
+      "title": "Delete project?",
+      "description": "This will permanently delete this Studio project.",
       "descriptionWithName": {
         "before": "This will permanently delete ",
         "after": "."
@@ -271,9 +281,9 @@
   "workspace": {
     "sheet": {
       "title": "Workspaces",
-      "description": "Workspaces attached to this conversation.",
+      "description": "Workspaces attached to this project.",
       "loadingWorkspaces": "Loading workspaces...",
-      "noSelection": "No workspaces attached to this conversation.",
+      "noSelection": "No workspaces attached to this project.",
       "noDocuments": "No documents found in the attached workspaces.",
       "documentsLabel": "Documents",
       "selectedCount": "{{count}} workspace attached",
@@ -289,10 +299,10 @@
   },
   "toasts": {
     "rename": {
-      "error": "Failed to rename conversation"
+      "error": "Failed to rename project"
     },
     "delete": {
-      "error": "Failed to delete conversation"
+      "error": "Failed to delete project"
     },
     "workspaces": {
       "loadListError": "Failed to load workspaces",
@@ -305,7 +315,7 @@
       "copyError": "Failed to copy link"
     },
     "share": {
-      "success": "App and conversation shared by email",
+      "success": "App shared by email",
       "error": "Failed to share the app"
     }
   }

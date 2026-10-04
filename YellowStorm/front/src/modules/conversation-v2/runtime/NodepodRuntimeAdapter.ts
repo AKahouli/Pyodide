@@ -12,7 +12,11 @@ import type { VfsFiles } from './RevisionHydrator';
 import type { FileEntry } from './runtime.types';
 import { sha256 } from './hashing';
 import { toVfsPath } from './paths';
-import { detectDevCommand } from './dev-toolchain';
+import {
+  detectDevCommand,
+  UnsupportedDevToolchainError,
+  unsupportedDevToolchainReason,
+} from './dev-toolchain';
 import {
   IGNORED_DIRS,
   RUN_OUTPUT_MAX_BYTES,
@@ -187,6 +191,28 @@ export class NodepodRuntimeAdapter {
     this.pendingServerUrl = null;
 
     log('boot:start', { fileCount: Object.keys(files).length });
+
+    // NodePod runs real Node in the browser (FS / npm / HTTP preview). Refuse
+    // toolchains that cannot bind a Vite preview before we pay for npm install.
+    // Docs: https://r1ck404.github.io/Nodepod/ — Vite must listen on 0.0.0.0;
+    // preview needs COOP/COEP (SharedArrayBuffer) + the host preview bridge.
+    const pkgRaw = files['/package.json'];
+    if (typeof pkgRaw !== 'string') {
+      throw new UnsupportedDevToolchainError(
+        'Template is missing /package.json at the project root (required for NodePod).',
+      );
+    }
+    let parsedPkg: Parameters<typeof unsupportedDevToolchainReason>[0] = null;
+    try {
+      parsedPkg = JSON.parse(pkgRaw) as NonNullable<typeof parsedPkg>;
+    } catch {
+      throw new UnsupportedDevToolchainError('Template package.json is not valid JSON.');
+    }
+    const toolchainBlock = unsupportedDevToolchainReason(parsedPkg);
+    if (toolchainBlock) {
+      throw new UnsupportedDevToolchainError(toolchainBlock);
+    }
+
     const pod = await Nodepod.boot({
       files,
       workdir: '/',
@@ -336,6 +362,8 @@ export class NodepodRuntimeAdapter {
     const softTimeoutMs = serverOpts?.softTimeoutMs ?? READY_SOFT_MS;
     const hardTimeoutMs = serverOpts?.hardTimeoutMs ?? READY_HARD_MS;
     const promotePolicy = serverOpts?.promotePolicy ?? 'full';
+    // HOST + Vite --host (from detectDevCommand) match NodePod's documented
+    // preview pattern: `npx vite --host 0.0.0.0` so the bridge can reach the server.
     const devEnv = {
       HOST: '0.0.0.0',
       ...(needsWasi ? { NAPI_RS_FORCE_WASI: 'true', NAPI_RS_FORCE_WASM: '1' } : {}),

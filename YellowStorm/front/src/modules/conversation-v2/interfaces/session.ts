@@ -70,6 +70,8 @@ export interface AgentSessionLocationState {
   source?: AgentSessionSource;
   /** App Market template id when cloning or starting from a template. */
   templateId?: string;
+  /** OpenCode capability for this session (`web_app` or `database_design`). */
+  capability?: 'web_app' | 'database_design';
 }
 
 /** Alias kept for existing imports; prefer {@link AgentSessionLocationState}. */

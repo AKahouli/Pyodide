@@ -17,10 +17,10 @@
   "createWithAgent": {
     "eyebrow": "Créer avec l'Agent",
     "title": "Décrivez l'application à créer",
-    "description": "Rédigez un brief court — une conversation Agent s'ouvre pour construire avec vous.",
+    "description": "Rédigez un brief court — App Builder Studio s’ouvre pour construire avec vous et un aperçu en direct.",
     "placeholder": "ex. Un tableau de bord des ventes avec graphiques hebdo…",
-    "sending": "Ouverture de la conversation Agent…",
-    "error": "Impossible de démarrer la conversation Agent.",
+    "sending": "Ouverture de Studio…",
+    "error": "Impossible d’ouvrir Studio.",
     "suggestions": {
       "label": "Essayer une idée",
       "dashboard": "Un tableau de bord des ventes avec graphiques hebdomadaires",
@@ -241,7 +241,7 @@
     "close": "Fermer",
     "createTitle": "Nouveau modèle",
     "editTitle": "Modifier le modèle",
-    "formDescription": "Téléversez un ZIP de projet React/Vite et une ou plusieurs images de couverture.",
+    "formDescription": "Téléversez un ZIP de projet React/Vite, validez-le dans Template Studio, puis ajustez la couverture si besoin.",
     "fieldCategory": "Catégorie",
     "fieldTitle": "Titre",
     "fieldDescription": "Description",
@@ -249,6 +249,9 @@
     "fieldZip": "ZIP source",
     "zipHint": "Un projet React/Vite complet (50 Mo max).",
     "fieldCover": "Images de couverture",
+    "validateTemplate": "Valider le modèle",
+    "validationConfirmed": "Validé",
+    "coverFromValidation": "Une couverture a été générée depuis l’aperçu du modèle. Ajustez la zone de focus si besoin.",
     "replaceCover": "Remplacer la couverture",
     "replaceSource": "Remplacer la source",
     "create": "Créer",
@@ -256,10 +259,32 @@
     "createSuccess": "Modèle créé et publié.",
     "updateSuccess": "Modèle mis à jour.",
     "coverReplaced": "Couverture mise à jour.",
-    "sourceReplaced": "Source republiée.",
-    "validateTemplate": "Valider le template",
-    "validationConfirmed": "Validation confirmée",
-    "coverFromValidation": "Une couverture a été générée depuis l’aperçu NodePod. Ajustez la zone de focus si besoin."
+    "sourceReplaced": "Source republiée."
+  },
+  "templateStudio": {
+    "title": "Aperçu du modèle",
+    "bootStep": "Charger l’aperçu du modèle",
+    "statusPending": "En attente…",
+    "statusRunning": "Démarrage de l’aperçu (install + serveur de dev)…",
+    "statusConfirmed": "Confirmé — l’aperçu du modèle est prêt.",
+    "statusFailed": "Échec de la validation.",
+    "preparing": "Démarrage de l’aperçu NodePod…",
+    "preparingTitle": "Démarrage de l’aperçu en direct",
+    "preparingHint": "NodePod décompresse votre ZIP, installe les dépendances et lance le serveur Vite.",
+    "bootUnpack": "Extraction de l’archive",
+    "bootInstall": "Installation des dépendances",
+    "bootServer": "Démarrage du serveur Vite",
+    "bootReady": "Préparation de l’aperçu",
+    "bootingUrl": "Préparation de l’aperçu…",
+    "livePreviewUrl": "localhost · aperçu NodePod",
+    "liveBadge": "En direct",
+    "bootingHint": "Cela prend généralement un moment le temps d’installer les paquets et de démarrer le serveur.",
+    "noPreview": "Aucun aperçu disponible pour le moment.",
+    "previewTitle": "Aperçu du modèle",
+    "footerHint": "Quand l’aperçu vous convient, continuez pour générer l’image de couverture.",
+    "confirmingHint": "Capture de la couverture depuis l’aperçu en direct…",
+    "confirm": "Utiliser cet aperçu",
+    "confirming": "Capture en cours…"
   },
   "coverGallery": {
     "count": "{{count}} / {{max}}",
@@ -308,30 +333,9 @@
     "deleteSuccess": "Élément supprimé.",
     "deleteError": "Impossible de supprimer."
   },
-  "platformReport": {
-    "heading": "Compatibilité plateforme",
-    "ready": "Prêt — ce modèle contient déjà la couche plateforme.",
-    "needsNormalization": "{{count}} fichier(s) plateforme seront ajoutés automatiquement au démarrage d'une session.",
-    "incompatible": "Ce modèle ne peut pas être normalisé automatiquement.",
-    "injectedFiles": "Fichiers ajoutés automatiquement",
-    "violations": "Problèmes bloquants",
-    "warnings": "Remarques"
-  },
   "dropZone": {
     "prompt": "Glissez-déposez ou cliquez pour sélectionner",
     "remove": "Retirer le fichier",
     "close": "Fermer"
-  },
-  "validation": {
-    "title": "Valider dans NodePod",
-    "zipDescription": "Le ZIP téléversé est démarré dans un aperçu NodePod. Une capture d’écran sert d’image de couverture lorsque l’app est prête.",
-    "nodepod": "Exécution NodePod",
-    "statusPending": "En attente…",
-    "statusRunning": "Démarrage de l’aperçu (install + serveur de dev)…",
-    "statusConfirmed": "Confirmé — le modèle fonctionne dans NodePod.",
-    "statusFailed": "Échec de la validation.",
-    "preparing": "Préparation de l’aperçu NodePod…",
-    "noPreview": "Aucun aperçu disponible pour le moment.",
-    "previewTitle": "Aperçu du modèle"
   }
 }

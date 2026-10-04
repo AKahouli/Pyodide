@@ -12,6 +12,8 @@ export interface UseInitialAgentMessageArgs {
   initialModel?: string;
   initialSkillIds?: string[];
   initialConnectorIds?: string[];
+  /** When not `web_app`, skip NodePod wait and send immediately. */
+  capability?: 'web_app' | 'database_design';
   setSelectedSkillIds: (ids: string[]) => void;
   setSelectedConnectorIds: (ids: string[]) => void;
   sendMessage: (text: string, model?: string) => Promise<void>;
@@ -19,7 +21,8 @@ export interface UseInitialAgentMessageArgs {
 }
 
 /**
- * Fire the landing-page initial message after NodePod has registered.
+ * Fire the landing-page initial message after NodePod has registered
+ * (web_app only). Schema-design sessions send immediately.
  */
 export function useInitialAgentMessage({
   sessionId,
@@ -30,6 +33,7 @@ export function useInitialAgentMessage({
   initialModel,
   initialSkillIds,
   initialConnectorIds,
+  capability = 'web_app',
   setSelectedSkillIds,
   setSelectedConnectorIds,
   sendMessage,
@@ -48,9 +52,10 @@ export function useInitialAgentMessage({
     if (initialConnectorIds?.length) setSelectedConnectorIds(initialConnectorIds);
 
     let cancelled = false;
+    const needsNodepod = capability === 'web_app';
 
     const sendWhenReady = async () => {
-      if (appRuntimeEnabled) {
+      if (appRuntimeEnabled && needsNodepod) {
         setPreviewPhase('waiting');
         const outcome = await waitForPreviewHost(sessionId, 'initialMessage');
         if (cancelled) return;
@@ -84,6 +89,7 @@ export function useInitialAgentMessage({
     setSelectedSkillIds,
     initialConnectorIds,
     setSelectedConnectorIds,
+    capability,
     sendMessage,
     setPreviewPhase,
     waitForPreviewHost,

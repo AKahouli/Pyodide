@@ -1,39 +1,46 @@
 {
   "page": {
-    "title": "App Builder",
-    "newChat": "Nouvelle conversation",
-    "emptyState": "Démarrer une nouvelle conversation."
+    "eyebrow": "App Builder Studio",
+    "title": "Créez des apps avec votre Agent",
+    "newChat": "Nouveau projet",
+    "emptyState": "Décrivez ce que vous voulez construire. Studio ouvre un aperçu en direct à côté du chat pour itérer jusqu’au déploiement.",
+    "backToMarket": "Retour à l’App Market",
+    "highlights": {
+      "agent": "Guidé par l’Agent",
+      "preview": "Aperçu en direct",
+      "deploy": "Déploiement en un clic"
+    }
   },
   "session": {
-    "loading": "Chargement de la session…",
-    "notFound": "Session introuvable.",
-    "notFoundHint": "Cette conversation a peut-être été supprimée, ou vous n'y avez pas accès.",
+    "loading": "Chargement de Studio…",
+    "notFound": "Projet introuvable.",
+    "notFoundHint": "Ce projet a peut-être été supprimé, ou vous n’y avez pas accès.",
     "back": "Retour",
-    "conversationError": "La conversation a rencontré une erreur inattendue.",
-    "previewError": "Le panneau d'aperçu a rencontré une erreur inattendue.",
-    "errorTitle": "Erreur de flux",
+    "conversationError": "Studio a rencontré une erreur inattendue.",
+    "previewError": "Le panneau d’aperçu a rencontré une erreur inattendue.",
+    "errorTitle": "Erreur de connexion",
     "waitingForPreview": {
-      "title": "En attente de l'aperçu en direct",
-      "body": "L'agent démarre une fois l'installation des dépendances terminée et Vite prêt."
+      "title": "En attente de l’aperçu en direct",
+      "body": "L’agent démarre une fois l’installation des dépendances terminée et Vite prêt."
     },
     "templateClone": {
-      "waitingTitle": "Préparation de l'aperçu de l'application",
-      "waitingBody": "Veuillez patienter pendant que nous préparons un aperçu en direct du modèle cloné. L'envoi est désactivé jusqu'à ce que l'aperçu soit prêt.",
-      "waitingBodyDraft": "L'aperçu en direct démarre dans le panneau latéral. Vous pouvez saisir un message — Envoyer s'active dès que l'aperçu est prêt, puis ouvre votre session App Builder avec ce modèle.",
+      "waitingTitle": "Préparation de l’aperçu de l’application",
+      "waitingBody": "Veuillez patienter pendant que nous préparons un aperçu en direct du modèle cloné. L’envoi est désactivé jusqu’à ce que l’aperçu soit prêt.",
+      "waitingBodyDraft": "L’aperçu en direct démarre dans le panneau latéral. Vous pouvez saisir un message — Envoyer s’active dès que l’aperçu est prêt, puis ouvre Studio avec ce modèle.",
       "readyTitle": "Aperçu prêt",
-      "readyBody": "Votre modèle est chargé dans l'aperçu en direct. Envoyez un message lorsque vous êtes prêt à le modifier et le personnaliser.",
+      "readyBody": "Votre modèle est chargé dans l’aperçu en direct. Envoyez un message lorsque vous êtes prêt à le modifier et le personnaliser.",
       "dismiss": "Compris"
     },
-    "previewBootFailed": "L'aperçu en direct n'a pas pu démarrer. Rechargez la page, puis renvoyez votre message.",
-    "previewBootTimeout": "L'aperçu en direct a mis trop de temps à démarrer. Rechargez la page, puis réessayez.",
+    "previewBootFailed": "L’aperçu en direct n’a pas pu démarrer. Rechargez la page, puis renvoyez votre message.",
+    "previewBootTimeout": "L’aperçu en direct a mis trop de temps à démarrer. Rechargez la page, puis réessayez.",
     "fromAppBuilder": {
-      "title": "Création depuis App Builder",
-      "body": "Votre demande a été envoyée à l'Agent. Continuez la conversation ici pour affiner l'application — l'aperçu en direct s'ouvre dans le panneau latéral dès qu'une version est prête. Revenez à App Builder à tout moment via la barre latérale.",
+      "title": "Bienvenue dans Studio",
+      "body": "Votre brief a été envoyé à l’Agent. Affinez ici — l’aperçu en direct s’ouvre dans le panneau latéral dès qu’une version est prête. Revenez à l’App Market via l’en-tête.",
       "dismiss": "Compris"
     }
   },
   "composer": {
-    "placeholder": "Tapez un message…",
+    "placeholder": "Décrivez un changement — ex. « Ajoute un mode sombre dans les paramètres »…",
     "send": "Envoyer",
     "connectors": "Connecteurs",
     "noConnectors": "Aucun connecteur disponible",
@@ -44,35 +51,35 @@
     }
   },
   "agentComposer": {
-    "placeholder": "Donnez une tâche à l'agent — ex : « trouve le prix du Bitcoin »"
+    "placeholder": "Décrivez l’application que vous voulez créer…"
   },
   "questionChoices": {
     "fallbackTitle": "Choisissez une option pour continuer"
   },
   "conversation": {
-    "emptyTitle": "Envoyez un message pour démarrer",
-    "emptyDescription": "L'agent vous répondra et pourra utiliser des outils et une machine virtuelle pour accomplir votre tâche.",
+    "emptyTitle": "Dites à Studio quoi construire",
+    "emptyDescription": "Demandez des écrans, des parcours ou des corrections. L’Agent modifie votre app et l’aperçu se met à jour à côté.",
     "thinking": "Réflexion",
-    "assistantName": "YelloStorm",
-    "fileOpenFailed": "Impossible d'ouvrir le fichier"
+    "assistantName": "YellowStorm",
+    "fileOpenFailed": "Impossible d’ouvrir le fichier"
   },
   "tool": {
     "running": "En cours",
     "success": "Terminé",
     "pending": "En attente",
     "error": "Échec",
-    "openDetails": "Ouvrir les détails de l'outil"
+    "openDetails": "Ouvrir les détails de l’outil"
   },
   "rightPanel": {
-    "title": "Ordinateur de l'agent",
-    "subtitle": "L'agent utilise",
+    "title": "Espace Studio",
+    "subtitle": "L’agent utilise",
     "close": "Fermer le panneau",
-    "empty": "Sélectionnez un outil pour l'inspecter.",
+    "empty": "Sélectionnez un outil pour l’inspecter.",
     "jumpToLive": "Revenir au direct",
     "tabCode": "Code",
-    "tabPreview": "Aperçus",
+    "tabPreview": "Aperçu",
     "tabData": "Données",
-    "resizeHandle": "Glisser pour redimensionner l'aperçu"
+    "resizeHandle": "Glisser pour redimensionner l’aperçu"
   },
   "appData": {
     "loading": "Chargement des données…",
@@ -95,6 +102,8 @@
     "inBrowser": "Aperçu en direct",
     "previewTitle": "Aperçu de l'application",
     "toolbarLabel": "Barre d'outils de l'aperçu",
+    "addressLocal": "localhost · aperçu",
+    "addressDeployed": "Application publiée",
     "fileCount": "{{count}} fichiers",
     "files": "Fichiers",
     "noFiles": "Aucun fichier pour le moment — ils apparaîtront au fur et à mesure de la génération.",
@@ -102,13 +111,13 @@
     "binaryFile": "Ce fichier ne peut pas être prévisualisé ({{size}})",
     "readOnly": "Lecture seule",
     "tabPreview": "Aperçu",
-    "tabSource": "Source",
+    "tabSource": "Code",
     "layoutPreviewOnly": "Aperçu",
     "layoutPreviewOnlyHint": "Afficher l'application en pleine largeur",
     "layoutSplit": "Fichiers",
     "layoutSplitHint": "Parcourir les fichiers à côté de l'aperçu",
-    "explorer": "Fichiers du projet",
-    "explorerHint": "Parcourez les fichiers générés. Les modifications se font via la conversation.",
+    "explorer": "Fichiers",
+    "explorerHint": "Parcourez les fichiers générés. Demandez à l’Agent dans le chat pour les modifier.",
     "searchFiles": "Rechercher un fichier…",
     "clearSearch": "Effacer la recherche",
     "expandAll": "Tout développer",
@@ -183,9 +192,9 @@
   },
   "controls": { "stop": "Arrêter", "pause": "Pause", "resume": "Reprendre" },
   "files": {
-    "title": "Fichiers de cette conversation",
+    "title": "Fichiers du projet",
     "button": "Fichiers",
-    "unavailable": "Aucun espace de travail attaché à cette session.",
+    "unavailable": "Aucun espace de travail attaché à ce projet.",
     "loading": "Chargement des fichiers…",
     "empty": "Aucun fichier pour l'instant.",
     "view": {
@@ -194,17 +203,18 @@
     }
   },
   "header": {
-    "back": "Retour",
+    "back": "Retour à l’App Market",
+    "backToMarket": "App Market",
     "readOnly": "Lecture seule",
-    "streaming": "En cours",
+    "streaming": "Construction",
     "streamError": "Problème de connexion",
     "tooltips": {
       "workspaces": "Gérer les workspaces",
-      "files": "Fichiers"
+      "files": "Fichiers du projet"
     },
     "actions": {
-      "rename": "Renommer",
-      "delete": "Supprimer",
+      "rename": "Renommer le projet",
+      "delete": "Supprimer le projet",
       "more": "Autres actions"
     }
   },
@@ -242,7 +252,7 @@
     "embedUnavailableHint": "Ouvrez-la dans un nouvel onglet pour continuer."
   },
   "share": {
-    "title": "Partager l'application et la conversation",
+    "title": "Partager l’application",
     "searchPlaceholder": "Rechercher ou saisir une adresse email…",
     "searching": "Recherche…",
     "noResults": "Saisissez une adresse email valide",
@@ -253,13 +263,13 @@
   },
   "dialogs": {
     "rename": {
-      "title": "Renommer la conversation",
-      "placeholder": "Titre de la conversation",
+      "title": "Renommer le projet",
+      "placeholder": "Titre du projet",
       "saving": "Enregistrement..."
     },
     "delete": {
-      "title": "Supprimer la conversation ?",
-      "description": "Cela supprimera définitivement cette conversation.",
+      "title": "Supprimer le projet ?",
+      "description": "Cela supprimera définitivement ce projet Studio.",
       "descriptionWithName": {
         "before": "Cela supprimera définitivement ",
         "after": "."
@@ -271,9 +281,9 @@
   "workspace": {
     "sheet": {
       "title": "Workspaces",
-      "description": "Workspaces attachés à cette conversation.",
+      "description": "Workspaces attachés à ce projet.",
       "loadingWorkspaces": "Chargement des workspaces...",
-      "noSelection": "Aucun workspace attaché à cette conversation.",
+      "noSelection": "Aucun workspace attaché à ce projet.",
       "noDocuments": "Aucun document trouvé dans les workspaces attachés.",
       "documentsLabel": "Documents",
       "selectedCount": "{{count}} workspace attaché",
@@ -289,10 +299,10 @@
   },
   "toasts": {
     "rename": {
-      "error": "Impossible de renommer la conversation"
+      "error": "Impossible de renommer le projet"
     },
     "delete": {
-      "error": "Impossible de supprimer la conversation"
+      "error": "Impossible de supprimer le projet"
     },
     "workspaces": {
       "loadListError": "Impossible de charger les workspaces",
@@ -305,7 +315,7 @@
       "copyError": "Impossible de copier le lien"
     },
     "share": {
-      "success": "Application et conversation partagées par email",
+      "success": "Application partagée par email",
       "error": "Impossible de partager l'application"
     }
   }

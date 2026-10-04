@@ -37,7 +37,6 @@ import {
   type FinalizedAppVersion,
 } from './utils/finalized-versions';
 import { CONVERSATION_V2_DEFAULT_MODEL_CHANGED_EVENT } from '@/modules/models/store';
-
 export type { FinalizedAppVersion };
 
 export interface ApplicationComponentState {
@@ -1039,10 +1038,15 @@ export const useConversationV2Store = create<State & Actions>()(
                           : {}),
                       }
                     : {};
+
                 if (idx >= 0) {
                   const next = state.events.slice();
                   next[idx] = event;
-                  return withSeq({ events: next, liveToolCallId: nextLive, ...autoOpen });
+                  return withSeq({
+                    events: next,
+                    liveToolCallId: nextLive,
+                    ...autoOpen,
+                  });
                 }
                 return withSeq({
                   events: [...state.events, event],
