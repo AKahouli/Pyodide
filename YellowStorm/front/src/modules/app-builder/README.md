@@ -2,9 +2,18 @@
 
 ## Overview
 
-The App Builder module is a frontend hub that lets users **browse, manage, share, and delete** their deployed apps, shared apps, and drafts. It also provides an inline **Agent entry point** to create new apps via conversational AI. The module does **not** contain app creation logic itself — it delegates that to the `conversation-v2` module.
+The App Builder module is a frontend hub that lets users **browse, manage, share, and delete** their deployed apps, shared apps, and drafts. It also provides an inline **Agent entry point** to create new apps via conversational AI. The module does **not** contain app creation logic itself — it delegates that to the `conversation-v2` module, which the product surfaces as **App Builder Studio**.
 
-**Route:** `/app-builder` (lazy-loaded via `React.lazy` in `Router.tsx`)
+**Routes:**
+
+| Path | Role |
+|---|---|
+| `/app-builder` | Hub (lazy-loaded via `React.lazy` in `Router.tsx`) |
+| `/app-market` | Alias / marketplace entry (see `Router.tsx`) |
+| `/studio` · `/studio/:sessionId` | App Builder Studio (conversation-v2 UI; user-facing name) |
+| `/conversation-v2/*` | Legacy redirects → `/studio/*` |
+
+Proposed commit split for the current Studio / Template Studio work: [`COMMITS.md`](COMMITS.md).
 
 ---
 
@@ -42,12 +51,20 @@ app-builder/
 │       ├── CategorySidebar.tsx           # Category list + admin CRUD entry points
 │       ├── TemplateGrid.tsx / TemplateCard.tsx
 │       ├── TemplateDetailDialog.tsx
-│       ├── TemplateFormDrawer.tsx        # Create/edit; ZIP validate + single cover
+│       ├── TemplateFormDrawer.tsx        # Create/edit; ZIP → TemplateStudio → cover
 │       ├── CategoryFormDialog.tsx
 │       ├── CategoryIconPicker.tsx        # Grouped icon select for categories
 │       ├── category-icons.tsx            # Curated icon set + picker groups
 │       ├── FileDropZone.tsx
-│       ├── TemplateValidatePreviewDialog.tsx
+│       ├── TemplateStudio.tsx            # Full-screen ZIP NodePod preview → cover
+│       ├── TemplateStudioBootState.tsx   # Boot steps UI (install / Vite)
+│       ├── template-studio-motion.css    # Template Studio motion
+│       ├── validation/                   # ZIP extract, preview boot, screenshot
+│       │   ├── pipeline.ts
+│       │   ├── zip-preview-validation-step.ts
+│       │   ├── extract-template-zip.ts
+│       │   ├── wait-for-preview-capture.ts
+│       │   └── capture-preview-screenshot.ts
 │       └── cover/                        # Cover focus crop (COVER_MAX_IMAGES = 1)
 └── locales/
     ├── en.json                           # English translations
@@ -167,9 +184,14 @@ All requests go through `apiClient` (axios-based, from `@/lib/api/client`).
 | Category CRUD | `/admin/conversation-v2/template-categories` | Create / patch / delete categories |
 | `createTemplate` / `updateTemplate` / `deleteTemplate` | `/admin/conversation-v2/templates` | ZIP + cover create; metadata update; delete |
 | `replaceCover` / `replaceSource` | `…/cover`, `…/source` | Replace assets (ZIP uploads use a long HTTP timeout) |
-| Staging publish / discard | `…/templates/staging/…` | ZIP validation preview before create |
 
 **Response wrapper:** All endpoints return `ApiResponse<T>` where the payload is in `data.data`.
+
+Template ZIP validation is local: **Validate** opens **Template Studio** (NodePod preview in the browser). There is no analyze/normalize/staging API call and no separate “platform summary” dialog — `TemplateValidatePreviewDialog` / `TemplatePlatformSummary` were removed in favor of `TemplateStudio`.
+
+**Copy note:** Template Studio boot UI does **not** expose a long NodePod product description; status strings stay short (`templateStudio.*` in locales). Platform Kit compatibility for publish lives on the backend (`platform_report` / `ERR_3807`).
+
+Demo ZIPs for marketplace seeding (outside this repo): `C:\Users\bader\Desktop\template\yellowmid-apps` (18 apps: CRM, commerce, finance, support, operations, crypto) based on `starter-react-vite-v6`.
 
 ---
 
@@ -187,13 +209,24 @@ The root component rendered at `/app-builder`. Responsibilities:
 
 Owns the App Market templates UX for the selected category:
 - Search + filtered `TemplateGrid`
-- Single **Clone App** handler → `startTemplateSession` (conversation-v2)
+- Single **Clone App** handler → `startTemplateSession` (opens **App Builder Studio** at `/studio/:sessionId?action=clone`)
 - `TemplateDetailDialog` and `TemplateFormDrawer` (create/edit)
 - Requests template delete via callback to the page AlertDialog
 
+### `TemplateStudio`
+
+Admin create/edit flow for ZIP templates:
+
+1. User drops a ZIP in `TemplateFormDrawer`.
+2. **Validate** runs `validation/pipeline.ts` → `zip-preview-validation-step.ts` (unpack + NodePod boot).
+3. `TemplateStudio` shows a live preview (browser chrome + boot steps via `TemplateStudioBootState`).
+4. On confirm, `capture-preview-screenshot.ts` produces the single cover image.
+
+Replaces the old `TemplateValidatePreviewDialog` modal. Motion: `template-studio-motion.css`.
+
 ### Cover images (`useCoverImageItems`)
 
-Create flow: ZIP → Validate (NodePod screenshot) → **one** cover (`COVER_MAX_IMAGES = 1`) with optional focus crop → submit. The hook owns blob URLs, primary selection, focus, and revoke on reset/unmount.
+Create flow: ZIP → Template Studio (NodePod screenshot) → **one** cover (`COVER_MAX_IMAGES = 1`) with optional focus crop → submit. The hook owns blob URLs, primary selection, focus, and revoke on reset/unmount.
 
 ### `AppBuilderButton`
 
@@ -205,7 +238,7 @@ An inline section at the top of the page with:
 - A `AgentComposer` (reused from `conversation-v2`) for text input
 - Suggestion chips ("A sales dashboard...", "A task tracker...", "A contact form...")
 - On submit, calls `startConversationV2AgentSession()` with `source: 'app-builder'`
-- On success, navigates to `/conversation-v2/:sessionId` (the conversation page handles the rest)
+- On success, navigates to `/studio/:sessionId` (App Builder Studio; module code remains under `conversation-v2`)
 - Clears selected skills/connectors on mount
 
 ### `AppBuilderGrid`
@@ -229,7 +262,7 @@ Card for both `owned` and `shared` deployed apps. Supports grid and list views.
 | Action | Visible when |
 |---|---|
 | Open app (`window.open`) | Always |
-| Go to conversation | Owned apps always; shared apps only if `canOpenConversation === true` |
+| Open in Studio | Owned apps always; shared apps only if `canOpenConversation === true` → `/studio/:sessionId` |
 | Manage users (opens `AppEndUsersDialog`) | Owned apps only |
 | Share (opens `ShareDeployDialog`) | Owned apps always; shared apps only if `canOpenConversation === true` |
 | Delete/Remove (opens `DeleteDeployedAppButton`) | Always |
@@ -241,7 +274,7 @@ Card for both `owned` and `shared` deployed apps. Supports grid and list views.
 Card for draft apps. Supports grid and list views.
 
 **Actions:**
-- Continue building → navigates to `/conversation-v2/:sessionId`
+- Continue building → navigates to `/studio/:sessionId`
 - Delete → opens `DeleteDraftAppButton`
 
 **Status badges:** idle (amber), deploying (amber with spinner), error (destructive with alert icon).
@@ -339,8 +372,10 @@ Translation keys are accessed via `useModuleTranslation('app-builder')`. The `st
 | Path | Component | Notes |
 |---|---|---|
 | `/app-builder` | `AppBuilderPage` (lazy) | Main hub page |
+| `/studio` · `/studio/:sessionId` | conversation-v2 pages | Product name: App Builder Studio |
+| `/conversation-v2/*` | `Navigate` redirects | Bookmarks → `/studio/*` |
 
-The sidebar button (`AppBuilderButton`) navigates to `/app-builder`. The platform overview page also links there.
+The sidebar button (`AppBuilderButton`) navigates to `/app-builder`. History rows and draft cards deep-link into `/studio/:sessionId` (see `conversation-v2/studio-paths.ts` and sidebar `chatGroups.ts`).
 
 URL search params are used for filter state:
 - `?q=<search>` — search query
@@ -352,22 +387,22 @@ URL search params are used for filter state:
 
 ## Business Rules
 
-1. **Deployed apps vs Shared apps:** Both use the `DeployedApp` type but differ in `source`. Shared apps may lack conversation access (`canOpenConversation`), which hides the conversation and share buttons.
+1. **Deployed apps vs Shared apps:** Both use the `DeployedApp` type but differ in `source`. Shared apps may lack Studio access (`canOpenConversation`), which hides the Studio and share buttons.
 
 2. **Delete semantics:**
-   - Deleting an **owned deployed app** removes it from App Builder but keeps the conversation and hosted app. Re-publishing adds it back.
+   - Deleting an **owned deployed app** removes it from App Builder but keeps the Studio session and hosted app. Re-publishing adds it back.
    - Deleting a **shared deployed app** ("unshare") only removes it from the current user's view. The owner is unaffected.
-   - Deleting a **draft** permanently deletes the associated conversation (irreversible).
+   - Deleting a **draft** permanently deletes the associated Studio session (irreversible).
 
 3. **End-user permissions:** Only the app owner can manage end-user grants. New users have no permissions by default. Sharing with an email that has no YellowMind account still sends an invite: the guest opens `{deployedUrl}register?invite=TOKEN`, the email is prefilled and locked, and register creates an app end-user with deny-all grants. If they later create a YellowMind account with the same email, the App Builder share is claimed automatically.
 
 4. **Pagination:** Client-side only, 9 items per page. Resets to page 1 on tab/data change.
 
-5. **Agent creation flow:** The inline agent creates a new `conversation-v2` session with `source: 'app-builder'`. The conversation page shows a special banner when entered from App Builder.
+5. **Agent creation flow:** The inline agent creates a new session with `source: 'app-builder'`. Studio shows a special banner when entered from App Builder. User-facing copy says **App Builder Studio**, not “conversation-v2”.
 
-6. **Clone App (templates):** `startTemplateSession` creates a real session seeded from `template_<id>`, then navigates to `/conversation-v2/{sessionId}?action=clone` **without** adding History and **without** putting the template id in the URL. First Send commits the draft (strip `?action=clone`, prepend History). See conversation-v2 README § Template Clone draft.
+6. **Clone App (templates):** `startTemplateSession` creates a real session seeded from `template_<id>`, then navigates to `/studio/{sessionId}?action=clone` **without** adding History and **without** putting the template id in the URL. First Send commits the draft (strip `?action=clone`, prepend History). See conversation-v2 README § Template Clone draft / `studio-paths.ts`.
 
-7. **Template covers:** At most one cover image on create (`COVER_MAX_IMAGES = 1`). Validation screenshot becomes the cover when ZIP validation succeeds.
+7. **Template covers:** At most one cover image on create (`COVER_MAX_IMAGES = 1`). Template Studio screenshot becomes the cover when ZIP validation succeeds.
 
 ---
 

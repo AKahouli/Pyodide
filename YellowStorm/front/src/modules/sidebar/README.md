@@ -6,7 +6,15 @@ The sidebar module renders the application left navigation, conversation history
 
 - `AppSidebar` composes the navigation shell, history panel, and footer controls.
 - `ConversationItem` renders one conversation row with rename/share/delete actions.
-- `useAutoCollapse` collapses the sidebar when the viewport shrinks.
+- `useAutoCollapse` collapses the sidebar when the viewport shrinks **or** when the
+  user is on Studio routes (`/studio`, `/studio/:sessionId`) — same treatment as
+  classic `/conversation`.
+- App Builder Studio history rows deep-link to `/studio/:sessionId` (not
+  `/conversation-v2/…`). Helpers live in `chatGroups.ts`; delete-current navigates
+  home to `/studio` (`RecentChats.tsx`).
+
+Related: [`../conversation-v2/studio-paths.ts`](../conversation-v2/studio-paths.ts),
+[`../app-builder/COMMITS.md`](../app-builder/COMMITS.md).
 
 ## Directory Structure
 
@@ -17,7 +25,7 @@ sidebar/
 ├── hooks/
 │   ├── index.ts
 │   ├── index.test.ts
-│   ├── useAutoCollapse.ts
+│   ├── useAutoCollapse.ts          # collapses on /studio and /conversation
 │   └── useAutoCollapse.test.tsx
 ├── components/
 │   ├── index.ts
@@ -25,6 +33,8 @@ sidebar/
 │   ├── AppSidebar.tsx
 │   ├── AppSidebar.test.tsx
 │   ├── ConversationItem.tsx
+│   ├── RecentChats.tsx             # history → /studio/:id
+│   ├── chatGroups.ts               # buildHistoryRows → studio paths
 │   └── ConversationItem.test.tsx
 └── README.md
 ```
@@ -35,7 +45,8 @@ sidebar/
 - Covered behavior includes:
   - sidebar fetch/navigation/history interactions
   - conversation item action flows and typewriter branch
-  - auto-collapse resize behavior
+  - auto-collapse resize behavior **and** `/studio` path matching
+  - `chatGroups` Studio URL building
   - barrel export integrity
 
 Run sidebar tests from `front/`:

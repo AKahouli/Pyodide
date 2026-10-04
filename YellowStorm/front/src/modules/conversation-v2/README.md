@@ -1,16 +1,30 @@
-# Conversation V2 — Frontend
+# Conversation V2 — Frontend (App Builder Studio)
 
 > **Documentation technique junior (Conversation en mode Agent / conversation-v2, code vérifié)** : [../../../../back/src/modules/conversation-v2/DOCUMENTATION_TECHNIQUE.md](../../../../back/src/modules/conversation-v2/DOCUMENTATION_TECHNIQUE.md)
 
-React module for Manus conversations: composer, streaming timeline,
-right panel (tool details + **Nodepod app preview**), skills/connectors,
+React module that powers **App Builder Studio**: composer, streaming timeline,
+right panel (tool details + **NodePod app preview**), skills/connectors,
 **Runtime Browser Host**, **source revision viewer**, **deploy controls**,
-and **App Marketplace** integration. 
+and **App Marketplace** integration.
+
+**Product naming:** User-facing UI/routes say **Studio** / **App Builder Studio**.
+Code and REST paths remain `conversation-v2`. Never surface “conversation-v2”
+in EN/FR copy.
+
+| Public route | Component | Notes |
+|---|---|---|
+| `/studio` | `ConversationV2Page` | Studio home / empty state |
+| `/studio/:sessionId` | `ConversationV2SessionPage` | Active session |
+| `/conversation-v2`, `/conversation-v2/:sessionId` | redirects | Legacy bookmarks → `/studio…` |
+
+Path helpers: [`studio-paths.ts`](studio-paths.ts) (`STUDIO_BASE_PATH`, `studioSessionPath`, `studioCloneDraftPath`).
 
 Related docs:
 
 - [`SKILLS.md`](SKILLS.md) — skill selection UI / store
 - [`CONNECTORS.md`](CONNECTORS.md) — connector selection UI / store
+- App Builder hub + Template Studio: [`../app-builder/README.md`](../app-builder/README.md)
+- Proposed commit split: [`../app-builder/COMMITS.md`](../app-builder/COMMITS.md)
 
 Backend counterpart:
 [`../../../../back/src/modules/conversation-v2/README.md`](../../../../back/src/modules/conversation-v2/README.md).
@@ -42,12 +56,13 @@ Backend counterpart:
 ## Overview
 
 The frontend consumes conversation-v2 events via a global SSE pipe and renders
-a split-pane UI:
+a split-pane **Studio** UI:
 
 - **Left**: message timeline with tool calls, plan, thinking, questions
-- **Right**: Code/Preview panel with file explorer, Nodepod preview, deploy controls
+- **Right**: Code / **Aperçu (Preview)** panel with file explorer, NodePod
+  preview in a decorative browser frame, deploy controls
 
-The **App Builder** flow:
+The **App Builder Studio** flow:
 
 1. User sends a message → composer dispatches via `POST …/message`.
 2. SSE events stream in → `session-reducer.ts` reduces them into UI state.
@@ -74,9 +89,9 @@ message.
 
 1. `startTemplateSession({ templateId, navigate })` → `POST …/sessions` with
    `templateId` (backend seeds `starter_revision_id = template_<id>`).
-2. Navigate to `/conversation-v2/{sessionId}?action=clone` with
+2. Navigate to `/studio/{sessionId}?action=clone` (`studioCloneDraftPath`) with
    `location.state.source = 'template-clone'` — **no** template id in the path,
-   **no** History prepend.
+   **no** History prepend. Legacy `/conversation-v2/…` redirects preserve the query.
 3. `ConversationV2SessionPage` detects draft via `isCloneDraftSearch` /
    `template-clone-gate` (`isTemplateCloneNavigation` / `isTemplateCloneSession`).
 4. Send stays locked while `previewPhase === 'waiting'` until NodePod is ready
@@ -112,18 +127,26 @@ Replaces the previous remote-sandbox **iframe-only** preview.
 | Piece | Role |
 |---|---|
 | `useNodepodPreview` | Download files → `Nodepod.boot` → install → spawn → `previewUrl` |
-| `ApplicationComponentView` | Toolbar + split: file tree \| Preview / Source |
+| `ApplicationComponentView` | Toolbar + split: file tree \| **Aperçu** / Source |
+| `PreviewBrowserFrame` | Decorative browser chrome (traffic lights, lock, address, Live) — presentation only |
+| `PreviewCenteredStatus` | Empty / boot / error centered states |
 | `AppSourceFileTree` | Expandable, read-only tree with search |
 | `AppSourceFileViewer` | Read-only code (CodeArtifact) + lock badge |
 | `flattenFilesTree` | Tree → flat paths for signed-URL batch |
 
 Users **cannot** edit generated sources in this panel — Source is inspection only.
 
+**UX rules (Studio preview):**
+
+- Tab / mode labels use **Preview** (EN) / **Aperçu** (FR) — not “Canvas”.
+- Preview chrome is presentation-only: no viewport toggles or extra device features.
+- Status copy stays product-facing (`preview-user-message`, `nodepod.*` locales).
+
 ### Dual preview modes
 
 | Mode | Source | When |
 |---|---|---|
-| **Nodepod** | Browser VFS via presigned URL downloads | During generation (live) |
+| **Nodepod (Aperçu)** | Browser VFS via presigned URL downloads | During generation (live) |
 | **Deployed** | Production URL from `deployedUrl` | After publish |
 
 The centered Preview/Deploy switch in `AppViewModeToggle` switches between Nodepod (local dev) and
@@ -361,45 +384,22 @@ streamingStateCache: Map<string, SessionSlice>;
 ## UI layout
 
 ```
-┌─ ConversationV2Header ──────────────── [Publish] [✕] ─┐
+┌─ Studio header ─────────────────────── [Publish] [✕] ─┐
 │ Title (editable) · status · [Pause] [Stop] [Share]     │
 ├────────────────────────────────────────────────────────┤
-│                                                         │
-│  ┌─ MessageList ──────────────────────────────────────┐ │
-│  │ User message                                        │ │
-│  │ ┌─ ThinkingIndicator ─┐                            │ │
-│  │ │ ⏳ Thinking...       │                            │ │
-│  │ └─────────────────────┘                            │ │
-│  │ ┌─ PlanPanel ─────────┐                            │ │
-│  │ │ 1. Analyze code      │                            │ │
-│  │ │ 2. Write component   │                            │ │
-│  │ │ 3. Test              │                            │ │
-│  │ └─────────────────────┘                            │ │
-│  │ ┌─ ToolCallCard ──────┐                            │ │
-│  │ │ 🔧 write src/App.tsx │                            │ │
-│  │ └─────────────────────┘                            │ │
-│  │ Assistant message (markdown)                        │ │
-│  │ ┌─ QuestionChoices ───┐                            │ │
-│  │ │ [Option A] [Option B]│                            │ │
-│  │ └─────────────────────┘                            │ │
+│  ┌─ MessageList ── thinking / plan / tools / chat ────┐ │
 │  └────────────────────────────────────────────────────┘ │
-│                                                         │
-│  ┌─ Composer ─────────────────────────────────────────┐ │
-│  │ [Model ▾] [Skills ▾] [Connectors ▾]                │ │
-│  │ ┌─ input ────────────────────────┐ [Send] [Stop] ──┤ │
+│  ┌─ Composer ── model / skills / connectors · Send ───┐ │
 │  └────────────────────────────────────────────────────┘ │
 ├────────────────────────────────────────────────────────┤
 │  ┌─ RightPanel ───────────────────────────────────────┐ │
-│  │ [Code] [Preview●]                                   │ │
-│  │ ✦ Title · N files · [Live]  [Preview|Source]  ▤ ↻   │ │
+│  │ [Code] [Aperçu●] [Data]                             │ │
 │  │ ┌──────────────┬──────────────────────────────────┐ │ │
-│  │ │ FILES        │  Preview → Nodepod iframe         │ │ │
-│  │ │ ▾ app        │  Source  → read-only CodeArtifact │ │ │
-│  │ │   page.tsx   │                                  │ │ │
-│  │ │ package.json │                                  │ │ │
+│  │ │ FILES        │  PreviewBrowserFrame              │ │ │
+│  │ │ ▾ app        │   └── NodePod iframe (live)       │ │ │
+│  │ │ package.json │  Source → read-only CodeArtifact  │ │ │
 │  │ └──────────────┴──────────────────────────────────┘ │ │
-│  │ ┌─ Header: [Code|Preview|Data]  [Preview|Deployed]  [Share][Update] │ │
-│  │ └───────────────────────────────────────────────────────────────────┘ │ │
+│  │ [Aperçu | Déployée]  [Share] [Update]               │ │
 │  └────────────────────────────────────────────────────┘ │
 └────────────────────────────────────────────────────────┘
 ```
@@ -412,7 +412,7 @@ The panel has two `rightPanelMode` values (`tool` and `app`), plus an inner
 | Mode | Content | When |
 |---|---|---|
 | **Tool** | `ToolDetailDispatch` (tool call details for the selected tool) | Selecting a tool call in the timeline |
-| **App — Preview / Source** | `ApplicationComponentView`: `AppSourceFileTree` + read-only `AppSourceFileViewer`, or Nodepod (live) / Deployed iframe | After `application_component`; centered Preview↔Deploy switch in `AppViewModeToggle` |
+| **App — Aperçu / Source** | `ApplicationComponentView`: file tree + `PreviewBrowserFrame` (NodePod / Deployed) or Source | After `application_component`; Preview↔Deploy in `AppViewModeToggle` |
 | **App — Data** | `AppDataPanel` (production database dev/prod tables + rows) | App data tab when the app has an app-data store |
 
 Selecting a file in the tree switches the main pane to **Source** (read-only).
@@ -564,9 +564,12 @@ Dependency: `@scelar/nodepod` in `front/package.json`.
 
 ## i18n
 
-Keys under `nodepod.*` and `appRuntime.*` in [`locales/en.json`](locales/en.json)
-and [`locales/fr.json`](locales/fr.json) (status badges, tabs, read-only, errors,
-tool views, deploy controls).
+Keys under `nodepod.*`, `appRuntime.*`, and Studio empty/banner strings in
+[`locales/en.json`](locales/en.json) / [`locales/fr.json`](locales/fr.json).
+
+- Preview tab: EN **Preview** / FR **Aperçu** (`tabPreview`, `modePreview`, …).
+- No user-facing “Canvas” or “conversation-v2” strings.
+- Address bar / Live badge: `nodepod.addressLocal`, `nodepod.liveBadge`, etc.
 
 ## Key files
 
@@ -574,10 +577,11 @@ tool views, deploy controls).
 
 | Path | Role |
 |---|---|
-| `ConversationV2SessionPage.tsx` | Session page: composes bootstrap / clone-preview / runtime / reconcile hooks |
-| `ConversationV2Page.tsx` | Session list page |
+| `studio-paths.ts` | Public `/studio` paths + clone query helpers |
+| `ConversationV2SessionPage.tsx` | Studio session page: bootstrap / clone-preview / runtime / reconcile |
+| `ConversationV2Page.tsx` | Studio home / empty state |
 | `SharedConversationV2Page.tsx` | Read-only shared view |
-| `startAgentSession.ts` | New session, template clone, commit clone draft |
+| `startAgentSession.ts` | New session, template clone, commit clone draft → `/studio/…` |
 | `template-clone-draft.ts` / `template-clone-gate.ts` | Clone draft URL + Send gate |
 | `store.ts` | Zustand store — session, messages, tools, deploy, SSE state |
 | `api.ts` | REST API client (all endpoints) |
@@ -650,13 +654,15 @@ tool views, deploy controls).
 
 | Path | Role |
 |---|---|
-| `RightPanel.tsx` | Resizable panel shell: Tool/App (Preview | Data) tabs, deploy controls |
+| `RightPanel.tsx` | Resizable panel shell: Tool/App (Aperçu \| Data) tabs, deploy controls |
 | `ApplicationComponentView.tsx` | Dual-pane: file tree + preview/source |
+| `preview/PreviewBrowserFrame.tsx` | Decorative browser chrome around the live iframe |
+| `preview/PreviewCenteredStatus.tsx` | Centered boot / waiting / error status |
 | `AppSourceFileTree.tsx` | File explorer with search, expand/collapse |
 | `AppSourceFileViewer.tsx` | Read-only code viewer |
 | `AppBuildProgressPanel.tsx` | Build progress stepper |
 | `AppDataPanel.tsx` | App-data store browse: dev/prod environments, tables, rows |
-| `DeployControls.tsx` | Publish/Update, Share; `AppViewModeToggle` for Preview↔Deploy |
+| `DeployControls.tsx` | Publish/Update, Share; `AppViewModeToggle` for Aperçu↔Deploy |
 | `ShareDeployDialog.tsx` | User search + email share dialog |
 
 ### components/RightPanel/tool-views/
