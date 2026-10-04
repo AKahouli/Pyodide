@@ -689,6 +689,35 @@ export class DerivedFieldMappingDto {
   constantValue?: string | number | boolean;
 }
 
+/** One field of the source concept expanded into several items, each read as a record of its own. */
+export class DerivedExpandDto {
+  @ApiProperty({ description: 'The source field holding several values (text or a JSON array)' })
+  @IsString() @MinLength(1) @MaxLength(200)
+  field!: string;
+
+  @ApiProperty({ enum: ['auto', 'list', 'emails', 'delimiters', 'lines'] })
+  @IsIn(['auto', 'list', 'emails', 'delimiters', 'lines'])
+  split!: 'auto' | 'list' | 'emails' | 'delimiters' | 'lines';
+
+  @ApiPropertyOptional({ type: [String], maxItems: 10, description: 'For delimiters' })
+  @ValidateIf((dto: DerivedExpandDto) => dto.split === 'delimiters')
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(10)
+  @IsString({ each: true }) @MinLength(1, { each: true }) @MaxLength(5, { each: true })
+  delimiters?: string[];
+
+  @ApiPropertyOptional({ description: 'The list inside a JSON object, e.g. "to" or "data.recipients[*]"' })
+  @IsOptional() @IsString() @MaxLength(120)
+  path?: string;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 1000 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(1000)
+  maxItems?: number;
+
+  @ApiPropertyOptional({ description: 'The relationship linking each source record to the records its items made' })
+  @IsOptional() @IsUUID()
+  relationId?: string;
+}
+
 export class SaveDerivedSourceDto extends ExpectedModelRevisionDto {
   @ApiProperty({ description: 'The concept filled from another one' })
   @IsUUID()
@@ -729,6 +758,12 @@ export class SaveDerivedSourceDto extends ExpectedModelRevisionDto {
   @ValidateNested()
   @Type(() => AiExtractionSettingsDto)
   aiSettings?: AiExtractionSettingsDto;
+
+  @ApiPropertyOptional({ type: () => DerivedExpandDto, description: 'Several records per source record, one per item of a field' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DerivedExpandDto)
+  expand?: DerivedExpandDto;
 }
 
 export class CreateSourceMappingDto {
@@ -982,6 +1017,12 @@ export class DerivedFieldPreviewDto {
   @ValidateNested()
   @Type(() => AiExtractionSettingsDto)
   aiSettings?: AiExtractionSettingsDto;
+
+  @ApiPropertyOptional({ type: () => DerivedExpandDto, description: 'Several records per source record, one per item of a field' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DerivedExpandDto)
+  expand?: DerivedExpandDto;
 }
 
 export class DocumentSourceRefDto {

@@ -192,12 +192,12 @@ export class SemanticReviewQueueService {
    * concept out until the derived source is changed.
    */
   private async derivedNotMade(modelId: string, versionId: string): Promise<ReviewQueueItem[]> {
-    type Row = Pick<DerivedSource, 'id' | 'conceptId' | 'fieldMappings' | 'conflictRule' | 'orderBy'> & {
+    type Row = Pick<DerivedSource, 'id' | 'conceptId' | 'fieldMappings' | 'conflictRule' | 'orderBy' | 'expand'> & {
       concept: string; source: string; sourceFields: string[]; targetFields: string[]; identity: string[] | null;
     };
     const rows = await this.database.query<Row>(
       `SELECT d.id::text AS id, d.concept_id::text AS "conceptId", d.field_mappings AS "fieldMappings",
-              d.conflict_rule AS "conflictRule", d.order_by AS "orderBy", t.label AS concept, s.label AS source,
+              d.conflict_rule AS "conflictRule", d.order_by AS "orderBy", d.expand, t.label AS concept, s.label AS source,
               ARRAY(SELECT a->>'key' FROM jsonb_array_elements(s.attributes) a) AS "sourceFields",
               ARRAY(SELECT a->>'key' FROM jsonb_array_elements(t.attributes) a) AS "targetFields",
               ARRAY(SELECT jsonb_array_elements_text(i.fields)) AS identity

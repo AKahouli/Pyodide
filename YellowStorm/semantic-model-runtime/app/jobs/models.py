@@ -153,6 +153,8 @@ class Derivation(BaseModel):
     mapping_version: str = Field(default="v1", alias="mappingVersion", max_length=200)
     # How much of a field's text the AI reads; only present when a field is read by AI.
     ai_settings: dict[str, Any] | None = Field(default=None, alias="aiSettings")
+    # One source field expanded into several items, each read as a record (see app.population.expand).
+    expand: dict[str, Any] | None = None
 
     @model_serializer(mode="wrap")
     def serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
@@ -160,6 +162,8 @@ class Derivation(BaseModel):
         if self.ai_settings is None:
             data.pop("aiSettings", None)
             data.pop("ai_settings", None)
+        if self.expand is None:
+            data.pop("expand", None)
         return data
 
 

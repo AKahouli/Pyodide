@@ -497,6 +497,24 @@ export interface DerivedFieldMapping {
   constantValue?: string | number | boolean;
 }
 
+/** How one value is split into items: a list (or JSON array), e-mail addresses, lines or delimiters; `auto` finds out. */
+export type DerivedExpandSplit = 'auto' | 'list' | 'emails' | 'delimiters' | 'lines';
+
+/**
+ * Several records per source record: one field of the source concept (the recipients of a message, as text
+ * or a JSON array) expanded into items, each read as a record. Fields then read `@item`, or `@item.<path>`.
+ */
+export interface DerivedExpand {
+  field: string;
+  split: DerivedExpandSplit;
+  delimiters?: string[];
+  /** The list inside a JSON object ("to", "data.recipients[*]"). */
+  path?: string;
+  maxItems?: number;
+  /** The relationship linking each source record to the records its items made. */
+  relationId?: string;
+}
+
 /** Sample records of the source concept read with a derived source's fields, as a run would. */
 export interface DerivedFieldPreviewRequest {
   conceptId: string;
@@ -504,12 +522,19 @@ export interface DerivedFieldPreviewRequest {
   fieldMappings: DerivedFieldMapping[];
   records: Array<{ entityId: string; values: Record<string, string | number | boolean | null> }>;
   aiSettings?: Partial<AiExtractionSettings>;
+  expand?: DerivedExpand;
 }
 
 export interface DerivedFieldPreviewResponse {
-  /** For each record, how each field was read (or why not); `column` is the source field read. */
-  records: Array<{ entityId: string; fields: Record<string, DocumentFieldReading> }>;
+  /**
+   * For each record (each of its items, when a field is expanded), how each field was read (or why not);
+   * `column` is the source field read.
+   */
+  records: Array<{ entityId: string; fields: Record<string, DocumentFieldReading>; item?: number; itemText?: string }>;
   ai: { aiRows: number; aiCalls: number; aiSkippedRows: number; aiFailedRows: number };
+  /** When a field is expanded: the `@item…` fields its items offer, and whether some items were left out. */
+  itemFields?: string[];
+  itemsTruncated?: boolean;
 }
 
 export interface DerivedSource {
@@ -522,6 +547,7 @@ export interface DerivedSource {
   orderBy: string | null;
   /** How much the AI reads for this source, where it differs from the admin's defaults. */
   aiSettings?: Partial<AiExtractionSettings> | null;
+  expand?: DerivedExpand | null;
   updatedAt: string;
 }
 
@@ -533,6 +559,7 @@ export interface DerivedSourceDraft {
   conflictRule: DerivedConflictRule;
   orderBy?: string;
   aiSettings?: Partial<AiExtractionSettings>;
+  expand?: DerivedExpand;
 }
 
 export interface ConceptSourceMapping {

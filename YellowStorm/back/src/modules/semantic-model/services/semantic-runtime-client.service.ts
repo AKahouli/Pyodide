@@ -281,6 +281,8 @@ export interface RuntimeSheetPreviewRequest {
   entry: { conceptId: string; conceptLabel?: string; source: Record<string, unknown>; fieldMappings: unknown[]; options?: Record<string, unknown>; unit?: 'row' | 'record' };
   rows: Array<{ rowNumber: number; values: Record<string, unknown> }>;
   aiExtraction?: { agentSlug: string; model: string | null; contractVersion: string } | null;
+  /** A derived source expanding a field: each row is read once per item. */
+  expand?: Record<string, unknown>;
 }
 
 /** How each field of a few sheet rows was read: as is, out of its cell (rules, AI) or by its recipe, or why not. */
@@ -288,8 +290,14 @@ export interface RuntimeSheetPreview {
   rows: Array<{
     rowNumber: number;
     fields: Record<string, Record<string, unknown> & { method: string; reason: string; column?: string; span?: { start: number; end: number } }>;
+    /** With `expand`: which item of the row this reading is, and the item as text. */
+    item?: number;
+    itemText?: string;
   }>;
   ai: { aiRows: number; aiCalls: number; aiSkippedRows: number; aiFailedRows: number };
+  /** With `expand`: the `@item…` fields the items offer, and whether some items were not read. */
+  itemFields?: string[];
+  itemsTruncated?: boolean;
 }
 
 // ── Graph search (records of a bound data revision, found by meaning, then followed along real links) ──

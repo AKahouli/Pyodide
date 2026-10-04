@@ -17,8 +17,8 @@ import json
 from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
 from app.population.compiler import (canonical_spec_hash, compile_specification,
                                      filter_fields, validate_specification)
-from app.population.derived import (DerivationError, derive_concept, merge_derived, normalize_derivations,
-                                    read_derived_fields)
+from app.population.derived import (DerivationError, derivation_items, derive_concept, merge_derived,
+                                    normalize_derivations, read_derived_fields)
 from app.population.computed_fields import (apply_row_recipes, check_inputs, normalize_computed,
                                             normalize_row_recipes, recipe_columns, recipe_sources)
 from app.population.cell_fields import (CellReader, cell_gaps, cell_text, extraction_columns,
@@ -347,6 +347,13 @@ def run_population_for_payload(command_dump: dict) -> dict:
             mapped_fields.setdefault(entry.get("conceptId"), set()).update(mapped_attributes)
         try:
             derivations = normalize_derivations(payload.get("derivations"), compiled["concepts"])
+            for derivation in derivations:
+                # The relationship an expanding derivation links its records by joins its two concepts.
+                relation_id = (derivation.get("expand") or {}).get("relationId")
+                relation = compiled["relations"].get(relation_id) if relation_id else None
+                if relation_id and (relation is None or {relation["sourceConceptId"], relation["targetConceptId"]}
+                                    != {derivation["conceptId"], derivation["sourceConceptId"]}):
+                    raise DerivationError("invalid_derivations")
         except DerivationError as exc:
             return {"ok": False, "errorCode": str(exc)}
         for derivation in derivations:
@@ -742,6 +749,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         for key in counts:
             counts[key] += merged["counts"].get(key, 0)
     # Concepts made from another concept's records, once every source has been read.
+    derived_links: list[dict] = []
     for derivation in validated["derivations"]:
         source = merged_by_concept.get(derivation["sourceConceptId"])
         if source is None:
@@ -749,16 +757,25 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         target = compiled["concepts"][derivation["conceptId"]]
         # Fields read out of a source field's text (rules, AI), taken by a recipe or fixed, with the
         # same readers as a sheet cell; a field copied as it is needs no reading.
-        read = await read_derived_fields(derivation, source["entities"], {
+        # A derivation expanding a field reads one item record per item (each recipient of a message).
+        items, expand_gaps = derivation_items(derivation, source["entities"])
+        read = await read_derived_fields(derivation, items, {
             "conceptId": derivation["conceptId"], "conceptLabel": target.get("label") or derivation["conceptId"],
             "source": {"assetId": f"derived:{derivation['derivationId']}",
                        "originalName": compiled["concepts"][derivation["sourceConceptId"]].get("label")
                        or derivation["sourceConceptId"]},
             "assetRef": {}, "modelId": str(command_dump.get("modelId") or ""), "aiExtraction": ai_extraction},
             cache=extraction_cache)
-        derived = derive_concept(target, derivation, source["entities"], source["assertions"], read["readings"])
-        if read["gaps"]:
-            derived["gaps"].extend(read["gaps"])
+        derived = derive_concept(target, derivation, items, source["assertions"], read["readings"])
+        relation_id = (derivation.get("expand") or {}).get("relationId")
+        if relation_id:
+            forward = compiled["relations"][relation_id]["sourceConceptId"] == derivation["sourceConceptId"]
+            derived_links.extend({"relationId": relation_id,
+                                  "sourceEntityId": link["sourceEntityId"] if forward else link["targetEntityId"],
+                                  "targetEntityId": link["targetEntityId"] if forward else link["sourceEntityId"],
+                                  "matchingStrategy": "derived"} for link in derived["links"])
+        if read["gaps"] or expand_gaps:
+            derived["gaps"].extend(read["gaps"] + expand_gaps)
             derived["counts"]["gaps"] = len(derived["gaps"])
         merged_by_concept[derivation["conceptId"]] = merge_derived(
             merged_by_concept.get(derivation["conceptId"]), derived)
@@ -809,6 +826,8 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             reference, target)
         relationships.extend(matched["relationships"])
         gaps.extend(matched["gaps"])
+    relationships.extend(link for link in derived_links
+                         if link["sourceEntityId"] in kept_ids and link["targetEntityId"] in kept_ids)
     relationships.extend(manual_relationships(kept, manual_links, compiled["relations"]))
     # Links grow with records: a run allowed more records may keep proportionally more links.
     max_relationships = max(MAX_TOTAL_RELATIONSHIPS, 2 * limits["maxRecordsPerRun"])

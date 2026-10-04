@@ -703,6 +703,13 @@ export class SemanticPopulationRefreshService {
     if (!concepts.length) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'The selected scope has no mapped concepts');
     }
+    // A relationship an expanding derived source links its records by, removed since, links nothing.
+    for (const derivation of derivations) {
+      if (derivation.expand?.relationId && !relations.some((relation) => relation.relationId === derivation.expand?.relationId)) {
+        const { relationId: _removed, ...rest } = derivation.expand;
+        derivation.expand = rest;
+      }
+    }
     const draft = {
       modelId: model.id,
       modelVersionId: model.currentDraftVersionId,

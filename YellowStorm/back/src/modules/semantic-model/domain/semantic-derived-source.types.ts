@@ -14,6 +14,49 @@ export type DerivedConflictRule = (typeof DERIVED_CONFLICT_RULES)[number];
 export const DERIVED_FIELD_MODES = ['direct', 'extract', 'computed', 'constant'] as const;
 export type DerivedFieldMode = (typeof DERIVED_FIELD_MODES)[number];
 
+/** How one value is split into items: a list (or JSON array), e-mail addresses, lines or delimiters; `auto` finds out. */
+export const DERIVED_EXPAND_SPLITS = ['auto', 'list', 'emails', 'delimiters', 'lines'] as const;
+export type DerivedExpandSplit = (typeof DERIVED_EXPAND_SPLITS)[number];
+
+/**
+ * One field of the source concept expanded into several items, each read as a record of its own: the
+ * recipients a message lists. Fields then read `@item`, or `@item.<path>` of an object item.
+ */
+export interface DerivedExpand {
+  field: string;
+  split: DerivedExpandSplit;
+  /** For `delimiters`. */
+  delimiters?: string[];
+  /** For a list inside a JSON object ("to", "data.recipients[*]"). */
+  path?: string;
+  maxItems?: number;
+  /** The relationship linking each source record to the records its items made. */
+  relationId?: string;
+}
+
+/** A field of an expanded item: the item itself, or a path inside an object item. */
+export const isItemField = (name: string | undefined): boolean => name === '@item' || (name?.startsWith('@item.') === true && name.length > 6);
+
+/** The source fields a derived source can read: the source concept's, and its items' when it expands a field. */
+export function readableSourceFields(sourceFields: Iterable<string>, expand?: DerivedExpand | null): ReadonlySet<string> {
+  const fields = new Set(sourceFields);
+  if (!expand) return fields;
+  return new (class extends Set<string> { has(name: string) { return super.has(name) || isItemField(name); } })(fields);
+}
+
+/** The expand setting as stored and sent: only what its split uses. */
+export function storedExpand(expand: DerivedExpand | null | undefined): DerivedExpand | null {
+  if (!expand?.field) return null;
+  const split = expand.split ?? 'auto';
+  return {
+    field: expand.field, split,
+    ...(split === 'delimiters' && expand.delimiters?.length ? { delimiters: [...new Set(expand.delimiters)] } : {}),
+    ...((split === 'auto' || split === 'list') && expand.path?.trim() ? { path: expand.path.trim() } : {}),
+    ...(expand.maxItems ? { maxItems: expand.maxItems } : {}),
+    ...(expand.relationId ? { relationId: expand.relationId } : {}),
+  };
+}
+
 /** A field of the derived concept and how it is filled; a copied field keeps the shape it always had. */
 export interface DerivedFieldMapping {
   /** The source field it reads: required when copied or read out of a text. */
@@ -43,6 +86,8 @@ export interface DerivedSource {
   orderBy: string | null;
   /** How much the AI reads for this source, where it differs from the admin's defaults; null for the defaults. */
   aiSettings?: Record<string, number> | null;
+  /** One source field expanded into several items, each read as a record; null when none is. */
+  expand?: DerivedExpand | null;
   updatedAt: string;
 }
 
@@ -58,6 +103,8 @@ export interface RuntimeDerivation {
   mappingVersion: string;
   /** How much of a field's text the AI reads; only present when a field is read by AI. */
   aiSettings?: Record<string, unknown>;
+  /** Only present when a field is expanded, so other derivations keep their fingerprint. */
+  expand?: DerivedExpand;
 }
 
 export const derivedFieldMode = (field: Pick<DerivedFieldMapping, 'mode'>): DerivedFieldMode => field.mode ?? 'direct';
@@ -134,8 +181,10 @@ export function runtimeDerivedField(field: DerivedFieldMapping, attribute?: Attr
  * without which no record can be made: the one a key field was read from, or the one the most recent rule
  * orders by.
  */
-export function checkDerivedSource(source: Pick<DerivedSource, 'fieldMappings' | 'conflictRule' | 'orderBy'>,
-  sourceFields: ReadonlySet<string>, targetFields: ReadonlySet<string>, identity: readonly string[]) {
+export function checkDerivedSource(source: Pick<DerivedSource, 'fieldMappings' | 'conflictRule' | 'orderBy'> & Pick<Partial<DerivedSource>, 'expand'>,
+  conceptFields: ReadonlySet<string>, targetFields: ReadonlySet<string>, identity: readonly string[]) {
+  // An expanding source also reads its items' fields; without the field it expands it makes no record.
+  const sourceFields = readableSourceFields(conceptFields, source.expand);
   const readable = (field: DerivedFieldMapping): boolean => {
     if (!targetFields.has(field.targetAttribute)) return false;
     if (field.mode === 'constant') return true;
@@ -158,5 +207,6 @@ export function checkDerivedSource(source: Pick<DerivedSource, 'fieldMappings' |
       return (field ? derivedFieldInputs(field, source.fieldMappings).find((input) => !sourceFields.has(input)) : undefined) ?? key;
     });
   if (source.conflictRule === 'latest' && (!source.orderBy || !sourceFields.has(source.orderBy))) missing.push(source.orderBy ?? '');
+  if (source.expand && !conceptFields.has(source.expand.field)) missing.push(source.expand.field);
   return { fieldMappings, missing: [...new Set(missing.filter(Boolean))] };
 }

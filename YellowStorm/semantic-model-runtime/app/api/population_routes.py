@@ -655,6 +655,28 @@ async def preview_cell_fields(body: dict) -> dict[str, object]:
             or not all(isinstance(item, dict) for item in mappings)):
         raise HTTPException(status_code=422, detail="invalid_preview")
     active = [item for item in mappings if item.get("mode") != "ignore" and isinstance(item.get("targetAttribute"), str)]
+    # A derived source expanding a field: each sample record gives one row per item, read like a record.
+    items_of: list[tuple[object, int | None, str | None]] = [(row.get("rowNumber"), None, None) for row in rows]
+    item_fields: list[str] | None = None
+    items_truncated = False
+    if body.get("expand") is not None:
+        from app.population.expand import ExpandError, item_attributes, item_paths, normalize_expand, split_value
+        try:
+            expand = normalize_expand(body["expand"], {key for row in rows for key in row["values"]})
+        except ExpandError as exc:
+            raise HTTPException(status_code=422, detail="invalid_expand") from exc
+        expanded: list[dict] = []
+        items_of = []
+        for row in rows:
+            for index, item in enumerate(split_value(row["values"].get(expand["field"]), expand), start=1):
+                if len(expanded) >= MAX_PREVIEW_ROWS * MAX_PREVIEW_ITEMS_PER_ROW:
+                    items_truncated = True
+                    break
+                attributes = item_attributes(item)
+                expanded.append({"rowNumber": len(expanded) + 1, "values": {**row["values"], **attributes}})
+                items_of.append((row.get("rowNumber"), index, str(attributes["@item"])[:300]))
+        item_fields = item_paths([{"entityId": str(row.get("rowNumber")), "attributes": row["values"]} for row in rows], expand)
+        rows = expanded
     try:
         extractions = normalize_field_extractions(extractions_from_mappings(active))
         shaped = [item for item in active if item.get("mode") in ("direct", "computed") and item.get("computed") is not None]
@@ -674,9 +696,9 @@ async def preview_cell_fields(body: dict) -> dict[str, object]:
              for row in rows]
     columns = extraction_columns(extractions)
     read = await reader.read_rows([(row.get("rowNumber"), {column: cells.get(column, "") for column in columns})
-                                   for row, cells in zip(rows, texts)]) if extractions else [None] * len(rows)
+                                   for row, cells in zip(rows, texts)]) if extractions and rows else [None] * len(rows)
     results = []
-    for row, cells, outcome in zip(rows, texts, read):
+    for row, cells, outcome, (row_number, item_index, item_text) in zip(rows, texts, read, items_of):
         values: dict[str, object] = {}
         fields: dict[str, object] = {}
         for item in active:
@@ -696,11 +718,15 @@ async def preview_cell_fields(body: dict) -> dict[str, object]:
         for target, recipe in apply_row_recipes(recipes, values, cells).items():
             fields[target] = {"method": "computed", "reason": recipe["reason"], "input": recipe["input"],
                               **({"value": values[target]} if recipe["reason"] == "found" else {})}
-        results.append({"rowNumber": row.get("rowNumber"), "fields": fields})
-    return {"rows": results, "ai": {key: reader.stats[key] for key in ("aiRows", "aiCalls", "aiSkippedRows", "aiFailedRows")}}
+        results.append({"rowNumber": row_number, "fields": fields,
+                        **({"item": item_index, "itemText": item_text} if item_index is not None else {})})
+    return {"rows": results, "ai": {key: reader.stats[key] for key in ("aiRows", "aiCalls", "aiSkippedRows", "aiFailedRows")},
+            **({"itemFields": item_fields, "itemsTruncated": items_truncated} if item_fields is not None else {})}
 
 
 MAX_SHAPED_ROWS = 500
+# How many items of each sample record a preview reads, on average, when a derived source expands a field.
+MAX_PREVIEW_ITEMS_PER_ROW = 5
 
 
 @router.post("/sheet-rows", status_code=status.HTTP_200_OK)

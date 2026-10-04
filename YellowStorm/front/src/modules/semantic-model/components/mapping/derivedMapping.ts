@@ -1,4 +1,4 @@
-import type { ConceptRecordsPage, DerivedFieldMapping, SourceFieldMapping } from '../../types';
+import type { DerivedExpand, ConceptRecordsPage, DerivedFieldMapping, SourceFieldMapping } from '../../types';
 import { computedPayload, recipeColumns } from './FieldRecipeEditor';
 
 /**
@@ -57,6 +57,58 @@ export function derivedPayload(rows: readonly SourceFieldMapping[], savedOrder: 
         ...(strategy !== 'deterministic' && row.agentId ? { agentId: row.agentId } : {}),
       };
     });
+}
+
+/** A field of an expanded item: the item itself (`@item`), or a path inside an object item (`@item.email`). */
+export const ITEM_FIELD = '@item';
+export const isItemField = (name: string | null | undefined): boolean => name === ITEM_FIELD || (Boolean(name?.startsWith(`${ITEM_FIELD}.`)) && name!.length > ITEM_FIELD.length + 1);
+
+/** The source record's fields a preview sends: those the fields read, and the one expanded (not the item's own). */
+export function sentSourceFields(payload: readonly DerivedFieldMapping[], expand?: DerivedExpand | null): string[] {
+  return [...new Set([...usedSourceFields(payload).filter((field) => !isItemField(field)), ...(expand?.field ? [expand.field] : [])])];
+}
+
+/**
+ * The fields an item offers, from the item as the preview returns it: `@item`, and for a JSON object one
+ * `@item.<path>` per value inside it (as the runtime reads it), so a recipe can be tried on them.
+ */
+export function itemColumns(itemText: string): Record<string, unknown> {
+  const columns: Record<string, unknown> = { [ITEM_FIELD]: itemText };
+  if (!itemText.trim().startsWith('{')) return columns;
+  try {
+    const walk = (value: Record<string, unknown>, prefix: string, depth: number) => {
+      for (const [key, inner] of Object.entries(value)) {
+        const name = `${prefix}${key}`;
+        if (inner && typeof inner === 'object' && !Array.isArray(inner) && depth < 4) walk(inner as Record<string, unknown>, `${name}.`, depth + 1);
+        else if (inner !== null && inner !== undefined) columns[name] = typeof inner === 'object' ? JSON.stringify(inner) : inner;
+      }
+    };
+    walk(JSON.parse(itemText) as Record<string, unknown>, `${ITEM_FIELD}.`, 1);
+  } catch {
+    // Not JSON after all (a cut item): only the item itself.
+  }
+  return columns;
+}
+
+/** The expand setting as saved: only what its split uses; none when no field is picked. */
+export function expandPayload(expand: DerivedExpand | null): DerivedExpand | undefined {
+  if (!expand?.field) return undefined;
+  const delimiters = (expand.delimiters ?? []).filter(Boolean);
+  return {
+    field: expand.field, split: expand.split,
+    ...(expand.split === 'delimiters' && delimiters.length ? { delimiters } : {}),
+    ...((expand.split === 'auto' || expand.split === 'list') && expand.path?.trim() ? { path: expand.path.trim() } : {}),
+    ...(expand.maxItems ? { maxItems: expand.maxItems } : {}),
+    ...(expand.relationId ? { relationId: expand.relationId } : {}),
+  };
+}
+
+/** Why an expand setting cannot be saved, as a translation key, or null. */
+export function expandProblem(expand: DerivedExpand | null): string | null {
+  if (!expand) return null;
+  if (!expand.field) return 'derived.expand.problem.field';
+  if (expand.split === 'delimiters' && !(expand.delimiters ?? []).some(Boolean)) return 'derived.expand.problem.delimiters';
+  return null;
 }
 
 /** The source fields the fields read: copied, read out of, or taken by a recipe. */

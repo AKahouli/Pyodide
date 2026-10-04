@@ -14,14 +14,15 @@ import { semanticModelApi } from '../../api';
 import { useDerivedSources, useIdentityRules } from '../../query/hooks';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
 import { useSemanticModelEditorStore } from '../../store';
-import type { AiExtractionSettings, AttributeDefinition, DerivedConflictRule, DerivedFieldPreviewResponse, DerivedSource, DocumentFieldReading, MappingSettings, SourceFieldMapping } from '../../types';
+import type { AiExtractionSettings, AttributeDefinition, DerivedConflictRule, DerivedExpand, DerivedFieldPreviewResponse, DerivedSource, DocumentFieldReading, MappingSettings, SourceFieldMapping } from '../../types';
 import { DELETE_BUTTON, FORM_SECTION, FormField, INPUT, ROW_LIST, SectionHeader } from '../form/FormParts';
 import { AiLimitsEditor, FieldReadingResult, limitProblem, ReadAllFieldsBar, rulesProblem, usesAi as mappingsUseAi, usesRules, type LabelSuggestions } from './DocumentFieldRules';
 import { MappingPresetBar } from './MappingPresetBar';
 import { FieldLiveStatus } from './DocumentPreviewPane';
-import { computedProblem } from './FieldRecipeEditor';
+import { computedProblem, recipeColumns } from './FieldRecipeEditor';
 import { FieldMappingList, readAllWith, recipeInputs } from './FieldMappingList';
-import { derivedPayload, derivedRows, newDerivedRows, recordValue, usedSourceFields } from './derivedMapping';
+import { derivedPayload, derivedRows, expandPayload, expandProblem, isItemField, ITEM_FIELD, itemColumns, newDerivedRows, recordValue, sentSourceFields } from './derivedMapping';
+import { ExpandCard } from './ExpandCard';
 import { ReadingTextContext } from './readingText';
 import { adaptToSheet, cellLabelSuggestions, cellValue } from './sheetMapping';
 import { foundSpans, markText, type Highlight } from './SheetSourceMappingDrawer';
@@ -39,6 +40,11 @@ const MAX_RECORDS = 20;
 const FILTER_FROM = 8;
 // The runtime's default bound on records read with AI per derived source and run (SEMANTIC_MAX_AI_ROWS_PER_SOURCE).
 const MAX_AI_RECORDS = 500;
+
+/** Whether a field reads an item of the expanded field (itself, or by a recipe). */
+const usesItem = (field: { sourceAttribute?: string; mode?: string; computed?: unknown }) =>
+  isItemField(field.sourceAttribute) || recipeColumnsOf(field as never).some(isItemField);
+const recipeColumnsOf = (field: { mode?: string; computed?: Parameters<typeof recipeColumns>[0] }) => field.mode === 'computed' ? recipeColumns(field.computed) : [];
 
 const words = (text: string) => text.toLocaleLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 
@@ -80,6 +86,8 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
   const [recordFilter, setRecordFilter] = useState('');
   const [highlight, setHighlight] = useState<Highlight>(null);
   const [aiSettings, setAiSettings] = useState<Partial<AiExtractionSettings>>({});
+  // Several records per source record: one source field split into items, each read as a record.
+  const [expand, setExpand] = useState<DerivedExpand | null>(null);
 
   // A concept filled from another one cannot fill a third, so derivations never chain.
   const others = derivedSources.filter((source) => source.id !== target?.derived?.id);
@@ -106,13 +114,16 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
     setSourceConceptId(start);
     // A field removed from the source concept since saving is no longer offered, so it is not kept.
     const fromFields = graph?.nodes.find((node) => node.id === start)?.attributes.map((field) => field.key) ?? [];
-    const next = derived ? derivedRows(derived.fieldMappings, concept.attributes, fromFields) : suggestedRows(start);
+    // An expanding source's fields may read its items (`@item`, `@item.email`), which are not fields of the concept.
+    const itemFields = derived?.expand ? derived.fieldMappings.map((field) => field.sourceAttribute ?? '').filter(isItemField) : [];
+    const next = derived ? derivedRows(derived.fieldMappings, concept.attributes, [...fromFields, ...itemFields]) : suggestedRows(start);
     setRows(next);
     const identity = identityRules.find((item) => item.conceptId === concept.id)?.fields ?? [];
     setKeys(identity.length ? identity : next.filter((row) => row.mode !== 'ignore').slice(0, 1).map((row) => row.targetAttribute));
     setRule(derived?.conflictRule ?? 'most_frequent');
     setOrderBy(derived?.orderBy && fromFields.includes(derived.orderBy) ? derived.orderBy : '');
     setAiSettings({ ...(derived?.aiSettings ?? {}) });
+    setExpand(derived?.expand ?? null);
     setPicked(null);
     setShownId(null);
     setHighlight(null);
@@ -127,7 +138,7 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
   const fieldProblems = payloadRows.filter((row) => {
     if ((row.mode === 'direct' || row.mode === 'extract') && !row.sourceField) return true;
     if (row.mode === 'extract' && usesRules(row.extractionStrategy) && rulesProblem(row.rules)) return true;
-    if (row.mode === 'computed') return Boolean(computedProblem(row.computed, recipeInputs(payloadRows, row.targetAttribute, 'record'), sourceFields));
+    if (row.mode === 'computed') return Boolean(computedProblem(row.computed, recipeInputs(payloadRows, row.targetAttribute, 'record'), columns));
     return false;
   }).map((row) => row.targetAttribute);
   const unmappedKey = keys.find((key) => !payload.some((field) => field.targetAttribute === key));
@@ -139,6 +150,8 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
     : unmappedKey ? t('derived.problem.keyNotFilled', { field: attributeLabel(unmappedKey) })
     : rule === 'latest' && !orderBy ? t('derived.problem.orderBy')
     : usesAi && limitProblem(aiSettings) ? t('derived.problem.aiLimits')
+    : expandProblem(expand) ? t(expandProblem(expand) as 'derived.expand.problem.field')
+    : payload.some((field) => usesItem(field)) && !expand ? t('derived.expand.problem.itemWithoutExpand')
     : null;
 
   // Sample records: the source concept's records in the data in use.
@@ -153,8 +166,10 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
   const shown = samples.find((record) => record.id === shownId && pickedIds.includes(record.id)) ?? samples.find((record) => record.id === pickedIds[0]);
   const togglePicked = (id: string) => setPicked(pickedIds.includes(id) ? pickedIds.filter((item) => item !== id)
     : pickedIds.length < MAX_RECORDS ? [...pickedIds, id] : pickedIds);
-  const usedFields = usedSourceFields(payload);
-  const textFields = [...new Set(payload.filter((field) => field.mode === 'extract' && field.sourceAttribute).map((field) => field.sourceAttribute!))];
+  const usedFields = sentSourceFields(payload, expand);
+  // A field read out of an item shows the source field the items come from.
+  const textFields = [...new Set(payload.filter((field) => field.mode === 'extract' && field.sourceAttribute)
+    .map((field) => isItemField(field.sourceAttribute) ? expand?.field ?? '' : field.sourceAttribute!).filter(Boolean))];
   const listedSamples = recordFilter.trim()
     ? samples.filter((record) => `${record.label} ${usedFields.map((field) => String(recordValue(record, field) ?? '')).join(' ')}`
       .toLocaleLowerCase().includes(recordFilter.trim().toLocaleLowerCase()))
@@ -162,11 +177,12 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
 
   // The picked records read with the fields as a run would; rules and copies as they change, AI on request.
   const canRead = !problem && pickedIds.length > 0;
-  const draftKey = canRead ? JSON.stringify([payload, pickedIds, sourceConceptId, target?.conceptId, usesAi ? aiSettings : null]) : '';
+  const draftKey = canRead ? JSON.stringify([payload, pickedIds, sourceConceptId, target?.conceptId, usesAi ? aiSettings : null, expandPayload(expand) ?? null]) : '';
   const requestRef = useRef<() => Parameters<typeof semanticModelApi.previewDerivedFields>[1]>();
   requestRef.current = () => ({
     conceptId: target!.conceptId, sourceConceptId, fieldMappings: payload,
     ...(usesAi && Object.keys(aiSettings).length ? { aiSettings } : {}),
+    ...(expandPayload(expand) ? { expand: expandPayload(expand) } : {}),
     records: pickedIds.map((id) => {
       const record = samples.find((item) => item.id === id)!;
       return { entityId: id, values: Object.fromEntries(usedFields.map((field) => [field, cellValue(recordValue(record, field))])) };
@@ -192,9 +208,24 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
     return () => clearTimeout(timer);
   }, [draftKey, usesAi, readRecords]);
   const stale = Boolean(live.result) && live.key !== draftKey;
+  // The fields of the items, offered beside the source fields: the item, then the paths of object items.
+  const itemFields = expand ? [...new Set([ITEM_FIELD, ...(live.result?.itemFields ?? []),
+    ...payload.flatMap((field) => [field.sourceAttribute ?? '', ...(field.mode === 'computed' ? recipeColumnsOf(field) : [])]).filter(isItemField)])] : [];
+  const columns = [...itemFields, ...sourceFields];
+  const columnLabels = { ...sourceLabels, ...Object.fromEntries(itemFields.map((field) => [field, field === ITEM_FIELD
+    ? t('derived.expand.item') : t('derived.expand.itemPath', { path: field.slice(ITEM_FIELD.length + 1) })])) };
   const readingsOf = (id?: string) => live.result?.records.find((record) => record.entityId === id)?.fields;
   const shownReadings = readingsOf(shown?.id);
   const recordLabel = (id: string) => samples.find((record) => record.id === id)?.label || id;
+  // Each item read by the preview, as a row of values a recipe can be tried on.
+  const itemRows = (live.result?.records ?? []).filter((record) => record.item !== undefined).map((record) => {
+    const from = samples.find((item) => item.id === record.entityId);
+    return {
+      ...(from ? Object.fromEntries(sourceFields.map((field) => [field, recordValue(from, field)])) : {}),
+      ...itemColumns(record.itemText ?? ''), __entityId: record.entityId,
+      __recordLabel: `${recordLabel(record.entityId)} · ${record.item}`,
+    } as Record<string, unknown> & { __entityId: string };
+  });
   const fieldValues = useMemo(() => Object.fromEntries(attributes.map((attribute) => [attribute.key, (live.result?.records ?? []).flatMap((record, index) => {
     const reading = record.fields[attribute.key];
     return reading?.reason === 'found' && reading.value != null ? [{ row: index + 1, value: String(reading.value), label: recordLabel(record.entityId) }] : [];
@@ -241,6 +272,7 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
       ...(rule === 'latest' ? { orderBy } : {}),
       // Only limits that were set; none saves the admin's defaults. Kept even while no field uses AI.
       ...(Object.keys(aiSettings).length ? { aiSettings } : {}),
+      ...(expandPayload(expand) ? { expand: expandPayload(expand) } : {}),
     }, target?.derived?.id),
     onSuccess: async (result) => {
       await refresh(result.revision);
@@ -288,7 +320,7 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
       <div className='min-h-0 flex-1 space-y-6 overflow-y-auto p-5'>
         <FormField label={t('derived.source')} htmlFor='derived-source'>
           <Select value={sourceConceptId} onValueChange={(value) => {
-            setSourceConceptId(value); setRows(suggestedRows(value)); setOrderBy(''); setPicked(null); setShownId(null); setHighlight(null);
+            setSourceConceptId(value); setRows(suggestedRows(value)); setOrderBy(''); setExpand(null); setPicked(null); setShownId(null); setHighlight(null);
           }}>
             <SelectTrigger id='derived-source' className={INPUT} aria-label={t('derived.source')}><SelectValue placeholder={t('derived.chooseSource')} /></SelectTrigger>
             <SelectContent>{candidates.map((node) => <SelectItem key={node.id} value={node.id}>{node.label}</SelectItem>)}</SelectContent>
@@ -348,6 +380,13 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
           </div>}
         </section>}
 
+        {source && <ExpandCard value={expand} onChange={setExpand} sourceLabel={source.label}
+          sourceFields={source.attributes.map((field) => ({ key: field.key, label: field.label }))}
+          relations={(graph?.relations ?? []).filter((relation) => (relation.sourceNodeTypeId === source.id && relation.targetNodeTypeId === concept.id)
+            || (relation.sourceNodeTypeId === concept.id && relation.targetNodeTypeId === source.id)).map((relation) => ({ id: relation.id, label: relation.label }))}
+          items={expand && live.result && !stale ? { count: live.result.records.length, records: new Set(live.result.records.map((record) => record.entityId)).size,
+            truncated: live.result.itemsTruncated === true } : undefined} />}
+
         {source && <section className={FORM_SECTION}>
           <SectionHeader title={t('derived.fields')} help={t('derived.fieldsHelp', { source: source.label })} count={payload.length || undefined} />
           <MappingPresetBar modelId={modelId} conceptId={concept!.id} attributes={attributes}
@@ -359,11 +398,12 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
           {usesAi && <AiLimitsEditor defaults={defaultsQuery.data?.aiSettings} value={aiSettings} onChange={setAiSettings} />}
           <FieldMappingList kind='record' modelId={modelId} attributes={attributes} mappings={rows} onChange={changeRows}
             onIgnore={(field) => setKeys((current) => current.filter((key) => key !== field))}
-            columns={sourceFields} columnLabels={sourceLabels}
-            columnSamples={shown ? Object.fromEntries(sourceFields.map((field) => [field, String(recordValue(shown, field) ?? '')]).filter(([, value]) => value)) : undefined}
+            columns={columns} columnLabels={columnLabels}
+            columnSamples={shown ? { ...Object.fromEntries(sourceFields.map((field) => [field, String(recordValue(shown, field) ?? '')]).filter(([, value]) => value)),
+              ...(itemRows.find((row) => row.__entityId === shown.id) ?? {}) } : undefined}
             recipeSource={{
-              kind: 'record', sourceLabel: source.label, columns: sourceFields, columnLabels: sourceLabels,
-              rows: samples.map((record) => ({ ...Object.fromEntries(sourceFields.map((field) => [field, recordValue(record, field)])), __recordLabel: record.label || record.id })),
+              kind: 'record', sourceLabel: source.label, columns, columnLabels,
+              rows: expand ? itemRows : samples.map((record) => ({ ...Object.fromEntries(sourceFields.map((field) => [field, recordValue(record, field)])), __recordLabel: record.label || record.id })),
               fieldValues,
               fieldInputs: Object.fromEntries(payloadRows.filter((row) => row.mode === 'direct' && row.sourceField).map((row) => [row.targetAttribute, { column: row.sourceField! }])),
             }}
@@ -415,9 +455,9 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
         {live.result && source && <section className={cn(FORM_SECTION, stale && 'opacity-60')} aria-label={t('derived.resultTitle')}>
           <SectionHeader title={t('derived.resultTitle')} count={live.result.records.length} />
           {live.result.ai.aiCalls > 0 && <p className='text-[11px] text-muted-foreground'>{t('mapping.cell.aiPreview', { count: live.result.ai.aiCalls })}</p>}
-          {live.result.records.map((record) => <div key={record.entityId} className='space-y-1.5 rounded-lg border p-2'>
+          {live.result.records.map((record) => <div key={`${record.entityId}#${record.item ?? 0}`} className='space-y-1.5 rounded-lg border p-2'>
             <button type='button' className='text-xs font-medium hover:underline' onClick={() => { setShownId(record.entityId); setHighlight(null); }}>
-              {recordLabel(record.entityId)}</button>
+              {recordLabel(record.entityId)}{record.item !== undefined ? ` · ${t('derived.expand.itemOf', { number: record.item, item: record.itemText ?? '' })}` : ''}</button>
             <div className='grid gap-1.5 sm:grid-cols-2'>
               {payload.filter((field) => record.fields[field.targetAttribute]).map((field) => {
                 const reading = record.fields[field.targetAttribute];

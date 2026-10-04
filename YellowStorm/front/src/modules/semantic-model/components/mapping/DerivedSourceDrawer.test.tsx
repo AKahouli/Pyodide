@@ -105,6 +105,38 @@ describe('Derived source with the shared field mapping', () => {
     expect(api.saveDerivedSource.mock.calls[0][2]).toBe('d-1');
   });
 
+  it('reopens a source expanding a field with its item fields, previews each item and saves the setting', async () => {
+    const expand = { field: 'customer_name', split: 'delimiters' as const, delimiters: [','] };
+    api.previewDerivedFields.mockResolvedValue({
+      records: [{ entityId: 'contract:k1', item: 1, itemText: 'Acme', fields: { id: { method: 'direct', reason: 'found', value: 'Acme', column: '@item' } } },
+        { entityId: 'contract:k1', item: 2, itemText: 'Globex', fields: { id: { method: 'direct', reason: 'found', value: 'Globex', column: '@item' } } }],
+      ai: { aiRows: 0, aiCalls: 0, aiSkippedRows: 0, aiFailedRows: 0 }, itemFields: ['@item'], itemsTruncated: false,
+    });
+    renderDrawer({ ...saved, expand, fieldMappings: [{ sourceAttribute: '@item', targetAttribute: 'id' }, { sourceAttribute: '@item', targetAttribute: 'name' }] });
+    await screen.findByText('Country', { selector: 'span.truncate' });
+    // The item is offered beside the source fields, and the saved rows still read it.
+    expect(within(fieldRow('ID')).getByRole('combobox', { name: 'derived.sourceFieldFor' })).toHaveTextContent('derived.expand.item');
+    expect(screen.getByRole('switch', { name: /derived.expand.label/ })).toBeChecked();
+    await waitFor(() => expect(api.previewDerivedFields).toHaveBeenCalled());
+    const request = api.previewDerivedFields.mock.calls.at(-1)![1];
+    expect(request.expand).toEqual(expand);
+    // The source field the items come from is sent; the item itself is not a field of the record.
+    expect(Object.keys(request.records[0].values)).toEqual(['customer_name']);
+    expect(await screen.findByText('derived.expand.found')).toBeInTheDocument();
+    expect(screen.getAllByText(/derived.expand.itemOf/)).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: 'derived.save' }));
+    await waitFor(() => expect(api.saveDerivedSource).toHaveBeenCalled());
+    expect(api.saveDerivedSource.mock.calls[0][1]).toMatchObject({ expand });
+  });
+
+  it('asks for the field to expand before saving', async () => {
+    renderDrawer();
+    await screen.findByText('Country', { selector: 'span.truncate' });
+    fireEvent.click(screen.getByRole('switch', { name: /derived.expand.label/ }));
+    expect(await screen.findByText('derived.expand.problem.field')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'derived.save' })).toBeDisabled();
+  });
+
   it('keeps the AI limits set for this source, and offers presets', async () => {
     api.listMappingPresets.mockResolvedValue([]);
     api.getExtractionDefaults.mockResolvedValue({ aiSettings: { maxBlocks: 120, maxCharacters: 60000, longDocumentCharacters: 40000, blocksPerField: 8 }, configured: {} });

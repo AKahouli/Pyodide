@@ -17,6 +17,10 @@ same recipe a sheet field uses; a ``column`` input names a field of the source r
 (``mode: constant``). Such a value keeps the source value's evidence and adds which part of the
 source field it was read from (``derivedFrom.attribute``, ``span``, ``method``); a recipe joining several
 source fields lists them all in ``derivedFrom.attributes``.
+
+A derivation can also *expand* one source field into several items (``expand``, see :mod:`.expand`): the
+recipients a message lists, as text or a JSON array. Each item is read as a record of its own, its fields
+reading ``@item`` (or ``@item.<path>`` of an object item); evidence still names the source record and field.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ from __future__ import annotations
 from typing import Any
 
 from .document_rules import RuleError, normalize_ai_settings, to_iso_date
+from .expand import ExpandError, expand_entities, is_item_attribute, normalize_expand
 from .tabular import MAX_ASSERTIONS, MAX_MATERIALIZED_ENTITIES, entity_key, normalize_identity_value
 
 CONFLICT_RULES = ("most_frequent", "latest", "longest", "leave_empty")
@@ -71,14 +76,18 @@ def field_plan(derivation: dict) -> dict[str, Any]:
     return {"extractions": extractions, "recipes": recipes, "constants": constants}
 
 
-def _normalize_field(field: Any, source: dict, target: dict) -> dict:
+def _normalize_field(field: Any, source: dict, target: dict, items: bool = False) -> dict:
     if not isinstance(field, dict):
         raise DerivationError("invalid_derivations")
+
+    def readable(name: Any) -> bool:
+        # A field of the source record, or (when the derivation expands a field) of the item.
+        return name in source["allowedFields"] or (items and is_item_attribute(name))
     mode = _mode(field)
     target_attribute = field.get("targetAttribute")
     if mode not in FIELD_MODES or target_attribute not in target["allowedFields"]:
         raise DerivationError("invalid_derivations")
-    if mode in ("direct", "extract") and field.get("sourceAttribute") not in source["allowedFields"]:
+    if mode in ("direct", "extract") and not readable(field.get("sourceAttribute")):
         raise DerivationError("invalid_derivations")
     if mode == "direct" and "mode" not in field:
         # A field copied as it is: the shape every derivation had before the field modes.
@@ -96,7 +105,7 @@ def _normalize_field(field: Any, source: dict, target: dict) -> dict:
             kind = part.get("kind") if isinstance(part, dict) else None
             # A "column" of a source record is one of its fields.
             if (kind not in ("column", "field", "text") or (kind == "text" and part is source_input)
-                    or (kind == "column" and part.get("name") not in source["allowedFields"])):
+                    or (kind == "column" and not readable(part.get("name")))):
                 raise DerivationError("invalid_derivations")
     return {key: field[key] for key in _FIELD_KEYS if key in field}
 
@@ -132,7 +141,11 @@ def normalize_derivations(entries: Any, concepts: dict[str, dict]) -> list[dict]
         fields = entry.get("fieldMappings")
         if not isinstance(fields, list) or not fields:
             raise DerivationError("invalid_derivations")
-        mapped = [_normalize_field(field, source, target) for field in fields]
+        try:
+            expand = normalize_expand(entry.get("expand"), source["allowedFields"])
+        except ExpandError as exc:
+            raise DerivationError("invalid_derivations") from exc
+        mapped = [_normalize_field(field, source, target, items=expand is not None) for field in fields]
         targets = [field["targetAttribute"] for field in mapped]
         if len(set(targets)) != len(targets):
             raise DerivationError("invalid_derivations")
@@ -156,6 +169,8 @@ def normalize_derivations(entries: Any, concepts: dict[str, dict]) -> list[dict]
             "conflictRule": rule, "orderBy": order_by, "labelField": label_field,
             "mappingVersion": mapping_version if isinstance(mapping_version, str) and mapping_version else "v1",
         }
+        if expand is not None:
+            derivation["expand"] = expand
         # How much of a field's text the AI reads; only sent when a field is read by AI.
         ai_settings = entry.get("aiSettings")
         if ai_settings is not None:
@@ -180,6 +195,15 @@ def _source_value(entity: dict, attribute: str) -> Any:
     if value is None:
         value = (entity.get("identity") or {}).get(attribute)
     return value
+
+
+def derivation_items(derivation: dict, source_entities: list[dict]) -> tuple[list[dict], list[dict]]:
+    """The records a derivation reads: the source records, or one item record per item of the field it
+    expands, with the gaps of the expansion (a record listing more items than are read)."""
+    items, gaps = expand_entities(source_entities, derivation.get("expand"))
+    for gap in gaps:
+        gap.update({"conceptId": derivation["conceptId"], "derivationId": derivation["derivationId"]})
+    return items, gaps
 
 
 def _order_key(value: Any) -> tuple[int, str]:
@@ -326,6 +350,11 @@ def derive_concept(target: dict, derivation: dict, source_entities: list[dict],
     key_components: list[str] = target["keyComponents"]
     rule = derivation["conflictRule"]
     evidence_of = {(assertion["entityId"], assertion["attribute"]): assertion for assertion in source_assertions}
+    expanded = (derivation.get("expand") or {}).get("field")
+
+    def source_of(member: dict) -> str:
+        """The source record an item record was made from (the record itself when nothing is expanded)."""
+        return member.get("parentEntityId") or member["entityId"]
     ordered = sorted(source_entities, key=lambda entity: entity["entityId"])
     if rule == "latest":
         # Most recent first, records without a date last; equal dates keep the entity-id order.
@@ -386,14 +415,18 @@ def derive_concept(target: dict, derivation: dict, source_entities: list[dict],
             member = next(member for candidate, member in candidates if candidate == value)
             read = ((readings.get(member["entityId"]) or {}).get("evidence") or {}).get(target_attribute) or {}
             source_attribute = read.get("attribute", source_attribute)
-            source_assertion = evidence_of.get((member["entityId"], source_attribute)) if source_attribute else None
+            # An item's value is evidenced by the source field the item was expanded from.
+            evidence_attribute = expanded if is_item_attribute(source_attribute) else source_attribute
+            source_assertion = evidence_of.get((source_of(member), evidence_attribute)) if evidence_attribute else None
             evidence = dict(source_assertion["evidence"]) if source_assertion else {
                 "assetRef": ((member.get("provenance") or {}).get("sources") or [{}])[0].get("assetRef")}
             evidence["mappingVersion"] = derivation["mappingVersion"]
             evidence["derivedFrom"] = {
                 "derivationId": derivation["derivationId"], "conceptId": derivation["sourceConceptId"],
-                "entityId": member["entityId"], "label": member.get("label"), "attribute": source_attribute,
-                "rule": rule, "distinctValues": distinct, "records": len(candidates)}
+                "entityId": source_of(member), "label": member.get("label"), "attribute": source_attribute,
+                "rule": rule, "distinctValues": distinct, "records": len({source_of(item) for _value, item in candidates})}
+            if member.get("itemIndex") is not None:
+                evidence["derivedFrom"].update({"item": member["itemIndex"], "expandedFrom": expanded})
             if _mode(by_field[target_attribute]) != "direct":
                 # Read out of the source field's text, by a recipe, or fixed: how, and where in the text.
                 evidence["derivedFrom"].update({key: read[key] for key in _READ_KEYS if read.get(key) is not None})
@@ -417,18 +450,22 @@ def derive_concept(target: dict, derivation: dict, source_entities: list[dict],
                 if marker not in seen:
                     seen.add(marker)
                     sources.append({**source, "rowNumbers": list(source.get("rowNumbers", []))})
-        member_ids = sorted(member["entityId"] for member in members)
+        member_ids = sorted({source_of(member) for member in members})
         entities.append({
             "entityId": key, "conceptId": target["conceptId"], "namespace": target["namespace"],
             "identity": dict(group["identity"]), "label": label or first_key_value or key,
             "attributes": attributes, "materialized": True,
             "provenance": {"sources": sources, "derivedFrom": {
                 "derivationId": derivation["derivationId"], "conceptId": derivation["sourceConceptId"],
-                "count": len(members), "entityIds": member_ids[:MAX_DERIVED_FROM_IDS]}},
+                "count": len(member_ids), "entityIds": member_ids[:MAX_DERIVED_FROM_IDS]}},
         })
         counts["materialized"] += 1
     counts["gaps"] = len(gaps)
-    return {"entities": entities, "assertions": assertions, "gaps": gaps, "counts": counts}
+    # An expanding derivation links each source record to the records its items made.
+    links = sorted({(source_of(member), key) for key, group in groups.items() for member in group["members"]
+                    if member.get("parentEntityId")}) if (derivation.get("expand") or {}).get("relationId") else []
+    return {"entities": entities, "assertions": assertions, "gaps": gaps, "counts": counts,
+            "links": [{"sourceEntityId": parent, "targetEntityId": key} for parent, key in links]}
 
 
 def merge_derived(direct: dict | None, derived: dict) -> dict:
