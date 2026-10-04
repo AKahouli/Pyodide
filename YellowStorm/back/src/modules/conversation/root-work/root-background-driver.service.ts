@@ -46,7 +46,8 @@ export class RootBackgroundDriverService implements OnModuleInit, OnModuleDestro
   }
 
   private async poll() {
-    if (this.closing || this.polling || this.active.size >= this.limits().global) return;
+    // Store claims independently bound coordinator ownership and leaf compute.
+    if (this.closing || this.polling || this.active.size >= this.limits().global * 2) return;
     this.polling = true;
     try {
       if (!await this.ready()) return;

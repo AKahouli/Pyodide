@@ -2,8 +2,9 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { isDeepStrictEqual } from 'node:util';
 import * as schema from '../../../postgres/schema';
 import type { RegisterExecutionInput } from '../../root-work/root-work.store';
-import type { DelegateResultV1, RootExecutionRecord, RootExecutionStatus } from '../../root-work/root-work.types';
-import type { RootControlTransaction } from './root-background-owner';
+import type { DelegateResultV1, RootBackgroundJobOwnerV1, RootExecutionRecord, RootExecutionStatus } from '../../root-work/root-work.types';
+import { requireBackgroundOwner, type RootControlTransaction } from './root-background-owner';
+import { loadOwnedBackgroundItem } from './root-background-fanout';
 
 type RootExecutionRow = typeof schema.rootExecutions.$inferSelect;
 export function toRecord(row: RootExecutionRow): RootExecutionRecord {
@@ -26,12 +27,44 @@ export function toRecord(row: RootExecutionRow): RootExecutionRecord {
   };
 }
 
-export async function admitRootExecution(tx: RootControlTransaction, input: RegisterExecutionInput, backgroundReplay = false): Promise<RootExecutionRecord> {
+export async function admitRootExecution(tx: RootControlTransaction, input: RegisterExecutionInput, backgroundReplay = false,
+  coordinatorGrant?: RootBackgroundJobOwnerV1): Promise<RootExecutionRecord> {
+    if (input.nativeState?.backgroundFanoutItem && !coordinatorGrant) {
+      throw new Error('Fan-out worker admission requires coordinator ownership');
+    }
     const [conversation] = await tx.select({ epoch: schema.conversations.rootWorkEpoch })
       .from(schema.conversations).where(eq(schema.conversations.id, input.conversationId))
       .limit(1).for('update');
     if (!conversation || conversation.epoch !== input.conversationEpoch) {
       throw new Error('Root execution admission is behind the conversation barrier');
+    }
+    const ownedItem = coordinatorGrant ? await loadOwnedBackgroundItem(tx, coordinatorGrant, input.executionId) : null;
+    if (ownedItem) {
+      const parentState = (ownedItem.parent.resultPayload as DelegateResultV1).nativeState!;
+      const snapshot = ownedItem.role === 'temporary_worker' ? parentState.scope.immutableSnapshotRef
+        : (parentState.rootContext.catalog as Array<{ agent_id: string; snapshot_digest: string }> | undefined)
+          ?.find((entry) => entry.agent_id === ownedItem.request.agentId)?.snapshot_digest;
+      if (coordinatorGrant!.producerExecutionId !== input.executionId || input.parentExecutionId !== ownedItem.parent.id
+        || input.conversationId !== ownedItem.parent.conversationId || input.rootAgentId !== ownedItem.parent.rootAgentId
+        || input.workGroupId !== ownedItem.parent.workGroupId || input.role !== ownedItem.role || input.depth !== 1
+        || input.nativeState?.actorId !== ownedItem.job.actorId || input.nativeState.scope.executionId !== input.executionId
+        || input.nativeState.scope.parentExecutionId !== ownedItem.parent.id || input.nativeState.scope.role !== ownedItem.role
+        || input.nativeState.scope.depth !== 1 || input.nativeState.scope.conversationEpoch !== ownedItem.job.conversationEpoch
+        || !snapshot || input.nativeState.scope.immutableSnapshotRef !== snapshot
+        || input.nativeState.rootContext.selected_agent_id !== (ownedItem.request.agentId ?? input.executionId)
+        || !isDeepStrictEqual(input.nativeState.admittedRequest, ownedItem.request)
+        || input.nativeState.rootContext.delegate_request_digest !== ownedItem.item.requestDigest) {
+        throw new Error('Fan-out worker registration conflicts with its owned reservation');
+      }
+      await requireBackgroundOwner(tx, { ...ownedItem.coordinator,
+        resultPayload: ownedItem.coordinator.resultPayload as DelegateResultV1 }, coordinatorGrant);
+      input = { ...input, nativeState: { ...input.nativeState!,
+        backgroundFanoutItem: { coordinatorExecutionId: ownedItem.coordinator.id,
+          manifestId: ownedItem.manifest.manifestId, digest: ownedItem.manifest.digest },
+        sessionId: ownedItem.job.nativeSessionId, invocationId: ownedItem.job.nativeInvocationId,
+        scope: { ...input.nativeState!.scope, nativeSessionId: ownedItem.job.nativeSessionId,
+          nativeInvocationId: ownedItem.job.nativeInvocationId, expectedFence: String(ownedItem.job.fence),
+          deadlineEpochMs: ownedItem.job.deadline.getTime() } } };
     }
     if (input.parentExecutionId) {
       const [parent] = await tx.select().from(schema.rootExecutions)
@@ -40,7 +73,7 @@ export async function admitRootExecution(tx: RootControlTransaction, input: Regi
         .where(eq(schema.rootBackgroundJobs.executionId, input.executionId)).limit(1) : [];
       if (!parent || parent.conversationId !== input.conversationId || parent.role !== 'root'
         || parent.depth !== 0 || input.depth !== 1 || !['library_worker', 'temporary_worker'].includes(input.role)
-        || (background ? parent.status === 'cancellation_requested' : !['running', 'waiting'].includes(parent.status))
+        || (background || ownedItem ? parent.status === 'cancellation_requested' : !['running', 'waiting'].includes(parent.status))
         || parent.conversationEpoch !== input.conversationEpoch) {
         throw new Error('Worker admission requires an active root parent');
       }
@@ -103,6 +136,8 @@ export async function admitRootExecution(tx: RootControlTransaction, input: Regi
       .onConflictDoNothing({ target: schema.rootExecutions.id })
       .returning();
     if (inserted.length > 0) {
+      if (ownedItem) await requireBackgroundOwner(tx, { ...ownedItem.coordinator,
+        resultPayload: ownedItem.coordinator.resultPayload as DelegateResultV1 }, coordinatorGrant);
       return toRecord(inserted[0]);
     }
     // Concurrent duplicate registration: return the winning row.
@@ -127,5 +162,10 @@ export async function admitRootExecution(tx: RootControlTransaction, input: Regi
     if (existing.resultPayload?.nativeState?.backgroundJobId && !backgroundReplay) {
       throw new Error('Background hydration requires an owned job path');
     }
+    if (existing.resultPayload?.nativeState?.backgroundFanoutItem && !ownedItem) {
+      throw new Error('Fan-out worker hydration requires coordinator ownership');
+    }
+    if (ownedItem) await requireBackgroundOwner(tx, { ...ownedItem.coordinator,
+      resultPayload: ownedItem.coordinator.resultPayload as DelegateResultV1 }, coordinatorGrant);
     return existing;
 }

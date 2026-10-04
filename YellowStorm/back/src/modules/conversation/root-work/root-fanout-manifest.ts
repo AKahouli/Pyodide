@@ -3,7 +3,7 @@ import { stableStringify } from '../../agent/services/agent-execution-snapshot.s
 
 export interface FanoutProposalV1 {
   version: 1;
-  mode: 'foreground';
+  mode: 'foreground' | 'background';
   nativeCallId: string;
   nativeCallBranch: string;
   target: { kind: 'library'; agentId: string } | { kind: 'temporary' };
@@ -27,10 +27,10 @@ const boundedText = (value: unknown, max: number): value is string =>
 
 /** Validate the entire finite proposal before reserving or starting any item. */
 export function buildFanoutManifest(parentId: string, value: unknown, maxItems: number,
-  allowedWorkspaceIds: readonly string[]): FanoutManifestV1 {
+  allowedWorkspaceIds: readonly string[], allowBackground = false): FanoutManifestV1 {
   if (!/^[0-9a-f]{24}$/.test(parentId) || !Number.isSafeInteger(maxItems) || maxItems < 1 || maxItems > 50
     || !plainObject(value) || !exactKeys(value, ['version', 'mode', 'nativeCallId', 'nativeCallBranch', 'target', 'items'])
-    || value.version !== 1 || value.mode !== 'foreground'
+    || value.version !== 1 || !(value.mode === 'foreground' || allowBackground && value.mode === 'background')
     || !boundedText(value.nativeCallId, 256) || !boundedText(value.nativeCallBranch, 2048)
     || !value.nativeCallBranch.endsWith(`run_fanout@${value.nativeCallId}`)) {
     throw new Error('Invalid foreground fan-out proposal');
@@ -62,7 +62,7 @@ export function buildFanoutManifest(parentId: string, value: unknown, maxItems: 
     return { key: item.key, task: item.task,
       ...(item.expectedOutput === undefined ? {} : { expectedOutput: item.expectedOutput as string }), contextRefs: [...refs] as string[] };
   });
-  const proposal: FanoutProposalV1 = { version: 1, mode: 'foreground', nativeCallId: value.nativeCallId,
+  const proposal: FanoutProposalV1 = { version: 1, mode: value.mode, nativeCallId: value.nativeCallId,
     nativeCallBranch: value.nativeCallBranch, target: { ...target } as FanoutProposalV1['target'], items };
   const manifestId = hash(`${parentId}:${proposal.nativeCallBranch}`).slice(0, 24);
   return { ...proposal, manifestId, digest: hash(stableStringify(proposal)), items: items.map((item) => {

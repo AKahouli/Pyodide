@@ -94,6 +94,9 @@ export interface RootNativeState {
   /** Foreground owners release on waiting/termination; no timed slot reuse. */
   workerPermits?: Record<string, string>;
   backgroundJobId?: string;
+  /** Coordinator binding; item progress remains native Workflow history. */
+  backgroundFanout?: { manifestId: string; digest: string };
+  backgroundFanoutItem?: { coordinatorExecutionId: string; manifestId: string; digest: string };
   backgroundEventSequence?: string;
   hasBackgroundJobs?: boolean;
   capabilityCeiling?: import('./root-capability-ceiling').RootCapabilityCeiling;
@@ -130,6 +133,8 @@ export interface RootBackgroundJobOwnerV1 {
   owner: string;
   fence: number;
   nativeOwner?: string;
+  /** Trusted producer binding for a leaf inside a coordinator-owned native session. */
+  producerExecutionId?: string;
 }
 
 /** Stream-side lineage stamped onto producer events (proto ExecutionTrace). */

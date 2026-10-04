@@ -7,6 +7,9 @@ import { stableStringify } from '../../../agent/services/agent-execution-snapsho
 import { requireBackgroundOwner } from './root-background-owner';
 import { queueBackgroundInputs } from './root-background-inputs';
 import { admitRootExecution } from './root-execution-admission';
+import { reserveFanoutManifestInTransaction } from './root-fanout-reservation';
+import { boundBackgroundManifest, loadOwnedBackgroundFanout, loadOwnedBackgroundItem,
+  registerBackgroundCoordinator } from './root-background-fanout';
 import type { RegisterExecutionInput } from '../../root-work/root-work.store';
 import type { RootContinuationRequest } from '../../interfaces/message.interface';
 import { Inject, Injectable } from '@nestjs/common';
@@ -78,6 +81,27 @@ export class RootBackgroundJobStore {
     });
   }
 
+  /** Runtime submission remains unavailable until the coordinator host is qualified. */
+  async admitFanout(parentId: string, proposal: unknown): Promise<RootBackgroundJob> {
+    return this.db.transaction(async (tx) => {
+      const manifest = await reserveFanoutManifestInTransaction(tx, parentId, proposal, true);
+      const coordinator = await registerBackgroundCoordinator(tx, parentId, manifest);
+      return this.enqueueInTransaction(tx, coordinator.id, manifest.digest, true);
+    });
+  }
+
+  getOwnedFanout(grant: RootJobOwner) {
+    return this.db.transaction((tx) => loadOwnedBackgroundFanout(tx, grant));
+  }
+
+  getOwnedFanoutItem(grant: RootJobOwner, executionId: string) {
+    return this.db.transaction((tx) => loadOwnedBackgroundItem(tx, grant, executionId));
+  }
+
+  registerOwnedFanoutItem(grant: RootJobOwner, registration: RegisterExecutionInput) {
+    return this.db.transaction((tx) => admitRootExecution(tx, registration, false, grant));
+  }
+
   private async enqueueInTransaction(tx: RootTransaction, executionId: string, requestDigest: string, allowReplay = false): Promise<RootBackgroundJob> {
       const [identity] = await tx.select().from(schema.rootExecutions).where(eq(schema.rootExecutions.id, executionId)).limit(1);
       if (!identity?.parentExecutionId) throw new Error('Background job requires an admitted worker');
@@ -88,13 +112,16 @@ export class RootBackgroundJobStore {
       const [child] = await tx.select().from(schema.rootExecutions).where(eq(schema.rootExecutions.id, executionId)).limit(1).for('update');
       const rootState = (parent?.resultPayload as DelegateResultV1 | null)?.nativeState;
       const childState = (child?.resultPayload as DelegateResultV1 | null)?.nativeState;
+      if (childState?.backgroundFanoutItem) throw new Error('Fan-out item cannot acquire an independent background job');
       const [replay] = await tx.select().from(schema.rootBackgroundJobs)
         .where(eq(schema.rootBackgroundJobs.executionId, executionId)).limit(1);
+      const coordinator = parent && child && boundBackgroundManifest(parent, child, requestDigest);
       if (!conversation || !parent || parent.role !== 'root' || (!allowReplay || !replay) && !['running', 'waiting'].includes(parent.status)
-        || !child || !['library_worker', 'temporary_worker'].includes(child.role) || child.depth !== 1
+        || !child || !(coordinator || ['library_worker', 'temporary_worker'].includes(child.role) && child.depth === 1)
         || !['running', 'waiting'].includes(child.status) || conversation.rootWorkEpoch !== child.conversationEpoch
         || parent.conversationEpoch !== child.conversationEpoch || !rootState || !childState
         || rootState.rootContext.background_enabled !== true || !/^[0-9a-f]{64}$/.test(requestDigest)
+        || coordinator && rootState.rootContext.background_fanout_enabled !== true
         || childState.rootContext.delegate_request_digest !== requestDigest
         || !this.currentBinding(conversation, parent, rootState.actorId)) {
         throw new Error('Background job authority or immutable request unavailable');
@@ -153,7 +180,12 @@ export class RootBackgroundJobStore {
       const [job] = await tx.select().from(schema.rootBackgroundJobs).where(and(eq(schema.rootBackgroundJobs.executionId, candidate.executionId), eligible))
         .limit(1).for('update', { skipLocked: true });
       if (!job || !parent || !conversation) continue;
-      const bindingChanged = !this.currentBinding(conversation, parent, job.actorId);
+      const [execution] = await tx.select().from(schema.rootExecutions)
+        .where(eq(schema.rootExecutions.id, job.executionId)).limit(1);
+      const coordinator = execution?.role === 'fanout_driver';
+      const bindingChanged = !this.currentBinding(conversation, parent, job.actorId)
+        || !execution || (coordinator ? !boundBackgroundManifest(parent, execution, job.requestDigest)
+          : !['library_worker', 'temporary_worker'].includes(execution.role));
       if (bindingChanged || conversation.rootWorkEpoch !== job.conversationEpoch || job.deadline.getTime() <= Date.now() || job.attempts >= job.maxAttempts) {
         await tx.update(schema.rootBackgroundJobs).set({ status: bindingChanged || conversation.rootWorkEpoch !== job.conversationEpoch ? 'cancelled'
           : job.startedAt ? 'outcome_unknown' : 'failed', owner: null, leaseUntil: null, fence: job.fence + 1, updatedAt: new Date() })
@@ -161,15 +193,21 @@ export class RootBackgroundJobStore {
         continue;
       }
       const validLeases = and(eq(schema.rootBackgroundJobs.status, 'running'), sql`${schema.rootBackgroundJobs.leaseUntil} > clock_timestamp()`);
-      const [{ global }] = await tx.select({ global: sql<number>`count(*)::int` }).from(schema.rootBackgroundJobs).where(validLeases);
+      const capacityClass = coordinator ? eq(schema.rootExecutions.role, 'fanout_driver')
+        : inArray(schema.rootExecutions.role, ['library_worker', 'temporary_worker']);
+      const [{ global }] = await tx.select({ global: sql<number>`count(*)::int` }).from(schema.rootBackgroundJobs)
+        .innerJoin(schema.rootExecutions, eq(schema.rootExecutions.id, schema.rootBackgroundJobs.executionId))
+        .where(and(validLeases, capacityClass));
       const [{ perUser }] = await tx.select({ perUser: sql<number>`count(*)::int` }).from(schema.rootBackgroundJobs)
-        .where(and(validLeases, eq(schema.rootBackgroundJobs.actorId, job.actorId)));
+        .innerJoin(schema.rootExecutions, eq(schema.rootExecutions.id, schema.rootBackgroundJobs.executionId))
+        .where(and(validLeases, capacityClass, eq(schema.rootBackgroundJobs.actorId, job.actorId)));
       const [{ perRoot }] = await tx.select({ perRoot: sql<number>`count(*)::int` }).from(schema.rootBackgroundJobs)
-        .where(and(validLeases, eq(schema.rootBackgroundJobs.parentExecutionId, parent.id)));
+        .innerJoin(schema.rootExecutions, eq(schema.rootExecutions.id, schema.rootBackgroundJobs.executionId))
+        .where(and(validLeases, capacityClass, eq(schema.rootBackgroundJobs.parentExecutionId, parent.id)));
       const state = (parent.resultPayload as DelegateResultV1 | null)?.nativeState;
-      const rootLimit = Number(state?.rootContext.max_parallel_workers);
-      const foreground = Object.keys(state?.workerPermits ?? {}).length;
-      if (global >= limits.global) return null;
+      const rootLimit = Number(state?.rootContext[coordinator ? 'max_outstanding_background_jobs' : 'max_parallel_workers']);
+      const foreground = coordinator ? 0 : Object.keys(state?.workerPermits ?? {}).length;
+      if (global >= limits.global) continue;
       if (perUser >= limits.perUser || !Number.isSafeInteger(rootLimit)
         || rootLimit < 1 || rootLimit > 8 || perRoot + foreground >= rootLimit) continue;
       const [claimed] = await tx.update(schema.rootBackgroundJobs).set({ status: 'running', owner,

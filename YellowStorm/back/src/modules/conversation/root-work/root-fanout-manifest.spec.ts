@@ -22,6 +22,15 @@ describe('foreground fan-out manifest', () => {
     expect(build(changed).manifestId).toBe(build(proposal()).manifestId);
     expect(build(changed).digest).not.toBe(build(proposal()).digest);
   });
+  it('accepts background only through a trusted admission seam and binds mode into the digest', () => {
+    const value = { ...proposal(), mode: 'background' };
+    expect(() => build(value)).toThrow();
+    const background = buildFanoutManifest(parent, value, 3, ['workspace'], true);
+    expect(background.mode).toBe('background');
+    expect(background.manifestId).toBe(build(proposal()).manifestId);
+    expect(background.digest).not.toBe(build(proposal()).digest);
+    expect(background.items).toEqual(build(proposal()).items);
+  });
   it.each([
     { ...proposal(), mode: 'background' }, { ...proposal(), items: [] },
     { ...proposal(), nativeCallBranch: 'delegate_to_agent@call-1' },

@@ -2,6 +2,18 @@
 
 Date: 2026-10-04
 
+## WP07 coordinator admission and owned items — current checkpoint
+
+- User authorized commit and continued implementation; reviewer calls remain paused. Checkpoint committed as fc1d9f0cb (163 task files). Intervening ace861644 optimizations commit preserved; no history rewrite or unrelated revert.
+- New root-background-fanout.ts binds a coordinator to the immutable background manifest, original ROOT, dedicated session, epoch, actor and snapshot. Revalidates proposal seal and derived native branches/item IDs/request digests during owned reads. Background manifest mode is accepted only through trusted store admission; public foreground reservation still rejects it.
+- Atomic admitFanout reserves every item and creates the control execution/job together. Failed outstanding-capacity admission rolls back reservations and coordinator. Original ROOT remains the depth-one item parent; coordinator is control depth zero, outside lifetime worker counts.
+- Coordinator ownership and leaf compute claims are bounded separately. Coordinator saturation cannot block an eligible leaf, and occupied foreground compute does not prevent claiming a coordinator. Shared ROOT worker-permit counts exclude coordinator leases. Driver observer bound permits both bounded classes.
+- Backend39 admission/manifest tests PASS before capacity expansion; capacity regression reproduced FAIL and fixed; backend40 PG/driver/foreground checks PASS. Expanded admission/capacity42 PASS with production TypeScript. Owned manifest hydration/tamper3 PASS; producer registration2 PASS; focused item WAIT/completion/evidence1 PASS. Latest broader five-suite run80 PASS (107.75s). Delayed item-settlement lease-expiry regression1 PASS (25.77s), proving output/evidence rollback; final sibling-scope spoof/owned settlement1 PASS (30.65s) and production TypeScript PASS. Whitespace checks PASS. No reviewer run after user's pause.
+- Owned item registration derives the exact reservation, requires current native process + producer binding, checks frozen selected snapshot/request, consumes the existing reserved allowance once, and supports terminal foreground ROOT. Items cannot obtain independent background jobs. Generic registration/state/evidence/settlement paths deny these markers; owned mutation requires coordinator proof and rechecks lease after writes. Child WAIT/completion leaves the coordinator lease running.
+- Native coordinator Workflow invocation, owned item definition/permit HTTP adapters, producer-isolated native action receipts/evidence, durable coordinator aggregate event/WAIT recovery and policy/proto readiness wiring remain unfinished. No production submit path calls admitFanout; no background enablement or main migration.
+- Services remain the previously deployed WP07 leaf/default-off build at5175/3002/50053/8003; these coordinator changes are not deployed. Primary browser previously passed foreground smoke and remains a separate gate from future enabled fan-out qualification.
+- CRG was used for admission call paths. Its pre-commit CLI printed a Windows console Unicode error after indexing, but the checkpoint commit succeeded; source and executed checks govern evidence. Coordinator helper is separated by responsibility; admission remains one transaction to preserve lock order and quota/replay checks, and integration fixtures deliberately share the isolated PG lifecycle setup.
+
 ## WP07 atomic admission and foreground independence — current checkpoint
 
 User requests continued implementation and explicitly pauses reviewer calls for now. All uncommitted work preserved; no commit/reset, shared agentstore migration, saved-profile changes or background enablement.

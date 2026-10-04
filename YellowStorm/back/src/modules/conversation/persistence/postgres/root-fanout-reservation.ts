@@ -13,7 +13,7 @@ export async function reserveFanoutManifest(db: NodePgDatabase<typeof schema>, p
 
 /** Lets trusted background admission commit its job and full reservation together. */
 export async function reserveFanoutManifestInTransaction(tx: RootControlTransaction, parentId: string,
-  proposal: unknown): Promise<FanoutManifestV1> {
+  proposal: unknown, allowBackground = false): Promise<FanoutManifestV1> {
     const [identity] = await tx.select({ conversationId: schema.rootExecutions.conversationId })
       .from(schema.rootExecutions).where(eq(schema.rootExecutions.id, parentId)).limit(1);
     if (!identity) throw new Error('Fan-out ROOT unavailable');
@@ -29,7 +29,9 @@ export async function reserveFanoutManifestInTransaction(tx: RootControlTransact
       throw new Error('Fan-out requires an enabled active ROOT');
     }
     const manifest = buildFanoutManifest(parentId, proposal, Number(state.rootContext.max_fanout_items),
-      state.capabilityCeiling.workspaceIds);
+      state.capabilityCeiling.workspaceIds, allowBackground);
+    if (manifest.mode === 'background' && (state.rootContext.background_enabled !== true
+      || state.rootContext.background_fanout_enabled !== true)) throw new Error('Background fan-out is disabled');
     const manifests = state.fanoutManifests ?? [];
     const replay = manifests.find((item) => item.manifestId === manifest.manifestId);
     if (replay) {

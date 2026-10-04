@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { eq, sql } from 'drizzle-orm';
-import { conversations, rootBackgroundJobs, rootExecutions } from '../../../postgres/schema';
+import { conversations, rootBackgroundJobs, rootEvidenceRecords, rootExecutions } from '../../../postgres/schema';
 import { stableStringify } from '../../../agent/services/agent-execution-snapshot.service';
 import { describeIntegration, makeTestDb } from '../../../postgres/testing/pg-integration';
 import { PostgresRootWorkStore } from './postgres-root-work.store';
@@ -22,10 +22,11 @@ describeIntegration('background job owner/fence admission', () => {
   async function claimedNative(...args: Parameters<RootBackgroundJobStore['claim']>) {
     const job = await jobs.claim(...args);
     if (!job) return null;
+    if (!job.owner) throw new Error('Fixture claim has no owner');
     const nativeOwner = 'fixture-native';
     await database.db.update(rootBackgroundJobs).set({ nativeOwner, nativeOwnerFence: job.fence })
       .where(eq(rootBackgroundJobs.executionId, job.executionId));
-    return { ...job, nativeOwner, nativeOwnerFence: job.fence };
+    return { ...job, owner: job.owner, nativeOwner, nativeOwnerFence: job.fence };
   }
   const id = () => randomBytes(12).toString('hex');
   const digest = 'a'.repeat(64);
@@ -52,13 +53,16 @@ describeIntegration('background job owner/fence admission', () => {
   });
   afterAll(async () => { await database.close(); });
 
-  async function fixture(actorId = id()) {
+  async function fixture(actorId = id(), fanout = false) {
     const conversationId = id(); conversationIds.push(conversationId);
     const parentId = id();
     await database.db.insert(conversations).values({ id: conversationId, createdBy: actorId });
     const state: RootNativeState = { actorId, sessionId: 'root-session', invocationId: null, pendingInputs: [],
+      capabilityCeiling: { workspaceIds: [], toolDigests: [], skillDigests: [], connectors: [] },
       rootContext: { max_child_executions_per_work_group: 5, max_parallel_workers: 1, background_enabled: true,
-        max_work_group_duration_seconds: 60,
+        max_work_group_duration_seconds: 60, fanout_enabled: fanout, background_fanout_enabled: fanout,
+        temporary_workers_enabled: fanout, max_temporary_workers: 2,
+        max_fanout_items: 3, catalog: [{ agent_id: actorId, snapshot_digest: 'worker-snapshot', configuration_mode: 'native' }],
         max_outstanding_background_jobs: 2, background_task_timeout_seconds: 60, background_max_attempts: 3 },
       scope: { role: 'root', executionId: parentId, parentExecutionId: null, workGroupId: null, depth: 0, attempt: 1,
         conversationEpoch: 0, expectedFence: null, resumeIntent: 'start', immutableSnapshotRef: 'snapshot',
@@ -77,6 +81,247 @@ describeIntegration('background job owner/fence admission', () => {
     };
     return { conversationId, parentId, state, actorId, child, childInput };
   }
+
+  const fanoutProposal = (actorId: string, call = 'fanout') => ({ version: 1, mode: 'background',
+    nativeCallId: call, nativeCallBranch: `run_fanout@${call}`, target: { kind: 'library', agentId: actorId },
+    items: [{ key: 'first', task: 'First' }, { key: 'second', task: 'Second' }] });
+
+  it('atomically admits one coordinator and reserves original ROOT item identities on concurrent replay', async () => {
+    const root = await fixture(id(), true); const proposal = fanoutProposal(root.actorId);
+    const jobsCreated = await Promise.all([jobs.admitFanout(root.parentId, proposal), jobs.admitFanout(root.parentId, proposal)]);
+    expect(jobsCreated[0].executionId).toBe(jobsCreated[1].executionId);
+    const parent = (await work.getExecution(root.parentId))!;
+    const manifests = parent.resultPayload!.nativeState!.fanoutManifests!;
+    expect(manifests).toHaveLength(1);
+    const coordinator = (await work.getExecution(jobsCreated[0].executionId))!;
+    expect(coordinator).toMatchObject({ role: 'fanout_driver', depth: 0, parentExecutionId: root.parentId });
+    expect(coordinator.resultPayload!.nativeState!.backgroundFanout)
+      .toEqual({ manifestId: manifests[0].manifestId, digest: manifests[0].digest });
+    for (const item of manifests[0].items) {
+      await work.registerExecution({ ...root.childInput(), executionId: item.executionId,
+        nativeState: { ...root.state, rootContext: { delegate_request_digest: item.requestDigest,
+          selected_agent_id: root.actorId }, scope: { ...root.state.scope, role: 'library_worker', depth: 1,
+          executionId: item.executionId, parentExecutionId: root.parentId } } });
+    }
+    expect((await work.getExecution(manifests[0].items[0].executionId))?.parentExecutionId).toBe(root.parentId);
+    await expect(jobs.admitFanout(root.parentId, { ...proposal,
+      items: [{ key: 'first', task: 'Changed' }, proposal.items[1]] })).rejects.toThrow('immutable manifest');
+  });
+
+  it('rolls back coordinator and reservations when the outstanding job bound rejects admission', async () => {
+    const root = await fixture(id(), true);
+    await jobs.admit(root.childInput(), digest); await jobs.admit(root.childInput(), digest);
+    await expect(jobs.admitFanout(root.parentId, fanoutProposal(root.actorId))).rejects.toThrow('outstanding allowance');
+    expect((await work.getExecution(root.parentId))?.resultPayload?.nativeState?.fanoutManifests).toBeUndefined();
+    const children = await database.db.select().from(rootExecutions).where(eq(rootExecutions.parentExecutionId, root.parentId));
+    expect(children).toHaveLength(2); expect(children.every((row) => row.role === 'library_worker')).toBe(true);
+  });
+
+  it('rejects disabled background fan-out, foreground proposals and admissions behind Stop', async () => {
+    const disabled = await fixture();
+    await expect(jobs.admitFanout(disabled.parentId, fanoutProposal(disabled.actorId))).rejects.toThrow('enabled active ROOT');
+    const root = await fixture(id(), true);
+    await expect(jobs.admitFanout(root.parentId, { ...fanoutProposal(root.actorId), mode: 'foreground' }))
+      .rejects.toThrow('coordinator ROOT');
+    expect((await work.getExecution(root.parentId))?.resultPayload?.nativeState?.fanoutManifests).toBeUndefined();
+    await work.stopRootWork({ conversationId: root.conversationId, stopRequestId: newStopRequestId() });
+    await expect(jobs.admitFanout(root.parentId, fanoutProposal(root.actorId))).rejects.toThrow('active ROOT');
+  });
+
+  it('claims a coordinator under occupied compute capacity and leaves model permits available', async () => {
+    const root = await fixture(id(), true);
+    const coordinator = await jobs.admitFanout(root.parentId, fanoutProposal(root.actorId));
+    const leaf = await jobs.admit(root.childInput(), digest);
+    const foreground = await root.child();
+    expect(await updateWorkerPermit(database.db, root.parentId, foreground, 'foreground', 'acquire')).toBe(true);
+    const control = await claimedNative('control', 30, { global: 1, perUser: 1 });
+    expect(control?.executionId).toBe(coordinator.executionId);
+    expect(await updateWorkerPermit(database.db, root.parentId, foreground, 'foreground', 'release')).toBe(true);
+    expect(await updateWorkerPermit(database.db, root.parentId, foreground, 'foreground', 'acquire')).toBe(true);
+    expect(await updateWorkerPermit(database.db, root.parentId, foreground, 'foreground', 'release')).toBe(true);
+    expect((await claimedNative('leaf', 30, { global: 1, perUser: 1 }))?.executionId).toBe(leaf.executionId);
+    expect(await updateWorkerPermit(database.db, root.parentId, foreground, 'foreground', 'acquire')).toBe(false);
+  });
+
+  it('keeps bounded coordinator ownership separate from global and per-user compute claims', async () => {
+    const actor = id(); const first = await fixture(actor, true);
+    await jobs.admitFanout(first.parentId, fanoutProposal(actor));
+    expect(await claimedNative('control-one', 30, { global: 1, perUser: 1 })).not.toBeNull();
+    const second = await fixture(actor, true);
+    const queuedControl = await jobs.admitFanout(second.parentId, fanoutProposal(actor));
+    const leafRoot = await fixture(actor); const leaf = await jobs.admit(leafRoot.childInput(), digest);
+    expect((await claimedNative('compute', 30, { global: 1, perUser: 1 }))?.executionId).toBe(leaf.executionId);
+    expect((await jobs.getJob(queuedControl.executionId))?.status).toBe('queued');
+    await work.stopRootWork({ conversationId: first.conversationId, stopRequestId: newStopRequestId() });
+    expect((await claimedNative('control-two', 30, { global: 1, perUser: 1 }))?.executionId).toBe(queuedControl.executionId);
+  });
+
+  it('claims admitted coordinators after foreground failure but fences forged manifest membership', async () => {
+    const root = await fixture(id(), true); const coordinator = await jobs.admitFanout(root.parentId, fanoutProposal(root.actorId));
+    await work.completeExecution(root.parentId, 'failed', null);
+    expect((await claimedNative('control', 30, { global: 1, perUser: 1 }))?.executionId).toBe(coordinator.executionId);
+    const forgedRoot = await fixture(id(), true);
+    const forged = await jobs.admitFanout(forgedRoot.parentId, fanoutProposal(forgedRoot.actorId));
+    await database.db.execute(sql`UPDATE conversation.root_executions
+      SET result_payload=jsonb_set(result_payload, '{nativeState,backgroundFanout,digest}', '"forged"'::jsonb)
+      WHERE id=${forged.executionId}`);
+    expect(await jobs.claim('forged', 30, { global: 2, perUser: 2 })).toBeNull();
+    expect((await jobs.getJob(forged.executionId))?.status).toBe('cancelled');
+  });
+
+  it('hydrates only stored manifest items under the current coordinator owner after foreground completion', async () => {
+    const root = await fixture(id(), true);
+    await jobs.admitFanout(root.parentId, fanoutProposal(root.actorId));
+    const grant = (await claimedNative('control', 30, { global: 1, perUser: 1 }))!;
+    await work.completeExecution(root.parentId, 'completed', null);
+    const owned = await jobs.getOwnedFanout(grant);
+    const first = owned.manifest.items[0];
+    const hydrated = await jobs.getOwnedFanoutItem(grant, first.executionId);
+    expect(hydrated.role).toBe('library_worker');
+    expect(hydrated.request).toEqual({ agentId: root.actorId, nativeCallId: first.nativeRunId,
+      nativeCallBranch: first.nativeCallBranch, task: first.task, expectedOutput: '', contextRefs: [] });
+    expect(hydrated.parent.id).toBe(root.parentId);
+    expect(await work.getExecution(first.executionId)).toBeNull();
+    await expect(jobs.getOwnedFanoutItem(grant, id())).rejects.toThrow('outside the owned');
+    await expect(jobs.getOwnedFanout({ ...grant, owner: 'other' })).rejects.toThrow('owner, fence');
+    await expect(jobs.getOwnedFanout({ ...grant, nativeOwner: 'other-native' })).rejects.toThrow('native owner');
+    await database.db.update(rootBackgroundJobs).set({ fence: grant.fence + 1 })
+      .where(eq(rootBackgroundJobs.executionId, grant.executionId));
+    await expect(jobs.getOwnedFanoutItem(grant, first.executionId)).rejects.toThrow('owner, fence');
+  });
+
+  it.each(['task', 'branch'])('rejects a persisted manifest with changed %s despite an unchanged stored digest', async (changed) => {
+    const root = await fixture(id(), true); await jobs.admitFanout(root.parentId, fanoutProposal(root.actorId));
+    const grant = (await claimedNative('control', 30, { global: 1, perUser: 1 }))!;
+    const field = changed === 'task' ? 'task' : 'nativeCallBranch';
+    await database.db.execute(sql`UPDATE conversation.root_executions SET result_payload=jsonb_set(result_payload,
+      ${`{nativeState,fanoutManifests,0,items,0,${field}}`}::text[], '"changed"'::jsonb) WHERE id=${root.parentId}`);
+    await expect(jobs.getOwnedFanout(grant)).rejects.toThrow('manifest changed');
+  });
+
+  it.each(['running', 'completed'] as const)('materializes only the bound reserved producer with foreground %s and blocks generic writes', async (foregroundStatus) => {
+    const root = await fixture(id(), true); await jobs.admitFanout(root.parentId, fanoutProposal(root.actorId));
+    const grant = (await claimedNative('control', 30, { global: 1, perUser: 1 }))!;
+    const manifest = (await jobs.getOwnedFanout(grant)).manifest;
+    const item = manifest.items[0]; const owned = await jobs.getOwnedFanoutItem(grant, item.executionId);
+    const input = { ...root.childInput(), executionId: item.executionId, nativeState: { ...root.state,
+      admittedRequest: owned.request, rootContext: { delegate_request_digest: item.requestDigest, selected_agent_id: root.actorId },
+      scope: { ...root.state.scope, executionId: item.executionId, parentExecutionId: root.parentId,
+        role: 'library_worker' as const, depth: 1, immutableSnapshotRef: 'worker-snapshot' } } };
+    const producerGrant = { ...grant, producerExecutionId: item.executionId };
+    if (foregroundStatus === 'completed') await work.completeExecution(root.parentId, 'completed', null);
+    const [first, replay] = await Promise.all([jobs.registerOwnedFanoutItem(producerGrant, input),
+      jobs.registerOwnedFanoutItem(producerGrant, input)]);
+    expect(first.id).toBe(replay.id); expect(first.parentExecutionId).toBe(root.parentId);
+    expect(first.resultPayload!.nativeState).toMatchObject({ sessionId: grant.nativeSessionId,
+      backgroundFanoutItem: { coordinatorExecutionId: grant.executionId, manifestId: manifest.manifestId, digest: manifest.digest },
+      scope: { executionId: item.executionId, parentExecutionId: root.parentId, depth: 1, expectedFence: String(grant.fence) } });
+    await expect(jobs.registerOwnedFanoutItem({ ...producerGrant, producerExecutionId: manifest.items[1].executionId }, input))
+      .rejects.toThrow('producer binding');
+    await expect(jobs.registerOwnedFanoutItem({ ...producerGrant, nativeOwner: undefined }, input)).rejects.toThrow('immutable binding');
+    await expect(jobs.registerOwnedFanoutItem(producerGrant, { ...input, nativeState: { ...input.nativeState,
+      admittedRequest: { ...owned.request, task: 'Changed' } } })).rejects.toThrow('owned reservation');
+    await expect(work.registerExecution(input)).rejects.toThrow(foregroundStatus === 'completed' ? 'active root' : 'coordinator ownership');
+    await expect(jobs.enqueue(item.executionId, item.requestDigest)).rejects.toThrow('independent background job');
+    await expect(work.completeExecution(item.executionId, 'completed', null)).rejects.toThrow('coordinator ownership');
+    await expect(work.recordNativeState(item.executionId, first.resultPayload!.nativeState!, 'waiting'))
+      .rejects.toThrow('coordinator ownership');
+    const [evidence] = producerEvidence(first, [{ kind: 'artifact', nativeIdentity: 'tool', outputOrdinal: 0,
+      payload: { workspaceId: 'workspace', path: 'output.txt' } }]);
+    await expect(work.registerEvidence(evidence)).rejects.toThrow('owned settlement');
+    await work.stopRootWork({ conversationId: root.conversationId, stopRequestId: newStopRequestId() });
+    await expect(jobs.registerOwnedFanoutItem(producerGrant, input)).rejects.toThrow('barrier');
+  });
+
+  it('parks and settles a bound item with evidence without releasing coordinator ownership', async () => {
+    const root = await fixture(id(), true); await jobs.admitFanout(root.parentId, fanoutProposal(root.actorId));
+    const grant = (await claimedNative('control', 30, { global: 1, perUser: 1 }))!;
+    await database.db.update(rootBackgroundJobs).set({ nativeInvocationId: 'coordinator-invocation' })
+      .where(eq(rootBackgroundJobs.executionId, grant.executionId));
+    const owned = await jobs.getOwnedFanout(grant); const item = owned.manifest.items[0];
+    const bound = await jobs.getOwnedFanoutItem(grant, item.executionId);
+    const producerGrant = { ...grant, producerExecutionId: item.executionId };
+    const child = await jobs.registerOwnedFanoutItem(producerGrant, { ...root.childInput(), executionId: item.executionId,
+      nativeState: { ...root.state, admittedRequest: bound.request,
+        rootContext: { delegate_request_digest: item.requestDigest, selected_agent_id: root.actorId },
+        scope: { ...root.state.scope, executionId: item.executionId, parentExecutionId: root.parentId,
+          role: 'library_worker', depth: 1, immutableSnapshotRef: 'worker-snapshot' } } });
+    const state = child.resultPayload!.nativeState!;
+    await expect(work.recordNativeState(item.executionId, { ...state, scope: { ...state.scope,
+      executionId: owned.manifest.items[1].executionId } }, 'waiting', producerGrant)).rejects.toThrow('producer binding changed');
+    expect((await work.getExecution(item.executionId))?.status).toBe('running');
+    expect((await work.recordNativeState(item.executionId, state, 'waiting', producerGrant))?.status).toBe('waiting');
+    expect((await jobs.getJob(grant.executionId))?.status).toBe('running');
+    const [evidence] = producerEvidence(child, [{ kind: 'artifact', nativeIdentity: 'tool', outputOrdinal: 0,
+      payload: { workspaceId: 'workspace', path: 'output.txt' } }]);
+    await expect(work.completeExecution(item.executionId, 'completed', null, [evidence],
+      { ...producerGrant, producerExecutionId: owned.manifest.items[1].executionId })).rejects.toThrow('coordinator ownership');
+    const completed = await work.completeExecution(item.executionId, 'completed', { ...child.resultPayload!,
+      status: 'completed', text: 'Bound worker output', fullText: 'Complete bound worker output',
+      artifactRefs: [evidence.evidenceId] }, [evidence], producerGrant);
+    expect(completed?.resultPayload?.artifactRefs).toEqual([evidence.evidenceId]);
+    expect(completed?.resultPayload?.fullText).toBe('Complete bound worker output');
+    expect((await database.db.select().from(rootEvidenceRecords).where(eq(rootEvidenceRecords.executionId, item.executionId))))
+      .toHaveLength(1);
+    const control = await jobs.getJob(grant.executionId);
+    expect(control).toMatchObject({ status: 'running', owner: grant.owner, fence: grant.fence, nativeOwner: grant.nativeOwner });
+    expect(await jobs.heartbeat(grant, 30)).toBe(true);
+  });
+
+  it('materializes temporary reservations once without creating extra jobs or replenishing lifetime allowances', async () => {
+    const root = await fixture(id(), true);
+    await jobs.admitFanout(root.parentId, { ...fanoutProposal(root.actorId), target: { kind: 'temporary' } });
+    const grant = (await claimedNative('control', 30, { global: 1, perUser: 1 }))!;
+    const owned = await jobs.getOwnedFanout(grant);
+    await work.completeExecution(root.parentId, 'completed', null);
+    for (const item of owned.manifest.items) {
+      const bound = await jobs.getOwnedFanoutItem(grant, item.executionId);
+      const registration: RegisterExecutionInput = { ...root.childInput(), role: 'temporary_worker', executionId: item.executionId,
+        nativeState: { ...root.state, admittedRequest: bound.request,
+          rootContext: { delegate_request_digest: item.requestDigest, selected_agent_id: item.executionId },
+          scope: { ...root.state.scope, role: 'temporary_worker', depth: 1, parentExecutionId: root.parentId, executionId: item.executionId } } };
+      const producer = { ...grant, producerExecutionId: item.executionId };
+      const child = await jobs.registerOwnedFanoutItem(producer, registration);
+      await work.completeExecution(item.executionId, 'completed', null, [], producer);
+      expect((await jobs.registerOwnedFanoutItem(producer, registration)).id).toBe(child.id);
+      expect(await jobs.getJob(item.executionId)).toBeNull();
+    }
+    const children = await database.db.select().from(rootExecutions).where(eq(rootExecutions.parentExecutionId, root.parentId));
+    expect(children.filter((row) => row.role === 'temporary_worker')).toHaveLength(2);
+    expect((await jobs.getJob(grant.executionId))?.status).toBe('running');
+  });
+
+  it('rolls back item output and evidence if the coordinator lease expires during settlement', async () => {
+    const root = await fixture(id(), true); await jobs.admitFanout(root.parentId, fanoutProposal(root.actorId));
+    const grant = (await claimedNative('control', 30, { global: 1, perUser: 1 }))!;
+    const item = (await jobs.getOwnedFanout(grant)).manifest.items[0];
+    const bound = await jobs.getOwnedFanoutItem(grant, item.executionId);
+    const producer = { ...grant, producerExecutionId: item.executionId };
+    const child = await jobs.registerOwnedFanoutItem(producer, { ...root.childInput(), executionId: item.executionId,
+      nativeState: { ...root.state, admittedRequest: bound.request,
+        rootContext: { delegate_request_digest: item.requestDigest, selected_agent_id: root.actorId },
+        scope: { ...root.state.scope, executionId: item.executionId, parentExecutionId: root.parentId,
+          role: 'library_worker', depth: 1, immutableSnapshotRef: 'worker-snapshot' } } });
+    const [evidence] = producerEvidence(child, [{ kind: 'artifact', nativeIdentity: 'tool', outputOrdinal: 0,
+      payload: { path: 'output.txt' } }]);
+    const name = `delay_item_${item.executionId}`;
+    await database.pool.query(`CREATE FUNCTION conversation.${name}() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.id = '${item.executionId}' THEN PERFORM pg_sleep(4); END IF; RETURN NEW; END $$`);
+    await database.pool.query(`CREATE TRIGGER ${name} BEFORE UPDATE ON conversation.root_executions
+      FOR EACH ROW EXECUTE FUNCTION conversation.${name}()`);
+    try {
+      await database.db.update(rootBackgroundJobs).set({ leaseUntil: sql`clock_timestamp()+interval '3 seconds'` })
+        .where(eq(rootBackgroundJobs.executionId, grant.executionId));
+      await expect(work.completeExecution(item.executionId, 'completed', { ...child.resultPayload!,
+        status: 'completed', fullText: 'Must roll back', artifactRefs: [evidence.evidenceId] }, [evidence], producer))
+        .rejects.toThrow('owner, fence');
+      expect((await work.getExecution(item.executionId))?.status).toBe('running');
+      expect(await work.listEvidenceForExecution(item.executionId)).toEqual([]);
+    } finally {
+      await database.pool.query(`DROP TRIGGER ${name} ON conversation.root_executions`);
+      await database.pool.query(`DROP FUNCTION conversation.${name}()`);
+    }
+  });
 
   it('rolls back execution admission when outstanding capacity rejects the job', async () => {
     const root = await fixture();

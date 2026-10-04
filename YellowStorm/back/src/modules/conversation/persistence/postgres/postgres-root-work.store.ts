@@ -22,6 +22,7 @@ import {
   RootBackgroundJobOwnerV1,
 } from '@modules/conversation/root-work/root-work.types';
 import { requireBackgroundOwner } from './root-background-owner';
+import { requireBackgroundItemOwner } from './root-background-fanout';
 
 type RootExecutionRow = typeof schema.rootExecutions.$inferSelect;
 type RootEvidenceRow = typeof schema.rootEvidenceRecords.$inferSelect;
@@ -94,6 +95,8 @@ export class PostgresRootWorkStore implements RootWorkStore {
     const background = (execution.resultPayload as DelegateResultV1 | null)?.nativeState?.backgroundJobId;
     const stoppedCancellation = status === 'cancelled' && execution.status === 'cancellation_requested'
       && conversation.epoch > execution.conversationEpoch;
+    const fanoutItem = (execution.resultPayload as DelegateResultV1 | null)?.nativeState?.backgroundFanoutItem;
+    if (fanoutItem && !stoppedCancellation) await requireBackgroundItemOwner(tx, execution, backgroundOwner);
     if (background && !stoppedCancellation) await requireBackgroundOwner(tx, toRecord(execution), backgroundOwner);
     if (evidence.length) {
       if (status !== 'completed' || !['library_worker', 'temporary_worker'].includes(execution.role)) {
@@ -142,6 +145,7 @@ export class PostgresRootWorkStore implements RootWorkStore {
           sql`${schema.rootBackgroundJobs.deadline} > clock_timestamp()`)).returning({ id: schema.rootBackgroundJobs.executionId });
       if (settled.length !== 1) throw new Error('Background lease expired before atomic settlement');
     }
+    if (row && fanoutItem && !stoppedCancellation) await requireBackgroundItemOwner(tx, row, backgroundOwner);
     return row ? toRecord(row) : null;
     });
   }
@@ -152,7 +156,8 @@ export class PostgresRootWorkStore implements RootWorkStore {
       .set({ status: 'waiting', updatedAt: new Date() })
       .where(
         and(eq(schema.rootExecutions.id, executionId), eq(schema.rootExecutions.status, 'running'),
-          sql`${schema.rootExecutions.resultPayload}->'nativeState'->>'backgroundJobId' IS NULL`),
+          sql`${schema.rootExecutions.resultPayload}->'nativeState'->>'backgroundJobId' IS NULL`,
+          sql`${schema.rootExecutions.resultPayload}->'nativeState'->>'backgroundFanoutItem' IS NULL`),
       );
   }
 
@@ -171,8 +176,10 @@ export class PostgresRootWorkStore implements RootWorkStore {
       if (!['running', 'waiting'].includes(execution.status)) return null;
       const payload = execution.resultPayload as DelegateResultV1 | null;
       const previous = payload?.nativeState;
+      const itemJob = previous?.backgroundFanoutItem ? await requireBackgroundItemOwner(tx, execution, backgroundOwner) : null;
       const job = previous?.backgroundJobId ? await requireBackgroundOwner(tx, toRecord(execution), backgroundOwner) : null;
-      if (job && (job.nativeInvocationId !== state.invocationId || !state.invocationId)) {
+      const ownedJob = job ?? itemJob;
+      if (ownedJob && (ownedJob.nativeInvocationId !== state.invocationId || !state.invocationId)) {
         throw new Error('Background native mapping must match committed invocation correlation');
       }
       if (!previous || previous.actorId !== state.actorId || previous.sessionId !== state.sessionId
@@ -184,7 +191,9 @@ export class PostgresRootWorkStore implements RootWorkStore {
           fanoutManifests: previous.fanoutManifests, workerPermits: previous.workerPermits,
           admittedRequest: previous.admittedRequest,
           backgroundEventSequence: previous.backgroundEventSequence,
-          backgroundJobId: previous.backgroundJobId, hasBackgroundJobs: previous.hasBackgroundJobs } }, updatedAt: new Date(),
+          backgroundJobId: previous.backgroundJobId, backgroundFanout: previous.backgroundFanout,
+          backgroundFanoutItem: previous.backgroundFanoutItem,
+          hasBackgroundJobs: previous.hasBackgroundJobs } }, updatedAt: new Date(),
       }).where(and(eq(schema.rootExecutions.id, executionId),
         inArray(schema.rootExecutions.status, ['running', 'waiting']))).returning();
       if (row && job) {
@@ -198,6 +207,7 @@ export class PostgresRootWorkStore implements RootWorkStore {
             sql`${schema.rootBackgroundJobs.deadline} > clock_timestamp()`)).returning({ id: schema.rootBackgroundJobs.executionId });
         if (parked.length !== 1) throw new Error('Background lease expired before native state commit');
       }
+      if (row && itemJob) await requireBackgroundItemOwner(tx, row, backgroundOwner);
       return row ? toRecord(row) : null;
     });
   }
@@ -209,7 +219,8 @@ export class PostgresRootWorkStore implements RootWorkStore {
     const [execution] = await tx.select().from(schema.rootExecutions)
       .where(eq(schema.rootExecutions.id, input.executionId)).limit(1).for('update');
     if (!conversation || !execution || execution.conversationId !== input.conversationId
-      || (execution.resultPayload as DelegateResultV1 | null)?.nativeState?.backgroundJobId) {
+      || (execution.resultPayload as DelegateResultV1 | null)?.nativeState?.backgroundJobId
+      || (execution.resultPayload as DelegateResultV1 | null)?.nativeState?.backgroundFanoutItem) {
       throw new Error('Background evidence requires atomic owned settlement');
     }
     const inserted = await tx

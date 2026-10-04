@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import * as schema from '../../../postgres/schema';
 import type { DelegateResultV1 } from '../../root-work/root-work.types';
@@ -41,7 +41,9 @@ export async function updateWorkerPermit(db: NodePgDatabase<typeof schema>, pare
       let background = 0;
       if (state.hasBackgroundJobs) {
         const [{ count }] = await tx.select({ count: sql<number>`count(*)::int` }).from(schema.rootBackgroundJobs)
+          .innerJoin(schema.rootExecutions, eq(schema.rootExecutions.id, schema.rootBackgroundJobs.executionId))
           .where(and(eq(schema.rootBackgroundJobs.parentExecutionId, parentId), eq(schema.rootBackgroundJobs.status, 'running'),
+            inArray(schema.rootExecutions.role, ['library_worker', 'temporary_worker']),
             sql`${schema.rootBackgroundJobs.leaseUntil} > clock_timestamp()`));
         background = count;
       }
