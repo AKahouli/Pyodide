@@ -8,7 +8,7 @@ import {
 describe('template-clone-draft', () => {
   it('builds a real session path with ?action=clone (no template id in the URL)', () => {
     expect(conversationV2CloneDraftPath('33209d21af8ec4c6c8af7f37')).toBe(
-      '/conversation-v2/33209d21af8ec4c6c8af7f37?action=clone',
+      '/studio/33209d21af8ec4c6c8af7f37?action=clone',
     );
   });
 

@@ -4,7 +4,8 @@ import { writeSelectedModelForSession } from './selectedModelStorage';
 import { useConversationV2PointersStore, useConversationV2Store } from './store';
 import { useModelsStore } from '@/modules/models';
 import type { AgentSessionSource } from './interfaces';
-import { conversationV2CloneDraftPath } from './template-clone-draft';
+import { studioCloneDraftPath, studioSessionPath } from './studio-paths';
+
 
 export type { AgentSessionSource };
 
@@ -19,6 +20,8 @@ export interface StartAgentSessionParams {
   templateId?: string;
   /** Replace history when navigating (e.g. leaving a draft clone preview route). */
   navigationReplace?: boolean;
+  /** OpenCode capability (`web_app` default). */
+  capability?: 'web_app' | 'database_design';
 }
 
 export interface StartTemplateSessionParams {
@@ -50,8 +53,8 @@ function resolveLitellmModel(modelId: string | null): string | undefined {
 }
 
 /**
- * Create a conversation-v2 session, surface it in the sidebar, and navigate to
- * the session page with the initial agent prompt (same path as Agent mode).
+ * Create a Studio session, surface it in the sidebar, and navigate to the
+ * session page with the initial agent prompt (same path as Agent mode).
  */
 export async function startConversationV2AgentSession({
   text,
@@ -61,6 +64,7 @@ export async function startConversationV2AgentSession({
   source = 'new-conversation',
   templateId,
   navigationReplace = false,
+  capability = 'web_app',
 }: StartAgentSessionParams): Promise<string> {
   const trimmed = text.trim();
   if (!trimmed) {
@@ -68,7 +72,7 @@ export async function startConversationV2AgentSession({
   }
 
   const { sessionId, workspaceIds: sessionWorkspaceIds } =
-    await conversationV2Api.createSession(workspaceIds, templateId);
+    await conversationV2Api.createSession(workspaceIds, templateId, capability);
 
   prependSessionPointer(sessionId, sessionWorkspaceIds ?? workspaceIds);
 
@@ -77,7 +81,7 @@ export async function startConversationV2AgentSession({
   }
   const litellmModel = resolveLitellmModel(modelId);
 
-  navigate(`/conversation-v2/${sessionId}`, {
+  navigate(studioSessionPath(sessionId), {
     replace: navigationReplace,
     state: {
       initialMessage: trimmed,
@@ -86,6 +90,7 @@ export async function startConversationV2AgentSession({
       connectorIds: useConversationV2Store.getState().selectedConnectorIds,
       source,
       ...(templateId ? { templateId } : {}),
+      ...(capability ? { capability } : {}),
     },
   });
 
@@ -93,9 +98,9 @@ export async function startConversationV2AgentSession({
 }
 
 /**
- * App Market "Clone App": create the Conversation V2 session immediately and
- * open `/conversation-v2/{sessionId}?action=clone`. History is deferred until
- * the first Send (when `action=clone` is stripped).
+ * App Market "Clone App": create the Studio session immediately and open
+ * `/studio/{sessionId}?action=clone`. History is deferred until the first Send
+ * (when `action=clone` is stripped).
  */
 export async function startTemplateSession({
   templateId,
@@ -108,14 +113,13 @@ export async function startTemplateSession({
     throw new Error('Template id is required');
   }
 
-  const { sessionId, workspaceIds: sessionWorkspaceIds } =
-    await conversationV2Api.createSession(workspaceIds, trimmedId);
+  const { sessionId } = await conversationV2Api.createSession(workspaceIds, trimmedId);
 
   if (modelId) {
     writeSelectedModelForSession(sessionId, modelId);
   }
 
-  navigate(conversationV2CloneDraftPath(sessionId), {
+  navigate(studioCloneDraftPath(sessionId), {
     state: {
       source: 'template-clone' as const,
       templateId: trimmedId,
@@ -141,5 +145,5 @@ export function commitCloneDraftSession(
     workspaceIds ?? useConversationV2Store.getState().workspaceIds ?? [];
   prependSessionPointer(id, ids);
 
-  navigate(`/conversation-v2/${id}`, { replace: true });
+  navigate(studioSessionPath(id), { replace: true });
 }

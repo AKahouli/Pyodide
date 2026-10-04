@@ -313,7 +313,7 @@ describe('AppBuilderPage', () => {
     renderPage();
     fireEvent.click(await screen.findByRole('button', { name: /card\.conversation/i }));
 
-    expect(navigateMock).toHaveBeenCalledWith('/conversation-v2/session-1');
+    expect(navigateMock).toHaveBeenCalledWith('/studio/session-1');
   });
 
   it('removes a card after delete confirmation', async () => {

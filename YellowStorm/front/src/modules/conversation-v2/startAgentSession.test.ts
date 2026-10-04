@@ -64,12 +64,12 @@ describe('startConversationV2AgentSession', () => {
       source: 'app-builder',
     });
 
-    expect(createSessionMock).toHaveBeenCalledWith(['ws-1'], undefined);
+    expect(createSessionMock).toHaveBeenCalledWith(['ws-1'], undefined, 'web_app');
     expect(prependMock).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: 'session-new', workspaceIds: ['ws-1'] }),
     );
     expect(writeSelectedModelMock).toHaveBeenCalledWith('session-new', 'model-1');
-    expect(navigate).toHaveBeenCalledWith('/conversation-v2/session-new', {
+    expect(navigate).toHaveBeenCalledWith('/studio/session-new', {
       replace: false,
       state: {
         initialMessage: 'Build a CRM',
@@ -77,6 +77,7 @@ describe('startConversationV2AgentSession', () => {
         skillIds: ['skill-1'],
         connectorIds: ['conn-1'],
         source: 'app-builder',
+        capability: 'web_app',
       },
     });
   });
@@ -91,8 +92,8 @@ describe('startConversationV2AgentSession', () => {
       templateId: 'tpl-1',
     });
 
-    expect(createSessionMock).toHaveBeenCalledWith([], 'tpl-1');
-    expect(navigate).toHaveBeenCalledWith('/conversation-v2/session-new', {
+    expect(createSessionMock).toHaveBeenCalledWith([], 'tpl-1', 'web_app');
+    expect(navigate).toHaveBeenCalledWith('/studio/session-new', {
       replace: false,
       state: expect.objectContaining({
         initialMessage: 'Customize',
@@ -124,7 +125,7 @@ describe('startTemplateSession', () => {
     expect(createSessionMock).toHaveBeenCalledWith([], 'tpl-42');
     expect(prependMock).not.toHaveBeenCalled();
     expect(navigate).toHaveBeenCalledWith(
-      '/conversation-v2/33209d21af8ec4c6c8af7f37?action=clone',
+      '/studio/33209d21af8ec4c6c8af7f37?action=clone',
       {
         state: {
           source: 'template-clone',
@@ -158,7 +159,7 @@ describe('commitCloneDraftSession', () => {
         workspaceIds: ['ws-1'],
       }),
     );
-    expect(navigate).toHaveBeenCalledWith('/conversation-v2/33209d21af8ec4c6c8af7f37', {
+    expect(navigate).toHaveBeenCalledWith('/studio/33209d21af8ec4c6c8af7f37', {
       replace: true,
     });
   });
