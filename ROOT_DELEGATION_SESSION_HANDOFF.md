@@ -1,6 +1,21 @@
 # Root delegation — session handoff
 
-Date: 2026-10-04
+Date: 2026-10-05
+
+## WP07 owned item API — current checkpoint
+
+- Added guarded internal coordinator/item definition endpoint. Authority requires native process ownership, coordinator request digest and immutable stored item membership; profile hydration reuses library/temporary resolvers and rechecks ownership before publishing. Caller supplies no replacement task/profile/actor/scope.
+- Three backend lifecycle/profile suites41 PASS (28.32s); production TypeScript PASS. Missing native owner, wrong digest and late ownership loss covered. Existing leaf definition behavior preserved. No service restart/background enablement/main migration in this chunk; reviewer remains paused.
+- Next: native owned adapters and producer-isolated action/evidence authority, coordinator Workflow host/recovery, then remaining WP08–WP10 gates. This endpoint alone does not qualify background fan-out execution.
+
+## WP07 owned profile hydration — current checkpoint
+
+- Coordinator persistence checkpoint committed as e07a8e3a5; prior fc1d9f0cb and intervening ace861644 preserved. Reviewer calls remain paused by user.
+- Uncommitted library/temporary resolveFanoutItem methods reuse existing selected profile authorization, frozen definition comparison and isolated output setup. Requests come from stored manifest, never replacement caller inputs. Native process and producer binding required; current background/fan-out/temporary opt-in checked before and after hydration; lease/member proof rechecked before owned registration. Supports already terminal foreground ROOT. Current fence is returned on replay; temporary runtime session changes do not mutate the pinned ROOT profile or its digest.
+- Library/temporary suites35 PASS (22.42s) and backend production TypeScript PASS after the final temporary path, including opt-out, missing owner, sibling binding, late owner loss and no generic registration/credential persistence. These four service/test files are not committed yet.
+- Next bounded plan: preserve legacy leaf definition fields; coordinator response discriminant kind=fanout_driver, executionScope proto-shaped, actorId, immutable manifest, bounded frozen rootContext and private approval data. Item response carries selected definition, originalRoot depth-one scope in coordinator native session/current fence, optional committed result. Owned requests carry owner/fence/nativeOwner/requestDigest plus item ID; no replacement actor/parent/branch/snapshot.
+- Pinned SDK supports App(root_agent=Workflow, resumability_config=...) and Runner(app=..., session_service=fenced). Root-node path has tracing/plugin differences; mandatory item leaf/action enforcement must remain on compiled items/storage. Node-root completion recovery needs separate proven classification. No driver LLM or alternate PG workflow progress.
+- Native coordinator host and item HTTP adapters remain unimplemented; background remains disabled and no main migration/config/profile change. No pending test processes after suite89350 completed.
 
 ## WP07 coordinator admission and owned items — current checkpoint
 

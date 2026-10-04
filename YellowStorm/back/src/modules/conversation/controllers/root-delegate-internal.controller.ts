@@ -44,6 +44,12 @@ export class RootDelegateInternalController {
     return this.background.ingest(executionId, request);
   }
 
+  @Post(':executionId/background-items/:itemId/definition')
+  definitionBackgroundItem(@Param('executionId') executionId: string, @Param('itemId') itemId: string,
+    @Body() request: RootBackgroundAuthorityDto) {
+    return this.background.itemDefinition(executionId, itemId, request);
+  }
+
   @Post(':executionId/background-lifecycle')
   settleBackground(@Param('executionId') executionId: string, @Body() request: RootBackgroundSettlementDto) {
     return this.background.settle(executionId, request);

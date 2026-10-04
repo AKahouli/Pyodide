@@ -39,7 +39,27 @@ export class RootDelegateDefinitionService {
     return this.resolveRequest(executionId, request, undefined, undefined, true);
   }
 
-  private async resolveRequest(executionId: string, request: ResolveRootDelegateDto, grant?: RootJobOwner, ownedSessionId?: string, prepareOnly = false) {
+  async resolveFanoutItem(grant: RootJobOwner, executionId: string) {
+    if (grant.producerExecutionId !== undefined && grant.producerExecutionId !== executionId) {
+      throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Fan-out producer binding changed');
+    }
+    const producer = { ...grant, producerExecutionId: executionId };
+    if (!producer.nativeOwner) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Fan-out requires native ownership');
+    const owned = await this.jobs.getOwnedFanoutItem(producer, executionId);
+    if (owned.role !== 'library_worker' || !owned.request.agentId) {
+      throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Fan-out item is not a library worker');
+    }
+    const prepared = await this.resolveRequest(owned.parent.id, { ...owned.request, agentId: owned.request.agentId },
+      undefined, owned.job.nativeSessionId, true, producer);
+    if (!('registration' in prepared) || !prepared.registration) throw new Error('Fan-out preparation missing');
+    const child = await this.jobs.registerOwnedFanoutItem(producer, prepared.registration);
+    return { executionId: child.id, definition: prepared.definition,
+      scope: { ...child.resultPayload!.nativeState!.scope, expectedFence: String(producer.fence) },
+      ...(child.terminalAt ? { result: child.resultPayload } : {}) };
+  }
+
+  private async resolveRequest(executionId: string, request: ResolveRootDelegateDto, grant?: RootJobOwner,
+    ownedSessionId?: string, prepareOnly = false, fanoutGrant?: RootJobOwner) {
     if (!/^[0-9a-f]{24}$/.test(executionId) || !request.nativeCallId
       || !request.nativeCallBranch.endsWith(`delegate_to_agent@${request.nativeCallId}`)) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid native delegation identity');
@@ -47,7 +67,7 @@ export class RootDelegateDefinitionService {
     const parent = await this.work.getExecution(executionId);
     const state = parent?.resultPayload?.nativeState;
     if (!parent || !state || parent.role !== 'root' || parent.depth !== 0
-      || (grant ? parent.status === 'cancellation_requested' : !['running', 'waiting'].includes(parent.status)) || !state.capabilityCeiling) {
+      || (grant || fanoutGrant ? parent.status === 'cancellation_requested' : !['running', 'waiting'].includes(parent.status)) || !state.capabilityCeiling) {
       throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Root execution cannot admit a worker');
     }
     const authorize = async () => {
@@ -58,6 +78,9 @@ export class RootDelegateDefinitionService {
         throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Root delegation authority changed');
       }
       const pool = await this.resolver.resolveForActor(parent.rootAgentId!, state.actorId);
+      if (fanoutGrant && (!pool.policy.background.enabled || !pool.policy.fanout.enabled || !pool.policy.fanout.allowBackground)) {
+        throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Background fan-out authority changed');
+      }
       const frozen = (state.rootContext.catalog as Array<Record<string, unknown>> | undefined)
         ?.find((entry) => entry.agent_id === request.agentId);
       const current = pool.entries.find((entry) => entry.agentId === request.agentId);
@@ -96,7 +119,7 @@ export class RootDelegateDefinitionService {
       task: request.task, expectedOutput: request.expectedOutput ?? '', contextRefs: request.contextRefs ?? [] })).digest('hex');
     // Compare with the admitted runtime identity; tools receive the owned
     // background session, whose binding is checked independently by the job.
-    const digestCandidate = grant && candidate.agent_params?.params.session_id !== undefined
+    const digestCandidate = (grant || fanoutGrant) && candidate.agent_params?.params.session_id !== undefined
       ? { ...candidate, agent_params: { params: { ...candidate.agent_params.params, session_id: state.sessionId } } }
       : candidate;
     const childState: RootNativeState = {
@@ -126,6 +149,10 @@ export class RootDelegateDefinitionService {
       rootAgentId: parent.rootAgentId, parentExecutionId: executionId, workGroupId: parent.workGroupId,
       role: 'library_worker' as const, depth: 1, attempt: 1, conversationEpoch: parent.conversationEpoch,
       nativeState: childState };
+    if (fanoutGrant) {
+      const owned = await this.jobs.getOwnedFanoutItem(fanoutGrant, childId);
+      if (owned.parent.id !== executionId) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Fan-out parent changed');
+    }
     if (prepareOnly) return { executionId: childId, definition: candidate, scope: childState.scope, registration };
     const child = await this.work.registerExecution(registration);
     return { executionId: child.id, definition: candidate, scope: childState.scope,

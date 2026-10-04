@@ -40,7 +40,28 @@ export class RootTemporaryDefinitionService {
     return this.resolveRequest(parentId, request, undefined, true);
   }
 
-  private async resolveRequest(parentId: string, request: ResolveRootTemporaryDto, grant?: RootJobOwner, prepareOnly = false) {
+  async resolveFanoutItem(grant: RootJobOwner, executionId: string) {
+    if (!grant.nativeOwner || grant.producerExecutionId !== undefined && grant.producerExecutionId !== executionId) {
+      throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Fan-out native producer ownership is unavailable');
+    }
+    const producer = { ...grant, producerExecutionId: executionId };
+    const owned = await this.jobs.getOwnedFanoutItem(producer, executionId);
+    if (owned.role !== 'temporary_worker') {
+      throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Fan-out item is not a temporary worker');
+    }
+    const prepared = await this.resolveRequest(owned.parent.id, owned.request, undefined, true, producer);
+    if (!('registration' in prepared) || !prepared.registration) throw new Error('Fan-out preparation missing');
+    const child = await this.jobs.registerOwnedFanoutItem(producer, prepared.registration);
+    if (prepared.definition.agent_params?.params.session_id !== undefined) {
+      prepared.definition.agent_params.params.session_id = owned.job.nativeSessionId;
+    }
+    return { executionId: child.id, definition: prepared.definition,
+      scope: { ...child.resultPayload!.nativeState!.scope, expectedFence: String(producer.fence) },
+      ...(child.terminalAt ? { result: child.resultPayload } : {}) };
+  }
+
+  private async resolveRequest(parentId: string, request: ResolveRootTemporaryDto, grant?: RootJobOwner,
+    prepareOnly = false, fanoutGrant?: RootJobOwner) {
     if (!request.nativeCallId || !request.nativeCallBranch.endsWith(`spawn_temporary_worker@${request.nativeCallId}`)) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Temporary worker requires its native branch');
     }
@@ -60,9 +81,12 @@ export class RootTemporaryDefinitionService {
       if (conversation.createdBy !== state.actorId || conversation.rootAgentId !== rootId
         || conversation.isArchived || conversation.isGroup
         || (conversation.rootWorkEpoch ?? 0) !== parent.conversationEpoch
-        || !current || (grant ? current.status === 'cancellation_requested' : !['running', 'waiting'].includes(current.status))
+        || !current || (grant || fanoutGrant ? current.status === 'cancellation_requested' : !['running', 'waiting'].includes(current.status))
         || pool.rootSnapshotDigest !== state.scope.immutableSnapshotRef || !pool.policy.temporaryWorkers.enabled) {
         throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Temporary worker authority changed');
+      }
+      if (fanoutGrant && (!pool.policy.background.enabled || !pool.policy.fanout.enabled || !pool.policy.fanout.allowBackground)) {
+        throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Background fan-out authority changed');
       }
     };
     await authorize();
@@ -132,6 +156,10 @@ export class RootTemporaryDefinitionService {
     const registration = { executionId: childId, conversationId: parent.conversationId,
       rootAgentId: rootId, parentExecutionId: parentId, workGroupId: parent.workGroupId, role: 'temporary_worker',
       depth: 1, attempt: 1, conversationEpoch: parent.conversationEpoch, nativeState: childState } as const;
+    if (fanoutGrant) {
+      const owned = await this.jobs.getOwnedFanoutItem(fanoutGrant, childId);
+      if (owned.parent.id !== parentId) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Fan-out parent changed');
+    }
     if (prepareOnly) return { executionId: childId, definition: candidate, scope: childState.scope, registration };
     const child = await this.work.registerExecution(registration);
     return { executionId: childId, definition: candidate, scope: childState.scope,

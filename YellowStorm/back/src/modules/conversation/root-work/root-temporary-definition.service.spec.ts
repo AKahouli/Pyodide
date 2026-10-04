@@ -2,6 +2,7 @@ import { RootTemporaryDefinitionService } from './root-temporary-definition.serv
 import { resolvedDefinitionsDigest } from '../services/conversation-agent-request.builder';
 import { freezeRootCapabilityCeiling } from './root-capability-ceiling';
 import type { IGrpcAgent } from '../../agent/interfaces/agent.interface';
+import { createHash } from 'node:crypto';
 
 describe('root-derived temporary profile', () => {
   const rootId = '1'.repeat(24), parentId = '2'.repeat(24);
@@ -30,11 +31,51 @@ describe('root-derived temporary profile', () => {
     const settings = { getSettings: jest.fn().mockResolvedValue({ compaction: { enabled: false } }) };
     const shares = { assertUserHasAccess: jest.fn() };
     const sources = { buildSources: jest.fn().mockResolvedValue([]) };
-    const jobs = { getOwnedHydration: jest.fn() };
+    const jobs = { getOwnedHydration: jest.fn(), getOwnedFanoutItem: jest.fn(), registerOwnedFanoutItem: jest.fn() };
     return { root, state, parent, work, conversations, pool, resolver, agents, semantic, shares, sources, jobs,
       service: new RootTemporaryDefinitionService(work as never, conversations as never, resolver as never,
         agents as never, semantic as never, settings as never, shares as never, sources as never, jobs as never) };
   }
+  it('rehydrates a frozen temporary fan-out profile with the coordinator session and current fence', async () => {
+    const h = harness();
+    h.root.agent_params!.params.session_id = 'root-session';
+    h.state.resolvedDefinitionsDigest = resolvedDefinitionsDigest(h.root, []);
+    h.parent.status = 'completed';
+    Object.assign(h.pool.policy, { background: { enabled: true }, fanout: { enabled: true, allowBackground: true } });
+    const executionId = createHash('sha256').update(`${parentId}:${request.nativeCallBranch}`).digest('hex').slice(0, 24);
+    const grant = { executionId: 'coordinator', owner: 'owner', nativeOwner: 'native', fence: 3 };
+    const owned = { parent: h.parent, role: 'temporary_worker', request: { ...request, expectedOutput: '', contextRefs: [] },
+      job: { nativeSessionId: 'coordinator-session' } };
+    h.jobs.getOwnedFanoutItem.mockResolvedValue(owned);
+    h.jobs.registerOwnedFanoutItem.mockImplementation(async (_grant, input) => ({ id: input.executionId,
+      resultPayload: { nativeState: { ...input.nativeState, scope: { ...input.nativeState.scope, expectedFence: '1' } } } }));
+    const result = await h.service.resolveFanoutItem(grant, executionId);
+    expect(result.definition).toMatchObject({ id: executionId, save_memory: false,
+      agent_params: { params: { session_id: 'coordinator-session' } } });
+    expect(result.scope).toMatchObject({ executionId, parentExecutionId: parentId, depth: 1, expectedFence: '3' });
+    expect(h.root.agent_params!.params.session_id).toBe('root-session');
+    expect(h.work.registerExecution).not.toHaveBeenCalled();
+    expect(JSON.stringify(h.jobs.registerOwnedFanoutItem.mock.calls)).not.toContain('current-internal-secret');
+    h.jobs.registerOwnedFanoutItem.mockClear();
+    h.jobs.getOwnedFanoutItem.mockReset().mockResolvedValueOnce(owned).mockRejectedValueOnce(new Error('lease changed'));
+    await expect(h.service.resolveFanoutItem(grant, executionId)).rejects.toThrow('lease changed');
+    expect(h.jobs.registerOwnedFanoutItem).not.toHaveBeenCalled();
+  });
+
+  it('denies missing or mismatched producer ownership and current background opt-out before profile hydration', async () => {
+    const h = harness();
+    await expect(h.service.resolveFanoutItem({ executionId: 'coordinator', owner: 'owner', fence: 1 }, 'item'))
+      .rejects.toThrow('ownership');
+    await expect(h.service.resolveFanoutItem({ executionId: 'coordinator', owner: 'owner', fence: 1,
+      nativeOwner: 'native', producerExecutionId: 'other' }, 'item')).rejects.toThrow('ownership');
+    expect(h.jobs.getOwnedFanoutItem).not.toHaveBeenCalled();
+    Object.assign(h.pool.policy, { background: { enabled: false }, fanout: { enabled: true, allowBackground: true } });
+    h.jobs.getOwnedFanoutItem.mockResolvedValue({ parent: h.parent, role: 'temporary_worker', request,
+      job: { nativeSessionId: 'coordinator-session' } });
+    await expect(h.service.resolveFanoutItem({ executionId: 'coordinator', owner: 'owner', nativeOwner: 'native', fence: 1 }, 'item'))
+      .rejects.toThrow('fan-out authority');
+    expect(h.agents.buildAgentsForStream).not.toHaveBeenCalled();
+  });
   it('prepares a temporary background registration without creating an execution', async () => {
     const h = harness();
     const prepared = await h.service.prepareBackground(parentId, request);

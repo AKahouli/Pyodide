@@ -32,6 +32,23 @@ export class RootBackgroundLifecycleService {
       inputResponses: owned.job.pendingInputResponses, inputResponseDigest: owned.job.inputResponseDigest };
   }
 
+  async itemDefinition(executionId: string, itemId: string, request: RootBackgroundAuthorityDto) {
+    if (!request.nativeOwner) {
+      throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Fan-out hydration requires native ownership');
+    }
+    const grant = { executionId, producerExecutionId: itemId, owner: request.owner,
+      fence: request.fence, nativeOwner: request.nativeOwner };
+    const owned = await this.jobs.getOwnedFanoutItem(grant, itemId);
+    if (owned.job.requestDigest !== request.requestDigest) {
+      throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Background request binding changed');
+    }
+    const resolved = owned.role === 'temporary_worker' ? await this.temporary.resolveFanoutItem(grant, itemId)
+      : await this.definitions.resolveFanoutItem(grant, itemId);
+    // Revalidate after profile hydration before returning a usable native definition.
+    await this.jobs.getOwnedFanoutItem(grant, itemId);
+    return { ...resolved, kind: 'worker' as const, executionScope: executionScopeToWire(resolved.scope) };
+  }
+
   async ingest(executionId: string, request: RootBackgroundEventsDto) {
     const owned = await this.owned(executionId, request);
     await this.results.authorizeBackgroundExecution(owned.job.conversationId, executionId, owned.job.actorId);
