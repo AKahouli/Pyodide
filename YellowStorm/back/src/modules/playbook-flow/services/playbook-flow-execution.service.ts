@@ -265,9 +265,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   ) {
     this.hitlResumeService?.bindExecutionHost({
       isRuntimeAvailable: () => this.isRuntimeAvailable(),
-      resumeApprovalRuntime: (request, callback) => this.resumeApprovalRuntime(request, callback),
-      resumeFromStepRuntime: (request, callback) => this.resumeFromStepRuntime(request, callback),
-      scheduleDurableResume: (ownerId) => this.scheduleQueueDrain(ownerId),
+      resumeApprovalRuntime: (request, callback) => { this.resumeApprovalRuntime(request, callback); },
+      resumeFromStepRuntime: (request, callback) => { this.resumeFromStepRuntime(request, callback); },
+      scheduleDurableResume: (ownerId) => { this.scheduleQueueDrain(ownerId); },
     });
   }
 
@@ -420,7 +420,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   }
 
   /** Keeps runtime HITL memory payloads lean and stable across the NestJS to ADK boundary. */
-  private mapRuntimeHitlMemories(memories: Array<Record<string, unknown>>): RuntimeHitlMemory[] {
+  private mapRuntimeHitlMemories(memories: Record<string, unknown>[]): RuntimeHitlMemory[] {
     return memories.map((memory) => ({
       id: String(memory.id || memory._id || ''),
       node_id: memory.nodeId == null ? null : String(memory.nodeId),
@@ -565,7 +565,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
   private findFirstSnapshotModel(snapshot?: Record<string, unknown>): string | undefined {
     const nodes = Array.isArray(snapshot?.nodes) ? snapshot.nodes : [];
-    for (const node of nodes as Array<Record<string, unknown>>) {
+    for (const node of nodes as Record<string, unknown>[]) {
       const metadata = node.metadata as Record<string, unknown> | undefined;
       const model = metadata?.modelId ?? metadata?.model_id ?? metadata?.agent_model;
       if (typeof model === 'string' && model.trim()) {
@@ -609,8 +609,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       this.logger.warn(
         `Cleaned ${sanitizedGraph.removedOrphanedEdgeCount} orphaned edge(s), ${sanitizedGraph.removedOrphanedBindingCount} orphaned binding(s), and ${sanitizedGraph.removedStaleBindingCount} stale binding(s) for flow ${flowId}`,
       );
-      flow.controlEdges = sanitizedGraph.controlEdges as any;
-      flow.dataBindings = sanitizedGraph.dataBindings as any;
+      flow.controlEdges = sanitizedGraph.controlEdges;
+      flow.dataBindings = sanitizedGraph.dataBindings;
     }
 
     this.validatorService.validate(flow.nodes, flow.controlEdges, flow.dataBindings, {
@@ -1010,7 +1010,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         agent_revision: planner.agentRevision,
       } : undefined;
       if (effectiveExecutionSettings) {
-        await this.executions.update(executionId, { playbookExecutionSettings: effectiveExecutionSettings as unknown as Record<string, unknown> });
+        await this.executions.update(executionId, { playbookExecutionSettings: effectiveExecutionSettings });
       }
 
       // Resolve agents referenced by nodes and enrich metadata
@@ -1091,7 +1091,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       }
       const singleStepTargetId = executionMeta?.singleStepTaskId ?? null;
       const globalExecMode = executionMeta?.executionMode || 'live';
-      const stepModes: Record<string, string> = (executionMeta?.stepExecutionModes as Record<string, string>) || {};
+      const stepModes: Record<string, string> = (executionMeta?.stepExecutionModes!) || {};
       const VALID_STEP_MODES = new Set(['live', 'replay_strict', 'replay_flex', 'replay_adaptive']);
       const REPLAY_MODES = new Set(['replay_strict', 'replay_flex', 'replay_adaptive']);
       const replayModeNodeIds = enrichedNodes
@@ -1106,7 +1106,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         : new Map<string, { formatGuide?: string | null }>();
       const activeHitlMemories = await this.loadActiveHitlMemories(flowId, taskNodeIds);
       const replayInputContext = inputContext || {};
-      const workspaceIds: string[] = ((snapshotOverride || snapshot) as any).workspaces || [];
+      const workspaceIds: string[] = ((snapshotOverride || snapshot)).workspaces || [];
       const defaultWorkspaceId = workspaceIds[0] || '';
       // Resolve each workspaceId to its `{ownerUserId}/{storagePrefix}` storage
       // path so the runtime can scan documents without a second lookup. Keyed by
@@ -1182,7 +1182,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         }
       }
 
-      const started = await this.executions.markStarted(executionId, replayPlanningByTask as unknown as Record<string, unknown>);
+      const started = await this.executions.markStarted(executionId, replayPlanningByTask);
       if (!started) {
         this.clearSelectedReplayArtifacts(executionId);
         await this.releaseExecutionLease(executionId);
@@ -1194,7 +1194,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
       const executionStartState = await this.executions.findById(executionId);
 
-      const effectiveExecutionMode = (executionStartState?.executionMode || 'live') as 'live' | 'inherit' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
+      const effectiveExecutionMode = (executionStartState?.executionMode || 'live');
       this.streamEvents.emitExecutionStart(executionId, flowId, normalizedOwnerId, {
         executionMode: effectiveExecutionMode,
         stepExecutionModes: (executionStartState?.stepExecutionModes as Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'> | undefined) ?? {},
@@ -1230,7 +1230,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         owner_id: normalizedOwnerId,
 
       snapshot: {
-        nodes: (enrichedNodes as any[]).map((n) => ({
+        nodes: (enrichedNodes).map((n) => ({
           id: n.id,
           kind: n.kind,
           label: n.label || '',
@@ -1366,7 +1366,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           executionId,
           event,
           releaseExecutionLease: () => this.releaseExecutionLease(executionId),
-          scheduleQueueDrain: (queuedOwnerId) => this.scheduleQueueDrain(queuedOwnerId),
+          scheduleQueueDrain: (queuedOwnerId) => { this.scheduleQueueDrain(queuedOwnerId); },
         }))
         .catch((err) => {
           this.logger.error(`Failed to handle run event for execution ${executionId}`, err instanceof Error ? err.stack : undefined);
@@ -1421,15 +1421,15 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       executionId,
       event,
       releaseExecutionLease: () => this.releaseExecutionLease(executionId),
-      scheduleQueueDrain: (ownerId) => this.scheduleQueueDrain(ownerId),
+      scheduleQueueDrain: (ownerId) => { this.scheduleQueueDrain(ownerId); },
     });
   }
 
   async findAll(
     flowId: string,
     ownerId: string,
-    page: number = 1,
-    limit: number = 10,
+    page = 1,
+    limit = 10,
   ): Promise<IFlowExecutionListResponse> {
     await this.requireAccessService().assertExecutionAccess(flowId, ownerId, 'read');
     const total = await this.executions.countByFlow(flowId);
@@ -1445,7 +1445,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     flowIds: string[],
     statuses: string[] | undefined,
     limit: number,
-  ): Promise<Array<{
+  ): Promise<{
     executionId: string;
     flowId: string;
     status: string;
@@ -1454,7 +1454,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     endedAt?: Date;
     waitingForHumanInput: boolean;
     task?: { taskId: string; iteration: number; status: string; taskName?: string };
-  }>> {
+  }[]> {
     if (flowIds.length === 0) return [];
     const executions = await this.executions.listRecentByFlows(flowIds, { statuses, limit });
     const executionIds = executions.map((execution) => execution.id);
@@ -1545,9 +1545,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           output: doc.output as string | null | undefined,
           displayText: (doc.displayText as string | null | undefined) ?? undefined,
           outputs: doc.outputs as Record<string, unknown> | undefined,
-          artifacts: doc.artifacts as Array<Record<string, unknown>>,
-          components: doc.components as Array<Record<string, unknown>>,
-          iteratorIterations: doc.iteratorIterations as Array<Record<string, unknown>> | undefined,
+          artifacts: doc.artifacts as Record<string, unknown>[],
+          components: doc.components as Record<string, unknown>[],
+          iteratorIterations: doc.iteratorIterations as Record<string, unknown>[] | undefined,
           error: doc.error == null ? undefined : String(doc.error),
           startedAt: r.startedAt ?? undefined,
           endedAt: r.endedAt ?? undefined,
@@ -1555,7 +1555,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           reasoningChain: (doc.reasoningChain as PublicReasoningTraceItem[] | undefined) ?? [],
           llmPromptTrace: doc.llmPromptTrace as FlowLlmPromptTraceItem[] | undefined,
           usage: r.usage as unknown as FlowUsageSummary | null | undefined,
-          ...flattenUsage({ usage: r.usage as unknown as FlowUsageSummary | null | undefined }),
+          ...flattenUsage({ usage: r.usage }),
           semanticMatch: doc.semanticMatch as FlowSemanticMatchSummary | null | undefined,
           traceMetadata: doc.traceMetadata as Record<string, unknown> ?? {},
           judgeStatus: r.judgeStatus ?? 'idle',
@@ -1596,7 +1596,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         next.id,
         ownerId,
         next.flowId,
-        this.resolveLeaseModelScope(next as unknown as Record<string, unknown>),
+        this.resolveLeaseModelScope(next),
       );
       if (leaseResult && !leaseResult.acquired) {
         // Keep queue order stable when the oldest runnable execution is blocked by
@@ -1815,7 +1815,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     const snapshot = structuredClone(
       sourceExecution.snapshot as Record<string, unknown>,
     );
-    const nodes = (snapshot.nodes || []) as Array<Record<string, unknown>>;
+    const nodes = (snapshot.nodes || []) as Record<string, unknown>[];
     const targetNode = nodes.find((n) => n.id === payload.taskId);
     if (!targetNode || targetNode.kind !== 'step') {
       throw new BadRequestException(

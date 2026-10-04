@@ -227,8 +227,8 @@ export class PlaybookExecutionNodeEventHandlerService {
       status: String(payload.status ?? fallbackStatus),
       output: typeof payload.output === 'string' ? sanitize(payload.output) as string : undefined,
       error: typeof payload.error === 'string' ? sanitize(payload.error) as string : undefined,
-      components: Array.isArray(payload.components) ? sanitize(payload.components) as Array<Record<string, unknown>> : undefined,
-      artifacts: Array.isArray(payload.artifacts) ? sanitize(payload.artifacts) as Array<Record<string, unknown>> : undefined,
+      components: Array.isArray(payload.components) ? sanitize(payload.components) as Record<string, unknown>[] : undefined,
+      artifacts: Array.isArray(payload.artifacts) ? sanitize(payload.artifacts) as Record<string, unknown>[] : undefined,
     };
   }
 
@@ -244,12 +244,12 @@ export class PlaybookExecutionNodeEventHandlerService {
       { executionId, taskId: iteratorNodeId, iteration },
       { light: true, with: ['iteratorIterations'] },
     );
-    const iterations: Array<Record<string, any>> = [...(doc?.iteratorIterations ?? [])];
+    const iterations: Record<string, any>[] = [...(doc?.iteratorIterations ?? [])];
     const index = iterations.findIndex((entry) => Number(entry?.index ?? -1) === child.iterationIndex);
     const iterationEntry: Record<string, any> = index >= 0
       ? { ...iterations[index] }
       : { index: child.iterationIndex, status: 'running', output: null, error: null, childResults: [] };
-    const childResults: Array<Record<string, any>> = [...(Array.isArray(iterationEntry.childResults) ? iterationEntry.childResults : [])];
+    const childResults: Record<string, any>[] = [...(Array.isArray(iterationEntry.childResults) ? iterationEntry.childResults : [])];
     const childIndex = childResults.findIndex((entry) => entry?.taskId === child.taskId);
     const previous = childIndex >= 0 ? childResults[childIndex] : null;
     const merged: Record<string, any> = {

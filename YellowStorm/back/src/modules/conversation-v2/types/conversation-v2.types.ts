@@ -38,7 +38,7 @@ export interface StepEventPayload extends ConversationV2BaseEvent {
 }
 
 export interface PlanEventPayload extends ConversationV2BaseEvent {
-  steps: Array<{ id: string; status: string; description: string }>;
+  steps: { id: string; status: string; description: string }[];
 }
 
 export interface TitleEventPayload extends ConversationV2BaseEvent {
@@ -105,7 +105,7 @@ export type ToolContent =
   | { kind: 'browser'; screenshot_url: string; url?: string; title?: string }
   | { kind: 'shell'; command: string; output: string; exit_code: number; session_handle?: string }
   | { kind: 'file'; path: string; content: string; language?: string; operation?: 'read' | 'write' | 'edit' | string }
-  | { kind: 'search'; query: string; results: Array<{ title: string; url: string; snippet: string }> }
+  | { kind: 'search'; query: string; results: { title: string; url: string; snippet: string }[] }
   | { kind: 'mcp'; server: string; tool: string; result: unknown }
   | { kind: 'webpage'; url: string; title?: string }
   | { kind: 'generic'; data: unknown };
@@ -123,7 +123,7 @@ export interface ConversationV2Event {
     | WaitEventPayload
     | ApplicationComponentEventPayload
     | AppBuildProgressEventPayload
-    | HeartbeatEventPayload;
+     ;
 }
 
 export interface SessionWithEvents {

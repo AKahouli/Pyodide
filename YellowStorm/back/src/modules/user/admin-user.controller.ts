@@ -295,8 +295,8 @@ export class AdminUserController {
       plan: user.planId
         ? {
             id: user.planId,
-            slug: user.planSlug as string,
-            startedAt: (user.planStartedAt ?? undefined) as Date | undefined,
+            slug: user.planSlug!,
+            startedAt: (user.planStartedAt ?? undefined),
           }
         : undefined,
       roles: user.roles.map((role) => ({
@@ -305,7 +305,7 @@ export class AdminUserController {
       })),
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
-      lastLoginAt: (user.lastLoginAt ?? undefined) as Date | undefined,
+      lastLoginAt: (user.lastLoginAt ?? undefined),
     };
   }
 }

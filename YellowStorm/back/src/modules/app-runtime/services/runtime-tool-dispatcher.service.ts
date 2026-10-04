@@ -287,15 +287,14 @@ export class RuntimeToolDispatcherService {
         timer = setTimeout(onTimeout, timeoutMs);
       };
 
-      const onTimeout = (): void =>
-        settle({
+      const onTimeout = (): void => { settle({
           ok: false,
           error: runtimeError(
             AppRuntimeErrorCodes.TOOL_TIMEOUT,
             `Browser runtime did not answer "${tool}" in time`,
             { tool, timeoutMs },
           ),
-        });
+        }); };
 
       timer = setTimeout(onTimeout, timeoutMs);
       this.pending.set(toolCallId, { workspaceId, settle, rearmTimeout });

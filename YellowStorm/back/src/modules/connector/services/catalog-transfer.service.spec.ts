@@ -241,7 +241,7 @@ describe('CatalogTransferService export fidelity', () => {
     );
     const importCategories = (service as unknown as {
       importSkillCategories(
-        categories: Array<{ name: string; description: string; isSystem: boolean }>,
+        categories: { name: string; description: string; isSystem: boolean }[],
         policy: 'overwrite',
         result: unknown,
       ): Promise<unknown>;

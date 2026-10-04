@@ -193,7 +193,7 @@ export class GovernanceMembershipService {
       await this.programService.assertProgramOwner(actorId, programId);
       return true;
     } catch (error) {
-      void error;
+      error;
       return false;
     }
   }

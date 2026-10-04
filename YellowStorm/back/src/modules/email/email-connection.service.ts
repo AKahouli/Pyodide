@@ -100,9 +100,9 @@ export class EmailConnectionService implements OnModuleInit, OnModuleDestroy {
     this.reconnect = new ReconnectBackoff(this.reconnectConfig, {
       connect: () => this.connect(),
       label: () => this.provider === 'outlook' ? 'Outlook' : 'SMTP',
-      log: (message) => this.logger.log(message, { display: true, save: false }),
-      warn: (message) => this.logger.warn(message),
-      error: (message) => this.logger.error(message),
+      log: (message) => { this.logger.log(message, { display: true, save: false }); },
+      warn: (message) => { this.logger.warn(message); },
+      error: (message) => { this.logger.error(message); },
     });
 
     this.healthCheckConfig = {

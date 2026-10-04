@@ -129,7 +129,7 @@ export class ClassifierSyncService {
   // ───────── helpers ─────────
 
   private buildFolderPathMap(
-    folders: Array<{ id: string; name: string; parentId: string | null }>,
+    folders: { id: string; name: string; parentId: string | null }[],
   ): Map<string, string[]> {
     const byId = new Map<string, { name: string; parentId: string | null }>();
     folders.forEach((f) => {
@@ -141,7 +141,7 @@ export class ClassifierSyncService {
 
     const pathById = new Map<string, string[]>();
     const resolve = (id: string, visited: Set<string>): string[] => {
-      if (pathById.has(id)) return pathById.get(id) as string[];
+      if (pathById.has(id)) return pathById.get(id)!;
       if (visited.has(id)) return []; // cycle guard
       visited.add(id);
       const node = byId.get(id);

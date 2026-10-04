@@ -22,7 +22,7 @@ export class PlaybookFlowExecutionAdvisorMapper {
     outputFormatGuide: string | null;
     baselineOutput: string | null;
   }): Record<string, unknown> {
-    const metadata = (params.node.metadata ?? {}) as Record<string, unknown>;
+    const metadata = (params.node.metadata ?? {});
     return {
       execution_id: params.executionId,
       owner_id: params.ownerId,

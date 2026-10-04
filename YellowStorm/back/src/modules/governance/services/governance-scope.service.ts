@@ -72,7 +72,7 @@ export class GovernanceScopeService {
       programId,
       name: dto.name.trim(),
       type: dto.type as GovernanceScopeType | undefined,
-      status: dto.status as GovernanceScopeRecord['status'] | undefined,
+      status: dto.status,
       parentScopeId: dto.parentScopeId,
       agentIds: dto.agentIds,
       metadata,
@@ -143,7 +143,7 @@ export class GovernanceScopeService {
   }
 
   /** Breadth-first subtree walk (root first); the visited set guards against parent cycles. */
-  private collectSubtree(rootId: string, hierarchy: Array<{ id: string; parentScopeId: string | null }>): string[] {
+  private collectSubtree(rootId: string, hierarchy: { id: string; parentScopeId: string | null }[]): string[] {
     const childrenByParent = new Map<string, string[]>();
     for (const node of hierarchy) {
       if (!node.parentScopeId) continue;
@@ -246,7 +246,7 @@ export class GovernanceScopeService {
     for (const [key, value] of Object.entries(next)) {
       const existing = merged[key];
       merged[key] = this.isPlainObject(existing) && this.isPlainObject(value)
-        ? this.mergeMetadata(existing as Record<string, unknown>, value as Record<string, unknown>)
+        ? this.mergeMetadata(existing, value)
         : value;
     }
     return merged;
@@ -295,7 +295,7 @@ export class GovernanceScopeService {
       await this.programService.assertProgramOwner(ownerUserId, programId);
       return true;
     } catch (error) {
-      void error;
+      error;
       return false;
     }
   }

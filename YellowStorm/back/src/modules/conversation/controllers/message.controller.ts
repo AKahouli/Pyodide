@@ -159,6 +159,9 @@ export class MessageController {
 
     const conversation = await this.conversationService.getConversationDocument(conversationId);
     const platformCopilot = conversation.runtimePurpose === PLATFORM_COPILOT;
+    if (dto.rootContinuation && (platformCopilot || conversation.isGroup || dto.memberIds?.length)) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Native continuation requires a standard root conversation');
+    }
     const teamId = dto.teamIds?.[0];
     if ((dto.teamIds?.length ?? 0) > 1 || (teamId && (dto.agentIds?.length ?? 0) > 0)) {
       throw new BadRequestException(ErrorCode.TEAM_NOT_EXECUTABLE, 'Select one team without standalone agents.');
@@ -422,6 +425,7 @@ export class MessageController {
           interactions: canonicalInteractions,
           replayContext: {
             requestFingerprint,
+            rootContinuation: dto.rootContinuation,
             content: canonicalContent,
             taskSummary: canonicalTaskSummary,
             attachedFileIds: dto.attachedFileIds ?? [],
@@ -473,6 +477,7 @@ export class MessageController {
           interactions: canonicalInteractions,
           replayContext: {
             requestFingerprint,
+            rootContinuation: dto.rootContinuation,
             content: canonicalContent,
             taskSummary: canonicalTaskSummary,
             attachedFileIds: dto.attachedFileIds ?? [],
@@ -568,6 +573,7 @@ export class MessageController {
           content: canonicalContent,
           taskSummary: canonicalTaskSummary,
           attachedFileIds: dto.attachedFileIds,
+          rootContinuation: dto.rootContinuation,
           webSearchEnabled: dto.webSearchEnabled,
           webConnectorAccessEnabled: dto.webConnectorAccessEnabled,
           deepSearchEnabled: dto.deepSearchEnabled,
@@ -649,7 +655,7 @@ export class MessageController {
     }
     if (!shouldStart) {
       const response = await this.messageService.getMessageDocument(aiMessageId);
-      shouldStart = response.isComplete !== true;
+      shouldStart = !response.isComplete;
     }
     if (shouldStart && !this.streamService.isConversationStreaming(user._id.toString(), conversationId)) {
       this.streamService.startStream(user._id.toString(), conversationId, aiMessageId, {
@@ -718,6 +724,7 @@ export class MessageController {
       interactions: dto.interactions ?? null,
       clientContext: dto.clientContext ?? null,
       playbookHandoffId: dto.playbookHandoffId ?? null,
+      rootContinuation: dto.rootContinuation ?? null,
     };
     return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
   }

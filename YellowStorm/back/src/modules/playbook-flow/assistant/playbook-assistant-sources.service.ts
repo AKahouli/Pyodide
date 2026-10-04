@@ -59,7 +59,7 @@ export class PlaybookAssistantSourcesService {
     return {
       items: requests
         .filter((request) => request.continuationId && this.sourceQuestions(request).length > 0)
-        .map((request) => ({ continuationId: request.continuationId as string, playbookName: flow.name })),
+        .map((request) => ({ continuationId: request.continuationId!, playbookName: flow.name })),
     };
   }
 
@@ -125,7 +125,7 @@ export class PlaybookAssistantSourcesService {
   }
 
   /** Checks the person can open each workspace and file, and keeps them with their names. */
-  private async resolve(userId: string, resources: Array<{ kind: 'workspace' | 'document'; id: string }>): Promise<PickedResource[]> {
+  private async resolve(userId: string, resources: { kind: 'workspace' | 'document'; id: string }[]): Promise<PickedResource[]> {
     if (resources.some((resource) => !isObjectId(resource.id))) throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'A chosen source is invalid');
     const workspaceIds = resources.filter((resource) => resource.kind === 'workspace').map((resource) => resource.id);
     const documentIds = resources.filter((resource) => resource.kind === 'document').map((resource) => resource.id);

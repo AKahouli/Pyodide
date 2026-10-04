@@ -41,13 +41,13 @@ export interface FlowCompletedResultPayload {
   output: string;
   displayText?: string;
   outputs?: Record<string, unknown>;
-  artifacts?: Array<Record<string, unknown>>;
-  components?: Array<Record<string, unknown>>;
+  artifacts?: Record<string, unknown>[];
+  components?: Record<string, unknown>[];
   toolTrace?: FlowToolTraceItem[];
   reasoningChain?: PublicReasoningTraceItem[];
   llmPromptTrace?: FlowLlmPromptTraceItem[];
   usage?: FlowUsageSummary | null;
   semanticMatch?: FlowSemanticMatchSummary | null;
   traceMetadata?: Record<string, unknown>;
-  iteratorIterations?: Array<Record<string, unknown>>;
+  iteratorIterations?: Record<string, unknown>[];
 }

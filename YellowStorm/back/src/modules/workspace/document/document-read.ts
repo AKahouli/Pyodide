@@ -317,7 +317,7 @@ export class WorkspaceDocumentRead {
     };
   }
 
-  async checkUrls(workspaceId: string, urls: string[]): Promise<{ results: Array<Record<string, unknown>> }> {
+  async checkUrls(workspaceId: string, urls: string[]): Promise<{ results: Record<string, unknown>[] }> {
     const normalized = urls.map((url) => ({ url, normalizedUrl: normalizeWorkspaceUrl(url) }));
     const documents = await this.documentStore.findUrlSources(workspaceId);
     const byNormalized = new Map(documents.map((doc) => [normalizeWorkspaceUrl(doc.sourceUrl ?? ''), doc]));

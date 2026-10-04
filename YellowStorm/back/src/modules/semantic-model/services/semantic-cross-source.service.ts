@@ -34,8 +34,8 @@ interface RelationDefinition {
   targetConceptId: string;
   sourceConceptLabel: string;
   targetConceptLabel: string;
-  sourceAttributes: Array<{ key: string }>;
-  targetAttributes: Array<{ key: string }>;
+  sourceAttributes: { key: string }[];
+  targetAttributes: { key: string }[];
 }
 
 interface ReviewDecision {
@@ -140,7 +140,7 @@ export class SemanticCrossSourceService {
   async saveIdentityRule(userId: string, modelId: string, conceptId: string, dto: SaveIdentityRuleDto) {
     const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
     if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
-    const concept = await this.database.query<{ attributes: Array<{ key: string }> }>(
+    const concept = await this.database.query<{ attributes: { key: string }[] }>(
       'SELECT attributes FROM semantic_model.node_types WHERE version_id=$1 AND id=$2',
       [model.currentDraftVersionId, conceptId],
     );
@@ -313,7 +313,7 @@ export class SemanticCrossSourceService {
     }
   }
 
-  private assertPriorities(priorities: Array<{ mappingId: string; rank: number }>, mappingIds: string[]): void {
+  private assertPriorities(priorities: { mappingId: string; rank: number }[], mappingIds: string[]): void {
     const ids = priorities.map((priority) => priority.mappingId);
     const ranks = priorities.map((priority) => priority.rank).sort((a, b) => a - b);
     const expectedRanks = priorities.map((_, index) => index + 1);
@@ -361,7 +361,7 @@ export class SemanticCrossSourceService {
     return { concepts: concepts.rows, manualEntities, incompleteConceptIds: [...incompleteConceptIds] };
   }
 
-  private matchSummary(matches: Array<{ status: 'resolved' | 'ambiguous' | 'unresolved' }>) {
+  private matchSummary(matches: { status: 'resolved' | 'ambiguous' | 'unresolved' }[]) {
     return {
       resolved: matches.filter((match) => match.status === 'resolved').length,
       ambiguous: matches.filter((match) => match.status === 'ambiguous').length,
@@ -423,7 +423,7 @@ export class SemanticCrossSourceService {
     };
   }
 
-  private async persistReviewItems(modelId: string, items: Array<{ kind: 'ambiguous_relation' | 'source_conflict'; targetId: string; details: unknown }>) {
+  private async persistReviewItems(modelId: string, items: { kind: 'ambiguous_relation' | 'source_conflict'; targetId: string; details: unknown }[]) {
     for (const item of items.slice(0, 200)) {
       const details = item.details as Record<string, unknown>;
       const identity = item.kind === 'ambiguous_relation'

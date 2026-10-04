@@ -121,10 +121,10 @@ export class PlaybookAssistantOperationService implements OnModuleInit, OnModule
         ...boundedEvent,
         sequence: current.lastSequence + 1,
         createdAt: new Date().toISOString(),
-      } as PlaybookIntentConstructionEvent;
+      };
       const appended = await this.operations.appendEvent({ operationId, playbookId, ownerId }, {
         expectedSequence: current.lastSequence,
-        event: persisted as unknown as Record<string, unknown>,
+        event: persisted,
         eventBytes,
         status,
         terminal,

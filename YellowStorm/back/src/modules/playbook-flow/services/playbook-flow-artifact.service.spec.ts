@@ -212,7 +212,7 @@ describe('PlaybookFlowArtifactService', () => {
   it('projects actions only for storage-backed artifacts', async () => {
     const projected = await service.projectPublicTaskResult(task, 'owner-1', 'execution-1');
 
-    expect((projected.components as Array<Record<string, any>>)[0].data).toEqual(expect.objectContaining({
+    expect((projected.components as Record<string, any>[])[0].data).toEqual(expect.objectContaining({
       artifactId: expect.stringMatching(/^[a-f0-9]{32}$/),
       availability: 'ready',
     }));
@@ -223,8 +223,8 @@ describe('PlaybookFlowArtifactService', () => {
 
     const projected = await service.projectPublicTaskResult(task, 'owner-1', 'execution-1');
 
-    expect((projected.components as Array<Record<string, any>>)[0].data).not.toHaveProperty('artifactId');
-    expect((projected.components as Array<Record<string, any>>)[0].data).not.toHaveProperty('availability');
+    expect((projected.components as Record<string, any>[])[0].data).not.toHaveProperty('artifactId');
+    expect((projected.components as Record<string, any>[])[0].data).not.toHaveProperty('availability');
   });
 
   it('fails closed when storage verification errors', async () => {
@@ -232,7 +232,7 @@ describe('PlaybookFlowArtifactService', () => {
 
     const projected = await service.projectPublicTaskResult(task, 'owner-1', 'execution-1');
 
-    expect((projected.components as Array<Record<string, any>>)[0].data).not.toHaveProperty('artifactId');
+    expect((projected.components as Record<string, any>[])[0].data).not.toHaveProperty('artifactId');
   });
 
   it('rejects malformed artifact capabilities', async () => {

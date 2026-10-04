@@ -201,7 +201,7 @@ export class WorkyStreamRepository {
       query.search ? ilike(s.title, `%${escapeLike(query.search)}%`) : undefined,
       query.createdFrom ? gte(s.createdAt, query.createdFrom) : undefined,
       query.createdTo ? lte(s.createdAt, query.createdTo) : undefined,
-    ) as SQL;
+    )!;
   }
 
   private attentionPredicate(): SQL {
@@ -213,7 +213,7 @@ export class WorkyStreamRepository {
           .from(tk)
           .where(and(eq(tk.streamId, s.id), inArray(tk.lane, ['blocked', 'failed']))),
       ),
-    ) as SQL;
+    )!;
   }
 
   /** The streams the user owns or is shared on, one page of them, plus the counts the home page shows. */
@@ -226,7 +226,7 @@ export class WorkyStreamRepository {
       scope,
       query.statuses?.length ? inArray(s.status, query.statuses) : undefined,
       query.attention ? this.attentionPredicate() : undefined,
-    ) as SQL;
+    )!;
 
     const dir = query.sortDir === 'asc' ? asc : desc;
     const order =

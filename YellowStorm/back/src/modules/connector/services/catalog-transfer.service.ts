@@ -152,8 +152,8 @@ export class CatalogTransferService {
   private async buildArchive(
     userId: string,
     resource: 'connectors' | 'skills',
-    connectors: Array<Record<string, any>>,
-    skills: Array<Record<string, any>>,
+    connectors: Record<string, any>[],
+    skills: Record<string, any>[],
     includeSecurity: boolean,
   ): Promise<CatalogArchiveV1> {
     const connectorCategoryIds = Array.from(new Set(connectors.flatMap((item) => item.categoryId ? [String(item.categoryId)] : [])));
@@ -188,7 +188,7 @@ export class CatalogTransferService {
     return archive;
   }
 
-  private async exportSecurity(userId: string, connectors: Array<Record<string, any>>) {
+  private async exportSecurity(userId: string, connectors: Record<string, any>[]) {
     const connectorIds = connectors.map((connector) => String(connector.id ?? connector._id));
     const connectorSlugById = new Map(connectors.map((connector) => [String(connector.id ?? connector._id), connector.slug]));
     const appKeys = Array.from(new Set(connectors.map((connector) => connector.connectedAppKey).filter(Boolean)));
@@ -207,8 +207,8 @@ export class CatalogTransferService {
     const adminAuth = adminAuthRows.filter(
       (a): a is ConnectorAdminAuthRow => a !== null && appKeySet.has(a.appKey),
     );
-    void definitions;
-    void connections;
+    definitions;
+    connections;
     return {
       connectorCredentials: credentials.map((credential) => ({
         connectorSlug: connectorSlugById.get(credential.connectorId.toString()) ?? '',
@@ -586,7 +586,7 @@ export class CatalogTransferService {
       const payload: Partial<Pick<ConnectorCredentialRow, 'displayName' | 'authPayload' | 'status' | 'expiresAt' | 'lastValidatedAt'>> = {
         displayName: credential.displayName,
         authPayload: credential.authPayload ?? {},
-        status: (credential.status as string) ?? 'active',
+        status: (credential.status) ?? 'active',
         lastValidatedAt: this.optionalDate(credential.lastValidatedAt),
         expiresAt: this.optionalDate(credential.expiresAt),
       };

@@ -321,7 +321,7 @@ export class WorkspaceDocumentWrite {
     mimeType: string,
     folderId?: string,
     deepSearch?: boolean,
-    autoIndex: boolean = true,
+    autoIndex = true,
   ): Promise<DocumentResponse> {
     const size = file.length;
 
@@ -349,7 +349,7 @@ export class WorkspaceDocumentWrite {
     let parentFolder = null;
     if (folderId) {
       parentFolder = await this.documentStore.findByIdAndWorkspace(folderId, workspaceId);
-      if (!parentFolder || !parentFolder.isFolder) {
+      if (!parentFolder?.isFolder) {
         throw new BadRequestException('Folder not found');
       }
     }
@@ -668,7 +668,7 @@ export class WorkspaceDocumentWrite {
 
     // Preserve the current extension (e.g. links are `.pdf`) so the name stays
     // consistent and never trips the "no extension" heuristics elsewhere.
-    const ext = doc.originalName?.match(/\.[a-z0-9]+$/i)?.[0] ?? '';
+    const ext = (/\.[a-z0-9]+$/i.exec(doc.originalName))?.[0] ?? '';
     const base = trimmed.toLowerCase().endsWith(ext.toLowerCase()) && ext
       ? trimmed.slice(0, trimmed.length - ext.length)
       : trimmed;

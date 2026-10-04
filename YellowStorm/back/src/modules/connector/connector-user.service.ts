@@ -20,7 +20,7 @@ interface GitHubRepository {
 }
 
 export interface RepositoriesResponse {
-  repositories: Array<{
+  repositories: {
     id: string;
     name: string;
     description: string;
@@ -28,7 +28,7 @@ export interface RepositoriesResponse {
     private: boolean;
     language: string;
     updatedAt: string;
-  }>;
+  }[];
   total: number;
   page: number;
   limit: number;

@@ -84,7 +84,7 @@ export class PgMembershipStore implements MembershipStore {
         and(
           eq(MEMBERSHIPS.programId, programId),
           scopeId === null ? isNull(MEMBERSHIPS.scopeId) : eq(MEMBERSHIPS.scopeId, scopeId),
-          target.userId ? eq(MEMBERSHIPS.userId, target.userId) : eq(MEMBERSHIPS.groupId, target.groupId as string),
+          target.userId ? eq(MEMBERSHIPS.userId, target.userId) : eq(MEMBERSHIPS.groupId, target.groupId!),
         ),
       )
       .limit(1);

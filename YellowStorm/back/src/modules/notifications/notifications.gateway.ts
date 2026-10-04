@@ -210,7 +210,7 @@ export class NotificationsGateway implements OnModuleInit, OnModuleDestroy {
     };
 
     let sentCount = 0;
-    const failedConnections: Array<{ userId: string; connectionId: string }> = [];
+    const failedConnections: { userId: string; connectionId: string }[] = [];
 
     for (const connection of this.connections.values()) {
       try {
@@ -270,7 +270,7 @@ export class NotificationsGateway implements OnModuleInit, OnModuleDestroy {
   }
 
   private sweepStaleConnections(): void {
-    const staleConnections: Array<{ userId: string; connectionId: string }> = [];
+    const staleConnections: { userId: string; connectionId: string }[] = [];
 
     for (const connection of this.connections.values()) {
       if (!connection.checkAlive()) {

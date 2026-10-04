@@ -102,7 +102,7 @@ export class GuardedUrlDownloaderService {
     const MAX_HOPS = 5;
     const deadlineMs = options.deadlineMs ?? 30_000;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), deadlineMs);
+    const timer = setTimeout(() => { controller.abort(); }, deadlineMs);
     let currentUrl = url;
     const headers: Record<string, string> = {
       ...this.pickIngestAuthHeaders(options.authHeaders),

@@ -165,7 +165,7 @@ export class DocumentService {
   }
 
   async uploadMany(
-    files: Array<{ buffer: Buffer; originalName: string; mimeType: string }>,
+    files: { buffer: Buffer; originalName: string; mimeType: string }[],
     options: UploadOptions = {},
   ): Promise<UploadedDocument[]> {
     const { maxFilesPerUpload } = await this.getUploadLimits();
@@ -566,7 +566,7 @@ export class DocumentService {
     return new Promise((resolve, reject) => {
       stream.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
       stream.on('error', reject);
-      stream.on('end', () => resolve(Buffer.concat(chunks)));
+      stream.on('end', () => { resolve(Buffer.concat(chunks)); });
     });
   }
 

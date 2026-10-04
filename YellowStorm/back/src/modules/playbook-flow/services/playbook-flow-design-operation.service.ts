@@ -102,7 +102,7 @@ export class PlaybookFlowDesignOperationService implements OnModuleInit {
     while (await this.hasCapacity()) {
       const next = await this.claimNext();
       if (!next) return;
-      void this.runOperation(next.id).finally(() => this.scheduleDrain());
+      void this.runOperation(next.id).finally(() => { this.scheduleDrain(); });
     }
   }
 

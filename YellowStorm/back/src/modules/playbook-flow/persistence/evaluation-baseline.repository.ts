@@ -82,7 +82,7 @@ export class EvaluationBaselineRepository {
   }
 
   private activeInTask(flowId: string, taskId: string): SQL {
-    return and(eq(b.flowId, normalizeObjectId(flowId)), eq(b.taskId, taskId), isNull(b.replacedAt)) as SQL;
+    return and(eq(b.flowId, normalizeObjectId(flowId)), eq(b.taskId, taskId), isNull(b.replacedAt))!;
   }
 
   /** The task's newest active baseline, optionally for one iteration. */

@@ -22,7 +22,7 @@ function toRecord(row: Row): SourceRevisionRecord {
     parentRevisionId: row.parentRevisionId ?? null,
     manifestHash: row.manifestHash,
     manifestObjectKey: row.manifestObjectKey,
-    files: (row.files as SourceRevisionFileRecord[]) ?? [],
+    files: (row.files) ?? [],
     createdByToolCallId: row.createdByToolCallId ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

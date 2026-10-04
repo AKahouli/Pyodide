@@ -129,7 +129,7 @@ export class AppBuilderAiAuthGuard implements CanActivate {
 
   private decodeHints(token: string): AppEndUserJwtHints | null {
     try {
-      return this.jwtService.decode(token) as AppEndUserJwtHints | null;
+      return this.jwtService.decode(token);
     } catch {
       return null;
     }
@@ -229,7 +229,7 @@ export class AppBuilderAiAuthGuard implements CanActivate {
           'User account is disabled',
         );
       }
-      if (endUser.grants?.useAi !== true) {
+      if (!(endUser.grants?.useAi)) {
         throw new ForbiddenException(
           ErrorCode.APP_DATA_GRANT_DENIED,
           'AI usage is not permitted for this user',
@@ -264,10 +264,10 @@ export class AppBuilderAiAuthGuard implements CanActivate {
     if (this.appDataClient?.isEnabled()) {
       try {
         const status = await this.appDataClient.getStatus(appDataId);
-        const fromRemote = this.pickOwnerUserId(status.app as Record<string, unknown> | undefined);
+        const fromRemote = this.pickOwnerUserId(status.app);
         if (fromRemote) return fromRemote;
 
-        const workspaceId = this.pickWorkspaceId(status.app as Record<string, unknown> | undefined);
+        const workspaceId = this.pickWorkspaceId(status.app);
         if (workspaceId && this.runtimeBindings) {
           const binding = await this.runtimeBindings.findByWorkspaceId(workspaceId);
           if (binding?.userId) {

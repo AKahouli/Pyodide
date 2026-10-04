@@ -122,7 +122,7 @@ const LIGHT_SELECTION = Object.fromEntries(
 ) as Omit<typeof FULL_SELECTION, TaskResultHeavyField>;
 
 function selection(read?: TaskResultLightRead | Record<string, unknown>) {
-  if (!read || (read as TaskResultLightRead).light !== true) return FULL_SELECTION;
+  if (!read || !(read as TaskResultLightRead).light) return FULL_SELECTION;
   const extra = Object.fromEntries(((read as TaskResultLightRead).with ?? []).map((key) => [key, FULL_SELECTION[key]]));
   return { ...LIGHT_SELECTION, ...extra } as typeof FULL_SELECTION;
 }
@@ -161,7 +161,7 @@ function toColumns(patch: TaskResultPatch): Partial<typeof t.$inferInsert> {
     else if (key === 'traceMetadata') out[key] = stripNul(value ?? {});
     else out[key] = value;
   }
-  return out as Partial<typeof t.$inferInsert>;
+  return out;
 }
 
 function iterationOf(value: number): number {
@@ -186,7 +186,7 @@ export class TaskResultRepository {
       eq(t.executionId, normalizeObjectId(key.executionId)),
       eq(t.taskId, stripNul(key.taskId)),
       eq(t.iteration, iterationOf(key.iteration)),
-    ) as SQL;
+    )!;
   }
 
   private filter(query: TaskResultQuery): SQL | undefined {

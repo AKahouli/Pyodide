@@ -266,7 +266,7 @@ export class SemanticModelService {
   }
 
   private remapRecordValues(recordId: string, values: Record<string, unknown>, ids: CloneIdMaps): Record<string, unknown> {
-    if (values['_entity_key'] !== recordId) return { ...values };
+    if (values._entity_key !== recordId) return { ...values };
     return { ...values, _entity_key: ids.recordIds.get(recordId)! };
   }
 

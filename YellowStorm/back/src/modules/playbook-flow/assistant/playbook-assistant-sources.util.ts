@@ -54,7 +54,7 @@ export function withResourcePicks<T extends ClarificationAnswerLike>(
   questions: ClarificationQuestionLike[],
   answers: T[],
   picks: Record<string, ResourcePick>,
-): Array<T | ClarificationAnswerLike> {
+): (T | ClarificationAnswerLike)[] {
   const picked = questions.filter(isSourceQuestion).filter((question) => picks[question.id]);
   if (!picked.length) return answers;
   const pickedIds = new Set(picked.map((question) => question.id));
@@ -78,7 +78,7 @@ const clean = (value: string) => value.replace(/[\r\n]+/g, ' ').replace(/\[/g, '
 export function resourceClarificationLines(questions: ClarificationQuestionLike[], answers: ClarificationAnswerLike[]): string[] {
   const questionText = new Map(questions.filter((question) => question.id).map((question) => [question.id!, question.question || question.id!]));
   return answers.flatMap((answer) => {
-    const resources: Array<Partial<PickedResource> & { kind: 'workspace' | 'document'; id: string }> = answer.resources ?? (answer.resource ? [answer.resource] : []);
+    const resources: (Partial<PickedResource> & { kind: 'workspace' | 'document'; id: string })[] = answer.resources ?? (answer.resource ? [answer.resource] : []);
     const question = clean(questionText.get(answer.questionId) ?? answer.questionId).replace(/:/g, ' -');
     return resources.map((resource) => {
       const workspaceId = resource.workspaceId || (resource.kind === 'workspace' ? resource.id : '');

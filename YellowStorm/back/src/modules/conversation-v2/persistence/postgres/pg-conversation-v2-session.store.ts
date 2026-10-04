@@ -24,7 +24,7 @@ export class PgConversationV2SessionStore implements ConversationV2SessionStore 
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
 
   private get q(): NodePgDatabase<typeof schema> {
-    return resolveQueryable(this.db) as NodePgDatabase<typeof schema>;
+    return resolveQueryable(this.db);
   }
 
   private static toRecord(row: SessionRow): ConversationV2SessionRecord {

@@ -141,7 +141,7 @@ Return strict JSON with these fields:
       ],
     }, { timeout: 30000 });
 
-    const content = (response.data as { choices?: Array<{ message?: { content?: string } }> })?.choices?.[0]?.message?.content;
+    const content = (response.data as { choices?: { message?: { content?: string } }[] })?.choices?.[0]?.message?.content;
     if (typeof content !== 'string' || !content.trim()) {
       throw new Error('Replay semantic judge returned no content.');
     }

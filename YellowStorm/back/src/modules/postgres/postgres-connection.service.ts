@@ -29,7 +29,7 @@ export class PostgresConnectionService implements OnModuleInit, OnModuleDestroy 
     // Attach exactly once: double registration would double-log pool errors.
     if (this.poolErrorAttached) return;
     this.poolErrorAttached = true;
-    this.pool.on('error', (err: Error) => this.handlePoolClientError(err));
+    this.pool.on('error', (err: Error) => { this.handlePoolClientError(err); });
     this.logEffectivePoolConfig();
   }
 

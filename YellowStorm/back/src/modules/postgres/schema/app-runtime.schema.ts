@@ -100,7 +100,7 @@ export const appRuntimeSourceRevisions = appRuntimeSchema.table(
     parentRevisionId: text('parent_revision_id'),
     manifestHash: text('manifest_hash').notNull(),
     manifestObjectKey: text('manifest_object_key').notNull(),
-    files: jsonb('files').$type<Array<{ path: string; sha256: string; objectKey: string; size: number }>>().notNull().default([]),
+    files: jsonb('files').$type<{ path: string; sha256: string; objectKey: string; size: number }[]>().notNull().default([]),
     createdByToolCallId: text('created_by_tool_call_id'),
     ...timestamps(),
   },

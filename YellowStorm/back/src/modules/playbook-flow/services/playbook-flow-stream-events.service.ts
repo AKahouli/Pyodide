@@ -184,8 +184,8 @@ export class PlaybookFlowStreamEventsService {
     output?: string,
     error?: string,
     iteration?: number,
-    artifacts?: Array<Record<string, unknown>>,
-    components?: Array<Record<string, unknown>>,
+    artifacts?: Record<string, unknown>[],
+    components?: Record<string, unknown>[],
     observability?: {
       toolTrace?: unknown[];
       reasoningChain?: unknown[];
@@ -196,7 +196,7 @@ export class PlaybookFlowStreamEventsService {
       modelName?: string | null;
       semanticMatch?: unknown;
       traceMetadata?: Record<string, unknown>;
-      iteratorIterations?: Array<Record<string, unknown>>;
+      iteratorIterations?: Record<string, unknown>[];
     },
   ): void {
     const ownerId = this.executionOwnerCache.get(executionId);
@@ -261,8 +261,8 @@ export class PlaybookFlowStreamEventsService {
       status: string;
       output?: string;
       error?: string;
-      components?: Array<Record<string, unknown>>;
-      artifacts?: Array<Record<string, unknown>>;
+      components?: Record<string, unknown>[];
+      artifacts?: Record<string, unknown>[];
     },
   ): void {
     const ownerId = this.executionOwnerCache.get(executionId);

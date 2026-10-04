@@ -61,8 +61,8 @@ export class SemanticMappingPresetService {
   async save(userId: string, modelId: string, dto: SaveMappingPresetDto, presetId?: string): Promise<MappingPreset> {
     const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
     const values = [
-      dto.name.trim(), dto.description?.trim() || null, JSON.stringify(presetFields(dto.fieldMappings as SourceFieldMapping[])),
-      JSON.stringify(pickAiSettings(dto.aiSettings as Partial<AiExtractionSettings> | undefined) ?? {}),
+      dto.name.trim(), dto.description?.trim() || null, JSON.stringify(presetFields(dto.fieldMappings)),
+      JSON.stringify(pickAiSettings(dto.aiSettings) ?? {}),
       JSON.stringify(dto.identityFields ?? []), userId,
     ];
     try {

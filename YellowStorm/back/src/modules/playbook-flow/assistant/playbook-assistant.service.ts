@@ -219,7 +219,7 @@ export class PlaybookAssistantService {
       const assessment = await this.intentService.assessNewDesign(request.requestId, request.ownerId, {
         intent: request.originalText,
       }, request.handoffContext ?? undefined);
-      const normalized = this.normalizeAssessment(assessment as unknown as Record<string, unknown>);
+      const normalized = this.normalizeAssessment(assessment);
       const saved = await this.requestService.saveAssessment(requestId, assessmentVersion, normalized);
       return {
         requestId,
@@ -247,7 +247,7 @@ export class PlaybookAssistantService {
         attachmentIds: request.attachmentIds,
       }),
     });
-    const normalized = this.normalizeAssessment(assessment as unknown as Record<string, unknown>);
+    const normalized = this.normalizeAssessment(assessment);
     const saved = await this.requestService.saveAssessment(requestId, assessmentVersion, normalized);
     return {
       requestId,
@@ -274,11 +274,11 @@ export class PlaybookAssistantService {
       throw new ConflictException(ErrorCode.CONFLICT, 'Assistant request does not support clarification');
     }
     const questions = Array.isArray(request.assessment?.questions)
-      ? request.assessment.questions as Array<{
+      ? request.assessment.questions as {
         id?: string;
         required?: boolean;
         resourceSelector?: 'workspace_or_document' | 'destination_workspace';
-      }>
+      }[]
       : [];
     const allowedQuestionIds = new Set(questions.map((question) => question.id).filter((id): id is string => Boolean(id)));
     if (dto.answers.some((answer) => !allowedQuestionIds.has(answer.questionId))) {
@@ -503,7 +503,7 @@ export class PlaybookAssistantService {
       assessment = (await this.continueClarification(continuationId, actor, {
         answers: dto.answers ?? [],
         skip: dto.skip,
-      })) as Record<string, unknown> & { status?: string };
+      }));
       requestId = String(assessment.requestId || '');
       request = await this.requestService.getBound(requestId, actor);
       if (request.operationKind !== 'generation') {
@@ -525,7 +525,7 @@ export class PlaybookAssistantService {
         return this.startGeneration(requestId, actor, dto);
       }
       if (request.status === 'processing') {
-        assessment = (await this.assessRequest(requestId, actor)) as Record<string, unknown> & { status?: string };
+        assessment = (await this.assessRequest(requestId, actor));
       } else {
         assessment = {
           continuationId: request.continuationId ?? null,
@@ -552,7 +552,7 @@ export class PlaybookAssistantService {
       await this.requestService.rebindCorrelationForContinuation({ continuationId, playbookId, actor });
       const request = await this.requestService.getByContinuation(continuationId, actor);
       requestId = request.requestId;
-      assessment = (await this.continueClarification(continuationId, actor, { answers: dto.answers ?? [], skip: dto.skip })) as Record<string, unknown> & { status?: string };
+      assessment = (await this.continueClarification(continuationId, actor, { answers: dto.answers ?? [], skip: dto.skip }));
     } else {
       const { text } = await this.resolveCurrentTurnQuestion(actor, 'modification');
       const request = await this.requestService.claimCurrentTurnModification({
@@ -563,7 +563,7 @@ export class PlaybookAssistantService {
       });
       requestId = request.requestId;
       if (request.status === 'processing') {
-        assessment = (await this.assessRequest(requestId, actor)) as Record<string, unknown> & { status?: string };
+        assessment = (await this.assessRequest(requestId, actor));
       } else {
         assessment = {
           requestId,
@@ -1081,10 +1081,10 @@ export class PlaybookAssistantService {
 
   private async validateClarificationResources(
     ownerId: string,
-    questions: Array<{
+    questions: {
       id?: string;
       resourceSelector?: 'workspace_or_document' | 'destination_workspace';
-    }>,
+    }[],
     answers: ContinuePlaybookClarificationDto['answers'],
   ): Promise<ContinuePlaybookClarificationDto['answers']> {
     const questionsById = new Map(questions

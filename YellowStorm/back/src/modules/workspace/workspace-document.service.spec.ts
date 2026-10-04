@@ -592,7 +592,7 @@ describe('WorkspaceDocumentService url document (addLink)', () => {
     // Each doc gets a unique link-pending path.
     const paths = created.map((d) => d.path);
     expect(new Set(paths).size).toBe(2);
-    paths.forEach((p) => expect(p).toContain('link-pending:'));
+    paths.forEach((p) => { expect(p).toContain('link-pending:'); });
 
     // Conversion is now a strictly sequential, fire-and-forget loop: the
     // second item's convertAndStore call only happens after the first

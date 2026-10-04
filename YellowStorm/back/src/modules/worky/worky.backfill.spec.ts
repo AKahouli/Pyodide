@@ -62,8 +62,7 @@ describeIntegration('worky backfill mapping (integration)', () => {
     expect(back.rows).toHaveLength(1);
     return back.rows[0] as Row;
   };
-  const sameContent = (row: Row, back: Row, key = 'id') =>
-    expect(compareRowChecksums(new Map([[String(row[key]), row]]), new Map([[String(row[key]), back]]))).toMatchObject({ match: true, compared: 1, mismatchTotal: 0 });
+  const sameContent = (row: Row, back: Row, key = 'id') => { expect(compareRowChecksums(new Map([[String(row[key]), row]]), new Map([[String(row[key]), back]]))).toMatchObject({ match: true, compared: 1, mismatchTotal: 0 }); };
   const roundTrip = async (table: string, columns: string[], row: Row, key = 'id'): Promise<void> => {
     await u.insertRow(pool, table, columns, row, key);
     sameContent(row, await readBack(table, columns, key, row[key]), key);

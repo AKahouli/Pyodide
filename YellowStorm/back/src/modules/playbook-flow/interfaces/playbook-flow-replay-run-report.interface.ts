@@ -85,7 +85,7 @@ export interface FlowReplayHitlFinding {
  * Replay reports need compact HITL counts without loading the full execution audit trail. A type (not
  * an interface) so it can be handed on as a plain record to the stream event.
  */
-export type FlowReplayHitlSummary = {
+export interface FlowReplayHitlSummary {
   baselineHitlCount: number;
   runtimeHitlCount: number;
   reusedMemoryCount: number;
@@ -93,7 +93,7 @@ export type FlowReplayHitlSummary = {
   approvalReaskedCount: number;
   hitlContextDrift: boolean;
   findings: FlowReplayHitlFinding[];
-};
+}
 
 /** The report document: the promoted columns and the report body kept in `doc`. */
 export interface FlowReplayRunReport {

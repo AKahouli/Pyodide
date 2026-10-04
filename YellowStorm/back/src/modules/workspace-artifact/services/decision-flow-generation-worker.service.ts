@@ -20,7 +20,7 @@ const LEASE_MINUTES = 5;
 
 interface PdfTextPage {
   pageIndex: number;
-  getTextContent(options: { normalizeWhitespace: boolean; disableCombineTextItems: boolean }): Promise<{ items: Array<{ str: string; transform: number[] }> }>;
+  getTextContent(options: { normalizeWhitespace: boolean; disableCombineTextItems: boolean }): Promise<{ items: { str: string; transform: number[] }[] }>;
 }
 
 @Injectable()

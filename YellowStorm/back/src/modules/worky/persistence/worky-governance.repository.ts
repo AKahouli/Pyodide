@@ -12,7 +12,7 @@ const g = schema.workyGovernancePolicies;
 export interface WorkyGovernancePolicyInput {
   workspaceId: string;
   defaultLevel: string;
-  categories: Array<{ category: string; level: string }>;
+  categories: { category: string; level: string }[];
   allowStreamOwnerOverride: boolean;
   maxOwnerRelaxLevel: string;
 }

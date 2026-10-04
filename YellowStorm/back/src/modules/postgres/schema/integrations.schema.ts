@@ -114,9 +114,9 @@ export const integrationsConnectors = integrationsSchema.table(
     mcpServerUrl: varchar('mcp_server_url', { length: 1024 }).notNull(),
     /** May hold headers/env secrets (parity). */
     mcpServerConfig: jsonb('mcp_server_config').$type<Record<string, unknown>>().notNull().default({}),
-    dynamicHeaders: jsonb('dynamic_headers').$type<Array<Record<string, unknown>>>().notNull().default([]),
+    dynamicHeaders: jsonb('dynamic_headers').$type<Record<string, unknown>[]>().notNull().default([]),
     /** Subdocument _ids preserved inside (plan DDL note). */
-    actions: jsonb('actions').$type<Array<Record<string, unknown>>>().notNull().default([]),
+    actions: jsonb('actions').$type<Record<string, unknown>[]>().notNull().default([]),
     isActive: boolean('is_active').notNull().default(true),
     isSystem: boolean('is_system').notNull().default(false),
     isHidden: boolean('is_hidden').notNull().default(false),

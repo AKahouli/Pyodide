@@ -207,7 +207,7 @@ export class PlaybookExecutionSingleStepPrepService {
     }
 
     const currentSnapshotNodes = Array.isArray(currentSnapshot.nodes)
-      ? currentSnapshot.nodes as unknown as Array<Record<string, unknown>>
+      ? currentSnapshot.nodes as unknown as Record<string, unknown>[]
       : [];
 
     const completedExecutions = await this.executionRepository.listRecentCompletedWithSnapshot(flowId, ownerId, 20);
@@ -216,7 +216,7 @@ export class PlaybookExecutionSingleStepPrepService {
     for (const exec of completedExecutions) {
       const execSnapshot = exec.snapshot;
       const execSnapshotNodes = Array.isArray(execSnapshot && (execSnapshot as Record<string, unknown>).nodes)
-        ? ((execSnapshot as Record<string, unknown>).nodes as Array<Record<string, unknown>>)
+        ? ((execSnapshot as Record<string, unknown>).nodes as Record<string, unknown>[])
         : [];
       const allUpstreamMatch = requiredSourceNodeIds.every((sourceNodeId) => {
         const priorNode = execSnapshotNodes.find((node) => node.id === sourceNodeId);
@@ -243,10 +243,10 @@ export class PlaybookExecutionSingleStepPrepService {
       order: 'latest',
     });
 
-    const resultsByTaskId = new Map<string, Array<Record<string, unknown>>>();
+    const resultsByTaskId = new Map<string, Record<string, unknown>[]>();
     for (const result of taskResults) {
       const existing = resultsByTaskId.get(result.taskId) ?? [];
-      existing.push(result as unknown as Record<string, unknown>);
+      existing.push(result);
       resultsByTaskId.set(result.taskId, existing);
     }
 
@@ -303,13 +303,13 @@ export class PlaybookExecutionSingleStepPrepService {
       output,
       ...(displayText ? { displayText } : {}),
       ...(outputs ? { outputs } : {}),
-      ...(Array.isArray(result.artifacts) ? { artifacts: result.artifacts as Array<Record<string, unknown>> } : {}),
-      ...(Array.isArray(result.components) ? { components: result.components as Array<Record<string, unknown>> } : {}),
-      ...(Array.isArray(result.toolTrace) ? { toolTrace: result.toolTrace as unknown as FlowToolTraceItem[] } : {}),
+      ...(Array.isArray(result.artifacts) ? { artifacts: result.artifacts as Record<string, unknown>[] } : {}),
+      ...(Array.isArray(result.components) ? { components: result.components as Record<string, unknown>[] } : {}),
+      ...(Array.isArray(result.toolTrace) ? { toolTrace: result.toolTrace } : {}),
       ...(Array.isArray(result.reasoningChain) ? { reasoningChain: result.reasoningChain as PublicReasoningTraceItem[] } : {}),
-      ...(Array.isArray(result.llmPromptTrace) ? { llmPromptTrace: result.llmPromptTrace as unknown as FlowLlmPromptTraceItem[] } : {}),
-      ...(result.usage ? { usage: result.usage as FlowUsageSummary } : {}),
-      ...(result.semanticMatch ? { semanticMatch: result.semanticMatch as FlowSemanticMatchSummary } : {}),
+      ...(Array.isArray(result.llmPromptTrace) ? { llmPromptTrace: result.llmPromptTrace } : {}),
+      ...(result.usage ? { usage: result.usage } : {}),
+      ...(result.semanticMatch ? { semanticMatch: result.semanticMatch } : {}),
       ...(result.traceMetadata ? { traceMetadata: result.traceMetadata as Record<string, unknown> } : {}),
     };
   }

@@ -10,7 +10,7 @@ export interface GovernanceDryRunCreateInput {
   testerId: string;
   status: GovernanceDryRunRecord['status'];
   executionMode: GovernanceDryRunRecord['executionMode'];
-  testCases?: Array<Record<string, unknown>>;
+  testCases?: Record<string, unknown>[];
   checks?: Record<string, unknown>;
 }
 

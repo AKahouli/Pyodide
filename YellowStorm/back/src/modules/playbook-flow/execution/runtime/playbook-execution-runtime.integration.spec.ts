@@ -127,7 +127,7 @@ describeIntegration('playbook runtime handlers (integration)', () => {
     );
     const host: PlaybookExecutionHitlResumeHost = {
       isRuntimeAvailable: () => true,
-      resumeApprovalRuntime: jest.fn((_request, callback) => setTimeout(() => callback(null, { resumed: true }), 20)),
+      resumeApprovalRuntime: jest.fn((_request, callback) => setTimeout(() => { callback(null, { resumed: true }); }, 20)),
       resumeFromStepRuntime: jest.fn(),
       scheduleDurableResume: jest.fn(),
     };
@@ -151,7 +151,7 @@ describeIntegration('playbook runtime handlers (integration)', () => {
     const responses = await Promise.all([
       service.resumeApproval(execution.id, ownerId, { decision: 'approved' }),
       service.resumeApproval(execution.id, ownerId, { decision: 'rejected' }),
-    ]).finally(() => findById.mockRestore());
+    ]).finally(() => { findById.mockRestore(); });
 
     expect(host.resumeApprovalRuntime).toHaveBeenCalledTimes(1);
     expect(responses.map((response) => response.status)).toEqual(['running', 'running']);

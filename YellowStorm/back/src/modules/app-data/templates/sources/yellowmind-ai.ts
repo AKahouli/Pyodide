@@ -40,7 +40,7 @@ function sanitizeAiClientHeaders(
     if (allow.has(key.toLowerCase())) out[key] = value;
   };
   if (typeof Headers !== 'undefined' && raw instanceof Headers) {
-    raw.forEach((value, key) => put(key, value));
+    raw.forEach((value, key) => { put(key, value); });
   } else if (Array.isArray(raw)) {
     for (const [key, value] of raw) put(key, value);
   } else {
@@ -169,7 +169,7 @@ function proxyFetch(url: string, init?: RequestInit): Promise<Response> {
     let cleanup: () => void;
 
     if (inIframe) {
-      const handler = (event: MessageEvent) => onResponse(event.data);
+      const handler = (event: MessageEvent) => { onResponse(event.data); };
       window.addEventListener('message', handler);
       cleanup = () => {
         clearTimeout(timeout);
@@ -178,7 +178,7 @@ function proxyFetch(url: string, init?: RequestInit): Promise<Response> {
       window.parent.postMessage(payload, '*');
     } else {
       const bc = getBroadcastChannel();
-      const handler = (event: MessageEvent) => onResponse(event.data);
+      const handler = (event: MessageEvent) => { onResponse(event.data); };
       bc.addEventListener('message', handler);
       cleanup = () => {
         clearTimeout(timeout);
@@ -299,9 +299,7 @@ export function getAssistantText(
   completion: OpenAI.Chat.ChatCompletion | null | undefined,
 ): string {
   const choice = completion?.choices?.[0];
-  const message = choice?.message as
-    | (OpenAI.Chat.ChatCompletionMessage & Record<string, unknown>)
-    | undefined;
+  const message = choice?.message;
   if (!message) return '';
 
   if (typeof message.content === 'string' && message.content.trim()) {

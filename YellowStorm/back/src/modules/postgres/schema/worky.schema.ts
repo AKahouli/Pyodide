@@ -38,7 +38,7 @@ export const workyGovernancePolicies = workySchema.table(
     workspaceId: objectId('workspace_id').notNull(),
     scope: varchar('scope', { length: 16 }).notNull().default('workspace'),
     defaultLevel: varchar('default_level', { length: 16 }).notNull().default('off'),
-    categories: jsonb('categories').$type<Array<{ category: string; level: string }>>().notNull().default([]),
+    categories: jsonb('categories').$type<{ category: string; level: string }[]>().notNull().default([]),
     allowStreamOwnerOverride: boolean('allow_stream_owner_override').notNull().default(true),
     maxOwnerRelaxLevel: varchar('max_owner_relax_level', { length: 16 }).notNull().default('notify'),
     ...timestamps(),

@@ -29,7 +29,7 @@ describe('ConnectorAdminAuthService (unit)', () => {
     fetchSpy = jest.spyOn(global, 'fetch');
   });
 
-  afterEach(() => fetchSpy.mockRestore());
+  afterEach(() => { fetchSpy.mockRestore(); });
 
   it('buildAuthorizationUrl persists a PKCE state and returns a provider URL with matching state/challenge', async () => {
     const url = new URL(await service.buildAuthorizationUrl('u1', 'app'));

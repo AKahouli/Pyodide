@@ -83,7 +83,7 @@ export type SemanticGraphOperation =
   | { type: 'record_relation.create'; entity: SemanticRecordRelation }
   | { type: 'record_relation.update'; id: string; changes: Pick<SemanticRecordRelation, 'values'> }
   | { type: 'record_relation.delete'; id: string }
-  | { type: 'layout.update'; positions: Array<{ id: string; position: CanvasPosition }> };
+  | { type: 'layout.update'; positions: { id: string; position: CanvasPosition }[] };
 
 export interface SemanticGraph {
   modelId: string;

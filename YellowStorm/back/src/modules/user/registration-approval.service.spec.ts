@@ -13,7 +13,7 @@ describe('RegistrationApprovalService', () => {
   const superAdminId = new Types.ObjectId();
 
   const makeService = (overrides: {
-    emails?: Array<{ email: string }>;
+    emails?: { email: string }[];
     role?: { id: string; name: string } | null;
     emailAvailable?: boolean;
     sendResult?: { success: boolean; error?: string; attempts: number };

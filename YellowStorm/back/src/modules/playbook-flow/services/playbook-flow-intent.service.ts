@@ -37,10 +37,8 @@ const NO_CAPTURED_CLARIFICATIONS = 'None captured.';
 const NO_RESOLVED_DESIGN_RESOURCES = '[]';
 const MAX_INTENT_CATALOG_FOLDERS_PER_WORKSPACE = 100;
 
-type IntentUserMessageContent = string | Array<
-  | { type: 'text'; text: string }
-  | { type: 'image_url'; image_url: { url: string } }
->;
+type IntentUserMessageContent = string | (| { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string } })[];
 
 export interface ResolvedDesignResource {
   question: string;
@@ -58,58 +56,58 @@ export interface ResolvedDesignResourceBindingValue extends ResolvedDesignResour
 }
 
 export interface AvailableDesignCatalog {
-  availableSkills: Array<{
+  availableSkills: {
     id: string;
     skillSlug: string;
     name: string;
     description: string;
     category?: string | null;
-  }>;
-  availableConnectors: Array<{
+  }[];
+  availableConnectors: {
     id: string;
     connectorSlug: string;
     name: string;
     description: string;
     category?: string | null;
-  }>;
-  availableConnectorActions: Array<{
+  }[];
+  availableConnectorActions: {
     connectorId: string;
     connectorSlug: string;
     connectorName: string;
     actionKey: string;
     label: string;
     description: string;
-  }>;
-  availableWorkspaces: Array<{
+  }[];
+  availableWorkspaces: {
     id: string;
     name: string;
     description: string;
-    folders: Array<{
+    folders: {
       id: string;
       name: string;
       parentId: string | null;
-    }>;
-  }>;
+    }[];
+  }[];
 }
 
 interface PromptAvailableDesignCatalog {
-  availableConnectors: Array<{
+  availableConnectors: {
     id: string;
     connectorSlug: string;
     name: string;
     category?: string | null;
-  }>;
-  availableConnectorActions: Array<{
+  }[];
+  availableConnectorActions: {
     connectorId: string;
     connectorSlug: string;
     actionKey: string;
     label: string;
-  }>;
-  availableWorkspaces: Array<{
+  }[];
+  availableWorkspaces: {
     id: string;
     name: string;
-    folders?: Array<{ id: string; name: string; parentId: string | null }>;
-  }>;
+    folders?: { id: string; name: string; parentId: string | null }[];
+  }[];
 }
 
 export type PlaybookIntentOperationType =
@@ -144,14 +142,14 @@ export interface PlaybookIntentTaskDraft {
   routerConfig?: {
     outputLabels: string[];
     maxIterations?: number | null;
-    conditions?: Array<{
+    conditions?: {
       label: string;
       sourceNode?: string | null;
       sourcePort?: string | null;
       path?: string | null;
       operator: 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte' | 'in' | 'not_in';
       value?: unknown;
-    }>;
+    }[];
     defaultLabel?: string | null;
     mode?: 'ai' | 'deterministic' | null;
     prompt?: string | null;
@@ -159,34 +157,34 @@ export interface PlaybookIntentTaskDraft {
   humanApprovalConfig?: Record<string, unknown> | null;
   retryPolicy?: { maxRetries: number; delayMs?: number } | null;
   modelId?: string | null;
-  inputPorts?: Array<{
+  inputPorts?: {
     id: string;
     name?: string | null;
     artifactKind: 'text' | 'document' | 'code' | 'image' | 'data' | 'dashboard';
     required?: boolean;
-  }>;
-  outputPorts?: Array<{
+  }[];
+  outputPorts?: {
     id: string;
     name?: string | null;
     artifactKind: 'text' | 'document' | 'code' | 'image' | 'data' | 'dashboard';
-  }>;
-  toolBindings?: Array<{
+  }[];
+  toolBindings?: {
     id: string;
     connectorId: string;
     connectorSlug?: string;
     connectorName?: string;
-    actions: Array<{ actionKey: string; isEnabled?: boolean }>;
+    actions: { actionKey: string; isEnabled?: boolean }[];
     isEnabled?: boolean;
-  }>;
-  skillBindings?: Array<{
+  }[];
+  skillBindings?: {
     id: string;
     skillId: string;
     skillSlug?: string;
     skillName?: string;
     isEnabled?: boolean;
-  }>;
+  }[];
   iteratorBody?: {
-    steps: Array<{
+    steps: {
       nodeRef: string;
       title: string;
       description: string;
@@ -200,19 +198,19 @@ export interface PlaybookIntentTaskDraft {
       modelId?: string | null;
       toolBindings?: PlaybookIntentTaskDraft['toolBindings'];
       skillBindings?: PlaybookIntentTaskDraft['skillBindings'];
-      inputPorts?: Array<{
+      inputPorts?: {
         id: string;
         name?: string | null;
         artifactKind: 'text' | 'document' | 'code' | 'image' | 'data' | 'dashboard';
         required?: boolean;
-      }>;
-      outputPorts?: Array<{
+      }[];
+      outputPorts?: {
         id: string;
         name?: string | null;
         artifactKind: 'text' | 'document' | 'code' | 'image' | 'data' | 'dashboard';
-      }>;
-    }>;
-    edges: Array<{
+      }[];
+    }[];
+    edges: {
       sourceNodeRef: string;
       targetNodeRef: string;
       edgeKind?: 'sequential' | 'conditional';
@@ -220,7 +218,7 @@ export interface PlaybookIntentTaskDraft {
       priority?: number | null;
       sourceOutputPortId?: string | null;
       targetInputPortId?: string | null;
-    }>;
+    }[];
   };
 }
 
@@ -371,12 +369,12 @@ export interface PlaybookIntentAnalysisContext {
   limits: IntentNormalizationLimits;
   availableDesignCatalog: AvailableDesignCatalog;
   resolvedDesignResources: ResolvedDesignResource[];
-  nodeTemplates: Array<{
+  nodeTemplates: {
     id: string; key: string; nodeType: string; title: string; description?: string; category: string;
-    inputPorts: Array<{ id: string; name: string; artifactKind: string; required?: boolean; description?: string }>;
-    outputPorts: Array<{ id: string; name: string; artifactKind: string; description?: string }>;
+    inputPorts: { id: string; name: string; artifactKind: string; required?: boolean; description?: string }[];
+    outputPorts: { id: string; name: string; artifactKind: string; description?: string }[];
     recommendedAgentTypeSlug: string | null; enabled: boolean; iteratorConfig?: unknown
-  }>;
+  }[];
 }
 
 const DEFAULT_GENERIC_NODE_TEMPLATE_KEY = 'generic.agent_step';
@@ -592,7 +590,7 @@ export class PlaybookFlowIntentService {
     }
 
     const selectedNode = dto.selectedTaskId
-      ? (flow.nodes as Array<{ id: string; label?: string; description?: string; metadata?: Record<string, unknown> }>).find((n) => n.id === dto.selectedTaskId) || null
+      ? (flow.nodes as { id: string; label?: string; description?: string; metadata?: Record<string, unknown> }[]).find((n) => n.id === dto.selectedTaskId) || null
       : null;
 
     if (dto.selectedTaskId && !selectedNode) {
@@ -600,10 +598,10 @@ export class PlaybookFlowIntentService {
     }
 
     const effectiveSettings = await this.settingsService.resolveEffectiveSettings(
-      (flow as any).designSettings,
+      (flow).designSettings,
     );
     const inferenceModel = await this.settingsService.resolveInferenceModelConfig(
-      (flow as any).designSettings,
+      (flow).designSettings,
     );
     const prompt = await this.promptService.findByKey('intent.analyze');
     const defaultAgents = await this.agentService.findDefaultAgents({ page: 1, limit: 100, isActive: true });
@@ -614,7 +612,7 @@ export class PlaybookFlowIntentService {
     const resolvedDesignResources = this.extractResolvedDesignResources(intentParts.capturedClarifications);
     const promptVariables = {
       playbook_name: flow.name,
-      playbook_description: (flow as any).description || '',
+      playbook_description: (flow).description || '',
       workflow_summary: JSON.stringify(this.buildWorkflowSummary(flow, dto.selectedTaskId || null), null, 2),
       default_agents: JSON.stringify(defaultAgents.data.map((agent) => ({
         agentSlug: agent.slug,
@@ -666,7 +664,7 @@ export class PlaybookFlowIntentService {
       resolved_design_resources: JSON.stringify(resolvedDesignResources, null, 2),
       available_design_catalog: JSON.stringify(this.buildPromptAvailableDesignCatalog(availableDesignCatalog, catalogPhase), null, 2),
       selected_task_title: selectedNode?.label || '',
-      selected_task_description: selectedNode?.description || (selectedNode?.metadata as Record<string, unknown> | undefined)?.description as string || '',
+      selected_task_description: selectedNode?.description || (selectedNode?.metadata)?.description as string || '',
       selected_task_id: selectedNode?.id || '',
       selected_task_context: JSON.stringify(this.buildSelectedNodeContext(flow, selectedNode?.id || null), null, 2),
     };
@@ -772,7 +770,7 @@ export class PlaybookFlowIntentService {
       })),
       availableConnectorActions: connectors.flatMap((connector) =>
         (connector.actions || [])
-          .filter((action) => action.isEnabled !== false)
+          .filter((action) => action.isEnabled)
           .map((action) => ({
             connectorId: connector.id,
             connectorSlug: connector.slug,
@@ -813,7 +811,7 @@ export class PlaybookFlowIntentService {
     };
   }
 
-  private async buildAvailableWorkspaceCatalog(workspaces: Array<{ id: string; name: string; description?: string }>) {
+  private async buildAvailableWorkspaceCatalog(workspaces: { id: string; name: string; description?: string }[]) {
     if (!this.workspaceDocumentService) {
       return workspaces.map((workspace) => ({
         id: workspace.id,
@@ -1082,8 +1080,8 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
   }
 
   private buildValidationContext(flow: any): IntentWorkflowValidationContext {
-    const nodes: Array<{ id: string; label?: string; description?: string; metadata?: { agentSlug?: string; description?: string }; input?: { ports?: Array<{ id: string; type?: string }> }; output?: { ports?: Array<{ id: string; type?: string }> } }> = flow.nodes || [];
-    const bindings: Array<{ targetNode: string; targetPort: string }> = flow.dataBindings || [];
+    const nodes: { id: string; label?: string; description?: string; metadata?: { agentSlug?: string; description?: string }; input?: { ports?: { id: string; type?: string }[] }; output?: { ports?: { id: string; type?: string }[] } }[] = flow.nodes || [];
+    const bindings: { targetNode: string; targetPort: string }[] = flow.dataBindings || [];
 
     const existingTaskIds = new Set<string>();
     const existingTaskTitles = new Map<string, string>();
@@ -1120,9 +1118,9 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
   }
 
   private buildWorkflowSummary(flow: any, selectedNodeId: string | null) {
-    const nodes: Array<{ id: string; label?: string; description?: string; metadata?: Record<string, unknown>; input?: { ports?: Array<{ id: string; label?: string; type?: string; required?: boolean }> }; output?: { ports?: Array<{ id: string; label?: string; type?: string }> } }> = flow.nodes || [];
-    const edges: Array<{ source: string; target: string; sourceOutputPortId?: string; targetInputPortId?: string }> = flow.controlEdges || [];
-    const bindings: Array<{ id: string; sourceKind: string; targetNode: string; targetPort: string; sourceNode?: string; sourcePort?: string; iteration?: string }> = flow.dataBindings || [];
+    const nodes: { id: string; label?: string; description?: string; metadata?: Record<string, unknown>; input?: { ports?: { id: string; label?: string; type?: string; required?: boolean }[] }; output?: { ports?: { id: string; label?: string; type?: string }[] } }[] = flow.nodes || [];
+    const edges: { source: string; target: string; sourceOutputPortId?: string; targetInputPortId?: string }[] = flow.controlEdges || [];
+    const bindings: { id: string; sourceKind: string; targetNode: string; targetPort: string; sourceNode?: string; sourcePort?: string; iteration?: string }[] = flow.dataBindings || [];
 
     return {
       taskCount: nodes.length,
@@ -1158,9 +1156,9 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
       return { upstream: [], downstream: [], incomingBindings: [], outgoingBindings: [] };
     }
 
-    const edges: Array<{ source: string; target: string }> = flow.controlEdges || [];
-    const nodes: Array<{ id: string; label?: string; description?: string; metadata?: Record<string, unknown>; input?: { ports?: Array<{ id: string; label?: string; type?: string; required?: boolean }> }; output?: { ports?: Array<{ id: string; label?: string; type?: string }> } }> = flow.nodes || [];
-    const bindings: Array<{ id: string; sourceKind: string; targetNode: string; targetPort: string; sourceNode?: string; sourcePort?: string }> = flow.dataBindings || [];
+    const edges: { source: string; target: string }[] = flow.controlEdges || [];
+    const nodes: { id: string; label?: string; description?: string; metadata?: Record<string, unknown>; input?: { ports?: { id: string; label?: string; type?: string; required?: boolean }[] }; output?: { ports?: { id: string; label?: string; type?: string }[] } }[] = flow.nodes || [];
+    const bindings: { id: string; sourceKind: string; targetNode: string; targetPort: string; sourceNode?: string; sourcePort?: string }[] = flow.dataBindings || [];
 
     const upstreamIds = edges.filter((e) => e.target === selectedNodeId).map((e) => e.source);
     const downstreamIds = edges.filter((e) => e.source === selectedNodeId).map((e) => e.target);
@@ -1187,7 +1185,7 @@ or {"status":"ready_to_generate","detectedIntent":"...","assumptions":["..."],"r
   }
 
   extractChatCompletionText(responseData: unknown): string {
-    const content = (responseData as { choices?: Array<{ message?: { content?: unknown } }> })?.choices?.[0]?.message?.content;
+    const content = (responseData as { choices?: { message?: { content?: unknown } }[] })?.choices?.[0]?.message?.content;
     if (typeof content === 'string') {
       return content.trim();
     }

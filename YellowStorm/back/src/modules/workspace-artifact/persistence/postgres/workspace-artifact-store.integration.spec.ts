@@ -13,7 +13,7 @@ import { PostgresWorkspaceArtifactStore } from './postgres-workspace-artifact-st
 const exclusive = process.env.PG_INTEGRATION_EXCLUSIVE === 'true';
 const itExclusive: jest.It = exclusive ? it : it.skip;
 if (!exclusive) {
-  // eslint-disable-next-line no-console
+   
   console.info(
     '[workspace-artifact-store.integration] claim/lease tests skipped: they touch rows across all workspaces. ' +
       'Set PG_INTEGRATION_EXCLUSIVE=true on a dedicated scratch DB to run them.',

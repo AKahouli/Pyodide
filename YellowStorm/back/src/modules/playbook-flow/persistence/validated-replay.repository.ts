@@ -25,7 +25,7 @@ export type FlowValidatedReplayRecord = FlowValidatedReplay & { id: string; crea
 /** A new baseline; `validationVersion` is allocated by createNextVersion. */
 export type NewValidatedReplay = Partial<Omit<FlowValidatedReplay, 'toolCalls' | 'validationVersion'>>
   & Pick<FlowValidatedReplay, 'flowId' | 'taskId' | 'iteration' | 'taskTitle' | 'createdBy' | 'referenceExecutionId' | 'referenceExecutionNumber'>
-  & { toolCalls?: Array<FlowReplayToolCall | FlowToolTraceItem> };
+  & { toolCalls?: (FlowReplayToolCall | FlowToolTraceItem)[] };
 
 /** Whole-field overwrites (Mongo's `$set` of top-level keys); `replayConfig` is merged key by key. */
 export type ValidatedReplayPatch = Partial<Omit<FlowValidatedReplay, 'replayConfig'
@@ -112,7 +112,7 @@ function replayConfigOf(value: unknown): FlowReplayConfig {
  * fields added since), the promoted columns on top.
  */
 export function toValidatedReplayRecord(row: ReplayRow): FlowValidatedReplayRecord {
-  const doc = (row.doc ?? {}) as Json;
+  const doc = (row.doc ?? {});
   const record = {
     ...doc,
     id: row.id,
@@ -145,7 +145,7 @@ export function toValidatedReplayJson(record: FlowValidatedReplayRecord): FlowVa
     ...record,
     replayConfig: replayConfigOf(record.replayConfig),
     mode: serializeReplayMode(record.mode),
-  } as FlowValidatedReplayRecord;
+  };
 }
 
 /** A soft reference: kept as given, lower-cased when it is an ObjectId. */
@@ -167,7 +167,7 @@ export class ValidatedReplayRepository {
   }
 
   private inTask(flowId: string, taskId: string): SQL {
-    return and(eq(r.flowId, normalizeObjectId(flowId)), eq(r.taskId, taskId)) as SQL;
+    return and(eq(r.flowId, normalizeObjectId(flowId)), eq(r.taskId, taskId))!;
   }
 
   /**
@@ -292,7 +292,7 @@ export class ValidatedReplayRepository {
   async update(id: string, flowId: string, taskId: string, patch: ValidatedReplayPatch): Promise<FlowValidatedReplayRecord | null> {
     if (!isObjectId(id) || !isObjectId(flowId)) return null;
     const { status, mode, isStale, label, taskTitle, replayConfig, ...fields } = patch;
-    const docFields = pickDoc(fields as Json);
+    const docFields = pickDoc(fields);
     let doc: SQL | undefined;
     if (Object.keys(docFields).length > 0) doc = sql`${r.doc} || ${JSON.stringify(docFields)}::jsonb`;
     if (replayConfig && Object.keys(replayConfig).length > 0) {

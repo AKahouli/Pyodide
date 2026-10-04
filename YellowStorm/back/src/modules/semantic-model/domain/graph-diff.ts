@@ -52,7 +52,7 @@ export function graphDiff(from: SemanticGraph, to: SemanticGraph): SemanticGraph
   const removals: SemanticGraphOperation[] = [];
   const additions: SemanticGraphOperation[] = [];
   const changes: SemanticGraphOperation[] = [];
-  const positions: Array<{ id: string; position: CanvasPosition }> = [];
+  const positions: { id: string; position: CanvasPosition }[] = [];
   const linkReplaced = (link: SemanticRecordRelation) => {
     const next = toLinks.get(link.id);
     return Boolean(next && (next.relationTypeId !== link.relationTypeId || next.sourceRecordId !== link.sourceRecordId || next.targetRecordId !== link.targetRecordId));

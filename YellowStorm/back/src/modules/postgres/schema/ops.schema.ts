@@ -16,7 +16,7 @@ export const opsNotifications = opsSchema.table(
     title: varchar('title', { length: 200 }).notNull(),
     message: varchar('message', { length: 2000 }).notNull(),
     data: jsonb('data').$type<Record<string, unknown>>(),
-    actions: jsonb('actions').$type<Array<{ label?: string; url?: string; action?: string }>>().notNull().default([]),
+    actions: jsonb('actions').$type<{ label?: string; url?: string; action?: string }[]>().notNull().default([]),
     destination: varchar('destination', { length: 64 }).notNull().default('user'),
     status: varchar('status', { length: 16 }).notNull().default('pending'),
     sourceModule: varchar('source_module', { length: 100 }).notNull(),

@@ -5,7 +5,7 @@ import {
   type AiExtractionSettings, type RunLimits,
 } from '../domain/semantic-source-mapping.types';
 
-const KEYS = Object.keys(DEFAULT_AI_EXTRACTION_SETTINGS) as Array<Exclude<keyof AiExtractionSettings, 'manyRecords'>>;
+const KEYS = Object.keys(DEFAULT_AI_EXTRACTION_SETTINGS) as Exclude<keyof AiExtractionSettings, 'manyRecords'>[];
 
 /** Only the limits that were set, as whole numbers; anything else is dropped. */
 export function pickAiSettings(input: unknown): Partial<AiExtractionSettings> {
@@ -23,7 +23,7 @@ export function pickAiSettings(input: unknown): Partial<AiExtractionSettings> {
 export function pickRunLimits(input: unknown): Partial<RunLimits> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
   const picked: Partial<RunLimits> = {};
-  for (const key of Object.keys(RUN_LIMIT_RANGES) as Array<keyof RunLimits>) {
+  for (const key of Object.keys(RUN_LIMIT_RANGES) as (keyof RunLimits)[]) {
     const value = (input as Record<string, unknown>)[key];
     const [low, high] = RUN_LIMIT_RANGES[key];
     if (typeof value === 'number' && Number.isInteger(value) && value >= low && value <= high) picked[key] = value;

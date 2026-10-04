@@ -112,11 +112,11 @@ describe('Governance REST response contract fixtures', () => {
   it('serializes a deployment and revision', () => {
     const service = new GovernanceDeploymentService({} as never, {} as never, {} as never, {} as never, {} as never, { assertOwnedProgram: jest.fn() } as never, {} as never, {} as never, {} as never, {} as never);
     const deploymentRecord = { id: id(), programId: id(), scopeId: id(), name: 'Public', status: 'published', currentDraftRevisionId: id(), currentPublishedRevisionId: id(), channels: { widget: { enabled: true } }, createdAt: NOW, updatedAt: NOW };
-    const deploymentResponse: GovernanceDeploymentResponse = service['toDeploymentResponse'](deploymentRecord as never);
+    const deploymentResponse: GovernanceDeploymentResponse = service.toDeploymentResponse(deploymentRecord as never);
     expect(Object.keys(deploymentResponse).sort()).toEqual(['channels', 'createdAt', 'currentDraftRevisionId', 'currentPublishedRevisionId', 'id', 'name', 'programId', 'scopeId', 'status', 'updatedAt']);
 
     const revisionRecord = { id: id(), deploymentId: deploymentRecord.id, revisionNumber: 1, status: 'published', agentId: id(), allowedAgentIds: [], workspaceIds: [id()], agentSnapshot: {}, workspaceBindingSnapshot: {}, channelSnapshot: {}, scopeSnapshot: {}, audienceSnapshot: {}, previousAudienceSnapshot: {}, createdBy: id(), publishedAt: NOW, createdAt: NOW, updatedAt: NOW };
-    const revisionResponse: GovernanceRevisionResponse = service['toRevisionResponse'](revisionRecord as never);
+    const revisionResponse: GovernanceRevisionResponse = service.toRevisionResponse(revisionRecord as never);
     expect(Object.keys(revisionResponse).sort()).toEqual(['agentId', 'allowedAgentIds', 'audienceSnapshot', 'configurationFingerprint', 'createdAt', 'createdBy', 'deploymentId', 'id', 'previousAudienceSnapshot', 'publishedAt', 'publishedBy', 'revisionNumber', 'scopeSnapshot', 'status', 'updatedAt', 'workspaceBindingSnapshot', 'workspaceIds']);
     // Roster fallback: allowedAgentIds falls back to the primary agent when empty.
     expect(revisionResponse.allowedAgentIds).toEqual([revisionRecord.agentId]);
@@ -143,8 +143,8 @@ describe('Governance REST response contract fixtures', () => {
   it('strips reconciliation lease internals like the former toJSON transform', () => {
     const record = runRecord();
     const { leaseToken, leaseExpiresAt, ...response } = record as unknown as GovernanceReconciliationRunRecord & Record<string, unknown>;
-    void leaseToken;
-    void leaseExpiresAt;
+    leaseToken;
+    leaseExpiresAt;
     expect(Object.keys(response).sort()).toEqual(['bindingId', 'completedAt', 'createdAt', 'dryRun', 'errors', 'id', 'startedAt', 'stats', 'status', 'updatedAt']);
     expect((response as Record<string, unknown>).leaseToken).toBeUndefined();
   });

@@ -190,7 +190,7 @@ export class PgTeamStore implements TeamStore {
         .set({
           ...columns,
           updatedAt: new Date(),
-        } as unknown as Partial<typeof schema.teams.$inferInsert>)
+        })
         .where(eq(schema.teams.id, id))
         .returning();
       if (!row) return null;

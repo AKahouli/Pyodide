@@ -476,7 +476,7 @@ export class WidgetChatService {
           this.logger.error('Widget stream failed', { sessionId, error: (err as Error).message });
           this.sseRegistry.emit(sessionId, { type: 'stream_error', data: { message: 'AI service error' } });
         })
-        .finally(() => this.sseRegistry.finishRun(sessionId));
+        .finally(() => { this.sseRegistry.finishRun(sessionId); });
 
       this.logger.log('Widget chat accepted, stream starting', { sessionId, messageId: userMsg.id });
       return { messageId: userMsg.id, sessionId };

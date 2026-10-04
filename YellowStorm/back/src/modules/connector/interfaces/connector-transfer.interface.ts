@@ -6,12 +6,12 @@ export interface ConnectorTransferAdapter {
     authHeaders: Record<string, string>,
     options?: { recursive?: boolean },
   ): Promise<
-    Array<{
+    {
       itemRef: Record<string, unknown>;
       filename: string;
       mimeType: string;
       sourcePath: string;
-    }>
+    }[]
   >;
 
   downloadItem(

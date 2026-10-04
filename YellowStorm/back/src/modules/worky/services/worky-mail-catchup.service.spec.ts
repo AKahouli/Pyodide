@@ -31,7 +31,7 @@ function mail(subject: string, from = 'x@example.com', body = 'Yellow Systems.')
 }
 
 function build(
-  messages: Array<Record<string, unknown>>,
+  messages: Record<string, unknown>[],
   delivered = true,
   mailboxes: WorkyMailSubscriptionRecord[] = [SUB],
 ) {

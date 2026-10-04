@@ -123,7 +123,7 @@ export function validateManifest(
   }
   for (const tableName of tableNames) {
     assertIdentifier(tableName, 'table name');
-    const table = tables[tableName] as AppDataTableDef;
+    const table = tables[tableName];
     if (!table?.columns || typeof table.columns !== 'object') {
       throw new AppDataException(
         AppDataErrorCode.INVALID_MANIFEST,
@@ -208,7 +208,7 @@ export function normalizeSchemaManifest(
   if (!changed) {
     return { manifest, changed: false, warnings: [] };
   }
-  return { manifest: { version: version as number, tables }, changed: true, warnings };
+  return { manifest: { version: version, tables }, changed: true, warnings };
 }
 
 export function safeSqlDefault(raw: unknown): string | null {

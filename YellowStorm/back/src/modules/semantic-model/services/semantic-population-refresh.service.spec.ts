@@ -137,7 +137,7 @@ describe('SemanticPopulationRefreshService', () => {
   it('says whether the data in use was built from the model as it is now', async () => {
     const { runtime, service, models } = setup();
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
-    const planned = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>]>)[0][0].payload.populationExecutionFingerprint;
+    const planned = (runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>][])[0][0].payload.populationExecutionFingerprint;
     (runtime.getBoundRecords as jest.Mock).mockResolvedValueOnce({ ...(await runtime.getBoundRecords()), executionFingerprint: planned });
     await expect(service.freshness('u-1', 'model-1')).resolves.toEqual({ state: 'current' });
     (runtime.getBoundRecords as jest.Mock).mockResolvedValueOnce({ ...(await runtime.getBoundRecords()), executionFingerprint: 'sha256:older' });
@@ -152,7 +152,7 @@ describe('SemanticPopulationRefreshService', () => {
   it('sends business synonyms in the specification only when there are some', async () => {
     const { database, runtime, service } = setup();
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
-    const plain = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>]>)[0][0];
+    const plain = (runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>][])[0][0];
     expect(plain.payload.specification.concepts[0]).not.toHaveProperty('aliases');
     expect(plain.payload.specification.concepts[0]).not.toHaveProperty('fieldAliases');
     const query = database.query.getMockImplementation()!;
@@ -160,7 +160,7 @@ describe('SemanticPopulationRefreshService', () => {
       ? { rows: [{ ...NODES[0], aliases: [' Client ', 'Client', ''], attributes: [NODES[0].attributes[0], { ...NODES[0].attributes[1], aliases: ['Company name'] }] }, NODES[1]] }
       : query(sql, params));
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
-    const aliased = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>]>)[1][0];
+    const aliased = (runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>][])[1][0];
     expect(aliased.payload.specification.concepts[0]).toMatchObject({ aliases: ['Client'], fieldAliases: { name: ['Company name'] } });
     expect(aliased.payload.specification.specHash).not.toBe(plain.payload.specification.specHash);
   });
@@ -262,7 +262,7 @@ describe('SemanticPopulationRefreshService', () => {
     expect(runtime.mirrorSpecification).toHaveBeenCalledWith(expect.objectContaining({
       homeWorkspaceId: 'ws-1', modelId: 'model-1', modelVersionId: 'v-1',
     }));
-    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     const command = calls[0][0];
     expect(command.workspaceId).toBe('ws-1');
     expect(command.payload.purpose).toBe('build');
@@ -287,7 +287,7 @@ describe('SemanticPopulationRefreshService', () => {
     const result = await service.rebuildFromScratch('u-1', 'model-1', { forgetDocumentReading: true });
     expect(runtime.purgeModelData).toHaveBeenCalledWith('model-1', 'u-1', { forgetDocumentReading: true });
     expect(runtime.purgeModelData.mock.invocationCallOrder[0]).toBeLessThan(runtime.requestPopulationRun.mock.invocationCallOrder[0]);
-    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(calls[0][0].payload).toMatchObject({ purpose: 'build', scope: { kind: 'model' } });
     expect(result).toMatchObject({ jobId: 'j-1', cleared: { revisions: 2 } });
   });
@@ -308,7 +308,7 @@ describe('SemanticPopulationRefreshService', () => {
 
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
 
-    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     const command = calls[0][0];
     const source = command.payload.sources[0];
     expect(source).toEqual(JSON.parse(JSON.stringify(source)));
@@ -347,7 +347,7 @@ describe('SemanticPopulationRefreshService', () => {
       purpose: 'refresh', scope: { kind: 'mapping', mappingId: 'm-2' },
     });
     expect(result.jobId).toBe('j-1');
-    const scoped = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const scoped = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     const command = scoped[0][0];
     expect(command.payload.sources).toHaveLength(1);
     expect(command.payload.sources[0].conceptId).toBe('c-contract');
@@ -371,7 +371,7 @@ describe('SemanticPopulationRefreshService', () => {
     await service.requestRefresh('u-1', 'model-1', {
       purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' },
     });
-    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(calls[0][0].payload.sources[0]).toMatchObject({
       sourceKind: 'document', conceptId: 'c-customer',
       fieldMappings: doc.fieldMappings,
@@ -398,7 +398,7 @@ describe('SemanticPopulationRefreshService', () => {
       purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' },
     });
 
-    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(calls[0][0].payload.sources[0].fieldMappings).toEqual([
       { sourceField: 'Customer ID', targetAttribute: 'customer_id', mode: 'extract', extractionStrategy: 'ai', valueType: 'text' },
       { sourceField: 'Name', targetAttribute: 'name', mode: 'extract', extractionStrategy: 'deterministic' },
@@ -420,7 +420,7 @@ describe('SemanticPopulationRefreshService', () => {
       size: 100, indexingStatus: 'ready',
     });
     await first.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' } });
-    const firstCall = (first.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0];
+    const firstCall = (first.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][])[0][0];
     expect(firstCall.payload.aiExtraction).toEqual({
       agentSlug: 'semantic-field-extraction', model: 'gpt-5.4-nano', contractVersion: 'ai-attribute-v1',
     });
@@ -434,7 +434,7 @@ describe('SemanticPopulationRefreshService', () => {
       size: 100, indexingStatus: 'ready',
     });
     await second.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' } });
-    const secondCall = (second.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0];
+    const secondCall = (second.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][])[0][0];
     expect(secondCall.payload.populationExecutionFingerprint)
       .not.toEqual(firstCall.payload.populationExecutionFingerprint);
   });
@@ -451,7 +451,7 @@ describe('SemanticPopulationRefreshService', () => {
       size: 100, indexingStatus: 'ready',
     });
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' } });
-    const call = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0];
+    const call = (runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][])[0][0];
     expect(call.payload.aiExtraction).toBeNull();
     expect(aiExtractionAgent.resolveAgent).not.toHaveBeenCalled();
   });
@@ -475,7 +475,7 @@ describe('SemanticPopulationRefreshService', () => {
       purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' },
     });
 
-    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(calls[0][0].payload.sources[0].fieldMappings).toEqual([
       { sourceField: 'Id', targetAttribute: 'customer_id', mode: 'extract' },
       { sourceField: 'Name', targetAttribute: 'name', mode: 'extract' },
@@ -533,7 +533,7 @@ describe('SemanticPopulationRefreshService', () => {
     const { runtime, service } = setup([MAPPING(), stale]);
     const result = await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
     expect(result.skipped).toEqual([expect.objectContaining({ mappingId: 'm-stale' })]);
-    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(calls[0][0].payload.sources).toHaveLength(1);
   });
 
@@ -558,7 +558,7 @@ describe('SemanticPopulationRefreshService', () => {
     const input = { purpose: 'build', scope: { kind: 'model' } } as const;
     await service.requestRefresh('u-1', 'model-1', input);
     await service.requestRefresh('u-1', 'model-1', input);
-    const keys = (runtime.requestPopulationRun.mock.calls as unknown as Array<[unknown, string]>).map((call) => call[1]);
+    const keys = (runtime.requestPopulationRun.mock.calls as unknown as [unknown, string][]).map((call) => call[1]);
     const [first, second] = keys;
     expect(first).toHaveLength(64);
     expect(first).toBe(second);
@@ -571,7 +571,7 @@ describe('SemanticPopulationRefreshService', () => {
     await service.requestRefresh('u-1', 'model-1', input);
     mapping.updatedAt = new Date('2026-01-02T00:00:00.000Z');
     await service.requestRefresh('u-1', 'model-1', input);
-    const keys = (runtime.requestPopulationRun.mock.calls as unknown as Array<[unknown, string]>).map((call) => call[1]);
+    const keys = (runtime.requestPopulationRun.mock.calls as unknown as [unknown, string][]).map((call) => call[1]);
     expect(keys[0]).not.toBe(keys[1]);
   });
 
@@ -595,7 +595,7 @@ describe('SemanticPopulationRefreshService', () => {
       'c-customer': ['customer_id'], 'c-contract': ['contract_id'],
     }, [relation], [rule]);
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
-    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(calls[0][0].payload.relationBindings).toEqual([{
       relationId: 'r-1', referenceField: 'customer_ref', targetField: 'customer_id',
     }]);
@@ -626,7 +626,7 @@ describe('SemanticPopulationRefreshService', () => {
     );
     const built = setup([contract], identity, [relation], [rule]);
     await withDerivation(built).requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
-    const [[command]] = built.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const [[command]] = built.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(command.payload.derivations).toEqual([{
       derivationId: 'dv-1', conceptId: 'c-customer', sourceConceptId: 'c-contract', conflictRule: 'latest', orderBy: 'contract_id',
       fieldMappings: [{ sourceAttribute: 'customer_ref', targetAttribute: 'customer_id' }], labelField: null,
@@ -637,7 +637,7 @@ describe('SemanticPopulationRefreshService', () => {
     // Without it, customers have no source: they are left out of the run, and so is the link to them.
     const plain = setup([contract], identity, [relation], [rule]);
     await plain.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
-    const [[plainCommand]] = plain.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const [[plainCommand]] = plain.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(plainCommand.payload).not.toHaveProperty('derivations');
     expect(plainCommand.payload.relationBindings).toEqual([]);
     expect(plainCommand.payload.populationExecutionFingerprint).not.toBe(command.payload.populationExecutionFingerprint);
@@ -666,7 +666,7 @@ describe('SemanticPopulationRefreshService', () => {
 
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
 
-    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(calls[0][0].payload.relationBindings).toEqual([{
       relationId: 'r-1', referenceField: 'customer_id', targetField: 'customer_ref',
     }]);
@@ -696,7 +696,7 @@ describe('SemanticPopulationRefreshService', () => {
     await service.requestRefresh('u-1', 'model-1', {
       purpose: 'build', scope: { kind: 'model' },
     });
-    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(calls[0][0].payload.relationBindings).toEqual([{
       relationId: 'r-1', referenceField: 'customer_id', targetField: 'customer_ref',
     }]);
@@ -709,7 +709,7 @@ describe('SemanticPopulationRefreshService', () => {
     ] });
     const { runtime, service } = setup([mapping]);
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
-    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(calls[0][0].payload.sources[0]).toMatchObject({
       columnMapping: { customer_id: 'customer_id' }, constantMapping: { name: 'Unknown' },
     });
@@ -730,13 +730,13 @@ describe('SemanticPopulationRefreshService', () => {
     const links = [{ relationTypeId: 'rel-1', sourceRecordId: 'r-1', targetRecordId: 'r-2' }];
     const { runtime, service } = setup([], {}, [], [], records, links);
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
-    const [modelId, snapshotId, batch] = runtime.appendManualRows.mock.calls[0] as unknown as [string, string, { rows: Array<{ values: object }>; links: unknown[] }];
+    const [modelId, snapshotId, batch] = runtime.appendManualRows.mock.calls[0] as unknown as [string, string, { rows: { values: object }[]; links: unknown[] }];
     expect(modelId).toBe('model-1');
     expect(snapshotId).toMatch(/^m[0-9a-f]{40}$/);
     expect(batch.rows[0].values).toEqual({ name: 'Acme' });
     expect(batch.links).toEqual([{ relationId: 'rel-1', sourceRowKey: 'r-1', targetRowKey: 'r-2' }]);
     expect(runtime.commitManualSnapshot).toHaveBeenCalledWith('model-1', snapshotId, { rowCount: 2, linkCount: 1 });
-    const payload = (runtime.requestPopulationRun.mock.calls[0] as unknown as [{ payload: { sources: Array<Record<string, unknown>>; specification: { concepts: Array<{ identity: object }>; sourceScope: unknown[] } } }])[0].payload;
+    const payload = (runtime.requestPopulationRun.mock.calls[0] as unknown as [{ payload: { sources: Record<string, unknown>[]; specification: { concepts: { identity: object }[]; sourceScope: unknown[] } } }])[0].payload;
     expect(payload.sources).toEqual([expect.objectContaining({ sourceKind: 'manual', conceptId: 'c-customer', source: { workspaceId: 'ws-1', assetId: `manual:${snapshotId}`, snapshotId } })]);
     expect(payload.specification.sourceScope).toContainEqual({ workspaceId: 'ws-1', assetId: `manual:${snapshotId}` });
     expect(payload.specification.concepts[0].identity).toEqual({ namespace: 'customer', keyComponents: ['customer_id'] });
@@ -790,7 +790,7 @@ describe('SemanticPopulationRefreshService', () => {
       await service.requestRefresh('u-1', 'model-1', { purpose: 'refresh', scope: { kind: 'model' } });
       withCorrections(runtime as any, 1);
       await service.requestRefresh('u-1', 'model-1', { purpose: 'refresh', scope: { kind: 'model' } });
-      const keys = (runtime.requestPopulationRun.mock.calls as unknown as Array<[unknown, string]>).map((call) => call[1]);
+      const keys = (runtime.requestPopulationRun.mock.calls as unknown as [unknown, string][]).map((call) => call[1]);
       expect(keys[0]).not.toEqual(keys[1]);
     });
 

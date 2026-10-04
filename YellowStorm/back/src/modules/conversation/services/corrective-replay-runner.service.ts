@@ -168,7 +168,7 @@ export class CorrectiveReplayRunnerService {
           text: message.content.slice(0, 30_000),
         });
       } else if (message.conversationType === 'ai') {
-        const active = message.correctionWorkflow?.activeVersion === 'corrected' ? message.correctionWorkflow.correctedComponents : (message.components as MessageComponent[] | undefined);
+        const active = message.correctionWorkflow?.activeVersion === 'corrected' ? message.correctionWorkflow.correctedComponents : (message.components);
         const text = this.visibleText(active ?? []);
         if (text)
           history.push({

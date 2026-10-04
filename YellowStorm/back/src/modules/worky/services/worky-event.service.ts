@@ -89,7 +89,7 @@ export class WorkyEventService implements OnModuleDestroy {
       map(
         () =>
           ({
-            type: 'heartbeat' as WorkyEventType,
+            type: 'heartbeat',
             data: { streamId, timestamp: Date.now() },
           }) as MessageEvent,
       ),

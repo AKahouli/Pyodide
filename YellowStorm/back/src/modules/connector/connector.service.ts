@@ -145,7 +145,7 @@ export class ConnectorService {
     const bindings: IGrpcConnector[] = [];
     for (const connector of connectors) {
       const actions = (connector.actions || [])
-        .filter((action) => action.isEnabled !== false)
+        .filter((action) => action.isEnabled)
         .map((action) => ({
           action_key: action.key,
           label: action.label || action.key,
@@ -229,7 +229,7 @@ export class ConnectorService {
 
   /** Resolve category id -> name for the given connectors in a single query. */
   private async buildCategoryNameMap(
-    connectors: Array<{ categoryId?: string | null }>,
+    connectors: { categoryId?: string | null }[],
   ): Promise<Map<string, string>> {
     const categoryIds = Array.from(
       new Set(connectors.map((c) => c.categoryId).filter((id): id is string => Boolean(id))),
@@ -255,20 +255,20 @@ export class ConnectorService {
     let normalizedActions: ConnectorAction[] | null = null;
     if (dto.actions) {
       normalizedActions = this.normalizeConnectorActions(dto.actions);
-      (updateData as Record<string, unknown>).actions = normalizedActions;
+      (updateData).actions = normalizedActions;
     }
     if (dto.referencedSkillIds) {
-      (updateData as Record<string, unknown>).skillIds = dto.referencedSkillIds;
-      delete (updateData as Record<string, unknown>).referencedSkillIds;
+      (updateData).skillIds = dto.referencedSkillIds;
+      delete (updateData).referencedSkillIds;
     }
     if (dto.mcpServerConfig) {
-      (updateData as Record<string, unknown>).mcpServerConfig = this.sanitizeMcpServerConfig(dto.mcpServerConfig);
+      (updateData).mcpServerConfig = this.sanitizeMcpServerConfig(dto.mcpServerConfig);
     }
     if (dto.dynamicHeaders) {
-      (updateData as Record<string, unknown>).dynamicHeaders = this.normalizeDynamicHeaders(dto.dynamicHeaders);
+      (updateData).dynamicHeaders = this.normalizeDynamicHeaders(dto.dynamicHeaders);
     }
     if (Object.prototype.hasOwnProperty.call(dto, 'categoryId')) {
-      (updateData as Record<string, unknown>).categoryId = dto.categoryId || null;
+      (updateData).categoryId = dto.categoryId || null;
     }
 
     const updated = await this.connectorStore.update(id, updateData);
@@ -304,7 +304,7 @@ export class ConnectorService {
 
   private getEnabledActionContracts(actions: ConnectorAction[]) {
     return actions
-      .filter((action) => action.isEnabled !== false)
+      .filter((action) => action.isEnabled)
       .map((action) => ({
         key: String(action.key || '').trim(),
         parameterSchema: action.parameterSchema || {},
@@ -446,7 +446,7 @@ export class ConnectorService {
       const requestInit = this.buildMcpRequestInit(finalServerConfig);
 
       if (transportType === 'sse') {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
+         
         const sseMod = await import('@modelcontextprotocol/sdk/client/sse.js').catch(() => null);
         if (!sseMod) {
           return { serverName: '', tools: [], error: 'MCP SDK not installed. Run: npm install @modelcontextprotocol/sdk' };
@@ -454,7 +454,7 @@ export class ConnectorService {
         const SSEClientTransport = sseMod.SSEClientTransport;
         transport = new SSEClientTransport(new URL(serverUrl), { requestInit });
       } else if (transportType === 'streamable_http') {
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
+         
         const httpMod = await import('@modelcontextprotocol/sdk/client/streamableHttp.js').catch(() => null);
         if (!httpMod) {
           return { serverName: '', tools: [], error: 'MCP SDK not installed. Run: npm install @modelcontextprotocol/sdk' };
@@ -463,7 +463,7 @@ export class ConnectorService {
         transport = new StreamableHTTPClientTransport(new URL(serverUrl), { requestInit });
       } else {
         // stdio
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
+         
         const stdioMod = await import('@modelcontextprotocol/sdk/client/stdio.js').catch(() => null);
         if (!stdioMod) {
           return { serverName: '', tools: [], error: 'MCP SDK not installed. Run: npm install @modelcontextprotocol/sdk' };
@@ -474,7 +474,7 @@ export class ConnectorService {
         transport = new StdioClientTransport({ command: serverUrl, args, env });
       }
 
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
+       
       const clientMod = await import('@modelcontextprotocol/sdk/client/index.js').catch(() => null);
       if (!clientMod) {
         return { serverName: '', tools: [], error: 'MCP SDK not installed. Run: npm install @modelcontextprotocol/sdk' };
@@ -621,7 +621,7 @@ export class ConnectorService {
   }
 
   private normalizeDynamicHeaders(
-    dynamicHeaders?: Array<{ headerName: string; source: string; enabled?: boolean }>,
+    dynamicHeaders?: { headerName: string; source: string; enabled?: boolean }[],
   ): ConnectorDynamicHeader[] {
     const allowed = new Set<string>(Object.values(DynamicHeaderSource));
     return (dynamicHeaders ?? [])
@@ -635,23 +635,24 @@ export class ConnectorService {
         headerName: this.truncateValue(row.headerName, 128),
         source: row.source as DynamicHeaderSource,
         enabled: row.enabled,
-      })) as ConnectorDynamicHeader[];
+      }));
   }
 
-  private normalizeConnectorActions(actions?: Array<{
+  private normalizeConnectorActions(actions?: {
     key: string;
     label: string;
     description?: string;
     parameterSchema?: Record<string, unknown>;
     outputSchema?: Record<string, unknown>;
     safety?: string;
+    executionKind?: 'leaf' | 'orchestration' | 'unknown';
     supportsBatch?: boolean;
     supportsIteration?: boolean;
     isEnabled?: boolean;
     resultKind?: ConnectorActionResultKind;
     citationMode?: ConnectorCitationMode;
     resultMapping?: Record<string, unknown>;
-  }>): ConnectorAction[] {
+  }[]): ConnectorAction[] {
     return (actions ?? []).map((action) => {
       // Replace {variable_name} with [variable_name] to prevent Google ADK template substitution
       // This fixes "Context variable not found" errors when variables like {property_name}
@@ -665,6 +666,7 @@ export class ConnectorService {
         parameterSchema: action.parameterSchema ?? {},
         outputSchema: action.outputSchema ?? {},
         safety: action.safety ?? 'read',
+        executionKind: action.executionKind ?? 'unknown',
         supportsBatch: action.supportsBatch ?? false,
         supportsIteration: action.supportsIteration ?? false,
         isEnabled: action.isEnabled ?? true,
@@ -710,13 +712,14 @@ export class ConnectorService {
         parameterSchema: a.parameterSchema ?? {},
         outputSchema: a.outputSchema ?? {},
         safety: a.safety ?? 'read',
+        executionKind: a.executionKind ?? 'unknown',
         supportsBatch: a.supportsBatch ?? false,
         supportsIteration: a.supportsIteration ?? false,
         isEnabled: a.isEnabled ?? true,
         resultKind: a.resultKind ?? ConnectorActionResultKind.GENERIC,
         citationMode: a.citationMode ?? ConnectorCitationMode.NONE,
         ...('resultMapping' in a && a.resultMapping ? { resultMapping: a.resultMapping } : {}),
-      })) as ConnectorAction[],
+      })),
       referencedSkillIds: doc.skillIds,
       isActive: doc.isActive,
       isSystem: doc.isSystem ?? false,

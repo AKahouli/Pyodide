@@ -91,14 +91,10 @@ function push(
 
 export const ymDiag = {
   enabled: isEnabled,
-  debug: (scope: string, message: string, data?: Record<string, unknown>) =>
-    push('debug', scope, message, data),
-  info: (scope: string, message: string, data?: Record<string, unknown>) =>
-    push('info', scope, message, data),
-  warn: (scope: string, message: string, data?: Record<string, unknown>) =>
-    push('warn', scope, message, data),
-  error: (scope: string, message: string, data?: Record<string, unknown>) =>
-    push('error', scope, message, data),
+  debug: (scope: string, message: string, data?: Record<string, unknown>) => { push('debug', scope, message, data); },
+  info: (scope: string, message: string, data?: Record<string, unknown>) => { push('info', scope, message, data); },
+  warn: (scope: string, message: string, data?: Record<string, unknown>) => { push('warn', scope, message, data); },
+  error: (scope: string, message: string, data?: Record<string, unknown>) => { push('error', scope, message, data); },
 
   /** Safe env / runtime snapshot for Preview debugging. */
   snapshot(): Record<string, unknown> {
@@ -146,7 +142,7 @@ export const ymDiag = {
   boot(): void {
     if (!isEnabled()) return;
     const snap = this.snapshot();
-    push('info', 'boot', 'YellowMind app diagnostic boot', snap as Record<string, unknown>);
+    push('info', 'boot', 'YellowMind app diagnostic boot', snap);
     console.info(
       `${PREFIX} tip: window.__YM_DIAG__.dump() | .snapshot() | .clear()`,
     );

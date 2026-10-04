@@ -112,15 +112,15 @@ export class WorkyPlanningService {
     streamId: string,
     limit = 200,
   ): Promise<
-    Array<{
+    {
       id: string;
       role: string;
       content: string;
       turnId: string | null;
       planDeltaRef: string | null;
       createdAt: string;
-      components: Array<{ id: string; type: string; data: Record<string, unknown> }>;
-    }>
+      components: { id: string; type: string; data: Record<string, unknown> }[];
+    }[]
   > {
     const stream = await this.loadStream(streamId, userId);
     // The newest `limit` messages, oldest first.
@@ -131,7 +131,7 @@ export class WorkyPlanningService {
     const components = await this.messages.listComponents(stream.id, externalIds);
     const componentsByMessage = new Map<
       string,
-      Array<{ id: string; type: string; data: Record<string, unknown> }>
+      { id: string; type: string; data: Record<string, unknown> }[]
     >();
     for (const component of components) {
       const list = componentsByMessage.get(component.messageExternalId) ?? [];

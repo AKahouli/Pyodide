@@ -216,7 +216,7 @@ Return strict JSON:
       ],
     }, { timeout: 345000 });
 
-    const content = (response.data as { choices?: Array<{ message?: { content?: string } }> })?.choices?.[0]?.message?.content;
+    const content = (response.data as { choices?: { message?: { content?: string } }[] })?.choices?.[0]?.message?.content;
     if (typeof content !== 'string' || !content.trim()) {
       throw new Error('Post-run judge returned no content.');
     }

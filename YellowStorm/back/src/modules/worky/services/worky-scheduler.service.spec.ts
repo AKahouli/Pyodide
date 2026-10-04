@@ -92,7 +92,7 @@ describe('WorkySchedulerService', () => {
       expect(await ctx.service.claimDue()).toBe(claimed);
       await ctx.service.claimDue();
 
-      const [[firstNow, firstToken], [, secondToken]] = ctx.timers.claimDue.mock.calls as Array<[Date, string]>;
+      const [[firstNow, firstToken], [, secondToken]] = ctx.timers.claimDue.mock.calls as [Date, string][];
       expect(firstNow.getTime()).toBeGreaterThanOrEqual(before);
       expect(firstNow.getTime()).toBeLessThanOrEqual(Date.now());
       expect(firstToken).toMatch(/^[0-9a-f-]{36}$/);

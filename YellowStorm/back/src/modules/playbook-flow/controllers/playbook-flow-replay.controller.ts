@@ -41,7 +41,7 @@ export class PlaybookFlowReplayController {
     await this.flowService.findOneForWrite(flowId, userId);
     return this.replayService.validateTaskReplay(
       userId, flowId, taskId, body.iteration ?? 0, body.executionId,
-      { preserveOutputFormat: body.preserveOutputFormat, mode: body.mode, replayConfig: body.replayConfig } as ValidateTaskReplayOptions,
+      { preserveOutputFormat: body.preserveOutputFormat, mode: body.mode, replayConfig: body.replayConfig },
     );
   }
 
@@ -105,7 +105,7 @@ export class PlaybookFlowReplayController {
     @Body() dto: UpdateTaskReplayFormatGuideDto,
   ) {
     await this.flowService.findOneForWrite(flowId, userId);
-    return this.replayService.updateTaskReplayFormatGuide(flowId, taskId, replayId, dto as UpdateReplayFormatGuidePayload);
+    return this.replayService.updateTaskReplayFormatGuide(flowId, taskId, replayId, dto);
   }
 
   @Patch(':taskId/replays/:replayId')

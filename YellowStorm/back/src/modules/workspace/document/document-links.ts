@@ -79,7 +79,7 @@ export class WorkspaceDocumentLinks {
     const groupId = options?.sourceGroupId ?? newObjectId();
 
     // Create all docs first (fast; each PROCESSING with a unique placeholder path).
-    const created: Array<{ response: DocumentResponse; id: string; url: string; name: string; nameFromUrl: boolean }> =
+    const created: { response: DocumentResponse; id: string; url: string; name: string; nameFromUrl: boolean }[] =
       [];
     for (const url of urls) {
       // Prefer the clicked link/button text (the same label shown in the browse
@@ -170,7 +170,7 @@ export class WorkspaceDocumentLinks {
    * Crawl a seed URL and return the discovered pages that live UNDER the seed's
    * path (so "Explore" on /docs yields /docs/*; a root seed yields the whole site).
    */
-  async crawlSite(_workspaceId: string, url: string): Promise<{ pages: Array<{ url: string; title?: string }>; truncated: boolean }> {
+  async crawlSite(_workspaceId: string, url: string): Promise<{ pages: { url: string; title?: string }[]; truncated: boolean }> {
     const { pages, truncated } = await this.websiteCrawler.crawl(url);
     let seedPath = '/';
     try { seedPath = new URL(url).pathname.replace(/\/+$/, '') || '/'; } catch { /* keep '/' */ }

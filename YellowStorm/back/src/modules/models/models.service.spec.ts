@@ -62,7 +62,7 @@ class InMemoryModelStore implements ModelStore {
   readonly rows = new Map<string, ModelRow>();
   readonly inserted: ModelRow[] = [];
   readonly clearedClassifierFor: string[] = [];
-  readonly exclusiveFlags: Array<{ modelId: string; flag: 'isDefault' | 'isConversationV2Default' }> = [];
+  readonly exclusiveFlags: { modelId: string; flag: 'isDefault' | 'isConversationV2Default' }[] = [];
   deactivatedNotIn: string[][] = [];
 
   async findByModelId(modelId: string): Promise<ModelRow | null> {

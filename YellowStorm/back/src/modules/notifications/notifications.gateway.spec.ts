@@ -40,7 +40,7 @@ describe('NotificationsGateway SSE payload', () => {
     gateway = new NotificationsGateway(logger as never, config as never);
   });
 
-  afterEach(() => gateway.onModuleDestroy());
+  afterEach(() => { gateway.onModuleDestroy(); });
 
   it('pushes exactly the mapper wire object to a connected user', async () => {
     const stream = gateway.registerConnection(record.userId!, 'conn-1', new Subject<void>())!;

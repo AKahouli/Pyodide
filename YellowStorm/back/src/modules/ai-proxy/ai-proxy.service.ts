@@ -139,7 +139,7 @@ export class AiProxyService {
 
   async listModels(): Promise<{
     object: 'list';
-    data: Array<{ id: string; object: 'model'; owned_by: string }>;
+    data: { id: string; object: 'model'; owned_by: string }[];
   }> {
     const { models } = await this.modelsService.findAll(true, true);
     const visibleModels = this.allowedModels.size > 0

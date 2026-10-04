@@ -18,7 +18,7 @@ const TOKEN_RE = /YW-[A-Za-z0-9_-]{16,}/;
  * body), or null when the mail carries none — which is the common case, since a
  * mailbox subscription fires for every arriving mail, not just ours.
  */
-export function extractMailToken(...texts: Array<string | null | undefined>): string | null {
+export function extractMailToken(...texts: (string | null | undefined)[]): string | null {
   for (const text of texts) {
     if (!text) continue;
     const match = TOKEN_RE.exec(text);

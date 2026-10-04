@@ -32,17 +32,17 @@ interface FixtureExpectation {
   forbiddenDiagnosticCodes?: string[];
   validationStatus?: WorkflowPlan['validationStatus'];
   noAutoBindRouterLabels?: string[];
-  nodePorts?: Array<{ nodeRef: string; inputPort?: string; outputPort?: string }>;
+  nodePorts?: { nodeRef: string; inputPort?: string; outputPort?: string }[];
 }
 
 interface GoldenFixture {
   inputBlueprint: PlaybookIntentBlueprint;
   expected: FixtureExpectation;
-  existing?: Array<{
+  existing?: {
     id: string;
-    inputPorts?: Array<[string, string]>;
-    outputPorts?: Array<[string, string]>;
-  }>;
+    inputPorts?: [string, string][];
+    outputPorts?: [string, string][];
+  }[];
 }
 
 const DEFAULT_LIMITS = {
@@ -102,7 +102,7 @@ const DESIGN_CATALOG: BuilderDesignCatalog = {
   skills: [{ id: 'skill-docx', slug: 'docx', name: 'DOCX' }],
 };
 
-function loadFixtures(): Array<{ name: string; fixture: GoldenFixture }> {
+function loadFixtures(): { name: string; fixture: GoldenFixture }[] {
   const dir = join(__dirname, '..', 'test-fixtures', 'intent-blueprint-v2');
   return readdirSync(dir)
     .filter((file) => file.endsWith('.json'))

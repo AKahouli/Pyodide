@@ -202,8 +202,8 @@ export class WorkspaceShareService {
     const shared: WorkspaceShareResponse[] = [];
     const notFound: string[] = [];
     const invalid: string[] = [];
-    const createdEvents: Array<{ userId: string; shareId: string; permission: WorkspacePermission }> = [];
-    const updatedEvents: Array<{ userId: string; shareId: string; permission: WorkspacePermission }> = [];
+    const createdEvents: { userId: string; shareId: string; permission: WorkspacePermission }[] = [];
+    const updatedEvents: { userId: string; shareId: string; permission: WorkspacePermission }[] = [];
 
     for (const entry of data.shares) {
       const email = entry.email.toLowerCase().trim();

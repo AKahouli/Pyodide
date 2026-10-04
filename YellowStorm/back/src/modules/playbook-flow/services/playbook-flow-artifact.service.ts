@@ -38,7 +38,7 @@ export class PlaybookFlowArtifactService {
     private readonly playbookShareService: PlaybookShareService,
   ) {}
 
-  async listRecent(userId: string, limit: number): Promise<Array<{
+  async listRecent(userId: string, limit: number): Promise<{
     source: 'playbook';
     artifactId: string;
     filename: string;
@@ -48,7 +48,7 @@ export class PlaybookFlowArtifactService {
     playbookName: string;
     executionId: string;
     generatedAt: string;
-  }>> {
+  }[]> {
     const sharedFlowIds = await this.playbookShareService.getSharedPlaybookIdsForUser(userId);
     const rows = await this.taskResultRepository.listRecentArtifacts(userId, sharedFlowIds, limit);
 

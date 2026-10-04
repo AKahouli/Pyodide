@@ -62,7 +62,7 @@ export interface ModelSpecification {
   homeWorkspaceId: string;
   concepts: ConceptSpec[];
   relations: RelationSpec[];
-  sourceScope: Array<{ workspaceId: string; assetId: string }>;
+  sourceScope: { workspaceId: string; assetId: string }[];
   specHash?: string;
 }
 

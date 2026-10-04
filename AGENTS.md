@@ -1,6 +1,6 @@
 # YellowStorm Agent Instructions
 
-The primary `build` agent runs the whole development loop. Subagents (`explore`, `plan`, `diagnostics`, `verify`, `frontend-qa`, `reviewer`, `maintainer`) are bounded tools that return condensed evidence.
+The primary `build` agent runs the whole development loop. Subagents (`explore`, `plan`, `frontend-qa`, `reviewer`, `maintainer`) are bounded tools that return condensed evidence.
 
 ## Source of Truth
 
@@ -36,7 +36,7 @@ Both files are 500+ lines with numbered sections. Grep the `^## ` headings, then
 
 ## Context Retrieval
 
-1. Graph first: code-review-graph MCP tools before Grep, Glob, or Read (`semantic_search_nodes_tool`, `query_graph_tool`, `get_impact_radius_tool`, `get_affected_flows_tool`, `get_minimal_context_tool`, `detect_changes_tool`). Load the `crg-navigation` skill for recipes. Fall back to file scanning only when the graph has no answer.
+1. Graph first for code investigation: start with `get_minimal_context_tool(task=..., repo_root=<active worktree absolute path>)`, then use targeted CRG queries before structural Grep/Glob/Read. Load the global `crg-navigation` skill for accurate tool recipes. Refresh missing/stale graphs before relying on them; source wins when results disagree. Skip pure prose and git-only chores. Fall back to focused file scanning when indexing/static analysis cannot answer, and record the limitation in the handoff.
 2. Read only the line ranges the change needs.
 3. Vault memory (`obsidian_vault`, `strategy: "semantic"`) only for Tier 3 work, or when a Tier 2 task depends on historical decisions or invariants that code does not explain. Never for Tier 0 or 1.
 4. Context7 only for external library behavior local code cannot establish.
@@ -64,9 +64,9 @@ Never swallow exceptions with an empty catch. Validate at trust boundaries only.
 | Tier | Scope | Required steps |
 |---|---|---|
 | 0 Trivial | typo, formatting, comment, non-runtime config text | edit, lightweight check; no subagents |
-| 1 Local | one behavior change, no contract or cross-module impact | inspect target and direct tests; `verify`; `reviewer` if runtime behavior changed |
-| 2 Standard | multi-file feature, bug fix, UI behavior, service change | `diagnostics` for unclear bugs; `plan` only if ambiguous; implement with tests; `verify`; `frontend-qa` if browser-visible; `reviewer` |
-| 3 High risk | API, schema, proto, auth, permissions, quotas, streaming, DB writes, agent runtime, cross-service | `plan`; reproduce before editing; verify both sides of each boundary; `verify` incl. integration where feasible; `frontend-qa` if browser-visible; `reviewer` (critical and major must be fixed); `maintainer` when tier is Full |
+| 1 Local | one behavior change, no contract or cross-module impact | inspect target and direct tests; run relevant checks; `reviewer` if runtime behavior changed |
+| 2 Standard | multi-file feature, bug fix, UI behavior, service change | diagnose unclear bugs and reproduce before editing; `plan` only if ambiguous; implement with tests; run relevant checks; `frontend-qa` if browser-visible; `reviewer` |
+| 3 High risk | API, schema, proto, auth, permissions, quotas, streaming, DB writes, agent runtime, cross-service | `plan`; reproduce before editing; verify both sides of each boundary; run relevant checks including integration where feasible; `frontend-qa` if browser-visible; `reviewer` (critical and major must be fixed); `maintainer` when tier is Full |
 
 Subagent routing:
 
@@ -74,8 +74,6 @@ Subagent routing:
 |---|---|---|
 | `explore` | ownership, call paths, or dependencies still unclear after one graph query | target and callers already known |
 | `plan` | Tier 3, ambiguity, several plausible designs, contract changes | obvious change, even if it touches several files |
-| `diagnostics` | bug with an unclear cause; needs reproduction before editing | cause is evident from the report or a failing test |
-| `verify` | any test, build, lint, or type-check run whose output could be long | a single short command you can run yourself |
 | `frontend-qa` | UI, layout, interaction, routing, forms, a11y, console, or network behavior changed | type-only or non-visible frontend change |
 | `reviewer` | non-trivial runtime, behavior, security, persistence, or contract change | Tier 0 |
 | `maintainer` | Full-tier change passed review and created durable knowledge | fact is obvious from code or git |

@@ -5,6 +5,7 @@ export interface IConnectorActionResponse {
   parameterSchema: Record<string, unknown>;
   outputSchema: Record<string, unknown>;
   safety: string;
+  executionKind?: string;
   supportsBatch: boolean;
   supportsIteration: boolean;
   isEnabled: boolean;

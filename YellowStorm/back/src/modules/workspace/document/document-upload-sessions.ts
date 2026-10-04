@@ -87,7 +87,7 @@ export class WorkspaceDocumentUploadSessions {
 
     // Create upload session
     const expiresAt = new Date(Date.now() + this.uploadSessionTtlMinutes * 60 * 1000);
-    const sessionFiles: Array<{
+    const sessionFiles: {
       index: number;
       filename: string;
       mimeType: string;
@@ -96,7 +96,7 @@ export class WorkspaceDocumentUploadSessions {
       uploadUrl: string;
       status: string;
       progress: number;
-    }> = [];
+    }[] = [];
 
     const responseFiles: BulkUploadInitResponse['files'] = [];
 
@@ -252,7 +252,7 @@ export class WorkspaceDocumentUploadSessions {
     userId: string,
     sessionId: string,
     deepSearch?: boolean,
-    autoIndex: boolean = true,
+    autoIndex = true,
   ): Promise<BulkUploadCompleteResponse> {
     const startTime = Date.now();
 
@@ -269,7 +269,7 @@ export class WorkspaceDocumentUploadSessions {
       count: 0,
       documents: [],
     };
-    const failed: { count: number; files: Array<{ index: number; filename: string; error: string }> } = {
+    const failed: { count: number; files: { index: number; filename: string; error: string }[] } = {
       count: 0,
       files: [],
     };

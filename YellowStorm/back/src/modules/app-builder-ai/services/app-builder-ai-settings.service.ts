@@ -34,12 +34,11 @@ export class AppBuilderAiSettingsService implements OnModuleInit, OnModuleDestro
   async onModuleInit(): Promise<void> {
     await this.getSettings();
     this.refreshTimer = setInterval(() => {
-      void this.refresh().catch((error) =>
-        this.logger.warn(
+      void this.refresh().catch((error) => { this.logger.warn(
           `Failed to refresh App Builder AI settings: ${
             error instanceof Error ? error.message : 'Unknown error'
           }`,
-        ),
+        ); },
       );
     }, CACHE_MS);
     this.refreshTimer.unref();

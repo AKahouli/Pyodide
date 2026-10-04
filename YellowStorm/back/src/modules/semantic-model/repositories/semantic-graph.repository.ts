@@ -132,7 +132,7 @@ export class SemanticGraphRepository {
    * without saving each mapping again. Table sources keep their columns: a new field has no column
    * to read until one is chosen.
    */
-  private async syncDocumentMappings(client: PoolClient, modelId: string, conceptId: string, attributes: ReadonlyArray<{ key: string }>): Promise<void> {
+  private async syncDocumentMappings(client: PoolClient, modelId: string, conceptId: string, attributes: readonly { key: string }[]): Promise<void> {
     const mappings = await client.query<{ id: string; fieldMappings: SourceFieldMapping[] }>(
       `SELECT id::text AS id, field_mappings AS "fieldMappings" FROM semantic_model.source_mappings
        WHERE model_id=$1 AND concept_id=$2 AND asset_kind='document' FOR UPDATE`,

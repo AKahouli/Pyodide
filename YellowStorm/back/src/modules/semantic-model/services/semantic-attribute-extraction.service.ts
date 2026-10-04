@@ -44,10 +44,10 @@ const ADK_TIMEOUT_MS = 240_000;
 export interface AttributeExtractionResult {
   model?: string | null;
   extractorVersion: string;
-  values: Array<{ key: string; value: unknown; evidenceReferences: string[] }>;
+  values: { key: string; value: unknown; evidenceReferences: string[] }[];
   failed: string[];
   /** Only when several records were asked for: every item found, with its own values. */
-  records?: Array<{ label: string; values: Array<{ key: string; value: unknown; evidenceReferences: string[] }> }>;
+  records?: { label: string; values: { key: string; value: unknown; evidenceReferences: string[] }[] }[];
 }
 
 /**
@@ -76,7 +76,7 @@ export class SemanticAttributeExtractionService {
 
   async extract(request: AttributeExtractionRequest): Promise<AttributeExtractionResult> {
     const bound = request.aiExtraction;
-    if (!bound || !bound.agentSlug || !bound.model || !bound.contractVersion) {
+    if (!bound?.agentSlug || !bound.model || !bound.contractVersion) {
       throw new ServiceUnavailableException(
         ErrorCode.SERVICE_UNAVAILABLE,
         'AI extraction requires the extractor identity bound at job admission',

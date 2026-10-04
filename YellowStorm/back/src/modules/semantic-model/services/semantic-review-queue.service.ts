@@ -9,7 +9,7 @@ import { SemanticRuntimeClientService } from './semantic-runtime-client.service'
 
 /** What a person does to clear an item; each item carries exactly one. */
 export type ReviewQueueAction =
-  | { kind: 'choose_match'; reviewItemId: string; options: Array<{ value: string; label: string }>; select: 'target' | 'source' }
+  | { kind: 'choose_match'; reviewItemId: string; options: { value: string; label: string }[]; select: 'target' | 'source' }
   | { kind: 'repair_mapping'; mappingId: string; bulkEdit?: boolean }
   | { kind: 'repair_derived'; derivedSourceId: string; conceptId: string }
   | { kind: 'choose_unique_field'; conceptId: string }
@@ -275,7 +275,7 @@ export class SemanticReviewQueueService {
          WHERE workspace_id=m.workspace_id AND asset_id=m.document_id ORDER BY completed_at DESC LIMIT 1) p ON true
        WHERE m.model_id=$1 AND m.id::text = ANY($2::text[])`,
       [modelId, [...new Set(mappingIds)]],
-    ).catch(() => ({ rows: [] as Array<{ id: string; name: string }> }));
+    ).catch(() => ({ rows: [] as { id: string; name: string }[] }));
     for (const row of result.rows) names.set(row.id, row.name);
     return names;
   }
@@ -296,7 +296,7 @@ export class SemanticReviewQueueService {
       ).then((result) => new Map(result.rows.map((row) => [row.id, row.label])));
       const relations = new Map((records.specification.relations ?? [])
         .map((relation) => [relation.relationId, relationLabels.get(relation.relationId) || relation.label]));
-      const nodes = await this.database.query<{ id: string; attributes: Array<{ key: string; label: string; required?: boolean }> }>(
+      const nodes = await this.database.query<{ id: string; attributes: { key: string; label: string; required?: boolean }[] }>(
         'SELECT n.id::text AS id, n.attributes FROM semantic_model.node_types n JOIN semantic_model.models m ON m.current_draft_version_id=n.version_id WHERE m.id=$1',
         [modelId],
       ).then((result) => result.rows);

@@ -45,7 +45,7 @@ export class CreatePlaybookFlowDto {
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(100)
-  hitlBlockers?: Array<Record<string, unknown>>;
+  hitlBlockers?: Record<string, unknown>[];
 
   @ApiPropertyOptional({ type: [FlowNodeDto] })
   @IsOptional()

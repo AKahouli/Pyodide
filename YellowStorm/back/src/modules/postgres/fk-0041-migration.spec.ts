@@ -18,7 +18,7 @@ describeIntegration('0041_classifier_runs_playbook_fk on dirty data (integration
     await close();
   });
 
-  const validated = async (client: { query: (sql: string, values?: unknown[]) => Promise<{ rows: Array<{ valid: boolean }> }> }): Promise<boolean | undefined> =>
+  const validated = async (client: { query: (sql: string, values?: unknown[]) => Promise<{ rows: { valid: boolean }[] }> }): Promise<boolean | undefined> =>
     (await client.query('SELECT convalidated AS valid FROM pg_constraint WHERE conname = $1', [NAME])).rows[0]?.valid;
 
   it('stays NOT VALID while a run points at a missing playbook, still refuses new ones, and validates once it is gone', async () => {

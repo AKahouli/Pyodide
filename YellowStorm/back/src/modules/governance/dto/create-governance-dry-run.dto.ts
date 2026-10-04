@@ -37,7 +37,7 @@ export class CreateGovernanceDryRunDto {
   @ApiPropertyOptional({ type: [Object] })
   @IsOptional()
   @IsArray()
-  testCases?: Array<Record<string, unknown>>;
+  testCases?: Record<string, unknown>[];
 
   @ApiPropertyOptional({ type: Object })
   @IsOptional()

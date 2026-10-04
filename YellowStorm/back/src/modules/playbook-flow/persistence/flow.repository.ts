@@ -211,7 +211,7 @@ export function toFlowRecord(row: FlowRow, workspaces: string[]): FlowRecord {
     definitionRevision: row.definitionRevision,
     name: row.name,
     description: row.description,
-    triggerConfig: row.triggerConfig as FlowTriggerConfig | null,
+    triggerConfig: row.triggerConfig,
     settings: row.settings as unknown as FlowSettings,
     hitlPolicy: row.hitlPolicy as unknown as HitlPolicy,
     hitlBlockers: row.hitlBlockers as unknown as HitlBlockerRule[],
@@ -292,8 +292,8 @@ export class FlowRepository {
     if (!isObjectId(input.ownerId)) throw new Error('Flow ownerId must be a 24-char hex id');
     const { id, ownerId, workspaces, ...fields } = input;
     // Mongoose defaults: applied to an undefined field, not to an explicit null.
-    fields.settings = fields.settings ?? (DEFAULT_FLOW_SETTINGS as FlowSettings);
-    fields.hitlPolicy = fields.hitlPolicy ?? ({ ...DEFAULT_HITL_POLICY } as HitlPolicy);
+    fields.settings = fields.settings ?? (DEFAULT_FLOW_SETTINGS);
+    fields.hitlPolicy = fields.hitlPolicy ?? ({ ...DEFAULT_HITL_POLICY });
     if (fields.designSettings === undefined) fields.designSettings = DEFAULT_DESIGN_SETTINGS;
     const now = new Date();
     return withTransaction(this.db, async () => {
@@ -387,7 +387,7 @@ export class FlowRepository {
       .from(f)
       .where(and(sql`${f.triggerConfig} ->> 'kind' = ${kind}`, sql`${f.triggerConfig} @> ${JSON.stringify(containment)}::jsonb`))
       .orderBy(asc(f.id));
-    return rows.map((row) => ({ ...row, triggerConfig: row.triggerConfig as FlowTriggerConfig | null }));
+    return rows.map((row) => ({ ...row, triggerConfig: row.triggerConfig }));
   }
 
   // ---------------------------------------------------------------- update
@@ -516,7 +516,7 @@ export class FlowRepository {
   private accessible(ownerId: string, sharedFlowIds: readonly string[]): SQL {
     const shared = normalizeIds(sharedFlowIds);
     const own = eq(f.ownerId, normalizeObjectId(ownerId));
-    return (shared.length > 0 ? or(own, inArray(f.id, shared)) : own) as SQL;
+    return (shared.length > 0 ? or(own, inArray(f.id, shared)) : own)!;
   }
 
   /**
@@ -529,7 +529,7 @@ export class FlowRepository {
     const where = and(
       this.accessible(query.ownerId, query.sharedFlowIds),
       query.search ? ilike(f.name, `%${escapeLike(query.search)}%`) : undefined,
-    ) as SQL;
+    )!;
 
     const latest = this.q
       .select({
@@ -597,13 +597,13 @@ export class FlowRepository {
   }
 
   /** Every accessible flow with the id and label of each node, in node order. */
-  async listNodeIndex(ownerId: string, sharedFlowIds: readonly string[]): Promise<Array<{ id: string; name: string; nodes: Array<{ id: string; label: string | null }> }>> {
+  async listNodeIndex(ownerId: string, sharedFlowIds: readonly string[]): Promise<{ id: string; name: string; nodes: { id: string; label: string | null }[] }[]> {
     if (!isObjectId(ownerId)) return [];
     const rows = await this.q
       .select({
         id: f.id,
         name: f.name,
-        nodes: sql<Array<{ id: string; label: string | null }>>`coalesce((
+        nodes: sql<{ id: string; label: string | null }[]>`coalesce((
           SELECT jsonb_agg(jsonb_build_object('id', n.node ->> 'id', 'label', n.node ->> 'label') ORDER BY n.ord)
           FROM jsonb_array_elements(${f.nodes}) WITH ORDINALITY AS n(node, ord)), '[]'::jsonb)`,
       })

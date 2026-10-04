@@ -48,7 +48,7 @@ export class WorkyTeamsCatchupService {
 
   @Cron(CronExpression.EVERY_30_SECONDS)
   async sweep(): Promise<void> {
-    let waits: Array<{ chatId: string; userId: string; sessionId: string }>;
+    let waits: { chatId: string; userId: string; sessionId: string }[];
     try {
       waits = await this.orchestrator.listOpenChatWaits();
     } catch (err) {

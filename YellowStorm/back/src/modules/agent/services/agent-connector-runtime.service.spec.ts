@@ -36,15 +36,15 @@ describe('AgentConnectorRuntimeService', () => {
     const bindings = await service.buildConnectorBindings(new Map([
       ['connector-1', {
         id: 'connector-1', name: 'CRM', slug: 'crm', actions: [
-          { key: 'update', safety: 'WRITE', parameterSchema: {} },
+          { key: 'update', safety: 'WRITE', executionKind: 'leaf', parameterSchema: {} },
           { key: 'read', parameterSchema: {} },
         ],
       } as never],
     ]), ['connector-1']);
 
     expect(bindings[0].actions).toEqual(expect.arrayContaining([
-      expect.objectContaining({ action_key: 'update', safety: 'write' }),
-      expect.objectContaining({ action_key: 'read', safety: 'unknown' }),
+      expect.objectContaining({ action_key: 'update', safety: 'write', execution_kind: 'leaf' }),
+      expect.objectContaining({ action_key: 'read', safety: 'unknown', execution_kind: 'unknown' }),
     ]));
   });
 

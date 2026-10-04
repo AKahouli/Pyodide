@@ -127,7 +127,7 @@ function softRef(value: string): string {
  * promoted columns on top.
  */
 export function toReplayRunReportRecord(row: ReportRow): FlowReplayRunReportRecord {
-  const doc = (row.doc ?? {}) as Json;
+  const doc = (row.doc ?? {});
   return {
     ...doc,
     ...('postRunEvaluation' in doc ? { postRunEvaluation: revivePostRunEvaluation(doc.postRunEvaluation) } : {}),
@@ -148,7 +148,7 @@ export function toReplayRunReportRecord(row: ReportRow): FlowReplayRunReportReco
 
 /** What a hydrated Mongo document showed, and its toJSON() returned: the schema defaults for the fields a stored document misses. */
 export function toReplayRunReportJson(record: FlowReplayRunReportRecord): FlowReplayRunReportRecord {
-  return { ...docDefaults(), ...record } as FlowReplayRunReportRecord;
+  return { ...docDefaults(), ...record };
 }
 
 /** The promoted columns a patch writes; the other fields go to `doc`. */
@@ -256,7 +256,7 @@ export class ReplayRunReportRepository {
   /** Overwrites the given top-level fields. False when the report does not exist. */
   async update(id: string, patch: ReplayRunReportPatch): Promise<boolean> {
     if (!isObjectId(id)) return false;
-    const doc = pickDoc(patch as Json);
+    const doc = pickDoc(patch);
     const rows = await this.q
       .update(t)
       .set({
@@ -281,7 +281,7 @@ export class ReplayRunReportRepository {
         doc: sql`${t.doc} || jsonb_build_object('postRunEvaluation', ${JSON.stringify(stripNul(evaluation))}::jsonb)`,
         updatedAt: new Date(),
       })
-      .where(and(eq(t.id, normalizeObjectId(id)), sql`jsonb_typeof(${t.doc} -> 'postRunEvaluation') IS DISTINCT FROM 'object'`) as SQL)
+      .where(and(eq(t.id, normalizeObjectId(id)), sql`jsonb_typeof(${t.doc} -> 'postRunEvaluation') IS DISTINCT FROM 'object'`))
       .returning({ id: t.id });
     return rows.length > 0;
   }

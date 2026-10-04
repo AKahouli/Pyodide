@@ -90,7 +90,7 @@ export class PgSettingStore {
     }
     if (Object.keys(values).length === 0) return;
     values.updatedAt = new Date();
-    await this.q.update(SETTINGS).set(values as Partial<typeof SETTINGS.$inferInsert>).where(eq(SETTINGS.id, id));
+    await this.q.update(SETTINGS).set(values).where(eq(SETTINGS.id, id));
   }
 
   async deleteById(id: string): Promise<void> {

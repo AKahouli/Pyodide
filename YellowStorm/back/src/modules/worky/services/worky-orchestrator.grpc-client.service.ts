@@ -49,7 +49,7 @@ export class WorkyOrchestratorGrpcClientService
     const maxMsg = this.config.get<number>('workyOrchestrator.grpcMaxMessageBytes')!;
     const { credentials, options: tlsOptions } = buildGrpcChannelCredentials(
       this.config,
-      (msg) => this.logger.warn(msg),
+      (msg) => { this.logger.warn(msg); },
       WORKY_ORCHESTRATOR_GRPC_SECURITY_NS,
     );
     this.client = new proto.yellowstorm.orchestrator.v1.CompanionAi(
@@ -170,7 +170,7 @@ export class WorkyOrchestratorGrpcClientService
         createGrpcMetadata(this.config, WORKY_ORCHESTRATOR_GRPC_SECURITY_NS),
         this.unaryDeadline,
         (err: grpc.ServiceError | null, response: { session_id: string }) => {
-          if (err) return reject(err);
+          if (err) { reject(err); return; }
           resolve(response.session_id);
         },
       );
@@ -214,7 +214,7 @@ export class WorkyOrchestratorGrpcClientService
           err: grpc.ServiceError | null,
           response: { session_id: string; accepted: boolean; run_id: string },
         ) => {
-          if (err) return reject(err);
+          if (err) { reject(err); return; }
           resolve({
             sessionId: response.session_id,
             accepted: !!response.accepted,
@@ -238,7 +238,7 @@ export class WorkyOrchestratorGrpcClientService
           err: grpc.ServiceError | null,
           response: { session_id: string; title: string; status: string; plan: unknown },
         ) => {
-          if (err) return reject(err);
+          if (err) { reject(err); return; }
           resolve({
             sessionId: response.session_id,
             title: response.title,
@@ -257,7 +257,7 @@ export class WorkyOrchestratorGrpcClientService
         createGrpcMetadata(this.config, WORKY_ORCHESTRATOR_GRPC_SECURITY_NS),
         this.unaryDeadline,
         (err: grpc.ServiceError | null, response: { stopped: boolean }) => {
-          if (err) return reject(err);
+          if (err) { reject(err); return; }
           resolve({ stopped: !!response.stopped });
         },
       );
@@ -272,7 +272,7 @@ export class WorkyOrchestratorGrpcClientService
         createGrpcMetadata(this.config, WORKY_ORCHESTRATOR_GRPC_SECURITY_NS),
         this.unaryDeadline,
         (err: grpc.ServiceError | null, response: { paused: boolean }) => {
-          if (err) return reject(err);
+          if (err) { reject(err); return; }
           resolve({ paused: !!response.paused });
         },
       );
@@ -309,7 +309,7 @@ export class WorkyOrchestratorGrpcClientService
           err: grpc.ServiceError | null,
           response: { delivered: boolean; session_id: string; step_id: string },
         ) => {
-          if (err) return reject(err);
+          if (err) { reject(err); return; }
           resolve({
             delivered: !!response.delivered,
             sessionId: response.session_id ?? '',
@@ -348,7 +348,7 @@ export class WorkyOrchestratorGrpcClientService
           err: grpc.ServiceError | null,
           response: { delivered: boolean; session_id: string; step_id: string },
         ) => {
-          if (err) return reject(err);
+          if (err) { reject(err); return; }
           resolve({
             delivered: !!response.delivered,
             sessionId: response.session_id ?? '',
@@ -365,7 +365,7 @@ export class WorkyOrchestratorGrpcClientService
    * answer (nothing waiting).
    */
   async listOpenChatWaits(): Promise<
-    Array<{ chatId: string; userId: string; sessionId: string }>
+    { chatId: string; userId: string; sessionId: string }[]
   > {
     return new Promise((resolve, reject) => {
       this.client.ListOpenChatWaits(
@@ -374,9 +374,9 @@ export class WorkyOrchestratorGrpcClientService
         this.unaryDeadline,
         (
           err: grpc.ServiceError | null,
-          response: { waits?: Array<{ chat_id: string; user_id: string; session_id: string }> },
+          response: { waits?: { chat_id: string; user_id: string; session_id: string }[] },
         ) => {
-          if (err) return reject(err);
+          if (err) { reject(err); return; }
           resolve(
             (response.waits ?? []).map((w) => ({
               chatId: w.chat_id,

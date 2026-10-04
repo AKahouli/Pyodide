@@ -127,7 +127,7 @@ export class ConnectorCategoryService implements OnModuleInit {
     await this.categoryStore.delete(id);
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   private toResponse(doc: ConnectorCategoryRow): IConnectorCategoryResponse {
     return {
       id: doc.id,

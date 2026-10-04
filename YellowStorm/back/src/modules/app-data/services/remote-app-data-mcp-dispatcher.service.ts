@@ -379,7 +379,7 @@ export class RemoteAppDataMcpDispatcherService {
 
   private mapManifestTables(
     manifest: AppDataSchemaManifest,
-  ): { tables: Array<Record<string, unknown>>; warnings: string[] } {
+  ): { tables: Record<string, unknown>[]; warnings: string[] } {
     const warnings: string[] = [];
     const tables = Object.entries(manifest.tables).map(([tableName, def]) => ({
       name: tableName,

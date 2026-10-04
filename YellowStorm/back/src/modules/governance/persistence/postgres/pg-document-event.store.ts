@@ -72,7 +72,7 @@ export class PgGovernanceEventStore implements GovernanceEventStore {
     if (rows[0]) return eventRowToRecord(rows[0]);
     // Partial unique index fires only for non-null keys; for keyed appends the
     // stored event wins (same idempotency as the Mongo 11000 fallback).
-    const existing = await this.findByDeduplicationKey(input.governanceDocumentId, input.deduplicationKey as string);
+    const existing = await this.findByDeduplicationKey(input.governanceDocumentId, input.deduplicationKey!);
     if (existing) return existing;
     throw new Error('Governance document event append failed');
   }

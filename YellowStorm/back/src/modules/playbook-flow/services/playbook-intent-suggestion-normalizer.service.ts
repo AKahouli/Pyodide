@@ -37,7 +37,7 @@ export class PlaybookIntentSuggestionNormalizerService {
     includeFallback = true,
   ): PlaybookIntentSuggestion[] {
     try {
-      const parsed = JSON.parse(raw || '{}') as { suggestions?: Array<Record<string, unknown>> };
+      const parsed = JSON.parse(raw || '{}') as { suggestions?: Record<string, unknown>[] };
       const suggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions : [];
       const normalized = suggestions
         .slice(0, 6)

@@ -147,7 +147,7 @@ export class SemanticPopulationRefreshService {
 
   /** The runtime knows the files a run no longer read only by id: give them their names. */
   private async nameRemovedSources<T extends { progress?: Record<string, unknown> }>(job: T): Promise<T> {
-    const changes = job.progress?.changes as { removedSources?: Array<{ assetId: string; name?: string }> } | undefined;
+    const changes = job.progress?.changes as { removedSources?: { assetId: string; name?: string }[] } | undefined;
     const removed = changes?.removedSources ?? [];
     if (!removed.length) return job;
     const files = await this.documents.findByIds(removed.map((source) => source.assetId)).catch(() => []);
@@ -398,7 +398,7 @@ export class SemanticPopulationRefreshService {
   }
 
   /** Display names of the people behind corrections; the viewer is flagged so the UI can say "you". */
-  private async correctorNames(modelId: string, viewerId: string, userIds: Array<string | null | undefined>) {
+  private async correctorNames(modelId: string, viewerId: string, userIds: (string | null | undefined)[]) {
     const ids = [...new Set(userIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
     const names = new Map<string, { name: string; self: boolean }>();
     if (!ids.length) return names;
@@ -464,7 +464,7 @@ export class SemanticPopulationRefreshService {
         `SELECT id, workspace_id AS "workspaceId" FROM semantic_model.source_mappings
          WHERE model_id=$1 AND scope='workspace' ORDER BY id`,
         [modelId],
-      ).then((result) => result.rows).catch(() => [] as Array<{ id: string; workspaceId: string }>);
+      ).then((result) => result.rows).catch(() => [] as { id: string; workspaceId: string }[]);
       if (workspaceMappings.length) {
         const files = await this.documents.findByIds(unmatched).catch(() => []);
         for (const file of files) {
@@ -590,7 +590,7 @@ export class SemanticPopulationRefreshService {
     const mappings = await this.loadScopeMappings(model.id, scope);
     const sources = [];
     const usableMappings: MappingRow[] = [];
-    const skipped: Array<{ mappingId: string; reason: string }> = [];
+    const skipped: { mappingId: string; reason: string }[] = [];
     let waitingFiles = 0;
     for (const mapping of [...mappings].sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0)) {
       try {
@@ -646,7 +646,7 @@ export class SemanticPopulationRefreshService {
       .map((node) => this.conceptSpec(node, identityRules.get(node.id) ?? [], manualOnly.has(node.id)));
     const inScope = new Set(concepts.map((concept) => concept.conceptId));
     const relations: RelationSpec[] = [];
-    const relationBindings: Array<{ relationId: string; referenceField: string; targetField: string }> = [];
+    const relationBindings: { relationId: string; referenceField: string; targetField: string }[] = [];
     for (const relation of relationRows.filter(
       (candidate) => inScope.has(candidate.sourceNodeTypeId) && inScope.has(candidate.targetNodeTypeId),
     )) {

@@ -86,7 +86,7 @@ describe('ConnectedAppUserService', () => {
       const result = await service.getAvailableApps(userId);
 
       expect(result).toHaveLength(2);
-      expect(result.every((a) => a.connected === false)).toBe(true);
+      expect(result.every((a) => !a.connected)).toBe(true);
       expect(result.every((a) => a.connection === undefined)).toBe(true);
     });
   });

@@ -1016,7 +1016,7 @@ export class DataPreviewDto {
   @IsInt()
   @Min(1)
   @Max(50)
-  limit: number = 25;
+  limit = 25;
 
   @ApiPropertyOptional()
   @IsOptional()
@@ -1097,7 +1097,7 @@ export type RecordCorrectionAction = (typeof RECORD_CORRECTION_ACTIONS)[number];
 
 export class RecordCorrectionDto {
   @ApiProperty({ enum: RECORD_CORRECTION_ACTIONS })
-  @IsIn(RECORD_CORRECTION_ACTIONS as unknown as string[])
+  @IsIn(RECORD_CORRECTION_ACTIONS)
   action!: RecordCorrectionAction;
 
   @ApiProperty({ description: 'Record ({ entityId }) or link ({ relationId, sourceEntityId, targetEntityId })' })

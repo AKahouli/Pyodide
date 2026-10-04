@@ -32,12 +32,12 @@ export interface RevisionManifest {
 interface CephStarterManifestJson {
   revisionId?: string;
   parentRevisionId?: string | null;
-  files?: Array<{
+  files?: {
     path?: string;
     sha256?: string;
     objectKey?: string;
     size?: number;
-  }>;
+  }[];
 }
 
 @Injectable()
@@ -156,14 +156,14 @@ export class RuntimeRevisionService {
   resolveObjectKeys(
     revision: RevisionManifest,
     paths: string[],
-  ): Array<{ path: string; objectKey: string; sha256: string; size: number }> {
+  ): { path: string; objectKey: string; sha256: string; size: number }[] {
     const byPath = new Map(revision.files.map((f) => [f.path, f]));
-    const items: Array<{
+    const items: {
       path: string;
       objectKey: string;
       sha256: string;
       size: number;
-    }> = [];
+    }[] = [];
 
     for (const relative of paths) {
       const normalized = this.normalizeRelativePath(relative);
@@ -213,7 +213,7 @@ export class RuntimeRevisionService {
     workspaceId: string;
     revisionId: string;
     parentRevisionId?: string | null;
-    files: Array<{ path: string; content: string }>;
+    files: { path: string; content: string }[];
     toolCallId?: string | null;
   }): Promise<RevisionManifest> {
     const { workspaceId, revisionId } = input;
@@ -319,7 +319,7 @@ export class RuntimeRevisionService {
     workspaceId: string;
     baseRevisionId: string;
     newRevisionId: string;
-    additionalFiles: Array<{ path: string; content: string }>;
+    additionalFiles: { path: string; content: string }[];
   }): Promise<RevisionManifest> {
     const base = await this.getAuthorizedRevision(input.workspaceId, input.baseRevisionId);
 
@@ -399,7 +399,7 @@ export class RuntimeRevisionService {
     for (const rid of revisionIds) {
       const match = /^rev_(\d+)$/.exec(rid);
       if (match) {
-        maxNumber = Math.max(maxNumber, Number.parseInt(match[1]!, 10));
+        maxNumber = Math.max(maxNumber, Number.parseInt(match[1], 10));
       }
     }
     const newRevisionId = `rev_${maxNumber + 1}`;

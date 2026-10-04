@@ -14,7 +14,7 @@ export interface WorkyBoardResponse {
   plan: { title: string; goal: string; status: string } | null;
   session: { status: string; activeInterruptId: string | null } | null;
   lanes: Record<BoardLane, IBoardTaskView[]>;
-  pendingClarifications: Array<{
+  pendingClarifications: {
     id: string;
     type: string;
     question: string;
@@ -22,7 +22,7 @@ export interface WorkyBoardResponse {
     taskId: string | null;
     blocksTaskIds: string[];
     createdAt: string;
-  }>;
+  }[];
 }
 
 @ApiTags('Worky')

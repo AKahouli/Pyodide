@@ -15,8 +15,8 @@ const createPlaybookBindingSyncServiceMock = () => ({
 
 /** Deep-partial row override: lets fixture literals use minimal action/header objects. */
 type RowOver = {
-  [K in keyof ConnectorRow]?: ConnectorRow[K] extends Array<infer T>
-    ? Array<Partial<T>>
+  [K in keyof ConnectorRow]?: ConnectorRow[K] extends (infer T)[]
+    ? Partial<T>[]
     : ConnectorRow[K];
 };
 

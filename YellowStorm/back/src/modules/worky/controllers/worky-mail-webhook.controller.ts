@@ -44,7 +44,7 @@ export class WorkyMailWebhookController {
     // subscription entirely — losing every future reply for that mailbox. A
     // notification we failed to process is worth far less than the subscription.
     try {
-      const body = req.body as { value?: Array<Record<string, any>> };
+      const body = req.body as { value?: Record<string, any>[] };
       const result = await this.webhookService.handleNotifications(body);
       return res.status(HttpStatus.ACCEPTED).json(result);
     } catch (err) {

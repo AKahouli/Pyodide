@@ -665,7 +665,7 @@ export class PgConnectorAdminAuthStore implements ConnectorAdminAuthStore {
     const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...rest } = patch;
     await this.q
       .update(schema.integrationsAdminConnectorAuthTokens)
-      .set({ ...rest, updatedAt: new Date() } as unknown as Partial<typeof schema.integrationsAdminConnectorAuthTokens.$inferInsert>)
+      .set({ ...rest, updatedAt: new Date() })
       .where(eq(schema.integrationsAdminConnectorAuthTokens.id, id));
   }
 

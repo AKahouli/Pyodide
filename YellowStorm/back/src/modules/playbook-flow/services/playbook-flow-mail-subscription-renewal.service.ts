@@ -29,9 +29,9 @@ export class PlaybookFlowMailSubscriptionRenewalService {
 
     const candidates = await this.flows.listByTrigger('mail', { runtimeEnabled: true });
     const flows = candidates.filter((flow) => {
-      const params = (flow.triggerConfig?.params ?? {}) as Record<string, unknown>;
-      const expiresAt = expiryTime(params['subscriptionExpiresAt']);
-      return params['subscriptionId'] != null && expiresAt <= cutoff && expiresAt > now;
+      const params = (flow.triggerConfig?.params ?? {});
+      const expiresAt = expiryTime(params.subscriptionExpiresAt);
+      return params.subscriptionId != null && expiresAt <= cutoff && expiresAt > now;
     });
 
     if (flows.length === 0) return;
@@ -39,12 +39,12 @@ export class PlaybookFlowMailSubscriptionRenewalService {
     this.logger.log('Renewing expiring mail subscriptions', { count: flows.length });
 
     for (const flow of flows) {
-      const params = (flow.triggerConfig?.params ?? {}) as Record<string, unknown>;
-      const subscriptionId = params['subscriptionId'] as string | undefined;
-      const mailboxAppKey = params['mailboxAppKey'] as string | undefined;
+      const params = (flow.triggerConfig?.params ?? {});
+      const subscriptionId = params.subscriptionId as string | undefined;
+      const mailboxAppKey = params.mailboxAppKey as string | undefined;
       if (!subscriptionId || !mailboxAppKey) continue;
 
-      const autoRenewUntil = params['autoRenewUntil'] as string | Date | null | undefined;
+      const autoRenewUntil = params.autoRenewUntil as string | Date | null | undefined;
       if (autoRenewUntil && new Date(autoRenewUntil).getTime() <= Date.now()) continue;
 
       try {
@@ -63,7 +63,7 @@ export class PlaybookFlowMailSubscriptionRenewalService {
               subscriptionExpiresAt: result.expirationDateTime || null,
             },
           },
-        } as any);
+        });
 
         this.logger.log('Mail subscription renewed', {
           flowId: flow.id,

@@ -110,19 +110,19 @@ describe('ConversationV2GrpcClientService', () => {
       },
     });
 
-    handlers['data']?.({
+    handlers.data?.({
       event_id: 'e1',
       timestamp: 1,
       payload: 'message',
       message: { role: 'assistant', content: 'hi', attachments: [] },
     });
-    handlers['data']?.({
+    handlers.data?.({
       event_id: 'e2',
       timestamp: 2,
       payload: 'done',
       done: {},
     });
-    handlers['end']?.();
+    handlers.end?.();
 
     expect(sub.closed).toBe(true);
   });

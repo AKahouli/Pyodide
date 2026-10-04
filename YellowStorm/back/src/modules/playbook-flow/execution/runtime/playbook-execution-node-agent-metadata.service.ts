@@ -120,7 +120,7 @@ export class PlaybookExecutionNodeAgentMetadataService {
       ],
       agent_params: {
         ...(resolvedAgent.agent_params && typeof resolvedAgent.agent_params === 'object' && !Array.isArray(resolvedAgent.agent_params)
-          ? resolvedAgent.agent_params as Record<string, unknown>
+          ? resolvedAgent.agent_params
           : {}),
         connector_bindings_json: JSON.stringify(mergedConnectorBindings),
       },

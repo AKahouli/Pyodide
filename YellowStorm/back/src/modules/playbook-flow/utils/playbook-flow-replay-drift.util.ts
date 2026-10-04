@@ -47,7 +47,7 @@ export function normalizeReplayScore(value: number | null | undefined): number |
   return Math.max(0, Math.min(100, normalized));
 }
 
-export function averageReplayScores(scores: Array<number | null | undefined>): number | null {
+export function averageReplayScores(scores: (number | null | undefined)[]): number | null {
   const valid = scores.filter((score): score is number => typeof score === 'number' && !Number.isNaN(score));
   if (valid.length === 0) {
     return null;
@@ -209,7 +209,7 @@ function scoreToolSequenceMatch(
 
 function scoreArgumentShapeMatch(
   baselineToolCalls: FlowReplayToolCall[],
-  alignedObservedTools: Array<FlowToolTraceItem | null>,
+  alignedObservedTools: (FlowToolTraceItem | null)[],
   allowArgumentValueChanges: boolean,
 ): number | null {
   if (baselineToolCalls.length === 0) {
@@ -255,7 +255,7 @@ function scoreOrderedOverlap(expected: string[], observed: string[], allowAdditi
 function alignObservedToolCalls(
   baselineToolCalls: FlowReplayToolCall[],
   observedToolTrace: FlowToolTraceItem[],
-): Array<FlowToolTraceItem | null> {
+): (FlowToolTraceItem | null)[] {
   const observed = observedToolTrace
     .filter((item) => item.status !== 'skipped')
     .sort((left, right) => (left.callIndex ?? 0) - (right.callIndex ?? 0));
@@ -272,8 +272,8 @@ function alignObservedToolCalls(
   });
 }
 
-function alignObservedToolNames(expected: string[], observed: string[]): Array<string | null> {
-  const aligned: Array<string | null> = [];
+function alignObservedToolNames(expected: string[], observed: string[]): (string | null)[] {
+  const aligned: (string | null)[] = [];
   let observedIndex = 0;
   for (const expectedItem of expected) {
     while (observedIndex < observed.length && observed[observedIndex] !== expectedItem) {

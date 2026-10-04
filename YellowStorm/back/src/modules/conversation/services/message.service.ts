@@ -82,10 +82,9 @@ export class MessageService {
     }
 
     // mention notification
-    this.extractAndNotifyMentions(message, data.conversationId).catch((err) =>
-      this.logger.error('Failed to process mentions', {
+    this.extractAndNotifyMentions(message, data.conversationId).catch((err) => { this.logger.error('Failed to process mentions', {
         error: err instanceof Error ? err.message : err,
-      }),
+      }); },
     );
 
     this.logger.log('User message created', {
@@ -258,10 +257,9 @@ export class MessageService {
     }
 
     // mention notification
-    this.extractAndNotifyMentions(message, message.conversationId).catch((err) =>
-      this.logger.error('Failed to process mentions', {
+    this.extractAndNotifyMentions(message, message.conversationId).catch((err) => { this.logger.error('Failed to process mentions', {
         error: err instanceof Error ? err.message : err,
-      }),
+      }); },
     );
 
     this.logger.log('AI message completed', {
@@ -535,11 +533,11 @@ export class MessageService {
     }
 
     const components = Array.isArray(message.components)
-      ? (message.components as Array<{
+      ? (message.components as {
           id?: unknown;
           type?: unknown;
           data?: Record<string, unknown>;
-        }>)
+        }[])
       : [];
     const component = components.find((candidate) => candidate?.id === componentId && candidate?.type === 'toolActivity');
     if (!component) {
@@ -661,7 +659,7 @@ export class MessageService {
     }
 
     const components = Array.isArray(message.components) ? message.components : [];
-    const hasAnswer = message.conversationType === 'ai' && message.isComplete === true && message.isStreaming === false && components.some((component) => component.type === 'text' && typeof component.data?.content === 'string' && component.data.content.trim()) && !components.some((component) => component.type === 'error') && !!message.questionMessageId;
+    const hasAnswer = message.conversationType === 'ai' && message.isComplete && !message.isStreaming && components.some((component) => component.type === 'text' && typeof component.data?.content === 'string' && component.data.content.trim()) && !components.some((component) => component.type === 'error') && !!message.questionMessageId;
     if (!hasAnswer) {
       if (!manual) return null;
       throw new AppException({
@@ -797,12 +795,12 @@ export class MessageService {
     cutoff: Date,
     limit: number,
   ): Promise<
-    Array<{
+    {
       id: string;
       conversationId: string;
       executionAttemptId: string | null;
       leaseExpiresAt: Date | null;
-    }>
+    }[]
   > {
     return this.messageStore.findExpiredStreamExecutions(cutoff, limit);
   }
@@ -913,16 +911,16 @@ export class MessageService {
     return {
       id: message.id,
       conversationId: toStr(message.conversationId),
-      conversationType: message.conversationType as 'user' | 'ai',
+      conversationType: message.conversationType,
       content: message.content,
-      components: this.publicComponents(message.components, false, redactSensitiveText) as any,
+      components: this.publicComponents(message.components, false, redactSensitiveText),
       attachedFileIds: message.attachedFileIds?.map((id: any) => toStr(id)),
       modelId: message.modelId,
       reasoningEffort: message.reasoningEffort,
       webSearchEnabled: message.webSearchEnabled,
       questionMessageId: toStr(message.questionMessageId),
       answerMessageId: toStr(message.answerMessageId),
-      feedback: message.feedback as any,
+      feedback: message.feedback,
       feedbackAt: toISO(message.feedbackAt),
       isEdited: message.isEdited || undefined,
       editedAt: toISO(message.editedAt),
@@ -934,12 +932,12 @@ export class MessageService {
       durationMs: message.durationMs,
       timeToFirstChunk: message.timeToFirstChunk,
       timeToFirstToken: message.timeToFirstToken,
-      latencyMetrics: message.latencyMetrics as ConversationLatencyMetricsV1 | undefined,
+      latencyMetrics: message.latencyMetrics,
       requestId: message.requestId,
-      guardrailDecision: message.guardrailDecision as any,
-      interaction: message.interaction as Record<string, unknown> | undefined,
-      interactions: message.interactions as Record<string, unknown>[] | undefined,
-      reliabilityEvaluation: message.reliabilityEvaluation as ReliabilityEvaluation | undefined,
+      guardrailDecision: message.guardrailDecision,
+      interaction: message.interaction,
+      interactions: message.interactions,
+      reliabilityEvaluation: message.reliabilityEvaluation,
       correctionWorkflow: message.correctionWorkflow
         ? ({
             ...message.correctionWorkflow,
@@ -956,7 +954,7 @@ export class MessageService {
                   })),
                 }
               : {}),
-          } as MessageResponse['correctionWorkflow'])
+          })
         : undefined,
       agentIds: message.agentIds?.map((id: any) => toStr(id)),
       memberIds: message.memberIds?.map((id: any) => toStr(id)),
@@ -992,10 +990,10 @@ export class MessageService {
       const settings = await Promise.race([
         this.conversationSettings.getSettings(),
         new Promise<never>((_, reject) => {
-          timeout = setTimeout(() => reject(new Error('Conversation redaction setting lookup timed out')), SETTINGS_LOOKUP_TIMEOUT_MS);
+          timeout = setTimeout(() => { reject(new Error('Conversation redaction setting lookup timed out')); }, SETTINGS_LOOKUP_TIMEOUT_MS);
         }),
       ]);
-      return settings.redactSensitiveText !== false;
+      return settings.redactSensitiveText;
     } catch (error) {
       this.logger.warn('Failed to resolve conversation redaction setting', {
         error: error instanceof Error ? error.message : 'Unknown error',

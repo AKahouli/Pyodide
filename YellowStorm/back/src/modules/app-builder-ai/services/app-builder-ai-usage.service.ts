@@ -108,7 +108,7 @@ export class AppBuilderAiUsageService {
     const user = await this.users.findById(userId);
     if (!user?.appBuilderAiOfferId) return null;
     const offer = await this.offers.findById(user.appBuilderAiOfferId);
-    if (!offer || !offer.isActive) return null;
+    if (!offer?.isActive) return null;
     const window = await this.getOrCreateCurrentWindow(userId, offer);
     const limit = offer.tokenLimit;
     const currentUsage = window.totalTokens;

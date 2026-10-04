@@ -37,7 +37,7 @@ export class WorkyTaskService {
     const task = await this.tasks.findById(taskId);
     if (!task || task.externalId === null) throw new NotFoundException('Task not found');
     const art = await this.mirror.findStepArtifact(task.streamId, task.externalId, artifactId);
-    if (!art || !art.filePath) throw new NotFoundException('Artifact not found');
+    if (!art?.filePath) throw new NotFoundException('Artifact not found');
     const filename = (art.filename || 'artifact').replace(/["\r\n]/g, '');
     const [viewUrl, downloadUrl] = await Promise.all([
       this.documents.generateSasUrl(art.filePath, { expiryMinutes: 10, checkExists: true }),
@@ -56,8 +56,8 @@ export class WorkyTaskService {
    * the task drawer opens, so the frequently-refetched board response stays lean.
    */
   async getResultContent(taskId: string): Promise<{
-    components: Array<{ id: string; type: string; data: Record<string, unknown> }>;
-    artifacts: Array<{ id: string; filePath: string; filename: string; artifactKind: string | null; mimeType: string | null; size: number | null; createdAt: string }>;
+    components: { id: string; type: string; data: Record<string, unknown> }[];
+    artifacts: { id: string; filePath: string; filename: string; artifactKind: string | null; mimeType: string | null; size: number | null; createdAt: string }[];
   }> {
     if (!isObjectId(taskId)) return { components: [], artifacts: [] };
     const task = await this.tasks.findById(taskId);

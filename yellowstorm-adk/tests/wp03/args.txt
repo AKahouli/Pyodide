@@ -1,0 +1,6 @@
+tests/wp03/test_root_runtime_contracts.py
+tests/wp03/test_root_cancellation.py
+tests/wp03/test_root_compiler.py
+tests/wp03/test_root_event_projector.py
+tests/wp03/test_plugin_resume_guard.py
+tests/wp03/test_execution_scope_proto.py

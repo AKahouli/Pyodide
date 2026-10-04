@@ -212,6 +212,7 @@ export class AgentConnectorRuntimeService {
             parameter_schema: {},
             parameter_schema_json: JSON.stringify(action.parameterSchema || {}),
             safety: String(action.safety || 'unknown').toLowerCase(),
+            execution_kind: action.executionKind || 'unknown',
             result_kind: action.resultKind || 'generic',
             citation_mode: action.citationMode || 'none',
             result_mapping_json: JSON.stringify(action.resultMapping || {}),

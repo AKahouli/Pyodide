@@ -54,7 +54,7 @@ export class ConversationAttachmentContextService {
    * and code tools. Current-turn files are handled separately (always in).
    */
   selectPreviousByReference(
-    previous: Array<{ documentId: string; filename: string }>,
+    previous: { documentId: string; filename: string }[],
     userQuery: string,
   ): string[] {
     if (previous.length === 0) return [];

@@ -156,7 +156,7 @@ const ACCESSIBILITY_PROFILES = ['standard', 'low-vision', 'high-contrast-light',
 
 function normalizeAccessibilitySettings(value: AgentWidgetSettings['accessibility']): AgentWidgetSettings['accessibility'] {
   const defaults = DEFAULT_WIDGET_SETTINGS.accessibility;
-  const profiles = Array.from(new Set((value.availableProfiles ?? []).filter((profile): profile is typeof ACCESSIBILITY_PROFILES[number] => ACCESSIBILITY_PROFILES.includes(profile as typeof ACCESSIBILITY_PROFILES[number]))));
+  const profiles = Array.from(new Set((value.availableProfiles ?? []).filter((profile): profile is typeof ACCESSIBILITY_PROFILES[number] => ACCESSIBILITY_PROFILES.includes(profile))));
   const availableProfiles = profiles.length ? profiles : defaults.availableProfiles;
   const defaultProfile = availableProfiles.includes(value.defaultProfile) ? value.defaultProfile : defaults.defaultProfile;
   return {

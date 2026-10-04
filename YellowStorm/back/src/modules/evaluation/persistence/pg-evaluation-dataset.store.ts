@@ -36,7 +36,7 @@ export class PgEvaluationDatasetStore implements EvaluationDatasetStore {
       .values({
         id: newObjectId(),
         name: stripNul(data.name),
-        items: stripNul(data.items) as unknown as Array<Record<string, unknown>>,
+        items: stripNul(data.items) as unknown as Record<string, unknown>[],
         createdBy: normalizeObjectId(data.createdBy),
         workspaceId: data.workspaceId ? normalizeObjectId(data.workspaceId) : null,
       })

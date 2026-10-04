@@ -8,7 +8,7 @@ export class BadRequestException extends AppException {
     // Check if first argument is an ErrorCode or a string message
     const isErrorCode = codeOrMessage && Object.values(ErrorCode).includes(codeOrMessage as ErrorCode);
     const code = isErrorCode ? (codeOrMessage as ErrorCode) : ErrorCode.BAD_REQUEST;
-    const msg = isErrorCode ? message : (codeOrMessage as string | undefined);
+    const msg = isErrorCode ? message : (codeOrMessage);
 
     super({
       code,

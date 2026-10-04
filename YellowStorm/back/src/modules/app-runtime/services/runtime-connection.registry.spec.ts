@@ -143,7 +143,7 @@ describe('RuntimeConnectionRegistry', () => {
       const holder = registry.withMutationLock(
         'sess_1',
         onTimeout,
-        () => new Promise<string>((resolve) => setTimeout(() => resolve('held'), 60)),
+        () => new Promise<string>((resolve) => setTimeout(() => { resolve('held'); }, 60)),
       );
       const blocked = registry.withMutationLock(
         'sess_1',

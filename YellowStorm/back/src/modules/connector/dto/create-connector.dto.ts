@@ -11,6 +11,7 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
+import { ConnectorActionExecutionKind } from '../connector.types';
 import { ConnectorActionResultKind, ConnectorActionSafety, ConnectorAuthSourceType, ConnectorAuthType, ConnectorCitationMode, DynamicHeaderSource, McpTransportType } from '../connector.types';
 
 export class ConnectorDynamicHeaderDto {
@@ -60,6 +61,11 @@ export class ConnectorActionDto {
   @IsOptional()
   @IsString()
   safety?: ConnectorActionSafety;
+
+  @ApiPropertyOptional({ enum: ConnectorActionExecutionKind, default: ConnectorActionExecutionKind.UNKNOWN })
+  @IsOptional()
+  @IsEnum(ConnectorActionExecutionKind)
+  executionKind?: ConnectorActionExecutionKind;
 
   @ApiPropertyOptional({ description: 'Whether the action supports batch mode' })
   @IsOptional()

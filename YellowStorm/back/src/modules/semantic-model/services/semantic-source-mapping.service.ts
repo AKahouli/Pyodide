@@ -145,7 +145,7 @@ export class SemanticSourceMappingService {
   }
 
   /** Layout only: moving a box changes no meaning, so it neither advances the model revision nor needs one. */
-  async saveCanvasPositions(userId: string, modelId: string, positions: Array<{ id: string; x: number; y: number }>) {
+  async saveCanvasPositions(userId: string, modelId: string, positions: { id: string; x: number; y: number }[]) {
     const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
     if (positions.length) {
       await this.database.query(

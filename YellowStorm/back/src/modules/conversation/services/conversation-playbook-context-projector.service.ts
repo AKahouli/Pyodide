@@ -28,7 +28,7 @@ export class ConversationPlaybookContextProjectorService {
     throw new ConflictException(ErrorCode.CONFLICT, 'The selected answer version is incomplete or stale');
   }
 
-  project(messages: Array<{ conversationType: string; content?: string; components?: MessageComponent[] }>, answer: ResolvedDisplayedAnswer): { context: TrustedConversationPlaybookContextV1; preview: ConversationPlaybookPreviewV1 } {
+  project(messages: { conversationType: string; content?: string; components?: MessageComponent[] }[], answer: ResolvedDisplayedAnswer): { context: TrustedConversationPlaybookContextV1; preview: ConversationPlaybookPreviewV1 } {
     const omissions: Record<string, number> = {};
     const executionSummaries: TrustedConversationPlaybookContextV1['executionSummaries'] = [];
     const planSteps: TrustedConversationPlaybookContextV1['planSteps'] = [];

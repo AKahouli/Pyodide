@@ -162,7 +162,7 @@ export class RuntimeConnectionRegistry {
     const acquired = await Promise.race([
       predecessor.then(() => true),
       new Promise<boolean>((resolve) => {
-        timer = setTimeout(() => resolve(false), waitMs);
+        timer = setTimeout(() => { resolve(false); }, waitMs);
       }),
     ]);
     if (timer) clearTimeout(timer);

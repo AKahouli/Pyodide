@@ -144,7 +144,7 @@ describeIntegration('LogBufferService on ops.logs (integration)', () => {
         { timestamp: at('2026-09-21T09:03:00Z'), level: 'INFO', context: 'BillingService', message: 'Invoice paid' },
         { timestamp: at('2026-09-21T09:04:00Z'), level: 'DEBUG', message: 'no context here' },
       ];
-      entries.forEach((entry) => buffer.add(entry));
+      entries.forEach((entry) => { buffer.add(entry); });
       await buffer.flush();
     };
     const messages = async (buffer: LogBufferService, filters: Record<string, unknown>) =>

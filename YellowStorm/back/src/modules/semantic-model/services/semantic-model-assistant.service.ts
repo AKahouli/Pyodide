@@ -103,7 +103,7 @@ export interface SourceSnapshot {
   documentId: string;
   sheetName: string;
   assetKind: string;
-  fieldMappings: Array<Record<string, unknown>>;
+  fieldMappings: Record<string, unknown>[];
   identityFields: string[];
   scope?: string;
   folderId?: string | null;
@@ -285,7 +285,7 @@ export class SemanticModelAssistantService {
   // ── Models ────────────────────────────────────────────────────────────────
 
   async listModels(userId: string, search?: string) {
-    const page = await this.models.list(userId, { search, page: 1, limit: 50, kind: 'designed' } as never) as { items?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>;
+    const page = await this.models.list(userId, { search, page: 1, limit: 50, kind: 'designed' } as never) as { items?: Record<string, unknown>[] } | Record<string, unknown>[];
     const items = Array.isArray(page) ? page : page.items ?? [];
     return {
       models: items.filter((model) => model.status !== 'archived').map((model) => ({
@@ -318,7 +318,7 @@ export class SemanticModelAssistantService {
   /** The model as a person would describe it: concepts with their fields, relationships and sources, by name. */
   async describeModel(userId: string, modelId: string) {
     const model = await this.models.get(userId, modelId);
-    const graph = await this.graph.getGraph(userId, modelId) as SemanticGraph;
+    const graph = await this.graph.getGraph(userId, modelId);
     const [identity, mappings] = await Promise.all([
       this.identityByConcept(userId, modelId),
       this.listSources(userId, modelId).catch(() => [] as SourceSnapshot[]),
@@ -353,7 +353,7 @@ export class SemanticModelAssistantService {
   }
 
   async checkModel(userId: string, modelId: string) {
-    const graph = await this.graph.getGraph(userId, modelId) as SemanticGraph;
+    const graph = await this.graph.getGraph(userId, modelId);
     const issues = this.validation.validate(graph);
     const freshness = await this.population.freshness(userId, modelId).catch(() => ({ state: 'not_runnable' as const }));
     return {
@@ -371,7 +371,7 @@ export class SemanticModelAssistantService {
   async applyChanges(actor: AssistantActor, modelId: string, changes: AssistantModelChanges, dryRun = false) {
     const model = await this.models.requireActiveRole(actor.userId, modelId, ['owner', 'editor']);
     if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
-    const before = await this.graph.getGraph(actor.userId, modelId) as SemanticGraph;
+    const before = await this.graph.getGraph(actor.userId, modelId);
     const identityBefore = await this.identityByConcept(actor.userId, modelId);
     const plan = this.plan(before, identityBefore, changes);
     const issues = this.validation.validate(plan.after).map((issue) => ({ severity: issue.severity, target: issue.targetLabel, message: issue.message }));
@@ -381,7 +381,7 @@ export class SemanticModelAssistantService {
       return { applied: false, dryRun, model: this.modelRef(model), summary: plan.summary, operationCount: operations.length, issues };
     }
     if (operations.length) {
-      await this.graph.apply(actor.userId, modelId, { expectedRevision: before.revision, operations: operations as unknown as Record<string, unknown>[] });
+      await this.graph.apply(actor.userId, modelId, { expectedRevision: before.revision, operations: operations });
     }
     await this.saveIdentity(actor.userId, modelId, identityChanged.map((conceptId) => [conceptId, plan.identity[conceptId]]));
     const changeSet = await this.recordChangeSet(actor, model.id, model.currentDraftVersionId, {
@@ -457,7 +457,7 @@ export class SemanticModelAssistantService {
           const label = spec.newLabel.trim();
           edits.push(`renamed to ${label}`);
           node.label = label;
-          node.key = this.uniqueKey(graph.nodes.filter((item) => item.id !== node!.id).map((item) => item.key), businessKey(label, 'concept'));
+          node.key = this.uniqueKey(graph.nodes.filter((item) => item.id !== node.id).map((item) => item.key), businessKey(label, 'concept'));
         }
         if (spec.description !== undefined && spec.description !== node.description) { node.description = spec.description; edits.push('description'); }
         if (spec.category && spec.category !== node.category) { node.category = spec.category; edits.push('category'); }
@@ -478,8 +478,8 @@ export class SemanticModelAssistantService {
       }
       if (spec.keyFields) {
         identity[node.id] = spec.keyFields.map((reference) => {
-          const field = this.findField(node!, reference);
-          if (!field) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${node!.label} has no field "${reference}" to use as a key field`);
+          const field = this.findField(node, reference);
+          if (!field) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `${node.label} has no field "${reference}" to use as a key field`);
           return field.key;
         });
       }
@@ -590,7 +590,7 @@ export class SemanticModelAssistantService {
     return Object.fromEntries(rules.map((rule) => [rule.conceptId, rule.fields]));
   }
 
-  private async saveIdentity(userId: string, modelId: string, rules: Array<[string, string[]]>) {
+  private async saveIdentity(userId: string, modelId: string, rules: [string, string[]][]) {
     for (const [conceptId, fields] of rules) {
       const model = await this.models.get(userId, modelId);
       await this.crossSource.saveIdentityRule(userId, modelId, conceptId, { expectedRevision: model.revision, fields });
@@ -602,10 +602,10 @@ export class SemanticModelAssistantService {
   async listWorkspaces(userId: string, search?: string) {
     const [own, shared] = await Promise.all([
       this.workspaces.findAllByUser(userId, { page: 1, limit: 50, search }),
-      this.workspaceShares.findSharedWithUser(userId, { page: 1, limit: 50 } as never).catch(() => ({ workspaces: [] })),
+      this.workspaceShares.findSharedWithUser(userId, { page: 1, limit: 50 }).catch(() => ({ workspaces: [] })),
     ]);
     const term = search?.trim().toLowerCase();
-    const sharedItems = (shared.workspaces as Array<{ id: string; name: string }>).filter((workspace) => !term || workspace.name.toLowerCase().includes(term));
+    const sharedItems = (shared.workspaces as { id: string; name: string }[]).filter((workspace) => !term || workspace.name.toLowerCase().includes(term));
     return {
       workspaces: [
         ...own.workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name, shared: false })),
@@ -638,10 +638,10 @@ export class SemanticModelAssistantService {
     if (term.length < 2) return { files: [], page: 1, totalPages: 1 };
     const [own, shared] = await Promise.all([
       this.workspaces.findAllByUser(userId, { page: 1, limit: 100 }),
-      this.workspaceShares.findSharedWithUser(userId, { page: 1, limit: 100 } as never).catch(() => ({ workspaces: [] })),
+      this.workspaceShares.findSharedWithUser(userId, { page: 1, limit: 100 }).catch(() => ({ workspaces: [] })),
     ]);
     const names = new Map<string, string>();
-    for (const workspace of [...own.workspaces, ...(shared.workspaces as Array<{ id: string; name: string }>)]) names.set(workspace.id, workspace.name);
+    for (const workspace of [...own.workspaces, ...(shared.workspaces as { id: string; name: string }[])]) names.set(workspace.id, workspace.name);
     if (!names.size) return { files: [], page: 1, totalPages: 1 };
     const result = await this.documents.findByMultipleWorkspaces([...names.keys()], { page, limit: 50, search: term, sortBy: 'originalName', sortOrder: 'asc' } as never);
     const files = result.documents.filter((document) => !document.isFolder);
@@ -698,7 +698,7 @@ export class SemanticModelAssistantService {
   }
 
   private compactProfile(profile: Record<string, unknown>) {
-    const fields = Array.isArray(profile.fields) ? profile.fields as Array<Record<string, unknown>> : [];
+    const fields = Array.isArray(profile.fields) ? profile.fields as Record<string, unknown>[] : [];
     return {
       sheets: profile.sheets,
       sheet: profile.sheet,
@@ -715,7 +715,7 @@ export class SemanticModelAssistantService {
 
   /** Feed a concept from a spreadsheet sheet: each concept field takes one column. */
   async mapSpreadsheet(actor: AssistantActor, modelId: string, input: { concept: string; workspaceId: string; documentId: string; sheetName?: string; columns: Record<string, string>; keyFields?: string[] }) {
-    const graph = await this.graph.getGraph(actor.userId, modelId) as SemanticGraph;
+    const graph = await this.graph.getGraph(actor.userId, modelId);
     const node = this.requireMappableConcept(graph, input.concept);
     await this.ensureWorkspaceLinked(actor.userId, modelId, input.workspaceId);
     const document = await this.documents.findById(input.workspaceId, input.documentId);
@@ -747,7 +747,7 @@ export class SemanticModelAssistantService {
     concept: string; workspaceId: string; documentIds?: string[]; folderIds?: string[]; wholeWorkspace?: boolean;
     fields?: Record<string, DocumentFieldMethod>; keyFields?: string[];
   }) {
-    const graph = await this.graph.getGraph(actor.userId, modelId) as SemanticGraph;
+    const graph = await this.graph.getGraph(actor.userId, modelId);
     const node = this.requireMappableConcept(graph, input.concept);
     await this.ensureWorkspaceLinked(actor.userId, modelId, input.workspaceId);
     const documentIds = [...new Set(input.documentIds ?? [])];
@@ -780,7 +780,7 @@ export class SemanticModelAssistantService {
     const result = await this.sourceMappings.createWorkspace(actor.userId, modelId, {
       expectedRevision: model.revision, conceptId: node.id, workspaceId: input.workspaceId,
       ...(input.wholeWorkspace ? {} : { folderIds, documentIds }), fieldMappings, identityFields,
-    } as never);
+    });
     const saved = await this.recordSourceAdded(actor, modelId, node,
       (mapping) => mapping.scope === 'workspace' && mapping.workspaceId === input.workspaceId && this.sameSelection(mapping, input.wholeWorkspace ? null : { folderIds, documentIds }),
       `documents feed ${node.label}`);
@@ -811,13 +811,13 @@ export class SemanticModelAssistantService {
     if (items.length > MAX_SUGGESTED_CONCEPTS) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Suggest sources for at most ${MAX_SUGGESTED_CONCEPTS} concepts at a time`);
     }
-    const graph = await this.graph.getGraph(actor.userId, modelId) as SemanticGraph;
+    const graph = await this.graph.getGraph(actor.userId, modelId);
     const files = new Map<string, Promise<Awaited<ReturnType<WorkspaceDocumentService['listAllInWorkspace']>>>>();
     const workspaceFiles = (workspaceId: string) => {
       if (!files.has(workspaceId)) files.set(workspaceId, this.documents.listAllInWorkspace(workspaceId));
       return files.get(workspaceId)!;
     };
-    const planned: Array<{ node: SemanticNodeType; options: SourceSuggestionOption[]; note: string }> = [];
+    const planned: { node: SemanticNodeType; options: SourceSuggestionOption[]; note: string }[] = [];
     for (const item of items) {
       const node = this.findConcept(graph, item.concept);
       if (!node || node.systemKey) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `There is no concept "${item.concept}" in this model`);
@@ -855,7 +855,7 @@ export class SemanticModelAssistantService {
       this.database.query<SuggestionRow>(
         `SELECT id, concept_id AS "conceptId", concept_key AS "conceptKey", options, note, status, created_at AS "createdAt", updated_at AS "updatedAt"
          FROM semantic_model.assistant_source_suggestions WHERE model_id=$1 ORDER BY created_at, concept_key`, [model.id]),
-      this.graph.getGraph(userId, modelId) as Promise<SemanticGraph>,
+      this.graph.getGraph(userId, modelId),
       this.listSources(userId, modelId).catch(() => [] as SourceSnapshot[]),
     ]);
     const suggestions = rows.rows.flatMap((row) => {
@@ -949,7 +949,7 @@ export class SemanticModelAssistantService {
   }
 
   private async ensureWorkspaceLinked(userId: string, modelId: string, workspaceId: string) {
-    const links = await this.modelWorkspaces.list(userId, modelId) as Array<{ workspaceId: string; enabled: boolean; role: string }>;
+    const links = await this.modelWorkspaces.list(userId, modelId) as { workspaceId: string; enabled: boolean; role: string }[];
     if (links.some((link) => link.workspaceId === workspaceId && link.enabled) && links.some((link) => link.role === 'origin' && link.enabled)) return;
     await this.requireWorkspaceAccess(userId, workspaceId);
     const model = await this.models.get(userId, modelId);
@@ -1009,11 +1009,11 @@ export class SemanticModelAssistantService {
   }
 
   async searchRecords(userId: string, modelId: string, concept: string, query?: string, limit = 20) {
-    const graph = await this.graph.getGraph(userId, modelId) as SemanticGraph;
+    const graph = await this.graph.getGraph(userId, modelId);
     const node = this.findConcept(graph, concept);
     if (!node) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, `There is no concept "${concept}" in this model`);
     const page = await this.population.conceptRecords(userId, modelId, node.id, { q: query, limit: Math.min(Math.max(limit, 1), 50), offset: 0 }) as {
-      total: number; records: Array<{ label: string; values: Record<string, unknown>; identity?: Record<string, unknown> }>;
+      total: number; records: { label: string; values: Record<string, unknown>; identity?: Record<string, unknown> }[];
     };
     return { concept: node.label, total: page.total, records: page.records.map((record) => ({ name: record.label, ...record.identity, ...record.values })) };
   }
@@ -1165,7 +1165,7 @@ export class SemanticModelAssistantService {
 
   async publish(userId: string, modelId: string) {
     const model = await this.models.get(userId, modelId);
-    const graph = await this.graph.getGraph(userId, modelId) as SemanticGraph;
+    const graph = await this.graph.getGraph(userId, modelId);
     const result = await this.versions.publish(userId, modelId, model.revision, graph.revision) as Record<string, unknown>;
     return { published: true, ...result, model: this.modelRef(model), uiTarget: this.uiTarget(model) };
   }
@@ -1252,15 +1252,15 @@ export class SemanticModelAssistantService {
       await this.sourceMappings.delete(userId, modelId, current.id, model.revision);
     }
     if (operations.length) {
-      const graph = await this.graph.getGraph(userId, modelId) as SemanticGraph;
+      const graph = await this.graph.getGraph(userId, modelId);
       try {
-        await this.graph.apply(userId, modelId, { expectedRevision: graph.revision, operations: operations as unknown as Record<string, unknown>[] });
+        await this.graph.apply(userId, modelId, { expectedRevision: graph.revision, operations: operations });
       } catch (error) {
         throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT,
           `The model changed since, so this cannot be reversed automatically: ${(error as Error).message}`);
       }
     }
-    const graph = await this.graph.getGraph(userId, modelId) as SemanticGraph;
+    const graph = await this.graph.getGraph(userId, modelId);
     await this.saveIdentity(userId, modelId, Object.entries(identity).filter(([conceptId]) => graph.nodes.some((node) => node.id === conceptId)));
     const restored: SourceSnapshot[] = [];
     for (const source of sourcesToRestore) {

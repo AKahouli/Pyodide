@@ -34,7 +34,7 @@ export class PlaybookIntentBlueprintParserService {
     const parsed = this.parseJsonObject(raw);
     if (!parsed || typeof parsed !== 'object') return null;
 
-    const root = parsed as Record<string, unknown>;
+    const root = parsed;
     const blueprintNode = root.blueprint && typeof root.blueprint === 'object'
       ? root.blueprint as Record<string, unknown>
       : null;
@@ -116,7 +116,7 @@ export class PlaybookIntentBlueprintParserService {
 
   private jsonCandidates(raw: string): string[] {
     const candidates = [raw];
-    const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    const fenceMatch = /```(?:json)?\s*([\s\S]*?)\s*```/i.exec(raw);
     if (fenceMatch?.[1]) candidates.push(fenceMatch[1].trim());
 
     const firstBrace = raw.indexOf('{');
@@ -169,7 +169,7 @@ export class PlaybookIntentBlueprintParserService {
         agentHint: this.asString(raw.agentHint) || null,
         ...(primitive ? { primitive: routerConfig ? { ...primitive, router: routerConfig } : primitive } : routerConfig ? { primitive: { kind: 'router', router: routerConfig } } : {}),
         ...(routerConfig ? { routerConfig } : {}),
-        ...(this.asRecord(raw.humanApprovalConfig ?? raw.human_approval_config) ? { humanApprovalConfig: this.asRecord(raw.humanApprovalConfig ?? raw.human_approval_config) as Record<string, unknown> } : {}),
+        ...(this.asRecord(raw.humanApprovalConfig ?? raw.human_approval_config) ? { humanApprovalConfig: this.asRecord(raw.humanApprovalConfig ?? raw.human_approval_config)! } : {}),
         inputPorts,
         outputPorts,
         connectorRefs: this.parseConnectorRefs(raw.connector_refs ?? raw.connectorRefs, diagnostics, ref),
@@ -691,11 +691,11 @@ export class PlaybookIntentBlueprintParserService {
     return {
       kind,
       ...(router ? { router } : {}),
-      ...(this.asRecord(raw.iterator) ? { iterator: this.asRecord(raw.iterator) as Record<string, unknown> } : {}),
-      ...(this.asRecord(raw.humanApproval ?? raw.human_approval) ? { humanApproval: this.asRecord(raw.humanApproval ?? raw.human_approval) as Record<string, unknown> } : {}),
-      ...(this.asRecord(raw.evaluation) ? { evaluation: this.asRecord(raw.evaluation) as Record<string, unknown> } : {}),
-      ...(this.asRecord(raw.action) ? { action: this.asRecord(raw.action) as Record<string, unknown> } : {}),
-      ...(this.asRecord(raw.metadata) ? { metadata: this.asRecord(raw.metadata) as Record<string, unknown> } : {}),
+      ...(this.asRecord(raw.iterator) ? { iterator: this.asRecord(raw.iterator)! } : {}),
+      ...(this.asRecord(raw.humanApproval ?? raw.human_approval) ? { humanApproval: this.asRecord(raw.humanApproval ?? raw.human_approval)! } : {}),
+      ...(this.asRecord(raw.evaluation) ? { evaluation: this.asRecord(raw.evaluation)! } : {}),
+      ...(this.asRecord(raw.action) ? { action: this.asRecord(raw.action)! } : {}),
+      ...(this.asRecord(raw.metadata) ? { metadata: this.asRecord(raw.metadata)! } : {}),
     };
   }
 

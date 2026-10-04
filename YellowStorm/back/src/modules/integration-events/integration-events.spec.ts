@@ -33,7 +33,7 @@ describeIntegration('integration-events outbox and dispatcher (integration)', ()
 
   const newDispatcher = (handlers: IntegrationEventHandler[]) => {
     const registry = new IntegrationEventHandlerRegistryService();
-    handlers.forEach((handler) => registry.register(handler));
+    handlers.forEach((handler) => { registry.register(handler); });
     return new IntegrationEventDispatcherService(db as never, registry, features as never);
   };
   const handler = (handlerKey: string, handle: (event: IntegrationEventEnvelope) => Promise<void> = () => Promise.resolve()): IntegrationEventHandler & { calls: IntegrationEventEnvelope[] } => {

@@ -58,7 +58,7 @@ export class CreateTaskDeltaDto {
 
   @ApiProperty({ enum: LANE_VALUES })
   @IsString()
-  @IsEnum(LANE_VALUES as unknown as string[])
+  @IsEnum(LANE_VALUES)
   lane!: (typeof LANE_VALUES)[number];
 
   @ApiPropertyOptional({ enum: ['pending', 'confirmed'] })
@@ -69,13 +69,13 @@ export class CreateTaskDeltaDto {
   @ApiPropertyOptional({ enum: PRIORITY_VALUES })
   @IsOptional()
   @IsString()
-  @IsEnum(PRIORITY_VALUES as unknown as string[])
+  @IsEnum(PRIORITY_VALUES)
   priority?: (typeof PRIORITY_VALUES)[number];
 
   @ApiPropertyOptional({ enum: ASSIGNEE_VALUES })
   @IsOptional()
   @IsString()
-  @IsEnum(ASSIGNEE_VALUES as unknown as string[])
+  @IsEnum(ASSIGNEE_VALUES)
   assigneeType?: (typeof ASSIGNEE_VALUES)[number];
 
   @ApiPropertyOptional({ type: [String], description: 'clientTaskId refs (or existing taskIds)' })
@@ -92,7 +92,7 @@ export class CreateTaskDeltaDto {
 
   @ApiProperty({ enum: CATEGORY_VALUES })
   @IsString()
-  @IsEnum(CATEGORY_VALUES as unknown as string[])
+  @IsEnum(CATEGORY_VALUES)
   actionCategory!: (typeof CATEGORY_VALUES)[number];
 
   @ApiPropertyOptional({ type: [String] })
@@ -145,7 +145,7 @@ export class UpdateTaskDeltaDto {
   @ApiPropertyOptional({ enum: ASSIGNEE_VALUES })
   @IsOptional()
   @IsString()
-  @IsEnum(ASSIGNEE_VALUES as unknown as string[])
+  @IsEnum(ASSIGNEE_VALUES)
   assigneeType?: (typeof ASSIGNEE_VALUES)[number];
 
   @ApiPropertyOptional({ type: [String] })

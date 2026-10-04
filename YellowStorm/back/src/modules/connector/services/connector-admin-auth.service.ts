@@ -162,7 +162,7 @@ export class ConnectorAdminAuthService {
   async getValidToken(userId: string, appKey: string): Promise<string> {
     const record = await this.authStore.findConnected(userId, appKey);
 
-    if (!record || !record.accessToken) {
+    if (!record?.accessToken) {
       throw new NotFoundException(
         ErrorCode.CONNECTED_APP_NOT_CONNECTED,
         `Admin is not connected to '${appKey}'`,
@@ -246,7 +246,7 @@ ${statusMessage}
   ): Promise<string> {
     const outcome = await withTransaction(this.pgDb, async (): Promise<RefreshOutcome> => {
       const locked = (await this.authStore.findByIdForUpdate(record.id))!;
-      if (!locked || !locked.connected) {
+      if (!locked?.connected) {
         // Writes nothing — safe to throw.
         throw new BadRequestException(
           ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED,

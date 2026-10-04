@@ -137,7 +137,7 @@ export class HealthHistoryService implements OnModuleInit, OnModuleDestroy {
           timestamp: result.timestamp,
           version: result.version,
           uptime: result.uptime,
-          checks: result.checks as Record<string, HealthCheckDetailRecord>,
+          checks: result.checks,
         },
         expireAt,
       );
@@ -254,7 +254,7 @@ export class HealthHistoryService implements OnModuleInit, OnModuleDestroy {
         timestamp: result.timestamp,
         version: result.version,
         uptime: result.uptime,
-        checks: result.checks as Record<string, HealthCheckDetailRecord>,
+        checks: result.checks,
       },
       expireAt,
     );

@@ -22,8 +22,8 @@ export class PlaybookFlowMailWebhookService {
     private readonly logger: LoggerService,
   ) { this.logger.setContext('PlaybookFlowMailWebhookService'); }
 
-  async handleNotifications(payload: { value?: Array<Record<string, any>> }) {
-    const results: Array<Record<string, any>> = [];
+  async handleNotifications(payload: { value?: Record<string, any>[] }) {
+    const results: Record<string, any>[] = [];
 
     for (const item of Array.isArray(payload?.value) ? payload.value : []) {
       if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
@@ -103,23 +103,23 @@ export class PlaybookFlowMailWebhookService {
 
     if (!flow) return null;
     const params = flow.triggerConfig?.params ?? {};
-    if (params['subscriptionId'] !== subscriptionId || params['subscriptionClientState'] !== clientState) return null;
+    if (params.subscriptionId !== subscriptionId || params.subscriptionClientState !== clientState) return null;
     return flow;
   }
 
   private getMailboxAppKey(flow: any): string {
     const params = (flow.triggerConfig?.params ?? {}) as Record<string, unknown>;
-    return (params['mailboxAppKey'] as string) || '';
+    return (params.mailboxAppKey as string) || '';
   }
 
   private isAttachmentImportEnabled(flow: any): boolean {
     const params = (flow.triggerConfig?.params ?? {}) as Record<string, unknown>;
-    return params['attachmentImportEnabled'] === true;
+    return params.attachmentImportEnabled === true;
   }
 
   private getAllowedExtensions(flow: any): string[] {
     const params = (flow.triggerConfig?.params ?? {}) as Record<string, unknown>;
-    const exts = params['allowedAttachmentExtensions'];
+    const exts = params.allowedAttachmentExtensions;
     return Array.isArray(exts) ? exts.map(String) : [];
   }
 
@@ -160,7 +160,7 @@ export class PlaybookFlowMailWebhookService {
   ): Promise<FlowMailMessageAttachmentData[]> {
     const results: FlowMailMessageAttachmentData[] = [];
 
-    let attachmentList: Array<Record<string, any>>;
+    let attachmentList: Record<string, any>[];
     try {
       attachmentList = await this.graphClient.listAttachments(userId, mailboxAppKey, graphMessageId);
     } catch (err) {

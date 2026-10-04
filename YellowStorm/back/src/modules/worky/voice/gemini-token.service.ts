@@ -113,7 +113,7 @@ export class GeminiTokenService implements OnModuleInit {
     for (const c of connectors) {
       const url = browserReachableMcpUrl(c.mcpServerUrl);
       for (const action of c.actions) {
-        const props = (action.parameterSchema as Record<string, unknown>)?.properties as
+        const props = (action.parameterSchema)?.properties as
           | Record<string, unknown>
           | undefined;
         if (props && 'streamId' in props) streamIdTools.push(action.key);

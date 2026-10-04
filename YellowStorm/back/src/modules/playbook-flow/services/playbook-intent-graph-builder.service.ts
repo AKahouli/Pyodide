@@ -82,13 +82,13 @@ interface BuildResult {
 }
 
 type BuilderPort = NonNullable<PlaybookIntentTaskDraft['inputPorts']>[number];
-type RouterConditionLike = {
+interface RouterConditionLike {
   label: string;
   sourceRef?: string | null;
   sourceIteratorRef?: string | null;
   sourceNode?: string | null;
   sourcePort?: string | null;
-};
+}
 type BlueprintEndpointNode = Pick<PlaybookIntentBlueprintNode, 'ref' | 'nodeTemplateKey' | 'primitive' | 'routerConfig'>;
 
 interface ReferencedPorts {
@@ -372,7 +372,7 @@ export class PlaybookIntentGraphBuilderService {
       ...(inputPorts.length ? { inputPorts } : {}),
       ...(outputPorts.length ? { outputPorts } : {}),
     }, nodeLike, runtimeSpec);
-    return task as NonNullable<PlaybookIntentTaskDraft['iteratorBody']>['steps'][number];
+    return task;
   }
 
   private resolvePrimitiveRuntimeSpec(
@@ -569,14 +569,14 @@ export class PlaybookIntentGraphBuilderService {
         const existing = byId.get(port.id);
         if (existing) {
           existing.name = port.name || existing.name;
-          existing.artifactKind = port.artifactKind as BuilderPort['artifactKind'];
+          existing.artifactKind = port.artifactKind;
           existing.required = existing.required === true || port.required === true;
           continue;
         }
         seen.add(port.id);
         const nextPort = {
           id: port.id,
-          artifactKind: port.artifactKind as BuilderPort['artifactKind'],
+          artifactKind: port.artifactKind,
           required: port.required === true,
           ...(port.name ? { name: port.name } : {}),
         };

@@ -3,8 +3,8 @@ import type { IntentWorkflowValidationContext, PlaybookIntentWorkflowChange } fr
 
 function makeContext(overrides: Partial<{
   existingTaskIds: string[];
-  inputPortsByTaskId: Array<[string, Array<[string, string]>]>;
-  outputPortsByTaskId: Array<[string, Array<[string, string]>]>;
+  inputPortsByTaskId: [string, [string, string][]][];
+  outputPortsByTaskId: [string, [string, string][]][];
   existingBindingTargets: string[];
 }> = {}): IntentWorkflowValidationContext {
   return {

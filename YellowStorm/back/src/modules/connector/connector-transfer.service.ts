@@ -23,14 +23,14 @@ export interface ImportTransferResult {
   success: boolean;
   mode: 'file' | 'files' | 'folder';
   workspaceId: string;
-  imported: Array<TransferResult & { finalFilename?: string; sourcePath?: string; collisionResolved?: boolean }>;
+  imported: (TransferResult & { finalFilename?: string; sourcePath?: string; collisionResolved?: boolean })[];
   summary: { requested: number; imported: number; failed: number };
-  errors: Array<{ sourcePath?: string; error: string }>;
+  errors: { sourcePath?: string; error: string }[];
 }
 
 @Injectable()
 export class ConnectorTransferService {
-  private readonly adapters: Map<string, ConnectorTransferAdapter> = new Map();
+  private readonly adapters = new Map<string, ConnectorTransferAdapter>();
 
   constructor(
     private readonly connectorService: ConnectorService,
@@ -79,7 +79,7 @@ export class ConnectorTransferService {
       connectorId,
     });
 
-    if (!auth.headers['Authorization']) {
+    if (!auth.headers.Authorization) {
       throw new Error(
         `Could not resolve auth for connector "${connector.slug}". ` +
         `Ensure the connected app is linked and has an active token.`,

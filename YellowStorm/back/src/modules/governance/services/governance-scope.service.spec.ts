@@ -11,7 +11,7 @@ describe('GovernanceScopeService delete authorization', () => {
     return { id: scopeId, programId, name: 'Scope', metadata: { classification: { stage: 'pilot' } }, agentIds: [], audience: { mode: 'restricted', userIds: [], groupIds: [] }, createdAt: new Date(), updatedAt: new Date(), ...overrides };
   }
 
-  function buildService(options: { isOwner?: boolean; accessibleScopeIds?: string[]; memberships?: Array<Record<string, unknown>>; groupIds?: string[]; hierarchy?: Array<{ id: string; parentScopeId: string | null }>; deployments?: Array<Record<string, unknown>> } = {}) {
+  function buildService(options: { isOwner?: boolean; accessibleScopeIds?: string[]; memberships?: Record<string, unknown>[]; groupIds?: string[]; hierarchy?: { id: string; parentScopeId: string | null }[]; deployments?: Record<string, unknown>[] } = {}) {
     const scope = scopeRecord();
     const scopeStore = {
       insert: jest.fn().mockResolvedValue(scope),

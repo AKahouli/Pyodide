@@ -76,7 +76,7 @@ export class TelegramApiService {
     botToken: string,
     chatId: string,
     text: string,
-    buttons: Array<{ text: string; callbackData: string }>,
+    buttons: { text: string; callbackData: string }[],
   ): Promise<TelegramSendMessageResult> {
     const response = await this.request(botToken, 'sendMessage', {
       chat_id: chatId,
@@ -148,7 +148,7 @@ export class TelegramApiService {
     payload: Record<string, unknown>,
   ): Promise<TelegramApiResponse<T>> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timeout = setTimeout(() => { controller.abort(); }, this.timeoutMs);
     const endpoint = `${this.baseUrl}/bot${botToken}/${method}`;
     const startedAt = Date.now();
 

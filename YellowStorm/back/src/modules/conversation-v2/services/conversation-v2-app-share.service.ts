@@ -23,7 +23,7 @@ import { PgConversationV2AppShareStore } from '../persistence/postgres/pg-conver
 import { PgConversationV2SessionStore } from '../persistence/postgres/pg-conversation-v2-session.store';
 
 export interface ShareAppsBatchResult {
-  shared: Array<{ shareId: string; recipientEmail: string }>;
+  shared: { shareId: string; recipientEmail: string }[];
   notFound: string[];
   skippedSelf: string[];
 }
@@ -106,7 +106,7 @@ export class ConversationV2AppShareService {
         pointer.id,
         {
           title: pointer.deployedAppTitle ?? pointer.title ?? '',
-          hasAiFeatures: pointer.hasAiFeatures === true,
+          hasAiFeatures: pointer.hasAiFeatures,
         },
       ]),
     );
@@ -122,7 +122,7 @@ export class ConversationV2AppShareService {
           : null,
         source: 'shared' as const,
         shareId: doc.id,
-        canOpenConversation: doc.includeConversation !== false,
+        canOpenConversation: doc.includeConversation,
         hasAiFeatures: live?.hasAiFeatures === true,
         lastDeployedRevisionId: null,
         latestFinalizedRevisionId: null,

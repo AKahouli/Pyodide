@@ -115,7 +115,7 @@ export class PlaybookFlowPublicReasoningParserService {
     }
 
     for (let index = markerIndexes.length - 1; index >= 0; index -= 1) {
-      const markerIndex = markerIndexes[index]!;
+      const markerIndex = markerIndexes[index];
       const jsonBlock = rawOutput.slice(markerIndex + PUBLIC_REASONING_MARKER.length).trim();
       if (!jsonBlock) {
         continue;
@@ -229,7 +229,7 @@ export class PlaybookFlowPublicReasoningParserService {
   private tryParseJson(
     jsonBlock: string,
     context: { executionId: string; taskId: string },
-    warnOnFailure: boolean = true,
+    warnOnFailure = true,
   ): unknown | undefined {
     try {
       return JSON.parse(jsonBlock);
@@ -267,7 +267,7 @@ export class PlaybookFlowPublicReasoningParserService {
         } catch {
           // also try stripping trailing noise from the extracted array
           let trailing = fromArray.trimEnd();
-          while (trailing.length > 1 && trailing[trailing.length - 1] === ']') {
+          while (trailing.length > 1 && trailing.endsWith(']')) {
             trailing = trailing.slice(0, -1).trimEnd();
             try {
               return JSON.parse(trailing);

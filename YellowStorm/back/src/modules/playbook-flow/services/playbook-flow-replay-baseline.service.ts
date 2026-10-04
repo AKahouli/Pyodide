@@ -110,10 +110,10 @@ export class PlaybookFlowReplayBaselineService {
     const nodeMetadata = this.asRecord(params.nodeSnapshot?.metadata);
     const parts = [
       this.cleanText(params.taskTitle),
-      this.cleanText(nodeMetadata?.['taskType']),
-      this.cleanText(nodeMetadata?.['nodeTemplateKey']) || this.cleanText(nodeMetadata?.['templateType']),
-      this.cleanText(nodeMetadata?.['selectedAction']),
-      this.cleanText(nodeMetadata?.['executionMode']),
+      this.cleanText(nodeMetadata?.taskType),
+      this.cleanText(nodeMetadata?.nodeTemplateKey) || this.cleanText(nodeMetadata?.templateType),
+      this.cleanText(nodeMetadata?.selectedAction),
+      this.cleanText(nodeMetadata?.executionMode),
     ].filter((value): value is string => Boolean(value));
     const intentLabel = parts[0] ?? params.taskId;
     return { intentKey: this.toSlug(parts.length > 0 ? parts.join(' ') : params.taskId), intentLabel };
@@ -453,7 +453,7 @@ export class PlaybookFlowReplayBaselineService {
 
   private extractToolConfig(nodeSnapshot?: Record<string, unknown> | null): Record<string, unknown> | null {
     const metadata = this.asRecord(nodeSnapshot?.metadata);
-    const configuredTools = Array.isArray(metadata?.['agent_tools']) ? metadata?.['agent_tools'] : [];
+    const configuredTools = Array.isArray(metadata?.agent_tools) ? metadata?.agent_tools : [];
     const tools = configuredTools.filter((value, index, items) => items.indexOf(value) === index);
 
     return tools.length > 0 ? { tools } : null;

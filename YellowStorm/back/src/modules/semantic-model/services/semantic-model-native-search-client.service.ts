@@ -281,21 +281,21 @@ export class SemanticModelNativeSearchClient {
     );
   }
 
-  private validationDetails(payload: unknown): Array<{
+  private validationDetails(payload: unknown): {
     location: string;
     type: string;
-  }> {
+  }[] {
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return [];
     const detail = (payload as { detail?: unknown }).detail;
     if (!Array.isArray(detail)) return [];
     return detail.slice(0, 10).flatMap((item) => {
       if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
       const value = item as Record<string, unknown>;
-      const location = Array.isArray(value['loc'])
-        ? value['loc'].slice(0, 5).map((part) => String(part).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 50)).join('.')
+      const location = Array.isArray(value.loc)
+        ? value.loc.slice(0, 5).map((part) => String(part).replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 50)).join('.')
         : 'request';
-      const type = typeof value['type'] === 'string'
-        ? value['type'].replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 80) || 'validation_error'
+      const type = typeof value.type === 'string'
+        ? value.type.replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 80) || 'validation_error'
         : 'validation_error';
       return [{ location: location || 'request', type }];
     });
@@ -306,7 +306,7 @@ export class SemanticModelNativeSearchClient {
     fileNameLength: number;
     fileExtension: string;
   } {
-    const extensionMatch = fileName.match(/\.([a-zA-Z0-9]{1,10})$/);
+    const extensionMatch = /\.([a-zA-Z0-9]{1,10})$/.exec(fileName);
     return {
       fileNameHash: createHash('sha256').update(fileName).digest('hex').slice(0, 12),
       fileNameLength: fileName.length,

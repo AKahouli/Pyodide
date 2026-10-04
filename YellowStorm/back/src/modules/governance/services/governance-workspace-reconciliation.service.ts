@@ -19,7 +19,7 @@ export interface GovernanceDocumentReconciliationResult {
   staleGovernanceDocuments: number;
   archivedMissingArtifacts: number;
   emittedEvents: number;
-  errors: Array<{ documentId?: string; message: string }>;
+  errors: { documentId?: string; message: string }[];
 }
 
 export interface GovernanceReconciliationRunResponse extends Omit<GovernanceReconciliationRunRecord, 'leaseToken' | 'leaseExpiresAt'> {}
@@ -109,8 +109,8 @@ export class GovernanceWorkspaceReconciliationService {
   private toResponse(run: GovernanceReconciliationRunRecord): GovernanceReconciliationRunResponse {
     // Lease internals were stripped by the Mongo toJSON transform; keep that contract.
     const { leaseToken, leaseExpiresAt, ...rest } = run;
-    void leaseToken;
-    void leaseExpiresAt;
+    leaseToken;
+    leaseExpiresAt;
     return rest;
   }
 

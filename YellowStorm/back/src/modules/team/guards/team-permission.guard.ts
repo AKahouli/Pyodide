@@ -66,7 +66,7 @@ export class TeamPermissionGuard implements CanActivate {
 
     if (isOwner) {
       request.teamContext = {
-        team: team as never,
+        team: team,
         isOwner: true,
         permission: 'owner',
       };
@@ -93,7 +93,7 @@ export class TeamPermissionGuard implements CanActivate {
     }
 
     request.teamContext = {
-      team: team as never,
+      team: team,
       isOwner: false,
       permission: sharePermission,
       shareId: share.id,

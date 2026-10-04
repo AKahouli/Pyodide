@@ -42,7 +42,7 @@ interface AuthUser {
 export const CurrentSseUser = createParamDecorator(
   (_data: unknown, ctx: ExecutionContext): SseAuthUser => {
     const req = ctx.switchToHttp().getRequest<{ sseUser?: SseAuthUser }>();
-    return req.sseUser as SseAuthUser;
+    return req.sseUser!;
   },
 );
 
@@ -181,10 +181,10 @@ export class ConversationV2StreamController {
   ): Promise<void> {
     const resolved = await this.sessionAccess.resolveSession(user.id, sessionId);
     if (!resolved) throw new NotFoundException('Session not found');
-    void resolved.pointer;
+    resolved.pointer;
 
     const since = Math.max(0, Number.parseInt(sinceRaw ?? '0', 10) || 0);
-    const terminal: ReadonlyArray<string> = ['completed', 'stopped', 'error'];
+    const terminal: readonly string[] = ['completed', 'stopped', 'error'];
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -193,7 +193,7 @@ export class ConversationV2StreamController {
     (res as Response & { flushHeaders?: () => void }).flushHeaders?.();
     (res.socket as { setNoDelay?: (b: boolean) => void } | null)?.setNoDelay?.(true);
 
-    const sseWrite = (chunk: string): void => this.sseWrite(res, chunk);
+    const sseWrite = (chunk: string): void => { this.sseWrite(res, chunk); };
     sseWrite(':' + ' '.repeat(2048) + '\n\n');
 
     const disconnect$ = new Subject<void>();
@@ -201,7 +201,7 @@ export class ConversationV2StreamController {
     const pollMs = this.config.get<number>('conversationV2.liveTailPollMs') ?? 1000;
     const heartbeat = interval(heartbeatMs)
       .pipe(takeUntil(disconnect$))
-      .subscribe(() => sseWrite(': heartbeat\n\n'));
+      .subscribe(() => { sseWrite(': heartbeat\n\n'); });
 
     let lastSeen = since;
     const poll = interval(pollMs)
@@ -215,7 +215,7 @@ export class ConversationV2StreamController {
               payload: {
                 event_id: row.eventId,
                 timestamp: row.emittedAt,
-                ...(row.payload as Record<string, unknown>),
+                ...(row.payload),
               },
             } as never;
             sseWrite(eventToSseFrame(wire, row.sequence));
@@ -223,7 +223,7 @@ export class ConversationV2StreamController {
           }
           const latest = await this.sessions.getById(sessionId);
           const sessionGone = latest === null;
-          const sessionTerminal = !!latest && terminal.includes(latest.status as string);
+          const sessionTerminal = !!latest && terminal.includes(latest.status);
           if (sessionGone || sessionTerminal) {
             (res as Response & { __teardown?: () => void }).__teardown?.();
           }

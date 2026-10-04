@@ -17,7 +17,7 @@ describeIntegration('0037_conversation_app_runtime_fks on dirty data (integratio
     await close();
   });
 
-  const state = async (client: { query: (sql: string, values?: unknown[]) => Promise<{ rows: Array<{ valid: boolean }> }> }, name: string) =>
+  const state = async (client: { query: (sql: string, values?: unknown[]) => Promise<{ rows: { valid: boolean }[] }> }, name: string) =>
     (await client.query('SELECT convalidated AS valid FROM pg_constraint WHERE conname = $1', [name])).rows[0]?.valid;
 
   it('leaves the constraint NOT VALID while an orphan exists, enforces it on new rows, and validates once the orphan is gone', async () => {

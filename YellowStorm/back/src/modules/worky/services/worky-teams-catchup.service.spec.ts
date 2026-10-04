@@ -1,8 +1,8 @@
 import { WorkyTeamsCatchupService } from './worky-teams-catchup.service';
 
 function build(opts: {
-  waits?: Array<{ chatId: string; userId: string; sessionId: string }>;
-  messages?: Array<Record<string, any>>;
+  waits?: { chatId: string; userId: string; sessionId: string }[];
+  messages?: Record<string, any>[];
   myId?: string;
   delivered?: boolean;
 }) {

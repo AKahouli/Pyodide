@@ -140,12 +140,12 @@ export class EvaluationService {
         const dataset = await this.findDatasetById(datasetId);
 
         // authHeader is no longer forwarded to ADK — service-to-service auth uses x-api-key.
-        void authHeader;
+        authHeader;
 
         const selectedJudgeModel = (() => {
             const jm = (judgeModel || '').trim();
             if (jm) return { name: jm };
-            if (typeof agent.model === 'string' && (agent.model as string).trim()) return { name: (agent.model as string).trim() };
+            if (typeof agent.model === 'string' && (agent.model).trim()) return { name: (agent.model).trim() };
             if (agent.model && typeof agent.model === 'object') {
                 const modelObj = agent.model as any;
                 const name = (modelObj.name || modelObj.model || '').trim();

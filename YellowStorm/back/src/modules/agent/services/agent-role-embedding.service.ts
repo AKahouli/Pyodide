@@ -32,8 +32,7 @@ export class AgentRoleEmbeddingService {
   reindexHumainRole(agentId: string, agentTypeSlug: string, name: string, role: string): void {
     if (agentTypeSlug !== HUMAIN_SLUG) return;
     setImmediate(() => {
-      void this.run(agentId, name, role).catch((error) =>
-        this.logger.warn('Role embedding reindex failed', { agentId, error: (error as Error).message }),
+      void this.run(agentId, name, role).catch((error) => { this.logger.warn('Role embedding reindex failed', { agentId, error: (error as Error).message }); },
       );
     });
   }

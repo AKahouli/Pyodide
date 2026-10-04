@@ -274,7 +274,7 @@ export function resolveSheetEntities(
       label: labelField ? String(values[labelField] ?? '') : '',
       values,
       provenance: {
-        rowNumber: typeof row[SHEET_ROW_KEY] === 'number' ? row[SHEET_ROW_KEY] as number : stats.scannedRows,
+        rowNumber: typeof row[SHEET_ROW_KEY] === 'number' ? row[SHEET_ROW_KEY] : stats.scannedRows,
         fields,
       },
     });
@@ -295,7 +295,7 @@ export const AI_EXTRACTION_CONTRACT_VERSION = 'ai-attribute-v1';
  * the other fields, and a row for a field the concept no longer has is dropped. `changed` is false
  * when the same fields are read, so an unrelated edit does not make the next run read again.
  */
-export function withConceptFields(saved: SourceFieldMapping[], attributes: ReadonlyArray<{ key: string }>): { mappings: SourceFieldMapping[]; changed: boolean } {
+export function withConceptFields(saved: SourceFieldMapping[], attributes: readonly { key: string }[]): { mappings: SourceFieldMapping[]; changed: boolean } {
   const byKey = new Map(saved.map((mapping) => [mapping.targetAttribute, mapping]));
   const counts = new Map<SourceExtractionStrategy, number>();
   for (const mapping of saved) {

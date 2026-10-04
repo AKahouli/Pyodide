@@ -260,7 +260,7 @@ export class TeamShareService {
 
   /** Maps a lean team document to ITeamResponse (shared-team context). */
   private toResponse(doc: TeamRow | Record<string, unknown>): ITeamResponse {
-    const members = (doc.members as Array<Record<string, unknown>>) || [];
+    const members = (doc.members as Record<string, unknown>[]) || [];
     return {
       id: doc.id as string,
       name: doc.name as string,

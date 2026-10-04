@@ -58,7 +58,7 @@ export interface PlaybookTaskOptimizationResult {
   taskId: string;
   definitionRevision: number;
   dimensions: string[];
-  findings: Array<{ dimension: string; severity: 'info' | 'warning'; message: string }>;
+  findings: { dimension: string; severity: 'info' | 'warning'; message: string }[];
   evidence: { validationDiagnostics: PlaybookAssistantDiagnostic[]; remediationItems: unknown[] };
   mutationApplied: false;
 }

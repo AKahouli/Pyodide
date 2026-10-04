@@ -141,7 +141,7 @@ export class PlaybookFlowSettingsService {
       if (validation.valid && validation.model) {
         const identifier = this.modelsService.getModelIdentifier(validation.model);
         if (identifier) {
-          return { model: identifier, omitTemperature: validation.model.omitTemperature === true };
+          return { model: identifier, omitTemperature: validation.model.omitTemperature };
         }
       }
 
@@ -192,9 +192,9 @@ export class PlaybookFlowSettingsService {
     return {
       inferenceModelId: typeof input?.inferenceModelId === 'string' ? input.inferenceModelId.trim() || null : null,
       nodeSuggestionsMode: input?.nodeSuggestionsMode === 'auto' || input?.nodeSuggestionsMode === 'manual'
-        ? input.nodeSuggestionsMode as FlowDesignSettings['nodeSuggestionsMode'] : 'inherit',
+        ? input.nodeSuggestionsMode : 'inherit',
       approvalSuggestionMode: input?.approvalSuggestionMode === 'auto' || input?.approvalSuggestionMode === 'manual'
-        ? input.approvalSuggestionMode as FlowDesignSettings['approvalSuggestionMode'] : 'inherit',
+        ? input.approvalSuggestionMode : 'inherit',
       recursionLimit: typeof input?.recursionLimit === 'number' && input.recursionLimit > 0
         ? Math.min(Math.round(input.recursionLimit), 50) : 25,
       maxParallelism: typeof input?.maxParallelism === 'number' && input.maxParallelism > 0
@@ -270,7 +270,7 @@ export class PlaybookFlowSettingsService {
       const validation = await this.modelsService.validateModelActive(modelId);
       if (validation.valid && validation.model) {
         const identifier = this.modelsService.getModelIdentifier(validation.model);
-        if (identifier) return { model: identifier, omitTemperature: validation.model.omitTemperature === true };
+        if (identifier) return { model: identifier, omitTemperature: validation.model.omitTemperature };
       }
     }
 

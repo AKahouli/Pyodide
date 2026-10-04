@@ -57,7 +57,7 @@ export class AiProxyController {
   @Get('models')
   async listModels(): Promise<{
     object: 'list';
-    data: Array<{ id: string; object: 'model'; owned_by: string }>;
+    data: { id: string; object: 'model'; owned_by: string }[];
   }> {
     return this.proxyService.listModels();
   }

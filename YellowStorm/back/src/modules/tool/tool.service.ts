@@ -122,10 +122,10 @@ export class ToolService {
     // Normalize requiredAppKey: empty string → null (clear the field)
     const updateData: Record<string, unknown> = { ...dto };
     if ('requiredAppKey' in updateData) {
-      updateData.requiredAppKey = (updateData.requiredAppKey as string) || null;
+      updateData.requiredAppKey = (updateData.requiredAppKey) || null;
     }
     if (Object.prototype.hasOwnProperty.call(updateData, 'categoryId')) {
-      updateData.categoryId = (updateData.categoryId as string) || null;
+      updateData.categoryId = (updateData.categoryId) || null;
     }
 
     const tool = await this.toolStore.update(id, updateData);

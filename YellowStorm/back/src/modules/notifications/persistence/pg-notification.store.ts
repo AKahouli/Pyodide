@@ -21,7 +21,7 @@ function toRecord(row: Row): NotificationRecord {
     title: row.title,
     message: row.message,
     data: row.data ?? null,
-    actions: (row.actions ?? []) as NotificationRecord['actions'],
+    actions: (row.actions ?? []),
     destination: row.destination,
     status: row.status,
     sourceModule: row.sourceModule,

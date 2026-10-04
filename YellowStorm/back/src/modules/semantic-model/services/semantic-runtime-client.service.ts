@@ -75,14 +75,14 @@ export interface RuntimeCorrection {
 }
 
 export interface RuntimeRevisionGaps {
-  missingValues: Array<{ conceptId: string; attribute: string; missing: number; total: number }>;
-  unresolvedLinks: Array<{ relationId: string; kind: string; count: number }>;
-  other: Array<{ conceptId: string | null; kind: string; count: number; fields?: string[] }>;
+  missingValues: { conceptId: string; attribute: string; missing: number; total: number }[];
+  unresolvedLinks: { relationId: string; kind: string; count: number }[];
+  other: { conceptId: string | null; kind: string; count: number; fields?: string[] }[];
   /** A few rows behind each gap, with the file they come from; absent on data prepared before they were kept. */
-  rowSamples?: Array<{ conceptId: string | null; kind: string; field?: string; rowNumber?: number | string;
-    asset?: { workspaceId?: string; assetId?: string }; values?: Record<string, unknown> }>;
-  linkSamples?: Array<{ relationId: string; kind: string; sourceEntityId: string; referenceField?: string;
-    referenceValue?: unknown; targetField?: string }>;
+  rowSamples?: { conceptId: string | null; kind: string; field?: string; rowNumber?: number | string;
+    asset?: { workspaceId?: string; assetId?: string }; values?: Record<string, unknown> }[];
+  linkSamples?: { relationId: string; kind: string; sourceEntityId: string; referenceField?: string;
+    referenceValue?: unknown; targetField?: string }[];
 }
 
 export interface RuntimeConceptRecordsPage {
@@ -99,7 +99,7 @@ export interface RuntimeBoundRecords {
   modelId: string;
   modelVersionId: string;
   dataRevisionId: string;
-  entities: Array<{
+  entities: {
     entityId: string;
     conceptId: string;
     label: string;
@@ -108,22 +108,22 @@ export interface RuntimeBoundRecords {
     origins?: Record<string, RuntimeValueOrigin>;
     /** Normalized matching key; key fields are not repeated among the attributes. */
     identity?: Record<string, unknown>;
-  }>;
+  }[];
   gaps?: RuntimeRevisionGaps;
-  relationships: Array<{
+  relationships: {
     relationId: string;
     sourceEntityId: string;
     targetEntityId: string;
     matchingStrategy: string | null;
-  }>;
+  }[];
   counts: { entities: number; assertions: number; relationships: number };
   /** Records per concept over the whole revision; absent from runtimes that predate it. */
   conceptCounts?: Record<string, number>;
   /** Fingerprint of the run that built this data; absent from runtimes that predate it. */
   executionFingerprint?: string | null;
   specification: {
-    concepts: Array<{ conceptId: string; label: string; allowedFields: string[] }>;
-    relations: Array<{ relationId: string; label: string }>;
+    concepts: { conceptId: string; label: string; allowedFields: string[] }[];
+    relations: { relationId: string; label: string }[];
   };
 }
 
@@ -141,14 +141,14 @@ export interface RuntimeBoundGraph {
   modelId: string;
   modelVersionId: string;
   dataRevisionId: string;
-  nodes: Array<{ id: string; label: string; properties: Record<string, unknown> }>;
-  edges: Array<{
+  nodes: { id: string; label: string; properties: Record<string, unknown> }[];
+  edges: {
     id: string;
     label: string;
     sourceId: string;
     targetId: string;
     properties: Record<string, unknown>;
-  }>;
+  }[];
   specification: RuntimeBoundRecords['specification'];
 }
 
@@ -214,13 +214,13 @@ export interface RuntimeDocumentPreview {
 
 export interface RuntimeDocumentLabelsRequest {
   actorUserId: string;
-  sources: Array<Record<string, unknown>>;
+  sources: Record<string, unknown>[];
 }
 
 export interface RuntimeDocumentLabels {
   documentsRead: number;
-  unread: Array<{ assetId: string; status: string }>;
-  labels: Array<{ label: string; kind: 'heading' | 'label'; documents: number; page: number | null; example: string }>;
+  unread: { assetId: string; status: string }[];
+  labels: { label: string; kind: 'heading' | 'label'; documents: number; page: number | null; example: string }[];
 }
 
 export interface RuntimeComputedPreviewRequest {
@@ -229,7 +229,7 @@ export interface RuntimeComputedPreviewRequest {
 }
 
 export interface RuntimeComputedPreview {
-  results: Array<{ input: string; value: string | null; reason: 'found' | 'no_input' | 'no_match' | 'not_transformable' }>;
+  results: { input: string; value: string | null; reason: 'found' | 'no_input' | 'no_match' | 'not_transformable' }[];
 }
 
 // ── Graph search (records of a bound data revision, found by meaning, then followed along real links) ──
@@ -280,7 +280,7 @@ export interface RuntimeGraphSearchResult {
   index: { indexId: string | null; state: RuntimeSearchIndexState; embeddingFingerprint: string | null };
   modeUsed: 'hybrid' | 'lexical_only' | 'exact_only';
   status: 'found' | 'no_match' | 'not_represented' | 'index_not_ready';
-  concepts: Array<{ conceptId: string; key: string; label: string }>;
+  concepts: { conceptId: string; key: string; label: string }[];
   unknownConcepts: string[];
   seeds: RuntimeGraphSearchSeed[];
   coverage: { expectedCount: number; indexedCount: number; exactOnlyCount: number };
@@ -320,7 +320,7 @@ export interface RuntimeGraphExpandResult {
   dataRevisionId: string;
   projectionRef: string;
   status: 'found' | 'no_match' | 'partial';
-  nodes: Array<{
+  nodes: {
     entityId: string;
     conceptId: string;
     conceptLabel: string;
@@ -329,8 +329,8 @@ export interface RuntimeGraphExpandResult {
     inclusionReason: 'seed' | 'relationship';
     path: RuntimeGraphPathStep[];
     provenance: RuntimeRecordProvenance[];
-  }>;
-  edges: Array<{ relationId: string; relationKey: string; sourceEntityId: string; targetEntityId: string }>;
+  }[];
+  edges: { relationId: string; relationKey: string; sourceEntityId: string; targetEntityId: string }[];
   hiddenSeeds: number;
   truncated: boolean;
   timings: { expandMs: number };

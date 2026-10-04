@@ -102,7 +102,7 @@ export class SemanticDerivedSourceService {
    * What a run receives: only derivations whose concepts are both in the draft and whose source
    * concept has records in this run. Sorted and complete, so the run fingerprint is stable.
    */
-  runtimeDerivations(sources: DerivedSource[], nodes: Array<{ id: string; attributes: AttributeDefinition[] }>,
+  runtimeDerivations(sources: DerivedSource[], nodes: { id: string; attributes: AttributeDefinition[] }[],
     sourcedConcepts: Set<string>, identityRules: Map<string, string[]>): RuntimeDerivation[] {
     const fieldsOf = (conceptId: string) => new Set(nodes.find((node) => node.id === conceptId)?.attributes.map((attribute) => attribute.key));
     return sources

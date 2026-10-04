@@ -40,7 +40,7 @@ export class SemanticModelRepository {
       page: number;
       limit: number;
     },
-  ): Promise<{ items: Array<SemanticModelRow & Record<string, unknown>>; pagination: Record<string, number> }> {
+  ): Promise<{ items: (SemanticModelRow & Record<string, unknown>)[]; pagination: Record<string, number> }> {
     const params: unknown[] = [userId];
     const conditions = [
       `(m.owner_user_id = $1 OR EXISTS (

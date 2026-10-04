@@ -203,7 +203,7 @@ describe('AiProxyStreamService', () => {
 });
 
 function onceFinish(stream: PassThrough): Promise<void> {
-  return new Promise((resolve) => stream.once('finish', () => resolve()));
+  return new Promise((resolve) => stream.once('finish', () => { resolve(); }));
 }
 
 function flushPromises(): Promise<void> {

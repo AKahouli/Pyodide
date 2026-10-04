@@ -33,7 +33,7 @@ export class PgUserStore implements UserStore {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
 
   private get q(): NodePgDatabase<typeof schema> {
-    return resolveQueryable(this.db) as NodePgDatabase<typeof schema>;
+    return resolveQueryable(this.db);
   }
 
   private static toRecord(row: UserRow): UserRecord {
@@ -332,7 +332,7 @@ export class PgUserStore implements UserStore {
 
     // Attach roles for the page only (R-10): joining before LIMIT fans users
     // out per role and shrinks every page by the roles count.
-    const rolesByUser = new Map<string, Array<{ id: string; name: string }>>();
+    const rolesByUser = new Map<string, { id: string; name: string }[]>();
     if (rows.length > 0) {
       const roleRows = await this.q
         .select({

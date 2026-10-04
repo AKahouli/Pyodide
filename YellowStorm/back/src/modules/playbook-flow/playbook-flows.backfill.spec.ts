@@ -56,8 +56,7 @@ describeIntegration('playbook flows backfill mapping (integration)', () => {
     expect(back.rows).toHaveLength(1);
     return back.rows[0] as Row;
   };
-  const sameContent = (row: Row, back: Row) =>
-    expect(compareRowChecksums(new Map([[String(row.id), row]]), new Map([[String(row.id), back]]))).toMatchObject({ match: true, compared: 1, mismatchTotal: 0 });
+  const sameContent = (row: Row, back: Row) => { expect(compareRowChecksums(new Map([[String(row.id), row]]), new Map([[String(row.id), back]]))).toMatchObject({ match: true, compared: 1, mismatchTotal: 0 }); };
 
   const flowDoc = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
     _id: objectId(oid()),

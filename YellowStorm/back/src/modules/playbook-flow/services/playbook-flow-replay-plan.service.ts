@@ -160,16 +160,16 @@ export class PlaybookFlowReplayPlanService {
       }
       const explicitArgKey = this.resolveExplicitToolArgKey(entry.variableKey, toolName);
       if (explicitArgKey) {
-        this.applyExplicitArgOverride(clonedArgs as Record<string, unknown>, explicitArgKey, entry.currentValue);
+        this.applyExplicitArgOverride(clonedArgs, explicitArgKey, entry.currentValue);
         continue;
       }
       if (entry.baselineValue !== null) {
         this.replaceExactPrimitiveValue(clonedArgs, entry.baselineValue, entry.currentValue);
       }
-      this.applyNormalizedKeyOverride(clonedArgs as Record<string, unknown>, entry.variableKey, entry.currentValue);
+      this.applyNormalizedKeyOverride(clonedArgs, entry.variableKey, entry.currentValue);
     }
 
-    return clonedArgs as Record<string, unknown>;
+    return clonedArgs;
   }
 
   private resolveExplicitToolArgKey(variableKey: string, toolName: string): string | null {
@@ -467,23 +467,23 @@ export class PlaybookFlowReplayPlanService {
   }
 
   private extractDateLikeValue(text: string): string | null {
-    const quarter = text.match(/\bQ[1-4]\s+20\d{2}\b/i)?.[0];
+    const quarter = (/\bQ[1-4]\s+20\d{2}\b/i.exec(text))?.[0];
     if (quarter) {
       return quarter;
     }
-    const monthYear = text.match(/\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|January|February|March|April|June|July|August|September|October|November|December)\s+20\d{2}\b/i)?.[0];
+    const monthYear = (/\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|January|February|March|April|June|July|August|September|October|November|December)\s+20\d{2}\b/i.exec(text))?.[0];
     if (monthYear) {
       return monthYear;
     }
-    const yearRange = text.match(/\b20\d{2}\s*(?:-|to)\s*20\d{2}\b/i)?.[0];
+    const yearRange = (/\b20\d{2}\s*(?:-|to)\s*20\d{2}\b/i.exec(text))?.[0];
     if (yearRange) {
       return yearRange;
     }
-    return text.match(/\b20\d{2}\b/)?.[0] ?? null;
+    return (/\b20\d{2}\b/.exec(text))?.[0] ?? null;
   }
 
   private extractIdentifier(text: string): string | null {
-    return text.match(/\b[A-Za-z]{2,6}-\d{2,}|\b[A-Z]{2,}\d{3,}\b|\b\d{5,}\b/)?.[0] ?? null;
+    return (/\b[A-Za-z]{2,6}-\d{2,}|\b[A-Z]{2,}\d{3,}\b|\b\d{5,}\b/.exec(text))?.[0] ?? null;
   }
 
   private extractEntityName(text: string, baselineValue: string | null): string | null {

@@ -19,7 +19,7 @@ export interface CatalogSkillRecord {
   metadata: Record<string, string>;
   allowedTools: string[];
   instructions: string;
-  files: Array<{ path: string; kind: string; mimeType: string; content: string }>;
+  files: { path: string; kind: string; mimeType: string; content: string }[];
   isActive: boolean;
 }
 
@@ -39,8 +39,8 @@ export interface CatalogConnectorRecord {
   mcpTransportType: string;
   mcpServerUrl: string;
   mcpServerConfig: Record<string, unknown>;
-  dynamicHeaders: Array<{ headerName: string; source: string; enabled: boolean }>;
-  actions: Array<{
+  dynamicHeaders: { headerName: string; source: string; enabled: boolean }[];
+  actions: {
     key: string;
     label: string;
     description: string;
@@ -53,7 +53,7 @@ export interface CatalogConnectorRecord {
     resultKind?: string;
     citationMode?: string;
     resultMapping?: Record<string, unknown>;
-  }>;
+  }[];
   referencedSkillSlugs: string[];
   isActive: boolean;
   isSystem: boolean;
@@ -61,15 +61,15 @@ export interface CatalogConnectorRecord {
 }
 
 export interface CatalogSecurityRecord {
-  connectorCredentials: Array<{
+  connectorCredentials: {
     connectorSlug: string;
     displayName: string;
     authPayload: Record<string, unknown>;
     status: string;
     lastValidatedAt: string | null;
     expiresAt: string | null;
-  }>;
-  connectedAppDefinitions: Array<{
+  }[];
+  connectedAppDefinitions: {
     appKey: string;
     displayName: string;
     description: string;
@@ -84,8 +84,8 @@ export interface CatalogSecurityRecord {
     pkceEnabled: boolean;
     enabled: boolean;
     sortOrder: number;
-  }>;
-  userAppConnections: Array<{
+  }[];
+  userAppConnections: {
     appKey: string;
     accessToken: string;
     refreshToken: string;
@@ -97,8 +97,8 @@ export interface CatalogSecurityRecord {
     lastUsedAt: string | null;
     lastRefreshedAt: string | null;
     errorMessage: string;
-  }>;
-  adminConnectorAuth: Array<{
+  }[];
+  adminConnectorAuth: {
     appKey: string;
     accessToken: string;
     refreshToken: string;
@@ -112,7 +112,7 @@ export interface CatalogSecurityRecord {
     lastUsedAt: string | null;
     lastRefreshedAt: string | null;
     errorMessage: string;
-  }>;
+  }[];
 }
 
 export interface CatalogArchiveV1 {

@@ -10,7 +10,7 @@ export class ReplayPlanningMetadata {
 
   intentLabel?: string | null;
 
-  contextMapping!: Array<Record<string, unknown>>;
+  contextMapping!: Record<string, unknown>[];
 
   executionPlan?: Record<string, unknown> | null;
 }

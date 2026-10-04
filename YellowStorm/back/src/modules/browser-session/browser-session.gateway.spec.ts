@@ -1,7 +1,7 @@
 import { BrowserSessionGateway } from './browser-session.gateway';
 
 function fakeClient(userId?: string) {
-  const emitted: Array<{ e: string; p: unknown }> = [];
+  const emitted: { e: string; p: unknown }[] = [];
   return {
     id: 'sock1',
     data: { userId } as { userId?: string; sessionId?: string },

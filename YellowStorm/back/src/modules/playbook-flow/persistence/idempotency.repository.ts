@@ -39,7 +39,7 @@ export class IdempotencyRepository {
   }
 
   private key(ownerId: string, idempotencyKey: string): SQL {
-    return and(eq(r.ownerId, normalizeObjectId(ownerId)), eq(r.idempotencyKey, stripNul(idempotencyKey))) as SQL;
+    return and(eq(r.ownerId, normalizeObjectId(ownerId)), eq(r.idempotencyKey, stripNul(idempotencyKey)))!;
   }
 
   private live(): SQL {

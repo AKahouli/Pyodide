@@ -86,7 +86,7 @@ describe('SemanticModelAssistantService', () => {
     expect(crossSource.saveIdentityRule).toHaveBeenCalledWith('user-1', 'model-1', created.id, { expectedRevision: 7, fields: ['contract_number'] });
     const insert = database.query.mock.calls.find(([sql]) => String(sql).includes('assistant_change_sets'))!;
     const params = (insert as unknown as [string, unknown[]])[1];
-    const undo = JSON.parse(params[7] as string) as Array<{ type: string; id?: string }>;
+    const undo = JSON.parse(params[7] as string) as { type: string; id?: string }[];
     expect(undo.map((operation) => operation.type)).toEqual(['relation_type.delete', 'node_type.delete', 'node_type.update']);
     expect(params[3]).toBe('agent-1');
   });

@@ -75,14 +75,14 @@ export interface PlaybookIntentBlueprintIteratorStep {
 
 export interface PlaybookIntentBlueprintIteratorBody {
   steps: PlaybookIntentBlueprintIteratorStep[];
-  edges: Array<{
+  edges: {
     sourceRef: string;
     targetRef: string;
     kind?: PlaybookIntentBlueprintEdgeKind;
     routerLabel?: string | null;
     sourceOutputPortId?: string | null;
     targetInputPortId?: string | null;
-  }>;
+  }[];
 }
 
 export interface PlaybookIntentBlueprintNode {

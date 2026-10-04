@@ -27,13 +27,13 @@ export interface RoleResponse {
  * Default roles to seed on application startup.
  * Priority is for UI display ordering ONLY - has NO effect on authorization.
  */
-export const DEFAULT_ROLES: Array<{
+export const DEFAULT_ROLES: {
   name: string;
   description: string;
   permissions: string[];
   isSystem: boolean;
   priority: number;
-}> = [
+}[] = [
   {
     name: 'user',
     description: 'Default user role with no admin permissions',

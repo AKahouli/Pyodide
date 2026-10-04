@@ -76,7 +76,7 @@ export class KnowledgeAssessmentRepositoryService {
       .orderBy(t.documentId, desc(t.assessedAt))
       .as('newest');
     const rows = await this.q.select().from(newest).orderBy(desc(newest.assessedAt));
-    return rows.map((row) => toRecord(row as Row));
+    return rows.map((row) => toRecord(row));
   }
 
   async purgeDocument(documentId: string): Promise<void> {

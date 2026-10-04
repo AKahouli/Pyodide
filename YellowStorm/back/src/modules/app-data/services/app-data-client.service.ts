@@ -21,7 +21,7 @@ export interface RemoteAppRow {
 
 interface RemoteAppStatusResponse {
   app: RemoteAppRow;
-  environments: Array<Record<string, unknown>>;
+  environments: Record<string, unknown>[];
 }
 
 interface RemoteBindResponse {
@@ -42,7 +42,7 @@ export class AppDataClientService {
   constructor(private readonly config: ConfigService) {}
 
   isEnabled(): boolean {
-    return this.config.get<boolean>('appData.remote', false) === true;
+    return this.config.get<boolean>('appData.remote', false);
   }
 
   private baseUrl(): string {
@@ -131,7 +131,7 @@ export class AppDataClientService {
   async applySchema(
     appDataId: string,
     env: 'dev' | 'prod',
-    tables: Array<Record<string, unknown>>,
+    tables: Record<string, unknown>[],
   ): Promise<{ message: string; tables: number }> {
     const res = await this.request<{ message: string; tables: number }>(
       'POST',
@@ -155,24 +155,24 @@ export class AppDataClientService {
   async listEndUsers(
     appDataId: string,
   ): Promise<
-    Array<{
+    {
       id: string;
       email: string;
       displayName: string | null;
       status: string;
       grants: AppDataEndUserGrants;
       createdAt: string;
-    }>
+    }[]
   > {
     const res = await this.request<{
-      users: Array<{
+      users: {
         id: string;
         email: string;
         displayName: string | null;
         status: string;
         grants: AppDataEndUserGrants;
         createdAt: string;
-      }>;
+      }[];
     }>('GET', `/v1/internal/apps/${encodeURIComponent(appDataId)}/end-users`);
     return (res.body.users ?? []).map((user) => ({
       ...user,
@@ -269,13 +269,13 @@ export class AppDataClientService {
     table: string,
     query: Record<string, string | undefined>,
   ): Promise<{
-    rows: Array<Record<string, unknown>>;
+    rows: Record<string, unknown>[];
     total: number;
     page: number;
     pageSize: number;
   }> {
     return this.request<{
-      rows: Array<Record<string, unknown>>;
+      rows: Record<string, unknown>[];
       total: number;
       page: number;
       pageSize: number;
@@ -328,7 +328,7 @@ export class AppDataClientService {
       'DELETE',
       `/v1/internal/apps/${encodeURIComponent(appDataId)}/${env}/tables/${encodeURIComponent(table)}/rows/${encodeURIComponent(id)}`,
     );
-    return res.body?.deleted === true;
+    return res.body?.deleted;
   }
 
   async seedRows(
@@ -560,7 +560,7 @@ export class AppDataClientService {
   private mapUpstreamError(status: number, body: unknown, path: string): AppDataException {
     const message =
       body && typeof body === 'object' && 'message' in body
-        ? String((body as { message: unknown }).message)
+        ? String((body).message)
         : `app-data service request failed (${status}) on ${path}`;
     switch (status) {
       case HttpStatus.NOT_FOUND:
@@ -615,7 +615,7 @@ function normalizeRemoteAppRow(app: RemoteAppRow | undefined): RemoteAppRow {
   if (!app || typeof app !== 'object') {
     return { id: '', workspaceId: '' };
   }
-  const normalized = normalizeRemoteRecord(app as Record<string, unknown>);
+  const normalized = normalizeRemoteRecord(app);
   return {
     ...normalized,
     id: String(normalized.id ?? ''),

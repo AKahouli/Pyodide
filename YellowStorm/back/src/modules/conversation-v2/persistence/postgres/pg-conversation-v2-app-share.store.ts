@@ -18,7 +18,7 @@ export class PgConversationV2AppShareStore implements ConversationV2AppShareStor
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>) {}
 
   private get q(): NodePgDatabase<typeof schema> {
-    return resolveQueryable(this.db) as NodePgDatabase<typeof schema>;
+    return resolveQueryable(this.db);
   }
 
   private static toRecord(row: ShareRow): ConversationV2AppShareRecord {

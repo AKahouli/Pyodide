@@ -2,21 +2,21 @@ import { UploadSessionStatus } from './upload-session-status.enum';
 import { DocumentResponse } from './workspace-document.interface';
 
 export interface InitiateBulkUploadData {
-  files: Array<{
+  files: {
     filename: string;
     mimeType: string;
     size: number;
-  }>;
+  }[];
 }
 
 export interface BulkUploadInitResponse {
   sessionId: string;
-  files: Array<{
+  files: {
     index: number;
     filename: string;
     uploadUrl: string;
     documentId: string;
-  }>;
+  }[];
   expiresAt: string;
 }
 
@@ -32,7 +32,7 @@ export interface UploadSessionResponse {
   workspaceId: string;
   userId: string;
   status: UploadSessionStatus;
-  files: Array<{
+  files: {
     index: number;
     filename: string;
     mimeType: string;
@@ -41,7 +41,7 @@ export interface UploadSessionResponse {
     status: string;
     progress: number;
     error?: string;
-  }>;
+  }[];
   totalFiles: number;
   totalSize: number;
   completedFiles: number;
@@ -61,11 +61,11 @@ export interface BulkUploadCompleteResponse {
   };
   failed: {
     count: number;
-    files: Array<{
+    files: {
       index: number;
       filename: string;
       error: string;
-    }>;
+    }[];
   };
   duration: number;
 }

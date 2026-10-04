@@ -45,7 +45,7 @@ export class PlaybookFlowMailWebhookController {
     }
 
     try {
-      const body = req.body as { value?: Array<Record<string, any>> };
+      const body = req.body as { value?: Record<string, any>[] };
       const result = await this.webhookService.handleNotifications(body);
       return res.status(202).json(result);
     } catch (err) {

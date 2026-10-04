@@ -507,12 +507,12 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     if (systemWorkspaceId && isAssistantMessage) {
       const attachments = (event.payload as { attachments?: unknown[] }).attachments;
       if (Array.isArray(attachments)) {
-        for (const fileInfo of attachments as Array<{
+        for (const fileInfo of attachments as {
           id: string;
           name: string;
           content_type: string;
           path: string;
-        }>) {
+        }[]) {
           this.workspaceDocuments
             .createFromAiArtifact(systemWorkspaceId, fileInfo)
             .catch(() => undefined);

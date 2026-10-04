@@ -43,7 +43,7 @@ export class PlaybookFlowOutputFormatService {
     const taskResult = await this.taskResults.findLatestForTask(execution.id, nodeId, {
       statuses: ['completed'], light: true, with: ['output'],
     });
-    if (!taskResult || !taskResult.output) {
+    if (!taskResult?.output) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST);
     }
 
@@ -87,7 +87,7 @@ export class PlaybookFlowOutputFormatService {
   private enqueueGeneration(templateId: string): void {
     void this.runGeneration(async () => {
       await this.generateInBackground(templateId);
-    }).catch((err) => this.logger.warn('Async format generation failed', { templateId, error: (err as Error).message }));
+    }).catch((err) => { this.logger.warn('Async format generation failed', { templateId, error: (err as Error).message }); });
   }
 
   private async generateInBackground(templateId: string): Promise<void> {

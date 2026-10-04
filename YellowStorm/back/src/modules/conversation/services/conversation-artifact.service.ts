@@ -16,7 +16,7 @@ export class ConversationArtifactService {
     private readonly workspaceDocumentService: WorkspaceDocumentService,
   ) {}
 
-  async listRecent(userId: string, limit: number): Promise<Array<{
+  async listRecent(userId: string, limit: number): Promise<{
     source: 'conversation';
     artifactId: string;
     filename: string;
@@ -26,7 +26,7 @@ export class ConversationArtifactService {
     conversationTitle: string;
     messageId: string;
     generatedAt: string;
-  }>> {
+  }[]> {
     const messages = await this.messageService.listRecentArtifactMessages(userId, Math.max(limit * 3, 12));
     return messages.flatMap((message) => (message.components ?? [])
       .filter((component) => component.type === 'artifact')

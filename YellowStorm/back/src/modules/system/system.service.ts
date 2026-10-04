@@ -405,7 +405,7 @@ export class SystemService implements OnApplicationBootstrap {
         this.corsSettingsCache = {
           origins: raw.origins
             .filter((e) => typeof e.origin === 'string')
-            .map((e) => ({ origin: e.origin, enabled: e.enabled !== false })),
+            .map((e) => ({ origin: e.origin, enabled: e.enabled })),
         };
       } else {
         this.corsSettingsCache = { origins: [] };

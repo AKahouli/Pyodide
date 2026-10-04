@@ -20,7 +20,7 @@ export interface FlowPromptTemplateListResponse {
 export interface FlowPromptTemplateImportPayload {
   version: 1;
   type: 'playbook-prompts';
-  items: Array<UpsertFlowPromptTemplateRequest & { key: string; enabled?: boolean; isBuiltIn?: boolean }>;
+  items: (UpsertFlowPromptTemplateRequest & { key: string; enabled?: boolean; isBuiltIn?: boolean })[];
 }
 
 export interface UpsertFlowPromptTemplateRequest {

@@ -244,7 +244,7 @@ export class WorkyPlanDeltaService {
       streamId: delta.streamId,
       basePlanVersion: delta.basePlanVersion,
       triggerEventId: delta.triggerEventId,
-      body: delta.body as unknown as PlanDeltaBodyDto,
+      body: delta.body,
       createdBy: input.approvedBy,
       phase: 'replan',
       applyMode: 'pending_approval',
@@ -632,7 +632,7 @@ export class WorkyPlanDeltaService {
     const adjacency: number[][] = (body.create_tasks ?? []).map(() => []);
     const indegree = new Array<number>(body.create_tasks?.length ?? 0).fill(0);
     for (let i = 0; i < (body.create_tasks?.length ?? 0); i++) {
-      const c = body.create_tasks![i]!;
+      const c = body.create_tasks![i];
       for (const ref of c.dependsOn ?? []) {
         if (existingIds.has(ref)) continue; // existing tasks are not in the new-subgraph topo
         const targetIdx = clientToIndex.get(ref);
@@ -640,7 +640,7 @@ export class WorkyPlanDeltaService {
           missingRefs.push(ref);
           continue;
         }
-        adjacency[i]!.push(targetIdx);
+        adjacency[i].push(targetIdx);
         indegree[targetIdx] = (indegree[targetIdx] ?? 0) + 1;
       }
     }
@@ -663,8 +663,8 @@ export class WorkyPlanDeltaService {
     while (queue.length > 0) {
       const i = queue.shift()!;
       visited++;
-      for (const next of adjacency[i]!) {
-        indegree[next]! -= 1;
+      for (const next of adjacency[i]) {
+        indegree[next] -= 1;
         if (indegree[next] === 0) queue.push(next);
       }
     }

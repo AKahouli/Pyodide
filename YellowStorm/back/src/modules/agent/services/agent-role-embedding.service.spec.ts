@@ -47,7 +47,7 @@ describe('AgentRoleEmbeddingService', () => {
     const agentRepository = { setRoleEmbedding: jest.fn() };
     const svc = new AgentRoleEmbeddingService(embeddingService as any, agentRepository as any, logger);
 
-    expect(() => svc.reindexHumainRole('a1', 'humain', 'Alice', 'Support agent')).not.toThrow();
+    expect(() => { svc.reindexHumainRole('a1', 'humain', 'Alice', 'Support agent'); }).not.toThrow();
     await flush();
     expect(logger.warn).toHaveBeenCalled();
   });

@@ -42,7 +42,7 @@ type EditorState = Required<Pick<FlowPatch,
 export class PlaybookFlowService {
   private readonly logger = new Logger(PlaybookFlowService.name);
 
-  private stableStringify(value: unknown, seen = new WeakSet<object>()): string {
+  private stableStringify(value: unknown, seen = new WeakSet()): string {
     if (value === undefined) {
       return 'undefined';
     }
@@ -233,7 +233,7 @@ export class PlaybookFlowService {
     return { ...DEFAULT_HITL_POLICY, mode: 'manual', disabledReason: 'Smart HITL defaults are disabled by configuration.' };
   }
 
-  private buildDefaultHitlBlockers(): Array<Record<string, unknown>> {
+  private buildDefaultHitlBlockers(): Record<string, unknown>[] {
     return [];
   }
 
@@ -246,7 +246,7 @@ export class PlaybookFlowService {
     const dataBindings = dto.dataBindings || [];
     const workspaces = this.workspacePolicy.normalizeWorkspaces(dto.workspaces);
 
-    this.validatorService.validate(nodes as any, controlEdges as any, dataBindings as any, { allowDraftRouters: true });
+    this.validatorService.validate(nodes as any, controlEdges, dataBindings, { allowDraftRouters: true });
 
     const resolvedName = await this.resolveUniqueName(ownerId, dto.name);
 
@@ -258,13 +258,13 @@ export class PlaybookFlowService {
         schemaVersion: 1,
         name: resolvedName,
         description: dto.description,
-        triggerConfig: dto.triggerConfig as FlowRecord['triggerConfig'],
+        triggerConfig: dto.triggerConfig,
         settings: dto.settings || { recursionLimit: 25, maxParallelism: 5 },
         hitlPolicy: (dto.hitlPolicy ?? this.buildDefaultHitlPolicy()) as unknown as HitlPolicy,
         hitlBlockers: (dto.hitlBlockers ?? this.buildDefaultHitlBlockers()) as unknown as HitlBlockerRule[],
         nodes: nodes as unknown as FlowRecord['nodes'],
-        controlEdges: controlEdges as unknown as FlowRecord['controlEdges'],
-        dataBindings: dataBindings as unknown as FlowRecord['dataBindings'],
+        controlEdges: controlEdges,
+        dataBindings: dataBindings,
         workspaces,
         reflectionEnabled: dto.reflectionEnabled ?? false,
         advisorScoringMode: dto.advisorScoringMode ?? 'llm',
@@ -324,14 +324,14 @@ export class PlaybookFlowService {
     query: string | undefined,
     workspaceId: string | undefined,
     limit: number,
-  ): Promise<Array<{
+  ): Promise<{
     playbookId: string;
     name: string;
     description?: string;
     definitionRevision: number;
     updatedAt?: Date;
     matchReason: 'exact_name' | 'prefix_name' | 'partial_name' | 'recent';
-  }>> {
+  }[]> {
     const sharedFlowIds = await this.playbookShareService.getSharedPlaybookIdsForUser(ownerId);
     const normalizedQuery = query?.trim() ?? '';
     const candidates = new Map<string, {
@@ -379,11 +379,11 @@ export class PlaybookFlowService {
     }));
   }
 
-  async findAccessibleAssistantIndex(ownerId: string): Promise<Array<{
+  async findAccessibleAssistantIndex(ownerId: string): Promise<{
     playbookId: string;
     name: string;
-    tasks: Array<{ taskId: string; taskName: string }>;
-  }>> {
+    tasks: { taskId: string; taskName: string }[];
+  }[]> {
     const sharedFlowIds = await this.playbookShareService.getSharedPlaybookIdsForUser(ownerId);
     const flows = await this.flows.listNodeIndex(ownerId, sharedFlowIds);
     return flows.map((flow) => ({
@@ -474,7 +474,7 @@ export class PlaybookFlowService {
           && existing.definitionRevision === reservation.expectedDefinitionRevision
           && this.buildEditorStateHash(existing) === reservation.expectedStateHash) {
           const response = this.responseAssembler.toBaseFlowResponse(existing);
-          await this.idempotencyService.confirmSaveResult(ownerId, idempotencyKey, response as unknown as Record<string, unknown>);
+          await this.idempotencyService.confirmSaveResult(ownerId, idempotencyKey, response);
           return response;
         }
         throw new ConflictException(
@@ -509,13 +509,13 @@ export class PlaybookFlowService {
     const next = this.toEditorState(existing);
     if (dto.name !== undefined) next.name = dto.name;
     if (dto.description !== undefined) next.description = dto.description;
-    if (dto.triggerConfig !== undefined) next.triggerConfig = dto.triggerConfig as FlowRecord['triggerConfig'];
+    if (dto.triggerConfig !== undefined) next.triggerConfig = dto.triggerConfig;
     if (dto.settings !== undefined) next.settings = dto.settings;
     if (dto.hitlPolicy !== undefined) next.hitlPolicy = dto.hitlPolicy as unknown as HitlPolicy;
     if (dto.hitlBlockers !== undefined) next.hitlBlockers = dto.hitlBlockers as unknown as HitlBlockerRule[];
     if (dto.nodes !== undefined) next.nodes = dto.nodes as unknown as FlowRecord['nodes'];
-    if (dto.controlEdges !== undefined) next.controlEdges = dto.controlEdges as unknown as FlowRecord['controlEdges'];
-    if (dto.dataBindings !== undefined) next.dataBindings = dto.dataBindings as unknown as FlowRecord['dataBindings'];
+    if (dto.controlEdges !== undefined) next.controlEdges = dto.controlEdges;
+    if (dto.dataBindings !== undefined) next.dataBindings = dto.dataBindings;
     if (dto.reflectionEnabled !== undefined) next.reflectionEnabled = dto.reflectionEnabled;
     if (dto.advisorScoringMode !== undefined) next.advisorScoringMode = dto.advisorScoringMode;
     if (dto.advisorAutopilotEnabled !== undefined) next.advisorAutopilotEnabled = dto.advisorAutopilotEnabled;
@@ -526,17 +526,17 @@ export class PlaybookFlowService {
     // Sanitized and validated as cast, like the Mongoose subdocuments the assignments produced.
     const cast = this.castEditorState(next);
     const sanitizedGraph = this.graphSanitizer.sanitize({
-      nodes: cast.nodes as any,
-      controlEdges: cast.controlEdges as any,
-      dataBindings: cast.dataBindings as any,
+      nodes: cast.nodes,
+      controlEdges: cast.controlEdges,
+      dataBindings: cast.dataBindings,
     });
-    cast.controlEdges = sanitizedGraph.controlEdges as any;
-    cast.dataBindings = sanitizedGraph.dataBindings as any;
+    cast.controlEdges = sanitizedGraph.controlEdges;
+    cast.dataBindings = sanitizedGraph.dataBindings;
 
     this.validatorService.validate(
-      cast.nodes as any,
-      cast.controlEdges as any,
-      cast.dataBindings as any,
+      cast.nodes,
+      cast.controlEdges,
+      cast.dataBindings,
       { allowDraftRouters: true, ...validationOptions },
     );
 
@@ -565,7 +565,7 @@ export class PlaybookFlowService {
     writeCommitted = true;
     if (idempotencyKey) {
       try {
-        await this.idempotencyService.confirmSaveResult(ownerId, idempotencyKey, raw as unknown as Record<string, unknown>);
+        await this.idempotencyService.confirmSaveResult(ownerId, idempotencyKey, raw);
       } catch (err) {
         this.logger.warn(`Failed to record idempotent full-save result for flow ${flowId}: ${(err as Error).message}`);
       }
@@ -660,9 +660,9 @@ export class PlaybookFlowService {
     const patchedGraph = this.deltaPatchService.buildPatchedGraph(existing, dto);
 
     this.validatorService.validate(
-      patchedGraph.nodes as any,
-      patchedGraph.controlEdges as any,
-      patchedGraph.dataBindings as any,
+      patchedGraph.nodes,
+      patchedGraph.controlEdges,
+      patchedGraph.dataBindings,
       {
         allowDraftRouters: true,
         allowUnboundRequiredPorts: true,
@@ -675,7 +675,7 @@ export class PlaybookFlowService {
     if (fields) {
       if (fields.name !== undefined) next.name = fields.name;
       if (fields.description !== undefined) next.description = fields.description;
-      if (fields.designSettings !== undefined) next.designSettings = fields.designSettings as Record<string, unknown>;
+      if (fields.designSettings !== undefined) next.designSettings = fields.designSettings;
       if (fields.settings !== undefined) next.settings = fields.settings as unknown as FlowRecord['settings'];
       if (fields.reflectionEnabled !== undefined) next.reflectionEnabled = fields.reflectionEnabled;
       if (fields.advisorScoringMode !== undefined) next.advisorScoringMode = fields.advisorScoringMode;
@@ -817,8 +817,8 @@ export class PlaybookFlowService {
 
       this.validatorService.validate(
         graph.nodes as any,
-        sanitizedGraph.controlEdges as any,
-        sanitizedGraph.dataBindings as any,
+        sanitizedGraph.controlEdges,
+        sanitizedGraph.dataBindings,
         { allowDraftRouters: true },
       );
       const saved = await this.flows.updateFields(flowId, {
@@ -874,7 +874,7 @@ export class PlaybookFlowService {
     }
   }
 
-  async findAllWithTriggerKind(kind: string): Promise<Array<{ id: string; ownerId: string; triggerConfig: any }>> {
+  async findAllWithTriggerKind(kind: string): Promise<{ id: string; ownerId: string; triggerConfig: any }[]> {
     const flows = await this.flows.listByTrigger(kind);
     return flows.map((f) => ({
       id: f.id,

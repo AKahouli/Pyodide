@@ -19,7 +19,7 @@ export interface WorkyAssignHumanResult {
   status: 'assigned' | 'ambiguous' | 'unresolved';
   taskId?: string;
   assigneeId?: string;
-  candidates?: Array<{ id: string; email: string; displayName: string }>;
+  candidates?: { id: string; email: string; displayName: string }[];
   reason?: string;
 }
 

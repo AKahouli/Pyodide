@@ -31,7 +31,7 @@ function getYmdFormatter(timeZone: string): Intl.DateTimeFormat {
 }
 
 function parseHm(s: string): { h: number; m: number } | null {
-  const m = s.trim().match(HM);
+  const m = HM.exec(s.trim());
   if (!m) return null;
   return { h: Number.parseInt(m[1], 10), m: Number.parseInt(m[2], 10) };
 }
@@ -50,9 +50,9 @@ export function daysBetweenYmd(a: string, b: string): number {
   return Math.round((parseYmd(b) - parseYmd(a)) / 86400000);
 }
 
-type ZonedParts = {
+interface ZonedParts {
   year: number; month: number; day: number; hour: number; minute: number; weekday: number;
-};
+}
 
 function getZonedParts(date: Date, timeZone: string): ZonedParts {
   const dtf = getZonedFormatter(timeZone);
@@ -90,15 +90,15 @@ export function weekOfMonthFromCalendarDay(dayOfMonth: number): number {
   return Math.min(5, Math.ceil(dayOfMonth / 7));
 }
 
-export type FlowScheduleEvalInput = {
+export interface FlowScheduleEvalInput {
   enabled?: boolean;
   timezone?: string;
   scheduleType?: string;
   lastScheduledRunAt?: Date | null;
   daily?: { timesLocal?: string[] } | null;
-  weekly?: { slots?: Array<{ weekday: number; timeLocal: string }> } | null;
+  weekly?: { slots?: { weekday: number; timeLocal: string }[] } | null;
   monthly?: {
-    slots?: Array<{ monthOfYear?: number | null; dayOfMonth: number; timeLocal: string }>;
+    slots?: { monthOfYear?: number | null; dayOfMonth: number; timeLocal: string }[];
   } | null;
   advanced?: {
     variant: 'weekdays' | 'weekend' | 'every_n_days';
@@ -107,7 +107,7 @@ export type FlowScheduleEvalInput = {
     monthOfYear?: number | null;
     weekOfMonth?: number | null;
   } | null;
-};
+}
 
 export function isFlowScheduleDueThisMinute(
   schedule: FlowScheduleEvalInput | null | undefined,
@@ -143,7 +143,7 @@ export function isFlowScheduleDueThisMinute(
       const hm = parseHm(slot.timeLocal);
       if (!hm) continue;
       if (slot.monthOfYear != null && slot.monthOfYear !== parts.month) continue;
-      let dayOk = slot.dayOfMonth === 0
+      const dayOk = slot.dayOfMonth === 0
         || (slot.dayOfMonth === -1 ? parts.day === dim : slot.dayOfMonth === parts.day);
       if (dayOk && timeMatchesNow(hm, parts)) return true;
     }

@@ -41,7 +41,7 @@ export class EmbeddingService {
       if (!res.ok) {
         throw new Error(`LiteLLM embeddings returned HTTP ${res.status}`);
       }
-      const payload = (await res.json()) as { data?: Array<{ embedding?: unknown }> };
+      const payload = (await res.json()) as { data?: { embedding?: unknown }[] };
       const vec = payload?.data?.[0]?.embedding;
       if (!Array.isArray(vec) || vec.length !== dimensions || !vec.every((value) => typeof value === 'number' && Number.isFinite(value))) {
         this.logger.error('Embedding response has an invalid vector shape', {

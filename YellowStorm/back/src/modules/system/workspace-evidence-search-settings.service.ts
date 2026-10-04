@@ -16,7 +16,7 @@ export class WorkspaceEvidenceSearchSettingsService {
   async getSettings(): Promise<WorkspaceEvidenceSearchSettings> {
     const setting = await this.settings.get(KEY);
     const value = setting?.value as Partial<WorkspaceEvidenceSearchSettingsValue> | undefined;
-    return { connectorId: typeof value?.connectorId === 'string' ? value.connectorId : null, updatedAt: setting?.updatedAt as Date | undefined };
+    return { connectorId: typeof value?.connectorId === 'string' ? value.connectorId : null, updatedAt: setting?.updatedAt };
   }
 
   async listActiveConnectorOptions(): Promise<WorkspaceEvidenceSearchConnectorOption[]> {

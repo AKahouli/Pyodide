@@ -222,7 +222,7 @@ export class PgDocumentStore implements DocumentStore {
     return { items: rows.map(documentRowToRecord), total: countRows[0]?.n ?? 0 };
   }
 
-  async findUrlSources(workspaceId: string): Promise<Array<Pick<WorkspaceDocumentRecord, 'id' | 'sourceUrl' | 'status' | 'indexingStatus'>>> {
+  async findUrlSources(workspaceId: string): Promise<Pick<WorkspaceDocumentRecord, 'id' | 'sourceUrl' | 'status' | 'indexingStatus'>[]> {
     const rows = await this.q
       .select({ id: DOCUMENTS.id, sourceUrl: DOCUMENTS.sourceUrl, status: DOCUMENTS.status, indexingStatus: DOCUMENTS.indexingStatus })
       .from(DOCUMENTS)

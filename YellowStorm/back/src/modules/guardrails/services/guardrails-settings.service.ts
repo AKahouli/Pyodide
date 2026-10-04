@@ -46,11 +46,11 @@ type LegacyAgentGuardrails = Partial<AgentGuardrails> & {
   promptInjection?: LegacyPromptInjectionGuardrailsConfig;
 };
 
-type RawAdminGuardrailsSettings = {
+interface RawAdminGuardrailsSettings {
   forceActivation?: boolean;
   promptInjection?: LegacyPromptInjectionGuardrailsConfig;
   toolActionReview?: Partial<ToolActionReviewConfig>;
-};
+}
 
 function normalizeMode(value: unknown): GuardrailMode {
   return value === 'monitor' || value === 'strict' ? value : 'balanced';

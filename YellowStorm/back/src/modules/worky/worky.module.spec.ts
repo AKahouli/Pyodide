@@ -21,7 +21,7 @@ describe('WorkyModule wiring', () => {
   /** Constructor dependencies of a class: `@Inject(token)` where given, else the design-time type. */
   const dependencies = (cls: Type): unknown[] => {
     const types = (Reflect.getMetadata('design:paramtypes', cls) ?? []) as unknown[];
-    const injected = (Reflect.getMetadata('self:paramtypes', cls) ?? []) as Array<{ index: number; param: unknown }>;
+    const injected = (Reflect.getMetadata('self:paramtypes', cls) ?? []) as { index: number; param: unknown }[];
     return types.map((type, index) => injected.find((i) => i.index === index)?.param ?? type);
   };
   const guardsOf = (cls: Type): Type[] => {

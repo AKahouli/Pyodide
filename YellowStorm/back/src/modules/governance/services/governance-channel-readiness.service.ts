@@ -45,7 +45,7 @@ export class GovernanceChannelReadinessService {
       }
       return false;
     } catch (error) {
-      void error;
+      error;
       return false;
     }
   }

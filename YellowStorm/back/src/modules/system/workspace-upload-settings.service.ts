@@ -55,7 +55,7 @@ export class WorkspaceUploadSettingsService implements OnApplicationBootstrap {
     if (setting && this.isUploadSettingsValue(setting.value)) {
       this.cache = { allowedExtensions: [...setting.value.allowedExtensions] };
       this.cacheLoadedAt = Date.now();
-      return this.buildSettingsResponse(this.cache, setting.updatedAt as Date | undefined);
+      return this.buildSettingsResponse(this.cache, setting.updatedAt);
     }
 
     if (setting) {

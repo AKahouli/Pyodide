@@ -82,7 +82,7 @@ export class WorkspaceInitializerService {
    * Check if a workspace is a personal workspace
    */
   isPersonalWorkspace(workspace: WorkspaceRecord): boolean {
-    return workspace.isPersonal === true;
+    return workspace.isPersonal;
   }
 
   /**

@@ -180,7 +180,7 @@ describeIntegration('flow and shared-playbook repositories (integration)', () =>
       const cast = castFlowPatch(patch);
       const saved = await flows.updateFields(flow.id, cast);
       const reread = await flows.findById(flow.id);
-      for (const key of Object.keys(cast) as Array<keyof typeof cast>) {
+      for (const key of Object.keys(cast) as (keyof typeof cast)[]) {
         expect({ key, value: reread?.[key] }).toEqual({ key, value: cast[key] });
         expect({ key, value: saved?.[key] }).toEqual({ key, value: cast[key] });
       }
@@ -335,7 +335,7 @@ describeIntegration('flow and shared-playbook repositories (integration)', () =>
 
     it('searches names exactly, by prefix or anywhere, within a workspace when asked', async () => {
       const marker = `srch${oid()}`;
-      const exact = await newFlow({ name: `${marker}`, workspaces: [workspaceA] });
+      const exact = await newFlow({ name: marker, workspaces: [workspaceA] });
       const prefixed = await newFlow({ name: `${marker} report` });
       const partial = await newFlow({ name: `weekly ${marker}` });
       const scope = { ownerId, sharedFlowIds: [], limit: 10 };

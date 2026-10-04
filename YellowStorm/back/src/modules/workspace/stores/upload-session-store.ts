@@ -31,7 +31,7 @@ export interface UploadSessionCreateInput {
   workspaceId: string;
   userId: string;
   status: string;
-  files: Array<Omit<UploadSessionFileRecord, 'documentId' | 'error'> & { documentId?: string }>;
+  files: (Omit<UploadSessionFileRecord, 'documentId' | 'error'> & { documentId?: string })[];
   totalFiles: number;
   totalSize: number;
   completedFiles: number;

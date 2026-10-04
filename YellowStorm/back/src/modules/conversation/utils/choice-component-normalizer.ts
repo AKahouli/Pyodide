@@ -11,7 +11,7 @@ export interface ChoiceComponentData extends Record<string, unknown> {
   presentation: ChoicePresentation;
   selectionMode: ChoiceSelectionMode;
   submitBehavior: ChoiceSubmitBehavior;
-  options: Array<{ id: string; label: string; submitText: string; value?: string; description?: string; disabled?: boolean; url?: string }>;
+  options: { id: string; label: string; submitText: string; value?: string; description?: string; disabled?: boolean; url?: string }[];
   otherOption?: { enabled: boolean; label: string; placeholder?: string; maxLength: number };
   labels?: { submit?: string; dismiss?: string; other?: string };
   progress?: { current: number; total: number; label?: string };

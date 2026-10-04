@@ -17,7 +17,7 @@ import { AssistantDescribeDataQueryDto, AssistantFindRecordsDto, AssistantQueryR
 import { SemanticAssistantActorGuard, SemanticAssistantModelGuard, assistantActorFrom } from '../guards/semantic-assistant-actor.guard';
 import { SemanticModelAssistantService } from '../services/semantic-model-assistant.service';
 
-type ActorRequest = { headers: Record<string, string | string[] | undefined> };
+interface ActorRequest { headers: Record<string, string | string[] | undefined> }
 
 const READ = [Permissions.SEMANTIC_MODELS_READ, Permissions.SEMANTIC_MODELS_ALL];
 const CREATE = [Permissions.SEMANTIC_MODELS_CREATE, Permissions.SEMANTIC_MODELS_ALL];

@@ -176,7 +176,7 @@ export class IndexingService {
       indexingAttemptCompletedAt: undefined,
     };
     await this.documentWritePort.updateIndexingState(documentId, processingPatch);
-    const document = { ...record, ...processingPatch } as WorkspaceDocumentRecord;
+    const document = { ...record, ...processingPatch };
     await this.recordIndexingEvent(WorkspaceIntegrationEvents.IndexingStartedV1, document);
 
     // Send notification so frontend sees pending → processing transition
@@ -338,7 +338,7 @@ export class IndexingService {
       ...(idempotencyKey ? { governanceReindexIdempotencyKey: idempotencyKey } : {}),
     };
     await this.documentWritePort.updateIndexingState(documentId, reindexPatch);
-    const document = { ...record, ...reindexPatch } as WorkspaceDocumentRecord;
+    const document = { ...record, ...reindexPatch };
 
     this.logger.debug('Document queued for re-indexing', {
       documentId,
@@ -522,7 +522,7 @@ export class IndexingService {
     }
 
     await this.documentWritePort.updateIndexingState(documentId, patch);
-    const updatedDocument = { ...document, ...patch } as WorkspaceDocumentRecord;
+    const updatedDocument = { ...document, ...patch };
     await this.recordIndexingEvent(
       updatedDocument.indexingStatus === IndexingStatus.READY
         ? WorkspaceIntegrationEvents.IndexingReadyV1

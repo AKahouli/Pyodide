@@ -5,11 +5,11 @@ import { SystemService } from '@modules/system/system.service';
 import { PlaybookFlowStreamEventsService } from './playbook-flow-stream-events.service';
 import { PlaybookTokenStreamRedactor } from '../utils/playbook-artifact';
 
-type TokenBufferKey = {
+interface TokenBufferKey {
   executionId: string;
   taskId: string;
   iteration: number;
-};
+}
 
 type TokenBufferEntry = TokenBufferKey & {
   chunks: string[];
@@ -66,7 +66,7 @@ export class PlaybookFlowTokenBufferService implements OnModuleDestroy {
 
   async flushExecution(executionId: string): Promise<void> {
     const publicKeys = Array.from(this.publicTokenKeys.values()).filter((entry) => entry.executionId === executionId);
-    publicKeys.forEach((entry) => this.flushPublicToken(entry));
+    publicKeys.forEach((entry) => { this.flushPublicToken(entry); });
     const keys = Array.from(this.buffers.keys()).filter((key) => key.startsWith(`${executionId}:`));
     for (const key of keys) {
       await this.flushKey(key);
@@ -87,7 +87,7 @@ export class PlaybookFlowTokenBufferService implements OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
-    Array.from(this.publicTokenKeys.values()).forEach((key) => this.flushPublicToken(key));
+    Array.from(this.publicTokenKeys.values()).forEach((key) => { this.flushPublicToken(key); });
     for (const key of Array.from(this.buffers.keys())) {
       await this.flushKey(key);
     }

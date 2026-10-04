@@ -202,7 +202,7 @@ export class ResponseReliabilityService implements OnModuleInit {
       const evidenceInput = this.evidenceBuilder.build(
         {
           id: message.id,
-          components: (message.components ?? []) as MessageComponent[],
+          components: (message.components ?? []),
         },
         question.content || '',
         job.requestId,

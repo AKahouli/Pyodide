@@ -28,7 +28,7 @@ export class WorkspaceGovernanceEventHandler implements OnModuleInit {
 
   onModuleInit(): void { this.registry.register(this); }
 
-  async handle(event: IntegrationEventEnvelope<Record<string, unknown>>): Promise<void> {
+  async handle(event: IntegrationEventEnvelope): Promise<void> {
     if (!this.config.get<boolean>('dataRoom.governanceEventConsumerEnabled')) return;
     const payload = event.payload as unknown as WorkspaceDocumentEventV1;
     if (!payload.workspaceId || !payload.documentId) throw new BadRequestException('Invalid workspace integration event payload');
@@ -48,7 +48,7 @@ export class WorkspaceGovernanceEventHandler implements OnModuleInit {
         if (!connectorId) continue;
         const inputHash = createHash('sha256').update(JSON.stringify({ programId, documentId: payload.documentId, contentHash: payload.contentHash ?? null, indexingAttemptId: payload.indexingAttemptId ?? null, connectorId })).digest('hex');
         await this.intelligence.enqueue({ programId, documentId: payload.documentId, connectorId, requestedByUserId: binding.createdBy, jobType: 'technical_metadata', inputHash, engineVersion: 'technical-metadata-v1' });
-        void governed;
+        governed;
       } catch (error) {
         this.logger.error('Failed to process workspace event for governance binding', { bindingId: binding.id, eventId: event.eventId, error: error instanceof Error ? error.message : 'Unknown error' });
         failures.push(binding.id);
