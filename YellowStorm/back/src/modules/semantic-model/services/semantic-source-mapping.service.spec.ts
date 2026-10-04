@@ -209,6 +209,27 @@ describe('SemanticSourceMappingService boundaries', () => {
     await expect(service.createWorkspace('user-1', 'model-1', { ...dto, folderIds: ['a'] } as never)).rejects.toThrow('not a folder');
   });
 
+  it('points an existing mapping at another file in place, keeping its id, and refuses one the concept already reads', async () => {
+    const { service, database, models, documents } = buildService('text/csv');
+    documents.findById.mockResolvedValue({ id: 'sheet-2', workspaceId: 'workspace-1', mimeType: 'text/csv', originalName: 'b.csv', size: 4, updatedAt: 'now' });
+    database.query.mockImplementation(async (sql: string) => sql.includes('FROM semantic_model.node_types')
+      ? { rows: [{ label: 'Contract', attributes: [{ key: 'number', label: 'Number', type: 'text' }] }] }
+      : { rows: [{ ok: 1 }] });
+    const client = { query: jest.fn(async (_sql: string, _params?: unknown[]) => ({ rows: [] as unknown[], rowCount: 1 })) };
+    Object.assign(database, { transaction: jest.fn(async (work: (value: unknown) => unknown) => work(client)) });
+    Object.assign(models, { advanceRevision: jest.fn().mockResolvedValue(4), audit: jest.fn() });
+    const dto = { expectedRevision: 3, conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'sheet-2', sheetName: 'b',
+      mappingId: '00000000-0000-4000-8000-000000000009', fieldMappings: [{ sourceField: 'num', targetAttribute: 'number', mode: 'direct' }] };
+    await expect(service.create('user-1', 'model-1', dto as never)).resolves.toEqual(expect.objectContaining({ revision: 4 }));
+    const update = client.query.mock.calls.find(([sql]) => String(sql).includes('UPDATE semantic_model.source_mappings')) as unknown as [string, unknown[]];
+    expect(update[0]).toContain("scope='document'");
+    expect(update[1].slice(0, 7)).toEqual(['00000000-0000-4000-8000-000000000009', 'model-1', 'concept-1', 'workspace-1', 'sheet-2', 'b', 'csv']);
+    expect(client.query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO semantic_model.source_mappings'))).toBe(false);
+
+    client.query.mockImplementation(async (sql: string) => ({ rows: sql.includes('SELECT 1') ? [{ ok: 1 }] : [], rowCount: 1 }));
+    await expect(service.create('user-1', 'model-1', dto as never)).rejects.toThrow('already has a source reading this file');
+  });
+
   it('keeps where source boxes sit on the canvas, for editors only, without touching the model revision', async () => {
     const { service, database, models } = buildService();
     database.query.mockResolvedValue({ rows: [] });

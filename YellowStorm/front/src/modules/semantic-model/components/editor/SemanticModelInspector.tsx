@@ -29,7 +29,7 @@ import { DELETE_BUTTON, FORM_SECTION as SECTION, FormField as Field, HelpTip, Se
 import { FieldSearchIndexPane } from '../settings/FieldSearchIndexPane';
 import { withSearchIndex } from '../../searchSettings';
 
-export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowledgeOpen,knowledgeTargetId,onKnowledgeClose,onMapData,onDeriveData,onAddSource,onBrowseRecords,recordCounts,workspace = false }: Readonly<{ modelId?:string;canEdit:boolean;knowledge:KnowledgeLinkingController;knowledgeOpen:boolean;knowledgeTargetId:string|null;onKnowledgeClose:()=>void;onMapData?:(target:SourceMappingTarget)=>void;onDeriveData?:(target:DerivedSourceTarget)=>void;onAddSource?:(conceptId:string)=>void;onBrowseRecords?:(conceptId:string)=>void;recordCounts?:Record<string,number>;workspace?:boolean }>) {
+export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowledgeOpen,knowledgeTargetId,onKnowledgeClose,onMapData,onDeriveData,onAddSource,onBrowseRecords,recordCounts,workspace = false,switching }: Readonly<{ switching?:{label:string;count:number}; modelId?:string;canEdit:boolean;knowledge:KnowledgeLinkingController;knowledgeOpen:boolean;knowledgeTargetId:string|null;onKnowledgeClose:()=>void;onMapData?:(target:SourceMappingTarget)=>void;onDeriveData?:(target:DerivedSourceTarget)=>void;onAddSource?:(conceptId:string)=>void;onBrowseRecords?:(conceptId:string)=>void;recordCounts?:Record<string,number>;workspace?:boolean }>) {
   const { t } = useModuleTranslation('semantic-model');
   const graph = useSemanticModelEditorStore((state) => state.graph);
   const selectedId = useSemanticModelEditorStore((state) => state.selectedId);
@@ -38,7 +38,7 @@ export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowled
   const relation = graph?.relations.find((item) => item.id === selectedId);
   const record = graph?.records.find((item) => item.id === selectedId);
   useFocusSection();
-  const knowledgePanel = <KnowledgePanel canEdit={canEdit} knowledge={knowledge} targetNodeId={knowledgeTargetId} onClose={onKnowledgeClose} onMapData={(resource)=>onMapData?.(sourceMappingTargetFromResource(resource, knowledgeTargetId ?? undefined))} onMapWorkspace={onMapData?(scope)=>onMapData(sourceMappingTargetFromWorkspace(scope, knowledgeTargetId ?? undefined)):undefined} onDeriveFrom={onDeriveData?(conceptId)=>onDeriveData({ conceptId }):undefined}/>;
+  const knowledgePanel = <KnowledgePanel switching={switching} canEdit={canEdit} knowledge={knowledge} targetNodeId={knowledgeTargetId} onClose={onKnowledgeClose} onMapData={(resource)=>onMapData?.(sourceMappingTargetFromResource(resource, knowledgeTargetId ?? undefined))} onMapWorkspace={onMapData?(scope)=>onMapData(sourceMappingTargetFromWorkspace(scope, knowledgeTargetId ?? undefined)):undefined} onDeriveFrom={onDeriveData&&!switching?(conceptId)=>onDeriveData({ conceptId }):undefined}/>;
   if (knowledgeOpen) return workspace
     ? <aside className='absolute inset-y-0 right-0 z-30 w-[min(26rem,100%)] border-l bg-background shadow-xl'>{knowledgePanel}</aside>
     : <ResizableSidePanel className='z-30 bg-background/95 shadow-2xl backdrop-blur lg:shadow-none'>{knowledgePanel}</ResizableSidePanel>;

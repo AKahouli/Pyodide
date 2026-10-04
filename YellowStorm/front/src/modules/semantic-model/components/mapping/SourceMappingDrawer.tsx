@@ -16,6 +16,11 @@ export interface SourceMappingTarget {
   bulkEdit?: boolean;
   /** Map many files of this workspace at once: all of them, or picked folders and files. */
   workspace?: WorkspaceSourceScope;
+  /**
+   * The mapping that reads this source from now on, in place of the one it read: its fields start as they
+   * were set (fitted to this source), and saving keeps the mapping, its id and history, rather than adding one.
+   */
+  replaces?: ConceptSourceMapping;
 }
 
 export interface WorkspaceSourceScope {
@@ -56,7 +61,7 @@ export function sourceMappingTargetFromResource(resource: Extract<KnowledgeResou
 }
 
 /** Documents and sheets share one field mapping (see FieldMappingList); each drawer knows its source. */
-export function SourceMappingDrawer({ onSuggestConcepts, ...props }: Readonly<{ modelId: string; target: SourceMappingTarget | null; onClose: () => void; onSuggestConcepts?: (source: SuggestionSource) => void }>) {
+export function SourceMappingDrawer({ onSuggestConcepts, ...props }: Readonly<{ modelId: string; target: SourceMappingTarget | null; onClose: () => void; onSaved?: () => void; onSuggestConcepts?: (source: SuggestionSource) => void }>) {
   if (props.target?.assetKind === 'document') return <DocumentSourceMappingDrawer {...props} />;
   return <SheetSourceMappingDrawer {...props} onSuggestConcepts={onSuggestConcepts} />;
 }

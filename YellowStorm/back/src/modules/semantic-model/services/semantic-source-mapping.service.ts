@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { PoolClient } from 'pg';
 import { Injectable, Logger } from '@nestjs/common';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
@@ -523,10 +524,12 @@ export class SemanticSourceMappingService {
         );
         if (clash.rows[0]) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'This concept already has a source covering exactly these files');
         const updated = await client.query(
+          // The mapping may have read another workspace, or a single file or sheet: it now reads these files.
           `UPDATE semantic_model.source_mappings
-           SET document_id=$5, folder_id=NULL, selection=$6::jsonb, source_label=$7, field_mappings=$8::jsonb,
+           SET workspace_id=$4, document_id=$5, sheet_name='', asset_kind='document', scope='workspace', folder_id=NULL,
+               selection=$6::jsonb, source_label=$7, field_mappings=$8::jsonb, validated_source_version=NULL,
                ai_settings=$9::jsonb, status='ready', validated_at=now(), updated_at=now()
-           WHERE id=$1 AND model_id=$2 AND concept_id=$3 AND workspace_id=$4 AND scope='workspace'`,
+           WHERE id=$1 AND model_id=$2 AND concept_id=$3`,
           [dto.mappingId, model.id, dto.conceptId, dto.workspaceId, key, storedSelection, label, JSON.stringify(dto.fieldMappings),
             storedAiSettings(dto.aiSettings)],
         );
@@ -700,9 +703,12 @@ export class SemanticSourceMappingService {
     SemanticSourceMappingService.assertMappingModes(kind, dto.fieldMappings);
     if (kind !== 'document' && !dto.sheetName) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A sheet is required for spreadsheet mappings');
     await this.assertConceptInDraft(model.id, model.currentDraftVersionId, dto.conceptId, dto.fieldMappings, dto.identityFields ?? []);
+    const aiSettings = kind === 'document' || usesAiExtraction(dto.fieldMappings) ? storedAiSettings(dto.aiSettings) : null;
     const revision = await this.database.transaction(async (client) => {
       const revision = await this.models.advanceRevision(client, modelId, dto.expectedRevision);
-      await client.query(
+      if (dto.mappingId) {
+        await this.switchSource(client, model.id, dto, kind, this.sourceVersion(document), aiSettings);
+      } else await client.query(
         `INSERT INTO semantic_model.source_mappings
          (model_id,concept_id,workspace_id,document_id,sheet_name,asset_kind,field_mappings,status,created_by,validated_source_version,validated_at,ai_settings)
          VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,'ready',$8,$9,now(),$10::jsonb)
@@ -712,7 +718,7 @@ export class SemanticSourceMappingService {
           [model.id, dto.conceptId, dto.workspaceId, dto.documentId, dto.sheetName ?? '', kind,
            JSON.stringify(dto.fieldMappings), userId, this.sourceVersion(document),
            // A sheet keeps AI limits only when one of its cells is read by AI.
-           kind === 'document' || usesAiExtraction(dto.fieldMappings) ? storedAiSettings(dto.aiSettings) : null],
+           aiSettings],
       );
       if (dto.identityFields?.length) {
         await client.query(
@@ -730,7 +736,7 @@ export class SemanticSourceMappingService {
         );
       }
       await this.models.audit(client, model.id, model.currentDraftVersionId, userId, 'source_mapping.saved', {
-        conceptId: dto.conceptId, documentId: dto.documentId, sheetName: dto.sheetName ?? '',
+        conceptId: dto.conceptId, documentId: dto.documentId, sheetName: dto.sheetName ?? '', mappingId: dto.mappingId ?? null,
       });
       return revision;
     });
@@ -817,6 +823,32 @@ export class SemanticSourceMappingService {
       return revision;
     });
     return { revision };
+  }
+
+  /**
+   * Points an existing mapping at another file (or sheet), keeping its id, so its health and history follow it.
+   * It may have read a whole workspace, a document or a sheet before.
+   */
+  private async switchSource(
+    client: PoolClient, modelId: string, dto: CreateSourceMappingDto, kind: SourceAssetKind, sourceVersion: string, aiSettings: string | null,
+  ): Promise<void> {
+    const sheetName = dto.sheetName ?? '';
+    const clash = await client.query(
+      `SELECT 1 FROM semantic_model.source_mappings
+       WHERE model_id=$1 AND concept_id=$2 AND document_id=$3 AND sheet_name=$4 AND id<>$5`,
+      [modelId, dto.conceptId, dto.documentId, sheetName, dto.mappingId],
+    );
+    if (clash.rows[0]) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'This concept already has a source reading this file');
+    const updated = await client.query(
+      `UPDATE semantic_model.source_mappings
+       SET workspace_id=$4, document_id=$5, sheet_name=$6, asset_kind=$7, scope='document', folder_id=NULL, selection=NULL,
+           source_label=NULL, field_mappings=$8::jsonb, validated_source_version=$9, ai_settings=$10::jsonb,
+           status='ready', validated_at=now(), updated_at=now()
+       WHERE id=$1 AND model_id=$2 AND concept_id=$3`,
+      [dto.mappingId, modelId, dto.conceptId, dto.workspaceId, dto.documentId, sheetName, kind,
+        JSON.stringify(dto.fieldMappings), sourceVersion, aiSettings],
+    );
+    if (!updated.rowCount) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'Source mapping not found');
   }
 
   private async requireLinkedWorkspace(modelId: string, workspaceId: string): Promise<void> {

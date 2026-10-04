@@ -30,7 +30,7 @@ export function isMappableDocument(mimeType:string): boolean {
   return isStructuredDocument(mimeType)||MAPPABLE_DOCUMENT_MIME_TYPES.has(mimeType);
 }
 
-export function KnowledgePanel({ canEdit,knowledge,targetNodeId,onClose,onMapData,onMapWorkspace,onDeriveFrom }: Readonly<{ canEdit:boolean;knowledge:KnowledgeLinkingController;targetNodeId:string|null;onClose?:()=>void;onMapData?:(resource:Extract<KnowledgeResource,{kind:'document'}>)=>void;onMapWorkspace?:(scope:{workspaceId:string;folderId?:string;name:string;workspaceName?:string})=>void;onDeriveFrom?:(conceptId:string)=>void }>) {
+export function KnowledgePanel({ canEdit,knowledge,targetNodeId,onClose,onMapData,onMapWorkspace,onDeriveFrom,switching }: Readonly<{ switching?:{label:string;count:number}; canEdit:boolean;knowledge:KnowledgeLinkingController;targetNodeId:string|null;onClose?:()=>void;onMapData?:(resource:Extract<KnowledgeResource,{kind:'document'}>)=>void;onMapWorkspace?:(scope:{workspaceId:string;folderId?:string;name:string;workspaceName?:string})=>void;onDeriveFrom?:(conceptId:string)=>void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const graph = useSemanticModelEditorStore((state)=>state.graph);
   const [available,setAvailable] = useState<Workspace[]>([]);
@@ -145,6 +145,7 @@ export function KnowledgePanel({ canEdit,knowledge,targetNodeId,onClose,onMapDat
   return <div className='flex h-full min-h-0 flex-col'>
     <div className='shrink-0 border-b p-5' onPointerUp={(event)=>{if(event.pointerType==='touch'){event.preventDefault();event.stopPropagation();if(event.target===event.currentTarget)onClose?.();else closeFromHeaderEdge(event.clientX,event.clientY,event.currentTarget);}}} onClick={(event)=>{if(event.target===event.currentTarget)onClose?.();else closeFromHeaderEdge(event.clientX,event.clientY,event.currentTarget);}}>
       <div className='flex items-start justify-between gap-3'><div className='flex min-h-11 items-center gap-1'><h2 className='font-semibold'>{t('knowledge.title')}</h2><span onPointerUp={(event)=>event.stopPropagation()}><HelpTip text={targetNode?t('knowledge.dropFor',{name:targetNode.label}):t('knowledge.trayDescription')}/></span></div>{onClose&&<Button size='icon' variant='ghost' className='h-11 w-11 shrink-0' onPointerUp={(event)=>{if(event.pointerType==='touch'){event.preventDefault();event.stopPropagation();onClose();}}} onClick={(event)=>{event.stopPropagation();onClose();}} aria-label={t('action.close')}><X className='h-4 w-4' /></Button>}</div>
+      {switching&&<p role='status' className='mt-2 rounded-lg border border-primary/30 bg-primary/5 p-2 text-xs'>{t('mapping.switch.pick',{name:switching.label,count:switching.count})}</p>}
       <div className='relative mt-4'><Search className='pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground' /><Input className={`${INPUT} pl-9`} value={search} onChange={(event)=>{setSearch(event.target.value);setWorkspacePage(1);}} placeholder={t('knowledge.search')} aria-label={t('knowledge.search')} /></div>
       {targetNode&&<div className='mt-3 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 text-xs'><span className='font-medium'>{t('knowledge.target')}</span> {targetNode.label}</div>}
       {canEdit&&onDeriveFrom&&(targetNode

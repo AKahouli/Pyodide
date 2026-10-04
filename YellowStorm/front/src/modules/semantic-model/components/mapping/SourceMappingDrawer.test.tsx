@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSemanticModelEditorStore } from '../../store';
 import type { ConceptSourceMapping, SemanticGraph, SourceFieldMapping } from '../../types';
 import { SourceMappingDrawer, type SourceMappingTarget } from './SourceMappingDrawer';
-import { adaptToSheet, cellLabelSuggestions, newSheetRows, sheetPayload, sheetRows } from './sheetMapping';
+import { adaptToDocument, adaptToSheet, cellLabelSuggestions, newSheetRows, sheetPayload, sheetRows } from './sheetMapping';
 import { readAllWith, withMode } from './FieldMappingList';
 
 const api = vi.hoisted(() => ({
@@ -60,6 +60,42 @@ describe('Sheet mapping with the document field mapping', () => {
     api.listMappingPresets.mockResolvedValue([]);
     api.lastUsedMapping.mockResolvedValue(null);
     api.previewSheetFields.mockResolvedValue({ rows: [], ai: { aiRows: 0, aiCalls: 0, aiSkippedRows: 0, aiFailedRows: 0 } });
+  });
+
+  it('switches a mapping to another spreadsheet in place: same sheet name, its fields fitted to the new columns', async () => {
+    const onSaved = vi.fn();
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    // The other file names its key column differently; the field still reads the column named like it.
+    api.profileSourceAsset.mockResolvedValue({ ...profile, sheets: [{ name: 'Other', rowCount: 1, fieldCount: 1 }, { name: 'Message', rowCount: 3, fieldCount: 2 }],
+      fields: [{ name: 'id', type: 'text', sample: 'X', populatedRatio: 1, uniqueRatio: 1 }, { name: 'corps', type: 'text', sample: BODY, populatedRatio: 1, uniqueRatio: 1 }] });
+    const switched: SourceMappingTarget = { workspaceId: 'workspace-1', documentId: 'document-2', documentName: 'mails3.xlsx', assetKind: 'excel_sheet', conceptId: 'concept-1', replaces: mapping };
+    render(<QueryClientProvider client={client}><SourceMappingDrawer modelId='model-1' target={switched} onClose={vi.fn()} onSaved={onSaved} /></QueryClientProvider>);
+    expect(await screen.findByText('mapping.switch.title')).toBeInTheDocument();
+    await screen.findByText('Référence', { selector: 'span.truncate' });
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.save' }));
+    await waitFor(() => expect(api.createSourceMapping).toHaveBeenCalled());
+    expect(api.createSourceMapping.mock.calls[0][1]).toEqual(expect.objectContaining({
+      mappingId: 'mapping-1', documentId: 'document-2', sheetName: 'Message', identityFields: ['id'],
+      fieldMappings: [{ sourceField: 'id', targetAttribute: 'id', mode: 'direct' }],
+    }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+  });
+
+  it('moves a sheet mapping to documents: columns read out of the document, recipes on columns start again, fixed values stay', () => {
+    const recipe = { input: { kind: 'column' as const, name: 'a' }, method: 'whole' as const, transform: 'none' as const };
+    const saved: SourceFieldMapping[] = [
+      { sourceField: 'message_id', targetAttribute: 'id', mode: 'direct' },
+      { sourceField: 'corps', targetAttribute: 'reference', mode: 'extract', extractionStrategy: 'ai', semanticDefinition: 'the order number' },
+      { sourceField: null, targetAttribute: 'joined', mode: 'computed', computed: recipe },
+      { sourceField: null, targetAttribute: 'kind', mode: 'constant', constantValue: 'mail' },
+    ];
+    expect(adaptToDocument(saved, [{ key: 'id' }, { key: 'reference' }, { key: 'joined' }, { key: 'kind' }, { key: 'unread' }])).toEqual([
+      { sourceField: null, targetAttribute: 'id', mode: 'extract', extractionStrategy: 'deterministic' },
+      { sourceField: null, targetAttribute: 'reference', mode: 'extract', extractionStrategy: 'ai', semanticDefinition: 'the order number' },
+      { sourceField: null, targetAttribute: 'joined', mode: 'extract', extractionStrategy: 'deterministic' },
+      { sourceField: null, targetAttribute: 'kind', mode: 'constant', constantValue: 'mail' },
+      { sourceField: null, targetAttribute: 'unread', mode: 'ignore' },
+    ]);
   });
 
   it('saves an old mapping exactly as it was, and refreshes the data preview', async () => {

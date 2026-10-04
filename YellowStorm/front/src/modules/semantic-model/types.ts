@@ -734,6 +734,8 @@ export interface SourceMappingDraft {
   fieldMappings: SourceFieldMapping[];
   identityFields: string[];
   aiSettings?: Partial<AiExtractionSettings>;
+  /** Point this existing mapping at the file instead of adding one. */
+  mappingId?: string;
 }
 
 /** Labels and section headings that recur across a few documents of a source. */

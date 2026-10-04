@@ -31,6 +31,7 @@ import { computedPayload, computedProblem } from './FieldRecipeEditor';
 import { FieldMappingList, readAllWith, recipeInputs } from './FieldMappingList';
 import { isReadableDocument, WorkspaceFilePicker, type WorkspacePick } from './WorkspaceFilePicker';
 import { MappingPresetBar } from './MappingPresetBar';
+import { adaptToDocument } from './sheetMapping';
 import { FORM_SECTION, FormField, INPUT, ROW_LIST, SectionHeader } from '../form/FormParts';
 
 type PreviewItem = { asset: StructuredSourceAsset; result: SourceMappingPreviewResponse };
@@ -41,7 +42,7 @@ const VIEWER_DOCUMENTS = 15;
 const MAX_SAMPLE_FOLDERS = 12;
 const LABEL_DOCUMENTS = 10;
 
-export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readonly<{ modelId: string; target: SourceMappingTarget | null; onClose: () => void }>) {
+export function DocumentSourceMappingDrawer({ modelId, target, onClose, onSaved }: Readonly<{ modelId: string; target: SourceMappingTarget | null; onClose: () => void; onSaved?: () => void }>) {
   const { t } = useModuleTranslation('semantic-model');
   const client = useQueryClient();
   const graph = useSemanticModelEditorStore((state) => state.graph);
@@ -84,7 +85,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
       documentIds: target.mapping.selection?.documentIds ?? [],
     }
     : undefined);
-  const editingWorkspaceMapping = target?.mapping?.scope === 'workspace' ? target.mapping.id : undefined;
+  const editingWorkspaceMapping = target?.mapping?.scope === 'workspace' ? target.mapping.id : target?.workspace ? target.replaces?.id : undefined;
   // Every file, or only what is picked in the workspace tree.
   const [coverage, setCoverage] = useState<{ whole: boolean; pick: WorkspacePick }>({ whole: true, pick: { folderIds: [], documentIds: [] } });
   const pickCount = coverage.pick.folderIds.length + coverage.pick.documentIds.length;
@@ -121,25 +122,29 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
 
   useEffect(() => {
     if (!target) return;
-    const nextConceptId = target.mapping?.conceptId ?? target.conceptId ?? '';
+    const replaced = target.replaces;
+    const nextConceptId = target.mapping?.conceptId ?? replaced?.conceptId ?? target.conceptId ?? '';
     const nextConcept = graph?.nodes.find((node) => node.id === nextConceptId);
     setConceptId(nextConceptId);
     const attributes = nextConcept?.attributes ?? [];
-    const rows = target.mapping ? withConceptFields(target.mapping.fieldMappings, attributes) : { mappings: attributes.map((attribute) => newDocumentField(attribute.key)), added: [] };
+    // A mapping switched here keeps how its fields were read; what read a sheet's columns now reads the documents.
+    const rows = target.mapping ? withConceptFields(target.mapping.fieldMappings, attributes)
+      : replaced ? { mappings: replaced.assetKind === 'document' ? withConceptFields(replaced.fieldMappings, attributes).mappings : adaptToDocument(replaced.fieldMappings, attributes), added: [] }
+        : { mappings: attributes.map((attribute) => newDocumentField(attribute.key)), added: [] };
     setMappings(rows.mappings);
     setAddedFields(rows.added);
     rowsBuiltFor.current = `${nextConceptId}:${attributes.map((attribute) => attribute.key).join('|')}`;
-    setIdentityFields(target.mapping?.identityFields ?? sourceMappings.find((mapping) => mapping.conceptId === nextConceptId)?.identityFields ?? []);
+    setIdentityFields(target.mapping?.identityFields ?? replaced?.identityFields ?? sourceMappings.find((mapping) => mapping.conceptId === nextConceptId)?.identityFields ?? []);
     setSelectedDocuments(new Set([target.documentId, ...(target.bulkEdit ? sourceMappings.filter((mapping) => mapping.conceptId === nextConceptId && mapping.assetKind === 'document').map((mapping) => mapping.documentId) : [])]));
     setDocumentSearch('');
     setSavedCount(0);
-    setAiSettings({ ...target.mapping?.aiSettings });
+    setAiSettings({ ...(target.mapping ?? replaced)?.aiSettings });
     setFieldSamples(undefined);
     const startPick = { folderIds: [...(workspace?.folderIds ?? []), ...(workspace?.folderId ? [workspace.folderId] : [])], documentIds: workspace?.documentIds ?? [] };
     setCoverage({ whole: !startPick.folderIds.length && !startPick.documentIds.length, pick: startPick });
     preview.reset();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target?.documentId, target?.mapping?.id, graph?.versionId, sourceMappings.length]);
+  }, [target?.documentId, target?.mapping?.id, target?.replaces?.id, graph?.versionId, sourceMappings.length]);
   useEffect(() => { saveWorkspace.reset(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [target?.documentId]);
   const conceptFields = concept ? `${concept.id}:${concept.attributes.map((attribute) => attribute.key).join('|')}` : '';
   useEffect(() => {
@@ -214,6 +219,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
     }),
     onSuccess: async (result) => {
       useSemanticModelEditorStore.getState().adoptRevision(result.revision);
+      onSaved?.();
       await Promise.all([
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.sourceMappings(modelId) }),
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.mappingHealth(modelId) }),
@@ -230,19 +236,25 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
   const save = useMutation({
     mutationFn: async () => {
       setSavedCount(0);
-      if (selectedAssets.length === 1) return (await semanticModelApi.createSourceMapping(modelId, {
-        conceptId,
-        workspaceId: selectedAssets[0].workspaceId,
-        documentId: selectedAssets[0].documentId,
-        sheetName: '',
-        assetKind: 'document',
-        fieldMappings: savedMappings,
-        identityFields,
-        aiSettings,
-      })).revision;
       let revision: number | undefined;
-      for (let start = 0; start < selectedAssets.length; start += 50) {
-        const batch = selectedAssets.slice(start, start + 50);
+      let rest = selectedAssets;
+      // One document, or the first of them when a mapping is switched here: that mapping now reads it.
+      if (selectedAssets.length === 1 || target?.replaces) {
+        revision = (await semanticModelApi.createSourceMapping(modelId, {
+          conceptId,
+          workspaceId: selectedAssets[0].workspaceId,
+          documentId: selectedAssets[0].documentId,
+          sheetName: '',
+          assetKind: 'document',
+          fieldMappings: savedMappings,
+          identityFields,
+          aiSettings,
+          ...(target?.replaces ? { mappingId: target.replaces.id } : {}),
+        })).revision;
+        rest = selectedAssets.slice(1);
+      }
+      for (let start = 0; start < rest.length; start += 50) {
+        const batch = rest.slice(start, start + 50);
         try {
           revision = (await semanticModelApi.createBulkDocumentSourceMappings(modelId, {
             conceptId,
@@ -252,10 +264,11 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
             aiSettings,
           })).revision;
         } catch (error) {
-          if (start) throw new Error(t('dataWorkflow.partialSaved', { count: start }), { cause: error });
+          const done = start + selectedAssets.length - rest.length;
+          if (done) throw new Error(t('dataWorkflow.partialSaved', { count: done }), { cause: error });
           throw error;
         }
-        setSavedCount(start + batch.length);
+        setSavedCount(start + batch.length + selectedAssets.length - rest.length);
       }
       return revision;
     },
@@ -270,6 +283,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
         client.invalidateQueries({ queryKey: ['semantic-models', 'data-preview', modelId] }),
       ]);
       showSuccess(t('mapping.documentSaved', { count: selectedAssets.length }));
+      onSaved?.();
       onClose();
     },
     onError: (error) => {
@@ -405,8 +419,8 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
           onClick={() => savePrefs({ collapsed: !prefs.collapsed })}>
           {prefs.collapsed ? <PanelLeftOpen className='h-4 w-4' /> : <PanelLeftClose className='h-4 w-4' />}
         </Button>}
-        <SheetTitle>{workspace ? t('mapping.workspaceTitle', { name: workspace.workspaceName ?? workspace.name }) : target.bulkEdit ? t('dataWorkflow.bulkTitle') : target.mapping ? t('mapping.editDocumentTitle') : t('mapping.documentTitle', { name: target.documentName })}</SheetTitle>
-        <SheetDescription>{workspace ? t('mapping.workspaceDescription') : target.bulkEdit ? t('dataWorkflow.bulkDescription', { name: target.documentName }) : t('mapping.documentDescription')}</SheetDescription>
+        <SheetTitle>{workspace ? t('mapping.workspaceTitle', { name: workspace.workspaceName ?? workspace.name }) : target.bulkEdit ? t('dataWorkflow.bulkTitle') : target.mapping ? t('mapping.editDocumentTitle') : target.replaces ? t('mapping.switch.title', { name: target.documentName }) : t('mapping.documentTitle', { name: target.documentName })}</SheetTitle>
+        <SheetDescription>{target.replaces ? t('mapping.switch.description', { name: target.replaces.documentName ?? target.replaces.documentId }) : workspace ? t('mapping.workspaceDescription') : target.bulkEdit ? t('dataWorkflow.bulkDescription', { name: target.documentName }) : t('mapping.documentDescription')}</SheetDescription>
       </SheetHeader>
       {narrow && <Tabs value={narrowTab} onValueChange={(value) => setNarrowTab(value as 'document' | 'fields')} className='border-b px-4 py-2'>
         <TabsList className='w-full'>
@@ -431,7 +445,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
           {live.result?.warnings.map((warning) => <p key={warning} className='flex gap-1.5 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400'><AlertTriangle className='h-3.5 w-3.5 shrink-0' />{warning}</p>)}
         </div>}
         <FormField label={t('mapping.concept')}>
-          <Select value={conceptId} disabled={Boolean(target.mapping)} onValueChange={(value) => {
+          <Select value={conceptId} disabled={Boolean(target.mapping || target.replaces)} onValueChange={(value) => {
             setConceptId(value);
             const next = graph?.nodes.find((node) => node.id === value);
             setMappings((next?.attributes ?? []).map((attribute) => newDocumentField(attribute.key)));

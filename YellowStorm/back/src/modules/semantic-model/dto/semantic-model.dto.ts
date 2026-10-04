@@ -758,6 +758,11 @@ export class CreateSourceMappingDto {
   @MaxLength(200)
   sheetName?: string;
 
+  @ApiPropertyOptional({ description: 'Point this existing mapping at the file (and sheet) instead of adding a mapping' })
+  @IsOptional()
+  @IsUUID()
+  mappingId?: string;
+
   @ApiPropertyOptional({ enum: ['excel_sheet', 'csv', 'document'] })
   @IsOptional()
   @IsIn(['excel_sheet', 'csv', 'document'])
@@ -1073,7 +1078,7 @@ export class WorkspaceSourceMappingDto {
   @MaxLength(200, { each: true })
   documentIds?: string[];
 
-  @ApiPropertyOptional({ description: 'Change what an existing workspace mapping covers instead of adding one' })
+  @ApiPropertyOptional({ description: 'Change what an existing mapping reads (another workspace, or a file or sheet before) instead of adding one' })
   @IsOptional()
   @IsUUID()
   mappingId?: string;

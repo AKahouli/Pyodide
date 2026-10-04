@@ -50,8 +50,8 @@ export function foundSpans(readings: Record<string, DocumentFieldReading> | unde
  * concept field is read from a column as it is, or out of the column's cell text with the document rules
  * and/or AI, or taken from a column or another field, or fixed. Picked sample rows are read as a run would.
  */
-export function SheetSourceMappingDrawer({ modelId, target, onClose, onSuggestConcepts }: Readonly<{
-  modelId: string; target: SourceMappingTarget | null; onClose: () => void; onSuggestConcepts?: (source: SuggestionSource) => void;
+export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, onSuggestConcepts }: Readonly<{
+  modelId: string; target: SourceMappingTarget | null; onClose: () => void; onSaved?: () => void; onSuggestConcepts?: (source: SuggestionSource) => void;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
   const client = useQueryClient();
@@ -70,7 +70,7 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSuggestCo
 
   useEffect(() => {
     if (!target) return;
-    setConceptId(target.mapping?.conceptId ?? target.conceptId ?? '');
+    setConceptId(target.mapping?.conceptId ?? target.replaces?.conceptId ?? target.conceptId ?? '');
     setSheetName(target.mapping?.sheetName ?? '');
     setMappings([]);
     setIdentityField(target.mapping?.identityFields[0] ?? '');
@@ -80,7 +80,7 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSuggestCo
     setHighlight(null);
     preview.reset();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target?.workspaceId, target?.documentId, target?.mapping?.id]);
+  }, [target?.workspaceId, target?.documentId, target?.mapping?.id, target?.replaces?.id]);
 
   const defaultsQuery = useQuery({
     queryKey: ['semantic-models', 'extraction-defaults'],
@@ -110,6 +110,15 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSuggestCo
   }, [unread, readKey]);
   const reading = profile.isLoading || analyze.isPending;
 
+  // A mapping switched to this file reads the sheet named like the one it read, or its only sheet.
+  const sheetNames = (profile.data?.sheets ?? []).map((sheet) => sheet.name);
+  useEffect(() => {
+    if (!target?.replaces || target.mapping || sheetName || !sheetNames.length) return;
+    const same = sheetNames.find((name) => name === target.replaces?.sheetName);
+    if (same || sheetNames.length === 1) setSheetName(same ?? sheetNames[0]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sheetNames.join('|'), target?.replaces?.id]);
+
   const fields = useMemo(() => sheetName ? profile.data?.fields ?? [] : [], [sheetName, profile.data]);
   const columns = useMemo(() => fields.map((field) => field.name), [fields]);
   const columnSamples = useMemo(() => Object.fromEntries(fields.map((field) => [field.name, field.sample])), [fields]);
@@ -119,11 +128,19 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSuggestCo
   const savedOrder = useMemo(() => (target?.mapping?.fieldMappings ?? []).filter((mapping) => mapping.mode !== 'ignore').map((mapping) => mapping.targetAttribute), [target?.mapping]);
 
   // One row per concept field: a saved mapping's rows as saved, a new one's from the columns named like the fields.
-  const buildKey = `${target?.mapping?.id ?? 'new'}|${conceptId}|${sheetName}|${attributes.map((attribute) => attribute.key).join(',')}|${target?.mapping ? '' : columns.join('|')}`;
+  const buildKey = `${target?.mapping?.id ?? target?.replaces?.id ?? 'new'}|${conceptId}|${sheetName}|${attributes.map((attribute) => attribute.key).join(',')}|${target?.mapping ? '' : columns.join('|')}`;
   useEffect(() => {
     if (!target || !conceptId || !sheetName) return;
     if (target.mapping) { setMappings(sheetRows(target.mapping.fieldMappings, attributes)); return; }
     if (!columns.length) return;
+    const replaced = target.replaces;
+    if (replaced) {
+      // The fields keep how they were read, each with a column of this sheet (its own, or the one named like it).
+      setMappings(adaptToSheet(replaced.fieldMappings, newSheetRows(attributes, columns), attributes, columns));
+      setIdentityField(replaced.identityFields[0] ?? '');
+      setAiSettings({ ...replaced.aiSettings });
+      return;
+    }
     const rows = newSheetRows(attributes, columns);
     setMappings(rows);
     const existing = sourceMappings.find((mapping) => mapping.conceptId === conceptId)?.identityFields[0];
@@ -232,6 +249,7 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSuggestCo
       conceptId, workspaceId: target!.workspaceId, documentId: target!.documentId, sheetName, assetKind: target!.assetKind,
       fieldMappings: payload, identityFields: identityField ? [identityField] : [],
       ...(usesAi ? { aiSettings } : {}),
+      ...(target!.replaces ? { mappingId: target!.replaces.id } : {}),
     }),
     onSuccess: async (result) => {
       // The mapping command advanced the model revision; adopt it so the next autosave does not conflict.
@@ -245,6 +263,7 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSuggestCo
         client.invalidateQueries({ queryKey: ['semantic-models', 'data-preview', modelId] }),
       ]);
       showSuccess(t('mapping.saved', { name: target!.documentName }));
+      onSaved?.();
       onClose();
     },
     onError: (error) => showError(t('mapping.saveError'), { description: error instanceof Error ? error.message : undefined }),
@@ -265,16 +284,16 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSuggestCo
   return <Sheet modal={false} open={Boolean(target)} onOpenChange={(open) => { if (!open) onClose(); }}>
     {target && <SheetContent side='right' className='flex w-full flex-col gap-0 p-0 sm:max-w-3xl' onInteractOutside={(event) => event.preventDefault()}>
       <SheetHeader className='border-b p-5'>
-        <SheetTitle>{target.mapping ? t('mapping.editTitle') : t('mapping.title', { name: target.documentName })}</SheetTitle>
-        <SheetDescription>{t('mapping.description')}</SheetDescription>
-        {onSuggestConcepts && !target.mapping && (target.assetKind === 'excel_sheet' || target.assetKind === 'csv') && <Button size='sm' variant='outline' className='mt-2 w-fit'
+        <SheetTitle>{target.mapping ? t('mapping.editTitle') : target.replaces ? t('mapping.switch.title', { name: target.documentName }) : t('mapping.title', { name: target.documentName })}</SheetTitle>
+        <SheetDescription>{target.replaces ? t('mapping.switch.description', { name: target.replaces.documentName ?? target.replaces.documentId }) : t('mapping.description')}</SheetDescription>
+        {onSuggestConcepts && !target.mapping && !target.replaces && (target.assetKind === 'excel_sheet' || target.assetKind === 'csv') && <Button size='sm' variant='outline' className='mt-2 w-fit'
           onClick={() => onSuggestConcepts({ workspaceId: target.workspaceId, documentId: target.documentId, documentName: target.documentName, assetKind: target.assetKind as SuggestionSource['assetKind'] })}>
           <Sparkles className='mr-2 h-4 w-4' />{t('suggest.openFromFile')}</Button>}
       </SheetHeader>
       <div className='min-h-0 flex-1 space-y-6 overflow-y-auto p-5'>
         <div className='grid gap-4 sm:grid-cols-2'>
           <FormField label={t('mapping.concept')}>
-            <Select value={conceptId} disabled={Boolean(target.mapping)} onValueChange={(value) => {
+            <Select value={conceptId} disabled={Boolean(target.mapping || target.replaces)} onValueChange={(value) => {
               setConceptId(value); setMappings([]);
               setIdentityField(sourceMappings.find((mapping) => mapping.conceptId === value)?.identityFields[0] ?? ''); preview.reset();
             }}>

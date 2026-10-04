@@ -161,6 +161,12 @@ export function SemanticModelEditorPage() {
   const [checking, setChecking] = useState(false);
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const [knowledgeTargetId, setKnowledgeTargetId] = useState<string | null>(null);
+  // Switching a source: the knowledge list picks the new one, then each of its mappings opens in turn on it.
+  const [switching, setSwitching] = useState<{ label: string; mappings: ConceptSourceMapping[] } | null>(null);
+  const switchQueue = useRef<{ base: SourceMappingTarget; rest: ConceptSourceMapping[]; switched: string[] } | null>(null);
+  const nextSwitch = useRef<SourceMappingTarget | null>(null);
+  // The knowledge list closed some other way (another concept picked): it no longer picks a source to switch to.
+  useEffect(() => { if (!knowledgeOpen) setSwitching(null); }, [knowledgeOpen]);
   // The concept whose records are shown in the table under the canvas.
   const [recordsConceptId, setRecordsConceptId] = useState<string | null>(null);
   const [leaveOpen, setLeaveOpen] = useState(false);
@@ -590,6 +596,56 @@ export function SemanticModelEditorPage() {
     setGraphViewerOpen(true);
   };
   const openVersions = () => { setKnowledgeOpen(false); setTrustOpen(false); setPopulation(null); setSuggestionsOpen(false); setMappingTarget(null); setVersionsOpen(true); };
+  const startSwitch = (source: DesignerSource) => {
+    if (!source.mappings.length) return;
+    setTrustOpen(false); setVersionsOpen(false); setPopulation(null); setSuggestionsOpen(false); setMappingTarget(null);
+    setSwitching({ label: source.label, mappings: source.mappings });
+    openKnowledge(source.mappings[0].conceptId);
+  };
+  const switchTo = (picked: SourceMappingTarget) => {
+    if (!switching) return;
+    const [first, ...rest] = switching.mappings;
+    const base = { ...picked, conceptId: undefined };
+    switchQueue.current = { base, rest, switched: [] };
+    setSwitching(null);
+    closeKnowledge();
+    void openMappingTarget({ ...base, conceptId: first.conceptId, replaces: first });
+  };
+  const readSwitched = async (mappingIds: string[]) => {
+    if (!modelId) return;
+    try {
+      const run = await semanticModelApi.requestPopulationRefresh(modelId, {
+        purpose: 'refresh', scope: mappingIds.length === 1 ? { kind: 'mapping', mappingId: mappingIds[0] } : { kind: 'model' },
+      });
+      setPopulationJobId(run.jobId);
+    } catch (error) {
+      showError(t('mapping.switch.readError'), { description: parseApiError(error).message });
+    }
+  };
+  const mappingSaved = () => {
+    const queue = switchQueue.current;
+    const replaced = mappingTarget?.replaces;
+    if (!queue || !replaced) return;
+    queue.switched.push(replaced.id);
+    const [next, ...rest] = queue.rest;
+    if (next) {
+      nextSwitch.current = { ...queue.base, conceptId: next.conceptId, replaces: next };
+      queue.rest = rest;
+      return;
+    }
+    switchQueue.current = null;
+    const switched = queue.switched;
+    showSuccess(t('mapping.switch.done', { name: queue.base.documentName, count: switched.length }), {
+      duration: 12000, action: { label: t('mapping.switch.readNow'), onClick: () => void readSwitched(switched) },
+    });
+  };
+  const mappingClosed = () => {
+    const next = nextSwitch.current;
+    nextSwitch.current = null;
+    // Closed without saving: the mappings not switched yet stay on their source.
+    if (!next) switchQueue.current = null;
+    setMappingTarget(next);
+  };
   const closeSidePanels = () => { setTrustOpen(false); setVersionsOpen(false); setPopulation(null); setSuggestionsOpen(false); };
   const openReview = () => { setKnowledgeOpen(false); setPopulation(null); setVersionsOpen(false); setSuggestionsOpen(false); setMappingTarget(null); setTrustOpen(true); };
   // A review list that names the field only by its label ("customer id") still leads to the right field.
@@ -767,6 +823,7 @@ export function SemanticModelEditorPage() {
             onPaneDrop={dropOnCanvas}
             onPaneClick={() => { closeSidePanels(); if (knowledgeOpen) closeKnowledge(); setMappingTarget(null); setDerivedTarget(null); }}
             onRemoveSource={(source, mapping) => void removeSource(source.label, mapping ? [mapping] : source.mappings)}
+            onSwitchSource={canEdit ? startSwitch : undefined}
             onAddFeed={(source) => { const first = source.mappings[0]; if (first) void openMappingTarget({ ...mappingTarget_(first), mapping: undefined, conceptId: undefined }); }}
             onToggleKey={canEdit ? toggleKey : undefined}
             sourcePositions={sourcePositions}
@@ -854,9 +911,9 @@ export function SemanticModelEditorPage() {
             void model.refetch();
           }}
         />}
-        {(knowledgeOpen || (onCanvas && detailsOpen)) && !trustOpen && !population && !suggestionsOpen && !versionsOpen && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} onBrowseRecords={browseRecords} recordCounts={conceptRecordCounts} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={closeKnowledge} onMapData={(target) => void openMappingTarget(target)} onDeriveData={openDerived} onAddSource={(conceptId) => { closeSidePanels(); openKnowledge(conceptId); }} />}
+        {(knowledgeOpen || (onCanvas && detailsOpen)) && !trustOpen && !population && !suggestionsOpen && !versionsOpen && <SemanticModelInspector modelId={modelId!} canEdit={canEdit} onBrowseRecords={browseRecords} recordCounts={conceptRecordCounts} knowledge={knowledge} knowledgeOpen={knowledgeOpen} knowledgeTargetId={knowledgeTargetId} onKnowledgeClose={() => { setSwitching(null); closeKnowledge(); }} switching={switching ? { label: switching.label, count: switching.mappings.length } : undefined} onMapData={(target) => { if (switching) switchTo(target); else void openMappingTarget(target); }} onDeriveData={openDerived} onAddSource={(conceptId) => { closeSidePanels(); openKnowledge(conceptId); }} />}
         {modelId && <DerivedSourceDrawer modelId={modelId} target={derivedTarget} onClose={() => setDerivedTarget(null)} />}
-        {modelId && <SourceMappingDrawer modelId={modelId} target={mappingTarget} onClose={() => setMappingTarget(null)} onSuggestConcepts={canEdit ? (source) => { setMappingTarget(null); setSuggestSource(source); } : undefined} />}
+        {modelId && <SourceMappingDrawer modelId={modelId} target={mappingTarget} onClose={mappingClosed} onSaved={mappingSaved} onSuggestConcepts={canEdit ? (source) => { setMappingTarget(null); setSuggestSource(source); } : undefined} />}
       </main>
       <AddConceptDialog open={conceptOpen} onOpenChange={setConceptOpen} />
       {modelId && canEdit && <SuggestConceptsDialog modelId={modelId} open={suggestSource !== null} onOpenChange={(open) => { if (!open) setSuggestSource(null); }} source={suggestSource === 'pick' ? null : suggestSource} />}

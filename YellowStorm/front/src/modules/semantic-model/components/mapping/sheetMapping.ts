@@ -77,6 +77,25 @@ export function adaptToSheet(applied: SourceFieldMapping[], current: SourceField
   });
 }
 
+/**
+ * A mapping (often a sheet one) moved to documents: what was read from a column is read out of the document
+ * instead, keeping its rules and AI; a recipe that read columns starts again as a new document field; fixed
+ * values stay. Fields that were left out stay left out.
+ */
+export function adaptToDocument(saved: SourceFieldMapping[], attributes: readonly Attribute[]): SourceFieldMapping[] {
+  const byKey = new Map(saved.map((mapping) => [mapping.targetAttribute, mapping]));
+  return attributes.map((attribute): SourceFieldMapping => {
+    const mapping = byKey.get(attribute.key);
+    if (!mapping || mapping.mode === 'ignore') return { sourceField: null, targetAttribute: attribute.key, mode: 'ignore' };
+    if (mapping.mode === 'direct') return { sourceField: null, targetAttribute: attribute.key, mode: 'extract', extractionStrategy: 'deterministic' };
+    if (mapping.mode === 'extract') return { ...mapping, sourceField: null, extractionStrategy: mapping.extractionStrategy ?? 'deterministic' };
+    if (mapping.mode === 'computed' && recipeRefs(mapping.computed?.input).some((ref) => ref.kind === 'column')) {
+      return { sourceField: null, targetAttribute: attribute.key, mode: 'extract', extractionStrategy: 'deterministic' };
+    }
+    return mapping;
+  });
+}
+
 /** A sample cell as text, as the runtime reads it. */
 export function cellValue(value: unknown): string | number | boolean | null {
   if (value === null || value === undefined) return null;
