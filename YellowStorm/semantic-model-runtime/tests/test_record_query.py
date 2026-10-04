@@ -11,7 +11,8 @@ import pytest
 
 from app.graph_search.record_query import (MAX_BUCKETS, compile_query, groups_sql, records_sql, resolve_date,
                                            stats_sql)
-from app.graph_search.typed_values import parse_boolean, parse_number, typed_value_sql
+from app.graph_search.retrieval import resolve_concepts
+from app.graph_search.typed_values import near_match, parse_boolean, parse_number, typed_value_sql
 
 NOW = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc)  # a Saturday
 COMPILED = {
@@ -148,6 +149,26 @@ def test_an_unknown_concept_lists_the_concepts() -> None:
     assert errors[0]["available"] == ["Invoice", "Customer"]
 
 
+def test_a_near_miss_names_the_concept_or_field_it_most_likely_means() -> None:
+    for name in ("Invoices", "invoces", "Bills"):
+        plan, errors, applied = compile_({"concept": name, "filters": [{"field": "Amounts", "op": "gt", "value": 1}]})
+        assert plan is not None and errors == [], (name, errors)
+        assert applied["concept"]["key"] == "invoice"
+        assert applied["filters"][0]["field"] == "amount"
+    assert compile_({"concept": "CUSTOMERS"})[2]["concept"]["key"] == "customer"
+    _, _, applied = compile_({"concept": "Invoices", "filters": [{"field": "Issue_date", "op": "eq", "value": "2026"}]})
+    assert applied["concept"]["key"] == "invoice"
+    found, unknown = resolve_concepts(COMPILED, ["Customers", "invoice", "Supplier"])
+    assert [item["key"] for item in found] == ["customer", "invoice"] and unknown == ["Supplier"]
+
+
+def test_near_match_refuses_far_or_tied_names() -> None:
+    named = {"amount ht": "ht", "amount ttc": "ttc", "status": "s"}
+    assert near_match("statuses", named) == "s"
+    assert near_match("amount", named) is None  # as close to both
+    assert near_match("country", named) is None
+
+
 def test_as_reads_a_text_field_with_another_type() -> None:
     plan, errors, applied = compile_({"concept": "Invoice", "filters": [
         {"field": "notes", "op": "gte", "value": "2026-01-01", "as": "date"}]})
@@ -222,6 +243,11 @@ def test_fields_returned_are_the_allowed_fields_in_model_order() -> None:
     ("12,5 %", Decimal("12.5")), ("1.234,56", Decimal("1234.56")), ("1,234.56", Decimal("1234.56")),
     ("1,234,567", Decimal("1234567")), ("-3.5", Decimal("-3.5")), (7, Decimal("7")),
     ("abc", None), ("", None), (True, None),
+    ("1,5 M€", Decimal("1500000")), ("1,250 M€", Decimal("1250000")), ("10 k€", Decimal("10000")),
+    ("10k", Decimal("10000")), ("2 millions d'euros", Decimal("2000000")), ("3 Mds €", Decimal("3000000000")),
+    ("1,2 milliard", Decimal("1200000000")), ("12 m", Decimal("12")), ("5 kg", Decimal("5")),
+    ("1,500", Decimal("1500")), ("1.500 €", Decimal("1500")), ("0,500", Decimal("0.5")), ("12,50", Decimal("12.5")),
+    ("12a34", None),
 ])
 def test_numbers_read_like_stored_values(text, expected) -> None:  # type: ignore[no-untyped-def]
     assert parse_number(text) == expected

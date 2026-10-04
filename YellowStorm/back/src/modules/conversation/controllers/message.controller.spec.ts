@@ -34,6 +34,7 @@ describe('MessageController.sendMessage sticky routing', () => {
     ensureSystemWorkspace: jest.Mock;
     assertPlatformCopilotAgent: jest.Mock;
     resolvePlatformCopilotAgent: jest.Mock;
+    findPlatformCopilotAgentId: jest.Mock;
   };
   let modelsService: { validateModelActive: jest.Mock };
   let teamService: { resolveAgentIds: jest.Mock };
@@ -101,6 +102,7 @@ describe('MessageController.sendMessage sticky routing', () => {
       ensureSystemWorkspace: jest.fn().mockResolvedValue(undefined),
       assertPlatformCopilotAgent: jest.fn().mockResolvedValue(stickyAgentId),
       resolvePlatformCopilotAgent: jest.fn().mockResolvedValue(stickyAgentId),
+      findPlatformCopilotAgentId: jest.fn().mockResolvedValue(null),
     };
     modelsService = { validateModelActive: jest.fn() };
     teamService = { resolveAgentIds: jest.fn().mockResolvedValue([]) };
@@ -561,6 +563,40 @@ describe('MessageController.sendMessage sticky routing', () => {
       'Ada Lovelace',
       undefined,
       expect.objectContaining({ requestId: 'req-1' }),
+    );
+  });
+
+  it('has Yellowmind answer a turn on a semantic model, keeping the sticky agents and dropping the picked effort', async () => {
+    const semanticModelId = '17b75421-e6c3-47b6-b220-4583d01fbd02';
+    conversationService.getConversationDocument.mockResolvedValue({ isFirstMessage: false, taggedAgentIds: [stickyAgentId] });
+    conversationService.findPlatformCopilotAgentId.mockResolvedValue('yellowmind-agent');
+    modelsService.validateModelActive.mockResolvedValue({ valid: true });
+    (modelsService as any).findById = jest.fn().mockResolvedValue({ isActive: true, supportsReasoning: true, reasoning: { efforts: [{ id: 'high' }] } });
+
+    await controller.sendMessage(user, conversationId,
+      { content: 'question', semanticModelId, agentIds: ['other-agent'], modelId: 'model-x', reasoningEffort: 'high' } as any);
+
+    expect(streamService.startStream).toHaveBeenCalledWith(
+      userId.toString(), conversationId, expect.any(String),
+      expect.objectContaining({ semanticModelId, agentIds: ['yellowmind-agent'] }),
+      'req-1', undefined, 'Ada Lovelace', undefined, expect.objectContaining({ requestId: 'req-1' }),
+    );
+    const request = streamService.startStream.mock.calls[0][3];
+    expect(request.reasoningEffort).toBeUndefined();
+    expect(conversationService.replaceTaggedAgentIds).not.toHaveBeenCalled();
+  });
+
+  it('lets the picked agent answer a turn on a semantic model when Yellowmind is turned off', async () => {
+    const semanticModelId = '17b75421-e6c3-47b6-b220-4583d01fbd02';
+    conversationService.getConversationDocument.mockResolvedValue({ isFirstMessage: false, taggedAgentIds: [] });
+    conversationService.findPlatformCopilotAgentId.mockResolvedValue(null);
+
+    await controller.sendMessage(user, conversationId, { content: 'question', semanticModelId } as any);
+
+    expect(streamService.startStream).toHaveBeenCalledWith(
+      userId.toString(), conversationId, expect.any(String),
+      expect.objectContaining({ semanticModelId, agentIds: undefined }),
+      'req-1', undefined, 'Ada Lovelace', undefined, expect.objectContaining({ requestId: 'req-1' }),
     );
   });
 

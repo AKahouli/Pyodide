@@ -329,8 +329,21 @@ export class MessageController {
     const stickyAgentIds =
       conversation.taggedAgentIds?.map((id) => id.toString()) ?? [];
     const willRunAi = !dto.memberIds?.length;
+    // A turn on a semantic model is answered by Yellowmind, whose instruction holds how to answer from records; the
+    // agent the user picked answers only when Yellowmind is turned off. The conversation's sticky agents are kept.
+    const semanticModelAgentId = effectiveSemanticModelId && !teamId && willRunAi
+      ? await this.conversationService.findPlatformCopilotAgentId()
+      : null;
+    if (effectiveSemanticModelId && !teamId && willRunAi && !semanticModelAgentId) {
+      this.logger.warn('Yellowmind is unavailable; the selected agent answers the chat on the semantic model', {
+        conversationId,
+        semanticModelId: effectiveSemanticModelId,
+      });
+    }
     const { effectiveAgentIds, shouldReplaceSticky } = teamId
       ? { effectiveAgentIds: [] as string[], shouldReplaceSticky: false }
+      : semanticModelAgentId
+      ? { effectiveAgentIds: [semanticModelAgentId], shouldReplaceSticky: false }
       : resolveStickyAgentRouting({
         mentionedAgentIds,
         stickyAgentIds,
@@ -338,7 +351,8 @@ export class MessageController {
       });
 
     let effectiveReasoningEffort: string | undefined;
-    if (dto.reasoningEffort) {
+    // Yellowmind answers a turn on a semantic model with its own model and effort: the picker's effort does not apply.
+    if (dto.reasoningEffort && !semanticModelAgentId) {
       if (governedRuntime || platformCopilot || !willRunAi || (effectiveAgentIds?.length ?? 0) > 0) {
         throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Reasoning effort is available only for untagged standard model turns.');
       }

@@ -15,6 +15,7 @@ export const semanticModelQueryKeys = {
   derivedSources: (id: string) => ['semantic-models','derived-sources',id] as const,
   relationRules: (id: string) => ['semantic-models','relation-rules',id] as const,
   identityRules: (id: string) => ['semantic-models','identity-rules',id] as const,
+  labelFields: (id: string) => ['semantic-models','label-fields',id] as const,
   sourcePolicies: (id: string) => ['semantic-models','source-policies',id] as const,
   dataPreview: (id: string, limit: number) => ['semantic-models','data-preview',id,limit] as const,
   corrections: (id: string) => ['semantic-models','corrections',id] as const,

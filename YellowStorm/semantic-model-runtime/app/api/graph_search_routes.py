@@ -265,13 +265,46 @@ async def search_records(command: SearchQuery, request: Request) -> dict[str, ob
         concept_ids=[concept["conceptId"] for concept in concepts] or None,
         limit=search_settings.limit(command.limit), allowed_workspaces=command.allowed_workspace_ids,
         generation=generation, profile=profile, settings=search_settings, index_fingerprint=fingerprint)
+    ready = generation is not None and generation["state"] == "ready"
     if found["seeds"]:
         outcome = "found"
-    elif generation is None or generation["state"] != "ready":
+    elif not ready:
         outcome = "index_not_ready"
     else:
         outcome = "no_match"
-    return {**base, **found, "status": outcome}
+    hidden = 0
+    if command.allowed_workspace_ids is not None:
+        # Records the actor may not read are never ranked: say how many were out of reach.
+        try:
+            counts = await overview(pool, model_id=command.model_id, revision_id=revision_id,
+                                    allowed_workspaces=command.allowed_workspace_ids)
+        except (asyncpg.QueryCanceledError, asyncio.TimeoutError):
+            counts = {}
+        scope = {concept["conceptId"] for concept in concepts} or set(counts)
+        hidden = sum(counts[concept_id]["stored"] - counts[concept_id]["visible"]
+                     for concept_id in scope if concept_id in counts)
+    found = {**found, "hiddenRecords": hidden}
+    return {**base, **found, "status": outcome, "notes": search_notes(index, found, ready)}
+
+
+def search_notes(index: dict[str, Any], found: dict[str, Any], ready: bool) -> list[str]:
+    """What makes a search answer incomplete, said plainly for whoever reports it."""
+    notes = []
+    if found.get("hasMore"):
+        notes.append("More records match than were returned: the list is not complete.")
+    if found.get("hiddenRecords"):
+        notes.append(f"{found['hiddenRecords']} record(s) searched here are hidden from this user "
+                     "and were not searched: matches among them are not shown.")
+    if not ready:
+        notes.append("The search index is not ready: only exact key or name matches were searched, "
+                     "so matching records may be missing.")
+    else:
+        expected = index.get("expectedCount") or 0
+        searched = (index.get("indexedCount") or 0) + (index.get("exactOnlyCount") or 0)
+        if expected and searched < expected:
+            notes.append(f"Only {searched} of {expected} records are in the search index: "
+                         "matching records may be missing.")
+    return notes
 
 
 @router.post("/expand", status_code=status.HTTP_200_OK)

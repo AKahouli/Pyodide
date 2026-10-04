@@ -1765,6 +1765,8 @@ export interface McpToolDefinition {
   name: string;
   description?: string;
   inputSchema?: Record<string, unknown>;
+  /** From the tool's MCP annotations; 'read' when the server declares none. */
+  safety?: 'read' | 'write' | 'delete';
 }
 
 export interface McpInspectResult {

@@ -184,7 +184,8 @@ export class SemanticDerivedSourceService {
    * travel only with a derivation that reads a field with AI, so other derivations keep their fingerprint.
    */
   runtimeDerivations(sources: DerivedSource[], nodes: Array<{ id: string; attributes: AttributeDefinition[] }>,
-    sourcedConcepts: Set<string>, identityRules: Map<string, string[]>, aiSettings?: AiExtractionSettings): RuntimeDerivation[] {
+    sourcedConcepts: Set<string>, identityRules: Map<string, string[]>, aiSettings?: AiExtractionSettings,
+    labelFields?: Map<string, string>): RuntimeDerivation[] {
     const fieldsOf = (conceptId: string) => new Set(nodes.find((node) => node.id === conceptId)?.attributes.map((attribute) => attribute.key));
     return sources
       .filter((source) => sourcedConcepts.has(source.sourceConceptId)
@@ -196,7 +197,9 @@ export class SemanticDerivedSourceService {
         const checked = checkDerivedSource(source, fieldsOf(source.sourceConceptId), fieldsOf(source.conceptId), identity);
         const expand = storedExpand(source.expand);
         if (checked.missing.length || !identity.length) return [];
-        const labelField = checked.fieldMappings.find((field) => !identity.includes(field.targetAttribute))?.targetAttribute ?? null;
+        // The field a person chose to name the concept's records; the first copied field otherwise.
+        const labelField = labelFields?.get(source.conceptId)
+          ?? checked.fieldMappings.find((field) => !identity.includes(field.targetAttribute))?.targetAttribute ?? null;
         const attributes = new Map((nodes.find((node) => node.id === source.conceptId)?.attributes ?? []).map((attribute) => [attribute.key, attribute]));
         const usesAi = checked.fieldMappings.some(derivedFieldUsesAi);
         return [{

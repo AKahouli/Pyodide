@@ -1,10 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConflictException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { checkDerivedSource, type DerivedSource } from '../domain/semantic-derived-source.types';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
 import { SemanticBusinessTrustService } from './semantic-business-trust.service';
 import { SemanticModelService } from './semantic-model.service';
+import { SemanticPopulationRefreshService } from './semantic-population-refresh.service';
 import { SemanticRuntimeClientService } from './semantic-runtime-client.service';
 
 /** What a person does to clear an item; each item carries exactly one. */
@@ -19,7 +20,9 @@ export type ReviewQueueAction =
   | { kind: 'check_links'; relationId: string }
   | { kind: 'open_sources'; conceptId: string }
   | { kind: 'review_rows'; conceptId: string }
-  | { kind: 'view_data' };
+  | { kind: 'view_data' }
+  | { kind: 'open_run_history' }
+  | { kind: 'choose_label_field'; conceptId: string };
 
 export type ReviewQueueGroup = 'decisions' | 'sources' | 'identity' | 'links' | 'data';
 
@@ -58,13 +61,14 @@ export class SemanticReviewQueueService {
     private readonly models: SemanticModelService,
     private readonly trust: SemanticBusinessTrustService,
     private readonly runtime: SemanticRuntimeClientService,
+    @Optional() private readonly refresh?: SemanticPopulationRefreshService,
   ) {}
 
   async reviewQueue(userId: string, modelId: string) {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
     const versionId = model.currentDraftVersionId;
-    const [reviews, health, identity, links, gaps, unsourced, unusable, unread, underived] = await Promise.all([
+    const [reviews, health, identity, links, gaps, unsourced, unusable, unread, underived, blockers, lastRun] = await Promise.all([
       this.openReviews(model.id, versionId),
       this.trust.mappingHealth(userId, model.id).catch(() => null),
       this.database.query<{ id: string; label: string }>(
@@ -111,8 +115,18 @@ export class SemanticReviewQueueService {
       ).then((result) => result.rows).catch(() => []),
       this.fieldsNotRead(model.id, versionId),
       this.derivedNotMade(model.id, versionId),
+      this.runBlockers(model.id, versionId),
+      this.lastRunFailed(userId, model.id),
     ]);
-    const items: ReviewQueueItem[] = [...reviews, ...unread, ...underived];
+    const items: ReviewQueueItem[] = [...blockers, ...lastRun, ...reviews, ...unread, ...underived];
+    // Anything else that stops the next run, with the reason it gives, when no item above explains it.
+    if (!blockers.length && this.refresh) {
+      const freshness = await this.refresh.freshness(userId, model.id).catch(() => null);
+      if (freshness?.state === 'not_runnable' && freshness.reason) {
+        items.push({ key: 'run:blocked', group: 'sources', priority: 1, kind: 'run_blocked',
+          params: { reason: freshness.reason }, action: { kind: 'open_run_history' } });
+      }
+    }
     for (const mapping of health?.items ?? []) {
       if (!['changed', 'broken', 'unavailable'].includes(mapping.state)) continue;
       items.push({
@@ -221,6 +235,108 @@ export class SemanticReviewQueueService {
         action: { kind: 'repair_derived' as const, derivedSourceId: row.id, conceptId: row.conceptId },
       }];
     });
+  }
+
+  /**
+   * What stops the next run from starting, each pointing at the place it is fixed: a link whose rule
+   * matches on a field no source fills (or a field removed or renamed since), and unique fields that
+   * are no longer fields of their concept.
+   */
+  private async runBlockers(modelId: string, versionId: string): Promise<ReviewQueueItem[]> {
+    type Attribute = { key: string; label?: string; type?: string };
+    const loaded = await Promise.all([
+      this.database.query<{ id: string; label: string; attributes: Attribute[] }>(
+        'SELECT id::text AS id, label, attributes FROM semantic_model.node_types WHERE model_id=$1 AND version_id=$2',
+        [modelId, versionId]).then((result) => result.rows),
+      this.database.query<{ relationId: string; label: string; sourceId: string; targetId: string; sourceAttribute: string; targetAttribute: string }>(
+        `SELECT r.id::text AS "relationId", r.label, r.source_node_type_id::text AS "sourceId", r.target_node_type_id::text AS "targetId",
+                rule.source_attribute AS "sourceAttribute", rule.target_attribute AS "targetAttribute"
+         FROM semantic_model.relation_resolution_rules rule
+         JOIN semantic_model.relation_types r ON r.id=rule.relation_id AND r.version_id=$2
+         WHERE rule.model_id=$1 ORDER BY r.created_at`,
+        [modelId, versionId]).then((result) => result.rows),
+      // The fields each concept's sources fill: its mapped files and the concepts it is made from.
+      this.database.query<{ conceptId: string; field: string }>(
+        `SELECT m.concept_id::text AS "conceptId", f->>'targetAttribute' AS field
+         FROM semantic_model.source_mappings m, jsonb_array_elements(m.field_mappings) f WHERE m.model_id=$1
+         UNION SELECT d.concept_id::text, f->>'targetAttribute'
+         FROM semantic_model.derived_sources d, jsonb_array_elements(d.field_mappings) f WHERE d.model_id=$1`,
+        [modelId]).then((result) => result.rows),
+      this.database.query<{ conceptId: string; fields: string[] }>(
+        'SELECT concept_id::text AS "conceptId", fields FROM semantic_model.identity_rules WHERE model_id=$1',
+        [modelId]).then((result) => result.rows),
+      this.database.query<{ conceptId: string; field: string }>(
+        'SELECT concept_id::text AS "conceptId", field FROM semantic_model.label_fields WHERE model_id=$1',
+        [modelId]).then((result) => result.rows),
+    ]).catch((error) => {
+      this.logger.debug(`Run blockers not checked for ${modelId}: ${(error as Error).message}`);
+      return null;
+    });
+    if (!loaded) return [];
+    const [nodes, rules, filled, keys, labels] = loaded;
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    const sourced = new Set(filled.map((row) => row.conceptId));
+    const fills = new Set(filled.map((row) => `${row.conceptId}:${row.field}`));
+    const items: ReviewQueueItem[] = [];
+    for (const rule of rules) {
+      const source = byId.get(rule.sourceId);
+      const target = byId.get(rule.targetId);
+      // Only a link between two concepts that both have sources takes part in a run.
+      if (!source || !target || !sourced.has(source.id) || !sourced.has(target.id)) continue;
+      const sides = [{ node: source, field: rule.sourceAttribute }, { node: target, field: rule.targetAttribute }];
+      const base = { relationship: rule.label, source: source.label, target: target.label };
+      const gone = sides.find((side) => !side.node.attributes?.some((attribute) => attribute.key === side.field));
+      const unfilled = sides.find((side) => !fills.has(`${side.node.id}:${side.field}`));
+      const types = sides.map((side) => side.node.attributes?.find((attribute) => attribute.key === side.field)?.type ?? 'text');
+      const label = (side: { node: { attributes: Attribute[] }; field: string }) =>
+        side.node.attributes?.find((attribute) => attribute.key === side.field)?.label || side.field.replaceAll('_', ' ');
+      const issue = gone ? { kind: 'link_field_gone', side: gone }
+        : unfilled ? { kind: 'link_field_not_filled', side: unfilled }
+          : types[0] !== types[1] ? { kind: 'link_fields_differ', side: sides[1] } : null;
+      if (!issue) continue;
+      items.push({
+        key: `run:link:${rule.relationId}`, group: 'links', priority: 1, kind: issue.kind,
+        params: { ...base, concept: issue.side.node.label, field: label(issue.side),
+          sourceField: label(sides[0]), targetField: label(sides[1]), sourceType: types[0], targetType: types[1] },
+        action: { kind: 'set_up_link', relationId: rule.relationId },
+      });
+    }
+    // Every concept with a source needs the field that names its records; runs are refused without it.
+    const labelOf = new Map(labels.map((row) => [row.conceptId, row.field]));
+    for (const node of nodes) {
+      if (!sourced.has(node.id) || !node.attributes?.length) continue;
+      const field = labelOf.get(node.id);
+      if (field && node.attributes.some((attribute) => attribute.key === field)) continue;
+      items.push({
+        key: `run:label:${node.id}`, group: 'identity', priority: 1, kind: field ? 'label_field_gone' : 'missing_label_field',
+        params: { concept: node.label, field: (field ?? '').replaceAll('_', ' ') },
+        action: { kind: 'choose_label_field', conceptId: node.id },
+      });
+    }
+    for (const rule of keys) {
+      const node = byId.get(rule.conceptId);
+      if (!node) continue;
+      const known = new Set((node.attributes ?? []).map((attribute) => attribute.key));
+      const missing = (rule.fields ?? []).filter((field) => !known.has(field));
+      if (!missing.length) continue;
+      items.push({
+        key: `run:identity:${rule.conceptId}`, group: 'identity', priority: 1, kind: 'unique_field_gone',
+        params: { concept: node.label, fields: missing.map((field) => field.replaceAll('_', ' ')).join(', ') },
+        action: { kind: 'choose_unique_field', conceptId: rule.conceptId },
+      });
+    }
+    return items;
+  }
+
+  /** The person's last run, when it failed: what went wrong, opened from the run history. */
+  private async lastRunFailed(userId: string, modelId: string): Promise<ReviewQueueItem[]> {
+    const [last] = await Promise.resolve().then(() => this.runtime.listJobs(modelId, userId, 1)).catch(() => []);
+    if (!last || last.state !== 'failed') return [];
+    return [{
+      key: `run:failed:${last.jobId}`, group: 'sources', priority: 1, kind: 'last_run_failed',
+      params: { error: last.errorCode ?? '', when: String(last.completedAt ?? last.createdAt ?? '') },
+      action: { kind: 'open_run_history' },
+    }];
   }
 
   /** Decisions left open on the current draft; items about removed concepts or mappings are stale. */

@@ -276,6 +276,16 @@ export const semanticModelApi = {
   async previewRelationResolutionRule(id: string, ruleId: string, limit = 25): Promise<RelationResolutionPreview> {
     return unwrap(await apiClient.post<ApiResponse<RelationResolutionPreview>>(API_ENDPOINTS.semanticModels.relationResolutionPreview(id, ruleId), { limit }, { timeout: 0 }));
   },
+  async listLabelFields(id: string): Promise<Array<{ conceptId: string; field: string }>> {
+    return unwrap(await apiClient.get<ApiResponse<Array<{ conceptId: string; field: string }>>>(API_ENDPOINTS.semanticModels.labelFields(id)));
+  },
+  async saveLabelField(id: string, conceptId: string, field: string): Promise<{ revision: number; conceptId: string; field: string }> {
+    const model = await semanticModelApi.get(id);
+    return unwrap(await apiClient.put<ApiResponse<{ revision: number; conceptId: string; field: string }>>(API_ENDPOINTS.semanticModels.labelField(id, conceptId), {
+      expectedRevision: model.revision,
+      field,
+    }));
+  },
   async listIdentityRules(id: string): Promise<Array<{ conceptId: string; fields: string[] }>> {
     return unwrap(await apiClient.get<ApiResponse<Array<{ conceptId: string; fields: string[] }>>>(API_ENDPOINTS.semanticModels.identityRules(id)));
   },
@@ -318,6 +328,10 @@ export const semanticModelApi = {
   /** Clear every record, link and review item generated for the model, then read every source again. */
   async rebuildPopulation(id: string, body: { forgetDocumentReading: boolean }): Promise<PopulationRebuildResponse> {
     return unwrap(await apiClient.post<ApiResponse<PopulationRebuildResponse>>(API_ENDPOINTS.semanticModels.populationRebuild(id), body, { timeout: 0 }));
+  },
+  /** This person's latest data updates of the model, newest first. */
+  async listPopulationJobs(id: string, limit = 20): Promise<PopulationJob[]> {
+    return unwrap(await apiClient.get<ApiResponse<{ items: PopulationJob[] }>>(API_ENDPOINTS.semanticModels.populationJobs(id), { params: { limit } })).items;
   },
   async getPopulationJob(id: string, jobId: string): Promise<PopulationJob> {
     return unwrap(await apiClient.get<ApiResponse<PopulationJob>>(API_ENDPOINTS.semanticModels.populationJob(id, jobId)));

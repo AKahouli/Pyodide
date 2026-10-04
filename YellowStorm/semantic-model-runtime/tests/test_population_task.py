@@ -642,3 +642,11 @@ def test_compare_revisions_counts_changes_and_names_files_no_longer_read():
     assert compare_revisions(before, after, {"sheet"}) == {
         "added": 1, "removed": 2, "changed": 1,
         "removedSources": [{"assetId": "old.pdf", "records": 1}]}
+
+
+def test_lease_owners_name_the_worker_node_and_this_process():
+    from app.workers.population_tasks import WORKER_BOOT_ID, lease_owner_for, node_lease_prefix
+
+    owner = lease_owner_for("semantic-population@host")
+    assert owner.startswith(node_lease_prefix("semantic-population@host") + WORKER_BOOT_ID + ":")
+    assert owner != lease_owner_for("semantic-population@host")

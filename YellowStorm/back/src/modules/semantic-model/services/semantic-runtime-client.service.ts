@@ -43,6 +43,9 @@ export interface RuntimeJob {
   progress?: Record<string, unknown>;
   result: Record<string, unknown> | null;
   errorCode: string | null;
+  createdAt?: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
 }
 
 export interface RuntimeValueOrigin {
@@ -373,6 +376,9 @@ export interface RuntimeGraphSearchResult {
   concepts: Array<{ conceptId: string; key: string; label: string }>;
   unknownConcepts: string[];
   seeds: RuntimeGraphSearchSeed[];
+  hasMore?: boolean;
+  hiddenRecords?: number;
+  notes?: string[];
   coverage: {
     expectedCount: number; indexedCount: number; exactOnlyCount: number;
     passageCount?: number; passageIndexedCount?: number; passageTruncatedCount?: number;
@@ -873,6 +879,13 @@ export class SemanticRuntimeClientService {
       `/v1/semantic-model-jobs/${encodeURIComponent(jobId)}`,
       actorUserId,
     );
+  }
+
+  /** The actor's latest runs for the model, newest first. */
+  async listJobs(modelId: string, actorUserId: string, limit = 20, jobType = 'population.run'): Promise<RuntimeJob[]> {
+    const params = new URLSearchParams({ modelId, jobType, limit: String(limit) });
+    const { items } = await this.get<{ items: RuntimeJob[] }>(`/v1/semantic-model-jobs?${params}`, actorUserId);
+    return items;
   }
 
   /** The actor's run for the model that has not ended yet, if any. */

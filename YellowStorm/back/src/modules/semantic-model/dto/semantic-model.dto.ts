@@ -1253,6 +1253,20 @@ export class SourcePriorityDto {
   rank!: number;
 }
 
+export class SaveLabelFieldDto {
+  @ApiProperty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  expectedRevision!: number;
+
+  @ApiProperty({ maxLength: 200, description: 'The concept field that names each record (its label)' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  field!: string;
+}
+
 export class SaveIdentityRuleDto {
   @ApiProperty()
   @Type(() => Number)

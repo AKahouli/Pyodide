@@ -26,6 +26,12 @@ export function reviewItemText(item: ReviewQueueItem, translate: Translate) {
   return translate(`reviewQueue.kind.${item.kind}`, readableParams(item.params));
 }
 
+/** How to fix an item, step by step where the item says it; why it matters otherwise. */
+export function reviewFixText(item: ReviewQueueItem, translate: Translate) {
+  const params = readableParams(item.params);
+  return translate(`reviewQueue.fix.${item.kind}`, { ...params, defaultValue: translate(`reviewQueue.why.${item.kind}`, params) });
+}
+
 /** Items fixed somewhere else in the designer; a choice between matches is made in the list itself. */
 export function opensElsewhere(item: ReviewQueueItem) {
   return item.action.kind !== 'choose_match';

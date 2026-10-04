@@ -639,6 +639,9 @@ export interface PopulationJob {
   progress?: Partial<PopulationProgress>;
   result: Record<string, unknown> | null;
   errorCode: string | null;
+  createdAt?: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
 }
 
 export interface PopulationProgress {
@@ -987,7 +990,9 @@ export type ReviewQueueAction =
   | { kind: 'check_links'; relationId: string }
   | { kind: 'open_sources'; conceptId: string }
   | { kind: 'review_rows'; conceptId: string }
-  | { kind: 'view_data' };
+  | { kind: 'view_data' }
+  | { kind: 'open_run_history' }
+  | { kind: 'choose_label_field'; conceptId: string };
 
 export interface ReviewQueueItem {
   key: string;

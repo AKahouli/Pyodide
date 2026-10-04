@@ -165,6 +165,13 @@ export class SemanticPopulationRefreshService {
       removedSources: removed.map((source) => ({ ...source, name: names.get(source.assetId) ?? source.name })) } } };
   }
 
+  /** This person's latest data updates of the model, newest first: the run history. */
+  async listJobs(userId: string, modelId: string, limit = 20) {
+    await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    const jobs = await this.runtime.listJobs(modelId, userId, Math.min(Math.max(Math.trunc(limit) || 20, 1), 100));
+    return Promise.all(jobs.map((job) => this.nameRemovedSources(job)));
+  }
+
   /** The data update of this model still running for this person, or null. */
   async activeJob(userId: string, modelId: string) {
     await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
@@ -568,7 +575,7 @@ export class SemanticPopulationRefreshService {
     const scope: PopulationRefreshScope = input.scope.kind === 'mapping'
       ? { kind: 'mapping', mappingId: input.scope.mappingId ?? '' }
       : { kind: 'model' };
-    const [nodes, relationRows, identityRules, relationRules, links] = await Promise.all([
+    const [nodes, relationRows, identityRules, relationRules, links, labelFields] = await Promise.all([
       this.database.query<NodeTypeRow>(
         'SELECT id, key, label, aliases, attributes FROM semantic_model.node_types WHERE version_id=$1',
         [model.currentDraftVersionId],
@@ -593,6 +600,10 @@ export class SemanticPopulationRefreshService {
         'SELECT workspace_id AS "workspaceId", role FROM semantic_model.workspace_links WHERE model_id=$1 AND enabled',
         [model.id],
       ).then((result) => result.rows),
+      this.database.query<{ conceptId: string; field: string }>(
+        'SELECT concept_id AS "conceptId", field FROM semantic_model.label_fields WHERE model_id=$1',
+        [model.id],
+      ).then((result) => new Map(result.rows.map((row) => [row.conceptId, row.field]))),
     ]);
     const homeWorkspaceId = links.find((link) => link.role === 'origin')?.workspaceId;
     if (!homeWorkspaceId) {
@@ -616,10 +627,10 @@ export class SemanticPopulationRefreshService {
           // One source per readable file, resolved now: files added since the last run are included.
           const files = await this.workspaceFiles(mapping.workspaceId, mappingSelection(mapping));
           if (!files.readable.length) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT, 'The workspace has no readable file yet');
-          for (const file of files.readable) sources.push(await this.populationSource(mapping, node, file));
+          for (const file of files.readable) sources.push(await this.populationSource(mapping, node, file, labelFields.get(mapping.conceptId)));
           waitingFiles += files.waiting.length;
         } else {
-          sources.push(await this.populationSource(mapping, node));
+          sources.push(await this.populationSource(mapping, node, undefined, labelFields.get(mapping.conceptId)));
         }
         usableMappings.push(mapping);
       } catch (error) {
@@ -635,9 +646,20 @@ export class SemanticPopulationRefreshService {
     const derivations = scope.kind === 'model' && this.derivedSources
       ? this.derivedSources.runtimeDerivations(await this.derivedSources.forModel(model.id), nodes,
         new Set(sources.map((source) => source.conceptId)), identityRules,
-        effectiveAiSettings(await this.adminAiSettings()))
+        effectiveAiSettings(await this.adminAiSettings()), labelFields)
       : [];
     const derivedConceptIds = new Set(derivations.map((derivation) => derivation.conceptId));
+    // Every concept a run fills needs the field that names its records, chosen by a person.
+    for (const conceptId of new Set([...usableMappings.map((mapping) => mapping.conceptId), ...derivedConceptIds])) {
+      const node = nodes.find((candidate) => candidate.id === conceptId);
+      const field = labelFields.get(conceptId);
+      if (node && (!field || !(node.attributes ?? []).some((attribute) => attribute.key === field))) {
+        throw new BadRequestException(
+          ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+          `Choose the field that names each ${node.label} record (its label). Open Review to choose it.`,
+        );
+      }
+    }
     if (!sources.length) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'No usable source in the selected scope');
     }
@@ -690,9 +712,19 @@ export class SemanticPopulationRefreshService {
         const targetType = nodes.find((node) => node.id === relation.targetNodeTypeId)
           ?.attributes.find((attribute) => attribute.key === rule.targetAttribute)?.type;
         if (!sourceFieldMapped || !targetFieldMapped || !sourceType || sourceType !== targetType) {
+          // Say which side is wrong, in the words of the model; Review lists it with a way to fix it.
+          const node = (id: string) => nodes.find((candidate) => candidate.id === id);
+          const fieldName = (id: string, key: string) => node(id)?.attributes.find((attribute) => attribute.key === key)?.label || key;
+          const side = !sourceType ? [relation.sourceNodeTypeId, rule.sourceAttribute, 'is no longer a field of'] as const
+            : !targetType ? [relation.targetNodeTypeId, rule.targetAttribute, 'is no longer a field of'] as const
+              : !sourceFieldMapped ? [relation.sourceNodeTypeId, rule.sourceAttribute, 'is not filled by any source of'] as const
+                : !targetFieldMapped ? [relation.targetNodeTypeId, rule.targetAttribute, 'is not filled by any source of'] as const
+                  : null;
           throw new BadRequestException(
             ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
-            `Relation "${relation.key}" cannot be populated by the selected mappings`,
+            side
+              ? `Link "${relation.key}" matches records on "${fieldName(side[0], side[1])}", which ${side[2]} ${node(side[0])?.label ?? ''}. Open Review to fix it.`
+              : `Link "${relation.key}" matches a ${sourceType} field with a ${targetType} field. Open Review to fix it.`,
           );
         }
         relationBindings.push({
@@ -1010,7 +1042,7 @@ export class SemanticPopulationRefreshService {
    * The runtime source for a mapping. A workspace mapping passes each file it covers: those files were
    * listed a moment ago, so they are read as they are now rather than checked against a saved version.
    */
-  private async populationSource(mapping: MappingRow, node: NodeTypeRow, file?: WorkspaceDocumentResponse) {
+  private async populationSource(mapping: MappingRow, node: NodeTypeRow, file?: WorkspaceDocumentResponse, labelField?: string) {
     this.assertUsable(mapping);
     const document = file ?? await this.documents.findById(mapping.workspaceId, mapping.documentId);
     const currentSourceVersion = document.contentHash || `${document.updatedAt}:${document.size}`;
@@ -1088,6 +1120,7 @@ export class SemanticPopulationRefreshService {
         // to these limits never reruns documents read by rules alone.
         ...documentReadOptions(usesAiExtraction(activeMappings),
           usesAiExtraction(activeMappings) ? await this.adminAiSettings() : {}, mapping.aiSettings),
+        ...(labelField ? { labelField } : {}),
         mappingVersion,
       };
     }
@@ -1114,9 +1147,6 @@ export class SemanticPopulationRefreshService {
         'The mapping must directly map every identity field',
       );
     }
-    const fields = mapping.fieldMappings ?? [];
-    const labelField = (fields.find((field) => field.mode === 'direct' && !identityFields.has(field.targetAttribute))
-      ?? fields.find((field) => (field.mode === 'extract' || field.mode === 'computed') && !identityFields.has(field.targetAttribute)))?.targetAttribute;
     const usesCellAi = Object.values(fieldExtractions).some((field) => field.extractionStrategy !== 'deterministic');
     return {
       sourceKind: mapping.assetKind,

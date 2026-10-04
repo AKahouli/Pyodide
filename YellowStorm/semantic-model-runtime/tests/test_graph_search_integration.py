@@ -127,6 +127,7 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
             "actorUserId": "user-e2e", "modelId": MODEL_ID, "environment": "draft",
             "query": "support agreement"})).json()
         assert pending["index"]["state"] == "queued" and pending["status"] == "index_not_ready"
+        assert any("not ready" in note for note in pending["notes"])
         exact_before = (await client.post("/v1/semantic-model-search/query", json={
             "actorUserId": "user-e2e", "modelId": MODEL_ID, "environment": "draft",
             "query": "CT003"})).json()
@@ -192,6 +193,14 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
         hidden = (await client.post("/v1/semantic-model-search/query",
                                     json=query("support agreement", allowedWorkspaceIds=[]))).json()
         assert hidden["seeds"] == []
+        assert hidden["hiddenRecords"] > 0 and any("hidden" in note for note in hidden["notes"])
+        one = (await client.post("/v1/semantic-model-search/query", json=query("agreement", limit=1))).json()
+        assert len(one["seeds"]) == 1 and one["hasMore"] is True
+        assert any("More records match" in note for note in one["notes"])
+        assert found["notes"] == [] and found["hiddenRecords"] == 0
+        near = (await client.post("/v1/semantic-model-search/query",
+                                  json=query("sony", concepts=["Customers"]))).json()
+        assert [seed["conceptId"] for seed in near["seeds"]] == ["c-customer"] and near["unknownConcepts"] == []
         visible = (await client.post("/v1/semantic-model-search/query",
                                      json=query("support agreement", allowedWorkspaceIds=[WORKSPACE_ID]))).json()
         assert visible["seeds"][0]["label"] == "CT002"
@@ -251,4 +260,4 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
     assert outcome["state"] == "ready" and outcome["embedded"] == 0 and outcome["passagesEmbedded"] == 0
     assert outcome["reused"] == status["index"]["indexedCount"]
     assert outcome["passagesReused"] == status["index"]["passageCount"]
-    assert sum(calls) == embedded_once + 6  # only the query embeddings of step 4
+    assert sum(calls) == embedded_once + 8  # only the query embeddings of step 4

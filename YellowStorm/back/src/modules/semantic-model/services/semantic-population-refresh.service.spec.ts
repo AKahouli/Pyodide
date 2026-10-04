@@ -40,6 +40,7 @@ const setup = (
   relationRules: unknown[] = [],
   records: unknown[] = [],
   recordRelations: unknown[] = [],
+  labels: Record<string, string> = { 'c-customer': 'name', 'c-contract': 'contract_id' },
 ) => {
   const database = {
     query: jest.fn(async (sql: string, params: unknown[] = []) => {
@@ -49,6 +50,7 @@ const setup = (
         return { rows: Object.entries(identity).map(([conceptId, fields]) => ({ conceptId, fields })) };
       }
       if (sql.includes('FROM semantic_model.relation_resolution_rules')) return { rows: relationRules };
+      if (sql.includes('FROM semantic_model.label_fields')) return { rows: Object.entries(labels).map(([conceptId, field]) => ({ conceptId, field })) };
       if (sql.includes('FROM semantic_model.workspace_links')) {
         return { rows: [{ workspaceId: 'ws-1', role: 'origin' }] };
       }
@@ -555,6 +557,18 @@ describe('SemanticPopulationRefreshService', () => {
     expect(calls[0][0].payload.sources).toHaveLength(1);
   });
 
+  it('refuses a run while a concept it fills has no field chosen to name its records, and uses the chosen one', async () => {
+    const refused = setup([MAPPING()], undefined, [], [], [], [], {});
+    await expect(refused.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } }))
+      .rejects.toThrow('Choose the field that names each Customer record');
+    const { runtime, service } = setup([MAPPING({ fieldMappings: [
+      { sourceField: 'customer_id', targetAttribute: 'customer_id', mode: 'direct' },
+      { sourceField: 'legal_name', targetAttribute: 'name', mode: 'direct' }] })], undefined, [], [], [], [], { 'c-customer': 'customer_id' });
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    expect(calls[0][0].payload.sources[0].labelField).toBe('customer_id');
+  });
+
   it('rejects concepts without usable identity', async () => {
     const { service } = setup([MAPPING()], {});
     await expect(service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } }))
@@ -647,7 +661,7 @@ describe('SemanticPopulationRefreshService', () => {
     const [[command]] = built.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
     expect(command.payload.derivations).toEqual([{
       derivationId: 'dv-1', conceptId: 'c-customer', sourceConceptId: 'c-contract', conflictRule: 'latest', orderBy: 'contract_id',
-      fieldMappings: [{ sourceAttribute: 'customer_ref', targetAttribute: 'customer_id' }], labelField: null,
+      fieldMappings: [{ sourceAttribute: 'customer_ref', targetAttribute: 'customer_id' }], labelField: 'name',
       mappingVersion: '2026-09-30T00:00:00.000Z',
     }]);
     expect(command.payload.specification.concepts.map((concept: { conceptId: string }) => concept.conceptId).sort()).toEqual(['c-contract', 'c-customer']);

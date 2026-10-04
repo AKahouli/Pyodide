@@ -502,8 +502,13 @@ describe('AgentService connector skill inheritance', () => {
       runtimeAuthConfig: { strategy: 'http_header_bearer', headerName: 'Authorization', headerPrefix: 'Bearer' },
       mcpTransportType: 'streamable_http', mcpServerUrl: 'http://localhost:8027/mcp', mcpServerConfig: {},
       dynamicHeaders: [{ headerName: 'X-YellowStorm-User-Id', source: 'user_id', enabled: true }],
-      actions: ['find_records', 'get_related_records', 'search_records'].map((key) => ({
-        key, label: key, isEnabled: true, safety: 'read',
+      actions: [
+        ...['find_records', 'get_related_records', 'describe_model', 'query_records'].map((key) => ({ key, safety: 'read', isEnabled: true })),
+        { key: 'search_records', safety: 'read', isEnabled: false },
+        { key: 'apply_model_changes', safety: 'write', isEnabled: true },
+        { key: 'publish_semantic_model', safety: 'delete', isEnabled: true },
+      ].map(({ key, safety, isEnabled }) => ({
+        key, label: key, isEnabled, safety,
         parameterSchema: {
           type: 'object',
           properties: { model_id: { type: 'string' }, data: { type: 'string' }, query: { type: 'string' } },
@@ -526,7 +531,7 @@ describe('AgentService connector skill inheritance', () => {
         SEMANTIC_MODEL_MCP_SERVER_URL: 'http://localhost:8027/mcp',
       } as Record<string, string>)[key] ?? fallback ?? '');
 
-    it('binds only the two search tools of the configured connector, pinned to the published model, with identity headers and a prompt block', async () => {
+    it('binds the enabled read tools of the configured connector, pinned to the published model, with identity headers and the model named', async () => {
       const { service, skillService, connectorService, connectorAuthService, configService } = createService();
       withSearchConfig(configService);
       jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([workerAgent(['other-connector'])]);
@@ -549,7 +554,9 @@ describe('AgentService connector skill inheritance', () => {
       const bindings = JSON.parse(params.connector_bindings_json as string) as Array<Record<string, any>>;
       const search = bindings.find((binding) => binding.connector_slug === 'mcp-semantic-search');
       expect(search).toBeDefined();
-      expect(search!.actions.map((action: { action_key: string }) => action.action_key)).toEqual(['find_records', 'get_related_records']);
+      // No selection for the connector: its enabled read tools; never a tool that changes or publishes the model.
+      expect(search!.actions.map((action: { action_key: string }) => action.action_key))
+        .toEqual(['find_records', 'get_related_records', 'describe_model', 'query_records']);
       expect(search!.fixed_params).toEqual({ model_id: 'model-1', data: 'published' });
       for (const action of search!.actions) {
         const schema = JSON.parse(action.parameter_schema_json);
@@ -568,10 +575,32 @@ describe('AgentService connector skill inheritance', () => {
         .toEqual(['search']);
       expect(result[0].connectorIds).toEqual(['other-connector', 'semantic-search-connector']);
       expect(result[0].prompt).toContain('Be helpful.');
-      expect(result[0].prompt).toContain('This conversation is about the semantic model "Contracts" (model_id model-1).');
-      expect(result[0].prompt).toContain('call mcp-semantic-search_find_records (find_records) first, then mcp-semantic-search_get_related_records (get_related_records)');
-      expect(result[0].prompt).toContain('index_not_ready');
-      expect(result[0].prompt).toContain('Never invent a value');
+      // How to answer from records is in the agent's own instruction (Yellowmind's, in the database), not added here.
+      expect(result[0].prompt).toContain('This conversation is about the semantic model "Contracts".');
+      expect(result[0].prompt).not.toContain('model-1');
+      expect(result[0].prompt).not.toContain('find_records');
+    });
+
+    it("keeps to the read tools the agent selected for the semantic connector", async () => {
+      const { service, skillService, connectorService, connectorAuthService, configService } = createService();
+      withSearchConfig(configService);
+      jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([{
+        ...workerAgent(['semantic-search-connector']),
+        connectorActionSelections: [{ connectorId: 'semantic-search-connector', actionKeys: ['query_records', 'find_records', 'publish_semantic_model'] }],
+      }]);
+      connectorService.findByIds.mockResolvedValue([searchConnector]);
+      connectorService.findBySlug.mockResolvedValue(searchConnector);
+      connectorAuthService.resolveRuntimeAuth.mockResolvedValue({ headers: { Authorization: 'Bearer ingress' }, env: {} });
+      connectorAuthService.resolveDynamicHeaders.mockResolvedValue({ 'X-YellowStorm-User-Id': userId });
+      skillService.findByIds.mockResolvedValue([]);
+
+      const result = await service.buildAgentsForStream(userId, undefined, ['worker-agent'], undefined, undefined, undefined, semanticModel,
+        { conversationId: 'conversation-1', correlationId: 'message-1' });
+
+      const bindings = JSON.parse(result[0].agent_params?.params.connector_bindings_json as string) as Array<Record<string, any>>;
+      const search = bindings.find((binding) => binding.connector_slug === 'mcp-semantic-search');
+      expect(search!.actions.map((action: { action_key: string }) => action.action_key)).toEqual(['find_records', 'query_records']);
+      expect(search!.fixed_params).toEqual({ model_id: 'model-1', data: 'published' });
     });
 
     it('still adds the prompt block, without tools, when the configured search connector is missing', async () => {
@@ -588,7 +617,7 @@ describe('AgentService connector skill inheritance', () => {
       const params = result[0].agent_params?.params ?? {};
       expect(JSON.parse(params.connector_bindings_json as string)).toEqual([]);
       expect(params.semantic_model_id).toBe('model-1');
-      expect(result[0].prompt).toContain('This conversation is about the semantic model "Contracts" (model_id model-1).');
+      expect(result[0].prompt).toContain('This conversation is about the semantic model "Contracts".');
       expect(result[0].prompt).toContain('not available');
     });
 

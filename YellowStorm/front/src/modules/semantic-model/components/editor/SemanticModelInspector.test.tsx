@@ -7,11 +7,12 @@ import { useSemanticModelEditorStore } from '../../store';
 import { SemanticModelInspector } from './SemanticModelInspector';
 
 vi.mock('../knowledge/KnowledgePanel',()=>({KnowledgePanel:()=> <div>knowledge-tray</div>}));
-const hookState = vi.hoisted(() => ({ mappings: [] as Array<Record<string, unknown>>, rules: [] as Array<{ conceptId: string; fields: string[] }> }));
+const hookState = vi.hoisted(() => ({ mappings: [] as Array<Record<string, unknown>>, rules: [] as Array<{ conceptId: string; fields: string[] }>, labels: [] as Array<{ conceptId: string; field: string }> }));
 const saveIdentityRule = vi.hoisted(() => vi.fn(async () => ({ revision: 1, conceptId: 'customer', fields: [] })));
+const saveLabelField = vi.hoisted(() => vi.fn(async () => ({ revision: 1, conceptId: 'customer', field: 'country' })));
 vi.mock('../mapping/RelationMatchingPanel',()=>({RelationMatchingPanel:()=> <div>relation-matching</div>}));
-vi.mock('../../query/hooks',()=>({useSourceMappings:()=>({data:hookState.mappings,isLoading:false}),useIdentityRules:()=>({data:hookState.rules,isLoading:false}),useDerivedSources:()=>({data:[],isLoading:false})}));
-vi.mock('../../api',()=>({semanticModelApi:{saveIdentityRule}}));
+vi.mock('../../query/hooks',()=>({useSourceMappings:()=>({data:hookState.mappings,isLoading:false}),useIdentityRules:()=>({data:hookState.rules,isLoading:false}),useLabelFields:()=>({data:hookState.labels,isLoading:false}),useDerivedSources:()=>({data:[],isLoading:false})}));
+vi.mock('../../api',()=>({semanticModelApi:{saveIdentityRule,saveLabelField}}));
 
 const graph: SemanticGraph = {
   modelId:'model',versionId:'version',revision:0,relations:[],records:[],recordRelations:[],
@@ -24,7 +25,7 @@ const renderInspector=(canEdit:boolean)=>render(
   </QueryClientProvider>);
 
 describe('SemanticModelInspector', () => {
-  beforeEach(() => { hookState.mappings=[];hookState.rules=[];saveIdentityRule.mockClear();useSemanticModelEditorStore.getState().hydrate(graph);useSemanticModelEditorStore.getState().select('customer'); });
+  beforeEach(() => { hookState.mappings=[];hookState.rules=[];hookState.labels=[];saveLabelField.mockClear();saveIdentityRule.mockClear();useSemanticModelEditorStore.getState().hydrate(graph);useSemanticModelEditorStore.getState().select('customer'); });
 
   it('renders read-only details without mutation-shaped controls', () => {
     renderInspector(false);
@@ -50,6 +51,26 @@ describe('SemanticModelInspector', () => {
     expect(useSemanticModelEditorStore.getState().pending[0].map((operation)=>operation.type)).toEqual([
       'record_relation.delete','record.delete','relation_type.delete','node_type.delete',
     ]);
+  });
+
+  it('renames a field without changing its key, so the unique fields, sources and links that name it keep working', () => {
+    hookState.rules=[{conceptId:'customer',fields:['country']}];
+    useSemanticModelEditorStore.getState().hydrate({ ...graph, nodes: [{ ...graph.nodes[0], attributes: [{ key: 'country', label: 'Country', type: 'text', required: false }] }] });
+    useSemanticModelEditorStore.getState().select('customer');
+    renderInspector(true);
+    fireEvent.change(screen.getByRole('textbox', { name: 'attributes.nameFor' }), { target: { value: 'Pays' } });
+    expect(useSemanticModelEditorStore.getState().graph?.nodes[0].attributes[0]).toMatchObject({ key: 'country', label: 'Pays' });
+    // Still shown as a unique field, under its new name.
+    expect(screen.getByRole('button', { name: 'Pays' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('asks which field names each record, says it is required, and saves the choice', async () => {
+    useSemanticModelEditorStore.getState().hydrate({ ...graph, nodes: [{ ...graph.nodes[0], attributes: [{ key: 'country', label: 'Country', type: 'text', required: false }, { key: 'name', label: 'Name', type: 'text', required: false }] }] });
+    useSemanticModelEditorStore.getState().select('customer');
+    renderInspector(true);
+    expect(screen.getByText('labelField.missing')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('radio', { name: 'Name' }));
+    await waitFor(() => expect(saveLabelField).toHaveBeenCalledWith('model', 'customer', 'name'));
   });
 
   it('updates whether a business field is required', () => {
@@ -86,7 +107,7 @@ describe('SemanticModelInspector', () => {
     useSemanticModelEditorStore.getState().select('customer');
     hookState.mappings=[{ id: 'm', conceptId: 'customer', identityFields: [] }];
     renderInspector(true);
-    expect(screen.getByRole('alert')).toHaveTextContent('identity.missing');
+    expect(screen.getAllByRole('alert')[0]).toHaveTextContent('identity.missing');
   });
 
   it('edits a relationship as two sentences that set its cardinality', () => {

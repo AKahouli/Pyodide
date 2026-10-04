@@ -1,4 +1,4 @@
-import { ConnectorService } from './connector.service';
+import { ConnectorService, mcpToolSafety } from './connector.service';
 import { ConnectorActionSafety, DynamicHeaderSource } from './connector.types';
 import type {
   ConnectorCategoryStore,
@@ -101,6 +101,17 @@ describe('ConnectorService findAllActive', () => {
     await service.findAllActive();
 
     expect(store.findAllActiveVisible).toHaveBeenCalledWith();
+  });
+});
+
+describe('mcpToolSafety', () => {
+  it("reads a tool's MCP annotations: read-only, destructive, another change, or read when none are declared", () => {
+    expect(mcpToolSafety({ readOnlyHint: true })).toBe('read');
+    expect(mcpToolSafety({ readOnlyHint: false, destructiveHint: true })).toBe('delete');
+    expect(mcpToolSafety({ readOnlyHint: false, destructiveHint: false })).toBe('write');
+    expect(mcpToolSafety({ readOnlyHint: false })).toBe('write');
+    expect(mcpToolSafety(undefined)).toBe('read');
+    expect(mcpToolSafety({ title: 'x' })).toBe('read');
   });
 });
 

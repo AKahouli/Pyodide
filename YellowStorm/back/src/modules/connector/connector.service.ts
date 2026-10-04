@@ -26,6 +26,17 @@ import { RESERVED_SYSTEM_OWNER_ID } from '../agent/constants/platform-copilot.co
 import { PgConnectorCategoryStore } from './persistence/pg-connector.store';
 import { PgConnectorStore } from './persistence/pg-connector.store';
 
+/**
+ * What an MCP tool may do, from its annotations: read-only, destructive or another change. A server that
+ * declares nothing keeps 'read', as before annotations were read.
+ */
+export function mcpToolSafety(annotations: unknown): 'read' | 'write' | 'delete' {
+  const hints = (annotations && typeof annotations === 'object' ? annotations : {}) as { readOnlyHint?: unknown; destructiveHint?: unknown };
+  if (hints.readOnlyHint === true) return 'read';
+  if (hints.destructiveHint === true) return 'delete';
+  return hints.readOnlyHint === false ? 'write' : 'read';
+}
+
 @Injectable()
 export class ConnectorService {
   private static readonly CONNECTOR_ACTION_KEY_MAX_LENGTH = 128;
@@ -324,7 +335,7 @@ export class ConnectorService {
       description: tool.description ?? '',
       parameterSchema: tool.inputSchema ?? {},
       outputSchema: {},
-      safety: 'read' as const,
+      safety: tool.safety ?? 'read',
       supportsBatch: false,
       supportsIteration: false,
       isEnabled: true,
@@ -490,6 +501,7 @@ export class ConnectorService {
         name: t.name ?? '',
         description: t.description ?? '',
         inputSchema: t.inputSchema ?? {},
+        safety: mcpToolSafety(t.annotations),
       }));
 
       return {

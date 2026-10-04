@@ -54,32 +54,30 @@ const MANAGER_SLUG = 'manager';
 const MONO_AGENT_SLUG = 'mono-agent';
 /** Agent-type slug for human agents exposed to third-party integrations. */
 const HUMAIN_AGENT_TYPE_SLUG = 'humain';
-/** Search tool arguments the back fixes for a chat on a semantic model; hidden from the model so it cannot override them. */
-const SEMANTIC_MODEL_SEARCH_FIXED_PARAM_KEYS = ['model_id', 'data'];
-/** Record search tools of the semantic model MCP, the only ones of its connector bound for a chat on a model. */
-const SEMANTIC_MODEL_SEARCH_ACTION_KEYS = ['find_records', 'get_related_records'];
-
-/** Runtime instructions for an agent answering from the records of a selected semantic model. */
-export function buildSemanticModelChatInstruction(
-  model: { id: string; name: string },
-  tools: { findRecords: string; getRelatedRecords: string } | null,
-): string {
+/**
+ * Which model the conversation is about. How to answer from its records is in the answering agent's instruction
+ * (Yellowmind's, in the database); only the model's name and whether its tools could be attached are added here.
+ */
+export function buildSemanticModelChatContext(model: { id: string; name: string }, toolsAttached: boolean): string {
   const name = (model.name || '').replace(/\s+/g, ' ').replace(/"/g, "'").trim().slice(0, 200) || model.id;
-  const lines = [
+  return [
     '[Semantic model]',
-    `This conversation is about the semantic model "${name}" (model_id ${model.id}).`,
-  ];
-  if (tools) {
-    lines.push(
-      `Answer from its records: call ${tools.findRecords} (find_records) first, then ${tools.getRelatedRecords} (get_related_records) on the entity ids it returned to follow the real links between records.`,
-      'The results are records stored in the model, not documents.',
-      'Say so plainly when the status is index_not_ready (the search index is still being built), no_match (no record matches), not_represented (the model has no such information), or when a result is truncated (the list is incomplete).',
-    );
-  } else {
-    lines.push('Its record search tools are not available right now: say that you cannot read its records instead of answering from memory.');
-  }
-  lines.push('Never invent a value that is not in a field of a returned record.');
-  return lines.join('\n');
+    `This conversation is about the semantic model "${name}".`,
+    toolsAttached
+      ? 'Its records are read through the attached semantic model tools, already set to this model and its published data.'
+      : 'Its record tools are not available right now: say that you cannot read its records instead of answering from memory.',
+  ].join('\n');
+}
+
+/**
+ * The semantic connector's tools a chat on a model gets: the read tools the agent selected for that connector, or all
+ * its enabled read tools when the agent has no selection. A chat on a model reads published data and changes nothing.
+ */
+export function semanticModelChatActionKeys(connector: IConnectorResponse, selected: Set<string> | undefined): Set<string> {
+  return new Set((connector.actions ?? [])
+    .filter((action) => action.isEnabled !== false && (action.safety ?? 'read') === 'read')
+    .map((action) => action.key)
+    .filter((key) => !selected || selected.has(key)));
 }
 const PLATFORM_COPILOT_LEGACY_PLAYBOOK_ACTIONS = new Set([
   'assess_playbook_request',
@@ -787,8 +785,8 @@ export class AgentService {
       semanticModel ? this.resolveSemanticModelSearchConnector(semanticModel.id) : Promise.resolve(null),
     ]);
     for (const connectorId of blockedConnectorIds) connectorsMap.delete(connectorId);
-    // A selected semantic model binds the configured search connector to every agent, restricted to the two
-    // search tools and pinned to the model's published data.
+    // A selected semantic model binds the configured semantic connector to the answering agent (Yellowmind), restricted
+    // to its read tools and pinned to the model's published data.
     const semanticSearchConnectorId = semanticSearchConnector?.id;
     if (semanticSearchConnector) connectorsMap.set(semanticSearchConnector.id, semanticSearchConnector);
     const semanticSearchFixedParams = semanticModel && semanticSearchConnectorId
@@ -866,9 +864,10 @@ export class AgentService {
         ]),
       ];
       let actionKeysByConnectorId = this.buildRuntimeConnectorActionKeysByConnectorId(agent, effectiveConnectorIds, connectorsMap);
-      if (semanticSearchConnectorId) {
+      if (semanticSearchConnector) {
         actionKeysByConnectorId = new Map(actionKeysByConnectorId ?? []);
-        actionKeysByConnectorId.set(semanticSearchConnectorId, new Set(SEMANTIC_MODEL_SEARCH_ACTION_KEYS));
+        actionKeysByConnectorId.set(semanticSearchConnector.id,
+          semanticModelChatActionKeys(semanticSearchConnector, actionKeysByConnectorId.get(semanticSearchConnector.id)));
       }
       const connectorBindings = await this.buildConnectorBindings(
         connectorsMap,
@@ -878,9 +877,12 @@ export class AgentService {
         semanticSearchFixedParams,
         agent.id,
       );
-      if (semanticSearchConnectorId) {
+      const semanticFixedParamKeys = semanticSearchConnectorId
+        ? Object.keys(semanticSearchFixedParams?.get(semanticSearchConnectorId) ?? {})
+        : [];
+      if (semanticFixedParamKeys.length) {
         for (const binding of connectorBindings) {
-          if (binding.connector_id === semanticSearchConnectorId) this.hideFixedParamsFromModel(binding, SEMANTIC_MODEL_SEARCH_FIXED_PARAM_KEYS);
+          if (binding.connector_id === semanticSearchConnectorId) this.hideFixedParamsFromModel(binding, semanticFixedParamKeys);
         }
       }
       if (agent.agentTypeSlug === PLATFORM_COPILOT && runtimeContext) {
@@ -928,15 +930,8 @@ export class AgentService {
         prompt += `${prompt ? '\n\n' : ''}${PLATFORM_COPILOT_HANDOFF_RUNTIME_INSTRUCTION}`;
       }
       if (semanticModel) {
-        const searchBinding = connectorBindings.find((binding) => binding.connector_id === semanticSearchConnectorId);
-        const searchSlug = String(searchBinding?.connector_slug || '');
-        const searchTools = searchBinding
-          ? {
-              findRecords: this.getConnectorRuntime().buildConnectorToolName(searchSlug, 'find_records'),
-              getRelatedRecords: this.getConnectorRuntime().buildConnectorToolName(searchSlug, 'get_related_records'),
-            }
-          : null;
-        prompt += `${prompt ? '\n\n' : ''}${buildSemanticModelChatInstruction(semanticModel, searchTools)}`;
+        const toolsAttached = connectorBindings.some((binding) => binding.connector_id === semanticSearchConnectorId);
+        prompt += `${prompt ? '\n\n' : ''}${buildSemanticModelChatContext(semanticModel, toolsAttached)}`;
       }
 
       // Append Group Members info if provided

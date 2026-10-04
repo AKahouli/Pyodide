@@ -17,9 +17,12 @@ What is read (after trimming, lowercasing and removing accents):
   colon (``Date : 18 juin 2026``). A date without a zone is UTC.
 - numbers: spaces and apostrophes inside the number are ignored, a currency
   or unit around it is dropped (``11 200 000 €``, ``8 750 000 EUR hors
-  taxes.``, ``12,5 %``); a single comma is a decimal separator (French), as is
-  a single dot; repeated commas or dots group thousands; with both, the last
-  one is the decimal separator.
+  taxes.``, ``12,5 %``); a scale right after it multiplies it (``10 k€``,
+  ``1,5 M€``, ``2 millions``, ``3 Mds``; a bare ``m`` is metres, not millions);
+  one separator between 1-3 digits and exactly three digits groups thousands
+  (``1,500``, ``1.500``) unless a scale follows; otherwise a single comma or
+  dot is a decimal separator; repeated commas or dots group thousands; with
+  both, the last one is the decimal separator.
 - yes/no: true/false, yes/no, oui/non, vrai/faux, 1/0, y/n, o/n.
 
 Everything returned is SQL built from constants around one input
@@ -31,6 +34,10 @@ from __future__ import annotations
 import re
 import unicodedata
 from decimal import Decimal, InvalidOperation
+from difflib import SequenceMatcher
+from typing import TypeVar
+
+T = TypeVar("T")
 
 MARKS = r"[̀-ͯ]"
 
@@ -111,25 +118,42 @@ def _date_sql(expr: str) -> str:
     )
 
 
+_CURRENCY = r"[€$£]|eur|usd|gbp|chf|cad"
+_NUMBER_PART = r"^([+-]?(?:\d[\d.,]*|[.,]\d+))([a-z€$£%][a-z€$£%.]*)?$"
+# A scale word or letter right after the number (``10 k€``, ``1,5 M€``, ``2 millions``, ``3 Mds``).
+# A bare ``m`` (metres) or ``k...`` other than k€ (``kg``) is not a scale.
+_SCALES = (
+    (1000, (rf"^k({_CURRENCY}|$)", r"^(thousands?|mille)")),
+    (1000000, (rf"^m({_CURRENCY})", r"^(millions?|mio)")),
+    (1000000000, (rf"^(mds?|mrds?|bn)({_CURRENCY}|$)", r"^milliards?")),
+)
+# One separator between 1-3 leading digits (not 0) and exactly three digits groups thousands
+# (``1,500`` / ``1.500``), unless a scale follows (``1,250 M€`` is 1.25 million).
+_THOUSANDS = r"^[+-]?[1-9]\d{0,2}[.,]\d{3}$"
+
+
 def _number_sql(expr: str) -> str:
-    # No spaces, no-break spaces or apostrophes; no currency before, no unit or words after.
-    squeezed = f"regexp_replace(lower(btrim({expr})), '[\\s\\u00a0\\u202f''\\u2019]', '', 'g')"
-    stripped = (f"regexp_replace(regexp_replace({squeezed}, '^(eur|usd|gbp|chf|cad|€|\\$|£)', ''), "
-                "'[a-z€$£%][a-z€$£%.]*$', '')")
+    # No spaces, no-break spaces or apostrophes; no currency before, a unit, scale or words after.
+    squeezed = rf"regexp_replace(lower(btrim({expr})), '[\s\u00a0\u202f''\u2019]', '', 'g')"
+    unprefixed = rf"regexp_replace({squeezed}, '^(eur|usd|gbp|chf|cad|€|\$|£)', '')"
+    scale = " ".join(f"WHEN p.m[2] ~ '{a}' OR p.m[2] ~ '{b}' THEN {factor}" for factor, (a, b) in _SCALES)
     commas = "(char_length(a.t) - char_length(replace(a.t, ',', '')))"
     dots = "(char_length(a.t) - char_length(replace(a.t, '.', '')))"
     last_comma = "(char_length(a.t) - strpos(reverse(a.t), ','))"
     last_dot = "(char_length(a.t) - strpos(reverse(a.t), '.'))"
     normalized = (
-        f"CASE WHEN {commas} > 0 AND {dots} > 0 THEN"
+        f"CASE WHEN a.k = 1 AND a.t ~ '{_THOUSANDS}' THEN regexp_replace(a.t, '[.,]', '')"
+        f" WHEN {commas} > 0 AND {dots} > 0 THEN"
         f" (CASE WHEN {last_comma} > {last_dot} THEN replace(replace(a.t, '.', ''), ',', '.')"
         " ELSE replace(a.t, ',', '') END)"
         f" WHEN {commas} = 1 THEN replace(a.t, ',', '.')"
         f" WHEN {commas} > 1 THEN replace(a.t, ',', '')"
         f" WHEN {dots} > 1 THEN replace(a.t, '.', '')"
         " ELSE a.t END")
-    return (f"(SELECT CASE WHEN b.n ~ '^[+-]?(\\d+(\\.\\d*)?|\\.\\d+)$' THEN b.n::numeric END"
-            f" FROM (SELECT {normalized} AS n FROM (SELECT {stripped} AS t) a) b)")
+    return (rf"(SELECT CASE WHEN b.n ~ '^[+-]?(\d+(\.\d*)?|\.\d+)$' THEN b.n::numeric * b.k END"
+            f" FROM (SELECT {normalized} AS n, a.k"
+            f" FROM (SELECT p.m[1] AS t, CASE {scale} ELSE 1 END AS k"
+            f" FROM (SELECT regexp_match({unprefixed}, '{_NUMBER_PART}') AS m) p) a) b)")
 
 
 _TRUE = ("true", "yes", "oui", "vrai", "1", "y", "o")
@@ -164,6 +188,38 @@ def fold(value: object) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def _name_form(name: str) -> str:
+    """A name with separators as spaces and each word without its plural ending."""
+    words = re.sub(r"[\s_\-./]+", " ", fold(name)).split()
+    return " ".join(re.sub(r"(?<=..)(es|s|x)$", "", word) for word in words)
+
+
+def near_match(wanted: str, named: dict[str, T], *, cutoff: float = 0.85) -> T | None:
+    """What a name that matched nothing exactly most likely means: the item whose name has
+    the same singular, separator-free form, or else the one clearly closest in spelling
+    (``Contrats``, ``contract_type``, ``Facturs``). None when nothing is close enough or two
+    different items are equally close. ``named`` maps folded names to their items."""
+    form = _name_form(wanted)
+    if not form or not re.fullmatch(r"[\w\s\-./'’]+", fold(wanted)):
+        return None  # a name with code-like punctuation is not a near miss
+    same = {id(item): item for name, item in named.items() if _name_form(name) == form}
+    if len(same) == 1:
+        return next(iter(same.values()))
+    if same:
+        return None
+    spaced = " ".join(re.sub(r"[\s_\-./]+", " ", fold(wanted)).split())
+    scored: dict[int, tuple[float, T]] = {}
+    for name, item in named.items():
+        ratio = max(SequenceMatcher(None, form, _name_form(name)).ratio(),
+                    SequenceMatcher(None, spaced, " ".join(re.sub(r"[\s_\-./]+", " ", name).split())).ratio())
+        if ratio > scored.get(id(item), (0.0, item))[0]:
+            scored[id(item)] = (ratio, item)
+    ranked = sorted(scored.values(), key=lambda pair: -pair[0])
+    if not ranked or ranked[0][0] < cutoff or (len(ranked) > 1 and ranked[1][0] == ranked[0][0]):
+        return None
+    return ranked[0][1]
+
+
 def parse_number(value: object) -> Decimal | None:
     """A number given in a query, read with the same rules as stored values."""
     if isinstance(value, bool):
@@ -177,9 +233,16 @@ def parse_number(value: object) -> Decimal | None:
         return None
     text = re.sub(r"[\s  '’]", "", value.strip().lower())
     text = re.sub(r"^(eur|usd|gbp|chf|cad|€|\$|£)", "", text)
-    text = re.sub(r"[a-z€$£%][a-z€$£%.]*$", "", text)
+    parts = re.match(_NUMBER_PART, text)
+    if parts is None:
+        return None
+    text, suffix = parts.group(1), parts.group(2) or ""
+    factor = next((factor for factor, patterns in _SCALES
+                   if any(re.match(pattern, suffix) for pattern in patterns)), 1)
     commas, dots = text.count(","), text.count(".")
-    if commas and dots:
+    if factor == 1 and re.fullmatch(_THOUSANDS, text):
+        text = re.sub(r"[.,]", "", text)
+    elif commas and dots:
         text = (text.replace(".", "").replace(",", ".") if text.rfind(",") > text.rfind(".")
                 else text.replace(",", ""))
     elif commas == 1:
@@ -191,7 +254,7 @@ def parse_number(value: object) -> Decimal | None:
     if not re.fullmatch(r"[+-]?(\d+(\.\d*)?|\.\d+)", text):
         return None
     try:
-        return Decimal(text)
+        return Decimal(text) * factor
     except InvalidOperation:
         return None
 

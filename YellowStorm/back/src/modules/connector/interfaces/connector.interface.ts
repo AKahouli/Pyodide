@@ -99,6 +99,8 @@ export interface IMcpToolDefinition {
   name: string;
   description?: string;
   inputSchema?: Record<string, unknown>;
+  /** From the tool's MCP annotations (readOnlyHint / destructiveHint); 'read' when the server declares none. */
+  safety?: 'read' | 'write' | 'delete';
 }
 
 export interface IMcpInspectResult {

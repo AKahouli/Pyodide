@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SuggestConceptsDialog, type SuggestionSource } from '../components/editor/SuggestConceptsDialog';
 import { Link, useBlocker, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import {
+import { ListOrdered,
   AlertTriangle,
   ArrowLeft,
   Box,
@@ -67,6 +67,7 @@ import { ReviewFocusBar } from '../components/review/ReviewFocusBar';
 import { CanvasPalette } from '../components/editor/CanvasPalette';
 import { SemanticTrustPanel } from '../components/review/SemanticTrustPanel';
 import { PopulationStartedPanel, populationServing, type PopulationOutcome } from '../components/population/PopulationStartedPanel';
+import { RunHistoryPanel } from '../components/population/RunHistoryPanel';
 import { VersionsPanel } from "../components/versions/VersionsPanel";
 import { useKnowledgeLinking, type KnowledgeResource } from "../hooks/use-knowledge-linking";
 import { useAssistantSync } from "../hooks/use-assistant-sync";
@@ -174,6 +175,7 @@ export function SemanticModelEditorPage() {
   const [graphViewerOpen, setGraphViewerOpen] = useState(false);
   const [boundDataRevisionId, setBoundDataRevisionId] = useState<string>();
   const [populationJobId, setPopulationJobId] = useState<string>();
+  const [runHistoryOpen, setRunHistoryOpen] = useState(false);
   const [trustOpen, setTrustOpen] = useState(false);
   const [population, setPopulation] = useState<PopulationOutcome | null>(null);
   const [stoppingRun, setStoppingRun] = useState(false);
@@ -646,8 +648,9 @@ export function SemanticModelEditorPage() {
     if (!next) switchQueue.current = null;
     setMappingTarget(next);
   };
-  const closeSidePanels = () => { setTrustOpen(false); setVersionsOpen(false); setPopulation(null); setSuggestionsOpen(false); };
-  const openReview = () => { setKnowledgeOpen(false); setPopulation(null); setVersionsOpen(false); setSuggestionsOpen(false); setMappingTarget(null); setTrustOpen(true); };
+  const closeSidePanels = () => { setTrustOpen(false); setVersionsOpen(false); setPopulation(null); setSuggestionsOpen(false); setRunHistoryOpen(false); };
+  const openReview = () => { setKnowledgeOpen(false); setPopulation(null); setVersionsOpen(false); setSuggestionsOpen(false); setMappingTarget(null); setRunHistoryOpen(false); setTrustOpen(true); };
+  const openRunHistory = () => { setKnowledgeOpen(false); setPopulation(null); setVersionsOpen(false); setSuggestionsOpen(false); setMappingTarget(null); setTrustOpen(false); setRunHistoryOpen(true); };
   // A review list that names the field only by its label ("customer id") still leads to the right field.
   const fieldKey = (conceptId: string, label: unknown) => {
     const wanted = String(label ?? '').trim().toLocaleLowerCase().replaceAll(/[\s_-]+/g, ' ');
@@ -673,6 +676,8 @@ export function SemanticModelEditorPage() {
       case 'open_sources': setMode('structure'); focus(action.conceptId, 'sources'); break;
       case 'fix_values': setMode('records'); setDataFocus({ conceptId: action.conceptId, attribute: action.attribute ?? fieldKey(action.conceptId, item.params.field), at: Date.now() }); break;
       case 'view_data': setMode('records'); setDataFocus(null); break;
+      case 'open_run_history': openRunHistory(); break;
+      case 'choose_label_field': setMode('structure'); focus(action.conceptId, 'identity'); break;
       default: break;
     }
   };
@@ -777,6 +782,7 @@ export function SemanticModelEditorPage() {
             {reviewCount > 0 && <span className='ml-2 rounded-full bg-amber-500/15 px-1.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300' aria-label={t('reviewQueue.badge', { count: reviewCount })}>{reviewCount}</span>}
           </Button>
           <Button variant='ghost' size='sm' className={versionsOpen ? 'bg-muted' : undefined} aria-pressed={versionsOpen} onClick={() => (versionsOpen ? setVersionsOpen(false) : openVersions())} aria-label={t('designer.versions')} title={t('designer.versions')}><History className='h-4 w-4' /></Button>
+          <Button variant='ghost' size='sm' className={runHistoryOpen ? 'bg-muted' : undefined} aria-pressed={runHistoryOpen} onClick={() => (runHistoryOpen ? setRunHistoryOpen(false) : openRunHistory())} aria-label={t('runHistory.title')} title={t('runHistory.title')}><ListOrdered className='h-4 w-4' /></Button>
           {model.data && <Button variant='ghost' size='sm' className='text-muted-foreground hover:text-primary' onClick={() => setCloneModelOpen(true)} aria-label={t('clone.button')} title={t('clone.button')}><Copy className='h-4 w-4' /></Button>}
           {model.data?.role === 'owner' && <Button variant='ghost' size='sm' className='text-muted-foreground hover:text-destructive' onClick={() => setDeleteModelOpen(true)} aria-label={t('deleteModel.button')} title={t('deleteModel.button')}><Trash2 className='h-4 w-4' /></Button>}
           {canEdit && <Button variant='outline' size='sm' disabled={!populationJobId && !canValidate}
@@ -873,6 +879,8 @@ export function SemanticModelEditorPage() {
           stopping={stoppingRun}
           serving={(populationJob.data?.jobId === population.jobId ? populationServing(populationJob.data?.result) : undefined) ?? population.serving}
         />}
+        {runHistoryOpen && modelId && !population && <RunHistoryPanel modelId={modelId} onClose={() => setRunHistoryOpen(false)} onOpenReview={openReview}
+          onOpenRun={(job) => { setRunHistoryOpen(false); setPopulationJobId(job.jobId); setPopulation({ jobId: job.jobId, status: job.state, skipped: [], reused: false }); }} />}
         {modelId && <SourceChooserDialog open={Boolean(choosingFor)} modelId={modelId} conceptLabel={choosingFor?.conceptLabel ?? ''} onClose={() => setChoosingFor(null)}
           onChoose={(option) => { const suggestion = choosingFor; setChoosingFor(null); if (suggestion) openSourceOption(suggestion, option); }} />}
         {suggestionsOpen && modelId && !population && !trustOpen && <aside className='relative z-20 flex h-full w-full max-w-sm shrink-0 flex-col border-l bg-background shadow-xl' aria-label={t('assistantSources.panelTitle')}>
@@ -929,6 +937,8 @@ export function SemanticModelEditorPage() {
           onOpenChange={setValidateOpen}
           modelId={modelId}
           onPopulationStarted={(outcome) => { setPopulation(outcome); setPopulationJobId(outcome.jobId); setTrustOpen(false); if (outcome.cleared) setBoundDataRevisionId(undefined); }}
+          // What stops the run is in Review, each item opening where it is fixed.
+          onRefused={() => { void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.reviewQueue(modelId) }); void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.freshness(modelId) }); openReview(); }}
         />
       )}
       {modelId && (

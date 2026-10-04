@@ -36,6 +36,11 @@ export function useDerivedSources(id: string | undefined) {
 export function useRelationResolutionRules(id: string | undefined) {
   return useQuery({ queryKey: semanticModelQueryKeys.relationRules(id ?? 'none'), queryFn: () => semanticModelApi.listRelationResolutionRules(id ?? ''), enabled: Boolean(id) });
 }
+/** The field that names each record, per concept. */
+export function useLabelFields(id: string | undefined) {
+  return useQuery({ queryKey: semanticModelQueryKeys.labelFields(id ?? 'none'), queryFn: () => semanticModelApi.listLabelFields(id ?? ''), enabled: Boolean(id) });
+}
+
 export function useIdentityRules(id: string | undefined) {
   return useQuery({ queryKey: semanticModelQueryKeys.identityRules(id ?? 'none'), queryFn: () => semanticModelApi.listIdentityRules(id ?? ''), enabled: Boolean(id) });
 }

@@ -413,6 +413,14 @@ export class SemanticModelService {
         'INSERT INTO semantic_model.identity_rules (model_id, concept_id, fields, updated_by) VALUES ($1,$2,$3::jsonb,$4)',
         [targetId, conceptId, JSON.stringify(rule.fields ?? []), userId]);
     }
+    const labels = await client.query<{ conceptId: string; field: string }>(
+      'SELECT concept_id AS "conceptId", field FROM semantic_model.label_fields WHERE model_id=$1', [sourceId]);
+    for (const label of labels.rows) {
+      const conceptId = ids.nodeIds.get(label.conceptId);
+      if (!conceptId) continue;
+      await client.query('INSERT INTO semantic_model.label_fields (model_id, concept_id, field, updated_by) VALUES ($1,$2,$3,$4)',
+        [targetId, conceptId, label.field, userId]);
+    }
     const positions = await client.query<{ elementId: string; x: number; y: number }>(
       'SELECT element_id AS "elementId", x, y FROM semantic_model.canvas_positions WHERE model_id=$1', [sourceId]);
     for (const position of positions.rows) {

@@ -28,7 +28,7 @@ import {
   DocumentLabelsDto,
   DataPreviewDto,
   SaveRelationResolutionRuleDto,
-  SaveIdentityRuleDto,
+  SaveIdentityRuleDto, SaveLabelFieldDto,
   SaveSourceResolutionPolicyDto,
   ListReviewItemsQueryDto,
   ResolveReviewItemDto,
@@ -396,6 +396,13 @@ export class SemanticModelController {
     return this.populationRefresh.freshness(user._id.toString(),modelId);
   }
 
+  @Get(':modelId/population/jobs')
+  @ApiOperation({ summary: 'The latest data updates of this model (run history), newest first' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  populationJobs(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Query('limit') limit?: string) {
+    return this.populationRefresh.listJobs(user._id.toString(), modelId, Number(limit ?? 20)).then((items) => ({ items }));
+  }
+
   @Get(':modelId/population/jobs/:jobId')
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
   populationJob(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('jobId') jobId: string) {
@@ -446,6 +453,19 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   saveIdentityRule(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('conceptId') conceptId: string,@Body() dto: SaveIdentityRuleDto) {
     return this.crossSource.saveIdentityRule(user._id.toString(), modelId, conceptId, dto);
+  }
+
+  @Get(':modelId/label-fields')
+  @ApiOperation({ summary: 'The field that names each record, per concept' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  listLabelFields(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
+    return this.crossSource.listLabelFields(user._id.toString(), modelId);
+  }
+
+  @Put(':modelId/label-fields/:conceptId')
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  saveLabelField(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('conceptId') conceptId: string,@Body() dto: SaveLabelFieldDto) {
+    return this.crossSource.saveLabelField(user._id.toString(), modelId, conceptId, dto);
   }
 
   @Get(':modelId/source-resolution-policies')

@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/modules/semantic-model/components/common/Select';
-import { showError, showSuccess } from '@/lib/notifications';
+import { showError } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../../api';
 import { useRelationResolutionRules } from '../../query/hooks';
@@ -25,6 +25,9 @@ export function RelationMatchingPanel({ modelId, relation }: Readonly<{ modelId:
   const [strategy, setStrategy] = useState<RelationMatchStrategy>('exact');
   const [ambiguityPolicy, setAmbiguityPolicy] = useState<'review' | 'unresolved'>('review');
   const [ruleId, setRuleId] = useState<string | null>(null);
+  // Saved on change (like the rest of the model); opening the panel alone saves nothing.
+  const [edited, setEdited] = useState(false);
+  const saved = useRef<string>('');
 
   useEffect(() => {
     setSourceAttribute(existing?.sourceAttribute ?? source?.attributes[0]?.key ?? '');
@@ -32,6 +35,8 @@ export function RelationMatchingPanel({ modelId, relation }: Readonly<{ modelId:
     setStrategy(existing?.strategy ?? 'exact');
     setAmbiguityPolicy(existing?.ambiguityPolicy ?? 'review');
     setRuleId(existing?.id ?? null);
+    setEdited(false);
+    saved.current = existing ? JSON.stringify([existing.sourceAttribute, existing.targetAttribute, existing.strategy, existing.ambiguityPolicy ?? 'review']) : '';
   }, [existing?.id, relation.id, source?.id, target?.id]);
 
   const save = useMutation({
@@ -50,15 +55,20 @@ export function RelationMatchingPanel({ modelId, relation }: Readonly<{ modelId:
         client.invalidateQueries({ queryKey: semanticModelQueryKeys.model(modelId) }),
         client.invalidateQueries({ queryKey: ['semantic-models', 'data-preview', modelId] }),
       ]);
-      showSuccess(t('relationMatching.saved'));
     },
-    onError: (error) => showError(t('relationMatching.saveError'), { description: error instanceof Error ? error.message : undefined }),
+    onError: (error) => { saved.current = ''; showError(t('relationMatching.saveError'), { description: error instanceof Error ? error.message : undefined }); },
   });
   const preview = useMutation({
     mutationFn: () => semanticModelApi.previewRelationResolutionRule(modelId, ruleId!, 25),
     onError: (error) => showError(t('relationMatching.previewError'), { description: error instanceof Error ? error.message : undefined }),
   });
-  const canSave = Boolean(sourceAttribute && targetAttribute) && !save.isPending;
+  const current = JSON.stringify([sourceAttribute, targetAttribute, strategy, ambiguityPolicy]);
+  useEffect(() => {
+    if (!edited || !sourceAttribute || !targetAttribute || current === saved.current) return;
+    const timer = window.setTimeout(() => { saved.current = current; save.mutate(); }, 400);
+    return () => window.clearTimeout(timer);
+  }, [edited, current]);
+  const change = <T,>(set: (value: T) => void) => (value: T) => { set(value); setEdited(true); };
 
   const idPrefix = `relation-matching-${relation.id}`;
 
@@ -72,32 +82,36 @@ export function RelationMatchingPanel({ modelId, relation }: Readonly<{ modelId:
         : t('relationSentence.chooseBoth')}
     </p>
     <FormField label={source?.label}>
-      <Select value={sourceAttribute} onValueChange={setSourceAttribute}>
+      <Select value={sourceAttribute} onValueChange={change(setSourceAttribute)}>
         <SelectTrigger className={INPUT} aria-label={t('relationMatching.sourceField')}><SelectValue placeholder={t('relationMatching.chooseField')} /></SelectTrigger>
         <SelectContent>{source?.attributes.map((attribute) => <SelectItem key={attribute.key} value={attribute.key}>{attribute.label}</SelectItem>)}</SelectContent>
       </Select>
     </FormField>
     <FormField label={target?.label}>
-      <Select value={targetAttribute} onValueChange={setTargetAttribute}>
+      <Select value={targetAttribute} onValueChange={change(setTargetAttribute)}>
         <SelectTrigger className={INPUT} aria-label={t('relationMatching.targetField')}><SelectValue placeholder={t('relationMatching.chooseField')} /></SelectTrigger>
         <SelectContent>{target?.attributes.map((attribute) => <SelectItem key={attribute.key} value={attribute.key}>{attribute.label}</SelectItem>)}</SelectContent>
       </Select>
     </FormField>
     <FormField label={t('relationMatching.strategy')} htmlFor={`${idPrefix}-strategy`}>
-      <Select value={strategy} onValueChange={(value: RelationMatchStrategy) => setStrategy(value)}>
+      <Select value={strategy} onValueChange={change((value: RelationMatchStrategy) => setStrategy(value))}>
         <SelectTrigger id={`${idPrefix}-strategy`} className={INPUT}><SelectValue /></SelectTrigger>
         <SelectContent>{(['exact', 'case_insensitive', 'normalized'] as const).map((value) => <SelectItem key={value} value={value}>{t(`relationMatching.strategyOption.${value}`)}</SelectItem>)}</SelectContent>
       </Select>
     </FormField>
     <FormField label={t('relationMatching.ambiguity')} htmlFor={`${idPrefix}-ambiguity`}>
-      <Select value={ambiguityPolicy} onValueChange={(value: 'review' | 'unresolved') => setAmbiguityPolicy(value)}>
+      <Select value={ambiguityPolicy} onValueChange={change((value: 'review' | 'unresolved') => setAmbiguityPolicy(value))}>
         <SelectTrigger id={`${idPrefix}-ambiguity`} className={INPUT}><SelectValue /></SelectTrigger>
         <SelectContent><SelectItem value='review'>{t('relationMatching.review')}</SelectItem><SelectItem value='unresolved'>{t('relationMatching.leaveUnresolved')}</SelectItem></SelectContent>
       </Select>
     </FormField>
-    <div className='flex gap-2 pt-1'>
-      <Button size='sm' className='h-9 flex-1' disabled={!canSave} onClick={() => save.mutate()}>{save.isPending && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}{t('relationMatching.save')}</Button>
-      <Button size='sm' className='h-9 flex-1' variant='outline' disabled={!ruleId || preview.isPending} onClick={() => preview.mutate()}>{preview.isPending && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}{t('relationMatching.preview')}</Button>
+    <div className='flex items-center gap-2 pt-1'>
+      {/* A link with no rule yet: saving it once is the explicit choice of the fields shown. */}
+      {!ruleId && !edited && <Button size='sm' className='h-9 flex-1' disabled={!sourceAttribute || !targetAttribute || save.isPending} onClick={() => { saved.current = current; save.mutate(); }}>{t('relationMatching.save')}</Button>}
+      <span className='flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted-foreground' role='status'>
+        {save.isPending ? <><Loader2 className='h-3.5 w-3.5 animate-spin' />{t('relationMatching.saving')}</> : ruleId ? <><CheckCircle2 className='h-3.5 w-3.5 text-emerald-600' />{t('relationMatching.autoSaved')}</> : null}
+      </span>
+      <Button size='sm' className='h-9 flex-1' variant='outline' disabled={!ruleId || preview.isPending || save.isPending} onClick={() => preview.mutate()}>{preview.isPending && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}{t('relationMatching.preview')}</Button>
     </div>
     {preview.data && <div className='space-y-3'>
       <div className='grid grid-cols-3 gap-2 text-center text-xs'>

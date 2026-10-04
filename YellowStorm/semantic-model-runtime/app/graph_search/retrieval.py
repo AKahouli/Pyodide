@@ -24,6 +24,7 @@ from app.population.tabular import normalize_identity_value
 from .documents import fold, query_terms
 from .embeddings import EmbeddingError, EmbeddingProfile, embed, vector_literal
 from .settings import SearchSettings
+from .typed_values import near_match
 
 # Defaults of SearchSettings (an administrator can change them per deployment).
 CANDIDATES_PER_METHOD = 50
@@ -39,17 +40,19 @@ def min_similarity() -> float:
 
 def resolve_concepts(compiled: dict[str, Any], names: list[str] | None
                      ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Concepts named by id, key, label or alias; unknown names are returned apart."""
+    """Concepts named by id, key, label or alias, or nearly (``near_match``); unknown names
+    are returned apart."""
     if not names:
         return [], []
     found: dict[str, dict[str, Any]] = {}
     unknown: list[str] = []
+    named: dict[str, dict[str, Any]] = {}
+    for concept in compiled["concepts"].values():
+        for item in [concept["conceptId"], concept.get("key"), concept.get("label"), *(concept.get("aliases") or [])]:
+            if fold(item):
+                named.setdefault(fold(item), concept)
     for name in names:
-        key = fold(name)
-        match = next((concept for concept in compiled["concepts"].values()
-                      if key in {fold(concept["conceptId"]), fold(concept.get("key")),
-                                 fold(concept.get("label"))}
-                      or key in {fold(alias) for alias in concept.get("aliases") or []}), None)
+        match = named.get(fold(name)) or near_match(name, named)
         if match is None:
             unknown.append(name)
         else:
@@ -266,7 +269,15 @@ async def find_seeds(pool: Any, *, revision_id: str, compiled: dict[str, Any], q
     rows = await search_store.entity_rows(pool, revision_id, ordered[: limit * 4])
     texts = await search_store.document_texts(pool, generation["index_id"], list(rows)) if ready else {}
     seeds = []
+    has_more = False
     for entity_id in ordered:
+        if len(seeds) >= limit:
+            # A visible match left out, or one not even read: the list is not the whole answer.
+            entity = rows.get(entity_id)
+            if entity is None or is_visible(entity, allowed_workspaces):
+                has_more = True
+                break
+            continue
         entity = rows.get(entity_id)
         if entity is None or not is_visible(entity, allowed_workspaces):
             continue
@@ -287,8 +298,6 @@ async def find_seeds(pool: Any, *, revision_id: str, compiled: dict[str, Any], q
             seed["matchedIn"] = "record" if entity_id in exact_ids else fusion.matched_in(entity_id)
             seed["passageOrdinals"] = fusion.best_passages(entity_id)
         seeds.append(seed)
-        if len(seeds) >= limit:
-            break
     wanted = [(seed["entityId"], ordinal) for seed in seeds for ordinal in seed.pop("passageOrdinals", [])]
     passages = await search_store.passage_texts(pool, generation["index_id"], wanted) if wanted else {}
     for seed in seeds:
@@ -298,4 +307,4 @@ async def find_seeds(pool: Any, *, revision_id: str, compiled: dict[str, Any], q
                                  "start": passage["start"], "end": passage["end"],
                                  "text": excerpt(passage["text"], terms, settings.excerpt_chars)} for passage in found]
     timings["seedMs"] = round((time.perf_counter() - started) * 1000)
-    return {"seeds": seeds, "modeUsed": mode, "timings": timings}
+    return {"seeds": seeds, "modeUsed": mode, "timings": timings, "hasMore": has_more}

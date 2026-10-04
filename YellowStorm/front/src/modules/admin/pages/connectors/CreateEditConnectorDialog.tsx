@@ -242,7 +242,7 @@ function mapInspectToolsToActions(
     ),
     parameterSchema: tool.inputSchema ?? {},
     outputSchema: {},
-    safety: 'read',
+    safety: tool.safety ?? 'read',
     supportsBatch: false,
     supportsIteration: false,
     isEnabled: enabledByKey.get(truncateValue(tool.name, CONNECTOR_ACTION_KEY_MAX_LENGTH))?.isEnabled ?? true,

@@ -14,6 +14,8 @@ interface Props {
   modelId: string;
   /** Called when a population run was accepted by the runtime, with the sources it skipped. */
   onPopulationStarted?: (result: { jobId: string; status: string; skipped: Array<{ mappingId: string; reason: string }>; reused: boolean; sourceCount?: number; cleared?: boolean }) => void;
+  /** A run that could not start: what stops it is listed in Review, with where to fix it. */
+  onRefused?: (message: string) => void;
 }
 
 /**
@@ -21,7 +23,7 @@ interface Props {
  * hand on the draft are sent along as a manual source. A second, confirmed action clears
  * all generated data first and repopulates the model from scratch.
  */
-export function SemanticModelValidateDialog({ open, onOpenChange, modelId, onPopulationStarted }: Props) {
+export function SemanticModelValidateDialog({ open, onOpenChange, modelId, onPopulationStarted, onRefused }: Props) {
   const { t } = useModuleTranslation("semantic-model");
   const populate = usePopulationRun(modelId);
   const rebuild = useRebuildFromScratch(modelId);
@@ -36,7 +38,9 @@ export function SemanticModelValidateDialog({ open, onOpenChange, modelId, onPop
       onPopulationStarted?.({ jobId: result.jobId, status: result.status, skipped: result.skipped, reused: result.reused, sourceCount: result.sourceCount });
       onOpenChange(false);
     } catch (error) {
-      showError(t("population.startError"), { description: parseApiError(error).message });
+      const message = parseApiError(error).message;
+      showError(t("population.startError"), { description: message, duration: 10000 });
+      onRefused?.(message);
     }
   };
 
@@ -47,7 +51,9 @@ export function SemanticModelValidateDialog({ open, onOpenChange, modelId, onPop
       onOpenChange(false);
     } catch (error) {
       const apiError = parseApiError(error);
-      showError(t("rebuild.error"), { description: apiError.message.includes("population_running") ? t("rebuild.running") : apiError.message });
+      const running = apiError.message.includes("population_running");
+      showError(t("rebuild.error"), { description: running ? t("rebuild.running") : apiError.message, duration: 10000 });
+      if (!running) onRefused?.(apiError.message);
     }
   };
 
