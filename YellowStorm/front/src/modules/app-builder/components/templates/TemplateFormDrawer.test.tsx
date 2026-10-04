@@ -5,9 +5,6 @@ import type { AppTemplate, TemplateCategory } from '../../types';
 
 const createTemplateMock = vi.hoisted(() => vi.fn(async () => ({})));
 const updateTemplateMock = vi.hoisted(() => vi.fn(async () => ({})));
-const coverFileMock = vi.hoisted(
-  () => new File(['png-bytes'], 'cover.png', { type: 'image/png' }),
-);
 
 vi.mock('../../api', () => ({
   adminTemplateApi: {
@@ -16,23 +13,28 @@ vi.mock('../../api', () => ({
   },
 }));
 
-vi.mock('./TemplateValidatePreviewDialog', () => ({
-  TemplateValidatePreviewDialog: ({
+vi.mock('./cover/CoverFocusDialog', () => ({
+  CoverFocusDialog: () => null,
+}));
+
+vi.mock('./TemplateStudio', () => ({
+  TemplateStudio: ({
     open,
     onValidated,
+    onOpenChange,
   }: {
     open: boolean;
     onValidated: (file: File) => void;
-  }) =>
-    open ? (
-      <button type='button' onClick={() => onValidated(coverFileMock)}>
-        mock-validate
-      </button>
-    ) : null,
-}));
-
-vi.mock('./cover/CoverFocusDialog', () => ({
-  CoverFocusDialog: () => null,
+    onOpenChange: (open: boolean) => void;
+  }) => {
+    if (!open) return null;
+    // Simulate successful preview → cover → auto-close.
+    queueMicrotask(() => {
+      onValidated(new File(['cover-bytes'], 'template-cover.png', { type: 'image/png' }));
+      onOpenChange(false);
+    });
+    return null;
+  },
 }));
 
 vi.mock('./cover/cover-focus', async () => {
@@ -99,7 +101,7 @@ describe('TemplateFormDrawer', () => {
     expect(screen.getByText('templates.createTitle')).toBeInTheDocument();
   });
 
-  it('keeps the create action locked until title, archive and cover are provided', async () => {
+  it('keeps create locked until ZIP is validated and cover is set from Template Studio', async () => {
     renderDrawer();
 
     const submit = screen.getByRole('button', { name: 'templates.create' });
@@ -112,21 +114,26 @@ describe('TemplateFormDrawer', () => {
     expect(submit).toBeDisabled();
 
     await userEvent.click(screen.getByRole('button', { name: 'templates.validateTemplate' }));
-    fireEvent.click(screen.getByText('mock-validate'));
-    expect(await screen.findByText('templates.validationConfirmed')).toBeInTheDocument();
-    expect(screen.getByText('coverGallery.tip')).toBeInTheDocument();
+
+    expect(await screen.findByRole('button', { name: /templates.validationConfirmed/ })).toBeDisabled();
     expect(submit).toBeEnabled();
 
     fireEvent.submit(submit.closest('form')!);
 
     await waitFor(() => expect(createTemplateMock).toHaveBeenCalledTimes(1));
-    expect(createTemplateMock).toHaveBeenCalledWith({
-      categoryId: 'cat_1',
-      title: 'Sales starter',
-      description: '',
-      zip,
-      cover: coverFileMock,
-    });
+    const payload = createTemplateMock.mock.calls[0]?.[0] as {
+      categoryId: string;
+      title: string;
+      description: string;
+      zip: File;
+      cover: File;
+    };
+    expect(payload.categoryId).toBe('cat_1');
+    expect(payload.title).toBe('Sales starter');
+    expect(payload.description).toBe('');
+    expect(payload.zip).toBe(zip);
+    expect(payload.cover).toBeInstanceOf(File);
+    expect(payload.cover.name).toBe('template-cover.png');
   });
 
   it('prefills the edit form, hides the upload zones and updates in place', async () => {
@@ -144,11 +151,13 @@ describe('TemplateFormDrawer', () => {
     await userEvent.type(screen.getByLabelText('templates.fieldDescription'), 'Updated');
     fireEvent.submit(screen.getByRole('button', { name: 'templates.save' }).closest('form')!);
 
-    await waitFor(() => expect(updateTemplateMock).toHaveBeenCalledWith('tpl_1', {
-      categoryId: 'cat_1',
-      title: 'Horizon',
-      description: 'Updated',
-    }));
+    await waitFor(() =>
+      expect(updateTemplateMock).toHaveBeenCalledWith('tpl_1', {
+        categoryId: 'cat_1',
+        title: 'Horizon',
+        description: 'Updated',
+      }),
+    );
     expect(createTemplateMock).not.toHaveBeenCalled();
     expect(onSaved).toHaveBeenCalledTimes(1);
     expect(onOpenChange).toHaveBeenCalledWith(false);

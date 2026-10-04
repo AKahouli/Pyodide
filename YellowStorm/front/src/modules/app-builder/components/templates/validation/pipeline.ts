@@ -1,11 +1,12 @@
 /**
- * Sequential validation steps for template ZIP preview (NodePod today; more later).
+ * Sequential validation steps for template ZIP preview.
  */
 export type ValidationStepStatus = 'pending' | 'running' | 'confirmed' | 'failed';
 
 export interface ValidationStepContext {
   signal: AbortSignal;
   setSessionId: (sessionId: string | null) => void;
+  /** @deprecated Kept for call-site compatibility; local preview does not use staging. */
   setStagingTemplateId: (stagingTemplateId: string | null) => void;
 }
 

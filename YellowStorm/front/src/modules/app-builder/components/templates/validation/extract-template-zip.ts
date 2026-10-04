@@ -40,7 +40,7 @@ function stripSingleRootPrefix(files: ArchiveEntry[]): ArchiveEntry[] {
 }
 
 /**
- * Expand a template ZIP in the browser for NodePod validation (no Ceph / backend session).
+ * Expand a template ZIP in the browser for local validation (no Ceph / backend session).
  * Mirrors backend `extractTemplateArchive` exclusions and root-folder stripping.
  */
 export async function extractTemplateZipFromFile(file: File): Promise<VfsFiles> {

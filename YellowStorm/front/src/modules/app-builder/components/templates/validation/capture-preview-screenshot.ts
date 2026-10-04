@@ -92,7 +92,7 @@ function cropCanvasToCover(source: HTMLCanvasElement): HTMLCanvasElement {
 }
 
 /**
- * Capture a PNG cover from the NodePod preview iframe once the app is rendered.
+ * Capture a PNG cover from the template preview iframe once the app is rendered.
  * Frames the visible desktop viewport (16:10), not the full document height.
  */
 export async function capturePreviewScreenshot(iframe: HTMLIFrameElement): Promise<File> {

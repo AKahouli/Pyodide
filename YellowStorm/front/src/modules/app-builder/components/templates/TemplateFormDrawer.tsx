@@ -25,7 +25,7 @@ import { adminTemplateApi } from '../../api';
 import { useCoverImageItems } from '../../hooks/useCoverImageItems';
 import type { AppTemplate, TemplateCategory } from '../../types';
 import { FileDropZone } from './FileDropZone';
-import { TemplateValidatePreviewDialog } from './TemplateValidatePreviewDialog';
+import { TemplateStudio } from './TemplateStudio';
 import { CoverFocusDialog } from './cover/CoverFocusDialog';
 import { CoverImageGallery } from './cover/CoverImageGallery';
 import { exportPrimaryCoverFile } from './cover/cover-focus';
@@ -59,7 +59,7 @@ export function TemplateFormDrawer({
   const [description, setDescription] = useState('');
   const [zipFile, setZipFile] = useState<File | null>(null);
   const [zipValidated, setZipValidated] = useState(false);
-  const [validateOpen, setValidateOpen] = useState(false);
+  const [studioOpen, setStudioOpen] = useState(false);
   const [exportingCover, setExportingCover] = useState(false);
 
   const {
@@ -83,7 +83,7 @@ export function TemplateFormDrawer({
     setZipFile(null);
     resetCoverItems();
     setZipValidated(false);
-    setValidateOpen(false);
+    setStudioOpen(false);
   }, [open, template, defaultCategoryId, categories, resetCoverItems]);
 
   const create = useApiAction(adminTemplateApi.createTemplate, {
@@ -120,7 +120,7 @@ export function TemplateFormDrawer({
   const handleValidatedCover = (file: File) => {
     replaceWithValidatedCover(file);
     setZipValidated(true);
-    setValidateOpen(false);
+    setStudioOpen(false);
   };
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -227,22 +227,23 @@ export function TemplateFormDrawer({
                     onChange={handleZipChange}
                     disabled={busy}
                   />
-                  {zipFile && !zipValidated ? (
+                  {zipFile ? (
                     <Button
                       type='button'
-                      variant='secondary'
+                      variant={zipValidated ? 'outline' : 'secondary'}
                       className='w-full'
-                      disabled={busy}
-                      onClick={() => setValidateOpen(true)}
+                      disabled={busy || zipValidated}
+                      onClick={() => setStudioOpen(true)}
                     >
-                      {t('templates.validateTemplate')}
+                      {zipValidated ? (
+                        <>
+                          <CheckCircle2 className='mr-2 size-4 text-ok' aria-hidden />
+                          {t('templates.validationConfirmed')}
+                        </>
+                      ) : (
+                        t('templates.validateTemplate')
+                      )}
                     </Button>
-                  ) : null}
-                  {zipValidated ? (
-                    <p className='flex items-center gap-2 rounded-lg bg-ok-soft/50 px-3 py-2 text-sm text-ok'>
-                      <CheckCircle2 className='size-4 shrink-0' aria-hidden />
-                      {t('templates.validationConfirmed')}
-                    </p>
                   ) : null}
                   <CoverImageGallery
                     id='template-cover'
@@ -282,10 +283,10 @@ export function TemplateFormDrawer({
         </SheetContent>
       </Sheet>
 
-      <TemplateValidatePreviewDialog
-        open={validateOpen}
+      <TemplateStudio
+        open={studioOpen}
         zipFile={zipFile}
-        onOpenChange={setValidateOpen}
+        onOpenChange={setStudioOpen}
         onValidated={handleValidatedCover}
       />
 

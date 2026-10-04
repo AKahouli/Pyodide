@@ -89,7 +89,7 @@ export function useCoverImageItems() {
     );
   }, []);
 
-  /** Replace gallery with a single NodePod validation screenshot cover. */
+  /** Replace gallery with a single Template Studio validation screenshot cover. */
   const replaceWithValidatedCover = useCallback((file: File) => {
     setCoverItems((prev) => {
       revokeCoverUrls(prev);

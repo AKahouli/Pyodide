@@ -31,7 +31,7 @@ export function defaultCoverFocus(): CoverFocus {
   return { cx: 0.5, cy: 0.5, zoom: 1 };
 }
 
-/** Auto NodePod covers: keep the app header / hero in the 16:10 window. */
+/** Auto-captured covers: keep the app header / hero in the 16:10 window. */
 export function screenshotCoverFocus(): CoverFocus {
   return { cx: 0.5, cy: 0.22, zoom: 1 };
 }

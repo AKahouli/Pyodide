@@ -4,11 +4,11 @@ import {
   removeHost,
   type BrowserRuntimeHost,
 } from '@/modules/conversation-v2/runtime/BrowserRuntimeHost';
-import type { ValidationStep, ValidationStepContext } from './pipeline';
+import type { ValidationStep } from './pipeline';
 import { extractTemplateZipFromFile } from './extract-template-zip';
 
 const READY_TIMEOUT_MS = 300_000;
-/** Local-only NodePod sessions — no Conversation v2 / Ceph staging. */
+/** Local-only preview sessions — no Conversation v2 / Ceph staging. */
 export const LOCAL_TEMPLATE_VALIDATION_PREFIX = 'validate-local-';
 
 class AbortedError extends Error {
@@ -18,16 +18,15 @@ class AbortedError extends Error {
   }
 }
 
-export function createZipNodepodValidationStep(zipFile: File): ValidationStep {
+export function createZipPreviewValidationStep(zipFile: File): ValidationStep {
   return {
-    id: 'nodepod',
-    labelKey: 'validation.nodepod',
+    id: 'preview',
+    labelKey: 'templateStudio.bootStep',
     async run(ctx) {
       if (ctx.signal.aborted) throw new AbortedError();
 
       const sessionId = `${LOCAL_TEMPLATE_VALIDATION_PREFIX}${nanoid()}`;
       ctx.setSessionId(sessionId);
-      ctx.setStagingTemplateId(null);
 
       const files = await extractTemplateZipFromFile(zipFile);
       if (ctx.signal.aborted) throw new AbortedError();
@@ -64,7 +63,9 @@ function waitForReady(
     const unsubscribe = host.subscribe((state) => {
       if (state.status === 'ready' && state.previewUrl) finish(resolve);
       else if (state.status === 'error' || state.status === 'disconnected') {
-        finish(() => reject(new Error(state.error || 'The template could not be started in NodePod.')));
+        finish(() =>
+          reject(new Error(state.error || 'The template could not be started for preview.')),
+        );
       }
     });
 
@@ -74,7 +75,7 @@ function waitForReady(
     const timer = setTimeout(
       () =>
         finish(() =>
-          reject(new Error('NodePod validation timed out before the preview became ready.')),
+          reject(new Error('Template validation timed out before the preview became ready.')),
         ),
       READY_TIMEOUT_MS,
     );
@@ -89,13 +90,9 @@ async function cleanup(sessionId: string): Promise<void> {
 
 export async function disposeZipValidationSession(
   sessionId: string | null,
-  stagingTemplateId: string | null,
+  _stagingTemplateId: string | null = null,
 ): Promise<void> {
   if (sessionId) {
     removeHost(sessionId);
-  }
-  if (stagingTemplateId) {
-    const { adminTemplateApi } = await import('../../../api');
-    await adminTemplateApi.discardStagingZip(stagingTemplateId).catch(() => undefined);
   }
 }

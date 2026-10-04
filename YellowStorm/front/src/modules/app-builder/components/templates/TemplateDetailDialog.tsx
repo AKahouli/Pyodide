@@ -18,7 +18,6 @@ import {
   startTemplateSession,
 } from '@/modules/conversation-v2/startAgentSession';
 import type { AppTemplate } from '../../types';
-import { TemplatePlatformSummary } from './TemplatePlatformSummary';
 import { TemplatePreviewFrame } from './TemplatePreviewFrame';
 
 interface TemplateDetailDialogProps {
@@ -181,11 +180,6 @@ export function TemplateDetailDialog({
                   </div>
                 </div>
 
-                {isSuperAdmin ? (
-                  <div className='mt-5'>
-                    <TemplatePlatformSummary report={template.platformReport} />
-                  </div>
-                ) : null}
               </div>
 
               {isSuperAdmin ? (
