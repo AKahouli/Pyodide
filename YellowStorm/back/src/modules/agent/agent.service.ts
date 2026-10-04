@@ -43,7 +43,6 @@ import { CHANNEL_TEARDOWN, type ChannelTeardown } from '../channels-teardown/cha
 import {
   PLATFORM_COPILOT,
   PLATFORM_COPILOT_AGENT_SLUG,
-  PLATFORM_COPILOT_HANDOFF_RUNTIME_INSTRUCTION,
 } from './constants/platform-copilot.constants';
 import { isTrustedMcpServerUrl, normalizeMcpServerUrl } from '../connector/utils/trusted-mcp-server.util';
 import { SystemService } from '../system/system.service';
@@ -65,7 +64,7 @@ export function buildSemanticModelChatContext(model: { id: string; name: string 
     `This conversation is about the semantic model "${name}".`,
     toolsAttached
       ? 'Its records are read through the attached semantic model tools, already set to this model and its published data.'
-      : 'Its record tools are not available right now: say that you cannot read its records instead of answering from memory.',
+      : 'Its record tools are not available right now.',
   ].join('\n');
 }
 
@@ -79,11 +78,6 @@ export function semanticModelChatActionKeys(connector: IConnectorResponse, selec
     .map((action) => action.key)
     .filter((key) => !selected || selected.has(key)));
 }
-const PLATFORM_COPILOT_LEGACY_PLAYBOOK_ACTIONS = new Set([
-  'assess_playbook_request',
-  'continue_playbook_clarification',
-  'start_playbook_construction',
-]);
 
 export interface PlaybookPlannerAgentConfig {
   agentTypeId: string;
@@ -863,7 +857,7 @@ export class AgentService {
           ...(semanticSearchConnectorId ? [semanticSearchConnectorId] : []),
         ]),
       ];
-      let actionKeysByConnectorId = this.buildRuntimeConnectorActionKeysByConnectorId(agent, effectiveConnectorIds, connectorsMap);
+      let actionKeysByConnectorId = this.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections);
       if (semanticSearchConnector) {
         actionKeysByConnectorId = new Map(actionKeysByConnectorId ?? []);
         actionKeysByConnectorId.set(semanticSearchConnector.id,
@@ -925,9 +919,8 @@ export class AgentService {
         prompt = agent.instruction || '';
       }
       if (agent.agentTypeSlug === PLATFORM_COPILOT
-        && runtimeContext?.playbookHandoffAttached
-        && !prompt.includes(PLATFORM_COPILOT_HANDOFF_RUNTIME_INSTRUCTION)) {
-        prompt += `${prompt ? '\n\n' : ''}${PLATFORM_COPILOT_HANDOFF_RUNTIME_INSTRUCTION}`;
+        && runtimeContext?.playbookHandoffAttached) {
+        prompt += `${prompt ? '\n\n' : ''}[Trusted conversation handoff]\nA trusted server-side projection of the source conversation is bound to this turn.`;
       }
       if (semanticModel) {
         const toolsAttached = connectorBindings.some((binding) => binding.connector_id === semanticSearchConnectorId);
@@ -1968,30 +1961,6 @@ export class AgentService {
     return new Map(
       selections.map((selection) => [selection.connectorId, new Set(selection.actionKeys)]),
     );
-  }
-
-  private buildRuntimeConnectorActionKeysByConnectorId(
-    agent: Pick<IAgentForStream, 'agentTypeSlug' | 'connectorActionSelections'>,
-    connectorIds: string[],
-    connectorsMap: Map<string, IConnectorResponse>,
-  ): Map<string, Set<string>> | undefined {
-    const selected = this.buildConnectorActionKeysByConnectorId(agent.connectorActionSelections);
-    if (agent.agentTypeSlug !== PLATFORM_COPILOT) return selected;
-
-    // The Copilot uses every current action of the playbook MCP (the connector pointing at PLAYBOOK_MCP_SERVER_URL).
-    const playbookMcpUrl = normalizeMcpServerUrl(this.configService.get<string>('PLAYBOOK_MCP_SERVER_URL', ''));
-    const runtimeSelections = new Map(selected ?? []);
-    for (const connectorId of connectorIds) {
-      const connector = connectorsMap.get(connectorId);
-      if (connector && playbookMcpUrl && normalizeMcpServerUrl(connector.mcpServerUrl) === playbookMcpUrl) {
-        runtimeSelections.set(connectorId, new Set(
-          connector.actions
-            .filter((action) => action.isEnabled !== false && !PLATFORM_COPILOT_LEGACY_PLAYBOOK_ACTIONS.has(action.key))
-            .map((action) => action.key),
-        ));
-      }
-    }
-    return runtimeSelections.size ? runtimeSelections : undefined;
   }
 
   private toGrpcSkill(skill: ISkillResponse): Record<string, unknown> {

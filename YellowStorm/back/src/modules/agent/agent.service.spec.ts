@@ -351,7 +351,7 @@ describe('AgentService connector skill inheritance', () => {
     expect(restricted[0].skills?.map((skill) => skill.id as string)).toEqual(['type-skill', 'agent-skill']);
   });
 
-  it('excludes legacy Playbook orchestration actions from Platform Copilot', async () => {
+  it('uses the configured Playbook action selection without Copilot-specific overrides', async () => {
     const { service, connectorService, modelsService } = createService();
     const enabledActions = [
       'search_playbooks',
@@ -408,11 +408,7 @@ describe('AgentService connector skill inheritance', () => {
         { conversationId: 'conversation-1', correlationId: 'message-1', playbookHandoffAttached: true },
       );
 
-      const expectedActions = enabledActions.filter((action) => ![
-        'assess_playbook_request',
-        'continue_playbook_clarification',
-        'start_playbook_construction',
-      ].includes(action));
+      const expectedActions = connectorActionSelections.length ? ['search_playbooks'] : enabledActions;
       expect(result[0].tools.map((tool) => tool.name)).toEqual(
         expectedActions.map((action) => `playbook-mcp_${action}`),
       );
@@ -422,7 +418,10 @@ describe('AgentService connector skill inheritance', () => {
         expect.arrayContaining(['playbook-mcp_disabled_action']),
       );
       expect(result[0].prompt).toContain('[Trusted conversation handoff]');
-      expect(result[0].prompt).toContain('Call start_playbook_generation now');
+      expect(result[0].prompt).toContain('A trusted server-side projection of the source conversation is bound to this turn.');
+      expect(result[0].prompt).not.toContain('Call start_playbook_generation now');
+      expect(result[0].prompt).not.toContain('Never ask the user');
+      expect(result[0].prompt).toContain(streamAgent.instruction);
       expect(result[0].prompt).not.toContain('conversation-1');
       expect(result[0].prompt).not.toContain('message-1');
     }
