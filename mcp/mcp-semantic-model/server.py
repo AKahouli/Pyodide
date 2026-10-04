@@ -450,19 +450,20 @@ async def find_records(
     query: str,
     concepts: list[str] | str | None = None,
     data: str = "published",
-    limit: int = 10,
+    limit: int | None = None,
 ) -> SemanticModelMcpResultV1:
     """Find the records of a semantic model that match a question: by exact key or name first, then by words and meaning. Use it first to answer a question from a model's data, then get_related_records with the entityId of the records found. No change is made.
     The results are records stored in the model (a customer, a contract, an invoice, an e-mail...) with their key fields and a snippet of their fields, NOT documents. match says how a record was found (exact, lexical, vector, hybrid); a vector or hybrid match is a likely candidate, not proof: check its fields.
     Long text fields (an e-mail body, a contract text) are searched to their end: a record may come with passages [{field, fieldKey, text}], the excerpts of those fields that match the question (matchedIn "passage" when the match came from them; the snippet is then the best passage). Quote a passage as evidence, naming its record and field; it is an excerpt, so to read the whole field call query_records on the record's concept with a filter on its name (or a key field) and fields=[the fieldKey] (values longer than 1500 characters come back cut).
-    concepts: concept names (or keys) to search in, e.g. ["Contract"]. data: "published" (default, what chat uses) or "draft" (the data being built; only for the model's editors). limit: 1 to 25.
+    concepts: concept names (or keys) to search in, e.g. ["Contract"]. data: "published" (default, what chat uses) or "draft" (the data being built; only for the model's editors). limit: how many records (default and maximum are set by the administrator: 10 and 25 unless changed); leave it out unless you need more or fewer.
     Report the result honestly, using notes: status index_not_ready means the search index is still being built and records may be missing; not_represented means the model has no such concept, so the information is not in the model; no_match means no record matches. Never infer a fact that is not in a field of a returned record."""
     try:
         payload = compact({
             "query": query.strip() if isinstance(query, str) else query,
             "concepts": string_list(concepts, "concepts") or None,
             "data": choice(data, "data", DATA_CHOICES),
-            "limit": bounded(limit, "limit", 1, 25),
+            # The back end applies the administrator's default and caps at their maximum.
+            "limit": bounded(limit, "limit", 1, 100) if limit is not None else None,
         })
     except ValueError as exc:
         return fail(str(exc))

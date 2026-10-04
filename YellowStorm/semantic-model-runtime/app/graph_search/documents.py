@@ -18,9 +18,13 @@ import re
 import unicodedata
 from typing import Any
 
+from .settings import IndexSettings, PassagePlan, SearchSettings
+
 # v2: cards unchanged, long fields also indexed as passages (a new index generation).
 SERIALIZER_VERSION = "gs-doc-v2"
 FIELD_POLICY_VERSION = "allowed-fields-v1"
+# The sizes below are the defaults of ``IndexSettings`` / ``SearchSettings`` (settings.py),
+# which an administrator can change; they are kept here for readers and tests.
 MAX_VALUE_CHARS = 300
 MAX_TEXT_CHARS = 2000
 MAX_QUERY_TERMS = 16
@@ -34,6 +38,24 @@ PASSAGE_OVERLAP_CHARS = 150
 MAX_PASSAGES_PER_FIELD = 20
 MAX_PASSAGES_PER_RECORD = 50
 
+# Words too common to say what a request is about (French and English, accent-folded): matching
+# them OR-joined made any record holding "de" or "the" a word match. Generic, not per model;
+# "it" is kept (IT, the business word, is more common in requests than the pronoun).
+STOP_WORDS = frozenset("""
+a ai aie ait as au aux avec c ca ce ceci cela celle celles celui ces cet cette ceux chez ci comme
+d dans de des du donc dont elle elles en entre est et etaient etait ete etre eu eux il ils j je l
+la le les leur leurs lui m ma mais me meme mes moi mon n ne ni nos notre nous on ont or ou par
+pas peu plus pour qu quand que quel quelle quelles quels qui s sa sans se ses si son sont sous
+sur ta te tes toi ton tous tout toute toutes tu un une unes uns vers vos votre vous y
+about above after again against all am an and any are aren as at be because been before being
+below between both but by can could did do does doing down during each few for from further had
+has have having he her here hers herself him himself his how i if in into is isn its itself
+just me more most my myself no nor not now of off on once only other our ours ourselves out over
+own same she should so some such than that the their theirs them themselves then there these they
+this those through to too under until up very was we were what when where which while who whom why
+will with would you your yours yourself yourselves
+""".split())
+
 
 def fold(value: Any) -> str:
     """Lowercase, accent-free, single-spaced: how keys, labels and queries compare."""
@@ -43,13 +65,19 @@ def fold(value: Any) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def query_terms(query: str) -> list[str]:
-    """Distinct words of a query, safe to join into a tsquery."""
+def query_terms(query: str, settings: SearchSettings | None = None) -> list[str]:
+    """Distinct words of a query, safe to join into a tsquery. Common words (``STOP_WORDS`` and
+    the administrator's extra ones) are left out, unless the query holds nothing else."""
+    settings = settings or SearchSettings()
     terms: list[str] = []
     for term in re.findall(r"[a-z0-9]+", fold(query)):
         if len(term) > 1 and term not in terms:
             terms.append(term)
-    return terms[:MAX_QUERY_TERMS]
+    if settings.stop_words:
+        ignored = STOP_WORDS | {word for extra in settings.extra_stop_words
+                                for word in re.findall(r"[a-z0-9]+", fold(extra))}
+        terms = [term for term in terms if term not in ignored] or terms
+    return terms[:settings.max_query_terms]
 
 
 def humanize(name: str) -> str:
@@ -110,24 +138,27 @@ def _restart(value: str, low: int, end: int) -> int:
     return end
 
 
-def split_passages(value: str, *, limit: int = MAX_PASSAGES_PER_FIELD) -> tuple[list[tuple[int, int]], bool]:
+def split_passages(value: str, *, limit: int | None = None,
+                   plan: PassagePlan | None = None) -> tuple[list[tuple[int, int]], bool]:
     """Overlapping ``(start, end)`` spans of ``value`` (offsets in the value as stored), and
-    whether the value goes on past the last span because of ``limit``."""
+    whether the value goes on past the last span because of ``limit`` (default: the plan's
+    passages per field)."""
+    plan = plan or PassagePlan()
+    limit = plan.max_per_field if limit is None else limit
     length = len(value.rstrip())
     start = len(value) - len(value.lstrip())
     spans: list[tuple[int, int]] = []
     while start < length and len(spans) < limit:
-        if length - start <= PASSAGE_MAX_CHARS:
+        if length - start <= plan.max_chars:
             end = length
         else:
-            end = _cut(value, start + PASSAGE_MIN_CHARS, start + PASSAGE_MAX_CHARS,
-                       start + PASSAGE_TARGET_CHARS)
+            end = _cut(value, start + plan.min_chars, start + plan.max_chars, start + plan.target_chars)
         while end > start and value[end - 1].isspace():
             end -= 1
         spans.append((start, end))
         if end >= length:
             return spans, False
-        following = _restart(value, max(start + 1, end - PASSAGE_OVERLAP_CHARS), end)
+        following = _restart(value, max(start + 1, end - plan.overlap_chars), end)
         while following < length and value[following].isspace():
             following += 1
         start = following
@@ -146,10 +177,14 @@ def _hash(text: str) -> str:
     return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def build_document(entity: dict[str, Any], concept: dict[str, Any] | None) -> dict[str, Any]:
+def build_document(entity: dict[str, Any], concept: dict[str, Any] | None,
+                   settings: IndexSettings | None = None) -> dict[str, Any]:
     """Search document of one stored record (``list_revision_entities`` shape), with the
-    passages of its fields too long for the card."""
+    passages of its long fields (longer than the threshold, or left off the card)."""
+    settings = settings or IndexSettings()
     concept = concept or {}
+    concept_key = str(concept.get("key") or "")
+    value_cap = settings.card_value_chars
     label = _text(entity.get("label")) or ""
     identity = entity.get("identity") or {}
     attributes = entity.get("attributes") or {}
@@ -167,28 +202,31 @@ def build_document(entity: dict[str, Any], concept: dict[str, Any] | None) -> di
     for component in key_components:
         value = _text(identity.get(component))
         if value and value != fold(label):
-            lines.append(f"{humanize(component)}: {value[:MAX_VALUE_CHARS]}")
+            lines.append(f"{humanize(component)}: {value[:value_cap]}")
     described = 0
     fields = [field for field in (concept.get("allowedFields") or list(attributes))
               if field not in key_components]
     omitted: list[str] = []
+    long_fields: list[str] = []
     for field in fields:
         value = _text(attributes.get(field))
         if value is None:
             continue
-        if len(value) > MAX_VALUE_CHARS:
-            value = value[:MAX_VALUE_CHARS].rstrip() + "…"
+        if len(value) > settings.for_field(concept_key, field).threshold:
+            long_fields.append(field)
+        if len(value) > value_cap:
+            value = value[:value_cap].rstrip() + "…"
             shortened.append(field)
         line = f"{_field_name(field, field_aliases)}: {value}"
-        if sum(len(item) + 1 for item in lines) + len(line) > MAX_TEXT_CHARS:
+        if sum(len(item) + 1 for item in lines) + len(line) > settings.card_text_chars:
             omitted.append(field)
             continue
         lines.append(line)
         described += 1
     search_text = "\n".join(lines)
     passages, passage_fields, truncated = _passages(
-        attributes, [field for field in fields if field in shortened or field in omitted],
-        field_aliases, concept_label, label)
+        attributes, [field for field in fields if field in long_fields or field in omitted],
+        field_aliases, concept_label, label, settings, concept_key)
     diagnostics: dict[str, Any] = {}
     if shortened:
         diagnostics["shortenedFields"] = shortened
@@ -216,9 +254,11 @@ def build_document(entity: dict[str, Any], concept: dict[str, Any] | None) -> di
 
 
 def _passages(attributes: dict[str, Any], fields: list[str], field_aliases: dict[str, Any],
-              concept_label: str, label: str) -> tuple[list[dict[str, Any]], dict[str, int], list[str]]:
-    """Passages of the fields the card cut or left out, in field order, at most
-    ``MAX_PASSAGES_PER_RECORD``; the fields not covered to their end are returned apart."""
+              concept_label: str, label: str, settings: IndexSettings,
+              concept_key: str) -> tuple[list[dict[str, Any]], dict[str, int], list[str]]:
+    """Passages of the long fields and of those the card left out, in field order, at most
+    ``max_passages_per_record``; the fields not covered to their end are returned apart. A
+    field whose settings turn passages off is not split (its card value stays as cut)."""
     passages: list[dict[str, Any]] = []
     counts: dict[str, int] = {}
     truncated: list[str] = []
@@ -226,9 +266,12 @@ def _passages(attributes: dict[str, Any], fields: list[str], field_aliases: dict
         raw = attributes.get(field)
         if raw is None or isinstance(raw, (dict, list)):
             continue
+        plan = settings.for_field(concept_key, field)
+        if not plan.enabled:
+            continue
         value = raw if isinstance(raw, str) else str(raw)
-        room = min(MAX_PASSAGES_PER_FIELD, MAX_PASSAGES_PER_RECORD - len(passages))
-        spans, cut_short = split_passages(value, limit=room) if room > 0 else ([], True)
+        room = min(plan.max_per_field, settings.max_passages_per_record - len(passages))
+        spans, cut_short = split_passages(value, limit=room, plan=plan) if room > 0 else ([], True)
         if cut_short:
             truncated.append(field)
         name = _field_name(field, field_aliases)
@@ -236,7 +279,7 @@ def _passages(attributes: dict[str, Any], fields: list[str], field_aliases: dict
                             f"Field: {name}"])
         for start, end in spans:
             body = re.sub(r"\s+", " ", value[start:end]).strip()
-            text = f"{header}\n{body}"
+            text = f"{header}\n{body}" if settings.passage_header else body
             passages.append({"ordinal": len(passages), "fieldKey": field, "fieldLabel": humanize(field),
                              "start": start, "end": end, "text": body, "searchText": text,
                              # Words of the passage only: the header words are already on the card.

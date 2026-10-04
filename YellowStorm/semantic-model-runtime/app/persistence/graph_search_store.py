@@ -1,4 +1,4 @@
-"""Graph search persistence (``semantic_graph_search``, migrations 022 and 024).
+"""Graph search persistence (``semantic_graph_search``, migrations 022, 024 and 025).
 
 A generation holds the search documents of one data revision for one
 embedding profile. Indexers own a generation through a lease so a duplicate
@@ -14,11 +14,17 @@ _GENERATION_COLUMNS = (
     "index_id::text, model_id, data_revision_id, projection_ref, spec_hash, embedding_fingerprint, "
     "state, attempt, owner, job_id::text, expected_count, indexed_count, exact_only_count, "
     "failed_count, reused_count, embedding_calls, last_error_code, created_at, completed_at, "
-    "passage_count, passage_indexed_count, passage_truncated_count")
+    "passage_count, passage_indexed_count, passage_truncated_count, index_settings")
 
 
 def _generation(row: Any) -> dict[str, Any] | None:
-    return dict(row) if row else None
+    if not row:
+        return None
+    generation = dict(row)
+    settings = generation.get("index_settings")
+    if isinstance(settings, str):
+        generation["index_settings"] = json.loads(settings)
+    return generation
 
 
 def public_generation(generation: dict[str, Any] | None) -> dict[str, Any]:
@@ -44,6 +50,25 @@ async def get_generation(pool: Any, data_revision_id: str, fingerprint: str) -> 
         data_revision_id, fingerprint))
 
 
+async def latest_generation(pool: Any, data_revision_id: str, embedding_fingerprint: str) -> dict[str, Any] | None:
+    """The revision's most recently requested generation for this embedding profile, whatever
+    its index settings."""
+    return _generation(await pool.fetchrow(
+        f"SELECT {_GENERATION_COLUMNS} FROM semantic_graph_search.index_generations "
+        "WHERE data_revision_id = $1 AND (embedding_fingerprint = $2 OR embedding_fingerprint LIKE $2 || ':ix:%') "
+        "ORDER BY created_at DESC LIMIT 1", data_revision_id, embedding_fingerprint))
+
+
+async def latest_index_settings(pool: Any, model_id: str, embedding_fingerprint: str) -> dict[str, Any] | None:
+    """The index settings of the model's most recently requested generation for this profile
+    (None: defaults, or no generation yet)."""
+    value = await pool.fetchval(
+        "SELECT index_settings FROM semantic_graph_search.index_generations "
+        "WHERE model_id = $1 AND (embedding_fingerprint = $2 OR embedding_fingerprint LIKE $2 || ':ix:%') "
+        "ORDER BY created_at DESC LIMIT 1", model_id, embedding_fingerprint)
+    return json.loads(value) if isinstance(value, str) else value
+
+
 async def get_generation_by_id(pool: Any, index_id: str) -> dict[str, Any] | None:
     return _generation(await pool.fetchrow(
         f"SELECT {_GENERATION_COLUMNS} FROM semantic_graph_search.index_generations "
@@ -51,12 +76,14 @@ async def get_generation_by_id(pool: Any, index_id: str) -> dict[str, Any] | Non
 
 
 async def create_generation(pool: Any, *, model_id: str, data_revision_id: str, projection_ref: str,
-                            spec_hash: str, fingerprint: str) -> dict[str, Any]:
+                            spec_hash: str, fingerprint: str,
+                            index_settings: dict[str, Any] | None = None) -> dict[str, Any]:
     await pool.execute(
         "INSERT INTO semantic_graph_search.index_generations "
-        "(model_id, data_revision_id, projection_ref, spec_hash, embedding_fingerprint) "
-        "VALUES ($1, $2, $3, $4, $5) ON CONFLICT (data_revision_id, embedding_fingerprint) DO NOTHING",
-        model_id, data_revision_id, projection_ref, spec_hash, fingerprint)
+        "(model_id, data_revision_id, projection_ref, spec_hash, embedding_fingerprint, index_settings) "
+        "VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT (data_revision_id, embedding_fingerprint) DO NOTHING",
+        model_id, data_revision_id, projection_ref, spec_hash, fingerprint,
+        json.dumps(index_settings, sort_keys=True) if index_settings is not None else None)
     generation = await get_generation(pool, data_revision_id, fingerprint)
     assert generation is not None
     return generation
@@ -312,9 +339,9 @@ def _passage_hits(rows: list[Any], score: str) -> list[dict[str, Any]]:
 
 async def lexical_passage_candidates(pool: Any, index_id: str, terms: list[str],
                                      concept_ids: list[str] | None, allowed_workspaces: list[str] | None,
-                                     limit: int) -> list[dict[str, Any]]:
+                                     limit: int, per_record: int = PASSAGES_PER_RECORD) -> list[dict[str, Any]]:
     """Records with a passage sharing words with the query, ranked by their best passage;
-    each with its best ``PASSAGES_PER_RECORD`` passages."""
+    each with its best ``per_record`` passages."""
     if not terms:
         return []
     rows = await pool.fetch(
@@ -328,14 +355,15 @@ async def lexical_passage_candidates(pool: Any, index_id: str, terms: list[str],
         "best AS (SELECT entity_id, score FROM ranked WHERE place = 1 ORDER BY score DESC, entity_id LIMIT $5) "
         "SELECT ranked.entity_id, ranked.ordinal, ranked.score FROM ranked JOIN best USING (entity_id) "
         "WHERE ranked.place <= $6 ORDER BY best.score DESC, ranked.entity_id, ranked.place",
-        index_id, concept_ids, allowed_workspaces, " | ".join(terms), limit, PASSAGES_PER_RECORD)
+        index_id, concept_ids, allowed_workspaces, " | ".join(terms), limit, per_record)
     return _passage_hits(rows, "score")
 
 
 async def vector_passage_candidates(pool: Any, index_id: str, vector: str, concept_ids: list[str] | None,
-                                    allowed_workspaces: list[str] | None, limit: int) -> list[dict[str, Any]]:
+                                    allowed_workspaces: list[str] | None, limit: int,
+                                    per_record: int = PASSAGES_PER_RECORD) -> list[dict[str, Any]]:
     """Records with the passages nearest the query (exact cosine), ranked by their best
-    passage; each with its best ``PASSAGES_PER_RECORD`` passages."""
+    passage; each with its best ``per_record`` passages."""
     rows = await pool.fetch(
         "WITH scored AS ("
         "  SELECT entity_id, ordinal, 1 - (embedding <=> $4::text::halfvec) AS similarity "
@@ -348,7 +376,7 @@ async def vector_passage_candidates(pool: Any, index_id: str, vector: str, conce
         "  ORDER BY similarity DESC, entity_id LIMIT $5) "
         "SELECT ranked.entity_id, ranked.ordinal, ranked.similarity FROM ranked JOIN best USING (entity_id) "
         "WHERE ranked.place <= $6 ORDER BY best.similarity DESC, ranked.entity_id, ranked.place",
-        index_id, concept_ids, allowed_workspaces, vector, limit, PASSAGES_PER_RECORD)
+        index_id, concept_ids, allowed_workspaces, vector, limit, per_record)
     return _passage_hits(rows, "similarity")
 
 

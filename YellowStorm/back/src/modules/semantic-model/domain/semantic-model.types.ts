@@ -1,3 +1,5 @@
+import type { FieldSearchIndexSettings } from './semantic-search-settings.types';
+
 export const semanticModelKinds = ['workspace_default', 'designed'] as const;
 export const semanticModelStatuses = ['draft', 'published', 'archived'] as const;
 export const nodeCategories = ['business_object', 'classification', 'system_collection'] as const;
@@ -24,6 +26,8 @@ export interface AttributeDefinition {
   options?: string[];
   /** Business synonyms for this field, e.g. "Client no." for "Customer number". */
   aliases?: string[];
+  /** This field's own search passage settings (graph search); anything left out uses the admin's. */
+  searchIndex?: FieldSearchIndexSettings;
 }
 
 export interface SemanticNodeType {

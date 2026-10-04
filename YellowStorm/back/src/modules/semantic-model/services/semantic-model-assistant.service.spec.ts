@@ -236,7 +236,8 @@ describe('SemanticModelAssistantService', () => {
     };
     const { service } = setup(undefined, { graphSearch });
     const result = await service.findRecords('user-1', 'model-1', { query: 'acme', concepts: ['Customer'] });
-    expect(graphSearch.search).toHaveBeenCalledWith('user-1', 'model-1', { environment: 'production', query: 'acme', concepts: ['Customer'], limit: 10 });
+    // No limit asked: the admin's default number of results applies (the runtime fills it in).
+    expect(graphSearch.search).toHaveBeenCalledWith('user-1', 'model-1', { environment: 'production', query: 'acme', concepts: ['Customer'], limit: undefined });
     expect(result).toMatchObject({
       model: { id: 'model-1', name: 'Billing' }, data: 'published', status: 'index_not_ready', searchMode: 'lexical_only', indexState: 'indexing',
       concepts: ['Customer'],

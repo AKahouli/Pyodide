@@ -1053,7 +1053,7 @@ export class SemanticModelAssistantService {
     const data = input.data ?? 'published';
     const model = await this.models.get(userId, modelId);
     const result = await this.graphSearch.search(userId, modelId, {
-      environment: assistantEnvironment(data), query: input.query, concepts: input.concepts, limit: input.limit ?? 10,
+      environment: assistantEnvironment(data), query: input.query, concepts: input.concepts, limit: input.limit,
     });
     const notes: string[] = [];
     if (result.status === 'index_not_ready') {

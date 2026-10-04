@@ -194,6 +194,29 @@ Field: {field (aliases)}
   until it is ready a search answers `index_not_ready` with exact matches only (the first read
   requests it); run `scripts/backfill_graph_search.py` right after deploying.
 
+### Settings (Admin > Semantic models, per-field overrides)
+The sizes above and the query constants of §7.2 are settings (`app/graph_search/settings.py`; defaults
+are the values above). An admin sets them in YellowStorm (back: `semantic_model.extraction_settings`
+`index_settings` / `search_settings`, migration 029); NestJS sends only the values set, with each
+search and index request (`settings: {index, search}`), and the runtime fills in its defaults
+(`SEMANTIC_SEARCH_MIN_SIMILARITY` stays the fallback of the similarity floor).
+
+- **Index settings** (card value/total caps, long-field threshold, passage target/min/max/overlap,
+  passages per field/record, passage header) shape the indexed text. They are part of the generation
+  fingerprint (`{profile}:ix:{hash}`; default settings keep the bare profile fingerprint, so existing
+  generations stay valid) and recorded on the generation (`index_settings`, runtime migration 025):
+  other settings build another generation on the next search. A request without settings (after a
+  population run) reuses the settings of the model's latest generation. Vectors stay cached by text
+  and profile only, so a rebuild re-embeds only texts that changed.
+- **Field overrides** live on the concept field definition (`attribute.searchIndex`: passages on/off,
+  threshold, target/min/max/overlap, passages per field) and travel with the request by concept key and
+  field key, taken from the definitions of the version whose data is searched; they are part of the
+  fingerprint too. An override that no longer fits the global sizes is left out by NestJS.
+- **Search settings** (lexical/vector candidates, similarity floor, RRF k, default/maximum results,
+  passages per record, excerpt and snippet sizes, stop words and extra stop words, query terms) apply
+  per request and never rebuild anything. Stop words (French and English, accent-folded) are left out
+  of word matching unless the query holds nothing else.
+
 ### Embedding profile
 The profile is pinned, and its hash is the `embedding_fingerprint`:
 

@@ -13,7 +13,6 @@ passages of its long fields; a passage hit stands for its record (see
 
 from __future__ import annotations
 
-import os
 import re
 import time
 import unicodedata
@@ -24,7 +23,9 @@ from app.population.tabular import normalize_identity_value
 
 from .documents import fold, query_terms
 from .embeddings import EmbeddingError, EmbeddingProfile, embed, vector_literal
+from .settings import SearchSettings
 
+# Defaults of SearchSettings (an administrator can change them per deployment).
 CANDIDATES_PER_METHOD = 50
 RRF_K = 60
 SNIPPET_CHARS = 400
@@ -32,12 +33,8 @@ MAX_ROW_NUMBERS = 5
 
 
 def min_similarity() -> float:
-    """Floor for vector-only matches. 0.4 from first live qwen3 probes: unrelated records
-    scored 0.34-0.37 against a key, related ones 0.46-0.59; calibrate on gold queries (plan G5)."""
-    try:
-        return float(os.environ.get("SEMANTIC_SEARCH_MIN_SIMILARITY", "0.4"))
-    except ValueError:
-        return 0.4
+    """Floor for vector-only matches when no setting says otherwise (see SearchSettings)."""
+    return SearchSettings().min_similarity
 
 
 def resolve_concepts(compiled: dict[str, Any], names: list[str] | None
@@ -154,9 +151,11 @@ class _Fusion:
     whose card matches as well as another's passage ranks as well. Records are then
     ranked per method and the two ranks fused (k=60), as before passages existed."""
 
-    def __init__(self) -> None:
+    def __init__(self, rrf_k: int = RRF_K, passages_per_record: int = 2) -> None:
         self.offers: dict[str, dict[str, dict[str, Any]]] = {"lexical": {}, "vector": {}}
         self.entries: dict[str, dict[str, Any]] = {}
+        self.rrf_k = rrf_k
+        self.passages_per_record = passages_per_record
 
     def offer(self, method: str, entity_id: str, score: float, where: str,
               passages: list[dict[str, Any]] | None = None, key: str = "score") -> None:
@@ -178,7 +177,7 @@ class _Fusion:
                 slot = slots[entity_id]
                 entry = self.entries.setdefault(entity_id, {"score": 0.0, "parts": {}, "diagnostics": {},
                                                             "passages": {}})
-                contribution = 1 / (RRF_K + rank)
+                contribution = 1 / (self.rrf_k + rank)
                 entry["score"] += contribution
                 entry["parts"][method] = (contribution, slot["where"])
                 if method == "lexical":
@@ -204,40 +203,50 @@ class _Fusion:
     def best_passages(self, entity_id: str) -> list[int]:
         scored = (self.entries.get(entity_id) or {}).get("passages", {})
         return [ordinal for ordinal, _ in sorted(scored.items(), key=lambda pair: (-pair[1], pair[0]))
-                ][:search_store.PASSAGES_PER_RECORD]
+                ][:self.passages_per_record]
 
 
 async def find_seeds(pool: Any, *, revision_id: str, compiled: dict[str, Any], query: str,
                      concept_ids: list[str] | None, limit: int,
                      allowed_workspaces: list[str] | None, generation: dict[str, Any] | None,
                      profile: EmbeddingProfile | None,
-                     embedder: Callable[..., Awaitable[list[list[float]]]] | None = None) -> dict[str, Any]:
+                     embedder: Callable[..., Awaitable[list[list[float]]]] | None = None,
+                     settings: SearchSettings | None = None,
+                     index_fingerprint: str | None = None) -> dict[str, Any]:
+    """``index_fingerprint``: the fingerprint the generation must carry for the query vector to
+    be comparable (the profile's, plus its index settings); the profile's when None."""
     embedder = embedder or embed
+    settings = settings or SearchSettings()
     started = time.perf_counter()
     timings = {"embedMs": 0, "seedMs": 0}
     exact_ids = await search_store.exact_entity_ids(
         pool, revision_id, query.strip(), normalize_identity_value(query), concept_ids)
-    fusion = _Fusion()
+    fusion = _Fusion(settings.rrf_k, settings.passages_per_record)
     mode = "exact_only"
-    terms = query_terms(query)
+    terms = query_terms(query, settings)
+    # Passages still rank their records when none are shown.
+    per_record = max(1, settings.passages_per_record)
     ready = generation is not None and generation["state"] == "ready"
     if ready:
         index_id = generation["index_id"]
         lexical = await search_store.lexical_candidates(
-            pool, index_id, terms, fold(query), concept_ids, allowed_workspaces, CANDIDATES_PER_METHOD)
+            pool, index_id, terms, fold(query), concept_ids, allowed_workspaces, settings.lexical_candidates)
         passage_lexical = await search_store.lexical_passage_candidates(
-            pool, index_id, terms, concept_ids, allowed_workspaces, CANDIDATES_PER_METHOD)
+            pool, index_id, terms, concept_ids, allowed_workspaces, settings.lexical_candidates,
+            per_record)
         vector: list[dict[str, Any]] = []
         passage_vector: list[dict[str, Any]] = []
         mode = "lexical_only"
-        if profile is not None and profile.fingerprint == generation["embedding_fingerprint"]:
+        wanted = index_fingerprint or (profile.fingerprint if profile is not None else None)
+        if profile is not None and wanted == generation["embedding_fingerprint"]:
             embed_started = time.perf_counter()
             try:
                 query_vector = vector_literal((await embedder(profile, [query], query=True))[0])
                 vector = await search_store.vector_candidates(
-                    pool, index_id, query_vector, concept_ids, allowed_workspaces, CANDIDATES_PER_METHOD)
+                    pool, index_id, query_vector, concept_ids, allowed_workspaces, settings.vector_candidates)
                 passage_vector = await search_store.vector_passage_candidates(
-                    pool, index_id, query_vector, concept_ids, allowed_workspaces, CANDIDATES_PER_METHOD)
+                    pool, index_id, query_vector, concept_ids, allowed_workspaces, settings.vector_candidates,
+                    per_record)
                 mode = "hybrid"
             except EmbeddingError:
                 vector, passage_vector = [], []
@@ -251,7 +260,7 @@ async def find_seeds(pool: Any, *, revision_id: str, compiled: dict[str, Any], q
         for item in passage_vector:
             fusion.offer("vector", item["entityId"], item["similarity"], "passage", item["passages"],
                          key="similarity")
-        fusion.fuse(min_similarity())
+        fusion.fuse(settings.min_similarity)
     ranked = fusion.ranked()
     ordered = list(exact_ids) + [entity_id for entity_id in ranked if entity_id not in exact_ids]
     rows = await search_store.entity_rows(pool, revision_id, ordered[: limit * 4])
@@ -270,7 +279,7 @@ async def find_seeds(pool: Any, *, revision_id: str, compiled: dict[str, Any], q
         else:
             match_class = "lexical" if "lexical" in methods else "vector"
         seed = {**describe_entity(entity, compiled),
-                "snippet": (texts.get(entity_id) or "")[:SNIPPET_CHARS],
+                "snippet": (texts.get(entity_id) or "")[:settings.snippet_chars],
                 "matchClass": match_class, "rank": len(seeds) + 1,
                 "diagnostics": dict(entry["diagnostics"]) if entry else {}}
         if entry is not None:
@@ -287,6 +296,6 @@ async def find_seeds(pool: Any, *, revision_id: str, compiled: dict[str, Any], q
         if found:
             seed["passages"] = [{"fieldKey": passage["fieldKey"], "field": passage["fieldLabel"],
                                  "start": passage["start"], "end": passage["end"],
-                                 "text": excerpt(passage["text"], terms)} for passage in found]
+                                 "text": excerpt(passage["text"], terms, settings.excerpt_chars)} for passage in found]
     timings["seedMs"] = round((time.perf_counter() - started) * 1000)
     return {"seeds": seeds, "modeUsed": mode, "timings": timings}

@@ -209,7 +209,7 @@ async def test_find_records_searches_the_published_data_by_default(monkeypatch, 
     assert result["ok"] is True and result["meta"]["modelName"] == "Billing"
     assert backend.calls == [
         ("POST", "/api/v1/internal/semantic-model-assistant/models/Billing/graph-search", "user-1",
-         {"query": "Acme contracts", "concepts": ["Contract"], "data": "published", "limit": 10}),
+         {"query": "Acme contracts", "concepts": ["Contract"], "data": "published"}),
         ("POST", "/api/v1/internal/semantic-model-assistant/models/Billing/graph-search", "user-1",
          {"query": "acme", "data": "draft", "limit": 3}),
     ]
@@ -222,7 +222,7 @@ async def test_find_records_refuses_bad_input_without_calling_the_backend(monkey
     async with Client(mcp) as client:
         empty = result_dict(await client.call_tool("find_records", {"model_id": "m", "query": "  "}))
         data = result_dict(await client.call_tool("find_records", {"model_id": "m", "query": "x", "data": "production"}))
-        limit = result_dict(await client.call_tool("find_records", {"model_id": "m", "query": "x", "limit": 26}))
+        limit = result_dict(await client.call_tool("find_records", {"model_id": "m", "query": "x", "limit": 101}))
     assert empty["ok"] is False and "query" in empty["error"]["message"]
     assert data["ok"] is False and "published, draft" in data["error"]["message"]
     assert limit["ok"] is False and "limit" in limit["error"]["message"]
