@@ -49,7 +49,7 @@ describe('SemanticDerivedSourceService', () => {
     expect(result).toMatchObject({ revision: 7, derivedSource: { id: 'd-1', updatedAt: '2026-09-30T00:00:00.000Z' } });
     const insert = client.query.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO semantic_model.derived_sources'))!;
     // The order field only matters to the most recent rule, so it is not kept for another rule.
-    expect(insert[1]).toEqual(['model', 'org', 'contract', JSON.stringify(derived().fieldMappings), 'most_frequent', null, 'user']);
+    expect(insert[1]).toEqual(['model', 'org', 'contract', JSON.stringify(derived().fieldMappings), 'most_frequent', null, 'user', null]);
     expect(client.query.mock.calls.some(([sql, params]) => String(sql).includes('identity_rules') && params?.[2] === '["id"]')).toBe(true);
     expect(models.audit).toHaveBeenCalledWith(client, 'model', 'v-1', 'user', 'derived_source.saved', expect.objectContaining({ conceptId: 'org' }));
   });
@@ -150,6 +150,11 @@ describe('SemanticDerivedSourceService', () => {
       expect(withAi.fieldMappings[2]).toEqual({ sourceAttribute: 'notes', targetAttribute: 'country', mode: 'extract', label: 'Country',
         extractionStrategy: 'rules_then_ai', rules: { labels: ['Pays'] }, agentId: 'reader', description: 'The country', valueType: 'text' });
       expect(withAi.aiSettings).toEqual(limits);
+      // A source's own limits win over the admin's; several records per item is not a derived source's choice.
+      const [own] = service.runtimeDerivations([
+        derived({ id: 'd-1', fieldMappings: [...derived().fieldMappings, country], aiSettings: { maxBlocks: 20, manyRecords: 1 } as never }),
+      ], target, new Set(['contract']), new Map([['org', ['id']]]), limits);
+      expect(own.aiSettings).toEqual({ ...limits, maxBlocks: 20 });
       expect(rulesOnly.fieldMappings[2]).toEqual({ sourceAttribute: 'notes', targetAttribute: 'country', mode: 'extract', label: 'Country',
         extractionStrategy: 'deterministic', rules: { labels: ['Pays'] } });
       expect(rulesOnly).not.toHaveProperty('aiSettings');

@@ -10,6 +10,7 @@ import { readingKeys } from './readingText';
 const api = vi.hoisted(() => ({
   listDerivedSources: vi.fn(), listIdentityRules: vi.fn(), conceptRecords: vi.fn(), previewDerivedFields: vi.fn(),
   saveDerivedSource: vi.fn(), deleteDerivedSource: vi.fn(), previewComputedField: vi.fn(),
+  listMappingPresets: vi.fn(), getLastDocumentMapping: vi.fn(), getExtractionDefaults: vi.fn(),
 }));
 vi.mock('../../api', () => ({ semanticModelApi: api }));
 vi.mock('@/modules/agent', () => ({ useAgents: () => [], useAgentStore: { getState: () => ({ isInitialized: true, isLoading: false, fetchAgents: vi.fn() }) } }));
@@ -102,6 +103,19 @@ describe('Derived source with the shared field mapping', () => {
     expect(api.saveDerivedSource.mock.calls[0][1]).toEqual({
       conceptId: 'org', sourceConceptId: 'contract', fieldMappings: saved.fieldMappings, identityFields: ['id'], conflictRule: 'most_frequent' });
     expect(api.saveDerivedSource.mock.calls[0][2]).toBe('d-1');
+  });
+
+  it('keeps the AI limits set for this source, and offers presets', async () => {
+    api.listMappingPresets.mockResolvedValue([]);
+    api.getExtractionDefaults.mockResolvedValue({ aiSettings: { maxBlocks: 120, maxCharacters: 60000, longDocumentCharacters: 40000, blocksPerField: 8 }, configured: {} });
+    renderDrawer({ ...saved, aiSettings: { maxBlocks: 40 }, fieldMappings: [...saved.fieldMappings,
+      { sourceAttribute: 'notes', targetAttribute: 'country', mode: 'extract', extractionStrategy: 'ai' }] });
+    await screen.findByText('Country', { selector: 'span.truncate' });
+    expect(screen.getByText('mapping.ai.title')).toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'mapping.presets.title' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'derived.save' }));
+    await waitFor(() => expect(api.saveDerivedSource).toHaveBeenCalled());
+    expect(api.saveDerivedSource.mock.calls[0][1]).toMatchObject({ aiSettings: { maxBlocks: 40 } });
   });
 
   it('picks the first five sample records, filters above eight, and previews each with its evidence', async () => {

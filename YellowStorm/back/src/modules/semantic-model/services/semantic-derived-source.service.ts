@@ -10,7 +10,7 @@ import { AI_EXTRACTION_CONTRACT_VERSION, type AiExtractionSettings } from '../do
 import type { DerivedFieldPreviewDto, SaveDerivedSourceDto } from '../dto/semantic-model.dto';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
 import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
-import { effectiveAiSettings, SemanticExtractionSettingsService } from './semantic-extraction-settings.service';
+import { effectiveAiSettings, pickAiSettings, SemanticExtractionSettingsService } from './semantic-extraction-settings.service';
 import { SemanticModelService } from './semantic-model.service';
 import { SemanticRuntimeClientService } from './semantic-runtime-client.service';
 import { SemanticSourceMappingService } from './semantic-source-mapping.service';
@@ -19,8 +19,14 @@ type DerivedSourceRow = Omit<DerivedSource, 'updatedAt'> & { updatedAt: Date | s
 
 const SELECT = `SELECT id::text AS id, concept_id::text AS "conceptId", source_concept_id::text AS "sourceConceptId",
                        field_mappings AS "fieldMappings", conflict_rule AS "conflictRule", order_by AS "orderBy",
-                       updated_at AS "updatedAt"
+                       ai_settings AS "aiSettings", updated_at AS "updatedAt"
                 FROM semantic_model.derived_sources`;
+
+/** The AI limits set for one derived source; several records per item is not a choice a derived source has. */
+function sourceAiSettings(input: unknown): Record<string, number> {
+  const { manyRecords: _ignored, ...limits } = pickAiSettings(input);
+  return limits as Record<string, number>;
+}
 
 const asSource = (row: DerivedSourceRow): DerivedSource => ({
   ...row,
@@ -64,23 +70,28 @@ export class SemanticDerivedSourceService {
     await this.assertValid(model.currentDraftVersionId, dto, orderBy, existing.filter((source) => source.id !== derivedSourceId));
     // A copied field is stored exactly as before the field modes, so earlier derived sources keep their fingerprint.
     const fieldMappings: DerivedFieldMapping[] = dto.fieldMappings.map((field) => storedDerivedField(field as DerivedFieldMapping));
+    // Only the limits set for this source; none means the admin's defaults.
+    const override = sourceAiSettings(dto.aiSettings);
+    const aiSettings = Object.keys(override).length ? JSON.stringify(override) : null;
     return this.database.transaction(async (client) => {
       const revision = await this.models.advanceRevision(client, modelId, dto.expectedRevision);
       const saved = derivedSourceId
         ? await client.query<DerivedSourceRow>(
           `UPDATE semantic_model.derived_sources
-           SET concept_id=$3, source_concept_id=$4, field_mappings=$5::jsonb, conflict_rule=$6, order_by=$7, updated_at=now()
+           SET concept_id=$3, source_concept_id=$4, field_mappings=$5::jsonb, conflict_rule=$6, order_by=$7, ai_settings=$8::jsonb, updated_at=now()
            WHERE id=$1 AND model_id=$2
            RETURNING id::text AS id, concept_id::text AS "conceptId", source_concept_id::text AS "sourceConceptId",
-                     field_mappings AS "fieldMappings", conflict_rule AS "conflictRule", order_by AS "orderBy", updated_at AS "updatedAt"`,
-          [derivedSourceId, model.id, dto.conceptId, dto.sourceConceptId, JSON.stringify(fieldMappings), dto.conflictRule, orderBy],
+                     field_mappings AS "fieldMappings", conflict_rule AS "conflictRule", order_by AS "orderBy",
+                     ai_settings AS "aiSettings", updated_at AS "updatedAt"`,
+          [derivedSourceId, model.id, dto.conceptId, dto.sourceConceptId, JSON.stringify(fieldMappings), dto.conflictRule, orderBy, aiSettings],
         )
         : await client.query<DerivedSourceRow>(
-          `INSERT INTO semantic_model.derived_sources (model_id, concept_id, source_concept_id, field_mappings, conflict_rule, order_by, created_by)
-           VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7)
+          `INSERT INTO semantic_model.derived_sources (model_id, concept_id, source_concept_id, field_mappings, conflict_rule, order_by, created_by, ai_settings)
+           VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8::jsonb)
            RETURNING id::text AS id, concept_id::text AS "conceptId", source_concept_id::text AS "sourceConceptId",
-                     field_mappings AS "fieldMappings", conflict_rule AS "conflictRule", order_by AS "orderBy", updated_at AS "updatedAt"`,
-          [model.id, dto.conceptId, dto.sourceConceptId, JSON.stringify(fieldMappings), dto.conflictRule, orderBy, userId],
+                     field_mappings AS "fieldMappings", conflict_rule AS "conflictRule", order_by AS "orderBy",
+                     ai_settings AS "aiSettings", updated_at AS "updatedAt"`,
+          [model.id, dto.conceptId, dto.sourceConceptId, JSON.stringify(fieldMappings), dto.conflictRule, orderBy, userId, aiSettings],
         );
       // The key fields are the derived concept's identity, shared with every other source it has.
       await client.query(
@@ -137,7 +148,7 @@ export class SemanticDerivedSourceService {
         source: { assetId: `derived:${source.id}`, originalName: source.label },
         unit: 'record',
         fieldMappings,
-        ...(usesAi ? { options: { aiSettings: await this.aiSettings() } } : {}),
+        ...(usesAi ? { options: { aiSettings: { ...await this.aiSettings(), ...sourceAiSettings(dto.aiSettings) } } } : {}),
       },
       rows: dto.records.map((record, index) => ({ rowNumber: index + 1, values: record.values })),
       aiExtraction: agent ? { agentSlug: agent.slug, model: agent.llmModel ?? null, contractVersion: AI_EXTRACTION_CONTRACT_VERSION } : null,
@@ -186,7 +197,7 @@ export class SemanticDerivedSourceService {
           orderBy: source.conflictRule === 'latest' ? source.orderBy : null,
           labelField,
           mappingVersion: source.updatedAt,
-          ...(usesAi && aiSettings ? { aiSettings: { ...aiSettings } } : {}),
+          ...(usesAi && aiSettings ? { aiSettings: { ...aiSettings, ...sourceAiSettings(source.aiSettings) } } : {}),
         }];
       })
       .sort((left, right) => left.derivationId < right.derivationId ? -1 : left.derivationId > right.derivationId ? 1 : 0);

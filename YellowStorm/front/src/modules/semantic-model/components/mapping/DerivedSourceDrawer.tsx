@@ -14,15 +14,16 @@ import { semanticModelApi } from '../../api';
 import { useDerivedSources, useIdentityRules } from '../../query/hooks';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
 import { useSemanticModelEditorStore } from '../../store';
-import type { AttributeDefinition, DerivedConflictRule, DerivedFieldPreviewResponse, DerivedSource, DocumentFieldReading, SourceFieldMapping } from '../../types';
+import type { AiExtractionSettings, AttributeDefinition, DerivedConflictRule, DerivedFieldPreviewResponse, DerivedSource, DocumentFieldReading, MappingSettings, SourceFieldMapping } from '../../types';
 import { DELETE_BUTTON, FORM_SECTION, FormField, INPUT, ROW_LIST, SectionHeader } from '../form/FormParts';
-import { FieldReadingResult, ReadAllFieldsBar, rulesProblem, usesAi as mappingsUseAi, usesRules, type LabelSuggestions } from './DocumentFieldRules';
+import { AiLimitsEditor, FieldReadingResult, limitProblem, ReadAllFieldsBar, rulesProblem, usesAi as mappingsUseAi, usesRules, type LabelSuggestions } from './DocumentFieldRules';
+import { MappingPresetBar } from './MappingPresetBar';
 import { FieldLiveStatus } from './DocumentPreviewPane';
 import { computedProblem } from './FieldRecipeEditor';
 import { FieldMappingList, readAllWith, recipeInputs } from './FieldMappingList';
 import { derivedPayload, derivedRows, newDerivedRows, recordValue, usedSourceFields } from './derivedMapping';
 import { ReadingTextContext } from './readingText';
-import { cellLabelSuggestions, cellValue } from './sheetMapping';
+import { adaptToSheet, cellLabelSuggestions, cellValue } from './sheetMapping';
 import { foundSpans, markText, type Highlight } from './SheetSourceMappingDrawer';
 
 export interface DerivedSourceTarget {
@@ -78,6 +79,7 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
   const [shownId, setShownId] = useState<string | null>(null);
   const [recordFilter, setRecordFilter] = useState('');
   const [highlight, setHighlight] = useState<Highlight>(null);
+  const [aiSettings, setAiSettings] = useState<Partial<AiExtractionSettings>>({});
 
   // A concept filled from another one cannot fill a third, so derivations never chain.
   const others = derivedSources.filter((source) => source.id !== target?.derived?.id);
@@ -110,6 +112,7 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
     setKeys(identity.length ? identity : next.filter((row) => row.mode !== 'ignore').slice(0, 1).map((row) => row.targetAttribute));
     setRule(derived?.conflictRule ?? 'most_frequent');
     setOrderBy(derived?.orderBy && fromFields.includes(derived.orderBy) ? derived.orderBy : '');
+    setAiSettings({ ...(derived?.aiSettings ?? {}) });
     setPicked(null);
     setShownId(null);
     setHighlight(null);
@@ -135,6 +138,7 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
     : !keys.length ? t('derived.problem.noKey')
     : unmappedKey ? t('derived.problem.keyNotFilled', { field: attributeLabel(unmappedKey) })
     : rule === 'latest' && !orderBy ? t('derived.problem.orderBy')
+    : usesAi && limitProblem(aiSettings) ? t('derived.problem.aiLimits')
     : null;
 
   // Sample records: the source concept's records in the data in use.
@@ -158,10 +162,11 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
 
   // The picked records read with the fields as a run would; rules and copies as they change, AI on request.
   const canRead = !problem && pickedIds.length > 0;
-  const draftKey = canRead ? JSON.stringify([payload, pickedIds, sourceConceptId, target?.conceptId]) : '';
+  const draftKey = canRead ? JSON.stringify([payload, pickedIds, sourceConceptId, target?.conceptId, usesAi ? aiSettings : null]) : '';
   const requestRef = useRef<() => Parameters<typeof semanticModelApi.previewDerivedFields>[1]>();
   requestRef.current = () => ({
     conceptId: target!.conceptId, sourceConceptId, fieldMappings: payload,
+    ...(usesAi && Object.keys(aiSettings).length ? { aiSettings } : {}),
     records: pickedIds.map((id) => {
       const record = samples.find((item) => item.id === id)!;
       return { entityId: id, values: Object.fromEntries(usedFields.map((field) => [field, cellValue(recordValue(record, field))])) };
@@ -234,6 +239,8 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
       identityFields: keys,
       conflictRule: rule,
       ...(rule === 'latest' ? { orderBy } : {}),
+      // Only limits that were set; none saves the admin's defaults. Kept even while no field uses AI.
+      ...(Object.keys(aiSettings).length ? { aiSettings } : {}),
     }, target?.derived?.id),
     onSuccess: async (result) => {
       await refresh(result.revision);
@@ -249,6 +256,23 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
   });
 
   const changeRows = (next: SourceFieldMapping[]) => setRows(next);
+  // A preset is fitted to the source concept: its fields are the "columns" a field reads; one it does not have
+  // falls back to the field read now or the same-named one. A recipe reading a column it lacks is flagged to fix.
+  const applySettings = (settings: MappingSettings, exact: boolean) => {
+    const next = adaptToSheet(settings.fieldMappings, rows, attributes, sourceFields)
+      .map((row) => row.mode === 'metadata' ? { sourceField: null, targetAttribute: row.targetAttribute, mode: 'ignore' as const } : row);
+    setRows(next);
+    const filled = settings.identityFields.filter((key) => next.some((row) => row.mode !== 'ignore' && row.targetAttribute === key));
+    if (filled.length || exact) setKeys(filled);
+    const { manyRecords: _ignored, ...limits } = settings.aiSettings ?? {};
+    setAiSettings(limits);
+  };
+  const defaultsQuery = useQuery({
+    queryKey: ['semantic-models', 'extraction-defaults'],
+    queryFn: () => semanticModelApi.getExtractionDefaults(),
+    enabled: Boolean(target),
+    staleTime: 60_000,
+  });
   const toggleKey = (key: string) => setKeys((current) => current.includes(key) ? current.filter((item) => item !== key) : [...current, key]);
   const keyLabels = keys.map(attributeLabel).join(', ');
   const busy = save.isPending || remove.isPending;
@@ -326,10 +350,13 @@ export function DerivedSourceDrawer({ modelId, target, onClose }: Readonly<{ mod
 
         {source && <section className={FORM_SECTION}>
           <SectionHeader title={t('derived.fields')} help={t('derived.fieldsHelp', { source: source.label })} count={payload.length || undefined} />
+          <MappingPresetBar modelId={modelId} conceptId={concept!.id} attributes={attributes}
+            current={{ fieldMappings: payloadRows, aiSettings, identityFields: keys }} onApply={applySettings} autoStart={false} />
           <ReadAllFieldsBar direct mappings={rows} onApply={(choice) => changeRows(readAllWith(rows, choice, 'record'))} />
           {usesAi && <p className='flex gap-1.5 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400'>
             <Bot className='mt-0.5 h-3.5 w-3.5 shrink-0' />{t('derived.aiEstimate', { calls: Math.min(recordCount, MAX_AI_RECORDS).toLocaleString(), records: recordCount.toLocaleString(), max: MAX_AI_RECORDS, source: source.label })}
           </p>}
+          {usesAi && <AiLimitsEditor defaults={defaultsQuery.data?.aiSettings} value={aiSettings} onChange={setAiSettings} />}
           <FieldMappingList kind='record' modelId={modelId} attributes={attributes} mappings={rows} onChange={changeRows}
             onIgnore={(field) => setKeys((current) => current.filter((key) => key !== field))}
             columns={sourceFields} columnLabels={sourceLabels}

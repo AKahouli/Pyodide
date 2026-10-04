@@ -41,6 +41,8 @@ export interface DerivedSource {
   conflictRule: DerivedConflictRule;
   /** The source field that orders records for the most recent rule; null for every other rule. */
   orderBy: string | null;
+  /** How much the AI reads for this source, where it differs from the admin's defaults; null for the defaults. */
+  aiSettings?: Record<string, number> | null;
   updatedAt: string;
 }
 

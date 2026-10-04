@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, FileText, Loader2, Play, Plus, Split, Type, X } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { parseApiError } from '@/lib/api-error';
@@ -67,6 +68,8 @@ export type RecipeSource =
     fieldSamples?: Record<string, string[]>;
     /** The documents read by the last previews, each with its file name and the value of each field: a joined input is tried on these. */
     documentRows?: Array<{ key: string; label: string; fileName: string; values: Record<string, string> }>;
+    /** Reads a few of the source's documents (as Preview data does), so a field's values can be tried on. */
+    readDocuments?: { run: () => void; busy: boolean; disabled?: boolean; count: number };
   }
   | {
     kind: 'sheet';
@@ -508,6 +511,11 @@ export function FieldRecipeEditor({ modelId, fieldLabel, rule, onChange, fields,
         summary={available.length ? previewSummary : undefined}
         help={sheet ? rowsText('rowsHelp', { max: MAX_SAMPLES }) : t('mapping.computed.filesHelp', { max: MAX_SAMPLES })}>
         {!available.length && <p className='text-muted-foreground'>{emptyText}</p>}
+        {!available.length && source.kind === 'document' && !fromFile && source.readDocuments && <Button type='button' size='sm' variant='outline' className='h-7 text-xs'
+          disabled={source.readDocuments.busy || source.readDocuments.disabled} onClick={source.readDocuments.run}>
+          {source.readDocuments.busy ? <Loader2 className='mr-1.5 h-3.5 w-3.5 animate-spin' /> : <Play className='mr-1.5 h-3.5 w-3.5' />}
+          {t('mapping.computed.readDocuments', { count: source.readDocuments.count })}
+        </Button>}
         {available.length > 0 && <div className='space-y-1'>
           <div className='flex items-center gap-2'>
             <span className='font-medium text-muted-foreground'>{toTryText}</span>

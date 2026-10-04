@@ -503,6 +503,7 @@ export interface DerivedFieldPreviewRequest {
   sourceConceptId: string;
   fieldMappings: DerivedFieldMapping[];
   records: Array<{ entityId: string; values: Record<string, string | number | boolean | null> }>;
+  aiSettings?: Partial<AiExtractionSettings>;
 }
 
 export interface DerivedFieldPreviewResponse {
@@ -519,6 +520,8 @@ export interface DerivedSource {
   conflictRule: DerivedConflictRule;
   /** The source field ordering records for the most recent rule. */
   orderBy: string | null;
+  /** How much the AI reads for this source, where it differs from the admin's defaults. */
+  aiSettings?: Partial<AiExtractionSettings> | null;
   updatedAt: string;
 }
 
@@ -529,6 +532,7 @@ export interface DerivedSourceDraft {
   identityFields: string[];
   conflictRule: DerivedConflictRule;
   orderBy?: string;
+  aiSettings?: Partial<AiExtractionSettings>;
 }
 
 export interface ConceptSourceMapping {

@@ -724,6 +724,11 @@ export class SaveDerivedSourceDto extends ExpectedModelRevisionDto {
   @MinLength(1)
   @MaxLength(200)
   orderBy?: string;
+  @ApiPropertyOptional({ type: () => AiExtractionSettingsDto, description: 'Overrides the admin defaults for how much the AI reads' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AiExtractionSettingsDto)
+  aiSettings?: AiExtractionSettingsDto;
 }
 
 export class CreateSourceMappingDto {
@@ -967,6 +972,11 @@ export class DerivedFieldPreviewDto {
   @ValidateNested({ each: true })
   @Type(() => DerivedPreviewRecordDto)
   records!: DerivedPreviewRecordDto[];
+  @ApiPropertyOptional({ type: () => AiExtractionSettingsDto, description: 'Overrides the admin defaults for how much the AI reads' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AiExtractionSettingsDto)
+  aiSettings?: AiExtractionSettingsDto;
 }
 
 export class DocumentSourceRefDto {

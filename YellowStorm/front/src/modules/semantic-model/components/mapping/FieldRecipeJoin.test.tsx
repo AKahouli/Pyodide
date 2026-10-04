@@ -123,6 +123,14 @@ describe('FieldRecipeEditor: join several', () => {
     expect(computedProblem(join([{ kind: 'field', name: 'name' }, { kind: 'column', name: 'x' }], { separator: 'x'.repeat(11) }), ['name'])).toBe('mapping.computed.problem.joinSeparator');
   });
 
+  it('offers to read sample documents when no document has been read yet', () => {
+    const run = vi.fn();
+    render(<Harness initial={sender} source={{ kind: 'document', fileSamples: ['a.eml'], readDocuments: { run, busy: false, count: 2 } }} />);
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.computed.preview' }));
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.computed.readDocuments' }));
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
   it('a field joining another field can be read by a third, but never in a loop; its columns count as read', () => {
     const mappings: SourceFieldMapping[] = [
       { sourceField: 'First', targetAttribute: 'first', mode: 'direct' },

@@ -487,7 +487,8 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
           </p>}
           <FieldMappingList kind='document' modelId={modelId} conceptId={concept.id} attributes={concept.attributes} mappings={mappings} onChange={changeMappings}
             onIgnore={(field) => setIdentityFields((current) => current.filter((item) => item !== field))} addedFields={addedFields}
-            recipeSource={{ kind: 'document', fileSamples, fieldSamples, documentRows }}
+            recipeSource={{ kind: 'document', fileSamples, fieldSamples, documentRows,
+              readDocuments: { run: () => preview.mutate(), busy: preview.isPending, disabled: !canPreview, count: Math.min(selectedAssets.length, 2) } }}
             extras={(mapping) => ({
               live: viewerShown && shown && (mapping.mode === 'extract' || mapping.mode === 'computed') && !liveStatus ? <FieldLiveStatus
                 reading={live.result?.fields?.[mapping.targetAttribute]}
