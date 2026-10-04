@@ -53,6 +53,8 @@ interface MappingRow {
   fieldMappings: SourceFieldMapping[];
   /** This mapping's own AI reading limits, over the admin defaults. */
   aiSettings?: Record<string, unknown> | null;
+  /** Several records per row (sheets only): the column split into items. */
+  expand?: Record<string, unknown> | null;
   status: string;
   identityFields: string[] | null;
   sourceEnabled: boolean;
@@ -946,7 +948,7 @@ export class SemanticPopulationRefreshService {
       const result = await this.database.query<MappingRow>(
         `SELECT m.id, m.concept_id AS "conceptId", m.workspace_id AS "workspaceId",
                 m.document_id AS "documentId", m.sheet_name AS "sheetName",
-                m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings", m.ai_settings AS "aiSettings",
+                m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings", m.ai_settings AS "aiSettings", m.expand,
                 m.status, i.fields AS "identityFields",
                 COALESCE(w.enabled, false) AS "sourceEnabled",
                 m.validated_source_version AS "validatedSourceVersion", m.updated_at AS "updatedAt",
@@ -965,7 +967,7 @@ export class SemanticPopulationRefreshService {
     const result = await this.database.query<MappingRow>(
       `SELECT m.id, m.concept_id AS "conceptId", m.workspace_id AS "workspaceId",
               m.document_id AS "documentId", m.sheet_name AS "sheetName",
-              m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings", m.ai_settings AS "aiSettings",
+              m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings", m.ai_settings AS "aiSettings", m.expand,
               m.status, i.fields AS "identityFields",
               COALESCE(w.enabled, false) AS "sourceEnabled",
               m.validated_source_version AS "validatedSourceVersion", m.updated_at AS "updatedAt",
@@ -1125,6 +1127,8 @@ export class SemanticPopulationRefreshService {
       options: {
         ...(mapping.sheetName ? { sheetName: mapping.sheetName } : {}),
         ...(usesCellAi ? { aiSettings: effectiveAiSettings(await this.adminAiSettings(), mapping.aiSettings) } : {}),
+        // Only sent when the sheet expands a column, so other sheets keep their options (and fingerprint).
+        ...(mapping.expand ? { expand: mapping.expand } : {}),
       },
       columnMapping,
       ...(Object.keys(constantMapping).length ? { constantMapping } : {}),

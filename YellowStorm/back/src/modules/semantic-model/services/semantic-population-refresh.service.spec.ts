@@ -778,6 +778,17 @@ describe('SemanticPopulationRefreshService', () => {
     expect(Object.keys(plainSource.options)).toEqual(['sheetName']);
   });
 
+  it('sends a sheet making several records per row with the column it splits in its options', async () => {
+    const expand = { field: 'to', split: 'emails' };
+    const { runtime, service } = setup([MAPPING({ expand, fieldMappings: [
+      { sourceField: '@item', targetAttribute: 'customer_id', mode: 'direct' },
+    ] })]);
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const [source] = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0].payload.sources;
+    expect(source.columnMapping).toEqual({ '@item': 'customer_id' });
+    expect(source.options).toEqual({ sheetName: 'Sheet1', expand });
+  });
+
   it('sends a sheet field taken from another field as its recipe', async () => {
     const recipe = { input: { kind: 'field' as const, name: 'customer_id' }, method: 'whole' as const, transform: 'upper' as const };
     const { runtime, service } = setup([MAPPING({ fieldMappings: [

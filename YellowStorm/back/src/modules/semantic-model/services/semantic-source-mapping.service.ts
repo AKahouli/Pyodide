@@ -16,6 +16,7 @@ import { aiFieldHints,
   joinInputProblem,
   MAX_JOIN_PARTS,
   resolveSheetEntities,
+  SHEET_ROW_KEY,
   usesAiExtraction,
   type ExtractionRules,
   type ResolvedEntity,
@@ -39,6 +40,7 @@ import type {
 import { DocumentExtractionConceptResolver } from './document-extraction-concept.resolver';
 import type { AttributeDefinition } from '../domain/semantic-model.types';
 import { SemanticRuntimeClientService } from './semantic-runtime-client.service';
+import { isItemField, storedExpand, type DerivedExpand } from '../domain/semantic-derived-source.types';
 import {
   MAX_WORKSPACE_MAPPING_DOCUMENTS,
   MAX_WORKSPACE_SELECTION_ITEMS,
@@ -95,6 +97,8 @@ interface SourceMappingRow {
   folderId?: string | null;
   selection?: WorkspaceSelection | null;
   sourceLabel?: string | null;
+  /** Several records per row: the column split into items, each read as a row. */
+  expand?: DerivedExpand | null;
 }
 
 /** Sample rows read by the runtime for the data preview (its own cap). */
@@ -227,12 +231,15 @@ export class SemanticSourceMappingService {
       limit: dto.limit,
     };
     if (kind === 'document') return this.previewDocument(input, document, dto.aiSettings);
+    SemanticSourceMappingService.assertExpand(kind, dto.fieldMappings, dto.expand);
     const labels = new Map(concept.attributes.map((attribute) => [attribute.key, attribute.label || attribute.key]));
+    const expand = storedExpand(dto.expand);
     return this.requestDiscovery(userId, model.id, document, dto.sheetName, {
       // A field read out of a cell looks for its own label by default, as a document field does.
       fieldMappings: dto.fieldMappings.map((field) => field.mode === 'extract' ? { ...field, label: labels.get(field.targetAttribute) } : field),
       identityFields: dto.identityFields ?? [],
       limit: dto.limit,
+      ...(expand ? { expand } : {}),
     });
   }
 
@@ -248,6 +255,8 @@ export class SemanticSourceMappingService {
     const kind = this.requireAssetKind(document.mimeType);
     if (kind === 'document') throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Only spreadsheet and e-mail archive rows can be previewed here');
     SemanticSourceMappingService.assertMappingModes(kind, dto.fieldMappings);
+    SemanticSourceMappingService.assertExpand(kind, dto.fieldMappings, dto.expand);
+    const expand = storedExpand(dto.expand);
     const concept = await this.assertConceptInDraft(model.id, model.currentDraftVersionId, dto.conceptId, dto.fieldMappings);
     const attributes = new Map(concept.attributes.map((attribute) => [attribute.key, attribute]));
     const fieldMappings = dto.fieldMappings.filter((field) => field.mode !== 'ignore').map((field) => {
@@ -273,6 +282,8 @@ export class SemanticSourceMappingService {
       },
       rows: dto.rows.map((row) => ({ rowNumber: row.rowNumber, values: row.values })),
       aiExtraction: agent ? { agentSlug: agent.slug, model: agent.llmModel ?? null, contractVersion: AI_EXTRACTION_CONTRACT_VERSION } : null,
+      // Several records per row: each row is read once per item of the expanded column.
+      ...(expand ? { expand: { ...expand } } : {}),
     });
   }
 
@@ -418,7 +429,7 @@ export class SemanticSourceMappingService {
     const result = await this.database.query<SourceMappingRow>(
       `SELECT m.id, m.concept_id AS "conceptId", m.workspace_id AS "workspaceId", m.document_id AS "documentId",
               m.sheet_name AS "sheetName", m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings", m.ai_settings AS "aiSettings",
-              m.status, m.created_by AS "createdBy", m.created_at AS "createdAt", m.updated_at AS "updatedAt",
+              m.expand, m.status, m.created_by AS "createdBy", m.created_at AS "createdAt", m.updated_at AS "updatedAt",
               i.fields AS "identityFields", m.validated_source_version AS "validatedSourceVersion",
               m.validated_at AS "validatedAt", m.scope, m.folder_id AS "folderId", m.selection, m.source_label AS "sourceLabel"
        FROM semantic_model.source_mappings m
@@ -574,7 +585,7 @@ export class SemanticSourceMappingService {
     const result = await this.database.query<SourceMappingRow>(
       `SELECT m.id, m.concept_id AS "conceptId", m.workspace_id AS "workspaceId", m.document_id AS "documentId",
               m.sheet_name AS "sheetName", m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings", m.ai_settings AS "aiSettings",
-              m.status, m.created_by AS "createdBy", m.created_at AS "createdAt", m.updated_at AS "updatedAt",
+              m.expand, m.status, m.created_by AS "createdBy", m.created_at AS "createdAt", m.updated_at AS "updatedAt",
               i.fields AS "identityFields", COALESCE(w.enabled, false) AS "sourceEnabled",
               m.scope, m.folder_id AS "folderId", m.selection, m.source_label AS "sourceLabel"
        FROM semantic_model.source_mappings m
@@ -704,21 +715,24 @@ export class SemanticSourceMappingService {
     if (kind !== 'document' && !dto.sheetName) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A sheet is required for spreadsheet mappings');
     await this.assertConceptInDraft(model.id, model.currentDraftVersionId, dto.conceptId, dto.fieldMappings, dto.identityFields ?? []);
     const aiSettings = kind === 'document' || usesAiExtraction(dto.fieldMappings) ? storedAiSettings(dto.aiSettings) : null;
+    SemanticSourceMappingService.assertExpand(kind, dto.fieldMappings, dto.expand);
+    const expand = storedExpand(dto.expand);
     const revision = await this.database.transaction(async (client) => {
       const revision = await this.models.advanceRevision(client, modelId, dto.expectedRevision);
       if (dto.mappingId) {
-        await this.switchSource(client, model.id, dto, kind, this.sourceVersion(document), aiSettings);
+        await this.switchSource(client, model.id, dto, kind, this.sourceVersion(document), aiSettings, expand);
       } else await client.query(
         `INSERT INTO semantic_model.source_mappings
-         (model_id,concept_id,workspace_id,document_id,sheet_name,asset_kind,field_mappings,status,created_by,validated_source_version,validated_at,ai_settings)
-         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,'ready',$8,$9,now(),$10::jsonb)
+         (model_id,concept_id,workspace_id,document_id,sheet_name,asset_kind,field_mappings,status,created_by,validated_source_version,validated_at,ai_settings,expand)
+         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,'ready',$8,$9,now(),$10::jsonb,$11::jsonb)
          ON CONFLICT (model_id,concept_id,document_id,sheet_name)
          DO UPDATE SET field_mappings=EXCLUDED.field_mappings,asset_kind=EXCLUDED.asset_kind,status='ready',
-           validated_source_version=EXCLUDED.validated_source_version,ai_settings=EXCLUDED.ai_settings,validated_at=now(),updated_at=now()`,
+           validated_source_version=EXCLUDED.validated_source_version,ai_settings=EXCLUDED.ai_settings,expand=EXCLUDED.expand,
+           validated_at=now(),updated_at=now()`,
           [model.id, dto.conceptId, dto.workspaceId, dto.documentId, dto.sheetName ?? '', kind,
            JSON.stringify(dto.fieldMappings), userId, this.sourceVersion(document),
            // A sheet keeps AI limits only when one of its cells is read by AI.
-           aiSettings],
+           aiSettings, expand ? JSON.stringify(expand) : null],
       );
       if (dto.identityFields?.length) {
         await client.query(
@@ -831,6 +845,7 @@ export class SemanticSourceMappingService {
    */
   private async switchSource(
     client: PoolClient, modelId: string, dto: CreateSourceMappingDto, kind: SourceAssetKind, sourceVersion: string, aiSettings: string | null,
+    expand: DerivedExpand | null = null,
   ): Promise<void> {
     const sheetName = dto.sheetName ?? '';
     const clash = await client.query(
@@ -843,10 +858,10 @@ export class SemanticSourceMappingService {
       `UPDATE semantic_model.source_mappings
        SET workspace_id=$4, document_id=$5, sheet_name=$6, asset_kind=$7, scope='document', folder_id=NULL, selection=NULL,
            source_label=NULL, field_mappings=$8::jsonb, validated_source_version=$9, ai_settings=$10::jsonb,
-           status='ready', validated_at=now(), updated_at=now()
+           expand=$11::jsonb, status='ready', validated_at=now(), updated_at=now()
        WHERE id=$1 AND model_id=$2 AND concept_id=$3`,
       [dto.mappingId, modelId, dto.conceptId, dto.workspaceId, dto.documentId, sheetName, kind,
-        JSON.stringify(dto.fieldMappings), sourceVersion, aiSettings],
+        JSON.stringify(dto.fieldMappings), sourceVersion, aiSettings, expand ? JSON.stringify(expand) : null],
     );
     if (!updated.rowCount) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'Source mapping not found');
   }
@@ -942,13 +957,16 @@ export class SemanticSourceMappingService {
     if (!profile) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'Source analysis is not ready');
     const rows = Array.isArray(profile.samples) ? profile.samples as Record<string, unknown>[] : [];
     // Recipes, joins and fields read out of a cell are read by the runtime, as a run reads them.
-    const shapes = mapping.fieldMappings.some((item) => item.mode !== 'ignore'
+    const expand = storedExpand(mapping.expand);
+    const shapes = Boolean(expand) || mapping.fieldMappings.some((item) => item.mode !== 'ignore'
       && (item.mode === 'extract' || item.mode === 'computed' || item.computed != null));
     const shaped = shapes
-      ? await this.runtime.shapeSheetRows({ rows: rows.slice(0, SHAPED_ROW_LIMIT), fieldMappings: mapping.fieldMappings })
+      ? await this.runtime.shapeSheetRows({ rows: rows.slice(0, SHAPED_ROW_LIMIT), fieldMappings: mapping.fieldMappings,
+        ...(expand ? { expand: { ...expand } } : {}) })
       : undefined;
-    const { entities, stats } = resolveSheetEntities(shaped ? rows.slice(0, SHAPED_ROW_LIMIT) : rows,
-      mapping.fieldMappings, mapping.identityFields ?? [], limit, shaped?.rows);
+    // A row expanded into items is read once per item: the rows are the runtime's item rows.
+    const read = expand && shaped ? shaped.rows.map((row) => ({ [SHEET_ROW_KEY]: row.rowNumber })) : shaped ? rows.slice(0, SHAPED_ROW_LIMIT) : rows;
+    const { entities, stats } = resolveSheetEntities(read, mapping.fieldMappings, mapping.identityFields ?? [], limit, shaped?.rows);
     const profiles = computeFieldProfiles(rows);
     return {
       entities,
@@ -1076,6 +1094,21 @@ export class SemanticSourceMappingService {
   }
 
   /** Whether field mappings use only the modes, recipes and rules their kind of source allows; throws when not. */
+  /**
+   * Several records per row: only a sheet (or e-mail archive) expands a column, and a field reads an item
+   * (`@item`, `@item.email`) only when its source expands one. Links back belong to a derived source.
+   */
+  static assertExpand(kind: SourceAssetKind, mappings: SourceFieldMapping[], expand?: DerivedExpand | null): void {
+    if (expand && (kind === 'document' || expand.relationId)) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'Only a spreadsheet source can make several records per row, without links');
+    }
+    const readsItem = mappings.some((mapping) => mapping.mode !== 'ignore' && (isItemField(mapping.sourceField ?? undefined)
+      || computedInputRefs(mapping.computed?.input).some((ref) => ref.kind === 'column' && isItemField(ref.name))));
+    if (readsItem && !expand?.field) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'A field reads an item, but the source does not make several records per row');
+    }
+  }
+
   static assertMappingModes(kind: SourceAssetKind, mappings: SourceFieldMapping[]): void {
     // A sheet field is read from a column as is, or out of its cell's text as a document field is read
     // (rules and/or AI), or taken from a column or another field (a recipe), or fixed.

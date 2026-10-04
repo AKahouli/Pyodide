@@ -742,6 +742,17 @@ async def shape_sheet_rows_route(body: dict) -> dict[str, object]:
             or not isinstance(mappings, list) or not 0 < len(mappings) <= 100
             or not all(isinstance(item, dict) for item in mappings)):
         raise HTTPException(status_code=422, detail="invalid_preview")
+    if body.get("expand") is not None:
+        # Several records per row: each row gives one row per item of the expanded column.
+        from app.population.expand import ExpandError, expand_rows, normalize_expand
+        try:
+            expand = normalize_expand(body["expand"], {key for row in rows for key in row})
+        except ExpandError as exc:
+            raise HTTPException(status_code=422, detail="invalid_expand") from exc
+        rows, gaps = expand_rows(rows, {**expand, "maxItems": min(expand.get("maxItems") or 1000, 50)},
+                                 lambda row: row.get(expand["field"]), lambda row: row.get("__sheetRow"))
+        return {**shape_sheet_rows(mappings, rows[:MAX_SHAPED_ROWS * 2]),
+                "itemsTruncated": bool(gaps) or len(rows) > MAX_SHAPED_ROWS * 2}
     return shape_sheet_rows(mappings, rows)
 
 

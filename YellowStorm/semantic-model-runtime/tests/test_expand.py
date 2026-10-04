@@ -122,3 +122,123 @@ def test_an_expanding_derivation_names_the_links_from_each_source_record_to_its_
     # Without a relationship there is nothing to link.
     [plain] = normalize_derivations([recipients_derivation()], concepts)
     assert derive_concept(concepts["org"], plain, derivation_items(plain, entities)[0], [])["links"] == []
+
+
+# --- A sheet expanding a column: one record per item of a row -------------------------------------------
+
+def _sheet_command(expand, mapping=None, extractions=None):  # type: ignore[no-untyped-def]
+    from tests.test_population_task import SOURCE, command
+
+    source = {"conceptId": "c1", "source": dict(SOURCE), "options": {"expand": expand} if expand else {},
+              "columnMapping": mapping or {"@item": "customer_id", "name": "name"}, "mappingVersion": "map-v1"}
+    if extractions:
+        source["fieldExtractions"] = extractions
+    return command(sources=[source])
+
+
+def _recipients_prepare(source, options, data, output):  # type: ignore[no-untyped-def]
+    output.write_bytes(b"parquet-bytes")
+    return {"datasetId": "ds_0123456789abcdef01234567", "rowCount": 2, "columns": ["__sheetRow", "to", "name"]}
+
+
+def _recipients_query(asked):  # type: ignore[no-untyped-def]
+    def query(path, *, columns=None, filters=None, limit=100, offset=0):  # type: ignore[no-untyped-def]
+        asked.append(list(columns or []))
+        rows = [{"__sheetRow": 2, "to": '"Dupont, Jean" <a@x.fr>; b@y.fr', "name": "Acme"},
+                {"__sheetRow": 3, "to": '["b@y.fr", "c@z.fr"]', "name": "Acme"},
+                {"__sheetRow": 4, "to": "", "name": "Empty"}][offset:]
+        return {"columns": columns, "rows": rows, "returnedRows": len(rows), "limit": limit, "offset": offset}
+    return query
+
+
+def test_expand_rows_keeps_the_row_and_numbers_its_items():
+    from app.population.expand import expand_rows
+
+    rows, gaps = expand_rows([{"__sheetRow": 2, "to": "a; b; c", "n": 1}], {"field": "to", "split": "delimiters",
+                             "delimiters": [";"], "maxItems": 2}, lambda row: row["to"], lambda row: row["__sheetRow"])
+    assert rows == [{"__sheetRow": 2, "to": "a; b; c", "n": 1, "@item": "a", "_item": 1},
+                    {"__sheetRow": 2, "to": "a; b; c", "n": 1, "@item": "b", "_item": 2}]
+    assert gaps[0]["kind"] == "expand_cap" and gaps[0]["rowNumber"] == 2
+
+
+@pytest.mark.asyncio
+async def test_a_sheet_expanding_a_column_makes_one_record_per_item():
+    from app.workers.population_tasks import run_population_for_task
+    from tests.test_population_task import fake_fetch
+
+    asked: list[list[str]] = []
+    outcome = await run_population_for_task(_sheet_command({"field": "to", "split": "auto"}),
+                                            fetch=fake_fetch, prepare=_recipients_prepare, query=_recipients_query(asked))
+    assert outcome["ok"] is True, outcome
+    # The item is not a column: the expanded column is read instead.
+    assert "@item" not in asked[0] and "to" in asked[0]
+    # An address list and a JSON array alike; b@y.fr on two rows is one record; the empty row makes none.
+    assert sorted(entity["identity"]["customer_id"] for entity in outcome["entities"]) == [
+        "b@y.fr", "c@z.fr", "dupont, jean <a@x.fr>"]
+    merged = next(entity for entity in outcome["entities"] if entity["identity"]["customer_id"] == "b@y.fr")
+    assert merged["provenance"]["sources"][0]["rowNumbers"] == [2, 3]
+    name = next(a for a in outcome["assertions"] if a["entityId"] == merged["entityId"] and a["attribute"] == "name")
+    assert name["evidence"]["rowNumber"] == 2 and name["evidence"]["item"] == 2
+
+
+@pytest.mark.asyncio
+async def test_a_value_read_out_of_an_item_points_at_the_expanded_cell():
+    from app.workers.population_tasks import run_population_for_task
+    from tests.test_population_task import fake_fetch
+
+    extractions = {"name": {"column": "@item", "extractionStrategy": "deterministic",
+                            "rules": {"location": "anywhere", "pattern": r"[\w.]+@[\w.]+"}}}
+    outcome = await run_population_for_task(
+        _sheet_command({"field": "to", "split": "emails"}, mapping={"@item": "customer_id"}, extractions=extractions),
+        fetch=fake_fetch, prepare=_recipients_prepare, query=_recipients_query([]))
+    assert outcome["ok"] is True, outcome
+    found = [a for a in outcome["assertions"] if a["attribute"] == "name"]
+    assert {a["value"] for a in found} >= {"a@x.fr", "c@z.fr"}
+    evidence = next(a["evidence"] for a in found if a["value"] == "c@z.fr")
+    assert evidence["column"] == "to" and evidence["itemField"] == "@item" and evidence["item"] == 2
+    assert evidence["rowNumber"] == 3 and "span" not in evidence
+
+
+def test_a_sheet_reading_an_item_without_expanding_is_refused():
+    from app.workers.population_tasks import run_population_for_payload
+
+    assert run_population_for_payload(_sheet_command(None)) == {"ok": False, "errorCode": "invalid_column_mapping"}
+    assert run_population_for_payload(_sheet_command({"field": "to", "split": "nope"}))["errorCode"] == "invalid_column_mapping"
+    # Links back are a derived source's: a sheet row is not a record to link from.
+    assert run_population_for_payload(_sheet_command({"field": "to", "relationId": "r1"}))["errorCode"] == "invalid_column_mapping"
+
+
+@pytest.mark.asyncio
+async def test_a_missing_expanded_column_fails_the_source():
+    from app.workers.population_tasks import run_population_for_task
+    from tests.test_population_task import fake_fetch
+
+    outcome = await run_population_for_task(_sheet_command({"field": "cc", "split": "auto"}),
+                                            fetch=fake_fetch, prepare=_recipients_prepare, query=_recipients_query([]))
+    assert outcome["ok"] is False and outcome["errorCode"] == "expand_column_missing"
+
+
+@pytest.mark.asyncio
+async def test_the_data_preview_shows_one_row_per_item():
+    from app.api.population_routes import shape_sheet_rows_route
+
+    shaped = await shape_sheet_rows_route({
+        "rows": [{"__sheetRow": 2, "to": "a@x.fr, b@y.fr"}],
+        "fieldMappings": [{"sourceField": "@item", "targetAttribute": "address", "mode": "direct"}],
+        "expand": {"field": "to", "split": "auto"}})
+    assert shaped["itemsTruncated"] is False
+    rows = shaped["rows"]
+    assert [(row["rowNumber"], row["item"], row["values"]["address"]) for row in rows] == [(2, 1, "a@x.fr"), (2, 2, "b@y.fr")]
+
+
+def test_the_mapping_preview_finds_one_record_per_item():
+    from app.workers.datasource_tasks import build_mapping_preview
+
+    preview = build_mapping_preview({"samples": [{"__sheetRow": 2, "to": "a@x.fr; b@y.fr"}, {"__sheetRow": 3, "to": "b@y.fr"}],
+                                     "fieldProfiles": []}, {
+        "fieldMappings": [{"sourceField": "@item", "targetAttribute": "address", "mode": "direct"}],
+        "identityFields": ["address"], "expand": {"field": "to", "split": "auto"}})
+    assert [entity["values"]["address"] for entity in preview["entities"]] == ["a@x.fr", "b@y.fr"]
+    assert preview["entities"][1]["provenance"] == {"rowNumber": 2, "item": 2, "fields": {
+        "address": {"method": "direct_mapping", "reference": "@item"}}}
+    assert preview["stats"]["duplicateKeysSkipped"] == 1

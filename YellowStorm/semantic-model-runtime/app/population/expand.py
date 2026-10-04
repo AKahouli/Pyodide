@@ -226,3 +226,28 @@ def item_paths(entities: list[dict], setting: dict[str, Any], limit: int = 50) -
             for name in item_attributes(item):
                 counts[name] = counts.get(name, 0) + 1
     return [name for name, _count in sorted(counts.items(), key=lambda pair: (pair[0] != ITEM, -pair[1], pair[0]))][:limit]
+
+
+def expand_rows(rows: list[dict], setting: dict[str, Any] | None, value_of: Any,
+                row_number_of: Any) -> tuple[list[dict], list[dict]]:
+    """The Expand step on a sheet: one item row per item of the expanded column of each row, and the gaps.
+
+    An item row keeps the row's cells (so a field may still read another column) plus the item's
+    (``@item``, ``@item.path``) and ``_item``, its number in the row; rows without items are dropped.
+    """
+    if not setting:
+        return rows, []
+    limit = setting.get("maxItems") or MAX_ITEMS
+    out: list[dict] = []
+    gaps: list[dict] = []
+    for row in rows:
+        items = split_value(value_of(row), setting)
+        if len(items) > limit:
+            number = row_number_of(row)
+            gaps.append({"kind": "expand_cap", "rowNumber": number, "field": setting["field"],
+                         "detail": f"row {number} lists {len(items)} items; the first {limit} are read",
+                         "values": {"count": len(items), "limit": limit}})
+            items = items[:limit]
+        for index, item in enumerate(items, start=1):
+            out.append({**row, **item_attributes(item), "_item": index})
+    return out, gaps

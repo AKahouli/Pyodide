@@ -155,6 +155,34 @@ describe('Sheet mapping with the document field mapping', () => {
     expect(api.createSourceMapping.mock.calls[0][1].fieldMappings).toEqual(saved.fieldMappings);
   });
 
+  it('makes several records per row: the column split into items, fields reading the item, saved with the split', async () => {
+    api.profileSourceAsset.mockResolvedValue({ ...profile, fields: [...profile.fields, { name: 'to', type: 'text', sample: 'a@x.fr; b@y.fr', populatedRatio: 1, uniqueRatio: 1 }],
+      sampleRows: [{ __sheetRow: 2, message_id: 'M1', corps: BODY, to: 'a@x.fr; b@y.fr' }] });
+    api.previewSheetFields.mockResolvedValue({ rows: [
+      { rowNumber: 2, item: 1, itemText: 'a@x.fr', fields: { id: { method: 'direct', reason: 'found', value: 'a@x.fr', column: '@item' } } },
+      { rowNumber: 2, item: 2, itemText: 'b@y.fr', fields: { id: { method: 'direct', reason: 'found', value: 'b@y.fr', column: '@item' } } },
+    ], ai: { aiRows: 0, aiCalls: 0, aiSkippedRows: 0, aiFailedRows: 0 }, itemFields: ['@item'], itemsTruncated: false });
+    const saved: ConceptSourceMapping = { ...mapping, fieldMappings: [{ sourceField: '@item', targetAttribute: 'id', mode: 'direct' }],
+      expand: { field: 'to', split: 'auto' } };
+    renderDrawer(target(saved));
+    await waitFor(() => expect(api.previewSheetFields).toHaveBeenCalled(), { timeout: 2000 });
+    // The item is not a column: the column it is split from is sent, with how to split it.
+    expect(api.previewSheetFields.mock.calls[0][1]).toEqual(expect.objectContaining({
+      rows: [{ rowNumber: 2, values: { to: 'a@x.fr; b@y.fr' } }], expand: { field: 'to', split: 'auto' } }));
+    expect(await screen.findByText('derived.expand.row.found')).toBeInTheDocument();
+    expect(screen.getAllByText(/derived\.expand\.row\.itemOf/)).toHaveLength(2);
+    expect(within(fieldRow('ID')).getByRole('combobox', { name: 'mapping.cell.columnFor' })).toHaveTextContent('derived.expand.item');
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.save' }));
+    await waitFor(() => expect(api.createSourceMapping).toHaveBeenCalled());
+    expect(api.createSourceMapping.mock.calls[0][1]).toEqual(expect.objectContaining({
+      fieldMappings: saved.fieldMappings, expand: { field: 'to', split: 'auto' } }));
+
+    // Turned off, a field still reading the item blocks saving.
+    fireEvent.click(screen.getByRole('switch', { name: 'derived.expand.row.label' }));
+    expect(await screen.findByText('derived.expand.row.itemWithoutExpand')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'mapping.save' })).toBeDisabled();
+  });
+
   it('reads every field with rules in one click, and directly again', async () => {
     renderDrawer();
     await screen.findByText('Référence', { selector: 'span.truncate' });

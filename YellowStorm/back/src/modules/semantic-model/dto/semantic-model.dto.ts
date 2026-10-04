@@ -823,6 +823,12 @@ export class CreateSourceMappingDto {
   @ValidateNested()
   @Type(() => AiExtractionSettingsDto)
   aiSettings?: AiExtractionSettingsDto;
+
+  @ApiPropertyOptional({ type: () => DerivedExpandDto, description: 'Several records per row: one column split into items, each read as a row' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DerivedExpandDto)
+  expand?: DerivedExpandDto;
 }
 
 /** A named copy of how a concept is read from documents, to reuse on other documents or workspaces. */
@@ -925,6 +931,12 @@ export class SourceMappingPreviewDto {
   @ValidateNested()
   @Type(() => AiExtractionSettingsDto)
   aiSettings?: AiExtractionSettingsDto;
+
+  @ApiPropertyOptional({ type: () => DerivedExpandDto, description: 'Several records per row: one column split into items, each read as a row' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DerivedExpandDto)
+  expand?: DerivedExpandDto;
 }
 
 /** One sample row of a sheet, as its cells' texts by column, to read a mapping's fields on. */
@@ -974,6 +986,12 @@ export class SheetFieldPreviewDto {
   @ValidateNested()
   @Type(() => AiExtractionSettingsDto)
   aiSettings?: AiExtractionSettingsDto;
+
+  @ApiPropertyOptional({ type: () => DerivedExpandDto, description: 'Several records per row: one column split into items, each read as a row' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DerivedExpandDto)
+  expand?: DerivedExpandDto;
 }
 
 /** A sample record of the source concept: its values by field, to read a derived source's fields on. */

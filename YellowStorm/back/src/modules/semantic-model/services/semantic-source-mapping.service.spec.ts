@@ -230,6 +230,33 @@ describe('SemanticSourceMappingService boundaries', () => {
     await expect(service.create('user-1', 'model-1', dto as never)).rejects.toThrow('already has a source reading this file');
   });
 
+  it('saves a sheet that makes several records per row, and refuses an item read without it or on a document', async () => {
+    const { service, database, models, documents } = buildService('text/csv');
+    documents.findById.mockResolvedValue({ id: 'sheet-2', workspaceId: 'workspace-1', mimeType: 'text/csv', originalName: 'b.csv', size: 4, updatedAt: 'now' });
+    database.query.mockImplementation(async (sql: string) => sql.includes('FROM semantic_model.node_types')
+      ? { rows: [{ label: 'Contact', attributes: [{ key: 'address', label: 'Address', type: 'text' }] }] }
+      : { rows: [{ ok: 1 }] });
+    const client = { query: jest.fn(async (_sql: string, _params?: unknown[]) => ({ rows: [] as unknown[], rowCount: 1 })) };
+    Object.assign(database, { transaction: jest.fn(async (work: (value: unknown) => unknown) => work(client)) });
+    Object.assign(models, { advanceRevision: jest.fn().mockResolvedValue(4), audit: jest.fn() });
+    const dto = { expectedRevision: 3, conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'sheet-2', sheetName: 'b',
+      fieldMappings: [{ sourceField: '@item', targetAttribute: 'address', mode: 'direct' }],
+      expand: { field: 'to', split: 'emails', delimiters: [';'], path: 'ignored' } };
+    await service.create('user-1', 'model-1', dto as never);
+    const insert = client.query.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO semantic_model.source_mappings')) as unknown as [string, unknown[]];
+    expect(insert[0]).toContain('expand=EXCLUDED.expand');
+    // Only what its split uses is kept.
+    expect(JSON.parse(insert[1][10] as string)).toEqual({ field: 'to', split: 'emails' });
+
+    await expect(service.create('user-1', 'model-1', { ...dto, expand: undefined } as never)).rejects.toThrow('does not make several records per row');
+    await expect(service.create('user-1', 'model-1', { ...dto, expand: { field: 'to', split: 'auto', relationId: '00000000-0000-4000-8000-000000000001' } } as never))
+      .rejects.toThrow('Only a spreadsheet source');
+    expect(() => SemanticSourceMappingService.assertExpand('document', [], { field: 'to', split: 'auto' })).toThrow('Only a spreadsheet source');
+    // A recipe reading an item needs it too.
+    expect(() => SemanticSourceMappingService.assertExpand('csv', [{ targetAttribute: 'address', mode: 'computed',
+      computed: { input: { kind: 'column', name: '@item.email' }, method: 'whole' } } as never], null)).toThrow('reads an item');
+  });
+
   it('keeps where source boxes sit on the canvas, for editors only, without touching the model revision', async () => {
     const { service, database, models } = buildService();
     database.query.mockResolvedValue({ rows: [] });

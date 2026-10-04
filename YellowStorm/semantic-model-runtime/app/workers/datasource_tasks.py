@@ -34,6 +34,16 @@ def build_mapping_preview(profile: dict, draft: object) -> dict | None:
     limit = min(limit, 50) if isinstance(limit, int) and not isinstance(limit, bool) else 50
     samples = profile.get("samples", [])
     profiles = profile.get("fieldProfiles", [])
+    item_warning = None
+    if draft.get("expand") is not None and isinstance(samples, list):
+        # Several records per row: each sample row gives one row per item of the expanded column.
+        from app.population.expand import ExpandError, expand_rows, normalize_expand
+        try:
+            expand = normalize_expand(draft["expand"], {key for row in samples if isinstance(row, dict) for key in row})
+            samples, _gaps = expand_rows([row for row in samples if isinstance(row, dict)], expand,
+                                         lambda row: row.get(expand["field"]), lambda row: row.get("__sheetRow"))
+        except ExpandError:
+            item_warning = "The column to split into several records is not in this sheet."
     extractions, extraction_warning = _cell_extractions(mappings)
     recipes, recipe_warning = _row_recipes(mappings, set(extractions))
     entities, seen = [], set()
@@ -56,7 +66,8 @@ def build_mapping_preview(profile: dict, draft: object) -> dict | None:
         if not label and values:
             label = str(next(iter(values.values())) or "")
         entities.append({"entityKey": entity_key, "label": label, "values": values,
-                         "provenance": {"rowNumber": row.get("__sheetRow"), "fields": fields}})
+                         "provenance": {"rowNumber": row.get("__sheetRow"), "fields": fields,
+                                        **({"item": row["_item"]} if "_item" in row else {})}})
     evidence = []
     for target in identities:
         source = next((item.get("sourceField") for item in mappings
@@ -69,6 +80,8 @@ def build_mapping_preview(profile: dict, draft: object) -> dict | None:
             evidence.append({**match, "name": target})
     warnings = [item.get("message") for item in profile.get("warnings", [])
                 if isinstance(item, dict) and isinstance(item.get("message"), str)]
+    if item_warning:
+        warnings.append(item_warning)
     if recipe_warning:
         warnings.append(recipe_warning)
     if extraction_warning:
@@ -133,7 +146,9 @@ def shape_sheet_rows(mappings: list, rows: list) -> dict:
     shaped = []
     for row in rows:
         values, fields = shape_row(mappings, extractions, recipes, row)
-        shaped.append({"rowNumber": row.get("__sheetRow"), "values": values, "fields": fields})
+        shaped.append({"rowNumber": row.get("__sheetRow"), "values": values, "fields": fields,
+                       # A row expanded into items: which item, and the item itself.
+                       **({"item": row["_item"], "itemText": str(row.get("@item", ""))[:300]} if "_item" in row else {})})
     warnings = [warning for warning in (recipe_warning, extraction_warning) if warning]
     if not extraction_warning and any(spec["extractionStrategy"] == "ai" for spec in extractions.values()):
         warnings.append("Fields read with AI are left empty in this preview: they are read when the data is updated.")

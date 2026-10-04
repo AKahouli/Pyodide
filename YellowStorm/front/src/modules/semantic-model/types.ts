@@ -586,6 +586,8 @@ export interface ConceptSourceMapping {
   /** Workspace mappings: the picked folders and files, or null for the whole workspace. */
   /** This mapping's own AI reading limits; each one left out uses the admin default. */
   aiSettings?: Partial<AiExtractionSettings> | null;
+  /** Several records per row: the column split into items (sheets only). */
+  expand?: DerivedExpand | null;
   selection?: { folderIds: string[]; documentIds: string[] } | null;
   /** Workspace mappings: files it covers today, and files still being indexed. */
   fileCount?: number;
@@ -706,6 +708,8 @@ export interface SourceMappingPreviewResponse {
     values: Record<string, unknown>;
     provenance: {
       rowNumber?: number;
+      /** A row making several records: which item of the row this record was read from. */
+      item?: number;
       fields?: Record<string, ValueReading>;
     };
   }>;
@@ -743,13 +747,20 @@ export interface SheetFieldPreviewRequest {
   fieldMappings: SourceFieldMapping[];
   rows: Array<{ rowNumber: number; values: Record<string, string | number | boolean | null> }>;
   aiSettings?: Partial<AiExtractionSettings>;
+  expand?: DerivedExpand;
 }
 
 export interface SheetFieldPreviewResponse {
-  /** For each row, how each field was read (or why not): as is, out of its cell (rules, AI), or by its recipe. */
-  rows: Array<{ rowNumber: number; fields: Record<string, DocumentFieldReading> }>;
+  /**
+   * For each row (each of its items, when a column is expanded), how each field was read (or why not):
+   * as is, out of its cell (rules, AI), or by its recipe.
+   */
+  rows: Array<{ rowNumber: number; fields: Record<string, DocumentFieldReading>; item?: number; itemText?: string }>;
   /** How many rows the AI was asked about. */
   ai: { aiRows: number; aiCalls: number; aiSkippedRows: number; aiFailedRows: number };
+  /** When a column is expanded: the `@item…` fields its items offer, and whether some items were left out. */
+  itemFields?: string[];
+  itemsTruncated?: boolean;
 }
 
 export interface SourceMappingDraft {
@@ -761,6 +772,8 @@ export interface SourceMappingDraft {
   fieldMappings: SourceFieldMapping[];
   identityFields: string[];
   aiSettings?: Partial<AiExtractionSettings>;
+  /** Several records per row: one column split into items (sheets only). */
+  expand?: DerivedExpand;
   /** Point this existing mapping at the file instead of adding one. */
   mappingId?: string;
 }
@@ -791,6 +804,8 @@ export interface SourceMappingPreviewDraft {
   identityFields: string[];
   limit?: number;
   aiSettings?: Partial<AiExtractionSettings>;
+  /** Several records per row: one column split into items (sheets only). */
+  expand?: DerivedExpand;
 }
 
 export type RelationMatchStrategy = 'exact' | 'case_insensitive' | 'normalized';

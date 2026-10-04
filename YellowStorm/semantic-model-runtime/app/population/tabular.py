@@ -157,7 +157,9 @@ def populate_concept_rows(compiled: dict[str, Any], rows: list[dict[str, Any]],
                                    "origin": "human" if field in constant_fields else "source",
                                    "evidence": {"assetRef": source_ref.get("assetRef"),
                                                 "rowNumber": row_number, "column": field,
-                                                "mappingVersion": source_ref.get("mappingVersion")}})
+                                                "mappingVersion": source_ref.get("mappingVersion"),
+                                                # A row expanded into items: which of its items.
+                                                **({"item": row["_item"]} if row.get("_item") is not None else {})}})
             elif current != value:
                 gaps.append({"kind": "conflicting_values", "conceptId": compiled["conceptId"],
                              "rowNumber": row_number,

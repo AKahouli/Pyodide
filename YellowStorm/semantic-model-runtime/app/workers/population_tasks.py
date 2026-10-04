@@ -27,6 +27,7 @@ from app.population.document_rules import RuleError, normalize_ai_settings, norm
 from app.population.run_limits import run_limits
 from app.datasource.email_archive import resolve_column
 from app.population.engine_version import reader_version
+from app.population.expand import ExpandError, expand_rows, is_item_attribute, normalize_expand
 from app.population.serving_policy import blocking_gap_kinds, serving_decision
 from app.population.tabular import (match_relationships, merge_concept_results,
                                     normalize_identity_value, populate_concept_rows)
@@ -312,6 +313,19 @@ def run_population_for_payload(command_dump: dict) -> dict:
                 except RuleError:
                     return {"ok": False, "errorCode": "invalid_column_mapping"}
                 mapped_attributes = set(mapping.values()) | set(constants) | set(extractions) | set(recipes)
+                # Several records per row: one column split into items (its columns are only known when read).
+                sheet_expand = ((entry.get("options") or {}).get("expand")
+                                if isinstance(entry.get("options"), dict) else None)
+                if sheet_expand is not None:
+                    try:
+                        if not isinstance(sheet_expand, dict) or "relationId" in sheet_expand:
+                            raise ExpandError("invalid_expand")
+                        normalize_expand(sheet_expand, {sheet_expand.get("field")} - {None, ""})
+                    except ExpandError:
+                        return {"ok": False, "errorCode": "invalid_column_mapping"}
+                elif any(is_item_attribute(column) for column in mapping):
+                    # A field reading an item of a sheet that does not expand a column.
+                    return {"ok": False, "errorCode": "invalid_column_mapping"}
             unmapped = [c for c in concept["keyComponents"] if c not in mapped_attributes]
             # Manual rows without a key value keep their own row key as identity.
             if unmapped and source_kind != "manual":
@@ -630,7 +644,17 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                     extraction_inputs = ({resolve_column(name, available) for name in extraction_columns(extractions)}
                                          & set(available) if isinstance(available, list)
                                          else extraction_columns(extractions))
-                    columns = sorted(set(mapping) | recipe_inputs | extraction_inputs | {SHEET_ROW_KEY})
+                    # A row expanded into items: its fields may read an item (`@item`), which is not a column.
+                    expand = None
+                    if (options or {}).get("expand"):
+                        expand = normalize_expand(options["expand"], {options["expand"].get("field")})
+                        expand_column = (resolve_column(expand["field"], available)
+                                         if isinstance(available, list) else expand["field"])
+                        if isinstance(available, list) and expand_column not in available:
+                            raise ValueError("expand_column_missing")
+                    columns = sorted({column for column in set(mapping) | recipe_inputs | extraction_inputs
+                                      if not is_item_attribute(column)}
+                                     | ({expand_column} if expand else set()) | {SHEET_ROW_KEY})
                     concept = compiled["concepts"][entry["conceptId"]]
                     # Fields read out of a cell's text, as a document's: rules on every row, AI on a bounded few.
                     cells = CellReader(extractions, {
@@ -653,9 +677,14 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                         if capped:
                             raws = raws[:max(0, limits["maxRecordsPerSource"] - records)]
                             complete_enumeration = sheet_complete = False
+                        expand_gaps: list = []
+                        if expand:
+                            raws, expand_gaps = expand_rows(raws, expand, lambda raw: raw.get(expand_column),
+                                                            lambda raw: raw.get(SHEET_ROW_KEY))
                         rows = []
                         for raw in raws:
-                            renamed: dict = {"_row": raw.get(SHEET_ROW_KEY), **constants}
+                            renamed: dict = {"_row": raw.get(SHEET_ROW_KEY), **constants,
+                                             **({"_item": raw["_item"]} if "_item" in raw else {})}
                             for source_column, attribute in mapping.items():
                                 if source_column in raw:
                                     renamed[attribute] = raw[source_column]
@@ -671,7 +700,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                                     renamed[attribute] = outcome["values"].get(attribute)
                                     if attribute not in outcome["values"]:
                                         missing_cells[attribute] = missing_cells.get(attribute, 0) + 1
-                                cell_evidence[renamed["_row"]] = outcome["evidence"]
+                                cell_evidence[(renamed["_row"], renamed.get("_item"))] = outcome["evidence"]
                             read_rows += len(raws)
                         # Shaped before the identity is read, so the key uses the shaped value.
                         if recipes:
@@ -685,12 +714,22 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                                            "constantFields": list(constants)})
                         # A value read out of a cell keeps where it was found: row, column and span.
                         for assertion in output["assertions"]:
-                            found = cell_evidence.get(assertion["evidence"].get("rowNumber"), {}).get(assertion["attribute"])
+                            item = assertion["evidence"].get("item")
+                            found = cell_evidence.get((assertion["evidence"].get("rowNumber"), item), {}).get(assertion["attribute"])
                             if found is not None:
                                 assertion["evidence"] = found
+                                if item is not None and is_item_attribute(found.get("column")):
+                                    # Read out of an item: the cell is the expanded column's, the span the item's.
+                                    found.pop("span", None)
+                                    assertion["evidence"] = {**found, "column": expand_column, "item": item,
+                                                             "itemField": found["column"]}
                             elif assertion["attribute"] in joined_sources:
                                 # A recipe joining several columns or fields: every one it read.
                                 assertion["evidence"]["recipeSources"] = joined_sources[assertion["attribute"]]
+                        if expand_gaps:
+                            output["gaps"].extend({**gap, "conceptId": entry["conceptId"], "assetRef": asset_ref}
+                                                  for gap in expand_gaps)
+                            output["counts"]["gaps"] = len(output["gaps"])
                         if cells is not None and (capped or page["returnedRows"] < QUERY_ROW_LIMIT):
                             output["gaps"].extend(cell_gaps(entry["conceptId"], asset_ref, extractions,
                                                             missing_cells, read_rows, cells.stats))

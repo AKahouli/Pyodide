@@ -271,8 +271,10 @@ export interface RuntimeComputedPreview {
 
 /** Sheet rows read as a run reads them: per row, the values and how each field was read. */
 export interface RuntimeShapedSheetRows {
-  rows: Array<{ rowNumber?: number; values: Record<string, unknown>; fields: NonNullable<ResolvedEntity['provenance']['fields']> }>;
+  /** With `expand`: one row per item, saying which item of its row it is. */
+  rows: Array<{ rowNumber?: number; values: Record<string, unknown>; fields: NonNullable<ResolvedEntity['provenance']['fields']>; item?: number; itemText?: string }>;
   warnings: string[];
+  itemsTruncated?: boolean;
 }
 
 export interface RuntimeSheetPreviewRequest {
@@ -281,7 +283,7 @@ export interface RuntimeSheetPreviewRequest {
   entry: { conceptId: string; conceptLabel?: string; source: Record<string, unknown>; fieldMappings: unknown[]; options?: Record<string, unknown>; unit?: 'row' | 'record' };
   rows: Array<{ rowNumber: number; values: Record<string, unknown> }>;
   aiExtraction?: { agentSlug: string; model: string | null; contractVersion: string } | null;
-  /** A derived source expanding a field: each row is read once per item. */
+  /** A derived source expanding a field, or a sheet expanding a column: each row is read once per item. */
   expand?: Record<string, unknown>;
 }
 
@@ -692,7 +694,7 @@ export class SemanticRuntimeClientService {
   }
 
   /** A sheet's sample rows with its fields read as a run reads them (no AI), for the data preview. */
-  async shapeSheetRows(body: { rows: Record<string, unknown>[]; fieldMappings: unknown[] }): Promise<RuntimeShapedSheetRows> {
+  async shapeSheetRows(body: { rows: Record<string, unknown>[]; fieldMappings: unknown[]; expand?: Record<string, unknown> }): Promise<RuntimeShapedSheetRows> {
     const base = this.requireRuntime();
     let res: Response;
     try {

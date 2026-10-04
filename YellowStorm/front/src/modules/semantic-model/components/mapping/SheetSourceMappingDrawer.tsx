@@ -15,7 +15,7 @@ import { semanticModelApi } from '../../api';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
 import { useSourceMappings } from '../../query/hooks';
 import { useSemanticModelEditorStore } from '../../store';
-import type { AiExtractionSettings, DocumentFieldReading, MappingSettings, SheetFieldPreviewResponse, SourceFieldMapping } from '../../types';
+import type { AiExtractionSettings, DerivedExpand, DocumentFieldReading, MappingSettings, SheetFieldPreviewResponse, SourceFieldMapping } from '../../types';
 import type { SuggestionSource } from '../editor/SuggestConceptsDialog';
 import { FORM_SECTION, FormField, INPUT, ROW_LIST, SectionHeader } from '../form/FormParts';
 import { AiLimitsEditor, FieldReadingResult, limitProblem, ReadAllFieldsBar, rulesProblem, usesAi as mappingsUseAi, usesRules, type LabelSuggestions } from './DocumentFieldRules';
@@ -26,6 +26,8 @@ import { MappingPresetBar } from './MappingPresetBar';
 import { ReadingTextContext } from './readingText';
 import { adaptToSheet, cellLabelSuggestions, cellValue, newSheetRows, sampleRowNumber, sheetPayload, sheetRows } from './sheetMapping';
 import type { SourceMappingTarget } from './SourceMappingDrawer';
+import { expandPayload, expandProblem, isItemField, ITEM_FIELD, itemColumns } from './derivedMapping';
+import { ExpandCard } from './ExpandCard';
 
 // Sample rows read for the fields until the person picks others, and at most.
 const DEFAULT_ROWS = 5;
@@ -67,9 +69,12 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
   const [shownRow, setShownRow] = useState<number | null>(null);
   const [rowFilter, setRowFilter] = useState('');
   const [highlight, setHighlight] = useState<Highlight>(null);
+  // Several records per row: one column split into items, each item read as a row of its own.
+  const [expand, setExpand] = useState<DerivedExpand | null>(null);
 
   useEffect(() => {
     if (!target) return;
+    setExpand(target.mapping?.expand ?? target.replaces?.expand ?? null);
     setConceptId(target.mapping?.conceptId ?? target.replaces?.conceptId ?? target.conceptId ?? '');
     setSheetName(target.mapping?.sheetName ?? '');
     setMappings([]);
@@ -136,7 +141,11 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
     const replaced = target.replaces;
     if (replaced) {
       // The fields keep how they were read, each with a column of this sheet (its own, or the one named like it).
-      setMappings(adaptToSheet(replaced.fieldMappings, newSheetRows(attributes, columns), attributes, columns));
+      // An expanding mapping's fields that read its items keep reading them, when this sheet has the column it split.
+      const keepsItems = Boolean(replaced.expand?.field && columns.includes(replaced.expand.field));
+      if (!keepsItems) setExpand(null);
+      const itemFields = keepsItems ? replaced.fieldMappings.map((field) => field.sourceField ?? '').filter(isItemField) : [];
+      setMappings(adaptToSheet(replaced.fieldMappings, newSheetRows(attributes, columns), attributes, [...itemFields, ...columns]));
       setIdentityField(replaced.identityFields[0] ?? '');
       setAiSettings({ ...replaced.aiSettings });
       return;
@@ -151,20 +160,32 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [buildKey]);
 
+  // The live reading of the picked rows (declared here: the item fields it found are offered as columns).
+  const [live, setLive] = useState<{ key: string; result?: SheetFieldPreviewResponse; error?: string; loading: boolean }>({ key: '', loading: false });
+  // An expanded row's fields: the item, the paths of object items the preview found, and those the fields read.
+  const itemFields = useMemo(() => expand ? [...new Set([ITEM_FIELD, ...(live.result?.itemFields ?? []),
+    ...mappings.flatMap((mapping) => [mapping.sourceField ?? '', ...recipeColumns(mapping.computed)]).filter(isItemField)])] : [],
+  [expand, live.result, mappings]);
+  const itemLabels = useMemo(() => Object.fromEntries(itemFields.map((field) => [field, field === ITEM_FIELD
+    ? t('derived.expand.item') : t('derived.expand.itemPath', { path: field.slice(ITEM_FIELD.length + 1) })])), [itemFields, t]);
   const payload = useMemo(() => sheetPayload(mappings, savedOrder), [mappings, savedOrder]);
   const usesAi = mappingsUseAi(payload);
   const changeMappings = (next: SourceFieldMapping[]) => { setMappings(next); preview.reset(); };
+  const changeExpand = (next: DerivedExpand | null) => { setExpand(next); preview.reset(); };
+  const readsItem = (mapping: SourceFieldMapping) => isItemField(mapping.sourceField) || recipeColumns(mapping.computed).some(isItemField);
 
   // What blocks saving, field by field.
   const problems = payload.filter((mapping) => {
     if ((mapping.mode === 'direct' || mapping.mode === 'extract') && !mapping.sourceField) return true;
     if (mapping.mode === 'extract' && usesRules(mapping.extractionStrategy) && rulesProblem(mapping.rules)) return true;
-    if (mapping.mode === 'computed') return Boolean(computedProblem(mapping.computed, recipeInputs(payload, mapping.targetAttribute, 'sheet'), columns.length ? columns : undefined));
+    if (mapping.mode === 'computed') return Boolean(computedProblem(mapping.computed, recipeInputs(payload, mapping.targetAttribute, 'sheet'), columns.length ? [...itemFields, ...columns] : undefined));
     return false;
   }).map((mapping) => mapping.targetAttribute);
   const identityValid = !identityField || payload.some((mapping) => mapping.targetAttribute === identityField);
   const limitsValid = !usesAi || !limitProblem(aiSettings);
-  const canSave = Boolean(conceptId && sheetName && payload.length && identityValid && !problems.length && limitsValid);
+  const expandIssue = expandProblem(expand) ? t('derived.expand.row.problem')
+    : !expand && payload.some(readsItem) ? t('derived.expand.row.itemWithoutExpand') : null;
+  const canSave = Boolean(conceptId && sheetName && payload.length && identityValid && !problems.length && limitsValid && !expandIssue);
 
   // Sample rows: the bounded rows the source analysis kept, numbered as in the sheet.
   const samples = useMemo(() => (profile.data?.sampleRows ?? []).map((row, index) => ({ number: sampleRowNumber(row, index), row })), [profile.data]);
@@ -175,11 +196,14 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
       : pickedNumbers.length < MAX_ROWS ? [...pickedNumbers, number].sort((left, right) => left - right) : pickedNumbers;
     setPicked(next);
   };
-  // The columns the fields read, sent for the picked rows; those read out of a cell are shown beside the fields.
-  const usedColumns = [...new Set(payload.flatMap((mapping) => [mapping.sourceField ?? '', ...recipeColumns(mapping.computed)]).filter(Boolean))];
-  const textColumns = [...new Set(payload.filter((mapping) => mapping.mode === 'extract' && mapping.sourceField).map((mapping) => mapping.sourceField!))];
+  // The columns the fields read, sent for the picked rows (an item is not a column: the column it comes from is);
+  // those read out of a cell are shown beside the fields.
+  const usedColumns = [...new Set([...payload.flatMap((mapping) => [mapping.sourceField ?? '', ...recipeColumns(mapping.computed)]),
+    ...(expand?.field ? [expand.field] : [])].filter((column) => column && !isItemField(column)))];
+  const textColumns = [...new Set(payload.filter((mapping) => mapping.mode === 'extract' && mapping.sourceField)
+    .map((mapping) => isItemField(mapping.sourceField) ? expand?.field ?? '' : mapping.sourceField!).filter(Boolean))];
   const canRead = canSave && pickedNumbers.length > 0;
-  const draftKey = canRead ? JSON.stringify([payload, pickedNumbers, usesAi ? aiSettings : null, conceptId]) : '';
+  const draftKey = canRead ? JSON.stringify([payload, pickedNumbers, usesAi ? aiSettings : null, conceptId, expandPayload(expand) ?? null]) : '';
   const requestRef = useRef<() => Parameters<typeof semanticModelApi.previewSheetFields>[1]>();
   requestRef.current = () => ({
     conceptId, workspaceId: target!.workspaceId, documentId: target!.documentId, fieldMappings: payload,
@@ -188,8 +212,8 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
       return { rowNumber: number, values: Object.fromEntries(usedColumns.map((column) => [column, cellValue(row[column])])) };
     }),
     ...(usesAi ? { aiSettings } : {}),
+    ...(expandPayload(expand) ? { expand: expandPayload(expand) } : {}),
   });
-  const [live, setLive] = useState<{ key: string; result?: SheetFieldPreviewResponse; error?: string; loading: boolean }>({ key: '', loading: false });
   const liveKey = useRef('');
   const readRows = useCallback(async () => {
     const key = draftKey;
@@ -210,8 +234,17 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
     return () => clearTimeout(timer);
   }, [draftKey, usesAi, readRows]);
   const stale = Boolean(live.result) && live.key !== draftKey;
+  // A row making several records is read once per item: the shown row shows its first item's readings.
   const readingsOf = (number?: number) => live.result?.rows.find((row) => row.rowNumber === number)?.fields;
   const shownReadings = readingsOf(shown?.number);
+  // Each item the preview read, as a row a recipe can be tried on: the row's cells and the item's fields.
+  const itemRows = useMemo(() => (live.result?.rows ?? []).filter((row) => row.item !== undefined).map((row) => ({
+    ...(samples.find((item) => item.number === row.rowNumber)?.row ?? {}), ...itemColumns(row.itemText ?? ''),
+  })), [live.result, samples]);
+  const shownItem = useMemo(() => {
+    const first = live.result?.rows.find((row) => row.rowNumber === shown?.number && row.item !== undefined);
+    return first ? Object.fromEntries(Object.entries(itemColumns(first.itemText ?? '')).map(([key, value]) => [key, String(value ?? '')])) : {};
+  }, [live.result, shown?.number]);
   const fieldValues = useMemo(() => Object.fromEntries(attributes.map((attribute) => [attribute.key, (live.result?.rows ?? []).flatMap((row) => {
     const reading = row.fields[attribute.key];
     return reading?.reason === 'found' && reading.value != null ? [{ row: row.rowNumber, value: String(reading.value) }] : [];
@@ -241,6 +274,7 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
     mutationFn: () => semanticModelApi.previewSourceMapping(modelId, {
       conceptId, workspaceId: target!.workspaceId, documentId: target!.documentId, sheetName, assetKind: target!.assetKind,
       fieldMappings: payload, identityFields: identityField ? [identityField] : [],
+      ...(expandPayload(expand) ? { expand: expandPayload(expand) } : {}),
     }),
     onError: (error) => showError(t('mapping.previewError'), { description: error instanceof Error ? error.message : undefined }),
   });
@@ -249,6 +283,7 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
       conceptId, workspaceId: target!.workspaceId, documentId: target!.documentId, sheetName, assetKind: target!.assetKind,
       fieldMappings: payload, identityFields: identityField ? [identityField] : [],
       ...(usesAi ? { aiSettings } : {}),
+      ...(expandPayload(expand) ? { expand: expandPayload(expand) } : {}),
       ...(target!.replaces ? { mappingId: target!.replaces.id } : {}),
     }),
     onSuccess: async (result) => {
@@ -270,7 +305,7 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
   });
 
   const applySettings = (settings: MappingSettings, exact: boolean) => {
-    const rows = adaptToSheet(settings.fieldMappings, mappings, attributes, columns);
+    const rows = adaptToSheet(settings.fieldMappings, mappings, attributes, [...itemFields, ...columns]);
     changeMappings(rows);
     const identity = settings.identityFields.find((key) => rows.some((row) => row.mode !== 'ignore' && row.targetAttribute === key));
     if (identity || exact) setIdentityField(identity ?? '');
@@ -302,7 +337,7 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
             </Select>
           </FormField>
           <FormField label={t('mapping.sheet')}>
-            <Select value={sheetName} disabled={Boolean(target.mapping)} onValueChange={(value) => { setSheetName(value); setMappings([]); setIdentityField(''); setPicked(null); preview.reset(); }}>
+            <Select value={sheetName} disabled={Boolean(target.mapping)} onValueChange={(value) => { setSheetName(value); setMappings([]); setIdentityField(''); setExpand(null); setPicked(null); preview.reset(); }}>
               <SelectTrigger className={INPUT} aria-label={t('mapping.sheet')}><SelectValue placeholder={t('mapping.chooseSheet')} /></SelectTrigger>
               <SelectContent>{(profile.data?.sheets ?? []).map((sheet) => <SelectItem key={sheet.name} value={sheet.name}>
                 {sheet.name}{sheet.rowCount || sheet.fieldCount ? ` · ${t('mapping.sheetMeta', { rows: sheet.rowCount, fields: sheet.fieldCount })}` : ''}</SelectItem>)}</SelectContent>
@@ -371,6 +406,11 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
           </div>}
         </section>}
 
+        {sheetName && concept && columns.length > 0 && <ExpandCard unit='row' value={expand} onChange={changeExpand} sourceLabel={sheetName}
+          sourceFields={columns.map((column) => ({ key: column, label: column }))} relations={[]}
+          items={expand && live.result && !stale ? { count: live.result.rows.length, records: new Set(live.result.rows.map((row) => row.rowNumber)).size,
+            truncated: live.result.itemsTruncated === true } : undefined} />}
+
         {sheetName && concept && attributes.length > 0 && <section className={FORM_SECTION}>
           <SectionHeader title={t('mapping.cell.fieldsTitle')} help={t('mapping.cell.fieldsHelp')} count={payload.length || undefined} />
           <MappingPresetBar modelId={modelId} conceptId={conceptId} attributes={attributes}
@@ -381,9 +421,10 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
           </p>}
           <FieldMappingList kind='sheet' modelId={modelId} attributes={attributes} mappings={mappings} onChange={changeMappings}
             onIgnore={(field) => { if (identityField === field) setIdentityField(''); }}
-            columns={columns} columnSamples={columnSamples}
+            columns={[...itemFields, ...columns]} columnLabels={itemLabels}
+            columnSamples={{ ...columnSamples, ...shownItem }}
             recipeSource={{
-              kind: 'sheet', columns, rows: profile.data?.sampleRows ?? [], fieldValues,
+              kind: 'sheet', columns: [...itemFields, ...columns], rows: expand && itemRows.length ? itemRows : profile.data?.sampleRows ?? [], fieldValues,
               fieldInputs: Object.fromEntries(payload.filter((mapping) => mapping.mode === 'direct' && mapping.sourceField)
                 .map((mapping) => [mapping.targetAttribute, { column: mapping.sourceField!, ...(mapping.computed ? { recipe: mapping.computed } : {}) }])),
               fieldConstants: Object.fromEntries(payload.filter((mapping) => mapping.mode === 'constant')
@@ -400,6 +441,7 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
             })} />
           {usesAi && <AiLimitsEditor defaults={defaultsQuery.data?.aiSettings} value={aiSettings} onChange={(next) => { setAiSettings(next); preview.reset(); }} />}
           {problems.length > 0 && <p role='status' className='text-xs text-amber-700 dark:text-amber-400'>{t('mapping.cell.saveBlocked', { fields: problems.map(attributeLabel).join(', ') })}</p>}
+          {expandIssue && <p role='status' className='text-xs text-amber-700 dark:text-amber-400'>{expandIssue}</p>}
         </section>}
 
         {sheetName && concept && <section className={FORM_SECTION}>
@@ -419,9 +461,9 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
         {live.result && concept && <ReadingTextContext.Provider value='cell'><section className={cn(FORM_SECTION, stale && 'opacity-60')} aria-label={t('mapping.cell.resultTitle')}>
           <SectionHeader title={t('mapping.cell.resultTitle')} count={live.result.rows.length} />
           {live.result.ai.aiCalls > 0 && <p className='text-[11px] text-muted-foreground'>{t('mapping.cell.aiPreview', { count: live.result.ai.aiCalls })}</p>}
-          {live.result.rows.map((row) => <div key={row.rowNumber} className='space-y-1.5 rounded-lg border p-2'>
+          {live.result.rows.map((row) => <div key={`${row.rowNumber}#${row.item ?? 0}`} className='space-y-1.5 rounded-lg border p-2'>
             <button type='button' className='text-xs font-medium hover:underline' onClick={() => { setShownRow(row.rowNumber); setHighlight(null); }}>
-              {t('mapping.recipe.rowLabel', { row: row.rowNumber })}</button>
+              {t('mapping.recipe.rowLabel', { row: row.rowNumber })}{row.item !== undefined ? ` · ${t('derived.expand.row.itemOf', { number: row.item, item: row.itemText ?? '' })}` : ''}</button>
             <div className='grid gap-1.5 sm:grid-cols-2'>
               {payload.filter((mapping) => row.fields[mapping.targetAttribute]).map((mapping) => <Fragment key={mapping.targetAttribute}>
                 <FieldReadingResult fieldLabel={attributeLabel(mapping.targetAttribute)} reading={row.fields[mapping.targetAttribute]}
@@ -439,7 +481,8 @@ export function SheetSourceMappingDrawer({ modelId, target, onClose, onSaved, on
               {preview.data.entities.map((entity) => <div key={entity.entityKey} className='px-3 py-2'>
                 <p className='truncate text-sm font-medium'>{entity.label || t('mapping.unnamedEntity')}</p>
                 <p className='truncate text-[11px] text-muted-foreground'>{Object.entries(entity.values).filter(([key]) => key !== entity.label).slice(0, 4).map(([key, value]) => `${key}: ${String(value ?? '')}`).join(' · ')}</p>
-                <p className='text-[11px] text-muted-foreground'>{t('mapping.provenance', { row: entity.provenance.rowNumber })}</p>
+                <p className='text-[11px] text-muted-foreground'>{t('mapping.provenance', { row: entity.provenance.rowNumber })}
+                  {entity.provenance.item !== undefined ? ` · ${t('derived.expand.row.itemOf', { number: entity.provenance.item, item: '' }).replace(/[:\s]+$/, '')}` : ''}</p>
               </div>)}
               {!preview.data.entities.length && <p className='p-3 text-xs text-muted-foreground'>{t('mapping.noEntities')}</p>}
             </div>
