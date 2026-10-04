@@ -357,6 +357,34 @@ describe('SemanticSourceMappingService boundaries', () => {
     expect(result.fields.title.rules.reason).toBe('label_not_found');
   });
 
+  it('previews a document making several records by rules: one entity per record, the switch sent without AI', async () => {
+    const database = { query: jest.fn()
+      .mockResolvedValueOnce({ rows: [{}] })
+      .mockResolvedValueOnce({ rows: [{ label: 'Amendment', attributes: [
+        { key: 'contract', label: 'Contract', type: 'text' }, { key: 'number', label: 'Number', type: 'text' }] }] }) };
+    const models = { requireActiveRole: jest.fn().mockResolvedValue({ id: 'model-1', currentDraftVersionId: 'version-1' }) };
+    const documents = { findById: jest.fn().mockResolvedValue({ id: 'document-1', mimeType: 'application/pdf', originalName: 'a.pdf', size: 10, indexingStatus: 'ready' }) };
+    const runtime = { previewDocumentFields: jest.fn().mockResolvedValue({ status: 'read', aiSent: null,
+      fields: { contract: { method: 'rules', reason: 'found', value: 'CNT-7' }, number: { method: 'rules', reason: 'found', value: '1', matches: 2 } },
+      records: [{ values: { contract: 'CNT-7', number: '1' } }, { values: { contract: 'CNT-7', number: '2' } }], recordCount: 2, unevenFields: ['date'] }) };
+    const service = new SemanticSourceMappingService(database as never, models as never, documents as never,
+      runtime as never, {} as never, undefined, undefined, undefined);
+
+    const result = await service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
+      fieldMappings: [
+        { sourceField: 'Contract', targetAttribute: 'contract', mode: 'extract' },
+        { sourceField: 'Number', targetAttribute: 'number', mode: 'extract' }],
+      identityFields: ['contract', 'number'], aiSettings: { manyRecords: true, maxBlocks: 9 },
+    }) as any;
+
+    expect(runtime.previewDocumentFields.mock.calls[0][0].entry.options).toEqual({ manyRecords: true });
+    expect(result.entities.map((entity: any) => entity.entityKey)).toEqual(['cnt-7|1', 'cnt-7|2']);
+    expect(result.entities[1].provenance.rowNumber).toBe(2);
+    expect(result.stats.resolvedEntities).toBe(2);
+    expect(result.warnings.join(' ')).toContain('date');
+  });
+
   it('tells the preview AI the field definition, or the attribute description when the field has none', async () => {
     const database = { query: jest.fn()
       .mockResolvedValueOnce({ rows: [{}] })

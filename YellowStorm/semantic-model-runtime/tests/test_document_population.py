@@ -660,3 +660,87 @@ async def test_the_agent_chosen_for_a_field_is_recorded_with_its_evidence(
     ), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata, model_id="model-1")
     assertion = next(item for item in result["assertions"] if item["attribute"] == "effective_date")
     assert assertion["evidence"]["requestedAgentId"] == "agent-7"
+
+
+# --- Several records per document by rules: every match of a rule is a record ---------------------------
+
+def _amendment_blocks(*amendments: tuple[str, str | None]) -> list[dict]:
+    blocks = [{"blockPk": 8, "blockKey": "b8", "pageNumber": 1, "origin": "native_text", "content": "Contract number: CNT-7"}]
+    for index, (number, date) in enumerate(amendments, start=10):
+        text = f"Amendment number: {number}" + (f"\nEffective date: {date}" if date else "")
+        blocks.append({"blockPk": index, "blockKey": f"b{index}", "pageNumber": 2, "origin": "native_text", "content": text})
+    return blocks
+
+
+def _rules_entry(many: bool) -> dict:
+    mapping = entry(
+        {"sourceField": "Contract number", "targetAttribute": "contract_number", "mode": "extract"},
+        {"sourceField": "Amendment number", "targetAttribute": "amendment_number", "mode": "extract"},
+        {"sourceField": "Effective date", "targetAttribute": "effective_date", "mode": "extract"},
+    )
+    mapping["options"] = {"manyRecords": True} if many else {}
+    return mapping
+
+
+@pytest.mark.asyncio
+async def test_rules_make_one_record_per_match_and_share_what_the_document_says_once(
+        monkeypatch: pytest.MonkeyPatch, index_stubs):
+    blocks = _amendment_blocks(("1", "2026-01-01"), ("2", "2026-02-01"))
+
+    async def read(*_args, **_kwargs):
+        return {"sections": [{"sectionPk": 7, "sectionKey": "s7", "blocks": blocks}], "coverage": {"directBlocksComplete": True}}
+
+    monkeypatch.setattr(document, "read_complete_section_set", read)
+    result = await document.populate_document(object(), _rules_entry(True), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata)
+    assert sorted((e["identity"]["contract_number"], e["identity"]["amendment_number"]) for e in result["entities"]) == [
+        ("cnt-7", "1"), ("cnt-7", "2")]
+    dates = sorted((a["value"], a["evidence"]["rowNumber"], a["evidence"]["blockKey"]) for a in result["assertions"]
+                   if a["attribute"] == "effective_date")
+    # Each value keeps the block it was found in, and its record's number.
+    assert dates == [("2026-01-01", 1, "b10"), ("2026-02-01", 2, "b11")]
+    assert not [gap for gap in result["gaps"] if gap["kind"] == "uneven_matches"]
+
+    # One record per document: the same rules find several values and keep none.
+    single = await document.populate_document(object(), _rules_entry(False), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata)
+    assert single["entities"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_field_matching_fewer_times_than_there_are_records_is_reported(
+        monkeypatch: pytest.MonkeyPatch, index_stubs):
+    blocks = _amendment_blocks(("1", "2026-01-01"), ("2", "2026-02-01"), ("3", None))
+
+    async def read(*_args, **_kwargs):
+        return {"sections": [{"sectionPk": 7, "sectionKey": "s7", "blocks": blocks}], "coverage": {"directBlocksComplete": True}}
+
+    monkeypatch.setattr(document, "read_complete_section_set", read)
+    result = await document.populate_document(object(), _rules_entry(True), AMENDMENT_CONCEPT, "u1", metadata_fetch=metadata)
+    assert sorted(e["identity"]["amendment_number"] for e in result["entities"]) == ["1", "2", "3"]
+    uneven = [gap for gap in result["gaps"] if gap["kind"] == "uneven_matches"]
+    assert [gap["field"] for gap in uneven] == ["effective_date"]
+
+
+def test_rule_matches_are_paired_with_the_ai_records_by_their_order():
+    evidence = lambda key: {"blockKey": key}  # noqa: E731
+    records, uneven = document.pair_rule_matches(
+        [{"values": {"label": "first"}, "evidence": {"label": evidence("a")}}],
+        {"amount": [("10", evidence("b1"), "q"), ("20", evidence("b2"), "q")]})
+    assert [record["values"] for record in records] == [{"label": "first", "amount": "10"}, {"amount": "20"}]
+    assert uneven == []
+    # A value the AI found for a record wins over a rule match.
+    records, _ = document.pair_rule_matches([{"values": {"amount": "99"}, "evidence": {"amount": evidence("ai")}}],
+                                            {"amount": [("10", evidence("b1"), "q")]})
+    assert records[0]["values"] == {"amount": "99"}
+    assert document.pair_rule_matches([], {}) == ([], [])
+
+
+def test_the_same_match_found_twice_in_one_block_is_one_match():
+    block, other = {"blockPk": 1}, {"blockPk": 2}
+    matches = document.rule_matches([("A", block, {}, "A"), ("A", block, {}, "A"), ("A", other, {}, "A"), ("B", block, {}, "B")])
+    assert [(value, item["blockPk"]) for value, item, *_ in matches] == [("A", 1), ("A", 2), ("B", 1)]
+
+
+def test_several_records_may_be_set_without_ai_or_with_its_limits():
+    assert document.many_records({"options": {"manyRecords": True}})
+    assert document.many_records({"options": {"aiSettings": {"manyRecords": True}}})
+    assert not document.many_records({"options": {}}) and not document.many_records({})

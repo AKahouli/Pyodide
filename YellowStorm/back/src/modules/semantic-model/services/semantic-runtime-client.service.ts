@@ -237,6 +237,11 @@ export interface RuntimeDocumentPreview {
   detail?: string;
   fields: Record<string, RuntimeDocumentPreviewField>;
   aiSent?: { documentCharacters: number; longDocument: boolean; blocksSent: number; charactersSent: number } | null;
+  /** Several records per document: each record's values (what is shared, then its own), at most 50. */
+  records?: Array<{ values: Record<string, unknown>; pages?: Record<string, number | null> }>;
+  recordCount?: number;
+  /** Fields found fewer times than there are records. */
+  unevenFields?: string[];
 }
 
 export interface RuntimeDocumentLabelsRequest {

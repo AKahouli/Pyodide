@@ -1,4 +1,4 @@
-import { effectiveAiSettings, SemanticExtractionSettingsService } from './semantic-extraction-settings.service';
+import { effectiveAiSettings, SemanticExtractionSettingsService, documentReadOptions } from './semantic-extraction-settings.service';
 import { createHash } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
@@ -1086,9 +1086,8 @@ export class SemanticPopulationRefreshService {
         }),
         // How much of the document the AI reads; only sent when a field is read by AI, so a change
         // to these limits never reruns documents read by rules alone.
-        ...(usesAiExtraction(activeMappings)
-          ? { options: { aiSettings: effectiveAiSettings(await this.adminAiSettings(), mapping.aiSettings) } }
-          : {}),
+        ...documentReadOptions(usesAiExtraction(activeMappings),
+          usesAiExtraction(activeMappings) ? await this.adminAiSettings() : {}, mapping.aiSettings),
         mappingVersion,
       };
     }

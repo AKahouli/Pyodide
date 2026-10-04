@@ -24,7 +24,7 @@ import { aiFieldHints,
   type SourceFieldMapping,
 } from '../domain/semantic-source-mapping.types';
 import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
-import { effectiveAiSettings, pickAiSettings, SemanticExtractionSettingsService } from './semantic-extraction-settings.service';
+import { documentReadOptions, effectiveAiSettings, pickAiSettings, SemanticExtractionSettingsService } from './semantic-extraction-settings.service';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
 import { SemanticModelService } from './semantic-model.service';
 import type {
@@ -368,7 +368,7 @@ export class SemanticSourceMappingService {
           indexingStatus: document.indexingStatus, contentHash: document.contentHash, uploadedAt: document.uploadedAt,
         },
         fieldMappings,
-        ...(usesAi ? { options: { aiSettings: effectiveAiSettings(defaults, aiSettings) } } : {}),
+        ...documentReadOptions(usesAi, defaults, aiSettings),
       },
       aiExtraction: agent ? { agentSlug: agent.slug, model: agent.llmModel ?? null, contractVersion: AI_EXTRACTION_CONTRACT_VERSION } : null,
     });
@@ -411,9 +411,30 @@ export class SemanticSourceMappingService {
       values,
       provenance: { fields: provenance },
     };
+    // Several records per document: one entity per record (the AI's items, a rule's matches).
+    const recordEntities = (preview.records ?? []).map((record, index): ResolvedEntity => {
+      const own = { ...values, ...record.values };
+      const key = input.identityFields.map((field) => own[field]);
+      return {
+        entityKey: key.every((value) => value !== undefined && value !== null && String(value).trim())
+          ? key.map((value) => String(value).trim().toLowerCase()).join('|') : `document:${input.documentId}#${index + 1}`,
+        label: String(key.find(Boolean) ?? Object.values(record.values).find(Boolean) ?? input.documentName),
+        values: own,
+        provenance: { rowNumber: index + 1, fields: provenance },
+      };
+    });
+    if ((preview.recordCount ?? 0) > recordEntities.length) {
+      warnings.push(`This document makes ${preview.recordCount} records; the first ${recordEntities.length} are shown.`);
+    }
+    if (preview.unevenFields?.length) {
+      warnings.push(`Some fields were found fewer times than there are records, so the last records have no value for them: ${preview.unevenFields.join(', ')}.`);
+    }
+    const entities = recordEntities.length ? recordEntities : [entity];
     return {
-      entities: [entity],
-      stats: { scannedRows: 1, resolvedEntities: 1, duplicateKeysSkipped: 0, nullIdentitySkipped: identityKey || !input.identityFields.length ? 0 : 1 },
+      entities,
+      stats: recordEntities.length
+        ? { scannedRows: preview.recordCount ?? recordEntities.length, resolvedEntities: recordEntities.length, duplicateKeysSkipped: 0, nullIdentitySkipped: 0 }
+        : { scannedRows: 1, resolvedEntities: 1, duplicateKeysSkipped: 0, nullIdentitySkipped: identityKey || !input.identityFields.length ? 0 : 1 },
       identityEvidence: [],
       warnings,
       complete: preview.status === 'read',

@@ -631,7 +631,23 @@ async def preview_document_fields(body: dict, request: Request) -> dict[str, obj
     computed = apply_computed(mappings, values, {"document_name": resolved["current"].get("originalName")})
     for key, outcome in computed.items():
         fields[key] = {**outcome, **({"value": values[key]} if outcome["reason"] == "found" else {})}
-    return {"status": "read", "fields": fields, "aiSent": read["aiSent"]}
+    preview: dict[str, object] = {"status": "read", "fields": fields, "aiSent": read["aiSent"]}
+    if read["records"]:
+        # Several records per document: each with what is shared (read once) and its own values.
+        own = set(read.get("itemKeys") or []) | {m["targetAttribute"] for m in read["aiMappings"]}
+        shared = {key: value for key, value in values.items() if key not in own}
+        records = []
+        for record in read["records"][:MAX_PREVIEW_RECORDS]:
+            row = {**shared, **record["values"]}
+            apply_computed(mappings, row, {"document_name": resolved["current"].get("originalName")})
+            records.append({"values": row, "pages": {key: item.get("pageNumber") for key, item in record["evidence"].items()}})
+        preview.update({"records": records, "recordCount": len(read["records"]),
+                        "unevenFields": read.get("unevenFields") or []})
+    return preview
+
+
+# How many of a document's records its preview shows.
+MAX_PREVIEW_RECORDS = 50
 
 
 @router.post("/cell-preview", status_code=status.HTTP_200_OK)

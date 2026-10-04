@@ -518,7 +518,8 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose, onSaved 
                 onRead: () => void live.run(),
               } : undefined,
             })} />
-          {usesAi && <ManyRecordsSwitch value={aiSettings} onChange={(next) => { setAiSettings(next); preview.reset(); }} />}
+          {/* Several records per document: the AI's items, or one record per match of a field's rules. */}
+          {activeMappings.some((mapping) => mapping.mode === 'extract') && <ManyRecordsSwitch value={aiSettings} onChange={(next) => { setAiSettings(next); preview.reset(); }} />}
           {usesAi && <AiLimitsEditor defaults={defaultsQuery.data?.aiSettings} value={aiSettings} onChange={(next) => { setAiSettings(next); preview.reset(); }} />}
         </section>}
 
@@ -546,7 +547,9 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose, onSaved 
           {result.fields && activeMappings.filter((mapping) => (mapping.mode === 'extract' || mapping.mode === 'computed') && result.fields?.[mapping.targetAttribute]).map((mapping) =>
             <FieldReadingResult key={mapping.targetAttribute} fieldLabel={attributeLabel(mapping.targetAttribute)} reading={result.fields![mapping.targetAttribute]}
               onOpenQuote={(quote, page) => openQuote(asset, quote, page)} />)}
-          {result.entities.map((entity) => Object.entries(entity.values).filter(([field]) => !result.fields?.[field]).map(([field, value]) => {
+          {result.entities.length > 1 && <RecordsTable entities={result.entities} total={result.stats.scannedRows}
+            fields={activeMappings.map((mapping) => mapping.targetAttribute)} label={attributeLabel} />}
+          {(result.entities.length > 1 ? [] : result.entities).map((entity) => Object.entries(entity.values).filter(([field]) => !result.fields?.[field]).map(([field, value]) => {
             const source = entity.provenance.fields?.[field];
             return <div key={field} className='rounded-lg bg-muted/50 p-2 text-xs'>
               <div className='flex items-start justify-between gap-2'><div><p className='font-medium'>{concept?.attributes.find((attribute) => attribute.key === field)?.label ?? field}</p><p>{String(value ?? '')}</p></div>{source?.confidence !== undefined && <span className='text-muted-foreground'>{Math.round(source.confidence * 100)}%</span>}</div>
@@ -582,4 +585,27 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose, onSaved 
 /** True when the preview failed because the retired document search service is gone, which the user cannot fix. */
 function isRetiredSearchFailure(error: unknown) {
   return /native search/i.test(parseApiError(error).message);
+}
+
+/** The records one document makes (one per item the AI found, or per match of a field's rules), a row each. */
+function RecordsTable({ entities, total, fields, label }: Readonly<{
+  entities: Array<{ entityKey: string; values: Record<string, unknown> }>; total: number; fields: string[]; label: (key: string) => string;
+}>) {
+  const { t } = useModuleTranslation('semantic-model');
+  const shown = fields.filter((field) => entities.some((entity) => entity.values[field] != null && String(entity.values[field]).trim()));
+  return <div className='rounded-lg border' role='region' aria-label={t('mapping.manyRecords.found', { count: total })}>
+    <p className='border-b bg-muted/30 px-2.5 py-1 text-[11px] font-medium'>{t('mapping.manyRecords.found', { count: total })}</p>
+    <div className='max-h-64 overflow-auto'>
+      <table className='w-full text-left text-xs'>
+        <thead className='sticky top-0 bg-background'><tr>
+          <th className='px-2 py-1 font-medium text-muted-foreground'>#</th>
+          {shown.map((field) => <th key={field} className='px-2 py-1 font-medium text-muted-foreground'>{label(field)}</th>)}
+        </tr></thead>
+        <tbody className='divide-y'>{entities.map((entity, index) => <tr key={`${entity.entityKey}-${index}`}>
+          <td className='px-2 py-1 tabular-nums text-muted-foreground'>{index + 1}</td>
+          {shown.map((field) => <td key={field} className='max-w-[14rem] truncate px-2 py-1'>{String(entity.values[field] ?? '') || '—'}</td>)}
+        </tr>)}</tbody>
+      </table>
+    </div>
+  </div>;
 }

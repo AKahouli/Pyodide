@@ -386,6 +386,17 @@ describe('SemanticPopulationRefreshService', () => {
     });
   });
 
+  it('sends a document making several records by rules alone with only that switch in its options', async () => {
+    const doc = MAPPING({ id: 'm-doc', assetKind: 'document', sheetName: '', aiSettings: { manyRecords: true, maxBlocks: 9 },
+      fieldMappings: [{ sourceField: 'Customer ID', targetAttribute: 'customer_id', mode: 'extract', extractionStrategy: 'deterministic' }] });
+    const { documents, runtime, service } = setup([doc]);
+    documents.findById.mockResolvedValueOnce({ mimeType: 'application/pdf', originalName: 'a.pdf', createdBy: 'u', contentHash: 'sha256:abc',
+      updatedAt: '2026-01-01', uploadedAt: '2026-01-01', size: 100, indexingStatus: 'ready' });
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' } });
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    expect(calls[0][0].payload.sources[0].options).toEqual({ manyRecords: true });
+  });
+
   it('carries the per-field extraction strategy into the population payload and fingerprint', async () => {
     const doc = MAPPING({
       id: 'm-doc', assetKind: 'document', sheetName: '',
