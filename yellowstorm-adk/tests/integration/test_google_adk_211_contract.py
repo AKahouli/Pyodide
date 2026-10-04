@@ -1,4 +1,4 @@
-"""Authoritative Google ADK 2.8 upgrade contract test.
+"""Authoritative Google ADK 2.11 upgrade contract test.
 
 Imports the installed SDK without mocking it and pins the public APIs
 Yellowmind relies on. Also guards against a local stub package (formerly
@@ -13,7 +13,7 @@ import google.adk
 
 
 def test_installed_google_adk_is_real_sdk():
-    assert google.adk.__version__ == "2.8.0"
+    assert google.adk.__version__ == "2.11.0"
     # Must resolve to the installed package, never a vendored stub.
     assert "site-packages" in str(google.adk.__file__)
     assert "src/google/adk" not in str(google.adk.__file__).replace("\\", "/")

@@ -1,6 +1,6 @@
 # YellowStorm Agent Instructions
 
-The primary `build` agent runs the whole development loop. Subagents (`explore`, `plan`, `diagnostics`, `verify`, `frontend-qa`, `reviewer`, `maintainer`) are bounded tools that return condensed evidence.
+The primary `build` agent runs the whole development loop. Subagents (`explore`, `plan`, `frontend-qa`, `reviewer`, `maintainer`) are bounded tools that return condensed evidence.
 
 ## Source of Truth
 
@@ -64,9 +64,9 @@ Never swallow exceptions with an empty catch. Validate at trust boundaries only.
 | Tier | Scope | Required steps |
 |---|---|---|
 | 0 Trivial | typo, formatting, comment, non-runtime config text | edit, lightweight check; no subagents |
-| 1 Local | one behavior change, no contract or cross-module impact | inspect target and direct tests; `verify`; `reviewer` if runtime behavior changed |
-| 2 Standard | multi-file feature, bug fix, UI behavior, service change | `diagnostics` for unclear bugs; `plan` only if ambiguous; implement with tests; `verify`; `frontend-qa` if browser-visible; `reviewer` |
-| 3 High risk | API, schema, proto, auth, permissions, quotas, streaming, DB writes, agent runtime, cross-service | `plan`; reproduce before editing; verify both sides of each boundary; `verify` incl. integration where feasible; `frontend-qa` if browser-visible; `reviewer` (critical and major must be fixed); `maintainer` when tier is Full |
+| 1 Local | one behavior change, no contract or cross-module impact | inspect target and direct tests; run relevant checks; `reviewer` if runtime behavior changed |
+| 2 Standard | multi-file feature, bug fix, UI behavior, service change | diagnose unclear bugs and reproduce before editing; `plan` only if ambiguous; implement with tests; run relevant checks; `frontend-qa` if browser-visible; `reviewer` |
+| 3 High risk | API, schema, proto, auth, permissions, quotas, streaming, DB writes, agent runtime, cross-service | `plan`; reproduce before editing; verify both sides of each boundary; run relevant checks including integration where feasible; `frontend-qa` if browser-visible; `reviewer` (critical and major must be fixed); `maintainer` when tier is Full |
 
 Subagent routing:
 
@@ -74,8 +74,6 @@ Subagent routing:
 |---|---|---|
 | `explore` | ownership, call paths, or dependencies still unclear after one graph query | target and callers already known |
 | `plan` | Tier 3, ambiguity, several plausible designs, contract changes | obvious change, even if it touches several files |
-| `diagnostics` | bug with an unclear cause; needs reproduction before editing | cause is evident from the report or a failing test |
-| `verify` | any test, build, lint, or type-check run whose output could be long | a single short command you can run yourself |
 | `frontend-qa` | UI, layout, interaction, routing, forms, a11y, console, or network behavior changed | type-only or non-visible frontend change |
 | `reviewer` | non-trivial runtime, behavior, security, persistence, or contract change | Tier 0 |
 | `maintainer` | Full-tier change passed review and created durable knowledge | fact is obvious from code or git |

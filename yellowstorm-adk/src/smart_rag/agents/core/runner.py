@@ -635,6 +635,9 @@ class AgentRunner:
                             accumulated_text += text_to_send
 
                     if part.function_call:
+                        # Streamed argument fragments are not separate tool calls.
+                        if event.partial is True:
+                            continue
                         if accumulated_text != "":
                             recorder.record_chunk(accumulated_text)
                             accumulated_text = ""
@@ -653,10 +656,10 @@ class AgentRunner:
                             else "standard"
                         )
 
-                        recorder.record_function_call(
-                            func_name, dict(part.function_call.args), tool_category
-                        )
                         tool_args = dict(part.function_call.args or {})
+                        recorder.record_function_call(
+                            func_name, tool_args, tool_category
+                        )
                         presentation = present_tool_call(func_name, tool_args)
                         logger.info(
                             "[TOOL CALL] ADK requested agent_role=%s agent_name=%s agent_id=%s tool_name=%s argument_keys=%s summary=%s",
@@ -1270,7 +1273,7 @@ class AgentRunner:
         # Create specialized search event if applicable
         search_event = self.streaming_formatter.create_search_events_for_function(
             func_name,
-            dict(part.function_call.args),
+            dict(part.function_call.args or {}),
             agent_name,
             session_id,
             agent_id,
