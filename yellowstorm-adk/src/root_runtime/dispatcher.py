@@ -123,7 +123,8 @@ def build_delegate_dispatcher(
     }
     if not catalog:
         return None
-    max_depth = int(root_context.get("max_depth") or 1)
+    raw_depth = root_context.get("max_depth")
+    max_depth = 1 if raw_depth is None else int(raw_depth)
     candidates_by_id = {
         str(getattr(candidate, "id", "") or ""): candidate
         for candidate in (delegate_candidates or [])
@@ -174,9 +175,10 @@ def build_delegate_dispatcher(
         if candidate is None:
             return _failed(agent_id, "The requested specialist definition was not provided for this turn.")
 
-        # Deterministic logical execution id derived from (agent, task); on
-        # replay the same request resolves to the same child branch (plan §6.5).
-        execution_id = f"exec_{uuid.uuid5(uuid.NAMESPACE_URL, f'{agent_id}:{task}').hex[:12]}"
+        # Logical execution id derived from the parent execution + (agent,
+        # task) so replays of the same request resolve to the same child
+        # branch, while different roots/turns never collide (plan §6.5).
+        execution_id = f"exec_{uuid.uuid5(uuid.NAMESPACE_URL, f'{parent_execution_id}:{agent_id}:{task}').hex[:12]}"
         logger.info(
             "[DELEGATE] start agent_id=%s execution_id=%s session_id=%s task_len=%s",
             agent_id, execution_id, session_id, len(task or ""),

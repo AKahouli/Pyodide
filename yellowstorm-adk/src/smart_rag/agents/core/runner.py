@@ -457,7 +457,14 @@ class AgentRunner:
                 state_delta = getattr(getattr(event, "actions", None), "state_delta", None)
                 if isinstance(state_delta, dict):
                     citation_session_state.update(state_delta)
-                if q and event.usage_metadata:
+                if q and event.usage_metadata and not (
+                    delegation_root_active
+                    and (getattr(event, "author", "") or "") != agent.name
+                ):
+                    # Delegated specialists' usage must not be absorbed into
+                    # the root's attribution (plan 9.3: unique call identity);
+                    # producer-scoped usage reporting lands with the projector
+                    # work in WP05+.
                     model_name = event.model_version if getattr(event, "model_version", None) else "unknown"
                     await q.put({
                         "usage": {

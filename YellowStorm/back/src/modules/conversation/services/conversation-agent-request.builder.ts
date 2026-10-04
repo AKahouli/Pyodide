@@ -25,6 +25,9 @@ export interface RootDelegationContext {
  * the specialist and does not weaken the specialist's mandatory guards.
  */
 export function scopeCandidateToRootCeiling(candidate: IGrpcAgent, root: IGrpcAgent): IGrpcAgent {
+  // Tool ceiling matches by tool NAME (the wire's capability unit today);
+  // config-aware comparison (sandbox mode, write scope) is a WP10 hardening
+  // item if same-named tools with divergent configs appear.
   const rootToolNames = new Set(root.tools.map((tool) => tool.name));
   const rootWorkspaceIds = new Set(root.brain_context.map((b) => b.workspace_id));
   const rootSkillIds = new Set(

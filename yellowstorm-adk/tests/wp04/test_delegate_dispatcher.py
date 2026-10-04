@@ -219,7 +219,7 @@ def test_delegation_compiles_only_chosen_specialist_and_returns_typed_result():
     exec_trace = traces[0]
     assert exec_trace["parent_execution_id"] == "exec_root"
     assert exec_trace["execution_id"].startswith("exec_")
-    assert exec_trace["execution_id"] == f"exec_{uuid.uuid5(uuid.NAMESPACE_URL, 'a1:Summarize T').hex[:12]}"
+    assert exec_trace["execution_id"] == f"exec_{uuid.uuid5(uuid.NAMESPACE_URL, 'exec_root:a1:Summarize T').hex[:12]}"
 
 
 def test_deterministic_run_ids_are_stable_across_calls():
