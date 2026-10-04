@@ -26,6 +26,8 @@ import { showError } from '@/lib/notifications';
 import { cn } from '@/lib/utils';
 import { RelationMatchingPanel } from '../mapping/RelationMatchingPanel';
 import { DELETE_BUTTON, FORM_SECTION as SECTION, FormField as Field, HelpTip, SectionHeader } from '../form/FormParts';
+import { FieldSearchIndexPane } from '../settings/FieldSearchIndexPane';
+import { withSearchIndex } from '../../searchSettings';
 
 export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowledgeOpen,knowledgeTargetId,onKnowledgeClose,onMapData,onDeriveData,onAddSource,onBrowseRecords,recordCounts,workspace = false }: Readonly<{ modelId?:string;canEdit:boolean;knowledge:KnowledgeLinkingController;knowledgeOpen:boolean;knowledgeTargetId:string|null;onKnowledgeClose:()=>void;onMapData?:(target:SourceMappingTarget)=>void;onDeriveData?:(target:DerivedSourceTarget)=>void;onAddSource?:(conceptId:string)=>void;onBrowseRecords?:(conceptId:string)=>void;recordCounts?:Record<string,number>;workspace?:boolean }>) {
   const { t } = useModuleTranslation('semantic-model');
@@ -389,6 +391,7 @@ function AttributeEditor({ attributes,onChange }: Readonly<{ attributes: Attribu
         {open && <div className='space-y-3 pb-2 pl-8 pr-1 pt-2'>
           <Field label={t('field.description')} help={t('attributes.descriptionHelp')}><Textarea className='min-h-[3.5rem] resize-y text-sm' rows={2} value={attribute.description ?? ''} placeholder={t('attributes.descriptionPlaceholder')} aria-label={t('attributes.descriptionFor', { name: attribute.label })} onChange={(event) => edit(index, { description: event.target.value })} /></Field>
           <Field label={t('aliases.title')}><AliasChips values={attribute.aliases ?? []} onChange={(aliases) => edit(index, { aliases })} placeholder={t('aliases.fieldPlaceholder', { name: attribute.label })} compact /></Field>
+          {attribute.type === 'text' && <FieldSearchIndexPane value={attribute.searchIndex} fieldLabel={attribute.label} onChange={(searchIndex) => onChange(attributes.map((item, itemIndex) => itemIndex === index ? withSearchIndex(item, searchIndex) : item))} />}
           {attribute.type === 'enum' && <Field label={t('attributes.options')}><Input className='h-8 text-sm' defaultValue={attribute.options?.join(', ') ?? ''} onBlur={(event) => edit(index, { options: event.target.value.split(',').map((option) => option.trim()).filter(Boolean) })} placeholder={t('attributes.optionsPlaceholder')} aria-label={t('attributes.optionsFor', { name: attribute.label })} /></Field>}
           <Button size='sm' variant='ghost' className='h-7 px-2 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive' onClick={() => remove(index)}><Trash2 className='mr-1.5 h-3.5 w-3.5' />{t('attributes.remove')}</Button>
         </div>}

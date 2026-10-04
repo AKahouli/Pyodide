@@ -485,7 +485,7 @@ export function DocumentSourceMappingDrawer({ modelId, target, onClose }: Readon
           {addedFields.length > 0 && <p role='status' className='flex gap-1.5 rounded-lg border border-sky-500/40 bg-sky-500/5 p-2.5 text-xs text-sky-800 dark:text-sky-300'>
             <Sparkles className='mt-0.5 h-3.5 w-3.5 shrink-0' />{t('mapping.newFields', { count: addedFields.length, fields: addedFields.map(attributeLabel).join(', ') })}
           </p>}
-          <FieldMappingList kind='document' modelId={modelId} attributes={concept.attributes} mappings={mappings} onChange={changeMappings}
+          <FieldMappingList kind='document' modelId={modelId} conceptId={concept.id} attributes={concept.attributes} mappings={mappings} onChange={changeMappings}
             onIgnore={(field) => setIdentityFields((current) => current.filter((item) => item !== field))} addedFields={addedFields}
             recipeSource={{ kind: 'document', fileSamples, fieldSamples, documentRows }}
             extras={(mapping) => ({

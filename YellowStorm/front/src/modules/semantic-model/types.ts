@@ -61,6 +61,19 @@ export interface AttributeDefinition {
   options?: string[];
   /** Business synonyms for this field. */
   aliases?: string[];
+  /** Text fields: how the search index cuts this field into passages; absent = the global settings. */
+  searchIndex?: FieldSearchIndex;
+}
+
+/** A text field's own search index settings, over the global ones. */
+export interface FieldSearchIndex {
+  passages?: boolean;
+  longFieldChars?: number;
+  passageTargetChars?: number;
+  passageMinChars?: number;
+  passageMaxChars?: number;
+  passageOverlapChars?: number;
+  maxPassagesPerField?: number;
 }
 
 export interface CanvasPosition { x: number; y: number }

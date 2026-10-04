@@ -146,7 +146,7 @@ export interface FieldRowExtras {
   pageCount?: number;
 }
 
-export function FieldMappingList({ kind, modelId, attributes, mappings, onChange, onIgnore, addedFields = [], columns = [], columnLabels, columnSamples, extras, recipeSource }: Readonly<{
+export function FieldMappingList({ kind, modelId, attributes, mappings, onChange, onIgnore, addedFields = [], columns = [], columnLabels, columnSamples, extras, recipeSource, conceptId }: Readonly<{
   kind: MappingSourceKind;
   modelId: string;
   attributes: ReadonlyArray<{ key: string; label: string; description?: string }>;
@@ -163,6 +163,8 @@ export function FieldMappingList({ kind, modelId, attributes, mappings, onChange
   columnSamples?: Record<string, string>;
   extras?: (mapping: SourceFieldMapping, index: number) => FieldRowExtras;
   recipeSource: RecipeSource;
+  /** Documents: the concept whose text fields can change their search index next to the AI pane. */
+  conceptId?: string;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
   const attributeLabel = (key: string) => attributes.find((attribute) => attribute.key === key)?.label ?? key;
@@ -220,7 +222,7 @@ export function FieldMappingList({ kind, modelId, attributes, mappings, onChange
           rules={mapping.rules} onChange={(rules) => update(index, withRules(mapping, rules))} suggestions={row.suggestions}
           pageCount={row.pageCount} live={row.reading} />}
         {mapping.mode === 'extract' && (mapping.extractionStrategy === 'ai' || mapping.extractionStrategy === 'rules_then_ai') && <AiFieldSettings
-          fieldLabel={fieldLabel} mapping={mapping}
+          fieldLabel={fieldLabel} mapping={mapping} conceptId={conceptId}
           attributeDescription={attributes.find((attribute) => attribute.key === mapping.targetAttribute)?.description}
           onChange={(patch) => update(index, withAiPatch(mapping, patch))} />}
         {mapping.mode === 'computed' && <FieldRecipeEditor modelId={modelId} fieldLabel={fieldLabel}
