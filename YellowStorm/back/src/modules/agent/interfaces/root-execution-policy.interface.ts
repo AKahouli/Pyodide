@@ -57,10 +57,10 @@ export const ROOT_POLICY_CEILINGS = {
  * with an empty pool; temporary workers ON (the only requested default-on
  * capability); fan-out and background present but disabled until qualified.
  */
-export function newRootExecutionPolicy(): RootExecutionPolicy {
+export function newRootExecutionPolicy(delegationEnabled = true): RootExecutionPolicy {
   return {
     version: 1,
-    delegation: { enabled: true, defaultConfigurationMode: 'native' },
+    delegation: { enabled: delegationEnabled, defaultConfigurationMode: 'native' },
     temporaryWorkers: { enabled: true, maxPerWorkGroup: 4 },
     fanout: { enabled: false, maxItems: 20, allowBackground: false },
     background: {

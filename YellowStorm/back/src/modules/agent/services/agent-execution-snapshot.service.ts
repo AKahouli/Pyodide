@@ -61,7 +61,7 @@ export interface CompactCatalogCandidate {
 }
 
 /** Deterministic JSON so the digest is stable across processes. */
-function stableStringify(value: unknown): string {
+export function stableStringify(value: unknown): string {
   if (value === null || typeof value !== 'object') {
     return JSON.stringify(value) ?? 'null';
   }

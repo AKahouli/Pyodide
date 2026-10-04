@@ -8,6 +8,7 @@
  */
 
 import { createHash, randomBytes } from 'crypto';
+import type { MessageReplayContext } from '../interfaces/message.interface';
 
 export const EXECUTION_ROLES = ['root', 'library_worker', 'temporary_worker', 'fanout_driver', 'followup'] as const;
 export type ExecutionRole = (typeof EXECUTION_ROLES)[number];
@@ -78,9 +79,57 @@ export interface DelegateResultV1 {
   status: RootExecutionStatus;
   /** Bounded text result; large payloads live behind the references. */
   text: string | null;
+  /** Complete bounded child output; never injected wholesale into ROOT prompts. */
+  fullText?: string;
   citationRefs: string[];
   artifactRefs: string[];
   safeError: string | null;
+  /** Native control metadata retained across waiting and terminal results. */
+  nativeState?: RootNativeState;
+}
+
+export interface RootNativeState {
+  /** Server-owned immutable reservations; native trace writes cannot replace them. */
+  fanoutManifests?: import('./root-fanout-manifest').FanoutManifestV1[];
+  /** Foreground owners release on waiting/termination; no timed slot reuse. */
+  workerPermits?: Record<string, string>;
+  backgroundJobId?: string;
+  backgroundEventSequence?: string;
+  hasBackgroundJobs?: boolean;
+  capabilityCeiling?: import('./root-capability-ceiling').RootCapabilityCeiling;
+  preparedContext?: {
+    workspaceContexts: unknown[];
+    attachedFiles: unknown[];
+    previousAttachedFiles: unknown[];
+    skills: unknown[];
+    attachmentContext?: string;
+    runCodeSources: import('../../workspace/interfaces/run-code-source.interface').RunCodeAttachmentSource[];
+    rootBrainContexts: unknown[];
+  };
+  resolvedDefinitionsDigest?: string;
+  admittedRequest?: {
+    nativeCallId: string;
+    nativeCallBranch: string;
+    task: string;
+    expectedOutput?: string;
+    contextRefs?: string[];
+    agentId?: string;
+  };
+  requestProfile?: MessageReplayContext;
+  actorId: string;
+  scope: ExecutionScopeV1;
+  rootContext: Record<string, unknown>;
+  invocationId: string | null;
+  sessionId: string;
+  pendingInputs: Array<{ inputId: string; functionName: string; inputVersion?: number; message?: string; responseSchemaUnsupported?: boolean; responseSchemaAbsent?: boolean;
+    responseSchema?: import('./native-input-schema').NativeInputSchema }>;
+}
+
+export interface RootBackgroundJobOwnerV1 {
+  executionId: string;
+  owner: string;
+  fence: number;
+  nativeOwner?: string;
 }
 
 /** Stream-side lineage stamped onto producer events (proto ExecutionTrace). */

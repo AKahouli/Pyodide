@@ -10,6 +10,7 @@ import pytest
 from google.adk.apps.app import ResumabilityConfig
 
 from src.root_runtime.compiler import (
+    attach_root_input_control,
     compile_worker,
     make_resumable_root_runner,
     make_role_runner,
@@ -32,9 +33,34 @@ def _root_scope() -> ExecutionScopeV1:
     return ExecutionScopeV1(role=ExecutionRole.ROOT, execution_id="exec_root", conversation_epoch=1)
 
 
+def _worker_scope() -> ExecutionScopeV1:
+    return ExecutionScopeV1(role=ExecutionRole.LIBRARY_WORKER, execution_id="exec_worker",
+                            parent_execution_id="exec_root", depth=1, conversation_epoch=1)
+
+
+def test_native_input_control_is_versioned_root_only_and_keeps_callbacks():
+    from google.adk.tools import request_input
+    root = _fake_agent()
+    callback = lambda *_args: None
+    root.before_tool_callback = callback
+    attach_root_input_control(root, _root_scope(), 1)
+    attach_root_input_control(root, _root_scope(), 1)
+    assert root.tools == [request_input]
+    assert root.before_tool_callback is callback
+    for scope in (None, _worker_scope(), ExecutionScopeV1(role=ExecutionRole.FOLLOWUP)):
+        agent = _fake_agent()
+        attach_root_input_control(agent, scope, 1)
+        assert agent.tools == []
+    older = _fake_agent()
+    attach_root_input_control(older, _root_scope(), 0)
+    assert older.tools == []
+    with pytest.raises(ValueError, match="Unsupported"):
+        attach_root_input_control(_fake_agent(), _root_scope(), 2)
+
+
 @pytest.mark.asyncio
 async def test_compile_worker_delegates_to_existing_factory():
-    sentinel_agent, sentinel_toolkit = object(), object()
+    sentinel_agent, sentinel_toolkit = _fake_agent(), object()
     calls = []
 
     async def factory(agent_config, agent_name, normalized_name, a, b, citation_manager):
@@ -42,11 +68,11 @@ async def test_compile_worker_delegates_to_existing_factory():
         return sentinel_agent, sentinel_toolkit
 
     compiled = await compile_worker(
-        {"id": "agent_1"}, "Advisory", "advisory", _root_scope(), factory
+        {"id": "agent_1"}, "Advisory", "advisory", _worker_scope(), factory
     )
     assert compiled.agent is sentinel_agent
     assert compiled.toolkit is sentinel_toolkit
-    assert compiled.scope.execution_id == "exec_root"
+    assert compiled.scope.execution_id == "exec_worker"
     assert calls == [({"id": "agent_1"}, "Advisory", "advisory")]
 
     disposed = []
@@ -63,7 +89,16 @@ async def test_compile_worker_raises_when_factory_fails():
         return None, None
 
     with pytest.raises(RuntimeError):
-        await compile_worker({}, "Broken", "broken", _root_scope(), factory)
+        await compile_worker({}, "Broken", "broken", _worker_scope(), factory)
+
+
+@pytest.mark.asyncio
+async def test_worker_compiler_rejects_root_scope_before_factory():
+    from unittest.mock import AsyncMock
+    factory = AsyncMock()
+    with pytest.raises(ValueError, match="depth-one leaf"):
+        await compile_worker({}, "Root", "root", _root_scope(), factory)
+    factory.assert_not_called()
 
 
 def test_resumable_root_runner_builds_explicit_resumable_app():

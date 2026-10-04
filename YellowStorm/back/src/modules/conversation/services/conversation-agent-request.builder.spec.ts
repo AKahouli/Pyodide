@@ -1,11 +1,19 @@
 import {
   ConversationAgentRequestBuilder,
   scopeCandidateToRootCeiling,
+  resolvedDefinitionsDigest,
   type RootDelegationContext,
 } from './conversation-agent-request.builder';
 import type { IGrpcAgent } from '../../agent/interfaces/agent.interface';
 
 describe('ConversationAgentRequestBuilder', () => {
+  it('keeps the native profile digest stable across acting-user tool credential refresh', () => {
+    const root = { id: 'root', tools: [{ name: 'search', accessToken: 'old' }] } as unknown as IGrpcAgent;
+    const refreshed = { ...root, tools: [{ name: 'search', accessToken: 'fresh' }] };
+    expect(resolvedDefinitionsDigest(refreshed, [])).toBe(resolvedDefinitionsDigest(root, []));
+    refreshed.tools[0].name = 'write';
+    expect(resolvedDefinitionsDigest(refreshed, [])).not.toBe(resolvedDefinitionsDigest(root, []));
+  });
   const request = {
     content: 'Question', attachedFileIds: ['file-1'], webSearchEnabled: true,
     deepSearchEnabled: true, modelId: 'model-1', agentIds: ['agent-1'], skillIds: ['skill-1'],
@@ -127,9 +135,12 @@ describe('ConversationAgentRequestBuilder', () => {
     } as unknown as IGrpcAgent;
 
     const scoped = scopeCandidateToRootCeiling(candidate, root);
+    expect(scopeCandidateToRootCeiling({ ...candidate,
+      tools: [{ name: 'search', writeScope: 'all' }],
+    }, root).tools).toEqual([]);
     expect(scoped.tools.map((t) => t.name)).toEqual(['search']);
     expect(scoped.brain_context.map((b) => b.workspace_id)).toEqual(['ws-shared']);
-    expect(scoped.skills.map((sk) => sk.id)).toEqual(['sk-1']);
+    expect(scoped.skills?.map((sk) => sk.id)).toEqual(['sk-1']);
 
     // A candidate with NO overlap keeps nothing (empty = deny, not all).
     const foreign = {
@@ -142,6 +153,30 @@ describe('ConversationAgentRequestBuilder', () => {
     expect(denied.tools).toEqual([]);
     expect(denied.brain_context).toEqual([]);
     expect(denied.skills).toEqual([]);
+  });
+
+  it('denies connector bindings absent from the root and narrows shared actions', () => {
+    const binding = { connector_id: 'crm', actions: [{ action_key: 'read' }, { action_key: 'write' }] };
+    const candidate = {
+      tools: [], brain_context: [], connector_bindings: [binding], connectorIds: ['crm'],
+      agent_params: { params: { connector_bindings_json: JSON.stringify([binding]), model_option: 'keep' } },
+    } as unknown as IGrpcAgent;
+    const root = { tools: [], brain_context: [] } as unknown as IGrpcAgent;
+    const denied = scopeCandidateToRootCeiling(candidate, root);
+    expect(denied.connector_bindings).toEqual([]);
+    expect(denied.connectorIds).toEqual([]);
+    expect(JSON.parse(denied.agent_params!.params.connector_bindings_json)).toEqual([]);
+
+    root.connector_bindings = [{ connector_id: 'crm', actions: [{ action_key: 'read' }] }];
+    const scoped = scopeCandidateToRootCeiling(candidate, root);
+    expect(scoped.connector_bindings).toEqual([{ ...binding, actions: [{ action_key: 'read' }], enforced_params: {} }]);
+    expect(JSON.parse(scoped.agent_params!.params.connector_bindings_json)).toEqual(scoped.connector_bindings);
+    expect(scoped.agent_params!.params.model_option).toBe('keep');
+    root.connector_bindings = [{ connector_id: 'crm', actions: [{ action_key: 'other' }] }];
+    expect(scopeCandidateToRootCeiling(candidate, root).connector_bindings).toEqual([]);
+    root.connector_bindings = [{ connector_id: 'crm', actions: [{ action_key: 'read' }], fixed_params: { workspace_id: 'root-only' } }];
+    expect(scopeCandidateToRootCeiling(candidate, root).connector_bindings).toEqual([]);
+    expect(candidate.connector_bindings).toEqual([binding]);
   });
 
   it('attaches root_context and delegate_candidates when delegation is present', () => {
@@ -162,6 +197,7 @@ describe('ConversationAgentRequestBuilder', () => {
       userId: 'user-1', conversationId: 'conv-1', request,
       workspaceContexts: [], agents: [{ id: 'root-1' }], attachedFiles: [], previousAttachedFiles: [], skills: [],
       rootDelegation,
+      executionScope: rootDelegation.scope,
     });
     expect(result.rpc).toBe('RunSingleAgent');
     expect(result.payload.root_context).toEqual(rootDelegation.rootContext);

@@ -17,6 +17,7 @@ def _worker_scope() -> ExecutionScopeV1:
         parent_execution_id="exec_root",
         work_group_id="wg_1",
         conversation_epoch=2,
+        native_invocation_id="native-invocation",
     )
 
 
@@ -28,6 +29,7 @@ def test_stamp_adds_lineage_and_increments_sequence():
     assert trace["execution_id"] == "exec_child"
     assert trace["parent_execution_id"] == "exec_root"
     assert trace["producer_agent_id"] == "agent_9"
+    assert trace["native_invocation_id"] == "native-invocation"
     assert trace["producer_role"] == chatbot_pb2.EXECUTION_ROLE_LIBRARY_WORKER
     assert trace["lifecycle"] == chatbot_pb2.INVOCATION_LIFECYCLE_STATE_STARTED
     assert trace["sequence"] == 1

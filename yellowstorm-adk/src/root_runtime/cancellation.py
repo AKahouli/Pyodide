@@ -40,6 +40,8 @@ class RootWorkCancellationRegistry:
     def register(self, conversation_id: str, scope: ExecutionScopeV1) -> RootRunHandle:
         handle = RootRunHandle(scope=scope)
         with self._lock:
+            if scope.is_set and scope.conversation_epoch < self._barrier_epochs.get(conversation_id, 0):
+                raise RootWorkCancelled(f"execution {scope.execution_id} is behind the Stop barrier")
             self._runs.setdefault(conversation_id, {})[scope.execution_id] = handle
         return handle
 

@@ -9,6 +9,11 @@ class FakeRootWorkStore implements RootWorkStore {
   evidence = new Map<string, RootEvidenceRecord>();
   conversations = new Map<string, { epoch: number; lastStopRequestId: string | null }>();
 
+  async listWaitingRoots(conversationId: string, epoch: number) {
+    return [...this.executions.values()].filter((row) => row.conversationId === conversationId
+      && row.conversationEpoch === epoch && row.role === 'root' && row.status === 'waiting');
+  }
+
   async registerExecution(
     input: Parameters<RootWorkStore['registerExecution']>[0],
   ): Promise<RootExecutionRecord> {
@@ -27,7 +32,11 @@ class FakeRootWorkStore implements RootWorkStore {
       status: 'running',
       conversationEpoch: input.conversationEpoch,
       stopRequestId: null,
-      resultPayload: null,
+      resultPayload: input.nativeState ? {
+        executionId: input.executionId, producerAgentId: input.rootAgentId, producerRole: input.role,
+        status: 'running', text: null, citationRefs: [], artifactRefs: [], safeError: null,
+        nativeState: input.nativeState,
+      } : null,
       createdAt: now,
       updatedAt: now,
       terminalAt: null,
@@ -58,6 +67,14 @@ class FakeRootWorkStore implements RootWorkStore {
   async markWaiting(executionId: string): Promise<void> {
     const record = this.executions.get(executionId);
     if (record && record.status === 'running') record.status = 'waiting';
+  }
+
+  async recordNativeState(executionId: string, state: Parameters<RootWorkStore['recordNativeState']>[1], status: 'running' | 'waiting') {
+    const record = this.executions.get(executionId);
+    if (!record || !['running', 'waiting'].includes(record.status)) return null;
+    record.status = status;
+    if (record.resultPayload) record.resultPayload.nativeState = state;
+    return record;
   }
 
   async registerEvidence(
@@ -125,6 +142,86 @@ function makeService() {
 }
 
 describe('RootWorkService', () => {
+  it('persists a waiting native mapping and rejects traces from another actor', async () => {
+    const { service, store } = makeService();
+    await service.registerExecution({
+      executionId: EXECUTION_ID, conversationId: CONVERSATION_ID, rootAgentId: AGENT_ID,
+      workGroupId: null, parentExecutionId: null, role: 'root', depth: 0, attempt: 1,
+      conversationEpoch: 2,
+      nativeState: {
+        actorId: AGENT_ID, sessionId: CONVERSATION_ID, invocationId: null, pendingInputs: [], rootContext: {},
+        scope: { role: 'root', executionId: EXECUTION_ID, parentExecutionId: null, workGroupId: null,
+          depth: 0, attempt: 1, conversationEpoch: 2, expectedFence: null, resumeIntent: 'start',
+          immutableSnapshotRef: null, nativeInvocationId: null, nativeSessionId: CONVERSATION_ID,
+          deadlineEpochMs: null },
+      },
+    });
+    const trace = { execution_id: EXECUTION_ID, native_session_id: CONVERSATION_ID,
+      native_invocation_id: 'native-invocation', producer_role: 'EXECUTION_ROLE_ROOT',
+      lifecycle: 'INVOCATION_LIFECYCLE_STATE_WAITING',
+      pending_inputs: [{ input_id: 'request', function_name: 'adk_request_input', response_schema_absent: true }] };
+    await expect(service.applyNativeTrace(EXECUTION_ID, CONVERSATION_ID, 'wrong-actor', trace))
+      .rejects.toThrow(BadRequestException);
+    await service.applyNativeTrace(EXECUTION_ID, CONVERSATION_ID, AGENT_ID, trace);
+    const record = store.executions.get(EXECUTION_ID)!;
+    expect(record.status).toBe('waiting');
+    expect(record.resultPayload!.nativeState!.invocationId).toBe('native-invocation');
+    expect(record.resultPayload!.nativeState!.pendingInputs).toEqual([
+      { inputId: 'request', functionName: 'adk_request_input', responseSchemaAbsent: true },
+    ]);
+    const state = record.resultPayload!.nativeState!;
+    state.scope.immutableSnapshotRef = 'frozen-root';
+    state.requestProfile = { content: 'original', attachedFileIds: [], agentIds: [], skillIds: [],
+      webSearchEnabled: false, deepSearchEnabled: false };
+    const continuation = { executionId: EXECUTION_ID,
+      inputResponses: [{ inputId: 'request', response: { answer: 'yes' } }] };
+    expect(await service.validateContinuation(continuation, AGENT_ID, CONVERSATION_ID, 2)).toBe(state);
+    await expect(service.validateContinuation(continuation, 'other-actor', CONVERSATION_ID, 2))
+      .rejects.toThrow(BadRequestException);
+    await expect(service.validateContinuation(continuation, AGENT_ID, CONVERSATION_ID, 3))
+      .rejects.toThrow(BadRequestException);
+    await expect(service.validateContinuation({ ...continuation,
+      inputResponses: [{ inputId: 'unknown', response: {} }] }, AGENT_ID, CONVERSATION_ID, 2))
+      .rejects.toThrow(BadRequestException);
+    await expect(service.applyNativeTrace(EXECUTION_ID, CONVERSATION_ID, AGENT_ID,
+      { ...trace, pending_inputs: [{ input_id: 'request', function_name: 'execute_tool' }] }))
+      .rejects.toThrow(BadRequestException);
+    await service.applyNativeTrace(EXECUTION_ID, CONVERSATION_ID, AGENT_ID, {
+      ...trace, pending_inputs: [{ input_id: 'request', function_name: 'adk_request_input', input_version: 2,
+        response_schema_json: JSON.stringify({ type: 'boolean' }) }],
+    });
+    await expect(service.validateContinuation(continuation, AGENT_ID, CONVERSATION_ID, 2))
+      .rejects.toThrow('stale native input');
+    await expect(service.validateContinuation({ executionId: EXECUTION_ID, inputResponses: [
+      { inputId: 'request', inputVersion: 2, response: { result: false } },
+    ] }, AGENT_ID, CONVERSATION_ID, 2)).resolves.toBeDefined();
+    await expect(service.validateContinuation({ executionId: EXECUTION_ID, inputResponses: [
+      { inputId: 'request', inputVersion: 2, response: { result: '"false"' } },
+    ] }, AGENT_ID, CONVERSATION_ID, 2)).rejects.toThrow('requested input format');
+    await service.applyNativeTrace(EXECUTION_ID, CONVERSATION_ID, AGENT_ID, {
+      ...trace, pending_inputs: [{ input_id: 'request', function_name: 'adk_request_confirmation', input_version: 3,
+        message: 'private hint', response_schema_json: '{"default":"private"}' }],
+    });
+    expect(store.executions.get(EXECUTION_ID)!.resultPayload!.nativeState!.pendingInputs).toEqual([
+      { inputId: 'request', inputVersion: 3, functionName: 'adk_request_confirmation' },
+    ]);
+    await expect(service.validateContinuation({ executionId: EXECUTION_ID, inputResponses: [
+      { inputId: 'request', inputVersion: 3, response: { confirmed: false } },
+    ] }, AGENT_ID, CONVERSATION_ID, 2)).resolves.toBeDefined();
+    await expect(service.validateContinuation({ executionId: EXECUTION_ID, inputResponses: [
+      { inputId: 'request', inputVersion: 3, response: { confirmed: 'false' } },
+    ] }, AGENT_ID, CONVERSATION_ID, 2)).rejects.toThrow('Invalid native confirmation');
+    for (const input of [
+      { input_id: 'request', function_name: 'adk_request_input' },
+      { input_id: 'request', function_name: 'adk_request_input', response_schema_unsupported: true },
+      { input_id: 'request', function_name: 'adk_request_input', response_schema_json: 'x'.repeat(8193) },
+      { input_id: 'request', function_name: 'adk_request_input', response_schema_json: '{"type":"string","pattern":"x"}' },
+    ]) {
+      await service.applyNativeTrace(EXECUTION_ID, CONVERSATION_ID, AGENT_ID, { ...trace, pending_inputs: [input] });
+      await expect(service.validateContinuation(continuation, AGENT_ID, CONVERSATION_ID, 2)).rejects.toThrow('not supported');
+      expect(store.executions.get(EXECUTION_ID)!.status).toBe('waiting');
+    }
+  });
   it('registers a valid execution and returns the record', async () => {
     const { service } = makeService();
     const record = await service.registerExecution({

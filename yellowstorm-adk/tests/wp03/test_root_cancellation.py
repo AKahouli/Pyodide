@@ -61,6 +61,16 @@ def test_unregister_removes_active_run():
     assert not handle.abort_event.is_set()
 
 
+def test_stop_between_admission_check_and_registration_rejects_run():
+    registry = RootWorkCancellationRegistry()
+    scope = _scope("exec_racing", epoch=0)
+    check_admission_barrier(scope, "conv_1", registry)
+    registry.cancel_all("conv_1", barrier_epoch=1)
+    with pytest.raises(RootWorkCancelled):
+        registry.register("conv_1", scope)
+    assert registry.active_executions("conv_1") == []
+
+
 def test_abort_event_wakes_waiter_asyncio():
     async def scenario():
         registry = RootWorkCancellationRegistry()

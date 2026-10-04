@@ -316,6 +316,13 @@
 			"when": 1791800000000,
 			"tag": "0043_root_work_records",
 			"breakpoints": true
+		},
+		{
+			"idx": 45,
+			"version": "7",
+			"when": 1791900000000,
+			"tag": "0044_root_background_jobs",
+			"breakpoints": true
 		}
 	]
 }

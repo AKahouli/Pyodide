@@ -18,7 +18,7 @@ class SearchToolADK(FunctionTool):
     for search functionality.
     """
     
-    def __init__(self, func, schema: dict, *, require_confirmation=False):
+    def __init__(self, func, schema: dict, *, require_confirmation=False, reject_unknown_args=False):
         """
         Initialize SearchToolADK with function and schema.
 
@@ -34,6 +34,14 @@ class SearchToolADK(FunctionTool):
         # Call FunctionTool base __init__ with just func; name/description handled upstream
         super().__init__(func, require_confirmation=require_confirmation)
         self.custom_schema = schema["function"]
+        self.reject_unknown_args = reject_unknown_args
+
+    async def run_async(self, *, args, tool_context):
+        if self.reject_unknown_args:
+            allowed = self.custom_schema.get("parameters", {}).get("properties", {})
+            if any(key not in allowed or (key.startswith("_") and key != "_display_purpose") for key in args):
+                return {"error": "The tool call contains parameters outside its declared schema."}
+        return await super().run_async(args=args, tool_context=tool_context)
 
     @override
     def _get_declaration(self) -> types.FunctionDeclaration:

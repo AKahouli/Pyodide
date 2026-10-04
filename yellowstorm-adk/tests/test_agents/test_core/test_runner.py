@@ -240,7 +240,7 @@ class TestAgentRunner:
             [],
         )
 
-        with patch('src.smart_rag.agents.core.runner.Runner', return_value=mock_runner_instance) as runner_class:
+        with patch('src.smart_rag.agents.core.runner.make_chat_runner', return_value=mock_runner_instance) as runner_class:
             result = await agent_runner._run_standard_agent(
                 agent=mock_agent,
                 agent_name="TestAgent",
@@ -259,7 +259,7 @@ class TestAgentRunner:
         assert result[0] == "Final response"
         assert result[1] == []
         assert isinstance(result[2], dict)
-        assert isinstance(runner_class.call_args.kwargs["plugins"][0], CleanSessionPlugin)
+        runner_class.assert_called_once_with(mock_agent, mock_session_helper)
 
     @pytest.mark.asyncio
     async def test_guarded_standard_agent_never_emits_unvalidated_partial_text(self):
@@ -290,7 +290,7 @@ class TestAgentRunner:
 
         adk_runner = MagicMock()
         adk_runner.run_async = run_async
-        with patch('src.smart_rag.agents.core.runner.Runner', return_value=adk_runner), \
+        with patch('src.smart_rag.agents.core.runner.make_chat_runner', return_value=adk_runner), \
              patch('src.smart_rag.agents.core.runner.MessageTransformer.simple_tag_transformer', side_effect=lambda tempmsg, **_kwargs: (tempmsg, "", [])), \
              patch.object(agent_runner, '_replace_diagram_references_during_streaming', new_callable=AsyncMock, side_effect=lambda text, _session: text), \
              patch.object(agent_runner, '_extract_generated_files', new_callable=AsyncMock, return_value=[]):
@@ -492,6 +492,14 @@ class TestAgentRunner:
         async def mock_run_async(*args, **kwargs):
             yield thought_event
             yield function_event
+            if narration_partial:
+                completed_call = MagicMock()
+                completed_call.content.parts = [types.Part(function_call=types.FunctionCall(
+                    name="run_code", id="call-1", args=function_call.function_call.args,
+                ))]
+                completed_call.partial = False
+                completed_call.is_final_response.return_value = False
+                yield completed_call
             yield mock_response_event
             yield mock_final_event
 
@@ -641,7 +649,7 @@ class TestAgentRunner:
         mock_runner_instance.run_async = mock_run_async
         mock_streaming_formatter.format_streaming_event.return_value = {"type": "chunk"}
 
-        with patch('src.smart_rag.agents.core.runner.Runner', return_value=mock_runner_instance) as runner_class:
+        with patch('src.smart_rag.agents.core.runner.make_chat_runner', return_value=mock_runner_instance) as runner_class:
             result = await agent_runner._run_html_agent(
                 agent=mock_agent,
                 session_helper=mock_session_helper,
@@ -655,7 +663,7 @@ class TestAgentRunner:
         assert result[0] == "html was generated successfully and sent to the user"
         assert result[1] == []
         assert isinstance(result[2], dict)
-        assert isinstance(runner_class.call_args.kwargs["plugins"][0], CleanSessionPlugin)
+        runner_class.assert_called_once_with(mock_agent, mock_session_helper)
 
     @pytest.mark.asyncio
     async def test_handle_function_call(self):

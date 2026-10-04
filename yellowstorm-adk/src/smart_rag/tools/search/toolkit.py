@@ -541,7 +541,8 @@ class SearchToolkit:
             "type": "function",
             "function": function_tool_schema
         }
-        return wrapper, wrapper.__openai_function__
+        from src.root_runtime.leaf_tools import register_tool_execution_kind
+        return register_tool_execution_kind(wrapper, "leaf"), wrapper.__openai_function__
 
     def generate_generic_function(self, schema: dict, retrieve_fn: Callable):
         """Generate function for non-search operations (like in-memory extraction)."""
@@ -673,7 +674,8 @@ class SearchToolkit:
             "function": function_tool_schema
         }
 
-        return wrapper, wrapper.__openai_function__
+        from src.root_runtime.leaf_tools import register_tool_execution_kind
+        return register_tool_execution_kind(wrapper, "leaf"), wrapper.__openai_function__
 
     def generate_function(self, schema: dict, retrieve_fn: Callable):
         """Main function that routes to appropriate generator based on schema."""

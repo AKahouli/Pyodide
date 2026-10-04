@@ -492,7 +492,7 @@ You have access to delegate functions for each agent. Use the appropriate delega
 
 
     @staticmethod
-    def _prepare_agent_data(agent_dict, user_request, team) -> dict:
+    def _prepare_agent_data(agent_dict, user_request, team, *, inherit_request_context=True) -> dict:
         """Prepare agent data with brain documents/relations and tool adjustments.
 
         Processes agent configuration to ensure proper tool assignment and brain data
@@ -512,13 +512,14 @@ You have access to delegate functions for each agent. Use the appropriate delega
 
         if 'search' in tool_names:
             doc_helper= DocumentHelpers()
-            agent_data = doc_helper._populate_brain_data(agent_data, user_request, team)
+            if inherit_request_context:
+                agent_data = doc_helper._populate_brain_data(agent_data, user_request, team)
             agent_data, tools = AgentHelper._remove_search_if_empty(agent_data, tools)
 
         # Mono agents are their own executor: give them the backend-built
         # bounded attachment context (teams inject it per executor instead).
         attachment_context = getattr(user_request, 'attachment_context', None)
-        if attachment_context:
+        if inherit_request_context and attachment_context:
             agent_data['prompt'] = f"{agent_data.get('prompt', '')}\n\n{attachment_context}"
 
         agent_data['tools'] = tools

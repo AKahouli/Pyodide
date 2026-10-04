@@ -254,9 +254,10 @@ def process_image_inputs(invocation_context: InvocationContext) -> None:
 
 class CleanSessionPlugin(BasePlugin):
 
-    def __init__(self) -> None:
+    def __init__(self, preserve_invocation_id: Optional[str] = None) -> None:
         """Initialize the plugin with counters."""
         super().__init__(name="on_user_message_callback")
+        self.preserve_invocation_id = preserve_invocation_id
 
     def _trace(self):
         return get_current_conversation_latency_trace()
@@ -304,6 +305,10 @@ class CleanSessionPlugin(BasePlugin):
         Called before a new message is processed.
         """
         trace = self._trace()
+        if (self.preserve_invocation_id and
+                invocation_context.invocation_id == self.preserve_invocation_id):
+            # The trusted runner validated this invocation against persisted history.
+            return None
         if trace is None:
             await clean_session_case_bad_request(invocation_context, user_message)
             process_image_inputs(invocation_context)

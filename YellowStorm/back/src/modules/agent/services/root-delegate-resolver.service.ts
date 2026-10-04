@@ -38,6 +38,7 @@ export interface RootDelegatePoolEntry {
 
 export interface RootDelegatePool {
   rootAgentId: string;
+  rootSnapshotDigest: string;
   delegationEnabled: boolean;
   defaultConfigurationMode: RootConfigurationMode;
   /** The root's stored policy (WP04 runtime reads limits from here). */
@@ -152,6 +153,7 @@ export class RootDelegateResolverService {
 
     return {
       rootAgentId: root._id,
+      rootSnapshotDigest: this.snapshotService.computeDigest(root),
       delegationEnabled: policy?.delegation.enabled ?? false,
       defaultConfigurationMode: policy?.delegation.defaultConfigurationMode ?? 'native',
       policy: policy ?? newRootExecutionPolicy(false),

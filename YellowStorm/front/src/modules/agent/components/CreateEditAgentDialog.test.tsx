@@ -23,12 +23,13 @@ const modelsStateMock = vi.hoisted(() => ({
 
 vi.mock('../store', () => ({
   useAgentTypes: () => [{ id: 'type-1', name: 'Manager' }],
+  useAgents: () => [],
   useEvaluationDatasets: () => [],
   useEvaluations: () => [],
   useEvaluationScenarios: () => [],
   useEvaluationLoading: () => false,
   useAgentStore: {
-    getState: () => ({ fetchAgentTypes: fetchAgentTypesMock }),
+    getState: () => ({ fetchAgentTypes: fetchAgentTypesMock, fetchAgents: vi.fn().mockResolvedValue(undefined) }),
   },
 }));
 
@@ -168,7 +169,7 @@ describe('CreateEditAgentDialog', () => {
     );
 
     expect(await screen.findByTestId('dialog-content')).toHaveClass('max-w-5xl');
-    expect(screen.getByTestId('tabs-list')).toHaveClass('flex-nowrap');
+    expect(await screen.findByTestId('tabs-list')).toHaveClass('flex-nowrap');
   });
 
   it('renders create mode content', async () => {

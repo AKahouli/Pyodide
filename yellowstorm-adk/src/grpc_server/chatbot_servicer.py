@@ -37,7 +37,7 @@ from src.smart_rag.core import AgentTeamService
 from src.smart_rag.tools.infrastructure.common_helpers import CommonHelpers
 from src.evaluation.semantic_match import evaluate_semantic_match
 from src.schema.chatbot_schema import RunAgentTeamRequest, AgentSuggestion
-from src.root_runtime.contracts import ExecutionScopeV1, InvocationLifecycleState, ExecutionEventV1
+from src.root_runtime.contracts import ExecutionRole, ExecutionScopeV1, InvocationLifecycleState, ExecutionEventV1
 from src.root_runtime.cancellation import (
     RootWorkCancelled,
     check_admission_barrier,
@@ -134,7 +134,16 @@ class ChatbotServicer(
         self.agent_team_service = agent_team_service
         self.conversation_session_seed = ConversationSessionSeedService()
         self._background_tasks: set[asyncio.Task] = set()
+        from src.grpc_server.background_rpc import BackgroundRpc
+        self.background_rpc = BackgroundRpc(agent_team_service, self._dict_to_stream_chunk)
         logger.info("[gRPC] ChatbotServicer initialized (V2 only)")
+
+    async def GetRootWorkCapabilities(self, request, context):
+        return await self.background_rpc.capabilities()
+
+    async def RunBackgroundInvocation(self, request, context):
+        async for update in self.background_rpc.run(request, context):
+            yield update
 
     async def SeedConversationSession(self, request, context):
         role_names = {
@@ -704,6 +713,8 @@ class ChatbotServicer(
         bg_task: Optional[asyncio.Task] = None
         get_task: Optional[asyncio.Task] = None
 
+        abort_watcher = None
+        root_handle = None
         try:
             internal_request = await self._convert_single_agent_request(request)
             _mark_latency_stage("mark_internal_request_ready")
@@ -738,6 +749,7 @@ class ChatbotServicer(
                 # Plan §11.3: the barrier applies before model invocation too.
                 check_admission_barrier(root_scope, request.conversation_id, registry)
                 root_handle = registry.register(request.conversation_id, root_scope)
+                internal_request.abort_signal = root_handle.abort_event
 
             bg_task = asyncio.create_task(
                 self.agent_team_service.process_team_request(internal_request, queue)
@@ -747,7 +759,9 @@ class ChatbotServicer(
 
                 async def _abort_on_stop(handle, workflow_task):
                     await handle.abort_event.wait()
-                    workflow_task.cancel()
+                    # Let ROOT consume native abort events and seal pending calls.
+                    if handle.scope.role is not ExecutionRole.ROOT:
+                        workflow_task.cancel()
 
                 abort_watcher = asyncio.create_task(_abort_on_stop(root_handle, bg_task))
 
@@ -929,7 +943,8 @@ class ChatbotServicer(
             ),
         }
 
-    def _convert_agent(self, pb_agent: "chatbot_pb2.Agent") -> AgentSuggestion:
+    @staticmethod
+    def _convert_agent(pb_agent: "chatbot_pb2.Agent") -> AgentSuggestion:
         """Convert protobuf Agent (V2) to internal V1 AgentSuggestion Pydantic model.
 
         V2 changes:
@@ -1073,7 +1088,7 @@ class ChatbotServicer(
             brain_ids=workspace_ids or workspace_names,
             brain_documents=brain_documents,
             brain_relations={"nodes": [], "relationships": []},
-            chatbot_name=self._convert_chatbot(pb_agent.chatbot)
+            chatbot_name=ChatbotServicer._convert_chatbot(pb_agent.chatbot)
             if pb_agent.HasField("chatbot")
             else None,
             agent_params=raw_agent_params if raw_agent_params else None,
@@ -1332,6 +1347,7 @@ class ChatbotServicer(
         agent, ``agent_mode='mono'`` (routes to the no-manager workflow), and the
         LLM/prompt are taken from the single agent itself instead of a manager.
         """
+        self._reject_background_scope(pb_request)
         ctx = await self._build_brain_and_file_context(pb_request)
         attachment_context_text = getattr(getattr(pb_request, "attachment_context", None), "text", "") or None
 
@@ -1374,6 +1390,11 @@ class ChatbotServicer(
             message=pb_request.query,
             execution_scope=execution_scope,
             root_context=root_context,
+            native_input_responses=[{
+                "input_id": response.input_id,
+                "function_name": response.function_name,
+                "response": _message_to_dict(response.response),
+            } for response in pb_request.native_input_responses],
             delegate_candidates=delegate_candidates,
             task_summary=getattr(pb_request, "task_summary", "") or None,
             image_input=ctx["image_input"] or None,
@@ -1421,6 +1442,7 @@ class ChatbotServicer(
         Returns:
             RunAgentTeamRequest: Internal V1 Pydantic model
         """
+        self._reject_background_scope(pb_request)
         has_team_definition = pb_request.HasField("team_definition")
         if (pb_request.agent_mode == "hierarchical") != has_team_definition:
             raise ValueError("Hierarchical mode and team definition must be provided together")
@@ -1724,6 +1746,11 @@ class ChatbotServicer(
             validate_hierarchical_request(converted)
         return converted
 
+    @staticmethod
+    def _reject_background_scope(pb_request):
+        if pb_request.HasField('execution_scope') and pb_request.execution_scope.native_session_id.startswith('background_'):
+            raise ValueError('Owned background sessions require the dedicated background invocation RPC')
+
     def _build_correction_replay_context(self, pb_request):
         if not pb_request.HasField("correction_replay_context"):
             return None
@@ -1979,6 +2006,9 @@ class ChatbotServicer(
             execution_id=str(trace_dict.get("execution_id", "") or ""),
             parent_execution_id=str(trace_dict.get("parent_execution_id", "") or ""),
             native_invocation_id=str(trace_dict.get("native_invocation_id", "") or ""),
+            native_session_id=str(trace_dict.get("native_session_id", "") or ""),
+            pending_inputs=[chatbot_pb2.NativePendingInput(**item)
+                            for item in trace_dict.get("pending_inputs", [])],
             source_event_id=str(trace_dict.get("source_event_id", "") or ""),
             producer_agent_id=str(trace_dict.get("producer_agent_id", "") or ""),
             producer_role=int(trace_dict.get("producer_role", 0) or 0),
@@ -3417,5 +3447,3 @@ class ChatbotServicer(
             await context.abort(
                 grpc.StatusCode.INTERNAL, f"Semantic evaluation failed: {str(e)}"
             )
-
-

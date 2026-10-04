@@ -719,7 +719,12 @@ Do not render charts for single values or non-numeric content.
                                image_input: Optional[List[Dict]] = None,
                                task_summary: Optional[str] = None,
                                delegation_tool: Optional[Any] = None,
-                               delegation_instruction: str = "") -> Optional[str]:
+                                delegation_instruction: str = "",
+                                execution_scope=None,
+                                abort_signal: Optional[asyncio.Event] = None,
+                                native_input_responses=None,
+                                temporary_worker_tool=None, fanout_tool=None, session_service=None,
+                                background_task_tool=None) -> Optional[str]:
         """Run a single specialized agent directly, with no manager/delegation.
 
         The one agent registered in the repository is built with its real tools
@@ -738,6 +743,24 @@ Do not render charts for single values or non-numeric content.
             Optional[str]: The agent's final response text, if any.
         """
         try:
+            from src.root_runtime.background_sessions import FencedBackgroundSessionService, validate_background_request
+            if isinstance(session_service, FencedBackgroundSessionService):
+                validate_background_request(session_service, execution_scope, self.config.user_id, session_id)
+                await session_service.validate_owner()
+            async def stopped_during_bootstrap():
+                if abort_signal is None or not abort_signal.is_set():
+                    return False
+                from src.root_runtime.invocation import NativeInvocationProjection
+                from src.root_runtime.contracts import InvocationLifecycleState
+                await NativeInvocationProjection(execution_scope, session_id, "").emit(
+                    q, InvocationLifecycleState.CANCELLED,
+                )
+                if q is not None:
+                    await q.put(None)
+                return True
+
+            if await stopped_during_bootstrap():
+                return None
             # Citation manager must exist before tools are created (mirrors run_agent_team)
             from src.smart_rag.infrastructure.session.citation_manager import get_citation_manager
             self.citation_manager = await get_citation_manager(session_id)
@@ -764,23 +787,61 @@ Do not render charts for single values or non-numeric content.
 
             # Reuse the delegation factory's full agent-creation path (prompt
             # enrichment, memory, attached images, MCP, connectors, all tools).
-            agent, toolkit = await self.delegation_factory._create_agent_with_error_handling(
-                agent_config, agent_name, normalized_name, "", False, self.citation_manager
-            )
+            from src.root_runtime.contracts import ExecutionRole
+            worker_role = execution_scope is not None and execution_scope.role in (
+                ExecutionRole.LIBRARY_WORKER, ExecutionRole.TEMPORARY_WORKER)
+            if worker_role:
+                if any(tool is not None for tool in (delegation_tool, temporary_worker_tool, fanout_tool, background_task_tool)):
+                    raise ValueError('Leaf worker cannot receive ROOT delegation controls')
+                from src.root_runtime.compiler import compile_worker
+                compiled = await compile_worker(agent_config, agent_name, normalized_name, execution_scope,
+                    self.delegation_factory._create_agent_with_error_handling, self.citation_manager)
+                agent, toolkit = compiled.agent, compiled.toolkit
+            else:
+                agent, toolkit = await self.delegation_factory._create_agent_with_error_handling(
+                    agent_config, agent_name, normalized_name, "", False, self.citation_manager
+                )
+            from src.root_runtime.background_sessions import FencedBackgroundSessionService
+            if isinstance(session_service, FencedBackgroundSessionService):
+                if not worker_role:
+                    raise ValueError('Owned background session requires a compiled leaf worker')
+                from src.root_runtime.background_actions import install_background_action_guard
+                install_background_action_guard(agent, session_service)
             if agent is None:
                 raise RuntimeError(f"Failed to create single agent: {agent_name}")
+            if await stopped_during_bootstrap():
+                return None
             _mark_first_model_agent_ready()
 
-            user_prompt = await self._attach_required_temporary_child_tool(
-                agent,
-                agent_config,
-                user_prompt,
-                image_input=image_input,
-            )
+            from src.root_runtime.contracts import ExecutionRole
+
+            if not worker_role and (execution_scope is None or execution_scope.role != ExecutionRole.ROOT):
+                user_prompt = await self._attach_required_temporary_child_tool(
+                    agent,
+                    agent_config,
+                    user_prompt,
+                    image_input=image_input,
+                )
 
             # WP04: expose the one bounded delegation operation to the enrolled
             # root. The dispatcher is a Workflow; ADK converts it to a tool the
             # same way the temporary-child callable attaches here.
+            from src.root_runtime.compiler import attach_root_input_control
+            attach_root_input_control(agent, execution_scope, agent_config.get("_root_input_control_version", 0))
+            if temporary_worker_tool is not None:
+                agent.tools = [*(agent.tools or []), temporary_worker_tool]
+                agent_config['_delegation_root'] = True
+            if fanout_tool is not None:
+                agent.tools = [*(agent.tools or []), fanout_tool]
+                agent_config['_delegation_root'] = True
+            if background_task_tool is not None:
+                from src.root_runtime.background_dispatcher import BACKGROUND_INSTRUCTION
+                agent.tools = [*(agent.tools or []), background_task_tool]
+                from src.root_runtime.background_dispatcher import build_background_status_tool
+                status_tool = build_background_status_tool({'background_enabled': True}, execution_scope)
+                agent.tools.append(status_tool)
+                agent.instruction += '\n' + BACKGROUND_INSTRUCTION
+                agent_config['_delegation_root'] = True
             if delegation_tool is not None:
                 agent.tools = [*(agent.tools or []), delegation_tool]
                 agent.instruction = agent.instruction + chr(10) + delegation_instruction
@@ -794,7 +855,7 @@ Do not render charts for single values or non-numeric content.
             # on the conversation's session_id.
             session_id_for_agent = session_id
             _mark_session_stage("mark_session_service_init_start")
-            session_helper = await get_shared_database_session_service()
+            session_helper = session_service if session_service is not None else await get_shared_database_session_service()
             _mark_session_stage("mark_session_service_init_end")
             agent_id = self.agent_repository.get_agent_id_by_name(agent_name) or agent_config.get('id', 'no_id')
 
@@ -812,6 +873,9 @@ Do not render charts for single values or non-numeric content.
                 image_input=image_input,
                 session_id=session_id_for_agent,
                 task_summary=task_summary,
+                execution_scope=execution_scope,
+                abort_signal=abort_signal,
+                native_input_responses=native_input_responses,
             )
 
             # Stream any files produced by the python_interpreter tool
@@ -838,6 +902,8 @@ Do not render charts for single values or non-numeric content.
 
         except Exception as e:
             logger.exception(f"Error running single agent: {str(e)}")
+            if session_service is not None:
+                raise
             if q:
                 import uuid
                 error_component = {
@@ -1077,4 +1143,3 @@ Do not render charts for single values or non-numeric content.
             'agent_count': len(team.agents) if hasattr(team, 'agents') else 0,
             'overall_status': 'healthy'
         }
-

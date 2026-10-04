@@ -1,5 +1,17 @@
 import { z } from 'zod';
 
+function canonicalAgentType(slug?: string): string {
+  return (slug || '').toLowerCase().replace(/[-_\s]+/g, '_');
+}
+
+export function isRootAgentType(slug?: string): boolean {
+  return canonicalAgentType(slug) === 'mono_agent';
+}
+
+export function isDelegateAgentType(slug?: string): boolean {
+  return !['mono_agent', 'humain', 'platform_copilot'].includes(canonicalAgentType(slug));
+}
+
 /**
  * Shared root-execution policy form schema (WP02) — used by the personal and
  * administrative agent editors. Mirrors the backend RootExecutionPolicyV1

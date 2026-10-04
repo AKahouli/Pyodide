@@ -1,7 +1,10 @@
+import { parseNativePendingInputs } from './native-pending-inputs';
 import { Inject, Injectable } from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { BadRequestException, ErrorCode } from '../../exceptions';
 import { isCanonicalObjectId } from '@common/postgres/object-id';
+import type { RootContinuationRequest } from '../interfaces/message.interface';
+import { validateNativeInputResponses } from './native-input-responses';
 import {
   RegisterEvidenceInput,
   RegisterExecutionInput,
@@ -16,6 +19,8 @@ import {
   ExecutionRole,
   RootEvidenceRecord,
   RootExecutionRecord,
+  RootNativeState,
+  RootBackgroundJobOwnerV1,
   isStopRequestId,
   evidenceDedupKey,
 } from './root-work.types';
@@ -68,19 +73,87 @@ export class RootWorkService {
     executionId: string,
     status: TerminalResultStatus,
     result: DelegateResultV1 | null,
+    evidence: RegisterEvidenceInput[] = [],
+    backgroundOwner?: RootBackgroundJobOwnerV1,
   ): Promise<RootExecutionRecord | null> {
     if (!TERMINAL_RESULT_STATUSES.includes(status)) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, `invalid terminal status ${status}`);
     }
-    return this.store.completeExecution(executionId, status, result);
+    return backgroundOwner ? this.store.completeExecution(executionId, status, result, evidence, backgroundOwner)
+      : this.store.completeExecution(executionId, status, result, evidence);
   }
 
   async markWaiting(executionId: string): Promise<void> {
     return this.store.markWaiting(executionId);
   }
 
+  recordNativeState(executionId: string, state: RootNativeState, status: 'running' | 'waiting', backgroundOwner?: RootBackgroundJobOwnerV1) {
+    return backgroundOwner ? this.store.recordNativeState(executionId, state, status, backgroundOwner)
+      : this.store.recordNativeState(executionId, state, status);
+  }
+
+  async applyNativeTrace(executionId: string, conversationId: string, actorId: string,
+    trace: Record<string, unknown>): Promise<void> {
+    const execution = await this.store.getExecution(executionId);
+    const previous = execution?.resultPayload?.nativeState;
+    if (!execution || !previous || execution.conversationId !== conversationId
+      || previous.actorId !== actorId || trace.execution_id !== executionId
+      || trace.native_session_id !== previous.sessionId
+      || trace.producer_role !== 'EXECUTION_ROLE_ROOT') {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Native trace does not match its execution');
+    }
+    const invocationId = trace.native_invocation_id || previous.invocationId;
+    const bootstrapCancellation = !invocationId && trace.lifecycle === 'INVOCATION_LIFECYCLE_STATE_CANCELLED';
+    if ((!bootstrapCancellation && (typeof invocationId !== 'string' || !invocationId))
+      || previous.invocationId && previous.invocationId !== invocationId) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid native invocation identity');
+    }
+    const pendingInputs = parseNativePendingInputs(trace.pending_inputs);
+    const lifecycle = trace.lifecycle;
+    if (!['INVOCATION_LIFECYCLE_STATE_STARTED', 'INVOCATION_LIFECYCLE_STATE_WAITING',
+      'INVOCATION_LIFECYCLE_STATE_COMPLETED', 'INVOCATION_LIFECYCLE_STATE_CANCELLED',
+      'INVOCATION_LIFECYCLE_STATE_FAILED'].includes(String(lifecycle))) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid native lifecycle');
+    }
+    const waiting = lifecycle === 'INVOCATION_LIFECYCLE_STATE_WAITING';
+    if (lifecycle === 'INVOCATION_LIFECYCLE_STATE_CANCELLED') {
+      // Stop has already advanced the epoch; its cancellation acknowledgement
+      // must settle cancellation_requested without admitting new work.
+      await this.store.completeExecution(executionId, 'cancelled', null);
+      return;
+    }
+    const state = { ...previous, invocationId: invocationId as string | null, pendingInputs };
+    const recorded = await this.store.recordNativeState(executionId, state, waiting ? 'waiting' : 'running');
+    if (!recorded) return; // Stop or a terminal transition won the epoch fence.
+    const terminal = {
+      INVOCATION_LIFECYCLE_STATE_COMPLETED: 'completed',
+      INVOCATION_LIFECYCLE_STATE_CANCELLED: 'cancelled',
+      INVOCATION_LIFECYCLE_STATE_FAILED: 'failed',
+    } as const;
+    const status = terminal[String(lifecycle) as keyof typeof terminal];
+    if (status) await this.store.completeExecution(executionId, status, null);
+  }
+
   getExecution(executionId: string): Promise<RootExecutionRecord | null> {
     return this.store.getExecution(executionId);
+  }
+
+  listWaitingRoots(conversationId: string, epoch: number) {
+    return this.store.listWaitingRoots(conversationId, epoch);
+  }
+
+  async validateContinuation(request: RootContinuationRequest, actorId: string,
+    conversationId: string, epoch: number): Promise<RootNativeState> {
+    const execution = await this.store.getExecution(request.executionId);
+    const state = execution?.resultPayload?.nativeState;
+    if (!execution || !state || execution.role !== 'root' || execution.status !== 'waiting'
+      || execution.conversationId !== conversationId || state.actorId !== actorId
+      || execution.conversationEpoch !== epoch || !state.invocationId || !state.requestProfile
+      || !state.scope.immutableSnapshotRef) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'This root invocation cannot be continued');
+    }
+    validateNativeInputResponses(state.pendingInputs, request.inputResponses);
+    return state;
   }
 
   /**

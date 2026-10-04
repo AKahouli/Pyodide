@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import { IsString, IsOptional, IsBoolean, IsArray, IsMongoId, IsUUID, MaxLength, ValidateNested, IsIn, ArrayMaxSize, ArrayUnique, Matches, IsNotEmpty,IsInt, Min, Max } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { RootContinuationDto } from './root-continuation.dto';
 
 class ConnectorRepoDto {
   @ApiProperty()
@@ -61,6 +62,9 @@ export class ChoiceInteractionDto {
 }
 
 export class SendMessageDto {
+  @ApiPropertyOptional({ type: RootContinuationDto })
+  @IsOptional() @ValidateNested() @Type(() => RootContinuationDto)
+  rootContinuation?: RootContinuationDto;
   @ApiPropertyOptional({ description: 'Stable identifier for retrying this logical message turn', maxLength: 128 })
   @IsOptional()
   @IsString()

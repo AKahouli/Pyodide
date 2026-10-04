@@ -147,6 +147,27 @@ export async function fetchActiveStream(conversationId: string): Promise<ActiveS
   return response.data.data;
 }
 
+export async function fetchRootInputs(conversationId: string, signal?: AbortSignal): Promise<import('./types').PendingRootInput[]> {
+  const response = await apiClient.get<ApiResponse<import('./types').PendingRootInput[]>>(
+    API_ENDPOINTS.conversations.rootInputs(conversationId), { signal },
+  );
+  return response.data.data;
+}
+
+export async function fetchRootResult(conversationId: string, executionId: string, signal?: AbortSignal): Promise<import('./types').RootExecutionTextResult> {
+  const response = await apiClient.get<ApiResponse<import('./types').RootExecutionTextResult>>(
+    API_ENDPOINTS.conversations.rootResult(conversationId, executionId), { signal },
+  );
+  return response.data.data;
+}
+
+export async function fetchRootEvidence(conversationId: string, executionId: string, evidenceId: string, signal?: AbortSignal): Promise<import('./types').RootExecutionEvidenceLocation> {
+  const response = await apiClient.get<ApiResponse<import('./types').RootExecutionEvidenceLocation>>(
+    API_ENDPOINTS.conversations.rootEvidence(conversationId, executionId, evidenceId), { signal },
+  );
+  return response.data.data;
+}
+
 export async function sendMessage(conversationId: string, payload: SendMessagePayload): Promise<{ userMessage: Message; aiMessageId?: string }> {
   const response = await apiClient.post<ApiResponse<{ userMessage: Message; aiMessageId?: string }>>(API_ENDPOINTS.conversations.messages(conversationId), payload);
   return response.data.data;

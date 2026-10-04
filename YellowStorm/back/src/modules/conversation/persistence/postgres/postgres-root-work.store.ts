@@ -1,6 +1,8 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { isDeepStrictEqual } from 'node:util';
 import { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { and, eq, inArray, lte, sql } from 'drizzle-orm';
+import { admitRootExecution, toRecord } from './root-execution-admission';
 import { LoggerService } from '@modules/logger';
 import { DRIZZLE_DB } from '@modules/postgres/postgres.constants';
 import * as schema from '@modules/postgres/schema';
@@ -16,30 +18,13 @@ import {
   RootEvidenceRecord,
   RootExecutionRecord,
   RootExecutionStatus,
+  RootNativeState,
+  RootBackgroundJobOwnerV1,
 } from '@modules/conversation/root-work/root-work.types';
+import { requireBackgroundOwner } from './root-background-owner';
 
 type RootExecutionRow = typeof schema.rootExecutions.$inferSelect;
 type RootEvidenceRow = typeof schema.rootEvidenceRecords.$inferSelect;
-
-function toRecord(row: RootExecutionRow): RootExecutionRecord {
-  return {
-    id: row.id,
-    conversationId: row.conversationId,
-    rootAgentId: row.rootAgentId,
-    workGroupId: row.workGroupId,
-    parentExecutionId: row.parentExecutionId,
-    role: row.role as RootExecutionRecord['role'],
-    depth: row.depth,
-    attempt: row.attempt,
-    status: row.status as RootExecutionStatus,
-    conversationEpoch: row.conversationEpoch,
-    stopRequestId: row.stopRequestId,
-    resultPayload: (row.resultPayload as DelegateResultV1 | null) ?? null,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-    terminalAt: row.terminalAt,
-  };
-}
 
 function toEvidence(row: RootEvidenceRow): RootEvidenceRecord {
   return {
@@ -66,31 +51,7 @@ export class PostgresRootWorkStore implements RootWorkStore {
   }
 
   async registerExecution(input: RegisterExecutionInput): Promise<RootExecutionRecord> {
-    const inserted = await this.db
-      .insert(schema.rootExecutions)
-      .values({
-        id: input.executionId,
-        conversationId: input.conversationId,
-        rootAgentId: input.rootAgentId,
-        workGroupId: input.workGroupId,
-        parentExecutionId: input.parentExecutionId,
-        role: input.role,
-        depth: input.depth,
-        attempt: input.attempt,
-        status: 'running',
-        conversationEpoch: input.conversationEpoch,
-      })
-      .onConflictDoNothing({ target: schema.rootExecutions.id })
-      .returning();
-    if (inserted.length > 0) {
-      return toRecord(inserted[0]);
-    }
-    // Concurrent duplicate registration: return the winning row.
-    const existing = await this.getExecution(input.executionId);
-    if (!existing) {
-      throw new Error(`root execution ${input.executionId} conflicted but was not found`);
-    }
-    return existing;
+    return this.db.transaction((tx) => admitRootExecution(tx, input));
   }
 
   async getExecution(executionId: string): Promise<RootExecutionRecord | null> {
@@ -102,16 +63,64 @@ export class PostgresRootWorkStore implements RootWorkStore {
     return row ? toRecord(row) : null;
   }
 
+  async listWaitingRoots(conversationId: string, epoch: number): Promise<RootExecutionRecord[]> {
+    const rows = await this.db.select().from(schema.rootExecutions).where(and(
+      eq(schema.rootExecutions.conversationId, conversationId), eq(schema.rootExecutions.conversationEpoch, epoch),
+      eq(schema.rootExecutions.role, 'root'), eq(schema.rootExecutions.status, 'waiting'),
+    )).limit(10);
+    return rows.map(toRecord);
+  }
+
   async completeExecution(
     executionId: string,
     status: 'completed' | 'cancelled' | 'failed' | 'outcome_unknown',
     result: RootExecutionRecord['resultPayload'],
+    evidence: RegisterEvidenceInput[] = [],
+    backgroundOwner?: RootBackgroundJobOwnerV1,
   ): Promise<RootExecutionRecord | null> {
-    const [row] = await this.db
+    return this.db.transaction(async (tx) => {
+    let [execution] = await tx.select().from(schema.rootExecutions)
+      .where(eq(schema.rootExecutions.id, executionId)).limit(1);
+    if (!execution) return null;
+    // Same lock ordering as Stop: conversation first, then execution update.
+    const [conversation] = await tx.select({ epoch: schema.conversations.rootWorkEpoch })
+      .from(schema.conversations).where(eq(schema.conversations.id, execution.conversationId))
+      .limit(1).for('update');
+    if (!conversation || (status === 'completed' && conversation.epoch !== execution.conversationEpoch)) return null;
+    [execution] = await tx.select().from(schema.rootExecutions)
+      .where(eq(schema.rootExecutions.id, executionId)).limit(1).for('update');
+    if (!execution) return null;
+    if (!['running', 'waiting', ...(status === 'completed' ? [] : ['cancellation_requested'])].includes(execution.status)) return null;
+    const background = (execution.resultPayload as DelegateResultV1 | null)?.nativeState?.backgroundJobId;
+    const stoppedCancellation = status === 'cancelled' && execution.status === 'cancellation_requested'
+      && conversation.epoch > execution.conversationEpoch;
+    if (background && !stoppedCancellation) await requireBackgroundOwner(tx, toRecord(execution), backgroundOwner);
+    if (evidence.length) {
+      if (status !== 'completed' || !['library_worker', 'temporary_worker'].includes(execution.role)) {
+        throw new Error('Evidence requires completed library worker settlement');
+      }
+      for (const item of evidence) {
+        if (item.executionId !== execution.id || item.conversationId !== execution.conversationId) {
+          throw new Error('Evidence producer does not match settlement');
+        }
+        await tx.insert(schema.rootEvidenceRecords).values({ id: item.evidenceId,
+          executionId: item.executionId, conversationId: item.conversationId,
+          kind: item.kind, producerAgentId: item.producerAgentId, payload: item.payload,
+          dedupKey: item.dedupKey }).onConflictDoNothing({ target: schema.rootEvidenceRecords.dedupKey });
+        const [registered] = await tx.select().from(schema.rootEvidenceRecords)
+          .where(eq(schema.rootEvidenceRecords.dedupKey, item.dedupKey)).limit(1);
+        if (!registered || registered.id !== item.evidenceId || registered.kind !== item.kind
+          || !isDeepStrictEqual(registered.payload, item.payload)) {
+          throw new Error('Evidence replay conflicts with its immutable producer');
+        }
+      }
+    }
+    const [row] = await tx
       .update(schema.rootExecutions)
       .set({
         status,
-        resultPayload: result ?? null,
+        resultPayload: result ? { ...result, nativeState: (execution.resultPayload as DelegateResultV1)?.nativeState }
+          : execution.resultPayload ? { ...(execution.resultPayload as DelegateResultV1), status } : null,
         terminalAt: new Date(),
         updatedAt: new Date(),
       })
@@ -120,11 +129,21 @@ export class PostgresRootWorkStore implements RootWorkStore {
       .where(
         and(
           eq(schema.rootExecutions.id, executionId),
-          inArray(schema.rootExecutions.status, ['running', 'waiting', 'cancellation_requested'] as const),
+          inArray(schema.rootExecutions.status, status === 'completed'
+            ? ['running', 'waiting'] : ['running', 'waiting', 'cancellation_requested']),
         ),
       )
       .returning();
+    if (row && background && !stoppedCancellation) {
+      const settled = await tx.update(schema.rootBackgroundJobs).set({ status, owner: null, leaseUntil: null, updatedAt: new Date() })
+        .where(and(eq(schema.rootBackgroundJobs.executionId, executionId),
+          eq(schema.rootBackgroundJobs.owner, backgroundOwner!.owner), eq(schema.rootBackgroundJobs.fence, backgroundOwner!.fence),
+          eq(schema.rootBackgroundJobs.status, 'running'), sql`${schema.rootBackgroundJobs.leaseUntil} > clock_timestamp()`,
+          sql`${schema.rootBackgroundJobs.deadline} > clock_timestamp()`)).returning({ id: schema.rootBackgroundJobs.executionId });
+      if (settled.length !== 1) throw new Error('Background lease expired before atomic settlement');
+    }
     return row ? toRecord(row) : null;
+    });
   }
 
   async markWaiting(executionId: string): Promise<void> {
@@ -132,12 +151,68 @@ export class PostgresRootWorkStore implements RootWorkStore {
       .update(schema.rootExecutions)
       .set({ status: 'waiting', updatedAt: new Date() })
       .where(
-        and(eq(schema.rootExecutions.id, executionId), eq(schema.rootExecutions.status, 'running')),
+        and(eq(schema.rootExecutions.id, executionId), eq(schema.rootExecutions.status, 'running'),
+          sql`${schema.rootExecutions.resultPayload}->'nativeState'->>'backgroundJobId' IS NULL`),
       );
   }
 
+  async recordNativeState(executionId: string, state: RootNativeState,
+    status: 'running' | 'waiting', backgroundOwner?: RootBackgroundJobOwnerV1): Promise<RootExecutionRecord | null> {
+    return this.db.transaction(async (tx) => {
+      const [identity] = await tx.select({ conversationId: schema.rootExecutions.conversationId }).from(schema.rootExecutions)
+        .where(eq(schema.rootExecutions.id, executionId)).limit(1);
+      if (!identity) return null;
+      const [ownerConversation] = await tx.select({ epoch: schema.conversations.rootWorkEpoch })
+        .from(schema.conversations).where(eq(schema.conversations.id, identity.conversationId))
+        .limit(1).for('update');
+      const [execution] = await tx.select().from(schema.rootExecutions)
+        .where(eq(schema.rootExecutions.id, executionId)).limit(1).for('update');
+      if (!execution || !ownerConversation || ownerConversation.epoch !== execution.conversationEpoch) return null;
+      if (!['running', 'waiting'].includes(execution.status)) return null;
+      const payload = execution.resultPayload as DelegateResultV1 | null;
+      const previous = payload?.nativeState;
+      const job = previous?.backgroundJobId ? await requireBackgroundOwner(tx, toRecord(execution), backgroundOwner) : null;
+      if (job && (job.nativeInvocationId !== state.invocationId || !state.invocationId)) {
+        throw new Error('Background native mapping must match committed invocation correlation');
+      }
+      if (!previous || previous.actorId !== state.actorId || previous.sessionId !== state.sessionId
+        || previous.invocationId && previous.invocationId !== state.invocationId) {
+        throw new Error('Native invocation mapping conflicts with its execution');
+      }
+      const [row] = await tx.update(schema.rootExecutions).set({
+        status, resultPayload: { ...payload, nativeState: { ...state,
+          fanoutManifests: previous.fanoutManifests, workerPermits: previous.workerPermits,
+          admittedRequest: previous.admittedRequest,
+          backgroundEventSequence: previous.backgroundEventSequence,
+          backgroundJobId: previous.backgroundJobId, hasBackgroundJobs: previous.hasBackgroundJobs } }, updatedAt: new Date(),
+      }).where(and(eq(schema.rootExecutions.id, executionId),
+        inArray(schema.rootExecutions.status, ['running', 'waiting']))).returning();
+      if (row && job) {
+        const parked = await tx.update(schema.rootBackgroundJobs).set(status === 'waiting'
+          ? { status: 'waiting', owner: null, leaseUntil: null, updatedAt: new Date() }
+          : { updatedAt: new Date() })
+          .where(and(eq(schema.rootBackgroundJobs.executionId, executionId),
+            eq(schema.rootBackgroundJobs.owner, backgroundOwner!.owner), eq(schema.rootBackgroundJobs.fence, backgroundOwner!.fence),
+            eq(schema.rootBackgroundJobs.status, 'running'),
+            sql`${schema.rootBackgroundJobs.leaseUntil} > clock_timestamp()`,
+            sql`${schema.rootBackgroundJobs.deadline} > clock_timestamp()`)).returning({ id: schema.rootBackgroundJobs.executionId });
+        if (parked.length !== 1) throw new Error('Background lease expired before native state commit');
+      }
+      return row ? toRecord(row) : null;
+    });
+  }
+
   async registerEvidence(input: RegisterEvidenceInput): Promise<RootEvidenceRecord> {
-    const inserted = await this.db
+    return this.db.transaction(async (tx) => {
+    const [conversation] = await tx.select({ id: schema.conversations.id }).from(schema.conversations)
+      .where(eq(schema.conversations.id, input.conversationId)).limit(1).for('update');
+    const [execution] = await tx.select().from(schema.rootExecutions)
+      .where(eq(schema.rootExecutions.id, input.executionId)).limit(1).for('update');
+    if (!conversation || !execution || execution.conversationId !== input.conversationId
+      || (execution.resultPayload as DelegateResultV1 | null)?.nativeState?.backgroundJobId) {
+      throw new Error('Background evidence requires atomic owned settlement');
+    }
+    const inserted = await tx
       .insert(schema.rootEvidenceRecords)
       .values({
         id: input.evidenceId,
@@ -154,12 +229,13 @@ export class PostgresRootWorkStore implements RootWorkStore {
       return toEvidence(inserted[0]);
     }
     // Replay: the dedup key exists — return the registered identity unchanged.
-    const [existing] = await this.db
+    const [existing] = await tx
       .select()
       .from(schema.rootEvidenceRecords)
       .where(eq(schema.rootEvidenceRecords.dedupKey, input.dedupKey))
       .limit(1);
     return toEvidence(existing);
+    });
   }
 
   async listEvidenceForExecution(executionId: string): Promise<RootEvidenceRecord[]> {
@@ -205,7 +281,17 @@ export class PostgresRootWorkStore implements RootWorkStore {
             inArray(schema.rootExecutions.status, ['running', 'waiting'] as const),
           ),
         )
-        .returning({ id: schema.rootExecutions.id });
+        .returning({ id: schema.rootExecutions.id, resultPayload: schema.rootExecutions.resultPayload });
+      const [backgroundRoot] = await tx.select({ id: schema.rootExecutions.id }).from(schema.rootExecutions).where(and(
+        eq(schema.rootExecutions.conversationId, input.conversationId), lte(schema.rootExecutions.conversationEpoch, conversation.epoch),
+        sql`${schema.rootExecutions.resultPayload}->'nativeState'->>'hasBackgroundJobs' = 'true'`)).limit(1);
+      if (backgroundRoot || marked.some((execution) => (execution.resultPayload as DelegateResultV1 | null)?.nativeState?.backgroundJobId)) {
+        await tx.update(schema.rootBackgroundJobs).set({ status: 'cancelled', owner: null, leaseUntil: null,
+          fence: sql`${schema.rootBackgroundJobs.fence} + 1`, updatedAt: new Date() }).where(and(
+          eq(schema.rootBackgroundJobs.conversationId, input.conversationId),
+          lte(schema.rootBackgroundJobs.conversationEpoch, conversation.epoch),
+          inArray(schema.rootBackgroundJobs.status, ['queued', 'running', 'waiting', 'outcome_unknown'])));
+      }
       await tx.execute(sql`
         UPDATE conversation.conversations
         SET root_work_epoch = ${barrierEpoch}, root_work_last_stop_request_id = ${input.stopRequestId}, updated_at = now()

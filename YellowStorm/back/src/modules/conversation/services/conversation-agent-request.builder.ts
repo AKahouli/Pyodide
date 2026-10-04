@@ -1,8 +1,12 @@
 import { Injectable } from '@nestjs/common';
+import { freezeRootCapabilityCeiling, scopeCandidateToFrozenCeiling, toolDefinition } from '../root-work/root-capability-ceiling';
+import { createHash } from 'node:crypto';
+import { stableStringify } from '../../agent/services/agent-execution-snapshot.service';
 import type { CorrectionReplayContext, MessageReplayContext } from '../interfaces/message.interface';
 import type { TeamExecutionDefinition } from '../../team/team-execution';
 import { ExecutionScopeV1, executionScopeToWire } from '../root-work/root-work.types';
 import type { IGrpcAgent } from '../../agent/interfaces/agent.interface';
+import { toGrpcStruct } from '../../playbook-flow/execution/grpc/grpc-struct.mapper';
 
 /**
  * WP04 root delegation payload pieces: the trusted root scope, the compact
@@ -17,6 +21,22 @@ export interface RootDelegationContext {
   candidates: unknown[];
 }
 
+/** Compare resolved definitions without freezing refreshed credentials or trace headers. */
+export function resolvedDefinitionsDigest(root: IGrpcAgent, candidates: unknown[]): string {
+  const definition = (agent: IGrpcAgent) => {
+    const bindings = (agent.connector_bindings ?? []).map((binding) => {
+      const { auth_headers, auth_env, ...configuration } = binding;
+      return configuration;
+    });
+    const { platform_api_token, platform_api_url, user_id, connector_bindings_json, ...params } =
+      agent.agent_params?.params ?? {};
+    return { ...agent, tools: agent.tools.map(toolDefinition), connector_bindings: bindings, agent_params: { params } };
+  };
+  return createHash('sha256').update(stableStringify({
+    root: definition(root), candidates: candidates.map((candidate) => definition(candidate as IGrpcAgent)),
+  })).digest('hex');
+}
+
 /**
  * Narrow a candidate specialist to the root's resolved capability ceiling
  * (plan §6.4): intersect connector actions, tools, knowledge workspaces and
@@ -25,23 +45,11 @@ export interface RootDelegationContext {
  * the specialist and does not weaken the specialist's mandatory guards.
  */
 export function scopeCandidateToRootCeiling(candidate: IGrpcAgent, root: IGrpcAgent): IGrpcAgent {
-  // Tool ceiling matches by tool NAME (the wire's capability unit today);
-  // config-aware comparison (sandbox mode, write scope) is a WP10 hardening
-  // item if same-named tools with divergent configs appear.
-  const rootToolNames = new Set(root.tools.map((tool) => tool.name));
-  const rootWorkspaceIds = new Set(root.brain_context.map((b) => b.workspace_id));
-  const rootSkillIds = new Set(
-    (root.skills ?? []).map((skill) => String(skill.id ?? '')).filter(Boolean),
-  );
-  return {
-    ...candidate,
-    tools: candidate.tools.filter((tool) => rootToolNames.has(tool.name)),
-    brain_context: candidate.brain_context.filter((b) => rootWorkspaceIds.has(b.workspace_id)),
-    skills: (candidate.skills ?? []).filter((skill) => rootSkillIds.has(String(skill.id ?? ''))),
-  };
+  return scopeCandidateToFrozenCeiling(candidate, freezeRootCapabilityCeiling(root));
 }
 
 export interface BuildAgentExecutionRequestInput {
+  nativeInputResponses?: Array<{ inputId: string; functionName: string; response: Record<string, unknown> }>;
   userId: string;
   username?: string;
   conversationId: string;
@@ -101,6 +109,9 @@ export class ConversationAgentRequestBuilder {
       } : {}),
       ...(input.attachmentContext ? { attachment_context: { text: input.attachmentContext } } : {}),
       ...(input.executionScope ? { execution_scope: executionScopeToWire(input.executionScope) } : {}),
+      ...(input.nativeInputResponses ? { native_input_responses: input.nativeInputResponses.map((response) => ({
+        input_id: response.inputId, function_name: response.functionName, response: toGrpcStruct(response.response),
+      })) } : {}),
       ...(input.rootDelegation ? { root_context: input.rootDelegation.rootContext } : {}),
       ...(input.rootDelegation && input.rootDelegation.candidates.length
         ? { delegate_candidates: input.rootDelegation.candidates }

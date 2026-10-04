@@ -2,7 +2,16 @@
 
 Date: 2026-10-03 · Base: `923d5c7290b0c1797335e21c056cb12168410ba9` · Env: conda `meta`, Python 3.12, Windows.
 
-## Result: qualified, with two recorded limitations
+## Current qualification status: foundation gates pending
+
+2026-10-04 review correction: the historical results below were not rerun in
+full during the foundation review. The current local runtime reports Python
+3.11.14, so the Python 3.12/deployment claims below are not current qualification.
+The child-resume fixture now uses a resumable App and the original invocation
+ID; it resumes the parked child successfully. The former NodeTool limitation
+was a nonresumable fixture error, not an established ADK defect. Production
+resume wiring, capability restrictions, evidence integrity and V1 browser QA
+remain pending; WP05 must stay behind the foundation gate.
 
 `google-adk` pinned `2.8.0` → `2.11.0` in `yellowstorm-adk/requirements.txt`
 (the Dockerfile installs from requirements.txt; no other pin exists). Installed
@@ -40,7 +49,7 @@ Worky/Playbooks are outside the adk11-migration scope, so the capability stays
 gated behind these xfail markers until an upstream fix; the markers flip the
 suite red again the moment the behavior changes in either direction.
 
-## Recorded limitation 2 — child interrupt through node-as-tool (WP00 fixture)
+## Corrected fixture — child interrupt through node-as-tool
 
 `tests/wp00/test_adk211_root_runtime_compat.py` proves the mechanisms the root
 runtime builds on — Workflow-in-`LlmAgent.tools` public conversion,
@@ -51,15 +60,12 @@ bounds them, interrupt parking the invocation without a false final answer,
 `abort_signal` stopping root and children, and an explicit `App`
 (`ResumabilityConfig(is_resumable=True)`) driving the same workflow.
 
-One xfail records a seam the dispatcher design must respect: when a delegated
-child raises `RequestInput` through `NodeTool` (`raise_on_wait=True`), the
-interrupt surfaces as `adk_request_input` on the delegate branch, and on
-resume the response part satisfies the LLM flow — the ROOT agent answers
-without the parked child ever re-running. Therefore the WP03/WP04 dispatcher
-must park the driver node itself (Worky HITL pattern: `FunctionNode` +
-`RequestInput` + `rerun_on_resume=True`, resume part consumed by
-`ctx.resume_inputs`) rather than let a child interrupt bubble through
-`NodeTool`.
+The old xfail used a nonresumable Runner and omitted the invocation ID. With
+`App(resumability_config=ResumabilityConfig(is_resumable=True))`, the matching
+RequestInput response and the original invocation ID, the child resumes and
+the parent completes. The xfail and its proposed dispatcher workaround have
+been removed. This fixture qualifies the native mechanism, not the production
+presenter's resume path.
 
 ## Also verified in source (not just docs)
 

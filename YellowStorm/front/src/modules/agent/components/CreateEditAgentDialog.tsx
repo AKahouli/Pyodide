@@ -39,7 +39,7 @@ import {
 import { EvaluationTab } from "./EvaluationTab";
 import { AgentTelegramIntegrationSection } from "./AgentTelegramIntegrationSection";
 import { RootExecutionPolicyFields } from "./RootExecutionPolicyFields";
-import { defaultRootExecutionPolicy, toRootPolicyFormValues } from "./root-execution-policy-schema";
+import { defaultRootExecutionPolicy, toRootPolicyFormValues, isRootAgentType, isDelegateAgentType } from "./root-execution-policy-schema";
 import { getAllTeams } from "@/modules/team/api";
 import type { SelectOption } from "./RootExecutionPolicyFields";
 import { AgentDeploymentSection } from "./AgentDeploymentSection";
@@ -244,9 +244,9 @@ export function CreateEditAgentDialog({
   // Root candidacy (WP02): the edited agent's type, or the type picked in
   // create mode. Only mono-agent records may carry a root-execution policy.
   const isRootCandidate = useMemo(() => {
-    if (agent) return (agent.agentType.slug || "") === "mono-agent";
+    if (agent) return isRootAgentType(agent.agentType.slug);
     const picked = agentTypes.find((type) => type.id === selectedAgentTypeId);
-    return (picked?.slug || "") === "mono-agent";
+    return isRootAgentType(picked?.slug);
   }, [agent, agentTypes, selectedAgentTypeId]);
 
   const formTabs = useMemo<
@@ -297,7 +297,7 @@ export function CreateEditAgentDialog({
       .filter((candidate) => candidate.id !== agent?.id)
       .filter((candidate) => {
         const slug = candidate.agentType.slug || "";
-        return slug !== "mono-agent" && slug !== "humain" && slug !== "platform_copilot";
+        return isDelegateAgentType(slug);
       })
       .filter((candidate) => candidate.isActive)
       .map((candidate) => ({

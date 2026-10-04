@@ -3,7 +3,7 @@
  * PostgreSQL implementation: persistence/postgres/postgres-root-work.store.ts.
  */
 
-import { RootExecutionRecord, RootEvidenceRecord } from './root-work.types';
+import { RootExecutionRecord, RootEvidenceRecord, RootNativeState, RootBackgroundJobOwnerV1 } from './root-work.types';
 
 /** DI token for the durable root-work store. */
 export const ROOT_WORK_STORE = Symbol('ROOT_WORK_STORE');
@@ -18,6 +18,7 @@ export interface RegisterExecutionInput {
   depth: number;
   attempt: number;
   conversationEpoch: number;
+  nativeState?: RootNativeState;
 }
 
 export interface RegisterEvidenceInput {
@@ -49,16 +50,21 @@ export interface RootWorkStore {
   registerExecution(input: RegisterExecutionInput): Promise<RootExecutionRecord>;
 
   getExecution(executionId: string): Promise<RootExecutionRecord | null>;
+  listWaitingRoots(conversationId: string, epoch: number): Promise<RootExecutionRecord[]>;
 
   /** Record the typed result + terminal state; no-op when already terminal. */
   completeExecution(
     executionId: string,
     status: 'completed' | 'cancelled' | 'failed' | 'outcome_unknown',
     result: RootExecutionRecord['resultPayload'],
+    evidence?: RegisterEvidenceInput[],
+    backgroundOwner?: RootBackgroundJobOwnerV1,
   ): Promise<RootExecutionRecord | null>;
 
   /** Mark waiting (e.g. approval or HITL park). */
   markWaiting(executionId: string): Promise<void>;
+  recordNativeState(executionId: string, state: RootNativeState,
+    status: 'running' | 'waiting', backgroundOwner?: RootBackgroundJobOwnerV1): Promise<RootExecutionRecord | null>;
 
   /**
    * Idempotently insert an evidence record. When dedupKey already exists the

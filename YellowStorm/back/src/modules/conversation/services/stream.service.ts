@@ -30,8 +30,9 @@ import { ModelsService } from '../../models/models.service';
 import { SkillService } from '../../skill/skill.service';
 import { buildGrpcChannelCredentials, createGrpcMetadata } from '../../../common/grpc/grpc-security.util';
 import { randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { ResponseReliabilityService } from './response-reliability.service';
-import { ConversationAgentRequestBuilder, scopeCandidateToRootCeiling, type BuiltAgentExecutionRequest, type RootDelegationContext } from './conversation-agent-request.builder';
+import { ConversationAgentRequestBuilder, resolvedDefinitionsDigest, type BuiltAgentExecutionRequest, type RootDelegationContext } from './conversation-agent-request.builder';
 import { ConversationAttachmentResolverService } from './conversation-attachment-resolver.service';
 import { ConversationAttachmentService } from './conversation-attachment.service';
 import { ConversationAttachmentContextService } from './conversation-attachment-context.service';
@@ -46,12 +47,15 @@ import { LatencyEnvelopeTracker } from '../utils/latency-metrics';
 import { beginBackendPreAdkStage, endBackendPreAdkStage, getBackendPreAdkTracker, markGrpcDispatchedForLatency } from '../utils/backend-latency-tracker';
 import { PostgresConversationExecutionStore } from '../persistence/postgres/postgres-conversation-execution-store';
 import type { ConversationRecord } from '../persistence/conversation-store';
-import { RootDelegateResolverService, type RootDelegatePool } from '../../agent/services/root-delegate-resolver.service';
+import { RootDelegateResolverService } from '../../agent/services/root-delegate-resolver.service';
 import { RootWorkService } from '../root-work/root-work.service';
-import { ExecutionScopeV1, newStopRequestId } from '../root-work/root-work.types';
+import { RootBackgroundJobStore } from '../persistence/postgres/root-background-job.store';
+import { freezeRootCapabilityCeiling } from '../root-work/root-capability-ceiling';
+import { ExecutionScopeV1, RootNativeState, newStopRequestId } from '../root-work/root-work.types';
 import { isCanonicalObjectId, newObjectId } from '@common/postgres/object-id';
 
 export interface StreamRequest {
+  rootContinuation?: MessageReplayContext['rootContinuation'];
   content: string;
   taskSummary?: string;
   attachedFileIds?: string[];
@@ -167,6 +171,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     @Inject(forwardRef(() => RootDelegateResolverService))
     private readonly rootDelegateResolver?: RootDelegateResolverService,
     private readonly rootWorkService?: RootWorkService,
+    private readonly rootBackgroundJobs?: RootBackgroundJobStore,
   ) {
     this.logger.setContext('StreamService');
     this.fleetAdmissionEnabled = this.configService.get<boolean>('conversation.fleetAdmissionEnabled', true);
@@ -341,6 +346,23 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       return null;
     }
     return this.chatbotClient;
+  }
+
+  async rootBackgroundReady(): Promise<boolean> {
+    if (!this.configService?.get<boolean>('conversation.rootBackgroundEnabled', false)
+      || !this.rootBackgroundJobs || !await this.waitForGrpcReady(3000)) return false;
+    const client = this.getChatbotClient();
+    if (!client?.GetRootWorkCapabilities || !client?.RunBackgroundInvocation) return false;
+    try {
+      const metadata = createGrpcMetadata(this.configService);
+      if (!metadata.get('x-api-key').length) return false;
+      const capability = await new Promise<any>((resolve, reject) => {
+        client.GetRootWorkCapabilities({}, metadata, { deadline: new Date(Date.now() + 3000) },
+          (error: unknown, response: unknown) => error ? reject(error) : resolve(response));
+      });
+      return capability?.background_protocol_version === 1 && capability.background_ready === true
+        && capability.control_database_fingerprint === await this.rootBackgroundJobs.controlInstance();
+    } catch { return false; }
   }
 
   /** Resolves workspace documents on agents' brain_context before external gRPC callers (widget, integration). */
@@ -870,6 +892,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         conversationId,
         {
           content: request.content,
+          rootContinuation: request.rootContinuation,
           taskSummary: request.taskSummary,
           attachedFileIds: request.attachedFileIds ?? [],
           webSearchEnabled: request.webSearchEnabled ?? false,
@@ -1024,6 +1047,15 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   async buildAgentExecutionRequest(userId: string, conversationId: string, request: MessageReplayContext, username?: string, correctionReplayContext?: CorrectionReplayContext, logOpts: LogOptions = {}, sessionId = conversationId, runtimeCorrelationId = sessionId): Promise<BuiltAgentExecutionRequest> {
     beginBackendPreAdkStage('conversationContextLoadMs');
     const conversation = await this.conversationService.getConversationDocument(conversationId);
+    const continuation = request.rootContinuation && this.rootWorkService
+      ? await this.rootWorkService.validateContinuation(request.rootContinuation, userId, conversationId,
+          conversation.rootWorkEpoch ?? 0) : undefined;
+    if (request.rootContinuation && (!continuation || request.agentIds.length || request.teamId
+      || request.governanceOverride || conversation.isGroup || conversation.runtimePurpose !== 'chat')) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Native continuation requires its bound root route');
+    }
+    if (continuation) request = { ...continuation.requestProfile!, content: request.content,
+      rootContinuation: request.rootContinuation };
     const systemWorkspaceId = conversation.systemWorkspaceId;
     const groupMembers = conversation.isGroup ? await this.conversationService.getGroupMembers(conversationId) : [];
     endBackendPreAdkStage('conversationContextLoadMs');
@@ -1057,7 +1089,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         ? conversation.rootAgentId
         : undefined;
     const [workspaceContexts, agents] = await Promise.all([
-      request.semanticModelId ? Promise.resolve([]) : this.buildWorkspaceContexts(conversationId, logOpts, conversation),
+      continuation?.preparedContext ? Promise.resolve(continuation.preparedContext.workspaceContexts as IGrpcWorkspaceContext[])
+        : request.semanticModelId ? Promise.resolve([]) : this.buildWorkspaceContexts(conversationId, logOpts, conversation),
       teamDefinition
         ? this.agentService.buildGrpcAgentsForPlaybook(
             userId,
@@ -1107,14 +1140,32 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     // bound root, attach the compact catalog + scoped candidate definitions so
     // ADK can expose the one bounded delegate_to_agent operation.
     const rootDelegation =
-      !teamDefinition && !governanceOverride && conversation.runtimePurpose !== PLATFORM_COPILOT
+      boundRootId
         ? await this.buildRootDelegationContext(conversation, agents, userId, conversationId, request, compaction, runtimeCorrelationId, logOpts)
         : undefined;
+    let admittedNativeState: RootNativeState | undefined;
+    if (continuation && !rootDelegation) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Root enrollment is no longer available');
+    }
     if (rootDelegation?.scope) {
-      // Durable identity record for the root execution (plan §9.1/§12.2);
-      // auxiliary in WP04 — a registration failure must not break the turn.
-      await this.rootWorkService
-        ?.registerExecution({
+      const definitionDigest = resolvedDefinitionsDigest(agents[0], rootDelegation.candidates);
+      rootDelegation.scope.nativeSessionId = sessionId;
+      if (!this.rootWorkService) {
+        throw new ServiceUnavailableException(ErrorCode.AGENT_UNAVAILABLE, 'Root execution store is unavailable');
+      }
+      // Enrolled execution cannot proceed without its durable control identity.
+      if (continuation) {
+        if (continuation.scope.immutableSnapshotRef !== rootDelegation.scope.immutableSnapshotRef
+          || continuation.rootContext.root_agent_id !== conversation.rootAgentId
+          || continuation.resolvedDefinitionsDigest !== definitionDigest
+          || continuation.rootContext.native_input_control_version !== rootDelegation.rootContext.native_input_control_version
+          || !isDeepStrictEqual(continuation.rootContext.catalog, rootDelegation.rootContext.catalog)) {
+          throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Root definition changed during native invocation');
+        }
+        rootDelegation.scope = { ...continuation.scope, resumeIntent: 'resume',
+          nativeInvocationId: continuation.invocationId, nativeSessionId: continuation.sessionId };
+        rootDelegation.rootContext = continuation.rootContext;
+      } else await this.rootWorkService.registerExecution({
           executionId: rootDelegation.scope.executionId,
           conversationId,
           rootAgentId: conversation.rootAgentId ?? null,
@@ -1124,10 +1175,35 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           depth: 0,
           attempt: 1,
           conversationEpoch: rootDelegation.scope.conversationEpoch,
-        })
-        .catch((error: unknown) => {
-          this.logger.warn(`Root execution registration failed: ${error instanceof Error ? error.message : String(error)}`);
+          nativeState: admittedNativeState = {
+            actorId: userId,
+            scope: rootDelegation.scope,
+            rootContext: rootDelegation.rootContext,
+            invocationId: null,
+            sessionId,
+            pendingInputs: [],
+            requestProfile: { ...request, rootContinuation: undefined },
+            resolvedDefinitionsDigest: definitionDigest,
+            capabilityCeiling: freezeRootCapabilityCeiling(agents[0]),
+          },
         });
+    }
+
+    const nativeInputResponses = continuation ? request.rootContinuation!.inputResponses.map((input) => ({
+      inputId: input.inputId, response: input.response,
+      functionName: continuation.pendingInputs.find((pending) => pending.inputId === input.inputId)!.functionName,
+    })) : undefined;
+    if (continuation) {
+      if (!continuation.preparedContext) {
+        throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Frozen invocation inputs are unavailable');
+      }
+      const prepared = continuation.preparedContext;
+      agents[0].brain_context = prepared.rootBrainContexts as IGrpcWorkspaceContext[];
+      await this.attachRunCodeContexts(agents, userId, runtimeCorrelationId,
+        workspaceContexts.map((context) => context.workspace_id), prepared.runCodeSources);
+      return this.agentRequestBuilder.build({ userId, username, conversationId: continuation.sessionId,
+        request, agents, ...prepared, rootDelegation, executionScope: rootDelegation!.scope,
+        nativeInputResponses });
     }
 
     beginBackendPreAdkStage('supplementalContextAssemblyMs');
@@ -1176,14 +1252,24 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
+    const runCodeSources = [...currentAttachmentSources, ...previousAttachedFiles.flatMap((file) =>
+      (file.workspace_id && file.filepath ? [{ workspaceId: file.workspace_id, path: file.filepath }] : []))];
     await this.attachRunCodeContexts(
       agents,
       userId,
       runtimeCorrelationId,
       workspaceContexts.map((context) => context.workspace_id),
-      [...currentAttachmentSources, ...previousAttachedFiles.flatMap((file) => (file.workspace_id && file.filepath ? [{ workspaceId: file.workspace_id, path: file.filepath }] : []))],
+      runCodeSources,
     );
     endBackendPreAdkStage('supplementalContextAssemblyMs');
+    if (admittedNativeState) {
+      const recorded = await this.rootWorkService!.recordNativeState(admittedNativeState.scope.executionId, {
+        ...admittedNativeState,
+        preparedContext: { workspaceContexts, attachedFiles, previousAttachedFiles, skills, attachmentContext,
+          runCodeSources, rootBrainContexts: agents[0].brain_context },
+      }, 'running');
+      if (!recorded) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Root execution was stopped during preparation');
+    }
     beginBackendPreAdkStage('grpcPayloadPreparationMs');
     return this.agentRequestBuilder.build({
       userId,
@@ -1200,13 +1286,15 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       attachmentContext,
       rootDelegation,
       executionScope: rootDelegation?.scope,
+      nativeInputResponses,
     });
   }
 
   /**
    * Resolve the delegation context for a turn against the conversation's bound
    * root (WP04, plan §6.3-§6.5). Returns undefined unless the turn targets the
-   * bound root of a conversation with delegation enabled and a non-empty pool.
+    * enrolled bound root on the default route. Enrollment is independent of
+    * delegation availability; disabled/empty pools still execute as ROOT.
    * Catalog entries carry metadata + digests only; candidate definitions are
    * scoped to the root's capability ceiling for root_constrained mode.
    */
@@ -1223,42 +1311,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     const rootAgentId = conversation.rootAgentId;
     if (!rootAgentId || !isCanonicalObjectId(rootAgentId)) return undefined;
     if (agents.length !== 1 || agents[0].id !== rootAgentId) return undefined;
-    if (!this.rootDelegateResolver) return undefined;
-    let pool: RootDelegatePool;
-    try {
-      pool = await this.rootDelegateResolver.resolveForActor(rootAgentId, userId);
-    } catch (error) {
-      this.logger.warn(`Root pool resolution failed, continuing without delegation: ${error instanceof Error ? error.message : String(error)}`);
-      return undefined;
+    const root = await this.agentService.findUserAgentById(userId, rootAgentId);
+    if (!root.rootExecutionPolicy) return undefined;
+    if (!this.rootDelegateResolver) {
+      throw new ServiceUnavailableException(ErrorCode.AGENT_UNAVAILABLE, 'Root execution resolver is unavailable');
     }
-    if (!pool.delegationEnabled || pool.entries.length === 0) return undefined;
-
-    const rootAgent = agents[0];
-    const candidateIds = pool.entries.map((entry) => entry.agentId);
-    const candidates = await this.agentService.buildAgentsForStream(
-      userId,
-      request.modelId,
-      candidateIds,
-      [],
-      [],
-      undefined,
-      undefined,
-      // Child tool calls authorize as the acting user (plan §6.2).
-      { conversationId, correlationId: runtimeCorrelationId, playbookHandoffAttached: false },
-      request.reasoningEffort,
-      compaction,
-      request.webConnectorAccessEnabled,
-    );
-    const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
-    const scopedCandidates = pool.entries
-      .map((entry) => {
-        const candidate = byId.get(entry.agentId);
-        if (!candidate) return undefined;
-        return entry.configurationMode === 'root_constrained'
-          ? scopeCandidateToRootCeiling(candidate, rootAgent)
-          : candidate;
-      })
-      .filter((candidate): candidate is IGrpcAgent => Boolean(candidate));
+    const pool = await this.rootDelegateResolver.resolveForActor(rootAgentId, userId);
+    const entries = pool.delegationEnabled ? pool.entries : [];
 
     const limits = pool.policy.limits;
     const scope: ExecutionScopeV1 = {
@@ -1271,13 +1330,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       conversationEpoch: conversation.rootWorkEpoch ?? 0,
       expectedFence: null,
       resumeIntent: 'start',
-      immutableSnapshotRef: null,
+      immutableSnapshotRef: pool.rootSnapshotDigest,
       nativeInvocationId: null,
-      nativeSessionId: null,
-      deadlineEpochMs: null,
+      nativeSessionId: conversationId,
+      deadlineEpochMs: Date.now() + limits.maxWorkGroupDurationSeconds * 1000,
     };
     this.logger.debug(
-      `Root delegation attached: candidates=${scopedCandidates.length} executionId=${scope.executionId}`,
+      `Root delegation attached: candidates=${entries.length} executionId=${scope.executionId}`,
       { requestId: logOpts.requestId },
     );
     return {
@@ -1291,7 +1350,18 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         max_child_executions_per_work_group: limits.maxChildExecutionsPerWorkGroup,
         max_work_group_duration_seconds: limits.maxWorkGroupDurationSeconds,
         governance_revision: pool.policy.delegation.defaultConfigurationMode,
-        catalog: pool.entries.map((entry) => ({
+        delegate_definition_mode: 'lazy',
+        native_input_control_version: 1,
+        temporary_workers_enabled: pool.policy.temporaryWorkers.enabled,
+        max_temporary_workers: pool.policy.temporaryWorkers.maxPerWorkGroup,
+        fanout_enabled: pool.policy.fanout.enabled,
+        max_fanout_items: pool.policy.fanout.maxItems,
+        worker_permit_version: 1,
+        background_enabled: pool.policy.background.enabled && await this.rootBackgroundReady(),
+        max_outstanding_background_jobs: pool.policy.background.maxOutstandingPerConversation,
+        background_task_timeout_seconds: pool.policy.background.taskTimeoutSeconds,
+        background_max_attempts: pool.policy.background.maxAttempts,
+        catalog: entries.map((entry) => ({
           agent_id: entry.agentId,
           name: entry.name,
           description: entry.description,
@@ -1299,7 +1369,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           snapshot_digest: entry.snapshotDigest,
         })),
       },
-      candidates: scopedCandidates,
+      candidates: [],
     };
   }
 
@@ -1611,6 +1681,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
   private executeGrpcStream(userId: string, conversationId: string, messageId: string, streamKey: string, grpcRequest: any, timeoutMs: number, memberIds: string[], requestId?: string, username?: string, useSingleAgent = false, latencyStart?: ConversationLatencyStartContext, latencyInstrumentationEnabled = true): Promise<void> {
     const logOpts: LogOptions = { requestId };
+    let nativeWrites = Promise.resolve();
+    let nativeWriteError: unknown;
 
     return new Promise<void>((resolve, reject) => {
       this.logger.debug(
@@ -1728,6 +1800,15 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       call.on('data', (chunk: any) => {
         if (terminal.started) return;
         if (chunk.action === 'heartbeat') return;
+        if (chunk.execution_trace?.native_session_id && grpcRequest.execution_scope?.execution_id) {
+          nativeWrites = nativeWrites.then(async () => {
+            if (nativeWriteError) return;
+            if (!this.rootWorkService) throw new Error('Root execution store is unavailable');
+            await this.rootWorkService.applyNativeTrace(
+              grpcRequest.execution_scope.execution_id, conversationId, userId, chunk.execution_trace,
+            );
+          }).catch((error) => { nativeWriteError = error; call.cancel(); });
+        }
         // Transport keepalives must not hide a stalled model call.
         resetIdleTimeout();
         chunkCount++;
@@ -1888,6 +1969,13 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       });
 
       call.on('end', async () => {
+        await nativeWrites;
+        if (nativeWriteError) {
+          this.beginStreamTerminal(streamKey, () => this.handleStreamError(
+            userId, conversationId, messageId, streamKey, ErrorCode.CHAT_STREAM_FAILED, requestId,
+          ), nativeWriteError);
+          return;
+        }
         if (terminal.started) return;
 
         const durationMs = Date.now() - startTime;
@@ -2053,7 +2141,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         });
       });
 
-      call.on('error', (error: any) => {
+      call.on('error', async (error: any) => {
+        await nativeWrites;
         if (terminal.started) return;
 
         this.logger.error(

@@ -160,6 +160,7 @@ class ExecutionEventV1:
     parent_execution_id: Optional[str] = None
     producer_agent_id: Optional[str] = None
     source_event_id: Optional[str] = None
+    native_invocation_id: Optional[str] = None
 
     def to_proto(self) -> "chatbot_pb2.ExecutionTrace":
         return chatbot_pb2.ExecutionTrace(
@@ -167,6 +168,7 @@ class ExecutionEventV1:
             execution_id=self.execution_id,
             parent_execution_id=self.parent_execution_id or "",
             source_event_id=self.source_event_id or "",
+            native_invocation_id=self.native_invocation_id or "",
             producer_agent_id=self.producer_agent_id or "",
             producer_role=_ROLE_TO_PROTO[self.producer_role],
             lifecycle=_LIFECYCLE_TO_PROTO[self.lifecycle],
@@ -178,7 +180,7 @@ class ExecutionEventV1:
             "work_group_id": self.work_group_id or "",
             "execution_id": self.execution_id,
             "parent_execution_id": self.parent_execution_id or "",
-            "native_invocation_id": "",
+            "native_invocation_id": self.native_invocation_id or "",
             "source_event_id": self.source_event_id or "",
             "producer_agent_id": self.producer_agent_id or "",
             "producer_role": _ROLE_TO_PROTO[self.producer_role],

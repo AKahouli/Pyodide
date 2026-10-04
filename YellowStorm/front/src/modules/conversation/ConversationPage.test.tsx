@@ -50,6 +50,7 @@ vi.mock('@/modules/localization', () => ({
 vi.mock('./components/ConversationHeader', () => ({ ConversationHeader: () => null }));
 vi.mock('./components/ConversationContent', () => ({ ConversationContent: () => null }));
 vi.mock('./components/ConversationInput', () => ({ ConversationInput: () => null }));
+vi.mock('./components/RootInputPanel', () => ({ RootInputPanel: () => null }));
 vi.mock('./components/StreamErrorDialog', () => ({ StreamErrorDialog: () => null }));
 vi.mock('./components/NotFound', () => ({ NotFound: () => null }));
 vi.mock('./GroupConversationPage', () => ({ GroupConversationPage: () => null }));

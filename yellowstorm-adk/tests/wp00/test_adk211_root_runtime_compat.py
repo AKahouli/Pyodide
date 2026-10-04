@@ -226,7 +226,9 @@ async def _drive(agent, session_id: str, text: str, *, sessions=None,
     if app is not None:
         runner = Runner(app=app, session_service=sessions)
     else:
-        runner = Runner(node=agent, app_name=APP, session_service=sessions)
+        runner = Runner(app=App(name=APP, root_agent=agent,
+                            resumability_config=ResumabilityConfig(is_resumable=True)),
+                    session_service=sessions)
     await runner.session_service.create_session(app_name=APP, user_id="u",
                                                 session_id=session_id)
     events: list[Event] = []
@@ -293,7 +295,8 @@ def test_delegation_executes_single_turn_specialist_and_returns_result():
     root = _make_root(root_parts, tools=[_dispatcher_workflow()])
     events, _ = asyncio.run(_drive(root, "s2", "ROOT HISTORY SHOULD NOT LEAK"))
 
-    final = [e for e in events if e.is_final_response()]
+    final = [e for e in events if e.is_final_response() and e.author == root.name
+             and e.content and e.content.parts and e.content.parts[0].text]
     assert final and "SPECIALIST ANSWER" in final[-1].content.parts[0].text
 
     # The specialist saw exactly the bounded packet: its task — not the root's
@@ -421,14 +424,6 @@ def test_interrupt_parks_invocation_waiting_not_success():
         _DISPATCHER.dispatch_one = orig
 
 
-@pytest.mark.xfail(reason=(
-    "WP00 recorded limitation: when a child interrupt (RequestInput) bubbles "
-    "out of a node-as-tool delegate, the response part resolves the "
-    "adk_request_input call in the LLM flow and the ROOT agent answers without "
-    "the parked child ever re-running. Resume of this shape requires the "
-    "dispatcher driver node itself to park (Worky HITL pattern) instead of "
-    "raising the child interrupt through NodeTool — a WP03/WP04 design rule."),
-    strict=False)
 def test_resume_of_delegated_child_reenters_parked_child():
     """Resume with the requested input must re-enter the parked child (parent
     re-executes; completed run_node calls replay from history, never rerun)."""
@@ -465,6 +460,7 @@ def test_resume_of_delegated_child_reenters_parked_child():
             events2: list[Event] = []
             async for ev in runner.run_async(
                 user_id="u", session_id="s6r",
+                invocation_id=events1[0].invocation_id,
                 new_message=types.Content(role="user",
                                           parts=[create_request_input_response(
                                               iid, {"value": "42"})]),
@@ -484,7 +480,9 @@ def test_resume_of_delegated_child_reenters_parked_child():
 
 
 async def await_drive_with_shared_sessions(agent, sessions, session_id, text):
-    runner = Runner(node=agent, app_name=APP, session_service=sessions)
+    runner = Runner(app=App(name=APP, root_agent=agent,
+                            resumability_config=ResumabilityConfig(is_resumable=True)),
+                    session_service=sessions)
     await sessions.create_session(app_name=APP, user_id="u", session_id=session_id)
     events = []
     async for ev in runner.run_async(

@@ -28,7 +28,7 @@ import { useModelsStore } from '@/modules/models/store';
 import { scrollToFirstError } from '@/lib/form-utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { RootExecutionPolicyFields, type SelectOption } from '@/modules/agent/components/RootExecutionPolicyFields';
-import { defaultRootExecutionPolicy, toRootPolicyFormValues } from '@/modules/agent/components/root-execution-policy-schema';
+import { defaultRootExecutionPolicy, toRootPolicyFormValues, isRootAgentType, isDelegateAgentType } from '@/modules/agent/components/root-execution-policy-schema';
 import { getAllTeams } from '@/modules/team/api';
 import { getAllAgents } from '@/modules/agent/api';
 
@@ -146,9 +146,9 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
 
   // Root candidacy (WP02): edited agent's type or the type picked in create mode.
   const isRootCandidate = (() => {
-    if (agent) return (((agent.agentType as unknown as { slug?: string }).slug) || '') === 'mono-agent';
+    if (agent) return isRootAgentType((agent.agentType as unknown as { slug?: string }).slug);
     const picked = agentTypes.find((at) => at.id === selectedAgentTypeId);
-    return (picked?.slug || '') === 'mono-agent';
+    return isRootAgentType(picked?.slug);
   })();
 
   useEffect(() => {
@@ -166,7 +166,7 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
         .filter((candidate) => candidate.id !== agent?.id && candidate.isActive)
         .filter((candidate) => {
           const slug = candidate.agentType.slug || '';
-          return slug !== 'mono-agent' && slug !== 'humain' && slug !== 'platform_copilot';
+          return isDelegateAgentType(slug);
         })
         .map((candidate) => ({ value: candidate.id, label: candidate.name, description: candidate.description || undefined })));
     });

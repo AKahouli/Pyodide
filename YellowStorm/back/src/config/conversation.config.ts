@@ -5,6 +5,9 @@ export default registerAs('conversation', () => ({
   // gRPC channel security (TLS + API key) is shared across all AI-service
   // clients — see config/grpc-security.config.ts (`grpcSecurity` namespace).
   grpcTimeoutMs: Number.parseInt(process.env.CONVERSATION_GRPC_TIMEOUT_MS || '120000', 10),
+  rootBackgroundEnabled: process.env.ROOT_WORK_BACKGROUND_ENABLED === 'true',
+  rootBackgroundMaxActive: Number.parseInt(process.env.ROOT_WORK_BACKGROUND_MAX_ACTIVE || '4', 10),
+  rootBackgroundMaxPerUser: Number.parseInt(process.env.ROOT_WORK_BACKGROUND_MAX_PER_USER || '2', 10),
   maxConcurrentStreams: Number.parseInt(process.env.CONVERSATION_MAX_CONCURRENT_STREAMS || '5', 10),
   sseHeartbeatMs: Number.parseInt(process.env.CONVERSATION_SSE_HEARTBEAT_MS || '15000', 10),
   maxSseConnections: Number.parseInt(process.env.CONVERSATION_MAX_SSE_CONNECTIONS || '5', 10),

@@ -142,6 +142,31 @@ def test_connector_tool_name_matches_nest_runtime_contract() -> None:
     assert tool.custom_schema["name"] == "workspace_search"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("override", ["model", "approval", "hidden"])
+async def test_trusted_connector_scope_cannot_be_overridden(monkeypatch, override):
+    calls = []
+
+    async def remote(*args, **kwargs):
+        calls.append(args[4])
+        return {"text": "ok"}
+
+    monkeypatch.setattr("src.flow_engine.mcp.call_mcp_tool", remote)
+    binding = _connector_binding({"type": "object", "properties": {"repo_id": {"type": "string"}}})
+    binding["enforced_params"] = {"repo_id": "allowed"}
+    tool = create_connector_tools([binding], ConnectorToolContext())[-1]
+    context = SimpleNamespace(tool_confirmation=SimpleNamespace(payload={"repo_id": "other"}))
+    if override == "hidden":
+        result = await tool.run_async(args={"_enforced_params": {}}, tool_context=context)
+    else:
+        result = await tool.func(tool_context=context if override == "approval" else None,
+                                 repo_id="other" if override == "model" else "allowed")
+    assert "error" in result
+    assert calls == []
+    await tool.func(repo_id="allowed")
+    assert calls == [{"repo_id": "allowed"}]
+
+
 def test_connector_tool_declares_display_purpose_but_does_not_forward_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -544,7 +569,9 @@ def test_connector_tool_injects_streamable_http_file_workspace_headers(
     asyncio.run(tool.func(query="revenue"))
 
     assert tool.name == "code-interpreter_search"
-    assert captured["params"] == {"query": "revenue", "workspace_id": "workspace-1"}
+    # Empty schemas must not gain undeclared workspace parameters; the scope
+    # travels in the headers below for this strict MCP action.
+    assert captured["params"] == {"query": "revenue"}
     assert captured["auth_headers"] == {
         "Authorization": "Bearer token",
         "X-User-Id": "user-1",

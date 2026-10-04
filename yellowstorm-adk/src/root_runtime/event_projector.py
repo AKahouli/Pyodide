@@ -38,6 +38,7 @@ class ProducerEventProjector:
             parent_execution_id=self._scope.parent_execution_id,
             producer_agent_id=self._producer_agent_id,
             source_event_id=source_event_id,
+            native_invocation_id=self._scope.native_invocation_id,
         )
 
     def stamp(self, chunk: Dict[str, Any], lifecycle: InvocationLifecycleState = InvocationLifecycleState.UNSPECIFIED) -> Dict[str, Any]:

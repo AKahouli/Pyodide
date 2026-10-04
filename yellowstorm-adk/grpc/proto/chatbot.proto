@@ -259,6 +259,24 @@ message ExecutionTrace {
     string producer_agent_id = 6;
     ExecutionRole producer_role = 7;
     InvocationLifecycleState lifecycle = 8;
+    string native_session_id = 9;
+    repeated NativePendingInput pending_inputs = 10;
+}
+
+message NativePendingInput {
+    string input_id = 1;
+    string function_name = 2;
+    string message = 3;
+    string response_schema_json = 4;
+    uint32 input_version = 5;
+    bool response_schema_unsupported = 6;
+    bool response_schema_absent = 7;
+}
+
+message NativeInputResponse {
+    string input_id = 1;
+    string function_name = 2;
+    google.protobuf.Struct response = 3;
 }
 
 message RunAgentTeamRequest {
@@ -307,6 +325,7 @@ message RunSingleAgentRequest {
     // authorized catalog + policy. Both unset = legacy single-agent request.
     repeated Agent delegate_candidates = 23;
     RootExecutionContext root_context = 24;
+    repeated NativeInputResponse native_input_responses = 25;
 }
 
 message GenerateConversationNameRequest {
@@ -341,6 +360,17 @@ message RootExecutionContext {
     int32 max_work_group_duration_seconds = 6;
     string governance_revision = 7;          // opaque policy revision digest
     repeated DelegateCandidateCatalogEntry catalog = 8;
+    string delegate_definition_mode = 9;
+    uint32 native_input_control_version = 10;
+    bool temporary_workers_enabled = 11;
+    uint32 max_temporary_workers = 12;
+    uint32 worker_permit_version = 13;
+    bool fanout_enabled = 14;
+    uint32 max_fanout_items = 15;
+    bool background_enabled = 16;
+    uint32 max_outstanding_background_jobs = 17;
+    uint32 background_task_timeout_seconds = 18;
+    uint32 background_max_attempts = 19;
 }
 
 // ===== RESPONSE MESSAGES =====
@@ -728,7 +758,37 @@ message DeleteConversationSessionResponse {
 
 // ===== SERVICES =====
 
+// Dedicated method: an older receiver must return UNIMPLEMENTED rather than
+// silently discard background ownership fields and run a foreground request.
+message RootBackgroundInvocationRequest {
+    uint32 protocol_version = 1;
+    string execution_id = 2;
+    string conversation_id = 3;
+    string actor_id = 4;
+    uint32 conversation_epoch = 5;
+    string owner = 6;
+    uint32 fence = 7;
+    string request_digest = 8;
+    string control_database_fingerprint = 9;
+}
+
+message RootBackgroundInvocationUpdate {
+    string execution_id = 1;
+    string status = 2;
+}
+
+message RootWorkCapabilitiesRequest {}
+message RootWorkCapabilitiesResponse {
+    uint32 background_protocol_version = 1;
+    bool background_ready = 2;
+    string native_sdk_version = 3;
+    string python_version = 4;
+    string control_database_fingerprint = 5;
+}
+
 service ChatbotService {
+    rpc GetRootWorkCapabilities(RootWorkCapabilitiesRequest) returns (RootWorkCapabilitiesResponse);
+    rpc RunBackgroundInvocation(RootBackgroundInvocationRequest) returns (stream RootBackgroundInvocationUpdate);
     rpc RunAgentTeam(RunAgentTeamRequest) returns (stream StreamChunk);
     rpc RunSingleAgent(RunSingleAgentRequest) returns (stream StreamChunk);
     rpc GenerateConversationName(GenerateConversationNameRequest) returns (GenerateConversationNameResponse);

@@ -58,6 +58,21 @@ import { ConversationAttachmentResolverService } from './services/conversation-a
 import { ConversationAttachmentService } from './services/conversation-attachment.service';
 import { ConversationAttachmentContextService } from './services/conversation-attachment-context.service';
 import { RootWorkService } from './root-work/root-work.service';
+import { RootDelegateDefinitionService } from './root-work/root-delegate-definition.service';
+import { RootDelegateInternalController } from './controllers/root-delegate-internal.controller';
+import { RootInputController } from './controllers/root-input.controller';
+import { RootInputService } from './root-work/root-input.service';
+import { RootResultController } from './controllers/root-result.controller';
+import { RootResultService } from './root-work/root-result.service';
+import { RootEvidenceService } from './root-work/root-evidence.service';
+import { RootTemporaryDefinitionService } from './root-work/root-temporary-definition.service';
+import { RootFanoutService } from './root-work/root-fanout.service';
+import { RootBackgroundJobStore } from './persistence/postgres/root-background-job.store';
+import { RootBackgroundEventStore } from './persistence/postgres/root-background-event.store';
+import { RootBackgroundLifecycleService } from './root-work/root-background-lifecycle.service';
+import { RootBackgroundDriverService } from './root-work/root-background-driver.service';
+import { RootBackgroundSubmissionService } from './root-work/root-background-submission.service';
+import { RootBackgroundInputService } from './root-work/root-background-input.service';
 import { CorrectiveReplayContextService } from './services/corrective-replay-context.service';
 import { CorrectiveReplayPromptBuilder } from './services/corrective-replay-prompt.builder';
 import { CorrectiveReplayRunnerService } from './services/corrective-replay-runner.service';
@@ -74,6 +89,9 @@ import { ConversationNameService } from './services/conversation-name.service';
 @Module({
   imports: [ConfigModule.forFeature(conversationConfig), ConversationPersistenceModule, JwtModule.register({}), forwardRef(() => AuthModule), forwardRef(() => AuthorizationModule), forwardRef(() => WorkspaceModule), forwardRef(() => IndexingModule), ModelsModule, LoggerModule, UsageModule, forwardRef(() => AgentModule), TeamModule, AgentTypeModule, SkillModule, EmailModule, GovernanceRuntimeModule, forwardRef(() => EvaluationModule), UserModule, SemanticModelModule, ProjectModule],
   controllers: [
+    RootInputController,
+    RootResultController,
+    RootDelegateInternalController,
     StreamController, // Must be before ConversationController to avoid route conflict with :id param
     ComposerSuggestionsController,
     ConversationController,
@@ -82,7 +100,7 @@ import { ConversationNameService } from './services/conversation-name.service';
     ReportController,
     ConversationFileController,
   ],
-  providers: [ConversationService, MessageService, StreamService, StreamGatewayService, ConversationNameService, ConversationRecoveryService, ShareService, ReportService, ComposerSuggestionsService, ChoiceInteractionService, ConversationBranchService, ConversationPlaybookContextProjectorService, ConversationPlaybookHandoffService, ResponseReliabilityService, ResponseReliabilityEvidenceBuilder, ResponseReliabilityScoringService, ResponseCorrectionPolicyService, ResponseCorrectionPlannerService, CorrectedResponseComponentBuilder, ResponseCorrectionService, ConversationAgentRequestBuilder, ConversationAttachmentResolverService, ConversationAttachmentService, ConversationAttachmentContextService, CorrectiveReplayContextService, CorrectiveReplayPromptBuilder, CorrectiveReplayRunnerService, ConversationArtifactService, ModelPricingService, CarbonEstimatorService, ConversationUsageAccountingService, ConversationOwnerGuard, SseAuthGuard, ComposerSuggestionsRateLimitGuard, RootWorkService],
+  providers: [ConversationService, MessageService, StreamService, StreamGatewayService, ConversationNameService, ConversationRecoveryService, ShareService, ReportService, ComposerSuggestionsService, ChoiceInteractionService, ConversationBranchService, ConversationPlaybookContextProjectorService, ConversationPlaybookHandoffService, ResponseReliabilityService, ResponseReliabilityEvidenceBuilder, ResponseReliabilityScoringService, ResponseCorrectionPolicyService, ResponseCorrectionPlannerService, CorrectedResponseComponentBuilder, ResponseCorrectionService, ConversationAgentRequestBuilder, ConversationAttachmentResolverService, ConversationAttachmentService, ConversationAttachmentContextService, CorrectiveReplayContextService, CorrectiveReplayPromptBuilder, CorrectiveReplayRunnerService, ConversationArtifactService, ModelPricingService, CarbonEstimatorService, ConversationUsageAccountingService, ConversationOwnerGuard, SseAuthGuard, ComposerSuggestionsRateLimitGuard, RootWorkService, RootDelegateDefinitionService, RootInputService, RootResultService, RootEvidenceService, RootTemporaryDefinitionService, RootFanoutService, RootBackgroundJobStore, RootBackgroundEventStore, RootBackgroundLifecycleService, RootBackgroundDriverService, RootBackgroundSubmissionService, RootBackgroundInputService],
   exports: [ConversationService, MessageService, StreamService, StreamGatewayService, ConversationPlaybookHandoffService],
 })
 export class ConversationModule {}

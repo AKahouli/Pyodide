@@ -53,6 +53,8 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("CEPH_SECRET_ACCESS_KEY", "CEPH_S3_SECRET_ACCESS_KEY"),
     )
     DATABASE_URL: str
+    ROOT_WORK_DATABASE_URL: Optional[str] = None
+    ROOT_WORK_BACKGROUND_ENABLED: bool = False
     lINKUP_API_KEY: str
     WEB_SEARCH_PROMPT: str
     API_URL: str

@@ -240,6 +240,9 @@ class AgentRunner:
         session_id: Optional[str] = None,
         seed_events: Optional[list] = None,
         task_summary: Optional[str] = None,
+        execution_scope=None,
+        abort_signal: Optional[asyncio.Event] = None,
+        native_input_responses=None,
     ) -> Tuple[str, List[str], dict]:
         """Run an agent tool and yield streaming events.
 
@@ -261,6 +264,21 @@ class AgentRunner:
                 - dict: Execution summary with performance and usage metrics
                 :param agent_config:
         """
+        from src.root_runtime.invocation import INPUT_FUNCTIONS, native_run_options
+        from src.root_runtime.background_sessions import native_app_name
+        app_name = native_app_name(session_helper)
+
+        native_run_options(execution_scope, None, native_input_responses)
+        resuming = execution_scope is not None and execution_scope.resume_intent == "resume"
+        if execution_scope is not None and execution_scope.native_session_id:
+            session_id = execution_scope.native_session_id
+        if abort_signal is not None and abort_signal.is_set():
+            from src.root_runtime.invocation import NativeInvocationProjection
+            from src.root_runtime.contracts import InvocationLifecycleState
+            await NativeInvocationProjection(execution_scope, session_id or "", str(agent_id)).emit(
+                q, InvocationLifecycleState.CANCELLED,
+            )
+            return (None, [], {}, [])
         try:
             # Build initial session state from agent's code interpreter params (if any)
             initial_state = {}
@@ -278,7 +296,7 @@ class AgentRunner:
                 _mark_session_stage("mark_session_create_seed_start")
                 with _latency_diag_phase(PHASE_YELLOWMIND_PRE_RUNNER):
                     session = await session_helper.create_session(
-                        app_name="manager_app",
+                        app_name=app_name,
                         user_id=user_id,
                         session_id=session_id,
                         state=initial_state or None,
@@ -288,16 +306,18 @@ class AgentRunner:
                 _mark_session_stage("mark_session_lookup_start")
                 with _latency_diag_phase(PHASE_YELLOWMIND_PRE_RUNNER):
                     session = await session_helper.get_session(
-                        app_name="manager_app",
+                        app_name=app_name,
                         user_id=user_id,
                         session_id=session_id,
                     )
                 _mark_session_stage("mark_session_lookup_end")
                 if session is None:
+                    if resuming:
+                        raise ValueError("The native session to resume does not exist")
                     _mark_session_stage("mark_session_create_seed_start")
                     with _latency_diag_phase(PHASE_YELLOWMIND_PRE_RUNNER):
                         session = await session_helper.create_session(
-                            app_name="manager_app",
+                            app_name=app_name,
                             user_id=user_id,
                             session_id=session_id,
                             state=initial_state or None,
@@ -307,6 +327,21 @@ class AgentRunner:
                             await session_helper.append_event(session, seed_event)
                     _mark_session_stage("mark_session_create_seed_end")
             logger.info(f"[SESSION] run_agent_tool using ADK session_id: '{session_id}' (user_id: {user_id})")
+            if resuming:
+                events = [event for event in session.events
+                          if event.invocation_id == execution_scope.native_invocation_id]
+                if not events:
+                    raise ValueError("The native invocation to resume does not exist")
+                pending = {}
+                for event in events:
+                    for part in getattr(event.content, "parts", None) or []:
+                        if part.function_call and part.function_call.name in INPUT_FUNCTIONS:
+                            pending[part.function_call.id] = part.function_call.name
+                        if part.function_response:
+                            pending.pop(part.function_response.id, None)
+                for response in native_input_responses or []:
+                    if pending.get(response["input_id"]) != response["function_name"]:
+                        raise ValueError("Native response does not match a pending input")
 
         except Exception as e:
             logger.error(
@@ -358,10 +393,15 @@ class AgentRunner:
                     agent_id,
                     session,
                     agent_config,
+                    execution_scope,
+                    abort_signal,
+                    native_input_responses,
                 )
             else:
                 return await self._run_html_agent(
-                    agent, session_helper, user_id, session_id, content, q, agent_id
+                    agent, session_helper, user_id, session_id, content, q, agent_id,
+                    execution_scope=execution_scope, abort_signal=abort_signal,
+                    native_input_responses=native_input_responses,
                 )
 
         except Exception as e:
@@ -384,6 +424,9 @@ class AgentRunner:
         agent_id,
         session=None,
         agent_config=None,
+        execution_scope=None,
+        abort_signal=None,
+        native_input_responses=None,
     ):
         """Run a standard agent (non-HTML) with detailed execution recording.
 
@@ -405,6 +448,12 @@ class AgentRunner:
             Tuple containing the final result, MCP tools used, execution summary, and generated files.
         """
         recorder = TraceRecorder(agent_name=agent_name, agent_type=agent_type)
+        from src.root_runtime.invocation import INPUT_FUNCTIONS, NativeInvocationProjection, native_run_options
+        from src.root_runtime.contracts import InvocationLifecycleState
+
+        projection = NativeInvocationProjection(execution_scope, session_id, str(agent_id))
+        await projection.restore_pending(session_helper, user_id, native_input_responses)
+        scoped_result = None
         agent_role = (
             "temporary_child"
             if agent_config and agent_config.get("_is_temporary_child_agent")
@@ -433,16 +482,23 @@ class AgentRunner:
         citation_session_state = dict(getattr(session, "state", {}) or {})
 
         _mark_session_stage("mark_runner_construction_start")
-        runner = make_chat_runner(agent, session_helper)
+        if execution_scope is not None:
+            from src.root_runtime.compiler import make_role_runner
+
+            runner = make_role_runner(agent, session_helper, execution_scope)
+        else:
+            runner = make_chat_runner(agent, session_helper)
         _mark_session_stage("mark_runner_construction_end")
         guarded_output = agent_tree_has_output_guardrail(agent)
 
         _mark_runner_invoked()
+        run_options = {"abort_signal": abort_signal} if abort_signal is not None else {}
         stream = runner.run_async(
             user_id=user_id,
             session_id=session_id,
-            new_message=content,
+            **native_run_options(execution_scope, content, native_input_responses),
             run_config=self.config,
+            **run_options,
         )
         should_close_stream = True
         _note_diag_session_id(session_id)
@@ -454,6 +510,7 @@ class AgentRunner:
 
         try:
             async for event in stream:
+                await projection.observe(event, q)
                 state_delta = getattr(getattr(event, "actions", None), "state_delta", None)
                 if isinstance(state_delta, dict):
                     citation_session_state.update(state_delta)
@@ -476,7 +533,8 @@ class AgentRunner:
                             "model": model_name,
                             "context_window_tokens": get_context_window_for_model(model_name) or 0,
                         },
-                        "metadata": {"message_id": session_id, "agent_id": str(agent_id or "")},
+                        "metadata": {"message_id": session_id, "agent_id": str(agent_id or ""),
+                            "native_event_id": event.id, "native_invocation_id": event.invocation_id},
                     })
                 # Log event for debugging
                 logger.debug(
@@ -489,6 +547,12 @@ class AgentRunner:
                 has_function_call = any(part.function_call for part in event.content.parts)
 
                 for part in event.content.parts:
+                    if ((part.function_call and part.function_call.name in INPUT_FUNCTIONS)
+                        or (part.function_response and part.function_response.name in INPUT_FUNCTIONS)):
+                        # Invocation control has its own owner-only projection.
+                        # Generic tool activity must never expose the original
+                        # confirmation call, private payload or schema hints.
+                        continue
                     is_thought = (
                         agent_type != "html"
                         and part.text
@@ -1097,12 +1161,21 @@ class AgentRunner:
                         session_helper, user_id, session_id
                     )
 
-                    return (
+                    result = (
                         final_result,
                         mcp_tools_used,
                         execution_summary,
                         generated_files,
                     )
+                    if execution_scope is None:
+                        return result
+                    scoped_result = result
+
+            lifecycle = await projection.finish(q, abort_signal, scoped_result is not None)
+            if lifecycle in {InvocationLifecycleState.WAITING, InvocationLifecycleState.CANCELLED}:
+                return (None, mcp_tools_used, recorder.get_execution_summary(), [])
+            if scoped_result is not None:
+                return scoped_result
 
             if owner_validation_response:
                 fallback_text = str(
@@ -1147,6 +1220,7 @@ class AgentRunner:
 
             logger.error(f"🔴 Full traceback: {traceback.format_exc()}")
             recorder.record_error(e)
+            await projection.emit(q, InvocationLifecycleState.FAILED)
             raise
         finally:
             reset_latency_diag_phase(runner_phase_token)
@@ -1156,7 +1230,9 @@ class AgentRunner:
                     await aclose()
 
     async def _run_html_agent(
-        self, agent, session_helper, user_id, session_id, content, q, agent_id
+        self, agent, session_helper, user_id, session_id, content, q, agent_id,
+        execution_scope=None, abort_signal=None,
+        native_input_responses=None,
     ):
         """Run HTML agent with detailed execution recording.
 
@@ -1172,17 +1248,29 @@ class AgentRunner:
             Tuple containing the final result, False (no MCP tools), execution summary, and generated files.
         """
         recorder = TraceRecorder(agent_name=agent.name, agent_type="html")
+        from src.root_runtime.invocation import NativeInvocationProjection, native_run_options
+        from src.root_runtime.contracts import InvocationLifecycleState
+
+        projection = NativeInvocationProjection(execution_scope, session_id, str(agent_id))
+        await projection.restore_pending(session_helper, user_id, native_input_responses)
+        scoped_result = None
         accumulated_text = ""
         guarded_output = agent_tree_has_output_guardrail(agent)
         _mark_session_stage("mark_runner_construction_start")
-        runner = make_chat_runner(agent, session_helper)
+        if execution_scope is not None:
+            from src.root_runtime.compiler import make_role_runner
+
+            runner = make_role_runner(agent, session_helper, execution_scope)
+        else:
+            runner = make_chat_runner(agent, session_helper)
         _mark_session_stage("mark_runner_construction_end")
 
         _mark_runner_invoked()
         stream = runner.run_async(
             user_id=user_id,
             session_id=session_id,
-            new_message=content,
+            **native_run_options(execution_scope, content, native_input_responses),
+            **({"abort_signal": abort_signal} if abort_signal is not None else {}),
         )
         should_close_stream = True
         _note_diag_session_id(session_id)
@@ -1191,6 +1279,7 @@ class AgentRunner:
 
         try:
             async for event in stream:
+                await projection.observe(event, q)
                 if not event.content or not event.content.parts:
                     continue
                 if guarded_output and event.is_final_response():
@@ -1230,15 +1319,22 @@ class AgentRunner:
                     recorder.record_final_result(final_result)
                     execution_summary = recorder.get_execution_summary()
 
-                    return (final_result, [], execution_summary, [])
+                    result = (final_result, [], execution_summary, [])
+                    if execution_scope is None:
+                        return result
+                    scoped_result = result
 
-            return (None, [], recorder.get_execution_summary(), [])
+            await projection.finish(q, abort_signal, scoped_result is not None)
+            if abort_signal is not None and abort_signal.is_set() or projection.pending:
+                return (None, [], recorder.get_execution_summary(), [])
+            return scoped_result or (None, [], recorder.get_execution_summary(), [])
 
         except (asyncio.CancelledError, GeneratorExit):
             should_close_stream = False
             raise
         except Exception as e:
             logger.error(f"🔴 Exception occurred in HTML agent: {str(e)}")
+            await projection.emit(q, InvocationLifecycleState.FAILED)
             recorder.record_error(e)
             execution_summary = recorder.get_execution_summary()
             return (None, [], execution_summary, [])
@@ -1252,8 +1348,9 @@ class AgentRunner:
     async def _extract_generated_files(self, session_helper, user_id, session_id):
         """Read generated files from session state after agent execution."""
         try:
+            from src.root_runtime.background_sessions import native_app_name
             session = await session_helper.get_session(
-                app_name="manager_app", user_id=user_id, session_id=session_id
+                app_name=native_app_name(session_helper), user_id=user_id, session_id=session_id
             )
             if session and session.state:
                 from src.smart_rag.tools.utilities.code_interpreter import (

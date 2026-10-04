@@ -950,6 +950,9 @@ def create_connector_tools(
         server_url = str(binding.get("mcp_server_url") or "").strip()
         server_config = binding.get("mcp_server_config") or {}
         fixed_params = binding.get("fixed_params") or {}
+        enforced_params = binding.get("enforced_params", {})
+        if not isinstance(enforced_params, dict):
+            raise ValueError("Connector enforced parameters must be an object")
         binding_auth_headers = binding.get("auth_headers") or {}
         if is_logical_search:
             binding_auth_headers = _logical_search_headers(binding_auth_headers)
@@ -1045,6 +1048,7 @@ def create_connector_tools(
                 _server_config: Dict[str, Any] = server_config,
                 _action_key: str = action_key,
                 _fixed_params: Dict[str, Any] = fixed_params,
+                _enforced_params: Dict[str, Any] = dict(enforced_params),
                 _auth_headers: Dict[str, str] = dict(binding_auth_headers),
                 _auth_env: Dict[str, str] = binding_auth_env,
                 _dynamic_headers: List[Dict[str, Any]] = list(binding_dynamic_headers),
@@ -1160,6 +1164,12 @@ def create_connector_tools(
                     effective_server_config,
                     _dynamic_headers,
                 )
+                # Trusted root restrictions apply after model args, approval edits
+                # and workspace defaults; fixed_params alone are only defaults.
+                for key, value in _enforced_params.items():
+                    if key in merged_params and merged_params[key] != value:
+                        return {"error": "The requested resource is outside the execution scope."}
+                    merged_params[key] = value
                 response = await call_mcp_tool(
                     _transport_type,
                     _server_url,
@@ -1203,7 +1213,9 @@ def create_connector_tools(
             _connector_tool.__annotations__ = {
                 p.name: p.annotation for p in runtime_signature.parameters.values()
             }
-            tools.append(SearchToolADK(_connector_tool, schema))
+            from src.root_runtime.leaf_tools import register_tool_execution_kind
+            tool = SearchToolADK(_connector_tool, schema, reject_unknown_args=True)
+            tools.append(register_tool_execution_kind(tool, action.get("execution_kind", "unknown")))
 
         logger.info(
             "conversation_connector_tools_created connector_id=%s connector_name=%s tool_count=%s workspace_names=%s",
@@ -1271,6 +1283,15 @@ def create_save_file_to_workspace(agent_params: Dict[str, Any]) -> Optional[Any]
                     return f"Error saving file to workspace: HTTP {resp.status_code} - {response_error}"
                 data = resp.json()
                 doc = data.get("document", {})
+                if isinstance(doc, dict) and doc.get('id') and (doc.get('filePath') or doc.get('azurePath')):
+                    from src.root_runtime.evidence_capture import capture_evidence
+                    capture_evidence('artifact', str(doc['id']), {
+                        'document_id': str(doc['id']), 'workspace_id': workspace_id,
+                        'file_path': doc.get('filePath') or doc.get('azurePath'),
+                        'filename': doc.get('originalName') or filename,
+                        'mime_type': doc.get('mimeType') or mime_type or '',
+                        'size_bytes': doc.get('size', 0), 'availability': 'ready',
+                    })
 
                 # Make the saved file available to code interpreter in this session.
                 if tool_context and doc:
@@ -1308,4 +1329,5 @@ def create_save_file_to_workspace(agent_params: Dict[str, Any]) -> Optional[Any]
             )
             return f"Error saving file to workspace: {error_message}"
 
-    return save_file_to_workspace
+    from src.root_runtime.leaf_tools import register_tool_execution_kind
+    return register_tool_execution_kind(save_file_to_workspace, "leaf")

@@ -1,8 +1,9 @@
 """Pydantic models for chatbot endpoints."""
 
+import asyncio
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.root_runtime.contracts import ExecutionScopeV1
 
@@ -146,6 +147,9 @@ class RunAgentTeamRequest(BaseModel):
     # Trusted execution scope (WP03); frozen dataclass from src.root_runtime.
     # None/unset = legacy semantics. Never model-authored.
     execution_scope: Optional[ExecutionScopeV1] = None
+    abort_signal: Optional[asyncio.Event] = Field(default=None, exclude=True)
+    session_service: Any = Field(default=None, exclude=True)
+    native_input_responses: Optional[List[Dict[str, Any]]] = None
     # WP04 root delegation: compact authorized catalog + frozen candidate
     # definitions. None/unset = legacy request.
     root_context: Optional[Dict[str, Any]] = None
@@ -207,4 +211,3 @@ class ChatCompletionRequest(BaseModel):
     model: str
     temperature: Optional[float] = 0.7
     max_tokens: Optional[int] = None
-

@@ -38,6 +38,11 @@ async def handle_single_agent_workflow(
     logger.info(f"[MONO WORKFLOW] Starting single-agent workflow - session_id: {session_id}")
 
     try:
+        session_service = user_request.session_service
+        if session_service is not None:
+            from src.root_runtime.background_sessions import validate_background_request
+            validate_background_request(session_service, user_request.execution_scope, user_request.user_id, session_id)
+            await session_service.validate_owner()
         # Exactly one agent is expected. Ignore any manager agent defensively.
         agents = [
             agent for agent in (user_request.agents or [])
@@ -61,6 +66,10 @@ async def handle_single_agent_workflow(
                 logger.info("[MONO WORKFLOW] deep_search_enabled=True — added deep_search tool to agent")
 
         agent_data = team.agent_helper._prepare_agent_data(agents[0], user_request, team)
+        from src.root_runtime.contracts import ExecutionRole
+        scope = getattr(user_request, "execution_scope", None)
+        if scope is not None and scope.role is ExecutionRole.ROOT:
+            agent_data["_root_input_control_version"] = (getattr(user_request, "root_context", None) or {}).get("native_input_control_version", 0)
         team.agent_repository.add_agent(agent_data)
         image_input = user_request.image_input if hasattr(user_request, 'image_input') else None
 
@@ -68,6 +77,9 @@ async def handle_single_agent_workflow(
         # replayable dispatcher so the root can delegate to allowlisted
         # specialists. Candidates stay data until the root chooses one.
         delegation_tool = None
+        temporary_worker_tool = None
+        fanout_tool = None
+        background_task_tool = None
         delegation_instruction = ""
         root_context = getattr(user_request, "root_context", None)
         if root_context and root_context.get("catalog"):
@@ -86,7 +98,19 @@ async def handle_single_agent_workflow(
             if delegation_tool is not None:
                 delegation_instruction = build_delegation_instruction(root_context["catalog"])
 
-        await team.run_single_agent(
+        if root_context and root_context.get('temporary_workers_enabled') is True:
+            from src.root_runtime.dispatcher import build_delegate_dispatcher
+            temporary_worker_tool = build_delegate_dispatcher(team, user_request, root_context, [],
+                root_scope=scope, temporary=True)
+
+        if root_context and root_context.get('fanout_enabled') is True:
+            from src.root_runtime.fanout import build_fanout_dispatcher
+            fanout_tool = build_fanout_dispatcher(team, user_request, root_context, scope)
+        if root_context and root_context.get('background_enabled') is True:
+            from src.root_runtime.background_dispatcher import build_background_dispatcher
+            background_task_tool = build_background_dispatcher(root_context, scope)
+
+        result = await team.run_single_agent(
             user_prompt=build_corrective_replay_user_message(
                 user_request.message,
                 user_request.correction_replay_context,
@@ -96,10 +120,20 @@ async def handle_single_agent_workflow(
             image_input=image_input,
             task_summary=user_request.task_summary,
             delegation_tool=delegation_tool,
+            temporary_worker_tool=temporary_worker_tool,
+            fanout_tool=fanout_tool,
             delegation_instruction=delegation_instruction,
+            execution_scope=getattr(user_request, "execution_scope", None),
+            abort_signal=getattr(user_request, "abort_signal", None),
+            native_input_responses=getattr(user_request, "native_input_responses", None),
+            **({'session_service': session_service} if session_service is not None else {}),
+            **({'background_task_tool': background_task_tool} if background_task_tool is not None else {}),
         )
         logger.info(f"[MONO WORKFLOW] Completed single-agent workflow - session_id: {session_id}")
+        return result
 
     except Exception as e:
+        if user_request.session_service is not None:
+            raise
         logger.exception(f"[MONO WORKFLOW] Error in single-agent workflow - session_id: {session_id}: {str(e)}")
         await team._message_helper._send_error_message(q, session_id, str(e))
