@@ -170,9 +170,19 @@ export const CATEGORY_ICONS: Record<string, LucideIcon> = {
 
 export const CATEGORY_ICON_NAMES = Object.keys(CATEGORY_ICONS);
 
+/** i18n key suffix under `categories.iconGroups` (must match en/fr locale keys). */
+export type CategoryIconGroupKey =
+  | 'general'
+  | 'business'
+  | 'files'
+  | 'communication'
+  | 'media'
+  | 'technology'
+  | 'commerce'
+  | 'time';
+
 export interface CategoryIconGroup {
-  /** i18n key suffix under `categories.iconGroups`. */
-  key: string;
+  key: CategoryIconGroupKey;
   icons: string[];
 }
 

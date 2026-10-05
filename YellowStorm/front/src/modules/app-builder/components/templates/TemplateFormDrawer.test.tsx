@@ -3,7 +3,17 @@ import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { AppTemplate, TemplateCategory } from '../../types';
 
-const createTemplateMock = vi.hoisted(() => vi.fn(async () => ({})));
+type CreateTemplateInput = {
+  categoryId: string;
+  title: string;
+  description?: string;
+  zip: File;
+  cover: File;
+};
+
+const createTemplateMock = vi.hoisted(() =>
+  vi.fn(async (_input: CreateTemplateInput) => ({})),
+);
 const updateTemplateMock = vi.hoisted(() => vi.fn(async () => ({})));
 
 vi.mock('../../api', () => ({
@@ -121,19 +131,14 @@ describe('TemplateFormDrawer', () => {
     fireEvent.submit(submit.closest('form')!);
 
     await waitFor(() => expect(createTemplateMock).toHaveBeenCalledTimes(1));
-    const payload = createTemplateMock.mock.calls[0]?.[0] as {
-      categoryId: string;
-      title: string;
-      description: string;
-      zip: File;
-      cover: File;
-    };
-    expect(payload.categoryId).toBe('cat_1');
-    expect(payload.title).toBe('Sales starter');
-    expect(payload.description).toBe('');
-    expect(payload.zip).toBe(zip);
-    expect(payload.cover).toBeInstanceOf(File);
-    expect(payload.cover.name).toBe('template-cover.png');
+    const payload = createTemplateMock.mock.calls[0]?.[0];
+    expect(payload).toBeDefined();
+    expect(payload!.categoryId).toBe('cat_1');
+    expect(payload!.title).toBe('Sales starter');
+    expect(payload!.description).toBe('');
+    expect(payload!.zip).toBe(zip);
+    expect(payload!.cover).toBeInstanceOf(File);
+    expect(payload!.cover.name).toBe('template-cover.png');
   });
 
   it('prefills the edit form, hides the upload zones and updates in place', async () => {
