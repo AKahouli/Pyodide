@@ -2,12 +2,12 @@ import { Injectable } from '@nestjs/common';
 import { ErrorCode, NotFoundException } from '../../exceptions';
 import { ConversationService } from '../services/conversation.service';
 import { RootWorkService } from './root-work.service';
-import { RootDelegateResolverService } from '../../agent/services/root-delegate-resolver.service';
+import { ConversationRootResolverService } from './conversation-root-resolver.service';
 
 @Injectable()
 export class RootResultService {
   constructor(private readonly conversations: ConversationService, private readonly work: RootWorkService,
-    private readonly resolver: RootDelegateResolverService) {}
+    private readonly resolver: ConversationRootResolverService) {}
 
   async getResult(conversationId: string, executionId: string, actorId: string) {
     const execution = await this.authorizeResult(conversationId, executionId, actorId);
@@ -44,7 +44,7 @@ export class RootResultService {
     const result = execution.resultPayload;
     const state = result.nativeState!;
     const parent = execution.parentExecutionId ? await this.work.getExecution(execution.parentExecutionId) : null;
-    const pool = await this.resolver.resolveForActor(execution.rootAgentId, actorId);
+    const pool = await this.resolver.resolveForActor(execution.rootAgentId, actorId, conversationId, parent?.resultPayload?.nativeState?.rootContext?.governance_revision ?? null);
     const selected = pool.entries.find((entry) => entry.agentId === state.rootContext.selected_agent_id);
     const manifest = parent?.resultPayload?.nativeState?.fanoutManifests?.find((entry) =>
       entry.manifestId === state.backgroundFanout?.manifestId && entry.digest === state.backgroundFanout?.digest);
@@ -69,7 +69,9 @@ export class RootResultService {
     }
     if (Array.isArray(sources)) {
       if (!sources.every((id) => typeof id === 'string')) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Result source permissions are unavailable');
-      const accessible = await this.conversations.filterAccessibleWorkspaceIds(actorId, sources);
+      const accessible = conversation.runtimeMode === 'governed'
+        ? await this.resolver.authorizedWorkspaces(conversationId, actorId, sources)
+        : await this.conversations.filterAccessibleWorkspaceIds(actorId, sources);
       if (sources.some((id) => !accessible.includes(id))) {
         throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Result source access is unavailable');
       }
@@ -87,6 +89,10 @@ export class RootResultService {
       for (const member of parent.resultPayload!.nativeState!.schedulingSeal!.resultManifest) {
         await this.authorizeSynthesisMember(conversationId, member.executionId, actorId);
       }
+    }
+    if (conversation.runtimeMode === 'governed') {
+      await this.resolver.resolveForActor(execution.rootAgentId, actorId, conversationId,
+        parent?.resultPayload?.nativeState?.rootContext?.governance_revision ?? null);
     }
     return execution;
   }

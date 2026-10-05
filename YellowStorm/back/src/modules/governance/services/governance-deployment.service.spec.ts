@@ -50,8 +50,9 @@ describe('GovernanceDeploymentService', () => {
         }
       }),
     };
-    const service = new GovernanceDeploymentService(deploymentStore as never, revisionStore as never, dryRunStore as never, bindingStore as never, attemptStore as never, programService as never, scopeService as never, accessService as never, auditLogService as never, draftPreparationService as never, tx as never);
-    return { tx, service, attemptStore, revisionStore, deploymentStore, auditLogService, accessService, scopeService, draftPreparationService };
+    const rootPublication = { capture: jest.fn().mockResolvedValue(undefined), assertUnchanged: jest.fn().mockResolvedValue(undefined) };
+    const service = new GovernanceDeploymentService(deploymentStore as never, revisionStore as never, dryRunStore as never, bindingStore as never, attemptStore as never, programService as never, scopeService as never, accessService as never, auditLogService as never, draftPreparationService as never, tx as never, rootPublication as never);
+    return { tx, service, attemptStore, revisionStore, deploymentStore, auditLogService, accessService, scopeService, draftPreparationService, rootPublication };
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -91,6 +92,36 @@ describe('GovernanceDeploymentService', () => {
     expect(deployment.currentPublishedRevisionId).toBe(revisionId);
     expect(attemptStore.insert).toHaveBeenCalledWith(expect.objectContaining({ status: 'success', revisionId }));
     expect(result.currentPublishedRevisionId).toBe(revisionId);
+  });
+
+  it('rejects client Root enrollment on both draft mutation routes', async () => {
+    const { service, revisionStore } = buildService(deploymentRecord(), revisionRecord());
+    await expect(service.createRevision(actorId, actorEmail, deploymentId, { agentId, agentSnapshot: { rootWork: {} } }))
+      .rejects.toMatchObject({ code: 'ERR_3670' });
+    await expect(service.updateRevision(actorId, deploymentId, revisionId, { agentSnapshot: { rootWork: {} } }))
+      .rejects.toMatchObject({ code: 'ERR_3670' });
+    expect(revisionStore.update).not.toHaveBeenCalled();
+  });
+
+  it('captures server Root policy atomically and does not bypass its recheck with allowPartial', async () => {
+    const revision = revisionRecord({ agentSnapshot: { legacy: true, rootWork: { client: true } } });
+    const { service, rootPublication, revisionStore } = buildService(deploymentRecord(), revision);
+    const frozen = { version: 1, pool: { rootAgentId: agentId } };
+    rootPublication.capture.mockResolvedValue(frozen as never);
+    await service.publish(actorId, actorEmail, deploymentId, {});
+    expect(revision.agentSnapshot).toEqual({ legacy: true, rootWork: frozen });
+    const second = buildService(deploymentRecord(), revisionRecord());
+    second.rootPublication.assertUnchanged.mockRejectedValue(new Error('profile drift'));
+    await expect(second.service.publish(actorId, actorEmail, deploymentId, { allowPartial: true })).rejects.toThrow('profile drift');
+    expect(second.revisionStore.update).not.toHaveBeenCalled();
+    expect(revisionStore.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not move the published pointer when the draft changes after capture', async () => {
+    const h = buildService(deploymentRecord(), revisionRecord());
+    h.revisionStore.update.mockResolvedValueOnce(null as never);
+    await expect(h.service.publish(actorId, actorEmail, deploymentId, {})).rejects.toMatchObject({ code: 'ERR_3670' });
+    expect(h.deploymentStore.publishGuarded).not.toHaveBeenCalled();
   });
 
   it('publishes even when channel configuration is not ready', async () => {

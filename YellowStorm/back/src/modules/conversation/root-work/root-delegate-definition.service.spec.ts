@@ -2,6 +2,7 @@ import { RootDelegateDefinitionService } from './root-delegate-definition.servic
 import { freezeRootCapabilityCeiling } from './root-capability-ceiling';
 import type { IGrpcAgent } from '../../agent/interfaces/agent.interface';
 import { createHash } from 'node:crypto';
+import { ConversationRootResolverService } from './conversation-root-resolver.service';
 
 describe('lazy selected root delegate definition', () => {
   const parentId = '1'.repeat(24), agentId = '2'.repeat(24);
@@ -78,6 +79,23 @@ describe('lazy selected root delegate definition', () => {
     expect(prepared.registration?.nativeState.admittedRequest).toEqual({ ...request, expectedOutput: '', contextRefs: [] });
     expect(h.work.registerExecution).not.toHaveBeenCalled();
     expect(JSON.stringify(prepared.registration)).not.toContain('fresh-credential');
+  });
+
+  it('rejects governed source revocation while run-code mounts are prepared', async () => {
+    const h = harness();
+    let revoked = false;
+    h.conversations.getConversationDocument.mockResolvedValue({ createdBy: 'actor', rootAgentId: parentId,
+      rootWorkEpoch: 4, isGroup: false, isArchived: false, runtimeMode: 'governed' } as never);
+    const authority = new ConversationRootResolverService(h.conversations as never, {} as never,
+      { resolveRuntime: async () => ({ workspaceIds: revoked ? [] : ['approved'] }) } as never, {} as never, {} as never);
+    Object.assign(h.resolver, { restrictDefinition: authority.restrictDefinition.bind(authority),
+      authorizedWorkspaces: authority.authorizedWorkspaces.bind(authority), assertWorkspaces: authority.assertWorkspaces.bind(authority) });
+    h.agents.buildGrpcAgentsForPlaybook.mockResolvedValue([{ ...definition, tools: [{ name: 'run_code' }],
+      brain_context: [{ workspace_id: 'approved', workspace_documents: [{ workspace_id: 'approved', filepath: 'fixture.pdf' }] }] } as never]);
+    h.sources.buildSources.mockImplementation(async () => { await Promise.resolve(); revoked = true; return []; });
+    await expect(h.service.resolve(parentId, request)).rejects.toThrow('Governed source access changed');
+    expect(h.work.registerExecution).not.toHaveBeenCalled();
+    expect(h.shares.assertUserHasAccess).not.toHaveBeenCalled();
   });
 
   it('hydrates only the selected Team-authorized specialist without root overrides', async () => {

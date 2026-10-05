@@ -1,6 +1,8 @@
 import { ConflictException, NotFoundException } from '@modules/exceptions';
 import { CreateGovernedConversationDto } from '../dto';
 import { GovernedConversationService } from './governed-conversation.service';
+import { newRootExecutionPolicy } from '@modules/agent/interfaces/root-execution-policy.interface';
+import { sealRootWork } from './governance-root-snapshot';
 
 const userId = '507f1f77bcf86cd799439011';
 const programId = '507f1f77bcf86cd799439012';
@@ -29,6 +31,7 @@ describe('GovernedConversationService create', () => {
       audienceService as never,
       conversationService as never,
       featureVisibility as never,
+      { get: jest.fn().mockReturnValue('test-only-secret') } as never,
     );
     return { service, conversationService };
   }
@@ -43,7 +46,17 @@ describe('GovernedConversationService create', () => {
     expect(conversationService.createGoverned).toHaveBeenCalledTimes(1);
     const payload = conversationService.createGoverned.mock.calls[0][1];
     expect(payload.title).toBeUndefined();
+    expect(payload.rootAgentId).toBeUndefined();
     expect(payload).toEqual(expect.objectContaining({ requestId: dto.requestId, scopeId, deploymentId, revisionId, revisionNumber: 3 }));
+  });
+
+  it('binds only a server-published enrolled Root to a new governed conversation', async () => {
+    const { service, conversationService } = buildService({ revision: { id: revisionId, deploymentId,
+      status: 'published', revisionNumber: 3, agentId: primaryAgentId, allowedAgentIds: [primaryAgentId], workspaceIds: [],
+      agentSnapshot: { rootWork: sealRootWork({ version: 1, pool: { rootAgentId: primaryAgentId, rootSnapshotDigest: 'frozen',
+        policy: newRootExecutionPolicy(), entries: [] } as never }, revisionId, 'test-only-secret') } } });
+    await service.create(userId, dto);
+    expect(conversationService.createGoverned.mock.calls[0][1].rootAgentId).toBe(primaryAgentId);
   });
 
   it('rejects unknown scopes', async () => {

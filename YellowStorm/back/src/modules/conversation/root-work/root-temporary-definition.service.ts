@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { BadRequestException, ConflictException, ErrorCode } from '../../exceptions';
 import { AgentService } from '../../agent/agent.service';
-import { RootDelegateResolverService } from '../../agent/services/root-delegate-resolver.service';
+import { ConversationRootResolverService } from './conversation-root-resolver.service';
 import { stableStringify } from '../../agent/services/agent-execution-snapshot.service';
 import { SemanticModelService } from '../../semantic-model/services/semantic-model.service';
 import { ConversationSettingsService } from '../../system/conversation-settings.service';
@@ -19,7 +19,7 @@ import { RootBackgroundJobStore, RootJobOwner } from '../persistence/postgres/ro
 @Injectable()
 export class RootTemporaryDefinitionService {
   constructor(private readonly work: RootWorkService, private readonly conversations: ConversationService,
-    private readonly resolver: RootDelegateResolverService, private readonly agents: AgentService,
+    private readonly resolver: ConversationRootResolverService, private readonly agents: AgentService,
     private readonly semanticModels: SemanticModelService, private readonly settings: ConversationSettingsService,
     private readonly workspaceShares: WorkspaceShareService, private readonly runCodeSources: RunCodeSourceScopeService,
     private readonly jobs: RootBackgroundJobStore) {}
@@ -76,7 +76,7 @@ export class RootTemporaryDefinitionService {
     const authorize = async () => {
       const [conversation, current, pool] = await Promise.all([
         this.conversations.getConversationDocument(parent.conversationId), this.work.getExecution(parentId),
-        this.resolver.resolveForActor(rootId, state.actorId),
+        this.resolver.resolveForActor(rootId, state.actorId, parent.conversationId, state.rootContext?.governance_revision ?? null),
       ]);
       if (conversation.createdBy !== state.actorId || conversation.rootAgentId !== rootId
         || conversation.isArchived || conversation.isGroup
@@ -98,7 +98,11 @@ export class RootTemporaryDefinitionService {
       summarizer_model: compaction.summarizerModel ?? '',
     } : undefined;
     const semanticModel = profile.semanticModelId ? await this.semanticModels.resolveChatModel(state.actorId, profile.semanticModelId) : undefined;
-    const [root] = await this.agents.buildAgentsForStream(state.actorId, profile.modelId, [rootId], [], [],
+    const conversation = await this.conversations.getConversationDocument(parent.conversationId);
+    const [root] = conversation.runtimeMode === 'governed'
+      ? await this.agents.buildGovernedAgentsForStream(state.actorId, [rootId],
+        await this.resolver.authorizedWorkspaces(parent.conversationId, state.actorId, state.capabilityCeiling.workspaceIds), grpcCompaction)
+      : await this.agents.buildAgentsForStream(state.actorId, profile.modelId, [rootId], [], [],
       profile.connectorRepo?.connectorId, semanticModel, { conversationId: parent.conversationId,
         correlationId: request.nativeCallId, playbookHandoffAttached: Boolean(profile.playbookHandoffId) },
       profile.reasoningEffort, grpcCompaction, profile.webConnectorAccessEnabled);
@@ -124,13 +128,18 @@ export class RootTemporaryDefinitionService {
     candidate.agent_params.params.connector_bindings_json = JSON.stringify(candidate.connector_bindings);
     candidate.agent_params.params.enable_temporary_child_agents = 'false';
     const workspaceIds = candidate.brain_context.map((context) => context.workspace_id);
-    await this.workspaceShares.assertUserHasAccess(state.actorId, workspaceIds);
+    const assertSources = async () => {
+      if (conversation.runtimeMode !== 'governed') return this.workspaceShares.assertUserHasAccess(state.actorId, workspaceIds);
+      const approved = await this.resolver.authorizedWorkspaces(parent.conversationId, state.actorId, workspaceIds);
+      if (workspaceIds.some((id) => !approved.includes(id))) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Governed source access changed');
+    };
+    await assertSources();
     if (candidate.tools.some((tool) => tool.name === 'run_code')) {
       candidate.agent_params.params.run_code_context_json = JSON.stringify({ userId: state.actorId, runId: childId,
         sources: await this.runCodeSources.buildSources(workspaceIds, []) });
     }
     await authorize();
-    await this.workspaceShares.assertUserHasAccess(state.actorId, workspaceIds);
+    await assertSources();
     const childState = { admittedRequest: { nativeCallId: request.nativeCallId, nativeCallBranch: request.nativeCallBranch,
       task: request.task, expectedOutput: request.expectedOutput ?? '', contextRefs: [...(request.contextRefs ?? [])] },
       actorId: state.actorId, sessionId: state.sessionId, invocationId: state.invocationId,

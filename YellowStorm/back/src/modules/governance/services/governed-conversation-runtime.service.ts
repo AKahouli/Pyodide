@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { BadRequestException, ForbiddenException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { SendMessageDto } from '@modules/conversation/dto/send-message.dto';
@@ -7,10 +8,12 @@ import { PgRevisionStore } from '../persistence/postgres/pg-revision.store';
 import { PgDeploymentStore } from '../persistence/postgres/pg-deployment.store';
 import { PgScopeStore } from '../persistence/postgres/pg-scope.store';
 import { PgBindingStore } from '../persistence/postgres/pg-binding.store';
+import { publishedRootWork, PublishedRootWorkV1 } from './governance-root-snapshot';
 
 export interface GovernedConversationRuntime {
   programId: string; scopeId: string; deploymentId: string; revisionId: string; revisionNumber: number;
   primaryAgentId: string; allowedAgentIds: string[]; workspaceIds: string[];
+  rootWork?: PublishedRootWorkV1;
 }
 
 export interface GovernedConversationRecord {
@@ -38,6 +41,7 @@ export class GovernedConversationRuntimeService {
     private readonly revisionStore: PgRevisionStore,
     private readonly audienceService: GovernanceAudienceAuthorizationService,
     private readonly bindingStore: PgBindingStore,
+    @Optional() private readonly config?: ConfigService,
   ) {}
 
   async resolveRuntime(userId: string, conversation: GovernedConversationRecord): Promise<GovernedConversationRuntime> {
@@ -68,7 +72,9 @@ export class GovernedConversationRuntimeService {
     const workspaceIds = context.runtimeDefinition.workspaceIds.filter((id) =>
       revision.workspaceIds.includes(id) && currentWorkspaces.has(id));
     return { programId: context.programId, scopeId: context.scopeId, deploymentId: context.deploymentId,
-      revisionId: context.revisionId, revisionNumber: context.revisionNumber, ...context.runtimeDefinition, workspaceIds };
+      revisionId: context.revisionId, revisionNumber: context.revisionNumber, ...context.runtimeDefinition, workspaceIds,
+      ...(revision.agentSnapshot?.rootWork !== undefined ? { rootWork: publishedRootWork(revision.agentSnapshot, revision.id,
+        this.config?.get<string>('INTERNAL_SERVICE_SECRET')) } : {}) };
   }
 
   assertRuntimeRequestAllowed(runtime: GovernedConversationRuntime, dto: SendMessageDto): void {

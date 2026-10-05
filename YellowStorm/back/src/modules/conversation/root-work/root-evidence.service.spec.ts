@@ -6,12 +6,13 @@ describe('Root evidence current access', () => {
     const results = { authorizeResult: jest.fn().mockResolvedValue(execution) };
     const work = { listEvidenceForExecution: jest.fn().mockResolvedValue([{ id: 'evidence', executionId: 'child', conversationId: 'conversation',
       producerAgentId: 'worker', kind, payload }]) };
-    const conversations = { filterAccessibleWorkspaceIds: jest.fn().mockResolvedValue(['workspace']) };
+    const conversations = { filterAccessibleWorkspaceIds: jest.fn(async (_actor: string, _ids: string[]) => ['workspace']) };
     const documents = { findById: jest.fn().mockResolvedValue({ path: 'owner/workspace/report.pdf', originalName: 'report.pdf' }),
       findByMultipleWorkspaces: jest.fn() };
     const storage = { generateSasUrl: jest.fn().mockResolvedValue('https://storage.test/read') };
     return { results, work, conversations, documents, storage,
-      service: new RootEvidenceService(results as never, work as never, conversations as never, documents as never, storage as never) };
+      service: new RootEvidenceService(results as never, work as never, conversations as never, documents as never, storage as never,
+        { authorizedWorkspaces: (_conversation: string, actor: string, ids: string[]) => conversations.filterAccessibleWorkspaceIds(actor, ids) } as never) };
   }
   it('resolves only registered document evidence under current source access', async () => {
     const h = setup({ document_id: 'document', workspace_id: 'workspace', file_path: 'owner/workspace/report.pdf' }, 'artifact');

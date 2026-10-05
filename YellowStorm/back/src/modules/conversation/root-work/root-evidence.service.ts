@@ -5,6 +5,7 @@ import { WorkspaceDocumentService } from '../../workspace/workspace-document.ser
 import { ConversationService } from '../services/conversation.service';
 import { RootResultService } from './root-result.service';
 import { RootWorkService } from './root-work.service';
+import { ConversationRootResolverService } from './conversation-root-resolver.service';
 import { flattenProducerEvidence } from './root-producer-evidence';
 
 const text = (value: unknown) => typeof value === 'string' ? value : '';
@@ -13,7 +14,7 @@ const text = (value: unknown) => typeof value === 'string' ? value : '';
 export class RootEvidenceService {
   constructor(private readonly results: RootResultService, private readonly work: RootWorkService,
     private readonly conversations: ConversationService, private readonly documents: WorkspaceDocumentService,
-    private readonly storage: DocumentService) {}
+    private readonly storage: DocumentService, private readonly resolver: ConversationRootResolverService) {}
 
   async resolve(conversationId: string, executionId: string, evidenceId: string, actorId: string) {
     const execution = await this.results.authorizeResult(conversationId, executionId, actorId);
@@ -32,7 +33,7 @@ export class RootEvidenceService {
     let fileName = filename;
     let mimeType = text(source.mime_type);
     if (workspaceId) {
-      const allowed = await this.conversations.filterAccessibleWorkspaceIds(actorId, [workspaceId]);
+      const allowed = await this.resolver.authorizedWorkspaces(conversationId, actorId, [workspaceId]);
       if (!allowed.includes(workspaceId)) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Source access is unavailable');
       const page = documentId ? null : await this.documents.findByMultipleWorkspaces([workspaceId],
         { search: filename, page: 1, limit: 100, searchFilename: true });
@@ -69,7 +70,7 @@ export class RootEvidenceService {
     if (!url) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Evidence location is unavailable');
     // Recheck execution and source grants after asynchronous storage resolution.
     await this.results.authorizeResult(conversationId, executionId, actorId);
-    if (workspaceId && !(await this.conversations.filterAccessibleWorkspaceIds(actorId, [workspaceId])).includes(workspaceId)) {
+    if (workspaceId && !(await this.resolver.authorizedWorkspaces(conversationId, actorId, [workspaceId])).includes(workspaceId)) {
       throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Source access is unavailable');
     }
     return { evidenceId, kind: registered.kind, producerAgentId: registered.producerAgentId, url, fileName,

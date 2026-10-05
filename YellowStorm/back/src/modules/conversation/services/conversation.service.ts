@@ -206,6 +206,7 @@ export class ConversationService {
       revisionId: string;
       revisionNumber: number;
       primaryAgentId: string;
+      rootAgentId?: string;
       allowedAgentIds: string[];
       workspaceIds: string[];
     },
@@ -221,6 +222,7 @@ export class ConversationService {
         title: data.title || 'New Conversation',
         createdBy: userId,
         runtimeMode: 'governed',
+        ...(data.rootAgentId ? { rootAgentId: data.rootAgentId } : {}),
         governedCreationRequestId: data.requestId,
         governanceContext: {
           programId: data.programId,

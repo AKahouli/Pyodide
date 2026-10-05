@@ -1,4 +1,6 @@
 import { Module, forwardRef } from '@nestjs/common';
+import { AgentModule } from '@modules/agent/agent.module';
+import { GovernanceRootPublicationService } from './services/governance-root-publication.service';
 import { AuthorizationModule } from '@modules/authorization';
 import { LoggerModule } from '@modules/logger';
 import { ConversationModule } from '@modules/conversation/conversation.module';
@@ -66,6 +68,7 @@ import { PgGovernancePersistenceModule } from './persistence/postgres/pg-governa
 
 @Module({
   imports: [
+    forwardRef(() => AgentModule),
     GovernanceRuntimeModule,
     PgGovernancePersistenceModule,
     WorkspaceModule,
@@ -83,7 +86,7 @@ import { PgGovernancePersistenceModule } from './persistence/postgres/pg-governa
     IndexingModule,
   ],
   controllers: [GovernanceProgramController, GovernanceScopeController, GovernanceScopeAudienceController, GovernanceConsumerController, GovernedConversationController, GovernanceDocumentController, GovernanceWorkspaceBindingController, GovernanceMembershipController, GovernanceDeploymentController, GovernanceDryRunController, GovernanceMetricController, GovernanceKnowledgeController],
-  providers: [GovernanceProgramService, GovernanceScopeService, GovernanceScopeAudienceService, GovernanceConsumerScopeService, GovernedConversationService, GovernedConversationRuntimeService, GovernanceScopeOverviewService, GovernanceDocumentService, GovernanceDocumentTransitionService, GovernanceDocumentEventService, DocumentValidityCalculatorService, TemporalCandidateValidatorService, TemporalCandidateExtractorService, LogicalSearchEvidenceService, GovernanceTemporalIntelligenceWorkerService, GovernanceTemporalCandidateService, GovernanceDocumentReviewSchedulerService, GovernanceWorkspaceBindingService, GovernanceWorkspaceReconciliationService, WorkspaceGovernanceEventHandler, GovernanceMembershipService, GovernanceAccessService, GovernanceDeploymentService, GovernanceDraftPreparationService, GovernanceDryRunService, GovernanceMetricService, GovernanceChannelReadinessService, GovernanceKnowledgeAssessmentService, KnowledgeAlertEngineService, KnowledgeRecommendationEngineService, MetadataCandidateEngineService, BusinessValidityEvaluator, FreshnessEvaluator, AvailabilityEvaluator, IntegrityEvaluator, SearchQualityEvaluator, GovernanceQualityEvaluator],
+  providers: [GovernanceRootPublicationService, GovernanceProgramService, GovernanceScopeService, GovernanceScopeAudienceService, GovernanceConsumerScopeService, GovernedConversationService, GovernedConversationRuntimeService, GovernanceScopeOverviewService, GovernanceDocumentService, GovernanceDocumentTransitionService, GovernanceDocumentEventService, DocumentValidityCalculatorService, TemporalCandidateValidatorService, TemporalCandidateExtractorService, LogicalSearchEvidenceService, GovernanceTemporalIntelligenceWorkerService, GovernanceTemporalCandidateService, GovernanceDocumentReviewSchedulerService, GovernanceWorkspaceBindingService, GovernanceWorkspaceReconciliationService, WorkspaceGovernanceEventHandler, GovernanceMembershipService, GovernanceAccessService, GovernanceDeploymentService, GovernanceDraftPreparationService, GovernanceDryRunService, GovernanceMetricService, GovernanceChannelReadinessService, GovernanceKnowledgeAssessmentService, KnowledgeAlertEngineService, KnowledgeRecommendationEngineService, MetadataCandidateEngineService, BusinessValidityEvaluator, FreshnessEvaluator, AvailabilityEvaluator, IntegrityEvaluator, SearchQualityEvaluator, GovernanceQualityEvaluator],
   exports: [GovernanceProgramService, GovernanceScopeService, GovernanceScopeAudienceService, GovernedConversationRuntimeService, GovernanceDocumentService, GovernanceAccessService, GovernanceMetricService],
 })
 export class GovernanceModule {}

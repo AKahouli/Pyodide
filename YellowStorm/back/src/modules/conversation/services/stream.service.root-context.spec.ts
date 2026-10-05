@@ -1,6 +1,7 @@
 import { StreamService } from './stream.service';
 import { ConversationAgentRequestBuilder } from './conversation-agent-request.builder';
 import { newRootExecutionPolicy } from '../../agent/interfaces/root-execution-policy.interface';
+import { ConversationRootResolverService } from '../root-work/conversation-root-resolver.service';
 
 describe('StreamService root enrollment', () => {
   const rootId = '111111111111111111111111';
@@ -61,6 +62,56 @@ describe('StreamService root enrollment', () => {
     const result = await h.run();
     expect(result.payload.execution_scope).toBeUndefined();
     expect(h.resolveForActor).not.toHaveBeenCalled();
+  });
+
+  it('routes a governed default Root with published authority while explicit targets stay direct', async () => {
+    const h = harness();
+    const governedConversation = { rootAgentId: rootId, runtimeMode: 'governed', runtimePurpose: 'chat', isGroup: false,
+      groupTaggedAgentIds: [], systemWorkspaceId: 'system-1', governanceContext: { revisionId: 'published-revision' } };
+    const buildGovernedAgentsForStream = jest.fn().mockResolvedValue([{ id: rootId, tools: [], brain_context: [] }]);
+    Object.assign(h.service, { conversationService: { getConversationDocument: jest.fn().mockResolvedValue(governedConversation) },
+      agentService: { buildGovernedAgentsForStream }, rootDelegateResolver: { resolveForActor: h.resolveForActor,
+        authorizedWorkspaces: jest.fn().mockResolvedValue([]), assertWorkspaces: jest.fn().mockResolvedValue(undefined),
+        restrictDefinition: jest.fn(async (_id, _actor, agent) => agent) } });
+    Object.assign(h.request, { agentIds: [rootId], governanceOverride: { runtimeMode: 'governed', primaryAgentId: rootId,
+      allowedAgentIds: [rootId], workspaceIds: [], revisionId: 'published-revision', scopeId: 'scope', rootBound: true } });
+    const result = await h.run();
+    expect(result.payload.execution_scope).toBeDefined();
+    expect(result.payload.root_context).toEqual(expect.objectContaining({ governance_revision: 'published-revision' }));
+    expect(h.findUserAgentById).not.toHaveBeenCalled();
+    expect(h.resolveForActor).toHaveBeenCalledWith(rootId, 'user-1', 'conversation-1');
+    Object.assign(h.request, { governanceOverride: { runtimeMode: 'governed', primaryAgentId: rootId,
+      allowedAgentIds: [rootId], workspaceIds: [], revisionId: 'published-revision', scopeId: 'scope', rootBound: false } });
+    const direct = await h.run();
+    expect(direct.payload.execution_scope).toBeUndefined();
+  });
+
+  it.each([false, true])('denies source revocation during final preparation (continuation=%s)', async (resume) => {
+    const h = harness();
+    let revoked = false;
+    let revokeDuringPreparation = !resume;
+    const conversation = { rootAgentId: rootId, runtimeMode: 'governed', runtimePurpose: 'chat', isGroup: false,
+      groupTaggedAgentIds: [], systemWorkspaceId: 'system-1', governanceContext: { revisionId: 'published-revision' } };
+    const authority = new ConversationRootResolverService({ getConversationDocument: async () => conversation } as never,
+      {} as never, { resolveRuntime: async () => ({ workspaceIds: revoked ? [] : ['approved'] }) } as never, {} as never, {} as never);
+    const definition = { id: rootId, tools: [], brain_context: [{ workspace_id: 'approved', workspace_documents: [] }] };
+    Object.assign(h.service, { conversationService: { getConversationDocument: async () => conversation },
+      agentService: { buildGovernedAgentsForStream: jest.fn().mockImplementation(async () => [structuredClone(definition)]) },
+      buildWorkspaceContexts: jest.fn().mockResolvedValue([{ workspace_id: 'approved', workspace_documents: [] }]),
+      rootDelegateResolver: { resolveForActor: h.resolveForActor, restrictDefinition: async (_id: string, _actor: string, agent: unknown) => agent,
+        authorizedWorkspaces: authority.authorizedWorkspaces.bind(authority), assertWorkspaces: authority.assertWorkspaces.bind(authority) },
+      attachRunCodeContexts: async () => { await Promise.resolve(); if (revokeDuringPreparation) revoked = true; } });
+    Object.assign(h.request, { agentIds: [rootId], governanceOverride: { runtimeMode: 'governed', primaryAgentId: rootId,
+      allowedAgentIds: [rootId], workspaceIds: ['approved'], revisionId: 'published-revision', scopeId: 'scope', rootBound: true } });
+    if (resume) {
+      await h.run();
+      const state = h.recordNativeState.mock.calls[0][1];
+      state.invocationId = 'native-invocation';
+      h.validateContinuation.mockResolvedValue(state);
+      Object.assign(h.request, { rootContinuation: { executionId: state.scope.executionId, inputResponses: [] } });
+      revokeDuringPreparation = true;
+    }
+    await expect(h.run()).rejects.toThrow('Governed source access changed');
   });
 
   it('admits a finite wire deadline and preserves the same durable deadline on resume', async () => {

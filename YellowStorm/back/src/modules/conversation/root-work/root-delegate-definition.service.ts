@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { BadRequestException, ConflictException, ErrorCode } from '../../exceptions';
 import { AgentService } from '../../agent/agent.service';
-import { RootDelegateResolverService } from '../../agent/services/root-delegate-resolver.service';
+import { ConversationRootResolverService } from './conversation-root-resolver.service';
 import { stableStringify } from '../../agent/services/agent-execution-snapshot.service';
 import { ConversationService } from '../services/conversation.service';
 import { resolvedDefinitionsDigest } from '../services/conversation-agent-request.builder';
@@ -19,7 +19,7 @@ import { RootBackgroundJobStore, RootJobOwner } from '../persistence/postgres/ro
 @Injectable()
 export class RootDelegateDefinitionService {
   constructor(private readonly work: RootWorkService, private readonly conversations: ConversationService,
-    private readonly resolver: RootDelegateResolverService, private readonly agents: AgentService,
+    private readonly resolver: ConversationRootResolverService, private readonly agents: AgentService,
     private readonly workspaceShares: WorkspaceShareService, private readonly runCodeSources: RunCodeSourceScopeService,
     private readonly jobs: RootBackgroundJobStore) {}
 
@@ -77,7 +77,7 @@ export class RootDelegateDefinitionService {
         || (conversation.rootWorkEpoch ?? 0) !== parent.conversationEpoch) {
         throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Root delegation authority changed');
       }
-      const pool = await this.resolver.resolveForActor(parent.rootAgentId!, state.actorId);
+      const pool = await this.resolver.resolveForActor(parent.rootAgentId!, state.actorId, parent.conversationId, state.rootContext?.governance_revision ?? null);
       if (fanoutGrant && (!pool.policy.background.enabled || !pool.policy.fanout.enabled || !pool.policy.fanout.allowBackground)) {
         throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Background fan-out authority changed');
       }
@@ -92,14 +92,23 @@ export class RootDelegateDefinitionService {
       return current;
     };
     await authorize();
-    const [definition] = await this.agents.buildGrpcAgentsForPlaybook(state.actorId, [request.agentId],
+    const [hydrated] = await this.agents.buildGrpcAgentsForPlaybook(state.actorId, [request.agentId],
       undefined, ownedSessionId ?? state.sessionId, { conversationId: parent.conversationId, correlationId: request.nativeCallId,
         scopeType: 'conversation', scopeId: parent.conversationId });
+    const conversation = await this.conversations.getConversationDocument(parent.conversationId);
+    const definition = hydrated && (conversation.runtimeMode === 'governed'
+      ? await this.resolver.restrictDefinition(parent.conversationId, state.actorId, hydrated) : hydrated);
     if (!definition || definition.id !== request.agentId) {
       throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Specialist definition unavailable');
     }
+    const assertSources = async () => {
+      if (conversation.runtimeMode === 'governed') await this.resolver.assertWorkspaces(parent.conversationId, state.actorId,
+        [...new Set(definition.brain_context.flatMap((context) => [context.workspace_id,
+          ...(context.workspace_documents ?? []).map((document) => document.workspace_id)]).filter(Boolean))]);
+    };
     // Recheck current grants/configuration after asynchronous hydration.
     const selected = await authorize();
+    await assertSources();
     const candidate = selected.configurationMode === 'root_constrained'
       ? scopeCandidateToFrozenCeiling(definition, state.capabilityCeiling) : definition;
     const childId = createHash('sha256').update(`${executionId}:${request.nativeCallBranch}`).digest('hex').slice(0, 24);
@@ -109,11 +118,16 @@ export class RootDelegateDefinitionService {
       const documents = candidate.brain_context.flatMap((context) => context.workspace_documents ?? [])
         .filter((document) => document.workspace_id && document.filepath)
         .map((document) => ({ workspaceId: document.workspace_id, path: document.filepath }));
-      await this.workspaceShares.assertUserHasAccess(state.actorId, [...new Set(documents.map((document) => document.workspaceId))]);
+      const ids = [...new Set(documents.map((document) => document.workspaceId))];
+      if (conversation.runtimeMode === 'governed') {
+        const approved = await this.resolver.authorizedWorkspaces(parent.conversationId, state.actorId, ids);
+        if (ids.some((id) => !approved.includes(id))) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Governed source access changed');
+      } else await this.workspaceShares.assertUserHasAccess(state.actorId, ids);
       const sources = await this.runCodeSources.buildSources([], documents);
       candidate.agent_params ??= { params: {} };
       candidate.agent_params.params.run_code_context_json = JSON.stringify({ userId: state.actorId, runId: childId, sources });
       await authorize();
+      await assertSources();
     }
     const requestDigest = createHash('sha256').update(stableStringify({ agentId: request.agentId,
       task: request.task, expectedOutput: request.expectedOutput ?? '', contextRefs: request.contextRefs ?? [] })).digest('hex');

@@ -3,7 +3,7 @@ import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { DRIZZLE_DB } from '../../postgres/postgres.constants';
 import * as schema from '../../postgres/schema';
 import { BadRequestException, ConflictException, ErrorCode } from '../../exceptions';
-import { RootDelegateResolverService } from '../../agent/services/root-delegate-resolver.service';
+import { ConversationRootResolverService } from './conversation-root-resolver.service';
 import { WorkspaceShareService } from '../../workspace/workspace-share.service';
 import { ConversationService } from '../services/conversation.service';
 import { RootWorkService } from './root-work.service';
@@ -18,7 +18,7 @@ import type { RootBackgroundJobOwnerV1 } from './root-work.types';
 export class RootFanoutService {
   constructor(@Inject(DRIZZLE_DB) private readonly db: NodePgDatabase<typeof schema>,
     private readonly work: RootWorkService, private readonly conversations: ConversationService,
-    private readonly resolver: RootDelegateResolverService, private readonly workspaceShares: WorkspaceShareService) {}
+    private readonly resolver: ConversationRootResolverService, private readonly workspaceShares: WorkspaceShareService) {}
 
   async permit(parentId: string, childId: string, request: RootWorkerPermitDto, grant?: RootBackgroundJobOwnerV1) {
     if (request.operation === 'release') {
@@ -34,7 +34,7 @@ export class RootFanoutService {
     }
     const authorize = async () => {
       const [conversation, pool] = await Promise.all([
-        this.conversations.getConversationDocument(parent.conversationId), this.resolver.resolveForActor(parent.rootAgentId!, state.actorId),
+        this.conversations.getConversationDocument(parent.conversationId), this.resolver.resolveForActor(parent.rootAgentId!, state.actorId, parent.conversationId, state.rootContext?.governance_revision ?? null),
       ]);
       const targetAllowed = child.role === 'temporary_worker' ? pool.policy.temporaryWorkers.enabled
         && childState.scope.immutableSnapshotRef === state.scope.immutableSnapshotRef
@@ -52,7 +52,11 @@ export class RootFanoutService {
     if (!Array.isArray(sources) || sources.some((id) => typeof id !== 'string')) {
       throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Worker source proof unavailable');
     }
-    await this.workspaceShares.assertUserHasAccess(state.actorId, sources);
+    const conversation = await this.conversations.getConversationDocument(parent.conversationId);
+    if (conversation.runtimeMode === 'governed') {
+      const approved = await this.resolver.authorizedWorkspaces(parent.conversationId, state.actorId, sources);
+      if (sources.some((id) => !approved.includes(id))) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Worker source authority changed');
+    } else await this.workspaceShares.assertUserHasAccess(state.actorId, sources);
     await authorize();
     return { acquired: await (grant ? updateWorkerPermit(this.db, parentId, childId, request.owner, 'acquire', grant)
       : updateWorkerPermit(this.db, parentId, childId, request.owner, 'acquire')) };
@@ -88,7 +92,7 @@ export class RootFanoutService {
     const authorize = async () => {
       const [conversation, pool] = await Promise.all([
         this.conversations.getConversationDocument(parent.conversationId),
-        this.resolver.resolveForActor(parent.rootAgentId!, state.actorId),
+        this.resolver.resolveForActor(parent.rootAgentId!, state.actorId, parent.conversationId, state.rootContext?.governance_revision ?? null),
       ]);
       if (conversation.createdBy !== state.actorId || conversation.rootAgentId !== parent.rootAgentId
         || conversation.isArchived || conversation.isGroup || (conversation.rootWorkEpoch ?? 0) !== parent.conversationEpoch
@@ -103,8 +107,11 @@ export class RootFanoutService {
         || target.kind === 'temporary' && !pool.policy.temporaryWorkers.enabled) {
         throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Fan-out target authority changed');
       }
-      await this.workspaceShares.assertUserHasAccess(state.actorId,
-        [...new Set(validated.items.flatMap((item) => item.contextRefs ?? []))]);
+      const sources = [...new Set(validated.items.flatMap((item) => item.contextRefs ?? []))];
+      if (conversation.runtimeMode === 'governed') {
+        const approved = await this.resolver.authorizedWorkspaces(parent.conversationId, state.actorId, sources);
+        if (sources.some((id) => !approved.includes(id))) throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Fan-out source authority changed');
+      } else await this.workspaceShares.assertUserHasAccess(state.actorId, sources);
     };
     return { validated, authorize };
   }

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { RootDelegateResolverService } from '../../agent/services/root-delegate-resolver.service';
+import { ConversationRootResolverService } from './conversation-root-resolver.service';
 import { stableStringify } from '../../agent/services/agent-execution-snapshot.service';
 import { ConflictException, ErrorCode } from '../../exceptions';
 import { RootBackgroundJobStore } from '../persistence/postgres/root-background-job.store';
@@ -16,7 +16,7 @@ import type { RootBackgroundFanoutDto } from '../dto/root-background.dto';
 @Injectable()
 export class RootBackgroundSubmissionService {
   constructor(private readonly work: RootWorkService, private readonly jobs: RootBackgroundJobStore,
-    private readonly driver: RootBackgroundDriverService, private readonly resolver: RootDelegateResolverService,
+    private readonly driver: RootBackgroundDriverService, private readonly resolver: ConversationRootResolverService,
     private readonly definitions: RootDelegateDefinitionService, private readonly temporary: RootTemporaryDefinitionService,
     private readonly results: RootResultService, private readonly fanout: RootFanoutService) {}
 
@@ -46,7 +46,7 @@ export class RootBackgroundSubmissionService {
       || state.rootContext.background_enabled !== true || !await this.driver.ready()
       || request.workerKind === 'specialist' && !request.agentId
       || request.workerKind === 'temporary' && request.agentId !== undefined) throw denied();
-    const pool = await this.resolver.resolveForActor(parent.rootAgentId, state.actorId);
+    const pool = await this.resolver.resolveForActor(parent.rootAgentId, state.actorId, parent.conversationId, state.rootContext?.governance_revision ?? null);
     if (!pool.policy.background.enabled || pool.rootSnapshotDigest !== state.scope.immutableSnapshotRef) throw denied();
     const { workerKind, agentId, ...temporaryRequest } = request;
     const admitted = { ...temporaryRequest, expectedOutput: request.expectedOutput ?? '', contextRefs: request.contextRefs ?? [],

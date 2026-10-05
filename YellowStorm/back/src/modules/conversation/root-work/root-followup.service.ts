@@ -3,7 +3,7 @@ import { RootFollowupStore } from '../persistence/postgres/root-followup.store';
 import { RootWorkService } from './root-work.service';
 import { RootResultService } from './root-result.service';
 import { ConversationService } from '../services/conversation.service';
-import { RootDelegateResolverService } from '../../agent/services/root-delegate-resolver.service';
+import { ConversationRootResolverService } from './conversation-root-resolver.service';
 import { AgentService } from '../../agent/agent.service';
 import { executionScopeToWire } from './root-work.types';
 import type { RootBackgroundAuthorityDto, RootBackgroundSettlementDto } from '../dto/root-background.dto';
@@ -15,7 +15,7 @@ export class RootFollowupService {
   private publicationCursor?: string;
   constructor(private readonly store: RootFollowupStore, private readonly work: RootWorkService,
     private readonly results: RootResultService, private readonly conversations: ConversationService,
-    private readonly resolver: RootDelegateResolverService, private readonly agents: AgentService) {}
+    private readonly resolver: ConversationRootResolverService, private readonly agents: AgentService) {}
 
   private async authorize(rootId: string, actorId: string) {
     const root = await this.work.getExecution(rootId);
@@ -27,7 +27,7 @@ export class RootFollowupService {
       || conversation.rootAgentId !== root.rootAgentId || (conversation.rootWorkEpoch ?? 0) !== root.conversationEpoch) {
       throw new Error('Synthesis Root authority changed');
     }
-    const pool = await this.resolver.resolveForActor(root.rootAgentId, actorId);
+    const pool = await this.resolver.resolveForActor(root.rootAgentId, actorId, root.conversationId, state.rootContext?.governance_revision ?? null);
     if (!pool.policy.background.enabled || pool.rootSnapshotDigest !== state.scope.immutableSnapshotRef) {
       throw new Error('Synthesis pinned Root authority changed');
     }
@@ -37,6 +37,9 @@ export class RootFollowupService {
     const current = await this.conversations.getConversationDocument(root.conversationId);
     if (current.createdBy !== actorId || current.rootAgentId !== root.rootAgentId || current.isArchived || current.isGroup
       || (current.rootWorkEpoch ?? 0) !== root.conversationEpoch) throw new Error('Synthesis audience changed');
+    if (conversation.runtimeMode === 'governed') {
+      await this.resolver.resolveForActor(root.rootAgentId, actorId, root.conversationId, state.rootContext?.governance_revision ?? null);
+    }
     return { root, state };
   }
 
