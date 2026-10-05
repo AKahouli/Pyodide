@@ -130,7 +130,8 @@ describeIntegration('real governed Root native qualification', () => {
       next();
     });
     app.setGlobalPrefix('api/v1');
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true,
+      transformOptions: { enableImplicitConversion: true }, stopAtFirstError: true }));
     let native: Awaited<ReturnType<typeof startNativeQualificationHost>> | undefined;
     let driver: RootBackgroundDriverService | undefined;
     try {
