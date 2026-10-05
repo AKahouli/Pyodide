@@ -2,6 +2,8 @@
 
 Source review: **PASS** for coordinator ownership, Stop/replay, sealed synthesis, current-authority evidence resolution, and shared model capacity. Production rollout: **not qualified yet**.
 
+Current main qualification supersedes the historical default-off and unapplied-migration statements below: see `vector-root-live-qualification.md`. Approved additive migrations and matching authentication remain applied. Actual governed worker/followup delivery,27-citation finitefanout, registered source pages, reload, Stop, scope revocation and bounded30-minute observation passed. Test profiles/scope are now inactive and runtime flags restored off; actual ordinary foreground check passed. Three uncertain provider slots remain quarantined and sandbox writes await separate approval; production rollout remains unqualified.
+
 Latest qualification: **governed library worker, two background fanout items and one sealed native followup PASS**, using actual isolated PostgreSQL governance authorization, scheduler, authenticated gRPC/Nest HTTP, ADK factory and configured provider. Three cycles passed (154.322/155.327/152.895 seconds), each with one publication and zero residual model slots. Profile repository/compiler remains an explicit fixture seam. This bounded repetition is not a long production soak. Reviewer source gate PASS.
 
 Approved PDF CORS repair applied: preserved the existing rule and added GET/HEAD for localhost:5175. Fresh storage probe returned206/PDF with the expected allow-origin; existing Chrome3 tab rendered citation page11/27. Proof: `vector-governed-pdf-qualified.png`. No object ACL change or new browser session.
@@ -43,6 +45,8 @@ Task durations include agent construction and SQL acquisition. The first baselin
 Reports: `vector-real-model-qualification-qualified.json` contains all successful samples. Preliminary `vector-real-model-qualification-full.json` retains a strict exact-format marker failure at the baseline 20-task stage; the final run checks marker presence and records response length. The configured default `gpt-5.4-mini` returned AuthenticationError; the previously working browser route `gpt-6-luna` was used instead. No secret values are included in reports.
 
 ## Remaining gates
+
+The paragraphs below describe the earlier isolated gate. The current approved local window finished; remaining limitations are provider-outcome reconciliation, separately authorized sandbox writes and broader production qualification, as recorded in the live report.
 
 Enabled live UI publication; real connector/source/sandbox effects; longer soak and concrete rollout approval. Isolated public WAIT/resume/Stop, governed worker/fanout/followup transport, source revocation, bounded fault/repetition and disabled-flags rehearsal passed within the limits above. A dedicated enrolled governed Root live fixture remains required. Main database migrations0044/0045, capacity/background enablement and saved profile/grant changes remain unapplied. Concrete source-only local qualification proposal is ROOT_DELEGATION_ROLLOUT_PROPOSAL.md.
 
