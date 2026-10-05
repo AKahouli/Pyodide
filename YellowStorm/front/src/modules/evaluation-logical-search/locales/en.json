@@ -66,6 +66,8 @@
     "empty": "No evaluations yet",
     "createdAt": "Created",
     "queries": "{{count}} queries",
+    "questionsRatio": "{{done}}/{{total}} queries",
+    "questionsEvaluated": "{{done}}/{{total}} queries evaluated",
     "view": "View",
     "paginationLabel": "History pagination",
     "confirmDelete": "Delete evaluation \"{{name}}\" and its results? This cannot be undone."

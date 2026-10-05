@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Trash2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -14,7 +15,7 @@ import { EvaluationResultsPanel } from '../components/EvaluationResultsPanel';
 import { buildPageWindow } from '../pagination';
 import type { LogicalSearchEvaluation, UploadResult, BenchmarkQuery, EvaluationResultsResponse } from '../types';
 
-const HISTORY_PAGE_SIZE = 3;
+const HISTORY_PAGE_SIZE = 5;
 
 interface WorkspaceSummary {
   id: string;
@@ -281,11 +282,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
 
   const refreshProgress = useCallback(() => {
     let cancelled = false;
-    Promise.all(
-      runs
-        .filter((e) => e.status === 'running')
-        .map((e) => evaluationLogicalSearchApi.progress(e.id)),
-    )
+    Promise.all(runs.map((e) => evaluationLogicalSearchApi.progress(e.id)))
       .then((results) => {
         if (cancelled) return;
         const next: Record<string, { done: number; total: number; currentQuery: string }> = {};
@@ -300,17 +297,20 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
     return () => { cancelled = true; };
   }, [runs]);
 
+  // Keep a last-known progress (done/total) for every visible run, so terminal
+  // runs still show how many questions were processed before stopping.
+  useEffect(() => refreshProgress(), [refreshProgress]);
+
   // Poll while a run request is in flight or any evaluation is still running.
   useEffect(() => {
     const running = runningEvalId !== null || runs.some((e) => e.status === 'running');
     if (!running) return;
     const interval = window.setInterval(() => {
       void refreshLists();
-      void refreshProgress();
       if (openResultsId) void loadResults(openResultsId);
     }, 2500);
     return () => window.clearInterval(interval);
-  }, [runningEvalId, runs, refreshLists, refreshProgress, openResultsId, loadResults]);
+  }, [runningEvalId, runs, refreshLists, openResultsId, loadResults]);
 
   // ── Derived ─────────────────────────────────────────────────
   const previewRows: BenchmarkQuery[] = useMemo(() => uploadResult?.preview ?? [], [uploadResult]);
@@ -341,6 +341,18 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
   );
 
   useEffect(() => { setSelectedQueryIds([]); }, [selectedEvalId]);
+
+  // Questions count shown on each history card: the executed/selected ratio for
+  // the run when progress is known, else the raw dataset size.
+  const questionsLabel = (ev: LogicalSearchEvaluation): string => {
+    const progress = evalProgress[ev.id];
+    if (!progress) return t('history.queries', { count: ev.queryCount });
+    return ev.status !== 'running' && progress.done < progress.total
+      ? t('history.questionsEvaluated', { done: progress.done, total: progress.total })
+      : t('history.questionsRatio', { done: progress.done, total: progress.total });
+  };
+  const showRunningProgress = (ev: LogicalSearchEvaluation): boolean =>
+    ev.status === 'running' && Boolean(evalProgress[ev.id]);
 
   return (
     <div className='h-full w-full overflow-auto'>
@@ -523,7 +535,7 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
             {runs.length === 0 && (
               <p className='text-sm text-muted-foreground'>{t('history.empty')}</p>
             )}
-            <div className='space-y-2'>
+            <div className='max-h-[420px] space-y-2 overflow-y-auto pr-1'>
               {visibleEvaluations.map((ev) => (
                 <div
                   key={ev.id}
@@ -532,16 +544,16 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
                   <div className='min-w-0'>
                     <p className='truncate font-medium'>{ev.name}</p>
                     <p className='text-xs text-muted-foreground'>
-                      {t('history.createdAt')}: {new Date(ev.createdAt).toLocaleString()} · {t('history.queries', { count: ev.queryCount })}
+                      {t('history.createdAt')}: {new Date(ev.createdAt).toLocaleString()} · {questionsLabel(ev)}
                     </p>
-                    {ev.status === 'running' && evalProgress[ev.id] && (
+                    {showRunningProgress(ev) && evalProgress[ev.id] && (
                       <>
                         <Progress
                           className='mt-1 h-1.5 max-w-xs'
                           value={Math.round((evalProgress[ev.id].done / Math.max(1, evalProgress[ev.id].total)) * 100)}
                         />
                         <p className='mt-1 truncate text-xs text-primary'>
-                          {evalProgress[ev.id].done}/{evalProgress[ev.id].total} · {evalProgress[ev.id].currentQuery}
+                          {evalProgress[ev.id].done}/{evalProgress[ev.id].total}{evalProgress[ev.id].currentQuery ? ` · ${evalProgress[ev.id].currentQuery}` : ''}
                         </p>
                       </>
                     )}
@@ -590,12 +602,15 @@ export function LogicalSearchEvaluationPage(): JSX.Element {
                       </Button>
                     )}
                     <Button
-                      size='sm'
+                      size='icon-sm'
                       variant='ghost'
+                      className='text-muted-foreground hover:text-destructive'
                       onClick={(e) => { e.stopPropagation(); void handleDelete(ev.id); }}
                       disabled={deletingEvalId !== null}
+                      aria-label={t('actions.delete')}
+                      title={deletingEvalId === ev.id ? t('actions.deleting') : t('actions.delete')}
                     >
-                      {deletingEvalId === ev.id ? t('actions.deleting') : t('actions.delete')}
+                      <Trash2 />
                     </Button>
                   </div>
                 </div>

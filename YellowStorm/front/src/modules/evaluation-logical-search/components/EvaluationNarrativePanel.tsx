@@ -95,7 +95,9 @@ export function EvaluationNarrativePanel({ evaluationId, status }: Props): JSX.E
       )}
 
       {content && (
-        <AssistantMarkdown className='text-sm text-muted-foreground'>{content}</AssistantMarkdown>
+        <div className='max-h-[50vh] overflow-y-auto rounded-md border bg-muted/20 p-3'>
+          <AssistantMarkdown className='text-sm text-muted-foreground'>{content}</AssistantMarkdown>
+        </div>
       )}
     </section>
   );

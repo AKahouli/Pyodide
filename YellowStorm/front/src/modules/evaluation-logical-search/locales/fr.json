@@ -66,6 +66,8 @@
     "empty": "Aucune évaluation pour le moment",
     "createdAt": "Créé",
     "queries": "{{count}} questions",
+    "questionsRatio": "{{done}}/{{total}} questions",
+    "questionsEvaluated": "{{done}}/{{total}} questions évaluées",
     "view": "Voir",
     "paginationLabel": "Pagination de l'historique",
     "confirmDelete": "Supprimer l'évaluation « {{name}} » et ses résultats ? Action irréversible."

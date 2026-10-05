@@ -88,9 +88,9 @@ export function EvaluationResultsPanel({ evaluationId, status, evaluationName, d
         )}
 
         {results.length > 0 && (
-          <div className='overflow-x-auto'>
+          <div className='max-h-[60vh] min-h-[200px] overflow-auto rounded-md border'>
             <table className='w-full text-sm'>
-              <thead>
+              <thead className='sticky top-0 z-10 bg-background'>
                 <tr className='border-b text-left text-muted-foreground'>
                   <th className='pb-2 pr-4'>{t('results.table.id')}</th>
                   <th className='pb-2 pr-4'>{t('results.table.question')}</th>
