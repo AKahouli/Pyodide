@@ -2,6 +2,8 @@
 
 Source review: **PASS** for coordinator ownership, Stop/replay, sealed synthesis, current-authority evidence resolution, and shared model capacity. Production rollout: **not qualified yet**.
 
+Latest retry: **enabled native followup transport PASS** (1 opt-in test, 10 skipped;77.337s). Actual scheduler, authenticated gRPC/Nest HTTP, ADK factory and configured provider produced one durable publication, native invocation/input correlation and events, no duplicate after reconciliation, and zero residual model slots. Disposable host shut down with process exit0. Profile/source lookup uses synthetic fixture seams; live governed authorization, leaf/fanout and UI publication are separate gates. ReviewerPASS. Browser access restored using the existingChrome3tab; PDF stillfails (vector-governed-pdf-cors-blocked.png), remote CORSproposal pending approval.
+
 ## Executed checks
 
 - Shared conda meta: Python 3.12.14, google-adk 2.11.0; ABI/import checks passed.
@@ -13,6 +15,10 @@ Source review: **PASS** for coordinator ownership, Stop/replay, sealed synthesis
 - Actual provider plus fenced PostgreSQL ADK session: two opt-in tests passed, covering durable checkpoint/fresh-service recovery and production team/AgentFactory synthesis compilation. The opt-in test explicitly restores the real ADK Agent class replaced by the repository's global mock fixture.
 - Separate OS-process replicas held15 slots each, blocked a31st acquisition, joined cleanly and left zero occupancy; capacity suite8 passed. Ten50-task deterministic provider bursts (500 calls) passed without residual occupancy or active provider tasks. This bounded fixture stress check is not a long-running production soak.
 - Live gRPC capabilities report protocol1 for background/fanout/followup, ADK2.11.0/Python3.12.14 and all readiness flags false, as expected with default-off configuration. Current backend/native files have no gRPC API key configured; enablement therefore also requires a matching service key. Secret values were not printed.
+- Governed Root publication/routing is implemented with server-sealed pinned authority, current audience/source checks and late preparation/mount revocation checks. Latest bounded publisher/routing/library suites50PASS, real isolated governance/library suites20PASS; reviewerPASS and productionTypeScript/buildPASS. Supplied guide conversation remains direct-agent.
+- Followup lifecycle ingestion fix389ecb8ef: focused16PASS; actualNest/isolatedSQL followup suite10PASS now includes wrong-native-owner rejection, replay/one event and cancelled-writer rejection. ReviewerPASS. Opt-in real native scheduler transport qualification remains in progress; no publication observed in initial attempts, fixture corrections applied and final rerun pending.
+- Supplied governed query completed through Smart Navigation Search (21s/9steps). PDF storage returned a valid206PDF but omitted CORS allow-origin forlocalhost5175. Read-only origin addition proposal is awaiting user approval; remote bucket unchanged. Browser extension later detached from the existing conversation tab; reconnection requested, no new session created.
+- Enabled transport gateBLOCKED by fixture: final attempt had zero publications, queuedjob and no nativeinvocation. Fixture omitted pinned max_parallel_workers; scheduler correctly rejects an absent ceiling beforedispatch. Stopped aftertwo unsuccessful fixturefix cycles perAGENTS. Next continuation must correct fixturepolicy and rerun; no production defect established by this attempt.
 
 ## Real-model load
 
@@ -34,7 +40,7 @@ Reports: `vector-real-model-qualification-qualified.json` contains all successfu
 
 ## Remaining gates
 
-Enabled native-to-Nest HTTP/gRPC background execution and UI publication; real Logical Search/connector/sandbox fixtures; governed pinned-profile qualification; cross-process crash/fault/soak and rollback rehearsal. User input is pending for the safe workspace, governed Root, and connector resource. Main database migrations 0044/0045, capacity/background enablement, and saved profile/grant changes remain unapplied.
+Enabled native-to-Nest HTTP/gRPC background execution and UI publication; live governed Root/source/sandbox fixtures; cross-process crash/fault/soak and rollback rehearsal. User supplied the governed conversation, workspace, BPCE-Support scope and smart-navigation-search connector. A dedicated enrolled governed Root live fixture remains required. Main database migrations 0044/0045, capacity/background enablement, and saved profile/grant changes remain unapplied.
 
 The concrete service configuration must provide matching backend `CONVERSATION_GRPC_API_KEY` and native `GRPC_API_KEY`, mirror the existing internal service secret, point native control/capacity at the same PostgreSQL singleton as backend, and enable both native flags only after migrations and qualification. No new main-service credential was created during this run.
 

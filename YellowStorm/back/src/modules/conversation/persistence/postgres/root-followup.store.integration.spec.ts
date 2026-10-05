@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { describeIntegration, makeTestDb } from '../../../postgres/testing/pg-integration';
-import { conversations, conversationExecutions, messages, rootBackgroundJobs, rootBackgroundEvents } from '../../../postgres/schema';
+import { conversations, conversationExecutions, messages, rootBackgroundJobs, rootBackgroundEvents, rootExecutions } from '../../../postgres/schema';
 import { PostgresRootWorkStore } from './postgres-root-work.store';
 import { RootFollowupStore } from './root-followup.store';
 import { newStopRequestId, type RootNativeState } from '../../root-work/root-work.types';
@@ -17,6 +17,10 @@ import { RootBackgroundSubmissionService } from '../../root-work/root-background
 import { RootDelegateDefinitionService } from '../../root-work/root-delegate-definition.service';
 import { RootTemporaryDefinitionService } from '../../root-work/root-temporary-definition.service';
 import { RootFanoutService } from '../../root-work/root-fanout.service';
+import { RootBackgroundEventStore } from './root-background-event.store';
+import { RootBackgroundJobStore } from './root-background-job.store';
+import { RootBackgroundDriverService } from '../../root-work/root-background-driver.service';
+import { startNativeQualificationHost } from '../../../postgres/testing/native-qualification-host';
 
 describeIntegration('sealed synthesis writer and atomic publication', () => {
   const database = makeTestDb();
@@ -29,7 +33,7 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
     conversationId = id(); actorId = id(); rootId = id(); childId = id();
     await database.db.insert(conversations).values({ id: conversationId, createdBy: actorId });
     state = { actorId, sessionId: 'root', invocationId: null, pendingInputs: [], hasBackgroundJobs: true,
-      rootContext: { max_child_executions_per_work_group: 2 },
+      rootContext: { max_child_executions_per_work_group: 2, max_parallel_workers: 1 },
       scope: { executionId: rootId, role: 'root', depth: 0, parentExecutionId: null, workGroupId: null,
         conversationEpoch: 0, attempt: 1, expectedFence: null, resumeIntent: 'start',
         immutableSnapshotRef: 'pinned', nativeInvocationId: null, nativeSessionId: 'root', deadlineEpochMs: null } };
@@ -177,9 +181,13 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
     } as never, { resolveForActor: async () => ({ policy: { background: { enabled: true } }, rootSnapshotDigest: 'pinned' }) } as never,
     {} as never);
     const token = id();
+    const results = { authorizeBackgroundExecution: async () => ({}) };
+    const lifecycle = new RootBackgroundLifecycleService({} as never,
+      new RootBackgroundEventStore(database.db, results as never), {} as never, {} as never,
+      results as never, work as never, {} as never, service);
     const module = await Test.createTestingModule({ controllers: [RootDelegateInternalController], providers: [
       { provide: ConfigService, useValue: { get: () => token } },
-      { provide: RootBackgroundLifecycleService, useValue: { readSynthesisResult: service.readResult.bind(service) } },
+      { provide: RootBackgroundLifecycleService, useValue: lifecycle },
       ...[RootDelegateDefinitionService, RootTemporaryDefinitionService, RootFanoutService, RootBackgroundSubmissionService]
         .map((provide) => ({ provide, useValue: {} })),
     ] }).compile();
@@ -199,11 +207,26 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
       const response = await post(body);
       expect(response.status).toBe(201);
       expect(await response.json()).toMatchObject({ executionId: childId, text: 'Child result', nextOffset: null });
+      const eventEndpoint = `${await app.getUrl()}/internal/root-work/${reserved.id}/background-events`;
+      const eventBody = { ...body, events: [{ eventId: 'followup_usage', kind: 'usage',
+        usage: { inputTokens: 2, outputTokens: 1 } }] };
+      delete (eventBody as Partial<typeof body>).offset;
+      const postEvent = (value = eventBody) => fetch(eventEndpoint, { method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-internal-token': token }, body: JSON.stringify(value) });
+      expect((await postEvent({ ...eventBody, nativeOwner: 'wrong' })).status).toBe(500);
+      const eventResponse = await postEvent();
+      expect(eventResponse.status).toBe(201);
+      const acknowledgement = await eventResponse.json();
+      expect(acknowledgement).toMatchObject({ events: [{ eventId: 'followup_usage' }] });
+      expect(await (await postEvent()).json()).toEqual(acknowledgement);
+      expect(await database.db.select().from(rootBackgroundEvents)
+        .where(eq(rootBackgroundEvents.executionId, reserved.id))).toHaveLength(1);
       await database.db.update(conversationExecutions).set({ status: 'cancelled' })
         .where(eq(conversationExecutions.id, reserved.id));
       const revoked = await post(body);
       expect(revoked.status).toBe(500);
       expect(await revoked.text()).not.toContain('Child result');
+      expect((await postEvent()).status).toBe(500);
     } finally { await app.close(); }
   });
 
@@ -217,4 +240,80 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
     await database.db.insert(conversationExecutions).values({ id: id(), conversationId, userId: actorId,
       messageId: id(), expiresAt: new Date(Date.now() + 60000) });
   });
+
+  (process.env.VECTOR_REAL_MODEL_QUALIFY === '1' ? it : it.skip)(
+    'runs the production scheduler, authenticated native host, provider and owned HTTP lifecycle', async () => {
+    // Only profile/source lookup is synthetic; transport, scheduler, SQL and model execution are real.
+    await database.db.update(conversations).set({ rootAgentId: actorId }).where(eq(conversations.id, conversationId));
+    await database.db.update(rootExecutions).set({ rootAgentId: actorId }).where(eq(rootExecutions.id, rootId));
+    const results = { authorizeSynthesisMember: async () => ({}),
+      authorizeBackgroundExecution: async (_conversation: string, executionId: string) => work.getExecution(executionId) };
+    const service = new RootFollowupService(followups, work as never, results as never, { getConversationDocument: async () => {
+      const [conversation] = await database.db.select().from(conversations).where(eq(conversations.id, conversationId));
+      return conversation;
+    } } as never, { resolveForActor: async () => ({ policy: { background: { enabled: true } }, rootSnapshotDigest: 'pinned' }) } as never,
+    { buildGrpcAgentsForPlaybook: async () => [{ id: actorId, name: 'QualificationSynthesis',
+      description: 'Synthetic qualification', prompt: 'Return VECTORNATIVENEST exactly. Do not use tools or citations.',
+      tools: [], brain_context: [], skills: [], save_memory: false, chatbot: { model: 'gpt-6-luna' } }] } as never);
+    const jobs = new RootBackgroundJobStore(database.db);
+    const lifecycle = new RootBackgroundLifecycleService(jobs, new RootBackgroundEventStore(database.db, results as never),
+      {} as never, {} as never, results as never, work as never, {} as never, service);
+    const token = id();
+    const module = await Test.createTestingModule({ controllers: [RootDelegateInternalController], providers: [
+      { provide: ConfigService, useValue: { get: () => token } },
+      { provide: RootBackgroundLifecycleService, useValue: lifecycle },
+      ...[RootDelegateDefinitionService, RootTemporaryDefinitionService, RootFanoutService, RootBackgroundSubmissionService]
+        .map((provide) => ({ provide, useValue: {} })),
+    ] }).compile();
+    const app = module.createNestApplication({ logger: false });
+    app.setGlobalPrefix('api/v1');
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+    let native: Awaited<ReturnType<typeof startNativeQualificationHost>> | undefined;
+    let driver: RootBackgroundDriverService | undefined;
+    try {
+      await app.listen(0, '127.0.0.1');
+      native = await startNativeQualificationHost(`${await app.getUrl()}/api/v1`, token);
+      const transport = native;
+      const readiness = () => new Promise<boolean>((resolveReady, reject) => {
+        transport.client.GetRootWorkCapabilities({}, transport.metadata, async (error: Error | null,
+          response: { background_ready: boolean; background_followup_ready: boolean; control_database_fingerprint: string }) => {
+          if (error) { reject(error); return; }
+          try { resolveReady(response.background_ready && response.background_followup_ready
+            && response.control_database_fingerprint === await jobs.controlInstance()); } catch (failure) { reject(failure); }
+        });
+      });
+      expect(await readiness()).toBe(true);
+      const sealed = await seal();
+      const reserved = (await followups.reserve(rootId, actorId, sealed.digest))!;
+      const configuration = { get: (name: string, fallback: unknown) => name === 'grpcSecurity.apiKey' ? transport.key
+        : name === 'conversation.rootBackgroundEnabled' ? true : name.startsWith('conversation.rootBackgroundMax') ? 1 : fallback };
+      driver = new RootBackgroundDriverService(jobs, { rootBackgroundReady: readiness,
+        getChatbotClient: () => transport.client } as never, configuration as ConfigService, service);
+      driver.onModuleInit();
+      const deadline = Date.now() + 90000;
+      let published: typeof messages.$inferSelect[] = [];
+      while (Date.now() < deadline) {
+        published = await database.db.select().from(messages).where(eq(messages.conversationId, conversationId));
+        if (published.length) break;
+        await new Promise((done) => setTimeout(done, 500));
+      }
+      const diagnosticJob = await jobs.getJob(reserved.id);
+      if (published.length !== 1) throw new Error(JSON.stringify({ publications: published.length,
+        status: diagnosticJob?.status, hasNativeInvocation: Boolean(diagnosticJob?.nativeInvocationId),
+        diagnostics: transport.diagnostics }));
+      expect(JSON.stringify(published[0])).toContain('VECTORNATIVENEST');
+      const job = (await jobs.getJob(reserved.id))!;
+      expect(job.nativeInvocationId).toBeTruthy(); expect(job.initialInputEventId).toBeTruthy();
+      expect(await database.db.select().from(rootBackgroundEvents)
+        .where(eq(rootBackgroundEvents.executionId, reserved.id))).not.toHaveLength(0);
+      await service.reconcile();
+      expect(await database.db.select().from(messages).where(eq(messages.conversationId, conversationId))).toHaveLength(1);
+      const occupied = await database.db.execute(sql`SELECT count(*)::int AS count FROM conversation.root_model_slots WHERE status <> 'free'`);
+      expect(occupied.rows[0].count).toBe(0);
+    } finally {
+      await driver?.onModuleDestroy();
+      await native?.close();
+      await app.close();
+    }
+  }, 180000);
 });
