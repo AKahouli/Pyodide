@@ -53,8 +53,8 @@ celery_app.conf.update(
 # as `run_id` in the unified-logging envelope context (SDK merges these contextvars).
 @task_prerun.connect
 def _bind_task_context(task=None, **_):
-    if task is not None:
-        bind_contextvars(run_id=task.request.id or "")
+    if task is not None and task.request.id:
+        bind_contextvars(run_id=task.request.id)
 
 
 @task_postrun.connect

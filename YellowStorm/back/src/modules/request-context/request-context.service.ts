@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from 'async_hooks';
 import { randomBytes } from 'crypto';
 import { RequestContext } from './interfaces/request-context.interface';
 import { LogOptions } from '@modules/logger';
-import { GrpcCorrelation, setGrpcCorrelationProvider } from 'src/common/grpc/grpc-security.util';
+import { GrpcCorrelation, setGrpcCorrelationProvider } from '@common/grpc/grpc-security.util';
 
 @Injectable()
 export class RequestContextService {

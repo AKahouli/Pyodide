@@ -144,9 +144,16 @@ export function createGrpcMetadata(
   const metadata = attachGrpcApiKey(config, new grpc.Metadata(), namespace);
   const correlation = grpcCorrelationProvider();
   if (correlation) {
-    if (correlation.traceparent) metadata.set('traceparent', correlation.traceparent);
-    if (correlation.requestId) metadata.set('x-request-id', correlation.requestId);
-    if (correlation.correlationId) metadata.set('correlation-id', correlation.correlationId);
+    // gRPC metadata values must be printable ASCII; echo-able inbound ids could
+    // otherwise carry control chars and make grpc-js reject the outgoing call.
+    const safe = (value: string | undefined) =>
+      value && /^[\x20-\x7E]{1,200}$/.test(value) ? value : undefined;
+    const traceparent = safe(correlation.traceparent);
+    const requestId = safe(correlation.requestId);
+    const correlationId = safe(correlation.correlationId);
+    if (traceparent) metadata.set('traceparent', traceparent);
+    if (requestId) metadata.set('x-request-id', requestId);
+    if (correlationId) metadata.set('correlation-id', correlationId);
   }
   return metadata;
 }

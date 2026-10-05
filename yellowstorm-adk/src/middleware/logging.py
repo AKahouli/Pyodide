@@ -31,12 +31,12 @@ def add_logging(app: FastAPI) -> None:
         url = get_path_with_query_string(request.scope)  # type: ignore
         http_version = request.scope["http_version"]
 
-        # Extract user email from headers for username column
-        user_mail = request.headers.get("user", "unknown")
+        # Identity is NOT taken from headers here: the acting user is bound by the
+        # authenticated dependency (get_current_user) after the API key check, so
+        # unauthenticated callers cannot inject an identity into log envelopes.
         # Bind context vars that will be added to ALL log entries during the request
         structlog.contextvars.bind_contextvars(
             request_id=request_id,
-            user_mail=user_mail,
             http_method=http_method,
             http_url=str(request.url),
             client_ip=client_host,

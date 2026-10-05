@@ -281,4 +281,35 @@ describe('RequestIdMiddleware', () => {
       expect(callOrder).toEqual(['run-start', 'next', 'run-end']);
     });
   });
+
+  describe('trace id extraction (plan P05)', () => {
+    const next = jest.fn();
+
+    it('reuses the trace id of a valid inbound W3C traceparent', () => {
+      const req = createMockRequest({
+        traceparent: '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+      });
+      const res = createMockResponse();
+
+      middleware.use(req as Request, res as Response, next);
+
+      expect(mockContextService.run).toHaveBeenCalledWith(
+        expect.objectContaining({ traceId: '4bf92f3577b34da6a3ce929d0e0e4736' }),
+        expect.any(Function),
+      );
+    });
+
+    it('generates a 32-hex trace id when the header is missing or malformed', () => {
+      const cases: Array<Record<string, string>> = [{}, { traceparent: 'not-a-traceparent' }];
+      for (const headers of cases) {
+        const req = createMockRequest(headers);
+        const res = createMockResponse();
+
+        middleware.use(req as Request, res as Response, next);
+
+        const { traceId } = mockContextService.run.mock.calls.at(-1)![0] as RequestContext;
+        expect(traceId).toMatch(/^[0-9a-f]{32}$/);
+      }
+    });
+  });
 });
