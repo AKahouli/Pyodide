@@ -7,6 +7,7 @@ pydantic-settings>=2,<3
 celery==5.3.6
 asyncpg==0.30.0
 httpx==0.28.1
+regex>=2024.5
 pytest==8.4.2
 pytest-asyncio==1.2.0
 # Test-only: contract tests validate generated profiles against contracts/v1.

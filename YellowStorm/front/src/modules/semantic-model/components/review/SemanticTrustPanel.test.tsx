@@ -37,17 +37,29 @@ describe('SemanticTrustPanel', () => {
     expect(screen.getByRole('option', { name: 'Sony Europe' })).toBeInTheDocument();
   });
 
-  it('groups items with the most important first and routes each to its one action', () => {
-    const onRepairMapping = vi.fn(); const onOpenItem = vi.fn(); const onFixValues = vi.fn(); const onClose = vi.fn();
-    render(<QueryClientProvider client={new QueryClient()}><SemanticTrustPanel modelId='model' canEdit onClose={onClose} onRepairMapping={onRepairMapping} onOpenItem={onOpenItem} onFixValues={onFixValues} /></QueryClientProvider>);
+  it('groups items with the most important first and hands each one over to be opened', () => {
+    const onOpenIssue = vi.fn(); const onClose = vi.fn();
+    render(<QueryClientProvider client={new QueryClient()}><SemanticTrustPanel modelId='model' canEdit onClose={onClose} onOpenIssue={onOpenIssue} activeKey='identity:c1' /></QueryClientProvider>);
     const groups = screen.getAllByRole('region').map((region) => region.getAttribute('aria-label'));
     expect(groups.indexOf('reviewQueue.group.sources')).toBeLessThan(groups.indexOf('reviewQueue.group.data'));
     fireEvent.click(screen.getByRole('button', { name: 'reviewQueue.action.repair_mapping' }));
-    expect(onRepairMapping).toHaveBeenCalledWith('m1');
-    fireEvent.click(screen.getByRole('button', { name: 'reviewQueue.action.choose_unique_field' }));
-    expect(onOpenItem).toHaveBeenCalledWith('c1');
+    expect(onOpenIssue).toHaveBeenLastCalledWith(expect.objectContaining({ key: 'mapping:m1' }));
     fireEvent.click(screen.getByRole('button', { name: 'reviewQueue.action.fix_values' }));
-    expect(onFixValues).toHaveBeenCalledWith('c2');
+    expect(onOpenIssue).toHaveBeenLastCalledWith(expect.objectContaining({ key: 'gap:c2:city' }));
+    // The page decides where to go; the list does not close itself.
+    expect(onClose).not.toHaveBeenCalled();
+    // The item opened last is marked, and an optional gap says so.
+    expect(screen.getByText('reviewQueue.kind.missing_unique_field').closest('li')).toHaveAttribute('aria-current', 'true');
+    expect(screen.getByText('reviewQueue.optional')).toBeInTheDocument();
+  });
+
+  it('shows only the items behind a readiness area', () => {
+    render(<QueryClientProvider client={new QueryClient()}><SemanticTrustPanel modelId='model' canEdit onClose={vi.fn()} /></QueryClientProvider>);
+    fireEvent.click(screen.getByRole('button', { name: /trust\.area\.sources/ }));
+    expect(screen.getByText('reviewQueue.kind.source_broken')).toBeInTheDocument();
+    expect(screen.queryByText('reviewQueue.kind.missing_unique_field')).not.toBeInTheDocument();
+    fireEvent.click(screen.getAllByRole('button', { name: 'trust.showAll' })[0]);
+    expect(screen.getByText('reviewQueue.kind.missing_unique_field')).toBeInTheDocument();
   });
 
   it('hides actions from people who can only read', () => {

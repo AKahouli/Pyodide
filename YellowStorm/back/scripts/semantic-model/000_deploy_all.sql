@@ -641,3 +641,39 @@ CREATE TABLE IF NOT EXISTS semantic_model.assistant_source_suggestions (
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (model_id, concept_key)
 );
+
+-- 024 - How much of a document the AI reads. An admin sets the defaults once; a document
+-- mapping can override any of them. Both hold only the limits that were set: anything left
+-- out falls back to the admin default, then to the built-in one.
+CREATE TABLE IF NOT EXISTS semantic_model.extraction_settings (
+  singleton    BOOLEAN     PRIMARY KEY DEFAULT true CHECK (singleton),
+  ai_settings  JSONB       NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(ai_settings) = 'object'),
+  updated_by   TEXT,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE semantic_model.source_mappings
+  ADD COLUMN IF NOT EXISTS ai_settings JSONB CHECK (ai_settings IS NULL OR jsonb_typeof(ai_settings) = 'object');
+
+-- 025 - A concept filled from another concept's records: one record per distinct key value the
+-- source records carry (a contract's customer id and name become an organization). When records
+-- sharing a key disagree on a field, the conflict rule picks the value kept; the most recent rule
+-- orders them by a field of the source concept.
+CREATE TABLE IF NOT EXISTS semantic_model.derived_sources (
+  id                 UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+  model_id           UUID        NOT NULL REFERENCES semantic_model.models(id) ON DELETE CASCADE,
+  concept_id         UUID        NOT NULL,
+  source_concept_id  UUID        NOT NULL,
+  field_mappings     JSONB       NOT NULL CHECK (jsonb_typeof(field_mappings) = 'array'),
+  conflict_rule      TEXT        NOT NULL DEFAULT 'most_frequent'
+                     CHECK (conflict_rule IN ('most_frequent', 'latest', 'longest', 'leave_empty')),
+  order_by           TEXT,
+  created_by         TEXT        NOT NULL,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (concept_id <> source_concept_id),
+  CHECK ((conflict_rule = 'latest') = (order_by IS NOT NULL))
+);
+
+CREATE INDEX IF NOT EXISTS semantic_derived_sources_model_idx
+  ON semantic_model.derived_sources (model_id);

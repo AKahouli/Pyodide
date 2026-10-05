@@ -29,26 +29,40 @@ describe('SemanticModelService archived access', () => {
     });
   });
 
-  it('resolves the search schema to the published runtime graph', async () => {
-    repository.findAccessible.mockResolvedValue({ ...accessible, status: 'published' });
+  it('resolves a published model for chat to its id and name', async () => {
+    repository.findAccessible.mockResolvedValue({ ...accessible, name: 'Contracts', status: 'published' });
     runtime.getPublishedBinding.mockResolvedValue({ projectionRef: 'age:v1:pop_dr_1' });
-    await expect(service.resolveSearchSchema('user-id', 'model-id')).resolves.toBe('pop_dr_1');
+    await expect(service.resolveChatModel('user-id', 'model-id')).resolves.toEqual({ id: 'model-id', name: 'Contracts' });
     expect(runtime.getPublishedBinding).toHaveBeenCalledWith('model-id', 'user-id');
   });
 
   it('keeps unpublished models out of chat', async () => {
     repository.findAccessible.mockResolvedValue({ ...accessible, status: 'draft' });
     runtime.getPublishedBinding.mockRejectedValue(new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND));
-    await expect(service.resolveSearchSchema('user-id', 'model-id')).rejects.toMatchObject({
+    await expect(service.resolveChatModel('user-id', 'model-id')).rejects.toMatchObject({
       code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
     });
   });
 
-  it('rejects archived models for semantic search', async () => {
+  it('rejects archived models for chat', async () => {
     repository.findAccessible.mockResolvedValue(accessible);
-    await expect(service.resolveSearchSchema('user-id', 'model-id')).rejects.toMatchObject({
+    await expect(service.resolveChatModel('user-id', 'model-id')).rejects.toMatchObject({
       code: ErrorCode.SEMANTIC_MODEL_NOT_FOUND,
     });
+    expect(runtime.getPublishedBinding).not.toHaveBeenCalled();
+  });
+
+  it('rejects models the user cannot access in chat', async () => {
+    repository.findAccessible.mockResolvedValue(null);
+    await expect(service.resolveChatModel('user-id', 'model-id')).rejects.toMatchObject({
+      code: ErrorCode.SEMANTIC_MODEL_NOT_FOUND,
+    });
+  });
+
+  it('propagates runtime failures other than a missing published binding', async () => {
+    repository.findAccessible.mockResolvedValue({ ...accessible, status: 'published' });
+    runtime.getPublishedBinding.mockRejectedValue(new Error('runtime down'));
+    await expect(service.resolveChatModel('user-id', 'model-id')).rejects.toThrow('runtime down');
   });
 });
 

@@ -8,7 +8,7 @@ the task spliced right after it.
 import asyncio
 from types import SimpleNamespace as NS
 
-from src.companion_ai import nodes
+from src.companion_ai.adk import nodes
 
 
 def _text(s):

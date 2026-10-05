@@ -40,11 +40,11 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from src.companion_ai import graph as graph_mod
+from src.companion_ai.adk import graph as graph_mod
 from src.companion_ai import human_agents as human_agents_mod
-from src.companion_ai import nodes as nodes_mod
+from src.companion_ai.adk import nodes as nodes_mod
 from src.companion_ai.plan import Plan, Step
-from src.companion_ai.service import OrchestratorService
+from src.companion_ai.adk.service import OrchestratorService
 
 
 class _ScriptedLlm(BaseLlm):
@@ -147,7 +147,6 @@ async def _run_with_concurrent_sibling(monkeypatch) -> dict:
     def tools_for_step(step, tools):
         if step.is_persona:
             tools = list(tools) + [
-                human_agents_mod.make_find_human_agents_tool(),
                 service._delegate_tool_for(
                     "sess1", "u1", plan, factory_holder, name_to_step, step.id)]
         return tools

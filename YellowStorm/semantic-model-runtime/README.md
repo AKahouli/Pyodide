@@ -34,6 +34,22 @@ the affected revisions must be projected again before activation.
   `INTERNAL_SERVICE_SECRET`; sent only to the configured backend origin.
 - `YELLOWSTORM_BACKEND_API_PREFIX`: NestJS global API prefix (default `api`).
 
+Graph search (`/v1/semantic-model-search`, migration `022`, plan in
+`docs/graph-search-plan.md`) needs pgvector >= 0.7 and pg_trgm in the runtime
+database and an embedding profile; without one, search answers exact keys only:
+
+- `SEMANTIC_EMBEDDING_BASE_URL`: OpenAI-compatible LiteLLM origin (no `/v1`).
+- `SEMANTIC_EMBEDDING_API_KEY`: a LiteLLM key for this service.
+- `SEMANTIC_EMBEDDING_MODEL`: `qwen3-embedding` (2560 dimensions, the
+  `halfvec(2560)` storage size; another size needs its own storage).
+- Optional: `SEMANTIC_EMBEDDING_TIMEOUT_SECONDS` (30),
+  `SEMANTIC_EMBEDDING_BATCH_SIZE` (32), `SEMANTIC_SEARCH_MIN_SIMILARITY` (0.4).
+
+Indexes are built by a third worker on queue `semantic-model-search.index`
+(`scripts/start-workers.ps1 -Only search`); a draft build and a publish request
+one automatically, and `POST /v1/semantic-model-search/indexes` backfills a
+model that was populated before.
+
 Feature switches default off:
 
 - `SEMANTIC_MODEL_RUNTIME_WRITES_ENABLED=true` permits durable admission.

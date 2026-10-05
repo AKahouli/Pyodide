@@ -28,13 +28,29 @@ function isConfirmGateMessage(message: WorkyMessage): boolean {
   });
 }
 
+/** An owner's answer to a runtime ask card ({askInterruptId, answer}). The
+ *  question + answer live on the ask card in "Needs you", so this control payload
+ *  is dropped from the chat thread rather than shown as a bubble. */
+function isAskCardAnswer(message: WorkyMessage): boolean {
+  if (message.role !== 'owner') return false;
+  const raw = (message.content ?? '').trim();
+  if (!raw.startsWith('{')) return false;
+  try {
+    return typeof (JSON.parse(raw) as { askInterruptId?: unknown }).askInterruptId === 'string';
+  } catch {
+    return false;
+  }
+}
+
 export function ChatMessageThread({
   streamId,
   className,
 }: { streamId?: string; className?: string } = {}): JSX.Element {
   const { t } = useModuleTranslation('worky');
   const allMessages = useWorkyMessages();
-  const messages = useMemo(() => allMessages.filter((message) => !isConfirmGateMessage(message)), [allMessages]);
+  const messages = useMemo(
+    () => allMessages.filter((message) => !isConfirmGateMessage(message) && !isAskCardAnswer(message)),
+    [allMessages]);
   const streaming = useWorkyStore((s) => s.streaming);
   const beginTurn = useWorkyStore((s) => s.beginTurn);
   const finishTurn = useWorkyStore((s) => s.finishTurn);

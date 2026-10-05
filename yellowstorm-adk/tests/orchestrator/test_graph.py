@@ -20,7 +20,7 @@ from google.adk.workflow import BaseNode
 from google.genai import types
 
 from src.companion_ai.plan import Plan, Step
-from src.companion_ai import graph
+from src.companion_ai.adk import graph
 
 
 def _fn_factory(runs: Counter, when: dict, t0_ref: list, delay: float = 0.2):

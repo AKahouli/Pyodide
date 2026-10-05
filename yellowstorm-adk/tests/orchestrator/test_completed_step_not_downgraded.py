@@ -4,7 +4,7 @@ Covers OrchestratorService._keep_completed_on_rerun_failure."""
 import asyncio
 from types import SimpleNamespace
 from src.companion_ai.plan import Status
-from src.companion_ai.service import OrchestratorService
+from src.companion_ai.adk.service import OrchestratorService
 
 
 def _fake_service():

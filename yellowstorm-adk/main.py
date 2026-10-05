@@ -112,7 +112,7 @@ async def lifespan(app: FastAPI):
     try:
         from src.evaluation.agent_evaluator import apply_litellm_debug_patch
         apply_litellm_debug_patch()
-        from src.companion_ai.adk_patches import (
+        from src.companion_ai.adk.adk_patches import (
             apply_replay_barrier_timeout_patch, apply_replay_barrier_resilience_patch)
         apply_replay_barrier_timeout_patch()
         apply_replay_barrier_resilience_patch()

@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { ConfigType } from '@nestjs/config';
 import semanticModelConfig from '@config/semantic-model.config';
 import {
+  BadRequestException,
   ConflictException,
   NotFoundException,
   ServiceUnavailableException,
@@ -76,7 +77,12 @@ export interface RuntimeCorrection {
 export interface RuntimeRevisionGaps {
   missingValues: Array<{ conceptId: string; attribute: string; missing: number; total: number }>;
   unresolvedLinks: Array<{ relationId: string; kind: string; count: number }>;
-  other: Array<{ conceptId: string | null; kind: string; count: number }>;
+  other: Array<{ conceptId: string | null; kind: string; count: number; fields?: string[] }>;
+  /** A few rows behind each gap, with the file they come from; absent on data prepared before they were kept. */
+  rowSamples?: Array<{ conceptId: string | null; kind: string; field?: string; rowNumber?: number | string;
+    asset?: { workspaceId?: string; assetId?: string }; values?: Record<string, unknown> }>;
+  linkSamples?: Array<{ relationId: string; kind: string; sourceEntityId: string; referenceField?: string;
+    referenceValue?: unknown; targetField?: string }>;
 }
 
 export interface RuntimeConceptRecordsPage {
@@ -173,6 +179,168 @@ export interface RuntimeActivateRevisionCommand {
   environment?: string;
 }
 
+const DOCUMENT_PREVIEW_TIMEOUT_MS = 120_000;
+
+export interface RuntimeDocumentPreviewRequest {
+  actorUserId: string;
+  modelId: string;
+  entry: { conceptId: string; conceptLabel?: string; source: Record<string, unknown>; fieldMappings: unknown[]; options?: Record<string, unknown> };
+  aiExtraction?: { agentSlug: string; model: string | null; contractVersion: string } | null;
+}
+
+/** How each extracted field was read, or why it was not. */
+export interface RuntimeDocumentPreviewField {
+  method: 'rules' | 'ai';
+  reason: 'found' | 'label_not_found' | 'no_value' | 'several_values' | 'pattern_mismatch' | 'no_heading' | 'no_match' | 'ai_not_found' | 'ai_failed';
+  value?: unknown;
+  values?: string[];
+  page?: number | null;
+  quote?: string | null;
+  detail?: string;
+  rules?: Omit<RuntimeDocumentPreviewField, 'rules'>;
+}
+
+export interface RuntimeDocumentPreview {
+  /** `read`, or why the document could not be read at all (e.g. `index_unavailable`). */
+  status: string;
+  detail?: string;
+  fields: Record<string, RuntimeDocumentPreviewField>;
+  aiSent?: { documentCharacters: number; longDocument: boolean; blocksSent: number; charactersSent: number } | null;
+}
+
+// ── Graph search (records of a bound data revision, found by meaning, then followed along real links) ──
+
+/** Query embedding can take a few seconds; seeds and expansion get a fixed, longer deadline. */
+const GRAPH_SEARCH_TIMEOUT_MS = 15_000;
+
+export type RuntimeSearchEnvironment = 'draft' | 'production';
+export type RuntimeSearchIndexState = 'ready' | 'queued' | 'indexing' | 'failed' | 'missing' | 'unavailable';
+
+export interface RuntimeRecordProvenance {
+  assetId: string;
+  workspaceId?: string;
+  rowNumbers?: number[];
+}
+
+export interface RuntimeGraphSearchRequest {
+  actorUserId: string;
+  modelId: string;
+  environment: RuntimeSearchEnvironment;
+  query: string;
+  concepts?: string[];
+  limit?: number;
+  /** Workspaces whose sources the actor may read; null or absent means no filter. */
+  allowedWorkspaceIds?: string[] | null;
+  expectedDataRevisionId?: string;
+}
+
+export interface RuntimeGraphSearchSeed {
+  entityId: string;
+  conceptId: string;
+  conceptLabel: string;
+  label: string;
+  keyFields: Record<string, unknown>;
+  snippet: string;
+  matchClass: 'exact' | 'lexical' | 'vector' | 'hybrid';
+  rank: number;
+  diagnostics: Record<string, unknown>;
+  provenance: RuntimeRecordProvenance[];
+}
+
+export interface RuntimeGraphSearchResult {
+  modelId: string;
+  environment: RuntimeSearchEnvironment;
+  modelVersionId: string;
+  dataRevisionId: string;
+  projectionRef: string;
+  index: { indexId: string | null; state: RuntimeSearchIndexState; embeddingFingerprint: string | null };
+  modeUsed: 'hybrid' | 'lexical_only' | 'exact_only';
+  status: 'found' | 'no_match' | 'not_represented' | 'index_not_ready';
+  concepts: Array<{ conceptId: string; key: string; label: string }>;
+  unknownConcepts: string[];
+  seeds: RuntimeGraphSearchSeed[];
+  coverage: { expectedCount: number; indexedCount: number; exactOnlyCount: number };
+  timings: { embedMs: number; seedMs: number };
+}
+
+export interface RuntimeGraphExpandStep {
+  /** Relation ids or keys; the second step must name them. */
+  relations?: string[];
+  direction?: 'outgoing' | 'incoming' | 'both';
+  concepts?: string[];
+}
+
+export interface RuntimeGraphExpandRequest {
+  actorUserId: string;
+  modelId: string;
+  environment: RuntimeSearchEnvironment;
+  seedEntityIds: string[];
+  steps: RuntimeGraphExpandStep[];
+  maxNodes?: number;
+  allowedWorkspaceIds?: string[] | null;
+  expectedDataRevisionId?: string;
+}
+
+export interface RuntimeGraphPathStep {
+  fromEntityId: string;
+  relationId: string;
+  relationKey: string;
+  direction: 'outgoing' | 'incoming';
+  toEntityId: string;
+}
+
+export interface RuntimeGraphExpandResult {
+  modelId: string;
+  environment: RuntimeSearchEnvironment;
+  modelVersionId: string;
+  dataRevisionId: string;
+  projectionRef: string;
+  status: 'found' | 'no_match' | 'partial';
+  nodes: Array<{
+    entityId: string;
+    conceptId: string;
+    conceptLabel: string;
+    label: string;
+    keyFields: Record<string, unknown>;
+    inclusionReason: 'seed' | 'relationship';
+    path: RuntimeGraphPathStep[];
+    provenance: RuntimeRecordProvenance[];
+  }>;
+  edges: Array<{ relationId: string; relationKey: string; sourceEntityId: string; targetEntityId: string }>;
+  hiddenSeeds: number;
+  truncated: boolean;
+  timings: { expandMs: number };
+}
+
+export interface RuntimeGraphSearchIndex {
+  indexId: string | null;
+  state: RuntimeSearchIndexState;
+  expectedCount: number;
+  indexedCount: number;
+  exactOnlyCount: number;
+  failedCount: number;
+  reusedCount: number;
+  embeddingCalls: number;
+  lastErrorCode: string | null;
+  completedAt: string | null;
+  embeddingFingerprint: string | null;
+}
+
+export interface RuntimeGraphSearchIndexStatus {
+  modelId: string;
+  environment: RuntimeSearchEnvironment;
+  dataRevisionId: string;
+  index: RuntimeGraphSearchIndex;
+}
+
+/** Why the runtime refused a search request (422), said in words a person or an agent can act on. */
+const GRAPH_SEARCH_REJECTIONS: Record<string, string> = {
+  unknown_relation: 'One of the relationships named is not in this model',
+  unknown_concept: 'One of the concepts named is not in this model',
+  relations_required_for_second_step: 'The second step must name the relationships to follow',
+  invalid_query: 'This search request is not valid',
+};
+
 @Injectable()
 export class SemanticRuntimeClientService {
   constructor(
@@ -240,6 +408,32 @@ export class SemanticRuntimeClientService {
         'Semantic runtime request failed',
       );
     }
+  }
+
+  /**
+   * Read one document's extracted fields as a run would, without storing anything. AI reading can
+   * take a while, so this waits longer than other calls; a rule the runtime rejects comes back as
+   * a validation error that names the problem.
+   */
+  async previewDocumentFields(body: RuntimeDocumentPreviewRequest): Promise<RuntimeDocumentPreview> {
+    const base = this.requireRuntime();
+    let res: Response;
+    try {
+      res = await fetch(`${base}/v1/semantic-model-population/document-preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Semantic-Service-Key': this.config.runtimeServiceKey },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(DOCUMENT_PREVIEW_TIMEOUT_MS),
+      });
+    } catch {
+      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    }
+    if (res.status === 422) {
+      const detail = this.errorDetail({ data: await this.readErrorPayload(res) });
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, detail || 'These reading rules cannot be used');
+    }
+    if (!res.ok) throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    return await res.json() as RuntimeDocumentPreview;
   }
 
   private async get<T>(path: string, actorUserId: string): Promise<T> {
@@ -431,6 +625,67 @@ export class SemanticRuntimeClientService {
       `/v1/semantic-model-population/manual-sources/${encodeURIComponent(modelId)}/snapshots/${encodeURIComponent(snapshotId)}/rows`,
       batch,
     );
+  }
+
+  /** Records whose fields match a query, by exact key, words and meaning, in the data bound to one environment. */
+  async graphSearch(body: RuntimeGraphSearchRequest): Promise<RuntimeGraphSearchResult> {
+    return this.graphSearchCall('POST', '/v1/semantic-model-search/query', body.actorUserId, body, GRAPH_SEARCH_TIMEOUT_MS);
+  }
+
+  /** The records linked to some records along real relationships, one or two steps away. */
+  async graphExpand(body: RuntimeGraphExpandRequest): Promise<RuntimeGraphExpandResult> {
+    return this.graphSearchCall('POST', '/v1/semantic-model-search/expand', body.actorUserId, body, GRAPH_SEARCH_TIMEOUT_MS);
+  }
+
+  /** Builds (or reuses) the search index of the data bound to one environment, in the background. */
+  async ensureGraphSearchIndex(body: { actorUserId: string; modelId: string; environment: RuntimeSearchEnvironment }):
+    Promise<RuntimeGraphSearchIndexStatus & { jobId: string | null }> {
+    return this.graphSearchCall('POST', '/v1/semantic-model-search/indexes', body.actorUserId, body, undefined, true);
+  }
+
+  async getGraphSearchIndex(modelId: string, environment: RuntimeSearchEnvironment, actorUserId: string): Promise<RuntimeGraphSearchIndexStatus> {
+    const params = new URLSearchParams({ environment });
+    return this.graphSearchCall('GET', `/v1/semantic-model-search/models/${encodeURIComponent(modelId)}/index?${params}`, actorUserId);
+  }
+
+  /**
+   * Search calls are reads (except building the index), so they work while runtime writes are off. A
+   * refused request (422) comes back as a validation error naming the problem; 404 and 409 map as for the
+   * other calls; anything else means the runtime cannot answer now.
+   */
+  private async graphSearchCall<T>(method: 'GET' | 'POST', path: string, actorUserId: string, body?: unknown,
+    timeoutMs = this.config.runtimeRequestTimeoutMs, writes = false): Promise<T> {
+    const base = writes ? this.requireWrites() : this.requireRuntime();
+    let res: Response;
+    try {
+      res = await fetch(`${base}${path}`, {
+        method,
+        headers: {
+          ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+          'X-Semantic-Service-Key': this.config.runtimeServiceKey,
+          'X-Actor-User-Id': actorUserId,
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch {
+      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    }
+    if (res.ok) {
+      try {
+        return await res.json() as T;
+      } catch {
+        throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+      }
+    }
+    const detail = this.errorDetail({ data: await this.readErrorPayload(res) });
+    if (res.status === 422 || res.status === 400) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+        GRAPH_SEARCH_REJECTIONS[detail.split(/[:\s]/)[0]] ?? GRAPH_SEARCH_REJECTIONS.invalid_query);
+    }
+    if (res.status === 409) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT, detail);
+    if (res.status === 404) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, detail);
+    throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
   }
 
   async commitManualSnapshot(modelId: string, snapshotId: string, counts: { rowCount: number; linkCount: number }): Promise<{ reused: boolean }> {

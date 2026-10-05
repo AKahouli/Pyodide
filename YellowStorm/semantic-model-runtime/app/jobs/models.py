@@ -90,6 +90,31 @@ class RelationBinding(BaseModel):
         return data
 
 
+class DerivationField(BaseModel):
+    """A field of the source concept copied into a field of the derived concept."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_attribute: str = Field(alias="sourceAttribute", min_length=1, max_length=200)
+    target_attribute: str = Field(alias="targetAttribute", min_length=1, max_length=200)
+
+
+class Derivation(BaseModel):
+    """A concept made from the distinct key values another concept's records carry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    derivation_id: str = Field(alias="derivationId", min_length=1, max_length=200)
+    concept_id: str = Field(alias="conceptId", min_length=1, max_length=200)
+    source_concept_id: str = Field(alias="sourceConceptId", min_length=1, max_length=200)
+    field_mappings: list[DerivationField] = Field(alias="fieldMappings", min_length=1, max_length=50)
+    conflict_rule: Literal["most_frequent", "latest", "longest", "leave_empty"] = Field(
+        default="most_frequent", alias="conflictRule")
+    order_by: str | None = Field(default=None, alias="orderBy", max_length=200)
+    label_field: str | None = Field(default=None, alias="labelField", max_length=200)
+    mapping_version: str = Field(default="v1", alias="mappingVersion", max_length=200)
+
+
 class PopulationScope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -115,6 +140,8 @@ class PopulationPayload(BaseModel):
     sources: list[PopulationSource] = Field(min_length=1, max_length=25)
     relation_bindings: list[RelationBinding] = Field(
         default_factory=list, alias="relationBindings", max_length=50)
+    # Concepts made from another concept's records, after every source is read.
+    derivations: list[Derivation] = Field(default_factory=list, max_length=50)
     # Identity of the AI extractor actually used (agent slug, effective model,
     # contract version), or null when no mapping requests AI extraction. Part of
     # the execution fingerprint so a model change produces a new revision.
@@ -125,6 +152,15 @@ class PopulationPayload(BaseModel):
         default=0, alias="expectedCorrectionSequence", ge=0)
     budget_profile_id: str = Field(
         default="default", alias="budgetProfileId", max_length=200)
+
+    @model_serializer(mode="wrap")
+    def serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        # A command without derivations serializes as it did before they existed, so its
+        # admission hash still matches jobs admitted earlier under the same idempotency key.
+        data = handler(self)
+        if not self.derivations:
+            data.pop("derivations", None)
+        return data
 
 
 class PopulationCommand(JobCommand):

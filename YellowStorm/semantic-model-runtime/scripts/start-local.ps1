@@ -35,6 +35,13 @@ try {
     '--hostname', 'semantic-population@%h'
   ) -WorkingDirectory $runtimeRoot -NoNewWindow -PassThru
 
+  $workers += Start-Process -FilePath 'conda' -ArgumentList @(
+    'run', '--no-capture-output', '-n', 'meta', 'python', '-m', 'celery',
+    '-A', 'app.workers.graph_search_tasks:celery_app', 'worker', '--loglevel=INFO', '--pool=solo',
+    '--queues', 'semantic-model-search.index',
+    '--hostname', 'semantic-search@%h'
+  ) -WorkingDirectory $runtimeRoot -NoNewWindow -PassThru
+
   & conda run --no-capture-output -n meta python -m uvicorn app.main:app --host 127.0.0.1 --port $Port
   if ($LASTEXITCODE) { throw "Semantic runtime exited with code $LASTEXITCODE" }
 } finally {
