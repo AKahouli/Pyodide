@@ -99,6 +99,10 @@ export interface RootNativeState {
   backgroundFanoutItem?: { coordinatorExecutionId: string; manifestId: string; digest: string };
   backgroundEventSequence?: string;
   hasBackgroundJobs?: boolean;
+  /** Server-owned finite result membership; native traces cannot reopen scheduling. */
+  schedulingSeal?: { sealedAt: string; digest: string; followupExecutionId: string;
+    resultManifest: Array<{ executionId: string; role: string }> };
+  followup?: { manifestDigest: string; publicationMessageId: string; publishedAt?: string };
   capabilityCeiling?: import('./root-capability-ceiling').RootCapabilityCeiling;
   preparedContext?: {
     workspaceContexts: unknown[];

@@ -9,7 +9,8 @@ describe('Root input read authorization', () => {
       { id: 'execution', rootAgentId: 'root', resultPayload: { nativeState } },
     ]) };
     const service = new RootInputService({ getConversationDocument: jest.fn().mockResolvedValue({ ...conversation, ...patch }) } as never,
-      work as never);
+      work as never, { publicSnapshot: jest.fn().mockResolvedValue({ epoch: 4, rootAgentId: 'root', jobs: [] }) } as never,
+      { authorizeBackgroundExecution: jest.fn() } as never, { get: jest.fn().mockReturnValue(false) } as never);
     return { work, service };
   }
   it('returns a purpose-built projection only for its actor and current binding/epoch', async () => {
@@ -18,6 +19,21 @@ describe('Root input read authorization', () => {
       { executionId: 'execution', epoch: 4, inputs: [{ inputId: 'input', inputVersion: 1, kind: 'confirmation' }] },
     ]);
     expect(work.listWaitingRoots).toHaveBeenCalledWith('conversation', 4);
+  });
+  it('projects an authorized background approval with its route discriminator and no native credentials', async () => {
+    const jobs = { publicSnapshot: jest.fn().mockResolvedValue({ epoch: 4, rootAgentId: 'root', jobs: [
+      { executionId: 'background', status: 'waiting', nativeState },
+    ] }) };
+    const results = { authorizeBackgroundExecution: jest.fn().mockResolvedValue({}) };
+    const service = new RootInputService({ getConversationDocument: jest.fn().mockResolvedValue(conversation) } as never,
+      { listWaitingRoots: jest.fn().mockResolvedValue([]) } as never, jobs as never, results as never,
+      { get: jest.fn().mockReturnValue(true) } as never);
+    expect(await service.getPendingInputs('conversation', 'owner')).toEqual([
+      { executionId: 'background', epoch: 4, mode: 'background', inputs: [{ inputId: 'input', inputVersion: 1, kind: 'confirmation' }] },
+    ]);
+    expect(results.authorizeBackgroundExecution).toHaveBeenCalledWith('conversation', 'background', 'owner');
+    results.authorizeBackgroundExecution.mockRejectedValueOnce(new Error('revoked'));
+    await expect(service.getPendingInputs('conversation', 'owner')).rejects.toThrow('revoked');
   });
   it.each(['member', 'project-reader', 'guest'])('does not disclose private requests to %s', async (actor) => {
     const { work, service } = setup();

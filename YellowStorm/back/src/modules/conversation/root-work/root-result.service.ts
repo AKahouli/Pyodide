@@ -23,16 +23,21 @@ export class RootResultService {
   async authorizeBackgroundExecution(conversationId: string, executionId: string, actorId: string) {
     return this.authorizeProducer(conversationId, executionId, actorId, true);
   }
+  async authorizeSynthesisMember(conversationId: string, executionId: string, actorId: string) {
+    return this.authorizeProducer(conversationId, executionId, actorId, false, true);
+  }
 
-  private async authorizeProducer(conversationId: string, executionId: string, actorId: string, background: boolean) {
+  private async authorizeProducer(conversationId: string, executionId: string, actorId: string, background: boolean, terminalMember = false) {
     const conversation = await this.conversations.getConversationDocument(conversationId);
     const execution = await this.work.getExecution(executionId);
     if (conversation.createdBy !== actorId || conversation.isArchived || conversation.isGroup
       || !execution || execution.conversationId !== conversationId
       || !execution.rootAgentId || execution.rootAgentId !== conversation.rootAgentId
       || execution.conversationEpoch !== (conversation.rootWorkEpoch ?? 0)
-      || !['library_worker', 'temporary_worker'].includes(execution.role)
-      || (background ? execution.resultPayload?.nativeState?.backgroundJobId !== execution.id : execution.status !== 'completed')
+      || !['library_worker', 'temporary_worker', 'fanout_driver', 'followup'].includes(execution.role)
+      || (terminalMember ? !['completed', 'failed', 'cancelled'].includes(execution.status)
+        : background ? execution.resultPayload?.nativeState?.backgroundJobId !== execution.id
+        && !execution.resultPayload?.nativeState?.backgroundFanoutItem : execution.status !== 'completed')
       || execution.resultPayload?.nativeState?.actorId !== actorId) {
       throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Execution result is unavailable');
     }
@@ -41,11 +46,24 @@ export class RootResultService {
     const parent = execution.parentExecutionId ? await this.work.getExecution(execution.parentExecutionId) : null;
     const pool = await this.resolver.resolveForActor(execution.rootAgentId, actorId);
     const selected = pool.entries.find((entry) => entry.agentId === state.rootContext.selected_agent_id);
-    const workerAuthorized = execution.role === 'temporary_worker'
+    const manifest = parent?.resultPayload?.nativeState?.fanoutManifests?.find((entry) =>
+      entry.manifestId === state.backgroundFanout?.manifestId && entry.digest === state.backgroundFanout?.digest);
+    const targetAgentId = manifest?.target.kind === 'library' ? manifest.target.agentId : null;
+    const workerAuthorized = execution.role === 'followup'
+      ? pool.policy.background.enabled && state.followup?.manifestDigest === parent?.resultPayload?.nativeState?.schedulingSeal?.digest
+        && execution.id === parent?.resultPayload?.nativeState?.schedulingSeal?.followupExecutionId
+      : execution.role === 'fanout_driver'
+      ? manifest?.mode === 'background' && pool.policy.background.enabled && pool.policy.fanout.enabled
+        && pool.policy.fanout.allowBackground && (manifest.target.kind === 'temporary' ? pool.policy.temporaryWorkers.enabled
+          : pool.delegationEnabled && pool.entries.some((entry) => entry.agentId === targetAgentId
+            && (parent?.resultPayload?.nativeState?.rootContext.catalog as Array<{ agent_id: string; snapshot_digest: string }> | undefined)
+              ?.some((frozen) => frozen.agent_id === entry.agentId && frozen.snapshot_digest === entry.snapshotDigest)))
+      : execution.role === 'temporary_worker'
       ? pool.policy.temporaryWorkers.enabled && state.rootContext.origin_root_agent_id === execution.rootAgentId
         && state.scope.immutableSnapshotRef === pool.rootSnapshotDigest
       : pool.delegationEnabled && Boolean(selected) && selected?.snapshotDigest === state.scope.immutableSnapshotRef;
-    const sources = state.rootContext.source_workspace_ids;
+    const sources = ['fanout_driver', 'followup'].includes(execution.role) ? parent?.resultPayload?.nativeState?.capabilityCeiling?.workspaceIds
+      : state.rootContext.source_workspace_ids;
     if (!Array.isArray(sources)) {
       throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Result source permissions are unavailable');
     }
@@ -64,6 +82,11 @@ export class RootResultService {
       || currentConversation.isArchived || currentConversation.isGroup
       || (currentConversation.rootWorkEpoch ?? 0) !== execution.conversationEpoch) {
       throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Execution result is unavailable');
+    }
+    if (execution.role === 'followup') {
+      for (const member of parent.resultPayload!.nativeState!.schedulingSeal!.resultManifest) {
+        await this.authorizeSynthesisMember(conversationId, member.executionId, actorId);
+      }
     }
     return execution;
   }

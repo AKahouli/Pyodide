@@ -15,17 +15,35 @@ describe('ROOT background submission', () => {
     const child = { id: childId, resultPayload: { nativeState: childState } };
     const work = { getExecution: jest.fn().mockImplementation(async (id) => id === parentId ? parent : child),
       completeExecution: jest.fn().mockResolvedValue({ status: 'failed' }) };
-    const jobs = { getJob: jest.fn().mockResolvedValue(null), admit: jest.fn().mockResolvedValue({ status: 'queued' }) };
+    const jobs = { getJob: jest.fn().mockResolvedValue(null), admit: jest.fn().mockResolvedValue({ status: 'queued' }),
+      admitFanout: jest.fn().mockResolvedValue({ executionId: 'coordinator', requestDigest: 'digest', status: 'queued',
+        conversationId: 'conversation', actorId: 'actor' }) };
     const driver = { ready: jest.fn().mockResolvedValue(true) };
     const resolver = { resolveForActor: jest.fn().mockResolvedValue({ rootSnapshotDigest: 'root-snapshot', policy: { background: { enabled: true } } }) };
     const registration = { executionId: childId, nativeState: childState };
     const definitions = { prepareBackground: jest.fn().mockResolvedValue({ executionId: childId, registration }) };
     const temporary = { prepareBackground: jest.fn() };
     const results = { authorizeBackgroundExecution: jest.fn().mockResolvedValue(child) };
+    const fanout = { authorizeBackground: jest.fn().mockResolvedValue({ digest: 'digest' }) };
     const service = new RootBackgroundSubmissionService(work as any, jobs as any, driver as any,
-      resolver as any, definitions as any, temporary as any, results as any);
-    return { service, parent, state, jobs, work, driver, resolver, definitions, results };
+      resolver as any, definitions as any, temporary as any, results as any, fanout as any);
+    return { service, parent, state, jobs, work, driver, resolver, definitions, results, fanout };
   }
+
+  it('requires versioned fan-out readiness before atomic admission and current authorization before acknowledgement', async () => {
+    const h = fixture();
+    const proposal = { version: 1 as const, mode: 'background' as const, nativeCallId: 'call', nativeCallBranch: 'run_fanout@call',
+      target: { kind: 'library' as const, agentId }, items: [{ key: 'first', task: 'bounded' }] };
+    h.driver.ready.mockResolvedValueOnce(false);
+    await expect(h.service.submitFanout(parentId, proposal)).rejects.toThrow('authorized');
+    expect(h.jobs.admitFanout).not.toHaveBeenCalled();
+    expect(await h.service.submitFanout(parentId, proposal)).toEqual({ executionId: 'coordinator', status: 'queued', resultRef: 'coordinator' });
+    expect(h.driver.ready).toHaveBeenCalledWith(true);
+    expect(h.fanout.authorizeBackground).toHaveBeenCalledWith(parentId, proposal);
+    expect(h.jobs.admitFanout).toHaveBeenCalledWith(parentId, proposal);
+    h.results.authorizeBackgroundExecution.mockRejectedValueOnce(new Error('revoked'));
+    await expect(h.service.submitFanout(parentId, proposal)).rejects.toThrow('revoked');
+  });
 
   it('acknowledges only after durable enqueue and exposes no hydrated profile', async () => {
     const h = fixture();

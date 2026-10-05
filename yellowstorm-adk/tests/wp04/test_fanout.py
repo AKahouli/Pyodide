@@ -108,3 +108,27 @@ def test_fanout_wire_defaults_and_enabled_fields():
     assert not default.fanout_enabled and default.worker_permit_version == 0
     enabled = RootExecutionContext(worker_permit_version=1, fanout_enabled=True, max_fanout_items=3)
     assert RootExecutionContext.FromString(enabled.SerializeToString()) == enabled
+
+
+@pytest.mark.asyncio
+async def test_background_fanout_returns_only_a_stable_reference_and_uncertain_ack_never_restarts_work(monkeypatch):
+    from src.root_runtime.contracts import ExecutionRole, ExecutionScopeV1
+    from unittest.mock import AsyncMock
+    scope = ExecutionScopeV1(role=ExecutionRole.ROOT, execution_id='a' * 24)
+    context = SimpleNamespace(function_call_id='call', branch='root', run_node=AsyncMock())
+    config = {'fanout_enabled': True, 'worker_permit_version': 1, 'max_parallel_workers': 1,
+        'max_fanout_items': 2, 'background_fanout_enabled': True}
+    tool = build_fanout_dispatcher(None, None, config, scope)
+    identity = hashlib.sha256(f'{scope.execution_id}:root.run_fanout@call:background_fanout'.encode()).hexdigest()[:24]
+    post = AsyncMock(return_value={'executionId': identity, 'status': 'queued', 'resultRef': identity})
+    monkeypatch.setattr('src.root_runtime.fanout._post', post)
+    args = {'items': [{'key': 'one', 'task': 'Bounded'}], 'worker_type': 'temporary', 'tool_context': context, 'mode': 'background'}
+    assert await tool.func(**args) == {'status': 'queued', 'execution_id': identity, 'result_ref': identity}
+    context.run_node.assert_not_awaited()
+    assert post.call_args.args[1] == 'background-fanout'
+    post.side_effect = TimeoutError('lost acknowledgement')
+    assert (await tool.func(**args))['status'] == 'outcome_unknown'
+    context.run_node.assert_not_awaited()
+    config['background_fanout_enabled'] = False
+    with pytest.raises(ValueError, match='unavailable'):
+        await tool.func(**args)

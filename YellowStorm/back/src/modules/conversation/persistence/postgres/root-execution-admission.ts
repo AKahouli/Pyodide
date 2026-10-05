@@ -4,7 +4,7 @@ import * as schema from '../../../postgres/schema';
 import type { RegisterExecutionInput } from '../../root-work/root-work.store';
 import type { DelegateResultV1, RootBackgroundJobOwnerV1, RootExecutionRecord, RootExecutionStatus } from '../../root-work/root-work.types';
 import { requireBackgroundOwner, type RootControlTransaction } from './root-background-owner';
-import { loadOwnedBackgroundItem } from './root-background-fanout';
+import { loadOwnedBackgroundItem, requireBackgroundItemOwner } from './root-background-fanout';
 
 type RootExecutionRow = typeof schema.rootExecutions.$inferSelect;
 export function toRecord(row: RootExecutionRow): RootExecutionRecord {
@@ -80,6 +80,14 @@ export async function admitRootExecution(tx: RootControlTransaction, input: Regi
       const [replay] = await tx.select({ id: schema.rootExecutions.id, terminalAt: schema.rootExecutions.terminalAt }).from(schema.rootExecutions)
         .where(eq(schema.rootExecutions.id, input.executionId)).limit(1);
       const state = (parent.resultPayload as DelegateResultV1 | null)?.nativeState;
+      if (state?.schedulingSeal && !replay && !ownedItem) {
+        throw new Error('Root scheduling is sealed');
+      }
+      const reservedManifest = state?.fanoutManifests?.find((manifest) =>
+        manifest.items.some((item) => item.executionId === input.executionId));
+      if (reservedManifest?.mode === 'background' && !ownedItem) {
+        throw new Error('Fan-out worker admission requires coordinator ownership');
+      }
       const duration = Number(state?.rootContext.max_work_group_duration_seconds ?? 0);
       if (!replay?.terminalAt && duration > 0 && Date.now() >= parent.createdAt.getTime() + duration * 1000) {
         throw new Error('Root child execution deadline expired');
@@ -165,7 +173,6 @@ export async function admitRootExecution(tx: RootControlTransaction, input: Regi
     if (existing.resultPayload?.nativeState?.backgroundFanoutItem && !ownedItem) {
       throw new Error('Fan-out worker hydration requires coordinator ownership');
     }
-    if (ownedItem) await requireBackgroundOwner(tx, { ...ownedItem.coordinator,
-      resultPayload: ownedItem.coordinator.resultPayload as DelegateResultV1 }, coordinatorGrant);
+    if (ownedItem) await requireBackgroundItemOwner(tx, existingRow!, coordinatorGrant);
     return existing;
 }

@@ -35,14 +35,16 @@ export function backgroundEventPayload(event: RootBackgroundEventProposal, job: 
   if (!event || typeof event.eventId !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(event.eventId)
     || Object.keys(event).some((key) => !['eventId', 'kind', 'trace', 'action', 'component', 'usage'].includes(key))) throw invalid();
   const lineage = { executionId: job.executionId, parentExecutionId: job.parentExecutionId,
-    conversationEpoch: job.conversationEpoch, producerAgentId: String(state.rootContext.selected_agent_id), producerRole: state.scope.role };
+    conversationEpoch: job.conversationEpoch, producerAgentId: String(state.rootContext.selected_agent_id ?? state.rootContext.root_agent_id), producerRole: state.scope.role };
   if (event.kind === 'lifecycle') {
     const trace = event.trace;
     if (!trace || event.component || event.usage || event.action || trace.execution_id !== job.executionId
       || trace.parent_execution_id !== job.parentExecutionId || trace.native_session_id !== job.nativeSessionId
       || !job.nativeInvocationId || trace.native_invocation_id !== job.nativeInvocationId
       || trace.producer_agent_id !== lineage.producerAgentId
-      || trace.producer_role !== (state.scope.role === 'library_worker' ? 'EXECUTION_ROLE_LIBRARY_WORKER' : 'EXECUTION_ROLE_TEMPORARY_WORKER')
+      || trace.producer_role !== (state.scope.role === 'followup' ? 'EXECUTION_ROLE_FOLLOWUP'
+        : state.scope.role === 'fanout_driver' ? 'EXECUTION_ROLE_FANOUT_DRIVER'
+        : state.scope.role === 'library_worker' ? 'EXECUTION_ROLE_LIBRARY_WORKER' : 'EXECUTION_ROLE_TEMPORARY_WORKER')
       || !['INVOCATION_LIFECYCLE_STATE_STARTED', 'INVOCATION_LIFECYCLE_STATE_WAITING', 'INVOCATION_LIFECYCLE_STATE_COMPLETED',
         'INVOCATION_LIFECYCLE_STATE_CANCELLED', 'INVOCATION_LIFECYCLE_STATE_FAILED'].includes(String(trace.lifecycle))) throw invalid();
     const pendingInputs = parseNativePendingInputs(trace.pending_inputs);

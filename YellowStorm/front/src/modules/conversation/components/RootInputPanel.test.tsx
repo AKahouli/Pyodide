@@ -4,14 +4,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RootInputPanel } from './RootInputPanel';
 import { encodeNativeInput } from './NativeInputFields';
 
-const mocks = vi.hoisted(() => ({ fetch: vi.fn(), send: vi.fn(), user: { id: 'owner' } }));
-vi.mock('../api', () => ({ fetchRootInputs: mocks.fetch }));
+const mocks = vi.hoisted(() => ({ fetch: vi.fn(), send: vi.fn(), background: vi.fn(), user: { id: 'owner' } }));
+vi.mock('../api', () => ({ fetchRootInputs: mocks.fetch, submitBackgroundRootInput: mocks.background }));
 vi.mock('../store', () => ({ useConversationStore: (selector: (state: unknown) => unknown) => selector({ sendMessage: mocks.send }) }));
 vi.mock('@/modules/auth/useAuth', () => ({ useAuth: () => ({ user: mocks.user }) }));
 vi.mock('@/modules/localization', () => ({ useModuleTranslation: () => ({ t: (key: string) => key }) }));
 
 describe('Native pending input', () => {
   beforeEach(() => { vi.clearAllMocks(); mocks.user.id = 'owner'; mocks.send.mockResolvedValue(undefined); });
+  it('queues a background approval without creating a foreground conversation turn', async () => {
+    mocks.background.mockResolvedValue(undefined);
+    mocks.fetch.mockResolvedValue([{ executionId: 'background-job', epoch: 2, mode: 'background',
+      inputs: [{ inputId: 'approval', inputVersion: 3, kind: 'confirmation' }] }]);
+    render(<RootInputPanel conversationId='conversation' creatorId='owner' />);
+    await userEvent.click(await screen.findByRole('button', { name: 'rootInput.reject' }));
+    expect(mocks.background).toHaveBeenCalledWith('conversation', 'background-job',
+      [{ inputId: 'approval', inputVersion: 3, response: { confirmed: false } }]);
+    expect(mocks.send).not.toHaveBeenCalled();
+  });
   it('rejects through the existing continuation with a real false boolean', async () => {
     mocks.fetch.mockResolvedValue([{ executionId: 'execution', epoch: 2,
       inputs: [{ inputId: 'approval', kind: 'confirmation' }] }]);

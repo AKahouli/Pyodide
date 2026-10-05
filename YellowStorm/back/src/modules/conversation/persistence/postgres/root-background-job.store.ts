@@ -1,4 +1,4 @@
-import { and, eq, inArray, lte, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, lte, or, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import * as schema from '../../../postgres/schema';
 import type { DelegateResultV1, RootBackgroundJobOwnerV1 } from '../../root-work/root-work.types';
@@ -28,6 +28,30 @@ export class RootBackgroundJobStore {
     const [job] = await this.db.select().from(schema.rootBackgroundJobs)
       .where(eq(schema.rootBackgroundJobs.executionId, executionId)).limit(1);
     return job ?? null;
+  }
+
+  async publicSnapshot(conversationId: string, actorId: string) {
+    return this.db.transaction(async (tx) => {
+      const [conversation] = await tx.select().from(schema.conversations)
+        .where(eq(schema.conversations.id, conversationId)).limit(1).for('share');
+      if (!conversation || conversation.createdBy !== actorId || conversation.isArchived || conversation.isGroup) {
+        throw new Error('Root work snapshot creator authority changed');
+      }
+      const rows = await tx.select({ executionId: schema.rootBackgroundJobs.executionId,
+        parentExecutionId: schema.rootBackgroundJobs.parentExecutionId, status: schema.rootBackgroundJobs.status,
+        role: schema.rootExecutions.role, createdAt: schema.rootBackgroundJobs.createdAt, deadline: schema.rootBackgroundJobs.deadline,
+        nativeState: sql<DelegateResultV1['nativeState']>`${schema.rootExecutions.resultPayload}->'nativeState'` })
+        .from(schema.rootBackgroundJobs).innerJoin(schema.rootExecutions, eq(schema.rootExecutions.id, schema.rootBackgroundJobs.executionId))
+        .where(and(eq(schema.rootBackgroundJobs.conversationId, conversationId), eq(schema.rootBackgroundJobs.actorId, actorId),
+          eq(schema.rootBackgroundJobs.conversationEpoch, conversation.rootWorkEpoch),
+          eq(schema.rootExecutions.rootAgentId, conversation.rootAgentId!)))
+        .orderBy(sql`CASE WHEN ${schema.rootBackgroundJobs.status} IN ('queued','running','waiting','outcome_unknown') THEN 0 ELSE 1 END`,
+          desc(schema.rootBackgroundJobs.createdAt)).limit(100);
+      const [{ watermark }] = await tx.select({ watermark: sql<string>`coalesce(max(${schema.rootBackgroundEvents.sequence}),0)::text` })
+        .from(schema.rootBackgroundEvents).where(and(eq(schema.rootBackgroundEvents.conversationId, conversationId),
+          eq(schema.rootBackgroundEvents.conversationEpoch, conversation.rootWorkEpoch), eq(schema.rootBackgroundEvents.actorId, actorId)));
+      return { epoch: conversation.rootWorkEpoch, watermark, rootAgentId: conversation.rootAgentId, jobs: rows };
+    });
   }
 
   /** Trusted scheduler seam; returns persisted inputs, never caller-supplied replacements. */
@@ -183,8 +207,12 @@ export class RootBackgroundJobStore {
       const [execution] = await tx.select().from(schema.rootExecutions)
         .where(eq(schema.rootExecutions.id, job.executionId)).limit(1);
       const coordinator = execution?.role === 'fanout_driver';
+      const synthesis = execution?.role === 'followup';
       const bindingChanged = !this.currentBinding(conversation, parent, job.actorId)
         || !execution || (coordinator ? !boundBackgroundManifest(parent, execution, job.requestDigest)
+          : synthesis ? (execution.resultPayload as DelegateResultV1 | null)?.nativeState?.followup?.manifestDigest
+              !== (parent.resultPayload as DelegateResultV1 | null)?.nativeState?.schedulingSeal?.digest
+            || execution.id !== (parent.resultPayload as DelegateResultV1 | null)?.nativeState?.schedulingSeal?.followupExecutionId
           : !['library_worker', 'temporary_worker'].includes(execution.role));
       if (bindingChanged || conversation.rootWorkEpoch !== job.conversationEpoch || job.deadline.getTime() <= Date.now() || job.attempts >= job.maxAttempts) {
         await tx.update(schema.rootBackgroundJobs).set({ status: bindingChanged || conversation.rootWorkEpoch !== job.conversationEpoch ? 'cancelled'
@@ -194,7 +222,7 @@ export class RootBackgroundJobStore {
       }
       const validLeases = and(eq(schema.rootBackgroundJobs.status, 'running'), sql`${schema.rootBackgroundJobs.leaseUntil} > clock_timestamp()`);
       const capacityClass = coordinator ? eq(schema.rootExecutions.role, 'fanout_driver')
-        : inArray(schema.rootExecutions.role, ['library_worker', 'temporary_worker']);
+        : inArray(schema.rootExecutions.role, ['library_worker', 'temporary_worker', 'followup']);
       const [{ global }] = await tx.select({ global: sql<number>`count(*)::int` }).from(schema.rootBackgroundJobs)
         .innerJoin(schema.rootExecutions, eq(schema.rootExecutions.id, schema.rootBackgroundJobs.executionId))
         .where(and(validLeases, capacityClass));

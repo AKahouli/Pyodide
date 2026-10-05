@@ -371,6 +371,7 @@ message RootExecutionContext {
     uint32 max_outstanding_background_jobs = 17;
     uint32 background_task_timeout_seconds = 18;
     uint32 background_max_attempts = 19;
+    bool background_fanout_enabled = 20;
 }
 
 // ===== RESPONSE MESSAGES =====
@@ -784,6 +785,10 @@ message RootWorkCapabilitiesResponse {
     string native_sdk_version = 3;
     string python_version = 4;
     string control_database_fingerprint = 5;
+    uint32 background_fanout_protocol_version = 6;
+    bool background_fanout_ready = 7;
+    uint32 background_followup_protocol_version = 8;
+    bool background_followup_ready = 9;
 }
 
 service ChatbotService {

@@ -154,6 +154,28 @@ export async function fetchRootInputs(conversationId: string, signal?: AbortSign
   return response.data.data;
 }
 
+export async function submitBackgroundRootInput(conversationId: string, executionId: string,
+  inputResponses: NonNullable<SendMessagePayload['rootContinuation']>['inputResponses']): Promise<void> {
+  await apiClient.post(API_ENDPOINTS.conversations.rootBackgroundInput(conversationId, executionId), { inputResponses });
+}
+
+export async function fetchRootWork(conversationId: string, signal?: AbortSignal): Promise<import('./types').RootWorkSnapshot> {
+  const response = await apiClient.get<ApiResponse<import('./types').RootWorkSnapshot>>(API_ENDPOINTS.conversations.rootWork(conversationId), { signal });
+  return response.data.data;
+}
+
+export async function fetchRootWorkEvents(conversationId: string, epoch: number, after: string, signal?: AbortSignal) {
+  const response = await apiClient.get<ApiResponse<Array<{ sequence: string; eventId: string; payload: Record<string, unknown> }>>>(
+    API_ENDPOINTS.conversations.rootWorkEvents(conversationId), { params: { epoch, after }, signal });
+  return response.data.data;
+}
+
+export async function stopRootWork(conversationId: string, request: { expectedEpoch: number; stopRequestId: string; foregroundMessageId?: string }) {
+  const response = await apiClient.post<ApiResponse<{ barrierEpoch: number; applied: boolean; markedCount: number; foregroundCancellationPending: boolean }>>(
+    API_ENDPOINTS.conversations.rootWorkStop(conversationId), request);
+  return response.data.data;
+}
+
 export async function fetchRootResult(conversationId: string, executionId: string, signal?: AbortSignal): Promise<import('./types').RootExecutionTextResult> {
   const response = await apiClient.get<ApiResponse<import('./types').RootExecutionTextResult>>(
     API_ENDPOINTS.conversations.rootResult(conversationId, executionId), { signal },

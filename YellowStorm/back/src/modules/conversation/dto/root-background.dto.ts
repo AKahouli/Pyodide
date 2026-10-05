@@ -1,10 +1,16 @@
 import { ArrayMaxSize, ArrayMinSize, IsArray, IsIn, IsInt, IsObject, IsOptional, Matches, Max, Min } from 'class-validator';
 import { OmitType } from '@nestjs/swagger';
+import { Equals } from 'class-validator';
+import { RootFanoutProposalDto } from './root-fanout-proposal.dto';
 import { SettleRootDelegateDto } from './settle-root-delegate.dto';
 import type { RootBackgroundEventProposal } from '../root-work/root-background-event';
 import { RootContinuationDto } from './root-continuation.dto';
 
 export class RootBackgroundInputsDto extends OmitType(RootContinuationDto, ['executionId'] as const) {}
+
+export class RootBackgroundFanoutDto extends OmitType(RootFanoutProposalDto, ['mode'] as const) {
+  @Equals('background') mode!: 'background';
+}
 
 export class RootBackgroundAuthorityDto {
   @Matches(/^[A-Za-z0-9_-]{1,128}$/) owner!: string;
@@ -16,6 +22,15 @@ export class RootBackgroundAuthorityDto {
 export class RootBackgroundEventsDto extends RootBackgroundAuthorityDto {
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(20) @IsObject({ each: true })
   events!: RootBackgroundEventProposal[];
+}
+
+export class RootBackgroundResultPageDto extends RootBackgroundAuthorityDto {
+  @IsOptional() @IsInt() @Min(0) @Max(262144) offset = 0;
+}
+
+export class RootBackgroundPermitDto extends RootBackgroundAuthorityDto {
+  @IsIn(['acquire', 'release']) operation!: 'acquire' | 'release';
+  @Matches(/^[A-Za-z0-9_-]{1,128}$/) permitOwner!: string;
 }
 
 export class RootBackgroundSettlementDto extends OmitType(SettleRootDelegateDto, ['status'] as const) {

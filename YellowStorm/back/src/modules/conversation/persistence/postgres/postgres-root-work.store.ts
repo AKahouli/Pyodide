@@ -23,6 +23,7 @@ import {
 } from '@modules/conversation/root-work/root-work.types';
 import { requireBackgroundOwner } from './root-background-owner';
 import { requireBackgroundItemOwner } from './root-background-fanout';
+import { sealRootScheduling } from './root-scheduling-seal';
 
 type RootExecutionRow = typeof schema.rootExecutions.$inferSelect;
 type RootEvidenceRow = typeof schema.rootEvidenceRecords.$inferSelect;
@@ -118,12 +119,15 @@ export class PostgresRootWorkStore implements RootWorkStore {
         }
       }
     }
+    const previousState = (execution.resultPayload as DelegateResultV1 | null)?.nativeState;
+    const terminalState = execution.role === 'root' && ['completed', 'failed'].includes(status) && previousState
+      ? await sealRootScheduling(tx, execution.id, previousState) : previousState;
     const [row] = await tx
       .update(schema.rootExecutions)
       .set({
         status,
-        resultPayload: result ? { ...result, nativeState: (execution.resultPayload as DelegateResultV1)?.nativeState }
-          : execution.resultPayload ? { ...(execution.resultPayload as DelegateResultV1), status } : null,
+        resultPayload: result ? { ...result, nativeState: terminalState }
+          : execution.resultPayload ? { ...(execution.resultPayload as DelegateResultV1), status, nativeState: terminalState } : null,
         terminalAt: new Date(),
         updatedAt: new Date(),
       })
@@ -193,7 +197,8 @@ export class PostgresRootWorkStore implements RootWorkStore {
           backgroundEventSequence: previous.backgroundEventSequence,
           backgroundJobId: previous.backgroundJobId, backgroundFanout: previous.backgroundFanout,
           backgroundFanoutItem: previous.backgroundFanoutItem,
-          hasBackgroundJobs: previous.hasBackgroundJobs } }, updatedAt: new Date(),
+          hasBackgroundJobs: previous.hasBackgroundJobs, schedulingSeal: previous.schedulingSeal,
+          followup: previous.followup } }, updatedAt: new Date(),
       }).where(and(eq(schema.rootExecutions.id, executionId),
         inArray(schema.rootExecutions.status, ['running', 'waiting']))).returning();
       if (row && job) {
@@ -263,6 +268,9 @@ export class PostgresRootWorkStore implements RootWorkStore {
         .select({
           epoch: schema.conversations.rootWorkEpoch,
           lastStopRequestId: schema.conversations.rootWorkLastStopRequestId,
+          actorId: schema.conversations.createdBy,
+          archived: schema.conversations.isArchived,
+          group: schema.conversations.isGroup,
         })
         .from(schema.conversations)
         .where(eq(schema.conversations.id, input.conversationId))
@@ -270,6 +278,20 @@ export class PostgresRootWorkStore implements RootWorkStore {
         .for('update');
       if (!conversation) {
         throw new Error(`conversation ${input.conversationId} not found`);
+      }
+      if (input.actorId !== undefined && (conversation.actorId !== input.actorId || conversation.archived || conversation.group)) {
+        throw new Error('Root Stop creator authority changed');
+      }
+      if (input.expectedEpoch !== undefined && input.expectedEpoch !== conversation.epoch) {
+        const [pending] = input.foregroundMessageId && conversation.lastStopRequestId === input.stopRequestId
+          ? await tx.select({ messageId: schema.conversationExecutions.messageId })
+            .from(schema.conversationExecutions).where(and(
+              eq(schema.conversationExecutions.conversationId, input.conversationId),
+              eq(schema.conversationExecutions.messageId, input.foregroundMessageId),
+              sql`${schema.conversationExecutions.cancelRequestedAt} IS NOT NULL`,
+              eq(schema.conversationExecutions.status, 'running'))).limit(1) : [];
+        return { barrierEpoch: conversation.epoch, applied: false, markedCount: 0,
+          ...(pending ? { foregroundMessageId: pending.messageId } : {}) };
       }
       // Stop ids are UUIDv7 (time-ordered, see newStopRequestId), so
       // lexicographic order is chronological. Equal id = idempotent replay;
@@ -282,6 +304,19 @@ export class PostgresRootWorkStore implements RootWorkStore {
         return { barrierEpoch: conversation.epoch, applied: false, markedCount: 0 };
       }
       const barrierEpoch = conversation.epoch + 1;
+      await tx.execute(sql`UPDATE conversation.conversation_executions SET status = 'cancelled',
+        cancel_requested_at = clock_timestamp(), terminal_at = clock_timestamp(), updated_at = clock_timestamp()
+        WHERE conversation_id = ${input.conversationId}::char(24) AND status = 'running'
+          AND id IN (SELECT id FROM conversation.root_executions WHERE conversation_id = ${input.conversationId}::char(24)
+            AND role = 'followup' AND conversation_epoch <= ${conversation.epoch})`);
+      // Persist the exact foreground cancellation intent with the barrier, so
+      // retrying an observer failure cannot target a newly admitted stream.
+      const [foreground] = input.foregroundMessageId ? await tx.update(schema.conversationExecutions)
+        .set({ cancelRequestedAt: new Date(), updatedAt: new Date() }).where(and(
+          eq(schema.conversationExecutions.conversationId, input.conversationId),
+          eq(schema.conversationExecutions.messageId, input.foregroundMessageId),
+          eq(schema.conversationExecutions.status, 'running')))
+        .returning({ messageId: schema.conversationExecutions.messageId }) : [];
       const marked = await tx
         .update(schema.rootExecutions)
         .set({ status: 'cancellation_requested', stopRequestId: input.stopRequestId, updatedAt: new Date() })
@@ -308,7 +343,8 @@ export class PostgresRootWorkStore implements RootWorkStore {
         SET root_work_epoch = ${barrierEpoch}, root_work_last_stop_request_id = ${input.stopRequestId}, updated_at = now()
         WHERE id = ${input.conversationId}::char(24)
       `);
-      return { barrierEpoch, applied: true, markedCount: marked.length };
+      return { barrierEpoch, applied: true, markedCount: marked.length,
+        ...(foreground ? { foregroundMessageId: foreground.messageId } : {}) };
     });
   }
 }

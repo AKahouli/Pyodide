@@ -13,11 +13,14 @@ logger = get_logger('root_runtime.worker_permits')
 
 
 @asynccontextmanager
-async def worker_permit(scope, child_id: str, abort_signal=None):
+async def worker_permit(scope, child_id: str, abort_signal=None, post=None):
     owner = uuid4().hex
     path = f'children/{child_id}/permit'
     acquired = False
     waited = False
+    async def update(operation):
+        return await post(child_id, owner, operation) if post is not None else await _post(scope, path,
+            {'owner': owner, 'operation': operation})
     try:
         while not acquired:
             if abort_signal is not None and abort_signal.is_set():
@@ -25,7 +28,7 @@ async def worker_permit(scope, child_id: str, abort_signal=None):
             deadline = getattr(scope, 'deadline_epoch_ms', None)
             if not deadline or time.time() * 1000 >= deadline:
                 raise TimeoutError('Worker permit deadline expired')
-            response = await _post(scope, path, {'owner': owner, 'operation': 'acquire'})
+            response = await update('acquire')
             if not isinstance(response.get('acquired'), bool):
                 raise ValueError('Invalid trusted worker permit response')
             acquired = response.get('acquired') is True
@@ -48,7 +51,7 @@ async def worker_permit(scope, child_id: str, abort_signal=None):
     finally:
         if acquired:
             try:
-                await _post(scope, path, {'owner': owner, 'operation': 'release'})
+                await update('release')
             except Exception:
                 # A failed release retains the slot; preserve native WAIT or
                 # cancellation instead of turning it into a successful item.

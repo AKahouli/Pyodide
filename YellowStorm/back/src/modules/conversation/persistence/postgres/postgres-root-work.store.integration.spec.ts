@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'crypto';
 import { stableStringify } from '../../../agent/services/agent-execution-snapshot.service';
 import { eq } from 'drizzle-orm';
 import { LoggerService } from '@modules/logger';
-import { conversations, rootExecutions } from '@modules/postgres/schema';
+import { conversations, conversationExecutions, rootExecutions } from '@modules/postgres/schema';
 import { describeIntegration, makeTestDb } from '@modules/postgres/testing/pg-integration';
 import { newStopRequestId, RootNativeState } from '../../root-work/root-work.types';
 import { PostgresRootWorkStore } from './postgres-root-work.store';
@@ -127,6 +127,65 @@ describeIntegration('PostgresRootWorkStore epoch and native mapping', () => {
     expect(await store.completeExecution(executionId, 'completed', null)).toBeNull();
     expect(await store.recordNativeState(executionId, nativeState, 'waiting')).toBeNull();
     expect((await store.completeExecution(executionId, 'cancelled', null))?.status).toBe('cancelled');
+  });
+
+  it('rejects another actor and prevents a stale Stop from cancelling a newer epoch', async () => {
+    await database.db.update(conversations).set({ createdBy: nativeState.actorId })
+      .where(eq(conversations.id, conversationId));
+    await store.registerExecution(input());
+    await expect(store.stopRootWork({ conversationId, actorId: newId(), expectedEpoch: 0,
+      stopRequestId: newStopRequestId() })).rejects.toThrow();
+    await store.stopRootWork({ conversationId, actorId: nativeState.actorId, expectedEpoch: 0,
+      stopRequestId: newStopRequestId() });
+    const nextId = newId();
+    await store.registerExecution({ ...input(), executionId: nextId, conversationEpoch: 1,
+      nativeState: { ...nativeState, scope: { ...nativeState.scope,
+        executionId: nextId, conversationEpoch: 1 } } });
+    const stale = await store.stopRootWork({ conversationId, actorId: nativeState.actorId,
+      expectedEpoch: 0, stopRequestId: newStopRequestId() });
+    expect(stale.applied).toBe(false);
+    expect((await store.getExecution(nextId))?.status).toBe('running');
+  });
+
+  it('persists foreground cancellation with Stop and reconciles only that original message', async () => {
+    await database.db.update(conversations).set({ createdBy: nativeState.actorId })
+      .where(eq(conversations.id, conversationId));
+    const foregroundMessageId = newId();
+    await database.db.insert(conversationExecutions).values({ id: newId(), conversationId,
+      userId: nativeState.actorId, messageId: foregroundMessageId, expiresAt: new Date(Date.now() + 60000) });
+    const request = { conversationId, actorId: nativeState.actorId, expectedEpoch: 0,
+      stopRequestId: newStopRequestId(), foregroundMessageId };
+    expect(await store.stopRootWork(request)).toMatchObject({ applied: true, foregroundMessageId });
+    expect(await store.stopRootWork(request)).toMatchObject({ applied: false, foregroundMessageId });
+    await database.db.update(conversationExecutions).set({ status: 'completed' })
+      .where(eq(conversationExecutions.messageId, foregroundMessageId));
+    const newerMessage = newId();
+    await database.db.insert(conversationExecutions).values({ id: newId(), conversationId,
+      userId: nativeState.actorId, messageId: newerMessage, expiresAt: new Date(Date.now() + 60000) });
+    expect(await store.stopRootWork({ ...request, foregroundMessageId: newerMessage }))
+      .not.toHaveProperty('foregroundMessageId');
+    const [newer] = await database.db.select().from(conversationExecutions)
+      .where(eq(conversationExecutions.messageId, newerMessage));
+    expect(newer.cancelRequestedAt).toBeNull();
+  });
+
+  it.each(['completed', 'failed'] as const)('seals finite background result membership when ROOT becomes %s', async (status) => {
+    enableFanout();
+    nativeState.hasBackgroundJobs = true;
+    await store.registerExecution(input());
+    const manifest = await reserveFanoutManifest(database.db, executionId, fanoutProposal());
+    await store.recordNativeState(executionId, nativeState, 'waiting');
+    expect((await store.getExecution(executionId))?.resultPayload?.nativeState?.schedulingSeal).toBeUndefined();
+    const terminal = await store.completeExecution(executionId, status, null);
+    const seal = terminal?.resultPayload?.nativeState?.schedulingSeal;
+    expect(seal?.resultManifest.map((member) => member.executionId).sort())
+      .toEqual(manifest.items.map((item) => item.executionId).sort());
+    expect(seal?.digest).toMatch(/^[a-f0-9]{64}$/);
+    expect(seal?.followupExecutionId).toMatch(/^[a-f0-9]{24}$/);
+    await store.completeExecution(executionId, status, null);
+    await store.recordNativeState(executionId, nativeState, 'running');
+    expect((await store.getExecution(executionId))?.resultPayload?.nativeState?.schedulingSeal).toEqual(seal);
+    await expect(reserveFanoutManifest(database.db, executionId, fanoutProposal('late'))).rejects.toThrow('active ROOT');
   });
 
   it('retains the latest native mapping when a result completes', async () => {

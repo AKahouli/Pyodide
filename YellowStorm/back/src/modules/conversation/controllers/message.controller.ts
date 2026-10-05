@@ -89,8 +89,9 @@ export class MessageController {
     @Param('conversationId') conversationId: string,
     @Param('messageId') messageId: string,
     @Param('artifactId') artifactId: string,
+    @CurrentUser() user?: { _id: string },
   ): Promise<{ viewUrl: string; downloadUrl: string }> {
-    return this.conversationArtifactService.resolveDownloadUrl(conversationId, messageId, artifactId);
+    return this.conversationArtifactService.resolveDownloadUrl(conversationId, messageId, artifactId, user?._id?.toString());
   }
 
   @Post(':messageId/citations/url')

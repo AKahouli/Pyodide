@@ -10,10 +10,11 @@ import { ResolveRootTemporaryDto } from '../dto/resolve-root-temporary.dto';
 import { RootFanoutProposalDto } from '../dto/root-fanout-proposal.dto';
 import { RootFanoutService } from '../root-work/root-fanout.service';
 import { RootWorkerPermitDto } from '../dto/root-worker-permit.dto';
-import { RootBackgroundAuthorityDto, RootBackgroundEventsDto, RootBackgroundSettlementDto } from '../dto/root-background.dto';
+import { RootBackgroundAuthorityDto, RootBackgroundEventsDto, RootBackgroundSettlementDto, RootBackgroundPermitDto, RootBackgroundFanoutDto } from '../dto/root-background.dto';
 import { RootBackgroundLifecycleService } from '../root-work/root-background-lifecycle.service';
 import { RootBackgroundSubmissionService } from '../root-work/root-background-submission.service';
 import { RootBackgroundSubmissionDto } from '../dto/root-background-submission.dto';
+import { RootBackgroundResultPageDto } from '../dto/root-background.dto';
 
 @ApiTags('Root work internal')
 @Public()
@@ -27,6 +28,11 @@ export class RootDelegateInternalController {
   @Post(':executionId/background-task')
   submitBackground(@Param('executionId') executionId: string, @Body() request: RootBackgroundSubmissionDto) {
     return this.backgroundSubmission.submit(executionId, request);
+  }
+
+  @Post(':executionId/background-fanout')
+  submitBackgroundFanout(@Param('executionId') executionId: string, @Body() request: RootBackgroundFanoutDto) {
+    return this.backgroundSubmission.submitFanout(executionId, request);
   }
 
   @Post(':executionId/background-tasks/:childId/status')
@@ -48,6 +54,18 @@ export class RootDelegateInternalController {
   definitionBackgroundItem(@Param('executionId') executionId: string, @Param('itemId') itemId: string,
     @Body() request: RootBackgroundAuthorityDto) {
     return this.background.itemDefinition(executionId, itemId, request);
+  }
+
+  @Post(':executionId/background-items/:itemId/permit')
+  permitBackgroundItem(@Param('executionId') executionId: string, @Param('itemId') itemId: string,
+    @Body() request: RootBackgroundPermitDto) {
+    return this.background.itemPermit(executionId, itemId, request);
+  }
+
+  @Post(':executionId/background-items/:itemId/lifecycle')
+  settleBackgroundItem(@Param('executionId') executionId: string, @Param('itemId') itemId: string,
+    @Body() request: RootBackgroundSettlementDto) {
+    return this.background.itemSettle(executionId, itemId, request);
   }
 
   @Post(':executionId/background-lifecycle')
@@ -72,6 +90,12 @@ export class RootDelegateInternalController {
   @ApiOperation({ summary: 'Resolve and reserve one root-derived temporary worker' })
   resolveTemporary(@Param('executionId') executionId: string, @Body() request: ResolveRootTemporaryDto) {
     return this.temporary.resolve(executionId, request);
+  }
+
+  @Post(':executionId/background-synthesis-results/:producerId')
+  readSynthesisResult(@Param('executionId') executionId: string, @Param('producerId') producerId: string,
+    @Body() request: RootBackgroundResultPageDto) {
+    return this.background.readSynthesisResult(executionId, producerId, request);
   }
 
   @Post(':executionId/delegate-definition')

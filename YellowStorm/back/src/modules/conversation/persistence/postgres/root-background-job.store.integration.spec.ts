@@ -98,14 +98,32 @@ describeIntegration('background job owner/fence admission', () => {
     expect(coordinator.resultPayload!.nativeState!.backgroundFanout)
       .toEqual({ manifestId: manifests[0].manifestId, digest: manifests[0].digest });
     for (const item of manifests[0].items) {
-      await work.registerExecution({ ...root.childInput(), executionId: item.executionId,
+      await expect(work.registerExecution({ ...root.childInput(), executionId: item.executionId,
         nativeState: { ...root.state, rootContext: { delegate_request_digest: item.requestDigest,
           selected_agent_id: root.actorId }, scope: { ...root.state.scope, role: 'library_worker', depth: 1,
-          executionId: item.executionId, parentExecutionId: root.parentId } } });
+          executionId: item.executionId, parentExecutionId: root.parentId } } })).rejects.toThrow('coordinator ownership');
     }
-    expect((await work.getExecution(manifests[0].items[0].executionId))?.parentExecutionId).toBe(root.parentId);
+    expect(await work.getExecution(manifests[0].items[0].executionId)).toBeNull();
     await expect(jobs.admitFanout(root.parentId, { ...proposal,
       items: [{ key: 'first', task: 'Changed' }, proposal.items[1]] })).rejects.toThrow('immutable manifest');
+  });
+
+  it('accepts aggregate coordinator lifecycle and rejects a leaf trace at the actual durable event boundary', async () => {
+    const root = await fixture(id(), true);
+    await database.db.update(rootExecutions).set({ rootAgentId: root.actorId }).where(eq(rootExecutions.id, root.parentId));
+    await database.db.update(conversations).set({ rootAgentId: root.actorId }).where(eq(conversations.id, root.conversationId));
+    await jobs.admitFanout(root.parentId, fanoutProposal(root.actorId));
+    const grant = (await claimedNative('control', 30, { global: 1, perUser: 1 }))!;
+    await database.db.update(rootBackgroundJobs).set({ nativeInvocationId: 'native-control' })
+      .where(eq(rootBackgroundJobs.executionId, grant.executionId));
+    const trace = { execution_id: grant.executionId, parent_execution_id: root.parentId, conversation_epoch: 0,
+      native_session_id: grant.nativeSessionId, native_invocation_id: 'native-control', producer_agent_id: root.actorId,
+      producer_role: 'EXECUTION_ROLE_FANOUT_DRIVER', lifecycle: 'INVOCATION_LIFECYCLE_STATE_STARTED', pending_inputs: [] };
+    const accepted = await events.append(grant, grant.requestDigest, [{ eventId: 'control-start', kind: 'lifecycle', trace }]);
+    expect(accepted).toHaveLength(1);
+    await expect(events.append(grant, grant.requestDigest, [{ eventId: 'leaf-start', kind: 'lifecycle',
+      trace: { ...trace, execution_id: 'a'.repeat(24), producer_role: 'EXECUTION_ROLE_LIBRARY_WORKER' } }])).rejects.toThrow('Invalid owned');
+    expect((await jobs.getJob(grant.executionId))?.status).toBe('running');
   });
 
   it('rolls back coordinator and reservations when the outstanding job bound rejects admission', async () => {
@@ -216,6 +234,11 @@ describeIntegration('background job owner/fence admission', () => {
     expect(first.resultPayload!.nativeState).toMatchObject({ sessionId: grant.nativeSessionId,
       backgroundFanoutItem: { coordinatorExecutionId: grant.executionId, manifestId: manifest.manifestId, digest: manifest.digest },
       scope: { executionId: item.executionId, parentExecutionId: root.parentId, depth: 1, expectedFence: String(grant.fence) } });
+    await expect(updateWorkerPermit(database.db, root.parentId, item.executionId, 'unowned', 'acquire'))
+      .rejects.toThrow('coordinator ownership');
+    expect(await updateWorkerPermit(database.db, root.parentId, item.executionId, 'native-permit', 'acquire', producerGrant)).toBe(true);
+    expect(await updateWorkerPermit(database.db, root.parentId, item.executionId, 'other', 'release')).toBe(false);
+    expect(await updateWorkerPermit(database.db, root.parentId, item.executionId, 'native-permit', 'release')).toBe(true);
     await expect(jobs.registerOwnedFanoutItem({ ...producerGrant, producerExecutionId: manifest.items[1].executionId }, input))
       .rejects.toThrow('producer binding');
     await expect(jobs.registerOwnedFanoutItem({ ...producerGrant, nativeOwner: undefined }, input)).rejects.toThrow('immutable binding');

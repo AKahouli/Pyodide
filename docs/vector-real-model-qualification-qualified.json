@@ -1,0 +1,1482 @@
+{
+  "model": "gpt-6-luna",
+  "database": "agentstore_test",
+  "stages": [
+    {
+      "capacity_enabled": false,
+      "users": 1,
+      "success": 1,
+      "elapsed_seconds": 19.409,
+      "peak_slots": 0,
+      "residual_slots": 0,
+      "median_seconds": 19.287,
+      "samples": [
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 19.287,
+          "first_text_seconds": 19.224,
+          "error": null
+        }
+      ]
+    },
+    {
+      "capacity_enabled": false,
+      "users": 10,
+      "success": 10,
+      "elapsed_seconds": 1.89,
+      "peak_slots": 0,
+      "residual_slots": 0,
+      "median_seconds": 1.379,
+      "samples": [
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.277,
+          "first_text_seconds": 1.216,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.286,
+          "first_text_seconds": 1.252,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.348,
+          "first_text_seconds": 1.278,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.349,
+          "first_text_seconds": 1.337,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.352,
+          "first_text_seconds": 1.309,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.406,
+          "first_text_seconds": 1.344,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.407,
+          "first_text_seconds": 1.305,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.414,
+          "first_text_seconds": 1.406,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.416,
+          "first_text_seconds": 1.409,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.792,
+          "first_text_seconds": 1.753,
+          "error": null
+        }
+      ]
+    },
+    {
+      "capacity_enabled": false,
+      "users": 20,
+      "success": 20,
+      "elapsed_seconds": 2.542,
+      "peak_slots": 0,
+      "residual_slots": 0,
+      "median_seconds": 1.492,
+      "samples": [
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 0.863,
+          "first_text_seconds": 0.829,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 0.964,
+          "first_text_seconds": 0.904,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.027,
+          "first_text_seconds": 0.988,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.268,
+          "first_text_seconds": 1.207,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.267,
+          "first_text_seconds": 1.234,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.295,
+          "first_text_seconds": 1.257,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.296,
+          "first_text_seconds": 1.241,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.329,
+          "first_text_seconds": 1.284,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.475,
+          "first_text_seconds": 1.326,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.491,
+          "first_text_seconds": 1.34,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.493,
+          "first_text_seconds": 1.38,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.5,
+          "first_text_seconds": 1.408,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.512,
+          "first_text_seconds": 1.38,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.527,
+          "first_text_seconds": 1.473,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.525,
+          "first_text_seconds": 1.444,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.559,
+          "first_text_seconds": 1.506,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.563,
+          "first_text_seconds": 1.479,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.562,
+          "first_text_seconds": 1.533,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.558,
+          "first_text_seconds": 1.556,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.377,
+          "first_text_seconds": 2.346,
+          "error": null
+        }
+      ]
+    },
+    {
+      "capacity_enabled": false,
+      "users": 30,
+      "success": 30,
+      "elapsed_seconds": 2.153,
+      "peak_slots": 0,
+      "residual_slots": 0,
+      "median_seconds": 1.4755,
+      "samples": [
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 0.983,
+          "first_text_seconds": 0.947,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.053,
+          "first_text_seconds": 1.032,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.059,
+          "first_text_seconds": 1.037,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.064,
+          "first_text_seconds": 1.042,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.16,
+          "first_text_seconds": 1.088,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.16,
+          "first_text_seconds": 1.102,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.171,
+          "first_text_seconds": 1.115,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.169,
+          "first_text_seconds": 1.123,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.175,
+          "first_text_seconds": 1.152,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.2,
+          "first_text_seconds": 1.171,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.248,
+          "first_text_seconds": 1.213,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 20,
+          "seconds": 1.381,
+          "first_text_seconds": 1.336,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.383,
+          "first_text_seconds": 1.338,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.471,
+          "first_text_seconds": 1.364,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.471,
+          "first_text_seconds": 1.418,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.49,
+          "first_text_seconds": 1.427,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.48,
+          "first_text_seconds": 1.447,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.486,
+          "first_text_seconds": 1.463,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.502,
+          "first_text_seconds": 1.48,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.536,
+          "first_text_seconds": 1.534,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.542,
+          "first_text_seconds": 1.51,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.549,
+          "first_text_seconds": 1.532,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.636,
+          "first_text_seconds": 1.584,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.686,
+          "first_text_seconds": 1.618,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.713,
+          "first_text_seconds": 1.691,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.705,
+          "first_text_seconds": 1.666,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.704,
+          "first_text_seconds": 1.67,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.727,
+          "first_text_seconds": 1.702,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.803,
+          "first_text_seconds": 1.709,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.042,
+          "first_text_seconds": 2.041,
+          "error": null
+        }
+      ]
+    },
+    {
+      "capacity_enabled": true,
+      "users": 1,
+      "success": 1,
+      "elapsed_seconds": 1.995,
+      "peak_slots": 1,
+      "residual_slots": 0,
+      "median_seconds": 1.913,
+      "samples": [
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.913,
+          "first_text_seconds": 1.765,
+          "error": null
+        }
+      ]
+    },
+    {
+      "capacity_enabled": true,
+      "users": 10,
+      "success": 10,
+      "elapsed_seconds": 2.1,
+      "peak_slots": 10,
+      "residual_slots": 0,
+      "median_seconds": 1.635,
+      "samples": [
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.306,
+          "first_text_seconds": 1.181,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.422,
+          "first_text_seconds": 1.311,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.523,
+          "first_text_seconds": 1.401,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.565,
+          "first_text_seconds": 1.463,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.622,
+          "first_text_seconds": 1.522,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.648,
+          "first_text_seconds": 1.493,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.651,
+          "first_text_seconds": 1.54,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.673,
+          "first_text_seconds": 1.573,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.769,
+          "first_text_seconds": 1.665,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.003,
+          "first_text_seconds": 1.897,
+          "error": null
+        }
+      ]
+    },
+    {
+      "capacity_enabled": true,
+      "users": 20,
+      "success": 20,
+      "elapsed_seconds": 3.029,
+      "peak_slots": 20,
+      "residual_slots": 0,
+      "median_seconds": 2.484,
+      "samples": [
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.245,
+          "first_text_seconds": 1.136,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.261,
+          "first_text_seconds": 1.175,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.386,
+          "first_text_seconds": 1.226,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.423,
+          "first_text_seconds": 1.357,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.962,
+          "first_text_seconds": 1.87,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.196,
+          "first_text_seconds": 2.081,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.341,
+          "first_text_seconds": 2.22,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.357,
+          "first_text_seconds": 2.238,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.396,
+          "first_text_seconds": 2.307,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.482,
+          "first_text_seconds": 2.311,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.49,
+          "first_text_seconds": 2.358,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.486,
+          "first_text_seconds": 2.336,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.512,
+          "first_text_seconds": 2.439,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.513,
+          "first_text_seconds": 2.382,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.539,
+          "first_text_seconds": 2.436,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.545,
+          "first_text_seconds": 2.466,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.589,
+          "first_text_seconds": 2.47,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.672,
+          "first_text_seconds": 2.532,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.674,
+          "first_text_seconds": 2.545,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.857,
+          "first_text_seconds": 2.485,
+          "error": null
+        }
+      ]
+    },
+    {
+      "capacity_enabled": true,
+      "users": 30,
+      "success": 30,
+      "elapsed_seconds": 2.788,
+      "peak_slots": 30,
+      "residual_slots": 0,
+      "median_seconds": 2.218,
+      "samples": [
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.392,
+          "first_text_seconds": 1.298,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.438,
+          "first_text_seconds": 1.336,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.479,
+          "first_text_seconds": 1.348,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.485,
+          "first_text_seconds": 1.392,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.503,
+          "first_text_seconds": 1.411,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.549,
+          "first_text_seconds": 1.443,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.569,
+          "first_text_seconds": 1.474,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.638,
+          "first_text_seconds": 1.547,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.873,
+          "first_text_seconds": 1.757,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.895,
+          "first_text_seconds": 1.783,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.897,
+          "first_text_seconds": 1.806,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.904,
+          "first_text_seconds": 1.809,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.03,
+          "first_text_seconds": 1.88,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.193,
+          "first_text_seconds": 1.992,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.2,
+          "first_text_seconds": 1.946,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.236,
+          "first_text_seconds": 1.924,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.238,
+          "first_text_seconds": 1.885,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.377,
+          "first_text_seconds": 2.138,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.378,
+          "first_text_seconds": 2.173,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.401,
+          "first_text_seconds": 2.21,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.385,
+          "first_text_seconds": 2.194,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.386,
+          "first_text_seconds": 2.21,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.416,
+          "first_text_seconds": 2.247,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.422,
+          "first_text_seconds": 1.818,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.43,
+          "first_text_seconds": 2.374,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.433,
+          "first_text_seconds": 2.352,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.573,
+          "first_text_seconds": 1.944,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.593,
+          "first_text_seconds": 2.152,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.59,
+          "first_text_seconds": 2.132,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.614,
+          "first_text_seconds": 2.154,
+          "error": null
+        }
+      ]
+    },
+    {
+      "capacity_enabled": true,
+      "users": 50,
+      "success": 50,
+      "elapsed_seconds": 4.388,
+      "peak_slots": 30,
+      "residual_slots": 0,
+      "median_seconds": 2.7889999999999997,
+      "samples": [
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.738,
+          "first_text_seconds": 1.488,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.76,
+          "first_text_seconds": 1.522,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.895,
+          "first_text_seconds": 1.663,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.934,
+          "first_text_seconds": 1.749,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.982,
+          "first_text_seconds": 1.565,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.978,
+          "first_text_seconds": 1.705,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 1.978,
+          "first_text_seconds": 1.695,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.566,
+          "first_text_seconds": 1.703,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.573,
+          "first_text_seconds": 1.842,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.562,
+          "first_text_seconds": 1.831,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.58,
+          "first_text_seconds": 1.836,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.597,
+          "first_text_seconds": 2.464,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.606,
+          "first_text_seconds": 1.872,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.619,
+          "first_text_seconds": 1.892,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.623,
+          "first_text_seconds": 1.893,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.664,
+          "first_text_seconds": 1.97,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.715,
+          "first_text_seconds": 1.911,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.735,
+          "first_text_seconds": 2.086,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.735,
+          "first_text_seconds": 2.085,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.725,
+          "first_text_seconds": 2.075,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.739,
+          "first_text_seconds": 2.092,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.771,
+          "first_text_seconds": 2.549,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.767,
+          "first_text_seconds": 2.411,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.788,
+          "first_text_seconds": 2.545,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.805,
+          "first_text_seconds": 2.567,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.784,
+          "first_text_seconds": 2.546,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.79,
+          "first_text_seconds": 2.552,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.808,
+          "first_text_seconds": 2.547,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.833,
+          "first_text_seconds": 2.546,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.851,
+          "first_text_seconds": 2.582,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.89,
+          "first_text_seconds": 2.635,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 2.916,
+          "first_text_seconds": 2.685,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 3.484,
+          "first_text_seconds": 3.386,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 3.582,
+          "first_text_seconds": 3.467,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 3.605,
+          "first_text_seconds": 3.455,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 3.677,
+          "first_text_seconds": 3.542,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 3.698,
+          "first_text_seconds": 3.554,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 3.727,
+          "first_text_seconds": 3.597,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 3.749,
+          "first_text_seconds": 3.613,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 3.761,
+          "first_text_seconds": 3.638,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 3.856,
+          "first_text_seconds": 3.653,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 3.864,
+          "first_text_seconds": 3.698,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 3.865,
+          "first_text_seconds": 3.705,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 3.902,
+          "first_text_seconds": 3.795,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 3.928,
+          "first_text_seconds": 3.827,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 3.922,
+          "first_text_seconds": 3.852,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 3.935,
+          "first_text_seconds": 3.853,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 4.084,
+          "first_text_seconds": 3.675,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 4.162,
+          "first_text_seconds": 3.709,
+          "error": null
+        },
+        {
+          "ok": true,
+          "marker_present": true,
+          "response_characters": 19,
+          "seconds": 4.17,
+          "first_text_seconds": 4.11,
+          "error": null
+        }
+      ]
+    }
+  ],
+  "scope": "Synthetic real ADK Runner/provider load; not live backend/connector qualification"
+}

@@ -35,6 +35,9 @@ export interface RegisterEvidenceInput {
 export interface StopRootWorkInput {
   conversationId: string;
   stopRequestId: string;
+  actorId?: string;
+  expectedEpoch?: number;
+  foregroundMessageId?: string;
 }
 
 export interface StopRootWorkResult {
@@ -43,6 +46,7 @@ export interface StopRootWorkResult {
   /** True when this call newly applied the barrier (false = idempotent replay). */
   applied: boolean;
   markedCount: number;
+  foregroundMessageId?: string;
 }
 
 export interface RootWorkStore {

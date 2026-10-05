@@ -4,7 +4,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useApiAction } from '@/lib/use-api-action';
 import { useAuth } from '@/modules/auth/useAuth';
 import { useModuleTranslation } from '@/modules/localization';
-import { fetchRootInputs } from '../api';
+import { fetchRootInputs, submitBackgroundRootInput } from '../api';
 import { useConversationStore } from '../store';
 import type { NativeInputSchema, PendingRootInput } from '../types';
 import { encodeNativeInput, NativeInputFields } from './NativeInputFields';
@@ -28,11 +28,16 @@ function PendingInputForm({ root, input, conversationId, onSubmitted }: {
   const [value, setValue] = useState<unknown>(() => initialValue(input.responseSchema));
   const [draft, setDraft] = useState('');
   const submit = useCallback(async (response: Record<string, unknown>, content: string) => {
+    if (root.mode === 'background') {
+      await submitBackgroundRootInput(conversationId, root.executionId,
+        [{ inputId: input.inputId, inputVersion: input.inputVersion ?? 1, response }]);
+      return true;
+    }
     await sendMessage(conversationId, { content, rootContinuation: {
       executionId: root.executionId, inputResponses: [{ inputId: input.inputId, inputVersion: input.inputVersion ?? 1, response }],
     } });
     return true;
-  }, [sendMessage, conversationId, root.executionId, input.inputId, input.inputVersion]);
+  }, [sendMessage, conversationId, root.executionId, root.mode, input.inputId, input.inputVersion]);
   const { execute, isLoading, error } = useApiAction(submit, { showErrorToast: false });
   async function send(response: Record<string, unknown>, content: string) {
     if (await execute(response, content)) onSubmitted();

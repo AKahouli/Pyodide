@@ -182,6 +182,9 @@ export class RootWorkService {
   }
 
   async stopRootWork(input: StopRootWorkInput): Promise<StopRootWorkResult> {
+    if (input.expectedEpoch !== undefined && (!Number.isSafeInteger(input.expectedEpoch) || input.expectedEpoch < 0)) {
+      throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'Invalid Root Stop epoch');
+    }
     if (!OBJECT_ID_RE.test(input.conversationId)) {
       throw new BadRequestException(ErrorCode.VALIDATION_ERROR, 'conversationId must be a 24-char hex id');
     }

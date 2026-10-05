@@ -1,0 +1,41 @@
+{
+  "model": "gpt-6-luna",
+  "database": "agentstore_test",
+  "stages": [
+    {
+      "capacity_enabled": false,
+      "users": 1,
+      "success": 1,
+      "elapsed_seconds": 12.114,
+      "peak_slots": 0,
+      "residual_slots": 0,
+      "median_seconds": 11.991,
+      "samples": [
+        {
+          "ok": true,
+          "seconds": 11.991,
+          "first_text_seconds": 11.913,
+          "error": null
+        }
+      ]
+    },
+    {
+      "capacity_enabled": true,
+      "users": 1,
+      "success": 1,
+      "elapsed_seconds": 2.432,
+      "peak_slots": 1,
+      "residual_slots": 0,
+      "median_seconds": 2.293,
+      "samples": [
+        {
+          "ok": true,
+          "seconds": 2.293,
+          "first_text_seconds": 2.135,
+          "error": null
+        }
+      ]
+    }
+  ],
+  "scope": "Synthetic real ADK Runner/provider load; not live backend/connector qualification"
+}

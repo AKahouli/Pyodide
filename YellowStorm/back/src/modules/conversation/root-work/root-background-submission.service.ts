@@ -10,13 +10,24 @@ import { RootDelegateDefinitionService } from './root-delegate-definition.servic
 import { RootTemporaryDefinitionService } from './root-temporary-definition.service';
 import { RootResultService } from './root-result.service';
 import { RootWorkService } from './root-work.service';
+import { RootFanoutService } from './root-fanout.service';
+import type { RootBackgroundFanoutDto } from '../dto/root-background.dto';
 
 @Injectable()
 export class RootBackgroundSubmissionService {
   constructor(private readonly work: RootWorkService, private readonly jobs: RootBackgroundJobStore,
     private readonly driver: RootBackgroundDriverService, private readonly resolver: RootDelegateResolverService,
     private readonly definitions: RootDelegateDefinitionService, private readonly temporary: RootTemporaryDefinitionService,
-    private readonly results: RootResultService) {}
+    private readonly results: RootResultService, private readonly fanout: RootFanoutService) {}
+
+  async submitFanout(parentId: string, proposal: RootBackgroundFanoutDto) {
+    if (!await this.driver.ready(true)) throw denied();
+    const manifest = await this.fanout.authorizeBackground(parentId, proposal);
+    const job = await this.jobs.admitFanout(parentId, proposal);
+    if (job.requestDigest !== manifest.digest) throw denied();
+    await this.results.authorizeBackgroundExecution(job.conversationId, job.executionId, job.actorId);
+    return { executionId: job.executionId, status: job.status, resultRef: job.executionId };
+  }
 
   async status(parentId: string, childId: string) {
     const parent = await this.work.getExecution(parentId);

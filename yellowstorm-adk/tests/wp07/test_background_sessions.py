@@ -196,7 +196,8 @@ async def test_action_receipt_recovers_output_and_evidence_without_repeating_ext
 
     async def upload():
         calls.append('uploaded')
-        state['_root_evidence:artifact'] = [{'kind': 'artifact', 'identity': 'saved-file'}]
+        key = '_root_evidence:' + hashlib.sha256(f'{_grant.execution_id}:native-call'.encode()).hexdigest()
+        state[key] = [{'executionId': _grant.execution_id, 'nativeIdentity': 'native-call', 'kind': 'artifact', 'identity': 'saved-file'}]
         return {'documentId': 'saved-file'}
 
     assert await ledger.execute('save_file', 'native-call', {'name': 'file'}, upload, state) == {'documentId': 'saved-file'}

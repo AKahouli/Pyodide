@@ -6,6 +6,7 @@ import { MessageService } from './message.service';
 import { ConversationService } from './conversation.service';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
 import { ResolveCitationUrlDto } from '../dto/resolve-citation-url.dto';
+import { RootEvidenceService } from '../root-work/root-evidence.service';
 
 @Injectable()
 export class ConversationArtifactService {
@@ -14,6 +15,7 @@ export class ConversationArtifactService {
     private readonly documentService: DocumentService,
     private readonly conversationService: ConversationService,
     private readonly workspaceDocumentService: WorkspaceDocumentService,
+    private readonly rootEvidence?: RootEvidenceService,
   ) {}
 
   async listRecent(userId: string, limit: number): Promise<{
@@ -49,6 +51,7 @@ export class ConversationArtifactService {
     conversationId: string,
     messageId: string,
     artifactId: string,
+    userId?: string,
   ): Promise<{ viewUrl: string; downloadUrl: string }> {
     const message = await this.messageService.getMessageDocument(messageId);
     if (message.conversationId.toString() !== conversationId) {
@@ -57,6 +60,15 @@ export class ConversationArtifactService {
     const component = message.components?.find((candidate) =>
       candidate.type === 'artifact' && candidate.data?.artifactId === artifactId,
     );
+    if (component?.data?.evidenceId || component?.data?.executionId) {
+      if (!this.rootEvidence || !userId || typeof component.data.evidenceId !== 'string'
+        || typeof component.data.executionId !== 'string') {
+        throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Artifact not found');
+      }
+      const location = await this.rootEvidence.resolve(conversationId, component.data.executionId, component.data.evidenceId, userId);
+      if (location.kind !== 'artifact') throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Artifact not found');
+      return { viewUrl: location.url, downloadUrl: location.url };
+    }
     const storagePath = component?.data?.storagePath;
     if (!component || typeof storagePath !== 'string' || !storagePath) {
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Artifact not found');
@@ -88,6 +100,23 @@ export class ConversationArtifactService {
     const message = await this.messageService.getMessageDocument(messageId);
     if (message.conversationId.toString() !== conversationId) {
       throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Citation not found');
+    }
+
+    const ownedCitations = (message.components ?? []).filter((component) => component.type === 'citation'
+      && (component.data.evidenceId || component.data.executionId)).filter((component) => {
+        const citation = this.getCitationIdentity(component.data);
+        return (selector.fileName ? citation.fileName === selector.fileName : citation.source === selector.source)
+          && (!selector.reference || citation.reference === this.normalizeReference(selector.reference));
+      });
+    if (ownedCitations.length) {
+      const component = ownedCitations[0];
+      if (ownedCitations.length !== 1 || !this.rootEvidence || !userId
+        || typeof component.data.evidenceId !== 'string' || typeof component.data.executionId !== 'string') {
+        throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Citation not found');
+      }
+      const location = await this.rootEvidence.resolve(conversationId, component.data.executionId, component.data.evidenceId, userId);
+      if (location.kind !== 'citation') throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Citation not found');
+      return { url: location.url, fileName: location.fileName, mimeType: location.mimeType || 'application/octet-stream' };
     }
 
     const citationCandidates = message.components

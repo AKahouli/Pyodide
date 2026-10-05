@@ -348,7 +348,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     return this.chatbotClient;
   }
 
-  async rootBackgroundReady(): Promise<boolean> {
+  async rootBackgroundReady(fanout = false, followup = false): Promise<boolean> {
     if (!this.configService?.get<boolean>('conversation.rootBackgroundEnabled', false)
       || !this.rootBackgroundJobs || !await this.waitForGrpcReady(3000)) return false;
     const client = this.getChatbotClient();
@@ -361,6 +361,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           (error: unknown, response: unknown) => error ? reject(error) : resolve(response));
       });
       return capability?.background_protocol_version === 1 && capability.background_ready === true
+        && (!fanout || capability.background_fanout_protocol_version === 1 && capability.background_fanout_ready === true)
+        && (!followup || capability.background_followup_protocol_version === 1 && capability.background_followup_ready === true)
         && capability.control_database_fingerprint === await this.rootBackgroundJobs.controlInstance();
     } catch { return false; }
   }
@@ -1357,7 +1359,9 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         fanout_enabled: pool.policy.fanout.enabled,
         max_fanout_items: pool.policy.fanout.maxItems,
         worker_permit_version: 1,
-        background_enabled: pool.policy.background.enabled && await this.rootBackgroundReady(),
+        background_enabled: pool.policy.background.enabled && await this.rootBackgroundReady(false, true),
+        background_fanout_enabled: pool.policy.background.enabled && pool.policy.fanout.enabled
+          && pool.policy.fanout.allowBackground && await this.rootBackgroundReady(true, true),
         max_outstanding_background_jobs: pool.policy.background.maxOutstandingPerConversation,
         background_task_timeout_seconds: pool.policy.background.taskTimeoutSeconds,
         background_max_attempts: pool.policy.background.maxAttempts,

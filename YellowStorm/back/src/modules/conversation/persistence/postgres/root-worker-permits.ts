@@ -1,14 +1,15 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
 import * as schema from '../../../postgres/schema';
-import type { DelegateResultV1 } from '../../root-work/root-work.types';
+import type { DelegateResultV1, RootBackgroundJobOwnerV1 } from '../../root-work/root-work.types';
+import { requireBackgroundItemOwner } from './root-background-fanout';
 
 /** Shared ROOT slots, independent of nonterminal/waiting execution counts.
  * Owners cannot be replaced by elapsed lease time: foreground code releases
  * in finally, and an abandoned ROOT must reach its deadline or Stop barrier.
  */
 export async function updateWorkerPermit(db: NodePgDatabase<typeof schema>, parentId: string,
-  childId: string, owner: string, operation: 'acquire' | 'release'): Promise<boolean> {
+  childId: string, owner: string, operation: 'acquire' | 'release', grant?: RootBackgroundJobOwnerV1): Promise<boolean> {
   if (!/^[0-9a-f]{24}$/.test(parentId) || !/^[0-9a-f]{24}$/.test(childId)
     || !/^[A-Za-z0-9_-]{1,128}$/.test(owner)) throw new Error('Invalid worker permit identity');
   return db.transaction(async (tx) => {
@@ -28,9 +29,11 @@ export async function updateWorkerPermit(db: NodePgDatabase<typeof schema>, pare
       delete permits[childId];
     } else {
       const [child] = await tx.select().from(schema.rootExecutions).where(eq(schema.rootExecutions.id, childId)).limit(1);
+      const ownedItem = Boolean((child?.resultPayload as DelegateResultV1 | null)?.nativeState?.backgroundFanoutItem);
+      if (ownedItem) await requireBackgroundItemOwner(tx, child!, grant);
       const duration = Number(state.rootContext.max_work_group_duration_seconds);
       if (!conversation || conversation.epoch !== parent.conversationEpoch
-        || !['running', 'waiting'].includes(parent.status) || !child
+        || (ownedItem ? parent.status === 'cancellation_requested' : !['running', 'waiting'].includes(parent.status)) || !child
         || child.parentExecutionId !== parentId || child.conversationEpoch !== parent.conversationEpoch
         || !['library_worker', 'temporary_worker'].includes(child.role) || !['running', 'waiting'].includes(child.status)
         || !Number.isSafeInteger(duration) || duration < 1 || Date.now() >= parent.createdAt.getTime() + duration * 1000) {
@@ -52,6 +55,10 @@ export async function updateWorkerPermit(db: NodePgDatabase<typeof schema>, pare
     }
     await tx.update(schema.rootExecutions).set({ resultPayload: { ...payload,
       nativeState: { ...state, workerPermits: permits } }, updatedAt: new Date() }).where(eq(schema.rootExecutions.id, parentId));
+    if (operation === 'acquire' && grant) {
+      const [child] = await tx.select().from(schema.rootExecutions).where(eq(schema.rootExecutions.id, childId)).limit(1);
+      await requireBackgroundItemOwner(tx, child, grant);
+    }
     return true;
   });
 }

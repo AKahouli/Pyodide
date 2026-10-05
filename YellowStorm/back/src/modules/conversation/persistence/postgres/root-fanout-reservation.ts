@@ -25,7 +25,7 @@ export async function reserveFanoutManifestInTransaction(tx: RootControlTransact
     const state = payload?.nativeState;
     if (!parent || !conversation || parent.role !== 'root' || parent.depth !== 0
       || !['running', 'waiting'].includes(parent.status) || parent.conversationEpoch !== conversation.epoch
-      || !state?.capabilityCeiling || state.rootContext.fanout_enabled !== true) {
+      || !state?.capabilityCeiling || state.schedulingSeal || state.rootContext.fanout_enabled !== true) {
       throw new Error('Fan-out requires an enabled active ROOT');
     }
     const manifest = buildFanoutManifest(parentId, proposal, Number(state.rootContext.max_fanout_items),

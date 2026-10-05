@@ -70,4 +70,24 @@ describe('Root child full output retrieval', () => {
     pool.policy.temporaryWorkers.enabled = false;
     await expect(service.getResult('conversation', 'child', 'owner')).rejects.toThrow('unavailable');
   });
+
+  it('authorizes coordinator replay against current fan-out policy, pinned target and sources', async () => {
+    const manifest = { manifestId: 'manifest', digest: 'digest', mode: 'background', target: { kind: 'library', agentId: 'worker' } };
+    const frozenRoot = { ...parent, resultPayload: { nativeState: { ...parent.resultPayload.nativeState,
+      capabilityCeiling: { workspaceIds: [] }, fanoutManifests: [manifest],
+      rootContext: { catalog: [{ agent_id: 'worker', snapshot_digest: 'snapshot' }] } } } };
+    const coordinator = { ...execution, role: 'fanout_driver', status: 'running', resultPayload: { nativeState: {
+      actorId: 'owner', backgroundJobId: 'child', backgroundFanout: { manifestId: 'manifest', digest: 'digest' }, rootContext: {} } } };
+    const pool = { delegationEnabled: true, rootSnapshotDigest: 'root-snapshot', entries: [{ agentId: 'worker', snapshotDigest: 'snapshot' }],
+      policy: { background: { enabled: true }, fanout: { enabled: true, allowBackground: true } } };
+    const service = new RootResultService({ getConversationDocument: jest.fn().mockResolvedValue(conversation),
+      filterAccessibleWorkspaceIds: jest.fn().mockResolvedValue([]) } as never,
+      { getExecution: jest.fn().mockImplementation(async (id) => id === 'parent' ? frozenRoot : coordinator) } as never,
+      { resolveForActor: jest.fn().mockResolvedValue(pool) } as never);
+    expect(await service.authorizeBackgroundExecution('conversation', 'child', 'owner')).toBe(coordinator);
+    pool.policy.fanout.allowBackground = false;
+    await expect(service.authorizeBackgroundExecution('conversation', 'child', 'owner')).rejects.toThrow('unavailable');
+    pool.policy.fanout.allowBackground = true; pool.entries[0].snapshotDigest = 'changed';
+    await expect(service.authorizeBackgroundExecution('conversation', 'child', 'owner')).rejects.toThrow('unavailable');
+  });
 });

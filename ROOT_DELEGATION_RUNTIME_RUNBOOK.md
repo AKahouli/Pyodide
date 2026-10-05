@@ -1,15 +1,16 @@
 # Root delegation runtime qualification
 
-Implementation checkpoint: 2026-10-04. This is a qualification checklist, not a production enablement record.
+Implementation checkpoint: 2026-10-05. This is a qualification checklist, not a production enablement record.
 
 ## Current deployment
 
 - Frontend: `http://localhost:5175`; backend: port `3002`; ADK gRPC: `50053`; ADK HTTP: `8003`.
 - WP07 source build deployed to backend/ADK on 2026-10-04 with background explicitly disabled. Startup and capability checks passed; full live background qualification remains pending.
-- ADK `/health/ready` returns 200. Backend `/api/v1/health/ready` returns 503 because Playbook MCP is unavailable; its PostgreSQL, storage, email, LiteLLM, Conversation gRPC and semantic model checks are healthy. Browser foreground smoke completed with `VECTOR_WP07_RESTART_OK`; evidence: `docs/vector-wp07-restart-smoke.png`.
+- ADK `/health/ready` and backend `/api/v1/health/ready` returned 200 after the authorized Python upgrade and restart. Real browser foreground smoke completed with `VECTOR_PY312_RUNTIME_OK`; evidence: `docs/vector-python312-smoke.png`. The running services do not yet contain all later WP09/capacity edits.
+- Latest WP09/capacity source rebuilt and default-off services restarted on 2026-10-05; both readiness endpoints returned200. Qualification evidence and measured real-model load are in `docs/vector-root-qualification.md`;172 synthetic tasks and one actual-provider fenced checkpoint passed. Enabled backend/connector/governed rollout remains unqualified.
 - Preserve the entire dirty worktree. Do not reset, commit unrelated work, or apply migrations to the shared database during qualification.
 - PostgreSQL integration fixtures use explicitly isolated `agentstore_test`. Never substitute the application database when that configuration is missing.
-- Conda `meta` currently has Python 3.11.14 and google-adk 2.11.0. Production background capability requires Python 3.12 and the qualified ADK version. Do not upgrade the shared environment implicitly.
+- User-authorized shared Conda `meta` upgrade completed: Python3.12.14/google-adk2.11.0. ABI checks and75 native regression tests passed; user-site packages are excluded with environment-scoped `PYTHONNOUSERSITE=1`. Before inventories, Conda revision, wheels and logs are under `TEMP/vector-meta-python312`.
 
 ## Qualification gates
 
@@ -17,17 +18,17 @@ Implementation checkpoint: 2026-10-04. This is a qualification checklist, not a 
 2. Run relevant backend job admission, event, ownership, approval, result authorization and transport tests with Jest. Run PostgreSQL capacity fixtures serially; native fixtures share the isolated database and can skew live-lease counts.
 3. Run `conda run -n meta pytest tests/wp07 -q` from `yellowstorm-adk`, plus the foreground fan-out and dispatcher regression suites.
 4. Require matching proto assets and regenerated native stubs. Backend `npm run build` invokes the runtime proto copy script; the active output is `dist/src`.
-5. Resume the reviewer gate when the user requests it. New atomic admission and Workflow extraction have not received that review while the user's pause is active.
+5. Reviewer is enabled. Bounded native coordinator, Stop/replay, scheduling seal, atomic follow-up persistence and synthesis/capacity integration source reviews passed. Review later changes and keep executed qualification separate from source review.
 6. Complete background fan-out, conversation replay/input UI, Stop, synthesis, cross-replica recovery and capacity gates before production qualification. A passing leaf suite does not qualify these remaining features.
 7. Browser-check the Conversation feature on port 5175, including reload, pending inputs, Stop after foreground completion, and reconnection. If primary browser testing is blocked, ask the user, as requested.
 
 ## Deployment prerequisites
 
-- Review the exact `0044_root_background_jobs.sql` diff and its journal entry before requesting approval for the shared database. That approval has not been requested or granted.
+- Review `0044_root_background_jobs.sql` and `0045_root_model_capacity.sql` plus journal entries before requesting approval for the shared database. Neither shared migration is authorized. Both were applied only in explicitly isolated fixtures.
 - The backend root-work control tables and fenced ADK native session tables must use the same PostgreSQL database. Set the ADK `ROOT_WORK_DATABASE_URL` accordingly through the established secret configuration; do not print it.
-- Backend `conversation.rootBackgroundEnabled` and ADK `ROOT_WORK_BACKGROUND_ENABLED` default off. Review their environment mappings in source before configuring them.
+- Backend `conversation.rootBackgroundEnabled`, ADK `ROOT_WORK_BACKGROUND_ENABLED` and `ROOT_WORK_LLM_CAPACITY_ENABLED` default off. Qualified background readiness requires the capacity control and exactly30 shared provider slots. Review environment mappings before configuring them.
 - Configure the existing internal HTTP secret and gRPC API key on both services. Empty or mismatched credentials must fail closed.
-- Verify `GetRootWorkCapabilities`: protocol 1, background ready, qualified SDK/Python versions, and the same database control singleton UUID as the backend. An old receiver must never fall back to ordinary foreground invocation RPC.
+- Verify `GetRootWorkCapabilities`: background/fan-out/follow-up protocol1 and readiness, qualified SDK/Python versions, and the same database control singleton UUID as the backend. New Root background flags require follow-up readiness. An old receiver must never fall back to ordinary foreground invocation RPC.
 - Configure bounded global/per-user background limits, retaining each ROOT's frozen policy limits. Opt-in saved profiles and grants require separate, explicit qualification; do not change them merely to make a test pass.
 
 ## Recovery checks
@@ -39,6 +40,11 @@ Implementation checkpoint: 2026-10-04. This is a qualification checklist, not a 
 - A foreground ROOT terminal outcome does not cancel admitted background work. Explicit Stop, epoch changes, revoked bindings, deadline or lease loss remain authoritative.
 - Reuse durable successful action receipts. An unresolved action intent requires reconciliation and must not trigger automatic external-write retry.
 - Verify new admission at outstanding capacity rolls back both the child execution and job, including lifetime-budget consumption.
+- A model permit belongs to one provider call, not the parent invocation. Release only after a confirmed nonstream response or stream EOF, before ADK invokes child tools. Qualified transport retries are disabled.
+- Provider timeout, cancellation or premature stream close retains `outcome_unknown` occupancy. Never reclaim it on a timer or process restart. Reconcile with definitive provider completion/termination evidence before an operator clears the exact slot owner/fence; a disconnected HTTP stream alone does not prove provider termination.
+- Root completion/failure seals finite result membership. WAIT/unknown members cannot trigger synthesis. A follow-up reserves the existing shared Conversation writer; a pending ordinary placeholder or approval takes priority. Native completion recovery reuses the same invocation and publication message identity.
+- Follow-up publication commits message, counters, terminal writer, publication marker and durable event together. Stop suppresses unpublished output and releases the old writer. Snapshot publication IDs reconcile the UI even while older event pages are being replayed.
+- Synthesis removes effect tools and installs only the fixed guarded read-only result pager. Public artifact routing uses original evidence IDs, preserves native artifact IDs as metadata, and reauthorizes the current viewer. Final numeric citation aliases must exist in the sealed registry before publication.
 
 ## Rollback procedure
 
@@ -51,4 +57,4 @@ Implementation checkpoint: 2026-10-04. This is a qualification checklist, not a 
 
 ## Remaining qualification
 
-Same-native-Workflow background fan-out and coordinator/item compute accounting; durable reconnect and pending-input UI; cross-replica Stop/publication; once-only synthesis behind the shared foreground slot; 30-active-generation/50-user burst, fault and soak evidence; Python 3.12 qualification; production configuration/migration approvals.
+Broader integrated regression after the latest synthesis/capacity edits; enabled live background qualification; 1/10/20/30-user baseline and mixed50-user burst; fault/soak evidence and rollback rehearsal; governed qualification; concrete production configuration/migration/profile approvals. Fixture and source-review passes alone do not qualify rollout.

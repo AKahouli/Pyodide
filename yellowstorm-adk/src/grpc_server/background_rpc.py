@@ -25,9 +25,11 @@ class BackgroundRpc:
     async def capabilities(self):
         settings = get_settings()
         sdk = importlib.metadata.version('google-adk')
-        response = chatbot_pb2.RootWorkCapabilitiesResponse(background_protocol_version=1,
+        response = chatbot_pb2.RootWorkCapabilitiesResponse(background_protocol_version=1, background_fanout_protocol_version=1,
+            background_followup_protocol_version=1,
             native_sdk_version=sdk, python_version=platform.python_version())
         if not (settings.ROOT_WORK_BACKGROUND_ENABLED and settings.ROOT_WORK_DATABASE_URL
+            and getattr(settings, 'ROOT_WORK_LLM_CAPACITY_ENABLED', False)
             and settings.INTERNAL_SERVICE_SECRET and settings.GRPC_API_KEY and sdk == '2.11.0'
             and platform.python_version_tuple()[:2] == ('3', '12')):
             return response
@@ -41,8 +43,13 @@ class BackgroundRpc:
         try:
             async with self.host.engine.connect() as connection:
                 identity = (await connection.execute(text('SELECT instance_id FROM conversation.root_background_control_instance WHERE singleton=true'))).scalar_one()
+                slots = (await connection.execute(text('SELECT count(*) FROM conversation.root_model_slots'))).scalar_one()
+                if slots != 30:
+                    return response
                 response.control_database_fingerprint = str(identity)
                 response.background_ready = True
+                response.background_fanout_ready = True
+                response.background_followup_ready = True
         except Exception:
             # Readiness is fail-closed; database/credential diagnostics stay out
             # of public capability responses.

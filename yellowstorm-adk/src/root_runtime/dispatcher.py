@@ -92,7 +92,7 @@ def build_delegation_instruction(catalog: List[Dict[str, Any]]) -> str:
     return DELEGATION_INSTRUCTION + _CATALOG_BLOCK_TEMPLATE.format(entries=entries)
 
 
-async def _compile_candidate(team: Any, user_request: Any, candidate: Any, scope: Any) -> Any:
+async def _compile_candidate(team: Any, user_request: Any, candidate: Any, scope: Any, authorize=None) -> Any:
     """Compile one candidate through the existing factory path (lazy: only the
     specialist the root chose is materialized; other candidates stay data)."""
     from src.smart_rag.agents.core.document_helpers import DocumentHelpers
@@ -129,6 +129,12 @@ async def _compile_candidate(team: Any, user_request: Any, candidate: Any, scope
         agent_data, agent_name, normalized_name, scope,
         factory._create_agent_with_error_handling, team.citation_manager,
     )
+    from src.root_runtime.background_sessions import FencedBackgroundSessionService
+    if isinstance(getattr(user_request, 'session_service', None), FencedBackgroundSessionService):
+        from src.root_runtime.background_items import validate_item
+        from src.root_runtime.background_actions import install_background_action_guard
+        await validate_item(user_request.session_service, scope)
+        install_background_action_guard(compiled.agent, user_request.session_service, scope, authorize)
     return compiled.agent
 
 
@@ -148,6 +154,7 @@ def build_worker_dispatcher(
     delegate_candidates: Optional[List[Any]],
     root_scope: Any = None,
     temporary: bool = False,
+    owned_adapter: Any = None,
 ) -> Optional[tuple]:
     """Build the replayable dispatcher Workflow for one root turn.
 
@@ -179,8 +186,19 @@ def build_worker_dispatcher(
     compiled: Dict[str, Any] = {}
     lazy = temporary or root_context.get("delegate_definition_mode") == "lazy"
     resolved_candidates: Dict[str, Any] = {}
+    resolved_scopes: Dict[str, Any] = {}
+
+    async def settle_child(execution_id, status, text=None, evidence=None):
+        if owned_adapter is not None:
+            return await owned_adapter.settle(execution_id, status, text, evidence)
+        from src.root_runtime.delegate_resolver import settle_delegate
+        return await settle_delegate(root_scope, execution_id, status, text, evidence)
 
     def _emit_lifecycle(lifecycle: InvocationLifecycleState, child_scope: Any, producer_agent_id: str) -> None:
+        if owned_adapter is not None:
+            # Owned item APIs persist leaf lifecycle; the coordinator sink must
+            # only receive its own aggregate native invocation projection.
+            return
         queue = getattr(team, "current_queue", None)
         if queue is None:
             return
@@ -221,6 +239,9 @@ def build_worker_dispatcher(
                               parent_execution_id=parent_execution_id, depth=1,
                               native_invocation_id=getattr(ctx, 'invocation_id', None),
                               immutable_snapshot_ref=entry.get("snapshot_digest"))
+        if owned_adapter is not None:
+            child_scope = resolved_scopes[execution_id]
+            await owned_adapter.validate(child_scope)
         logger.info(
             "[DELEGATE] start agent_id=%s execution_id=%s session_id=%s task_len=%s",
             agent_id, execution_id, session_id, len(task or ""),
@@ -229,7 +250,11 @@ def build_worker_dispatcher(
         child_started = False
         try:
             if execution_id not in compiled:
-                compiled[execution_id] = await _compile_candidate(team, user_request, candidate, child_scope)
+                if owned_adapter is not None:
+                    compiled[execution_id] = await _compile_candidate(team, user_request, candidate, child_scope,
+                        lambda: owned_adapter.validate(child_scope))
+                else:
+                    compiled[execution_id] = await _compile_candidate(team, user_request, candidate, child_scope)
             child_agent = compiled[execution_id]
 
             packet_lines = [
@@ -260,7 +285,7 @@ def build_worker_dispatcher(
                     if lazy:
                         from src.root_runtime.delegate_resolver import settle_delegate
                         try:
-                            await settle_delegate(root_scope, execution_id, "waiting")
+                            await settle_child(execution_id, "waiting")
                         except Exception:
                             # Preserve native interruption; a resumed bridge retries
                             # admission instead of manufacturing a completed result.
@@ -270,7 +295,7 @@ def build_worker_dispatcher(
             if lazy:
                 from src.root_runtime.delegate_resolver import settle_delegate
                 from src.root_runtime.evidence_capture import collect_evidence
-                settled = await settle_delegate(root_scope, execution_id, "completed", text,
+                settled = await settle_child(execution_id, "completed", text,
                     collect_evidence(ctx.state.to_dict(), execution_id))
             _emit_lifecycle(InvocationLifecycleState.COMPLETED, child_scope, producer_id)
             logger.info("[DELEGATE] completed agent_id=%s execution_id=%s text_len=%s", agent_id, execution_id, len(text))
@@ -291,7 +316,7 @@ def build_worker_dispatcher(
             if lazy:
                 from src.root_runtime.delegate_resolver import settle_delegate
                 try:
-                    await settle_delegate(root_scope, execution_id, status)
+                    await settle_child(execution_id, status)
                 except Exception:
                     logger.warning("[DELEGATE] could not persist child interruption lifecycle")
             return _failed(
@@ -329,7 +354,8 @@ def build_worker_dispatcher(
                 return _failed(agent_id, "The requested specialist is not in the authorized delegation catalog.")
             from src.root_runtime.delegate_resolver import resolve_delegate_definition, resolve_temporary_definition
             try:
-                resolved = (await resolve_temporary_definition(root_scope, call_id, branch,
+                resolved = (await owned_adapter.resolve(execution_id) if owned_adapter is not None else
+                    await resolve_temporary_definition(root_scope, call_id, branch,
                     task, expected_output, context_refs or []) if temporary else
                     await resolve_delegate_definition(root_scope, call_id, branch,
                         agent_id, task, expected_output, context_refs or []))
@@ -343,6 +369,8 @@ def build_worker_dispatcher(
                         "citation_refs": result.get("citationRefs", []),
                         "artifact_refs": result.get("artifactRefs", []), "safe_error": result.get("safeError")}
                 resolved_candidates[execution_id] = candidate
+                if owned_adapter is not None:
+                    resolved_scopes[execution_id] = resolved['scope']
                 compiled.pop(execution_id, None)
             except Exception:
                 logger.warning("[DELEGATE] selected worker admission denied or unavailable")
@@ -363,7 +391,8 @@ def build_worker_dispatcher(
 
         if root_context.get('worker_permit_version') == 1:
             from src.root_runtime.worker_permits import worker_permit
-            async with worker_permit(root_scope, execution_id, getattr(user_request, 'abort_signal', None)) as waited:
+            async with worker_permit(root_scope, execution_id, getattr(user_request, 'abort_signal', None),
+                post=owned_adapter.permit if owned_adapter is not None else None) as waited:
                 if waited:
                     terminal = await admit()  # Refresh authority/credentials after queueing.
                     if terminal is not None:

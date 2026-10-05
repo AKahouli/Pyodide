@@ -73,24 +73,51 @@ class BackgroundInvocationHost:
                     raise ValueError('Local background invocation binding changed')
             return existing
         authority = self._authority(grant)
-        resolved = _resolved_worker(await _post(SimpleNamespace(execution_id=grant.execution_id),
-            'background-definition', authority))
+        resolved = await _post(SimpleNamespace(execution_id=grant.execution_id), 'background-definition', authority)
+        control_workflow = resolved.get('kind') == 'fanout_driver'
+        synthesis = resolved.get('kind') == 'followup'
+        if not control_workflow:
+            resolved = _resolved_worker(resolved)
         scope = ExecutionScopeV1.from_proto(json_format.ParseDict(resolved['executionScope'], chatbot_pb2.ExecutionScope()))
         grant = replace(grant, resume_intent=scope.resume_intent, input_response_digest=resolved.get('inputResponseDigest'))
         service = FencedBackgroundSessionService(grant, db_engine=self.engine)
-        internal = self._request(resolved, scope, service)
+        internal = (RunAgentTeamRequest(user_id=resolved['actorId'], session_id=grant.session_id,
+            message='Run the immutable admitted fan-out manifest.', chatbot_name={}, agent_mode='mono', agents=[],
+            execution_scope=scope, session_service=service, root_context=resolved['rootContext'],
+            native_input_responses=resolved.get('inputResponses')) if control_workflow else self._request(resolved, scope, service))
         validate_background_request(service, scope, internal.user_id, internal.session_id)
+        if synthesis:
+            from src.root_runtime.contracts import ExecutionRole
+            if scope.role is not ExecutionRole.FOLLOWUP or resolved.get('executionId') != grant.execution_id:
+                raise ValueError('Synthesis execution binding changed')
+            internal.message = resolved['request']['task']
         control = await service.control_state()
         if scope.parent_execution_id != control['parent_execution_id']:
             raise ValueError('Background worker parent binding changed')
         session = await service.get_session(app_name=grant.app_name, user_id=grant.actor_id, session_id=grant.session_id)
         from src.smart_rag.agents.core.helpers import AgentHelper
-        recovery = classify_native_history(session, control['native_invocation_id'], control['initial_input_event_id'],
-            AgentHelper.normalize_agent_name(resolved['candidate'].name))
+        if control_workflow:
+            if scope.role.value != 'fanout_driver' or resolved.get('executionId') != grant.execution_id:
+                raise ValueError('Background coordinator identity changed')
+            from src.root_runtime.background_fanout import classify_fanout_history
+            recovery = classify_fanout_history(session, control['native_invocation_id'], control['initial_input_event_id'])
+        else:
+            recovery = classify_native_history(session, control['native_invocation_id'], control['initial_input_event_id'],
+                AgentHelper.normalize_agent_name(resolved['candidate'].name))
         if recovery.status == 'waiting' and internal.native_input_responses:
             recovery = replace(recovery, status='resume')
         if recovery.status == 'never_started' and scope.resume_intent != 'start':
             raise ValueError('Never-started background execution cannot resume')
+        if control_workflow:
+            from src.root_runtime.background_fanout import run_owned_fanout
+            return await self._supervise(service, internal, recovery,
+                run_workflow=lambda queue, abort: run_owned_fanout(service, internal, resolved['manifest'], queue, abort),
+                producer_id=resolved['rootContext']['root_agent_id'])
+        if synthesis:
+            from src.root_runtime.background_synthesis import run_owned_synthesis
+            return await self._supervise(service, internal, recovery,
+                run_workflow=lambda queue, abort: run_owned_synthesis(service, internal, queue, abort),
+                producer_id=resolved['rootContext']['root_agent_id'])
         return await self._supervise(service, internal, recovery)
 
     @staticmethod
@@ -113,7 +140,7 @@ class BackgroundInvocationHost:
             workspace_names=candidate.workspace_names, brain_documents=candidate.brain_documents,
             native_input_responses=resolved.get('inputResponses'))
 
-    async def _supervise(self, service, internal, recovery):
+    async def _supervise(self, service, internal, recovery, run_workflow=None, producer_id=None):
         last_trace = None
         grant = service.grant
         authority = self._authority(grant)
@@ -132,7 +159,7 @@ class BackgroundInvocationHost:
             if recovery.status == 'waiting':
                 from src.root_runtime.invocation import NativeInvocationProjection
                 from src.root_runtime.contracts import InvocationLifecycleState
-                projection = NativeInvocationProjection(scope, grant.session_id, internal.agents[0].id)
+                projection = NativeInvocationProjection(scope, grant.session_id, producer_id or internal.agents[0].id)
                 await projection.restore_pending(service, grant.actor_id, [])
                 await projection.emit(queue, InvocationLifecycleState.WAITING)
             if recovery.status not in ('never_started', 'resume'):
@@ -141,7 +168,7 @@ class BackgroundInvocationHost:
             from src.middleware.correlation import set_user_context, user_ctx
             token = set_user_context(grant.actor_id, 'background-worker')
             try:
-                return await self.agent_team_service.process_team_request(internal, queue)
+                return await run_workflow(queue, abort) if run_workflow is not None else await self.agent_team_service.process_team_request(internal, queue)
             finally:
                 user_ctx.reset(token)
 

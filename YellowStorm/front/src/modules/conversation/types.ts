@@ -696,8 +696,18 @@ export interface NativeInputSchema {
 export interface PendingRootInput {
   executionId: string;
   epoch: number;
+  mode?: 'foreground' | 'background';
   inputs: Array<{ inputId: string; inputVersion?: number; kind: 'confirmation' | 'input'; message?: string;
     responseSchema?: NativeInputSchema; responseSchemaUnsupported?: boolean }>;
+}
+
+export interface RootWorkSnapshot {
+  epoch: number;
+  watermark: string;
+  stopRequestId: string;
+  jobs: Array<{ executionId: string; parentExecutionId: string; role: 'library_worker' | 'temporary_worker' | 'fanout_driver' | 'followup';
+    status: 'queued' | 'running' | 'waiting' | 'outcome_unknown' | 'completed' | 'failed' | 'cancelled';
+    createdAt: string; deadline: string; publicationMessageId?: string }>;
 }
 
 export interface ConversationClientContextV1 {

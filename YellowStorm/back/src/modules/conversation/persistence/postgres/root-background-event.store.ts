@@ -60,7 +60,7 @@ export class RootBackgroundEventStore {
 
   async replay(conversationId: string, actorId: string, epoch: number, after: string) {
     if (!/^[0-9]{1,20}$/.test(after) || BigInt(after) > 9223372036854775807n) throw new Error('Invalid durable event cursor');
-    return this.db.transaction(async (tx) => {
+    const snapshot = await this.db.transaction(async (tx) => {
       const [conversation] = await tx.select().from(schema.conversations)
         .where(eq(schema.conversations.id, conversationId)).limit(1).for('share');
       if (!conversation || conversation.createdBy !== actorId || conversation.rootWorkEpoch !== epoch
@@ -72,10 +72,16 @@ export class RootBackgroundEventStore {
           WHERE j.execution_id = ${schema.rootBackgroundEvents.executionId} AND p.root_agent_id IS NOT DISTINCT FROM ${conversation.rootAgentId}
             AND p.conversation_epoch = ${epoch})`))
         .orderBy(schema.rootBackgroundEvents.sequence).limit(100);
-      for (const executionId of new Set(rows.map((row) => row.executionId))) {
-        await this.results.authorizeBackgroundExecution(conversationId, executionId, actorId);
-      }
-      return rows.map((row) => ({ sequence: row.sequence.toString(), eventId: row.eventId, payload: row.payload }));
+      return { rows, rootAgentId: conversation.rootAgentId };
     });
+    // Resource hydration can use remote stores; never hold the SQL barrier
+    // lock across those calls. Recheck the conversation after authorization.
+    for (const executionId of new Set(snapshot.rows.map((row) => row.executionId))) {
+      await this.results.authorizeBackgroundExecution(conversationId, executionId, actorId);
+    }
+    const [current] = await this.db.select().from(schema.conversations).where(eq(schema.conversations.id, conversationId)).limit(1);
+    if (!current || current.createdBy !== actorId || current.rootWorkEpoch !== epoch || current.isArchived || current.isGroup
+      || current.rootAgentId !== snapshot.rootAgentId) throw new Error('Background replay authority changed');
+    return snapshot.rows.map((row) => ({ sequence: row.sequence.toString(), eventId: row.eventId, payload: row.payload }));
   }
 }

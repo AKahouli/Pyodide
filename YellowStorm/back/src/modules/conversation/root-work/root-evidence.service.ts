@@ -5,11 +5,8 @@ import { WorkspaceDocumentService } from '../../workspace/workspace-document.ser
 import { ConversationService } from '../services/conversation.service';
 import { RootResultService } from './root-result.service';
 import { RootWorkService } from './root-work.service';
+import { flattenProducerEvidence } from './root-producer-evidence';
 
-function sourceIdentity(payload: Record<string, unknown>): Record<string, unknown> {
-  const source = payload.source_object as Record<string, unknown> | undefined;
-  return { ...payload, ...(source ?? {}), ...(source?.metadata as object ?? {}), ...(source?.content as object ?? {}) };
-}
 const text = (value: unknown) => typeof value === 'string' ? value : '';
 
 @Injectable()
@@ -26,13 +23,14 @@ export class RootEvidenceService {
       || ![...execution.resultPayload.citationRefs, ...execution.resultPayload.artifactRefs].includes(evidenceId)) {
       throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Evidence is unavailable');
     }
-    const source = sourceIdentity(registered.payload);
+    const source = flattenProducerEvidence(registered.payload);
     const workspaceId = text(source.workspace_id || source.workspaceId || source.brain_id);
     const documentId = text(source.document_id || source.documentId);
     const filename = text(source.filename || source.file_name || source.fileName);
     const storagePath = text(source.file_path || source.filepath || source.path);
     let url = '';
     let fileName = filename;
+    let mimeType = text(source.mime_type);
     if (workspaceId) {
       const allowed = await this.conversations.filterAccessibleWorkspaceIds(actorId, [workspaceId]);
       if (!allowed.includes(workspaceId)) throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Source access is unavailable');
@@ -48,6 +46,7 @@ export class RootEvidenceService {
         throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Source document is unavailable');
       }
       fileName = matches[0].originalName;
+      mimeType = matches[0].mimeType || mimeType;
       url = await this.storage.generateSasUrl(matches[0].path!, { expiryMinutes: 10, checkExists: true });
     } else if (registered.kind === 'artifact' && storagePath) {
       // Native run-code output belongs to this exact child, never its siblings.
@@ -73,6 +72,7 @@ export class RootEvidenceService {
     if (workspaceId && !(await this.conversations.filterAccessibleWorkspaceIds(actorId, [workspaceId])).includes(workspaceId)) {
       throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Source access is unavailable');
     }
-    return { evidenceId, kind: registered.kind, producerAgentId: registered.producerAgentId, url, fileName };
+    return { evidenceId, kind: registered.kind, producerAgentId: registered.producerAgentId, url, fileName,
+      ...(mimeType ? { mimeType } : {}) };
   }
 }

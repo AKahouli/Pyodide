@@ -8,6 +8,11 @@ const fields = new Set(['type', 'title', 'filename', 'file_name', 'fileName', 'p
   'file_path', 'source', 'url', 'document_id', 'documentId', 'workspace_id', 'workspaceId',
   'brain_id', 'reference', 'page', 'artifact_id', 'artifact_kind', 'mime_type', 'size_bytes',
   'availability', 'producer_tool_id']);
+export function flattenProducerEvidence(payload: Record<string, unknown>): Record<string, unknown> {
+  const source = payload.source_object as Record<string, unknown> | undefined;
+  return { ...payload, ...(source ?? {}), ...(source?.metadata as object ?? {}), ...(source?.content as object ?? {}) };
+}
+
 function safePayload(value: unknown, depth = 0): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value) || depth > 4) return false;
   return Object.entries(value).every(([key, item]) => {

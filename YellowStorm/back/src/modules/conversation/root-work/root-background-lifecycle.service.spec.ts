@@ -11,7 +11,7 @@ describe('Owned background lifecycle acknowledgement', () => {
     const definitions = { resolveFanoutItem: jest.fn().mockResolvedValue(resolved) };
     const temporary = { resolveFanoutItem: jest.fn().mockResolvedValue(resolved) };
     const service = new RootBackgroundLifecycleService(jobs as any, {} as any, definitions as any,
-      temporary as any, {} as any, {} as any);
+      temporary as any, {} as any, {} as any, {} as any);
     return { jobs, definitions, temporary, service };
   }
 
@@ -46,6 +46,49 @@ describe('Owned background lifecycle acknowledgement', () => {
     expect(fixture.definitions.resolveFanoutItem).toHaveBeenCalledTimes(1);
   });
 
+  it('hydrates a coordinator without resolving a worker or returning a profile', async () => {
+    const scope = { executionId: 'coordinator', role: 'fanout_driver', depth: 0, parentExecutionId: 'root' };
+    const owned = { job: { requestDigest: 'digest', conversationId: 'conversation', actorId: 'actor', fence: 2,
+      deadline: new Date(10000), nativeInvocationId: 'invocation', inputResponseDigest: null },
+      coordinator: { resultPayload: { nativeState: { scope } } },
+      parent: { resultPayload: { nativeState: { rootContext: { catalog: [] } } } }, manifest: { manifestId: 'manifest' } };
+    const jobs = { getOwnedFanout: jest.fn().mockResolvedValue(owned) };
+    const definitions = { resolveOwned: jest.fn() };
+    const results = { authorizeBackgroundExecution: jest.fn().mockResolvedValue({}) };
+    const work = { getExecution: jest.fn().mockResolvedValue({ role: 'fanout_driver' }) };
+    const service = new RootBackgroundLifecycleService(jobs as any, {} as any, definitions as any, {} as any,
+      results as any, work as any, {} as any);
+    const response = await service.definition('coordinator', request);
+    expect(response).toMatchObject({ kind: 'fanout_driver', manifest: { manifestId: 'manifest' },
+      executionScope: { execution_id: 'coordinator', parent_execution_id: 'root', depth: 0, expected_fence: '2', resume_intent: 'resume' } });
+    expect(response).not.toHaveProperty('definition');
+    expect(definitions.resolveOwned).not.toHaveBeenCalled();
+    expect(jobs.getOwnedFanout).toHaveBeenCalledTimes(2);
+    results.authorizeBackgroundExecution.mockRejectedValueOnce(new Error('revoked'));
+    await expect(service.definition('coordinator', request)).rejects.toThrow('revoked');
+  });
+
+  it('requires terminal producer coverage and forbids worker evidence in coordinator completion', async () => {
+    const child = { role: 'fanout_driver', parentExecutionId: 'root', rootAgentId: 'agent' };
+    const producer = { terminalAt: null as Date | null, parentExecutionId: 'root',
+      resultPayload: { nativeState: { backgroundFanoutItem: { coordinatorExecutionId: 'coordinator' } } } };
+    const job = { conversationId: 'conversation', actorId: 'actor', parentExecutionId: 'root',
+      nativeInvocationId: 'invocation', requestDigest: 'digest' };
+    const jobs = { getJob: jest.fn().mockResolvedValue(job), getOwnedFanout: jest.fn().mockResolvedValue({ job,
+      parent: { id: 'root' }, coordinator: { ...child, resultPayload: { nativeState: { pendingInputs: [] } } },
+      manifest: { items: [{ executionId: 'item' }] } }) };
+    const work = { getExecution: jest.fn().mockImplementation(async (id) => id === 'item' ? producer : child),
+      completeExecution: jest.fn().mockResolvedValue({ status: 'completed' }) };
+    const service = new RootBackgroundLifecycleService(jobs as any, {} as any, {} as any, {} as any,
+      { authorizeBackgroundExecution: jest.fn() } as any, work as any, {} as any);
+    const completion = { ...request, status: 'completed' as const, fullText: '{}' };
+    await expect(service.settle('coordinator', completion)).rejects.toThrow('coverage');
+    expect(work.completeExecution).not.toHaveBeenCalled();
+    producer.terminalAt = new Date();
+    expect(await service.settle('coordinator', completion)).toMatchObject({ status: 'completed' });
+    await expect(service.settle('coordinator', { ...completion, evidence: [{}] as never })).rejects.toThrow('evidence');
+  });
+
   it('returns committed WAIT status rather than the older running result payload', async () => {
     const job = { requestDigest: 'digest', conversationId: 'conversation', actorId: 'actor',
       parentExecutionId: 'parent', nativeInvocationId: 'native' };
@@ -54,9 +97,10 @@ describe('Owned background lifecycle acknowledgement', () => {
       job, child, state: { pendingInputs: [{ callId: 'confirmation' }] } }) };
     const definitions = { settle: jest.fn().mockResolvedValue({ status: 'running' }) };
     const results = { authorizeBackgroundExecution: jest.fn().mockResolvedValue(child) };
-    const work = { getExecution: jest.fn().mockResolvedValueOnce(child).mockResolvedValueOnce({ ...child, status: 'waiting' }) };
+    const work = { getExecution: jest.fn().mockResolvedValueOnce(child).mockResolvedValueOnce(child)
+      .mockResolvedValueOnce({ ...child, status: 'waiting' }) };
     const service = new RootBackgroundLifecycleService(jobs as any, {} as any, definitions as any,
-      {} as any, results as any, work as any);
+      {} as any, results as any, work as any, {} as any);
     const request = { owner: 'owner', fence: 1, nativeOwner: 'native-process', requestDigest: 'digest', status: 'waiting' as const };
     expect(await service.settle('child', request)).toEqual({ executionId: 'child', status: 'waiting', resultRef: 'child' });
     expect(definitions.settle).toHaveBeenCalledWith('parent', 'child', expect.any(Object),

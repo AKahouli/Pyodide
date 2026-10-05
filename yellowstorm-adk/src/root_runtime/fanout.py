@@ -94,11 +94,13 @@ def validate_manifest(scope, branch, call_id, manifest, maximum):
     return manifest
 
 
-def build_fanout_workflow(team: Any, request: Any, root_context: dict, scope: Any):
+def build_fanout_workflow(team: Any, request: Any, root_context: dict, scope: Any, owned_adapter=None, bound_manifest=None):
     """Native manifest progress and child runs are shared by invocation hosts."""
-    async def run_manifest(ctx, manifest):
+    async def run_manifest(ctx, manifest=None):
+        if bound_manifest is not None:
+            manifest = bound_manifest
         temporary = manifest['target']['kind'] == 'temporary'
-        dispatcher = build_worker_dispatcher(team, request, root_context, [], scope, temporary)
+        dispatcher = build_worker_dispatcher(team, request, root_context, [], scope, temporary, owned_adapter)
         if dispatcher is None:
             raise ValueError('Fan-out target dispatcher unavailable')
         execute_selected = dispatcher[1]
@@ -111,7 +113,10 @@ def build_fanout_workflow(team: Any, request: Any, root_context: dict, scope: An
             except Exception:
                 logger.exception('Foreground fan-out item could not finish')
                 try:
-                    await settle_delegate(scope, item['executionId'], 'failed')
+                    if owned_adapter is not None:
+                        await owned_adapter.settle(item['executionId'], 'failed')
+                    else:
+                        await settle_delegate(scope, item['executionId'], 'failed')
                     status = 'failed'
                 except Exception:
                     logger.exception('Could not persist failed fan-out item')
@@ -123,7 +128,7 @@ def build_fanout_workflow(team: Any, request: Any, root_context: dict, scope: An
             root_context['max_parallel_workers'], getattr(request, 'abort_signal', None))
         return fanout_result(manifest, results)
 
-    return Workflow(name='foreground_fanout', edges=[(START, FunctionNode(func=run_manifest,
+    return Workflow(name='background_fanout' if owned_adapter is not None else 'foreground_fanout', edges=[(START, FunctionNode(func=run_manifest,
         name='fanout_driver', parameter_binding='node_input', rerun_on_resume=True))])
 
 
@@ -141,11 +146,12 @@ def build_fanout_dispatcher(team: Any, request: Any, root_context: dict, scope: 
         raise ValueError('Invalid frozen fan-out limits')
     workflow = build_fanout_workflow(team, request, root_context, scope)
 
-    async def run_fanout(items: list[dict], worker_type: str, tool_context: ToolContext, agent_id: str = '') -> dict:
+    async def run_fanout(items: list[dict], worker_type: str, tool_context: ToolContext, agent_id: str = '', mode: str = 'foreground') -> dict:
         """Run a finite list of independent tasks in foreground. Each item needs
         a unique key and task; optional expectedOutput and contextRefs narrow
         inputs. worker_type is library (with approved agent_id) or temporary.
-        Background work is unavailable. Simple answers need no fan-out.
+        mode is foreground by default; background requires explicit runtime
+        permission and returns a durable job reference. Simple answers need no fan-out.
         """
         call_id = tool_context.function_call_id
         if not call_id:
@@ -154,6 +160,20 @@ def build_fanout_dispatcher(team: Any, request: Any, root_context: dict, scope: 
             raise ValueError('Invalid fan-out target')
         branch = f'{tool_context.branch}.run_fanout@{call_id}' if tool_context.branch else f'run_fanout@{call_id}'
         target = {'kind': worker_type, **({'agentId': agent_id} if worker_type == 'library' else {})}
+        if mode not in ('foreground', 'background') or mode == 'background' and root_context.get('background_fanout_enabled') is not True:
+            raise ValueError('Fan-out execution mode is unavailable')
+        if mode == 'background':
+            execution_id = hashlib.sha256(f'{scope.execution_id}:{branch}:background_fanout'.encode()).hexdigest()[:24]
+            try:
+                acknowledged = await _post(scope, 'background-fanout', {'version': 1, 'mode': mode, 'nativeCallId': call_id,
+                    'nativeCallBranch': branch, 'target': target, 'items': items})
+                if acknowledged.get('executionId') != execution_id or acknowledged.get('resultRef') != execution_id or acknowledged.get('status') not in (
+                    'queued', 'running', 'waiting', 'completed', 'failed', 'cancelled', 'outcome_unknown'):
+                    raise ValueError('Invalid durable fan-out acknowledgement')
+                return {'status': acknowledged['status'], 'execution_id': execution_id, 'result_ref': execution_id}
+            except Exception:
+                return {'status': 'outcome_unknown', 'execution_id': execution_id, 'result_ref': execution_id,
+                    'safe_error': 'Submission could not be confirmed. Inspect this job before submitting another fan-out.'}
         manifest = await _post(scope, 'fanout-manifest', {'version': 1, 'mode': 'foreground', 'nativeCallId': call_id,
             'nativeCallBranch': branch, 'target': target, 'items': items})
         validate_manifest(scope, branch, call_id, manifest, maximum)

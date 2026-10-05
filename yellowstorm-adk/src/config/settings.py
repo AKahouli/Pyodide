@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     DATABASE_URL: str
     ROOT_WORK_DATABASE_URL: Optional[str] = None
     ROOT_WORK_BACKGROUND_ENABLED: bool = False
+    ROOT_WORK_LLM_CAPACITY_ENABLED: bool = False
     lINKUP_API_KEY: str
     WEB_SEARCH_PROMPT: str
     API_URL: str

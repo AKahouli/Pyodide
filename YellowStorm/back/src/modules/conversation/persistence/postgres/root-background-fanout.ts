@@ -62,7 +62,7 @@ export async function registerBackgroundCoordinator(tx: RootControlTransaction, 
   const sessionId = `background_${executionId}`;
   const nativeState: RootNativeState = { actorId: state.actorId, sessionId, invocationId: null, pendingInputs: [],
     backgroundFanout: { manifestId: manifest.manifestId, digest: manifest.digest },
-    rootContext: { delegate_request_digest: manifest.digest },
+    rootContext: { delegate_request_digest: manifest.digest, root_agent_id: parent.rootAgentId },
     scope: { ...state.scope, role: 'fanout_driver', executionId, parentExecutionId: parentId, depth: 0,
       attempt: 1, nativeSessionId: sessionId, nativeInvocationId: null, expectedFence: null, resumeIntent: 'start' } };
   await tx.insert(schema.rootExecutions).values({ id: executionId, conversationId: parent.conversationId,

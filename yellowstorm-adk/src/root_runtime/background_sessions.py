@@ -35,9 +35,10 @@ def validate_background_request(service, scope, user_id, session_id):
     if not isinstance(service, FencedBackgroundSessionService):
         raise ValueError('Background storage requires fenced native authority')
     grant = service.grant
+    control = scope is not None and scope.role in (ExecutionRole.FANOUT_DRIVER, ExecutionRole.FOLLOWUP) and scope.depth == 0
+    leaf = scope is not None and scope.role in (ExecutionRole.LIBRARY_WORKER, ExecutionRole.TEMPORARY_WORKER) and scope.depth == 1
     if (not grant.native_owner or user_id != grant.actor_id or session_id != grant.session_id
-        or scope is None or scope.role not in (ExecutionRole.LIBRARY_WORKER, ExecutionRole.TEMPORARY_WORKER)
-        or scope.depth != 1 or not scope.parent_execution_id or scope.execution_id != grant.execution_id
+        or not (control or leaf) or not scope.parent_execution_id or scope.execution_id != grant.execution_id
         or scope.conversation_epoch != grant.epoch or scope.expected_fence != str(grant.fence)
         or scope.native_session_id != grant.session_id or scope.resume_intent != grant.resume_intent):
         raise ValueError('Background request does not match owned native authority')
@@ -108,6 +109,19 @@ def _guard(connection, binding, correlate=False, require_native_owner=True):
         or parent['conversation_epoch'] != grant.epoch or parent['status'] == 'cancellation_requested'
         or ((parent['result_payload'] or {}).get('nativeState') or {}).get('actorId') != grant.actor_id):
         raise BackgroundOwnershipError('Background ROOT binding changed')
+    execution = connection.execute(text('SELECT role,result_payload FROM conversation.root_executions WHERE id=:id'),
+        {'id': grant.execution_id}).mappings().one_or_none()
+    if execution and execution['role'] == 'followup':
+        followup = ((execution['result_payload'] or {}).get('nativeState') or {}).get('followup') or {}
+        seal = ((parent['result_payload'] or {}).get('nativeState') or {}).get('schedulingSeal') or {}
+        writer = connection.execute(text('''SELECT 1 FROM conversation.conversation_executions
+            WHERE id=:id AND conversation_id=:conversation AND message_id=:message AND status='running'
+                AND expires_at > clock_timestamp() FOR UPDATE'''),
+            {'id': grant.execution_id, 'conversation': grant.conversation_id,
+                'message': followup.get('publicationMessageId')}).one_or_none()
+        if (not writer or not followup.get('manifestDigest') or followup['manifestDigest'] != seal.get('digest')
+            or seal.get('followupExecutionId') != grant.execution_id):
+            raise BackgroundOwnershipError('Synthesis writer or sealed manifest authority changed')
     invocation_id = metadata.get('invocation_id')
     if invocation_id and job['native_invocation_id'] not in (None, invocation_id):
         raise BackgroundOwnershipError('Background native invocation mapping conflicts')

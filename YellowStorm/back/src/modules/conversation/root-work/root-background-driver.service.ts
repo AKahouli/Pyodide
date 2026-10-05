@@ -5,6 +5,7 @@ import { createGrpcMetadata } from '../../../common/grpc/grpc-security.util';
 import { AdkInvocationClient } from '../../../common/grpc/adk-invocation-client';
 import { StreamService } from '../services/stream.service';
 import { RootBackgroundJob, RootBackgroundJobStore } from '../persistence/postgres/root-background-job.store';
+import { RootFollowupService } from './root-followup.service';
 
 @Injectable()
 export class RootBackgroundDriverService implements OnModuleInit, OnModuleDestroy {
@@ -16,7 +17,7 @@ export class RootBackgroundDriverService implements OnModuleInit, OnModuleDestro
   private closing = false;
 
   constructor(private readonly jobs: RootBackgroundJobStore, private readonly stream: StreamService,
-    private readonly config: ConfigService) {}
+    private readonly config: ConfigService, private readonly followups?: RootFollowupService) {}
 
   onModuleInit() {
     if (!this.config.get<boolean>('conversation.rootBackgroundEnabled', false)) return;
@@ -41,8 +42,8 @@ export class RootBackgroundDriverService implements OnModuleInit, OnModuleDestro
     return { global, perUser };
   }
 
-  async ready(): Promise<boolean> {
-    return this.stream.rootBackgroundReady();
+  async ready(fanout = false): Promise<boolean> {
+    return fanout ? this.stream.rootBackgroundReady(true) : this.stream.rootBackgroundReady();
   }
 
   private async poll() {
@@ -51,6 +52,8 @@ export class RootBackgroundDriverService implements OnModuleInit, OnModuleDestro
     this.polling = true;
     try {
       if (!await this.ready()) return;
+      if (this.closing) return;
+      if (this.followups && await this.stream.rootBackgroundReady(false, true)) await this.followups.reconcile();
       if (this.closing) return;
       const job = await this.jobs.claim(this.owner, 30, this.limits());
       if (!job || this.closing) return;

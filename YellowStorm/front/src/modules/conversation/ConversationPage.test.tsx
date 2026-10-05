@@ -51,6 +51,7 @@ vi.mock('./components/ConversationHeader', () => ({ ConversationHeader: () => nu
 vi.mock('./components/ConversationContent', () => ({ ConversationContent: () => null }));
 vi.mock('./components/ConversationInput', () => ({ ConversationInput: () => null }));
 vi.mock('./components/RootInputPanel', () => ({ RootInputPanel: () => null }));
+vi.mock('./components/RootWorkPanel', () => ({ RootWorkPanel: () => null }));
 vi.mock('./components/StreamErrorDialog', () => ({ StreamErrorDialog: () => null }));
 vi.mock('./components/NotFound', () => ({ NotFound: () => null }));
 vi.mock('./GroupConversationPage', () => ({ GroupConversationPage: () => null }));
