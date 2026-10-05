@@ -311,16 +311,38 @@ async def lexical_candidates(pool: Any, index_id: str, terms: list[str], label_q
     return [{"entityId": row["entity_id"], "score": float(row["score"])} for row in rows]
 
 
+# Neighbours an approximate (HNSW) scan looks at, at least: more finds the true nearest more often.
+MIN_EF_SEARCH = 100
+# Passages looked at per record wanted, before keeping each record's best ones.
+PASSAGES_SCANNED_PER_RECORD = 8
+
+
+async def _nearest(pool: Any, sql: str, *args: Any, wanted: int) -> list[Any]:
+    """Run a nearest-neighbour query through the HNSW index. The filters (generation, concept,
+    workspaces) are applied while the index is walked (iterative scan), so a narrow filter
+    still gets ``wanted`` rows; their order is fixed by the outer ORDER BY."""
+    acquire = getattr(pool, "acquire", None)
+    if acquire is None:  # a single connection (tests, scripts)
+        return await pool.fetch(sql, *args)
+    async with acquire() as connection, connection.transaction():
+        await connection.execute(f"SET LOCAL hnsw.ef_search = {max(MIN_EF_SEARCH, min(wanted, 1000))}")
+        await connection.execute("SET LOCAL hnsw.iterative_scan = relaxed_order")
+        return await connection.fetch(sql, *args)
+
+
 async def vector_candidates(pool: Any, index_id: str, vector: str, concept_ids: list[str] | None,
                             allowed_workspaces: list[str] | None, limit: int) -> list[dict[str, Any]]:
-    """Exact cosine nearest records (no approximate index: the reference ranking)."""
-    rows = await pool.fetch(
-        "SELECT entity_id, 1 - (embedding <=> $4::text::halfvec) AS similarity "
-        "FROM semantic_graph_search.entity_documents "
-        f"WHERE index_id = $1::uuid AND ($2::text[] IS NULL OR concept_id = ANY($2::text[])) AND {_VISIBLE} "
-        "AND status = 'ready' "
-        "ORDER BY embedding <=> $4::text::halfvec, entity_id LIMIT $5",
-        index_id, concept_ids, allowed_workspaces, vector, limit)
+    """The cosine-nearest records, through the vector index (approximate, very close to exact)."""
+    rows = await _nearest(
+        pool,
+        "SELECT entity_id, 1 - distance AS similarity FROM ("
+        "  SELECT entity_id, embedding <=> $4::text::halfvec AS distance "
+        "  FROM semantic_graph_search.entity_documents "
+        f"  WHERE index_id = $1::uuid AND ($2::text[] IS NULL OR concept_id = ANY($2::text[])) AND {_VISIBLE} "
+        "  AND status = 'ready' "
+        "  ORDER BY embedding <=> $4::text::halfvec LIMIT $5) nearest "
+        "ORDER BY distance, entity_id",
+        index_id, concept_ids, allowed_workspaces, vector, limit, wanted=limit)
     return [{"entityId": row["entity_id"], "similarity": float(row["similarity"])} for row in rows]
 
 
@@ -362,21 +384,23 @@ async def lexical_passage_candidates(pool: Any, index_id: str, terms: list[str],
 async def vector_passage_candidates(pool: Any, index_id: str, vector: str, concept_ids: list[str] | None,
                                     allowed_workspaces: list[str] | None, limit: int,
                                     per_record: int = PASSAGES_PER_RECORD) -> list[dict[str, Any]]:
-    """Records with the passages nearest the query (exact cosine), ranked by their best
-    passage; each with its best ``per_record`` passages."""
-    rows = await pool.fetch(
+    """Records with the passages nearest the query (cosine, through the vector index), ranked by
+    their best passage; each with its best ``per_record`` passages among the nearest ones."""
+    scanned = limit * max(per_record, PASSAGES_SCANNED_PER_RECORD)
+    rows = await _nearest(
+        pool,
         "WITH scored AS ("
         "  SELECT entity_id, ordinal, 1 - (embedding <=> $4::text::halfvec) AS similarity "
         "  FROM semantic_graph_search.entity_passages "
         f"  WHERE index_id = $1::uuid AND ($2::text[] IS NULL OR concept_id = ANY($2::text[])) AND {_VISIBLE} "
-        "  AND status = 'ready'), "
+        "  AND status = 'ready' ORDER BY embedding <=> $4::text::halfvec LIMIT $7), "
         "ranked AS (SELECT *, row_number() OVER (PARTITION BY entity_id ORDER BY similarity DESC, ordinal) "
         "  AS place FROM scored), "
         "best AS (SELECT entity_id, similarity FROM ranked WHERE place = 1 "
         "  ORDER BY similarity DESC, entity_id LIMIT $5) "
         "SELECT ranked.entity_id, ranked.ordinal, ranked.similarity FROM ranked JOIN best USING (entity_id) "
         "WHERE ranked.place <= $6 ORDER BY best.similarity DESC, ranked.entity_id, ranked.place",
-        index_id, concept_ids, allowed_workspaces, vector, limit, per_record)
+        index_id, concept_ids, allowed_workspaces, vector, limit, per_record, scanned, wanted=scanned)
     return _passage_hits(rows, "similarity")
 
 
