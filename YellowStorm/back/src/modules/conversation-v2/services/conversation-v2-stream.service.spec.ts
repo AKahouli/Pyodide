@@ -68,6 +68,7 @@ describe('ConversationV2StreamService', () => {
       getConversationV2DefaultModel: jest.fn().mockResolvedValue(null),
       getModelIdentifier: jest.fn((m: { litellmModel?: string; id?: string } | null) => m?.litellmModel || m?.id || ''),
       getDefaultModel: jest.fn().mockResolvedValue(null),
+      findByIdOrLitellmModel: jest.fn().mockResolvedValue(null),
     };
     sessions = {
       getOne: jest.fn().mockResolvedValue(pointer),
@@ -297,11 +298,19 @@ describe('ConversationV2StreamService', () => {
 
   describe('conversation-v2 default model resolution', () => {
     const chatModelArg = (): unknown => grpcClient.chat.mock.calls[0][3];
+    const chatAppAiModelArg = (): unknown => grpcClient.chat.mock.calls[0][7];
 
     it('uses the explicit per-message model when provided', async () => {
+      modelsService.findByIdOrLitellmModel.mockResolvedValue({
+        id: 'catalog-gpt-4.1',
+        litellmModel: 'azure/gpt-4.1',
+      });
+
       await service.startStream('u1', 's1', { message: 'hi', model: 'azure/gpt-4.1' });
 
       expect(chatModelArg()).toBe('azure/gpt-4.1');
+      expect(chatAppAiModelArg()).toBe('catalog-gpt-4.1');
+      expect(modelsService.findByIdOrLitellmModel).toHaveBeenCalledWith('azure/gpt-4.1');
       expect(modelsService.getConversationV2DefaultModel).not.toHaveBeenCalled();
       expect(modelsService.getDefaultModel).not.toHaveBeenCalled();
     });
@@ -316,6 +325,7 @@ describe('ConversationV2StreamService', () => {
 
       expect(modelsService.getConversationV2DefaultModel).toHaveBeenCalled();
       expect(chatModelArg()).toBe('deepseek/deepseek-v4-flash');
+      expect(chatAppAiModelArg()).toBe('deepseek-v4-flash');
     });
 
     it('falls back to the global default when no conversation-v2 default is set', async () => {
@@ -328,6 +338,7 @@ describe('ConversationV2StreamService', () => {
       await service.startStream('u1', 's1', { message: 'hi' });
 
       expect(chatModelArg()).toBe('openai/gpt-4o-mini');
+      expect(chatAppAiModelArg()).toBe('gpt-4o-mini');
     });
 
     it('degrades to the legacy behaviour (no model) when the default lookup fails', async () => {
@@ -336,6 +347,7 @@ describe('ConversationV2StreamService', () => {
       await service.startStream('u1', 's1', { message: 'hi' });
 
       expect(chatModelArg()).toBeUndefined();
+      expect(chatAppAiModelArg()).toBeUndefined();
     });
 
     it('tags the first assistant message with the resolved default model', async () => {

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { RuntimeRevisionService } from '@modules/app-runtime/services/runtime-revision.service';
 import { AppDataDeploymentService } from '@modules/app-data/services/app-data-deployment.service';
 import { PlatformBaselineService } from '@modules/app-runtime/platform-kit/platform-baseline.service';
+import { ModelsService } from '@modules/models/models.service';
 import { DEFAULT_STARTER_REVISION_ID } from '@modules/app-runtime/constants/starter-revisions';
 import { ConversationV2DeployService } from './conversation-v2-deploy.service';
 
@@ -28,6 +29,10 @@ describe('ConversationV2DeployService', () => {
     readRevisionFileText: jest.fn(),
     listFiles: jest.fn(),
     starterRevisionId: DEFAULT_STARTER_REVISION_ID,
+  };
+  const modelsService = {
+    getConversationV2DefaultModel: jest.fn().mockResolvedValue({ id: 'v2-default-model' }),
+    getDefaultModel: jest.fn().mockResolvedValue({ id: 'platform-default-model' }),
   };
   let service: ConversationV2DeployService;
 
@@ -80,6 +85,7 @@ describe('ConversationV2DeployService', () => {
       config as unknown as ConfigService,
       revisions as unknown as RuntimeRevisionService,
       baseline as unknown as PlatformBaselineService,
+      modelsService as unknown as ModelsService,
     );
   });
 
@@ -231,6 +237,7 @@ describe('ConversationV2DeployService', () => {
       runtimeEnv: {
         VITE_APP_BASE: '/apps/2e65d5fa87a0499f/',
         VITE_YM_API_BASE_URL: 'https://api.yellowsys.org/api/v1',
+        VITE_YM_AI_DEFAULT_MODEL: 'v2-default-model',
       },
     });
   });
@@ -394,6 +401,7 @@ describe('ConversationV2DeployService', () => {
       config as unknown as ConfigService,
       revisions as unknown as RuntimeRevisionService,
       baseline as unknown as PlatformBaselineService,
+      modelsService as unknown as ModelsService,
       appDataDeployment as unknown as AppDataDeploymentService,
     );
 
@@ -418,6 +426,7 @@ describe('ConversationV2DeployService', () => {
       config as unknown as ConfigService,
       revisions as unknown as RuntimeRevisionService,
       baseline as unknown as PlatformBaselineService,
+      modelsService as unknown as ModelsService,
       appDataDeployment as unknown as AppDataDeploymentService,
     );
     jest.spyOn(global, 'fetch').mockResolvedValueOnce(
@@ -586,6 +595,7 @@ describe('ConversationV2DeployService', () => {
         config as unknown as ConfigService,
         revisions as unknown as RuntimeRevisionService,
         baseline as unknown as PlatformBaselineService,
+        modelsService as unknown as ModelsService,
         {
           ensureDevProvisioned: jest.fn().mockResolvedValue(undefined),
           prepareProduction: jest.fn().mockRejectedValue('app data offline'),

@@ -149,6 +149,28 @@ describe('ConversationV2GrpcClientService', () => {
     expect(fakeStream.cancel).toHaveBeenCalled();
   });
 
+  it('chat passes app_ai_model when provided', () => {
+    const fakeStream: any = { on: jest.fn().mockReturnThis(), cancel: jest.fn() };
+    mockGrpcClient.Chat.mockReturnValue(fakeStream);
+
+    const sub = service
+      .chat('u1', 's1', 'm', 'litellm/model', undefined, undefined, undefined, 'catalog-model-id')
+      .subscribe();
+
+    expect(mockGrpcClient.Chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user_id: 'u1',
+        session_id: 's1',
+        message: 'm',
+        model: 'litellm/model',
+        app_ai_model: 'catalog-model-id',
+      }),
+      expect.anything(),
+      expect.anything(),
+    );
+    sub.unsubscribe();
+  });
+
   describe('worky', () => {
     it('calls Worky with positional metadata + deadline and resolves accepted', async () => {
       const Worky = jest.fn((_req, _md, _opts, cb) =>

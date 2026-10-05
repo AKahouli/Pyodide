@@ -66,20 +66,39 @@ export function checkDataModule(source: string): string[] {
     : ['src/lib/yellowmind-data must read import.meta.env.VITE_YM_APP_DATA_URL.'];
 }
 
+/**
+ * Agent-invented provider model strings (e.g. `model: 'gpt-4o-mini'`).
+ * The studio session model is injected as VITE_YM_AI_DEFAULT_MODEL — apps must
+ * omit `model` or call resolveDefaultAiModel(), never invent a catalog id.
+ */
+const INVENTED_MODEL_LITERAL_RE =
+  /\bmodel\s*:\s*['"`](gpt-|o1|o3|o4|claude-|openai\/|azure\/|anthropic\/|deepseek\/)/i;
+
 /** Any app source may call AI; it must go through the platform proxy. */
 export function checkAiUsage(source: string): string[] {
   if (!source.trim()) return [];
   const callsRemoteAi = YELLOWMIND_AI_IMPORT_RE.test(source) || REMOTE_AI_CALL_RE.test(source);
   if (!callsRemoteAi) return [];
 
+  const violations: string[] = [];
   const usesPlatformClient =
     YELLOWMIND_AI_IMPORT_RE.test(source) || CREATE_AI_CLIENT_RE.test(source);
   const usesDeployApiBase = source.includes(DEPLOY_API_BASE);
-  return usesPlatformClient || usesDeployApiBase
-    ? []
-    : [
-        'Use @/lib/yellowmind-ai (createAIClient / chatCompletion) or import.meta.env.VITE_YM_API_BASE_URL for /chat/completions — do not hardcode external AI URLs.',
-      ];
+  if (!usesPlatformClient && !usesDeployApiBase) {
+    violations.push(
+      'Use @/lib/yellowmind-ai (createAIClient / chatCompletion) or import.meta.env.VITE_YM_API_BASE_URL for /chat/completions — do not hardcode external AI URLs.',
+    );
+  }
+  // Managed yellowmind-ai.ts itself builds `{ model }` params — skip there.
+  if (
+    !/export async function resolveDefaultAiModel/.test(source) &&
+    INVENTED_MODEL_LITERAL_RE.test(source)
+  ) {
+    violations.push(
+      'Do not hardcode AI model ids (e.g. gpt-4o-mini). Omit `model` or use resolveDefaultAiModel() so the studio session model (VITE_YM_AI_DEFAULT_MODEL) is used via the AI proxy.',
+    );
+  }
+  return violations;
 }
 
 /** Invariants for a managed file the agent modified. Empty array means fine. */

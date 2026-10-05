@@ -385,6 +385,8 @@ export class ConversationV2GrpcClientService
     },
     skills?: IGrpcSkill[],
     connectors?: IGrpcConnector[],
+    /** Catalog model id for generated-app AI (Studio selection). */
+    appAiModel?: string,
   ): Observable<ConversationV2Event> {
     return new Observable<ConversationV2Event>((subscriber) => {
       const request: Record<string, unknown> = {
@@ -393,6 +395,7 @@ export class ConversationV2GrpcClientService
         message,
       };
       if (model) request.model = model;
+      if (appAiModel) request.app_ai_model = appAiModel;
       if (connectorRepo) {
         request.connector_repo = {
           connector_id: connectorRepo.connectorId,

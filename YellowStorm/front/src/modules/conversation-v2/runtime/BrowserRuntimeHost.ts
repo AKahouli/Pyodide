@@ -99,6 +99,17 @@ export function setAiPreviewTicketFetcher(fetcher: AiPreviewTicketFetcher | null
   aiPreviewTicketFetcher = fetcher;
 }
 
+/** Studio catalog model id forced onto preview chat/completions (overrides agent literals). */
+let aiDefaultModelId: string | null = null;
+
+export function setAiDefaultModelId(modelId: string | null): void {
+  aiDefaultModelId = modelId?.trim() || null;
+}
+
+export function getAiDefaultModelId(): string | null {
+  return aiDefaultModelId;
+}
+
 /** appDataId from a data-plane URL (`/v1/apps/{id}/…` or legacy gateway). */
 export function appDataIdFromUrl(url: string): string | null {
   try {
@@ -360,12 +371,38 @@ function installAiFetchProxyOnce(): void {
     }
 
     // Preview AI is non-streaming through postMessage (full JSON body).
+    // Also rewrite `model` to the studio session catalog id so agent-invented
+    // literals like gpt-4o-mini never hit the AI proxy.
     let requestBody = body as BodyInit | undefined;
     if (typeof requestBody === 'string' && requestBody.length > 0) {
       try {
         const parsed = JSON.parse(requestBody) as Record<string, unknown>;
+        let changed = false;
         if (parsed.stream === true) {
           parsed.stream = false;
+          changed = true;
+        }
+        if (
+          aiDefaultModelId &&
+          /\/chat\/completions\/?$/.test(new URL(absoluteUrl).pathname) &&
+          typeof parsed.model === 'string' &&
+          parsed.model.trim() !== aiDefaultModelId
+        ) {
+          console.log(LOG, 'AI proxy rewriting model to studio session default', {
+            from: parsed.model,
+            to: aiDefaultModelId,
+          });
+          parsed.model = aiDefaultModelId;
+          changed = true;
+        } else if (
+          aiDefaultModelId &&
+          /\/chat\/completions\/?$/.test(new URL(absoluteUrl).pathname) &&
+          (parsed.model == null || parsed.model === '')
+        ) {
+          parsed.model = aiDefaultModelId;
+          changed = true;
+        }
+        if (changed) {
           requestBody = JSON.stringify(parsed);
         }
       } catch {
@@ -496,8 +533,10 @@ export class BrowserRuntimeHost {
   private externalRelayPeers: WindowProxy[] = [];
   /** Provision completed before host reached ready — restart once ready. */
   private pendingAppDataRestart = false;
-  /** Catalog model id injected as VITE_YM_AI_DEFAULT_MODEL (conversation-v2 selection preferred). */
+  /** Catalog model id injected as VITE_YM_AI_DEFAULT_MODEL (same as Studio composer). */
   private defaultAiModelId: string | null = null;
+  /** Keep AI Proxy default in lockstep with Composer model changes. */
+  private selectedModelUnsub: (() => void) | null = null;
 
   /**
    * Vite env for NodePod Dev Preview.
@@ -531,10 +570,9 @@ export class BrowserRuntimeHost {
   }
 
   /**
-   * Resolve catalog model id for AI Proxy preview clients.
-   * Prefer conversation-v2 composer selection → isConversationV2Default →
-   * platform isDefault → first active. Always re-resolve (selection can change
-   * between Vite starts). Injects catalog `id` (not litellmModel).
+   * Resolve catalog model id for AI Proxy — same cascade as Studio Composer stream:
+   * composer selection → conversation-v2 default → platform default → first active.
+   * Catalog `id` only (AI Proxy allowlist), never invent gpt-4o / provider literals.
    */
   private async ensureDefaultAiModelId(): Promise<void> {
     try {
@@ -552,7 +590,7 @@ export class BrowserRuntimeHost {
         ?? models[0]?.id
         ?? null;
       if (pick && pick !== this.defaultAiModelId) {
-        console.log(LOG, 'default AI model', {
+        console.log(LOG, 'default AI model (studio stream)', {
           model: pick,
           source: selected?.id
             ? 'conversation-v2-selection'
@@ -562,6 +600,7 @@ export class BrowserRuntimeHost {
         });
       }
       this.defaultAiModelId = pick;
+      setAiDefaultModelId(pick);
     } catch (err) {
       console.warn(
         LOG,
@@ -569,6 +608,21 @@ export class BrowserRuntimeHost {
         err instanceof Error ? err.message : String(err),
       );
     }
+  }
+
+  /**
+   * Composer `setSelectedModelId` must immediately update the AI Proxy relay
+   * default so preview chat uses the same model as Studio streaming.
+   */
+  private wireStudioModelSync(): void {
+    this.selectedModelUnsub?.();
+    let prevSelected = useConversationV2Store.getState().selectedModelId;
+    this.selectedModelUnsub = useConversationV2Store.subscribe((state) => {
+      if (this._destroyed) return;
+      if (state.selectedModelId === prevSelected) return;
+      prevSelected = state.selectedModelId;
+      void this.ensureDefaultAiModelId();
+    });
   }
 
   private setupAppDataFetchProxy(): void {
@@ -761,6 +815,7 @@ export class BrowserRuntimeHost {
     // Owner data tickets for relayed preview App Data calls (refreshed on 401).
     setAppDataTicketFetcher((appDataId, force, env) => this.acquireAppDataTicket(appDataId, force, env));
     setAiPreviewTicketFetcher((force) => this.acquireAiPreviewTicket(force));
+    this.wireStudioModelSync();
 
     const cephPath = existingCephPath ?? null;
     const filesTree = (existingFilesTree as FilesTreeNode | null) ?? null;
@@ -1532,6 +1587,7 @@ export class BrowserRuntimeHost {
     this.setupAppDataFetchProxy();
     setAppDataTicketFetcher((appDataId, force, env) => this.acquireAppDataTicket(appDataId, force, env));
     setAiPreviewTicketFetcher((force) => this.acquireAiPreviewTicket(force));
+    this.wireStudioModelSync();
 
     const keepPreviewVisible = Boolean(this.previewCtrl.previewUrl);
     try {
@@ -1605,6 +1661,10 @@ export class BrowserRuntimeHost {
     this.workspaceId = null;
     this.ticket = null;
     this.aiPreviewTicketCache = null;
+    this.defaultAiModelId = null;
+    setAiDefaultModelId(null);
+    this.selectedModelUnsub?.();
+    this.selectedModelUnsub = null;
     this.legacyMode = false;
     this.rehydrating = false;
     this.reconnectAttempts = 0;

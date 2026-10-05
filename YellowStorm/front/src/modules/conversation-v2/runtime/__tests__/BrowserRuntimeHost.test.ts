@@ -138,14 +138,19 @@ vi.mock('../PreviewController', () => ({
   })),
 }));
 
-const { mockDispatchTool, conversationV2StoreState } = vi.hoisted(() => ({
-  mockDispatchTool: vi.fn().mockResolvedValue({ content: 'ok' }),
-  conversationV2StoreState: {
+const { mockDispatchTool, conversationV2StoreState, conversationV2StoreListeners } = vi.hoisted(() => {
+  const conversationV2StoreListeners = new Set<(state: unknown) => void>();
+  const conversationV2StoreState = {
     applicationComponent: null as null,
     selectedModelId: null as string | null,
     setRightPanelView: vi.fn(),
-  },
-}));
+  };
+  return {
+    mockDispatchTool: vi.fn().mockResolvedValue({ content: 'ok' }),
+    conversationV2StoreState,
+    conversationV2StoreListeners,
+  };
+});
 
 vi.mock('../RuntimeToolHandlers', () => ({
   dispatchTool: mockDispatchTool,
@@ -155,6 +160,10 @@ vi.mock('../RuntimeToolHandlers', () => ({
 vi.mock('../../store', () => ({
   useConversationV2Store: {
     getState: () => conversationV2StoreState,
+    subscribe: (listener: (state: typeof conversationV2StoreState) => void) => {
+      conversationV2StoreListeners.add(listener);
+      return () => conversationV2StoreListeners.delete(listener);
+    },
   },
 }));
 
@@ -171,6 +180,7 @@ describe('BrowserRuntimeHost', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     conversationV2StoreState.selectedModelId = null;
+    conversationV2StoreListeners.clear();
     mockHydrateFromRevision.mockResolvedValue({
       '/package.json': '{"name":"from-ceph"}',
       '/src/App.jsx': 'app',
@@ -514,6 +524,29 @@ describe('BrowserRuntimeHost', () => {
 
       const viteEnv = mockStartDevServer.mock.calls.at(-1)?.[3] as Record<string, string> | undefined;
       expect(viteEnv?.VITE_YM_AI_DEFAULT_MODEL).toBe('v2-default');
+      host.destroy();
+    });
+
+    it('updates AI Proxy default when Studio composer selection changes', async () => {
+      const { getModels } = await import('@/modules/models/api');
+      const { getAiDefaultModelId } = await import('../BrowserRuntimeHost');
+      (getModels as ReturnType<typeof vi.fn>).mockResolvedValue({
+        models: [
+          { id: 'stream-a', isDefault: false, isConversationV2Default: true, isActive: true },
+          { id: 'stream-b', isDefault: true, isConversationV2Default: false, isActive: true },
+        ],
+        total: 2,
+      });
+      conversationV2StoreState.selectedModelId = 'stream-a';
+
+      const host = new BrowserRuntimeHost();
+      await host.start('sess_1');
+      await vi.waitFor(() => expect(getAiDefaultModelId()).toBe('stream-a'));
+
+      conversationV2StoreState.selectedModelId = 'stream-b';
+      conversationV2StoreListeners.forEach((listener) => listener(conversationV2StoreState));
+      await vi.waitFor(() => expect(getAiDefaultModelId()).toBe('stream-b'));
+
       host.destroy();
     });
 

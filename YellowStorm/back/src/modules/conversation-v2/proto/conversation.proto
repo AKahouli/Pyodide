@@ -66,6 +66,9 @@ message ChatRequest {
   string model = 6;  // Required: full LiteLLM model identifier e.g. "azure/gpt-4.1", "anthropic/claude-sonnet-4-5"
   repeated Skill  skills    = 8;   // skills selected by the user, injected into the agent prompt
   repeated ConnectorBinding connectors = 9;   // selected connectors (MCP servers); auth already resolved by YellowMind
+  // Catalog model id for generated-app AI Proxy calls (same Studio composer selection).
+  // Distinct from `model` (LiteLLM id used by the OpenCode builder).
+  optional string app_ai_model = 10;
 }
 
 // --- Skills (Agent Skills pattern / progressive disclosure) ---

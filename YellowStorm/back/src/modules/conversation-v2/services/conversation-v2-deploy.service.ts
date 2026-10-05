@@ -8,6 +8,7 @@ import {
   type BaselineFile,
 } from '@modules/app-runtime/platform-kit/platform-baseline.service';
 import { checkAiUsage } from '@modules/app-runtime/platform-kit/platform-conformance';
+import { ModelsService } from '@modules/models/models.service';
 import {
   detectRevisionUsesAi,
   isScannableAppSourcePath,
@@ -70,6 +71,7 @@ export class ConversationV2DeployService {
     private readonly config: ConfigService,
     private readonly revisions: RuntimeRevisionService,
     private readonly baseline: PlatformBaselineService,
+    private readonly modelsService: ModelsService,
     @Optional() private readonly appDataDeployment?: AppDataDeploymentService,
   ) {}
 
@@ -120,6 +122,10 @@ export class ConversationV2DeployService {
     const backendUrl = this.resolveDeployBackendUrl();
     if (backendUrl && usesAi) {
       productionEnv.VITE_YM_API_BASE_URL = `${backendUrl}/api/v1`;
+      const defaultAiModelId = await this.resolveDeployDefaultAiModelId();
+      if (defaultAiModelId) {
+        productionEnv.VITE_YM_AI_DEFAULT_MODEL = defaultAiModelId;
+      }
     }
 
     if (this.config.get<boolean>('appData.enabled', false) && this.appDataDeployment) {
@@ -503,6 +509,25 @@ export class ConversationV2DeployService {
       throw new ServiceUnavailableException(
         'App Data could not be prepared for production. Provision App Data (OpenCode MCP yellowappdata_provision or deploy with owner context), then deploy again.',
       );
+    }
+  }
+
+  /**
+   * Catalog model id baked into deployed apps as VITE_YM_AI_DEFAULT_MODEL.
+   * Prefer conversation-v2 admin default, then platform default — same order as
+   * BrowserRuntimeHost preview injection when no composer selection is stored.
+   */
+  private async resolveDeployDefaultAiModelId(): Promise<string | null> {
+    try {
+      const conversationV2Default = await this.modelsService.getConversationV2DefaultModel();
+      if (conversationV2Default?.id) return conversationV2Default.id;
+      const platformDefault = await this.modelsService.getDefaultModel();
+      return platformDefault?.id ?? null;
+    } catch (err) {
+      this.logger.warn(
+        `[deploy] default AI model lookup failed: ${describeError(err)}`,
+      );
+      return null;
     }
   }
 
