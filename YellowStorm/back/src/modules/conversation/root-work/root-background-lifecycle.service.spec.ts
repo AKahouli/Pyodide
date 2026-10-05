@@ -2,6 +2,21 @@ import { RootBackgroundLifecycleService } from './root-background-lifecycle.serv
 
 describe('Owned background lifecycle acknowledgement', () => {
   const request = { owner: 'owner', fence: 2, nativeOwner: 'native-process', requestDigest: 'digest' };
+
+  it('ingests synthesis events through sealed follow-up authority instead of leaf hydration', async () => {
+    const job = { conversationId: 'conversation', actorId: 'actor', requestDigest: 'digest' };
+    const jobs = { getOwnedHydration: jest.fn().mockRejectedValue(new Error('leaf-only hydration rejects followup')) };
+    const work = { getExecution: jest.fn().mockResolvedValue({ role: 'followup' }) };
+    const followups = { authorizeOwned: jest.fn().mockResolvedValue({ job, root: {}, execution: {}, state: {},
+      grant: { executionId: 'followup', owner: request.owner, fence: request.fence, nativeOwner: request.nativeOwner } }) };
+    const results = { authorizeBackgroundExecution: jest.fn().mockResolvedValue({}) };
+    const events = { append: jest.fn().mockResolvedValue([{ eventId: 'event', sequence: '1' }]) };
+    const service = new RootBackgroundLifecycleService(jobs as never, events as never, {} as never,
+      {} as never, results as never, work as never, {} as never, followups as never);
+    await expect(service.ingest('followup', { ...request, events: [] })).resolves.toEqual({ events: [{ eventId: 'event', sequence: '1' }] });
+    expect(followups.authorizeOwned).toHaveBeenCalledWith('followup', expect.objectContaining(request));
+    expect(jobs.getOwnedHydration).not.toHaveBeenCalled();
+  });
   function fanoutFixture(role = 'library_worker') {
     const jobs = { getOwnedFanoutItem: jest.fn().mockResolvedValue({ role, job: { requestDigest: 'digest' } }) };
     const resolved = { scope: { version: 1, role, executionId: 'item', parentExecutionId: 'root',

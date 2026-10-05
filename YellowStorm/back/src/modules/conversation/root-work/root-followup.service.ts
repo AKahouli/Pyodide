@@ -85,6 +85,14 @@ export class RootFollowupService {
         resumeIntent: current.job.nativeInvocationId ? 'resume' : 'start' }) };
   }
 
+  async authorizeOwned(executionId: string, request: RootBackgroundAuthorityDto) {
+    const grant = { executionId, owner: request.owner, fence: request.fence, nativeOwner: request.nativeOwner };
+    const owned = await this.store.owned(grant);
+    if (owned.job.requestDigest !== request.requestDigest) throw new Error('Synthesis request binding changed');
+    await this.authorize(owned.root.id, owned.job.actorId);
+    return { ...await this.store.owned(grant), grant };
+  }
+
   async readResult(executionId: string, producerId: string, request: RootBackgroundAuthorityDto & { offset?: number }) {
     const grant = { executionId, owner: request.owner, fence: request.fence, nativeOwner: request.nativeOwner };
     const owned = await this.store.owned(grant);

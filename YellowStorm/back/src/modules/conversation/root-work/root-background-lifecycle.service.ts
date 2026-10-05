@@ -129,7 +129,10 @@ export class RootBackgroundLifecycleService {
   }
 
   async ingest(executionId: string, request: RootBackgroundEventsDto) {
-    const owned = await this.owned(executionId, request);
+    const identity = await this.work.getExecution(executionId);
+    if (identity?.role === 'followup' && !this.followups) throw new Error('Synthesis runtime is unavailable');
+    const owned = identity?.role === 'followup'
+      ? await this.followups!.authorizeOwned(executionId, request) : await this.owned(executionId, request);
     await this.results.authorizeBackgroundExecution(owned.job.conversationId, executionId, owned.job.actorId);
     const acknowledgements = await this.events.append(owned.grant, request.requestDigest, request.events);
     return { events: acknowledgements };
