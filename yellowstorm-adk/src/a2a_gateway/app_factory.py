@@ -21,10 +21,11 @@ def build_a2a_app(
     public_url: str,
     grpc_target: str,
     api_key_header: str,
+    caller_mcp_headers: Dict[str, str] | None = None,
 ) -> A2AStarletteApplication:
     card = build_agent_card(definition, public_url, api_key_header)
     handler = DefaultRequestHandler(
-        agent_executor=RunSingleAgentExecutor(grpc_target, definition),
+        agent_executor=RunSingleAgentExecutor(grpc_target, definition, caller_mcp_headers),
         task_store=InMemoryTaskStore(),
     )
     return A2AStarletteApplication(agent_card=card, http_handler=handler)
