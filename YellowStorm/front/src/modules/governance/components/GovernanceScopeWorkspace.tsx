@@ -936,8 +936,15 @@ function selectionLabel(selection: AccessSelection): string {
   return fullName || selection.user.email;
 }
 
+export function availableInviteUsers(users: GovernanceUserSearchResult[], currentUser: GovernanceUserSearchResult | undefined, excludedIds: string[], search: string): GovernanceUserSearchResult[] {
+  const candidates = currentUser ? [currentUser, ...users.filter((user) => user.id !== currentUser.id)] : users;
+  const normalized = search.trim().toLowerCase();
+  return candidates.filter((user) => !excludedIds.includes(user.id) && (!normalized || `${user.email} ${user.firstName ?? ''} ${user.lastName ?? ''}`.toLowerCase().includes(normalized)));
+}
+
 function InviteUsersDialog({ open, onOpenChange, programId, scopeId, excludeUserIds, excludeGroupIds }: Readonly<{ open: boolean; onOpenChange: (open: boolean) => void; programId: string | null; scopeId: string; excludeUserIds: string[]; excludeGroupIds: string[] }>): JSX.Element {
   const { t } = useModuleTranslation('governance');
+  const { user: currentUser } = useAuth();
   const createMembership = useCreateGovernanceMembership(programId);
   const groups = useGroups();
   const fetchGroups = useGroupsStore((state) => state.fetchGroups);
@@ -1000,7 +1007,7 @@ function InviteUsersDialog({ open, onOpenChange, programId, scopeId, excludeUser
 
   const normalizedSearch = search.trim().toLowerCase();
   const userSource = normalizedSearch.length >= 3 ? results : directoryUsers;
-  const availableResults = userSource.filter((user) => !excludeUserIds.includes(user.id) && (!normalizedSearch || `${user.email} ${user.firstName ?? ''} ${user.lastName ?? ''}`.toLowerCase().includes(normalizedSearch)));
+  const availableResults = availableInviteUsers(userSource, currentUser ? { id: currentUser.id, email: currentUser.email, firstName: currentUser.profile.firstName, lastName: currentUser.profile.lastName } : undefined, excludeUserIds, search);
   const availableGroups = groups.filter((group) => !excludeGroupIds.includes(group.id) && (!normalizedSearch || `${group.name} ${group.description}`.toLowerCase().includes(normalizedSearch)));
 
   return (

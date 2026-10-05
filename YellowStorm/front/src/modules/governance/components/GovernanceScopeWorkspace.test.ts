@@ -2,7 +2,21 @@ import { describe, expect, it } from 'vitest';
 import type { GovernanceScope, GovernanceScopeOverview, GovernanceWorkspaceBinding } from '@/modules/governance';
 import type { Agent } from '@/modules/agent';
 import type { Workspace } from '@/modules/workspace';
-import { buildScopeSettingsPayload, buildScopeWorkspaceBindingPayload, createScopeSettingsDraft, isEffectiveScopeWorkspaceBinding, isScopeSettingsDraftDirty, reviewChanges } from './GovernanceScopeWorkspace';
+import { availableInviteUsers, buildScopeSettingsPayload, buildScopeWorkspaceBindingPayload, createScopeSettingsDraft, isEffectiveScopeWorkspaceBinding, isScopeSettingsDraftDirty, reviewChanges } from './GovernanceScopeWorkspace';
+
+describe('scope collaborator self selection', () => {
+  const self = { id: 'self', email: 'owner@example.test', firstName: 'Scope', lastName: 'Owner' };
+  it('includes the signed-in owner when directory search excludes them', () => {
+    expect(availableInviteUsers([], self, [], ' OWNER ')).toEqual([self]);
+    expect(availableInviteUsers([], self, [], '')).toEqual([self]);
+  });
+  it('preserves membership exclusions and search matching without duplicating the owner', () => {
+    expect(availableInviteUsers([self], self, [], 'owner')).toEqual([self]);
+    expect(availableInviteUsers([], self, ['self'], 'owner')).toEqual([]);
+    expect(availableInviteUsers([], self, [], 'someone else')).toEqual([]);
+    expect(availableInviteUsers([], undefined, [], '')).toEqual([]);
+  });
+});
 
 function scopeWithDescription(description: string): GovernanceScope {
   return {
