@@ -339,7 +339,7 @@ def _register_connector_response_sources(
                        if isinstance(doc, dict) and path and normalize_vectorstore_source(doc.get("filepath")) == path]
             if len(matches) == 1:
                 workspace = str(matches[0].get("workspace_id") or source_context.workspace_id or "")
-                document_id = str(matches[0].get("document_id") or "")
+                document_id = str(matches[0].get("document_id") or matches[0].get("_id") or "")
                 source_is_bound = bool(workspace and (not source.get("workspace_id") or source["workspace_id"] == workspace)
                                        and (not source.get("document_id") or source["document_id"] == document_id))
                 if source_is_bound:

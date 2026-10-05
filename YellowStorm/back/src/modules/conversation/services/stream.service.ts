@@ -23,6 +23,7 @@ import { WorkspaceShareService } from '../../workspace/workspace-share.service';
 import { RunCodeSourceScopeService } from '../../workspace/services/run-code-source-scope.service';
 import type { RunCodeAttachmentSource } from '../../workspace/interfaces/run-code-source.interface';
 import { DocumentStatus } from '../../workspace/interfaces/document-status.enum';
+import { toGrpcWorkspaceDocument } from './grpc-workspace-document';
 import { AgentService } from '../../agent/agent.service';
 import { IGrpcAgent, IGrpcCompaction, IGrpcWorkspaceContext } from '../../agent/interfaces/agent.interface';
 import { TeamService } from '../../team/team.service';
@@ -484,18 +485,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         contextMap.set(wsId, {
           workspace_id: wsId,
           workspace_name: workspaceName,
-          workspace_documents: result.documents.map((doc) => ({
-            _id: doc.id,
-            filename: doc.filename || '',
-            filepath: doc.path || '',
-            in_memory: false,
-            language: doc.detected_language || 'fr',
-            indexing_token: doc.chunk_size || 1200,
-            workspace_id: wsId,
-            workspace_name: workspaceName,
-            file_name: doc.filename || '',
-            createdAt: doc.createdAt,
-          })),
+          workspace_documents: result.documents.map((doc) => toGrpcWorkspaceDocument(doc, wsId, workspaceName)),
         });
       }),
     );

@@ -22,7 +22,7 @@ async def owned_tool(action='locate_answer_citations', execution='child'):
         'mcp_server_url': 'https://fixture.test/mcp', 'actions': [{'action_key': action,
             'label': 'Locate', 'execution_kind': 'leaf', 'parameter_schema': {'type': 'object', 'properties': {}}}]}
     context = ConnectorToolContext(workspace_id='workspace', brain_documents=[{
-        'filepath': 'fixture/approved/manual.pdf', 'workspace_id': 'workspace', 'document_id': 'document'}])
+        'filepath': 'fixture/approved/manual.pdf', 'workspace_id': 'workspace', '_id': 'document'}])
     agent = LlmAgent(name='guide', model='gemini-2.5-flash', tools=create_connector_tools([binding], context))
 
     async def factory(*args):

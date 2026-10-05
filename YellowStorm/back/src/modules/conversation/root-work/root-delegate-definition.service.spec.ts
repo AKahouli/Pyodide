@@ -27,9 +27,10 @@ describe('lazy selected root delegate definition', () => {
     const shares = { assertUserHasAccess: jest.fn() };
     const sources = { buildSources: jest.fn().mockResolvedValue([]) };
     const jobs = { getOwnedHydration: jest.fn(), getOwnedFanoutItem: jest.fn(), registerOwnedFanoutItem: jest.fn() };
-    return { state, work, conversations, pool, resolver, agents, shares, sources, jobs,
+    const documents = { findAllByWorkspace: jest.fn().mockResolvedValue({ documents: [{ id: 'document', path: 'fixture.pdf', filename: 'fixture.pdf' }], pagination: { total: 1 } }) };
+    return { state, work, conversations, pool, resolver, agents, shares, sources, jobs, documents,
       service: new RootDelegateDefinitionService(work as any, conversations as any, resolver as any, agents as any,
-        shares as any, sources as any, jobs as any) };
+        shares as any, sources as any, jobs as any, documents as any) };
   }
 
   it('rehydrates a manifest-selected item after foreground completion and rechecks ownership before registration', async () => {
@@ -81,6 +82,62 @@ describe('lazy selected root delegate definition', () => {
     expect(JSON.stringify(prepared.registration)).not.toContain('fresh-credential');
   });
 
+  it('hydrates only the selected worker workspaces remaining inside the frozen ceiling', async () => {
+    const h = harness();
+    h.pool.entries[0].configurationMode = 'root_constrained';
+    h.state.rootContext.catalog[0].configuration_mode = 'root_constrained';
+    h.state.capabilityCeiling.workspaceIds = ['approved'];
+    h.agents.buildGrpcAgentsForPlaybook.mockResolvedValue([{ ...definition, brain_context: [
+      { workspace_id: 'approved', workspace_documents: [] },
+      { workspace_id: 'excluded', workspace_documents: [] },
+    ] } as never]);
+    const result = await h.service.resolve(parentId, request);
+    expect(h.documents.findAllByWorkspace).toHaveBeenCalledTimes(1);
+    expect(h.documents.findAllByWorkspace).toHaveBeenCalledWith('approved', { limit: 1000, status: 'completed' });
+    expect(result.definition.brain_context).toEqual([expect.objectContaining({ workspace_id: 'approved',
+      workspace_documents: [expect.objectContaining({ _id: 'document', workspace_id: 'approved', filepath: 'fixture.pdf' })] })]);
+    expect(h.shares.assertUserHasAccess).toHaveBeenCalledWith('actor', ['approved']);
+  });
+
+  it('rejects ordinary source denial before reading document metadata and rejects truncated document sets', async () => {
+    const h = harness();
+    h.agents.buildGrpcAgentsForPlaybook.mockResolvedValue([{ ...definition,
+      brain_context: [{ workspace_id: 'approved', workspace_documents: [] }] } as never]);
+    h.shares.assertUserHasAccess.mockRejectedValueOnce(new Error('source denied'));
+    await expect(h.service.resolve(parentId, request)).rejects.toThrow('source denied');
+    expect(h.documents.findAllByWorkspace).not.toHaveBeenCalled();
+    h.documents.findAllByWorkspace.mockResolvedValueOnce({ documents: [], pagination: { total: 1001 } });
+    await expect(h.service.resolve(parentId, request)).rejects.toThrow('bounded hydration limit');
+    expect(h.work.registerExecution).not.toHaveBeenCalled();
+  });
+
+  it('rechecks governed source authorization after asynchronous document hydration', async () => {
+    const h = harness();
+    h.conversations.getConversationDocument.mockResolvedValue({ createdBy: 'actor', rootAgentId: parentId,
+      rootWorkEpoch: 4, isGroup: false, isArchived: false, runtimeMode: 'governed' } as never);
+    const hydrated = { ...definition, brain_context: [{ workspace_id: 'approved', workspace_documents: [] }] };
+    Object.assign(h.resolver, { restrictDefinition: jest.fn().mockResolvedValue(hydrated),
+      assertWorkspaces: jest.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('source revoked')) });
+    h.agents.buildGrpcAgentsForPlaybook.mockResolvedValue([hydrated as never]);
+    await expect(h.service.resolve(parentId, request)).rejects.toThrow('source revoked');
+    expect(h.documents.findAllByWorkspace).toHaveBeenCalledWith('approved', expect.any(Object));
+    expect(h.shares.assertUserHasAccess).not.toHaveBeenCalled();
+    expect(h.work.registerExecution).not.toHaveBeenCalled();
+  });
+
+  it('rejects owned replay when the selected document set changes after admission', async () => {
+    const h = harness();
+    h.agents.buildGrpcAgentsForPlaybook.mockResolvedValue([{ ...definition,
+      brain_context: [{ workspace_id: 'approved', workspace_documents: [] }] } as never]);
+    const prepared = await h.service.prepareBackground(parentId, request);
+    h.jobs.getOwnedHydration.mockResolvedValue({ child: { id: prepared.executionId, role: 'library_worker' },
+      parent: { id: parentId }, request, state: prepared.registration!.nativeState,
+      job: { nativeSessionId: 'session' } });
+    h.documents.findAllByWorkspace.mockResolvedValue({ documents: [], pagination: { total: 0 } });
+    await expect(h.service.resolveOwned({ executionId: prepared.executionId, owner: 'owner', fence: 1 }))
+      .rejects.toThrow('Owned worker definition changed');
+  });
+
   it('rejects governed source revocation while run-code mounts are prepared', async () => {
     const h = harness();
     let revoked = false;
@@ -103,7 +160,7 @@ describe('lazy selected root delegate definition', () => {
     const resolved = await h.service.resolve(parentId, request);
     expect(h.agents.buildGrpcAgentsForPlaybook).toHaveBeenCalledWith('actor', [agentId], undefined, 'session',
       expect.objectContaining({ scopeType: 'conversation' }));
-    expect(h.resolver.resolveForActor).toHaveBeenCalledTimes(2);
+    expect(h.resolver.resolveForActor).toHaveBeenCalledTimes(3);
     expect(resolved.executionId).toMatch(/^[0-9a-f]{24}$/);
     expect(JSON.stringify(h.work.registerExecution.mock.calls)).not.toContain('fresh-credential');
     expect(resolved.definition).toBe(definition);
@@ -186,6 +243,8 @@ describe('lazy selected root delegate definition', () => {
 
   it('isolates run-code output per child and mounts only selected worker documents', async () => {
     const h = harness();
+    h.documents.findAllByWorkspace.mockResolvedValue({ documents: [{ id: 'own-document',
+      filename: 'report.pdf', path: 'owner/own-workspace/report.pdf' }], pagination: { total: 1 } });
     const worker = { ...definition, tools: [{ name: 'run_code' }], agent_params: { params: {} as Record<string, string> },
       brain_context: [{ workspace_id: 'own-workspace', workspace_documents: [{ workspace_id: 'own-workspace',
         filepath: 'owner/own-workspace/report.pdf' }] }] };

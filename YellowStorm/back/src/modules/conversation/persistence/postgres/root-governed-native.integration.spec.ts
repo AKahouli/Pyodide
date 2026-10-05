@@ -94,7 +94,7 @@ describeIntegration('real governed Root native qualification', () => {
     })) };
     const jobs = new RootBackgroundJobStore(database.db);
     const definitions = new RootDelegateDefinitionService(work as never, conversationsFixture as never,
-      governed.resolver, profiles as never, {} as never, {} as never, jobs);
+      governed.resolver, profiles as never, {} as never, {} as never, jobs, {} as never);
     const fanout = new RootFanoutService(database.db, work as never, conversationsFixture as never,
       governed.resolver, {} as never);
     const service = new RootFollowupService(followups, work as never, results as never,

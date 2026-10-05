@@ -15,13 +15,17 @@ import { producerEvidence } from './root-producer-evidence';
 import { WorkspaceShareService } from '../../workspace/workspace-share.service';
 import { RunCodeSourceScopeService } from '../../workspace/services/run-code-source-scope.service';
 import { RootBackgroundJobStore, RootJobOwner } from '../persistence/postgres/root-background-job.store';
+import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
+import { DocumentStatus } from '../../workspace/interfaces/document-status.enum';
+import { toGrpcWorkspaceDocument } from '../services/grpc-workspace-document';
+import type { IGrpcAgent } from '../../agent/interfaces/agent.interface';
 
 @Injectable()
 export class RootDelegateDefinitionService {
   constructor(private readonly work: RootWorkService, private readonly conversations: ConversationService,
     private readonly resolver: ConversationRootResolverService, private readonly agents: AgentService,
     private readonly workspaceShares: WorkspaceShareService, private readonly runCodeSources: RunCodeSourceScopeService,
-    private readonly jobs: RootBackgroundJobStore) {}
+    private readonly jobs: RootBackgroundJobStore, private readonly documents: WorkspaceDocumentService) {}
 
   async resolve(executionId: string, request: ResolveRootDelegateDto) {
     return this.resolveRequest(executionId, request);
@@ -101,16 +105,21 @@ export class RootDelegateDefinitionService {
     if (!definition || definition.id !== request.agentId) {
       throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Specialist definition unavailable');
     }
-    const assertSources = async () => {
-      if (conversation.runtimeMode === 'governed') await this.resolver.assertWorkspaces(parent.conversationId, state.actorId,
-        [...new Set(definition.brain_context.flatMap((context) => [context.workspace_id,
-          ...(context.workspace_documents ?? []).map((document) => document.workspace_id)]).filter(Boolean))]);
-    };
     // Recheck current grants/configuration after asynchronous hydration.
     const selected = await authorize();
-    await assertSources();
     const candidate = selected.configurationMode === 'root_constrained'
       ? scopeCandidateToFrozenCeiling(definition, state.capabilityCeiling) : definition;
+    const assertSources = async () => {
+      const ids = [...new Set(candidate.brain_context.flatMap((context) => [context.workspace_id,
+        ...(context.workspace_documents ?? []).map((document) => document.workspace_id)]).filter(Boolean))];
+      if (!ids.length) return;
+      if (conversation.runtimeMode === 'governed') await this.resolver.assertWorkspaces(parent.conversationId, state.actorId, ids);
+      else await this.workspaceShares.assertUserHasAccess(state.actorId, ids);
+    };
+    await assertSources();
+    await this.hydrateSources(candidate);
+    await authorize();
+    await assertSources();
     const childId = createHash('sha256').update(`${executionId}:${request.nativeCallBranch}`).digest('hex').slice(0, 24);
     if (candidate.tools.some((tool) => tool.name === 'run_code')) {
       // File mounts come only from the selected worker's own hydrated documents.
@@ -171,6 +180,17 @@ export class RootDelegateDefinitionService {
     const child = await this.work.registerExecution(registration);
     return { executionId: child.id, definition: candidate, scope: childState.scope,
       ...(child.terminalAt ? { result: child.resultPayload } : {}) };
+  }
+
+  private async hydrateSources(candidate: IGrpcAgent): Promise<void> {
+    for (const context of candidate.brain_context) {
+      const result = await this.documents.findAllByWorkspace(context.workspace_id, { limit: 1000, status: DocumentStatus.COMPLETED });
+      if (result.pagination.total > result.documents.length) {
+        throw new ConflictException(ErrorCode.VALIDATION_ERROR, 'Specialist source metadata exceeds the bounded hydration limit');
+      }
+      context.workspace_documents = result.documents.filter((doc) => !doc.isFolder && doc.path)
+        .map((doc) => toGrpcWorkspaceDocument(doc, context.workspace_id, context.workspace_name || context.workspace_id));
+    }
   }
 
   async settle(parentId: string, childId: string, request: SettleRootDelegateDto, backgroundOwner?: RootJobOwner) {
