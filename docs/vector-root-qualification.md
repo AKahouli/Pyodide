@@ -6,11 +6,13 @@ Source review: **PASS** for coordinator ownership, Stop/replay, sealed synthesis
 
 - Shared conda meta: Python 3.12.14, google-adk 2.11.0; ABI/import checks passed.
 - Native regression: 85 passed before the last read-tool refinement; updated synthesis suite 3 passed, including real ADK tool execution and checkpoint recovery.
-- Backend PostgreSQL regression: 58 passed; updated follow-up publication suite 9 passed, including sibling artifact identity collisions, unsupported final citations, expired deadlines, and Stop suppression.
+- Backend PostgreSQL regression: 58 passed; updated follow-up publication/HTTP suite 10 passed, including sibling artifact identity collisions, unsupported final citations, expired deadlines, Stop suppression, and the real Nest controller/guard/DTO/result-reader boundary. Profile/source resolution uses explicitly synthetic fixture seams in the HTTP test.
 - Latest backend follow-up/evidence/artifact suites: 31 passed. Production backend build and proto copy passed; frontend build and prior 39-test regression passed. Updated replay/panel suite 9 passed.
 - Actual browser foreground inference passed after Python upgrade and again after the final default-off source rebuild/restart (`vector-final-default-off-smoke.png`). Disposable actual-component UI checks passed for desktop/mobile Stop, pending cancellation/retry, and typed false background approval. This was not an enabled live background run.
 - Actual configured `gpt-6-luna` through production LLMFactory and ADK Runner: 172 synthetic task markers passed. Two capacity objects shared the isolated SQL slots in one process; this is not a cross-process benchmark.
-- Actual provider plus fenced PostgreSQL ADK session: one durable checkpoint/recovery test passed; a fresh service recovered the original committed invocation without another model run.
+- Actual provider plus fenced PostgreSQL ADK session: two opt-in tests passed, covering durable checkpoint/fresh-service recovery and production team/AgentFactory synthesis compilation. The opt-in test explicitly restores the real ADK Agent class replaced by the repository's global mock fixture.
+- Separate OS-process replicas held15 slots each, blocked a31st acquisition, joined cleanly and left zero occupancy; capacity suite8 passed. Ten50-task deterministic provider bursts (500 calls) passed without residual occupancy or active provider tasks. This bounded fixture stress check is not a long-running production soak.
+- Live gRPC capabilities report protocol1 for background/fanout/followup, ADK2.11.0/Python3.12.14 and all readiness flags false, as expected with default-off configuration. Current backend/native files have no gRPC API key configured; enablement therefore also requires a matching service key. Secret values were not printed.
 
 ## Real-model load
 
@@ -33,5 +35,7 @@ Reports: `vector-real-model-qualification-qualified.json` contains all successfu
 ## Remaining gates
 
 Enabled native-to-Nest HTTP/gRPC background execution and UI publication; real Logical Search/connector/sandbox fixtures; governed pinned-profile qualification; cross-process crash/fault/soak and rollback rehearsal. User input is pending for the safe workspace, governed Root, and connector resource. Main database migrations 0044/0045, capacity/background enablement, and saved profile/grant changes remain unapplied.
+
+The concrete service configuration must provide matching backend `CONVERSATION_GRPC_API_KEY` and native `GRPC_API_KEY`, mirror the existing internal service secret, point native control/capacity at the same PostgreSQL singleton as backend, and enable both native flags only after migrations and qualification. No new main-service credential was created during this run.
 
 Only `agentstore_test` received qualification writes. Main frontend/backend/gRPC ports remain 5175/3002/50053. Preserve unrelated uncommitted logging, package, contract, infrastructure, and script work.

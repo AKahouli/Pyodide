@@ -1,4 +1,4 @@
-"""Pinned-profile synthesis through the ADK factory, with no executable tools."""
+"""Pinned-profile ADK synthesis with only a guarded read-only result tool."""
 from copy import deepcopy
 import re
 

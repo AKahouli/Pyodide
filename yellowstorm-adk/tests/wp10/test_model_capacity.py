@@ -1,4 +1,6 @@
 import asyncio
+import os
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -8,6 +10,56 @@ from sqlalchemy import text
 
 from src.root_runtime.model_capacity import CapacityClient, ModelCapacity
 from tests.wp07.test_background_sessions import guarded_native
+
+
+@pytest.mark.asyncio
+async def test_separate_process_replicas_share_slots_and_join_cleanly(capacity, tmp_path):
+    helper = tmp_path / 'capacity_replica.py'
+    helper.write_text('''import asyncio, os, sys
+from sqlalchemy.ext.asyncio import create_async_engine
+from src.root_runtime.model_capacity import ModelCapacity
+async def main():
+    engine = create_async_engine(os.environ['VECTOR_QUALIFICATION_SQL'])
+    pool = ModelCapacity(engine)
+    permits = []
+    try:
+        for _ in range(15):
+            permits.append(await pool.acquire())
+        print('READY', flush=True)
+        await asyncio.to_thread(sys.stdin.readline)
+    finally:
+        for permit in permits:
+            await pool.transition(permit, 'free')
+        await engine.dispose()
+    print('CLEAN', flush=True)
+asyncio.run(main())
+''', encoding='utf-8')
+    environment = {**os.environ, 'VECTOR_QUALIFICATION_SQL': capacity.engine.url.render_as_string(hide_password=False),
+        'PYTHONPATH': str(Path(__file__).resolve().parents[2])}
+    children = []
+    try:
+        for _ in range(2):
+            children.append(await asyncio.create_subprocess_exec(sys.executable, str(helper), env=environment,
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE))
+        async with asyncio.timeout(30):
+            for child in children:
+                assert (await child.stdout.readline()).strip() == b'READY'
+        with pytest.raises(TimeoutError):
+            await capacity.acquire(timeout=0.15)
+        for child in children:
+            child.stdin.write(b'release\n')
+            await child.stdin.drain()
+        async with asyncio.timeout(30):
+            for child in children:
+                assert (await child.stdout.readline()).strip() == b'CLEAN'
+                assert await child.wait() == 0
+        async with capacity.engine.connect() as connection:
+            assert (await connection.execute(text("SELECT count(*) FROM conversation.root_model_slots WHERE status <> 'free'"))).scalar_one() == 0
+    finally:
+        for child in children:
+            if child.returncode is None:
+                child.kill()
+                await child.wait()
 
 
 @pytest.fixture
@@ -43,6 +95,27 @@ async def test_two_replicas_share_exactly_30_slots_and_stale_release_cannot_free
     await capacity.transition(successor, 'free')
     for permit in permits[1:]:
         await capacity.transition(permit, 'free')
+
+
+@pytest.mark.asyncio
+async def test_repeated_mixed_bursts_do_not_leak_slots_or_provider_tasks(capacity):
+    active, peak = 0, 0
+    async def provider(**_kwargs):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        try:
+            await asyncio.sleep(0.02)
+            return {'confirmed': True}
+        finally:
+            active -= 1
+    clients = [CapacityClient(SimpleNamespace(acompletion=provider), ModelCapacity(capacity.engine)) for _ in range(2)]
+    for _ in range(10):
+        results = await asyncio.gather(*(clients[index % 2].acompletion(stream=False) for index in range(50)))
+        assert all(result == {'confirmed': True} for result in results)
+        assert active == 0 and peak <= 30
+        async with capacity.engine.connect() as connection:
+            assert (await connection.execute(text("SELECT count(*) FROM conversation.root_model_slots WHERE status <> 'free'"))).scalar_one() == 0
 
 
 @pytest.mark.asyncio

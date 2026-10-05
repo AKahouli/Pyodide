@@ -7,6 +7,16 @@ import { RootFollowupStore } from './root-followup.store';
 import { newStopRequestId, type RootNativeState } from '../../root-work/root-work.types';
 import { producerEvidence } from '../../root-work/root-producer-evidence';
 import type { RegisterEvidenceInput } from '../../root-work/root-work.store';
+import { Test } from '@nestjs/testing';
+import { ValidationPipe } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { RootDelegateInternalController } from '../../controllers/root-delegate-internal.controller';
+import { RootFollowupService } from '../../root-work/root-followup.service';
+import { RootBackgroundLifecycleService } from '../../root-work/root-background-lifecycle.service';
+import { RootBackgroundSubmissionService } from '../../root-work/root-background-submission.service';
+import { RootDelegateDefinitionService } from '../../root-work/root-delegate-definition.service';
+import { RootTemporaryDefinitionService } from '../../root-work/root-temporary-definition.service';
+import { RootFanoutService } from '../../root-work/root-fanout.service';
 
 describeIntegration('sealed synthesis writer and atomic publication', () => {
   const database = makeTestDb();
@@ -150,6 +160,51 @@ describeIntegration('sealed synthesis writer and atomic publication', () => {
     await work.recordNativeState(rootId, state, 'running');
     const sealed = await seal();
     expect(await followups.reserve(rootId, actorId, sealed.digest)).toBeNull();
+  });
+
+  it('qualifies the real HTTP guard, DTO and result-reader boundary against isolated PostgreSQL', async () => {
+    const sealed = await seal(); const reserved = (await followups.reserve(rootId, actorId, sealed.digest))!;
+    const grant = await nativeClaim(reserved.id);
+    const owned = await followups.owned(grant);
+    // Profile/source lookup is a disposable fixture seam; SQL ownership and HTTP wiring are real.
+    const service = new RootFollowupService(followups, {
+      getExecution: async (executionId: string) => ({ ...await work.getExecution(executionId), rootAgentId: actorId }),
+    } as never, { authorizeSynthesisMember: async () => ({}) } as never, {
+      getConversationDocument: async () => {
+        const [conversation] = await database.db.select().from(conversations).where(eq(conversations.id, conversationId));
+        return { ...conversation, rootAgentId: actorId };
+      },
+    } as never, { resolveForActor: async () => ({ policy: { background: { enabled: true } }, rootSnapshotDigest: 'pinned' }) } as never,
+    {} as never);
+    const token = id();
+    const module = await Test.createTestingModule({ controllers: [RootDelegateInternalController], providers: [
+      { provide: ConfigService, useValue: { get: () => token } },
+      { provide: RootBackgroundLifecycleService, useValue: { readSynthesisResult: service.readResult.bind(service) } },
+      ...[RootDelegateDefinitionService, RootTemporaryDefinitionService, RootFanoutService, RootBackgroundSubmissionService]
+        .map((provide) => ({ provide, useValue: {} })),
+    ] }).compile();
+    const app = module.createNestApplication({ logger: false });
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }));
+    try {
+      await app.listen(0, '127.0.0.1');
+      const endpoint = `${await app.getUrl()}/internal/root-work/${reserved.id}/background-synthesis-results/${childId}`;
+      const body = { owner: grant.owner, fence: grant.fence, nativeOwner: grant.nativeOwner,
+        requestDigest: owned.job.requestDigest, offset: 0 };
+      const post = (value: unknown, secret = token) => fetch(endpoint, { method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-internal-token': secret }, body: JSON.stringify(value) });
+      expect((await post(body, 'wrong')).status).toBe(401);
+      expect((await post({ ...body, offset: -1 })).status).toBe(400);
+      expect((await post({ ...body, actorId: 'impersonation' })).status).toBe(400);
+      expect((await post({ ...body, requestDigest: 'f'.repeat(64) })).status).toBe(500);
+      const response = await post(body);
+      expect(response.status).toBe(201);
+      expect(await response.json()).toMatchObject({ executionId: childId, text: 'Child result', nextOffset: null });
+      await database.db.update(conversationExecutions).set({ status: 'cancelled' })
+        .where(eq(conversationExecutions.id, reserved.id));
+      const revoked = await post(body);
+      expect(revoked.status).toBe(500);
+      expect(await revoked.text()).not.toContain('Child result');
+    } finally { await app.close(); }
   });
 
   it('lets Stop suppress unpublished synthesis and release its writer for the next request', async () => {
