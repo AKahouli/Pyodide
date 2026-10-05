@@ -332,9 +332,22 @@ export class PlaybookAssistantService {
     };
   }
 
+  /**
+   * The answers to a clarification, sent on their own. For a new Playbook nothing else would start it, so once
+   * the request is ready the draft is created here, as `start_playbook_generation` with the continuation does.
+   */
+  async continueClarificationAndStart(continuationId: string, actor: TrustedPlaybookAssistantActor, dto: ContinuePlaybookClarificationDto) {
+    const result = await this.continueClarification(continuationId, actor, dto);
+    const request = await this.requestService.getBound(result.requestId, actor);
+    if (request.operationKind !== 'generation' || request.status !== 'ready') return result;
+    return { ...result, ...(await this.startGeneration(request.requestId, actor, {})) };
+  }
+
   async startBoundConstruction(requestId: string, actor: TrustedPlaybookAssistantActor, contextId?: string) {
     this.assertEnabled();
     const request = await this.requestService.getBound(requestId, actor);
+    // A ready new-Playbook request has no Playbook to construct into yet: it starts as a generation.
+    if (request.operationKind === 'generation') return this.startGeneration(requestId, actor, {});
     if (!request.playbookId || request.expectedDefinitionRevision == null) {
       throw new ConflictException(ErrorCode.CONFLICT, 'Construction requires a bound Playbook revision');
     }

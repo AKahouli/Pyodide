@@ -246,6 +246,54 @@ describe('SemanticSourceMappingService boundaries', () => {
     })).rejects.toThrow('extraction strategy');
   });
 
+  it('previews a document as a run reads it, with the mapping limits over the admin defaults', async () => {
+    const database = { query: jest.fn()
+      .mockResolvedValueOnce({ rows: [{}] })
+      .mockResolvedValueOnce({ rows: [{ label: 'Amendment', attributes: [
+        { key: 'number', label: 'Contract number', type: 'text' }, { key: 'title', label: 'Title', type: 'text' }] }] }) };
+    const models = { requireActiveRole: jest.fn().mockResolvedValue({ id: 'model-1', currentDraftVersionId: 'version-1' }) };
+    const documents = { findById: jest.fn().mockResolvedValue({ id: 'document-1', mimeType: 'application/pdf', originalName: 'amendment.pdf',
+      size: 10, createdBy: 'u-2', indexingStatus: 'ready', contentHash: 'sha256:1' }) };
+    const runtime = { previewDocumentFields: jest.fn().mockResolvedValue({ status: 'read', aiSent: null, fields: {
+      number: { method: 'rules', reason: 'found', value: 'CNT-1', page: 1, quote: 'Contract number CNT-1' },
+      title: { method: 'ai', reason: 'ai_not_found', rules: { method: 'rules', reason: 'label_not_found' } } } }) };
+    const agent = { resolveAgent: jest.fn().mockResolvedValue({ slug: 'semantic-field-extraction', llmModel: 'gpt' }) };
+    const settings = { getDefaults: jest.fn().mockResolvedValue({ configured: { maxCharacters: 9000 } }) };
+    const service = new SemanticSourceMappingService(database as never, models as never, documents as never,
+      runtime as never, {} as never, undefined, agent as never, settings as never);
+
+    const result = await service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
+      fieldMappings: [
+        { sourceField: null, targetAttribute: 'number', mode: 'extract', rules: { location: 'anywhere', pattern: 'CNT-\d+' } },
+        { sourceField: null, targetAttribute: 'title', mode: 'extract', extractionStrategy: 'rules_then_ai' }],
+      identityFields: ['number'], aiSettings: { blocksPerField: 3 },
+    }) as any;
+
+    const request = runtime.previewDocumentFields.mock.calls[0][0];
+    expect(request.entry.fieldMappings[1].sourceField).toBe('Title');
+    expect(request.entry.options.aiSettings).toEqual({ maxBlocks: 400, maxCharacters: 9000, longDocumentCharacters: 30000, blocksPerField: 3 });
+    expect(request.aiExtraction).toMatchObject({ agentSlug: 'semantic-field-extraction', contractVersion: 'ai-attribute-v1' });
+    expect(result.entities[0]).toMatchObject({ entityKey: 'cnt-1', values: { number: 'CNT-1' },
+      provenance: { fields: { number: { page: '1', quote: 'Contract number CNT-1' } } } });
+    expect(result.fields.title.rules.reason).toBe('label_not_found');
+  });
+
+  it('rejects reading rules outside a document, and reading anywhere without a pattern', async () => {
+    const { service, database } = buildService('text/csv');
+    database.query.mockResolvedValue({ rows: [{}] });
+    await expect(service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1', assetKind: 'csv', sheetName: 'CSV',
+      fieldMappings: [{ sourceField: 'id', targetAttribute: 'id', mode: 'direct', rules: { labels: ['Id'] } }], identityFields: [],
+    })).rejects.toThrow('Reading rules');
+    const pdf = buildService();
+    pdf.database.query.mockResolvedValue({ rows: [{}] });
+    await expect(pdf.service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
+      fieldMappings: [{ sourceField: null, targetAttribute: 'id', mode: 'extract', rules: { location: 'anywhere' } }], identityFields: [],
+    })).rejects.toThrow('needs a pattern');
+  });
+
   it('lists mappings only through enabled workspace links', async () => {
     const { service, database, documents } = buildService();
     database.query.mockResolvedValue({ rows: [] });

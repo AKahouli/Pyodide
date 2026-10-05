@@ -72,7 +72,10 @@ const CURRENT_WORK_ORDER: Record<WorkyCurrentWorkStatus, number> = {
 
 function currentWorkStatus(task: WorkyTask, activeInterruptId: string | null): WorkyCurrentWorkStatus | null {
   const kind = task.kind ?? 'execute';
-  if (kind === 'ask' && task.lane === 'blocked' && task.interruptId === activeInterruptId) return 'needs_input';
+  // A runtime ask_user parks an execute/await step (kind stays truthful) with
+  // blockedReason 'ask' — treat it as an ask for the "needs you" lane too.
+  const isAsk = kind === 'ask' || task.blockedReason === 'ask';
+  if (isAsk && task.lane === 'blocked' && task.interruptId === activeInterruptId) return 'needs_input';
   if (task.lane === 'failed') return 'failed';
   if (kind === 'await_reply' && task.lane === 'blocked') return 'waiting_external';
   if (task.lane === 'blocked') return 'blocked';
@@ -159,7 +162,8 @@ export function deriveExecutiveView(
   const activeInterruptId = board.session?.activeInterruptId ?? null;
   const pendingApprovals = collectPendingApprovals(messages);
   const runtimeAsks = tasks
-    .filter((task) => task.kind === 'ask' && task.lane === 'blocked' && task.interruptId)
+    .filter((task) => (task.kind === 'ask' || task.blockedReason === 'ask')
+      && task.lane === 'blocked' && task.interruptId)
     .map((task) => ({
       taskId: task.id,
       interruptId: task.interruptId as string,

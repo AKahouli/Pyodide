@@ -10,7 +10,7 @@ vi.mock('../knowledge/KnowledgePanel',()=>({KnowledgePanel:()=> <div>knowledge-t
 const hookState = vi.hoisted(() => ({ mappings: [] as Array<Record<string, unknown>>, rules: [] as Array<{ conceptId: string; fields: string[] }> }));
 const saveIdentityRule = vi.hoisted(() => vi.fn(async () => ({ revision: 1, conceptId: 'customer', fields: [] })));
 vi.mock('../mapping/RelationMatchingPanel',()=>({RelationMatchingPanel:()=> <div>relation-matching</div>}));
-vi.mock('../../query/hooks',()=>({useSourceMappings:()=>({data:hookState.mappings,isLoading:false}),useIdentityRules:()=>({data:hookState.rules,isLoading:false})}));
+vi.mock('../../query/hooks',()=>({useSourceMappings:()=>({data:hookState.mappings,isLoading:false}),useIdentityRules:()=>({data:hookState.rules,isLoading:false}),useDerivedSources:()=>({data:[],isLoading:false})}));
 vi.mock('../../api',()=>({semanticModelApi:{saveIdentityRule}}));
 
 const graph: SemanticGraph = {

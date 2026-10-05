@@ -1038,7 +1038,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       : undefined;
     beginBackendPreAdkStage('workspaceAgentResolutionMs');
     const teamDefinition = request.teamId ? await this.teamService!.resolveExecutionDefinition(userId, request.teamId) : undefined;
-    const semanticSchemaName = request.semanticModelId ? await this.semanticModelService.resolveSearchSchema(userId, request.semanticModelId) : undefined;
+    const semanticModel = request.semanticModelId ? await this.semanticModelService.resolveChatModel(userId, request.semanticModelId) : undefined;
     const [workspaceContexts, agents] = await Promise.all([
       request.semanticModelId ? Promise.resolve([]) : this.buildWorkspaceContexts(conversationId, logOpts, conversation),
       teamDefinition
@@ -1059,7 +1059,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
               sharedAgentIds,
               groupMembers,
               request.connectorRepo?.connectorId,
-              semanticSchemaName,
+              semanticModel,
               // runtimeContext must exist for every conversation, not just the
               // copilot: trusted system MCP servers (playbook-mcp, agent-mcp)
               // authorize each tool call as the acting user via these headers.

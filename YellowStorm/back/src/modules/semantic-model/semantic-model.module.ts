@@ -1,3 +1,7 @@
+import { SemanticExtractionSettingsController } from './controllers/semantic-extraction-settings.controller';
+import { SemanticDerivedSourceController } from './controllers/semantic-derived-source.controller';
+import { SemanticDerivedSourceService } from './services/semantic-derived-source.service';
+import { SemanticExtractionSettingsService } from './services/semantic-extraction-settings.service';
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import semanticModelConfig from '@config/semantic-model.config';
@@ -39,14 +43,15 @@ import { SemanticAccessEventHandler } from './integration/semantic-access-event.
 import { SemanticDataGrantRevocationService } from './services/semantic-data-grant-revocation.service';
 import { SemanticRealtimeSignalService } from './services/semantic-realtime-signal.service';
 import { SemanticModelAssistantService } from './services/semantic-model-assistant.service';
+import { SemanticGraphSearchService } from './services/semantic-graph-search.service';
 import { SemanticModelAssistantInternalController } from './controllers/semantic-model-assistant-internal.controller';
 import { SemanticAssistantActorGuard, SemanticAssistantModelGuard } from './guards/semantic-assistant-actor.guard';
 
 @Module({
   imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,UserModule,IntegrationEventsModule,forwardRef(() => WorkspaceModule)],
-  controllers: [SemanticModelController,WorkspaceSemanticModelController,SemanticDataTokenController,SemanticAttributeExtractionInternalController,SemanticModelAssistantInternalController],
+  controllers: [SemanticExtractionSettingsController,SemanticDerivedSourceController,SemanticModelController,WorkspaceSemanticModelController,SemanticDataTokenController,SemanticAttributeExtractionInternalController,SemanticModelAssistantInternalController],
   providers: [
-    SemanticModelDatabaseService,SemanticModelRepository,SemanticGraphRepository,SemanticModelService,
+    SemanticModelDatabaseService,SemanticExtractionSettingsService,SemanticDerivedSourceService,SemanticModelRepository,SemanticGraphRepository,SemanticModelService,
     SemanticGraphCommandService,SemanticModelValidationService,SemanticModelWorkspaceService,
     SemanticKnowledgeBindingService,SemanticModelVersionService,SemanticModelProvisioningService,
     SemanticModelNativeSearchClient,
@@ -68,6 +73,7 @@ import { SemanticAssistantActorGuard, SemanticAssistantModelGuard } from './guar
     SemanticModelSourceReconciliationService,
     SemanticAccessEventHandler,
     SemanticModelAssistantService,
+    SemanticGraphSearchService,
     SemanticAssistantActorGuard,
     SemanticAssistantModelGuard,
   ],

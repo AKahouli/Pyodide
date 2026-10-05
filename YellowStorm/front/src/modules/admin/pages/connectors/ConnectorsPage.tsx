@@ -163,6 +163,7 @@ export function ConnectorsPage() {
         referencedSkillIds: data.referencedSkillIds,
         isActive: data.isActive,
         isHidden: data.isHidden,
+        isSystem: data.isSystem,
       };
       if (editingConnector) {
         await updateConnector(editingConnector.id, payload);

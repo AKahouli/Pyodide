@@ -100,7 +100,6 @@ export const configValidationSchema = Joi.object({
   SEMANTIC_MODEL_NATIVE_SEARCH_LOG_QUERY: Joi.boolean().default(false),
   SEMANTIC_MODEL_DOCUMENT_EXTRACTION_AGENT_ID: Joi.string().allow('').optional(),
   SEMANTIC_MODEL_DOCUMENT_EXTRACTION_TIMEOUT_MS: Joi.number().min(5000).max(1800000).default(180000),
-  SEMANTIC_SEARCH_TIMEOUT_SECONDS: Joi.number().min(1).max(1800).default(300),
 
   // Encryption
   ENCRYPTION_KEY: Joi.string()
@@ -380,6 +379,8 @@ export const configValidationSchema = Joi.object({
   AGENT_MCP_INGRESS_TOKEN: Joi.string().allow('').default(''),
   // Internal MCP servers whose connectors (created by an admin) receive the acting user's identity.
   SEMANTIC_MODEL_MCP_SERVER_URL: Joi.string().allow('').default('http://localhost:8027/mcp'),
+  // Bearer token the back sends to the mcp-semantic-model server (its inbound ingress token).
+  SEMANTIC_MODEL_MCP_INGRESS_TOKEN: Joi.string().allow('').default(''),
   TRUSTED_MCP_SERVER_URLS: Joi.string().allow('').default(''),
   // Telegram
   TELEGRAM_ENABLED: Joi.boolean().default(true),

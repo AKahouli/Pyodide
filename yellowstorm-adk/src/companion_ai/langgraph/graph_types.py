@@ -1,10 +1,12 @@
-"""Shared types for the LangGraph orchestrator (breaks the graph<->hitl cycle).
+"""Shared types + state reducers for the LangGraph orchestrator.
 
-The engine is a fixed executor LOOP, not a per-plan topology: the plan lives in
-state as an ordered list of step dicts, and readiness (deps satisfied) is
-recomputed every tick. A step can therefore insert new work at runtime (a
-delegate/create_task) by editing the plan list — no graph reshape, which is what
-made the old topology build unable to slot a step between two others.
+The engine is a scheduler-driven Functional-API entrypoint, not a StateGraph: the
+plan lives in the entrypoint's persisted state as an ordered list of step dicts,
+and readiness (deps satisfied + any state-driven wait cleared) is recomputed each
+loop pass. A step can insert new work at runtime by returning new steps, which the
+loop merges into the plan (via merge_plan) — no graph reshape. OrchState documents
+that state shape; merge_plan/merge_results are how the entrypoint folds each
+input (a new reply/answer/plan edit) onto the checkpointed `previous`.
 """
 from __future__ import annotations
 
@@ -51,3 +53,7 @@ class OrchState(TypedDict):
     # DeliverMailReply, then the graph is re-driven). No interrupt() -> the graph
     # never halts, so parallel waits don't block each other.
     replies: Annotated[Dict[str, str], merge_results]
+    # step_id -> the user's answer for an ask step. Same state-driven mechanism as
+    # replies: an ask step is NOT ready until its answer lands here (written by
+    # resume). No interrupt() -> parallel asks don't block each other either.
+    answers: Annotated[Dict[str, str], merge_results]

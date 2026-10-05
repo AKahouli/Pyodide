@@ -288,9 +288,12 @@ class ReadModel:
     async def set_step_status(self, session_id: str, step_id: str, status: str, *,
                               result: Optional[str] = None,
                               blocked_reason: Optional[str] = None,
-                              interrupt_id: Optional[str] = None) -> None:
+                              interrupt_id: Optional[str] = None,
+                              question: Optional[str] = None) -> None:
         """`interrupt_id` is written as given, not merged: a step that moves to any
-        status without one is no longer parked, so the default clears it."""
+        status without one is no longer parked, so the default clears it. `question`
+        is COALESCE'd (kept unless given) — used to surface a runtime ask_user
+        question on a step whose plan-time question was empty."""
         async with self._pool.acquire() as con:
             await con.execute(f"""
                 UPDATE {_q(self._schema,'plan_steps')}
@@ -298,9 +301,11 @@ class ReadModel:
                     result=COALESCE($4, result),
                     blocked_reason=$5,
                     interrupt_id=$6,
+                    question=COALESCE($7, question),
                     updated_at=now()
                 WHERE session_id=$1 AND step_id=$2
-            """, session_id, step_id, status, result, blocked_reason, interrupt_id)
+            """, session_id, step_id, status, result, blocked_reason, interrupt_id,
+                 question)
 
     async def outstanding_interrupts(self, session_id: str) -> List[Tuple[str, str]]:
         """(interrupt_id, step_id) for every step still parked on an answer.
@@ -463,6 +468,17 @@ class ReadModel:
                 f"UPDATE {_q(self._schema,'mail_waits')} SET interrupt_id=$3 "
                 f"WHERE session_id=$1 AND step_id=$2 AND status='waiting'",
                 session_id, step_id, interrupt_id)
+
+    async def mail_wait_target(self, session_id: str, step_id: str):
+        """(conversation_id, expected_from) of a step's open wait, or None if it has
+        no waiting row. Both None means no send bound a routable target to it — a
+        reply can never be matched (the await would hang forever)."""
+        async with self._pool.acquire() as con:
+            row = await con.fetchrow(
+                f"SELECT conversation_id, expected_from FROM {_q(self._schema,'mail_waits')} "
+                f"WHERE session_id=$1 AND step_id=$2 AND status='waiting'",
+                session_id, step_id)
+        return (row["conversation_id"], row["expected_from"]) if row else None
 
     async def cancel_mail_wait(self, session_id: str, step_id: str) -> None:
         """Drop one step's wait — its reply can never arrive (e.g. the send it was

@@ -9,7 +9,7 @@ import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-d
 import { SemanticGraphRepository } from '../repositories/semantic-graph.repository';
 import { SemanticModelRepository, SemanticModelRow } from '../repositories/semantic-model.repository';
 import { SemanticRealtimeSignalService } from './semantic-realtime-signal.service';
-import { RuntimePublishedBinding, SemanticRuntimeClientService } from './semantic-runtime-client.service';
+import { SemanticRuntimeClientService } from './semantic-runtime-client.service';
 
 interface CloneIdMaps {
   nodeIds: Map<string, string>;
@@ -55,20 +55,23 @@ export class SemanticModelService {
     return model;
   }
 
-  /** Chat reads only the published data of a model: the runtime graph bound to production. */
-  async resolveSearchSchema(userId: string, modelId: string): Promise<string> {
+  /**
+   * Resolve a semantic model for chat. Chat reads only the published data of a model, so the model
+   * must be bound to a published runtime graph; an unpublished model is refused here rather than
+   * answering from nothing.
+   */
+  async resolveChatModel(userId: string, modelId: string): Promise<{ id: string; name: string }> {
     const model = await this.get(userId, modelId);
     if (model.status === 'archived') throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND);
-    let binding: RuntimePublishedBinding;
     try {
-      binding = await this.runtime.getPublishedBinding(model.id, userId);
+      await this.runtime.getPublishedBinding(model.id, userId);
     } catch (error) {
       if (error instanceof NotFoundException) {
         throw new ConflictException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Publish this semantic model to use it in chat');
       }
       throw error;
     }
-    return binding.projectionRef.slice(binding.projectionRef.lastIndexOf(':') + 1);
+    return { id: model.id, name: model.name };
   }
 
   async create(userId: string, dto: CreateSemanticModelDto): Promise<SemanticModelRow> {

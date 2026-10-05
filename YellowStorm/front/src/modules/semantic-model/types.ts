@@ -217,7 +217,23 @@ export interface SheetProfile {
   complete?: boolean;
 }
 
-export type SourceExtractionStrategy = 'deterministic' | 'ai';
+/** Rules alone, AI alone, or the rules first and the AI only for what they did not find. */
+export type SourceExtractionStrategy = 'deterministic' | 'ai' | 'rules_then_ai';
+
+export type ExtractionLocation = 'auto' | 'same_line' | 'next_line' | 'table' | 'heading' | 'anywhere';
+
+/** Where a document value is and what it looks like. Without rules: `Label: value`, or a table row. */
+export interface ExtractionRules {
+  /** Labels the value follows; empty means the field's name. */
+  labels?: string[];
+  location?: ExtractionLocation;
+  /** A regular expression the value must match; its first group is kept when it has one. */
+  pattern?: string;
+  transform?: 'none' | 'upper' | 'lower' | 'date_iso';
+  /** Keep a value only when every match agrees, or keep the first one. */
+  occurrence?: 'unique' | 'first';
+  firstPageOnly?: boolean;
+}
 
 export interface SourceFieldMapping {
   sourceField: string | null;
@@ -226,6 +242,34 @@ export interface SourceFieldMapping {
   constantValue?: unknown;
   // Only meaningful for mode='extract'; absent means deterministic.
   extractionStrategy?: SourceExtractionStrategy;
+  rules?: ExtractionRules;
+}
+
+/** How much of a document the AI reads. */
+export interface AiExtractionSettings {
+  maxBlocks: number;
+  maxCharacters: number;
+  longDocumentCharacters: number;
+  blocksPerField: number;
+}
+
+/** The admin defaults with every limit filled in, and which ones the admin set. */
+export interface AiExtractionDefaults {
+  aiSettings: AiExtractionSettings;
+  configured: Partial<AiExtractionSettings>;
+}
+
+/** How one extracted field was read in a preview, or why it was not. */
+export interface DocumentFieldReading {
+  method: 'rules' | 'ai';
+  reason: 'found' | 'label_not_found' | 'no_value' | 'several_values' | 'pattern_mismatch' | 'no_heading' | 'no_match' | 'ai_not_found' | 'ai_failed';
+  value?: unknown;
+  values?: string[];
+  page?: number | null;
+  quote?: string | null;
+  detail?: string;
+  /** For a field the rules missed before the AI was asked: why the rules missed it. */
+  rules?: Omit<DocumentFieldReading, 'rules'>;
 }
 
 /** A change an assistant (an agent using the semantic model MCP) made to the model. */
@@ -296,6 +340,30 @@ export interface SourceSuggestionsPage {
   suggestions: SourceSuggestion[];
 }
 
+/** How a derived record picks one value when the records it comes from disagree. */
+export type DerivedConflictRule = 'most_frequent' | 'latest' | 'longest' | 'leave_empty';
+
+/** A concept filled from another concept's records: one record per distinct key value they carry. */
+export interface DerivedSource {
+  id: string;
+  conceptId: string;
+  sourceConceptId: string;
+  fieldMappings: Array<{ sourceAttribute: string; targetAttribute: string }>;
+  conflictRule: DerivedConflictRule;
+  /** The source field ordering records for the most recent rule. */
+  orderBy: string | null;
+  updatedAt: string;
+}
+
+export interface DerivedSourceDraft {
+  conceptId: string;
+  sourceConceptId: string;
+  fieldMappings: DerivedSource['fieldMappings'];
+  identityFields: string[];
+  conflictRule: DerivedConflictRule;
+  orderBy?: string;
+}
+
 export interface ConceptSourceMapping {
   id: string;
   conceptId: string;
@@ -318,6 +386,8 @@ export interface ConceptSourceMapping {
   scope?: 'document' | 'workspace';
   folderId?: string | null;
   /** Workspace mappings: the picked folders and files, or null for the whole workspace. */
+  /** This mapping's own AI reading limits; each one left out uses the admin default. */
+  aiSettings?: Partial<AiExtractionSettings> | null;
   selection?: { folderIds: string[]; documentIds: string[] } | null;
   /** Workspace mappings: files it covers today, and files still being indexed. */
   fileCount?: number;
@@ -377,6 +447,16 @@ export interface PopulationProgress {
   current: { name: string; conceptId?: string; kind?: string } | null;
   recent: Array<{ name: string; conceptId?: string; status: string; records: number; reused: boolean }>;
   startedAt: string;
+  /** What the saved result changed in the data in use; absent until saved, or when there was no data before. */
+  changes?: PopulationChanges;
+}
+
+export interface PopulationChanges {
+  added: number;
+  removed: number;
+  changed: number;
+  /** Files read last time and not this time, with how many records came from them. */
+  removedSources: Array<{ assetId: string; name?: string; records: number }>;
 }
 
 /** A page of one concept's records in the data in use. */
@@ -429,6 +509,10 @@ export interface SourceMappingPreviewResponse {
   stats: { scannedRows: number; resolvedEntities: number; duplicateKeysSkipped: number; nullIdentitySkipped: number };
   identityEvidence: SheetFieldProfile[];
   warnings: string[];
+  /** Documents only: how each extracted field was read, or why it was not. */
+  fields?: Record<string, DocumentFieldReading>;
+  /** Documents only: what the AI was sent. */
+  aiSent?: { documentCharacters: number; longDocument: boolean; blocksSent: number; charactersSent: number } | null;
 }
 
 export interface SourceMappingDraft {
@@ -439,6 +523,7 @@ export interface SourceMappingDraft {
   assetKind: SourceAssetKind;
   fieldMappings: SourceFieldMapping[];
   identityFields: string[];
+  aiSettings?: Partial<AiExtractionSettings>;
 }
 
 export interface SourceMappingPreviewDraft {
@@ -450,6 +535,7 @@ export interface SourceMappingPreviewDraft {
   fieldMappings: SourceFieldMapping[];
   identityFields: string[];
   limit?: number;
+  aiSettings?: Partial<AiExtractionSettings>;
 }
 
 export type RelationMatchStrategy = 'exact' | 'case_insensitive' | 'normalized';
@@ -556,7 +642,19 @@ export interface SemanticDataPreview {
 export interface SemanticDataGaps {
   missingValues: Array<{ conceptId: string; conceptLabel: string; attribute: string; attributeLabel: string; missing: number; total: number }>;
   unresolvedLinks: Array<{ relationId: string; relationLabel: string; kind: string; count: number }>;
-  other: Array<{ conceptId: string | null; conceptLabel: string | null; kind: string; count: number }>;
+  other: Array<{ conceptId: string | null; conceptLabel: string | null; kind: string; count: number; fields?: string[] }>;
+  /** A few rows behind each gap, with the file they come from; absent on data prepared before they were kept. */
+  rowSamples?: Array<{
+    conceptId: string | null;
+    kind: string;
+    field?: string;
+    fieldLabel?: string;
+    rowNumber?: number | string;
+    source?: { mappingId: string; workspaceId: string; documentId: string; documentName: string; documentPath?: string; mimeType?: string; sheetName?: string; kind: SourceAssetKind };
+    values: Record<string, unknown>;
+  }>;
+  /** Records whose link found nothing, and the value it looked for. */
+  linkSamples?: Array<{ relationId: string; relationLabel: string; kind: string; sourceEntityId: string; referenceField?: string; referenceValue?: unknown; targetField?: string }>;
 }
 
 export interface ValueCorrection {
@@ -610,10 +708,16 @@ export interface VersionComparison {
 
 export type ReviewQueueAction =
   | { kind: 'choose_match'; reviewItemId: string; options: Array<{ value: string; label: string }>; select: 'target' | 'source' }
-  | { kind: 'repair_mapping'; mappingId: string }
+  | { kind: 'repair_mapping'; mappingId: string; bulkEdit?: boolean }
+  | { kind: 'repair_derived'; derivedSourceId: string; conceptId: string }
   | { kind: 'choose_unique_field'; conceptId: string }
   | { kind: 'set_up_link'; relationId: string }
-  | { kind: 'fix_values'; conceptId: string };
+  | { kind: 'fix_values'; conceptId: string; attribute?: string }
+  | { kind: 'add_source'; conceptId: string }
+  | { kind: 'check_links'; relationId: string }
+  | { kind: 'open_sources'; conceptId: string }
+  | { kind: 'review_rows'; conceptId: string }
+  | { kind: 'view_data' };
 
 export interface ReviewQueueItem {
   key: string;

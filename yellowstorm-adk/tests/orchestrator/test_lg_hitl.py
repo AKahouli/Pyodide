@@ -97,6 +97,19 @@ class FakeReadModel:
                     and w["status"] == "waiting"):
                 w["interrupt_id"] = interrupt_id
 
+    async def mail_wait_target(self, session_id, step_id):
+        for w in self.waits.values():
+            if (w["session_id"] == session_id and w["step_id"] == step_id
+                    and w["status"] == "waiting"):
+                return (w["conversation_id"], w["expected_from"])
+        return None
+
+    async def cancel_mail_wait(self, session_id, step_id):
+        for w in self.waits.values():
+            if (w["session_id"] == session_id and w["step_id"] == step_id
+                    and w["status"] == "waiting"):
+                w["status"] = "cancelled"
+
     async def claim_mail_wait(self, token, reply_from=None):
         w = self.waits.get(token)
         if not w or w["status"] != "waiting" or w["interrupt_id"] is None:
@@ -187,8 +200,10 @@ async def test_multi_await_join_targeted_resume():
         Step(id="rep", title="REP", description="report", depends_on=["aw", "bw"]),
     ])
     rm = FakeReadModel()
-    await rm.register_mail_wait("TOK-A", session_id="s2", step_id="aw", user_id="u")
-    await rm.register_mail_wait("TOK-B", session_id="s2", step_id="bw", user_id="u")
+    await rm.register_mail_wait("TOK-A", session_id="s2", step_id="aw", user_id="u",
+                                conversation_id="chat-a")
+    await rm.register_mail_wait("TOK-B", session_id="s2", step_id="bw", user_id="u",
+                                conversation_id="chat-b")
     runner = LgRunner("fake", read_model=rm)
     model = EchoCtxModel()
     async with AsyncSqliteSaver.from_conn_string(":memory:") as saver:
@@ -253,7 +268,8 @@ async def test_await_spawn_inserts_before_dependent_and_reparents():
         Step(id="dep", title="DEP", description="update from the reply", depends_on=["aw"]),
     ])
     rm = FakeReadModel()
-    await rm.register_mail_wait("YW-AW", session_id="s", step_id="aw", user_id="u")
+    await rm.register_mail_wait("YW-AW", session_id="s", step_id="aw", user_id="u",
+                                conversation_id="chat-aw")
     runner = LgRunner("fake", read_model=rm)
     model = Model()
     async with AsyncSqliteSaver.from_conn_string(":memory:") as saver:

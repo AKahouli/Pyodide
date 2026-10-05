@@ -35,6 +35,14 @@ describe('designerFlow', () => {
     expect(feeds.filter((feed) => feed.sourceId === sheet.id).map((feed) => feed.conceptId)).toEqual(['supplier', 'contract']);
   });
 
+  it('draws a concept made from another one as a line from that concept, with no source box', () => {
+    const derived = { id: 'd1', conceptId: 'supplier', sourceConceptId: 'contract', conflictRule: 'most_frequent' as const, orderBy: null,
+      updatedAt: '', fieldMappings: [{ sourceAttribute: 'number', targetAttribute: 'siret' }] };
+    const { sources, feeds } = designerFlow({ ...graph, records: [] }, [], [], {}, [derived]);
+    expect(sources).toEqual([]);
+    expect(feeds).toEqual([expect.objectContaining({ id: 'feed:derived:d1', sourceId: 'contract', conceptId: 'supplier', step: 'derived', mapped: 1, total: 3, derived })]);
+  });
+
   it('counts mapped fields and ignores skipped columns', () => {
     const { feeds } = designerFlow(graph, [mapping('a', 'supplier')], [health('a', 'healthy')]);
     expect(feeds[0]).toMatchObject({ step: 'map', mapped: 2, total: 3, tone: 'ok' });

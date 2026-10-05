@@ -10,6 +10,7 @@ const getActiveToolsMock = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 const getWorkspacesMock = vi.hoisted(() => vi.fn().mockResolvedValue({ workspaces: [] }));
 const getActiveSkillsMock = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 const getActiveConnectorsMock = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+const getConnectorByIdMock = vi.hoisted(() => vi.fn());
 const modelsStateMock = vi.hoisted(() => ({
   models: [
     {
@@ -44,6 +45,7 @@ vi.mock('../api', () => ({
   getActiveTools: getActiveToolsMock,
   getActiveSkills: getActiveSkillsMock,
   getActiveConnectors: getActiveConnectorsMock,
+  getConnectorById: getConnectorByIdMock,
 }));
 
 vi.mock('@/modules/workspace', () => ({
@@ -271,5 +273,50 @@ describe('CreateEditAgentDialog', () => {
     await waitFor(() => expect(screen.getByLabelText('reasoning-effort')).toHaveValue('medium'));
     await user.selectOptions(screen.getByLabelText('model-select'), 'model-2');
     await waitFor(() => expect(screen.getByLabelText('reasoning-effort')).toHaveValue(''));
+  });
+
+  it('fetches hidden connectors already attached to the agent so they can be removed', async () => {
+    getActiveConnectorsMock.mockResolvedValue([
+      { id: 'conn-visible', name: 'mcp-playbook', description: '', connectedAppKey: '' },
+    ]);
+    getConnectorByIdMock.mockResolvedValue({
+      id: 'conn-hidden', name: 'testmcpplay', description: '', connectedAppKey: '',
+    });
+    const onSave = vi.fn();
+    render(
+      <CreateEditAgentDialog
+        open
+        onOpenChange={vi.fn()}
+        agent={{
+          id: 'a1',
+          name: 'Yellowmind',
+          slug: 'platform-copilot',
+          agentType: { id: 'type-1', name: 'Manager' },
+          role: 'role',
+          description: '',
+          temperature: 0.5,
+          model: 'model-1',
+          reasoning_effort: 'high',
+          instruction: '',
+          ignorePrePrompt: false,
+          knowledgeBases: [],
+          tools: [],
+          connectors: ['conn-visible', 'conn-hidden'],
+          isDefault: false,
+          isDefaultForType: false,
+          isActive: true,
+          createdBy: '',
+          createdAt: '',
+          updatedAt: '',
+        }}
+        onSave={onSave}
+        saving={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(getConnectorByIdMock).toHaveBeenCalledWith('conn-hidden');
+      expect(screen.getByText('testmcpplay')).toBeInTheDocument();
+    });
   });
 });

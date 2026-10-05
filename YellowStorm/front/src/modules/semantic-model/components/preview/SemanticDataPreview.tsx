@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ExternalLink, Loader2, RefreshCw, Search, Database } from 'lucide-react';
+import { AlertTriangle, ExternalLink, Loader2, RefreshCw, Search, Database, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,16 +10,50 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useSemanticDataPreview, useSemanticGraph } from '../../query/hooks';
 import { AddLinkForm, CorrectionNote, CorrectionNotice, CorrectionsList, FixValueButton, HideRecordButton, useCorrectionActions } from './RecordCorrections';
 import type { SemanticDataGaps, SourcePreviewIssue } from '../../types';
+import { MissingValueGuide, RejectedRowsGuide, UnmatchedLinksGuide, type GapGuideActions } from './DataGapGuides';
 
-export function SemanticDataPreview({ modelId, dataRevisionId, onDataRevision, onOpenItem, onRebuildStarted, canEdit = true }: Readonly<{ modelId: string; dataRevisionId?: string; onDataRevision?: (revisionId: string | undefined) => void; onOpenItem?: (id: string) => void; onRebuildStarted?: (jobId: string) => void; canEdit?: boolean }>) {
+/**
+ * What a review item points at in the data: a concept's records missing one field, the rows of a concept
+ * that never became records, or the records whose link of one relationship found nothing.
+ */
+export interface DataPreviewFocus { conceptId?: string; attribute?: string; rows?: boolean; relationId?: string; at: number }
+
+export function SemanticDataPreview({ modelId, dataRevisionId, onDataRevision, onOpenReview, onRebuildStarted, canEdit = true, focus, onOpenMapping, onOpenIdentity, onOpenMatching }: Readonly<{ modelId: string; dataRevisionId?: string; onDataRevision?: (revisionId: string | undefined) => void; onOpenReview?: () => void; onRebuildStarted?: (jobId: string) => void; canEdit?: boolean; focus?: DataPreviewFocus | null } & GapGuideActions>) {
   const { t } = useModuleTranslation('semantic-model');
   const [limit, setLimit] = useState(25);
   const [conceptId, setConceptId] = useState('all');
   const [search, setSearch] = useState('');
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [showUnresolved, setShowUnresolved] = useState(true);
+  const [missingField, setMissingField] = useState<string | null>(null);
+  const [rowsConceptId, setRowsConceptId] = useState<string | null>(null);
+  const [linkRelationId, setLinkRelationId] = useState<string | null>(null);
   const preview = useSemanticDataPreview(modelId, limit, true, dataRevisionId);
   const structure = useSemanticGraph(modelId);
+  const focusedRelation = structure.data?.relations.find((relation) => relation.id === linkRelationId);
+  // Opening a review item shows only what it is about, with the most records sampled.
+  useEffect(() => {
+    if (!focus) return;
+    setMissingField(focus.attribute ?? null);
+    setRowsConceptId(focus.rows && focus.conceptId ? focus.conceptId : null);
+    setLinkRelationId(focus.relationId ?? null);
+    if (focus.conceptId) setConceptId(focus.conceptId);
+    setSearch('');
+    setSelectedEntityId(null);
+    setLimit(50);
+  }, [focus]);
+  // A relationship's records are browsed from its first side, once the structure says which that is.
+  useEffect(() => {
+    if (focusedRelation) setConceptId(focusedRelation.sourceNodeTypeId);
+  }, [focusedRelation]);
+  const clearGuide = () => { setMissingField(null); setRowsConceptId(null); setLinkRelationId(null); };
+  // The records whose link found nothing: the ones the data kept as examples, else those of the sample with no such link.
+  const linkSampleIds = new Set((preview.data?.gaps?.linkSamples ?? []).filter((sample) => sample.relationId === linkRelationId).map((sample) => sample.sourceEntityId));
+  const unmatchedInSample = linkRelationId ? (preview.data?.concepts ?? []).flatMap((concept) => concept.entities)
+    .filter((entity) => entity.conceptId === focusedRelation?.sourceNodeTypeId
+      && !(preview.data?.relations ?? []).some((relation) => relation.relationId === linkRelationId && relation.status === 'resolved' && relation.sourceEntityId === entity.id))
+    .map((entity) => entity.id) : [];
+  const linkIds = linkSampleIds.size ? linkSampleIds : new Set(unmatchedInSample);
   const fixes = useCorrectionActions(modelId, onRebuildStarted);
   useEffect(() => {
     if (preview.data?.dataRevisionId) onDataRevision?.(preview.data.dataRevisionId);
@@ -28,10 +62,11 @@ export function SemanticDataPreview({ modelId, dataRevisionId, onDataRevision, o
     .filter((concept) => conceptId === 'all' || concept.id === conceptId)
     .map((concept) => ({
       ...concept,
-      entities: concept.entities.filter((entity) => !search.trim()
+      entities: concept.entities.filter((entity) => (!missingField || isEmpty(entity.values[missingField])) && (!linkRelationId || linkIds.has(entity.id))).filter((entity) => !search.trim()
         || entity.label.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())
         || Object.values(entity.values).some((value) => String(value ?? '').toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))),
-    })), [conceptId, preview.data?.concepts, search]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    })), [conceptId, missingField, linkRelationId, linkIds.size, preview.data?.concepts, search]);
   // The second line under a record's name: its first non-key business value, so records sharing a label stay distinguishable.
   const recordDetail = (entity: { label: string; values: Record<string, unknown> }) => {
     const value = businessValues(entity.values).find(([, candidate]) => candidate != null && String(candidate) !== '' && String(candidate) !== entity.label)?.[1];
@@ -98,7 +133,18 @@ export function SemanticDataPreview({ modelId, dataRevisionId, onDataRevision, o
           </div>
         </div>
       </section>}
-      {preview.data?.gaps && <GapsPanel gaps={preview.data.gaps} onOpenItem={onOpenItem} />}
+      {preview.data?.gaps && <GapsSummary gaps={preview.data.gaps} onOpenReview={onOpenReview} />}
+      {missingField && <div className='flex flex-wrap items-center gap-2 rounded-2xl border border-primary/40 bg-primary/5 px-4 py-3 text-sm'>
+        <span className='min-w-0 flex-1'>{t('dataPreview.missingFilter', { count: visibleEntities.length, concept: concepts[0]?.label ?? '', field: readableLabel(missingField) })}</span>
+        <Button variant='ghost' size='sm' className='h-8' onClick={clearGuide}><X className='mr-1 h-3.5 w-3.5' />{t('dataPreview.showAllRecords')}</Button>
+      </div>}
+      {rowsConceptId && <RejectedRowsGuide conceptId={rowsConceptId} conceptLabel={preview.data?.concepts.find((concept) => concept.id === rowsConceptId)?.label ?? structure.data?.nodes.find((node) => node.id === rowsConceptId)?.label ?? ''}
+        gaps={preview.data?.gaps} onOpenMapping={onOpenMapping} onOpenIdentity={onOpenIdentity} />}
+      {linkRelationId && <UnmatchedLinksGuide relationId={linkRelationId} relationLabel={readableLabel(focusedRelation?.label || focusedRelation?.key || '')}
+        targetLabel={structure.data?.nodes.find((node) => node.id === focusedRelation?.targetNodeTypeId)?.label ?? ''}
+        gaps={preview.data?.gaps} entityLabel={(id) => allEntities.find((entity) => entity.id === id)?.label || undefined}
+        unmatchedInSample={unmatchedInSample} onPick={setSelectedEntityId} onOpenMatching={onOpenMatching} />}
+      {(rowsConceptId || linkRelationId) && <div className='flex justify-end'><Button variant='ghost' size='sm' className='h-8' onClick={clearGuide}><X className='mr-1 h-3.5 w-3.5' />{t('dataPreview.showAllRecords')}</Button></div>}
       <CorrectionNotice actions={fixes} />
       {canEdit && <CorrectionsList actions={fixes} recordLabel={entityName} fieldLabel={readableLabel} relationLabel={relationName} />}
       {selectedEntity ? <div className='grid gap-4 min-[900px]:grid-cols-[15rem_minmax(0,1fr)]'>
@@ -110,11 +156,12 @@ export function SemanticDataPreview({ modelId, dataRevisionId, onDataRevision, o
           {recordDetail(selectedEntity) && <p className='mt-1 text-sm text-muted-foreground'>{recordDetail(selectedEntity)}</p>}
           {canEdit && <div className='mt-3'><HideRecordButton busy={fixes.busy} onHide={() => fixes.save({ action: 'remove_entity', targetIdentity: { entityId: selectedEntity.id } })} /></div>}
           <h4 className='mt-6 font-semibold'>{t('dataPreview.valuesAndSources')}</h4>
-          <div className='mt-2 divide-y'>{businessValues(selectedEntity.values).map(([attribute, value]) => {
+          <div className='mt-2 divide-y'>{withField(businessValues(selectedEntity.values), missingField).map(([attribute, value]) => {
             const provenance = selectedEntity.provenance[attribute];
             const canOpen = Boolean(provenance?.source.workspaceId && provenance.source.documentId);
             const typedByHand = provenance?.source.kind === 'manual';
-            return <div key={attribute} className='grid grid-cols-[minmax(6rem,0.7fr)_1fr] gap-3 py-2 text-sm'><span className='text-muted-foreground'>{readableLabel(attribute)}</span><div className='min-w-0'><div className='flex flex-wrap items-baseline justify-between gap-2'><p className='break-words'>{String(value ?? '')}</p>{canEdit && <FixValueButton label={readableLabel(attribute)} value={value} busy={fixes.busy} onSave={(next) => fixes.save({ action: 'edit_entity', targetIdentity: { entityId: selectedEntity.id }, payload: { attribute, value: next } })} />}</div>{provenance?.correction && <CorrectionNote correction={provenance.correction} busy={fixes.busy} onUndo={canEdit ? () => fixes.revert(provenance.correction!.sequence) : undefined} />}{typedByHand && !provenance?.correction && <p className='mt-1 text-[11px] text-muted-foreground'>{t('dataPreview.typedByHand')}</p>}{provenance && !typedByHand && <button type='button' disabled={!canOpen} className='mt-1 flex max-w-full items-center gap-1 truncate text-left text-[11px] text-primary disabled:cursor-default disabled:text-muted-foreground' onClick={() => canOpen && void useFileViewerStore.getState().openFile(provenance.source.workspaceId!, provenance.source.documentId!, provenance.source.documentPath ?? '', provenance.source.documentName, provenance.source.mimeType ?? '', { page: Number.parseInt(provenance.field?.page ?? '1', 10) || 1, highlightText: provenance.field?.quote })}><ExternalLink className='h-3 w-3 shrink-0' />{provenance.source.documentName}{provenance.source.sheetName ? ` / ${provenance.source.sheetName}` : ''}{provenance.rowNumber ? ` · ${t('dataPreview.row', { row: provenance.rowNumber })}` : ''}{provenance.field?.reference ? ` · ${t('dataPreview.column', { column: provenance.field.reference })}` : ''}{provenance.field?.page ? ` · ${t('dataPreview.page', { page: provenance.field.page })}` : ''}</button>}</div></div>;
+            const toFix = attribute === missingField && isEmpty(value);
+            return <div key={attribute} className={`grid grid-cols-[minmax(6rem,0.7fr)_1fr] gap-3 py-2 text-sm ${toFix ? 'rounded-lg bg-primary/5 px-2 ring-1 ring-primary' : ''}`}><span className='text-muted-foreground'>{readableLabel(attribute)}</span><div className='min-w-0'><div className='flex flex-wrap items-baseline justify-between gap-2'><p className={`break-words ${toFix ? 'italic text-muted-foreground' : ''}`}>{toFix ? t('dataPreview.noValue') : String(value ?? '')}</p>{canEdit && <FixValueButton label={readableLabel(attribute)} value={value} busy={fixes.busy} onSave={(next) => fixes.save({ action: 'edit_entity', targetIdentity: { entityId: selectedEntity.id }, payload: { attribute, value: next } })} />}</div>{toFix && <MissingValueGuide entity={selectedEntity} field={attribute} onOpenMapping={onOpenMapping} />}{provenance?.correction && <CorrectionNote correction={provenance.correction} busy={fixes.busy} onUndo={canEdit ? () => fixes.revert(provenance.correction!.sequence) : undefined} />}{typedByHand && !provenance?.correction && <p className='mt-1 text-[11px] text-muted-foreground'>{t('dataPreview.typedByHand')}</p>}{provenance && !typedByHand && <button type='button' disabled={!canOpen} className='mt-1 flex max-w-full items-center gap-1 truncate text-left text-[11px] text-primary disabled:cursor-default disabled:text-muted-foreground' onClick={() => canOpen && void useFileViewerStore.getState().openFile(provenance.source.workspaceId!, provenance.source.documentId!, provenance.source.documentPath ?? '', provenance.source.documentName, provenance.source.mimeType ?? '', { page: Number.parseInt(provenance.field?.page ?? '1', 10) || 1, highlightText: provenance.field?.quote })}><ExternalLink className='h-3 w-3 shrink-0' />{provenance.source.documentName}{provenance.source.sheetName ? ` / ${provenance.source.sheetName}` : ''}{provenance.rowNumber ? ` · ${t('dataPreview.row', { row: provenance.rowNumber })}` : ''}{provenance.field?.reference ? ` · ${t('dataPreview.column', { column: provenance.field.reference })}` : ''}{provenance.field?.page ? ` · ${t('dataPreview.page', { page: provenance.field.page })}` : ''}</button>}</div></div>;
           })}</div>
           {selectedEntity.conflicts.length > 0 && <div className='mt-5 space-y-2 border-t pt-4'><h4 className='font-semibold text-amber-700 dark:text-amber-400'>{t('dataPreview.conflictDetails')}</h4>{selectedEntity.conflicts.map((conflict, index) => <div key={`${conflict.attribute}-${conflict.conflictingMappingId}-${index}`} className='rounded-lg bg-amber-500/10 p-3 text-xs'><p className='font-medium'>{conflict.attribute}</p><p className='mt-1 break-words'>{String(conflict.preferred ?? '')} <span className='text-muted-foreground'>· {selectedEntity.sources?.find((source) => source.mappingId === conflict.preferredMappingId)?.source.documentName ?? conflict.preferredMappingId}</span></p><p className='mt-1 break-words'>{String(conflict.conflicting ?? '')} <span className='text-muted-foreground'>· {selectedEntity.sources?.find((source) => source.mappingId === conflict.conflictingMappingId)?.source.documentName ?? conflict.conflictingMappingId}</span></p></div>)}</div>}
           <section className='mt-6 border-t pt-5'><h4 className='font-semibold'>{t('dataPreview.relationships')}</h4><div className='mt-3 space-y-2'>{relatedRelations.map((relation, index) => <div key={`${relation.relationId}-${relation.sourceEntityId}-${index}`} className={`rounded-lg p-3 text-xs ${relation.status === 'resolved' ? 'bg-emerald-500/10' : 'bg-amber-500/10'}`}><p><span className='font-medium'>{labels.get(relation.sourceEntityId) ?? relation.sourceEntityId}</span><span className='mx-1 text-muted-foreground'>→ {readableLabel(relation.relationLabel).toLocaleLowerCase()} →</span><span className='font-medium'>{relation.targetEntityIds.map((id) => labels.get(id) ?? id).join(', ') || t(`relationMatching.status.${relation.status}`)}</span></p>{canEdit && relation.status === 'resolved' && relation.targetEntityIds.length === 1 && <button type='button' disabled={fixes.busy} className='mt-1 inline-flex items-center gap-1 text-[11px] text-primary disabled:opacity-50' onClick={() => fixes.save({ action: 'remove_relationship', targetIdentity: { relationId: relation.relationId, sourceEntityId: relation.sourceEntityId, targetEntityId: relation.targetEntityIds[0] } })}>{t('corrections.hideLink')}</button>}<details className='mt-2'><summary className='cursor-pointer text-muted-foreground'>{t('dataPreview.matchingEvidence')}</summary><p className='mt-1 text-muted-foreground'>{readableLabel(relation.sourceAttribute)} = {String(relation.sourceValue ?? '')}{relation.targetValues.length ? ` · ${readableLabel(relation.targetAttribute)} = ${relation.targetValues.map(String).join(', ')}` : ''}</p></details></div>)}{relatedRelations.length === 0 && <p className='text-sm text-muted-foreground'>{t('dataPreview.noRelationships')}</p>}</div>{canEdit && <div className='mt-3'><AddLinkForm options={linkOptions} busy={fixes.busy} onAdd={(relationId, otherId, direction) => fixes.save({ action: 'add_relationship', targetIdentity: direction === 'out' ? { relationId, sourceEntityId: selectedEntity.id, targetEntityId: otherId } : { relationId, sourceEntityId: otherId, targetEntityId: selectedEntity.id } })} /></div>}</section>
@@ -146,34 +193,31 @@ function groupSourceIssues(issues: SourcePreviewIssue[]) {
   return [...groups.values()];
 }
 
-/** The prepared records' gaps, in plain words, each with a way to fix it. */
-function GapsPanel({ gaps, onOpenItem }: Readonly<{ gaps: SemanticDataGaps; onOpenItem?: (id: string) => void }>) {
+/** How many problems the prepared records have; they are reviewed, and fixed, from the Trust center. */
+function GapsSummary({ gaps, onOpenReview }: Readonly<{ gaps: SemanticDataGaps; onOpenReview?: () => void }>) {
   const { t } = useModuleTranslation('semantic-model');
-  const rows = [
-    ...gaps.missingValues.map((gap) => ({
-      key: `value-${gap.conceptId}-${gap.attribute}`, targetId: gap.conceptId,
-      text: t('dataPreview.gapMissingValue', { missing: gap.missing, total: gap.total, concept: gap.conceptLabel, field: gap.attributeLabel }),
-      action: t('dataPreview.gapFixConcept', { concept: gap.conceptLabel }),
-    })),
-    ...gaps.unresolvedLinks.map((gap) => ({
-      key: `link-${gap.relationId}-${gap.kind}`, targetId: gap.relationId,
-      text: t('dataPreview.gapUnresolvedLink', { count: gap.count, relationship: gap.relationLabel }),
-      action: t('dataPreview.gapFixRelationship'),
-    })),
-    ...gaps.other.map((gap) => ({
-      key: `other-${gap.conceptId ?? 'model'}-${gap.kind}`, targetId: gap.conceptId,
-      text: gap.conceptLabel ? t('dataPreview.gapOther', { count: gap.count, concept: gap.conceptLabel }) : t('dataPreview.gapOtherModel', { count: gap.count }),
-      action: gap.conceptLabel ? t('dataPreview.gapFixConcept', { concept: gap.conceptLabel }) : null,
-    })),
-  ];
-  return <section className={`rounded-2xl border p-4 ${rows.length ? 'border-amber-500/30 bg-amber-500/5' : 'bg-background'}`} aria-label={t('dataPreview.gapsTitle')}>
-    <h3 className='text-sm font-semibold'>{t('dataPreview.gapsTitle')}</h3>
-    {rows.length === 0 ? <p className='mt-1 text-sm text-muted-foreground'>{t('dataPreview.gapsNone')}</p>
-      : <ul className='mt-2 space-y-2'>{rows.map((row) => <li key={row.key} className='flex flex-col gap-1 text-sm sm:flex-row sm:items-center sm:justify-between'>
-        <span className='break-words'>{row.text}</span>
-        {row.action && row.targetId && onOpenItem && <Button variant='link' size='sm' className='h-auto p-0' onClick={() => onOpenItem(row.targetId!)}>{row.action}</Button>}
-      </li>)}</ul>}
+  // A field not found in a document is the empty value it leaves, already counted there; the review list does the same.
+  const count = gaps.missingValues.length + gaps.unresolvedLinks.length
+    + gaps.other.filter((gap) => !FIELD_NOT_FOUND.has(gap.kind) || Boolean(gap.conceptId && gap.fields?.length
+      && !gap.fields.every((field) => gaps.missingValues.some((value) => value.conceptId === gap.conceptId && value.attribute === field)))).length;
+  if (!count) return <section className='rounded-2xl border bg-background p-4' aria-label={t('dataPreview.gapsTitle')}><p className='text-sm text-muted-foreground'>{t('dataPreview.gapsNone')}</p></section>;
+  return <section className='flex flex-wrap items-center gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/5 px-4 py-3' aria-label={t('dataPreview.gapsTitle')}>
+    <AlertTriangle className='h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400' />
+    <p className='min-w-0 flex-1 text-sm'>{t('dataPreview.gapsCount', { count })}</p>
+    {onOpenReview && <Button variant='outline' size='sm' className='h-8' onClick={onOpenReview}>{t('dataPreview.reviewGaps')}</Button>}
   </section>;
+}
+
+const FIELD_NOT_FOUND = new Set(['unresolved_document_field', 'ai_extraction_unresolved']);
+
+/** A value counts as missing when the source gave nothing for it. */
+function isEmpty(value: unknown) {
+  return value === undefined || value === null || (typeof value === 'string' && value.trim() === '');
+}
+
+/** The field being fixed always shows, even when the record has no entry for it at all. */
+function withField(values: Array<[string, unknown]>, field: string | null): Array<[string, unknown]> {
+  return !field || values.some(([key]) => key === field) ? values : [...values, [field, null]];
 }
 
 function Summary({ value, label, good = false, warn = false }: Readonly<{ value: number; label: string; good?: boolean; warn?: boolean }>) {

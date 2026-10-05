@@ -136,6 +136,7 @@ describe('AgentService connector skill inheritance', () => {
     const connectorService = {
       findByIds: jest.fn(),
       findIdsByCategoryName: jest.fn().mockResolvedValue([]),
+      findActiveSystemBySlug: jest.fn().mockResolvedValue(null),
     };
     const connectorAuthService = {
       resolveRuntimeAuth: jest.fn(),
@@ -208,6 +209,8 @@ describe('AgentService connector skill inheritance', () => {
     return {
       service,
       configService,
+      logger,
+      connectorAuthService,
       agentRepository,
       skillService,
       connectorService,
@@ -487,6 +490,110 @@ describe('AgentService connector skill inheritance', () => {
       'X-YellowStorm-User-Id': userId, 'X-YellowStorm-Agent-Id': 'designer-agent', 'X-Correlation-Id': 'message-1',
     }));
     expect(bindings.find((binding) => binding.connector_slug === 'elsewhere')?.auth_headers ?? {}).not.toHaveProperty('X-YellowStorm-User-Id');
+  });
+
+  describe('chat on a semantic model', () => {
+    const semanticModel = { id: 'model-1', name: 'Contracts' };
+    const searchConnector = {
+      id: 'semantic-search-connector', name: 'Semantic Model Search (MCP)', slug: 'semantic-model-search-mcp',
+      authSourceType: 'server_config', connectedAppKey: '',
+      runtimeAuthConfig: { strategy: 'http_header_bearer', secretKey: 'semantic_model_mcp_ingress' },
+      mcpTransportType: 'streamable_http', mcpServerUrl: 'http://localhost:8027/mcp', mcpServerConfig: {},
+      dynamicHeaders: [{ headerName: 'X-YellowStorm-User-Id', source: 'user_id', enabled: true }],
+      actions: ['find_records', 'get_related_records', 'search_records'].map((key) => ({
+        key, label: key, isEnabled: true, safety: 'read',
+        parameterSchema: {
+          type: 'object',
+          properties: { model_id: { type: 'string' }, data: { type: 'string' }, query: { type: 'string' } },
+          required: ['model_id', 'query'],
+        },
+      })),
+      referencedSkillIds: [],
+    };
+    const workerAgent = (connectorIds: string[] = []): IAgentForStream => ({
+      id: 'worker-agent', name: 'Worker', agentTypeName: 'Worker', agentTypeSlug: 'worker', agentTypeId: 'type-worker', role: 'Assistant',
+      description: '', temperature: 0, model: 'model-1', instruction: 'Be helpful.', ignorePrePrompt: false, knowledgeBases: [], toolIds: [],
+      guardrails: defaultGuardrails, connectorIds,
+      connectorActionSelections: connectorIds.map((connectorId) => ({ connectorId, actionKeys: ['search'] })), skillIds: [],
+      disabledSkillIds: [], agentTypeSkillIds: [], enable_temporary_child_agents: false, max_temporary_child_agents: 4, isDefault: false, isDefaultForType: false,
+    });
+
+    it('binds only the two search tools of the system connector, pinned to the published model, with identity headers and a prompt block', async () => {
+      const { service, skillService, connectorService, connectorAuthService } = createService();
+      jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([workerAgent(['other-connector'])]);
+      connectorService.findByIds.mockResolvedValue([
+        { id: 'other-connector', name: 'Elsewhere', slug: 'elsewhere', mcpServerUrl: 'https://example.com/mcp',
+          actions: [{ key: 'search', label: 'Search', isEnabled: true }, { key: 'write', label: 'Write', isEnabled: true }] },
+      ]);
+      connectorService.findActiveSystemBySlug.mockResolvedValue(searchConnector);
+      connectorAuthService.resolveRuntimeAuth.mockResolvedValue({ headers: { Authorization: 'Bearer ingress' }, env: {} });
+      connectorAuthService.resolveDynamicHeaders.mockResolvedValue({ 'X-YellowStorm-User-Id': userId });
+      skillService.findByIds.mockResolvedValue([]);
+
+      const result = await service.buildAgentsForStream(userId, undefined, ['worker-agent'], undefined, undefined, undefined, semanticModel,
+        { conversationId: 'conversation-1', correlationId: 'message-1' });
+
+      expect(connectorService.findActiveSystemBySlug).toHaveBeenCalledWith('semantic-model-search-mcp');
+      const params = result[0].agent_params?.params ?? {};
+      expect(params.semantic_model_id).toBe('model-1');
+      expect(params).not.toHaveProperty('semantic_model_schema_name');
+      const bindings = JSON.parse(params.connector_bindings_json as string) as Array<Record<string, any>>;
+      const search = bindings.find((binding) => binding.connector_slug === 'semantic-model-search-mcp');
+      expect(search).toBeDefined();
+      expect(search!.actions.map((action: { action_key: string }) => action.action_key)).toEqual(['find_records', 'get_related_records']);
+      expect(search!.fixed_params).toEqual({ model_id: 'model-1', data: 'published' });
+      for (const action of search!.actions) {
+        const schema = JSON.parse(action.parameter_schema_json);
+        expect(Object.keys(schema.properties)).toEqual(['query']);
+        expect(schema.required).toEqual(['query']);
+      }
+      expect(search!.auth_headers).toEqual(expect.objectContaining({
+        Authorization: 'Bearer ingress',
+        'X-YellowStorm-User-Id': userId,
+        'X-YellowStorm-Agent-Id': 'worker-agent',
+        'X-YellowStorm-Conversation-Id': 'conversation-1',
+        'X-Correlation-Id': 'message-1',
+      }));
+      // The agent's own connector keeps its own action selection.
+      expect(bindings.find((binding) => binding.connector_slug === 'elsewhere')!.actions.map((action: { action_key: string }) => action.action_key))
+        .toEqual(['search']);
+      expect(result[0].connectorIds).toEqual(['other-connector', 'semantic-search-connector']);
+      expect(result[0].prompt).toContain('Be helpful.');
+      expect(result[0].prompt).toContain('This conversation is about the semantic model "Contracts" (model_id model-1).');
+      expect(result[0].prompt).toContain('call semantic-model-search-mcp_find_records (find_records) first, then semantic-model-search-mcp_get_related_records (get_related_records)');
+      expect(result[0].prompt).toContain('index_not_ready');
+      expect(result[0].prompt).toContain('Never invent a value');
+    });
+
+    it('still adds the prompt block, without tools, when the search connector is missing', async () => {
+      const { service, skillService, connectorService, logger } = createService();
+      jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([workerAgent()]);
+      connectorService.findByIds.mockResolvedValue([]);
+      skillService.findByIds.mockResolvedValue([]);
+
+      const result = await service.buildAgentsForStream(userId, undefined, ['worker-agent'], undefined, undefined, undefined, semanticModel,
+        { conversationId: 'conversation-1', correlationId: 'message-1' });
+
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('Semantic model search connector is not available'), expect.anything());
+      const params = result[0].agent_params?.params ?? {};
+      expect(JSON.parse(params.connector_bindings_json as string)).toEqual([]);
+      expect(params.semantic_model_id).toBe('model-1');
+      expect(result[0].prompt).toContain('This conversation is about the semantic model "Contracts" (model_id model-1).');
+      expect(result[0].prompt).toContain('not available');
+    });
+
+    it('does not look up or bind the search connector without a semantic model', async () => {
+      const { service, skillService, connectorService } = createService();
+      jest.spyOn(service as any, 'getAgentsForUser').mockResolvedValue([workerAgent()]);
+      connectorService.findByIds.mockResolvedValue([]);
+      skillService.findByIds.mockResolvedValue([]);
+
+      const result = await service.buildAgentsForStream(userId, undefined, ['worker-agent']);
+
+      expect(connectorService.findActiveSystemBySlug).not.toHaveBeenCalled();
+      expect(result[0].agent_params?.params).not.toHaveProperty('semantic_model_id');
+      expect(result[0].prompt).not.toContain('[Semantic model]');
+    });
   });
 
   it('resolves the mono-agent directly from the DB even though it is not part of the user\'s roster', async () => {

@@ -1,7 +1,7 @@
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type { ApiResponse } from '@/lib/api/client';
-import type { AgeGraphEdge, AssistantChangesPage, SourceSuggestionsPage, SourceFileMatches, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
+import type { AiExtractionDefaults, DerivedSource, DerivedSourceDraft, AiExtractionSettings, AgeGraphEdge, AssistantChangesPage, SourceSuggestionsPage, SourceFileMatches, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
 SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, PopulationFreshness, DesignerBoxPosition, SemanticReviewItem, SemanticVersion,
 SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
 StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison, ReviewQueue, ConceptRecordsPage } from './types';
@@ -75,8 +75,17 @@ export const semanticModelApi = {
     return unwrap(await apiClient.get<ApiResponse<Array<{ workspaceId: string; role: 'origin' | 'connected'; enabled: boolean }>>>(API_ENDPOINTS.semanticModels.workspaces(id)));
   },
   async connectWorkspace(id: string, workspaceId: string, addToDocumentsFallback: boolean): Promise<void> {
-    const model = await semanticModelApi.get(id);
-    await apiClient.post(API_ENDPOINTS.semanticModels.workspaces(id), { workspaceId, addToDocumentsFallback, expectedRevision: model.revision });
+    // The model can change between reading its revision and linking: read it again and retry once.
+    for (let attempt = 0; ; attempt += 1) {
+      const model = await semanticModelApi.get(id);
+      try {
+        await apiClient.post(API_ENDPOINTS.semanticModels.workspaces(id), { workspaceId, addToDocumentsFallback, expectedRevision: model.revision });
+        return;
+      } catch (error) {
+        const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined;
+        if (code !== 'ERR_3703' || attempt > 0) throw error;
+      }
+    }
   },
   async disconnectWorkspace(id: string, workspaceId: string): Promise<void> { const model = await semanticModelApi.get(id); await apiClient.delete(API_ENDPOINTS.semanticModels.workspace(id, workspaceId), { data: { expectedRevision: model.revision } }); },
   async versions(id: string): Promise<SemanticVersion[]> {
@@ -142,13 +151,28 @@ export const semanticModelApi = {
     const model = await semanticModelApi.get(id);
     return unwrap(await apiClient.delete<ApiResponse<{ revision: number }>>(API_ENDPOINTS.semanticModels.sourceMapping(id, mappingId), { data: { expectedRevision: model.revision } }));
   },
-  async createBulkDocumentSourceMappings(id: string, payload: { conceptId: string; documents: Array<{ workspaceId: string; documentId: string }>; fieldMappings: SourceMappingDraft['fieldMappings']; identityFields: string[] }): Promise<{ revision: number; mappingCount: number }> {
+  async listDerivedSources(id: string): Promise<DerivedSource[]> {
+    return unwrap(await apiClient.get<ApiResponse<DerivedSource[]>>(API_ENDPOINTS.semanticModels.derivedSources(id)));
+  },
+  /** Fill a concept from another concept's records; updates the one given, or adds a new one. */
+  async saveDerivedSource(id: string, draft: DerivedSourceDraft, derivedSourceId?: string): Promise<{ revision: number; derivedSource: DerivedSource }> {
+    const model = await semanticModelApi.get(id);
+    const body = { ...draft, expectedRevision: model.revision };
+    return unwrap(derivedSourceId
+      ? await apiClient.put<ApiResponse<{ revision: number; derivedSource: DerivedSource }>>(API_ENDPOINTS.semanticModels.derivedSource(id, derivedSourceId), body)
+      : await apiClient.post<ApiResponse<{ revision: number; derivedSource: DerivedSource }>>(API_ENDPOINTS.semanticModels.derivedSources(id), body));
+  },
+  async deleteDerivedSource(id: string, derivedSourceId: string): Promise<{ revision: number }> {
+    const model = await semanticModelApi.get(id);
+    return unwrap(await apiClient.delete<ApiResponse<{ revision: number }>>(API_ENDPOINTS.semanticModels.derivedSource(id, derivedSourceId), { data: { expectedRevision: model.revision } }));
+  },
+  async createBulkDocumentSourceMappings(id: string, payload: { conceptId: string; documents: Array<{ workspaceId: string; documentId: string }>; fieldMappings: SourceMappingDraft['fieldMappings']; identityFields: string[]; aiSettings?: SourceMappingDraft['aiSettings'] }): Promise<{ revision: number; mappingCount: number }> {
     const model = await semanticModelApi.get(id);
     return unwrap(await apiClient.post<ApiResponse<{ revision: number; mappingCount: number }>>(API_ENDPOINTS.semanticModels.bulkDocumentSourceMappings(id), { ...payload, expectedRevision: model.revision }));
   },
   /** One mapping for every readable file of a workspace, or of one of its folders. */
   /** One mapping for many files of a workspace: all of them, or the picked folders and files. `mappingId` changes an existing one. */
-  async createWorkspaceSourceMapping(id: string, payload: { conceptId: string; workspaceId: string; folderIds?: string[]; documentIds?: string[]; mappingId?: string; fieldMappings: SourceMappingDraft['fieldMappings']; identityFields: string[] }): Promise<{ revision: number; fileCount: number; waitingCount: number }> {
+  async createWorkspaceSourceMapping(id: string, payload: { conceptId: string; workspaceId: string; folderIds?: string[]; documentIds?: string[]; mappingId?: string; fieldMappings: SourceMappingDraft['fieldMappings']; identityFields: string[]; aiSettings?: SourceMappingDraft['aiSettings'] }): Promise<{ revision: number; fileCount: number; waitingCount: number }> {
     const model = await semanticModelApi.get(id);
     const { folderIds, documentIds, mappingId, ...rest } = payload;
     return unwrap(await apiClient.post<ApiResponse<{ revision: number; fileCount: number; waitingCount: number }>>(API_ENDPOINTS.semanticModels.workspaceSourceMapping(id), {
@@ -175,8 +199,19 @@ export const semanticModelApi = {
       params: { ...(query.q ? { q: query.q } : {}), limit: query.limit ?? 50, offset: query.offset ?? 0 },
     }));
   },
+  /** The AI reading limits a document mapping starts from, as an admin set them. */
+  async getExtractionDefaults(): Promise<AiExtractionDefaults> {
+    return unwrap(await apiClient.get<ApiResponse<AiExtractionDefaults>>(API_ENDPOINTS.semanticModelSettings.extraction));
+  },
+  async getAdminExtractionSettings(): Promise<AiExtractionDefaults> {
+    return unwrap(await apiClient.get<ApiResponse<AiExtractionDefaults>>(API_ENDPOINTS.adminSemanticModelSettings.base));
+  },
+  async updateAdminExtractionSettings(settings: Partial<AiExtractionSettings>): Promise<AiExtractionDefaults> {
+    return unwrap(await apiClient.put<ApiResponse<AiExtractionDefaults>>(API_ENDPOINTS.adminSemanticModelSettings.base, settings));
+  },
   async previewSourceMapping(id: string, draft: SourceMappingPreviewDraft): Promise<SourceMappingPreviewResponse> {
-    const result = unwrap(await apiClient.post<ApiResponse<SourceMappingPreviewResponse | { jobId: string }>>(API_ENDPOINTS.semanticModels.sourceMappingPreview(id), draft));
+    // A document read with AI can take a couple of minutes.
+    const result = unwrap(await apiClient.post<ApiResponse<SourceMappingPreviewResponse | { jobId: string }>>(API_ENDPOINTS.semanticModels.sourceMappingPreview(id), draft, { timeout: 130_000 }));
     if (!('jobId' in result)) return result;
     const job = await waitForDatasourceJob(id, result.jobId);
     const preview = job.result?.mappingPreview;

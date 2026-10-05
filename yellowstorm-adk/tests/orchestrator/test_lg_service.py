@@ -69,12 +69,25 @@ class FakeReadModel:
 
     async def register_mail_wait(self, token, *, session_id, step_id, user_id, **kw):
         self.waits[token] = {"token": token, "session_id": session_id, "step_id": step_id,
-                             "interrupt_id": None, "status": "waiting"}
+                             "interrupt_id": None, "status": "waiting",
+                             "conversation_id": kw.get("conversation_id"),
+                             "expected_from": kw.get("expected_from")}
 
     async def bind_mail_wait_interrupt(self, sid, step_id, iid):
         for w in self.waits.values():
             if w["session_id"] == sid and w["step_id"] == step_id and w["status"] == "waiting":
                 w["interrupt_id"] = iid
+
+    async def mail_wait_target(self, sid, step_id):
+        for w in self.waits.values():
+            if w["session_id"] == sid and w["step_id"] == step_id and w["status"] == "waiting":
+                return (w["conversation_id"], w["expected_from"])
+        return None
+
+    async def cancel_mail_wait(self, sid, step_id):
+        for w in self.waits.values():
+            if w["session_id"] == sid and w["step_id"] == step_id and w["status"] == "waiting":
+                w["status"] = "cancelled"
 
     async def claim_mail_wait(self, token, reply_from=None):
         w = self.waits.get(token)
@@ -120,7 +133,8 @@ class FakeOrch:
         for s in plan.steps:                      # mirrors _register_mail_waits
             if s.kind == "await_reply":
                 await self._rm.register_mail_wait(f"YW-{s.id}", session_id=sid,
-                                                  step_id=s.id, user_id=uid)
+                                                  step_id=s.id, user_id=uid,
+                                                  conversation_id=f"chat-{s.id}")
 
     async def fail_session(self, sid, exc): pass
     async def expire_mail_waits(self): return 0
