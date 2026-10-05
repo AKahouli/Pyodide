@@ -225,6 +225,12 @@ export class ModelsService implements OnApplicationBootstrap {
     return this.toModelResponse(model);
   }
 
+
+  async findByIdOrLitellmModel(id: string): Promise<ModelResponse | null> {
+    const model = await this.modelStore.findByIdOrLitellmModel(id);
+    return model ? this.toModelResponse(model) : null;
+  }
+
   async findPricing(id: string): Promise<ModelPricingSnapshot | null> {
     const model = await this.modelStore.findByIdOrLitellmModel(id);
     if (!model) return null;

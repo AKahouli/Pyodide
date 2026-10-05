@@ -40,6 +40,13 @@ describe('ConversationV2PointerWriterService', () => {
     );
   });
 
+  it('TitleEvent with blank title only bumps lastEventAt', async () => {
+    await svc.apply(SESSION_HEX, ev('title', { title: '   ' } as any));
+    expect(applyPointerPatch).toHaveBeenCalledWith(SESSION_HEX, {
+      lastEventAt: expect.any(Date),
+    });
+  });
+
   it('DoneEvent flips status to completed', async () => {
     await svc.apply(SESSION_HEX, ev('done'));
     expect(applyPointerPatch).toHaveBeenCalledWith(

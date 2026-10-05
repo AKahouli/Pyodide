@@ -1,7 +1,7 @@
 import { Injectable,  Logger } from '@nestjs/common';
 import type { ConversationV2SessionStatus } from '../types/conversation-v2-persistence.types';
 import type { ConversationV2Event } from '../types/conversation-v2.types';
-import { PgConversationV2SessionStore } from '../persistence/postgres/pg-conversation-v2-session.store';
+import { PgConversationV2SessionStore } from '../persistence/postgres/pg-conversation-v2-session.store';
 
 @Injectable()
 export class ConversationV2PointerWriterService {
@@ -20,7 +20,9 @@ export class ConversationV2PointerWriterService {
       } = { lastEventAt: new Date() };
 
       if (event.type === 'title') {
-        patch.title = (event.payload as { title: string }).title;
+        const next = (event.payload as { title?: string }).title?.trim();
+        // Ignore empty titles so a bad AI/name-gen frame cannot wipe a good one.
+        if (next) patch.title = next;
       }
       if (event.type === 'message') {
         const role = (event.payload as { role?: string }).role;
