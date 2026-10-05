@@ -7,6 +7,7 @@
   "rootWork.status.running": "Running",
   "rootWork.status.waiting": "Waiting for your response",
   "rootWork.status.outcome_unknown": "Outcome needs checking",
+  "rootWork.status.failed": "Failed",
   "rootWork.stopAll": "Stop all work",
   "rootWork.cancellationPending": "Background work is stopped. Foreground cancellation still needs confirmation.",
   "rootWork.retryCancellation": "Check cancellation",

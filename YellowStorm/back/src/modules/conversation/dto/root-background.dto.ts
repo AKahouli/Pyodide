@@ -5,6 +5,7 @@ import { RootFanoutProposalDto } from './root-fanout-proposal.dto';
 import { SettleRootDelegateDto } from './settle-root-delegate.dto';
 import type { RootBackgroundEventProposal } from '../root-work/root-background-event';
 import { RootContinuationDto } from './root-continuation.dto';
+import { Type } from 'class-transformer';
 
 export class RootBackgroundInputsDto extends OmitType(RootContinuationDto, ['executionId'] as const) {}
 
@@ -21,6 +22,7 @@ export class RootBackgroundAuthorityDto {
 
 export class RootBackgroundEventsDto extends RootBackgroundAuthorityDto {
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(20) @IsObject({ each: true })
+  @Type(() => Object)
   events!: RootBackgroundEventProposal[];
 }
 

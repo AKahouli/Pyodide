@@ -79,4 +79,12 @@ describe('Durable background work controls', () => {
     expect(mocks.fetch).not.toHaveBeenCalled();
     expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
+
+  it('recovers failed work from a reload snapshot without replay events or a Stop action', async () => {
+    mocks.fetch.mockResolvedValue({ ...snapshot, jobs: [{ ...snapshot.jobs[0], role: 'library_worker', status: 'failed' }] });
+    render(<RootWorkPanel conversationId='conversation' creatorId='owner' />);
+    expect(await screen.findByText(/rootWork.status.failed/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'rootWork.stopAll' })).not.toBeInTheDocument();
+    expect(mocks.stop).not.toHaveBeenCalled();
+  });
 });

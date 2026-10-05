@@ -68,13 +68,17 @@ function RootWorkPanelContent({ conversationId, creatorId }: { conversationId: s
   const active = snapshot?.jobs.filter((job): job is RootWorkSnapshot['jobs'][number]
     & { status: 'queued' | 'running' | 'waiting' | 'outcome_unknown' } =>
     ['queued', 'running', 'waiting', 'outcome_unknown'].includes(job.status)) ?? [];
-  if (user?.id !== creatorId || !snapshot || active.length === 0 && !pendingStop && !activity?.events.length) return null;
+  const failed = snapshot?.jobs.filter((job) => job.status === 'failed') ?? [];
+  if (user?.id !== creatorId || !snapshot || active.length === 0 && failed.length === 0 && !pendingStop && !activity?.events.length) return null;
   return <section aria-label={t('rootWork.title')} className='mx-auto flex w-full max-w-6xl items-start justify-between gap-4 px-4 py-3'>
     <div className='min-w-0 space-y-1'>
       <p className='text-sm font-medium'>{t('rootWork.title')}</p>
       <ul className='space-y-1 text-sm text-muted-foreground' aria-live='polite'>
         {active.map((job) => <li key={job.executionId}>
           {t(job.role === 'followup' ? 'rootWork.synthesis' : job.role === 'fanout_driver' ? 'rootWork.fanout' : 'rootWork.worker')}: {t(`rootWork.status.${job.status}`)}
+        </li>)}
+        {failed.map((job) => <li key={job.executionId} className='text-destructive'>
+          {t(job.role === 'followup' ? 'rootWork.synthesis' : job.role === 'fanout_driver' ? 'rootWork.fanout' : 'rootWork.worker')}: {t('rootWork.status.failed')}
         </li>)}
       </ul>
       {error && <p role='alert' className='text-sm text-destructive'>{error.message}</p>}

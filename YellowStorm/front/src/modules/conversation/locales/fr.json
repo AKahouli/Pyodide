@@ -7,6 +7,7 @@
   "rootWork.status.running": "En cours",
   "rootWork.status.waiting": "Votre réponse est nécessaire",
   "rootWork.status.outcome_unknown": "Résultat à vérifier",
+  "rootWork.status.failed": "Échec",
   "rootWork.stopAll": "Arrêter tout le travail",
   "rootWork.cancellationPending": "Les tâches en arrière-plan sont arrêtées. L’arrêt de la réponse en cours reste à confirmer.",
   "rootWork.retryCancellation": "Vérifier l’arrêt",
