@@ -1,6 +1,6 @@
+import re
 import uuid
-from contextvars import ContextVar, copy_context
-from email.policy import default
+from contextvars import ContextVar
 
 from fastapi import Request
 from opentelemetry import trace
@@ -16,9 +16,22 @@ _CORRELATION_FIELDS = ("request_id", "username", "user_id")
 
 correlation_id_ctx: ContextVar[str | None] = ContextVar("correlation_id", default=None)
 # Holds the display user (username/email) — used for the [%(user)s] log column.
+# Bound only after authentication (get_current_user), never from a raw header here.
 user_ctx: ContextVar[str | None] = ContextVar("user", default=None)
 # Holds the stable user identifier (user_id) — used for logs/metadata (e.g. LiteLLM).
 user_id_ctx: ContextVar[str | None] = ContextVar("user_id", default=None)
+
+# W3C traceparent: 00-<32 hex trace id>-<16 hex span id>-<2 hex flags>.
+_TRACEPARENT_RE = re.compile(r"^00-([0-9a-f]{32})-[0-9a-f]{16}-[0-9a-f]{2}$", re.IGNORECASE)
+
+
+def trace_id_from_header(value: str | None) -> str:
+    """Reuse an inbound W3C traceparent's trace id, else start a fresh trace."""
+    if value:
+        match = _TRACEPARENT_RE.match(value.strip())
+        if match:
+            return match.group(1)
+    return uuid.uuid4().hex
 
 
 class UserContext:
@@ -154,23 +167,20 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
         # Set correlation ID from header if provided, otherwise leave as None
         # get_correlation_id() will generate UUID if needed
         corr_id = request.headers.get("correlation-id")
-        # Get user from HTTP header
-        user = request.headers.get("user")
+        # Acting-user identity is NOT trusted here: it is bound by the
+        # authenticated dependency (get_current_user) after the API key check
+        # (plan P05 trusted-identity re-binding).
 
         corr_token = correlation_id_ctx.set(corr_id)
-        user_token = None
-        # Set user in unified context if provided in HTTP header
-        if user:
-            user_token = user_ctx.set(user)
 
         # Get or generate the final correlation ID
         final_corr_id = get_correlation_id()
+        trace_id = trace_id_from_header(request.headers.get("traceparent"))
+        bind_contextvars(trace_id=trace_id)
 
         span: Span = trace.get_current_span()
         if span and span.is_recording():
             span.set_attribute("correlationId", final_corr_id)
-            if user:
-                span.set_attribute("user", user)
             span.set_attribute("component", "API-metachatbot")
             # Track if correlation ID was generated vs provided
             span.set_attribute("correlation_id_source", "header" if corr_id else "generated")
@@ -179,9 +189,7 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
         finally:
             correlation_id_ctx.reset(corr_token)
-            if user_token is not None:
-                user_ctx.reset(user_token)
-            unbind_contextvars(*_CORRELATION_FIELDS)
+            unbind_contextvars(*_CORRELATION_FIELDS, "trace_id")
 
         response.headers["correlation-id"] = final_corr_id
         return response

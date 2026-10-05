@@ -4,6 +4,7 @@ from hmac import compare_digest
 import re
 
 from starlette.types import ASGIApp, Receive, Scope, Send
+from structlog.contextvars import bind_contextvars, unbind_contextvars
 
 
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,199}$")
@@ -96,9 +97,18 @@ class TrustedIdentityMiddleware:
         ) if user_id else None
         user_token = acting_user_id.set(user_id or None)
         actor_token = actor_context.set(context)
+        # Unified-logging context (plan P05): the SDK merges these contextvars at
+        # emit time, so every envelope from this tool call carries the actor.
+        bound = bind_contextvars(
+            username=user_id or "",
+            agent_id=(context.agent_id if context else ""),
+            conversation_id=(context.conversation_id if context else ""),
+            request_id=(context.correlation_id if context else ""),
+        )
         try:
             await self.app(scope, receive, send)
         finally:
+            unbind_contextvars(*bound)
             actor_context.reset(actor_token)
             acting_user_id.reset(user_token)
 

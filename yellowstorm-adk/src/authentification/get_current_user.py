@@ -1,10 +1,12 @@
-from typing import Annotated, Optional
+from typing import Annotated, Generator, Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import APIKeyHeader
+from structlog.contextvars import bind_contextvars, unbind_contextvars
 
 from src.config.settings import get_settings
 from src.logger.logging import get_logger
+from src.middleware.correlation import user_ctx
 from src.schema.authentification_schema import User
 
 logger = get_logger(__name__)
@@ -24,8 +26,9 @@ def _service_user() -> User:
 
 
 def get_current_user(
+    request: Request,
     x_api_key: Annotated[Optional[str], Depends(api_key_header)] = None,
-) -> User:
+) -> Generator[User, None, None]:
     expected = _expected_api_key()
     if not expected:
         logger.error("ADK_API_KEY is not configured")
@@ -39,7 +42,17 @@ def get_current_user(
             detail="Invalid or missing API key",
             headers={"WWW-Authenticate": "ApiKey"},
         )
-    return _service_user()
+    # Trusted-identity re-binding (plan P05): the acting user is bound only here —
+    # after the API key validates. The caller (backend) authenticated the end user
+    # and vouches for them via the `user` header; unauthenticated paths bind nothing.
+    username = request.headers.get("user")
+    user_token = user_ctx.set(username or None)
+    bind_contextvars(username=username or "")
+    try:
+        yield _service_user()
+    finally:
+        user_ctx.reset(user_token)
+        unbind_contextvars("username")
 
 
 def get_current_active_user(
@@ -51,14 +64,24 @@ def get_current_active_user(
 
 
 def get_current_user_optional(
+    request: Request,
     x_api_key: Annotated[Optional[str], Depends(api_key_header_optional)] = None,
-) -> User:
+) -> Generator[User, None, None]:
     expected = _expected_api_key()
     if not x_api_key:
-        return User(username="anonymous", disabled=False)
+        yield User(username="anonymous", disabled=False)
+        return
     if not expected or x_api_key.strip() != expected:
-        return User(username="anonymous", disabled=False)
-    return _service_user()
+        yield User(username="anonymous", disabled=False)
+        return
+    username = request.headers.get("user")
+    user_token = user_ctx.set(username or None)
+    bind_contextvars(username=username or "")
+    try:
+        yield _service_user()
+    finally:
+        user_ctx.reset(user_token)
+        unbind_contextvars("username")
 
 
 def get_current_active_user_optional(

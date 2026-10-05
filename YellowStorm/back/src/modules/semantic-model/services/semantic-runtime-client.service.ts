@@ -108,10 +108,14 @@ export interface RuntimeRevisionGaps {
   unresolvedLinks: { relationId: string; kind: string; count: number }[];
   other: { conceptId: string | null; kind: string; count: number; fields?: string[] }[];
   /** A few rows behind each gap, with the file they come from; absent on data prepared before they were kept. */
-  rowSamples?: { conceptId: string | null; kind: string; field?: string; rowNumber?: number | string;
-    asset?: { workspaceId?: string; assetId?: string }; values?: Record<string, unknown> }[];
-  linkSamples?: { relationId: string; kind: string; sourceEntityId: string; referenceField?: string;
-    referenceValue?: unknown; targetField?: string }[];
+  rowSamples?: {
+    conceptId: string | null; kind: string; field?: string; rowNumber?: number | string;
+    asset?: { workspaceId?: string; assetId?: string }; values?: Record<string, unknown>
+  }[];
+  linkSamples?: {
+    relationId: string; kind: string; sourceEntityId: string; referenceField?: string;
+    referenceValue?: unknown; targetField?: string
+  }[];
 }
 
 export interface RuntimeConceptRecordsPage {
@@ -270,48 +274,7 @@ export interface RuntimeComputedPreviewRequest {
 }
 
 export interface RuntimeComputedPreview {
-<<<<<<< HEAD
-  results: { input: string; value: string | null; reason: 'found' | 'no_input' | 'no_match' | 'not_transformable' }[];
-=======
-  results: Array<{
-    input: string; value: string | null; reason: 'found' | 'no_input' | 'no_match' | 'not_transformable';
-    /** The value after each step that ran; null where the recipe stopped. */
-    steps?: Array<{ step: 'join' | 'cut' | 'keep' | 'pattern' | 'transform'; value: string | null }>;
-  }>;
-}
-
-/** Sheet rows read as a run reads them: per row, the values and how each field was read. */
-export interface RuntimeShapedSheetRows {
-  /** With `expand`: one row per item, saying which item of its row it is. */
-  rows: Array<{ rowNumber?: number; values: Record<string, unknown>; fields: NonNullable<ResolvedEntity['provenance']['fields']>; item?: number; itemText?: string }>;
-  warnings: string[];
-  itemsTruncated?: boolean;
-}
-
-export interface RuntimeSheetPreviewRequest {
-  modelId: string;
-  /** `unit`: what a row is (a sheet's row, or another concept's record for a derived source). */
-  entry: { conceptId: string; conceptLabel?: string; source: Record<string, unknown>; fieldMappings: unknown[]; options?: Record<string, unknown>; unit?: 'row' | 'record' };
-  rows: Array<{ rowNumber: number; values: Record<string, unknown> }>;
-  aiExtraction?: { agentSlug: string; model: string | null; contractVersion: string } | null;
-  /** A derived source expanding a field, or a sheet expanding a column: each row is read once per item. */
-  expand?: Record<string, unknown>;
-}
-
-/** How each field of a few sheet rows was read: as is, out of its cell (rules, AI) or by its recipe, or why not. */
-export interface RuntimeSheetPreview {
-  rows: Array<{
-    rowNumber: number;
-    fields: Record<string, Record<string, unknown> & { method: string; reason: string; column?: string; span?: { start: number; end: number } }>;
-    /** With `expand`: which item of the row this reading is, and the item as text. */
-    item?: number;
-    itemText?: string;
-  }>;
-  ai: { aiRows: number; aiCalls: number; aiSkippedRows: number; aiFailedRows: number };
-  /** With `expand`: the `@item…` fields the items offer, and whether some items were not read. */
-  itemFields?: string[];
-  itemsTruncated?: boolean;
->>>>>>> semantic-ux/phase-1
+  results: Array<{ input: string; value: string | null; reason: 'found' | 'no_input' | 'no_match' | 'not_transformable' }>;
 }
 
 // ── Graph search (records of a bound data revision, found by meaning, then followed along real links) ──
@@ -577,7 +540,7 @@ export class SemanticRuntimeClientService {
   constructor(
     @Inject(semanticModelConfig.KEY)
     private readonly config: ConfigType<typeof semanticModelConfig>,
-  ) {}
+  ) { }
 
   private requireRuntime(): string {
     if (!this.config.runtimeEnabled || !this.config.runtimeUrl || !this.config.runtimeServiceKey) {

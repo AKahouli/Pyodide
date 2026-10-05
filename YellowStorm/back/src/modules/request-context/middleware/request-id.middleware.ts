@@ -1,6 +1,6 @@
 import { Injectable, NestMiddleware } from '@nestjs/common';
 import { Request, Response, NextFunction } from 'express';
-import { randomUUID } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 import { RequestContextService } from '../request-context.service';
 import { RequestContext } from '../interfaces/request-context.interface';
 
@@ -12,6 +12,8 @@ declare global {
   }
 }
 
+const TRACEPATTERN = /^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/i;
+
 @Injectable()
 export class RequestIdMiddleware implements NestMiddleware {
   constructor(private readonly requestContextService: RequestContextService) {}
@@ -19,10 +21,12 @@ export class RequestIdMiddleware implements NestMiddleware {
   use(req: Request, res: Response, next: NextFunction): void {
     const requestId = this.extractRequestId(req);
     const correlationId = this.extractCorrelationId(req);
+    const traceId = this.extractTraceId(req);
 
     const context: RequestContext = {
       requestId,
       correlationId,
+      traceId,
       startTime: Date.now(),
       path: req.path,
       method: req.method,
@@ -63,5 +67,15 @@ export class RequestIdMiddleware implements NestMiddleware {
     }
 
     return undefined;
+  }
+
+  /** Root trace: reuse the inbound W3C traceparent's trace id, else start a fresh trace (plan P05). */
+  private extractTraceId(req: Request): string {
+    const traceparent = req.headers['traceparent'];
+    const value = Array.isArray(traceparent) ? traceparent[0] : traceparent;
+    if (value && TRACEPATTERN.test(value)) {
+      return value.slice(3, 35).toLowerCase();
+    }
+    return randomBytes(16).toString('hex');
   }
 }

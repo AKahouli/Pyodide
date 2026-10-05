@@ -66,7 +66,7 @@ export class LoggerService implements NestLoggerService {
     if (requestContextService && !sharedContextReader) {
       sharedContextReader = () => {
         const ctx = requestContextService.getContext();
-        return ctx ? { request_id: ctx.requestId, user_id: ctx.userId } : undefined;
+        return ctx ? { request_id: ctx.requestId, user_id: ctx.userId, trace_id: ctx.traceId } : undefined;
       };
     }
   }

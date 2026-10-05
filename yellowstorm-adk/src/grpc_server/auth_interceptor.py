@@ -12,9 +12,13 @@ development only); callers should not add the interceptor in that case.
 from __future__ import annotations
 
 import hmac
+import re
 
 import grpc
 from structlog import get_logger
+from structlog.contextvars import bind_contextvars
+
+from src.middleware.correlation import correlation_id_ctx, trace_id_from_header
 
 logger = get_logger(__name__)
 
@@ -25,6 +29,12 @@ class ApiKeyAuthInterceptor(grpc.aio.ServerInterceptor):
     """Reject calls whose ``x-api-key`` metadata does not match the shared key.
 
     The comparison is constant-time to avoid leaking the key via timing.
+
+    Authorized calls also get their correlation context bound (request id from
+    ``correlation-id``/``x-request-id``, W3C trace id from ``traceparent``) so
+    every log line inside the handler carries it (plan P05). Acting-user
+    identity stays with the servicers, which read it from the request payload
+    after this auth gate.
     """
 
     def __init__(self, api_key: str, header: str = API_KEY_HEADER) -> None:
@@ -51,6 +61,16 @@ class ApiKeyAuthInterceptor(grpc.aio.ServerInterceptor):
 
     async def intercept_service(self, continuation, handler_call_details):
         if self._is_authorized(handler_call_details):
+            # Metadata keys are lowercase per the gRPC wire format.
+            metadata = dict(handler_call_details.invocation_metadata or ())
+            corr_id = metadata.get("correlation-id") or metadata.get("x-request-id")
+            # contextvars set here reach the handler: grpc.aio runs the
+            # interceptor chain and the handler in the same task (verified).
+            correlation_id_ctx.set(corr_id)
+            bind_contextvars(
+                request_id=corr_id or "",
+                trace_id=trace_id_from_header(metadata.get("traceparent")),
+            )
             return await continuation(handler_call_details)
 
         logger.warning(

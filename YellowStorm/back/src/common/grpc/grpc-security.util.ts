@@ -93,6 +93,25 @@ export function getGrpcApiKey(
 }
 
 /**
+ * Per-call correlation headers attached to every outgoing gRPC call. Produced by
+ * RequestContextService (W3C traceparent + request/correlation ids) and injected
+ * here via `setGrpcCorrelationProvider` so each of the many call sites propagates
+ * context without per-site plumbing (plan P05).
+ */
+export interface GrpcCorrelation {
+  traceparent?: string;
+  requestId?: string;
+  correlationId?: string;
+}
+
+let grpcCorrelationProvider: () => GrpcCorrelation | undefined = () => undefined;
+
+/** Called once by RequestContextService to make ALS context flow into gRPC metadata. */
+export function setGrpcCorrelationProvider(provider: () => GrpcCorrelation | undefined): void {
+  grpcCorrelationProvider = provider;
+}
+
+/**
  * Attach the `x-api-key` header required by the server interceptor. No-op until
  * the key is configured, so it's safe to call before the server enforces auth.
  */
@@ -109,7 +128,9 @@ export function attachGrpcApiKey(
 }
 
 /**
- * Create a fresh Metadata pre-loaded with the API key for `namespace`.
+ * Create a fresh Metadata pre-loaded with the API key for `namespace` and the
+ * current request's correlation headers (traceparent / x-request-id /
+ * correlation-id) when the ALS provider is registered.
  *
  * IMPORTANT: pass the returned Metadata to a gRPC call as the *positional*
  * metadata argument — `client.Method(request, createGrpcMetadata(cfg), ...)`.
@@ -120,5 +141,12 @@ export function createGrpcMetadata(
   config: ConfigService,
   namespace: string = DEFAULT_GRPC_SECURITY_NAMESPACE,
 ): grpc.Metadata {
-  return attachGrpcApiKey(config, new grpc.Metadata(), namespace);
+  const metadata = attachGrpcApiKey(config, new grpc.Metadata(), namespace);
+  const correlation = grpcCorrelationProvider();
+  if (correlation) {
+    if (correlation.traceparent) metadata.set('traceparent', correlation.traceparent);
+    if (correlation.requestId) metadata.set('x-request-id', correlation.requestId);
+    if (correlation.correlationId) metadata.set('correlation-id', correlation.correlationId);
+  }
+  return metadata;
 }
