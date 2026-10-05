@@ -60,6 +60,26 @@ describeIntegration('Published governed Root SQL authority', () => {
     return { actorId, rootId, workerId, workspaceId, scope, deployment, binding, draft, runtime, conversation, resolver };
   }
 
+  it('publishes a first revision once and retains draft and repeat guards', async () => {
+    const h = await fixture();
+    const scope = await scopes.insert({ programId, name: 'First publication' });
+    const deployment = await deployments.insert({ programId, scopeId: scope.id, name: 'First publication' });
+    const first = await revisions.insert({ deploymentId: deployment.id, revisionNumber: 1, agentId: h.rootId, createdBy: h.actorId });
+    await deployments.update(deployment.id, { currentDraftRevisionId: first.id });
+    expect(await deployments.publishGuarded(deployment.id, id(), first.id)).toBeNull();
+    const attempts = await Promise.all([
+      deployments.publishGuarded(deployment.id, first.id, first.id),
+      deployments.publishGuarded(deployment.id, first.id, first.id),
+    ]);
+    expect(attempts.filter(Boolean)).toHaveLength(1);
+    expect((await deployments.findById(deployment.id))?.currentPublishedRevisionId).toBe(first.id);
+    expect(await deployments.publishGuarded(deployment.id, first.id, first.id)).toBeNull();
+    const next = await revisions.insert({ deploymentId: deployment.id, revisionNumber: 2, agentId: h.rootId, createdBy: h.actorId });
+    await deployments.update(deployment.id, { currentDraftRevisionId: next.id });
+    expect(await deployments.publishGuarded(deployment.id, first.id, next.id)).toBeNull();
+    expect((await deployments.publishGuarded(deployment.id, next.id, next.id))?.currentPublishedRevisionId).toBe(next.id);
+  });
+
   it('pins an old signed revision across newer publication and enforces live binding/audience revocation', async () => {
     const h = await fixture();
     const newer = await revisions.insert({ deploymentId: h.deployment.id, revisionNumber: 2, agentId: h.rootId,
