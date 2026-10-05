@@ -9,12 +9,10 @@ A production-grade, global logging module with PostgreSQL persistence, buffered 
 - **Log Levels** - ERROR, WARN, INFO, DEBUG, VERBOSE
 - **Sensitive Data Redaction** - Automatically redacts passwords, tokens, secrets
 - **Context Support** - Track which service/class is logging
-- **PostgreSQL Persistence** - Logs are saved to `ops.logs` (migration 0036) and swept after `LOGGING_RETENTION_DAYS`
+- **Historic ops.logs Reads** - the admin logs screen queries the historic table (P11 retired the SQL write path; live logs stream to Grafana via the unified-logging SDK)
 - **Request Tracking** - Track all logs for a specific HTTP request via `requestId`
-- **Display/Save Control** - Skip console output or database persistence per log
-- **Display-Only Contexts** - Startup/runtime logs are display-only by default (not saved to DB)
-- **Query API** - Search and filter logs from both buffer and database
-- **Graceful Shutdown** - Flushes pending logs before application exit
+- **Query API** - Search and filter the historic `ops.logs` table
+- **Graceful Shutdown** - the SDK's bounded drain flushes stderr events on shutdown
 - **TTL Auto-Cleanup** - Old logs automatically deleted after configured days
 
 ## Configuration
@@ -30,7 +28,13 @@ A production-grade, global logging module with PostgreSQL persistence, buffered 
 | `LOGGING_RETENTION_DAYS` | `30` | Days the persisted logs are kept (swept hourly from `ops.logs`) |
 | `LOGGING_DISPLAY_ONLY_CONTEXTS` | retired (P11) | no longer read |
 
-### Display-Only Contexts
+### Retired knobs (P11)
+
+The SQL write path, in-memory buffer, and display-only context filtering were removed at the
+unified-logging cutover. The `LOGGING_*` env vars for them still validate (so old `.env`
+files boot) but are not read. Live logs stream to Grafana; see `docs/observability/`.
+
+## Display-Only Contexts
 
 By default, the following contexts are **display-only** (shown in console but not saved to database). These are typically startup/bootstrap logs that don't need persistence:
 
