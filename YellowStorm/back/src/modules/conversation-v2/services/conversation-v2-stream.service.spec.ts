@@ -37,6 +37,7 @@ describe('ConversationV2StreamService', () => {
     getConversationV2DefaultModel: jest.Mock;
     getModelIdentifier: jest.Mock;
     getDefaultModel: jest.Mock;
+    findByIdOrLitellmModel: jest.Mock;
   };
   let sessions: {
     getOne: jest.Mock;

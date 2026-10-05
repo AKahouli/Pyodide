@@ -166,7 +166,6 @@ describe('ConversationV2GrpcClientService', () => {
         app_ai_model: 'catalog-model-id',
       }),
       expect.anything(),
-      expect.anything(),
     );
     sub.unsubscribe();
   });
