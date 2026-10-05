@@ -15,44 +15,68 @@ function ctx(headers: Record<string, string | undefined>): ExecutionContext {
 describe('InternalServiceGuard', () => {
   const expected = 'internal-secret-token-abcdef';
 
-  const makeGuard = (secret: string) => {
+  const makeGuard = (env: Record<string, string>) => {
     const config = {
-      get: jest.fn((key: string, fallback = '') =>
-        key === 'INTERNAL_SERVICE_SECRET' ? secret : fallback,
-      ),
+      get: jest.fn((key: string, fallback = '') => env[key] ?? fallback),
     } as unknown as ConfigService;
     return new InternalServiceGuard(config);
   };
 
-  it('passes when X-Internal-Token matches the configured secret', () => {
-    const guard = makeGuard(expected);
+  it('passes when X-Internal-Token matches INTERNAL_SERVICE_SECRET', () => {
+    const guard = makeGuard({ INTERNAL_SERVICE_SECRET: expected });
     expect(guard.canActivate(ctx({ 'x-internal-token': expected }))).toBe(true);
   });
 
+  it('prefers APP_RUNTIME_BIND_TOKEN over INTERNAL_SERVICE_SECRET', () => {
+    const bindToken = 'app-runtime-bind-token-value!!';
+    const guard = makeGuard({
+      APP_RUNTIME_BIND_TOKEN: bindToken,
+      INTERNAL_SERVICE_SECRET: expected,
+    });
+    expect(guard.canActivate(ctx({ 'x-internal-token': bindToken }))).toBe(true);
+    expect(() =>
+      guard.canActivate(ctx({ 'x-internal-token': expected })),
+    ).toThrow(UnauthorizedException);
+  });
+
+  it('accepts APP_RUNTIME_BIND_TOKEN alone (APImanus shared name)', () => {
+    const bindToken = 'shared-with-apimanus-token!!';
+    const guard = makeGuard({ APP_RUNTIME_BIND_TOKEN: bindToken });
+    expect(guard.canActivate(ctx({ 'x-internal-token': bindToken }))).toBe(true);
+  });
+
   it('rejects with UnauthorizedException when the token header is missing', () => {
-    const guard = makeGuard(expected);
+    const guard = makeGuard({ INTERNAL_SERVICE_SECRET: expected });
     expect(() => guard.canActivate(ctx({}))).toThrow(UnauthorizedException);
     expect(() => guard.canActivate(ctx({}))).toThrow(/Missing internal service token/);
   });
 
   it('rejects when the token header is empty', () => {
-    const guard = makeGuard(expected);
+    const guard = makeGuard({ INTERNAL_SERVICE_SECRET: expected });
     expect(() => guard.canActivate(ctx({ 'x-internal-token': '' }))).toThrow(
       UnauthorizedException,
     );
   });
 
   it('rejects when the token does not match', () => {
-    const guard = makeGuard(expected);
+    const guard = makeGuard({ INTERNAL_SERVICE_SECRET: expected });
     expect(() =>
       guard.canActivate(ctx({ 'x-internal-token': 'wrong-token-value!!!!!' })),
     ).toThrow(UnauthorizedException);
   });
 
-  it('fail-closes when INTERNAL_SERVICE_SECRET is not configured', () => {
-    const guard = makeGuard('');
+  it('fail-closes when neither secret is configured', () => {
+    const guard = makeGuard({});
     expect(() =>
       guard.canActivate(ctx({ 'x-internal-token': 'whatever' })),
     ).toThrow(UnauthorizedException);
+  });
+
+  it('treats blank APP_RUNTIME_BIND_TOKEN as unset and falls back', () => {
+    const guard = makeGuard({
+      APP_RUNTIME_BIND_TOKEN: '   ',
+      INTERNAL_SERVICE_SECRET: expected,
+    });
+    expect(guard.canActivate(ctx({ 'x-internal-token': expected }))).toBe(true);
   });
 });

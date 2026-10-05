@@ -10,15 +10,19 @@ import { timingSafeEqual } from 'crypto';
 
 /**
  * Guard for internal service-to-service authentication.
- * Validates the X-Internal-Token header against INTERNAL_SERVICE_SECRET.
- * Used for brain (gRPC service) -> NestJS calls where no user JWT is available.
+ * Validates the `X-Internal-Token` header against the configured secret.
+ *
+ * Secret resolution (first non-empty wins):
+ * 1. `APP_RUNTIME_BIND_TOKEN` — shared name with APImanus OpenCode bind
+ * 2. `INTERNAL_SERVICE_SECRET` — legacy / other internal callers
  */
 @Injectable()
 export class InternalServiceGuard implements CanActivate {
   private readonly secret: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.secret = this.configService.get<string>('INTERNAL_SERVICE_SECRET', '');
+    this.secret =
+      this.configService.get<string>('APP_RUNTIME_BIND_TOKEN', '')?.trim();
   }
 
   canActivate(context: ExecutionContext): boolean {
