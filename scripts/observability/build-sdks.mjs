@@ -42,6 +42,18 @@ for (const consumer of consumers) {
   mkdirSync(dest, { recursive: true });
   copyFileSync(path.join(staging, tarball), path.join(dest, tarball));
   writeFileSync(path.join(dest, 'manifest.json'), JSON.stringify(manifest, null, 2));
+  // The consumer's package-lock pins the tarball's integrity hash; npm verifies it on
+  // every install/ci and never rehashes a file: dep whose version is unchanged. Keep
+  // the recorded hash true so `npm ci` stays exact and never EINTEGRITYs.
+  const lockPath = path.join(consumer, 'package-lock.json');
+  const tgzHash = `sha512-${createHash('sha512').update(readFileSync(path.join(dest, tarball))).digest('base64')}`;
+  const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
+  const lockEntry = lock.packages?.['node_modules/@yellowmind/observability'];
+  if (lockEntry && lockEntry.integrity !== tgzHash) {
+    lockEntry.integrity = tgzHash;
+    writeFileSync(lockPath, JSON.stringify(lock, null, 2) + '\n');
+    console.log(`[observability] refreshed integrity in ${path.relative(repoRoot, lockPath)}`);
+  }
   console.log(`[observability] staged ${tarball} -> ${path.relative(repoRoot, dest)}`);
 }
 

@@ -4,6 +4,8 @@ WORKDIR /app
 
 COPY .generated/observability/ .generated/observability/
 COPY package.json package-lock.json ./
+# The staging step (scripts/observability/build-sdks.mjs) keeps the lock's
+# integrity hash in sync with the staged SDK tarball, so npm ci stays exact.
 RUN npm ci
 COPY src ./src
 COPY nest-cli.json tsconfig.json tsconfig.build.json ./
