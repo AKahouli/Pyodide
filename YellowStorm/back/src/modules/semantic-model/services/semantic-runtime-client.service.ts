@@ -10,6 +10,31 @@ import {
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import type { ResolvedEntity } from '../domain/semantic-source-mapping.types';
 
+export interface RuntimeShapedSheetRows {
+  rows: Array<{ rowNumber?: number; values: Record<string, unknown>;
+    fields: NonNullable<ResolvedEntity['provenance']['fields']>; item?: number; itemText?: string }>;
+  warnings: string[];
+  itemsTruncated?: boolean;
+}
+
+export interface RuntimeSheetPreviewRequest {
+  modelId: string;
+  entry: { conceptId: string; conceptLabel?: string; source: Record<string, unknown>; fieldMappings: unknown[];
+    options?: Record<string, unknown>; unit?: 'row' | 'record' };
+  rows: Array<{ rowNumber: number; values: Record<string, unknown> }>;
+  aiExtraction?: { agentSlug: string; model: string | null; contractVersion: string } | null;
+  expand?: Record<string, unknown>;
+}
+
+export interface RuntimeSheetPreview {
+  rows: Array<{ rowNumber: number; fields: Record<string, Record<string, unknown> & {
+    method: string; reason: string; column?: string; span?: { start: number; end: number } }>;
+    item?: number; itemText?: string }>;
+  ai: { aiRows: number; aiCalls: number; aiSkippedRows: number; aiFailedRows: number };
+  itemFields?: string[];
+  itemsTruncated?: boolean;
+}
+
 // Thin NestJS client for the merged semantic-model-runtime (P2.11). Single
 // shot per call with the configured deadline; no retries without the caller's
 // original idempotency key. Runtime command validation stays server-side.

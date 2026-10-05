@@ -98,6 +98,10 @@ export interface PlaybookPlannerAgentOption {
   model: string | null;
 }
 
+const PLATFORM_COPILOT_LEGACY_PLAYBOOK_ACTIONS = new Set([
+  'assess_playbook_request', 'continue_playbook_clarification', 'start_playbook_construction',
+]);
+
 @Injectable()
 export class AgentService {
   private fallbackConnectorRuntimeService?: AgentConnectorRuntimeService;
