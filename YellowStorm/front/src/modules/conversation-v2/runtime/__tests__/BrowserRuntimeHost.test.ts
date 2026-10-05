@@ -160,7 +160,7 @@ vi.mock('../RuntimeToolHandlers', () => ({
 vi.mock('../../store', () => ({
   useConversationV2Store: {
     getState: () => conversationV2StoreState,
-    subscribe: (listener: (state: typeof conversationV2StoreState) => void) => {
+    subscribe: (listener: (state: unknown) => void) => {
       conversationV2StoreListeners.add(listener);
       return () => conversationV2StoreListeners.delete(listener);
     },
