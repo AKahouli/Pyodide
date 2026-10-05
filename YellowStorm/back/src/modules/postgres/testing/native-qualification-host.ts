@@ -5,7 +5,7 @@ import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
 
 /** Opt-in, real native transport; credentials exist only in the child environment. */
-export async function startNativeQualificationHost(apiUrl: string, internalToken: string) {
+export async function startNativeQualificationHost(apiUrl: string, internalToken: string, enabled = true, waitFixture = false) {
   if (process.env.POSTGRES_TEST_DB !== 'agentstore_test'
     || process.env.POSTGRES_TEST_DB === process.env.POSTGRES_DB) throw new Error('Isolated test database required');
   const database = new URL('postgresql://localhost/agentstore_test');
@@ -18,9 +18,9 @@ export async function startNativeQualificationHost(apiUrl: string, internalToken
   const child = spawn('conda', ['run', '--no-capture-output', '-n', 'meta', 'python',
     'tests/wp10/native_qualification_host.py'], { cwd: runtime, windowsHide: true,
     env: { ...process.env, PYTHONPATH: runtime, PYTHONUTF8: '1',
-      ROOT_WORK_DATABASE_URL: database.toString(), ROOT_WORK_BACKGROUND_ENABLED: 'true',
-      ROOT_WORK_LLM_CAPACITY_ENABLED: 'true', INTERNAL_SERVICE_SECRET: internalToken,
-      GRPC_API_KEY: key, PLATFORM_API_URL: apiUrl } });
+      ROOT_WORK_DATABASE_URL: database.toString(), ROOT_WORK_BACKGROUND_ENABLED: String(enabled),
+      ROOT_WORK_LLM_CAPACITY_ENABLED: String(enabled), INTERNAL_SERVICE_SECRET: internalToken,
+      GRPC_API_KEY: key, PLATFORM_API_URL: apiUrl, VECTOR_NATIVE_WAIT_FIXTURE: String(waitFixture) } });
   // Do not expose native log output: settings/provider diagnostics may contain credentials.
   child.stderr.on('data', () => {});
   const diagnostics: unknown[] = [];

@@ -21,6 +21,35 @@ async def main():
     from src.root_runtime.background_host import BackgroundInvocationHost
     from src.smart_rag.core.agent_team_service import AgentTeamService
 
+    # Protocol fixture only: one owned Workflow item pauses; other items use the real factory/provider.
+    if os.environ.get('VECTOR_NATIVE_WAIT_FIXTURE') == 'true':
+        from google.adk.workflow import FunctionNode
+        from google.adk.agents.context import Context
+        from google.adk.events.request_input import RequestInput
+        from src.root_runtime import dispatcher
+        original_compile = dispatcher._compile_candidate
+        parked_scope = None
+
+        async def parking(ctx: Context):
+            if 'qualification_pause' not in ctx.resume_inputs:
+                return RequestInput(interrupt_id='qualification_pause', message='Qualification input',
+                    response_schema={'type': 'object', 'properties': {'allow': {'type': 'boolean'}},
+                        'required': ['allow'], 'additionalProperties': False})
+            if ctx.resume_inputs['qualification_pause'].get('allow') is not False:
+                raise ValueError('Qualification requires typed false')
+            return 'VECTORNATIVENEST typed_false'
+
+        async def compile_with_pause(team, request, candidate, scope, authorize=None):
+            nonlocal parked_scope
+            if parked_scope is None:
+                parked_scope = scope.execution_id
+            if scope.execution_id == parked_scope:
+                return FunctionNode(func=parking, name='qualification_pause', rerun_on_resume=True)
+            print('VECTOR_NATIVE_DIAGNOSTIC ' + json.dumps({'kind': 'fixture_compile',
+                'executionId': scope.execution_id}), flush=True)
+            return await original_compile(team, request, candidate, scope, authorize=authorize)
+        dispatcher._compile_candidate = compile_with_pause
+
     original_start = BackgroundInvocationHost.start
     async def diagnosed_start(host, request):
         try:
