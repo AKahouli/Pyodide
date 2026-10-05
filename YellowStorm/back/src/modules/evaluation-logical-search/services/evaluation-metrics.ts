@@ -812,17 +812,56 @@ function baseName(source: string): string {
  * `locate_answer_citations` tool call captured in the trace. Falls back to
  * `citation_sources`, then to the tool call arguments.
  */
+/**
+ * Tool names are truncated/hashed when `{connector_slug}_{action_key}` exceeds
+ * 64 chars (e.g. `...-no-document-strategy_lo_<hash>`), so detect the citation
+ * call by its payload rather than by name.
+ */
+function isCitationCall(call: ToolCall): boolean {
+  if (String(call['tool_name'] || call['name'] || '').includes('locate')) return true;
+  const output = parseJsonMaybe(call['output_summary'] ?? call['output'] ?? call['result']);
+  if (output && (Array.isArray(output['citations']) || Array.isArray(output['citation_sources']))) return true;
+  const args = parseJsonMaybe(call['args'] ?? call['input']);
+  return Boolean(args && Array.isArray(args['citations']));
+}
+
+function toolCallDurationMs(call: ToolCall): number | null {
+  const raw = call['duration_ms'] ?? call['execution_time'];
+  const value = typeof raw === 'number' ? raw : Number(raw);
+  return Number.isFinite(value) ? Math.round(value) : null;
+}
+
+/** The answer-producing tool call: citation call, else last search/read call. */
+function findAnswerToolCall(toolCalls: ToolCall[]): ToolCall | null {
+  const reversed = [...toolCalls].reverse();
+  return reversed.find(isCitationCall) ?? reversed.find((call) => {
+    const name = String(call['tool_name'] || call['name'] || '').toLowerCase();
+    return name.includes('search') || name.includes('read') || name.includes('retriev');
+  }) ?? null;
+}
+
+/**
+ * Sum of tool call durations for a query, excluding the answer-producing tool
+ * (reported separately by {@link answerToolDurationMs}).
+ */
+export function toolCallsDurationMs(toolCalls: ToolCall[]): number {
+  const answerCall = findAnswerToolCall(toolCalls);
+  let total = 0;
+  for (const call of toolCalls) {
+    if (call === answerCall) continue;
+    const value = toolCallDurationMs(call);
+    if (value !== null && value > 0) total += value;
+  }
+  return total;
+}
+
+/** Duration of the answer-producing tool (citation call, else last search/read). */
+export function answerToolDurationMs(toolCalls: ToolCall[]): number | null {
+  const answerCall = findAnswerToolCall(toolCalls);
+  return answerCall ? toolCallDurationMs(answerCall) : null;
+}
+
 export function buildCitations(toolCalls: ToolCall[]): EvaluationCitation[] {
-  // Tool names are truncated/hashed when `{connector_slug}_{action_key}` exceeds
-  // 64 chars (e.g. `...-no-document-strategy_lo_<hash>`), so detect the citation
-  // call by its payload rather than by name.
-  const isCitationCall = (call: ToolCall): boolean => {
-    if (String(call['tool_name'] || call['name'] || '').includes('locate')) return true;
-    const output = parseJsonMaybe(call['output_summary'] ?? call['output'] ?? call['result']);
-    if (output && (Array.isArray(output['citations']) || Array.isArray(output['citation_sources']))) return true;
-    const args = parseJsonMaybe(call['args'] ?? call['input']);
-    return Boolean(args && Array.isArray(args['citations']));
-  };
   const locate = [...toolCalls].reverse().find(isCitationCall);
   if (!locate) return [];
 

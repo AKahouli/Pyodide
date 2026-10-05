@@ -10,6 +10,8 @@ import {
   normalizeFilename,
   extractFilePagePairs,
   selectBenchmarkQueries,
+  toolCallsDurationMs,
+  answerToolDurationMs,
 } from './evaluation-metrics';
 
 describe('selectBenchmarkQueries', () => {
@@ -210,6 +212,51 @@ describe('buildCitations', () => {
     expect(buildCitations([call(output, hashedName)])).toEqual([
       { reference: 5, fileName: 'doc.pdf', page: 3, snippet: 'Extrait', source: 's3://vectorstore/ws/p/doc.pdf' },
     ]);
+  });
+});
+
+describe('tool call durations', () => {
+  const call = (toolName: string, durationMs?: number) => ({
+    node_id: 'eval-target',
+    iteration: 0,
+    tool_name: toolName,
+    duration_ms: durationMs,
+  }) as unknown as Parameters<typeof toolCallsDurationMs>[0][number];
+
+  it('sums every tool call duration, ignoring missing values', () => {
+    expect(toolCallsDurationMs([call('a', 10), call('b', 5), call('c')])).toBe(15);
+  });
+
+  it('excludes the answer tool from the tool calls total', () => {
+    const calls = [
+      call('smart-navigation-search_search', 5000),
+      call('smart-navigation-search_locate_answer_citations', 12000),
+    ];
+    expect(toolCallsDurationMs(calls)).toBe(5000);
+    expect(answerToolDurationMs(calls)).toBe(12000);
+  });
+
+  it('excludes the fallback search tool from the tool calls total', () => {
+    const calls = [call('x_read_document', 700), call('y_search', 1800)];
+    expect(toolCallsDurationMs(calls)).toBe(700);
+    expect(answerToolDurationMs(calls)).toBe(1800);
+  });
+
+  it('targets the citation tool for the answer duration', () => {
+    const calls = [
+      call('smart-navigation-search_search', 5000),
+      call('smart-navigation-search_locate_answer_citations', 12000),
+    ];
+    expect(answerToolDurationMs(calls)).toBe(12000);
+  });
+
+  it('falls back to the last search/read tool without a citation call', () => {
+    const calls = [call('x_read_document', 700), call('y_search', 1800)];
+    expect(answerToolDurationMs(calls)).toBe(1800);
+  });
+
+  it('returns null when no answer tool is present', () => {
+    expect(answerToolDurationMs([call('activate_skill', 2)])).toBeNull();
   });
 });
 

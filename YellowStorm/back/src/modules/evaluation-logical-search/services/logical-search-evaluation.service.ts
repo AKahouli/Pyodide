@@ -19,6 +19,8 @@ import {
   EvaluationRunSummary,
   EvaluationProgress,
   selectBenchmarkQueries,
+  toolCallsDurationMs,
+  answerToolDurationMs,
 } from './evaluation-metrics';
 import {
   buildExecutionLogsExport,
@@ -868,6 +870,13 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
     }
     const summary = await readJson<EvaluationRunSummary>(join(runDir, 'summary.json'));
 
+    const meanOf = (values: number[]): number =>
+      values.length > 0 ? Math.round(values.reduce((total, value) => total + value, 0) / values.length) : 0;
+    const toolDurationValues = results.map((r) => toolCallsDurationMs(r.tool_calls ?? []));
+    const answerDurationValues = results
+      .map((r) => answerToolDurationMs(r.tool_calls ?? []))
+      .filter((value): value is number => value !== null && value > 0);
+
     const summarySheetData = [
       { Metric: 'Total Queries', Value: summary.query_count },
       { Metric: 'Mean Semantic Similarity', Value: summary.mean_semantic_similarity },
@@ -876,6 +885,8 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       { Metric: 'Mean Answer Quality', Value: summary.mean_answer_quality },
       { Metric: 'Mean Retrieval Recall (File)', Value: summary.mean_file_recall },
       { Metric: 'Mean Retrieval Precision (File)', Value: summary.mean_file_precision },
+      { Metric: 'Mean Tool Calls Duration (ms)', Value: meanOf(toolDurationValues) },
+      { Metric: 'Mean Answer Tool Duration (ms)', Value: meanOf(answerDurationValues) },
     ];
 
     const toCellText = (value: unknown): string => {
@@ -891,7 +902,8 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
       'Retrieval Recall', 'Retrieval Precision',
       'Semantic Similarity', 'Fact Recall', 'Fact Precision', 'Answer Quality',
       'Judge Score', 'Judge Faithfulness', 'Judge Reasoning',
-      'Status', 'Duration (ms)', 'Target Duration (ms)', 'Judge Duration (ms)', 'Error',
+      'Status', 'Duration (ms)', 'Target Duration (ms)', 'Judge Duration (ms)',
+      'Tool Calls Duration (ms)', 'Answer Tool Duration (ms)', 'Error',
       'Execution Logs / Tool Calls', 'Token Usage',
       'Target Prompt Tokens', 'Target Completion Tokens', 'Target Total Tokens',
       'Judge Prompt Tokens', 'Judge Completion Tokens', 'Judge Total Tokens',
@@ -935,6 +947,8 @@ export class LogicalSearchEvaluationService implements OnModuleInit {
         'Duration (ms)': r.duration_ms,
         'Target Duration (ms)': r.target_duration_ms ?? '',
         'Judge Duration (ms)': r.judge_duration_ms ?? '',
+        'Tool Calls Duration (ms)': toolCallsDurationMs(r.tool_calls ?? []),
+        'Answer Tool Duration (ms)': answerToolDurationMs(r.tool_calls ?? []) ?? '',
         'Error': r.error ?? '',
         'Execution Logs / Tool Calls': toolCallsText,
         'Token Usage': tokenUsageText,
