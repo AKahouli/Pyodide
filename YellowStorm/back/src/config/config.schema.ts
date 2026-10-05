@@ -399,6 +399,10 @@ export const configValidationSchema = Joi.object({
   LOGGING_DEFAULT_DISPLAY: Joi.boolean().default(true),
   LOGGING_RETENTION_DAYS: Joi.number().min(1).max(3650).default(30),
   LOGGING_DISPLAY_ONLY_CONTEXTS: Joi.string().optional(),
+  // Unified-logging cutover: historic-only read API + allowlisted Grafana navigation link
+  LOGGING_HISTORIC_CUTOVER_AT: Joi.string().isoDate().optional(),
+  OBS_GRAFANA_BASE_URL: Joi.string().uri().optional(),
+  OBS_GRAFANA_DASHBOARD_UID: Joi.string().max(64).optional(),
 
   // Worky (Chief of Staff)
   WORKY_SSE_HEARTBEAT_MS: Joi.number().min(5000).max(60000).default(15000),

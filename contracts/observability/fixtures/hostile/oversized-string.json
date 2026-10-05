@@ -1,0 +1,7 @@
+{
+  "name": "oversized-string",
+  "description": "A ~1 MiB attribute string. Must be truncated to the attribute budget with a truncated_fields entry; final event stays under 8 KiB.",
+  "input": null,
+  "input_note": "Attribute value 'x'.repeat(1048576).",
+  "expect": { "does_not_throw": true, "max_event_bytes": 8192, "truncated_fields_contains": "detail" }
+}

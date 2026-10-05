@@ -1,0 +1,21 @@
+global:
+  scrape_interval: 30s
+
+scrape_configs:
+  - job_name: alloy
+    static_configs:
+      - targets: ["alloy:12345"]
+
+  - job_name: loki
+    static_configs:
+      - targets: ["loki:3100"]
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Business services exposing /metrics (e.g. yellowstorm-code-runtime). Populated per deployment;
+  # services without a metrics surface are covered by SDK counters surfaced in P05/P06.
+  - job_name: services
+    file_sd_configs:
+      - files: ["/etc/prometheus/targets/*.json"]

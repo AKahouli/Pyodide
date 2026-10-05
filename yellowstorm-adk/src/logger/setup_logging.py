@@ -1,4 +1,5 @@
 import logging
+import os
 import sys
 
 import structlog
@@ -47,7 +48,36 @@ def tracer_injection(_, __, event_dict: EventDict) -> EventDict:
     return event_dict
 
 
+def _silence_noise_loggers() -> None:
+    """Clear uvicorn handlers and quiet third-party noise (shared by both bootstrap paths)."""
+    for _log in ["uvicorn", "uvicorn.error"]:
+        logging.getLogger(_log).handlers.clear()
+        logging.getLogger(_log).propagate = True
+    logging.getLogger("uvicorn.access").handlers.clear()
+    logging.getLogger("uvicorn.access").propagate = False
+    logging.getLogger("elastic_transport").setLevel(logging.CRITICAL)
+    logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.CRITICAL)
+    logging.getLogger("litellm").setLevel(logging.CRITICAL)
+    logging.getLogger("LiteLLM").setLevel(logging.CRITICAL)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("adk").setLevel(logging.WARNING)
+    logging.getLogger("google_adk").setLevel(logging.WARNING)
+    logging.getLogger("google.adk.sessions").setLevel(logging.WARNING)
+    logging.getLogger("mem0").setLevel(logging.WARNING)
+    logging.getLogger("mem0.memory.main").setLevel(logging.WARNING)
+
+
 def setup_logging(json_logs: bool = False, log_level: str = "INFO", color_logs: bool = True):
+    # Unified-logging cutover (plan P06): when enabled, the shared SDK owns the bootstrap —
+    # structlog bridge + bounded stderr writer instead of the PostgreSQL sink.
+    if os.getenv("USE_YELLOWMIND_OBSERVABILITY", "true").strip().lower() not in ("0", "false", "no", "off"):
+        from yellowmind_observability import setup_observability
+
+        setup_observability(min_level=log_level)
+        _silence_noise_loggers()
+        return
+
     app_settings = get_settings()
     timestamper = structlog.processors.TimeStamper(fmt="iso")
     shared_processors: list[Processor] = [
@@ -133,31 +163,7 @@ def setup_logging(json_logs: bool = False, log_level: str = "INFO", color_logs: 
         except Exception as e:
             root_logger.error(f"Failed to initialize PostgreSQL logging handler: {e}")
 
-    for _log in ["uvicorn", "uvicorn.error"]:
-        # Clear the log handlers for uvicorn loggers, and enable propagation
-        # so the messages are caught by our root logger and formatted correctly
-        # by structlog
-        logging.getLogger(_log).handlers.clear()
-        logging.getLogger(_log).propagate = True
-
-    # Since we re-create the access logs ourselves, to add all information
-    # in the structured log (see the `logging_middleware` in main.py), we clear
-    # the handlers and prevent the logs to propagate to a logger higher up in the
-    # hierarchy (effectively rendering them silent).
-    logging.getLogger("uvicorn.access").handlers.clear()
-    logging.getLogger("uvicorn.access").propagate = False
-    logging.getLogger("elastic_transport").setLevel(logging.CRITICAL)
-    logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.CRITICAL)
-    logging.getLogger("litellm").setLevel(logging.CRITICAL)
-    logging.getLogger("LiteLLM").setLevel(logging.CRITICAL)
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("adk").setLevel(logging.WARNING)
-    logging.getLogger("google_adk").setLevel(logging.WARNING)
-    logging.getLogger("google.adk.sessions").setLevel(logging.WARNING)
-    logging.getLogger("mem0").setLevel(logging.WARNING)
-    logging.getLogger("mem0.memory.main").setLevel(logging.WARNING)
-
+    _silence_noise_loggers()
 
     def handle_exception(exc_type, exc_value, exc_traceback):
         """

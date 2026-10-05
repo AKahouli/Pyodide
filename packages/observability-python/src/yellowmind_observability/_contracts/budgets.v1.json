@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "$comment": "Engineering budgets (plan §4.4). Machine-readable; relaxing any value requires a reviewed change.",
+  "max_event_bytes": 8192,
+  "max_attributes": 32,
+  "max_attribute_string_bytes": 512,
+  "max_array_items": 16,
+  "max_error_message_bytes": 1024,
+  "max_error_stack_bytes": 3072,
+  "max_error_stack_frames": 20,
+  "max_error_cause_depth": 2,
+  "max_queue_events": 2048,
+  "max_queue_bytes": 4194304,
+  "error_reserve_bytes": 524288,
+  "shutdown_drain_ms": 1000,
+  "debug_scope_ttl_minutes": 15,
+  "truncation_order": [
+    "optional_arrays_and_details",
+    "long_strings",
+    "error_stack_tail",
+    "minimal_error_summary"
+  ],
+  "preserve_under_truncation": [
+    "timestamp", "service_name", "severity_text", "severity_number", "event_name",
+    "event_id", "trace_id", "span_id", "request_id", "user_id", "run_id"
+  ]
+}

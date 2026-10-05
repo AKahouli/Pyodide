@@ -101,13 +101,17 @@ export class LogBufferService implements OnModuleDestroy {
     this.hostname = osHostname();
     this.nodeEnv = this.configService.get<string>('app.nodeEnv', 'development');
 
-    // Start the flush timer
-    this.startFlushTimer();
+    // Start the periodic flush timer only when the SQL writer is active (P07 cutover:
+    // reads stay available after persistence is switched off, with no writer/timer).
+    if (this.persistenceEnabled) {
+      this.startFlushTimer();
+    }
   }
 
   /** Never inside a caller's transaction: a rolled-back request must not erase the logs that explain it. */
   private get db(): NodePgDatabase<typeof schema> | null {
-    if (!this.persistenceEnabled) return null;
+    // Historic reads are intentionally independent of persistenceEnabled (P07): the admin
+    // console keeps reading ops.logs through its retention window after the writer is off.
     if (!this.database) {
       try {
         this.database = this.moduleRef.get<NodePgDatabase<typeof schema>>(DRIZZLE_DB, { strict: false });
@@ -119,10 +123,12 @@ export class LogBufferService implements OnModuleDestroy {
   }
 
   /**
-   * Add a log entry to the buffer (non-blocking, returns immediately)
+   * Add a log entry to the buffer (non-blocking, returns immediately).
+   * Operational SQL writes are retired at the unified-logging cutover; the facade no
+   * longer calls this, and with persistence off nothing is buffered or written.
    */
   add(log: Omit<BufferedLog, 'hostname' | 'nodeEnv'>): void {
-    if (this.isShuttingDown) {
+    if (this.isShuttingDown || !this.persistenceEnabled) {
       return;
     }
 

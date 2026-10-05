@@ -13,9 +13,12 @@ from auth import TrustedIdentityMiddleware, require_acting_user_id, require_acto
 from clients.yellowstorm_agent_client import AgentBackendError, YellowStormAgentClient
 from config import Settings
 from contracts import AgentMcpResultV1, failure_result, success_result
+from yellowmind_observability import setup_observability
 
 
 settings = Settings.from_env()
+# Unified logging: stderr JSON lines only (MCP protocol owns stdout).
+setup_observability(service_name=os.environ.get("OBS_SERVICE_NAME") or "mcp-agent")
 mcp = FastMCP("Agent MCP")
 _client: YellowStormAgentClient | None = None
 

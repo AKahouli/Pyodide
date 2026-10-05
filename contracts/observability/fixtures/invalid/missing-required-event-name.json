@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "timestamp": "2026-10-05T20:42:17.381Z",
+  "event_id": "inv-01",
+  "message": "missing event_name",
+  "severity_text": "INFO",
+  "severity_number": 9,
+  "service_name": "yellowstorm-back",
+  "service_version": "dev",
+  "environment": "local",
+  "event_origin": "application",
+  "attributes": {}
+}

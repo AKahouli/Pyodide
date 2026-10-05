@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "$comment": "Redaction policy. Event-level allowlists first; bounded redaction is defense in depth. Applied before any output.",
+  "sensitive_key_rules": {
+    "substring": [
+      "password", "passwd", "secret", "apikey", "api_key", "access_key", "accesskey",
+      "credential", "cookie", "set-cookie", "bearer", "dsn", "private_key",
+      "client_secret", "authorization"
+    ],
+    "exact": ["token", "auth", "sessionid", "session_id", "session"],
+    "suffix": ["token"],
+    "$comment": "usage_input_tokens is NOT sensitive ('tokens' != suffix 'token'); access_token/refresh_token are (suffix match)."
+  },
+  "redacted_marker": "[REDACTED]",
+  "url_rules": {
+    "strip_query": true,
+    "strip_userinfo": true
+  },
+  "exception_message_rules": [
+    "strip_connection_strings_and_dsns",
+    "strip_bearer_and_key_query_params"
+  ],
+  "stack_rules": {
+    "allowed": ["filename", "function", "line"],
+    "forbidden": ["local_variables", "source_line_dump"]
+  },
+  "never_log": [
+    "credentials", "authentication_session_tokens", "full_prompts", "full_responses",
+    "full_documents", "raw_request_objects", "raw_sql_parameters", "arbitrary_object_graphs"
+  ]
+}

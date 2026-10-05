@@ -1,6 +1,13 @@
 import { Injectable, LoggerService as NestLoggerService, Optional, Scope } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { LogBufferService } from './log-buffer.service';
+import {
+  boundedDetail,
+  createLogger,
+  type ContextReader,
+  type LogAttrs,
+  type ObservabilityLogger,
+  type SeverityText,
+} from '@yellowmind/observability';
 import { LogOptions } from './interfaces/log-options.interface';
 import { RequestContextService } from '../request-context';
 
@@ -12,43 +19,69 @@ export enum LogLevel {
   VERBOSE = 4,
 }
 
-interface LogEntry {
-  timestamp: string;
-  level: string;
-  context?: string;
-  message: string;
-  data?: Record<string, unknown>;
-  traceId?: string;
-  requestId?: string;
+/**
+ * Migration facade (plan §9.1): the public LoggerService API is preserved while the operational
+ * write path goes through @yellowmind/observability as `legacy.log` events (stderr JSON lines).
+ * PostgreSQL persistence is no longer fed; LogBufferService remains only for historic reads
+ * (see admin-logs controller) until the P07 read-side cutover.
+ */
+const LEGACY_SEVERITY: Record<string, SeverityText> = {
+  INFO: 'INFO',
+  WARN: 'WARN',
+  DEBUG: 'DEBUG',
+  VERBOSE: 'TRACE',
+  ERROR: 'ERROR',
+};
+
+const SEVERITY_METHOD: Record<SeverityText, 'debug' | 'info' | 'warn' | 'error' | 'fatal'> = {
+  TRACE: 'debug',
+  DEBUG: 'debug',
+  INFO: 'info',
+  WARN: 'warn',
+  ERROR: 'error',
+  FATAL: 'fatal',
+};
+
+// One SDK writer per process (plan §5.2): transient LoggerService instances share it.
+let sharedSdk: ObservabilityLogger | null = null;
+let sharedContextReader: ContextReader | undefined;
+
+function getSdk(): ObservabilityLogger {
+  if (!sharedSdk) {
+    sharedSdk = createLogger({ contextReader: () => sharedContextReader?.() });
+  }
+  return sharedSdk;
 }
 
 @Injectable({ scope: Scope.TRANSIENT })
 export class LoggerService implements NestLoggerService {
   private context?: string;
-  private readonly isProduction: boolean;
   private readonly logLevel: LogLevel;
-  private readonly persistenceEnabled: boolean;
-  private readonly defaultSave: boolean;
-  private readonly defaultDisplay: boolean;
-  private readonly displayOnlyContexts: Set<string>;
 
   constructor(
     private readonly configService: ConfigService,
-    @Optional() private readonly logBuffer?: LogBufferService,
     @Optional() private readonly requestContextService?: RequestContextService,
   ) {
-    this.isProduction = this.configService.get<string>('app.nodeEnv') === 'production';
     this.logLevel = this.getLogLevelFromEnv();
-    this.persistenceEnabled = this.configService.get<boolean>('logging.persistenceEnabled', true);
-    this.defaultSave = this.configService.get<boolean>('logging.defaultSave', true);
-    this.defaultDisplay = this.configService.get<boolean>('logging.defaultDisplay', true);
-    this.displayOnlyContexts = new Set(
-      this.configService.get<string[]>('logging.displayOnlyContexts', []),
-    );
+    if (requestContextService && !sharedContextReader) {
+      sharedContextReader = () => {
+        const ctx = requestContextService.getContext();
+        return ctx ? { request_id: ctx.requestId, user_id: ctx.userId } : undefined;
+      };
+    }
   }
 
   setContext(context: string): void {
     this.context = context;
+  }
+
+  metricsSnapshot() {
+    return getSdk().metricsSnapshot();
+  }
+
+  /** Flush pending SDK events within the configured shutdown budget. */
+  async onApplicationShutdown(): Promise<void> {
+    await getSdk().shutdown();
   }
 
   // log() overloads - backward compatible + new options
@@ -82,10 +115,9 @@ export class LoggerService implements NestLoggerService {
   ): void {
     if (this.logLevel < LogLevel.ERROR) return;
 
-    // Handle trace string specially (convert to data object)
+    // Handle trace string specially (legacy error(message, trace) keeps its stack)
     if (typeof traceOrDataOrOptions === 'string' && !this.isLogOptions(traceOrDataOrOptions)) {
-      const data = { trace: traceOrDataOrOptions };
-      this.writeLog('ERROR', message, data, contextOrOptions);
+      this.writeLog('ERROR', message, { trace: traceOrDataOrOptions }, contextOrOptions);
     } else {
       this.writeLog('ERROR', message, traceOrDataOrOptions, contextOrOptions);
     }
@@ -145,46 +177,33 @@ export class LoggerService implements NestLoggerService {
     dataOrContextOrOptions?: Record<string, unknown> | string | LogOptions,
     contextOrOptions?: string | LogOptions,
   ): void {
-    // Parse arguments to extract data, context, and options
     const { data, context, options } = this.parseArguments(dataOrContextOrOptions, contextOrOptions);
+    const severity = LEGACY_SEVERITY[level] ?? 'INFO';
 
-    // Check if this context is display-only (e.g., startup/bootstrap logs)
-    const isDisplayOnlyContext = context ? this.displayOnlyContexts.has(context) : false;
-
-    // Determine display and save based on options, defaults, and context
-    const shouldDisplay = options.display ?? this.defaultDisplay;
-    const shouldSave = isDisplayOnlyContext ? false : (options.save ?? this.defaultSave);
-    const requestId = options.requestId ?? this.requestContextService?.getRequestId();
-
-    const entry: LogEntry = {
-      timestamp: new Date().toISOString(),
-      level,
-      context,
-      message,
-      ...(data && { data: this.sanitize(data) }),
-      ...(requestId && { requestId }),
+    const attrs: LogAttrs = {
+      logger_name: context,
+      level: level.toLowerCase(),
+      detail: message,
     };
-
-    // Write to console if display is enabled
-    if (shouldDisplay) {
-      if (this.isProduction) {
-        this.writeJson(entry);
-      } else {
-        this.writePretty(entry);
+    let error: unknown;
+    if (data) {
+      for (const [key, value] of Object.entries(data)) {
+        if (key === 'trace' && typeof value === 'string') {
+          error = { type: 'Error', stack: value }; // legacy error(message, traceString)
+          continue;
+        }
+        if (value !== null && value !== undefined && (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean')) {
+          attrs[key] = value;
+        }
       }
+      const detailData = boundedDetail(data);
+      if (detailData !== undefined) attrs.detail_data = detailData;
     }
+    if (error !== undefined) attrs.error = error;
 
-    // Save to database if save is enabled and persistence is available
-    if (shouldSave && this.persistenceEnabled && this.logBuffer) {
-      this.logBuffer.add({
-        timestamp: entry.timestamp,
-        level: entry.level,
-        context: entry.context,
-        message: entry.message,
-        data: entry.data,
-        requestId: entry.requestId,
-      });
-    }
+    // `save`/`display` LogOptions are retired (plan §9.1); they no longer select sinks.
+    const target = options.requestId ? getSdk().child({ request_id: options.requestId }) : getSdk();
+    target[SEVERITY_METHOD[severity]]('legacy.log', attrs);
   }
 
   /**
@@ -255,85 +274,6 @@ export class LoggerService implements NestLoggerService {
     }
 
     return true;
-  }
-
-  private writeJson(entry: LogEntry): void {
-    const output = JSON.stringify(entry);
-    if (entry.level === 'ERROR') {
-      process.stderr.write(output + '\n');
-    } else {
-      process.stdout.write(output + '\n');
-    }
-  }
-
-  private writePretty(entry: LogEntry): void {
-    const color = this.getColor(entry.level);
-    const reset = '\x1b[0m';
-    const dim = '\x1b[2m';
-    const contextStr = entry.context ? `[${entry.context}]` : '';
-    const requestIdStr = entry.requestId ? `{${entry.requestId}} ` : '';
-    const dataStr = entry.data ? ` ${JSON.stringify(entry.data)}` : '';
-
-    const output = `${dim}${entry.timestamp}${reset} ${color}${entry.level.padEnd(7)}${reset} ${requestIdStr}${contextStr} ${entry.message}${dataStr}\n`;
-
-    if (entry.level === 'ERROR') {
-      process.stderr.write(output);
-    } else {
-      process.stdout.write(output);
-    }
-  }
-
-  private getColor(level: string): string {
-    const colors: Record<string, string> = {
-      ERROR: '\x1b[31m',
-      WARN: '\x1b[33m',
-      INFO: '\x1b[32m',
-      DEBUG: '\x1b[36m',
-      VERBOSE: '\x1b[35m',
-    };
-    return colors[level] || '\x1b[0m';
-  }
-
-  private sanitize(data: Record<string, unknown>, depth = 0): Record<string, unknown> {
-    const MAX_DEPTH = 10;
-    const sensitiveKeys = [
-      'password',
-      'token',
-      'secret',
-      'authorization',
-      'apikey',
-      'api_key',
-      'accessToken',
-      'refreshToken',
-      'credentials',
-      'sessionId',
-      'cookie',
-      'set-cookie',
-    ];
-
-    if (depth >= MAX_DEPTH) {
-      return { _truncated: '[MAX_DEPTH_EXCEEDED]' };
-    }
-
-    const sanitized: Record<string, unknown> = {};
-
-    for (const [key, value] of Object.entries(data)) {
-      if (sensitiveKeys.some((sk) => key.toLowerCase().includes(sk))) {
-        sanitized[key] = '[REDACTED]';
-      } else if (Array.isArray(value)) {
-        sanitized[key] = value.slice(0, 100).map((item) =>
-          typeof item === 'object' && item !== null
-            ? this.sanitize(item as Record<string, unknown>, depth + 1)
-            : item,
-        );
-      } else if (typeof value === 'object' && value !== null) {
-        sanitized[key] = this.sanitize(value as Record<string, unknown>, depth + 1);
-      } else {
-        sanitized[key] = value;
-      }
-    }
-
-    return sanitized;
   }
 
   private getLogLevelFromEnv(): LogLevel {

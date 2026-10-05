@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "timestamp": "2026-10-05T20:42:17.381Z",
+  "event_id": "inv-10",
+  "event_name": "tool.call.failed",
+  "message": "Tool call failed",
+  "severity_text": "ERROR",
+  "severity_number": 17,
+  "service_name": "yellowstorm-adk",
+  "service_version": "dev",
+  "environment": "local",
+  "event_origin": "application",
+  "error": {
+    "type": "TimeoutError",
+    "message": "timed out",
+    "cause": {
+      "type": "ConnectionError",
+      "message": "read interrupted",
+      "cause": {
+        "type": "OSError",
+        "message": "too deep",
+        "cause": {
+          "type": "EBUSY",
+          "message": "one level past the budget"
+        }
+      }
+    }
+  },
+  "attributes": {}
+}

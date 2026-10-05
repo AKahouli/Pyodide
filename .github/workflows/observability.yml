@@ -1,0 +1,104 @@
+# Unified-logging gates (plan P08). Hard-failing by design: no `|| true`, no continue-on-error.
+name: observability
+
+on:
+  pull_request:
+    branches: [main, adk11-migration]
+  push:
+    branches: [adk11-migration]
+    paths:
+      - 'contracts/observability/**'
+      - 'packages/observability-ts/**'
+      - 'packages/observability-python/**'
+      - 'scripts/observability/**'
+      - 'infra/observability/**'
+      # The policy check scans owned application code: changes there must re-run it.
+      - 'YellowStorm/back/src/**'
+      - 'yellowstorm-code-runtime/src/**'
+      - 'yellowstorm-adk/src/**'
+      - 'mcp/**'
+      - '.github/workflows/observability.yml'
+
+jobs:
+  policy:
+    name: Logging policy (new violations fail)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install typescript for the AST checker
+        working-directory: YellowStorm/back
+        run: npm ci --ignore-scripts
+      - name: Policy check
+        run: node scripts/observability/check-policy.mjs
+
+  sdk-ts:
+    name: TypeScript SDK unit + contract tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci --ignore-scripts
+        working-directory: packages/observability-ts
+      - run: npm test
+        working-directory: packages/observability-ts
+      - run: npm run build
+        working-directory: packages/observability-ts
+
+  sdk-python:
+    name: Python SDK unit + contract tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install SDK + test deps
+        run: pip install -e packages/observability-python
+      - run: python -m pytest packages/observability-python/tests -q
+
+  packaging:
+    name: Shared SDK packaging + staging smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Stage SDK artifacts into consumers
+        run: node scripts/observability/build-sdks.mjs
+      - name: Verify staged artifacts exist with manifests
+        run: |
+          test -f YellowStorm/back/.generated/observability/manifest.json
+          test -f yellowstorm-code-runtime/.generated/observability/manifest.json
+          test -f yellowstorm-adk/.generated/observability/manifest.json
+          echo "staged artifacts verified"
+      # Clean-install smoke (plan T28): npm ci proves the staged file: dependency resolves
+      # against the committed lockfile (npm install would silently repair lock drift).
+      - name: Consumer install smoke (backend)
+        working-directory: YellowStorm/back
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+  integration:
+    name: Isolated stack integration (compose)
+    runs-on: ubuntu-latest
+    needs: [policy, sdk-ts, sdk-python]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compose config validation
+        working-directory: infra/observability
+        env:
+          OBS_LOKI_USER: ci
+          OBS_LOKI_PASSWORD: ci-pass
+          GRAFANA_ADMIN_USER: admin
+          GRAFANA_ADMIN_PASSWORD: admin
+        run: docker compose config >/dev/null && echo "compose config valid"
+      # Full emit→collect→query validation runs from the P09 fault/smoke suites; wiring lands
+      # in P10 on the deployment host (BLOCKED here: no docker.sock available to GH runners).

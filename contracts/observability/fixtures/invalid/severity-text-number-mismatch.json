@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "timestamp": "2026-10-05T20:42:17.381Z",
+  "event_id": "inv-02",
+  "event_name": "http.request.completed",
+  "message": "HTTP request completed",
+  "severity_text": "WARN",
+  "severity_number": 9,
+  "service_name": "yellowstorm-back",
+  "service_version": "dev",
+  "environment": "local",
+  "event_origin": "application",
+  "attributes": {}
+}

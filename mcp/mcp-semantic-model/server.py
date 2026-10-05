@@ -56,6 +56,10 @@ incomplete. Say when the model does not hold the information, and never state a 
 field or link holds."""
 
 settings = Settings.from_env()
+# Unified logging: stderr JSON lines only (MCP protocol owns stdout).
+from yellowmind_observability import setup_observability
+
+setup_observability(service_name=os.environ.get("OBS_SERVICE_NAME") or "mcp-semantic-model")
 mcp = FastMCP("Semantic Model MCP", instructions=INSTRUCTIONS)
 _client: YellowStormSemanticModelClient | None = None
 

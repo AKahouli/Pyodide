@@ -1,0 +1,119 @@
+// Yellowmind log collection & normalization (plan §7.2/§7.3).
+// Discovers ONLY containers labelled logging=yellowmind; parses exactly one application JSON event;
+// keeps three bounded index labels; extracts search context as structured metadata; preserves the
+// occurrence timestamp and the JSON body.
+
+discovery.docker "services" {
+  host = "unix:///var/run/docker.sock"
+  refresh_interval = "10s"
+}
+
+discovery.relabel "services" {
+  targets = discovery.docker.services.targets
+
+  // Only approved service containers are collected.
+  rule {
+    source_labels = ["__meta_docker_container_label_logging"]
+    regex         = "yellowmind"
+    action        = "keep"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+  rule {
+    target_label = "environment"
+    replacement  = env("OBS_ENVIRONMENT")
+  }
+}
+
+loki.source.docker "services" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.services.output
+  forward_to = [loki.process.yellowmind.receiver]
+  labels     = { source = "docker" }
+}
+
+loki.process "yellowmind" {
+  // Unwrap Docker JSON framing, then parse one application event.
+  stage.docker {}
+
+  stage.json {
+    expressions = {
+      ts                  = "timestamp",
+      event_id            = "event_id",
+      event_name          = "event_name",
+      severity            = "severity_text",
+      service_name        = "service_name",
+      service_version     = "service_version",
+      service_instance_id = "service_instance_id",
+      trace_id            = "trace_id",
+      span_id             = "span_id",
+      request_id          = "request_id",
+      user_id             = "user_id",
+      username            = "username",
+      workspace_id        = "workspace_id",
+      conversation_id     = "conversation_id",
+      run_id              = "run_id",
+      job_id              = "job_id",
+      agent_id            = "agent_id",
+    }
+  }
+
+  // Occurrence time, not collection time; unparseable timestamps keep collection time (canary/infra lines).
+  stage.timestamp {
+    source = "ts"
+    format = "RFC3339Nano"
+    action_on_failure = "skip"
+  }
+
+  // INDEX LABELS ONLY (plan §7.4) — a fixed allowlist; nothing else becomes a stream label.
+  stage.labels {
+    values = {
+      service_name  = "",
+      environment   = "",
+      severity_text = "severity",
+    }
+  }
+
+  // High-cardinality search context as queryable structured metadata.
+  stage.structured_metadata {
+    values = {
+      event_id            = "event_id",
+      event_name          = "event_name",
+      service_version     = "service_version",
+      service_instance_id = "service_instance_id",
+      trace_id            = "trace_id",
+      span_id             = "span_id",
+      request_id          = "request_id",
+      user_id             = "user_id",
+      username            = "username",
+      workspace_id        = "workspace_id",
+      conversation_id     = "conversation_id",
+      run_id              = "run_id",
+      job_id              = "job_id",
+      agent_id            = "agent_id",
+    }
+  }
+
+  forward_to = [loki.write.gateway.receiver]
+}
+
+loki.write "gateway" {
+  endpoint {
+    url                   = env("OBS_LOKI_URL") + "/loki/api/v1/push"
+    tenant_id             = ""
+    batch_wait            = "1s"
+    batch_size            = "1MB"
+    remote_timeout        = "10s"
+    min_backoff_period    = "500ms"
+    max_backoff_period    = "5m"
+    max_backoff_retries   = 10
+    retry_on_http_429     = true
+    basic_auth {
+      username = env("OBS_LOKI_USER")
+      password = env("OBS_LOKI_PASSWORD")
+    }
+  }
+}

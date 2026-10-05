@@ -1,0 +1,28 @@
+{
+  "schema_version": "1.0",
+  "timestamp": "2026-10-05T20:42:17.381Z",
+  "event_id": "boot-demo-01:1842",
+  "event_name": "http.request.completed",
+  "message": "HTTP request completed",
+  "severity_text": "INFO",
+  "severity_number": 9,
+  "service_name": "yellowstorm-back",
+  "service_version": "35741c2d",
+  "environment": "rec",
+  "event_origin": "application",
+  "service_instance_id": "boot-demo-01",
+  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "span_id": "00f067aa0ba902b7",
+  "trace_flags": 0,
+  "request_id": "req-demo-01",
+  "user_id": "user-demo-01",
+  "username": "demo.user",
+  "actor_type": "user",
+  "workspace_id": "workspace-demo-01",
+  "attributes": {
+    "method": "POST",
+    "route": "/api/conversations/:id/messages",
+    "status_code": 200,
+    "duration_ms": 1042
+  }
+}

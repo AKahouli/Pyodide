@@ -1,0 +1,17 @@
+{
+  "locked_at": "2026-10-05",
+  "note": "Tags pinned from verified released versions. Digest resolution for this host's architecture is a predeploy CI check (plan §7.1); digests are intentionally not invented here.",
+  "images": {
+    "grafana/loki": { "tag": "3.5.0", "digest_verified": false },
+    "grafana/alloy": { "tag": "v1.5.0", "digest_verified": false },
+    "grafana/grafana": { "tag": "11.6.0", "digest_verified": false },
+    "prom/prometheus": { "tag": "v3.2.0", "digest_verified": false },
+    "nginx": { "tag": "1.27.3-alpine", "digest_verified": false }
+  },
+  "predeploy_checks": [
+    "docker pull + `docker image inspect --format '{{index .RepoDigests 0}}'` each image; record digest in the deployment record",
+    "alloy fmt + loki -verify-config run in CI against these exact images (P08 gate)",
+    "confirm structured metadata support: Loki >= 3.x with TSDB schema v13 (satisfied by pinned tag)",
+    "regenerate gateway/htpasswd from OBS_LOKI_USER/OBS_LOKI_PASSWORD (`htpasswd -Bbn ... > gateway/htpasswd`) — the committed placeholder authenticates nothing"
+  ]
+}

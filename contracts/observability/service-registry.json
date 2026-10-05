@@ -1,0 +1,124 @@
+{
+  "$comment": "P00 service registry. completion_status: pending | sdk_adopted | instrumentation_done | external_gate | out_of_scope",
+  "version": 1,
+  "services": [
+    {
+      "name": "yellowstorm-back",
+      "source_path": "YellowStorm/back",
+      "runtime": "node",
+      "module_format": "cjs",
+      "entrypoint": "dist/main.js",
+      "protocol": "http,grpc-server",
+      "deployed_by": "deploy-backend.yml",
+      "current_sink": "console (LoggerService display) + ops.logs via LogBufferService (Drizzle)",
+      "target": "observability-ts SDK via Nest LoggerService facade; JSON lines on stderr",
+      "completion_status": "sdk_adopted"
+    },
+    {
+      "name": "yellowstorm-adk",
+      "source_path": "yellowstorm-adk",
+      "runtime": "python",
+      "module_format": "src-layout",
+      "entrypoint": "main.py (FastAPI + gRPC supervisor)",
+      "protocol": "http,grpc-server",
+      "deployed_by": "deploy-adk.yml",
+      "current_sink": "root StreamHandler (structlog) + application_logs via PostgreSQLHandler",
+      "target": "observability-python SDK; structlog bridge + bounded queue/listener; JSON lines on stderr",
+      "completion_status": "sdk_adopted"
+    },
+    {
+      "name": "mcp-agent",
+      "source_path": "mcp/mcp-agent",
+      "runtime": "python",
+      "entrypoint": "server.py",
+      "protocol": "http(streamable-mcp)",
+      "deployed_by": null,
+      "current_sink": "none",
+      "target": "observability-python SDK; stderr JSON lines (MCP-stdout safe)",
+      "completion_status": "sdk_adopted"
+    },
+    {
+      "name": "mcp-playbook",
+      "source_path": "mcp/mcp-playbook",
+      "runtime": "python",
+      "entrypoint": "server.py",
+      "protocol": "http(streamable-mcp)",
+      "deployed_by": null,
+      "current_sink": "none",
+      "target": "observability-python SDK; stderr JSON lines",
+      "completion_status": "sdk_adopted"
+    },
+    {
+      "name": "mcp-semantic-model",
+      "source_path": "mcp/mcp-semantic-model",
+      "runtime": "python",
+      "entrypoint": "server.py",
+      "protocol": "http(streamable-mcp)",
+      "deployed_by": null,
+      "current_sink": "none",
+      "target": "observability-python SDK; stderr JSON lines",
+      "completion_status": "sdk_adopted"
+    },
+    {
+      "name": "yellowstorm-code-runtime",
+      "source_path": "yellowstorm-code-runtime",
+      "runtime": "node",
+      "module_format": "esm",
+      "entrypoint": "dist/src/main.js",
+      "protocol": "http",
+      "deployed_by": "build-code-runtime.yml (build+push)",
+      "current_sink": "console defaults",
+      "target": "observability-ts SDK (ESM resolution proof); keeps existing /metrics",
+      "completion_status": "pending"
+    },
+    {
+      "name": "semantic-model-runtime",
+      "source_path": "YellowStorm/semantic-model-runtime",
+      "runtime": "python",
+      "entrypoint": "main.py (uvicorn) + Celery workers",
+      "protocol": "http,celery",
+      "deployed_by": null,
+      "current_sink": "uvicorn defaults",
+      "target": "observability-python SDK",
+      "completion_status": "pending"
+    },
+    {
+      "name": "celery-worker-attribute-extraction",
+      "source_path": "yellowstorm-adk",
+      "runtime": "python",
+      "entrypoint": "celery worker (queue attribute_extraction)",
+      "protocol": "celery",
+      "deployed_by": "dev compose only; production unknown (operator check)",
+      "current_sink": "ADK root logging",
+      "target": "observability-python SDK",
+      "completion_status": "pending"
+    },
+    {
+      "name": "yellowstorm-front",
+      "source_path": "YellowStorm/front",
+      "runtime": "browser/nginx",
+      "entrypoint": null,
+      "protocol": "http",
+      "deployed_by": "deploy-frontend.yml",
+      "current_sink": "n/a",
+      "target": "out of scope this release (admin-log navigation + copyable references only)",
+      "completion_status": "out_of_scope"
+    },
+    {
+      "name": "yellowstorm-agentic-runtime",
+      "source_path": "yellowstorm-agentic-runtime",
+      "runtime": "python",
+      "entrypoint": null,
+      "protocol": null,
+      "deployed_by": null,
+      "current_sink": null,
+      "target": "no source in checkout (pycache only)",
+      "completion_status": "out_of_scope"
+    }
+  ],
+  "external_services": {
+    "$comment": "Populate during P06 with real repository/deployed revision/owner; none invented here.",
+    "known": [],
+    "operator_action_required": true
+  }
+}

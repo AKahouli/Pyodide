@@ -47,3 +47,6 @@ semantica==0.6.5
 httpx==0.28.1
 markdown==3.10.3
 greenlet>=3.0.0
+
+# Unified logging SDK (staged by scripts/observability/build-sdks.mjs before install/build)
+yellowmind_observability @ file:./.generated/observability/yellowmind_observability-0.1.0-py3-none-any.whl

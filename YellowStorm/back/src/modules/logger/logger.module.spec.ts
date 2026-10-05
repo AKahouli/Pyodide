@@ -10,9 +10,9 @@ import { LoggerService } from './logger.service';
 const CONTEXT = 'LoggerModuleSpec';
 
 /**
- * The real LoggerModule and PostgresModule side by side. The connection pool needs a LoggerService, which
- * needs the log buffer, which writes through that pool: a wiring cycle would only surface at application
- * boot, so it is compiled here. It also proves the final flush lands before the pool is closed.
+ * The real LoggerModule and PostgresModule side by side: a wiring cycle would only surface at
+ * application boot, so it is compiled here. Since the unified-logging cutover the facade no longer
+ * feeds the SQL buffer — this proves diagnostic logging performs zero PostgreSQL writes (plan T18).
  */
 describeIntegration('LoggerModule with PostgresModule (integration)', () => {
   const { db, close } = makeTestDb();
@@ -20,8 +20,7 @@ describeIntegration('LoggerModule with PostgresModule (integration)', () => {
   const overrides: Record<string, string> = {
     POSTGRES_DB: process.env.POSTGRES_TEST_DB ?? '',
     LOGGING_DEFAULT_DISPLAY: 'false',
-    LOGGING_BUFFER_SIZE: '100000',
-    LOGGING_FLUSH_INTERVAL_MS: '3600000',
+    LOGGING_PERSISTENCE_ENABLED: 'false',
     LOG_LEVEL: 'info',
   };
   let moduleRef: TestingModule | undefined;
@@ -45,7 +44,7 @@ describeIntegration('LoggerModule with PostgresModule (integration)', () => {
     moduleRef = undefined;
   });
 
-  it('resolves without a dependency cycle, and flushes the buffered logs before the pool closes', async () => {
+  it('resolves without a dependency cycle and diagnostic logs never reach PostgreSQL', async () => {
     moduleRef = await Test.createTestingModule({
       imports: [ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }), LoggerModule, PostgresModule],
     }).compile();
@@ -53,14 +52,15 @@ describeIntegration('LoggerModule with PostgresModule (integration)', () => {
     const buffer = moduleRef.get(LogBufferService);
     const logger = await moduleRef.resolve(LoggerService);
     logger.setContext(CONTEXT);
-    logger.log('written through the wired module', { answer: 42 });
-    expect(buffer.getBufferSize()).toBeGreaterThan(0);
+    logger.log('emitted through the SDK, not the SQL buffer', { answer: 42 });
+    logger.error('boom', 'Error: boom\n    at thing (file.ts:1:1)');
 
-    // Closing runs the destroy hooks; whichever order Nest picks, the entry must reach the table.
+    // Closing runs the destroy hooks; whichever order Nest picks, nothing diagnostic may be written.
     await moduleRef.close();
     moduleRef = undefined;
 
-    const rows = await db.execute(sql`SELECT message, data FROM ops.logs WHERE context = ${CONTEXT}`);
-    expect(rows.rows).toEqual([{ message: 'written through the wired module', data: { answer: 42 } }]);
+    expect(buffer.getBufferSize()).toBe(0);
+    const rows = await db.execute(sql`SELECT message FROM ops.logs WHERE context = ${CONTEXT}`);
+    expect(rows.rows).toEqual([]);
   });
 });

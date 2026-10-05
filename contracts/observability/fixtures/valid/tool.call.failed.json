@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "timestamp": "2026-10-05T20:42:27.381Z",
+  "event_id": "boot-demo-01:1901",
+  "event_name": "tool.call.failed",
+  "message": "Tool call failed",
+  "severity_text": "ERROR",
+  "severity_number": 17,
+  "service_name": "yellowstorm-adk",
+  "service_version": "35741c2d",
+  "environment": "rec",
+  "event_origin": "application",
+  "service_instance_id": "boot-demo-01",
+  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "span_id": "00f067aa0ba902b8",
+  "trace_flags": 0,
+  "request_id": "req-demo-01",
+  "user_id": "user-demo-01",
+  "username": "demo.user",
+  "actor_type": "user",
+  "conversation_id": "conversation-demo-01",
+  "run_id": "run-demo-01",
+  "error": {
+    "type": "TimeoutError",
+    "code": "UPSTREAM_TIMEOUT",
+    "message": "Dependency logical_search timed out after 10000 ms",
+    "retryable": true,
+    "cause": {
+      "type": "ConnectionError",
+      "message": "read interrupted"
+    }
+  },
+  "attributes": {
+    "tool_name": "logical_search",
+    "attempt": 2,
+    "duration_ms": 10000
+  }
+}

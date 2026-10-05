@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "$comment": "Severity mapping. severity_number uses OTel base values. Map Python WARNING->WARN, CRITICAL->FATAL, Nest verbose->TRACE (deliberate).",
+  "levels": [
+    { "text": "TRACE", "number": 1,  "python": "DEBUG",    "nest": "verbose", "python_numeric": 10  },
+    { "text": "DEBUG", "number": 5,  "python": "DEBUG",    "nest": "debug",   "python_numeric": 10  },
+    { "text": "INFO",  "number": 9,  "python": "INFO",     "nest": "log",     "python_numeric": 20  },
+    { "text": "WARN",  "number": 13, "python": "WARNING",  "nest": "warn",    "python_numeric": 30  },
+    { "text": "ERROR", "number": 17, "python": "ERROR",    "nest": "error",   "python_numeric": 40  },
+    { "text": "FATAL", "number": 21, "python": "CRITICAL", "nest": "error",   "python_numeric": 50  }
+  ],
+  "rules": {
+    "retries": "A retry is usually WARN; exhausted/terminal failure is ERROR.",
+    "cancellation": "User cancellation is normally INFO.",
+    "fatal": "FATAL means the process cannot continue.",
+    "terminal_outcome": "Emit one terminal outcome per operation/attempt owner; a returned failure envelope, MCP isError result, fallback, expired deadline, or abnormal stream end is not success."
+  }
+}

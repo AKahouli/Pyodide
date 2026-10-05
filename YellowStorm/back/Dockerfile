@@ -2,6 +2,7 @@ FROM node:20-alpine AS build
 WORKDIR /app
 
 
+COPY .generated/observability/ .generated/observability/
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY src ./src

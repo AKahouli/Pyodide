@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "timestamp": "2026-10-05T20:42:31.500Z",
+  "event_id": "boot-demo-04:12",
+  "event_name": "stream.completed",
+  "message": "Stream completed",
+  "severity_text": "INFO",
+  "severity_number": 9,
+  "service_name": "yellowstorm-adk",
+  "service_version": "35741c2d",
+  "environment": "rec",
+  "event_origin": "application",
+  "request_id": "req-démo-04",
+  "username": "démô.üser",
+  "attributes": {
+    "stream_kind": "sse",
+    "event_count": 42,
+    "cancellation_reason": "terminé — aucun détail sensible ici ✓"
+  }
+}

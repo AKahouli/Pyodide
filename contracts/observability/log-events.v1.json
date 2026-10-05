@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "$comment": "Initial event registry (plan §4.3). event_name -> default message + permitted attributes. Attributes must come from this vocabulary; unknown names fail contract tests. Register new entries here before using them in code.",
+  "attribute_vocabulary": [
+    "attempt", "bytes", "cancellation_reason", "client_kind", "code", "component", "count",
+    "dependency", "direction", "dispatcher", "duration_ms", "event_count", "exit_code",
+    "fallback_used", "first_token_ms", "handler", "input_kind", "job_kind", "launcher",
+    "level", "logger_name", "method", "model", "node_id", "operation", "outcome", "provider",
+    "queue", "reason", "reason_code", "route", "session_kind", "source", "source_name",
+    "status", "status_code", "stream_kind", "suppressed_count", "tool_name", "transport",
+    "ttft_ms", "usage_input_tokens", "usage_output_tokens", "worker", "owner", "detail",
+    "source_fingerprint", "records", "scope"
+  ],
+  "events": {
+    "service.started":            { "message": "Service started", "attributes": ["launcher", "worker", "dispatcher"] },
+    "service.stopping":           { "message": "Service stopping", "attributes": ["reason", "reason_code"] },
+    "service.crashed":            { "message": "Service crashed", "attributes": ["exit_code", "launcher"] },
+
+    "http.request.completed":     { "message": "HTTP request completed", "attributes": ["method", "route", "status_code", "duration_ms"] },
+    "http.request.failed":        { "message": "HTTP request failed", "attributes": ["method", "route", "status_code", "duration_ms"] },
+
+    "rpc.call.completed":         { "message": "gRPC call completed", "attributes": ["method", "status", "duration_ms", "direction"] },
+    "rpc.call.failed":            { "message": "gRPC call failed", "attributes": ["method", "status", "duration_ms", "direction"] },
+
+    "conversation.execution.completed": { "message": "Conversation execution completed", "attributes": ["duration_ms", "outcome"] },
+    "conversation.execution.failed":    { "message": "Conversation execution failed", "attributes": ["duration_ms", "outcome"] },
+    "conversation.execution.cancelled": { "message": "Conversation execution cancelled", "attributes": ["duration_ms", "cancellation_reason"] },
+
+    "tool.call.completed":        { "message": "Tool call completed", "attributes": ["tool_name", "operation", "attempt", "dependency", "duration_ms"] },
+    "tool.call.failed":           { "message": "Tool call failed", "attributes": ["tool_name", "operation", "attempt", "dependency", "duration_ms"] },
+    "tool.call.retried":          { "message": "Tool call retried", "attributes": ["tool_name", "operation", "attempt", "dependency", "duration_ms"] },
+
+    "llm.call.completed":         { "message": "LLM call completed", "attributes": ["provider", "model", "duration_ms", "ttft_ms", "usage_input_tokens", "usage_output_tokens"] },
+    "llm.call.failed":            { "message": "LLM call failed", "attributes": ["provider", "model", "duration_ms", "attempt"] },
+    "llm.call.retried":           { "message": "LLM call retried", "attributes": ["provider", "model", "duration_ms", "attempt"] },
+
+    "job.execution.started":      { "message": "Job execution started", "attributes": ["queue", "job_kind", "attempt"] },
+    "job.execution.completed":    { "message": "Job execution completed", "attributes": ["queue", "job_kind", "attempt", "duration_ms"] },
+    "job.execution.failed":       { "message": "Job execution failed", "attributes": ["queue", "job_kind", "attempt", "duration_ms"] },
+    "job.execution.retried":      { "message": "Job execution retried", "attributes": ["queue", "job_kind", "attempt"] },
+    "job.execution.cancelled":    { "message": "Job execution cancelled", "attributes": ["queue", "job_kind"] },
+
+    "run.execution.started":      { "message": "Run execution started", "attributes": ["node_id", "worker", "reason"] },
+    "run.execution.completed":    { "message": "Run execution completed", "attributes": ["node_id", "duration_ms"] },
+    "run.execution.failed":       { "message": "Run execution failed", "attributes": ["node_id", "duration_ms"] },
+    "run.execution.paused":       { "message": "Run execution paused", "attributes": ["reason"] },
+    "run.execution.resumed":      { "message": "Run execution resumed", "attributes": ["reason"] },
+
+    "stream.completed":           { "message": "Stream completed", "attributes": ["stream_kind", "duration_ms", "event_count", "bytes"] },
+    "stream.failed":              { "message": "Stream failed", "attributes": ["stream_kind", "duration_ms"] },
+    "stream.disconnected":        { "message": "Stream disconnected", "attributes": ["stream_kind", "duration_ms", "cancellation_reason"] },
+
+    "dependency.request.failed":  { "message": "Dependency request failed", "attributes": ["dependency", "operation", "status_code", "attempt"] },
+    "dependency.request.retried": { "message": "Dependency request retried", "attributes": ["dependency", "operation", "status_code", "attempt"] },
+    "dependency.recovered":       { "message": "Dependency recovered", "attributes": ["dependency"] },
+
+    "legacy.log":                 { "message": "Legacy log call", "attributes": ["logger_name", "level", "source", "detail"] },
+    "framework.log":              { "message": "Framework log", "attributes": ["logger_name", "source"] },
+    "infrastructure.log":         { "message": "Infrastructure log", "attributes": ["source_name", "source_fingerprint", "records"] },
+    "logger.event.invalid":       { "message": "Invalid log event rejected", "attributes": ["reason_code", "scope"] },
+    "logger.transport.recovered": { "message": "Log transport recovered", "attributes": ["suppressed_count"] }
+  }
+}

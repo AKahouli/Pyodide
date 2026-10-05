@@ -1,0 +1,29 @@
+{
+  "name": "@yellowmind/observability",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Yellowmind unified logging TypeScript SDK (credit-limited handoff writer, stderr JSON lines, log-event v1 contract)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "sync:contracts": "node scripts/sync-contracts.cjs",
+    "prebuild": "npm run sync:contracts",
+    "build": "tsc -p tsconfig.json",
+    "postbuild": "node scripts/copy-contract-json.cjs",
+    "pretest": "npm run sync:contracts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "sonic-boom": "^4.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "ajv": "^8.17.1",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.8"
+  }
+}

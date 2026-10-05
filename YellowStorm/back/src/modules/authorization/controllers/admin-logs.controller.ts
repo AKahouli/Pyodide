@@ -1,4 +1,5 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
 import { LogBufferService, LogLevelEnum, LogQueryResult, LogEntry } from '@modules/logger';
 import { RequirePermissions } from '../decorators/require-permissions.decorator';
@@ -11,7 +12,10 @@ import { LogQueryDto } from '../dto';
 @Controller('admin/logs')
 @UseGuards(PermissionsGuard)
 export class AdminLogsController {
-  constructor(private readonly logBuffer: LogBufferService) {}
+  constructor(
+    private readonly logBuffer: LogBufferService,
+    private readonly configService: ConfigService,
+  ) {}
 
   @Get()
   @RequirePermissions(Permissions.ADMIN_LOGS_READ)
@@ -62,5 +66,31 @@ export class AdminLogsController {
   @ApiResponse({ status: 200, description: 'Log counts retrieved' })
   async getCounts(): Promise<Record<string, number>> {
     return this.logBuffer.getCountsByLevel();
+  }
+
+  /**
+   * Read-side cutover status (P07): this API serves HISTORIC rows only; live events are in
+   * Grafana. Never present an empty historic query as evidence about recent failures.
+   */
+  @Get('capabilities')
+  @RequirePermissions(Permissions.ADMIN_LOGS_READ)
+  @ApiOperation({ summary: 'Read-side cutover status and live-log navigation' })
+  async getCapabilities(): Promise<{
+    historicOnly: boolean;
+    historicCutoverAt: string | null;
+    liveLogsUrl: string | null;
+    note: string;
+  }> {
+    const cutoverAt = this.configService.get<string | null>('logging.historicCutoverAt') ?? null;
+    const baseUrl = this.configService.get<string | null>('logging.grafanaBaseUrl') ?? null;
+    const uid = this.configService.get<string | null>('logging.grafanaDashboardUid') ?? null;
+    // URL is built only from allowlisted configured values (never user input): no open redirect.
+    const liveLogsUrl = baseUrl && uid ? `${baseUrl.replace(/\/+$/, '')}/d/${encodeURIComponent(uid)}` : null;
+    return {
+      historicOnly: true,
+      historicCutoverAt: cutoverAt,
+      liveLogsUrl,
+      note: 'Events after the cutover timestamp are served by Grafana, not this API. An empty historic result does not mean no recent failures occurred.',
+    };
   }
 }

@@ -1,0 +1,20 @@
+{
+  "schema_version": "1.0",
+  "timestamp": "2026-10-05T20:42:17.381Z",
+  "event_id": "inv-05",
+  "event_name": "http.request.completed",
+  "message": "HTTP request completed",
+  "severity_text": "INFO",
+  "severity_number": 9,
+  "service_name": "yellowstorm-back",
+  "service_version": "dev",
+  "environment": "local",
+  "event_origin": "application",
+  "attributes": {
+    "a01": 1, "a02": 2, "a03": 3, "a04": 4, "a05": 5, "a06": 6, "a07": 7, "a08": 8,
+    "a09": 9, "a10": 10, "a11": 11, "a12": 12, "a13": 13, "a14": 14, "a15": 15, "a16": 16,
+    "a17": 17, "a18": 18, "a19": 19, "a20": 20, "a21": 21, "a22": 22, "a23": 23, "a24": 24,
+    "a25": 25, "a26": 26, "a27": 27, "a28": 28, "a29": 29, "a30": 30, "a31": 31, "a32": 32,
+    "a33": 33
+  }
+}

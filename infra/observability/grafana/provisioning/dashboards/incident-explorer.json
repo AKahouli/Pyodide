@@ -1,0 +1,71 @@
+{
+  "uid": "yellowmind-incident-explorer",
+  "title": "Yellowmind — Incident Explorer",
+  "tags": ["yellowmind", "observability"],
+  "timezone": "Europe/Paris",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      { "name": "service", "type": "query", "datasource": { "type": "loki", "uid": "yellowmind-loki" }, "query": { "label": "service_name", "stream": "", "refId": "var" }, "includeAll": true, "multi": true, "current": { "text": "All", "value": "$__all" } },
+      { "name": "severity", "type": "custom", "query": "All,TRACE,DEBUG,INFO,WARN,ERROR,FATAL", "includeAll": true, "multi": true, "current": { "text": "All", "value": "$__all" } },
+      { "name": "username", "type": "textbox", "current": { "text": "", "value": "" } },
+      { "name": "user_id", "type": "textbox", "current": { "text": "", "value": "" } },
+      { "name": "request_id", "type": "textbox", "current": { "text": "", "value": "" } },
+      { "name": "trace_id", "type": "textbox", "current": { "text": "", "value": "" } },
+      { "name": "conversation_id", "type": "textbox", "current": { "text": "", "value": "" } },
+      { "name": "run_id", "type": "textbox", "current": { "text": "", "value": "" } }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Errors and fatals by service",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "loki", "uid": "yellowmind-loki" },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (service_name) (count_over_time({severity_text=~\"ERROR|FATAL\"}[$__auto]))",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 20, "lineWidth": 1 } }, "overrides": [] }
+    },
+    {
+      "id": 2,
+      "type": "logs",
+      "title": "Events",
+      "gridPos": { "h": 20, "w": 24, "x": 0, "y": 8 },
+      "datasource": { "type": "loki", "uid": "yellowmind-loki" },
+      "targets": [
+        { "refId": "A", "expr": "{service_name=~\"$service\"} | event_name=~\".+\"", "queryType": "range" }
+      ],
+      "options": { "showTime": true, "showLabels": true, "showCommonLabels": false, "wrapLogMessage": true, "prettifyLogMessage": false, "enableLogDetails": true, "sortOrder": "Descending", "dedupStrategy": "none" }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Canary pipeline health (last 10m — empty means UNHEALTHY)",
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 28 },
+      "datasource": { "type": "loki", "uid": "yellowmind-loki" },
+      "targets": [
+        { "refId": "A", "expr": "count_over_time({service_name=\"observability-canary\"}[10m])", "queryType": "range", "instant": true }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "special", "options": { "null": { "text": "NO CANARY EVENTS — PIPELINE UNHEALTHY", "color": "red" }, "match": "null" } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" }, "colorMode": "background", "graphMode": "none", "textMode": "auto" }
+    }
+  ]
+}

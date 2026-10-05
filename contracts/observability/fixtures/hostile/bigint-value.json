@@ -1,0 +1,7 @@
+{
+  "name": "bigint-value",
+  "description": "BigInt attribute value. JSON has no BigInt; SDKs stringify it (bounded) or drop the field with a truncated_fields entry.",
+  "input": null,
+  "input_note": "Attribute value 2n ** 64n (or Python int beyond float range).",
+  "expect": { "does_not_throw": true, "max_event_bytes": 8192 }
+}

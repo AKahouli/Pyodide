@@ -1,0 +1,38 @@
+# Unified logging implementation status
+
+Plan: `yellowmind_unified_logging_implementation_plan` (Grafana + Loki + Alloy, shared TS/Python SDKs).
+Checkout: branch `adk11-migration`, HEAD `35741c2d1` (plan reviewed `923d5c72`; deltas re-verified in `migration-inventory.md`).
+
+Statuses: `PASS`, `FAIL`, `BLOCKED`, `NOT_RUN`.
+
+| Package | Status | Notes |
+|---|---|---|
+| P00 Inventory & baseline | PASS (inventory) / NOT_RUN (measurements) | `migration-inventory.md`, `deployment-inventory.md`, `contracts/observability/service-registry.json`. Performance baselines are P09 work on a controlled host (`performance-baseline.md`). |
+| P01 Contract & fixtures | PASS | `contracts/observability/*`: schema (severity cross-checks in-schema), registry (45 events), budgets, severity, redaction, service registry, valid/invalid/hostile fixtures. Conformance proven by both SDK test suites (ajv 2020-12 on the TS side). |
+| P02 TypeScript SDK + Nest facade | PASS | `packages/observability-ts`: credit-limited handoff writer (SonicBoom fd 2 in worker), bounded admission with error reserve, degradation order, redaction, metrics counters; 18 vitest tests incl. real-worker e2e to a file fd. Facade `logger.service.ts` keeps the Nest API; emits `legacy.log` events; zero SQL writes (inverted integration test). |
+| P03 Python SDK + bootstrap | PASS | `packages/observability-python`: structlog native bound logger → bounded snapshot queue → listener owning stderr fd; stdlib root bridge (WARNING captured); idempotent setup; 15 pytest tests (T01–T11 subset) in conda `meta`. |
+| P04 Collector/Loki/Grafana | PASS (artifacts) / NOT_RUN (live stack) | `infra/observability/`: compose (loki+alloy+nginx gateway+grafana+prometheus+canary), Alloy pipeline (3 index labels + structured metadata + occurrence timestamp), loki v13/TSDB/retention-30d config, Incident Explorer provisioning, versions lock with predeploy digest checks. No docker host exercised in this environment. |
+| P05 Context & boundaries | PARTIAL | ADK contextvars → structlog context bridge (`correlation.py`), Nest ALS → SDK context reader (facade). **Open:** trusted-identity re-binding after authentication (middleware currently trusts the `user` header — pre-existing contract), gRPC metadata propagation, MCP acting-user propagation, job context envelopes, root trace creation without an OTEL provider. |
+| P06 Service adoption | PASS (backend, ADK, MCP ×3) / NOT_RUN (code-runtime, semantic-model-runtime) | Backend facade live; ADK `setup_logging` delegates to SDK (`USE_YELLOWMIND_OBSERVABILITY`, default on) replacing the PostgreSQL sink wiring; MCP servers boot the SDK (111 service tests pass). Code-runtime + semantic-model-runtime adoption and consumer container builds (T28) remain. |
+| P07 Read-side cutover | PASS | `LOGGING_PERSISTENCE_ENABLED=false` → no writer/timer, historic reads independent; `GET admin/logs/capabilities` (historic-only, cutoff, allowlisted Grafana link, explicit "empty ≠ no failures" note); new optional env vars in schema. Frontend navigation switch is an operator step after Grafana access verification (§9.2.6). |
+| P08 CI/policy/packaging | PASS | `scripts/observability/check-policy.mjs` (TS AST + py line checks, 761 shrink-only baselined legacy sites keyed `file:rule`), `run-gates.mjs` (unit ALL PASS), `.github/workflows/observability.yml` (hard-fail: policy/sdk-ts/sdk-python/packaging/compose-config), `build-sdks.mjs` stages tgz+wheel+manifests into consumers (verified end to end), Dockerfiles copy `.generated/observability/` before install (incl. ADK wheel), deploy workflows stage before build, ADK `requirements.txt` file: wheel dep. |
+| P09 Validation | PARTIAL (local) | Executed on the local runner (`scripts/observability/{faults,benchmark,smoke}.mjs`, reports in `.generated/observability-reports/`): blocked-sink p99 37 µs + RSS plateau + shedding counters; healthy steady-state p99 12.2 µs / ~185k events/s / zero loss; worker-death recovery; policy self-test; live-stack label allowlist + canary queries; gateway-outage recovery with no app restarts. **NOT_RUN:** whole-service modes vs baseline (TTFT, concurrency sweeps), T12/T13/T14/T15 transport-chain correlation, T21–T23, T26–T28 — these need the P10 canary host and built service images. Full detail in `performance-baseline.md`. |
+| P10 Canary rollout | BLOCKED | Requires operator authorization, nonproduction host, secrets, compose overlay application. Runbook ready: `rollout-runbook.md`. |
+| P11 Legacy retirement | NOT_RUN | PostgreSQL handler/buffer code removal, baseline shrink, after P10 evidence. |
+
+## Deviations from the plan
+
+1. **Pino is not used in the TypeScript SDK.** `pino.transport()`'s ThreadStream blocks the caller when its internal buffer fills (verified against pino docs), violating INV-04/§5.2.8. The plan's §5.2.4 alternative — "a small credit-limited handoff to one writer worker" — is implemented instead, with SonicBoom owned by the worker (same destination library pino itself uses).
+2. **Python TRACE gates at DEBUG** (structlog 25.4's filtering factory supports no trace level); envelope severities still use the contract mapping.
+3. **Python queue byte budget** is enforced as an events cap with a derived error-reserve (plan budgets are byte-based); item size is construction-bounded and the final byte cap is enforced at render in the listener, with degradation.
+4. **Malformed/non-JSON container lines** pass through with container labels only (no envelope rewrite in Alloy v1) — documented in `infra/observability/README.md`; no raw-secret dead-letter dump exists.
+5. **Orchestrator/flow_engine test suites were not rerouted**: 11 pre-existing failures identical with/without this change; recorded rather than fixed (out of scope).
+
+## Review gate outcome
+
+Reviewer verdict on the first pass: FAIL (1 critical, 2 major, 12 minor). **All required actions and all minors fixed in the same pass**, re-verified: wheel staging cwd bug (critical), ADK Dockerfile wheel COPY (major), SonicBoom `maxLength` + `drop` forwarding (major), exact-byte credit acks, worker-generation tagging for stale acks, spawn-stability restart reset, partial-`os.write` loop, `atexit` drain + crash-hook chaining, free-form structlog messages routed to `legacy.log` (parity with the TS facade), dict-stack sanitization, `trace_id`/`span_id` extraction in the Python context path, `LOG_LEVEL=verbose`→TRACE, guarded context reader, workflow path filter + `npm ci` smoke, htpasswd regeneration in predeploy checks. Evidence after fixes: unit gates ALL PASS, backend build clean, backend logger 17/17, ADK test_logger 34/34, MCP suites 111/111.
+
+## Environment notes
+
+- conda `meta` is Python 3.12.14 with structlog 25.4.0 (runbook said 3.11.14 — env has moved; Dockerfile pins 3.11).
+- Local `python` on PATH is a broken user-site install; `run-gates.mjs --suite unit` accepts `OBS_PYTHON` (e.g. `conda run -n meta python`).

@@ -8,6 +8,12 @@ from opentelemetry.trace import Span
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
+# Unified-logging bridge (P05): ADK context flows into the observability SDK through
+# structlog contextvars, which it merges on the emitting thread at log time.
+from structlog.contextvars import bind_contextvars, unbind_contextvars
+
+_CORRELATION_FIELDS = ("request_id", "username", "user_id")
+
 correlation_id_ctx: ContextVar[str | None] = ContextVar("correlation_id", default=None)
 # Holds the display user (username/email) — used for the [%(user)s] log column.
 user_ctx: ContextVar[str | None] = ContextVar("user", default=None)
@@ -86,6 +92,7 @@ def get_correlation_id() -> str:
     if not corr_id:
         corr_id = str(uuid.uuid4())
         correlation_id_ctx.set(corr_id)
+    bind_contextvars(request_id=corr_id)
     return corr_id
 
 def get_user() -> str:
@@ -137,6 +144,7 @@ def set_user_context(user_id: str | None, username: str | None):
         Token for the username contextvar (pass to ``user_ctx.reset``).
     """
     user_id_ctx.set(user_id or None)
+    bind_contextvars(user_id=user_id or "", username=username or "")
     return user_ctx.set(username or None)
 
 class CorrelationIdMiddleware(BaseHTTPMiddleware):
@@ -173,6 +181,7 @@ class CorrelationIdMiddleware(BaseHTTPMiddleware):
             correlation_id_ctx.reset(corr_token)
             if user_token is not None:
                 user_ctx.reset(user_token)
+            unbind_contextvars(*_CORRELATION_FIELDS)
 
         response.headers["correlation-id"] = final_corr_id
         return response
