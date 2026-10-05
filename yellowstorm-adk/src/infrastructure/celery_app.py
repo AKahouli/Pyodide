@@ -1,9 +1,18 @@
 """Celery application configuration for api-metachatbot-adk."""
 
+import os
+
 from celery import Celery
 from src.config.settings import get_settings
+from src.logger.setup_logging import setup_logging
 
 settings = get_settings()
+
+# Celery worker processes never run the API startup path; boot unified logging here
+# so task logs flow through the SDK (idempotent per process; env-gated inside).
+# Prefork caveat: a forked child inherits a dead writer thread — current pools are
+# threads (docker-compose) / solo; re-init via worker_process_init before switching.
+setup_logging(log_level=os.getenv("LOG_LEVEL", "INFO"))
 
 # Create Celery app with Redis broker and backend
 celery_app = Celery(

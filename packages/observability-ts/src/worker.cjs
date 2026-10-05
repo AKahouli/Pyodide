@@ -83,3 +83,10 @@ sonic.on('drop', () => {
   // maxLength exceeded inside SonicBoom's buffer: bounded loss, honestly counted.
   drop(currentGen, 1, 0, 'sink_overflow');
 });
+
+// SonicBoom buffers below minLength until end(); without this a quiet service's
+// acked events would never reach the sink. Bounded delivery delay instead.
+// flush() after end() only races teardown. Known limit: events already inside
+// SonicBoom's buffer that fail during a flush are lost uncounted — the 'error'/'drop'
+// handlers only see the worker-side pending queue. Pre-existing gap, reachable via this timer.
+setInterval(() => { try { sonic.flush(); } catch { /* teardown race, see above */ } }, 500).unref();

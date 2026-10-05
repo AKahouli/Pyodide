@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.864.0",
+    "@yellowmind/observability": "file:.generated/observability/yellowmind-observability-0.1.0.tgz",
     "quickjs-emscripten": "0.32.0"
   },
   "devDependencies": {

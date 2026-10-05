@@ -12,6 +12,14 @@ import os
 
 from celery import Celery
 
+from yellowmind_observability import setup_observability
+
+# Worker processes (and any importer) boot the unified-logging SDK here; setup is
+# idempotent per process, so the API process importing this module is unaffected.
+# Prefork caveat: a forked child inherits a dead writer thread — current pools are
+# solo (scripts/start-*.ps1); re-init via worker_process_init before ever switching.
+setup_observability(service_name=os.environ.get("OBS_SERVICE_NAME") or "semantic-model-runtime")
+
 DATASOURCE_QUEUES = ("semantic-model-datasource.preview", "semantic-model-datasource.batch")
 POPULATION_QUEUES = ("semantic-model-population.corrections", "semantic-model-population.batch")
 # Search indexing has its own worker so a long embedding run never holds up population.
@@ -30,6 +38,9 @@ def make_celery() -> Celery:
         task_acks_on_failure_or_timeout=False,
         worker_prefetch_multiplier=1,
         task_reject_on_worker_lost=True,
+        # Keep the unified-logging root bridge alive: celery's default hijack
+        # clears root handlers at worker boot, silencing the SDK (plan P06).
+        worker_hijack_root_logger=False,
     )
     return app
 

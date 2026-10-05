@@ -67,9 +67,9 @@
       "entrypoint": "dist/src/main.js",
       "protocol": "http",
       "deployed_by": "build-code-runtime.yml (build+push)",
-      "current_sink": "console defaults",
+      "current_sink": "observability-ts SDK (stderr JSON lines); keeps existing /metrics",
       "target": "observability-ts SDK (ESM resolution proof); keeps existing /metrics",
-      "completion_status": "pending"
+      "completion_status": "sdk_adopted"
     },
     {
       "name": "semantic-model-runtime",
@@ -78,9 +78,9 @@
       "entrypoint": "main.py (uvicorn) + Celery workers",
       "protocol": "http,celery",
       "deployed_by": null,
-      "current_sink": "uvicorn defaults",
+      "current_sink": "observability-python SDK (stderr JSON lines)",
       "target": "observability-python SDK",
-      "completion_status": "pending"
+      "completion_status": "sdk_adopted"
     },
     {
       "name": "celery-worker-attribute-extraction",
@@ -89,9 +89,9 @@
       "entrypoint": "celery worker (queue attribute_extraction)",
       "protocol": "celery",
       "deployed_by": "dev compose only; production unknown (operator check)",
-      "current_sink": "ADK root logging",
+      "current_sink": "observability-python SDK (celery_app module boot)",
       "target": "observability-python SDK",
-      "completion_status": "pending"
+      "completion_status": "sdk_adopted"
     },
     {
       "name": "yellowstorm-front",

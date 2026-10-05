@@ -459,8 +459,10 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                 await extraction_cache.put(cache_key, concept_id=EMAIL_DERIVATION_CACHE_CONCEPT,
                                            asset_id=str(source.get("assetId") or ""),
                                            output={"files": len(files), "created": created})
+            # "created" is a reserved LogRecord attribute; INFO logs are no longer
+            # filtered out now that the unified-logging bridge captures them.
             logger.info("email archive derived", extra={"assetId": source.get("assetId"),
-                                                        "files": len(files), "created": created})
+                                                        "files": len(files), "files_created": created})
         except (ValueError, RuntimeError, AssetFetchError, TimeoutError) as exc:
             logger.warning("email archive derivation failed",
                            extra={"assetId": source.get("assetId"), "error": str(exc)})

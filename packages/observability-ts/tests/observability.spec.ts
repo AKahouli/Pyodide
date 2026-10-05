@@ -254,6 +254,23 @@ describe('P02 admission, worker lifecycle, shutdown (T08/T09/T11)', () => {
     }
   });
 
+  it('periodic flush delivers quiet-service events without shutdown (bounded delay)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'obs-test-'));
+    const file = join(dir, 'events.log');
+    const fd = openSync(file, 'w');
+    try {
+      const logger = makeLogger({ workerPath: worker('real'), workerEnv: { OBS_WRITER_FD: String(fd) } } as never);
+      logger.info('service.started', { launcher: 'vitest' });
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      const lines = readFileSync(file, 'utf8').trim().split('\n').filter(Boolean);
+      expect(lines.length, 'flush timer must deliver buffered events within ~1s').toBe(1);
+      expect(JSON.parse(lines[0]).event_name).toBe('service.started');
+      await logger.shutdown(500);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('repeated createLogger returns one writer per process (T07)', () => {
     const a = createLogger();
     const b = createLogger();
