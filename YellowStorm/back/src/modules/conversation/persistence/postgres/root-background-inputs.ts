@@ -6,6 +6,7 @@ import { stableStringify } from '../../../agent/services/agent-execution-snapsho
 import { validateNativeInputResponses } from '../../root-work/native-input-responses';
 import type { RootContinuationRequest } from '../../interfaces/message.interface';
 import type { DelegateResultV1 } from '../../root-work/root-work.types';
+import { boundBackgroundManifest } from './root-background-fanout';
 
 export async function queueBackgroundInputs(db: NodePgDatabase<typeof schema>, conversationId: string,
   executionId: string, actorId: string, inputResponses: RootContinuationRequest['inputResponses']) {
@@ -29,7 +30,9 @@ export async function queueBackgroundInputs(db: NodePgDatabase<typeof schema>, c
       || (parent.resultPayload as DelegateResultV1 | null)?.nativeState?.actorId !== actorId
       || state.backgroundJobId !== executionId || state.invocationId !== job.nativeInvocationId
       || state.sessionId !== job.nativeSessionId || state.rootContext.delegate_request_digest !== job.requestDigest
-      || !job.nativeInvocationId || !['library_worker', 'temporary_worker'].includes(child.role) || child.depth !== 1) {
+      || !job.nativeInvocationId
+      || !((['library_worker', 'temporary_worker'].includes(child.role) && child.depth === 1)
+        || boundBackgroundManifest(parent, child, job.requestDigest))) {
       throw new Error('Background input authority changed');
     }
     const requestDigest = createHash('sha256').update(stableStringify({ nativeInvocationId: job.nativeInvocationId,

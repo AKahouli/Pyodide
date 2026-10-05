@@ -569,6 +569,29 @@ describeIntegration('background job owner/fence admission', () => {
     expect(await claimedNative('other', 30, { global: 2, perUser: 2 })).toBeNull();
   });
 
+  it('resumes only the sealed waiting fanout coordinator with typed input and current epoch', async () => {
+    const root = await fixture(id(), true);
+    const job = await jobs.admitFanout(root.parentId, fanoutProposal(root.actorId));
+    const grant = (await claimedNative('owner', 30, { global: 2, perUser: 2 }))!;
+    await database.db.update(rootBackgroundJobs).set({ nativeInvocationId: 'fanout-invocation' })
+      .where(eq(rootBackgroundJobs.executionId, job.executionId));
+    const state = (await work.getExecution(job.executionId))!.resultPayload!.nativeState!;
+    await work.recordNativeState(job.executionId, { ...state, invocationId: 'fanout-invocation', pendingInputs: [
+      { inputId: 'approve', inputVersion: 2, functionName: 'adk_request_confirmation' }] }, 'waiting', grant as any);
+    const response = [{ inputId: 'approve', inputVersion: 2, response: { confirmed: false } }];
+    await expect(jobs.queueInputs(root.conversationId, job.executionId, id(), response)).rejects.toThrow('authority');
+    await expect(jobs.queueInputs(root.conversationId, job.executionId, root.actorId,
+      [{ ...response[0], inputVersion: 1 }])).rejects.toThrow('stale');
+    expect(await jobs.queueInputs(root.conversationId, job.executionId, root.actorId, response))
+      .toEqual({ executionId: job.executionId, status: 'queued' });
+    expect((await jobs.getJob(job.executionId))!.pendingInputResponses?.[0].response).toEqual({ confirmed: false });
+    const resumed = (await claimedNative('resumed', 30, { global: 2, perUser: 2 }))!;
+    expect(resumed.nativeInvocationId).toBe('fanout-invocation');
+    expect(resumed.fence).toBeGreaterThan(grant.fence);
+    await work.stopRootWork({ conversationId: root.conversationId, stopRequestId: newStopRequestId() });
+    await expect(jobs.queueInputs(root.conversationId, job.executionId, root.actorId, response)).rejects.toThrow('authority');
+  });
+
   it('durably queues only current human confirmation and replay does not queue another turn', async () => {
     const root = await fixture(); const childId = await root.child(); await jobs.enqueue(childId, digest);
     const grant = (await claimedNative('owner', 30, { global: 2, perUser: 2 }))!;
