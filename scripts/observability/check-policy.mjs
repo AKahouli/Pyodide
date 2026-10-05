@@ -94,8 +94,8 @@ for (const scope of SCOPES) {
 
 // Baseline keys are file:rule (NOT file:line:rule): line numbers drift with any upstream edit,
 // which would flag unchanged legacy sites as new. Per-file growth within a baselined rule is a
-// known residual gap; new files always fail.
-const current = violations.map((v) => `${v.file}:${v.rule}`).sort();
+// known residual gap; new files always fail. Multiple call sites in one file collapse to one key.
+const current = [...new Set(violations.map((v) => `${v.file}:${v.rule}`))].sort();
 const baselinePath = path.join(repoRoot, baselineArg);
 const baseline = existsSync(baselinePath)
   ? JSON.parse(readFileSync(baselinePath, 'utf8')).violations.sort()
@@ -106,7 +106,9 @@ const newViolations = current.filter((v) => !baselineSet.has(v));
 
 if (args.includes('--update-baseline')) {
   const fs = require('node:fs');
-  const merged = [...new Set([...baseline, ...current])].sort();
+  // Replace with the sites still present — this is what makes the list shrink
+  // when legacy call sites are retired (plan P11). Merging instead would keep
+  // stale entries forever and break the shrink-only invariant.
   fs.writeFileSync(
     baselinePath,
     JSON.stringify(
@@ -114,13 +116,13 @@ if (args.includes('--update-baseline')) {
         _comment: 'Known legacy diagnostic call sites (plan §11.1). This list must shrink, never grow. Regenerate with: node scripts/observability/check-policy.mjs --update-baseline',
         owner: 'platform-team',
         removal_task: 'P11 legacy retirement',
-        violations: merged,
+        violations: current,
       },
       null,
       2,
     ) + '\n',
   );
-  console.log(`[observability-policy] baseline updated: ${merged.length} entr(ies)`);
+  console.log(`[observability-policy] baseline updated: ${current.length} entr(ies)`);
   process.exit(0);
 }
 
