@@ -46,6 +46,11 @@ from src.smart_rag.tool_activity_presenter import (
     tool_args_without_display_purpose,
 )
 from src.smart_rag.thought_activity_tracker import ThoughtActivityTracker
+from src.smart_rag.tools.utilities.connector_citations import (
+    display_source_name as _display_source_name,
+    normalize_vectorstore_source as _normalize_vectorstore_source,
+    normalize_connector_citations,
+)
 
 logger = get_logger("api.smart_rag.agentic_rag.AgentRunner")
 
@@ -141,37 +146,6 @@ def _loggable_structured_response(tool_name: str, response: Any) -> Any:
     if _registers_connector_citations(tool_name):
         return response
     return "[non-locator structured response omitted]"
-
-
-def _display_source_name(value: Any) -> str:
-    """Normalize a source field to a filename when it contains a URL or path."""
-    text = str(value or "").strip()
-    if not text:
-        return ""
-
-    parsed = urlparse(text)
-    if parsed.scheme and parsed.netloc:
-        path = parsed.path.rstrip("/")
-        if path:
-            candidate = path.rsplit("/", 1)[-1].strip()
-            if candidate:
-                return candidate
-
-    normalized = text.rstrip("/")
-    if "/" in normalized:
-        candidate = normalized.rsplit("/", 1)[-1].strip()
-        if candidate:
-            return candidate
-
-    return text
-
-
-def _normalize_vectorstore_source(value: Any) -> str:
-    text = str(value or "").strip()
-    prefix = "s3://vectorstore/"
-    if text.startswith(prefix):
-        return text[len(prefix):]
-    return text
 
 
 def _normalize_reference_token(value: Any) -> str:
@@ -2182,67 +2156,7 @@ class AgentRunner:
         result_payload = response_data.get("result")
         raw_citations = response_data.get("citations")
         if isinstance(raw_citations, list):
-            citation_sources: List[Dict[str, Any]] = []
-            seen = set()
-            for index, citation in enumerate(raw_citations):
-                if not isinstance(citation, dict):
-                    continue
-
-                raw_source = citation.get("source") or citation.get("path") or ""
-                source = _normalize_vectorstore_source(raw_source)
-                file_name = _display_source_name(raw_source)
-                page = str(
-                    citation.get("page")
-                    or citation.get("page_number")
-                    or ""
-                ).strip()
-                highlight_text = str(
-                    citation.get("highlight_text")
-                    or citation.get("highlightText")
-                    or citation.get("page_content")
-                    or ""
-                )
-                highlight_bbox = (
-                    citation.get("highlight_bbox")
-                    or citation.get("highlightBBox")
-                    or []
-                )
-                reference = str(
-                    citation.get("reference")
-                    or citation.get("citation")
-                    or index + 1
-                )
-                signature = (source, page, highlight_text)
-                if signature in seen:
-                    continue
-                seen.add(signature)
-
-                citation_sources.append(
-                    {
-                        "type": "text",
-                        "source": source,
-                        "file_name": file_name,
-                        "page": page,
-                        "page_content": highlight_text,
-                        "workspace_id": str(
-                            citation.get("workspace_id")
-                            or citation.get("workspace_name")
-                            or ""
-                        ),
-                        "reference": reference,
-                        "reference_aliases": [],
-                        "highlight_text": highlight_text,
-                        "highlight_bbox": highlight_bbox,
-                        "block_bbox": highlight_bbox,
-                    }
-                )
-            if citation_sources:
-                logger.info(
-                    "[STRUCTURED TOOL RESPONSE] tool=%s extracted_citation_sources_from_citations count=%s",
-                    tool_name,
-                    len(citation_sources),
-                )
-            return citation_sources
+            return normalize_connector_citations(raw_citations)
 
         if isinstance(result_payload, str):
             try:

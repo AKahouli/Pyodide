@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
 import requests
+from hashlib import sha256
 from google.adk.tools.tool_context import ToolContext
 
 from src.connector_tool_name import build_connector_tool_name
@@ -14,6 +15,7 @@ from src.run_workspace import with_run_workspace_path
 from src.config.settings import get_settings
 from src.logger.logging import get_logger
 from src.smart_rag.tools.search.tools import SearchToolADK
+from src.smart_rag.tools.utilities.connector_citations import normalize_connector_citations, normalize_vectorstore_source
 from src.smart_rag.tools.utilities.code_interpreter import _STATE_KEY_BRAIN_DOCS
 from src.smart_rag.infrastructure.external.purpose_aware_mcp import (
     DISPLAY_PURPOSE_DESCRIPTION,
@@ -210,9 +212,17 @@ def _buffer_mcp_images_for_model(response: Any, tool_context: Optional[ToolConte
     return _strip_mcp_content_parts(response)
 
 
+def _capture_connector_source(signature: str, reference: str, source: Dict[str, Any], source_is_bound: bool) -> None:
+    if not source_is_bound:
+        return
+    from src.root_runtime.evidence_capture import capture_citation
+    capture_citation(sha256(signature.encode()).hexdigest(), reference, source)
+
+
 def _register_connector_text_source(
     source: Dict[str, Any],
     tool_context: ToolContext,
+    *, source_is_bound: bool = False,
 ) -> Dict[str, Any]:
     state = tool_context.state
     signatures = state.setdefault(_STATE_KEY_CONNECTOR_SOURCE_SIGNATURES, {})
@@ -224,6 +234,7 @@ def _register_connector_text_source(
     existing_reference = signatures.get(signature)
     if existing_reference:
         source["reference"] = existing_reference
+        _capture_connector_source(signature, existing_reference, source, source_is_bound)
         return source
 
     next_ref = int(state.get(_STATE_KEY_CONNECTOR_REFERENCE_COUNTER, 0)) + 1
@@ -259,8 +270,8 @@ def _register_connector_text_source(
                         "page": str(source.get("page") or ""),
                         "file_name": str(source.get("file_name") or ""),
                         "workspace_name": "",
-                        "workspace_id": "",
-                        "brain_id": "",
+                        "workspace_id": str(source.get("workspace_id") or ""),
+                        "brain_id": str(source.get("brain_id") or ""),
                         "height": str(source.get("height") or ""),
                         "width": str(source.get("width") or ""),
                         "highlight_text": str(source.get("highlight_text") or ""),
@@ -281,8 +292,8 @@ def _register_connector_text_source(
                         "page": str(source.get("page") or ""),
                         "page_content": str(source.get("page_content") or ""),
                         "workspace_name": "",
-                        "workspace_id": "",
-                        "brain_id": "",
+                        "workspace_id": str(source.get("workspace_id") or ""),
+                        "brain_id": str(source.get("brain_id") or ""),
                         "_read_content_doc": bool(source.get("_read_content_doc")),
                         "_pages_cache": source.get("_pages_cache") or [],
                         "highlight_text": str(source.get("highlight_text") or ""),
@@ -293,6 +304,7 @@ def _register_connector_text_source(
             }
         )
 
+    _capture_connector_source(signature, reference, source, source_is_bound)
     return source
 
 
@@ -301,6 +313,7 @@ def _register_connector_response_sources(
     tool_context: Optional[ToolContext],
     action_key: str = "",
     trusted_web_result: bool = False,
+    source_context: Optional[ConnectorToolContext] = None,
 ) -> Any:
     if not tool_context or not isinstance(response, dict):
         return response
@@ -308,6 +321,8 @@ def _register_connector_response_sources(
         return _strip_legacy_citation_fields(response)
 
     citation_sources = response.get("citation_sources")
+    if not isinstance(citation_sources, list) and _is_locate_answer_citations_action(action_key) and isinstance(response.get("citations"), list):
+        citation_sources = normalize_connector_citations(response["citations"])
     if not isinstance(citation_sources, list) or not citation_sources:
         return response
 
@@ -316,7 +331,22 @@ def _register_connector_response_sources(
     for source in citation_sources:
         if not isinstance(source, dict):
             continue
-        normalized = _register_connector_text_source(dict(source), tool_context)
+        source = dict(source)
+        source_is_bound = trusted_web_result and source.get("type") == "web"
+        if source_context and source.get("type", "text") != "web":
+            path = normalize_vectorstore_source(source.get("source") or source.get("path"))
+            matches = [doc for doc in source_context.brain_documents or []
+                       if isinstance(doc, dict) and path and normalize_vectorstore_source(doc.get("filepath")) == path]
+            if len(matches) == 1:
+                workspace = str(matches[0].get("workspace_id") or source_context.workspace_id or "")
+                document_id = str(matches[0].get("document_id") or "")
+                source_is_bound = bool(workspace and (not source.get("workspace_id") or source["workspace_id"] == workspace)
+                                       and (not source.get("document_id") or source["document_id"] == document_id))
+                if source_is_bound:
+                    source.update(workspace_id=workspace, file_path=path)
+                    if document_id:
+                        source["document_id"] = document_id
+        normalized = _register_connector_text_source(source, tool_context, source_is_bound=source_is_bound)
         normalized_sources.append(normalized)
         reference = str(normalized.get("reference") or "").strip()
         if reference:
@@ -1197,6 +1227,7 @@ def create_connector_tools(
                     tool_context,
                     action_key=_action_key,
                     trusted_web_result=_result_kind in {"web_search", "web_fetch"},
+                    source_context=context,
                 )
                 return registered_response
 
