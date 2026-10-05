@@ -39,7 +39,8 @@ export const TOOL_DESCRIPTIONS: Record<RuntimeMcpToolName, string> = {
   preview_action: 'Interact with the preview: reload, click, input, scroll',
   platform_check:
     'Check the workspace against the YellowStorm platform contract (the files listed in yellowstorm.platform.json). Returns the violations deploy would reject. Runs on the server; no preview needed.',
-  finalize: 'Finalize a revision as the completed application with verification evidence',
+  finalize:
+    'Finalize a revision as the completed application with verification evidence. For AI: use @/lib/yellowmind-ai and never hardcode model ids (gpt-4o-mini, etc.) — omit model or use resolveDefaultAiModel().',
 };
 
 /** JSON Schema fragments for tools/list (OpenCode MCP). */

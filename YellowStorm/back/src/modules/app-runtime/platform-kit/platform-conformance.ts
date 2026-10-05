@@ -74,6 +74,23 @@ export function checkDataModule(source: string): string[] {
 const INVENTED_MODEL_LITERAL_RE =
   /\bmodel\s*:\s*['"`](gpt-|o1|o3|o4|claude-|openai\/|azure\/|anthropic\/|deepseek\/)/i;
 
+/** Matches a single invented `model: 'provider/...'` property for removal. */
+const INVENTED_MODEL_PROPERTY_RE =
+  /\bmodel\s*:\s*['"`](?:gpt-|o1|o3|o4|claude-|openai\/|azure\/|anthropic\/|deepseek\/)[^'"`]*['"`]\s*,?\s*/gi;
+
+/**
+ * Strip agent-invented model literals so chatCompletion falls back to
+ * VITE_YM_AI_DEFAULT_MODEL / resolveDefaultAiModel() at runtime.
+ */
+export function stripInventedAiModelLiterals(source: string): string {
+  if (!INVENTED_MODEL_LITERAL_RE.test(source)) return source;
+  return source
+    .replace(INVENTED_MODEL_PROPERTY_RE, '')
+    .replace(/\{\s*,/g, '{')
+    .replace(/,\s*,/g, ',')
+    .replace(/,\s*\}/g, ' }');
+}
+
 /** Any app source may call AI; it must go through the platform proxy. */
 export function checkAiUsage(source: string): string[] {
   if (!source.trim()) return [];

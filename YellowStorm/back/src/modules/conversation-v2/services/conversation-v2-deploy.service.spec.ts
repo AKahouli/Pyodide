@@ -242,6 +242,45 @@ describe('ConversationV2DeployService', () => {
     });
   });
 
+  it('sanitizes hardcoded AI model literals into the deploy patch revision', async () => {
+    configValues['app.backendUrl'] = 'https://api.yellowsys.org';
+    revisions.listFiles.mockResolvedValue({
+      files: [{ path: 'src/pages/Assistant.jsx' }, ...defaultRevisionFiles],
+    });
+    const readSource = revisions.readRevisionFileText.getMockImplementation()!;
+    revisions.readRevisionFileText.mockImplementation(async (workspaceId, id, path) => {
+      if (path.endsWith('Assistant.jsx')) {
+        return `
+          import { chatCompletion } from '@/lib/yellowmind-ai';
+          export async function ask(messages) {
+            return chatCompletion(messages, { model: 'gpt-4o-mini' });
+          }
+        `;
+      }
+      return readSource(workspaceId, id, path);
+    });
+    jest.spyOn(global, 'fetch').mockResolvedValueOnce(
+      jsonResponse({
+        status: 'ready',
+        app_id: '2e65d5fa87a0499f',
+        url: 'https://apps.yellowsys.org/apps/2e65d5fa87a0499f/',
+      }),
+    );
+
+    await service.deploy('2e65d5fa87a0499f', 'rev_15');
+
+    expect(revisions.patchRevisionWithFiles).toHaveBeenCalledWith(
+      expect.objectContaining({
+        additionalFiles: expect.arrayContaining([
+          expect.objectContaining({
+            path: 'src/pages/Assistant.jsx',
+            content: expect.not.stringMatching(/gpt-4o-mini/),
+          }),
+        ]),
+      }),
+    );
+  });
+
   it('uses an existing public runtime base when BACKEND_URL is loopback', async () => {
     configValues['app.backendUrl'] = 'http://localhost:3000';
     configValues['app.nodeEnv'] = 'production';

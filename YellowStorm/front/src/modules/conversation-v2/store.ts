@@ -26,6 +26,10 @@ import {
 import { normalizeFilesTree } from './utils/files-tree';
 import { deployError, deployLog, deployWarn } from './utils/deploy-log';
 import {
+  isDeployConnectionLost,
+  pollDeployStateFromSession,
+} from './utils/reconcile-deploy';
+import {
   syncHostRevisionSources,
   maybeRestartDevServerAfterAppDataTool,
   refreshHostPreview,
@@ -808,6 +812,29 @@ export const useConversationV2Store = create<State & Actions>()(
             'deploy/done',
           );
         } catch (err) {
+          if (isDeployConnectionLost(err)) {
+            const reconciled = await pollDeployStateFromSession(id, (sid) =>
+              conversationV2Api.getSession(sid),
+            );
+            if (reconciled?.deployStatus === 'deployed' && reconciled.deployedUrl) {
+              deployLog('store:reconciled', {
+                sessionId: id,
+                deployedUrl: reconciled.deployedUrl,
+              });
+              set(
+                {
+                  deployStatus: reconciled.deployStatus,
+                  deployedUrl: reconciled.deployedUrl,
+                  lastDeployedAt: reconciled.lastDeployedAt,
+                  ownerInviteToken: reconciled.ownerInviteToken ?? null,
+                  appViewMode: 'deployed',
+                },
+                false,
+                'deploy/reconciled',
+              );
+              return;
+            }
+          }
           deployError('store:error', err, {
             sessionId: id,
             deployRevisionId: deployRevisionId ?? null,

@@ -7,7 +7,10 @@ import {
   PlatformBaselineService,
   type BaselineFile,
 } from '@modules/app-runtime/platform-kit/platform-baseline.service';
-import { checkAiUsage } from '@modules/app-runtime/platform-kit/platform-conformance';
+import {
+  checkAiUsage,
+  stripInventedAiModelLiterals,
+} from '@modules/app-runtime/platform-kit/platform-conformance';
 import { ModelsService } from '@modules/models/models.service';
 import {
   detectRevisionUsesAi,
@@ -143,13 +146,19 @@ export class ConversationV2DeployService {
     this.logger.log(
       `[deploy] assert production env keys=[${Object.keys(productionEnv).sort().join(',')}]`,
     );
-    await this.assertProductionEnv(aiSessionId, revisionId, productionEnv, usesAi);
+    const aiSourceFixes = await this.assertProductionEnv(
+      aiSessionId,
+      revisionId,
+      productionEnv,
+      usesAi,
+    );
     try {
       deployRevisionId = await this.injectEnvProduction(
         aiSessionId,
         revisionId,
         productionEnv,
         baselinePlan.files,
+        aiSourceFixes,
       );
       this.logger.log(
         `[deploy] patched revision ready base=${revisionId} deployRevision=${deployRevisionId}`,
@@ -443,6 +452,7 @@ export class ConversationV2DeployService {
     baseRevisionId: string,
     env: Record<string, string>,
     baselineFiles: BaselineFile[],
+    aiSourceFixes: Array<{ path: string; content: string }> = [],
   ): Promise<string> {
     const lines = Object.entries(env)
       .map(([k, v]) => `${k}=${quoteDotenvValue(v)}`)
@@ -456,13 +466,14 @@ export class ConversationV2DeployService {
       newRevisionId: patchedRevisionId,
       additionalFiles: [
         ...baselineFiles,
+        ...aiSourceFixes,
         { path: '.env.production', content: lines + '\n' },
       ],
     });
 
     this.logger.log(
       `[deploy] .env.production injected revision=${patchedRevisionId} base=${baseRevisionId} ` +
-        `platformFiles=${String(baselineFiles.length)} envKeys=[${Object.keys(env)
+        `platformFiles=${String(baselineFiles.length)} aiSanitized=${String(aiSourceFixes.length)} envKeys=[${Object.keys(env)
           .sort()
           .join(',')}]`,
     );
@@ -540,7 +551,7 @@ export class ConversationV2DeployService {
     revisionId: string,
     runtimeEnv: Record<string, string>,
     usesAi: boolean,
-  ): Promise<void> {
+  ): Promise<Array<{ path: string; content: string }>> {
     if (this.config.get<boolean>('appData.enabled', false)) {
       if (!runtimeEnv.VITE_YM_APP_DATA_URL || !runtimeEnv.VITE_YM_APP_DATA_ID) {
         throw new ServiceUnavailableException(
@@ -549,7 +560,8 @@ export class ConversationV2DeployService {
       }
     }
 
-    if (!usesAi) return;
+    const aiSourceFixes: Array<{ path: string; content: string }> = [];
+    if (!usesAi) return aiSourceFixes;
 
     if (!runtimeEnv.VITE_YM_API_BASE_URL) {
       throw new ServiceUnavailableException(
@@ -563,9 +575,21 @@ export class ConversationV2DeployService {
       .filter(isScannableAppSourcePath)
       .slice(0, 40);
     for (const path of candidates) {
-      const source = await this.revisions.readRevisionFileText(workspaceId, revisionId, path);
-      const violations = checkAiUsage(source ?? '');
+      const raw = await this.revisions.readRevisionFileText(workspaceId, revisionId, path);
+      const source = raw ?? '';
+      let violations = checkAiUsage(source);
       if (violations.length) {
+        const sanitized = stripInventedAiModelLiterals(source);
+        if (sanitized !== source) {
+          violations = checkAiUsage(sanitized);
+          if (!violations.length) {
+            this.logger.warn(
+              `[deploy] sanitized invented AI model literal path=${path} revision=${revisionId}`,
+            );
+            aiSourceFixes.push({ path, content: sanitized });
+            continue;
+          }
+        }
         throw new ServiceUnavailableException(
           `AI integration does not meet the YellowStorm platform contract. ${path}: ${violations.join(
             ' ',
@@ -573,6 +597,7 @@ export class ConversationV2DeployService {
         );
       }
     }
+    return aiSourceFixes;
   }
 }
 
