@@ -214,8 +214,9 @@ export function SemanticModelEditorPage() {
     const finalState = populationJob.data.state;
     const finalProgress = populationJob.data.progress;
     const finalServing = populationServing(populationJob.data.result);
+    const finalError = populationJob.data.errorCode;
     setPopulation((current) => current && current.jobId === populationJobId
-      ? { ...current, status: finalState, progress: finalProgress ?? current.progress, serving: finalServing ?? current.serving } : current);
+      ? { ...current, status: finalState, progress: finalProgress ?? current.progress, serving: finalServing ?? current.serving, errorCode: finalError ?? current.errorCode } : current);
     setPopulationJobId(undefined);
   }, [populationJob.data]);
   const [mappingTarget, setMappingTarget] = useState<SourceMappingTarget | null>(null);
@@ -892,6 +893,8 @@ export function SemanticModelEditorPage() {
           onStop={canEdit ? () => void stopRun() : undefined}
           stopping={stoppingRun}
           serving={(populationJob.data?.jobId === population.jobId ? populationServing(populationJob.data?.result) : undefined) ?? population.serving}
+          modelId={modelId}
+          dataRevisionId={populationJob.data?.jobId === population.jobId && typeof populationJob.data?.result?.dataRevisionId === 'string' ? populationJob.data.result.dataRevisionId : undefined}
         />}
         {runHistoryOpen && modelId && !population && <RunHistoryPanel modelId={modelId} onClose={() => setRunHistoryOpen(false)} onOpenReview={openReview}
           onOpenRun={(job) => { setRunHistoryOpen(false); setPopulationJobId(job.jobId); setPopulation({ jobId: job.jobId, status: job.state, skipped: [], reused: false }); }} />}

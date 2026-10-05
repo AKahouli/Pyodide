@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SEARCH_QUERY_DEFAULTS } from '../../searchSettings';
 import { SearchQuerySettings, parseStopWords } from './SearchQuerySettings';
+import { OPEN_KEY } from './SettingsPane';
 
 const api = vi.hoisted(() => ({ getAdminSearch: vi.fn(), updateAdminSearch: vi.fn() }));
 vi.mock('../../searchSettings', async (importOriginal) => ({ ...(await importOriginal<object>()), searchSettingsApi: api }));
@@ -15,6 +16,8 @@ const saveButton = () => screen.getByText('settings.save').closest('button')!;
 
 describe('SearchQuerySettings', () => {
   beforeEach(() => {
+    // Panes start folded; these tests read the fields inside.
+    localStorage.setItem(OPEN_KEY, JSON.stringify({ 'search-index': true, 'search-query': true, 'run-size': true, 'ai-calls': true }));
     api.getAdminSearch.mockResolvedValue({ settings: SEARCH_QUERY_DEFAULTS, configured: { maxLimit: 40, extraStopWords: ['acme'] }, defaults: SEARCH_QUERY_DEFAULTS });
     api.updateAdminSearch.mockImplementation(async (configured) => ({ settings: SEARCH_QUERY_DEFAULTS, configured, defaults: SEARCH_QUERY_DEFAULTS }));
   });

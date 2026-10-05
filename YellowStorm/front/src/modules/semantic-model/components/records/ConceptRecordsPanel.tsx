@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerE
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, FileText, FilterX, FolderOpen, GitBranch, Keyboard, Loader2, RefreshCw, Search, Sheet, Table2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { parseApiError } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
@@ -24,6 +25,11 @@ const NAME = '__label__';
 const SOURCE = '__source__';
 const DEFAULT_WIDTHS: Record<string, number> = { [NAME]: 200, [SOURCE]: 180 };
 const DEFAULT_WIDTH = 160;
+/** Longer values (a body, a file's text) open whole in a reader instead of a tooltip. */
+const LONG_VALUE = 200;
+
+/** A value read in full: a body or an attached file's text, too long for a cell. */
+interface LongText { record: string; field: string; text: string }
 
 type RecordRow = ConceptRecordsPage['records'][number];
 type ValueOrigin = RecordRow['provenance'][string];
@@ -84,6 +90,7 @@ export function ConceptRecordsPanel({ modelId, conceptId, onClose, onOpenSource,
   const madeFrom = (useDerivedSources(modelId).data ?? []).filter((source) => source.conceptId === conceptId)
     .map((source) => concepts.find((node) => node.id === source.sourceConceptId)?.label ?? source.sourceConceptId);
   const [search, setSearch] = useState('');
+  const [reading, setReading] = useState<LongText | null>(null);
   const [query, setQuery] = useState('');
   const [filters, setFilters] = useState<Record<string, string>>({});
   const [appliedFilters, setAppliedFilters] = useState<Record<string, string>>({});
@@ -273,9 +280,16 @@ export function ConceptRecordsPanel({ modelId, conceptId, onClose, onOpenSource,
                   const key = own ? '' : display(record.identity?.[column.key]);
                   const value = own || key;
                   const origin = record.provenance[column.key];
-                  return <td key={column.key} title={own ? [own, originText(origin, t, concepts)].filter(Boolean).join('\n') : key ? t('records.table.keyValue') : t('records.table.missing')}
+                  const long = own.length > LONG_VALUE;
+                  const tip = long ? `${own.slice(0, LONG_VALUE)}…\n${t('records.table.readFull', { chars: own.length.toLocaleString() })}` : own;
+                  return <td key={column.key} title={own ? [tip, originText(origin, t, concepts)].filter(Boolean).join('\n') : key ? t('records.table.keyValue') : t('records.table.missing')}
                     className={cn('truncate border-b px-2 py-1', origin?.correction && 'text-primary', key && 'font-mono text-[11px] text-amber-800 dark:text-amber-300')}>
-                    {value || <span className='text-muted-foreground/60'>—</span>}
+                    {long
+                      ? <button type='button' className='block w-full truncate text-left hover:underline'
+                        onClick={() => setReading({ record: record.label, field: column.label || column.key, text: own })}>
+                        <FileText className='mr-1 inline h-3 w-3 align-[-2px] text-muted-foreground' />{own.slice(0, LONG_VALUE)}
+                      </button>
+                      : value || <span className='text-muted-foreground/60'>—</span>}
                   </td>;
                 })}
                 <td className='truncate border-b px-2 py-1 text-[11px] text-muted-foreground' title={sources.join(', ')}>{sources.join(', ')}</td>
@@ -290,5 +304,15 @@ export function ConceptRecordsPanel({ modelId, conceptId, onClose, onOpenSource,
       <Button variant='ghost' size='icon' className='h-6 w-6' disabled={page === 0} onClick={() => setPage((current) => Math.max(0, current - 1))} aria-label={t('records.table.previous')}><ChevronLeft className='h-4 w-4' /></Button>
       <Button variant='ghost' size='icon' className='h-6 w-6' disabled={page + 1 >= pages} onClick={() => setPage((current) => current + 1)} aria-label={t('records.table.next')}><ChevronRight className='h-4 w-4' /></Button>
     </footer>}
+
+    <Dialog open={reading !== null} onOpenChange={(open) => { if (!open) setReading(null); }}>
+      <DialogContent className='max-w-3xl'>
+        <DialogHeader>
+          <DialogTitle className='truncate'>{reading?.field}</DialogTitle>
+          <DialogDescription className='truncate'>{reading?.record} · {t('records.table.characters', { chars: (reading?.text.length ?? 0).toLocaleString() })}</DialogDescription>
+        </DialogHeader>
+        <pre className='max-h-[65vh] overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3 font-sans text-xs'>{reading?.text}</pre>
+      </DialogContent>
+    </Dialog>
   </section>;
 }

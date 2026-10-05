@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from typing import Any, Protocol
 
@@ -34,8 +35,15 @@ _EMAIL_ARCHIVE_MIMES = {"application/zip", "application/x-zip-compressed", "mess
 MAX_EMAIL_ARCHIVE_BYTES = 1024 * 1024 * 1024
 
 
-def max_source_bytes(mime_type: Any) -> int:
-    return MAX_EMAIL_ARCHIVE_BYTES if mime_type in _EMAIL_ARCHIVE_MIMES else MAX_COMPRESSED_BYTES
+def max_source_bytes(mime_type: Any, archive_mb: str | int | None = None) -> int:
+    if mime_type in _EMAIL_ARCHIVE_MIMES:
+        # An admin may allow larger mailboxes (the run limits, else ``SEMANTIC_EMAIL_MAX_ARCHIVE_MB``).
+        try:
+            megabytes = int(archive_mb if archive_mb is not None else os.environ.get("SEMANTIC_EMAIL_MAX_ARCHIVE_MB", "0"))
+        except ValueError:
+            megabytes = 0
+        return megabytes * 1024 * 1024 if 1 <= megabytes <= 51200 else MAX_EMAIL_ARCHIVE_BYTES
+    return MAX_COMPRESSED_BYTES
 
 
 def is_email_archive(mime_type: Any) -> bool:

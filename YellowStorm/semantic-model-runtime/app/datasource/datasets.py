@@ -133,6 +133,11 @@ def prepare_parquet(source: dict[str, Any], options: dict[str, Any] | None,
     finally:
         if workbook is not None:
             workbook.close()
+    return {"datasetId": dataset_id(source, options), **_written(output, headers, row_count)}
+
+
+def _written(output: Path, headers: list[str], row_count: int) -> dict[str, Any]:
+    """Size, hash and shape of a written dataset; ``dataset_too_large`` past the cap."""
     size = output.stat().st_size
     if size > MAX_DATASET_BYTES:
         output.unlink(missing_ok=True)
@@ -141,6 +146,48 @@ def prepare_parquet(source: dict[str, Any], options: dict[str, Any] | None,
     with output.open("rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
-    return {"datasetId": dataset_id(source, options), "rowCount": row_count,
-            "columns": [SHEET_ROW_KEY, *headers], "sizeBytes": size,
+    return {"rowCount": row_count, "columns": [SHEET_ROW_KEY, *headers], "sizeBytes": size,
             "contentHash": f"sha256:{digest.hexdigest()}"}
+
+
+def prepare_email_tables(data: Any, mime: str, output_dir: Path) -> dict[str, dict[str, Any]]:
+    """All three tables of an e-mail archive in one read (``<sheet>.parquet`` in ``output_dir``),
+    each described as :func:`prepare_parquet` does but without ``datasetId`` (it depends on the
+    mapping's options). Reading a large mailbox once instead of once per table saves minutes."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from .email_archive import COLUMNS, SHEET_ATTACHMENTS, SHEET_MESSAGES, SHEET_PARTICIPANTS, SHEETS, read_messages
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    schemas = {sheet: pa.schema([(SHEET_ROW_KEY, pa.int64()), *[(name, pa.string()) for name in COLUMNS[sheet]]])
+               for sheet in SHEETS}
+    writers = {sheet: pq.ParquetWriter(output_dir / f"{sheet}.parquet", schemas[sheet], compression="zstd")
+               for sheet in SHEETS}
+    batches: dict[str, list[tuple[int, list[Any]]]] = {sheet: [] for sheet in SHEETS}
+    counts = {sheet: 0 for sheet in SHEETS}
+    # Row numbers as a one-table read gives them: the first data row is 2.
+    numbers = {sheet: 2 for sheet in SHEETS}
+
+    def add(sheet: str, row: dict[str, Any]) -> None:
+        batches[sheet].append((numbers[sheet], [row.get(name) for name in COLUMNS[sheet]]))
+        numbers[sheet] += 1
+        if len(batches[sheet]) >= BATCH_ROWS:
+            counts[sheet] += _write_batch(writers[sheet], schemas[sheet], COLUMNS[sheet], batches[sheet])
+            batches[sheet].clear()
+
+    try:
+        for message in read_messages(data, mime, with_text=True):
+            add(SHEET_MESSAGES, message.row)
+            for participant in message.participants:
+                add(SHEET_PARTICIPANTS, participant)
+            for attachment in message.attachments:
+                add(SHEET_ATTACHMENTS, attachment.row)
+        for sheet in SHEETS:
+            if batches[sheet]:
+                counts[sheet] += _write_batch(writers[sheet], schemas[sheet], COLUMNS[sheet], batches[sheet])
+    finally:
+        for writer in writers.values():
+            writer.close()
+    return {sheet: {"file": f"{sheet}.parquet", **_written(output_dir / f"{sheet}.parquet", COLUMNS[sheet], counts[sheet])}
+            for sheet in SHEETS}

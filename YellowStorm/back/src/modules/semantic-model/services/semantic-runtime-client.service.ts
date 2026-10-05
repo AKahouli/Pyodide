@@ -9,6 +9,7 @@ import {
 } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import type { ResolvedEntity } from '../domain/semantic-source-mapping.types';
+import { runtimeErrorMessage, runtimeUnreachableMessage } from '../domain/runtime-error-messages';
 
 // Thin NestJS client for the merged semantic-model-runtime (P2.11). Single
 // shot per call with the configured deadline; no retries without the caller's
@@ -621,20 +622,7 @@ export class SemanticRuntimeClientService {
       }
       return await res.json() as T;
     } catch (error) {
-      const status = (error as { status?: unknown }).status;
-      if (typeof status === 'number') {
-        const detail = this.errorDetail(error);
-        if (status === 409) {
-          throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT, detail);
-        }
-        if (status === 404) {
-          throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, detail);
-        }
-      }
-      throw new ServiceUnavailableException(
-        ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
-        'Semantic runtime request failed',
-      );
+      throw this.translate(error);
     }
   }
 
@@ -653,8 +641,8 @@ export class SemanticRuntimeClientService {
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(DOCUMENT_PREVIEW_TIMEOUT_MS),
       });
-    } catch {
-      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    } catch (error) {
+      throw this.translate(error);
     }
     if (!res.ok) {
       throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, `Semantic runtime could not read the document labels (${res.status})`);
@@ -672,14 +660,14 @@ export class SemanticRuntimeClientService {
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(DOCUMENT_PREVIEW_TIMEOUT_MS),
       });
-    } catch {
-      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    } catch (error) {
+      throw this.translate(error);
     }
     if (res.status === 422) {
       const detail = this.errorDetail({ data: await this.readErrorPayload(res) });
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, detail || 'These reading rules cannot be used');
     }
-    if (!res.ok) throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    if (!res.ok) throw await this.failure(res);
     return await res.json() as RuntimeDocumentPreview;
   }
 
@@ -694,14 +682,14 @@ export class SemanticRuntimeClientService {
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(DOCUMENT_PREVIEW_TIMEOUT_MS),
       });
-    } catch {
-      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    } catch (error) {
+      throw this.translate(error);
     }
     if (res.status === 422) {
       const detail = this.errorDetail({ data: await this.readErrorPayload(res) });
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, detail || 'These reading rules cannot be used');
     }
-    if (!res.ok) throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    if (!res.ok) throw await this.failure(res);
     return await res.json() as RuntimeSheetPreview;
   }
 
@@ -716,14 +704,14 @@ export class SemanticRuntimeClientService {
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(this.config.runtimeRequestTimeoutMs),
       });
-    } catch {
-      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    } catch (error) {
+      throw this.translate(error);
     }
     if (res.status === 422) {
       const detail = this.errorDetail({ data: await this.readErrorPayload(res) });
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, detail || 'This mapping cannot be previewed');
     }
-    if (!res.ok) throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    if (!res.ok) throw await this.failure(res);
     return await res.json() as RuntimeShapedSheetRows;
   }
 
@@ -737,14 +725,14 @@ export class SemanticRuntimeClientService {
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(this.config.runtimeRequestTimeoutMs),
       });
-    } catch {
-      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    } catch (error) {
+      throw this.translate(error);
     }
     if (res.status === 422) {
       const detail = this.errorDetail({ data: await this.readErrorPayload(res) });
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, detail || 'This computation cannot be used');
     }
-    if (!res.ok) throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    if (!res.ok) throw await this.failure(res);
     return await res.json() as RuntimeComputedPreview;
   }
 
@@ -766,13 +754,7 @@ export class SemanticRuntimeClientService {
       }
       return await res.json() as T;
     } catch (error) {
-      if ((error as { status?: unknown }).status === 404) {
-        throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, this.errorDetail(error));
-      }
-      throw new ServiceUnavailableException(
-        ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
-        'Semantic runtime request failed',
-      );
+      throw this.translate(error);
     }
   }
 
@@ -786,9 +768,29 @@ export class SemanticRuntimeClientService {
   }
 
   private errorDetail(error: unknown): string {
-    const detail = ((error as { data?: unknown }).data as { detail?: unknown } | undefined)?.detail;
-    if (typeof detail === 'string' && detail) return detail.slice(0, 200);
-    return 'Semantic runtime request failed';
+    return runtimeErrorMessage((error as { data?: unknown }).data, 'The semantic runtime could not do this');
+  }
+
+  /**
+   * A runtime failure as the error a person sees: a refusal (400/422) says why, a missing thing is
+   * not found, a conflict is a conflict, and a runtime that never answered says so.
+   */
+  private translate(error: unknown): Error {
+    const status = (error as { status?: unknown }).status;
+    if (typeof status !== 'number') {
+      return new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, runtimeUnreachableMessage(error));
+    }
+    const detail = this.errorDetail(error);
+    if (status === 409) return new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT, detail);
+    if (status === 404) return new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, detail);
+    if (status === 400 || status === 422) return new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, detail);
+    return new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
+      runtimeErrorMessage((error as { data?: unknown }).data, `The semantic runtime failed (HTTP ${status}). Try again in a moment.`));
+  }
+
+  /** An answer that is not ok, read and translated. */
+  private async failure(res: Response): Promise<Error> {
+    return this.translate({ status: res.status, data: await this.readErrorPayload(res) });
   }
 
   async requestPopulationRun(
@@ -822,8 +824,8 @@ export class SemanticRuntimeClientService {
         headers: { 'X-Semantic-Service-Key': this.config.runtimeServiceKey, 'X-Actor-User-Id': actorUserId },
         signal: AbortSignal.timeout(this.config.runtimeRequestTimeoutMs),
       });
-    } catch {
-      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    } catch (error) {
+      throw this.translate(error);
     }
     if (res.ok) return true;
     if (res.status === 409) {
@@ -855,8 +857,8 @@ export class SemanticRuntimeClientService {
         body: JSON.stringify(command),
         signal: AbortSignal.timeout(Math.max(this.config.runtimeRequestTimeoutMs, 300_000)),
       });
-    } catch {
-      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    } catch (error) {
+      throw this.translate(error);
     }
     if (res.ok) return await res.json() as RuntimeClonedData;
     if (res.status === 409) {
@@ -1065,24 +1067,24 @@ export class SemanticRuntimeClientService {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         signal: AbortSignal.timeout(timeoutMs),
       });
-    } catch {
-      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    } catch (error) {
+      throw this.translate(error);
     }
     if (res.ok) {
       try {
         return await res.json() as T;
       } catch {
-        throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+        throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'The semantic runtime sent an answer that could not be read.');
       }
     }
-    const detail = this.errorDetail({ data: await this.readErrorPayload(res) });
+    const data = await this.readErrorPayload(res);
     if (res.status === 422 || res.status === 400) {
+      const raw = (data as { detail?: unknown } | null)?.detail;
+      const code = typeof raw === 'string' ? raw.split(/[:\s]/)[0] : '';
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
-        GRAPH_SEARCH_REJECTIONS[detail.split(/[:\s]/)[0]] ?? GRAPH_SEARCH_REJECTIONS.invalid_query);
+        GRAPH_SEARCH_REJECTIONS[code] ?? GRAPH_SEARCH_REJECTIONS.invalid_query);
     }
-    if (res.status === 409) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT, detail);
-    if (res.status === 404) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, detail);
-    throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    throw this.translate({ status: res.status, data });
   }
 
   async commitManualSnapshot(modelId: string, snapshotId: string, counts: { rowCount: number; linkCount: number }): Promise<{ reused: boolean }> {

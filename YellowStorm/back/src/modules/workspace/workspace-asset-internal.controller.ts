@@ -12,9 +12,10 @@ import {
   UseGuards,
   VERSION_NEUTRAL,
 } from '@nestjs/common';
-import { ApiOperation, ApiProperty, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
-import { IsMongoId, IsString, Matches, MaxLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsInt, IsMongoId, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 import { createHash } from 'crypto';
 import type { Request, Response } from 'express';
 import { pipeline } from 'stream/promises';
@@ -30,10 +31,14 @@ import { WorkspaceShareService } from './workspace-share.service';
 const SEMANTIC_PREVIEW_MAX_BYTES = 50 * 1024 * 1024;
 // An e-mail archive is read entry by entry and streamed to disk by the runtime, never held in memory.
 const SEMANTIC_EMAIL_ARCHIVE_MAX_BYTES = 1024 * 1024 * 1024;
+// The most an admin may allow for one archive (Admin > Semantic models > E-mail archives).
+const SEMANTIC_EMAIL_ARCHIVE_CEILING_MB = 51200;
 const EMAIL_ARCHIVE_MIME_TYPES = new Set(['application/zip', 'application/x-zip-compressed', 'message/rfc822']);
 
-function semanticReadLimit(mimeType: string | undefined): number {
-  return mimeType && EMAIL_ARCHIVE_MIME_TYPES.has(mimeType) ? SEMANTIC_EMAIL_ARCHIVE_MAX_BYTES : SEMANTIC_PREVIEW_MAX_BYTES;
+/** `archiveMb`: the admin's archive size limit, sent by the runtime with the run's limits. */
+function semanticReadLimit(mimeType: string | undefined, archiveMb?: number): number {
+  if (!mimeType || !EMAIL_ARCHIVE_MIME_TYPES.has(mimeType)) return SEMANTIC_PREVIEW_MAX_BYTES;
+  return archiveMb ? Math.min(archiveMb, SEMANTIC_EMAIL_ARCHIVE_CEILING_MB) * 1024 * 1024 : SEMANTIC_EMAIL_ARCHIVE_MAX_BYTES;
 }
 
 class SemanticAssetQueryDto {
@@ -48,6 +53,10 @@ class SemanticAssetQueryDto {
   @ApiProperty()
   @IsMongoId()
   documentId!: string;
+
+  @ApiPropertyOptional({ minimum: 10, maximum: SEMANTIC_EMAIL_ARCHIVE_CEILING_MB, description: 'Largest e-mail archive to stream, in MB (the run limits)' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(10) @Max(SEMANTIC_EMAIL_ARCHIVE_CEILING_MB)
+  maxArchiveMb?: number;
 }
 
 class SemanticDerivedFileQueryDto extends SemanticAssetQueryDto {
@@ -127,7 +136,7 @@ export class WorkspaceAssetInternalController {
     if (document.isFolder || document.status !== DocumentStatus.COMPLETED || !document.path) {
       throw new BadRequestException('Document is not available for semantic discovery');
     }
-    if (document.size > semanticReadLimit(document.mimeType)) {
+    if (document.size > semanticReadLimit(document.mimeType, query.maxArchiveMb)) {
       throw new PayloadTooLargeException('Document exceeds the semantic preview limit');
     }
 

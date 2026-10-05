@@ -617,6 +617,10 @@ export class AiExtractionSettingsDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50)
   blocksPerField?: number;
 
+  @ApiPropertyOptional({ minimum: 1, maximum: 32, description: 'AI calls made at once (one per record); never above the admin ceiling' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(32)
+  parallelCalls?: number;
+
   @ApiPropertyOptional({ description: 'One document gives several records, one per item the AI finds (mapping only)' })
   @IsOptional() @IsBoolean()
   manyRecords?: boolean;
@@ -627,17 +631,41 @@ export class RunLimitsDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50000)
   maxRunSources?: number;
 
-  @ApiPropertyOptional({ minimum: 100, maximum: 200000, description: 'Most records one source gives' })
-  @IsOptional() @Type(() => Number) @IsInt() @Min(100) @Max(200000)
+  @ApiPropertyOptional({ minimum: 100, maximum: 500000, description: 'Most records one source gives' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(100) @Max(500000)
   maxRecordsPerSource?: number;
 
-  @ApiPropertyOptional({ minimum: 100, maximum: 200000, description: 'Most records one run keeps' })
-  @IsOptional() @Type(() => Number) @IsInt() @Min(100) @Max(200000)
+  @ApiPropertyOptional({ minimum: 100, maximum: 500000, description: 'Most records one run keeps' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(100) @Max(500000)
   maxRecordsPerRun?: number;
 
-  @ApiPropertyOptional({ minimum: 1000, maximum: 2000000, description: 'Most field values one run keeps' })
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1000) @Max(2000000)
+  @ApiPropertyOptional({ minimum: 1000, maximum: 5000000, description: 'Most field values one run keeps' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1000) @Max(5000000)
   maxValuesPerRun?: number;
+
+  @ApiPropertyOptional({ minimum: 0, maximum: 200000, description: 'Most records of one source read with AI in a run' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(200000)
+  maxAiRowsPerSource?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 32, description: 'Most AI calls one run makes at once' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(32)
+  maxAiParallelCalls?: number;
+
+  @ApiPropertyOptional({ minimum: 100, maximum: 200000, description: 'Most e-mails one archive may hold' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(100) @Max(200000)
+  maxArchiveEmails?: number;
+
+  @ApiPropertyOptional({ minimum: 10, maximum: 51200, description: 'Largest e-mail archive read, in MB' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(10) @Max(51200)
+  maxArchiveMb?: number;
+
+  @ApiPropertyOptional({ minimum: 256, maximum: 16384, description: 'Memory of the reader process for one source, in MB' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(256) @Max(16384)
+  parserMemoryMb?: number;
+
+  @ApiPropertyOptional({ minimum: 60, maximum: 7200, description: 'Time one full read of an e-mail archive may take, in seconds' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(60) @Max(7200)
+  archiveTimeoutSeconds?: number;
 }
 
 export class DerivedFieldMappingDto {

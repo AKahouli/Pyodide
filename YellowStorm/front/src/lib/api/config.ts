@@ -478,6 +478,7 @@ export const API_ENDPOINTS = {
     bulkDocumentSourceMappings: (id: string) => `/semantic-models/${id}/source-mappings/bulk-documents`,
     workspaceSourceMapping: (id: string) => `/semantic-models/${id}/source-mappings/workspace`,
     conceptRecords: (id: string, conceptId: string) => `/semantic-models/${id}/concepts/${conceptId}/records`,
+    searchIndex: (id: string) => `/semantic-models/${id}/search-index`,
     assistantChanges: (id: string) => `/semantic-models/${id}/assistant/changes`,
     assistantChange: (id: string, changeId: string, action: 'undo' | 'redo') => `/semantic-models/${id}/assistant/changes/${changeId}/${action}`,
     sourceMapping: (id: string, mappingId: string) => `/semantic-models/${id}/source-mappings/${mappingId}`,

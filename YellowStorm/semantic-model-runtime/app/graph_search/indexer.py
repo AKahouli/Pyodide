@@ -36,6 +36,8 @@ INDEX_TASK_NAME = "semantic-model-search.index"
 # Index jobs belong to no person: one job per generation attempt, whoever asked.
 SYSTEM_ACTOR = "system:graph-search"
 GENERATION_LEASE_SECONDS = 300
+# Records read and written per step of a build.
+ENTITY_PAGE_SIZE = 5000
 TERMINAL_JOB_STATES = ("completed", "completed_with_gaps", "failed", "cancelled", "superseded")
 
 
@@ -161,14 +163,21 @@ async def build_index(pool: Any, *, index_id: str, owner: str,
         await search_store.fail_generation(pool, index_id, "revision_specification_not_found", owner)
         return {"state": "failed", "errorCode": "revision_specification_not_found"}
     concepts = compile_specification(specification)["concepts"]
-    entities = await population_store.list_revision_entities(pool, revision_id)
     expected = (await population_store.count_revision_rows(pool, revision_id))["entities"]
-    if expected != len(entities):
-        await search_store.fail_generation(pool, index_id, "revision_too_large", owner)
-        return {"state": "failed", "errorCode": "revision_too_large"}
-    documents = [build_document(entity, concepts.get(entity["conceptId"]), settings) for entity in entities]
-    await search_store.insert_documents(pool, index_id, documents)
-    passages = await search_store.insert_passages(pool, index_id, documents)
+    # A page of records at a time: a large mailbox gives hundreds of thousands of them.
+    loaded = passages = 0
+    async for entities in population_store.iter_revision_entities(pool, revision_id, ENTITY_PAGE_SIZE):
+        documents = [build_document(entity, concepts.get(entity["conceptId"]), settings) for entity in entities]
+        await search_store.insert_documents(pool, index_id, documents)
+        passages += await search_store.insert_passages(pool, index_id, documents)
+        loaded += len(entities)
+        if not await search_store.renew_generation(pool, index_id, owner, GENERATION_LEASE_SECONDS, 0):
+            return {"state": "lease_lost"}
+        await report({"stage": "documents", "expected": expected, "loaded": loaded, "passages": passages})
+    if expected != loaded:
+        # The revision changed under the build: a later request builds it again.
+        await search_store.fail_generation(pool, index_id, "revision_changed", owner)
+        return {"state": "failed", "errorCode": "revision_changed"}
     model_id = generation["model_id"]
     reused = await search_store.fill_from_cache(pool, index_id, model_id, profile.fingerprint)
     passages_reused = await search_store.fill_from_cache(pool, index_id, model_id, profile.fingerprint,

@@ -669,3 +669,26 @@ def test_concept_refresh_accepts_links_and_no_source_of_concepts_it_keeps():
     derived_only["payload"]["scope"] = {"kind": "concept", "conceptId": "c2"}
     assert run_population_for_payload(derived_only)["ok"] is True
     assert run_population_for_payload(command(sources=[]))["errorCode"] == "invalid_sources"
+
+
+@pytest.mark.asyncio
+async def test_progress_says_how_far_the_current_step_is_and_counts_ai_calls():
+    from app.workers.population_tasks import PopulationProgress
+
+    reports: list[dict] = []
+
+    async def report(snapshot: dict) -> None:
+        reports.append(snapshot)
+
+    progress = PopulationProgress(report, min_interval=0)
+    await progress.begin(1)
+    assert "step" not in reports[-1] and "ai" not in reports[-1]
+    await progress.advance("rows", 1000, 25000)
+    await progress.count_ai("planned", 40)
+    await progress.count_ai("answered")
+    await progress.count_ai("reused")
+    assert reports[-1]["step"] == {"unit": "rows", "done": 1000, "total": 25000}
+    assert reports[-1]["ai"] == {"planned": 40, "answered": 1, "reused": 1, "skipped": 0, "failed": 0}
+    # A finished source or a new phase has no step left; the AI tally runs for the whole run.
+    await progress.enter("linking")
+    assert "step" not in reports[-1] and reports[-1]["ai"]["planned"] == 40

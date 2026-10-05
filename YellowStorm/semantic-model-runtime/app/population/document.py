@@ -15,7 +15,7 @@ from app.datasource.logical_search import LogicalSearchError, combine_hits, sear
 from app.datasource.section_reader import (MAX_CLOSURE_SECTIONS, SectionReadError,
                                            get_outline, read_complete_section_set)
 
-from .document_rules import (PASSAGE_LOCATIONS, all_matches, clean, compile_pattern, fold,
+from .document_rules import (PASSAGE_LOCATIONS, all_matches, answer_options, clean, compile_pattern, fold,
                              folded_label_regex, heading_matches, heading_text, label_found,
                              next_line_values, normalize_ai_settings, same_line_values, shaped_input,
                              to_iso_date_or_period)
@@ -906,7 +906,7 @@ async def populate_document(
             "mappingVersion": entry["mappingVersion"], "labelField": entry.get("labelField"),
             "assetRef": asset_ref, "contentHash": current.get("contentHash"),
             "documentPk": candidate["documentPk"], "aiExtraction": ai_extraction,
-            **({"options": options} if options else {})})
+            **({"options": answer_options(options)} if options else {})})
         cached = await cache.get(cache_key)
         if cached is not None:
             cached["indexObservation"] = observation

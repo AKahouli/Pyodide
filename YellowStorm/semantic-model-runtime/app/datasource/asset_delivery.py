@@ -19,7 +19,7 @@ def asset_fetch_wall_seconds(source: dict[str, Any]) -> int:
     """35 s for an ordinary file; a large e-mail archive also gets 1 s per 10 MB."""
     size = source.get("sizeBytes")
     extra = size // (10 * 1024 * 1024) if isinstance(size, int) and not isinstance(size, bool) and size > 0 else 0
-    return 35 + min(extra, 600)
+    return 35 + min(extra, 5400)
 
 
 class AssetFetchError(ValueError):
@@ -73,13 +73,13 @@ def _authoritative_source(response: httpx.Response) -> dict[str, Any]:
 
 
 def _validate_metadata(expected: dict[str, Any], current: dict[str, Any],
-                       response: httpx.Response) -> int:
+                       response: httpx.Response, archive_mb: int | None = None) -> int:
     if current["workspaceId"] != expected.get("workspaceId") or current["assetId"] != expected.get("assetId"):
         raise AssetFetchError("asset_identity_mismatch")
     if current["mimeType"] != expected.get("mimeType"):
         raise AssetFetchError("asset_changed")
     size = current["sizeBytes"]
-    if size < 0 or size > max_source_bytes(current["mimeType"]):
+    if size < 0 or size > max_source_bytes(current["mimeType"], archive_mb):
         raise AssetFetchError("source_too_large")
     expected_size = expected.get("sizeBytes")
     if isinstance(expected_size, int) and not isinstance(expected_size, bool) and size != expected_size:
@@ -142,11 +142,12 @@ class _HashCheck:
 
 async def fetch_workspace_asset(source: dict[str, Any], actor_user_id: str,
                                 *, client: httpx.AsyncClient | None = None,
-                                target: Path | None = None) -> bytes | Path:
+                                target: Path | None = None, archive_mb: int | None = None) -> bytes | Path:
     """Stream an identity-bound asset with redirects disabled and a hard cap.
 
     With ``target`` the bytes go to that file and its path is returned: large
-    e-mail archives are never held in memory.
+    e-mail archives are never held in memory. ``archive_mb`` is the admin's size limit for an
+    e-mail archive (the run limits), asked of the back end too.
     """
     token = os.environ.get("YELLOWSTORM_INTERNAL_SERVICE_TOKEN", "")
     if not token:
@@ -161,7 +162,8 @@ async def fetch_workspace_asset(source: dict[str, Any], actor_user_id: str,
         async with http.stream(
             "GET", url,
             params={"actorUserId": actor_user_id, "workspaceId": source.get("workspaceId", ""),
-                    "documentId": source.get("assetId", "")},
+                    "documentId": source.get("assetId", ""),
+                    **({"maxArchiveMb": archive_mb} if archive_mb else {})},
             headers={"X-Internal-Token": token, "Accept-Encoding": "identity"},
         ) as response:
             if response.is_redirect:
@@ -180,8 +182,8 @@ async def fetch_workspace_asset(source: dict[str, Any], actor_user_id: str,
             if response.headers.get("content-encoding") not in (None, "identity"):
                 raise AssetFetchError("invalid_asset_response")
             current = _authoritative_source(response)
-            expected_size = _validate_metadata(source, current, response)
-            limit = max_source_bytes(current["mimeType"])
+            expected_size = _validate_metadata(source, current, response, archive_mb)
+            limit = max_source_bytes(current["mimeType"], archive_mb)
             check = _HashCheck(current.get("contentHash"))
             if target is not None:
                 written = 0

@@ -5,7 +5,8 @@ import {
   type AiExtractionSettings, type RunLimits,
 } from '../domain/semantic-source-mapping.types';
 
-const KEYS = Object.keys(DEFAULT_AI_EXTRACTION_SETTINGS) as Array<Exclude<keyof AiExtractionSettings, 'manyRecords'>>;
+// parallelCalls has no built-in value here: left out, the runtime uses its own (and no mapping changes fingerprint).
+const KEYS = [...Object.keys(DEFAULT_AI_EXTRACTION_SETTINGS), 'parallelCalls'] as Array<Exclude<keyof AiExtractionSettings, 'manyRecords'>>;
 
 /** Only the limits that were set, as whole numbers; anything else is dropped. */
 export function pickAiSettings(input: unknown): Partial<AiExtractionSettings> {

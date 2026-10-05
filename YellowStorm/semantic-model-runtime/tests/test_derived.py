@@ -205,3 +205,13 @@ def test_a_command_without_derivations_keeps_its_admission_shape():
     assert "derivations" not in PopulationPayload.model_validate(payload).model_dump(by_alias=True, mode="json")
     dumped = PopulationPayload.model_validate({**payload, "derivations": [derivation()]}).model_dump(by_alias=True, mode="json")
     assert dumped["derivations"] == [derivation()]
+
+
+
+def test_a_run_may_make_more_derived_records_than_the_built_in_bound():
+    concepts = compiled_concepts()
+    [normalized] = normalize_derivations([derivation()], concepts)
+    many = [contract(f"k{i}", f"C-{i}", f"Org {i}") for i in range(30)]
+    capped = derive_concept(concepts["org"], normalized, many, [], max_entities=10)
+    assert len(capped["entities"]) == 10 and any(gap["kind"] == "materialization_cap" for gap in capped["gaps"])
+    assert len(derive_concept(concepts["org"], normalized, many, [], max_entities=100)["entities"]) == 30

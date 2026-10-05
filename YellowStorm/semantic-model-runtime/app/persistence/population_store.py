@@ -584,6 +584,36 @@ async def count_revision_entities_by_concept(pool: Any, revision_id: str) -> dic
     return {str(row["concept_id"]): int(row["entities"]) for row in rows}
 
 
+async def iter_revision_entities(pool: Any, revision_id: str, page_size: int = 5000):  # type: ignore[no-untyped-def]
+    """Every entity of a revision, a page at a time in id order (a revision can hold hundreds of
+    thousands): yields lists shaped like :func:`list_revision_entities`."""
+    after = ""
+    while True:
+        rows = await pool.fetch(
+            "SELECT id, concept_id, namespace, label, attributes, provenance, identity_key "
+            "FROM semantic_population.entities WHERE data_revision_id = $1 AND id > $2 "
+            "ORDER BY id LIMIT $3", revision_id, after, page_size)
+        if not rows:
+            return
+        yield [_entity_row(dict(row)) for row in rows]
+        after = rows[-1]["id"]
+        if len(rows) < page_size:
+            return
+
+
+def _entity_row(values: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "entityId": values["id"], "conceptId": values["concept_id"],
+        "namespace": values["namespace"], "label": values["label"],
+        "attributes": json.loads(values["attributes"])
+        if isinstance(values["attributes"], str) else dict(values["attributes"]),
+        "provenance": json.loads(values.get("provenance") or "{}")
+        if isinstance(values.get("provenance"), str)
+        else dict(values.get("provenance") or {}),
+        "identity": _json_object(values.get("identity_key")),
+    }
+
+
 async def list_revision_entities(pool: Any, revision_id: str,
                                  limit: int = 50000,
                                  concept_id: str | None = None) -> list[dict[str, Any]]:

@@ -19,7 +19,7 @@ import os
 import re
 from typing import Any
 
-from .document_rules import MAX_LABEL_CHARS, RuleError, normalize_rules, shaped_input
+from .document_rules import MAX_LABEL_CHARS, RuleError, answer_settings, normalize_rules, shaped_input
 
 CELL_EXTRACTION_VERSION = "cell-v1"
 # A cell has no pages, headings or tables: the places that read a passage or a line still apply.
@@ -218,7 +218,8 @@ class CellReader:
     """
 
     def __init__(self, specs: dict[str, dict[str, Any]], context: dict[str, Any], *, cache: Any = None,
-                 ai_rows: int | None = None, extract: Any = None) -> None:
+                 ai_rows: int | None = None, extract: Any = None, concurrency: int | None = None,
+                 progress: Any = None) -> None:
         from .document_rules import normalize_ai_settings
 
         self.specs = specs
@@ -229,7 +230,14 @@ class CellReader:
         self.extract = extract or _doc()._apply_ai_extraction
         self.stats: dict[str, Any] = {"aiRows": 0, "aiCalls": 0, "aiReused": 0, "aiSkippedRows": 0,
                                       "aiFailedRows": 0, "lastFailure": None}
-        self._semaphore = asyncio.Semaphore(AI_ROW_CONCURRENCY)
+        self.concurrency = max(1, concurrency or self.context["settings"].get("parallelCalls") or AI_ROW_CONCURRENCY)
+        self._semaphore = asyncio.Semaphore(self.concurrency)
+        # The run's progress (``count_ai``), so the AI calls show while they happen.
+        self.progress = progress
+
+    async def _count(self, key: str, amount: int = 1) -> None:
+        if self.progress is not None and amount:
+            await self.progress.count_ai(key, amount)
 
     async def read_rows(self, rows: list[tuple[Any, dict[str, str]]]) -> list[dict[str, Any]]:
         """For each ``(rowNumber, cells by column)``: ``values``, ``evidence`` and ``fields`` (readings)."""
@@ -247,12 +255,14 @@ class CellReader:
                 continue
             if self.stats["aiRows"] >= self.ai_rows:
                 self.stats["aiSkippedRows"] += 1
+                await self._count("skipped")
                 for spec in pending:
                     self._missed(result, spec, "ai_failed", "ai_row_limit")
                 continue
             self.stats["aiRows"] += 1
             tasks.append(self._read_ai(number, cells, pending, result))
         if tasks:
+            await self._count("planned", len(tasks))
             await asyncio.gather(*tasks)
         return results
 
@@ -273,10 +283,11 @@ class CellReader:
             cache_key = extraction_cache_key({
                 "engine": CELL_EXTRACTION_VERSION, "modelId": self.context.get("modelId"),
                 "conceptId": self.context.get("conceptId"), "fields": pending, "cells": _cells_key(cells, columns),
-                "settings": self.context.get("settings"), "aiExtraction": self.context.get("aiExtraction")})
+                "settings": answer_settings(self.context.get("settings")), "aiExtraction": self.context.get("aiExtraction")})
             answer = await self.cache.get(cache_key)
             if answer is not None:
                 self.stats["aiReused"] += 1
+                await self._count("reused")
         if answer is None:
             sections: list[dict[str, Any]] = []
             for index, column in enumerate(columns, start=1):
@@ -295,6 +306,7 @@ class CellReader:
                     entry, self.context.get("assetRef") or {}, sections, pending,
                     str(self.context.get("modelId") or ""), self.context.get("aiExtraction"),
                     values, evidence, self.context["settings"], quotes)
+            await self._count("failed" if failure is not None else "answered")
             by_section = {index: column for index, column in enumerate(columns, start=1)}
             answer = {"failure": failure, "values": values, "quotes": quotes,
                       "evidence": {key: {"column": by_section.get(item.get("sectionPk"), pending[0]["column"]),

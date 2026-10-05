@@ -47,6 +47,18 @@ describe('ConceptRecordsPanel', () => {
     expect(screen.getByText('records.table.range')).toBeInTheDocument();
   });
 
+  it('opens a long value, such as a file text, whole in a reader', async () => {
+    const text = `Clause de confidentialité. ${'Le prestataire s’engage. '.repeat(20)}Fin du contrat.`;
+    api.conceptRecords.mockResolvedValue({ dataRevisionId: 'dr', total: 1, offset: 0, limit: 50,
+      records: [{ ...record(1), values: { country: text } }] });
+    renderPanel();
+
+    fireEvent.click(await screen.findByRole('button', { name: /Clause de confidentialité/ }));
+
+    expect(await screen.findByRole('dialog')).toHaveTextContent('Fin du contrat.');
+    expect(screen.getByRole('heading', { name: 'Country' })).toBeInTheDocument();
+  });
+
   it('searches as the person types, and pages through the results', async () => {
     renderPanel();
     await screen.findByText('Acme 1');

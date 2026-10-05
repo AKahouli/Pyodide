@@ -9,7 +9,8 @@ import pytest
 from app.population import document as document_module
 from app.population.cell_fields import (CellReader, cell_sections, normalize_field_extractions,
                                         read_row_rules)
-from app.population.document_rules import RuleError
+from app.population.document_rules import RuleError, normalize_ai_settings
+from app.population.run_limits import ai_pacing, run_limits
 from app.workers.datasource_tasks import build_mapping_preview
 from app.workers.population_tasks import (population_execution_fingerprint, run_population_for_payload,
                                           run_population_for_task)
@@ -231,3 +232,54 @@ async def test_the_cell_preview_route_reads_picked_rows_like_a_run() -> None:
     assert second["fields"]["country"]["reason"] == "no_input"
     assert second["fields"]["customer_id"]["reason"] == "no_input"
     assert result["ai"]["aiCalls"] == 0
+
+
+@pytest.mark.asyncio
+async def test_ai_calls_run_as_many_at_once_as_the_mapping_asks(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import asyncio
+
+    running = {"now": 0, "most": 0}
+
+    async def slow_agent(**kwargs: Any) -> dict:
+        running["now"] += 1
+        running["most"] = max(running["most"], running["now"])
+        await asyncio.sleep(0.01)
+        running["now"] -= 1
+        return {"values": [], "extractorVersion": "ai-test-v1", "model": "fake"}
+
+    monkeypatch.setattr(document_module, "extract_attributes", slow_agent)
+    specs = normalize_field_extractions({"country": {**RULES["country"], "extractionStrategy": "ai"}})
+    reader = CellReader(specs, {**CONTEXT, "settings": normalize_ai_settings({"parallelCalls": 6})})
+    await reader.read_rows([(row, {"notes": NOTES}) for row in range(20)])
+    assert reader.concurrency == 6 and running["most"] == 6
+
+
+def test_the_admin_ceiling_bounds_parallel_calls_and_sets_the_ai_row_cap() -> None:
+    limits = run_limits({"limits": {"maxAiParallelCalls": 3, "maxAiRowsPerSource": 25000}})
+    assert ai_pacing(limits, {"parallelCalls": 16}) == {"aiRows": 25000, "concurrency": 3}
+    assert ai_pacing(run_limits({}), {"parallelCalls": 6})["concurrency"] == 6
+
+
+@pytest.mark.asyncio
+async def test_changing_parallel_calls_reuses_earlier_answers(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    calls: list[dict] = []
+    monkeypatch.setattr(document_module, "extract_attributes", _fake_agent({"country": "France"}, calls))
+    specs = normalize_field_extractions({"country": {**RULES["country"], "extractionStrategy": "ai"}})
+    cache = MemoryCache()
+    await CellReader(specs, CONTEXT, cache=cache).read_rows([(2, {"notes": NOTES})])
+    faster = CellReader(specs, {**CONTEXT, "settings": normalize_ai_settings({"parallelCalls": 12})}, cache=cache)
+    await faster.read_rows([(2, {"notes": NOTES})])
+    assert len(calls) == 1 and faster.stats["aiReused"] == 1
+
+
+@pytest.mark.asyncio
+async def test_the_reader_tells_the_run_about_every_ai_call(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from app.workers.population_tasks import PopulationProgress
+
+    calls: list[dict] = []
+    monkeypatch.setattr(document_module, "extract_attributes", _fake_agent({"country": "France"}, calls))
+    specs = normalize_field_extractions({"country": {**RULES["country"], "extractionStrategy": "ai"}})
+    progress = PopulationProgress()
+    reader = CellReader(specs, CONTEXT, ai_rows=2, progress=progress)
+    await reader.read_rows([(2, {"notes": NOTES}), (3, {"notes": NOTES}), (4, {"notes": NOTES})])
+    assert progress.ai == {"planned": 2, "answered": 2, "reused": 0, "skipped": 1, "failed": 0}

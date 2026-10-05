@@ -88,3 +88,22 @@ def test_changes_of_a_concept_refresh_do_not_report_kept_sources_as_removed():
 def test_a_concept_made_from_another_is_made_again_from_the_kept_records():
     assert derivations_to_rerun(DERIVATIONS, {"person"}, "person") == {"d1", "d2"}
     assert derivations_to_rerun(DERIVATIONS, {"sector"}, "sector") == {"d3"}
+
+
+def test_admission_takes_a_refresh_of_a_concept_made_from_another_without_sources():
+    import pytest
+    from pydantic import ValidationError
+
+    from app.jobs.models import PopulationPayload
+
+    base = {"modelVersionId": "v1", "specHash": "sha256:" + "0" * 64, "purpose": "build",
+            "specification": {}, "sources": []}
+    derivation = {"derivationId": "d1", "conceptId": "fact", "sourceConceptId": "message",
+                  "fieldMappings": [{"sourceAttribute": "subject", "targetAttribute": "name"}],
+                  "conflictRule": "latest", "mappingVersion": "1"}
+    payload = PopulationPayload.model_validate({**base, "scope": {"kind": "concept", "conceptId": "fact"},
+                                                "derivations": [derivation]})
+    assert payload.sources == []
+    for scope, derivations in (({"kind": "model"}, [derivation]), ({"kind": "concept", "conceptId": "x"}, [])):
+        with pytest.raises(ValidationError):
+            PopulationPayload.model_validate({**base, "scope": scope, "derivations": derivations})

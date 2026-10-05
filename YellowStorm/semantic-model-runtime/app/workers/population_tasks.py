@@ -14,6 +14,7 @@ import logging
 import hashlib
 import json
 import uuid
+from functools import partial
 
 from celery.signals import worker_ready
 
@@ -26,19 +27,22 @@ from app.population.computed_fields import (apply_row_recipes, check_inputs, nor
                                             normalize_row_recipes, recipe_columns, recipe_sources)
 from app.population.cell_fields import (CellReader, cell_gaps, cell_text, extraction_columns,
                                         normalize_field_extractions, uses_ai as uses_cell_ai)
-from app.population.document_rules import RuleError, normalize_ai_settings, normalize_rules
-from app.population.run_limits import run_limits
+from app.population.document_rules import RuleError, answer_options, normalize_ai_settings, normalize_rules
+from app.population.run_limits import ai_pacing, run_limits
 from app.datasource.email_archive import resolve_column
 from app.population.engine_version import reader_version
 from app.population.expand import ExpandError, expand_rows, is_item_attribute, normalize_expand
 from app.population.serving_policy import blocking_gap_kinds, serving_decision
-from app.population.tabular import (match_relationships, merge_concept_results,
+from app.population.tabular import (MAX_ASSERTIONS, MAX_MATERIALIZED_ENTITIES, match_relationships, merge_concept_results,
                                     normalize_identity_value, populate_concept_rows)
 
 from .celery_app import POPULATION_QUEUES, celery_app
 
 logger = logging.getLogger(__name__)
 ASSET_FETCH_WALL_SECONDS = 35
+# Files of an e-mail archive sent for indexing at once, and per batch awaited together.
+DERIVED_UPLOAD_CONCURRENCY = 8
+DERIVED_UPLOAD_BATCH = 500
 # Bump when the e-mail texts or attachment names written to the workspace change.
 EMAIL_DERIVATION_VERSION = "email-derived-v1"
 EMAIL_DERIVATION_CACHE_CONCEPT = "__email_derived_files__"
@@ -122,6 +126,12 @@ class PopulationProgress:
         self.recent: list[dict] = []
         # What the saved result changed in the data in use, once it is known.
         self.changes: dict | None = None
+        # How far the current step is (rows of a sheet, files sent for indexing…); ``total`` is
+        # None when unknown (an archive being opened).
+        self.step: dict | None = None
+        # AI calls of the whole run: planned, answered, reused from an earlier run, skipped over
+        # the cap, failed.
+        self.ai = {"planned": 0, "answered": 0, "reused": 0, "skipped": 0, "failed": 0}
 
     def snapshot(self) -> dict:
         snapshot = {"phase": self.phase, "total": self.total, "done": self.done, "reused": self.reused,
@@ -129,7 +139,20 @@ class PopulationProgress:
                     "recent": list(self.recent), "startedAt": self.started_at}
         if self.changes is not None:
             snapshot["changes"] = self.changes
+        if self.step is not None:
+            snapshot["step"] = dict(self.step)
+        if any(self.ai.values()):
+            snapshot["ai"] = dict(self.ai)
         return snapshot
+
+    async def advance(self, unit: str, done: int, total: int | None = None) -> None:
+        """How far the current step is: ``done`` of ``total`` ``unit`` (rows, files, …)."""
+        self.step = {"unit": unit, "done": done, "total": total}
+        await self.send()
+
+    async def count_ai(self, key: str, amount: int = 1) -> None:
+        self.ai[key] = self.ai.get(key, 0) + amount
+        await self.send()
 
     async def send(self, *, force: bool = False) -> None:
         if self._report is None:
@@ -153,6 +176,7 @@ class PopulationProgress:
                    reused: bool = False) -> None:
         self.done += 1
         self.current = None
+        self.step = None
         self.reused += 1 if reused else 0
         self.records += records
         self.gaps += gaps
@@ -162,7 +186,7 @@ class PopulationProgress:
         await self.send(force=self.done == self.total)
 
     async def enter(self, phase: str) -> None:
-        self.phase, self.current = phase, None
+        self.phase, self.current, self.step = phase, None, None
         await self.send(force=True)
 
 
@@ -447,7 +471,9 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     run does not make again is kept from it (see ``carry_over``)."""
     import asyncio
     import os
+    import shutil
     import tempfile
+    from typing import Any
     from pathlib import Path
 
     from app.datasource.asset_delivery import (AssetFetchError, asset_fetch_wall_seconds,
@@ -496,7 +522,8 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                                                             dir=os.environ.get("SEMANTIC_TASK_TEMP_DIR")))
             target = archive_dir["path"] / f"{len(archive_files)}.bin"
             async with asyncio.timeout(asset_fetch_wall_seconds(source)):
-                archive_files[key] = await (fetch or fetch_workspace_asset)(source, actor, target=target)
+                archive_files[key] = await (fetch or partial(fetch_workspace_asset, archive_mb=limits["maxArchiveMb"]))(
+                    source, actor, target=target)
             await derive_archive(source, archive_files[key])
         return archive_files[key]
 
@@ -522,14 +549,33 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         try:
             with tempfile.TemporaryDirectory(prefix="semantic-derived-",
                                              dir=os.environ.get("SEMANTIC_TASK_TEMP_DIR")) as directory:
-                files = await asyncio.to_thread(derive or derive_files_subprocess, source, path, Path(directory))
-                created = 0
-                for number, entry in enumerate(files, start=1):
-                    stored = Path(directory) / str(entry.get("stored", ""))
-                    result = await (upload_derived or upload_derived_file)(source, actor, entry, stored)
-                    created += bool(result.get("created"))
-                    if number % 100 == 0:
-                        await progress.send(force=True)
+                await progress.advance("opening", 0, None)
+                files = await asyncio.to_thread(derive or partial(derive_files_subprocess, limits=limits),
+                                                source, path, Path(directory))
+                created = sent = failed = 0
+                await progress.advance("files", 0, len(files))
+                # Several at once: a large mailbox gives tens of thousands of files. One that fails
+                # does not stop the others; the archive is derived again next run.
+                gate = asyncio.Semaphore(DERIVED_UPLOAD_CONCURRENCY)
+
+                async def send_one(entry: dict) -> None:
+                    nonlocal created, sent, failed
+                    async with gate:
+                        stored = Path(directory) / str(entry.get("stored", ""))
+                        try:
+                            result = await (upload_derived or upload_derived_file)(source, actor, entry, stored)
+                            created += bool(result.get("created"))
+                        except (ValueError, RuntimeError, AssetFetchError, TimeoutError, OSError) as exc:
+                            failed += 1
+                            logger.warning("derived file not sent", extra={"assetId": source.get("assetId"),
+                                                                           "error": str(exc)[:200]})
+                        sent += 1
+                        await progress.advance("files", sent, len(files))
+
+                for start in range(0, len(files), DERIVED_UPLOAD_BATCH):
+                    await asyncio.gather(*(send_one(entry) for entry in files[start:start + DERIVED_UPLOAD_BATCH]))
+                if failed:
+                    raise RuntimeError(f"derived_files_failed:{failed}")
             if cache_key is not None:
                 await extraction_cache.put(cache_key, concept_id=EMAIL_DERIVATION_CACHE_CONCEPT,
                                            asset_id=str(source.get("assetId") or ""),
@@ -542,6 +588,29 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         finally:
             progress.phase = phase
             await progress.send(force=True)
+
+    email_tables: dict[str, dict] = {}
+
+    async def prepare_table(source: dict, options: dict | None, data: Any, artifact: Path) -> dict:
+        """The prepared dataset of one source. An e-mail archive's three tables come from one read
+        of the archive, shared by every mapping of it in this run."""
+        if prepare is None and is_email_archive(source.get("mimeType")) and isinstance(data, Path):
+            from app.datasource.datasets import dataset_id
+            from app.datasource.email_archive import selected_sheet
+            from app.datasource.parser_sandbox import prepare_email_tables_subprocess
+
+            key = str(data)
+            if key not in email_tables:
+                email_tables[key] = await asyncio.to_thread(
+                    prepare_email_tables_subprocess, source, data, data.parent / f"{data.stem}-tables", limits=limits)
+            table = email_tables[key][selected_sheet(options)]
+            await asyncio.to_thread(shutil.copyfile, table["path"], artifact)
+            return {**{name: table[name] for name in ("rowCount", "columns", "sizeBytes", "contentHash")},
+                    "datasetId": dataset_id(source, options)}
+        result = await asyncio.to_thread(
+            prepare or partial(prepare_dataset_subprocess, limits=limits), source, options, data, artifact)
+        # The parser answers with the preview and the prepared dataset beside it.
+        return result["dataset"] if isinstance(result, dict) and isinstance(result.get("dataset"), dict) else result
 
     async def read_sources() -> dict | None:
         """Read every source in turn; an error result stops the run."""
@@ -613,7 +682,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                     "modelId": str(command_dump.get("modelId") or ""),
                     "concept": compiled["concepts"][entry["conceptId"]], "conceptId": entry["conceptId"],
                     "columnMapping": entry["columnMapping"], "constantMapping": entry.get("constantMapping", {}),
-                    "options": options, "mappingVersion": entry["mappingVersion"],
+                    "options": answer_options(options), "mappingVersion": entry["mappingVersion"],
                     "labelField": entry.get("labelField"), "assetRef": asset_ref,
                     "content": content_digest,
                     # Only present with a recipe, so a sheet without one keeps its cached reading.
@@ -642,8 +711,8 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                 with tempfile.TemporaryDirectory(prefix="semantic-populate-",
                                                  dir=temp_root) as directory:
                     artifact = Path(directory) / "dataset.parquet"
-                    manifest = await asyncio.to_thread(
-                        prepare or prepare_dataset_subprocess, source, options, data, artifact)
+                    await progress.advance("opening", 0, None)
+                    manifest = await prepare_table(source, options, data, artifact)
                     asset_ref["datasetRevisionId"] = manifest.get("datasetId")
                     # A column a newer reader renamed is read under its new name.
                     available = manifest.get("columns") if isinstance(manifest, dict) else None
@@ -673,12 +742,18 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                                      | ({expand_column} if expand else set()) | {SHEET_ROW_KEY})
                     concept = compiled["concepts"][entry["conceptId"]]
                     # Fields read out of a cell's text, as a document's: rules on every row, AI on a bounded few.
+                    cell_settings = normalize_ai_settings((options or {}).get("aiSettings"))
+                    pacing = ai_pacing(limits, cell_settings)
                     cells = CellReader(extractions, {
                         "conceptId": entry["conceptId"], "conceptLabel": concept.get("label") or entry["conceptId"],
                         "source": source, "assetRef": asset_ref, "mappingVersion": entry["mappingVersion"],
                         "modelId": str(command_dump.get("modelId") or ""), "aiExtraction": ai_extraction,
-                        "settings": normalize_ai_settings((options or {}).get("aiSettings"))},
-                        cache=extraction_cache) if extractions else None
+                        "settings": cell_settings},
+                        cache=extraction_cache, ai_rows=pacing["aiRows"],
+                        concurrency=pacing["concurrency"], progress=progress) if extractions else None
+                    row_total = manifest.get("rowCount") if isinstance(manifest, dict) else None
+                    row_total = row_total if isinstance(row_total, int) else None
+                    await progress.advance("rows", 0, row_total)
                     missing_cells: dict[str, int] = {}
                     read_rows = 0
                     offset = 0
@@ -755,6 +830,7 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                         records += len(output["entities"])
                         gaps += len(output["gaps"])
                         offset += page["returnedRows"]
+                        await progress.advance("rows", offset, row_total)
                         if capped or page["returnedRows"] < QUERY_ROW_LIMIT:
                             break
             except ValueError as exc:
@@ -827,6 +903,10 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         if source is None:
             continue
         target = compiled["concepts"][derivation["conceptId"]]
+        # Shown as its own step: AI reading a concept made from another one can take a while.
+        progress.phase = "making"
+        progress.current = {"name": target.get("label") or derivation["conceptId"], "conceptId": derivation["conceptId"]}
+        await progress.send(force=True)
         # Fields read out of a source field's text (rules, AI), taken by a recipe or fixed, with the
         # same readers as a sheet cell; a field copied as it is needs no reading.
         # A derivation expanding a field reads one item record per item (each recipient of a message).
@@ -837,8 +917,10 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                        "originalName": compiled["concepts"][derivation["sourceConceptId"]].get("label")
                        or derivation["sourceConceptId"]},
             "assetRef": {}, "modelId": str(command_dump.get("modelId") or ""), "aiExtraction": ai_extraction},
-            cache=extraction_cache)
-        derived = derive_concept(target, derivation, items, source["assertions"], read["readings"])
+            cache=extraction_cache, limits=limits, progress=progress)
+        derived = derive_concept(target, derivation, items, source["assertions"], read["readings"],
+                                 max_entities=max(limits["maxRecordsPerSource"], MAX_MATERIALIZED_ENTITIES),
+                                 max_assertions=max(limits["maxValuesPerRun"], MAX_ASSERTIONS))
         relation_id = (derivation.get("expand") or {}).get("relationId")
         if relation_id:
             forward = compiled["relations"][relation_id]["sourceConceptId"] == derivation["sourceConceptId"]
@@ -853,6 +935,8 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             merged_by_concept.get(derivation["conceptId"]), derived)
         for key in counts:
             counts[key] += derived["counts"].get(key, 0)
+    if progress.phase == "making":
+        await progress.enter("linking")
     # Bound the result before matching so relationships never reference dropped
     # entities and assertions never outlive their entity.
     kept: list[dict] = []
@@ -1455,6 +1539,11 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
                 decision = serving_decision(blocking, await has_draft_binding(pool, lease.payload))
             result.update({"blockingGapKinds": blocking, "servingDecision": decision})
             if decision == "activate":
+                if is_whole_model_build(lease.payload):
+                    try:
+                        await progress.enter("projecting")
+                    except RunCancelled:
+                        pass  # Already saved: a late stop request changes nothing.
                 finalized = await finalize_whole_model_build(pool, lease.payload, revision_id)
                 if finalized is not None:
                     result.update({"projectionRef": finalized["projectionRef"],
