@@ -1,7 +1,7 @@
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagger';
-import { LogBufferService, LogLevelEnum, LogQueryResult, LogEntry } from '@modules/logger';
+import { OpsLogsService, LogLevelEnum, LogQueryResult, LogEntry } from '@modules/logger';
 import { RequirePermissions } from '../decorators/require-permissions.decorator';
 import { PermissionsGuard } from '../guards/permissions.guard';
 import { Permissions } from '../constants/permissions';
@@ -13,7 +13,7 @@ import { LogQueryDto } from '../dto';
 @UseGuards(PermissionsGuard)
 export class AdminLogsController {
   constructor(
-    private readonly logBuffer: LogBufferService,
+    private readonly opsLogs: OpsLogsService,
     private readonly configService: ConfigService,
   ) {}
 
@@ -41,7 +41,7 @@ export class AdminLogsController {
     if (query.from) options.from = query.from;
     if (query.to) options.to = query.to;
 
-    return this.logBuffer.findLogs(options);
+    return this.opsLogs.findLogs(options);
   }
 
   @Get('levels')
@@ -49,7 +49,7 @@ export class AdminLogsController {
   @ApiOperation({ summary: 'Get distinct log levels' })
   @ApiResponse({ status: 200, description: 'Log levels retrieved' })
   async getLevels(): Promise<string[]> {
-    return this.logBuffer.getDistinctValues('level');
+    return this.opsLogs.getDistinctValues('level');
   }
 
   @Get('contexts')
@@ -57,7 +57,7 @@ export class AdminLogsController {
   @ApiOperation({ summary: 'Get distinct log contexts' })
   @ApiResponse({ status: 200, description: 'Log contexts retrieved' })
   async getContexts(): Promise<string[]> {
-    return this.logBuffer.getDistinctValues('context');
+    return this.opsLogs.getDistinctValues('context');
   }
 
   @Get('counts')
@@ -65,7 +65,7 @@ export class AdminLogsController {
   @ApiOperation({ summary: 'Get log counts by level' })
   @ApiResponse({ status: 200, description: 'Log counts retrieved' })
   async getCounts(): Promise<Record<string, number>> {
-    return this.logBuffer.getCountsByLevel();
+    return this.opsLogs.getCountsByLevel();
   }
 
   /**

@@ -10,7 +10,6 @@ A production-grade, global logging module with PostgreSQL persistence, buffered 
 - **Sensitive Data Redaction** - Automatically redacts passwords, tokens, secrets
 - **Context Support** - Track which service/class is logging
 - **PostgreSQL Persistence** - Logs are saved to `ops.logs` (migration 0036) and swept after `LOGGING_RETENTION_DAYS`
-- **Buffered Writes** - Non-blocking, fire-and-forget log persistence
 - **Request Tracking** - Track all logs for a specific HTTP request via `requestId`
 - **Display/Save Control** - Skip console output or database persistence per log
 - **Display-Only Contexts** - Startup/runtime logs are display-only by default (not saved to DB)
@@ -25,13 +24,11 @@ A production-grade, global logging module with PostgreSQL persistence, buffered 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOG_LEVEL` | `info` | Minimum log level (error, warn, info, debug, verbose) |
-| `LOGGING_BUFFER_SIZE` | `100` | Max logs in buffer before auto-flush |
-| `LOGGING_FLUSH_INTERVAL_MS` | `5000` | Flush interval in milliseconds |
-| `LOGGING_PERSISTENCE_ENABLED` | `true` | Enable/disable database persistence |
-| `LOGGING_DEFAULT_SAVE` | `true` | Default value for `save` option |
-| `LOGGING_DEFAULT_DISPLAY` | `true` | Default value for `display` option |
+| `LOGGING_PERSISTENCE_ENABLED` | retired (P11) | no longer read; kept in the validation schema for old .env files |
+| `LOGGING_DEFAULT_SAVE` | retired (P11) | no longer read |
+| `LOGGING_DEFAULT_DISPLAY` | retired (P11) | no longer read |
 | `LOGGING_RETENTION_DAYS` | `30` | Days the persisted logs are kept (swept hourly from `ops.logs`) |
-| `LOGGING_DISPLAY_ONLY_CONTEXTS` | *(see below)* | Comma-separated contexts that are display-only |
+| `LOGGING_DISPLAY_ONLY_CONTEXTS` | retired (P11) | no longer read |
 
 ### Display-Only Contexts
 
@@ -134,7 +131,7 @@ interface LogOptions {
 
 ## Querying Logs
 
-The `LogBufferService` provides methods to query logs from both the in-memory buffer and database.
+The `OpsLogsService` provides methods to query the historic ops.logs table (P11 retired the SQL write path; live logs stream to Grafana via the unified-logging SDK).
 
 ### Basic Query
 

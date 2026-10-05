@@ -3,7 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { sql } from 'drizzle-orm';
 import { PostgresModule } from '../postgres/postgres.module';
 import { describeIntegration, makeTestDb } from '../postgres/testing/pg-integration';
-import { LogBufferService } from './log-buffer.service';
+import { OpsLogsService } from './ops-logs.service';
 import { LoggerModule } from './logger.module';
 import { LoggerService } from './logger.service';
 
@@ -49,7 +49,7 @@ describeIntegration('LoggerModule with PostgresModule (integration)', () => {
       imports: [ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }), LoggerModule, PostgresModule],
     }).compile();
 
-    const buffer = moduleRef.get(LogBufferService);
+    moduleRef.get(OpsLogsService); // wiring proof: the read service resolves despite the lazy pool cycle
     const logger = await moduleRef.resolve(LoggerService);
     logger.setContext(CONTEXT);
     logger.log('emitted through the SDK, not the SQL buffer', { answer: 42 });
@@ -59,7 +59,6 @@ describeIntegration('LoggerModule with PostgresModule (integration)', () => {
     await moduleRef.close();
     moduleRef = undefined;
 
-    expect(buffer.getBufferSize()).toBe(0);
     const rows = await db.execute(sql`SELECT message FROM ops.logs WHERE context = ${CONTEXT}`);
     expect(rows.rows).toEqual([]);
   });

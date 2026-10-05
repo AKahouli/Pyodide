@@ -391,13 +391,15 @@ export const configValidationSchema = Joi.object({
   TELEGRAM_WEBHOOK_RATE_WINDOW_MS: Joi.number().min(1000).max(3600000).default(60000),
   TELEGRAM_MAX_REPLY_LENGTH: Joi.number().min(64).max(4096).default(3900),
 
-  // Logging Persistence
+  // Logging Persistence — P11 retired the SQL write path; these vars are no longer read by
+  // any code. They stay validated (defaults) so existing .env files keep booting; remove the
+  // entries from your .env at leisure.
   LOGGING_BUFFER_SIZE: Joi.number().min(10).max(10000).default(100),
   LOGGING_FLUSH_INTERVAL_MS: Joi.number().min(1000).max(60000).default(5000),
   LOGGING_PERSISTENCE_ENABLED: Joi.boolean().default(true),
   LOGGING_DEFAULT_SAVE: Joi.boolean().default(true),
   LOGGING_DEFAULT_DISPLAY: Joi.boolean().default(true),
-  LOGGING_RETENTION_DAYS: Joi.number().min(1).max(3650).default(30),
+  LOGGING_RETENTION_DAYS: Joi.number().min(1).max(3650).default(30), // still live: ops.logs TTL sweeper
   LOGGING_DISPLAY_ONLY_CONTEXTS: Joi.string().optional(),
   // Unified-logging cutover: historic-only read API + allowlisted Grafana navigation link
   LOGGING_HISTORIC_CUTOVER_AT: Joi.string().isoDate().optional(),

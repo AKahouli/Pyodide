@@ -13,11 +13,11 @@ this runbook is the handoff artifact.
 
 ## Canary sequence
 
-1. Deploy ONE service chain (recommend backend) with the new image; keep `LOGGING_PERSISTENCE_ENABLED` on until the canary proves event flow, then switch it off (never re-enable).
+1. Deploy ONE service chain (recommend backend) with the new image. Since P11 the SQL write path is removed: `LOGGING_PERSISTENCE_ENABLED` (and the other retired `LOGGING_*` vars) are validated but unread — no switch to flip. Rollback for the SDK itself is a git revert.
 2. Confirm in Grafana: `legacy.log`/registry events present, filters by username/request_id/trace_id/run_id work, no duplicate primary sinks (old console display stops, SQL writer stops).
 3. Apply the non-blocking json-file logging overlay (infra/observability/README) to that service only; verify container recreation does not lose collection (Alloy re-discovers within 10s).
 4. Expand service-by-service (ADK → MCP ×3 → code-runtime → semantic-model-runtime), respecting long-running executions: do NOT stop streams/jobs to apply logging config; drain or canary each service. Record per-service cutover timestamps in implementation-status.md.
-5. ADK: ensure `USE_YELLOWMIND_OBSERVABILITY` unset (defaults on) or explicitly `true`; `ENABLE_POSTGRESQL_LOGGING=false`.
+5. ADK: `USE_YELLOWMIND_OBSERVABILITY` and `ENABLE_POSTGRESQL_LOGGING` are retired (P11 removed the legacy path) — stale values are harmless (settings ignore extras); no action needed.
 
 ## Promotion conditions
 

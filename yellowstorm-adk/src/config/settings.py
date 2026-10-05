@@ -115,11 +115,6 @@ class Settings(BaseSettings):
 
     # Embedding Configuration
     FAKE_EMBEDDINGS: bool = False
-    ENABLE_POSTGRESQL_LOGGING: bool = True
-    POSTGRESQL_LOG_BATCH_SIZE: int = 50
-    POSTGRESQL_LOG_FLUSH_INTERVAL: float = 10.0
-    POSTGRESQL_LOG_POOL_SIZE: int = 5
-    POSTGRESQL_LOG_MAX_OVERFLOW: int = 10
 
     # Database Connection Pool Settings
     DB_MAX_CONNECTIONS: int = 3000  # PostgreSQL max_connections setting
@@ -432,70 +427,30 @@ class Settings(BaseSettings):
         if not self.DB_POOL_AUTO_SCALE:
             return self.DB_POOL_SIZE
 
-        # Only reserve logging connections if logging is actually enabled
-        # Each log handler can use up to pool_size + max_overflow connections
-        total_log_connections = 0
-        if self.ENABLE_POSTGRESQL_LOGGING:
-            log_connections_per_worker = (
-                self.POSTGRESQL_LOG_POOL_SIZE + self.POSTGRESQL_LOG_MAX_OVERFLOW
-            )
-            total_log_connections = self.UVICORN_WORKERS * log_connections_per_worker
-        total_connections = (
-            self.UVICORN_WORKERS * (self.DB_POOL_SIZE + self.DB_POOL_MAX_OVERFLOW)
-        ) + total_log_connections
+        total_connections = self.UVICORN_WORKERS * (
+            self.DB_POOL_SIZE + self.DB_POOL_MAX_OVERFLOW
+        )
         safe_limit = int(self.DB_MAX_CONNECTIONS * 0.8)
 
         if total_connections > safe_limit:
-            # Auto-calculate safe pool sizes
-            # Subtract total logging connections (all workers) if logging is enabled
-            available_for_workers = safe_limit - total_log_connections
+            available_for_workers = safe_limit
 
-            # Validate configuration is feasible
             if available_for_workers < self.UVICORN_WORKERS:
-                error_msg = (
+                raise ValueError(
                     f"Invalid database pool configuration: Cannot allocate connections.\n"
                     f"  DB_MAX_CONNECTIONS: {self.DB_MAX_CONNECTIONS}\n"
                     f"  Safe limit (80%): {safe_limit}\n"
-                    f"  Workers: {self.UVICORN_WORKERS}\n"
-                )
-
-                if self.ENABLE_POSTGRESQL_LOGGING:
-                    error_msg += (
-                        f"  Logging pool per worker: {self.POSTGRESQL_LOG_POOL_SIZE}\n"
-                        f"  Total logging connections: {total_log_connections}\n"
-                    )
-                else:
-                    error_msg += f"  PostgreSQL logging: Disabled\n"
-
-                error_msg += (
                     f"  Available for workers: {available_for_workers}\n"
                     f"  Minimum required: {self.UVICORN_WORKERS} (1 per worker)\n"
                     f"\n"
                     f"Solutions:\n"
                     f"  1. Increase DB_MAX_CONNECTIONS (current: {self.DB_MAX_CONNECTIONS})\n"
                     f"  2. Reduce UVICORN_WORKERS (current: {self.UVICORN_WORKERS})\n"
+                    f"  3. Set DB_POOL_AUTO_SCALE=False and configure pools manually"
                 )
 
-                if self.ENABLE_POSTGRESQL_LOGGING:
-                    error_msg += f"  3. Reduce POSTGRESQL_LOG_POOL_SIZE (current: {self.POSTGRESQL_LOG_POOL_SIZE})\n"
-                    error_msg += f"  4. Disable PostgreSQL logging (ENABLE_POSTGRESQL_LOGGING=False)\n"
-                    error_msg += f"  5. Set DB_POOL_AUTO_SCALE=False and configure pools manually"
-                else:
-                    error_msg += f"  3. Set DB_POOL_AUTO_SCALE=False and configure pools manually"
-
-                raise ValueError(error_msg)
-
-            connections_per_worker_safe = available_for_workers // self.UVICORN_WORKERS
-
-            # Clamp to minimum of 1 connection per worker
-            if connections_per_worker_safe < 1:
-                connections_per_worker_safe = 1
-
-            # Split into pool_size (70%) and max_overflow (30%)
-            pool_size = int(connections_per_worker_safe * 0.7)
-
-            # Ensure at least 1 for pool_size
-            return max(1, pool_size)
+            connections_per_worker_safe = max(1, available_for_workers // self.UVICORN_WORKERS)
+            return max(1, int(connections_per_worker_safe * 0.7))
 
         return self.DB_POOL_SIZE
 
@@ -503,81 +458,22 @@ class Settings(BaseSettings):
         """Get the effective max overflow, auto-scaled if needed.
 
         Returns at least 0 for overflow.
-
-
         Raises:
             ValueError: If DB_MAX_CONNECTIONS is too low for the current configuration
         """
         if not self.DB_POOL_AUTO_SCALE:
             return self.DB_POOL_MAX_OVERFLOW
 
-        # Only reserve logging connections if logging is actually enabled
-        # Each log handler can use up to pool_size + max_overflow connections
-        total_log_connections = 0
-        if self.ENABLE_POSTGRESQL_LOGGING:
-            log_connections_per_worker = (
-                self.POSTGRESQL_LOG_POOL_SIZE + self.POSTGRESQL_LOG_MAX_OVERFLOW
-            )
-            total_log_connections = self.UVICORN_WORKERS * log_connections_per_worker
-        total_connections = (
-            self.UVICORN_WORKERS * (self.DB_POOL_SIZE + self.DB_POOL_MAX_OVERFLOW)
-        ) + total_log_connections
+        total_connections = self.UVICORN_WORKERS * (
+            self.DB_POOL_SIZE + self.DB_POOL_MAX_OVERFLOW
+        )
         safe_limit = int(self.DB_MAX_CONNECTIONS * 0.8)
 
         if total_connections > safe_limit:
-            # Auto-calculate safe pool sizes
-            # Subtract total logging connections (all workers) if logging is enabled
-            available_for_workers = safe_limit - total_log_connections
-
-            # Validate configuration is feasible (same check as pool_size)
-            if available_for_workers < self.UVICORN_WORKERS:
-                error_msg = (
-                    f"Invalid database pool configuration: Cannot allocate connections.\n"
-                    f"  DB_MAX_CONNECTIONS: {self.DB_MAX_CONNECTIONS}\n"
-                    f"  Safe limit (80%): {safe_limit}\n"
-                    f"  Workers: {self.UVICORN_WORKERS}\n"
-                )
-
-                if self.ENABLE_POSTGRESQL_LOGGING:
-                    error_msg += (
-                        f"  Logging pool per worker: {self.POSTGRESQL_LOG_POOL_SIZE}\n"
-                        f"  Total logging connections: {total_log_connections}\n"
-                    )
-                else:
-                    error_msg += f"  PostgreSQL logging: Disabled\n"
-
-                error_msg += (
-                    f"  Available for workers: {available_for_workers}\n"
-                    f"  Minimum required: {self.UVICORN_WORKERS} (1 per worker)\n"
-                    f"\n"
-                    f"Solutions:\n"
-                    f"  1. Increase DB_MAX_CONNECTIONS (current: {self.DB_MAX_CONNECTIONS})\n"
-                    f"  2. Reduce UVICORN_WORKERS (current: {self.UVICORN_WORKERS})\n"
-                )
-
-                if self.ENABLE_POSTGRESQL_LOGGING:
-                    error_msg += f"  3. Reduce POSTGRESQL_LOG_POOL_SIZE (current: {self.POSTGRESQL_LOG_POOL_SIZE})\n"
-                    error_msg += f"  4. Disable PostgreSQL logging (ENABLE_POSTGRESQL_LOGGING=False)\n"
-                    error_msg += f"  5. Set DB_POOL_AUTO_SCALE=False and configure pools manually"
-                else:
-                    error_msg += f"  3. Set DB_POOL_AUTO_SCALE=False and configure pools manually"
-
-                raise ValueError(error_msg)
-
-            connections_per_worker_safe = available_for_workers // self.UVICORN_WORKERS
-
-            # Clamp to minimum of 1 connection per worker
-            if connections_per_worker_safe < 1:
-                connections_per_worker_safe = 1
-
-            # Split into pool_size (70%) and max_overflow (30%)
-            pool_size = int(connections_per_worker_safe * 0.7)
-            pool_size = max(1, pool_size)  # Ensure at least 1
-
-            overflow = connections_per_worker_safe - pool_size
-
-            # Ensure at least 0 for overflow (never negative)
-            return max(0, overflow)
+            available_for_workers = safe_limit
+            connections_per_worker_safe = max(1, available_for_workers // self.UVICORN_WORKERS)
+            pool_size = max(1, int(connections_per_worker_safe * 0.7))
+            return max(0, connections_per_worker_safe - pool_size)
 
         return self.DB_POOL_MAX_OVERFLOW
 

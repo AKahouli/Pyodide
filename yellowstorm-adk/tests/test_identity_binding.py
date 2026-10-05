@@ -18,7 +18,15 @@ from src.middleware.correlation import CorrelationIdMiddleware, get_user
 
 @pytest.fixture()
 def client(monkeypatch):
-    monkeypatch.setattr(get_settings(), "ADK_API_KEY", "test-key", raising=False)
+    # The dependency reads the module-level `app_settings` captured at import time — in the
+    # full suite other tests replace the cached settings instance, so patch THAT object,
+    # not whatever get_settings() returns now. Direct assign + restore: some tests reassign
+    # the attribute without restoring it.
+    import src.authentification.get_current_user as auth_module
+
+    settings = auth_module.app_settings
+    saved_key = settings.ADK_API_KEY
+    settings.ADK_API_KEY = "test-key"
 
     from src.logger.setup_logging import setup_logging
 
@@ -35,8 +43,11 @@ def client(monkeypatch):
     async def optional_whoami():
         return {"user": get_user(), "bound": get_contextvars().get("username")}
 
-    with TestClient(app, raise_server_exceptions=True) as test_client:
-        yield test_client
+    try:
+        with TestClient(app, raise_server_exceptions=True) as test_client:
+            yield test_client
+    finally:
+        settings.ADK_API_KEY = saved_key
 
 
 def test_authenticated_request_binds_identity_in_endpoint_context(client):

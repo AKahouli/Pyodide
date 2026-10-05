@@ -14,12 +14,12 @@ async def main():
     database = make_url(os.environ['ROOT_WORK_DATABASE_URL'])
     if database.database != 'agentstore_test':
         raise ValueError('Qualification requires agentstore_test')
-    os.environ['ENABLE_POSTGRESQL_LOGGING'] = 'false'
     import grpc
     from src.grpc_generated import chatbot_pb2_grpc
     from src.grpc_server.chatbot_servicer import ChatbotServicer
     from src.grpc_server.auth_interceptor import ApiKeyAuthInterceptor
     from src.root_runtime.background_host import BackgroundInvocationHost
+    from src.smart_rag.core.agent_team_service import AgentTeamService
 
     original_start = BackgroundInvocationHost.start
     async def diagnosed_start(host, request):
@@ -32,7 +32,7 @@ async def main():
             raise
     BackgroundInvocationHost.start = diagnosed_start
 
-    servicer = ChatbotServicer(None)
+    servicer = ChatbotServicer(AgentTeamService())
     server = grpc.aio.server(interceptors=[ApiKeyAuthInterceptor(os.environ['GRPC_API_KEY'])])
     chatbot_pb2_grpc.add_ChatbotServiceServicer_to_server(servicer, server)
     port = server.add_insecure_port('127.0.0.1:0')

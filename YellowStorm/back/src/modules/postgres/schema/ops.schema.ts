@@ -118,7 +118,7 @@ export const opsIntegrationEventDeliveries = opsSchema.table(
 );
 
 /**
- * Application logs (roadmap P6): buffered by LogBufferService, read by the admin logs screen, swept by
+ * Application logs (roadmap P6): written by the retired P11 SQL path, read by the admin logs screen, swept by
  * the TTL sweeper once older than `logging.retentionDays`. `created_at` is the time the entry was
  * logged (not the flush time), so range filters and ordering follow the log line itself.
  */

@@ -22,7 +22,7 @@ export enum LogLevel {
 /**
  * Migration facade (plan §9.1): the public LoggerService API is preserved while the operational
  * write path goes through @yellowmind/observability as `legacy.log` events (stderr JSON lines).
- * PostgreSQL persistence is no longer fed; LogBufferService remains only for historic reads
+ * PostgreSQL persistence is no longer fed; OpsLogsService remains only for historic reads
  * (see admin-logs controller) until the P07 read-side cutover.
  */
 const LEGACY_SEVERITY: Record<string, SeverityText> = {
