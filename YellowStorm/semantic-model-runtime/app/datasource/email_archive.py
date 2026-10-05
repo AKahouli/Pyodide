@@ -44,9 +44,12 @@ SHEETS = (SHEET_MESSAGES, SHEET_PARTICIPANTS, SHEET_ATTACHMENTS)
 MESSAGE_COLUMNS = [
     "cle_message", "message_id", "objet", "date_envoi", "date_reception",
     "source_date_reception", "adresse_expediteur", "nom_expediteur", "domaine_expediteur",
-    "destinataires", "en_reponse_a", "fil", "apercu", "nombre_pieces_jointes",
+    "destinataires", "en_reponse_a", "fil", "corps", "corps_complet", "nombre_pieces_jointes",
     "chemin_archive", "cle_message_parent", "anomalies",
 ]
+# Columns an earlier reader produced, and the column that now holds their data.
+# A mapping saved against the old name still reads (see ``resolve_column``).
+LEGACY_COLUMNS = {"apercu": "corps"}
 PARTICIPANT_COLUMNS = ["cle_message", "role", "adresse", "nom_affiche", "domaine"]
 ATTACHMENT_COLUMNS = [
     "cle_piece_jointe", "cle_message", "nom_fichier", "type_fichier", "taille",
@@ -62,7 +65,7 @@ MAX_ARCHIVE_DECOMPRESSED_BYTES = 8 * 1024 * 1024 * 1024
 MAX_EML_BYTES = 100 * 1024 * 1024
 MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
 MAX_NESTING = 3
-PREVIEW_CHARS = 500
+BODY_CHARS = 100_000
 
 # Formats the workspace indexer reads; anything else is kept but not read.
 _INDEXABLE = {
@@ -550,9 +553,9 @@ def _parse(raw: bytes, path: str, key: str, *, parent: str | None, depth: int,
         attachments.append(_attachment(key, index, filename, content_type, payload,
                                        inline=inline, is_email=False, with_payloads=with_payloads))
 
-    preview = re.sub(r"\s+", " ", new_text).strip()
-    if len(preview) > PREVIEW_CHARS:
-        preview = preview[:PREVIEW_CHARS].rstrip() + "…"
+    full_body = _bounded_body(text, anomalies, "corps complet")
+    # A forward or reply that adds nothing of its own: its body is the quoted message.
+    body = _bounded_body(new_text, anomalies, "corps") if new_text.strip() else full_body
     recipients = [p["adresse"] for p in participants if p["role"] in ("destinataire", "copie")]
     row = {
         "cle_message": key,
@@ -567,7 +570,8 @@ def _parse(raw: bytes, path: str, key: str, *, parent: str | None, depth: int,
         "destinataires": ", ".join(recipients) or None,
         "en_reponse_a": in_reply_to,
         "fil": thread,
-        "apercu": preview or None,
+        "corps": body,
+        "corps_complet": full_body,
         "nombre_pieces_jointes": sum(1 for item in attachments if not item.inline),
         "chemin_archive": path,
         "cle_message_parent": parent,
@@ -582,6 +586,23 @@ def _parse(raw: bytes, path: str, key: str, *, parent: str | None, depth: int,
         seen.add(nested_key)
         yield from _parse(payload, nested_path, nested_key, parent=key, depth=depth + 1,
                           seen=seen, with_payloads=with_payloads)
+
+
+def _bounded_body(text: str, anomalies: list[str], label: str) -> str | None:
+    """The body as written (line breaks kept), cut at ``BODY_CHARS`` with a note when longer."""
+    body = re.sub(r"[ \t]+\n", "\n", text).strip()
+    if len(body) > BODY_CHARS:
+        anomalies.append(f"{label} tronqué à {BODY_CHARS} caractères")
+        body = body[:BODY_CHARS].rstrip() + "…"
+    return body or None
+
+
+def resolve_column(name: str, available: Any) -> str:
+    """The column to read for a mapped name: itself, or what replaced it when it is gone."""
+    if name in available:
+        return name
+    replacement = LEGACY_COLUMNS.get(name)
+    return replacement if replacement is not None and replacement in available else name
 
 
 def _parts(message: EmailMessage) -> Iterator[EmailMessage]:

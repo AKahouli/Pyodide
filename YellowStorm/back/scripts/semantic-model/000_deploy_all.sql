@@ -704,3 +704,68 @@ CREATE UNIQUE INDEX IF NOT EXISTS semantic_mapping_presets_name_idx
 ALTER TABLE semantic_model.extraction_settings
   ADD COLUMN IF NOT EXISTS run_limits JSONB NOT NULL DEFAULT '{}'::jsonb
     CHECK (jsonb_typeof(run_limits) = 'object');
+
+-- 028 - The e-mail archive reader's "apercu" column (first 500 characters of the new text) became
+-- "corps" (the whole new text). Mappings of an e-mail archive's messages sheet read "corps" from now
+-- on. Only the source column is renamed: the concept attribute it fills keeps its key, and populated
+-- data is left as is until the next run. The runtime also reads "corps" for a mapping left on
+-- "apercu", so a mapping this misses still works.
+-- (migrate.mjs splits on a semicolon ending a line: the inner ones are kept mid-line.)
+DO $$
+BEGIN
+  IF to_regclass('semantic_datasource.discovery_profiles') IS NULL THEN RETURN; END IF; UPDATE semantic_model.source_mappings m
+     SET field_mappings = (
+           SELECT jsonb_agg(CASE WHEN f->>'mode' = 'direct' AND f->>'sourceField' = 'apercu'
+                                 THEN jsonb_set(f, '{sourceField}', '"corps"') ELSE f END
+                            ORDER BY position)
+             FROM jsonb_array_elements(m.field_mappings) WITH ORDINALITY AS item(f, position)),
+         updated_at = now()
+   WHERE m.sheet_name = 'messages'
+     AND m.field_mappings @> '[{"mode": "direct", "sourceField": "apercu"}]'::jsonb
+     AND NOT m.field_mappings @> '[{"sourceField": "corps"}]'::jsonb
+     AND EXISTS (SELECT 1 FROM semantic_datasource.discovery_profiles p
+                  WHERE p.asset_id = m.document_id
+                    AND p.profile->'structure'->>'kind' = 'email_archive'); END
+$$;
+
+-- 029 - Graph search settings, as an admin set them for every model: how records are cut into
+-- searchable text (index_settings: card and passage sizes; changing them builds new search indexes
+-- on the next search) and how a search request is matched (search_settings). Both hold only the
+-- values that were set: anything left out falls back to the built-in value.
+ALTER TABLE semantic_model.extraction_settings
+  ADD COLUMN IF NOT EXISTS index_settings JSONB NOT NULL DEFAULT '{}'::jsonb
+    CHECK (jsonb_typeof(index_settings) = 'object');
+
+ALTER TABLE semantic_model.extraction_settings
+  ADD COLUMN IF NOT EXISTS search_settings JSONB NOT NULL DEFAULT '{}'::jsonb
+    CHECK (jsonb_typeof(search_settings) = 'object');
+
+-- 030 - How much the AI reads for one derived source (a concept filled from another concept's
+-- records), as a document mapping can override it. Holds only the limits that were set: anything
+-- left out falls back to the admin default, then to the built-in one.
+ALTER TABLE semantic_model.derived_sources
+  ADD COLUMN IF NOT EXISTS ai_settings JSONB CHECK (ai_settings IS NULL OR jsonb_typeof(ai_settings) = 'object');
+
+-- 031 - A derived source can expand one field of the source concept into several items (the
+-- recipients a message lists, as text or a JSON array): each item is read as a record of its own.
+-- Holds the field, how it is split, and optionally the relationship linking each source record to
+-- the records its items made; null when the derived source does not expand a field.
+ALTER TABLE semantic_model.derived_sources
+  ADD COLUMN IF NOT EXISTS expand JSONB CHECK (expand IS NULL OR jsonb_typeof(expand) = 'object');
+
+-- 032 - A spreadsheet (or e-mail archive) source can expand one column into several items (the
+-- recipients a row lists, as text or a JSON array): each item is read as a row of its own, so one row
+-- makes several records. Holds the column and how it is split; null when the source does not expand.
+ALTER TABLE semantic_model.source_mappings
+  ADD COLUMN IF NOT EXISTS expand JSONB CHECK (expand IS NULL OR jsonb_typeof(expand) = 'object');
+
+-- 033 - The field that names each record of a concept (its label on the canvas, in lists and in
+-- answers), chosen by a person once per concept and used by every source of that concept.
+CREATE TABLE IF NOT EXISTS semantic_model.label_fields (
+  model_id    UUID        NOT NULL REFERENCES semantic_model.models(id) ON DELETE CASCADE,
+  concept_id  UUID        NOT NULL,
+  field       TEXT        NOT NULL CHECK (length(field) BETWEEN 1 AND 200),
+  updated_by  TEXT        NOT NULL,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (model_id, concept_id)
+);

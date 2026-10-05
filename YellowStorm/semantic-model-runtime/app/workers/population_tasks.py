@@ -13,15 +13,24 @@ from __future__ import annotations
 import logging
 import hashlib
 import json
+import uuid
+
+from celery.signals import worker_ready
 
 from app.jobs.recovery import max_attempts_from_env, retry_seconds_from_env
 from app.population.compiler import (canonical_spec_hash, compile_specification,
                                      filter_fields, validate_specification)
-from app.population.derived import DerivationError, derive_concept, merge_derived, normalize_derivations
-from app.population.computed_fields import check_inputs, normalize_computed
+from app.population.derived import (DerivationError, derivation_items, derive_concept, merge_derived,
+                                    normalize_derivations, read_derived_fields)
+from app.population.computed_fields import (apply_row_recipes, check_inputs, normalize_computed,
+                                            normalize_row_recipes, recipe_columns, recipe_sources)
+from app.population.cell_fields import (CellReader, cell_gaps, cell_text, extraction_columns,
+                                        normalize_field_extractions, uses_ai as uses_cell_ai)
 from app.population.document_rules import RuleError, normalize_ai_settings, normalize_rules
 from app.population.run_limits import run_limits
+from app.datasource.email_archive import resolve_column
 from app.population.engine_version import reader_version
+from app.population.expand import ExpandError, expand_rows, is_item_attribute, normalize_expand
 from app.population.serving_policy import blocking_gap_kinds, serving_decision
 from app.population.tabular import (match_relationships, merge_concept_results,
                                     normalize_identity_value, populate_concept_rows)
@@ -66,6 +75,10 @@ def population_execution_fingerprint(spec_hash: str, sources: list[dict],
         "fieldMappings": source.get("fieldMappings"),
         "options": source.get("options", {}),
         "labelField": source.get("labelField"),
+        # Only present when a sheet field has a recipe, so other sources keep their fingerprint.
+        **({"fieldRecipes": source["fieldRecipes"]} if source.get("fieldRecipes") else {}),
+        # Only present when a sheet field is read out of a cell, so other sources keep their fingerprint.
+        **({"fieldExtractions": source["fieldExtractions"]} if source.get("fieldExtractions") else {}),
     } for source in sources]
     # The AI agent's effective model is part of revision identity: changing it in
     # the agent library must produce a new revision instead of reusing persisted
@@ -277,12 +290,45 @@ def run_population_for_payload(command_dump: dict) -> dict:
             else:
                 mapping = entry.get("columnMapping") or entry.get("column_mapping")
                 constants = entry.get("constantMapping") or entry.get("constant_mapping") or {}
+                field_recipes = entry.get("fieldRecipes") or entry.get("field_recipes")
+                field_extractions = entry.get("fieldExtractions") or entry.get("field_extractions")
                 if (not isinstance(mapping, dict) or not isinstance(constants, dict)
-                        or (not mapping and not constants)):
+                        or (not mapping and not constants and not field_extractions and not field_recipes)):
                     return {"ok": False, "errorCode": "invalid_column_mapping"}
-                if set(mapping.values()) & set(constants):
+                # A field read out of a cell's text with the document rules and/or AI.
+                try:
+                    extractions = normalize_field_extractions(field_extractions)
+                    if uses_cell_ai(extractions):
+                        normalize_ai_settings((entry.get("options") or {}).get("aiSettings"))
+                except RuleError:
+                    return {"ok": False, "errorCode": "invalid_column_mapping"}
+                if (set(mapping.values()) & set(constants) or set(extractions) & set(mapping.values())
+                        or set(extractions) & set(constants)):
                     return {"ok": False, "errorCode": "duplicate_column_mapping"}
-                mapped_attributes = set(mapping.values()) | set(constants)
+                # A field's recipe (take it from, cut, keep, shape, clean-up), as a document's computed field:
+                # on a column it shapes, or on its own (a field taken from a column or another field).
+                recipe_fields = set(field_recipes) if isinstance(field_recipes, dict) else set()
+                if recipe_fields & (set(constants) | set(extractions)):
+                    return {"ok": False, "errorCode": "duplicate_column_mapping"}
+                try:
+                    recipes = normalize_row_recipes(
+                        field_recipes, set(mapping.values()) | set(constants) | set(extractions) | recipe_fields)
+                except RuleError:
+                    return {"ok": False, "errorCode": "invalid_column_mapping"}
+                mapped_attributes = set(mapping.values()) | set(constants) | set(extractions) | set(recipes)
+                # Several records per row: one column split into items (its columns are only known when read).
+                sheet_expand = ((entry.get("options") or {}).get("expand")
+                                if isinstance(entry.get("options"), dict) else None)
+                if sheet_expand is not None:
+                    try:
+                        if not isinstance(sheet_expand, dict) or "relationId" in sheet_expand:
+                            raise ExpandError("invalid_expand")
+                        normalize_expand(sheet_expand, {sheet_expand.get("field")} - {None, ""})
+                    except ExpandError:
+                        return {"ok": False, "errorCode": "invalid_column_mapping"}
+                elif any(is_item_attribute(column) for column in mapping):
+                    # A field reading an item of a sheet that does not expand a column.
+                    return {"ok": False, "errorCode": "invalid_column_mapping"}
             unmapped = [c for c in concept["keyComponents"] if c not in mapped_attributes]
             # Manual rows without a key value keep their own row key as identity.
             if unmapped and source_kind != "manual":
@@ -308,13 +354,23 @@ def run_population_for_payload(command_dump: dict) -> dict:
                 "sourceKind": source_kind or "tabular",
                 "options": options if isinstance(options, dict) else {},
                 **({"fieldMappings": active, "receivedFieldMappings": field_mappings} if source_kind == "document"
-                   else {"columnMapping": dict(mapping), "constantMapping": dict(constants)}),
+                   else {"columnMapping": dict(mapping), "constantMapping": dict(constants),
+                         **({"fieldRecipes": recipes, "receivedFieldRecipes": field_recipes} if recipes else {}),
+                         **({"fieldExtractions": extractions, "receivedFieldExtractions": field_extractions}
+                            if extractions else {})}),
                 "labelField": entry.get("labelField") or entry.get("label_field"),
                 "mappingVersion": entry.get("mappingVersion") or entry.get("mapping_version") or "v1",
             })
             mapped_fields.setdefault(entry.get("conceptId"), set()).update(mapped_attributes)
         try:
             derivations = normalize_derivations(payload.get("derivations"), compiled["concepts"])
+            for derivation in derivations:
+                # The relationship an expanding derivation links its records by joins its two concepts.
+                relation_id = (derivation.get("expand") or {}).get("relationId")
+                relation = compiled["relations"].get(relation_id) if relation_id else None
+                if relation_id and (relation is None or {relation["sourceConceptId"], relation["targetConceptId"]}
+                                    != {derivation["conceptId"], derivation["sourceConceptId"]}):
+                    raise DerivationError("invalid_derivations")
         except DerivationError as exc:
             return {"ok": False, "errorCode": str(exc)}
         for derivation in derivations:
@@ -349,10 +405,16 @@ def run_population_for_payload(command_dump: dict) -> dict:
         # The core hashes the mappings it sent, before the rules are normalized here.
         received = [{**source, "fieldMappings": source["receivedFieldMappings"]}
                     if "receivedFieldMappings" in source else source for source in normalized]
+        received = [{**source, "fieldRecipes": source["receivedFieldRecipes"]}
+                    if "receivedFieldRecipes" in source else source for source in received]
+        received = [{**source, "fieldExtractions": source["receivedFieldExtractions"]}
+                    if "receivedFieldExtractions" in source else source for source in received]
         execution_fingerprint = population_execution_fingerprint(
             expected_hash, received, normalized_bindings, ai_extraction, derivations)
         for source in normalized:
             source.pop("receivedFieldMappings", None)
+            source.pop("receivedFieldRecipes", None)
+            source.pop("receivedFieldExtractions", None)
         supplied_fingerprint = (payload.get("populationExecutionFingerprint")
                                 or payload.get("population_execution_fingerprint"))
         if supplied_fingerprint is not None and supplied_fingerprint != execution_fingerprint:
@@ -542,7 +604,11 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                     "columnMapping": entry["columnMapping"], "constantMapping": entry.get("constantMapping", {}),
                     "options": options, "mappingVersion": entry["mappingVersion"],
                     "labelField": entry.get("labelField"), "assetRef": asset_ref,
-                    "content": content_digest})
+                    "content": content_digest,
+                    # Only present with a recipe, so a sheet without one keeps its cached reading.
+                    **({"fieldRecipes": entry["fieldRecipes"]} if entry.get("fieldRecipes") else {}),
+                    **({"fieldExtractions": entry["fieldExtractions"], "aiExtraction": ai_extraction}
+                       if entry.get("fieldExtractions") else {})})
                 cached = await extraction_cache.get(cache_key)
                 if cached is not None and isinstance(cached.get("outputs"), list):
                     for output in cached["outputs"]:
@@ -568,32 +634,111 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                     manifest = await asyncio.to_thread(
                         prepare or prepare_dataset_subprocess, source, options, data, artifact)
                     asset_ref["datasetRevisionId"] = manifest.get("datasetId")
-                    columns = sorted(set(entry["columnMapping"]) | {SHEET_ROW_KEY})
+                    # A column a newer reader renamed is read under its new name.
+                    available = manifest.get("columns") if isinstance(manifest, dict) else None
+                    mapping = ({resolve_column(column, available): attribute
+                                for column, attribute in entry["columnMapping"].items()}
+                               if isinstance(available, list) else entry["columnMapping"])
+                    recipes = entry.get("fieldRecipes") or {}
+                    joined_sources = {attribute: recipe_sources(spec) for attribute, spec in recipes.items()
+                                      if spec["input"]["kind"] == "join"}
+                    # A column a recipe reads that the sheet does not have is left out (its input is empty).
+                    recipe_inputs = ({resolve_column(name, available) for name in recipe_columns(recipes)}
+                                     & set(available) if isinstance(available, list) else recipe_columns(recipes))
+                    extractions = entry.get("fieldExtractions") or {}
+                    extraction_inputs = ({resolve_column(name, available) for name in extraction_columns(extractions)}
+                                         & set(available) if isinstance(available, list)
+                                         else extraction_columns(extractions))
+                    # A row expanded into items: its fields may read an item (`@item`), which is not a column.
+                    expand = None
+                    if (options or {}).get("expand"):
+                        expand = normalize_expand(options["expand"], {options["expand"].get("field")})
+                        expand_column = (resolve_column(expand["field"], available)
+                                         if isinstance(available, list) else expand["field"])
+                        if isinstance(available, list) and expand_column not in available:
+                            raise ValueError("expand_column_missing")
+                    columns = sorted({column for column in set(mapping) | recipe_inputs | extraction_inputs
+                                      if not is_item_attribute(column)}
+                                     | ({expand_column} if expand else set()) | {SHEET_ROW_KEY})
+                    concept = compiled["concepts"][entry["conceptId"]]
+                    # Fields read out of a cell's text, as a document's: rules on every row, AI on a bounded few.
+                    cells = CellReader(extractions, {
+                        "conceptId": entry["conceptId"], "conceptLabel": concept.get("label") or entry["conceptId"],
+                        "source": source, "assetRef": asset_ref, "mappingVersion": entry["mappingVersion"],
+                        "modelId": str(command_dump.get("modelId") or ""), "aiExtraction": ai_extraction,
+                        "settings": normalize_ai_settings((options or {}).get("aiSettings"))},
+                        cache=extraction_cache) if extractions else None
+                    missing_cells: dict[str, int] = {}
+                    read_rows = 0
                     offset = 0
                     while True:
                         page = await asyncio.to_thread(
                             query or query_parquet, artifact, columns=columns,
                             limit=QUERY_ROW_LIMIT, offset=offset)
-                        mapping = entry["columnMapping"]
                         constants = entry.get("constantMapping", {})
+                        raws = page["rows"]
+                        # The admin's per-source limit: the rest of the sheet is left unread.
+                        capped = len(raws) > limits["maxRecordsPerSource"] - records
+                        if capped:
+                            raws = raws[:max(0, limits["maxRecordsPerSource"] - records)]
+                            complete_enumeration = sheet_complete = False
+                        expand_gaps: list = []
+                        if expand:
+                            raws, expand_gaps = expand_rows(raws, expand, lambda raw: raw.get(expand_column),
+                                                            lambda raw: raw.get(SHEET_ROW_KEY))
                         rows = []
-                        for raw in page["rows"]:
-                            renamed: dict = {"_row": raw.get(SHEET_ROW_KEY), **constants}
+                        for raw in raws:
+                            renamed: dict = {"_row": raw.get(SHEET_ROW_KEY), **constants,
+                                             **({"_item": raw["_item"]} if "_item" in raw else {})}
                             for source_column, attribute in mapping.items():
                                 if source_column in raw:
                                     renamed[attribute] = raw[source_column]
                             rows.append(renamed)
-                        # The admin's per-source limit: the rest of the sheet is left unread.
-                        capped = len(rows) > limits["maxRecordsPerSource"] - records
-                        if capped:
-                            rows = rows[:max(0, limits["maxRecordsPerSource"] - records)]
-                            complete_enumeration = sheet_complete = False
-                        concept = compiled["concepts"][entry["conceptId"]]
+                        cell_evidence: dict = {}
+                        if cells is not None:
+                            outcomes = await cells.read_rows([
+                                (raw.get(SHEET_ROW_KEY), {column: cell_text(raw.get(resolve_column(column, raw)))
+                                                          for column in extraction_columns(extractions)})
+                                for raw in raws])
+                            for renamed, outcome in zip(rows, outcomes):
+                                for attribute in extractions:
+                                    renamed[attribute] = outcome["values"].get(attribute)
+                                    if attribute not in outcome["values"]:
+                                        missing_cells[attribute] = missing_cells.get(attribute, 0) + 1
+                                cell_evidence[(renamed["_row"], renamed.get("_item"))] = outcome["evidence"]
+                            read_rows += len(raws)
+                        # Shaped before the identity is read, so the key uses the shaped value.
+                        if recipes:
+                            for raw, renamed in zip(raws, rows):
+                                apply_row_recipes(recipes, renamed, raw,
+                                                  lambda name, raw=raw: resolve_column(name, raw))
                         output = populate_concept_rows(
                             concept, rows, {"assetRef": asset_ref,
                                            "mappingVersion": entry["mappingVersion"],
                                            "labelField": entry.get("labelField"),
                                            "constantFields": list(constants)})
+                        # A value read out of a cell keeps where it was found: row, column and span.
+                        for assertion in output["assertions"]:
+                            item = assertion["evidence"].get("item")
+                            found = cell_evidence.get((assertion["evidence"].get("rowNumber"), item), {}).get(assertion["attribute"])
+                            if found is not None:
+                                assertion["evidence"] = found
+                                if item is not None and is_item_attribute(found.get("column")):
+                                    # Read out of an item: the cell is the expanded column's, the span the item's.
+                                    found.pop("span", None)
+                                    assertion["evidence"] = {**found, "column": expand_column, "item": item,
+                                                             "itemField": found["column"]}
+                            elif assertion["attribute"] in joined_sources:
+                                # A recipe joining several columns or fields: every one it read.
+                                assertion["evidence"]["recipeSources"] = joined_sources[assertion["attribute"]]
+                        if expand_gaps:
+                            output["gaps"].extend({**gap, "conceptId": entry["conceptId"], "assetRef": asset_ref}
+                                                  for gap in expand_gaps)
+                            output["counts"]["gaps"] = len(output["gaps"])
+                        if cells is not None and (capped or page["returnedRows"] < QUERY_ROW_LIMIT):
+                            output["gaps"].extend(cell_gaps(entry["conceptId"], asset_ref, extractions,
+                                                            missing_cells, read_rows, cells.stats))
+                            output["counts"]["gaps"] = len(output["gaps"])
                         per_concept.setdefault(entry["conceptId"], []).append(output)
                         outputs.append(output)
                         records += len(output["entities"])
@@ -616,7 +761,9 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
                 "sizeBytes": manifest.get("sizeBytes"),
                 "rowCount": manifest.get("rowCount")}
             observations.append(observation)
-            if cache_key is not None and records <= TABULAR_CACHE_MAX_RECORDS:
+            # A failed call to the extraction agent is worth retrying next run.
+            ai_failed = cells is not None and cells.stats["aiFailedRows"] > 0
+            if cache_key is not None and records <= TABULAR_CACHE_MAX_RECORDS and not ai_failed:
                 sheet = (options or {}).get("sheetName") or ""
                 await extraction_cache.put(
                     cache_key, concept_id=entry["conceptId"],
@@ -646,12 +793,34 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         for key in counts:
             counts[key] += merged["counts"].get(key, 0)
     # Concepts made from another concept's records, once every source has been read.
+    derived_links: list[dict] = []
     for derivation in validated["derivations"]:
         source = merged_by_concept.get(derivation["sourceConceptId"])
         if source is None:
             continue
-        derived = derive_concept(compiled["concepts"][derivation["conceptId"]], derivation,
-                                 source["entities"], source["assertions"])
+        target = compiled["concepts"][derivation["conceptId"]]
+        # Fields read out of a source field's text (rules, AI), taken by a recipe or fixed, with the
+        # same readers as a sheet cell; a field copied as it is needs no reading.
+        # A derivation expanding a field reads one item record per item (each recipient of a message).
+        items, expand_gaps = derivation_items(derivation, source["entities"])
+        read = await read_derived_fields(derivation, items, {
+            "conceptId": derivation["conceptId"], "conceptLabel": target.get("label") or derivation["conceptId"],
+            "source": {"assetId": f"derived:{derivation['derivationId']}",
+                       "originalName": compiled["concepts"][derivation["sourceConceptId"]].get("label")
+                       or derivation["sourceConceptId"]},
+            "assetRef": {}, "modelId": str(command_dump.get("modelId") or ""), "aiExtraction": ai_extraction},
+            cache=extraction_cache)
+        derived = derive_concept(target, derivation, items, source["assertions"], read["readings"])
+        relation_id = (derivation.get("expand") or {}).get("relationId")
+        if relation_id:
+            forward = compiled["relations"][relation_id]["sourceConceptId"] == derivation["sourceConceptId"]
+            derived_links.extend({"relationId": relation_id,
+                                  "sourceEntityId": link["sourceEntityId"] if forward else link["targetEntityId"],
+                                  "targetEntityId": link["targetEntityId"] if forward else link["sourceEntityId"],
+                                  "matchingStrategy": "derived"} for link in derived["links"])
+        if read["gaps"] or expand_gaps:
+            derived["gaps"].extend(read["gaps"] + expand_gaps)
+            derived["counts"]["gaps"] = len(derived["gaps"])
         merged_by_concept[derivation["conceptId"]] = merge_derived(
             merged_by_concept.get(derivation["conceptId"]), derived)
         for key in counts:
@@ -701,6 +870,8 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
             reference, target)
         relationships.extend(matched["relationships"])
         gaps.extend(matched["gaps"])
+    relationships.extend(link for link in derived_links
+                         if link["sourceEntityId"] in kept_ids and link["targetEntityId"] in kept_ids)
     relationships.extend(manual_relationships(kept, manual_links, compiled["relations"]))
     # Links grow with records: a run allowed more records may keep proportionally more links.
     max_relationships = max(MAX_TOTAL_RELATIONSHIPS, 2 * limits["maxRecordsPerRun"])
@@ -1158,18 +1329,70 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
         await pool.close()
 
 
+# Changes each time a worker process starts: a lease under another boot id of the same
+# node was left by a process that is gone (see release_abandoned_leases).
+WORKER_BOOT_ID = uuid.uuid4().hex
+
+
+def node_lease_prefix(hostname: str | None) -> str:
+    return f"population-worker:{hostname or 'unknown'}:"
+
+
+def lease_owner_for(hostname: str | None) -> str:
+    return f"{node_lease_prefix(hostname)}{WORKER_BOOT_ID}:{uuid.uuid4().hex}"
+
+
+async def _release_abandoned_leases(hostname: str) -> int:
+    import os
+
+    import asyncpg
+
+    from app.persistence.postgres_jobs import PostgresJobRepository
+
+    pool = await asyncpg.create_pool(os.environ["SEMANTIC_RUNTIME_DATABASE_URL"], min_size=1, max_size=1,
+                                     command_timeout=10)
+    try:
+        prefix = node_lease_prefix(hostname)
+        return await PostgresJobRepository(pool).release_abandoned_leases(
+            node_prefix=prefix, boot_prefix=f"{prefix}{WORKER_BOOT_ID}:")
+    finally:
+        await pool.close()
+
+
+@worker_ready.connect
+def release_abandoned_leases(sender=None, **_kwargs) -> None:  # type: ignore[no-untyped-def]
+    """A restarted worker hands back the runs its previous process was reading.
+
+    Without this, a run asked to stop while its worker was restarted shows "Stopping"
+    until its lease runs out (up to 15 minutes), and an unstopped one waits as long to
+    be read again.
+    """
+    import asyncio
+
+    hostname = getattr(sender, "hostname", None)
+    if not hostname:
+        return
+    try:
+        released = asyncio.run(_release_abandoned_leases(str(hostname)))
+        if released:
+            logger.info("Released runs left by this worker's previous process",
+                        extra={"released": released})
+    except Exception as exc:  # recovery still ends them when their lease runs out
+        logger.warning("Releasing abandoned population leases failed",
+                       extra={"error_code": type(exc).__name__[:100]})
+
+
 @celery_app.task(bind=True, name="semantic-model-population.run", queue=POPULATION_QUEUES[1])
 def populate_model(self, task_id: int) -> dict:  # type: ignore[no-untyped-def]
     import asyncio
     import os
-    import uuid
 
     if isinstance(task_id, bool) or not isinstance(task_id, int):
         return {"ok": False, "errorCode": "invalid_task_reference"}
     max_attempts = max_attempts_from_env(os.environ.get("SEMANTIC_TASK_MAX_ATTEMPTS"))
     retry_seconds = retry_seconds_from_env(os.environ.get("SEMANTIC_TASK_RETRY_SECONDS"))
     try:
-        return asyncio.run(_run_task(task_id, f"population-worker:{uuid.uuid4().hex}"))
+        return asyncio.run(_run_task(task_id, lease_owner_for(self.request.hostname)))
     except Exception as exc:
         logger.warning("Semantic population task failed, scheduling bounded retry",
                        extra={"error_code": type(exc).__name__[:100]})

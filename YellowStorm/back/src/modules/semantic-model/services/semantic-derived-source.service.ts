@@ -1,18 +1,32 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import type { AttributeDefinition } from '../domain/semantic-model.types';
-import { checkDerivedSource, type DerivedFieldMapping, type DerivedSource, type RuntimeDerivation } from '../domain/semantic-derived-source.types';
-import type { SaveDerivedSourceDto } from '../dto/semantic-model.dto';
+import {
+  asSheetFieldMappings, checkDerivedSource, derivedFieldInputs, derivedFieldMode, derivedFieldUsesAi, readableSourceFields, runtimeDerivedField,
+  storedDerivedField, storedExpand, type DerivedExpand, type DerivedFieldMapping, type DerivedSource, type RuntimeDerivation,
+} from '../domain/semantic-derived-source.types';
+import { AI_EXTRACTION_CONTRACT_VERSION, type AiExtractionSettings } from '../domain/semantic-source-mapping.types';
+import type { DerivedFieldPreviewDto, SaveDerivedSourceDto } from '../dto/semantic-model.dto';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
+import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
+import { effectiveAiSettings, pickAiSettings, SemanticExtractionSettingsService } from './semantic-extraction-settings.service';
 import { SemanticModelService } from './semantic-model.service';
+import { SemanticRuntimeClientService } from './semantic-runtime-client.service';
+import { SemanticSourceMappingService } from './semantic-source-mapping.service';
 
 type DerivedSourceRow = Omit<DerivedSource, 'updatedAt'> & { updatedAt: Date | string };
 
 const SELECT = `SELECT id::text AS id, concept_id::text AS "conceptId", source_concept_id::text AS "sourceConceptId",
                        field_mappings AS "fieldMappings", conflict_rule AS "conflictRule", order_by AS "orderBy",
-                       updated_at AS "updatedAt"
+                       ai_settings AS "aiSettings", expand, updated_at AS "updatedAt"
                 FROM semantic_model.derived_sources`;
+
+/** The AI limits set for one derived source; several records per item is not a choice a derived source has. */
+function sourceAiSettings(input: unknown): Record<string, number> {
+  const { manyRecords: _ignored, ...limits } = pickAiSettings(input);
+  return limits as Record<string, number>;
+}
 
 const asSource = (row: DerivedSourceRow): DerivedSource => ({
   ...row,
@@ -30,7 +44,10 @@ export class SemanticDerivedSourceService {
   constructor(
     private readonly database: SemanticModelDatabaseService,
     private readonly models: SemanticModelService,
-  ) {}
+    @Optional() private readonly runtime?: SemanticRuntimeClientService,
+    @Optional() private readonly aiExtractionAgent?: SemanticAttributeExtractionService,
+    @Optional() private readonly extractionSettings?: SemanticExtractionSettingsService,
+  ) { }
 
   async list(userId: string, modelId: string): Promise<DerivedSource[]> {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
@@ -51,24 +68,34 @@ export class SemanticDerivedSourceService {
     }
     const orderBy = dto.conflictRule === 'latest' ? dto.orderBy ?? null : null;
     await this.assertValid(model.currentDraftVersionId, dto, orderBy, existing.filter((source) => source.id !== derivedSourceId));
-    const fieldMappings: DerivedFieldMapping[] = dto.fieldMappings.map((field) => ({ sourceAttribute: field.sourceAttribute, targetAttribute: field.targetAttribute }));
+    // A copied field is stored exactly as before the field modes, so earlier derived sources keep their fingerprint.
+    const fieldMappings: DerivedFieldMapping[] = dto.fieldMappings.map((field) => storedDerivedField(field as DerivedFieldMapping));
+    // Only the limits set for this source; none means the admin's defaults.
+    const override = sourceAiSettings(dto.aiSettings);
+    const aiSettings = Object.keys(override).length ? JSON.stringify(override) : null;
+    const expand = storedExpand(dto.expand as DerivedExpand | undefined);
     return this.database.transaction(async (client) => {
       const revision = await this.models.advanceRevision(client, modelId, dto.expectedRevision);
       const saved = derivedSourceId
         ? await client.query<DerivedSourceRow>(
           `UPDATE semantic_model.derived_sources
-           SET concept_id=$3, source_concept_id=$4, field_mappings=$5::jsonb, conflict_rule=$6, order_by=$7, updated_at=now()
+           SET concept_id=$3, source_concept_id=$4, field_mappings=$5::jsonb, conflict_rule=$6, order_by=$7, ai_settings=$8::jsonb,
+               expand=$9::jsonb, updated_at=now()
            WHERE id=$1 AND model_id=$2
            RETURNING id::text AS id, concept_id::text AS "conceptId", source_concept_id::text AS "sourceConceptId",
-                     field_mappings AS "fieldMappings", conflict_rule AS "conflictRule", order_by AS "orderBy", updated_at AS "updatedAt"`,
-          [derivedSourceId, model.id, dto.conceptId, dto.sourceConceptId, JSON.stringify(fieldMappings), dto.conflictRule, orderBy],
+                     field_mappings AS "fieldMappings", conflict_rule AS "conflictRule", order_by AS "orderBy",
+                     ai_settings AS "aiSettings", expand, updated_at AS "updatedAt"`,
+          [derivedSourceId, model.id, dto.conceptId, dto.sourceConceptId, JSON.stringify(fieldMappings), dto.conflictRule, orderBy, aiSettings,
+            expand ? JSON.stringify(expand) : null],
         )
         : await client.query<DerivedSourceRow>(
-          `INSERT INTO semantic_model.derived_sources (model_id, concept_id, source_concept_id, field_mappings, conflict_rule, order_by, created_by)
-           VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7)
+          `INSERT INTO semantic_model.derived_sources (model_id, concept_id, source_concept_id, field_mappings, conflict_rule, order_by, created_by, ai_settings, expand)
+           VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8::jsonb,$9::jsonb)
            RETURNING id::text AS id, concept_id::text AS "conceptId", source_concept_id::text AS "sourceConceptId",
-                     field_mappings AS "fieldMappings", conflict_rule AS "conflictRule", order_by AS "orderBy", updated_at AS "updatedAt"`,
-          [model.id, dto.conceptId, dto.sourceConceptId, JSON.stringify(fieldMappings), dto.conflictRule, orderBy, userId],
+                     field_mappings AS "fieldMappings", conflict_rule AS "conflictRule", order_by AS "orderBy",
+                     ai_settings AS "aiSettings", expand, updated_at AS "updatedAt"`,
+          [model.id, dto.conceptId, dto.sourceConceptId, JSON.stringify(fieldMappings), dto.conflictRule, orderBy, userId, aiSettings,
+          expand ? JSON.stringify(expand) : null],
         );
       // The key fields are the derived concept's identity, shared with every other source it has.
       await client.query(
@@ -99,11 +126,66 @@ export class SemanticDerivedSourceService {
   }
 
   /**
-   * What a run receives: only derivations whose concepts are both in the draft and whose source
-   * concept has records in this run. Sorted and complete, so the run fingerprint is stable.
+   * Read a derived source's fields on a few sample records of the source concept, as a run would: each
+   * field copied, read out of a source field's text with the rules and/or AI (with where it was found),
+   * taken by its recipe, or fixed. The same readers as a sheet's rows; AI is only asked for these records.
    */
-  runtimeDerivations(sources: DerivedSource[], nodes: { id: string; attributes: AttributeDefinition[] }[],
-    sourcedConcepts: Set<string>, identityRules: Map<string, string[]>): RuntimeDerivation[] {
+  async previewFields(userId: string, modelId: string, dto: DerivedFieldPreviewDto) {
+    const model = await this.models.requireActiveRole(userId, modelId, ['owner', 'editor']);
+    if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
+    if (!this.runtime) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'The semantic runtime is not available');
+    const fields = dto.fieldMappings.map((field) => storedDerivedField(field as DerivedFieldMapping));
+    const expand = storedExpand(dto.expand as DerivedExpand | undefined);
+    const { target, source } = await this.assertFields(model.currentDraftVersionId, dto.conceptId, dto.sourceConceptId, fields, expand);
+    const attributes = new Map((target.attributes ?? []).map((attribute) => [attribute.key, attribute]));
+    // Read as a sheet's fields are: a source field is the "column" a field reads.
+    const fieldMappings = fields.map((field) => {
+      const { sourceAttribute, ...rest } = runtimeDerivedField(field, attributes.get(field.targetAttribute)) as Record<string, unknown>;
+      return { ...rest, sourceField: (sourceAttribute as string | undefined) ?? null, mode: derivedFieldMode(field) };
+    });
+    const usesAi = fields.some(derivedFieldUsesAi);
+    const agent = usesAi && this.aiExtractionAgent ? await this.aiExtractionAgent.resolveAgent() : null;
+    const result = await this.runtime.previewSheetFields({
+      modelId: model.id,
+      entry: {
+        conceptId: target.id,
+        conceptLabel: target.label,
+        source: { assetId: `derived:${source.id}`, originalName: source.label },
+        unit: 'record',
+        fieldMappings,
+        ...(usesAi ? { options: { aiSettings: { ...await this.aiSettings(), ...sourceAiSettings(dto.aiSettings) } } } : {}),
+      },
+      rows: dto.records.map((record, index) => ({ rowNumber: index + 1, values: record.values })),
+      aiExtraction: agent ? { agentSlug: agent.slug, model: agent.llmModel ?? null, contractVersion: AI_EXTRACTION_CONTRACT_VERSION } : null,
+      ...(expand ? { expand: { ...expand } } : {}),
+    });
+    // Each reading names the source record it was read on rather than a row number (and its item, when expanded).
+    return {
+      records: result.rows.map((row) => ({
+        entityId: dto.records[row.rowNumber - 1]?.entityId ?? String(row.rowNumber), fields: row.fields,
+        ...(row.item !== undefined ? { item: row.item, itemText: row.itemText ?? '' } : {}),
+      })),
+      ai: result.ai,
+      ...(result.itemFields ? { itemFields: result.itemFields, itemsTruncated: result.itemsTruncated === true } : {}),
+    };
+  }
+
+  /** The admin's AI reading limits, as a run applies them to a derived source's AI fields. */
+  async aiSettings(): Promise<AiExtractionSettings> {
+    const configured = this.extractionSettings
+      ? await this.extractionSettings.getDefaults().then((defaults) => defaults.configured).catch(() => ({}))
+      : {};
+    return effectiveAiSettings(configured);
+  }
+
+  /**
+   * What a run receives: only derivations whose concepts are both in the draft and whose source
+   * concept has records in this run. Sorted and complete, so the run fingerprint is stable. `aiSettings`
+   * travel only with a derivation that reads a field with AI, so other derivations keep their fingerprint.
+   */
+  runtimeDerivations(sources: DerivedSource[], nodes: Array<{ id: string; attributes: AttributeDefinition[] }>,
+    sourcedConcepts: Set<string>, identityRules: Map<string, string[]>, aiSettings?: AiExtractionSettings,
+    labelFields?: Map<string, string>): RuntimeDerivation[] {
     const fieldsOf = (conceptId: string) => new Set(nodes.find((node) => node.id === conceptId)?.attributes.map((attribute) => attribute.key));
     return sources
       .filter((source) => sourcedConcepts.has(source.sourceConceptId)
@@ -113,40 +195,80 @@ export class SemanticDerivedSourceService {
         // A field removed since the derived source was saved is not copied; without its key or its
         // date to order by, the concept is left out of the run and shown in To review instead.
         const checked = checkDerivedSource(source, fieldsOf(source.sourceConceptId), fieldsOf(source.conceptId), identity);
+        const expand = storedExpand(source.expand);
         if (checked.missing.length || !identity.length) return [];
-        const labelField = checked.fieldMappings.find((field) => !identity.includes(field.targetAttribute))?.targetAttribute ?? null;
+        // The field a person chose to name the concept's records; the first copied field otherwise.
+        const labelField = labelFields?.get(source.conceptId)
+          ?? checked.fieldMappings.find((field) => !identity.includes(field.targetAttribute))?.targetAttribute ?? null;
+        const attributes = new Map((nodes.find((node) => node.id === source.conceptId)?.attributes ?? []).map((attribute) => [attribute.key, attribute]));
+        const usesAi = checked.fieldMappings.some(derivedFieldUsesAi);
         return [{
           derivationId: source.id,
           conceptId: source.conceptId,
           sourceConceptId: source.sourceConceptId,
-          fieldMappings: checked.fieldMappings.map((field) => ({ sourceAttribute: field.sourceAttribute, targetAttribute: field.targetAttribute })),
+          fieldMappings: checked.fieldMappings.map((field) => runtimeDerivedField(field, attributes.get(field.targetAttribute))),
           conflictRule: source.conflictRule,
           orderBy: source.conflictRule === 'latest' ? source.orderBy : null,
           labelField,
           mappingVersion: source.updatedAt,
+          ...(usesAi && aiSettings ? { aiSettings: { ...aiSettings, ...sourceAiSettings(source.aiSettings) } } : {}),
+          ...(expand ? { expand } : {}),
         }];
       })
       .sort((left, right) => left.derivationId < right.derivationId ? -1 : left.derivationId > right.derivationId ? 1 : 0);
   }
 
-  private async assertValid(versionId: string, dto: SaveDerivedSourceDto, orderBy: string | null, others: DerivedSource[]) {
+  /**
+   * The two concepts, once the fields are checked against them: every source field a field reads and every
+   * field it fills exist, each field is filled once, and its mode, rules and recipe are ones a sheet field
+   * could use (a source field is read like a cell, and a recipe's column is a source field).
+   */
+  private async assertFields(versionId: string, conceptId: string, sourceConceptId: string, fields: DerivedFieldMapping[], expand: DerivedExpand | null = null) {
     const invalid = (message: string) => new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, message);
-    if (dto.conceptId === dto.sourceConceptId) throw invalid('A concept cannot be made from its own records');
+    if (conceptId === sourceConceptId) throw invalid('A concept cannot be made from its own records');
     const nodes = await this.database.query<{ id: string; label: string; attributes: AttributeDefinition[] }>(
       'SELECT id::text AS id, label, attributes FROM semantic_model.node_types WHERE version_id=$1 AND id = ANY($2::uuid[]) AND system_key IS NULL',
-      [versionId, [dto.conceptId, dto.sourceConceptId]],
+      [versionId, [conceptId, sourceConceptId]],
     ).then((result) => new Map(result.rows.map((row) => [row.id, row])));
-    const target = nodes.get(dto.conceptId);
-    const source = nodes.get(dto.sourceConceptId);
+    const target = nodes.get(conceptId);
+    const source = nodes.get(sourceConceptId);
     if (!target || !source) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'Concept not found in the current draft');
     const targetKeys = new Set((target.attributes ?? []).map((attribute) => attribute.key));
-    const sourceKeys = new Set((source.attributes ?? []).map((attribute) => attribute.key));
-    const unknownSource = dto.fieldMappings.find((field) => !sourceKeys.has(field.sourceAttribute));
-    if (unknownSource) throw invalid(`${source.label} has no field ${unknownSource.sourceAttribute}`);
-    const unknownTarget = dto.fieldMappings.find((field) => !targetKeys.has(field.targetAttribute));
+    const conceptKeys = new Set((source.attributes ?? []).map((attribute) => attribute.key));
+    if (expand && !conceptKeys.has(expand.field)) throw invalid(`${source.label} has no field ${expand.field}`);
+    // An expanding source also reads its items: `@item`, or `@item.<path>` of an object item.
+    const sourceKeys = readableSourceFields(conceptKeys, expand);
+    const noSource = fields.find((field) => (derivedFieldMode(field) === 'direct' || field.mode === 'extract') && !field.sourceAttribute);
+    if (noSource) throw invalid(`${noSource.targetAttribute}: choose the ${source.label} field it is read from`);
+    const unknownSource = fields.flatMap((field) => [...(field.sourceAttribute ? [field.sourceAttribute] : []), ...derivedFieldInputs(field, fields)])
+      .find((attribute) => !sourceKeys.has(attribute));
+    if (unknownSource) throw invalid(`${source.label} has no field ${unknownSource}`);
+    const unknownTarget = fields.find((field) => !targetKeys.has(field.targetAttribute));
     if (unknownTarget) throw invalid(`${target.label} has no field ${unknownTarget.targetAttribute}`);
-    const targets = dto.fieldMappings.map((field) => field.targetAttribute);
+    const targets = fields.map((field) => field.targetAttribute);
     if (new Set(targets).size !== targets.length) throw invalid('Each field can only be filled once');
+    const badConstant = fields.find((field) => field.mode === 'constant' && !['string', 'number', 'boolean'].includes(typeof field.constantValue));
+    if (badConstant) throw invalid(`${badConstant.targetAttribute}: a fixed value needs a value`);
+    // The same checks as a sheet's fields: the modes, rules a text without pages can use, recipes and their inputs.
+    SemanticSourceMappingService.assertMappingModes('excel_sheet', asSheetFieldMappings(fields));
+    return { target, source };
+  }
+
+  private async assertValid(versionId: string, dto: SaveDerivedSourceDto, orderBy: string | null, others: DerivedSource[]) {
+    const invalid = (message: string) => new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, message);
+    const expand = storedExpand(dto.expand as DerivedExpand | undefined);
+    const { target, source } = await this.assertFields(versionId, dto.conceptId, dto.sourceConceptId,
+      dto.fieldMappings.map((field) => storedDerivedField(field as DerivedFieldMapping)), expand);
+    if (expand?.relationId) {
+      const relation = await this.database.query<{ id: string }>(
+        `SELECT id::text AS id FROM semantic_model.relation_types
+         WHERE version_id=$1 AND id=$2 AND ((source_node_type_id=$3 AND target_node_type_id=$4) OR (source_node_type_id=$4 AND target_node_type_id=$3))`,
+        [versionId, expand.relationId, dto.sourceConceptId, dto.conceptId],
+      );
+      if (!relation.rows[0]) throw invalid(`The relationship that links the records must join ${source.label} and ${target.label}`);
+    }
+    const sourceKeys = new Set((source.attributes ?? []).map((attribute) => attribute.key));
+    const targets = dto.fieldMappings.map((field) => field.targetAttribute);
     const unmappedKey = dto.identityFields.find((field) => !targets.includes(field));
     if (unmappedKey) throw invalid(`The key field ${unmappedKey} must be filled from ${source.label}`);
     if (orderBy !== null && !sourceKeys.has(orderBy)) throw invalid(`${source.label} has no field ${orderBy}`);

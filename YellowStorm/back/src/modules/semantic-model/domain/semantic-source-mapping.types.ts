@@ -23,11 +23,58 @@ export interface ExtractionRules {
   take?: { from?: 'start' | 'end'; count: number; unit?: 'characters' | 'words' | 'lines' };
 }
 
-/** A document field derived from the file name or from another mapped field (runtime computes it). */
+/**
+ * A field's recipe: take it from somewhere, cut it, keep a part, match a shape, clean it up (the runtime
+ * applies it). A document's computed field, or a spreadsheet's direct field that is transformed.
+ */
+/** One input a recipe reads: kind 'file' reads 'document_name' (documents); kind 'field' reads another
+ * mapping's targetAttribute (not itself taken from a field); kind 'column' reads a column of the row. */
+export interface ComputedInputRef { kind: 'file' | 'field' | 'column'; name: string }
+
+/**
+ * What a recipe reads: a single input (`name`), or kind 'join': several `parts` (inputs and fixed texts,
+ * in order) joined into one text with `separator` (' ' when absent); `skipEmpty` (the default) leaves an
+ * empty part out with its separator.
+ */
+export interface ComputedFieldInput {
+  kind: 'file' | 'field' | 'column' | 'join';
+  name?: string;
+  parts?: Array<{ kind: 'file' | 'field' | 'column' | 'text'; name?: string; value?: string }>;
+  separator?: string;
+  skipEmpty?: boolean;
+}
+
+export const MAX_JOIN_PARTS = 10;
+export const MAX_JOIN_TEXT_CHARS = 100;
+export const MAX_JOIN_SEPARATOR_CHARS = 10;
+
+/** What a recipe reads: its input, or every part of a join that is not a fixed text. */
+export function computedInputRefs(input: ComputedFieldInput | undefined): ComputedInputRef[] {
+  if (!input) return [];
+  const refs = input.kind === 'join' ? (input.parts ?? []) : [input];
+  return refs.filter((part) => part.kind !== 'text' && part.kind !== 'join')
+    .map((part) => ({ kind: part.kind as ComputedInputRef['kind'], name: part.name ?? '' }));
+}
+
+/** Why a joined input cannot be used (beyond its DTO checks), or null. */
+export function joinInputProblem(input: ComputedFieldInput | undefined): string | null {
+  if (input?.kind !== 'join') return null;
+  const parts = input.parts ?? [];
+  if (parts.length < 2 || parts.length > MAX_JOIN_PARTS) return `a join needs 2 to ${MAX_JOIN_PARTS} parts`;
+  if (parts.some((part) => !['file', 'field', 'column', 'text'].includes(part.kind))) return 'a join cannot hold another join';
+  if (parts.some((part) => part.kind === 'text' && (!part.value || part.value.length > MAX_JOIN_TEXT_CHARS))) {
+    return `a fixed text part needs 1 to ${MAX_JOIN_TEXT_CHARS} characters`;
+  }
+  if ((input.separator?.length ?? 0) > MAX_JOIN_SEPARATOR_CHARS) return `the separator is at most ${MAX_JOIN_SEPARATOR_CHARS} characters`;
+  if (!computedInputRefs(input).length) return 'a join needs at least one part read from the record';
+  return null;
+}
+
 export interface ComputedFieldSpec {
-  // kind 'file' reads 'document_name'; kind 'field' reads another non-computed mapping's targetAttribute.
-  input: { kind: 'file' | 'field'; name: string };
-  method: 'split' | 'between' | 'regex';
+  // A single input, or several parts joined into one text.
+  input: ComputedFieldInput;
+  // 'whole' keeps the input as it is (no cut).
+  method: 'whole' | 'split' | 'between' | 'regex';
   delimiter?: string;
   part?: number;
   after?: string;
@@ -53,6 +100,7 @@ export interface SourceFieldMapping {
   /** AI reading only: the agent asked to read the field; absent means the platform's extraction agent. */
   agentId?: string;
   rules?: ExtractionRules;
+  /** mode 'computed' (documents) or 'direct' (spreadsheets: the column's value is transformed). */
   computed?: ComputedFieldSpec;
 }
 
@@ -128,6 +176,10 @@ export interface ResolvedEntity {
       quote?: string;
       reference?: string;
       confidence?: number;
+      /** A recipe: the columns or fields it read, in order. */
+      sources?: string[];
+      /** Taken from another concept's record: that concept, the record's label, and the field(s) read. */
+      derivedFrom?: { conceptId?: string; label?: string; attribute?: string; attributes?: string[]; method?: string; records?: number };
     }>;
   };
 }
@@ -240,18 +292,23 @@ export function resolveSheetEntities(
   fieldMappings: SourceFieldMapping[],
   identityFields: string[],
   limit = 50,
+  /** The rows already read as a run reads them (recipes, rules), in the same order as `rows`. */
+  shaped?: Array<{ values: Record<string, unknown>; fields: NonNullable<ResolvedEntity['provenance']['fields']> }>,
 ): { entities: ResolvedEntity[]; stats: ResolutionStats } {
   const active = fieldMappings.filter((mapping) => mapping.mode !== 'ignore');
   const stats: ResolutionStats = { scannedRows: 0, resolvedEntities: 0, duplicateKeysSkipped: 0, nullIdentitySkipped: 0 };
   const seen = new Set<string>();
   const entities: ResolvedEntity[] = [];
-  for (const row of rows) {
+  for (const [index, row] of rows.entries()) {
     if (entities.length >= limit || stats.scannedRows >= PREVIEW_ROW_SCAN_LIMIT) break;
     stats.scannedRows += 1;
-    const values: Record<string, unknown> = {};
-    for (const mapping of active) {
-      values[mapping.targetAttribute] = mapping.mode === 'constant' ? mapping.constantValue
-        : mapping.sourceField ? row[mapping.sourceField] : undefined;
+    const read = shaped?.[index];
+    const values: Record<string, unknown> = read ? { ...read.values } : {};
+    if (!read) {
+      for (const mapping of active) {
+        values[mapping.targetAttribute] = mapping.mode === 'constant' ? mapping.constantValue
+          : mapping.sourceField ? row[mapping.sourceField] : undefined;
+      }
     }
     const key = identityFields.length ? identityKeyOf(values, identityFields) : `row:${stats.scannedRows}`;
     if (identityFields.length && !key.replace(/\u0000/g, '')) {
@@ -265,7 +322,7 @@ export function resolveSheetEntities(
     if (identityFields.length) seen.add(key);
     const labelField = identityFields.find((field) => normalizeIdentityValue(values[field]) !== '')
       ?? active.find((mapping) => normalizeIdentityValue(values[mapping.targetAttribute]) !== '')?.targetAttribute;
-    const fields = Object.fromEntries(active.map((mapping) => [mapping.targetAttribute, {
+    const fields = read?.fields ?? Object.fromEntries(active.map((mapping) => [mapping.targetAttribute, {
       method: mapping.mode === 'constant' ? 'fixed_value' as const : 'direct_mapping' as const,
       reference: mapping.sourceField ?? undefined,
     }]));

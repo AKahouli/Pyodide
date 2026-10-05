@@ -71,7 +71,7 @@ describe('SemanticDataPreview', () => {
     expect(undoCorrection).toHaveBeenCalledWith(7, expect.any(Object));
   });
 
-  it('hides a record or a link and adds a missing link', () => {
+  it('hides a record or a link and adds a missing link', async () => {
     render(<SemanticDataPreview modelId='model' />);
     fireEvent.click(screen.getByRole('button', { name: /corrections.hideLink/ }));
     expect(recordCorrection).toHaveBeenLastCalledWith(
@@ -82,8 +82,10 @@ describe('SemanticDataPreview', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /corrections.hideRecord/ })[0]);
     expect(recordCorrection).toHaveBeenLastCalledWith({ action: 'remove_entity', targetIdentity: { entityId: 'organization:c001' } }, expect.any(Object));
     fireEvent.click(screen.getByRole('button', { name: /corrections.addLink/ }));
-    fireEvent.change(screen.getByRole('combobox', { name: 'corrections.chooseRelationship' }), { target: { value: 'partner|out' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'corrections.chooseRecord' }), { target: { value: 'organization:c002' } });
+    fireEvent.click(screen.getByRole('combobox', { name: 'corrections.chooseRelationship' }));
+    fireEvent.click((await screen.findAllByRole('option'))[0]);
+    fireEvent.click(screen.getByRole('combobox', { name: 'corrections.chooseRecord' }));
+    fireEvent.click((await screen.findAllByRole('option'))[0]);
     fireEvent.click(screen.getByRole('button', { name: 'corrections.link' }));
     expect(recordCorrection).toHaveBeenLastCalledWith(
       { action: 'add_relationship', targetIdentity: { relationId: 'partner', sourceEntityId: 'organization:c001', targetEntityId: 'organization:c002' } },

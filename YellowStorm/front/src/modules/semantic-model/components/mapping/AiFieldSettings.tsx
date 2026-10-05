@@ -2,12 +2,15 @@ import { useEffect, useState } from 'react';
 import { Bot, ChevronDown, ChevronRight, ExternalLink, MessageSquare } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/modules/semantic-model/components/common/Select';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { useAgents, useAgentStore } from '@/modules/agent';
 import { useModuleTranslation } from '@/modules/localization';
-import type { SourceFieldMapping } from '../../types';
+import type { AttributeDefinition, SemanticNodeType, SourceFieldMapping } from '../../types';
+import { useSemanticModelEditorStore } from '../../store';
+import { withSearchIndex } from '../../searchSettings';
+import { FieldSearchIndexPane } from '../settings/FieldSearchIndexPane';
 import { INPUT_COMPACT, TEXTAREA } from '../form/FormParts';
 import { RuleSection, useOpenSections } from './RuleControls';
 
@@ -34,12 +37,14 @@ function useAgentChoices() {
  * How the AI reads one field: what the value means (sent to the AI with the field), and which agent
  * reads it. Folded by default, its header sums both up.
  */
-export function AiFieldSettings({ fieldLabel, mapping, attributeDescription, onChange }: Readonly<{
+export function AiFieldSettings({ fieldLabel, mapping, attributeDescription, onChange, conceptId }: Readonly<{
   fieldLabel: string;
   mapping: SourceFieldMapping;
   /** The concept attribute's description, used when the field has no definition of its own. */
   attributeDescription?: string;
   onChange: (patch: Pick<SourceFieldMapping, 'semanticDefinition' | 'agentId'>) => void;
+  /** The concept being mapped: its text field's search index settings are shown under the AI pane. */
+  conceptId?: string;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
   const [open, setOpen] = useState(false);
@@ -54,7 +59,7 @@ export function AiFieldSettings({ fieldLabel, mapping, attributeDescription, onC
   const definitionSummary = definition.trim() || (fallback ? t('mapping.aiField.fromDescription', { text: fallback }) : t('mapping.aiField.noDefinition'));
   const summary = `${definitionSummary} · ${agentName}`;
 
-  return <div className='rounded-lg border border-dashed'>
+  const pane = <div className='rounded-lg border border-dashed'>
     <button type='button' className='flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-muted-foreground hover:bg-muted/50'
       aria-expanded={open} aria-controls={id} onClick={() => setOpen(!open)}>
       {open ? <ChevronDown className='h-3.5 w-3.5 shrink-0' /> : <ChevronRight className='h-3.5 w-3.5 shrink-0' />}
@@ -90,4 +95,23 @@ export function AiFieldSettings({ fieldLabel, mapping, attributeDescription, onC
       </RuleSection>
     </div>}
   </div>;
+  if (!conceptId) return pane;
+  return <div className='space-y-2'>
+    {pane}
+    <ConceptFieldSearchIndex conceptId={conceptId} attributeKey={mapping.targetAttribute} fieldLabel={fieldLabel} />
+  </div>;
+}
+
+/** The concept field's search index settings, edited in the model like the concept inspector does. */
+function ConceptFieldSearchIndex({ conceptId, attributeKey, fieldLabel }: Readonly<{ conceptId: string; attributeKey: string; fieldLabel: string }>) {
+  const node = useSemanticModelEditorStore((state) => state.graph?.nodes.find((candidate) => candidate.id === conceptId));
+  const commit = useSemanticModelEditorStore((state) => state.commit);
+  const attribute = node?.attributes.find((candidate) => candidate.key === attributeKey);
+  if (!node || attribute?.type !== 'text') return null;
+  const change = (searchIndex: AttributeDefinition['searchIndex']) => {
+    const attributes = node.attributes.map((candidate) => candidate.key === attributeKey ? withSearchIndex(candidate, searchIndex) : candidate);
+    const changes: Pick<SemanticNodeType, 'attributes'> = { attributes };
+    commit({ type: 'node_type.update', id: conceptId, changes }, (current) => ({ ...current, nodes: current.nodes.map((candidate) => candidate.id === conceptId ? { ...candidate, ...changes } : candidate) }));
+  };
+  return <FieldSearchIndexPane value={attribute.searchIndex} fieldLabel={fieldLabel} onChange={change} />;
 }

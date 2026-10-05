@@ -41,8 +41,9 @@ def test_search_text_is_deterministic_readable_and_bounded() -> None:
     moved = build_document({**ENTITY, "provenance": {}}, CONCEPT)
     assert moved["contentHash"] == document["contentHash"]
     long = build_document({**ENTITY, "attributes": {"title": "x" * 900}}, CONCEPT)
-    assert long["diagnostics"] == {"shortenedFields": ["title"]}
+    assert long["diagnostics"] == {"shortenedFields": ["title"], "passageFields": {"title": 1}}
     assert len(long["searchText"]) < 500
+    assert document["passages"] == []
 
 
 def test_a_record_with_only_keys_is_exact_only() -> None:

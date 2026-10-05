@@ -4,6 +4,7 @@ import { SemanticDerivedSourceService } from './services/semantic-derived-source
 import { SemanticMappingPresetController } from './controllers/semantic-mapping-preset.controller';
 import { SemanticMappingPresetService } from './services/semantic-mapping-preset.service';
 import { SemanticExtractionSettingsService } from './services/semantic-extraction-settings.service';
+import { SemanticSearchSettingsService } from './services/semantic-search-settings.service';
 import { Module, forwardRef } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import semanticModelConfig from '@config/semantic-model.config';
@@ -53,7 +54,7 @@ import { SemanticAssistantActorGuard, SemanticAssistantModelGuard } from './guar
   imports: [ConfigModule.forFeature(semanticModelConfig),AuthorizationModule,LoggerModule,UserModule,IntegrationEventsModule,forwardRef(() => WorkspaceModule)],
   controllers: [SemanticExtractionSettingsController,SemanticDerivedSourceController,SemanticMappingPresetController,SemanticModelController,WorkspaceSemanticModelController,SemanticDataTokenController,SemanticAttributeExtractionInternalController,SemanticModelAssistantInternalController],
   providers: [
-    SemanticModelDatabaseService,SemanticExtractionSettingsService,SemanticDerivedSourceService,SemanticMappingPresetService,SemanticModelRepository,SemanticGraphRepository,SemanticModelService,
+    SemanticModelDatabaseService,SemanticExtractionSettingsService,SemanticSearchSettingsService,SemanticDerivedSourceService,SemanticMappingPresetService,SemanticModelRepository,SemanticGraphRepository,SemanticModelService,
     SemanticGraphCommandService,SemanticModelValidationService,SemanticModelWorkspaceService,
     SemanticKnowledgeBindingService,SemanticModelVersionService,SemanticModelProvisioningService,
     SemanticModelNativeSearchClient,

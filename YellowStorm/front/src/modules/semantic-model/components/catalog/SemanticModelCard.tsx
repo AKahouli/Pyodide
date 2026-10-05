@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, ArrowRight, Boxes, Copy, Database, FileText, Network, Pencil, Share2, Sparkles } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Boxes, Copy, Database, FileText, Network, Pencil, Share2, Sparkles, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
@@ -12,7 +12,10 @@ import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../../api';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
 import type { SemanticModel } from '../../types';
+import { CloneSemanticModelDialog } from './CloneSemanticModelDialog';
+import { DeleteSemanticModelDialog } from './DeleteSemanticModelDialog';
 import { ShareSemanticModelDialog } from './ShareSemanticModelDialog';
+import { DELETE_BUTTON } from '../form/FormParts';
 
 export function SemanticModelCard({ model }: Readonly<{ model: SemanticModel }>) {
   const { t } = useModuleTranslation('semantic-model');
@@ -23,8 +26,8 @@ export function SemanticModelCard({ model }: Readonly<{ model: SemanticModel }>)
   const canEdit = model.role !== 'viewer';
   const [shareOpen, setShareOpen] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
-  const [cloneName, setCloneName] = useState(`${model.name} ${t('clone.copySuffix')}`.trim());
   const [renameOpen, setRenameOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [renameName, setRenameName] = useState(model.name);
   const queryClient = useQueryClient();
   const renameAction = useApiAction(
@@ -38,18 +41,6 @@ export function SemanticModelCard({ model }: Readonly<{ model: SemanticModel }>)
       },
     },
   );
-  const cloneAction = useApiAction(
-    (name: string) => semanticModelApi.clone(model.id, name),
-    {
-      showSuccessToast: true,
-      successMessage: t('clone.created'),
-      onSuccess: (copy) => {
-        setCloneOpen(false);
-        navigate(`/semantic-models/${copy.id}`);
-      },
-    },
-  );
-
   return (
     <>
       <Card className='group flex h-full flex-col overflow-hidden border-border/70 bg-card/80 transition hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-lg'>
@@ -106,17 +97,25 @@ export function SemanticModelCard({ model }: Readonly<{ model: SemanticModel }>)
         <CardFooter className='gap-2'>
           <Button
             variant='outline'
-            onClick={() => { setCloneName(`${model.name} ${t('clone.copySuffix')}`.trim()); setCloneOpen(true); }}
+            onClick={() => setCloneOpen(true)}
           >
             <Copy className='mr-1.5 h-4 w-4' />
             {t('clone.button')}
           </Button>
+          {/* Only the owner deletes; others see why the button is off. */}
+          <span title={model.role === 'owner' ? t('deleteModel.button') : t('deleteModel.ownerOnly')}>
+            <Button variant='outline' size='icon' className={DELETE_BUTTON} aria-label={t('deleteModel.button')}
+              disabled={model.role !== 'owner'} onClick={() => setDeleteOpen(true)}>
+              <Trash2 className='h-4 w-4' />
+            </Button>
+          </span>
           <Button className='flex-1 justify-between' variant='ghost' onClick={() => navigate(`/semantic-models/${model.id}`)}>
             {t('catalog.open')}<ArrowRight className='h-4 w-4 transition group-hover:translate-x-1' />
           </Button>
         </CardFooter>
       </Card>
 
+      {model.role === 'owner' && <DeleteSemanticModelDialog model={model} open={deleteOpen} onOpenChange={setDeleteOpen} />}
       {isOwner && (
         <ShareSemanticModelDialog
           open={shareOpen}
@@ -150,31 +149,7 @@ export function SemanticModelCard({ model }: Readonly<{ model: SemanticModel }>)
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <Dialog open={cloneOpen} onOpenChange={setCloneOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{t('clone.title')}</DialogTitle>
-            <DialogDescription>{t('clone.description')}</DialogDescription>
-          </DialogHeader>
-          <Input
-            value={cloneName}
-            onChange={(event) => setCloneName(event.target.value)}
-            placeholder={t('clone.placeholder')}
-            aria-label={t('clone.name')}
-            autoFocus
-            maxLength={160}
-          />
-          <DialogFooter>
-            <Button variant='outline' onClick={() => setCloneOpen(false)}>{t('action.cancel')}</Button>
-            <Button
-              onClick={() => void cloneAction.execute(cloneName.trim())}
-              disabled={!cloneName.trim() || cloneAction.isLoading}
-            >
-              {cloneAction.isLoading ? t('clone.creating') : t('clone.submit')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <CloneSemanticModelDialog model={model} open={cloneOpen} onOpenChange={setCloneOpen} />
     </>
   );
 }

@@ -1,10 +1,10 @@
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type { ApiResponse } from '@/lib/api/client';
-import type { ComputedFieldRule, DocumentLabelsResponse, ComputedPreviewResult, AiExtractionDefaults, RunLimits, RunLimitsDefaults, DerivedSource, DerivedSourceDraft, LastDocumentMapping, MappingPreset, MappingSettings, AiExtractionSettings, AgeGraphEdge, AssistantChangesPage, SourceSuggestionsPage, SourceFileMatches, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRebuildResponse, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
+import type { ComputedFieldRule, DocumentLabelsResponse, ComputedPreviewResult, SheetFieldPreviewRequest, SheetFieldPreviewResponse,AiExtractionDefaults, RunLimits, RunLimitsDefaults, DerivedSource, DerivedSourceDraft, DerivedFieldPreviewRequest, DerivedFieldPreviewResponse, LastDocumentMapping, MappingPreset, MappingSettings, AiExtractionSettings, AgeGraphEdge, AssistantChangesPage, SourceSuggestionsPage, SourceFileMatches, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRebuildResponse, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
 SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, PopulationFreshness, DesignerBoxPosition, SemanticReviewItem, SemanticVersion,
 SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
-StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison, ReviewQueue, ConceptRecordsPage } from './types';
+StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison, ReviewQueue, ConceptRecordsPage, SemanticModelCloneInclude, SemanticModelCloneResult } from './types';
 import type { SemanticDataTokenResponse } from './data-plane/semantic-api.types';
 
 const unwrap = <T>(response: { data: ApiResponse<T> }): T => response.data.data;
@@ -45,9 +45,16 @@ export const semanticModelApi = {
   async update(id: string, payload: { expectedRevision: number; name?: string; description?: string }): Promise<SemanticModel> {
     return unwrap(await apiClient.patch<ApiResponse<SemanticModel>>(API_ENDPOINTS.semanticModels.byId(id), payload));
   },
-  async archive(id: string): Promise<void> { const model = await semanticModelApi.get(id); await apiClient.delete(API_ENDPOINTS.semanticModels.byId(id), { data: { expectedRevision: model.revision } }); },
-  async clone(id: string, name: string): Promise<SemanticModel> {
-    return unwrap(await apiClient.post<ApiResponse<SemanticModel>>(API_ENDPOINTS.semanticModels.clone(id), { name }));
+  async archive(id: string): Promise<void> { const model = await semanticModelApi.get(id); await apiClient.post(`${API_ENDPOINTS.semanticModels.byId(id)}/archive`, { expectedRevision: model.revision }); },
+  /** Delete the model and all its data for good (owner only); workspace documents stay. */
+  async deletePermanently(id: string): Promise<void> { await apiClient.delete(API_ENDPOINTS.semanticModels.byId(id)); },
+  /** Copy a model; the structure always comes along, the rest as ticked (data needs the sources). */
+  async clone(id: string, name: string, include?: SemanticModelCloneInclude): Promise<SemanticModelCloneResult> {
+    return unwrap(await apiClient.post<ApiResponse<SemanticModelCloneResult>>(API_ENDPOINTS.semanticModels.clone(id), include ? { name, include } : { name }));
+  },
+  /** Counts shown next to the clone options; records is null when the data cannot be counted right now. */
+  async clonePreview(id: string): Promise<{ sources: number; records: number | null; people: number }> {
+    return unwrap(await apiClient.get<ApiResponse<{ sources: number; records: number | null; people: number }>>(`${API_ENDPOINTS.semanticModels.clone(id)}-preview`));
   },
   async graph(id: string, layer = 'combined'): Promise<SemanticGraph> {
     return unwrap(await apiClient.get<ApiResponse<SemanticGraph>>(API_ENDPOINTS.semanticModels.graph(id), { params: { layer } }));
@@ -178,6 +185,10 @@ export const semanticModelApi = {
       ? await apiClient.put<ApiResponse<{ revision: number; derivedSource: DerivedSource }>>(API_ENDPOINTS.semanticModels.derivedSource(id, derivedSourceId), body)
       : await apiClient.post<ApiResponse<{ revision: number; derivedSource: DerivedSource }>>(API_ENDPOINTS.semanticModels.derivedSources(id), body));
   },
+  /** Read a derived source's fields on a few source records as a run would; nothing is saved. */
+  async previewDerivedFields(id: string, payload: DerivedFieldPreviewRequest): Promise<DerivedFieldPreviewResponse> {
+    return unwrap(await apiClient.post<ApiResponse<DerivedFieldPreviewResponse>>(API_ENDPOINTS.semanticModels.derivedSourcePreview(id), payload, { timeout: 130_000 }));
+  },
   async deleteDerivedSource(id: string, derivedSourceId: string): Promise<{ revision: number }> {
     const model = await semanticModelApi.get(id);
     return unwrap(await apiClient.delete<ApiResponse<{ revision: number }>>(API_ENDPOINTS.semanticModels.derivedSource(id, derivedSourceId), { data: { expectedRevision: model.revision } }));
@@ -231,8 +242,16 @@ export const semanticModelApi = {
   async updateAdminRunLimits(limits: Partial<RunLimits>): Promise<RunLimitsDefaults> {
     return unwrap(await apiClient.put<ApiResponse<RunLimitsDefaults>>(API_ENDPOINTS.adminSemanticModelSettings.runLimits, limits));
   },
-  async previewComputedField(id: string, payload: { computed: ComputedFieldRule; samples: string[] }): Promise<{ results: ComputedPreviewResult[] }> {
+  async previewComputedField(id: string, payload: {
+    computed: ComputedFieldRule; samples?: string[]; inputRecipe?: ComputedFieldRule;
+    /** A joined input: per sample, each part's value by "<kind>:<name>", and recipes shaping a part first. */
+    partSamples?: Array<Record<string, string>>; partRecipes?: Record<string, ComputedFieldRule>;
+  }): Promise<{ results: ComputedPreviewResult[] }> {
     return unwrap(await apiClient.post<ApiResponse<{ results: ComputedPreviewResult[] }>>(API_ENDPOINTS.semanticModels.computedFieldPreview(id), payload));
+  },
+  /** Read a few picked sheet rows as a run would (columns, cells read by rules or AI, recipes). AI can take a while. */
+  async previewSheetFields(id: string, payload: SheetFieldPreviewRequest): Promise<SheetFieldPreviewResponse> {
+    return unwrap(await apiClient.post<ApiResponse<SheetFieldPreviewResponse>>(API_ENDPOINTS.semanticModels.sheetFieldPreview(id), payload, { timeout: 130_000 }));
   },
   /** Labels and headings that recur across up to 10 documents of a source, to suggest as rule labels. */
   async getDocumentLabels(id: string, body: { workspaceId: string; documentIds: string[] }): Promise<DocumentLabelsResponse> {
@@ -256,6 +275,16 @@ export const semanticModelApi = {
   },
   async previewRelationResolutionRule(id: string, ruleId: string, limit = 25): Promise<RelationResolutionPreview> {
     return unwrap(await apiClient.post<ApiResponse<RelationResolutionPreview>>(API_ENDPOINTS.semanticModels.relationResolutionPreview(id, ruleId), { limit }, { timeout: 0 }));
+  },
+  async listLabelFields(id: string): Promise<Array<{ conceptId: string; field: string }>> {
+    return unwrap(await apiClient.get<ApiResponse<Array<{ conceptId: string; field: string }>>>(API_ENDPOINTS.semanticModels.labelFields(id)));
+  },
+  async saveLabelField(id: string, conceptId: string, field: string): Promise<{ revision: number; conceptId: string; field: string }> {
+    const model = await semanticModelApi.get(id);
+    return unwrap(await apiClient.put<ApiResponse<{ revision: number; conceptId: string; field: string }>>(API_ENDPOINTS.semanticModels.labelField(id, conceptId), {
+      expectedRevision: model.revision,
+      field,
+    }));
   },
   async listIdentityRules(id: string): Promise<Array<{ conceptId: string; fields: string[] }>> {
     return unwrap(await apiClient.get<ApiResponse<Array<{ conceptId: string; fields: string[] }>>>(API_ENDPOINTS.semanticModels.identityRules(id)));
@@ -299,6 +328,10 @@ export const semanticModelApi = {
   /** Clear every record, link and review item generated for the model, then read every source again. */
   async rebuildPopulation(id: string, body: { forgetDocumentReading: boolean }): Promise<PopulationRebuildResponse> {
     return unwrap(await apiClient.post<ApiResponse<PopulationRebuildResponse>>(API_ENDPOINTS.semanticModels.populationRebuild(id), body, { timeout: 0 }));
+  },
+  /** This person's latest data updates of the model, newest first. */
+  async listPopulationJobs(id: string, limit = 20): Promise<PopulationJob[]> {
+    return unwrap(await apiClient.get<ApiResponse<{ items: PopulationJob[] }>>(API_ENDPOINTS.semanticModels.populationJobs(id), { params: { limit } })).items;
   },
   async getPopulationJob(id: string, jobId: string): Promise<PopulationJob> {
     return unwrap(await apiClient.get<ApiResponse<PopulationJob>>(API_ENDPOINTS.semanticModels.populationJob(id, jobId)));

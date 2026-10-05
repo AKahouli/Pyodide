@@ -19,6 +19,16 @@ export function pickAiSettings(input: unknown): Partial<AiExtractionSettings> {
   return picked;
 }
 
+/**
+ * A document mapping's options for the runtime: the AI's limits when a field is read by AI (they carry
+ * "several records per document"), else only that switch, so rules alone can make several records.
+ * Nothing when neither applies, so other mappings keep their options (and fingerprint).
+ */
+export function documentReadOptions(usesAi: boolean, defaults: Partial<AiExtractionSettings>, settings: unknown): { options?: Record<string, unknown> } {
+  if (usesAi) return { options: { aiSettings: effectiveAiSettings(defaults, settings) } };
+  return pickAiSettings(settings).manyRecords ? { options: { manyRecords: true } } : {};
+}
+
 /** Only the run limits that were set and are in range, as whole numbers; anything else is dropped. */
 export function pickRunLimits(input: unknown): Partial<RunLimits> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return {};

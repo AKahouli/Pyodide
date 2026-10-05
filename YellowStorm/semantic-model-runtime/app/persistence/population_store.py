@@ -407,6 +407,66 @@ async def purge_model_data(pool: Any, model_id: str, *,
     }
 
 
+class ModelJobsRunning(Exception):
+    """A job of the model is queued or running; the model cannot be deleted under it."""
+
+
+# Every runtime table keyed by the model id, children before parents. Rows hanging off them
+# (entities -> identities, snapshots -> manual rows/links, generations -> entity documents,
+# jobs -> tasks/events/outbox) go with them by cascade.
+_MODEL_TABLES = (
+    "semantic_jobs.ui_signal_outbox",
+    "semantic_graph_search.embedding_cache",
+    "semantic_graph_search.index_generations",
+    "semantic_runtime.active_bindings",
+    "semantic_population.review_items",
+    "semantic_population.corrections",
+    "semantic_population.relationships",
+    "semantic_population.assertions",
+    "semantic_population.entities",
+    "semantic_population.document_extractions",
+    "semantic_population.data_revisions",
+    "semantic_population.manual_snapshots",
+    "semantic_population.model_data_resets",
+    "semantic_runtime.specifications",
+    "semantic_datasource.mapping_health",
+    "semantic_jobs.jobs",
+)
+_UUID_MODEL_TABLES = frozenset({"semantic_jobs.ui_signal_outbox", "semantic_datasource.mapping_health"})
+
+
+async def delete_model(pool: Any, model_id: str) -> dict[str, Any]:
+    """Forget a model entirely: every runtime row keyed by it, in one transaction.
+
+    Refuses while one of its jobs is not finished (the caller must wait or cancel it).
+    Idempotent: a model with no rows deletes nothing. Returns the projection graphs
+    that were referenced, for the caller to drop from the graph database."""
+    async with pool.acquire() as connection:
+        async with connection.transaction():
+            await connection.execute("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+                                     f"purge:{model_id}")
+            running = await connection.fetchval(
+                "SELECT count(*) FROM semantic_jobs.jobs WHERE model_id = $1 "
+                "AND NOT (state = ANY($2::text[]))", model_id, list(_TERMINAL_JOB_STATES))
+            if running:
+                raise ModelJobsRunning(model_id)
+            refs = await connection.fetch(
+                "SELECT projection_ref FROM semantic_population.data_revisions WHERE model_id = $1 "
+                "UNION SELECT projection_ref FROM semantic_runtime.active_bindings WHERE model_id = $1 "
+                "UNION SELECT projection_ref FROM semantic_graph_search.index_generations "
+                "WHERE model_id = $1", model_id)
+            counts: dict[str, int] = {}
+            for table in _MODEL_TABLES:
+                # Two small tables key the model as a uuid; compare as text so any id is accepted.
+                column = "model_id::text" if table in _UUID_MODEL_TABLES else "model_id"
+                deleted = await connection.fetchval(
+                    f"WITH gone AS (DELETE FROM {table} WHERE {column} = $1 RETURNING 1) "
+                    "SELECT count(*) FROM gone", model_id)
+                counts[table] = int(deleted or 0)
+    return {"modelId": model_id, "deleted": counts,
+            "projections": sorted({row["projection_ref"] for row in refs if row["projection_ref"]})}
+
+
 async def get_active_binding(pool: Any, model_id: str,
                              environment: str = "production") -> dict[str, Any] | None:
     row = await pool.fetchrow(
@@ -617,6 +677,12 @@ def _origin_of(evidence: dict[str, Any], origin: str | None) -> dict[str, Any]:
     if isinstance(derived, dict):
         result["derivedFrom"] = {key: derived.get(key) for key in (
             "conceptId", "entityId", "label", "attribute", "rule", "distinctValues", "records")}
+        # A value read out of the source field's text (rules, AI), by a recipe or fixed: how, and where.
+        result["derivedFrom"].update({key: derived[key] for key in ("method", "span", "attributes")
+                                      if derived.get(key) is not None})
+    # A recipe joining several fields or columns: every one it read.
+    if isinstance(evidence.get("recipeSources"), list):
+        result["recipeSources"] = evidence["recipeSources"]
     return result
 
 

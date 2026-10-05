@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { AlertTriangle, Asterisk, ChevronRight, FileText, FolderOpen, GitMerge, KeyRound, Loader2, LockKeyhole, Pencil, Plus, Sheet, Table2, Trash2, X } from 'lucide-react';
+import { Tag, AlertTriangle, Asterisk, ChevronRight, FileText, FolderOpen, GitMerge, KeyRound, Loader2, LockKeyhole, Pencil, Plus, Sheet, Table2, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/modules/semantic-model/components/common/Select';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useModuleTranslation } from '@/modules/localization';
-import { useSemanticModelEditorStore } from '../../store';
+import { useSemanticModelEditorStore, waitForGraphSave } from '../../store';
 import type { KnowledgeLinkingController } from '../../hooks/use-knowledge-linking';
 import { type SourceMappingTarget, sourceMappingTargetFromResource, sourceMappingTargetFromWorkspace } from '../mapping/SourceMappingDrawer';
 import type { AttributeDefinition, SemanticNodeType, SemanticRecord, SemanticRelationType } from '../../types';
@@ -19,15 +19,17 @@ import { KnowledgePanel } from '../knowledge/KnowledgePanel';
 import { semanticModelApi } from '../../api';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { semanticModelQueryKeys } from '../../query/queryKeys';
-import { useDerivedSources, useIdentityRules, useSourceMappings } from '../../query/hooks';
+import { useLabelFields, useDerivedSources, useIdentityRules, useSourceMappings } from '../../query/hooks';
 import type { DerivedSourceTarget } from '../mapping/DerivedSourceDrawer';
 import { parseApiError } from '@/lib/api-error';
 import { showError } from '@/lib/notifications';
 import { cn } from '@/lib/utils';
 import { RelationMatchingPanel } from '../mapping/RelationMatchingPanel';
 import { DELETE_BUTTON, FORM_SECTION as SECTION, FormField as Field, HelpTip, SectionHeader } from '../form/FormParts';
+import { FieldSearchIndexPane } from '../settings/FieldSearchIndexPane';
+import { withSearchIndex } from '../../searchSettings';
 
-export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowledgeOpen,knowledgeTargetId,onKnowledgeClose,onMapData,onDeriveData,onAddSource,onBrowseRecords,recordCounts,workspace = false }: Readonly<{ modelId?:string;canEdit:boolean;knowledge:KnowledgeLinkingController;knowledgeOpen:boolean;knowledgeTargetId:string|null;onKnowledgeClose:()=>void;onMapData?:(target:SourceMappingTarget)=>void;onDeriveData?:(target:DerivedSourceTarget)=>void;onAddSource?:(conceptId:string)=>void;onBrowseRecords?:(conceptId:string)=>void;recordCounts?:Record<string,number>;workspace?:boolean }>) {
+export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowledgeOpen,knowledgeTargetId,onKnowledgeClose,onMapData,onDeriveData,onAddSource,onBrowseRecords,recordCounts,workspace = false,switching }: Readonly<{ switching?:{label:string;count:number}; modelId?:string;canEdit:boolean;knowledge:KnowledgeLinkingController;knowledgeOpen:boolean;knowledgeTargetId:string|null;onKnowledgeClose:()=>void;onMapData?:(target:SourceMappingTarget)=>void;onDeriveData?:(target:DerivedSourceTarget)=>void;onAddSource?:(conceptId:string)=>void;onBrowseRecords?:(conceptId:string)=>void;recordCounts?:Record<string,number>;workspace?:boolean }>) {
   const { t } = useModuleTranslation('semantic-model');
   const graph = useSemanticModelEditorStore((state) => state.graph);
   const selectedId = useSemanticModelEditorStore((state) => state.selectedId);
@@ -36,7 +38,7 @@ export function SemanticModelInspector({ modelId = '', canEdit,knowledge,knowled
   const relation = graph?.relations.find((item) => item.id === selectedId);
   const record = graph?.records.find((item) => item.id === selectedId);
   useFocusSection();
-  const knowledgePanel = <KnowledgePanel canEdit={canEdit} knowledge={knowledge} targetNodeId={knowledgeTargetId} onClose={onKnowledgeClose} onMapData={(resource)=>onMapData?.(sourceMappingTargetFromResource(resource, knowledgeTargetId ?? undefined))} onMapWorkspace={onMapData?(scope)=>onMapData(sourceMappingTargetFromWorkspace(scope, knowledgeTargetId ?? undefined)):undefined} onDeriveFrom={onDeriveData?(conceptId)=>onDeriveData({ conceptId }):undefined}/>;
+  const knowledgePanel = <KnowledgePanel switching={switching} canEdit={canEdit} knowledge={knowledge} targetNodeId={knowledgeTargetId} onClose={onKnowledgeClose} onMapData={(resource)=>onMapData?.(sourceMappingTargetFromResource(resource, knowledgeTargetId ?? undefined))} onMapWorkspace={onMapData?(scope)=>onMapData(sourceMappingTargetFromWorkspace(scope, knowledgeTargetId ?? undefined)):undefined} onDeriveFrom={onDeriveData&&!switching?(conceptId)=>onDeriveData({ conceptId }):undefined}/>;
   if (knowledgeOpen) return workspace
     ? <aside className='absolute inset-y-0 right-0 z-30 w-[min(26rem,100%)] border-l bg-background shadow-xl'>{knowledgePanel}</aside>
     : <ResizableSidePanel className='z-30 bg-background/95 shadow-2xl backdrop-blur lg:shadow-none'>{knowledgePanel}</ResizableSidePanel>;
@@ -196,7 +198,11 @@ export function IdentitySection({ modelId, node, canEdit }: Readonly<{ modelId: 
   const fields = rules.data?.find((rule) => rule.conceptId === node.id)?.fields ?? [];
   const mapped = (mappings.data ?? []).some((mapping) => mapping.conceptId === node.id);
   const save = useMutation({
-    mutationFn: (next: string[]) => semanticModelApi.saveIdentityRule(modelId, node.id, next),
+    mutationFn: async (next: string[]) => {
+      // A field just added reaches the server with the next autosave; the key may only name saved fields.
+      if (useSemanticModelEditorStore.getState().pending.length) await waitForGraphSave();
+      return semanticModelApi.saveIdentityRule(modelId, node.id, next);
+    },
     onSuccess: async (result) => {
       useSemanticModelEditorStore.getState().adoptRevision(result.revision);
       await Promise.all([
@@ -209,6 +215,24 @@ export function IdentitySection({ modelId, node, canEdit }: Readonly<{ modelId: 
     onError: (error) => showError(t('identity.saveError'), { description: parseApiError(error).message }),
   });
   const toggle = (key: string) => save.mutate(fields.includes(key) ? fields.filter((field) => field !== key) : [...fields, key]);
+  const labels = useLabelFields(modelId);
+  const labelField = labels.data?.find((rule) => rule.conceptId === node.id)?.field;
+  const labelValid = Boolean(labelField && node.attributes.some((attribute) => attribute.key === labelField));
+  const saveLabel = useMutation({
+    mutationFn: async (field: string) => {
+      if (useSemanticModelEditorStore.getState().pending.length) await waitForGraphSave();
+      return semanticModelApi.saveLabelField(modelId, node.id, field);
+    },
+    onSuccess: async (result) => {
+      useSemanticModelEditorStore.getState().adoptRevision(result.revision);
+      await Promise.all([
+        client.invalidateQueries({ queryKey: semanticModelQueryKeys.labelFields(modelId) }),
+        client.invalidateQueries({ queryKey: semanticModelQueryKeys.reviewQueue(modelId) }),
+        client.invalidateQueries({ queryKey: semanticModelQueryKeys.freshness(modelId) }),
+      ]);
+    },
+    onError: (error) => showError(t('labelField.saveError'), { description: parseApiError(error).message }),
+  });
   return <div className='space-y-2'>
     <SectionHeader title={t('identity.title', { name: node.label })} help={t('identity.help', { name: node.label })} />
     {mapped && !fields.length && !rules.isLoading && <p role='alert' className='flex gap-2 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400'><AlertTriangle className='h-4 w-4 shrink-0' />{t('identity.missing', { name: node.label })}</p>}
@@ -221,6 +245,18 @@ export function IdentitySection({ modelId, node, canEdit }: Readonly<{ modelId: 
           {active && <KeyRound className='h-3 w-3' />}{attribute.label || attribute.key}
         </button>;
       })}{save.isPending && <Loader2 className='h-4 w-4 animate-spin self-center' />}</div>}
+    {node.attributes.length > 0 && <div className='space-y-2 pt-3'>
+      <SectionHeader title={t('labelField.title', { name: node.label })} help={t('labelField.help', { name: node.label })} />
+      {!labelValid && !labels.isLoading && <p role='alert' className='flex gap-2 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-400'><AlertTriangle className='h-4 w-4 shrink-0' />{t('labelField.missing', { name: node.label })}</p>}
+      <div role='radiogroup' aria-label={t('labelField.title', { name: node.label })} className='flex flex-wrap gap-1.5'>{node.attributes.map((attribute) => {
+        const active = labelValid && labelField === attribute.key;
+        return <button key={attribute.key} type='button' role='radio' aria-checked={active} disabled={!canEdit || saveLabel.isPending || labels.isLoading}
+          onClick={() => { if (!active) saveLabel.mutate(attribute.key); }}
+          className={`flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary disabled:cursor-default ${active ? 'border-sky-500/60 bg-sky-500/10 font-medium text-sky-800 dark:text-sky-300' : 'hover:bg-muted'}`}>
+          {active && <Tag className='h-3 w-3' />}{attribute.label || attribute.key}
+        </button>;
+      })}{saveLabel.isPending && <Loader2 className='h-4 w-4 animate-spin self-center' />}</div>
+    </div>}
   </div>;
 }
 
@@ -375,7 +411,7 @@ function AttributeEditor({ attributes,onChange }: Readonly<{ attributes: Attribu
             className='flex h-8 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'>
             <ChevronRight className={cn('h-4 w-4 transition-transform', open && 'rotate-90')} />
           </button>
-          <Input className='h-8 min-w-0 flex-1 text-sm' value={attribute.label} aria-label={t('attributes.nameFor', { name: attribute.label })} onChange={(event) => edit(index, { label:event.target.value, key:businessKey(event.target.value) })} />
+          <Input className='h-8 min-w-0 flex-1 text-sm' value={attribute.label} aria-label={t('attributes.nameFor', { name: attribute.label })} onChange={(event) => edit(index, { label:event.target.value })} />
           <Select value={attribute.type} onValueChange={(type: AttributeDefinition['type']) => edit(index, { type })}>
             <SelectTrigger className='h-8 w-[5.75rem] shrink-0 px-2 text-xs' aria-label={t('attributes.typeFor', { name: attribute.label })}><SelectValue /></SelectTrigger>
             <SelectContent>{(['text','number','boolean','date','enum'] as const).map((type) => <SelectItem key={type} value={type}>{t(`attribute.type.${type}`)}</SelectItem>)}</SelectContent>
@@ -389,6 +425,7 @@ function AttributeEditor({ attributes,onChange }: Readonly<{ attributes: Attribu
         {open && <div className='space-y-3 pb-2 pl-8 pr-1 pt-2'>
           <Field label={t('field.description')} help={t('attributes.descriptionHelp')}><Textarea className='min-h-[3.5rem] resize-y text-sm' rows={2} value={attribute.description ?? ''} placeholder={t('attributes.descriptionPlaceholder')} aria-label={t('attributes.descriptionFor', { name: attribute.label })} onChange={(event) => edit(index, { description: event.target.value })} /></Field>
           <Field label={t('aliases.title')}><AliasChips values={attribute.aliases ?? []} onChange={(aliases) => edit(index, { aliases })} placeholder={t('aliases.fieldPlaceholder', { name: attribute.label })} compact /></Field>
+          {attribute.type === 'text' && <FieldSearchIndexPane value={attribute.searchIndex} fieldLabel={attribute.label} onChange={(searchIndex) => onChange(attributes.map((item, itemIndex) => itemIndex === index ? withSearchIndex(item, searchIndex) : item))} />}
           {attribute.type === 'enum' && <Field label={t('attributes.options')}><Input className='h-8 text-sm' defaultValue={attribute.options?.join(', ') ?? ''} onBlur={(event) => edit(index, { options: event.target.value.split(',').map((option) => option.trim()).filter(Boolean) })} placeholder={t('attributes.optionsPlaceholder')} aria-label={t('attributes.optionsFor', { name: attribute.label })} /></Field>}
           <Button size='sm' variant='ghost' className='h-7 px-2 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive' onClick={() => remove(index)}><Trash2 className='mr-1.5 h-3.5 w-3.5' />{t('attributes.remove')}</Button>
         </div>}

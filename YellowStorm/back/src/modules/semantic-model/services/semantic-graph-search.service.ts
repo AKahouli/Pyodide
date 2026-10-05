@@ -6,6 +6,8 @@ import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-d
 import { SemanticGraphRepository } from '../repositories/semantic-graph.repository';
 import type { SemanticGraph } from '../domain/semantic-model.types';
 import { SemanticModelService } from './semantic-model.service';
+import { SemanticSearchSettingsService } from './semantic-search-settings.service';
+import type { RuntimeSearchSettingsPayload } from '../domain/semantic-search-settings.types';
 import {
   RuntimeGraphExpandResult,
   RuntimeGraphExpandStep,
@@ -60,12 +62,19 @@ export class SemanticGraphSearchService {
     private readonly workspaceShares: WorkspaceShareService,
     private readonly runtime: SemanticRuntimeClientService,
     private readonly graphs: SemanticGraphRepository,
+    private readonly searchSettings: SemanticSearchSettingsService,
   ) {}
 
+  /**
+   * The admin's search settings travel with the request, with the own search settings of the fields of the
+   * version whose data is searched; with no limit asked, the admin's default number of results applies.
+   */
   async search(userId: string, modelId: string, input: GraphSearchQuery): Promise<RuntimeGraphSearchResult> {
     const model = await this.requireReadable(userId, modelId, input.environment);
-    const allowedWorkspaceIds = await this.allowedWorkspaceIds(userId, model.id);
-    return this.bound(input.environment, () => this.runtime.graphSearch({
+    const [allowedWorkspaceIds, settings] = await Promise.all([
+      this.allowedWorkspaceIds(userId, model.id), this.settingsFor(model, input.environment),
+    ]);
+    const request: Parameters<SemanticRuntimeClientService['graphSearch']>[0] & { settings: RuntimeSearchSettingsPayload } = {
       actorUserId: userId,
       modelId: model.id,
       environment: input.environment,
@@ -74,7 +83,9 @@ export class SemanticGraphSearchService {
       ...(input.limit ? { limit: input.limit } : {}),
       allowedWorkspaceIds,
       ...(input.expectedDataRevisionId ? { expectedDataRevisionId: input.expectedDataRevisionId } : {}),
-    }));
+      settings,
+    };
+    return this.bound(input.environment, () => this.runtime.graphSearch(request));
   }
 
   async expand(userId: string, modelId: string, input: GraphExpandQuery): Promise<RuntimeGraphExpandResult> {
@@ -126,7 +137,15 @@ export class SemanticGraphSearchService {
   /** Building an index costs embedding calls, so only the people who edit the model can start one. */
   async ensureIndex(userId: string, modelId: string, environment: RuntimeSearchEnvironment) {
     const model = await this.models.requireActiveRole(userId, modelId, EDIT_ROLES);
-    return this.bound(environment, () => this.runtime.ensureGraphSearchIndex({ actorUserId: userId, modelId: model.id, environment }));
+    const request = { actorUserId: userId, modelId: model.id, environment, settings: { index: (await this.settingsFor(model, environment)).index } };
+    return this.bound(environment, () => this.runtime.ensureGraphSearchIndex(request));
+  }
+
+  /** The search settings sent to the runtime: the admin's, and each field's own from the bound version's definitions. */
+  private async settingsFor(model: { id: string; currentDraftVersionId?: string | null; currentPublishedVersionId?: string | null },
+    environment: RuntimeSearchEnvironment): Promise<RuntimeSearchSettingsPayload> {
+    const definitions = await this.definitions(model, environment).catch(() => ({ versionId: null, graph: null }));
+    return this.searchSettings.runtimePayload(definitions.graph);
   }
 
   /**

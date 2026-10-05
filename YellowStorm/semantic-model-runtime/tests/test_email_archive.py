@@ -11,8 +11,9 @@ import pytest
 from app.datasource.dataset_query import query_parquet
 from app.datasource.datasets import prepare_parquet
 from app.datasource.discovery import discover, preview_source
-from app.datasource.email_archive import (_addresses, iter_derived_files, iter_sheet_rows, read_messages,
-                                          read_tnef, split_new_text)
+from app.datasource.email_archive import (BODY_CHARS, MESSAGE_COLUMNS, _addresses, iter_derived_files,
+                                          iter_sheet_rows, read_messages, read_tnef, resolve_column,
+                                          split_new_text)
 
 ZIP = "application/zip"
 SOURCE = {
@@ -127,7 +128,10 @@ def test_messages_are_read_once_with_headers_dates_and_thread(archive: bytes):
     assert reply["message_id"] == "reply-1@client.fr"
     assert reply["en_reponse_a"] == "origin-1@yellowsys.fr"
     assert reply["fil"] == "root-0@yellowsys.fr"
-    assert "reportée au 15 mars" in reply["apercu"] and "part demain" not in reply["apercu"]
+    assert reply["corps"] == "Bonjour,\n\nLa livraison du lot 2 est reportée au 15 mars.\n\nCordialement,\nJeanne"
+    assert reply["corps_complet"].startswith(reply["corps"]) and "Le lot 2 part demain." in reply["corps_complet"]
+    assert reply["destinataires"] == "support@yellowsys.fr, paul@client.fr, chef@yellowsys.fr"
+    assert "apercu" not in reply
     assert reply["nombre_pieces_jointes"] == 1
     assert reply["chemin_archive"] == "boite/2026/reply.eml"
 
@@ -136,6 +140,29 @@ def test_messages_are_read_once_with_headers_dates_and_thread(archive: bytes):
     attached = rows["Bon de commande"]
     assert attached["cle_message_parent"] == forward["cle_message"]
     assert attached["chemin_archive"] == "boite/fwd.eml#1"
+
+
+def test_a_long_body_is_kept_whole_up_to_the_cap():
+    message = EmailMessage()
+    message["From"] = "a@b.fr"
+    message["To"] = "c@d.fr"
+    message["Message-ID"] = "<long@b.fr>"
+    message.set_content("ligne\n" * 30000)
+    row = next(read_messages(bytes(message), "message/rfc822")).row
+    assert len(row["corps"]) == BODY_CHARS + 1 and row["corps"].endswith("…")
+    assert "corps tronqué à 100000 caractères" in row["anomalies"]
+    short = EmailMessage()
+    short["From"] = "a@b.fr"
+    short.set_content("x" * 5000)
+    assert next(read_messages(bytes(short), "message/rfc822")).row["corps"] == "x" * 5000
+
+
+def test_a_mapping_to_the_former_preview_column_reads_the_body():
+    assert "apercu" not in MESSAGE_COLUMNS and "corps" in MESSAGE_COLUMNS
+    assert resolve_column("apercu", MESSAGE_COLUMNS) == "corps"
+    assert resolve_column("apercu", ["apercu", "corps"]) == "apercu"  # a sheet that has the column keeps it
+    assert resolve_column("objet", MESSAGE_COLUMNS) == "objet"
+    assert resolve_column("apercu", ["objet"]) == "apercu"  # nothing to fall back on: reported missing
 
 
 def test_participants_and_attachments_tables(archive: bytes):
@@ -161,7 +188,7 @@ def test_winmail_body_and_files_are_recovered():
     files, body = read_tnef(_tnef([("a.pdf", PDF), ("b.txt", b"hello")], "Corps TNEF"))
     assert files == [("a.pdf", PDF), ("b.txt", b"hello")] and body == "Corps TNEF"
     message = next(read_messages(_with_winmail(), "message/rfc822"))
-    assert message.row["apercu"] == "Voici le contrat signé."
+    assert message.row["corps"] == "Voici le contrat signé."
 
 
 def test_derived_files_are_keyed_by_message_and_attachment(archive: bytes):
@@ -190,6 +217,7 @@ def test_discovery_preview_and_preparation_present_three_tables(archive: bytes, 
     output = tmp_path / "messages.parquet"
     manifest = prepare_parquet(source, {"sheetName": "messages"}, io.BytesIO(archive), output)
     assert manifest["rowCount"] == 4
+    assert "corps" in manifest["columns"] and "destinataires" in manifest["columns"]
     rows = query_parquet(output, columns=["objet", "nombre_pieces_jointes"],
                          filters=[{"column": "domaine_expediteur", "op": "eq", "value": "client.fr"}])
     assert {"objet": "RE: Livraison du lot 2", "nombre_pieces_jointes": "1"} in rows["rows"]
@@ -350,3 +378,11 @@ async def test_admin_limit_on_records_per_source_stops_reading_that_source():
     limited["payload"]["limits"] = {"maxRecordsPerSource": 100}
     outcome = await run_population_for_task(limited, fetch=fetch, upload_derived=upload)
     assert outcome["counts"]["materialized"] == 100 and outcome["completeEnumeration"] is False
+
+
+def test_corps_falls_back_to_full_text_when_nothing_new() -> None:
+    raw = (b"From: a@x.fr\r\nTo: b@y.fr\r\nSubject: TR: devis\r\nDate: Mon, 27 Jul 2026 09:31:28 +0000\r\n\r\n"
+           b"-----Original Message-----\r\nFrom: c@z.fr\r\nSent: Monday\r\n\r\nLe devis est joint.\r\n")
+    row = next(read_messages(raw, "message/rfc822")).row
+    assert row["corps"] == row["corps_complet"]
+    assert "Le devis est joint." in row["corps"]

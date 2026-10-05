@@ -3,7 +3,7 @@ import { Check, Loader2, Trash2, UserPlus, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/modules/semantic-model/components/common/Select';
 import { showError, showSuccess } from '@/lib/notifications';
 import { searchUsers } from '@/modules/workspace/api';
 import type { UserSearchResult } from '@/modules/workspace/types';

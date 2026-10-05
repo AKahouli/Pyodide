@@ -58,18 +58,36 @@ class PopulationSource(BaseModel):
     field_mappings: list[dict[str, Any]] | None = Field(
         default=None, alias="fieldMappings", min_length=1, max_length=25)
     label_field: str | None = Field(default=None, alias="labelField", max_length=200)
+    # Tabular only: a field's recipe (same shape as a document's computed field), by field.
+    field_recipes: dict[str, dict[str, Any]] | None = Field(default=None, alias="fieldRecipes", max_length=50)
+    # Tabular only: a field read out of a cell's text with the document reading rules and/or AI, by field.
+    field_extractions: dict[str, dict[str, Any]] | None = Field(
+        default=None, alias="fieldExtractions", max_length=25)
     mapping_version: str = Field(default="v1", alias="mappingVersion", max_length=200)
 
     @model_validator(mode="after")
     def validate_mapping_shape(self):  # type: ignore[no-untyped-def]
         if self.source_kind == "document":
             if (self.field_mappings is None or self.column_mapping is not None
-                    or self.constant_mapping is not None):
+                    or self.constant_mapping is not None or self.field_recipes is not None
+                    or self.field_extractions is not None):
                 raise ValueError("document sources require fieldMappings only")
         elif ((self.column_mapping is None and self.constant_mapping is None)
               or self.field_mappings is not None):
             raise ValueError("tabular sources require columnMapping only")
         return self
+
+    @model_serializer(mode="wrap")
+    def serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        # A source without recipes or cell extractions keeps its historical stored shape.
+        data = handler(self)
+        if self.field_recipes is None:
+            data.pop("fieldRecipes", None)
+            data.pop("field_recipes", None)
+        if self.field_extractions is None:
+            data.pop("fieldExtractions", None)
+            data.pop("field_extractions", None)
+        return data
 
 
 class RelationBinding(BaseModel):
@@ -91,12 +109,32 @@ class RelationBinding(BaseModel):
 
 
 class DerivationField(BaseModel):
-    """A field of the source concept copied into a field of the derived concept."""
+    """A field of the derived concept: copied from a field of the source concept (the default), read
+    out of its text with rules and/or AI (``extract``), taken from a field by a recipe (``computed``),
+    or fixed (``constant``). Checked in depth by ``app.population.derived.normalize_derivations``."""
 
     model_config = ConfigDict(extra="forbid")
 
-    source_attribute: str = Field(alias="sourceAttribute", min_length=1, max_length=200)
+    source_attribute: str | None = Field(default=None, alias="sourceAttribute", min_length=1, max_length=200)
     target_attribute: str = Field(alias="targetAttribute", min_length=1, max_length=200)
+    mode: Literal["direct", "extract", "computed", "constant"] | None = None
+    label: str | None = Field(default=None, max_length=200)
+    extraction_strategy: Literal["deterministic", "ai", "rules_then_ai"] | None = Field(
+        default=None, alias="extractionStrategy")
+    rules: dict[str, Any] | None = None
+    semantic_definition: str | None = Field(default=None, alias="semanticDefinition", max_length=2000)
+    agent_id: str | None = Field(default=None, alias="agentId", max_length=64)
+    description: str | None = Field(default=None, max_length=2000)
+    value_type: str | None = Field(default=None, alias="valueType", max_length=50)
+    allowed_values: list[str] | None = Field(default=None, alias="allowedValues", max_length=200)
+    computed: dict[str, Any] | None = None
+    constant_value: str | int | float | bool | None = Field(default=None, alias="constantValue")
+
+    @model_serializer(mode="wrap")
+    def serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        # A field copied as it is serializes as it did before the field modes existed.
+        data = handler(self)
+        return {key: value for key, value in data.items() if value is not None}
 
 
 class Derivation(BaseModel):
@@ -113,6 +151,20 @@ class Derivation(BaseModel):
     order_by: str | None = Field(default=None, alias="orderBy", max_length=200)
     label_field: str | None = Field(default=None, alias="labelField", max_length=200)
     mapping_version: str = Field(default="v1", alias="mappingVersion", max_length=200)
+    # How much of a field's text the AI reads; only present when a field is read by AI.
+    ai_settings: dict[str, Any] | None = Field(default=None, alias="aiSettings")
+    # One source field expanded into several items, each read as a record (see app.population.expand).
+    expand: dict[str, Any] | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data = handler(self)
+        if self.ai_settings is None:
+            data.pop("aiSettings", None)
+            data.pop("ai_settings", None)
+        if self.expand is None:
+            data.pop("expand", None)
+        return data
 
 
 class PopulationScope(BaseModel):

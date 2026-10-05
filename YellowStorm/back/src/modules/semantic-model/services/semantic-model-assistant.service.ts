@@ -294,9 +294,35 @@ export class SemanticModelAssistantService {
     };
   }
 
+  /** Delete a model for good (owner only), once its exact name is repeated. Workspace documents stay. */
+  async deleteModel(userId: string, modelId: string, confirmName: string | undefined) {
+    const model = await this.models.get(userId, modelId);
+    if ((confirmName ?? '').trim() !== model.name.trim()) {
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+        'confirm_name must be the exact model name; ask the user to confirm the permanent deletion first');
+    }
+    await this.models.deletePermanently(userId, model.id);
+    return { deleted: true, modelId: model.id, name: model.name };
+  }
+
   async createModel(actor: AssistantActor, name: string, description?: string) {
     const model = await this.models.create(actor.userId, { name, description });
     return { modelId: model.id, name: model.name, model: this.modelRef(model), editorPath: this.editorPath(model.id), uiTarget: this.uiTarget(model) };
+  }
+
+  /** Copy a model into a new one the user owns; the data needs the sources and is copied by the runtime. */
+  async cloneModel(actor: AssistantActor, modelId: string, options: { name?: string; includeSources?: boolean; includeData?: boolean; includeShares?: boolean }) {
+    const source = await this.models.get(actor.userId, modelId);
+    const name = options.name?.trim() || `${source.name} (copy)`;
+    const copy = await this.models.clone(actor.userId, source.id, name, {
+      sources: options.includeSources ?? true,
+      data: options.includeData ?? false,
+      shares: options.includeShares ?? false,
+    });
+    return {
+      modelId: copy.id, name: copy.name, sourceModelId: source.id, dataCopy: copy.dataCopy,
+      model: this.modelRef(copy), editorPath: this.editorPath(copy.id), uiTarget: this.uiTarget(copy),
+    };
   }
 
   /**
@@ -1027,7 +1053,7 @@ export class SemanticModelAssistantService {
     const data = input.data ?? 'published';
     const model = await this.models.get(userId, modelId);
     const result = await this.graphSearch.search(userId, modelId, {
-      environment: assistantEnvironment(data), query: input.query, concepts: input.concepts, limit: input.limit ?? 10,
+      environment: assistantEnvironment(data), query: input.query, concepts: input.concepts, limit: input.limit,
     });
     const notes: string[] = [];
     if (result.status === 'index_not_ready') {
@@ -1039,13 +1065,26 @@ export class SemanticModelAssistantService {
     if (result.status === 'no_match') notes.push('No record of the model matches this search.');
     if (result.modeUsed === 'lexical_only') notes.push('Search by meaning was unavailable: only keys, names and words were matched, so a record worded differently may be missing.');
     if (result.modeUsed === 'exact_only') notes.push('Only exact keys and names were matched.');
+    if (result.seeds.some((seed) => seed.passages?.length)) {
+      notes.push('passages quote the parts of long fields (an e-mail body, a contract text) that match the search: quote them as evidence. They are excerpts: to read a whole field, use query_records on that record with fields=[the field].');
+    }
+    if (result.coverage.passageTruncatedCount) {
+      notes.push(`${String(result.coverage.passageTruncatedCount)} records have fields too long to be searched to their end: words near the end of those fields may not be found.`);
+    }
     return {
       model: this.modelRef(model), data, status: result.status, searchMode: result.modeUsed, indexState: result.index.state,
       concepts: result.concepts.map((concept) => concept.label), unknownConcepts: result.unknownConcepts,
-      records: result.seeds.map((seed) => ({
-        entityId: seed.entityId, concept: seed.conceptLabel, name: seed.label, keyFields: seed.keyFields, snippet: seed.snippet,
-        match: seed.matchClass, sourceCount: seed.provenance.length,
-      })),
+      records: result.seeds.map((seed) => {
+        const passages = (seed.passages ?? []).map((passage) => ({ field: passage.field, fieldKey: passage.fieldKey, text: passage.text }));
+        // Found by words deep in a long field: the passage says why, the start of the record does not.
+        const fromPassage = seed.matchedIn === 'passage' && passages.length > 0;
+        return {
+          entityId: seed.entityId, concept: seed.conceptLabel, name: seed.label, keyFields: seed.keyFields,
+          snippet: fromPassage ? `${passages[0].field}: ${passages[0].text}` : seed.snippet,
+          match: seed.matchClass, ...(seed.matchedIn ? { matchedIn: seed.matchedIn } : {}),
+          ...(passages.length ? { passages } : {}), sourceCount: seed.provenance.length,
+        };
+      }),
       coverage: result.coverage, notes,
     };
   }

@@ -186,7 +186,8 @@ class TestAgentRunner:
             )
 
     @pytest.mark.asyncio
-    async def test_run_standard_agent_success(self):
+    @pytest.mark.parametrize("tool_args", ["no_call", None, {"query": "ADK release"}])
+    async def test_run_standard_agent_success(self, tool_args):
         """Test running standard agent successfully."""
         mock_event_extractor = MagicMock()
         mock_message_transformer = MagicMock()
@@ -213,6 +214,10 @@ class TestAgentRunner:
         mock_event.content.parts = [MagicMock()]
         mock_event.content.parts[0].text = "Test response"
         mock_event.content.parts[0].function_call = None
+        if tool_args != "no_call":
+            mock_event.content.parts[0].function_call = types.FunctionCall(
+                name="perform_web_search", args=tool_args
+            )
         mock_event.content.parts[0].function_response = None
         mock_event.is_final_response.return_value = False
 
@@ -227,6 +232,14 @@ class TestAgentRunner:
 
         # Mock Runner class
         async def mock_run_async(*args, **kwargs):
+            if tool_args != "no_call":
+                partial = MagicMock()
+                partial.partial = True
+                partial.is_final_response.return_value = False
+                partial.content = types.Content(parts=[types.Part(
+                    function_call=types.FunctionCall(name="perform_web_search")
+                )])
+                yield partial
             yield mock_event
             yield mock_final_event
 
@@ -666,7 +679,8 @@ class TestAgentRunner:
         runner_class.assert_called_once_with(mock_agent, mock_session_helper)
 
     @pytest.mark.asyncio
-    async def test_handle_function_call(self):
+    @pytest.mark.parametrize("tool_args", [None, {"arg1": "value1"}])
+    async def test_handle_function_call(self, tool_args):
         """Test handling function calls."""
         mock_event_extractor = MagicMock()
         mock_message_transformer = MagicMock()
@@ -683,7 +697,7 @@ class TestAgentRunner:
         # Setup mocks
         mock_part = MagicMock()
         mock_part.function_call.name = "test_function"
-        mock_part.function_call.args = {"arg1": "value1"}
+        mock_part.function_call.args = tool_args
 
         mock_event = MagicMock()
         mock_agent = MagicMock()

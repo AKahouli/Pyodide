@@ -115,6 +115,13 @@ export class ConversationService {
     return this.mapToResponse(record);
   }
 
+  /** The active Yellowmind agent, or null when it is turned off or missing (never throws). */
+  async findPlatformCopilotAgentId(): Promise<string | null> {
+    const visibility = await this.featureVisibility.getVisibility();
+    if (!visibility.platformCopilot) return null;
+    return this.agentRepository.findActiveDefaultIdBySlugAndType(PLATFORM_COPILOT_AGENT_SLUG, PLATFORM_COPILOT);
+  }
+
   async assertPlatformCopilotAgent(pinnedAgentId?: string | null): Promise<string> {
     const visibility = await this.featureVisibility.getVisibility();
     if (!visibility.platformCopilot) {

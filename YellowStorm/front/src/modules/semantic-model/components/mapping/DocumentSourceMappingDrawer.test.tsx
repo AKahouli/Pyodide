@@ -79,6 +79,28 @@ describe('DocumentSourceMappingDrawer', () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['semantic-models', 'data-preview', 'model-1'] });
   });
 
+  it('makes several records per document with rules alone, and previews them as a table', async () => {
+    api.createSourceMapping.mockResolvedValue({ revision: 1, mappingCount: 1 });
+    api.previewSourceMapping.mockResolvedValue({ entities: [
+      { entityKey: 'cnt-7|1', label: 'CNT-7', values: { contract_number: 'CNT-7', amendment_number: '1' }, provenance: { rowNumber: 1 } },
+      { entityKey: 'cnt-7|2', label: 'CNT-7', values: { contract_number: 'CNT-7', amendment_number: '2' }, provenance: { rowNumber: 2 } },
+    ], stats: { scannedRows: 2, resolvedEntities: 2, duplicateKeysSkipped: 0, nullIdentitySkipped: 0 }, identityEvidence: [], warnings: [] });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    render(<QueryClientProvider client={client}><DocumentSourceMappingDrawer modelId='model-1' target={{
+      workspaceId: 'workspace-1', documentId: 'document-1', documentName: 'One.pdf', assetKind: 'document', conceptId: 'concept-1', mimeType: 'application/pdf', path: 'one.pdf',
+    }} onClose={vi.fn()} /></QueryClientProvider>);
+
+    // Every field is read by rules: the switch is offered all the same.
+    fireEvent.click(await screen.findByLabelText('mapping.manyRecords.label'));
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.previewButton' }));
+    await waitFor(() => expect(api.previewSourceMapping).toHaveBeenCalledWith('model-1', expect.objectContaining({ aiSettings: { manyRecords: true } })));
+    const table = await screen.findByRole('region', { name: 'mapping.manyRecords.found' });
+    expect(table.querySelectorAll('tbody tr')).toHaveLength(2);
+    expect(table).toHaveTextContent('CNT-7');
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.save' }));
+    await waitFor(() => expect(api.createSourceMapping).toHaveBeenCalledWith('model-1', expect.objectContaining({ aiSettings: { manyRecords: true } })));
+  });
+
   it('defaults extracted fields to deterministic and saves an AI choice', async () => {
     api.createSourceMapping.mockResolvedValue({ revision: 1, mappingCount: 1 });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });

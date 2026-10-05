@@ -6,6 +6,12 @@ caller (NestJS) has already authorized the actor and passes the workspaces the
 actor may read; a record read from any other workspace is never returned,
 ranked or used as a bridge. Reads never build anything: a missing index is
 requested (a durable job) and the answer says so.
+
+Search and index requests may carry the administrator's settings (``settings``:
+index settings with per-field overrides, and search settings). Index settings
+pick the generation (another set builds another one); search settings apply to
+the request only. Without them, the index settings are the model's latest ones
+and the search settings the defaults.
 """
 
 from __future__ import annotations
@@ -20,9 +26,11 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.graph_search.embeddings import profile_from_env
-from app.graph_search.indexer import IndexUnavailable, request_index, request_index_quietly
+from app.graph_search.indexer import (IndexUnavailable, request_index, request_index_quietly,
+                                      settings_for_revision)
 from app.graph_search.record_query import compile_query, overview, run_query
 from app.graph_search.retrieval import find_seeds, resolve_concepts, resolve_relations
+from app.graph_search.settings import IndexSettings, SearchSettings, index_fingerprint
 from app.graph_search.traversal import MAX_STEPS, expand
 from app.persistence import graph_search_store as search_store
 from app.persistence import population_store as store
@@ -46,10 +54,21 @@ class _Pinned(BaseModel):
                                                   max_length=200)
 
 
+class RequestSettings(BaseModel):
+    """The administrator's settings sent by NestJS; each group left out uses its defaults
+    (index: the model's latest settings)."""
+    model_config = ConfigDict(extra="forbid")
+
+    index: IndexSettings | None = None
+    search: SearchSettings | None = None
+
+
 class SearchQuery(_Pinned):
     query: str = Field(min_length=1, max_length=500)
     concepts: list[str] | None = Field(default=None, max_length=10)
-    limit: int = Field(default=10, ge=1, le=25)
+    # Capped by the search settings' maximum; their default when left out.
+    limit: int | None = Field(default=None, ge=1, le=100)
+    settings: RequestSettings | None = None
 
     @field_validator("query")
     @classmethod
@@ -164,6 +183,7 @@ class IndexCommand(BaseModel):
     actor_user_id: str = Field(alias="actorUserId", min_length=1, max_length=200)
     model_id: str = Field(alias="modelId", min_length=1, max_length=200)
     environment: Environment = "draft"
+    settings: RequestSettings | None = None
 
 
 def _pool(request: Request):  # type: ignore[no-untyped-def]
@@ -213,12 +233,18 @@ async def search_records(command: SearchQuery, request: Request) -> dict[str, ob
     revision_id = binding["data_revision_id"]
     compiled = await _compiled(pool, revision_id)
     concepts, unknown = resolve_concepts(compiled, command.concepts)
+    settings = command.settings or RequestSettings()
+    search_settings = settings.search or SearchSettings()
     profile = profile_from_env()
-    generation = (await search_store.get_generation(pool, revision_id, profile.fingerprint)
-                  if profile is not None else None)
-    if profile is not None and (generation is None or generation["state"] == "failed"):
-        await request_index_quietly(pool, _admit(request), revision_id)
-        generation = await search_store.get_generation(pool, revision_id, profile.fingerprint)
+    fingerprint = None
+    generation = None
+    if profile is not None:
+        index_settings = await settings_for_revision(pool, revision_id, profile, settings.index)
+        fingerprint = index_fingerprint(profile.fingerprint, index_settings)
+        generation = await search_store.get_generation(pool, revision_id, fingerprint)
+        if generation is None or generation["state"] == "failed":
+            await request_index_quietly(pool, _admit(request), revision_id, index_settings)
+            generation = await search_store.get_generation(pool, revision_id, fingerprint)
     index = search_store.public_generation(generation)
     if profile is None:
         index["state"] = "unavailable"
@@ -226,22 +252,59 @@ async def search_records(command: SearchQuery, request: Request) -> dict[str, ob
             "unknownConcepts": unknown,
             "coverage": {"expectedCount": index.get("expectedCount"),
                          "indexedCount": index.get("indexedCount"),
-                         "exactOnlyCount": index.get("exactOnlyCount")}}
+                         "exactOnlyCount": index.get("exactOnlyCount"),
+                         "passageCount": index.get("passageCount"),
+                         "passageIndexedCount": index.get("passageIndexedCount"),
+                         "passageTruncatedCount": index.get("passageTruncatedCount")}}
     if command.concepts and not concepts:
         # Every named concept is absent from the model: the data cannot hold the answer.
         return {**base, "modeUsed": "exact_only", "status": "not_represented", "seeds": [],
                 "timings": {"embedMs": 0, "seedMs": 0}}
     found = await find_seeds(
         pool, revision_id=revision_id, compiled=compiled, query=command.query,
-        concept_ids=[concept["conceptId"] for concept in concepts] or None, limit=command.limit,
-        allowed_workspaces=command.allowed_workspace_ids, generation=generation, profile=profile)
+        concept_ids=[concept["conceptId"] for concept in concepts] or None,
+        limit=search_settings.limit(command.limit), allowed_workspaces=command.allowed_workspace_ids,
+        generation=generation, profile=profile, settings=search_settings, index_fingerprint=fingerprint)
+    ready = generation is not None and generation["state"] == "ready"
     if found["seeds"]:
         outcome = "found"
-    elif generation is None or generation["state"] != "ready":
+    elif not ready:
         outcome = "index_not_ready"
     else:
         outcome = "no_match"
-    return {**base, **found, "status": outcome}
+    hidden = 0
+    if command.allowed_workspace_ids is not None:
+        # Records the actor may not read are never ranked: say how many were out of reach.
+        try:
+            counts = await overview(pool, model_id=command.model_id, revision_id=revision_id,
+                                    allowed_workspaces=command.allowed_workspace_ids)
+        except (asyncpg.QueryCanceledError, asyncio.TimeoutError):
+            counts = {}
+        scope = {concept["conceptId"] for concept in concepts} or set(counts)
+        hidden = sum(counts[concept_id]["stored"] - counts[concept_id]["visible"]
+                     for concept_id in scope if concept_id in counts)
+    found = {**found, "hiddenRecords": hidden}
+    return {**base, **found, "status": outcome, "notes": search_notes(index, found, ready)}
+
+
+def search_notes(index: dict[str, Any], found: dict[str, Any], ready: bool) -> list[str]:
+    """What makes a search answer incomplete, said plainly for whoever reports it."""
+    notes = []
+    if found.get("hasMore"):
+        notes.append("More records match than were returned: the list is not complete.")
+    if found.get("hiddenRecords"):
+        notes.append(f"{found['hiddenRecords']} record(s) searched here are hidden from this user "
+                     "and were not searched: matches among them are not shown.")
+    if not ready:
+        notes.append("The search index is not ready: only exact key or name matches were searched, "
+                     "so matching records may be missing.")
+    else:
+        expected = index.get("expectedCount") or 0
+        searched = (index.get("indexedCount") or 0) + (index.get("exactOnlyCount") or 0)
+        if expected and searched < expected:
+            notes.append(f"Only {searched} of {expected} records are in the search index: "
+                         "matching records may be missing.")
+    return notes
 
 
 @router.post("/expand", status_code=status.HTTP_200_OK)
@@ -343,7 +406,8 @@ async def request_search_index(command: IndexCommand, request: Request) -> dict[
         raise HTTPException(status_code=503, detail="runtime_writes_disabled")
     binding = await _pin(pool, command.model_id, command.environment, None)
     try:
-        requested = await request_index(pool, admit, revision_id=binding["data_revision_id"])
+        requested = await request_index(pool, admit, revision_id=binding["data_revision_id"],
+                                        settings=command.settings.index if command.settings else None)
     except IndexUnavailable as exc:
         raise HTTPException(status_code=409 if exc.code.startswith("revision_") else 503,
                             detail=exc.code) from exc
@@ -362,7 +426,8 @@ async def read_search_index(model_id: str, request: Request,
     if profile is None:
         index = {**search_store.public_generation(None), "state": "unavailable"}
     else:
+        # The generation of the index settings last asked for (a search or index request).
         index = search_store.public_generation(
-            await search_store.get_generation(pool, binding["data_revision_id"], profile.fingerprint))
+            await search_store.latest_generation(pool, binding["data_revision_id"], profile.fingerprint))
     return {"modelId": model_id, "environment": environment,
             "dataRevisionId": binding["data_revision_id"], "index": index}

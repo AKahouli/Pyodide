@@ -24,10 +24,11 @@ import {
   SaveCanvasPositionsDto,
   SourceMappingPreviewDto,
   ComputedFieldPreviewDto,
+  SheetFieldPreviewDto,
   DocumentLabelsDto,
   DataPreviewDto,
   SaveRelationResolutionRuleDto,
-  SaveIdentityRuleDto,
+  SaveIdentityRuleDto, SaveLabelFieldDto,
   SaveSourceResolutionPolicyDto,
   ListReviewItemsQueryDto,
   ResolveReviewItemDto,
@@ -96,7 +97,15 @@ export class SemanticModelController {
     return this.models.update(user._id.toString(),modelId,dto);
   }
 
+  /** Delete the model and all its data for good (owner only). Workspace documents stay. */
   @Delete(':modelId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_DELETE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  deletePermanently(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
+    return this.models.deletePermanently(user._id.toString(),modelId);
+  }
+
+  @Post(':modelId/archive')
   @HttpCode(HttpStatus.NO_CONTENT)
   @RequirePermissions([Permissions.SEMANTIC_MODELS_DELETE,Permissions.SEMANTIC_MODELS_ALL],'any')
   archive(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: ExpectedModelRevisionDto) {
@@ -106,7 +115,14 @@ export class SemanticModelController {
   @Post(':modelId/clone')
   @RequirePermissions([Permissions.SEMANTIC_MODELS_CREATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   clone(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: CloneSemanticModelDto) {
-    return this.models.clone(user._id.toString(),modelId,dto.name);
+    return this.models.clone(user._id.toString(),modelId,dto.name,dto.include ?? {});
+  }
+
+  /** Counts shown next to the clone options (source links, built records, people). */
+  @Get(':modelId/clone-preview')
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_CREATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  clonePreview(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
+    return this.models.clonePreview(user._id.toString(),modelId);
   }
 
   @Get(':modelId/overview')
@@ -331,6 +347,15 @@ export class SemanticModelController {
     return this.sourceMappings.documentLabels(user._id.toString(),modelId,dto);
   }
 
+  @Post(':modelId/source-mappings/sheet-preview')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Read a few picked sheet rows as a run would: as is, out of a cell (rules, AI) or by a recipe' })
+  @RateLimit({ limit: 20, windowMs: 60_000, keyPrefix: 'semantic-model:sheet-preview' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  previewSheetFields(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: SheetFieldPreviewDto) {
+    return this.sourceMappings.previewSheetFields(user._id.toString(),modelId,dto);
+  }
+
   @Post(':modelId/source-mappings/computed-preview')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Try a computed field on sample file names or field values' })
@@ -369,6 +394,13 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
   populationFreshness(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
     return this.populationRefresh.freshness(user._id.toString(),modelId);
+  }
+
+  @Get(':modelId/population/jobs')
+  @ApiOperation({ summary: 'The latest data updates of this model (run history), newest first' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  populationJobs(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Query('limit') limit?: string) {
+    return this.populationRefresh.listJobs(user._id.toString(), modelId, Number(limit ?? 20)).then((items) => ({ items }));
   }
 
   @Get(':modelId/population/jobs/:jobId')
@@ -421,6 +453,19 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   saveIdentityRule(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('conceptId') conceptId: string,@Body() dto: SaveIdentityRuleDto) {
     return this.crossSource.saveIdentityRule(user._id.toString(), modelId, conceptId, dto);
+  }
+
+  @Get(':modelId/label-fields')
+  @ApiOperation({ summary: 'The field that names each record, per concept' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  listLabelFields(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
+    return this.crossSource.listLabelFields(user._id.toString(), modelId);
+  }
+
+  @Put(':modelId/label-fields/:conceptId')
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  saveLabelField(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Param('conceptId') conceptId: string,@Body() dto: SaveLabelFieldDto) {
+    return this.crossSource.saveLabelField(user._id.toString(), modelId, conceptId, dto);
   }
 
   @Get(':modelId/source-resolution-policies')

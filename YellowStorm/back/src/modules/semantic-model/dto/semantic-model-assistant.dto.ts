@@ -70,6 +70,13 @@ export class AssistantCreateModelDto {
   @ApiPropertyOptional({ maxLength: 2000 }) @IsOptional() @IsString() @MaxLength(2000) description?: string;
 }
 
+export class AssistantCloneModelDto {
+  @ApiPropertyOptional({ maxLength: 160 }) @IsOptional() @IsString() @MinLength(1) @MaxLength(160) name?: string;
+  @ApiPropertyOptional({ default: true }) @IsOptional() @IsBoolean() includeSources?: boolean;
+  @ApiPropertyOptional({ default: false }) @IsOptional() @IsBoolean() includeData?: boolean;
+  @ApiPropertyOptional({ default: false }) @IsOptional() @IsBoolean() includeShares?: boolean;
+}
+
 export class AssistantListQueryDto {
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(200) search?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(200) folderId?: string;

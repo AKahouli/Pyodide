@@ -8,6 +8,7 @@ from typing import Any
 import asyncpg
 
 from app.datasource.discovery import parser_fingerprint
+from app.datasource.email_archive import resolve_column
 from app.jobs.models import (
     Admission,
     IdempotencyConflict,
@@ -372,6 +373,25 @@ class PostgresJobRepository:
             "completedAt": row["completed_at"],
             "updatedAt": row["updated_at"],
         }
+
+    async def list_jobs(
+        self, *, actor_user_id: str, model_id: str, job_type: str, limit: int
+    ) -> list[dict[str, Any]]:
+        """The actor's latest jobs of this type for the model, newest first."""
+        rows = await self.pool.fetch(
+            """
+            SELECT id::text FROM semantic_jobs.jobs
+            WHERE actor_user_id = $1 AND model_id = $2 AND job_type = $3
+            ORDER BY created_at DESC
+            LIMIT $4
+            """,
+            actor_user_id,
+            model_id,
+            job_type,
+            limit,
+        )
+        jobs = [await self.get_job(row["id"], actor_user_id) for row in rows]
+        return [job for job in jobs if job is not None]
 
     async def find_active_job(
         self, *, actor_user_id: str, model_id: str, job_type: str
@@ -886,7 +906,8 @@ class PostgresJobRepository:
             required = [item.get("sourceField") for item in mappings or []
                         if isinstance(item, dict) and item.get("mode") == "direct"
                         and isinstance(item.get("sourceField"), str)]
-            missing = [field for field in required if field not in available_set]
+            missing = [field for field in required
+                       if resolve_column(field, available_set) not in available_set]
             if not row["source_enabled"]:
                 state = "unavailable"
             elif missing:
@@ -991,6 +1012,26 @@ class PostgresJobRepository:
                     retry_seconds,
                 )
                 return True
+
+    async def release_abandoned_leases(self, *, node_prefix: str, boot_prefix: str) -> int:
+        """Expire the leases a worker node held before it restarted.
+
+        Lease owners are ``<node_prefix><boot id>:<run id>``; a node that starts again
+        gets a new boot id, so any lease of the node under another boot id belongs to a
+        process that is gone. Expired now, recovery ends a run asked to stop and requeues
+        the others at once instead of waiting for the lease to run out.
+        """
+        result = await self.pool.execute(
+            """
+            UPDATE semantic_jobs.tasks
+            SET lease_expires_at = now() - interval '1 second', updated_at = now()
+            WHERE state = 'running' AND lease_expires_at > now()
+              AND starts_with(lease_owner, $1) AND NOT starts_with(lease_owner, $2)
+            """,
+            node_prefix,
+            boot_prefix,
+        )
+        return int(result.split()[-1]) if result else 0
 
     async def recover_stalled_tasks(
         self,

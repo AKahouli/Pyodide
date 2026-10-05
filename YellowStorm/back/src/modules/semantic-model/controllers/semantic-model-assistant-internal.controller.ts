@@ -4,6 +4,7 @@ import { Public } from '@modules/auth/decorators/public.decorator';
 import { InternalServiceGuard } from '@modules/auth/guards/internal-service.guard';
 import { Permissions, PermissionsGuard, RequirePermissions } from '@modules/authorization';
 import {
+  AssistantCloneModelDto,
   AssistantCreateModelDto,
   AssistantListQueryDto,
   AssistantMapDocumentsDto,
@@ -22,6 +23,7 @@ interface ActorRequest { headers: Record<string, string | string[] | undefined> 
 const READ = [Permissions.SEMANTIC_MODELS_READ, Permissions.SEMANTIC_MODELS_ALL];
 const CREATE = [Permissions.SEMANTIC_MODELS_CREATE, Permissions.SEMANTIC_MODELS_ALL];
 const UPDATE = [Permissions.SEMANTIC_MODELS_UPDATE, Permissions.SEMANTIC_MODELS_ALL];
+const DELETE = [Permissions.SEMANTIC_MODELS_DELETE, Permissions.SEMANTIC_MODELS_ALL];
 const PUBLISH = [Permissions.SEMANTIC_MODELS_PUBLISH, Permissions.SEMANTIC_MODELS_ALL];
 
 /**
@@ -47,6 +49,20 @@ export class SemanticModelAssistantInternalController {
   @RequirePermissions(CREATE, 'any')
   createModel(@Req() request: ActorRequest, @Body() dto: AssistantCreateModelDto) {
     return this.assistant.createModel(assistantActorFrom(request.headers), dto.name, dto.description);
+  }
+
+  /** Copy a model: structure always, sources/data/shares as asked. */
+  @Post('models/:modelId/clone')
+  @RequirePermissions(CREATE, 'any')
+  cloneModel(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Body() dto: AssistantCloneModelDto) {
+    return this.assistant.cloneModel(assistantActorFrom(request.headers), modelId, dto);
+  }
+
+  /** Delete a model and all its data for good; the exact model name must be repeated. */
+  @Delete('models/:modelId')
+  @RequirePermissions(DELETE, 'any')
+  deleteModel(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Query('confirmName') confirmName: string) {
+    return this.assistant.deleteModel(assistantActorFrom(request.headers).userId, modelId, confirmName);
   }
 
   @Get('models/:modelId')

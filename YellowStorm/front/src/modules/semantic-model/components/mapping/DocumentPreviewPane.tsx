@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState, type KeyboardEvent } from 'react';
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, FileText, Loader2, Search, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/modules/semantic-model/components/common/Select';
 import { cn } from '@/lib/utils';
 import { DocumentPreviewViewer, type DocumentPreviewNavigation } from '@/modules/file-viewer/components/DocumentPreviewViewer';
 import { useModuleTranslation } from '@/modules/localization';
 import type { DocumentFieldReading, StructuredSourceAsset } from '../../types';
 import { INPUT_COMPACT } from '../form/FormParts';
 import { pageRange } from './DocumentFieldRules';
+import { useReadingText } from './readingText';
 
 // A long passage is found in the viewer by its first words.
 const HIGHLIGHT_CHARACTERS = 120;
@@ -124,7 +125,9 @@ export function documentStatusText(t: (key: `mapping.live.status.${KnownStatus |
  * What the shown document gives for one field: found (with the value and its page), or why not,
  * with a way to see it in the document.
  */
-export function FieldLiveStatus({ reading: current, pending, stale, labels, onShow, onFindLabel }: Readonly<{
+export function FieldLiveStatus({ reading: current, pending, stale, labels, onShow, onFindLabel, findLabelText }: Readonly<{
+  /** The "Find label" button's text: in the document (default), or in a sheet's cells. */
+  findLabelText?: string;
   reading?: DocumentFieldReading;
   /** The document is being read again for this field. */
   pending: boolean;
@@ -135,6 +138,7 @@ export function FieldLiveStatus({ reading: current, pending, stale, labels, onSh
   onFindLabel: (label: string) => void;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
+  const text = useReadingText();
   if (!current) {
     return pending ? <div className='flex h-7 items-center gap-1.5 rounded-md bg-muted/40 px-2 text-[11px] text-muted-foreground' role='status'>
       <Loader2 className='h-3 w-3 animate-spin' />{t('mapping.live.reading')}
@@ -155,12 +159,13 @@ export function FieldLiveStatus({ reading: current, pending, stale, labels, onSh
         aria-label={t('mapping.live.showValue', { value: value.slice(0, 80) })} onClick={() => onShow(current)}>
         <span className='line-clamp-2 break-words'>{value}</span>
       </button>
-        : <p className='text-foreground/80'>{t(`mapping.reading.reason.${current.reason}`, { values: (current.values ?? []).map((item) => `“${item}”`).join(', '), detail: current.detail ?? '' })}</p>}
+        : <p className='text-foreground/80'>{text.reason(current)}</p>}
     </div>
     {found && current.page ? <span className='shrink-0 tabular-nums text-muted-foreground'>{pageRange(t, current.page, current.pageEnd)}</span> : null}
-    {canShow && <Button type='button' size='sm' variant='ghost' className='h-5 shrink-0 px-1.5 text-[11px]' onClick={() => onShow(current)}>{t('mapping.live.show')}</Button>}
+    {found && !current.page && current.column ? <span className='max-w-[8rem] shrink-0 truncate text-muted-foreground'>{current.column}</span> : null}
+    {canShow &&<Button type='button' size='sm' variant='ghost' className='h-5 shrink-0 px-1.5 text-[11px]' onClick={() => onShow(current)}>{t('mapping.live.show')}</Button>}
     {!found && labels.length > 0 && <Button type='button' size='sm' variant='ghost' className='h-5 shrink-0 px-1.5 text-[11px]' onClick={() => onFindLabel(labels[0])}>
-      <Search className='mr-1 h-3 w-3' />{t('mapping.live.findLabel')}
+      <Search className='mr-1 h-3 w-3' />{findLabelText ?? t('mapping.live.findLabel')}
     </Button>}
   </div>;
 }

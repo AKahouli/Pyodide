@@ -4,7 +4,7 @@ import { AlertTriangle, KeyRound, Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/modules/semantic-model/components/common/Select';
 import { parseApiError } from '@/lib/api-error';
 import { showError, showSuccess } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';

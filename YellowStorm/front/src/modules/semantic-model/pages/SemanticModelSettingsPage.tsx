@@ -9,6 +9,8 @@ import { semanticModelApi } from '../api';
 import { AiLimitFields, limitProblem } from '../components/mapping/DocumentFieldRules';
 import type { AiExtractionSettings } from '../types';
 import { RunLimitsSettings } from '../components/settings/RunLimitsSettings';
+import { SearchIndexSettings } from '../components/settings/SearchIndexSettings';
+import { SearchQuerySettings } from '../components/settings/SearchQuerySettings';
 import { FORM_SECTION, SectionHeader } from '../components/form/FormParts';
 
 /** The limits every document mapping starts from when nothing else is set. */
@@ -62,5 +64,7 @@ export function SemanticModelSettingsPage() {
       </div>
     </section>
     <RunLimitsSettings />
+    <SearchIndexSettings />
+    <SearchQuerySettings />
   </div>;
 }

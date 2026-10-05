@@ -236,7 +236,8 @@ describe('SemanticModelAssistantService', () => {
     };
     const { service } = setup(undefined, { graphSearch });
     const result = await service.findRecords('user-1', 'model-1', { query: 'acme', concepts: ['Customer'] });
-    expect(graphSearch.search).toHaveBeenCalledWith('user-1', 'model-1', { environment: 'production', query: 'acme', concepts: ['Customer'], limit: 10 });
+    // No limit asked: the admin's default number of results applies (the runtime fills it in).
+    expect(graphSearch.search).toHaveBeenCalledWith('user-1', 'model-1', { environment: 'production', query: 'acme', concepts: ['Customer'], limit: undefined });
     expect(result).toMatchObject({
       model: { id: 'model-1', name: 'Billing' }, data: 'published', status: 'index_not_ready', searchMode: 'lexical_only', indexState: 'indexing',
       concepts: ['Customer'],
@@ -245,6 +246,36 @@ describe('SemanticModelAssistantService', () => {
     expect(result.records[0]).not.toHaveProperty('diagnostics');
     expect(result.notes.join(' ')).toMatch(/not ready.*4 of 10/);
     expect(result.notes.join(' ')).toMatch(/Search by meaning was unavailable/);
+  });
+
+  it('quotes the matching passage of a long field and uses it as the snippet when the match came from it', async () => {
+    const seed = (entityId: string, matchedIn: 'record' | 'passage', passages?: unknown[]) => ({
+      entityId, conceptId: 'c-1', conceptLabel: 'E-mail', label: `Mail ${entityId}`, keyFields: {}, snippet: 'Type: E-mail\nName: Mail',
+      matchClass: 'hybrid', matchedIn, rank: 1, diagnostics: {}, provenance: [], ...(passages ? { passages } : {}),
+    });
+    const graphSearch = {
+      search: jest.fn().mockResolvedValue({
+        status: 'found', modeUsed: 'hybrid', index: { state: 'ready' }, concepts: [], unknownConcepts: [],
+        seeds: [
+          seed('e-1', 'passage', [{ fieldKey: 'corps', field: 'Corps', start: 850, end: 1850, text: '…the rack keys are at the front desk…' },
+            { fieldKey: 'corps', field: 'Corps', start: 0, end: 1000, text: 'Hello team' }]),
+          seed('e-2', 'record', [{ fieldKey: 'corps', field: 'Corps', start: 0, end: 900, text: 'keys' }]),
+          seed('e-3', 'record'),
+        ],
+        coverage: { expectedCount: 3, indexedCount: 3, exactOnlyCount: 0, passageCount: 12, passageIndexedCount: 12, passageTruncatedCount: 1 },
+      }),
+    };
+    const { service } = setup(undefined, { graphSearch });
+    const result = await service.findRecords('user-1', 'model-1', { query: 'where are the rack keys' });
+    expect(result.records[0]).toEqual({
+      entityId: 'e-1', concept: 'E-mail', name: 'Mail e-1', keyFields: {}, snippet: 'Corps: …the rack keys are at the front desk…',
+      match: 'hybrid', matchedIn: 'passage', sourceCount: 0,
+      passages: [{ field: 'Corps', fieldKey: 'corps', text: '…the rack keys are at the front desk…' }, { field: 'Corps', fieldKey: 'corps', text: 'Hello team' }],
+    });
+    expect(result.records[1]).toMatchObject({ snippet: 'Type: E-mail\nName: Mail', matchedIn: 'record', passages: [{ field: 'Corps', text: 'keys' }] });
+    expect(result.records[2]).not.toHaveProperty('passages');
+    expect(result.notes.join(' ')).toMatch(/quote them as evidence.*query_records/);
+    expect(result.notes.join(' ')).toMatch(/1 records have fields too long/);
   });
 
   it('reports concepts the model does not hold as not represented', async () => {
@@ -399,5 +430,42 @@ describe('SemanticModelAssistantService', () => {
       environment: 'draft', seedEntityIds: ['e-1'], maxNodes: 5, steps: [{ direction: 'both', concepts: ['Invoice'] }],
     });
     expect(result.notes).toEqual(['These records have no links of the kind asked for.']);
+  });
+});
+
+describe('SemanticModelAssistantService deleteModel', () => {
+  it('refuses unless the exact model name is repeated', async () => {
+    const { service, models } = setup();
+    Object.assign(models, { deletePermanently: jest.fn() });
+    await expect(service.deleteModel('user-1', 'model-1', 'billing')).rejects.toMatchObject({ status: 400 });
+    await expect(service.deleteModel('user-1', 'model-1', undefined)).rejects.toMatchObject({ status: 400 });
+    expect((models as unknown as { deletePermanently: jest.Mock }).deletePermanently).not.toHaveBeenCalled();
+  });
+
+  it('deletes the model when the name matches', async () => {
+    const { service, models } = setup();
+    const deletePermanently = jest.fn().mockResolvedValue(undefined);
+    Object.assign(models, { deletePermanently });
+    await expect(service.deleteModel('user-1', 'model-1', 'Billing')).resolves.toEqual({ deleted: true, modelId: 'model-1', name: 'Billing' });
+    expect(deletePermanently).toHaveBeenCalledWith('user-1', 'model-1');
+  });
+});
+
+describe('SemanticModelAssistantService cloneModel', () => {
+  it('names the copy after the source and passes the include options', async () => {
+    const { service, models } = setup();
+    const clone = jest.fn().mockResolvedValue({ id: 'copy-1', name: 'Billing (copy)', status: 'draft', role: 'owner', dataCopy: { status: 'copied', records: 5 } });
+    Object.assign(models, { clone });
+    const result = await service.cloneModel(actor, 'model-1', { includeData: true });
+    expect(clone).toHaveBeenCalledWith('user-1', 'model-1', 'Billing (copy)', { sources: true, data: true, shares: false });
+    expect(result).toMatchObject({ modelId: 'copy-1', sourceModelId: 'model-1', dataCopy: { status: 'copied' } });
+  });
+
+  it('keeps a given name and leaves out what is not asked', async () => {
+    const { service, models } = setup();
+    const clone = jest.fn().mockResolvedValue({ id: 'copy-2', name: 'Lean', status: 'draft', role: 'owner', dataCopy: { status: 'skipped' } });
+    Object.assign(models, { clone });
+    await service.cloneModel(actor, 'model-1', { name: ' Lean ', includeSources: false });
+    expect(clone).toHaveBeenCalledWith('user-1', 'model-1', 'Lean', { sources: false, data: false, shares: false });
   });
 });

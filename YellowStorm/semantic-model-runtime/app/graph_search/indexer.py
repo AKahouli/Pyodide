@@ -6,6 +6,11 @@ the documents, reuses cached vectors, embeds the rest in committed batches and
 declares the generation ready only when every record is covered. It never
 touches the AGE graph, the binding or the population rows, so an embedding
 outage cannot break population or the graph.
+
+A generation is built with index settings (card and passage sizes, per-field
+overrides) recorded on it and named by its fingerprint: other settings make
+another generation. A request without settings (after a population run) reuses
+the settings of the model's latest generation.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from app.workers.celery_app import SEARCH_QUEUES
 
 from .documents import build_document
 from .embeddings import EmbeddingError, EmbeddingProfile, embed, profile_from_env, vector_literal
+from .settings import IndexSettings, ValidationError, index_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -39,17 +45,48 @@ class IndexUnavailable(RuntimeError):
         self.code = code
 
 
+def stored_settings(value: Any) -> IndexSettings:
+    """Index settings as recorded on a generation; unreadable ones count as the defaults."""
+    if not value:
+        return IndexSettings()
+    try:
+        return IndexSettings.model_validate(value)
+    except ValidationError:
+        logger.warning("Unreadable search index settings; defaults used")
+        return IndexSettings()
+
+
+async def settings_for_revision(pool: Any, revision_id: str, profile: EmbeddingProfile,
+                                settings: IndexSettings | None) -> IndexSettings:
+    """``settings`` when given, else those of the model's latest generation (defaults if none)."""
+    if settings is not None:
+        return settings
+    revision = await population_store.get_data_revision(pool, revision_id)
+    if revision is None:
+        return IndexSettings()
+    return stored_settings(await search_store.latest_index_settings(pool, revision["model_id"], profile.fingerprint))
+
+
 async def request_index(pool: Any, admit: Callable[..., Awaitable[Any]] | None, *,
-                        revision_id: str) -> dict[str, Any]:
-    """Make sure the revision has (or is getting) a search index for the current profile.
+                        revision_id: str, settings: IndexSettings | None = None) -> dict[str, Any]:
+    """Make sure the revision has (or is getting) a search index for the current profile and
+    index settings (None: the model's latest ones).
 
     ``admit`` is ``JobService.admit``; None only reads the current state.
-    Returns ``{"generation": row | None, "jobId": str | None}``.
+    Returns ``{"generation": row | None, "jobId": str | None, "fingerprint": str}``.
     """
     profile = profile_from_env()
     if profile is None:
         raise IndexUnavailable("embedding_not_configured")
-    generation = await search_store.get_generation(pool, revision_id, profile.fingerprint)
+    settings = await settings_for_revision(pool, revision_id, profile, settings)
+    fingerprint = index_fingerprint(profile.fingerprint, settings)
+    requested = await _request(pool, admit, revision_id, settings, fingerprint)
+    return {**requested, "fingerprint": fingerprint}
+
+
+async def _request(pool: Any, admit: Callable[..., Awaitable[Any]] | None, revision_id: str,
+                   settings: IndexSettings, fingerprint: str) -> dict[str, Any]:
+    generation = await search_store.get_generation(pool, revision_id, fingerprint)
     if admit is None or (generation is not None and generation["state"] == "ready"):
         return {"generation": generation, "jobId": generation["job_id"] if generation else None}
     if generation is None:
@@ -61,7 +98,7 @@ async def request_index(pool: Any, admit: Callable[..., Awaitable[Any]] | None, 
         generation = await search_store.create_generation(
             pool, model_id=revision["model_id"], data_revision_id=revision_id,
             projection_ref=revision["projection_ref"], spec_hash=revision["spec_hash"],
-            fingerprint=profile.fingerprint)
+            fingerprint=fingerprint, index_settings=None if settings.is_default() else settings.canonical())
     for _ in range(3):
         if generation["state"] == "failed":
             generation = await search_store.retry_generation(pool, generation["index_id"]) \
@@ -88,10 +125,10 @@ async def request_index(pool: Any, admit: Callable[..., Awaitable[Any]] | None, 
 
 
 async def request_index_quietly(pool: Any, admit: Callable[..., Awaitable[Any]] | None,
-                                revision_id: str) -> None:
+                                revision_id: str, settings: IndexSettings | None = None) -> None:
     """Hook form: a search index that cannot be requested never fails the caller."""
     try:
-        await request_index(pool, admit, revision_id=revision_id)
+        await request_index(pool, admit, revision_id=revision_id, settings=settings)
     except IndexUnavailable as exc:
         logger.info("Search index not requested for %s: %s", revision_id, exc.code)
     except Exception as exc:
@@ -111,7 +148,8 @@ async def build_index(pool: Any, *, index_id: str, owner: str,
         return {"state": "missing"}
     if generation["state"] == "ready":
         return {"state": "ready", "reused": True}
-    if profile is None or profile.fingerprint != generation["embedding_fingerprint"]:
+    settings = stored_settings(generation.get("index_settings"))
+    if profile is None or index_fingerprint(profile.fingerprint, settings) != generation["embedding_fingerprint"]:
         await search_store.fail_generation(pool, index_id, "embedding_profile_changed")
         return {"state": "failed", "errorCode": "embedding_profile_changed"}
     if not await search_store.claim_generation(pool, index_id, owner, GENERATION_LEASE_SECONDS):
@@ -128,31 +166,46 @@ async def build_index(pool: Any, *, index_id: str, owner: str,
     if expected != len(entities):
         await search_store.fail_generation(pool, index_id, "revision_too_large", owner)
         return {"state": "failed", "errorCode": "revision_too_large"}
-    documents = [build_document(entity, concepts.get(entity["conceptId"])) for entity in entities]
+    documents = [build_document(entity, concepts.get(entity["conceptId"]), settings) for entity in entities]
     await search_store.insert_documents(pool, index_id, documents)
-    reused = await search_store.fill_from_cache(pool, index_id, generation["model_id"],
-                                                profile.fingerprint)
-    embedded = 0
-    await report({"stage": "embedding", "expected": expected, "reused": reused, "embedded": 0})
-    while True:
-        batch = await search_store.pending_documents(pool, index_id, profile.batch_size)
-        if not batch:
-            break
-        vectors = await embedder(profile, [row["search_text"] for row in batch])
-        await search_store.store_vectors(
-            pool, index_id=index_id, model_id=generation["model_id"], fingerprint=profile.fingerprint,
-            vectors=[(row["entity_id"], row["content_hash"], vector_literal(vector))
-                     for row, vector in zip(batch, vectors)])
-        embedded += len(batch)
-        if not await search_store.renew_generation(pool, index_id, owner, GENERATION_LEASE_SECONDS, 1):
-            return {"state": "lease_lost"}
-        await report({"stage": "embedding", "expected": expected, "reused": reused,
-                      "embedded": embedded})
+    passages = await search_store.insert_passages(pool, index_id, documents)
+    model_id = generation["model_id"]
+    reused = await search_store.fill_from_cache(pool, index_id, model_id, profile.fingerprint)
+    passages_reused = await search_store.fill_from_cache(pool, index_id, model_id, profile.fingerprint,
+                                                         kind="passages")
+    progress = {"stage": "embedding", "expected": expected, "reused": reused, "embedded": 0,
+                "passages": passages, "passagesReused": passages_reused, "passagesEmbedded": 0}
+    await report(dict(progress))
+    # Records first (the cards answer most requests), then the passages of long fields.
+    for kind in ("documents", "passages"):
+        while True:
+            if kind == "documents":
+                batch = await search_store.pending_documents(pool, index_id, profile.batch_size)
+            else:
+                batch = await search_store.pending_passages(pool, index_id, profile.batch_size)
+            if not batch:
+                break
+            vectors = await embedder(profile, [row["search_text"] for row in batch])
+            if kind == "documents":
+                await search_store.store_vectors(
+                    pool, index_id=index_id, model_id=model_id, fingerprint=profile.fingerprint,
+                    vectors=[(row["entity_id"], row["content_hash"], vector_literal(vector))
+                             for row, vector in zip(batch, vectors)])
+                progress["embedded"] += len(batch)
+            else:
+                await search_store.store_passage_vectors(
+                    pool, index_id=index_id, model_id=model_id, fingerprint=profile.fingerprint,
+                    vectors=[(row["entity_id"], row["ordinal"], row["content_hash"], vector_literal(vector))
+                             for row, vector in zip(batch, vectors)])
+                progress["passagesEmbedded"] += len(batch)
+            if not await search_store.renew_generation(pool, index_id, owner, GENERATION_LEASE_SECONDS, 1):
+                return {"state": "lease_lost"}
+            await report(dict(progress))
     state = await search_store.finish_generation(pool, index_id, owner, expected)
     if state == "ready":
-        await search_store.prune_generations(pool, generation["model_id"])
-    return {"state": state, "expected": expected, "reused": reused, "embedded": embedded}
+        await search_store.prune_generations(pool, model_id)
+    return {"state": state, **{key: value for key, value in progress.items() if key != "stage"}}
 
 
 __all__ = ["EmbeddingError", "IndexUnavailable", "build_index", "request_index",
-           "request_index_quietly", "INDEX_JOB_TYPE", "INDEX_TASK_NAME", "SYSTEM_ACTOR"]
+           "request_index_quietly", "settings_for_revision", "stored_settings", "INDEX_JOB_TYPE", "INDEX_TASK_NAME", "SYSTEM_ACTOR"]

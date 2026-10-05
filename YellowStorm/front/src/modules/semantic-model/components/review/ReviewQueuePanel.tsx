@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { AlertOctagon, AlertTriangle, CheckCircle2, Info, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/modules/semantic-model/components/common/Select';
 import { showError, showSuccess } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
 import { semanticModelApi } from '../../api';
@@ -23,6 +24,12 @@ type Translate = (key: string, options?: Record<string, unknown>) => string;
 /** The sentence that names an item, the same in the list and in the bar shown while fixing it. */
 export function reviewItemText(item: ReviewQueueItem, translate: Translate) {
   return translate(`reviewQueue.kind.${item.kind}`, readableParams(item.params));
+}
+
+/** How to fix an item, step by step where the item says it; why it matters otherwise. */
+export function reviewFixText(item: ReviewQueueItem, translate: Translate) {
+  const params = readableParams(item.params);
+  return translate(`reviewQueue.fix.${item.kind}`, { ...params, defaultValue: translate(`reviewQueue.why.${item.kind}`, params) });
 }
 
 /** Items fixed somewhere else in the designer; a choice between matches is made in the list itself. */
@@ -75,10 +82,10 @@ export function ReviewQueueList({ modelId, canEdit, onOpenIssue, activeKey, grou
       const value = choices[item.key] ?? '';
       const pending = resolve.isPending && resolve.variables?.reviewItemId === action.reviewItemId;
       return <div className='mt-2 flex flex-wrap items-center gap-2'>
-        <select className='h-8 min-w-0 flex-1 rounded-md border bg-background px-2 text-xs' value={value} onChange={(event) => setChoices((current) => ({ ...current, [item.key]: event.target.value }))} aria-label={t(action.select === 'target' ? 'reviewQueue.chooseRecord' : 'reviewQueue.chooseSource')}>
-          <option value=''>{t(action.select === 'target' ? 'reviewQueue.chooseRecord' : 'reviewQueue.chooseSource')}</option>
-          {action.options.map((option, index) => <option key={option.value} value={option.value}>{option.label || t('reviewQueue.optionNumber', { number: index + 1 })}</option>)}
-        </select>
+        <Select value={value || undefined} onValueChange={(next) => setChoices((current) => ({ ...current, [item.key]: next }))}>
+          <SelectTrigger className='h-8 min-w-0 flex-1 px-2 text-xs' aria-label={t(action.select === 'target' ? 'reviewQueue.chooseRecord' : 'reviewQueue.chooseSource')}><SelectValue placeholder={t(action.select === 'target' ? 'reviewQueue.chooseRecord' : 'reviewQueue.chooseSource')} /></SelectTrigger>
+          <SelectContent>{action.options.map((option, index) => <SelectItem key={option.value} value={option.value}>{option.label || t('reviewQueue.optionNumber', { number: index + 1 })}</SelectItem>)}</SelectContent>
+        </Select>
         <Button size='sm' className='h-8' disabled={!value || pending} onClick={() => resolve.mutate({ reviewItemId: action.reviewItemId, select: action.select, value })}>{pending && <Loader2 className='mr-1.5 h-3.5 w-3.5 animate-spin' />}{t('reviewQueue.action.choose_match')}</Button>
       </div>;
     }

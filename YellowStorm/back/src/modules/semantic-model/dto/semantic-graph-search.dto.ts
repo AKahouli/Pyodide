@@ -55,12 +55,12 @@ export class GraphSearchDto {
   @MaxLength(200, { each: true })
   concepts?: string[];
 
-  @ApiPropertyOptional({ default: 10, maximum: 25 })
+  @ApiPropertyOptional({ maximum: 100, description: 'At most the admin maximum (25 built in); the admin default (10 built in) when absent' })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  @Max(25)
+  @Max(100)
   limit?: number;
 
   @ApiPropertyOptional()
@@ -136,7 +136,7 @@ export class AssistantFindRecordsDto {
   @ApiProperty({ minLength: 1, maxLength: 500 }) @IsString() @MinLength(1) @MaxLength(500) query!: string;
   @ApiPropertyOptional({ type: [String] }) @IsOptional() @IsArray() @ArrayMaxSize(10) @IsString({ each: true }) @MaxLength(200, { each: true }) concepts?: string[];
   @ApiPropertyOptional({ enum: ASSISTANT_DATA, default: 'published' }) @IsOptional() @IsIn(ASSISTANT_DATA) data?: AssistantData;
-  @ApiPropertyOptional({ default: 10, maximum: 25 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(25) limit?: number;
+  @ApiPropertyOptional({ maximum: 100, description: 'At most the admin maximum (25 built in); the admin default (10 built in) when absent' }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) limit?: number;
 }
 
 export class AssistantRelatedRecordsDto {

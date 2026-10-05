@@ -24,8 +24,9 @@ function setup(model: Record<string, unknown> = { id: 'model-1', role: 'viewer',
     recordsOverview: jest.fn().mockResolvedValue({ modelVersionId: 'published-1', concepts: [], relations: [] }),
   };
   const graphs = { getGraph: jest.fn().mockResolvedValue(versionGraph) };
-  const service = new SemanticGraphSearchService(database as never, models as never, workspaceShares as never, runtime as never, graphs as never);
-  return { service, database, models, workspaceShares, runtime, graphs };
+  const searchSettings = { runtimePayload: jest.fn().mockResolvedValue({ index: {}, search: {} }) };
+  const service = new SemanticGraphSearchService(database as never, models as never, workspaceShares as never, runtime as never, graphs as never, searchSettings as never);
+  return { service, database, models, workspaceShares, runtime, graphs, searchSettings };
 }
 
 const versionGraph = {
@@ -50,8 +51,22 @@ describe('SemanticGraphSearchService', () => {
     expect(workspaceShares.filterAccessible).toHaveBeenCalledWith('user-1', ['ws-1', 'ws-2']);
     expect(runtime.graphSearch).toHaveBeenCalledWith({
       actorUserId: 'user-1', modelId: 'model-1', environment: 'production', query: 'acme', concepts: ['Customer'], limit: 5,
-      allowedWorkspaceIds: ['ws-1'],
+      allowedWorkspaceIds: ['ws-1'], settings: { index: {}, search: {} },
     });
+  });
+
+  it('sends the admin search settings with the own settings of the fields of the bound version', async () => {
+    const { service, runtime, graphs, searchSettings } = setup({ id: 'model-1', role: 'editor', status: 'draft', currentDraftVersionId: 'draft-2' });
+    const settings = { index: { passageTargetChars: 800, fields: { invoice: { notes: { passageOverlapChars: 50 } } } }, search: { rrfK: 30 } };
+    searchSettings.runtimePayload.mockResolvedValue(settings);
+    await service.search('user-1', 'model-1', { environment: 'draft', query: 'acme' });
+    expect(graphs.getGraph).toHaveBeenCalledWith('model-1', 'draft-2', 0);
+    expect(searchSettings.runtimePayload).toHaveBeenCalledWith(versionGraph);
+    // No limit asked: the runtime applies the admin's default number of results.
+    expect(runtime.graphSearch).toHaveBeenCalledWith(expect.objectContaining({ settings }));
+    expect(runtime.graphSearch.mock.calls[0][0]).not.toHaveProperty('limit');
+    await service.ensureIndex('user-1', 'model-1', 'draft');
+    expect(runtime.ensureGraphSearchIndex).toHaveBeenCalledWith({ actorUserId: 'user-1', modelId: 'model-1', environment: 'draft', settings: { index: settings.index } });
   });
 
   it('sends an empty allow-list when the model takes data from no workspace the person can read', async () => {
@@ -153,6 +168,6 @@ describe('SemanticGraphSearchService', () => {
     const editor = setup({ id: 'model-1', role: 'editor', status: 'published' });
     await expect(editor.service.ensureIndex('user-1', 'model-1', 'production')).resolves.toMatchObject({ jobId: 'job-1' });
     expect(editor.models.requireActiveRole).toHaveBeenCalledWith('user-1', 'model-1', ['owner', 'editor']);
-    expect(editor.runtime.ensureGraphSearchIndex).toHaveBeenCalledWith({ actorUserId: 'user-1', modelId: 'model-1', environment: 'production' });
+    expect(editor.runtime.ensureGraphSearchIndex).toHaveBeenCalledWith({ actorUserId: 'user-1', modelId: 'model-1', environment: 'production', settings: { index: {} } });
   });
 });

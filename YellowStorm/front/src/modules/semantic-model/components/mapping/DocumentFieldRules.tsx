@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, Heading, ListChecks, ListFilter, Plus, RefreshCw, SlidersHorizontal, Sparkles, Tag, X } from 'lucide-react';
+import { AlertTriangle, Bot, CheckCircle2, ChevronDown, ChevronRight, Columns, ExternalLink, Heading, ListChecks, ListFilter, Plus, RefreshCw, SlidersHorizontal, Sparkles, Tag, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,11 +10,14 @@ import { useModuleTranslation } from '@/modules/localization';
 import type { AiExtractionSettings, DocumentFieldReading, DocumentLabelSuggestion, ExtractionLocation, ExtractionRules, SourceExtractionStrategy, SourceFieldMapping } from '../../types';
 import { FormField, INPUT } from '../form/FormParts';
 import { ChoiceGroup, HelpTip, LocationIcon, PageRangeControl, RuleSection, useOpenSections } from './RuleControls';
+import { useReadingText } from './readingText';
 import { ValueShaper, type ShaperAction } from './ValueShaper';
 import { CleanupSection, KeepSection, PATTERN_PRESETS, patternProblem, presetOf, takeProblem, useTakeSummary, ValuePatternSection } from './ValueShapeSections';
 
 export const STRATEGIES: SourceExtractionStrategy[] = ['deterministic', 'rules_then_ai', 'ai'];
 const LOCATIONS: ExtractionLocation[] = ['auto', 'same_line', 'next_line', 'table', 'after_label', 'before_label', 'heading', 'pages', 'anywhere'];
+/** A cell's text has no tables, headings or pages: the places that read a line or a passage still apply. */
+export const CELL_LOCATIONS: ExtractionLocation[] = ['auto', 'same_line', 'next_line', 'after_label', 'before_label', 'anywhere'];
 const TRANSFORMS = ['none', 'trim', 'no_spaces', 'upper', 'lower', 'date_iso'] as const;
 const MAX_LABELS = 10;
 const MAX_PAGES = 2000;
@@ -105,20 +108,32 @@ export interface LabelSuggestions {
   onRetry?: () => void;
   /** Hovering or focusing a suggestion shows where it is in the document. */
   onPreview?: (suggestion: DocumentLabelSuggestion) => void;
+  /** What was read: documents, a sheet's cells, or the fields of another concept's records. */
+  unit?: 'documents' | 'cells' | 'records';
 }
 
-/** One click to read every extracted field the same way; each field can still be changed alone. */
-export function ReadAllFieldsBar({ mappings, onApply }: Readonly<{ mappings: SourceFieldMapping[]; onApply: (strategy: SourceExtractionStrategy) => void }>) {
+/**
+ * One click to read every extracted field the same way; each field can still be changed alone. With
+ * `direct` (sheets), a field read from its column as it is counts too, and can be read that way again.
+ */
+export function ReadAllFieldsBar({ mappings, onApply, direct }: Readonly<{
+  mappings: SourceFieldMapping[];
+  onApply: (choice: SourceExtractionStrategy | 'direct') => void;
+  direct?: boolean;
+}>) {
   const { t } = useModuleTranslation('semantic-model');
-  const extracted = mappings.filter((mapping) => mapping.mode === 'extract');
+  const extracted = mappings.filter((mapping) => mapping.mode === 'extract' || (direct && mapping.mode === 'direct'));
   if (!extracted.length) return null;
-  const strategies = new Set(extracted.map((mapping) => mapping.extractionStrategy ?? 'deterministic'));
+  const strategies = new Set(extracted.map((mapping) => mapping.mode === 'direct' ? 'direct' : mapping.extractionStrategy ?? 'deterministic'));
   const current = strategies.size === 1 ? [...strategies][0] : null;
+  const choices: Array<SourceExtractionStrategy | 'direct'> = [...(direct ? ['direct' as const] : []), ...STRATEGIES];
   return <div className='flex flex-wrap items-center gap-2' role='group' aria-label={t('mapping.readAll.label')}>
     <span className='text-xs font-medium text-muted-foreground'>{t('mapping.readAll.label')}</span>
-    {STRATEGIES.map((strategy) => <Button key={strategy} type='button' size='sm' variant={current === strategy ? 'default' : 'outline'} className='h-7 px-2.5 text-xs'
-      aria-pressed={current === strategy} onClick={() => onApply(strategy)}>
-      <StrategyIcon strategy={strategy} />{t(`mapping.strategy.${strategy}`)}
+    {choices.map((choice) => <Button key={choice} type='button' size='sm' variant={current === choice ? 'default' : 'outline'} className='h-7 px-2.5 text-xs'
+      aria-pressed={current === choice} onClick={() => onApply(choice)}>
+      {choice === 'direct'
+        ? <><Columns className='mr-1 h-3.5 w-3.5' />{t('mapping.cell.readAllDirect')}</>
+        : <><StrategyIcon strategy={choice} />{t(`mapping.strategy.${choice}`)}</>}
     </Button>)}
     {!current && <span className='text-xs text-muted-foreground'>{t('mapping.readAll.mixed')}</span>}
   </div>;
@@ -134,8 +149,10 @@ function StrategyIcon({ strategy }: Readonly<{ strategy: SourceExtractionStrateg
  * The rules of one field: which labels the value follows, where it sits, what it looks like and
  * how it is cleaned up. Collapsed to a one-line summary until opened.
  */
-export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions, live, pageCount }: Readonly<{
+export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions, live, pageCount, textKind = 'document' }: Readonly<{
   fieldLabel: string;
+  /** What the rules read: a document, or (sheets) the text of a cell, which has no pages, headings or tables. */
+  textKind?: 'document' | 'cell';
   rules?: ExtractionRules;
   onChange: (rules: ExtractionRules | undefined) => void;
   suggestions?: LabelSuggestions;
@@ -240,7 +257,7 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions, liv
       <RuleSection {...section('where')} title={t('mapping.rules.location')} icon={<LocationIcon location={location} className='h-3.5 w-5' />}
         summary={t(`mapping.rules.tile.${location}`) + summaryBoundary + summaryPages} help={t(`mapping.rules.whereHelp.${location}`)} invalid={Boolean(pagesError)}>
         <ChoiceGroup variant='tiles' label={t('mapping.rules.locationFor', { field: fieldLabel })} value={location} onChange={(value) => update({ location: value })}
-          options={LOCATIONS.map((item) => ({ value: item, label: t(`mapping.rules.tile.${item}`), hint: t(`mapping.rules.tileHint.${item}`), help: t(`mapping.rules.whereHelp.${item}`), icon: <LocationIcon location={item} className='h-5 w-7' /> }))} />
+          options={(textKind === 'cell' ? CELL_LOCATIONS : LOCATIONS).map((item) => ({ value: item, label: t(`mapping.rules.tile.${item}`), hint: t(`mapping.rules.tileHint.${item}`), help: t(`mapping.rules.whereHelp.${item}`), icon: <LocationIcon location={item} className='h-5 w-7' /> }))} />
 
         {usesBoundary(location) && <div className='flex flex-wrap items-center gap-1.5 pt-1'>
           <Label className='text-xs font-medium text-muted-foreground' htmlFor={`${id}-boundary`}>{t(`mapping.rules.boundary.${location}`)}</Label>
@@ -284,10 +301,10 @@ export function FieldRulesEditor({ fieldLabel, rules, onChange, suggestions, liv
           <ChoiceGroup variant='segmented' label={t('mapping.rules.occurrenceFor', { field: fieldLabel })} value={rules?.occurrence ?? 'unique'} onChange={(value) => update({ occurrence: value })}
             options={(['unique', 'first'] as const).map((item) => ({ value: item, label: t(`mapping.rules.occurrenceOption.${item}`) }))} />
         </div>
-        <label className='flex items-center gap-2 text-xs'>
+        {textKind === 'document' && <label className='flex items-center gap-2 text-xs'>
           <input type='checkbox' checked={Boolean(rules?.firstPageOnly)} onChange={(event) => update({ firstPageOnly: event.target.checked })} />
           {t('mapping.rules.firstPageOnly')}
-        </label>
+        </label>}
       </RuleSection>
     </div>}
   </div>;
@@ -321,8 +338,10 @@ export function LabelSuggestionChips({ suggestions, added, full, onAdd }: Readon
 
   return <div className='space-y-1.5 rounded-lg bg-muted/30 p-2' role='group' aria-label={t('mapping.suggestions.title')}>
     <div className='flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground'>
-      <Sparkles className='h-3 w-3' />{t('mapping.suggestions.title')}
-      {suggestions.status === 'ready' && suggestions.documentsRead > 0 && <span className='font-normal'>· {t('mapping.suggestions.read', { count: suggestions.documentsRead })}</span>}
+      <Sparkles className='h-3 w-3' />{suggestions.unit === 'cells' ? t('mapping.cell.suggestionsTitle') : suggestions.unit === 'records' ? t('derived.suggestionsTitle') : t('mapping.suggestions.title')}
+      {suggestions.status === 'ready' && suggestions.documentsRead > 0 && <span className='font-normal'>· {suggestions.unit === 'cells'
+        ? t('mapping.cell.suggestionsRead', { count: suggestions.documentsRead })
+        : suggestions.unit === 'records' ? t('derived.suggestionsRead', { count: suggestions.documentsRead }) : t('mapping.suggestions.read', { count: suggestions.documentsRead })}</span>}
     </div>
     {suggestions.status === 'loading' && <div className='flex flex-wrap gap-1.5' aria-busy='true' aria-label={t('mapping.suggestions.loading')}>
       {[64, 96, 80, 112, 72].map((width) => <Skeleton key={width} className='h-6 rounded-full' style={{ width }} />)}
@@ -458,18 +477,18 @@ export function FieldReadingResult({ fieldLabel, reading, onOpenQuote }: Readonl
   onOpenQuote?: (quote: string, page?: number | null) => void;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
+  const text = useReadingText();
   const found = reading.reason === 'found';
   const computed = reading.method === 'computed';
-  const method = t(`mapping.reading.method.${reading.method}`);
-  const values = (reading.values ?? []).map((value) => `“${value}”`).join(', ');
+  const method = reading.method === 'direct' ? text.direct() : t(`mapping.reading.method.${reading.method}`);
   return <div className={cn('rounded-lg p-2 text-xs', found ? 'bg-muted/50' : 'border border-amber-500/40 bg-amber-500/5')}>
     <div className='flex items-start justify-between gap-2'>
       <div className='min-w-0'>
         <p className='font-medium'>{fieldLabel}</p>
         {found ? <p className='break-words'>{String(reading.value ?? '')}</p>
-          : <p className='text-amber-800 dark:text-amber-300'>{t(`mapping.reading.reason.${reading.reason}`, { values, detail: reading.detail ?? '' })}</p>}
-        {!found && reading.rules && <p className='mt-0.5 text-muted-foreground'>{t('mapping.reading.rulesFirst', { reason: t(`mapping.reading.reason.${reading.rules.reason}`, { values: (reading.rules.values ?? []).map((value) => `“${value}”`).join(', '), detail: '' }) })}</p>}
-        {!found && <p className='mt-0.5 text-muted-foreground'>{t(`mapping.reading.hint.${reading.reason}`)}</p>}
+          : <p className='text-amber-800 dark:text-amber-300'>{text.reason(reading)}</p>}
+        {!found && reading.rules && <p className='mt-0.5 text-muted-foreground'>{t('mapping.reading.rulesFirst', { reason: text.reason({ ...reading.rules, detail: '' }) })}</p>}
+        {!found && <p className='mt-0.5 text-muted-foreground'>{text.hint(reading)}</p>}
         {computed && reading.input && <p className='mt-0.5 truncate text-muted-foreground'>{t('mapping.reading.computedFrom', { input: reading.input })}</p>}
       </div>
       <span className={cn('inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px]', found ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' : 'bg-muted text-muted-foreground')}>
@@ -478,7 +497,7 @@ export function FieldReadingResult({ fieldLabel, reading, onOpenQuote }: Readonl
     </div>
     {found && reading.quote && <button type='button' className='mt-1 flex w-full items-start gap-1 text-left text-[11px] text-primary hover:underline'
       onClick={() => onOpenQuote?.(reading.quote!, reading.page)}>
-      <ExternalLink className='mt-0.5 h-3 w-3 shrink-0' /><span className='line-clamp-2'>{reading.page ? `${pageRange(t, reading.page, reading.pageEnd)} · ` : ''}{reading.quote}</span>
+      <ExternalLink className='mt-0.5 h-3 w-3 shrink-0' /><span className='line-clamp-2'>{reading.page ? `${pageRange(t, reading.page, reading.pageEnd)} · ` : ''}{reading.column ? `${reading.column} · ` : ''}{reading.quote}</span>
     </button>}
   </div>;
 }

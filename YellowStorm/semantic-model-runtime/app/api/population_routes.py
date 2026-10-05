@@ -10,8 +10,9 @@ import hashlib
 import json
 import logging
 import os
+from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Path, Query, Request, status
+from fastapi import APIRouter, Header, HTTPException, Path, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.graph_search.indexer import request_index_quietly
@@ -315,6 +316,113 @@ async def purge_model_data(model_id: str, command: PurgeModelDataCommand,
     return {**result, "projectionsDropped": dropped}
 
 
+@router.delete("/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_model(model_id: str, request: Request) -> Response:
+    """Delete everything the runtime holds for a model: data, review items, search index,
+    jobs, specifications and its graphs. Idempotent; refused while one of its jobs runs.
+    Source documents belong to workspaces and are never touched."""
+    if not model_id or len(model_id) > 200:
+        raise HTTPException(status_code=422, detail="invalid_model_id")
+    pool = getattr(request.app.state, "population_pool", None)
+    if pool is None:
+        raise HTTPException(status_code=503, detail="population_store_unavailable")
+    try:
+        result = await store.delete_model(pool, model_id)
+    except store.ModelJobsRunning as exc:
+        raise HTTPException(status_code=409, detail="model_jobs_running") from exc
+    age_pool = getattr(request.app.state, "age_pool", None)
+    failed = 0
+    for ref in result["projections"]:
+        if age_pool is None or not is_live_projection_ref(ref):
+            continue
+        graph = ref[len(LIVE_PROJECTION_PREFIX):]
+        try:
+            async with age_pool.acquire() as connection:
+                if await projection_exists(connection, graph):
+                    await drop_projection(connection, graph)
+        except Exception as exc:  # noqa: BLE001 - the rows are already gone
+            failed += 1
+            logger.warning("Could not drop graph %s of deleted model %s: %s", graph, model_id,
+                           type(exc).__name__)
+    logger.info("Deleted runtime data of model %s: %s (graphs not dropped: %d)",
+                model_id, result["deleted"], failed)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class CloneDataIdMap(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    concepts: dict[str, str] = Field(default_factory=dict)
+    attributes: dict[str, str] = Field(default_factory=dict)
+    relations: dict[str, str] = Field(default_factory=dict)
+    mappings: dict[str, str] = Field(default_factory=dict)
+
+
+class CloneDataCommand(BaseModel):
+    """Copy a model's draft data into a clone whose ids the back already remapped."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    target_model_id: str = Field(alias="targetModelId", min_length=1, max_length=200)
+    target_model_version_id: str = Field(alias="targetModelVersionId", min_length=1, max_length=200)
+    id_map: CloneDataIdMap = Field(alias="idMap", default_factory=CloneDataIdMap)
+    # The clone's own build plan, sent when the source data is current, so the copy reads as current.
+    home_workspace_id: str | None = Field(default=None, alias="homeWorkspaceId", max_length=200)
+    spec_hash: str | None = Field(default=None, alias="specHash", pattern=r"^sha256:[0-9a-f]{64}$")
+    specification: dict[str, Any] | None = None
+    execution_fingerprint: str | None = Field(default=None, alias="executionFingerprint", max_length=200)
+
+
+@router.post("/models/{model_id}/clone-data", status_code=status.HTTP_200_OK)
+async def clone_model_data(model_id: str, command: CloneDataCommand,
+                           request: Request) -> dict[str, object]:
+    """Copy the draft data revision of ``model_id`` into the (empty) clone, project its
+    graph and serve it as the clone's draft data. The search index is requested, not copied.
+    Refused (409) while a job of the source runs. Source documents are never copied."""
+    from app.persistence import model_clone_store as clone_store
+
+    if not model_id or len(model_id) > 200 or command.target_model_id == model_id:
+        raise HTTPException(status_code=422, detail="invalid_model_id")
+    planned = None
+    if command.specification is not None or command.spec_hash is not None:
+        if (command.specification is None or command.spec_hash is None or not command.home_workspace_id
+                or canonical_spec_hash(command.specification) != command.spec_hash):
+            raise HTTPException(status_code=422, detail="spec_hash_mismatch")
+        planned = {"homeWorkspaceId": command.home_workspace_id, "specHash": command.spec_hash,
+                   "specification": command.specification,
+                   "executionFingerprint": command.execution_fingerprint}
+    pool = _population_pool(request)
+    age_pool = _age_pool(request)
+    id_map = {**command.id_map.concepts, **command.id_map.attributes,
+              **command.id_map.relations, **command.id_map.mappings}
+    try:
+        result = await clone_store.clone_model_data(
+            pool, source_model_id=model_id, target_model_id=command.target_model_id,
+            target_model_version_id=command.target_model_version_id, id_map=id_map, planned=planned)
+    except store.ModelJobsRunning as exc:
+        raise HTTPException(status_code=409, detail="model_jobs_running") from exc
+    except clone_store.CloneTargetNotEmpty as exc:
+        raise HTTPException(status_code=409, detail="target_has_data") from exc
+    if not result["copied"]:
+        return result
+    try:
+        projection = await ensure_revision_projection(pool, age_pool, result["revisionId"])
+    except (PopulationError, ProjectionUnavailable) as exc:
+        # Leave no half-copied data behind: the clone simply has none.
+        await store.delete_model(pool, command.target_model_id)
+        logger.warning("Clone of %s into %s: graph not built (%s); copied data removed",
+                       model_id, command.target_model_id, getattr(exc, "code", type(exc).__name__))
+        raise HTTPException(status_code=503, detail="clone_projection_failed") from exc
+    await clone_store.activate_cloned_revision(
+        pool, model_id=command.target_model_id, model_version_id=command.target_model_version_id,
+        revision_id=result["revisionId"], projection_ref=projection["projectionRef"],
+        correction_sequence=result["correctionSequence"])
+    service = getattr(request.app.state, "job_service", None)
+    await request_index_quietly(pool, service.admit if service else None, result["revisionId"])
+    logger.info("Cloned data of model %s into %s: %s", model_id, command.target_model_id, result["counts"])
+    return {**result, "projectionRef": projection["projectionRef"]}
+
+
 @router.post("/revisions/{revision_id}/project", status_code=status.HTTP_200_OK)
 async def project_revision(revision_id: str, request: Request) -> dict[str, object]:
     """Build and validate the immutable AGE graph before recording it (P6.16)."""
@@ -523,27 +631,199 @@ async def preview_document_fields(body: dict, request: Request) -> dict[str, obj
     computed = apply_computed(mappings, values, {"document_name": resolved["current"].get("originalName")})
     for key, outcome in computed.items():
         fields[key] = {**outcome, **({"value": values[key]} if outcome["reason"] == "found" else {})}
-    return {"status": "read", "fields": fields, "aiSent": read["aiSent"]}
+    preview: dict[str, object] = {"status": "read", "fields": fields, "aiSent": read["aiSent"]}
+    if read["records"]:
+        # Several records per document: each with what is shared (read once) and its own values.
+        own = set(read.get("itemKeys") or []) | {m["targetAttribute"] for m in read["aiMappings"]}
+        shared = {key: value for key, value in values.items() if key not in own}
+        records = []
+        for record in read["records"][:MAX_PREVIEW_RECORDS]:
+            row = {**shared, **record["values"]}
+            apply_computed(mappings, row, {"document_name": resolved["current"].get("originalName")})
+            records.append({"values": row, "pages": {key: item.get("pageNumber") for key, item in record["evidence"].items()}})
+        preview.update({"records": records, "recordCount": len(read["records"]),
+                        "unevenFields": read.get("unevenFields") or []})
+    return preview
+
+
+# How many of a document's records its preview shows.
+MAX_PREVIEW_RECORDS = 50
+
+
+@router.post("/cell-preview", status_code=status.HTTP_200_OK)
+async def preview_cell_fields(body: dict) -> dict[str, object]:
+    """Read a few sheet rows' fields exactly as a run would: a column as it is, a value read out of a
+    cell with the document rules and/or AI (with the row, column and span it was found at), a recipe.
+    The rows are sample rows the person picked. Nothing is stored and no cache is used or filled."""
+    from app.population.cell_fields import (MAX_CELL_CHARS, MAX_PREVIEW_ROWS, CellReader, extraction_columns,
+                                            extractions_from_mappings, normalize_field_extractions)
+    from app.population.computed_fields import apply_row_recipes, normalize_row_recipes
+    from app.population.document_rules import RuleError, normalize_ai_settings
+
+    entry = body.get("entry")
+    rows = body.get("rows")
+    if (not isinstance(entry, dict) or not isinstance(rows, list) or not 0 < len(rows) <= MAX_PREVIEW_ROWS
+            or not all(isinstance(row, dict) and isinstance(row.get("values"), dict) and len(row["values"]) <= 200
+                       for row in rows)):
+        raise HTTPException(status_code=422, detail="invalid_preview")
+    mappings = entry.get("fieldMappings")
+    if (not isinstance(mappings, list) or not 0 < len(mappings) <= 100
+            or not all(isinstance(item, dict) for item in mappings)):
+        raise HTTPException(status_code=422, detail="invalid_preview")
+    active = [item for item in mappings if item.get("mode") != "ignore" and isinstance(item.get("targetAttribute"), str)]
+    # A derived source expanding a field: each sample record gives one row per item, read like a record.
+    items_of: list[tuple[object, int | None, str | None]] = [(row.get("rowNumber"), None, None) for row in rows]
+    item_fields: list[str] | None = None
+    items_truncated = False
+    if body.get("expand") is not None:
+        from app.population.expand import ExpandError, item_attributes, item_paths, normalize_expand, split_value
+        try:
+            expand = normalize_expand(body["expand"], {key for row in rows for key in row["values"]})
+        except ExpandError as exc:
+            raise HTTPException(status_code=422, detail="invalid_expand") from exc
+        expanded: list[dict] = []
+        items_of = []
+        for row in rows:
+            for index, item in enumerate(split_value(row["values"].get(expand["field"]), expand), start=1):
+                if len(expanded) >= MAX_PREVIEW_ROWS * MAX_PREVIEW_ITEMS_PER_ROW:
+                    items_truncated = True
+                    break
+                attributes = item_attributes(item)
+                expanded.append({"rowNumber": len(expanded) + 1, "values": {**row["values"], **attributes}})
+                items_of.append((row.get("rowNumber"), index, str(attributes["@item"])[:300]))
+        item_fields = item_paths([{"entityId": str(row.get("rowNumber")), "attributes": row["values"]} for row in rows], expand)
+        rows = expanded
+    try:
+        extractions = normalize_field_extractions(extractions_from_mappings(active))
+        shaped = [item for item in active if item.get("mode") in ("direct", "computed") and item.get("computed") is not None]
+        recipes = normalize_row_recipes({item["targetAttribute"]: item["computed"] for item in shaped},
+                                        {item["targetAttribute"] for item in active if item.get("mode") in ("direct", "computed", "extract", "constant")})
+        settings = normalize_ai_settings((entry.get("options") or {}).get("aiSettings"))
+    except RuleError as exc:
+        raise HTTPException(status_code=422, detail=f"invalid_rules: {exc}") from exc
+    reader = CellReader(extractions, {
+        "conceptId": entry.get("conceptId") or "preview", "conceptLabel": entry.get("conceptLabel"),
+        "source": entry.get("source") or {}, "assetRef": {"assetId": (entry.get("source") or {}).get("assetId")},
+        "mappingVersion": "preview", "modelId": str(body.get("modelId") or ""),
+        "aiExtraction": body.get("aiExtraction"), "settings": settings,
+        # Rows of a sheet, or records of another concept (a derived source's sample records).
+        "unit": "record" if entry.get("unit") == "record" else "row"}, ai_rows=MAX_PREVIEW_ROWS)
+    texts = [{str(column): "" if value is None else str(value)[:MAX_CELL_CHARS] for column, value in row["values"].items()}
+             for row in rows]
+    columns = extraction_columns(extractions)
+    read = await reader.read_rows([(row.get("rowNumber"), {column: cells.get(column, "") for column in columns})
+                                   for row, cells in zip(rows, texts)]) if extractions and rows else [None] * len(rows)
+    results = []
+    for row, cells, outcome, (row_number, item_index, item_text) in zip(rows, texts, read, items_of):
+        values: dict[str, object] = {}
+        fields: dict[str, object] = {}
+        for item in active:
+            target = item["targetAttribute"]
+            if item.get("mode") == "direct" and isinstance(item.get("sourceField"), str):
+                value = row["values"].get(item["sourceField"])
+                values[target] = value
+                fields[target] = {"method": "direct", "column": item["sourceField"],
+                                  "reason": "no_input" if value is None or str(value).strip() == "" else "found",
+                                  **({"value": value} if value is not None and str(value).strip() else {})}
+            elif item.get("mode") == "constant":
+                values[target] = item.get("constantValue")
+        if outcome is not None:
+            for target in extractions:
+                values[target] = outcome["values"].get(target)
+                fields[target] = outcome["fields"].get(target) or {"method": "rules", "reason": "no_input"}
+        for target, recipe in apply_row_recipes(recipes, values, cells).items():
+            fields[target] = {"method": "computed", "reason": recipe["reason"], "input": recipe["input"],
+                              **({"value": values[target]} if recipe["reason"] == "found" else {})}
+        results.append({"rowNumber": row_number, "fields": fields,
+                        **({"item": item_index, "itemText": item_text} if item_index is not None else {})})
+    return {"rows": results, "ai": {key: reader.stats[key] for key in ("aiRows", "aiCalls", "aiSkippedRows", "aiFailedRows")},
+            **({"itemFields": item_fields, "itemsTruncated": items_truncated} if item_fields is not None else {})}
+
+
+MAX_SHAPED_ROWS = 500
+# How many items of each sample record a preview reads, on average, when a derived source expands a field.
+MAX_PREVIEW_ITEMS_PER_ROW = 5
+
+
+@router.post("/sheet-rows", status_code=status.HTTP_200_OK)
+async def shape_sheet_rows_route(body: dict) -> dict[str, object]:
+    """A sheet's sample rows with its fields read as a run reads them (columns, fixed values, rules on a
+    cell, recipes and joins), for the data preview. AI is not run. Nothing is stored."""
+    from app.workers.datasource_tasks import shape_sheet_rows
+
+    rows = body.get("rows")
+    mappings = body.get("fieldMappings")
+    if (not isinstance(rows, list) or len(rows) > MAX_SHAPED_ROWS
+            or not all(isinstance(row, dict) and len(row) <= 201 for row in rows)
+            or not isinstance(mappings, list) or not 0 < len(mappings) <= 100
+            or not all(isinstance(item, dict) for item in mappings)):
+        raise HTTPException(status_code=422, detail="invalid_preview")
+    if body.get("expand") is not None:
+        # Several records per row: each row gives one row per item of the expanded column.
+        from app.population.expand import ExpandError, expand_rows, normalize_expand
+        try:
+            expand = normalize_expand(body["expand"], {key for row in rows for key in row})
+        except ExpandError as exc:
+            raise HTTPException(status_code=422, detail="invalid_expand") from exc
+        rows, gaps = expand_rows(rows, {**expand, "maxItems": min(expand.get("maxItems") or 1000, 50)},
+                                 lambda row: row.get(expand["field"]), lambda row: row.get("__sheetRow"))
+        return {**shape_sheet_rows(mappings, rows[:MAX_SHAPED_ROWS * 2]),
+                "itemsTruncated": bool(gaps) or len(rows) > MAX_SHAPED_ROWS * 2}
+    return shape_sheet_rows(mappings, rows)
 
 
 @router.post("/computed-preview", status_code=status.HTTP_200_OK)
 async def preview_computed_field(body: dict) -> dict[str, object]:
-    """Run one computed field on sample values (file names, or values of the field it reads)."""
-    from app.population.computed_fields import MAX_PREVIEW_SAMPLES, compute, normalize_computed
+    """Run one computed field on sample values (file names, values of the field it reads, or cells of
+    the column it reads), with the value at each step. ``inputRecipe`` first shapes each sample, for a
+    sheet field taken from another field that has its own recipe.
+
+    A recipe joining several parts is tried on ``partSamples`` instead: per sample, the value of each
+    part by ``"<kind>:<name>"``; ``partRecipes`` first shapes a part (a field with its own recipe)."""
+    from app.population.computed_fields import (MAX_JOIN_PARTS, MAX_PREVIEW_SAMPLES, compute, compute_from,
+                                                normalize_computed)
     from app.population.document_rules import RuleError
 
+    try:
+        spec = normalize_computed(body.get("computed"))
+        before = normalize_computed(body["inputRecipe"]) if body.get("inputRecipe") is not None else None
+        part_recipes = body.get("partRecipes") or {}
+        if not isinstance(part_recipes, dict) or len(part_recipes) > MAX_JOIN_PARTS:
+            raise RuleError("partRecipes must map parts to recipes")
+        part_recipes = {str(key): normalize_computed(recipe) for key, recipe in part_recipes.items()}
+    except RuleError as exc:
+        raise HTTPException(status_code=422, detail=f"invalid_computed: {exc}") from exc
+    if spec["input"]["kind"] == "join":
+        part_samples = body.get("partSamples")
+        if (not isinstance(part_samples, list) or not 0 < len(part_samples) <= MAX_PREVIEW_SAMPLES
+                or not all(isinstance(sample, dict) and len(sample) <= MAX_JOIN_PARTS * 2
+                           and all(isinstance(key, str) and len(key) <= 220 and isinstance(value, str) and len(value) <= 1000
+                                   for key, value in sample.items()) for sample in part_samples)):
+            raise HTTPException(status_code=422, detail="invalid_samples")
+        joined = []
+        for sample in part_samples:
+            def lookup(kind: str, name: str, sample: dict = sample) -> str | None:
+                key = f"{kind}:{name}"
+                value = sample.get(key)
+                if value is not None and key in part_recipes:
+                    value, _ = compute(part_recipes[key], value)
+                return value
+            steps: list[dict] = []
+            value, reason, text = compute_from(spec, lookup, steps)
+            joined.append({"input": text, "value": value, "reason": reason, "steps": steps})
+        return {"results": joined}
     samples = body.get("samples")
     if (not isinstance(samples, list) or not 0 < len(samples) <= MAX_PREVIEW_SAMPLES
             or not all(isinstance(sample, str) and len(sample) <= 1000 for sample in samples)):
         raise HTTPException(status_code=422, detail="invalid_samples")
-    try:
-        spec = normalize_computed(body.get("computed"))
-    except RuleError as exc:
-        raise HTTPException(status_code=422, detail=f"invalid_computed: {exc}") from exc
     results = []
     for sample in samples:
-        value, reason = compute(spec, sample)
-        results.append({"input": sample, "value": value, "reason": reason})
+        source: str | None = sample
+        if before is not None:
+            source, _ = compute(before, sample)
+        steps: list[dict] = []
+        value, reason = compute(spec, source, steps)
+        results.append({"input": sample, "value": value, "reason": reason, "steps": steps})
     return {"results": results}
 
 

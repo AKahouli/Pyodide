@@ -19,7 +19,7 @@ from .document_rules import (PASSAGE_LOCATIONS, all_matches, clean, compile_patt
                              folded_label_regex, heading_matches, heading_text, label_found,
                              next_line_values, normalize_ai_settings, same_line_values, shaped_input,
                              to_iso_date_or_period)
-from .computed_fields import COMPUTED_VERSION, apply_computed, normalize_computed
+from .computed_fields import COMPUTED_VERSION, apply_computed, normalize_computed, recipe_sources
 from .tabular import populate_concept_rows
 
 # Bump when the way a document is read changes, so cached results are not reused.
@@ -258,6 +258,35 @@ def _mapping_labels(mapping: dict[str, Any]) -> list[str]:
 
 def _strategy(mapping: dict[str, Any]) -> str:
     return mapping.get("extractionStrategy") or "deterministic"
+
+
+# How many records one document's rules can make (one per match).
+MAX_RULE_RECORDS = 200
+
+
+def many_records(entry: dict[str, Any]) -> bool:
+    """Whether a mapping reads several records from one document: set on its own (rules alone), or
+    with the AI's limits (where it was first kept)."""
+    options = entry.get("options") or {}
+    return options.get("manyRecords") is True or (options.get("aiSettings") or {}).get("manyRecords") is True
+
+
+def pair_rule_matches(records: list[dict[str, Any]], rule_items: dict[str, list[tuple[Any, dict[str, Any], str]]],
+                      ) -> tuple[list[dict[str, Any]], list[str]]:
+    """The records of a document with every rule match placed: the n-th match of a field goes to the
+    n-th record (beside what the AI found for it), so the lines of a table make one record each.
+    Returns the records and the fields that matched fewer times than there are records."""
+    if not rule_items:
+        return records, []
+    count = max([len(records), *(len(items) for items in rule_items.values())])
+    paired = [{"values": dict(record["values"]), "evidence": dict(record["evidence"])} for record in records]
+    paired += [{"values": {}, "evidence": {}} for _ in range(count - len(paired))]
+    for key, items in rule_items.items():
+        for record, (value, evidence, _quote) in zip(paired, items):
+            if key not in record["values"]:
+                record["values"][key] = value
+                record["evidence"][key] = evidence
+    return paired, sorted(key for key, items in rule_items.items() if len(items) < count)
 
 
 async def _apply_ai_extraction(
@@ -631,9 +660,25 @@ def _rule_candidates(mapping: dict[str, Any], rules: dict[str, Any] | None, labe
     return cleaned, [value for value, _, _ in raw]
 
 
+def rule_matches(candidates: list[tuple[str, dict[str, Any], dict[str, Any], str]]) -> list[tuple[str, dict[str, Any], dict[str, Any], str]]:
+    """Every match of a rule, once each, in reading order: the same value found twice in one block (by
+    two labels, or as a line and a table row) is one match; the same value in two blocks is two."""
+    seen: set[tuple[str, Any]] = set()
+    kept = []
+    for candidate in candidates:
+        key = (candidate[0], candidate[1].get("blockPk"))
+        if key not in seen:
+            seen.add(key)
+            kept.append(candidate)
+    return kept[:MAX_RULE_RECORDS]
+
+
 def _read_rules(mapping: dict[str, Any], label_sections: list[dict[str, Any]], whole: list[dict[str, Any]],
-                all_labels: list[str]) -> dict[str, Any]:
-    """One field read by its rules: its value and evidence, or why none was kept."""
+                all_labels: list[str], every: bool = False) -> dict[str, Any]:
+    """One field read by its rules: its value and evidence, or why none was kept.
+
+    With ``every`` (a document making several records), a rule matching several times keeps every
+    match (``matches``), each becoming a value of its own record, instead of finding several values."""
     rules = mapping.get("rules")
     location = rules["location"] if rules else "auto"
     candidates, raw = _rule_candidates(mapping, rules, label_sections, whole, all_labels)
@@ -641,6 +686,11 @@ def _read_rules(mapping: dict[str, Any], label_sections: list[dict[str, Any]], w
     distinct = list(dict.fromkeys(value for value, *_ in candidates))
     # A document has many headings: the first one (matching the pattern, if any) is the one meant.
     take_first = location == "heading" or bool(rules and rules.get("occurrence") == "first")
+    matches = rule_matches(candidates) if every and not take_first else []
+    if len(matches) > 1:
+        value, block, section, source = matches[0]
+        return {"value": value, "block": block, "section": section, "reason": "found", "raw": source,
+                "matches": matches, "matchesCut": len({(item[0], item[1].get("blockPk")) for item in candidates}) > MAX_RULE_RECORDS}
     if len(distinct) == 1 or (distinct and take_first):
         value, block, section, source = candidates[0]
         return {"value": value, "block": block, "section": section, "reason": "found", "raw": source}
@@ -683,6 +733,12 @@ async def read_document_values(
     extract = [m for m in entry["fieldMappings"] if m["mode"] == "extract"]
     rule_mappings = [m for m in extract if _strategy(m) in ("deterministic", "rules_then_ai")]
     settings = normalize_ai_settings((entry.get("options") or {}).get("aiSettings"))
+    # A mapping can read several records from one document (each line of a table, each message): the
+    # AI returns its items, and a rule matching several times gives one value per record.
+    many = many_records(entry)
+    # Per field, every match of its rule when there are several: (value, evidence, quote) in reading order.
+    rule_items: dict[str, list[tuple[Any, dict[str, Any], str]]] = {}
+    cut_fields: list[str] = []
 
     whole_cache: list[list[dict[str, Any]]] = []
 
@@ -725,8 +781,14 @@ async def read_document_values(
     for mapping in rule_mappings:
         location = (mapping.get("rules") or {}).get("location") or "auto"
         document = await whole() if location in ("heading", "anywhere", *PASSAGE_LOCATIONS) else []
-        outcome = _read_rules(mapping, label_sections, document, all_labels)
+        outcome = _read_rules(mapping, label_sections, document, all_labels, every=many)
         key = mapping["targetAttribute"]
+        if outcome.get("matches"):
+            rule_items[key] = [(value, _evidence(block, section, str(block.get("content") or ""), asset_ref,
+                                                 entry["mappingVersion"]), str(block.get("content") or "")[:600])
+                               for value, block, section, _source in outcome["matches"]]
+            if outcome.get("matchesCut"):
+                cut_fields.append(key)
         if outcome["reason"] == "found":
             values[key] = outcome["value"]
             evidence_by_field[key] = _evidence(
@@ -747,8 +809,6 @@ async def read_document_values(
                    or (_strategy(m) == "rules_then_ai" and m["targetAttribute"] not in values)]
     ai_failure: str | None = None
     ai_sent: dict[str, Any] | None = None
-    # A mapping can read several records from one document (each line of a table, each message).
-    many = ((entry.get("options") or {}).get("aiSettings") or {}).get("manyRecords") is True
     records: list[dict[str, Any]] | None = [] if ai_mappings and many else None
     if ai_mappings:
         try:
@@ -768,8 +828,15 @@ async def read_document_values(
                 fields[key] = {"method": "ai", "reason": "ai_failed" if ai_failure else "ai_not_found",
                                **({"detail": ai_failure} if ai_failure else {}),
                                **({"rules": earlier} if earlier else {})}
+    for key, items in rule_items.items():
+        if key in fields:
+            fields[key]["matches"] = len(items)
+    records, uneven = pair_rule_matches(records or [], rule_items)
     return {"values": values, "evidence": evidence_by_field, "fields": fields, "quotes": quotes, "raws": raws,
-            "aiMappings": ai_mappings, "aiFailure": ai_failure, "aiSent": ai_sent, "records": records or [],
+            "aiMappings": ai_mappings, "aiFailure": ai_failure, "aiSent": ai_sent, "records": records,
+            # Fields whose values differ per record (not shared), those matching fewer times than there are
+            # records, and those with more matches than are read.
+            "itemKeys": sorted(rule_items), "unevenFields": uneven, "cutFields": cut_fields,
             "readComplete": bool(read is None or read["coverage"]["directBlocksComplete"]),
             "searchTruncated": search_truncated}
 
@@ -873,14 +940,22 @@ async def populate_document(
     context = {"document_name": current.get("originalName")}
     computed_evidence = {"assetRef": asset_ref, "origin": "metadata", "extractorVersion": COMPUTED_VERSION,
                          "mappingVersion": entry["mappingVersion"]}
+    # A recipe joining several parts names every field (or the file) it read.
+    joined_sources = {m["targetAttribute"]: recipe_sources(m["computed"]) for m in computed
+                      if m["computed"]["input"]["kind"] == "join"}
+
+    def computed_evidence_of(field: str) -> dict[str, Any]:
+        return ({**computed_evidence, "recipeSources": joined_sources[field]} if field in joined_sources
+                else computed_evidence)
     source_ref = {"assetRef": asset_ref, "mappingVersion": entry["mappingVersion"],
                   "labelField": entry.get("labelField")}
 
     if extracted["records"]:
         # Several records: what the document says once (metadata, constants, rules) is shared by
         # every record, and each item the AI found adds its own values. Row n is the n-th item.
-        values.update({key: value for key, value in extracted["values"].items() if key not in ai_keys})
-        evidence_by_field.update({key: item for key, item in extracted["evidence"].items() if key not in ai_keys})
+        own_keys = ai_keys | set(extracted.get("itemKeys") or [])
+        values.update({key: value for key, value in extracted["values"].items() if key not in own_keys})
+        evidence_by_field.update({key: item for key, item in extracted["evidence"].items() if key not in own_keys})
         shared, shared_evidence = dict(values), dict(evidence_by_field)
         rows: list[dict[str, Any]] = []
         evidence_by_row: dict[int, dict[str, dict[str, Any]]] = {}
@@ -890,7 +965,7 @@ async def populate_document(
             row_evidence = {**shared_evidence, **record["evidence"]}
             for field, outcome in apply_computed(computed, row_values, context).items():
                 if outcome["reason"] == "found":
-                    row_evidence[field] = computed_evidence
+                    row_evidence[field] = computed_evidence_of(field)
                 # A computed field counts as found when any record found it.
                 if field not in computed_outcomes or outcome["reason"] == "found":
                     computed_outcomes[field] = outcome
@@ -908,11 +983,20 @@ async def populate_document(
         computed_outcomes = apply_computed(computed, values, context)
         for field, outcome in computed_outcomes.items():
             if outcome["reason"] == "found":
-                evidence_by_field[field] = computed_evidence
+                evidence_by_field[field] = computed_evidence_of(field)
         output = populate_concept_rows(concept, [{**values, "_row": None}], source_ref)
         for assertion in output["assertions"]:
             assertion["evidence"] = evidence_by_field[assertion["attribute"]]
             assertion["origin"] = "human" if assertion["evidence"]["origin"] == "human" else "source"
+    for field in extracted.get("unevenFields") or []:
+        output["gaps"].append({"kind": "uneven_matches", "conceptId": entry["conceptId"], "rowNumber": None,
+                               "field": field, "assetRef": asset_ref,
+                               "detail": f"field '{field}' matched fewer times than the document has records; "
+                                         "the last records have no value for it"})
+    for field in extracted.get("cutFields") or []:
+        output["gaps"].append({"kind": "records_cap", "conceptId": entry["conceptId"], "rowNumber": None,
+                               "field": field, "assetRef": asset_ref,
+                               "detail": f"field '{field}' matched more than {MAX_RULE_RECORDS} times; the first {MAX_RULE_RECORDS} are read"})
     extract_mappings = [m for m in entry["fieldMappings"] if m["mode"] == "extract"]
     missing_fields = [m["targetAttribute"] for m in extract_mappings if m["targetAttribute"] not in values]
     for field, outcome in computed_outcomes.items():

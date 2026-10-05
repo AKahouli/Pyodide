@@ -40,6 +40,7 @@ const setup = (
   relationRules: unknown[] = [],
   records: unknown[] = [],
   recordRelations: unknown[] = [],
+  labels: Record<string, string> = { 'c-customer': 'name', 'c-contract': 'contract_id' },
 ) => {
   const database = {
     query: jest.fn(async (sql: string, params: unknown[] = []) => {
@@ -49,6 +50,7 @@ const setup = (
         return { rows: Object.entries(identity).map(([conceptId, fields]) => ({ conceptId, fields })) };
       }
       if (sql.includes('FROM semantic_model.relation_resolution_rules')) return { rows: relationRules };
+      if (sql.includes('FROM semantic_model.label_fields')) return { rows: Object.entries(labels).map(([conceptId, field]) => ({ conceptId, field })) };
       if (sql.includes('FROM semantic_model.workspace_links')) {
         return { rows: [{ workspaceId: 'ws-1', role: 'origin' }] };
       }
@@ -174,6 +176,8 @@ describe('SemanticPopulationRefreshService', () => {
         origins: {
           name: { kind: 'source', assetId: 'd-1', rowNumber: 4, column: 'name' },
           customer_id: { kind: 'source', assetId: 'manual:snap-1', rowNumber: 'r1', column: 'customer_id' },
+          segment: { kind: 'source', assetId: 'd-1', recipeSources: ['first', 'last'],
+            derivedFrom: { conceptId: 'c-contact', entityId: 'e-9', label: 'Ada', attribute: 'email', method: 'rules', records: 2, rule: 'most_frequent' } },
         },
       }],
       relationships: [],
@@ -196,6 +200,11 @@ describe('SemanticPopulationRefreshService', () => {
       field: { method: 'direct_mapping', reference: 'name' },
     });
     expect(entity.provenance.customer_id).toEqual({ mappingId: '', source: { kind: 'manual', documentName: '' } });
+    expect(entity.provenance.segment).toHaveProperty('field');
+    expect((entity.provenance.segment as { field?: unknown }).field).toMatchObject({
+      sources: ['first', 'last'],
+      derivedFrom: { conceptId: 'c-contact', label: 'Ada', attribute: 'email', method: 'rules', records: 2 },
+    });
     expect(result.gaps.missingValues[0]).toMatchObject({ conceptLabel: 'Customer', attributeLabel: 'Name', missing: 2 });
     expect(result.gaps.unresolvedLinks[0]).toMatchObject({ relationLabel: 'belongs to', count: 3 });
     expect(result.summary.unresolvedRelations).toBe(3);
@@ -379,6 +388,17 @@ describe('SemanticPopulationRefreshService', () => {
     });
   });
 
+  it('sends a document making several records by rules alone with only that switch in its options', async () => {
+    const doc = MAPPING({ id: 'm-doc', assetKind: 'document', sheetName: '', aiSettings: { manyRecords: true, maxBlocks: 9 },
+      fieldMappings: [{ sourceField: 'Customer ID', targetAttribute: 'customer_id', mode: 'extract', extractionStrategy: 'deterministic' }] });
+    const { documents, runtime, service } = setup([doc]);
+    documents.findById.mockResolvedValueOnce({ mimeType: 'application/pdf', originalName: 'a.pdf', createdBy: 'u', contentHash: 'sha256:abc',
+      updatedAt: '2026-01-01', uploadedAt: '2026-01-01', size: 100, indexingStatus: 'ready' });
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' } });
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    expect(calls[0][0].payload.sources[0].options).toEqual({ manyRecords: true });
+  });
+
   it('carries the per-field extraction strategy into the population payload and fingerprint', async () => {
     const doc = MAPPING({
       id: 'm-doc', assetKind: 'document', sheetName: '',
@@ -537,6 +557,18 @@ describe('SemanticPopulationRefreshService', () => {
     expect(calls[0][0].payload.sources).toHaveLength(1);
   });
 
+  it('refuses a run while a concept it fills has no field chosen to name its records, and uses the chosen one', async () => {
+    const refused = setup([MAPPING()], undefined, [], [], [], [], {});
+    await expect(refused.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } }))
+      .rejects.toThrow('Choose the field that names each Customer record');
+    const { runtime, service } = setup([MAPPING({ fieldMappings: [
+      { sourceField: 'customer_id', targetAttribute: 'customer_id', mode: 'direct' },
+      { sourceField: 'legal_name', targetAttribute: 'name', mode: 'direct' }] })], undefined, [], [], [], [], { 'c-customer': 'customer_id' });
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    expect(calls[0][0].payload.sources[0].labelField).toBe('customer_id');
+  });
+
   it('rejects concepts without usable identity', async () => {
     const { service } = setup([MAPPING()], {});
     await expect(service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } }))
@@ -629,7 +661,7 @@ describe('SemanticPopulationRefreshService', () => {
     const [[command]] = built.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(command.payload.derivations).toEqual([{
       derivationId: 'dv-1', conceptId: 'c-customer', sourceConceptId: 'c-contract', conflictRule: 'latest', orderBy: 'contract_id',
-      fieldMappings: [{ sourceAttribute: 'customer_ref', targetAttribute: 'customer_id' }], labelField: null,
+      fieldMappings: [{ sourceAttribute: 'customer_ref', targetAttribute: 'customer_id' }], labelField: 'name',
       mappingVersion: '2026-09-30T00:00:00.000Z',
     }]);
     expect(command.payload.specification.concepts.map((concept: { conceptId: string }) => concept.conceptId).sort()).toEqual(['c-contract', 'c-customer']);
@@ -700,6 +732,97 @@ describe('SemanticPopulationRefreshService', () => {
     expect(calls[0][0].payload.relationBindings).toEqual([{
       relationId: 'r-1', referenceField: 'customer_id', targetField: 'customer_ref',
     }]);
+  });
+
+  it('sends a transformed sheet field as its recipe, and fingerprints it only when there is one', async () => {
+    const recipe = { input: { kind: 'column' as const, name: 'customer_id' }, method: 'split' as const, delimiter: '-', part: 2, transform: 'upper' as const };
+    const mapping = MAPPING({ fieldMappings: [
+      { sourceField: 'customer_id', targetAttribute: 'customer_id', mode: 'direct', computed: recipe },
+      { sourceField: 'legal_name', targetAttribute: 'name', mode: 'direct' },
+    ] });
+    const { runtime, service } = setup([mapping]);
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const command = calls[0][0];
+    expect(command.payload.sources[0]).toMatchObject({
+      columnMapping: { customer_id: 'customer_id', legal_name: 'name' }, fieldRecipes: { customer_id: recipe },
+    });
+    const canonical = (entry: Record<string, any>, withRecipes: boolean) => ({
+      conceptId: entry.conceptId, sourceKind: entry.sourceKind, source: entry.source, mappingVersion: entry.mappingVersion,
+      columnMapping: entry.columnMapping ?? null, constantMapping: entry.constantMapping ?? null,
+      fieldMappings: entry.fieldMappings ?? null, options: entry.options ?? {}, labelField: entry.labelField ?? null,
+      ...(withRecipes ? { fieldRecipes: entry.fieldRecipes } : {}),
+    });
+    const fingerprint = (withRecipes: boolean) => new ModelSpecificationService().hashCanonical({
+      specHash: command.payload.specHash,
+      sources: command.payload.sources.map((entry: Record<string, any>) => canonical(entry, withRecipes)),
+      relationBindings: command.payload.relationBindings,
+      aiExtraction: command.payload.aiExtraction,
+      populationEngineVersion: 'r1-mvp-8',
+    });
+    expect(command.payload.populationExecutionFingerprint).toBe(fingerprint(true));
+    expect(fingerprint(true)).not.toBe(fingerprint(false));
+
+    const plain = setup();
+    await plain.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const plainCalls = plain.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    expect(plainCalls[0][0].payload.sources[0]).not.toHaveProperty('fieldRecipes');
+  });
+
+  it('sends a sheet field read out of a cell as a cell extraction, with the AI identity only when a cell uses AI', async () => {
+    const rules = { labels: ['Nom'], location: 'same_line' as const };
+    const mapping = MAPPING({ fieldMappings: [
+      { sourceField: 'customer_id', targetAttribute: 'customer_id', mode: 'direct' },
+      { sourceField: 'notes', targetAttribute: 'name', mode: 'extract', extractionStrategy: 'deterministic', rules },
+    ] });
+    const { runtime, service, aiExtractionAgent } = setup([mapping]);
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const command = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0];
+    const [source] = command.payload.sources;
+    expect(source.columnMapping).toEqual({ customer_id: 'customer_id' });
+    expect(source.fieldExtractions).toEqual({ name: { column: 'notes', label: 'Name', extractionStrategy: 'deterministic', rules } });
+    expect(source.options).toEqual({ sheetName: 'Sheet1' });
+    expect(command.payload.aiExtraction).toBeNull();
+    expect(aiExtractionAgent.resolveAgent).not.toHaveBeenCalled();
+
+    const ai = setup([MAPPING({ fieldMappings: [
+      { sourceField: 'customer_id', targetAttribute: 'customer_id', mode: 'direct' },
+      { sourceField: 'notes', targetAttribute: 'name', mode: 'extract', extractionStrategy: 'rules_then_ai', semanticDefinition: 'Legal name' },
+    ] })]);
+    await ai.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const aiCommand = (ai.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0];
+    expect(aiCommand.payload.sources[0].fieldExtractions.name).toMatchObject({ extractionStrategy: 'rules_then_ai', description: 'Legal name', valueType: 'text' });
+    expect(aiCommand.payload.sources[0].options.aiSettings).toBeDefined();
+    expect(aiCommand.payload.aiExtraction).toMatchObject({ agentSlug: 'semantic-field-extraction' });
+
+    // A sheet whose columns are read as they are keeps exactly what it sent before.
+    const plain = setup();
+    await plain.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const plainSource = (plain.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0].payload.sources[0];
+    expect(plainSource).not.toHaveProperty('fieldExtractions');
+    expect(Object.keys(plainSource.options)).toEqual(['sheetName']);
+  });
+
+  it('sends a sheet making several records per row with the column it splits in its options', async () => {
+    const expand = { field: 'to', split: 'emails' };
+    const { runtime, service } = setup([MAPPING({ expand, fieldMappings: [
+      { sourceField: '@item', targetAttribute: 'customer_id', mode: 'direct' },
+    ] })]);
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const [source] = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0].payload.sources;
+    expect(source.columnMapping).toEqual({ '@item': 'customer_id' });
+    expect(source.options).toEqual({ sheetName: 'Sheet1', expand });
+  });
+
+  it('sends a sheet field taken from another field as its recipe', async () => {
+    const recipe = { input: { kind: 'field' as const, name: 'customer_id' }, method: 'whole' as const, transform: 'upper' as const };
+    const { runtime, service } = setup([MAPPING({ fieldMappings: [
+      { sourceField: 'customer_id', targetAttribute: 'customer_id', mode: 'direct' },
+      { sourceField: null, targetAttribute: 'name', mode: 'computed', computed: recipe },
+    ] })]);
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const [source] = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0].payload.sources;
+    expect(source).toMatchObject({ columnMapping: { customer_id: 'customer_id' }, fieldRecipes: { name: recipe }, labelField: 'name' });
   });
 
   it('compiles structured constants without replacing direct fields', async () => {

@@ -1,4 +1,4 @@
-import { effectiveAiSettings, SemanticExtractionSettingsService } from './semantic-extraction-settings.service';
+import { effectiveAiSettings, SemanticExtractionSettingsService, documentReadOptions } from './semantic-extraction-settings.service';
 import { createHash } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { BadRequestException, ConflictException, NotFoundException } from '@modules/exceptions';
@@ -6,13 +6,14 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import type { AttributeDefinition } from '../domain/semantic-model.types';
 import type { RelationResolutionRule } from '../domain/semantic-cross-source.types';
-import { AI_EXTRACTION_CONTRACT_VERSION, aiFieldHints, DEFAULT_RUN_LIMITS, usesAiExtraction, type AiExtractionSettings, type RunLimits, type SourceFieldMapping } from '../domain/semantic-source-mapping.types';
+import { AI_EXTRACTION_CONTRACT_VERSION, aiFieldHints, DEFAULT_RUN_LIMITS, usesAiExtraction, type AiExtractionSettings, type ComputedFieldSpec, type RunLimits, type SourceFieldMapping } from '../domain/semantic-source-mapping.types';
 import type { ConceptSpec, RelationSpec } from '../domain/model-specification.types';
 import type { RecordCorrectionDto } from '../dto/semantic-model.dto';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
 import { ModelSpecificationService } from './model-specification.service';
 import { SemanticModelService } from './semantic-model.service';
 import { SemanticDerivedSourceService } from './semantic-derived-source.service';
+import type { RuntimeDerivation } from '../domain/semantic-derived-source.types';
 import { SemanticRuntimeClientService, type RuntimeValueOrigin } from './semantic-runtime-client.service';
 import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
 import { DOCUMENT_MIME_TYPES, STRUCTURED_MIME_PREFIXES } from './semantic-source-mapping.service';
@@ -52,6 +53,8 @@ interface MappingRow {
   fieldMappings: SourceFieldMapping[];
   /** This mapping's own AI reading limits, over the admin defaults. */
   aiSettings?: Record<string, unknown> | null;
+  /** Several records per row (sheets only): the column split into items. */
+  expand?: Record<string, unknown> | null;
   status: string;
   identityFields: string[] | null;
   sourceEnabled: boolean;
@@ -125,8 +128,14 @@ export class SemanticPopulationRefreshService {
    */
   private async aiExtractionIdentity(
     sources: object[],
+    derivations: RuntimeDerivation[] = [],
   ): Promise<{ agentSlug: string; model: string | null; contractVersion: string } | null> {
-    const usesAi = sources.some((source) => usesAiExtraction((source as { fieldMappings?: SourceFieldMapping[] | null }).fieldMappings));
+    // A derived field read out of a source field's text by AI.
+    const usesAi = derivations.some((derivation) => derivation.aiSettings !== undefined)
+      || sources.some((source) => usesAiExtraction((source as { fieldMappings?: SourceFieldMapping[] | null }).fieldMappings)
+      // A sheet field read out of a cell by AI.
+      || Object.values((source as { fieldExtractions?: Record<string, { extractionStrategy?: string }> }).fieldExtractions ?? {})
+        .some((field) => field.extractionStrategy === 'ai' || field.extractionStrategy === 'rules_then_ai'));
     if (!usesAi) return null;
     const agent = await this.aiExtractionAgent.resolveAgent();
     return {
@@ -154,6 +163,13 @@ export class SemanticPopulationRefreshService {
     const names = new Map(files.map((file) => [file.id, file.originalName]));
     return { ...job, progress: { ...job.progress, changes: { ...changes,
       removedSources: removed.map((source) => ({ ...source, name: names.get(source.assetId) ?? source.name })) } } };
+  }
+
+  /** This person's latest data updates of the model, newest first: the run history. */
+  async listJobs(userId: string, modelId: string, limit = 20) {
+    await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
+    const jobs = await this.runtime.listJobs(modelId, userId, Math.min(Math.max(Math.trunc(limit) || 20, 1), 100));
+    return Promise.all(jobs.map((job) => this.nameRemovedSources(job)));
   }
 
   /** The data update of this model still running for this person, or null. */
@@ -508,6 +524,8 @@ export class SemanticPopulationRefreshService {
         method,
         ...(origin.column && method === 'direct_mapping' ? { reference: origin.column } : {}),
         ...(origin.pageNumber != null ? { page: String(origin.pageNumber) } : {}),
+        ...(origin.recipeSources?.length ? { sources: origin.recipeSources.map(String) } : {}),
+        ...(origin.derivedFrom ? { derivedFrom: derivedProvenance(origin.derivedFrom) } : {}),
       },
     };
   }
@@ -557,7 +575,7 @@ export class SemanticPopulationRefreshService {
     const scope: PopulationRefreshScope = input.scope.kind === 'mapping'
       ? { kind: 'mapping', mappingId: input.scope.mappingId ?? '' }
       : { kind: 'model' };
-    const [nodes, relationRows, identityRules, relationRules, links] = await Promise.all([
+    const [nodes, relationRows, identityRules, relationRules, links, labelFields] = await Promise.all([
       this.database.query<NodeTypeRow>(
         'SELECT id, key, label, aliases, attributes FROM semantic_model.node_types WHERE version_id=$1',
         [model.currentDraftVersionId],
@@ -582,6 +600,10 @@ export class SemanticPopulationRefreshService {
         'SELECT workspace_id AS "workspaceId", role FROM semantic_model.workspace_links WHERE model_id=$1 AND enabled',
         [model.id],
       ).then((result) => result.rows),
+      this.database.query<{ conceptId: string; field: string }>(
+        'SELECT concept_id AS "conceptId", field FROM semantic_model.label_fields WHERE model_id=$1',
+        [model.id],
+      ).then((result) => new Map(result.rows.map((row) => [row.conceptId, row.field]))),
     ]);
     const homeWorkspaceId = links.find((link) => link.role === 'origin')?.workspaceId;
     if (!homeWorkspaceId) {
@@ -605,10 +627,10 @@ export class SemanticPopulationRefreshService {
           // One source per readable file, resolved now: files added since the last run are included.
           const files = await this.workspaceFiles(mapping.workspaceId, mappingSelection(mapping));
           if (!files.readable.length) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT, 'The workspace has no readable file yet');
-          for (const file of files.readable) sources.push(await this.populationSource(mapping, node, file));
+          for (const file of files.readable) sources.push(await this.populationSource(mapping, node, file, labelFields.get(mapping.conceptId)));
           waitingFiles += files.waiting.length;
         } else {
-          sources.push(await this.populationSource(mapping, node));
+          sources.push(await this.populationSource(mapping, node, undefined, labelFields.get(mapping.conceptId)));
         }
         usableMappings.push(mapping);
       } catch (error) {
@@ -623,9 +645,21 @@ export class SemanticPopulationRefreshService {
     // Concepts made from another concept's records, when that concept is read by this run.
     const derivations = scope.kind === 'model' && this.derivedSources
       ? this.derivedSources.runtimeDerivations(await this.derivedSources.forModel(model.id), nodes,
-        new Set(sources.map((source) => source.conceptId)), identityRules)
+        new Set(sources.map((source) => source.conceptId)), identityRules,
+        effectiveAiSettings(await this.adminAiSettings()), labelFields)
       : [];
     const derivedConceptIds = new Set(derivations.map((derivation) => derivation.conceptId));
+    // Every concept a run fills needs the field that names its records, chosen by a person.
+    for (const conceptId of new Set([...usableMappings.map((mapping) => mapping.conceptId), ...derivedConceptIds])) {
+      const node = nodes.find((candidate) => candidate.id === conceptId);
+      const field = labelFields.get(conceptId);
+      if (node && (!field || !(node.attributes ?? []).some((attribute) => attribute.key === field))) {
+        throw new BadRequestException(
+          ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+          `Choose the field that names each ${node.label} record (its label). Open Review to choose it.`,
+        );
+      }
+    }
     if (!sources.length) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'No usable source in the selected scope');
     }
@@ -678,9 +712,19 @@ export class SemanticPopulationRefreshService {
         const targetType = nodes.find((node) => node.id === relation.targetNodeTypeId)
           ?.attributes.find((attribute) => attribute.key === rule.targetAttribute)?.type;
         if (!sourceFieldMapped || !targetFieldMapped || !sourceType || sourceType !== targetType) {
+          // Say which side is wrong, in the words of the model; Review lists it with a way to fix it.
+          const node = (id: string) => nodes.find((candidate) => candidate.id === id);
+          const fieldName = (id: string, key: string) => node(id)?.attributes.find((attribute) => attribute.key === key)?.label || key;
+          const side = !sourceType ? [relation.sourceNodeTypeId, rule.sourceAttribute, 'is no longer a field of'] as const
+            : !targetType ? [relation.targetNodeTypeId, rule.targetAttribute, 'is no longer a field of'] as const
+              : !sourceFieldMapped ? [relation.sourceNodeTypeId, rule.sourceAttribute, 'is not filled by any source of'] as const
+                : !targetFieldMapped ? [relation.targetNodeTypeId, rule.targetAttribute, 'is not filled by any source of'] as const
+                  : null;
           throw new BadRequestException(
             ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
-            `Relation "${relation.key}" cannot be populated by the selected mappings`,
+            side
+              ? `Link "${relation.key}" matches records on "${fieldName(side[0], side[1])}", which ${side[2]} ${node(side[0])?.label ?? ''}. Open Review to fix it.`
+              : `Link "${relation.key}" matches a ${sourceType} field with a ${targetType} field. Open Review to fix it.`,
           );
         }
         relationBindings.push({
@@ -692,6 +736,13 @@ export class SemanticPopulationRefreshService {
     }
     if (!concepts.length) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'The selected scope has no mapped concepts');
+    }
+    // A relationship an expanding derived source links its records by, removed since, links nothing.
+    for (const derivation of derivations) {
+      if (derivation.expand?.relationId && !relations.some((relation) => relation.relationId === derivation.expand?.relationId)) {
+        const { relationId: _removed, ...rest } = derivation.expand;
+        derivation.expand = rest;
+      }
     }
     const draft = {
       modelId: model.id,
@@ -717,7 +768,7 @@ export class SemanticPopulationRefreshService {
     const runtimeSources = JSON.parse(JSON.stringify(sources)) as typeof sources;
     // The AI agent's effective model is part of revision identity, so an admin
     // changing it produces a new revision instead of reusing persisted rows.
-    const aiExtraction = await this.aiExtractionIdentity(runtimeSources);
+    const aiExtraction = await this.aiExtractionIdentity(runtimeSources, derivations);
     const populationExecutionFingerprint = this.specifications.hashCanonical({
       specHash,
       sources: runtimeSources.map((source) => ({
@@ -730,6 +781,10 @@ export class SemanticPopulationRefreshService {
         fieldMappings: 'fieldMappings' in source ? source.fieldMappings : null,
         options: 'options' in source ? source.options : {},
         labelField: 'labelField' in source ? source.labelField ?? null : null,
+        // Only present when a sheet field is transformed, so other sources keep their fingerprint.
+        ...('fieldRecipes' in source && source.fieldRecipes ? { fieldRecipes: source.fieldRecipes } : {}),
+        // Only present when a sheet field is read out of a cell, so other sources keep their fingerprint.
+        ...('fieldExtractions' in source && source.fieldExtractions ? { fieldExtractions: source.fieldExtractions } : {}),
       })),
       relationBindings,
       aiExtraction,
@@ -739,6 +794,15 @@ export class SemanticPopulationRefreshService {
       ...(Object.keys(limits).length ? { limits } : {}),
     });
     return { model, scope, scopeKey, homeWorkspaceId, snapshot, specHash, specification, runtimeSources, relationBindings, derivations, aiExtraction, limits, populationExecutionFingerprint, skipped, waitingFiles };
+  }
+
+  /**
+   * What a full build of the model would run with now (specification, hash, execution fingerprint),
+   * without running it. A clone that copies data stamps its revision with these so it reads as current.
+   */
+  async plannedExecution(userId: string, modelId: string) {
+    const plan = await this.planRefresh(userId, modelId, { purpose: 'build', scope: { kind: 'model' } }, 'read');
+    return { homeWorkspaceId: plan.homeWorkspaceId, specHash: plan.specHash, specification: plan.specification, executionFingerprint: plan.populationExecutionFingerprint };
   }
 
   async requestRefresh(userId: string, modelId: string, input: RequestPopulationRefreshInput) {
@@ -916,7 +980,7 @@ export class SemanticPopulationRefreshService {
       const result = await this.database.query<MappingRow>(
         `SELECT m.id, m.concept_id AS "conceptId", m.workspace_id AS "workspaceId",
                 m.document_id AS "documentId", m.sheet_name AS "sheetName",
-                m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings", m.ai_settings AS "aiSettings",
+                m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings", m.ai_settings AS "aiSettings", m.expand,
                 m.status, i.fields AS "identityFields",
                 COALESCE(w.enabled, false) AS "sourceEnabled",
                 m.validated_source_version AS "validatedSourceVersion", m.updated_at AS "updatedAt",
@@ -935,7 +999,7 @@ export class SemanticPopulationRefreshService {
     const result = await this.database.query<MappingRow>(
       `SELECT m.id, m.concept_id AS "conceptId", m.workspace_id AS "workspaceId",
               m.document_id AS "documentId", m.sheet_name AS "sheetName",
-              m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings", m.ai_settings AS "aiSettings",
+              m.asset_kind AS "assetKind", m.field_mappings AS "fieldMappings", m.ai_settings AS "aiSettings", m.expand,
               m.status, i.fields AS "identityFields",
               COALESCE(w.enabled, false) AS "sourceEnabled",
               m.validated_source_version AS "validatedSourceVersion", m.updated_at AS "updatedAt",
@@ -978,7 +1042,7 @@ export class SemanticPopulationRefreshService {
    * The runtime source for a mapping. A workspace mapping passes each file it covers: those files were
    * listed a moment ago, so they are read as they are now rather than checked against a saved version.
    */
-  private async populationSource(mapping: MappingRow, node: NodeTypeRow, file?: WorkspaceDocumentResponse) {
+  private async populationSource(mapping: MappingRow, node: NodeTypeRow, file?: WorkspaceDocumentResponse, labelField?: string) {
     this.assertUsable(mapping);
     const document = file ?? await this.documents.findById(mapping.workspaceId, mapping.documentId);
     const currentSourceVersion = document.contentHash || `${document.updatedAt}:${document.size}`;
@@ -1001,7 +1065,7 @@ export class SemanticPopulationRefreshService {
     }
     const allowedModes = mapping.assetKind === 'document'
       ? new Set(['extract', 'metadata', 'constant', 'computed'])
-      : new Set(['direct', 'constant']);
+      : new Set(['direct', 'extract', 'constant', 'computed']);
     if (activeMappings.some((field) => !allowedModes.has(field.mode))) {
       throw new BadRequestException(
         ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
@@ -1054,35 +1118,51 @@ export class SemanticPopulationRefreshService {
         }),
         // How much of the document the AI reads; only sent when a field is read by AI, so a change
         // to these limits never reruns documents read by rules alone.
-        ...(usesAiExtraction(activeMappings)
-          ? { options: { aiSettings: effectiveAiSettings(await this.adminAiSettings(), mapping.aiSettings) } }
-          : {}),
+        ...documentReadOptions(usesAiExtraction(activeMappings),
+          usesAiExtraction(activeMappings) ? await this.adminAiSettings() : {}, mapping.aiSettings),
+        ...(labelField ? { labelField } : {}),
         mappingVersion,
       };
     }
     const columnMapping: Record<string, string> = {};
     const constantMapping: Record<string, unknown> = {};
+    // A field read from a column and then transformed: the runtime applies the same recipe as documents.
+    const fieldRecipes: Record<string, ComputedFieldSpec> = {};
+    // A field read out of a cell's text, as a document field is read: the runtime applies the same rules and AI.
+    const fieldExtractions: Record<string, Record<string, unknown>> = {};
+    const attributes = new Map((node.attributes ?? []).map((attribute) => [attribute.key, attribute]));
     for (const field of mapping.fieldMappings ?? []) {
       if (field.mode === 'direct' && field.sourceField) columnMapping[field.sourceField] = field.targetAttribute;
+      if ((field.mode === 'direct' && field.sourceField && field.computed) || (field.mode === 'computed' && field.computed)) {
+        fieldRecipes[field.targetAttribute] = field.computed!;
+      }
+      if (field.mode === 'extract' && field.sourceField) fieldExtractions[field.targetAttribute] = cellExtraction(field, attributes.get(field.targetAttribute));
       if (field.mode === 'constant') constantMapping[field.targetAttribute] = field.constantValue;
     }
-    if ((!Object.keys(columnMapping).length && !Object.keys(constantMapping).length)
+    if ((!Object.keys(columnMapping).length && !Object.keys(constantMapping).length
+        && !Object.keys(fieldExtractions).length && !Object.keys(fieldRecipes).length)
       || [...identityFields].some((field) => !mappedAttributes.has(field))) {
       throw new BadRequestException(
         ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
         'The mapping must directly map every identity field',
       );
     }
-    const labelField = (mapping.fieldMappings ?? []).find(
-      (field) => field.mode === 'direct' && !identityFields.has(field.targetAttribute),
-    )?.targetAttribute;
+    const usesCellAi = Object.values(fieldExtractions).some((field) => field.extractionStrategy !== 'deterministic');
     return {
       sourceKind: mapping.assetKind,
       conceptId: mapping.conceptId,
       source,
-      options: mapping.sheetName ? { sheetName: mapping.sheetName } : {},
+      // How much of a cell the AI reads; only sent when a cell is read by AI, so other sheets keep their options.
+      options: {
+        ...(mapping.sheetName ? { sheetName: mapping.sheetName } : {}),
+        ...(usesCellAi ? { aiSettings: effectiveAiSettings(await this.adminAiSettings(), mapping.aiSettings) } : {}),
+        // Only sent when the sheet expands a column, so other sheets keep their options (and fingerprint).
+        ...(mapping.expand ? { expand: mapping.expand } : {}),
+      },
       columnMapping,
       ...(Object.keys(constantMapping).length ? { constantMapping } : {}),
+      ...(Object.keys(fieldRecipes).length ? { fieldRecipes } : {}),
+      ...(Object.keys(fieldExtractions).length ? { fieldExtractions } : {}),
       ...(labelField ? { labelField } : {}),
       mappingVersion,
     };
@@ -1097,3 +1177,31 @@ export function graphPropertyKey(field: string): string {
 
 /** What the extraction agent is told about a field read by AI, beyond its label. Empty parts are left out. */
 export { aiFieldHints };
+
+/**
+ * How the runtime reads a sheet field out of its column's cell: the column, the field's label (the label its
+ * rules look for by default), the strategy, the rules and, for AI, what the agent is told. Absent parts are left out.
+ */
+export function cellExtraction(field: SourceFieldMapping, attribute?: AttributeDefinition): Record<string, unknown> {
+  const strategy = field.extractionStrategy ?? 'deterministic';
+  return {
+    column: field.sourceField,
+    label: attribute?.label || field.targetAttribute,
+    extractionStrategy: strategy,
+    ...(field.rules ? { rules: field.rules } : {}),
+    ...(strategy !== 'deterministic' && field.agentId ? { agentId: field.agentId } : {}),
+    ...(strategy !== 'deterministic' && attribute ? aiFieldHints(attribute, field) : {}),
+  };
+}
+
+/** What the records table says about a value taken from another concept's record. */
+function derivedProvenance(derived: NonNullable<RuntimeValueOrigin['derivedFrom']>) {
+  return {
+    ...(derived.conceptId ? { conceptId: derived.conceptId } : {}),
+    ...(derived.label ? { label: String(derived.label) } : {}),
+    ...(derived.attribute ? { attribute: derived.attribute } : {}),
+    ...(derived.attributes?.length ? { attributes: derived.attributes.map(String) } : {}),
+    ...(derived.method ? { method: derived.method } : {}),
+    ...(typeof derived.records === 'number' ? { records: derived.records } : {}),
+  };
+}

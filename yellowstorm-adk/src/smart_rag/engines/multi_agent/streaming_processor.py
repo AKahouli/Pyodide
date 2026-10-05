@@ -490,7 +490,7 @@ class StreamingEventProcessor:
                     # Extract code from function arguments
                     code = ""
                     if hasattr(part.function_call, "args") and part.function_call.args:
-                        args_dict = dict(part.function_call.args)
+                        args_dict = dict(part.function_call.args or {})
                         code = sanitize_tool_result_value(args_dict.get("code", ""))
 
                     # Use function_call.id as component_id for tracking

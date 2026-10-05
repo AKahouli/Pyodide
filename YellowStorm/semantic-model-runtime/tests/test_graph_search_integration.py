@@ -127,20 +127,33 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
             "actorUserId": "user-e2e", "modelId": MODEL_ID, "environment": "draft",
             "query": "support agreement"})).json()
         assert pending["index"]["state"] == "queued" and pending["status"] == "index_not_ready"
+        assert any("not ready" in note for note in pending["notes"])
         exact_before = (await client.post("/v1/semantic-model-search/query", json={
             "actorUserId": "user-e2e", "modelId": MODEL_ID, "environment": "draft",
             "query": "CT003"})).json()
         assert [seed["label"] for seed in exact_before["seeds"]] == ["CT003"]  # labels are the key values here
         assert exact_before["modeUsed"] == "exact_only"
 
-        # 2. The real index worker builds every record's document and vector.
+        # A long text (an e-mail body, a clause) on one record: only its start fits the card.
+        long_title = ("Carrefour Supply Agreement. " + " ".join(
+            f"Clause {n}: deliveries follow the usual schedule and the usual terms." for n in range(40))
+            + " Refrigerated trucks arriving late owe a penalty of two percent per hour. "
+            + " ".join(f"Annex {n}: pallets are labelled as agreed." for n in range(20)))
+        await runtime.execute(
+            "UPDATE semantic_population.entities SET attributes = jsonb_set(attributes::jsonb, '{title}', "
+            "to_jsonb($2::text)) WHERE data_revision_id = $1 AND label = 'CT003'", revision_id, long_title)
+
+        # 2. The real index worker builds every record's document and vector, and the passages.
         outcome = await search_tasks._run_task(index_task["id"], "e2e-search")
         assert outcome["ok"] and outcome["state"] == "ready", outcome
+        assert outcome["passages"] == outcome["passagesEmbedded"] > 3
         status = (await client.get(f"/v1/semantic-model-search/models/{MODEL_ID}/index")).json()
         assert status["dataRevisionId"] == revision_id
         assert status["index"]["state"] == "ready"
         assert status["index"]["expectedCount"] == 5
         assert status["index"]["indexedCount"] + status["index"]["exactOnlyCount"] == 5
+        assert status["index"]["passageCount"] == status["index"]["passageIndexedCount"] == outcome["passages"]
+        assert status["index"]["passageTruncatedCount"] == 0
         embedded_once = sum(calls)
 
         # 3. Asking again is free: the generation is ready and reused.
@@ -158,6 +171,15 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
         assert found["seeds"][0]["label"] == "CT002"
         assert found["seeds"][0]["matchClass"] in ("hybrid", "lexical", "vector")
         assert found["seeds"][0]["provenance"][0]["assetId"] == CONTRACTS_ASSET
+        # Words far past the card's cut find the record through its passage, quoted back.
+        deep = (await client.post("/v1/semantic-model-search/query",
+                                  json=query("penalty for late refrigerated trucks"))).json()
+        assert deep["seeds"][0]["label"] == "CT003" and deep["seeds"][0]["matchedIn"] == "passage", deep
+        assert deep["coverage"]["passageCount"] == outcome["passages"]
+        passage = deep["seeds"][0]["passages"][0]
+        assert passage["fieldKey"] == "title" and "Refrigerated trucks arriving late" in passage["text"]
+        assert long_title[passage["start"]:passage["end"]].find("Refrigerated trucks") >= 0
+        assert "passages" not in found["seeds"][0]
         exact = (await client.post("/v1/semantic-model-search/query", json=query("CT001"))).json()
         assert exact["seeds"][0]["matchClass"] == "exact"
         assert exact["seeds"][0]["label"] == "CT001"
@@ -171,6 +193,14 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
         hidden = (await client.post("/v1/semantic-model-search/query",
                                     json=query("support agreement", allowedWorkspaceIds=[]))).json()
         assert hidden["seeds"] == []
+        assert hidden["hiddenRecords"] > 0 and any("hidden" in note for note in hidden["notes"])
+        one = (await client.post("/v1/semantic-model-search/query", json=query("agreement", limit=1))).json()
+        assert len(one["seeds"]) == 1 and one["hasMore"] is True
+        assert any("More records match" in note for note in one["notes"])
+        assert found["notes"] == [] and found["hiddenRecords"] == 0
+        near = (await client.post("/v1/semantic-model-search/query",
+                                  json=query("sony", concepts=["Customers"]))).json()
+        assert [seed["conceptId"] for seed in near["seeds"]] == ["c-customer"] and near["unknownConcepts"] == []
         visible = (await client.post("/v1/semantic-model-search/query",
                                      json=query("support agreement", allowedWorkspaceIds=[WORKSPACE_ID]))).json()
         assert visible["seeds"][0]["label"] == "CT002"
@@ -227,6 +257,7 @@ async def test_records_are_found_and_their_real_links_followed(pools, monkeypatc
 
     outcome = await indexer.build_index(runtime, index_id=rebuilt["index_id"], owner="e2e-rebuild",
                                         report=report)
-    assert outcome["state"] == "ready" and outcome["embedded"] == 0
+    assert outcome["state"] == "ready" and outcome["embedded"] == 0 and outcome["passagesEmbedded"] == 0
     assert outcome["reused"] == status["index"]["indexedCount"]
-    assert sum(calls) == embedded_once + 5  # only the query embeddings of step 4
+    assert outcome["passagesReused"] == status["index"]["passageCount"]
+    assert sum(calls) == embedded_once + 8  # only the query embeddings of step 4

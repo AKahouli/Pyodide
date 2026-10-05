@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -17,10 +17,28 @@ import {
   Matches,
   Min,
   MinLength,
+  Validate,
   ValidateNested,
   ValidateIf,
+  ValidatorConstraint,
+  type ValidatorConstraintInterface,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+
+/** A sample row's cells: at most 200 columns, each a short name and a text, number, true/false or empty value. */
+@ValidatorConstraint({ name: 'sheetRowValues', async: false })
+export class SheetRowValuesConstraint implements ValidatorConstraintInterface {
+  validate(value: unknown): boolean {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const entries = Object.entries(value as Record<string, unknown>);
+    return entries.length <= 200 && entries.every(([column, cell]) => column.length <= 200
+      && (cell === null || typeof cell === 'number' || typeof cell === 'boolean' || (typeof cell === 'string' && cell.length <= 20000)));
+  }
+
+  defaultMessage(): string {
+    return 'values must map at most 200 columns to texts of at most 20000 characters';
+  }
+}
 
 export class CreateSemanticModelDto {
   @ApiProperty({ maxLength: 160 })
@@ -210,6 +228,23 @@ export class UpdateBindingDto {
   enabled?: boolean;
 }
 
+export class CloneSemanticModelIncludeDto {
+  @ApiPropertyOptional({ default: true, description: 'Source links and extraction rules' })
+  @IsOptional()
+  @IsBoolean()
+  sources?: boolean;
+
+  @ApiPropertyOptional({ default: false, description: 'Data already built (forces sources)' })
+  @IsOptional()
+  @IsBoolean()
+  data?: boolean;
+
+  @ApiPropertyOptional({ default: false, description: 'People the model is shared with (owner only)' })
+  @IsOptional()
+  @IsBoolean()
+  shares?: boolean;
+}
+
 export class CloneSemanticModelDto {
   @ApiProperty({ maxLength: 160 })
   @IsString()
@@ -217,6 +252,12 @@ export class CloneSemanticModelDto {
   @MaxLength(160)
   @Matches(/\S/)
   name!: string;
+
+  @ApiPropertyOptional({ type: CloneSemanticModelIncludeDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CloneSemanticModelIncludeDto)
+  include?: CloneSemanticModelIncludeDto;
 }
 
 export class SemanticRecordQueryDto {
@@ -385,15 +426,47 @@ export class DocumentLabelsDto {
   documentIds!: string[];
 }
 
-export class ComputedFieldInputDto {
-  @ApiProperty({ enum: ['file', 'field'] })
-  @IsIn(['file', 'field'])
-  kind!: 'file' | 'field';
+/** One part of a joined input: an input (as a single input names it) or a fixed text. */
+export class ComputedJoinPartDto {
+  @ApiProperty({ enum: ['file', 'field', 'column', 'text'] })
+  @IsIn(['file', 'field', 'column', 'text'])
+  kind!: 'file' | 'field' | 'column' | 'text';
 
-  // 'document_name' for a file input, another mapping's targetAttribute for a field input.
-  @ApiProperty({ maxLength: 80 })
-  @IsString() @MinLength(1) @MaxLength(80)
-  name!: string;
+  @ApiPropertyOptional({ maxLength: 200, description: 'file, field or column: what it reads' })
+  @ValidateIf((part: ComputedJoinPartDto) => part.kind !== 'text')
+  @IsString() @MinLength(1) @MaxLength(200)
+  name?: string;
+
+  @ApiPropertyOptional({ maxLength: 100, description: 'text: the fixed text' })
+  @ValidateIf((part: ComputedJoinPartDto) => part.kind === 'text')
+  @IsString() @MinLength(1) @MaxLength(100)
+  value?: string;
+}
+
+export class ComputedFieldInputDto {
+  @ApiProperty({ enum: ['file', 'field', 'column', 'join'], description: "'join' joins several parts into one text" })
+  @IsIn(['file', 'field', 'column', 'join'])
+  kind!: 'file' | 'field' | 'column' | 'join';
+
+  // 'document_name' for a file input, another mapping's targetAttribute for a field input, a sheet column.
+  @ApiPropertyOptional({ maxLength: 200 })
+  @ValidateIf((input: ComputedFieldInputDto) => input.kind !== 'join')
+  @IsString() @MinLength(1) @MaxLength(200)
+  name?: string;
+
+  @ApiPropertyOptional({ type: () => [ComputedJoinPartDto], minItems: 2, maxItems: 10, description: 'join: the parts, in order' })
+  @ValidateIf((input: ComputedFieldInputDto) => input.kind === 'join')
+  @IsArray() @ArrayMinSize(2) @ArrayMaxSize(10)
+  @ValidateNested({ each: true }) @Type(() => ComputedJoinPartDto)
+  parts?: ComputedJoinPartDto[];
+
+  @ApiPropertyOptional({ maxLength: 10, description: "join: put between two parts; ' ' when absent" })
+  @IsOptional() @IsString() @MaxLength(10)
+  separator?: string;
+
+  @ApiPropertyOptional({ description: 'join: leave an empty part out with its separator (default true)' })
+  @IsOptional() @IsBoolean()
+  skipEmpty?: boolean;
 }
 
 export class ComputedFieldDto {
@@ -403,9 +476,9 @@ export class ComputedFieldDto {
   @Type(() => ComputedFieldInputDto)
   input!: ComputedFieldInputDto;
 
-  @ApiProperty({ enum: ['split', 'between', 'regex'] })
-  @IsIn(['split', 'between', 'regex'])
-  method!: 'split' | 'between' | 'regex';
+  @ApiProperty({ enum: ['whole', 'split', 'between', 'regex'], description: "'whole' keeps the input as it is" })
+  @IsIn(['whole', 'split', 'between', 'regex'])
+  method!: 'whole' | 'split' | 'between' | 'regex';
 
   @ApiPropertyOptional({ minLength: 1, maxLength: 10 })
   @IsOptional() @IsString() @MinLength(1) @MaxLength(10)
@@ -490,7 +563,7 @@ export class SourceFieldMappingDto {
   @Type(() => ExtractionRulesDto)
   rules?: ExtractionRulesDto;
 
-  @ApiPropertyOptional({ type: () => ComputedFieldDto, description: 'How a computed document field is derived' })
+  @ApiPropertyOptional({ type: () => ComputedFieldDto, description: 'How a computed document field is derived, or how a spreadsheet field is transformed' })
   @IsOptional()
   @ValidateNested()
   @Type(() => ComputedFieldDto)
@@ -504,10 +577,26 @@ export class ComputedFieldPreviewDto {
   @Type(() => ComputedFieldDto)
   computed!: ComputedFieldDto;
 
-  @ApiProperty({ type: [String], minItems: 1, maxItems: 20 })
+  @ApiPropertyOptional({ type: [String], minItems: 1, maxItems: 20, description: 'A single input: the values to try it on' })
+  @ValidateIf((dto: ComputedFieldPreviewDto) => dto.partSamples === undefined)
   @IsArray() @ArrayMinSize(1) @ArrayMaxSize(20)
   @IsString({ each: true }) @MaxLength(1000, { each: true })
-  samples!: string[];
+  samples?: string[];
+
+  @ApiPropertyOptional({ type: () => ComputedFieldDto, description: 'Applied to each sample first: the recipe of the field this one is taken from' })
+  @IsOptional() @ValidateNested() @Type(() => ComputedFieldDto)
+  inputRecipe?: ComputedFieldDto;
+
+  @ApiPropertyOptional({ type: 'array', items: { type: 'object', additionalProperties: { type: 'string' } }, maxItems: 20,
+    description: 'A joined input: per sample, the value of each part by "<kind>:<name>"' })
+  // Each sample's shape (an object of texts) is checked by the service: implicit conversion would turn it into a string here.
+  @IsOptional() @IsArray() @ArrayMinSize(1) @ArrayMaxSize(20)
+  @Transform(({ obj }) => (obj as { partSamples?: unknown }).partSamples)
+  partSamples?: Array<Record<string, string>>;
+
+  @ApiPropertyOptional({ type: 'object', additionalProperties: true, description: 'A joined input: recipes applied first to a part, by "<kind>:<name>"' })
+  @IsOptional() @IsObject()
+  partRecipes?: Record<string, ComputedFieldDto>;
 }
 
 /** Limits on how much of a document the AI reads. Each one left out uses the admin default. */
@@ -552,17 +641,81 @@ export class RunLimitsDto {
 }
 
 export class DerivedFieldMappingDto {
-  @ApiProperty({ description: 'A field of the source concept' })
+  @ApiPropertyOptional({ description: 'The field of the source concept it is copied from or read out of; absent for a recipe or a fixed value' })
+  @ValidateIf((field: DerivedFieldMappingDto) => (field.mode ?? 'direct') === 'direct' || field.mode === 'extract' || field.sourceAttribute !== undefined)
   @IsString()
   @MinLength(1)
   @MaxLength(200)
-  sourceAttribute!: string;
+  sourceAttribute?: string;
 
   @ApiProperty({ description: 'The field of the derived concept it fills' })
   @IsString()
   @MinLength(1)
   @MaxLength(200)
   targetAttribute!: string;
+
+  @ApiPropertyOptional({ enum: ['direct', 'extract', 'computed', 'constant'], description: 'Absent: copied as it is' })
+  @IsOptional()
+  @IsIn(['direct', 'extract', 'computed', 'constant'])
+  mode?: 'direct' | 'extract' | 'computed' | 'constant';
+
+  @ApiPropertyOptional({ enum: ['deterministic', 'ai', 'rules_then_ai'], description: 'extract: rules, AI, or rules then AI' })
+  @IsOptional()
+  @IsIn(['deterministic', 'ai', 'rules_then_ai'])
+  extractionStrategy?: 'deterministic' | 'ai' | 'rules_then_ai';
+
+  @ApiPropertyOptional({ maxLength: 2000, description: 'AI reading: what the value means and what to look for' })
+  @IsOptional() @IsString() @MaxLength(2000)
+  semanticDefinition?: string;
+
+  @ApiPropertyOptional({ maxLength: 64, description: 'AI reading: the agent asked to read the field' })
+  @IsOptional() @IsString() @Matches(/^[A-Za-z0-9_-]{1,64}$/)
+  agentId?: string;
+
+  @ApiPropertyOptional({ type: () => ExtractionRulesDto, description: 'extract: where the value is in the source field text and what it looks like' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExtractionRulesDto)
+  rules?: ExtractionRulesDto;
+
+  @ApiPropertyOptional({ type: () => ComputedFieldDto, description: 'computed: the recipe; a column input names a field of the source concept' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ComputedFieldDto)
+  computed?: ComputedFieldDto;
+
+  @ApiPropertyOptional({ description: 'constant: the fixed value' })
+  @IsOptional()
+  constantValue?: string | number | boolean;
+}
+
+/** One field of the source concept expanded into several items, each read as a record of its own. */
+export class DerivedExpandDto {
+  @ApiProperty({ description: 'The source field holding several values (text or a JSON array)' })
+  @IsString() @MinLength(1) @MaxLength(200)
+  field!: string;
+
+  @ApiProperty({ enum: ['auto', 'list', 'emails', 'delimiters', 'lines'] })
+  @IsIn(['auto', 'list', 'emails', 'delimiters', 'lines'])
+  split!: 'auto' | 'list' | 'emails' | 'delimiters' | 'lines';
+
+  @ApiPropertyOptional({ type: [String], maxItems: 10, description: 'For delimiters' })
+  @ValidateIf((dto: DerivedExpandDto) => dto.split === 'delimiters')
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(10)
+  @IsString({ each: true }) @MinLength(1, { each: true }) @MaxLength(5, { each: true })
+  delimiters?: string[];
+
+  @ApiPropertyOptional({ description: 'The list inside a JSON object, e.g. "to" or "data.recipients[*]"' })
+  @IsOptional() @IsString() @MaxLength(120)
+  path?: string;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 1000 })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(1000)
+  maxItems?: number;
+
+  @ApiPropertyOptional({ description: 'The relationship linking each source record to the records its items made' })
+  @IsOptional() @IsUUID()
+  relationId?: string;
 }
 
 export class SaveDerivedSourceDto extends ExpectedModelRevisionDto {
@@ -600,6 +753,17 @@ export class SaveDerivedSourceDto extends ExpectedModelRevisionDto {
   @MinLength(1)
   @MaxLength(200)
   orderBy?: string;
+  @ApiPropertyOptional({ type: () => AiExtractionSettingsDto, description: 'Overrides the admin defaults for how much the AI reads' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AiExtractionSettingsDto)
+  aiSettings?: AiExtractionSettingsDto;
+
+  @ApiPropertyOptional({ type: () => DerivedExpandDto, description: 'Several records per source record, one per item of a field' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DerivedExpandDto)
+  expand?: DerivedExpandDto;
 }
 
 export class CreateSourceMappingDto {
@@ -629,6 +793,11 @@ export class CreateSourceMappingDto {
   @MaxLength(200)
   sheetName?: string;
 
+  @ApiPropertyOptional({ description: 'Point this existing mapping at the file (and sheet) instead of adding a mapping' })
+  @IsOptional()
+  @IsUUID()
+  mappingId?: string;
+
   @ApiPropertyOptional({ enum: ['excel_sheet', 'csv', 'document'] })
   @IsOptional()
   @IsIn(['excel_sheet', 'csv', 'document'])
@@ -654,6 +823,12 @@ export class CreateSourceMappingDto {
   @ValidateNested()
   @Type(() => AiExtractionSettingsDto)
   aiSettings?: AiExtractionSettingsDto;
+
+  @ApiPropertyOptional({ type: () => DerivedExpandDto, description: 'Several records per row: one column split into items, each read as a row' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DerivedExpandDto)
+  expand?: DerivedExpandDto;
 }
 
 /** A named copy of how a concept is read from documents, to reuse on other documents or workspaces. */
@@ -756,6 +931,116 @@ export class SourceMappingPreviewDto {
   @ValidateNested()
   @Type(() => AiExtractionSettingsDto)
   aiSettings?: AiExtractionSettingsDto;
+
+  @ApiPropertyOptional({ type: () => DerivedExpandDto, description: 'Several records per row: one column split into items, each read as a row' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DerivedExpandDto)
+  expand?: DerivedExpandDto;
+}
+
+/** One sample row of a sheet, as its cells' texts by column, to read a mapping's fields on. */
+export class SheetPreviewRowDto {
+  @ApiProperty({ description: 'The row number in the sheet, shown with what was read' })
+  @Type(() => Number) @IsInt() @Min(0) @Max(10_000_000)
+  rowNumber!: number;
+
+  @ApiProperty({ description: 'Cell values by column (at most 200 columns, 20000 characters each)' })
+  @IsObject()
+  @Validate(SheetRowValuesConstraint)
+  values!: Record<string, string | number | boolean | null>;
+}
+
+export class SheetFieldPreviewDto {
+  @ApiProperty()
+  @IsUUID()
+  conceptId!: string;
+
+  @ApiProperty()
+  @IsString()
+  @MinLength(1)
+  workspaceId!: string;
+
+  @ApiProperty()
+  @IsString()
+  @MinLength(1)
+  documentId!: string;
+
+  @ApiProperty({ type: [SourceFieldMappingDto], maxItems: 100 })
+  @IsArray()
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => SourceFieldMappingDto)
+  fieldMappings!: SourceFieldMappingDto[];
+
+  @ApiProperty({ type: [SheetPreviewRowDto], minItems: 1, maxItems: 20 })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => SheetPreviewRowDto)
+  rows!: SheetPreviewRowDto[];
+
+  @ApiPropertyOptional({ type: () => AiExtractionSettingsDto, description: 'Overrides the admin defaults for how much the AI reads' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AiExtractionSettingsDto)
+  aiSettings?: AiExtractionSettingsDto;
+
+  @ApiPropertyOptional({ type: () => DerivedExpandDto, description: 'Several records per row: one column split into items, each read as a row' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DerivedExpandDto)
+  expand?: DerivedExpandDto;
+}
+
+/** A sample record of the source concept: its values by field, to read a derived source's fields on. */
+export class DerivedPreviewRecordDto {
+  @ApiProperty({ description: 'The source record' })
+  @IsString() @MinLength(1) @MaxLength(300)
+  entityId!: string;
+
+  @ApiProperty({ description: 'Values by source field (at most 200 fields, 20000 characters each)' })
+  @IsObject()
+  @Validate(SheetRowValuesConstraint)
+  values!: Record<string, string | number | boolean | null>;
+}
+
+export class DerivedFieldPreviewDto {
+  @ApiProperty({ description: 'The concept filled from another one' })
+  @IsUUID()
+  conceptId!: string;
+
+  @ApiProperty({ description: 'The concept whose records carry the values' })
+  @IsUUID()
+  sourceConceptId!: string;
+
+  @ApiProperty({ type: [DerivedFieldMappingDto], maxItems: 50 })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => DerivedFieldMappingDto)
+  fieldMappings!: DerivedFieldMappingDto[];
+
+  @ApiProperty({ type: [DerivedPreviewRecordDto], minItems: 1, maxItems: 20 })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => DerivedPreviewRecordDto)
+  records!: DerivedPreviewRecordDto[];
+  @ApiPropertyOptional({ type: () => AiExtractionSettingsDto, description: 'Overrides the admin defaults for how much the AI reads' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AiExtractionSettingsDto)
+  aiSettings?: AiExtractionSettingsDto;
+
+  @ApiPropertyOptional({ type: () => DerivedExpandDto, description: 'Several records per source record, one per item of a field' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => DerivedExpandDto)
+  expand?: DerivedExpandDto;
 }
 
 export class DocumentSourceRefDto {
@@ -852,7 +1137,7 @@ export class WorkspaceSourceMappingDto {
   @MaxLength(200, { each: true })
   documentIds?: string[];
 
-  @ApiPropertyOptional({ description: 'Change what an existing workspace mapping covers instead of adding one' })
+  @ApiPropertyOptional({ description: 'Change what an existing mapping reads (another workspace, or a file or sheet before) instead of adding one' })
   @IsOptional()
   @IsUUID()
   mappingId?: string;
@@ -966,6 +1251,20 @@ export class SourcePriorityDto {
   @Min(1)
   @Max(50)
   rank!: number;
+}
+
+export class SaveLabelFieldDto {
+  @ApiProperty()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  expectedRevision!: number;
+
+  @ApiProperty({ maxLength: 200, description: 'The concept field that names each record (its label)' })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  field!: string;
 }
 
 export class SaveIdentityRuleDto {

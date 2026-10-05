@@ -28,7 +28,8 @@ from decimal import Decimal
 from typing import Any
 
 from .documents import humanize
-from .typed_values import fold, fold_sql, is_blank_sql, parse_boolean, parse_number, typed_value_sql
+from .typed_values import (fold, fold_sql, is_blank_sql, near_match, parse_boolean, parse_number,
+                           typed_value_sql)
 
 OPS = ("eq", "ne", "contains", "starts_with", "ends_with", "in", "gt", "gte", "lt", "lte", "between",
        "is_empty", "not_empty")
@@ -164,7 +165,10 @@ def _catalog_concept(catalog: dict[str, Any], key: str) -> dict[str, Any] | None
 
 
 def find_concept(compiled: dict[str, Any], catalog: dict[str, Any], name: str) -> Concept | None:
+    """The concept named exactly by id, key, label or alias, else the one the name nearly
+    matches (a plural, a separator, a small typo: see ``near_match``)."""
     wanted = fold(name)
+    named: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
     for concept in compiled["concepts"].values():
         entry = _catalog_concept(catalog, concept.get("key", "")) or {}
         names = {fold(concept["conceptId"]), fold(concept.get("key")), fold(concept.get("label")),
@@ -172,7 +176,9 @@ def find_concept(compiled: dict[str, Any], catalog: dict[str, Any], name: str) -
         names |= {fold(alias) for alias in [*(concept.get("aliases") or []), *(entry.get("aliases") or [])]}
         if wanted in names:
             return build_concept(concept, entry)
-    return None
+        named.update({item: (concept, entry) for item in names if item})
+    near = near_match(wanted, named)
+    return build_concept(*near) if near is not None else None
 
 
 def concept_names(compiled: dict[str, Any], catalog: dict[str, Any]) -> list[str]:
@@ -471,6 +477,10 @@ def _resolve_field(compiled: dict[str, Any], catalog: dict[str, Any], concept: C
     item = concept.by_name.get(fold(name))
     if item is not None:
         return item, None
+    if "." not in name:
+        near = near_match(name, concept.by_name)
+        if near is not None:
+            return near, None
     for index, char in enumerate(name):
         if char != ".":
             continue

@@ -8,6 +8,7 @@ import {
   ServiceUnavailableException,
 } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import type { ResolvedEntity } from '../domain/semantic-source-mapping.types';
 
 // Thin NestJS client for the merged semantic-model-runtime (P2.11). Single
 // shot per call with the configured deadline; no retries without the caller's
@@ -42,6 +43,9 @@ export interface RuntimeJob {
   progress?: Record<string, unknown>;
   result: Record<string, unknown> | null;
   errorCode: string | null;
+  createdAt?: string;
+  startedAt?: string | null;
+  completedAt?: string | null;
 }
 
 export interface RuntimeValueOrigin {
@@ -55,12 +59,37 @@ export interface RuntimeValueOrigin {
   correctedBy?: string | null;
   originalValue?: unknown;
   correctionSequence?: number | null;
+  /** A value taken from another concept's record: which record, which field, and how it was read. */
+  derivedFrom?: {
+    conceptId?: string | null; entityId?: string | null; label?: string | null; attribute?: string | null;
+    attributes?: string[]; method?: string; rule?: string | null; records?: number | null;
+  };
+  /** A recipe joining several columns or fields: every one it read. */
+  recipeSources?: string[];
 }
 
 export interface RuntimeDataSummary {
   modelId: string;
   draft: { modelVersionId: string; records: number; links: number } | null;
   production: { modelVersionId: string; records: number; links: number } | null;
+}
+
+export interface RuntimeCloneDataCommand {
+  targetModelId: string;
+  targetModelVersionId: string;
+  idMap: { concepts: Record<string, string>; relations: Record<string, string>; mappings: Record<string, string> };
+  /** The clone's own build plan, when the source data is current: the copy then reads as current. */
+  homeWorkspaceId?: string;
+  specHash?: string;
+  specification?: Record<string, unknown>;
+  executionFingerprint?: string;
+}
+
+export interface RuntimeClonedData {
+  copied: boolean;
+  reason?: string;
+  revisionId?: string;
+  counts?: { entities: number; relationships: number; assertions?: number; reviewItems?: number; corrections?: number };
 }
 
 export interface RuntimeCorrection {
@@ -184,7 +213,8 @@ const DOCUMENT_PREVIEW_TIMEOUT_MS = 120_000;
 export interface RuntimeDocumentPreviewRequest {
   actorUserId: string;
   modelId: string;
-  entry: { conceptId: string; conceptLabel?: string; source: Record<string, unknown>; fieldMappings: unknown[]; options?: Record<string, unknown> };
+  /** `unit`: what a row is (a sheet's row, or another concept's record for a derived source). */
+  entry: { conceptId: string; conceptLabel?: string; source: Record<string, unknown>; fieldMappings: unknown[]; options?: Record<string, unknown>; unit?: 'row' | 'record' };
   aiExtraction?: { agentSlug: string; model: string | null; contractVersion: string } | null;
 }
 
@@ -210,6 +240,11 @@ export interface RuntimeDocumentPreview {
   detail?: string;
   fields: Record<string, RuntimeDocumentPreviewField>;
   aiSent?: { documentCharacters: number; longDocument: boolean; blocksSent: number; charactersSent: number } | null;
+  /** Several records per document: each record's values (what is shared, then its own), at most 50. */
+  records?: Array<{ values: Record<string, unknown>; pages?: Record<string, number | null> }>;
+  recordCount?: number;
+  /** Fields found fewer times than there are records. */
+  unevenFields?: string[];
 }
 
 export interface RuntimeDocumentLabelsRequest {
@@ -226,10 +261,57 @@ export interface RuntimeDocumentLabels {
 export interface RuntimeComputedPreviewRequest {
   computed: unknown;
   samples: string[];
+  /** Shapes each sample first (the recipe of the field this one is taken from). */
+  inputRecipe?: unknown;
+  /** A joined input: per sample, the value of each part by "<kind>:<name>". */
+  partSamples?: Array<Record<string, string>>;
+  /** Shapes a part first (a field with its own recipe), by "<kind>:<name>". */
+  partRecipes?: Record<string, unknown>;
 }
 
 export interface RuntimeComputedPreview {
+<<<<<<< HEAD
   results: { input: string; value: string | null; reason: 'found' | 'no_input' | 'no_match' | 'not_transformable' }[];
+=======
+  results: Array<{
+    input: string; value: string | null; reason: 'found' | 'no_input' | 'no_match' | 'not_transformable';
+    /** The value after each step that ran; null where the recipe stopped. */
+    steps?: Array<{ step: 'join' | 'cut' | 'keep' | 'pattern' | 'transform'; value: string | null }>;
+  }>;
+}
+
+/** Sheet rows read as a run reads them: per row, the values and how each field was read. */
+export interface RuntimeShapedSheetRows {
+  /** With `expand`: one row per item, saying which item of its row it is. */
+  rows: Array<{ rowNumber?: number; values: Record<string, unknown>; fields: NonNullable<ResolvedEntity['provenance']['fields']>; item?: number; itemText?: string }>;
+  warnings: string[];
+  itemsTruncated?: boolean;
+}
+
+export interface RuntimeSheetPreviewRequest {
+  modelId: string;
+  /** `unit`: what a row is (a sheet's row, or another concept's record for a derived source). */
+  entry: { conceptId: string; conceptLabel?: string; source: Record<string, unknown>; fieldMappings: unknown[]; options?: Record<string, unknown>; unit?: 'row' | 'record' };
+  rows: Array<{ rowNumber: number; values: Record<string, unknown> }>;
+  aiExtraction?: { agentSlug: string; model: string | null; contractVersion: string } | null;
+  /** A derived source expanding a field, or a sheet expanding a column: each row is read once per item. */
+  expand?: Record<string, unknown>;
+}
+
+/** How each field of a few sheet rows was read: as is, out of its cell (rules, AI) or by its recipe, or why not. */
+export interface RuntimeSheetPreview {
+  rows: Array<{
+    rowNumber: number;
+    fields: Record<string, Record<string, unknown> & { method: string; reason: string; column?: string; span?: { start: number; end: number } }>;
+    /** With `expand`: which item of the row this reading is, and the item as text. */
+    item?: number;
+    itemText?: string;
+  }>;
+  ai: { aiRows: number; aiCalls: number; aiSkippedRows: number; aiFailedRows: number };
+  /** With `expand`: the `@item…` fields the items offer, and whether some items were not read. */
+  itemFields?: string[];
+  itemsTruncated?: boolean;
+>>>>>>> semantic-ux/phase-1
 }
 
 // ── Graph search (records of a bound data revision, found by meaning, then followed along real links) ──
@@ -266,9 +348,24 @@ export interface RuntimeGraphSearchSeed {
   keyFields: Record<string, unknown>;
   snippet: string;
   matchClass: 'exact' | 'lexical' | 'vector' | 'hybrid';
+  /** Where the best matches were: the record's own search text, or a passage of a long field. */
+  matchedIn?: 'record' | 'passage';
+  /** Best matching passages of long fields (up to 2), quoted around the words of the query. */
+  passages?: RuntimeGraphSearchPassage[];
   rank: number;
   diagnostics: Record<string, unknown>;
   provenance: RuntimeRecordProvenance[];
+}
+
+export interface RuntimeGraphSearchPassage {
+  fieldKey: string;
+  /** Readable field name. */
+  field: string;
+  /** Offsets of the whole passage in the field value. */
+  start: number;
+  end: number;
+  /** About 400 characters of the passage around the match. */
+  text: string;
 }
 
 export interface RuntimeGraphSearchResult {
@@ -283,7 +380,13 @@ export interface RuntimeGraphSearchResult {
   concepts: { conceptId: string; key: string; label: string }[];
   unknownConcepts: string[];
   seeds: RuntimeGraphSearchSeed[];
-  coverage: { expectedCount: number; indexedCount: number; exactOnlyCount: number };
+  hasMore?: boolean;
+  hiddenRecords?: number;
+  notes?: string[];
+  coverage: {
+    expectedCount: number; indexedCount: number; exactOnlyCount: number;
+    passageCount?: number; passageIndexedCount?: number; passageTruncatedCount?: number;
+  };
   timings: { embedMs: number; seedMs: number };
 }
 
@@ -583,6 +686,50 @@ export class SemanticRuntimeClientService {
     return await res.json() as RuntimeDocumentPreview;
   }
 
+  /** Read a few sheet rows' fields as a run would; AI can take a while, so this waits as long as a document preview. */
+  async previewSheetFields(body: RuntimeSheetPreviewRequest): Promise<RuntimeSheetPreview> {
+    const base = this.requireRuntime();
+    let res: Response;
+    try {
+      res = await fetch(`${base}/v1/semantic-model-population/cell-preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Semantic-Service-Key': this.config.runtimeServiceKey },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(DOCUMENT_PREVIEW_TIMEOUT_MS),
+      });
+    } catch {
+      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    }
+    if (res.status === 422) {
+      const detail = this.errorDetail({ data: await this.readErrorPayload(res) });
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, detail || 'These reading rules cannot be used');
+    }
+    if (!res.ok) throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    return await res.json() as RuntimeSheetPreview;
+  }
+
+  /** A sheet's sample rows with its fields read as a run reads them (no AI), for the data preview. */
+  async shapeSheetRows(body: { rows: Record<string, unknown>[]; fieldMappings: unknown[]; expand?: Record<string, unknown> }): Promise<RuntimeShapedSheetRows> {
+    const base = this.requireRuntime();
+    let res: Response;
+    try {
+      res = await fetch(`${base}/v1/semantic-model-population/sheet-rows`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Semantic-Service-Key': this.config.runtimeServiceKey },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(this.config.runtimeRequestTimeoutMs),
+      });
+    } catch {
+      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    }
+    if (res.status === 422) {
+      const detail = this.errorDetail({ data: await this.readErrorPayload(res) });
+      throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, detail || 'This mapping cannot be previewed');
+    }
+    if (!res.ok) throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    return await res.json() as RuntimeShapedSheetRows;
+  }
+
   async previewComputedField(body: RuntimeComputedPreviewRequest): Promise<RuntimeComputedPreview> {
     const base = this.requireRuntime();
     let res: Response;
@@ -663,6 +810,65 @@ export class SemanticRuntimeClientService {
     });
   }
 
+  /**
+   * Delete everything the runtime holds for a model (data, review items, search index, jobs,
+   * specifications, graphs). Idempotent. A job still running for the model comes back as a 409.
+   * Returns false when no runtime is configured at all: then it holds nothing for the model.
+   */
+  async deleteModel(modelId: string, actorUserId: string): Promise<boolean> {
+    if (!this.config.runtimeEnabled) return false;
+    const base = this.requireWrites();
+    let res: Response;
+    try {
+      res = await fetch(`${base}/v1/semantic-model-population/models/${encodeURIComponent(modelId)}`, {
+        method: 'DELETE',
+        headers: { 'X-Semantic-Service-Key': this.config.runtimeServiceKey, 'X-Actor-User-Id': actorUserId },
+        signal: AbortSignal.timeout(this.config.runtimeRequestTimeoutMs),
+      });
+    } catch {
+      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    }
+    if (res.ok) return true;
+    if (res.status === 409) {
+      throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT,
+        'A build or index job is still running for this model. Wait for it to finish or cancel it, then delete again.');
+    }
+    throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
+      'The model data could not be deleted from the semantic runtime; nothing was deleted, try again.');
+  }
+
+  /**
+   * Copy the source model's draft data into a fresh clone (ids remapped by the caller). The
+   * runtime projects the graph and requests the search index. A job running on the source comes
+   * back as a 409. Returns null when no runtime is configured. Copies can be large, so the
+   * deadline is longer than for ordinary calls.
+   */
+  async cloneModelData(sourceModelId: string, command: RuntimeCloneDataCommand, actorUserId: string): Promise<RuntimeClonedData | null> {
+    if (!this.config.runtimeEnabled) return null;
+    const base = this.requireWrites();
+    let res: Response;
+    try {
+      res = await fetch(`${base}/v1/semantic-model-population/models/${encodeURIComponent(sourceModelId)}/clone-data`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Semantic-Service-Key': this.config.runtimeServiceKey,
+          'X-Actor-User-Id': actorUserId,
+        },
+        body: JSON.stringify(command),
+        signal: AbortSignal.timeout(Math.max(this.config.runtimeRequestTimeoutMs, 300_000)),
+      });
+    } catch {
+      throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'Semantic runtime request failed');
+    }
+    if (res.ok) return await res.json() as RuntimeClonedData;
+    if (res.status === 409) {
+      throw new ConflictException(ErrorCode.SEMANTIC_MODEL_REVISION_CONFLICT,
+        'A build or index job is running on this model. Wait for it to finish, then copy it again with its data.');
+    }
+    throw new ServiceUnavailableException(ErrorCode.SEMANTIC_MODEL_UNAVAILABLE, 'The model data could not be copied.');
+  }
+
   async requestDatasourceDiscovery(
     command: RuntimeDiscoveryCommand,
     idempotencyKey: string,
@@ -677,6 +883,13 @@ export class SemanticRuntimeClientService {
       `/v1/semantic-model-jobs/${encodeURIComponent(jobId)}`,
       actorUserId,
     );
+  }
+
+  /** The actor's latest runs for the model, newest first. */
+  async listJobs(modelId: string, actorUserId: string, limit = 20, jobType = 'population.run'): Promise<RuntimeJob[]> {
+    const params = new URLSearchParams({ modelId, jobType, limit: String(limit) });
+    const { items } = await this.get<{ items: RuntimeJob[] }>(`/v1/semantic-model-jobs?${params}`, actorUserId);
+    return items;
   }
 
   /** The actor's run for the model that has not ended yet, if any. */

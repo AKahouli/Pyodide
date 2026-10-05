@@ -51,7 +51,7 @@ async def test_registers_the_design_tools_with_the_versioned_envelope():
         "apply_model_changes", "list_model_changes", "undo_model_change",
         "list_workspaces", "list_workspace_files", "profile_spreadsheet", "map_spreadsheet", "map_documents", "remove_source",
         "run_data_update", "get_run_status", "stop_data_update", "search_records", "publish_semantic_model", "suggest_sources",
-        "find_records", "get_related_records", "describe_model", "query_records",
+        "find_records", "get_related_records", "describe_model", "query_records", "delete_semantic_model", "clone_semantic_model",
     }
     for tool in tools:
         assert tool.outputSchema["properties"]["schemaVersion"]["const"] == "semantic_model.mcp.v1"
@@ -60,6 +60,7 @@ async def test_registers_the_design_tools_with_the_versioned_envelope():
     hints = {tool.name: tool.annotations for tool in tools}
     assert hints["get_semantic_model"].readOnlyHint is True
     assert hints["publish_semantic_model"].destructiveHint is True
+    assert hints["delete_semantic_model"].destructiveHint is True
     assert hints["find_records"].readOnlyHint is True
     assert hints["get_related_records"].readOnlyHint is True
     assert hints["describe_model"].readOnlyHint is True
@@ -208,7 +209,7 @@ async def test_find_records_searches_the_published_data_by_default(monkeypatch, 
     assert result["ok"] is True and result["meta"]["modelName"] == "Billing"
     assert backend.calls == [
         ("POST", "/api/v1/internal/semantic-model-assistant/models/Billing/graph-search", "user-1",
-         {"query": "Acme contracts", "concepts": ["Contract"], "data": "published", "limit": 10}),
+         {"query": "Acme contracts", "concepts": ["Contract"], "data": "published"}),
         ("POST", "/api/v1/internal/semantic-model-assistant/models/Billing/graph-search", "user-1",
          {"query": "acme", "data": "draft", "limit": 3}),
     ]
@@ -221,7 +222,7 @@ async def test_find_records_refuses_bad_input_without_calling_the_backend(monkey
     async with Client(mcp) as client:
         empty = result_dict(await client.call_tool("find_records", {"model_id": "m", "query": "  "}))
         data = result_dict(await client.call_tool("find_records", {"model_id": "m", "query": "x", "data": "production"}))
-        limit = result_dict(await client.call_tool("find_records", {"model_id": "m", "query": "x", "limit": 26}))
+        limit = result_dict(await client.call_tool("find_records", {"model_id": "m", "query": "x", "limit": 101}))
     assert empty["ok"] is False and "query" in empty["error"]["message"]
     assert data["ok"] is False and "published, draft" in data["error"]["message"]
     assert limit["ok"] is False and "limit" in limit["error"]["message"]
@@ -271,6 +272,7 @@ async def test_record_search_tools_tell_the_agent_how_to_read_results():
     related = tools["get_related_records"].description
     assert "NOT documents" in find and "index_not_ready" in find and "not_represented" in find and "Never infer" in find
     assert "get_related_records" in find
+    assert "passages" in find and "query_records" in find and "evidence" in find
     assert "NOT because it matched" in related and "truncated" in related and "find_records" in related and "Never infer" in related
 
 
@@ -350,3 +352,24 @@ async def test_data_tools_tell_the_agent_when_to_use_them_and_how_to_report():
     assert "first" in describe and "type" in describe and "inData" in describe
     assert "describe_model first" in server.INSTRUCTIONS and "query_records" in server.INSTRUCTIONS
     assert "Never invent" in server.INSTRUCTIONS and "cite the records" in server.INSTRUCTIONS
+
+
+@pytest.mark.asyncio
+async def test_delete_semantic_model_passes_the_confirmed_name(monkeypatch, actor):
+    backend = Recorder({"deleted": True})
+    monkeypatch.setattr(server, "backend", lambda: backend)
+    async with Client(mcp) as client:
+        response = await client.call_tool("delete_semantic_model", {"model_id": "m/1", "confirm_name": "Billing models"})
+    assert result_dict(response)["ok"] is True
+    assert backend.calls == [("DELETE", "/api/v1/internal/semantic-model-assistant/models/m%2F1?confirmName=Billing+models", "user-1", None)]
+
+
+@pytest.mark.asyncio
+async def test_clone_semantic_model_sends_the_include_options(monkeypatch, actor):
+    backend = Recorder({"modelId": "copy-1"})
+    monkeypatch.setattr(server, "backend", lambda: backend)
+    async with Client(mcp) as client:
+        response = await client.call_tool("clone_semantic_model", {"model_id": "m/1", "include_data": True})
+    assert result_dict(response)["ok"] is True
+    assert backend.calls == [("POST", "/api/v1/internal/semantic-model-assistant/models/m%2F1/clone", "user-1",
+                              {"includeSources": True, "includeData": True, "includeShares": False})]

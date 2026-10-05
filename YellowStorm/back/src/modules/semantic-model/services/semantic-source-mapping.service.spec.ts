@@ -4,8 +4,9 @@ import {
   normalizeIdentityValue,
   resolveSheetEntities,
   suggestFieldMappings,
+  type SourceFieldMapping,
 } from '../domain/semantic-source-mapping.types';
-import { SemanticSourceMappingService } from './semantic-source-mapping.service';
+import { SemanticSourceMappingService, recipeLoop } from './semantic-source-mapping.service';
 
 describe('semantic source mapping domain', () => {
   describe('normalizeIdentityValue / identityKeyOf', () => {
@@ -44,7 +45,36 @@ describe('semantic source mapping domain', () => {
     });
   });
 
+  describe('recipeLoop', () => {
+    const recipe = (...fields: string[]) => ({ input: { kind: 'join' as const, parts: fields.map((name) => ({ kind: 'field' as const, name })) }, method: 'whole' as const });
+    it('lets a field read another field taken from fields, and finds a loop', () => {
+      const chain = [
+        { sourceField: null, targetAttribute: 'full', mode: 'computed' as const, computed: recipe('first', 'last') },
+        { sourceField: null, targetAttribute: 'label', mode: 'computed' as const, computed: recipe('full', 'city') },
+      ];
+      expect(recipeLoop(chain as never)).toBeNull();
+      const loop = [
+        { sourceField: null, targetAttribute: 'a', mode: 'computed' as const, computed: recipe('b', 'x') },
+        { sourceField: null, targetAttribute: 'b', mode: 'computed' as const, computed: recipe('a', 'y') },
+      ];
+      expect(recipeLoop(loop as never)).toEqual(['a', 'b', 'a']);
+    });
+  });
+
   describe('resolveSheetEntities', () => {
+    it('uses the rows the runtime already read, recipes included, for values and keys', () => {
+      const shaped = [
+        { values: { id: 'C001', name: 'Sony Europe' }, fields: { name: { method: 'direct_mapping' as const, sources: ['legal_name', 'suffix'] } } },
+        { values: { id: 'c001', name: 'again' }, fields: { name: { method: 'direct_mapping' as const } } },
+      ];
+      const { entities, stats } = resolveSheetEntities([{ customer_id: 'x' }, { customer_id: 'y' }],
+        [{ sourceField: 'customer_id', targetAttribute: 'id', mode: 'direct' as const }], ['id'], 50, shaped);
+      expect(entities).toHaveLength(1);
+      expect(entities[0].values).toEqual({ id: 'C001', name: 'Sony Europe' });
+      expect(entities[0].provenance.fields?.name).toEqual({ method: 'direct_mapping', sources: ['legal_name', 'suffix'] });
+      expect(stats.duplicateKeysSkipped).toBe(1);
+    });
+
     const mappings = [
       { sourceField: 'customer_id', targetAttribute: 'id', mode: 'direct' as const },
       { sourceField: 'legal_name', targetAttribute: 'name', mode: 'direct' as const },
@@ -179,6 +209,54 @@ describe('SemanticSourceMappingService boundaries', () => {
     await expect(service.createWorkspace('user-1', 'model-1', { ...dto, folderIds: ['a'] } as never)).rejects.toThrow('not a folder');
   });
 
+  it('points an existing mapping at another file in place, keeping its id, and refuses one the concept already reads', async () => {
+    const { service, database, models, documents } = buildService('text/csv');
+    documents.findById.mockResolvedValue({ id: 'sheet-2', workspaceId: 'workspace-1', mimeType: 'text/csv', originalName: 'b.csv', size: 4, updatedAt: 'now' });
+    database.query.mockImplementation(async (sql: string) => sql.includes('FROM semantic_model.node_types')
+      ? { rows: [{ label: 'Contract', attributes: [{ key: 'number', label: 'Number', type: 'text' }] }] }
+      : { rows: [{ ok: 1 }] });
+    const client = { query: jest.fn(async (_sql: string, _params?: unknown[]) => ({ rows: [] as unknown[], rowCount: 1 })) };
+    Object.assign(database, { transaction: jest.fn(async (work: (value: unknown) => unknown) => work(client)) });
+    Object.assign(models, { advanceRevision: jest.fn().mockResolvedValue(4), audit: jest.fn() });
+    const dto = { expectedRevision: 3, conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'sheet-2', sheetName: 'b',
+      mappingId: '00000000-0000-4000-8000-000000000009', fieldMappings: [{ sourceField: 'num', targetAttribute: 'number', mode: 'direct' }] };
+    await expect(service.create('user-1', 'model-1', dto as never)).resolves.toEqual(expect.objectContaining({ revision: 4 }));
+    const update = client.query.mock.calls.find(([sql]) => String(sql).includes('UPDATE semantic_model.source_mappings')) as unknown as [string, unknown[]];
+    expect(update[0]).toContain("scope='document'");
+    expect(update[1].slice(0, 7)).toEqual(['00000000-0000-4000-8000-000000000009', 'model-1', 'concept-1', 'workspace-1', 'sheet-2', 'b', 'csv']);
+    expect(client.query.mock.calls.some(([sql]) => String(sql).includes('INSERT INTO semantic_model.source_mappings'))).toBe(false);
+
+    client.query.mockImplementation(async (sql: string) => ({ rows: sql.includes('SELECT 1') ? [{ ok: 1 }] : [], rowCount: 1 }));
+    await expect(service.create('user-1', 'model-1', dto as never)).rejects.toThrow('already has a source reading this file');
+  });
+
+  it('saves a sheet that makes several records per row, and refuses an item read without it or on a document', async () => {
+    const { service, database, models, documents } = buildService('text/csv');
+    documents.findById.mockResolvedValue({ id: 'sheet-2', workspaceId: 'workspace-1', mimeType: 'text/csv', originalName: 'b.csv', size: 4, updatedAt: 'now' });
+    database.query.mockImplementation(async (sql: string) => sql.includes('FROM semantic_model.node_types')
+      ? { rows: [{ label: 'Contact', attributes: [{ key: 'address', label: 'Address', type: 'text' }] }] }
+      : { rows: [{ ok: 1 }] });
+    const client = { query: jest.fn(async (_sql: string, _params?: unknown[]) => ({ rows: [] as unknown[], rowCount: 1 })) };
+    Object.assign(database, { transaction: jest.fn(async (work: (value: unknown) => unknown) => work(client)) });
+    Object.assign(models, { advanceRevision: jest.fn().mockResolvedValue(4), audit: jest.fn() });
+    const dto = { expectedRevision: 3, conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'sheet-2', sheetName: 'b',
+      fieldMappings: [{ sourceField: '@item', targetAttribute: 'address', mode: 'direct' }],
+      expand: { field: 'to', split: 'emails', delimiters: [';'], path: 'ignored' } };
+    await service.create('user-1', 'model-1', dto as never);
+    const insert = client.query.mock.calls.find(([sql]) => String(sql).includes('INSERT INTO semantic_model.source_mappings')) as unknown as [string, unknown[]];
+    expect(insert[0]).toContain('expand=EXCLUDED.expand');
+    // Only what its split uses is kept.
+    expect(JSON.parse(insert[1][10] as string)).toEqual({ field: 'to', split: 'emails' });
+
+    await expect(service.create('user-1', 'model-1', { ...dto, expand: undefined } as never)).rejects.toThrow('does not make several records per row');
+    await expect(service.create('user-1', 'model-1', { ...dto, expand: { field: 'to', split: 'auto', relationId: '00000000-0000-4000-8000-000000000001' } } as never))
+      .rejects.toThrow('Only a spreadsheet source');
+    expect(() => SemanticSourceMappingService.assertExpand('document', [], { field: 'to', split: 'auto' })).toThrow('Only a spreadsheet source');
+    // A recipe reading an item needs it too.
+    expect(() => SemanticSourceMappingService.assertExpand('csv', [{ targetAttribute: 'address', mode: 'computed',
+      computed: { input: { kind: 'column', name: '@item.email' }, method: 'whole' } } as never], null)).toThrow('reads an item');
+  });
+
   it('keeps where source boxes sit on the canvas, for editors only, without touching the model revision', async () => {
     const { service, database, models } = buildService();
     database.query.mockResolvedValue({ rows: [] });
@@ -279,6 +357,34 @@ describe('SemanticSourceMappingService boundaries', () => {
     expect(result.fields.title.rules.reason).toBe('label_not_found');
   });
 
+  it('previews a document making several records by rules: one entity per record, the switch sent without AI', async () => {
+    const database = { query: jest.fn()
+      .mockResolvedValueOnce({ rows: [{}] })
+      .mockResolvedValueOnce({ rows: [{ label: 'Amendment', attributes: [
+        { key: 'contract', label: 'Contract', type: 'text' }, { key: 'number', label: 'Number', type: 'text' }] }] }) };
+    const models = { requireActiveRole: jest.fn().mockResolvedValue({ id: 'model-1', currentDraftVersionId: 'version-1' }) };
+    const documents = { findById: jest.fn().mockResolvedValue({ id: 'document-1', mimeType: 'application/pdf', originalName: 'a.pdf', size: 10, indexingStatus: 'ready' }) };
+    const runtime = { previewDocumentFields: jest.fn().mockResolvedValue({ status: 'read', aiSent: null,
+      fields: { contract: { method: 'rules', reason: 'found', value: 'CNT-7' }, number: { method: 'rules', reason: 'found', value: '1', matches: 2 } },
+      records: [{ values: { contract: 'CNT-7', number: '1' } }, { values: { contract: 'CNT-7', number: '2' } }], recordCount: 2, unevenFields: ['date'] }) };
+    const service = new SemanticSourceMappingService(database as never, models as never, documents as never,
+      runtime as never, {} as never, undefined, undefined, undefined);
+
+    const result = await service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
+      fieldMappings: [
+        { sourceField: 'Contract', targetAttribute: 'contract', mode: 'extract' },
+        { sourceField: 'Number', targetAttribute: 'number', mode: 'extract' }],
+      identityFields: ['contract', 'number'], aiSettings: { manyRecords: true, maxBlocks: 9 },
+    }) as any;
+
+    expect(runtime.previewDocumentFields.mock.calls[0][0].entry.options).toEqual({ manyRecords: true });
+    expect(result.entities.map((entity: any) => entity.entityKey)).toEqual(['cnt-7|1', 'cnt-7|2']);
+    expect(result.entities[1].provenance.rowNumber).toBe(2);
+    expect(result.stats.resolvedEntities).toBe(2);
+    expect(result.warnings.join(' ')).toContain('date');
+  });
+
   it('tells the preview AI the field definition, or the attribute description when the field has none', async () => {
     const database = { query: jest.fn()
       .mockResolvedValueOnce({ rows: [{}] })
@@ -365,7 +471,104 @@ describe('SemanticSourceMappingService boundaries', () => {
     await expect(csv.service.preview('user-1', 'model-1', {
       conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1', assetKind: 'csv', sheetName: 'CSV',
       fieldMappings: [computedFrom('id')], identityFields: [],
-    })).rejects.toThrow('computed mappings are not supported');
+    })).rejects.toThrow('transformed field reads a column');
+  });
+
+  it('accepts a transformed spreadsheet field and rejects one misplaced or in a loop', async () => {
+    const csv = buildService('text/csv');
+    csv.database.query.mockResolvedValue({ rows: [{ label: 'Customer', attributes: [{ key: 'id' }, { key: 'name' }] }] });
+    const preview = (fieldMappings: SourceFieldMapping[]) => csv.service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1', assetKind: 'csv', sheetName: 'CSV',
+      fieldMappings, identityFields: [],
+    });
+    const fromColumn = { input: { kind: 'column' as const, name: 'ref' }, method: 'split' as const, delimiter: '-', part: 2 };
+    const fromField = (name: string) => ({ input: { kind: 'field' as const, name }, method: 'whole' as const, transform: 'upper' as const });
+    const id = { sourceField: 'id', targetAttribute: 'id', mode: 'direct' as const, computed: fromColumn };
+    // Past the checks: a recipe on a column, and one on a field read from a column, reach the runtime preview.
+    await preview([id, { sourceField: 'name', targetAttribute: 'name', mode: 'direct', computed: fromField('id') }]);
+    expect(csv.runtime.requestDatasourceDiscovery).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(csv.runtime.requestDatasourceDiscovery.mock.calls[0][0])).toContain('"kind":"column"');
+    await expect(preview([{ sourceField: null, targetAttribute: 'id', mode: 'constant', constantValue: 'x', computed: fromColumn }]))
+      .rejects.toThrow('only supported for fields read from a column');
+    await expect(preview([id, { sourceField: 'name', targetAttribute: 'name', mode: 'direct', computed: fromField('name') }]))
+      .rejects.toThrow('transformed field reads a column');
+    await expect(preview([{ ...id, computed: fromField('name') }, { sourceField: 'name', targetAttribute: 'name', mode: 'direct', computed: fromField('id') }]))
+      .rejects.toThrow('read each other in a loop: id → name → id');
+    await expect(preview([id, { sourceField: 'name', targetAttribute: 'name', mode: 'direct', computed: fromField('gone') }]))
+      .rejects.toThrow('transformed field reads a column');
+    const pdf = buildService();
+    pdf.database.query.mockResolvedValue({ rows: [{}] });
+    await expect(pdf.service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
+      fieldMappings: [{ sourceField: null, targetAttribute: 'code', mode: 'computed', computed: fromColumn }], identityFields: [],
+    })).rejects.toThrow('non-computed field');
+  });
+
+  it('lets a sheet field be read out of its cell like a document field, and keeps old sheet mappings valid', async () => {
+    const csv = buildService('text/csv');
+    csv.database.query.mockResolvedValue({ rows: [{ label: 'Message', attributes: [{ key: 'id' }, { key: 'reference', label: 'Référence' }, { key: 'code' }] }] });
+    const preview = (fieldMappings: SourceFieldMapping[]) => csv.service.preview('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1', assetKind: 'csv', sheetName: 'CSV',
+      fieldMappings, identityFields: ['id'],
+    });
+    const id = { sourceField: 'id', targetAttribute: 'id', mode: 'direct' as const };
+    // An old mapping (columns read as they are) passes and reaches the runtime unchanged.
+    await preview([id]);
+    expect(csv.runtime.requestDatasourceDiscovery.mock.calls[0][0].payload.mappingPreview.fieldMappings).toEqual([id]);
+    const reference = { sourceField: 'corps', targetAttribute: 'reference', mode: 'extract' as const, extractionStrategy: 'rules_then_ai' as const,
+      rules: { labels: ['Réf'], location: 'same_line' as const }, semanticDefinition: 'The order reference' };
+    const code = { sourceField: null, targetAttribute: 'code', mode: 'computed' as const,
+      computed: { input: { kind: 'field' as const, name: 'reference' }, method: 'whole' as const, transform: 'upper' as const } };
+    await preview([id, reference, code]);
+    const sent = csv.runtime.requestDatasourceDiscovery.mock.calls[1][0].payload.mappingPreview.fieldMappings;
+    // The field's label is what its rules look for by default, as for a document.
+    expect(sent[1]).toEqual({ ...reference, label: 'Référence' });
+    expect(sent[2]).toEqual(code);
+    await expect(preview([id, { ...reference, sourceField: null }])).rejects.toThrow('choose the column');
+    await expect(preview([id, { ...reference, rules: { location: 'pages', pages: { from: 1 } } }])).rejects.toThrow('no pages, headings or tables');
+    await expect(preview([id, { ...reference, rules: { firstPageOnly: true } }])).rejects.toThrow('no pages, headings or tables');
+    await expect(preview([id, { ...code, computed: undefined }])).rejects.toThrow('needs a recipe');
+    await expect(preview([id, { ...id, targetAttribute: 'code', extractionStrategy: 'ai' }])).rejects.toThrow('only supported for extracted fields');
+    await expect(preview([id, { sourceField: null, targetAttribute: 'code', mode: 'metadata' }])).rejects.toThrow('metadata mappings are not supported');
+  });
+
+  it('reads picked sheet rows through the runtime with what the AI is told', async () => {
+    const database = { query: jest.fn().mockResolvedValue({ rows: [{ label: 'Message', attributes: [
+      { key: 'id', label: 'Id' }, { key: 'reference', label: 'Référence', type: 'text', description: 'Order reference' }] }] }) };
+    const models = { requireActiveRole: jest.fn().mockResolvedValue({ id: 'model-1', currentDraftVersionId: 'version-1' }) };
+    const documents = { findById: jest.fn().mockResolvedValue({ id: 'document-1', mimeType: 'application/zip', originalName: 'mails.zip' }) };
+    const runtime = { previewSheetFields: jest.fn().mockResolvedValue({ rows: [], ai: { aiRows: 1, aiCalls: 1, aiSkippedRows: 0, aiFailedRows: 0 } }) };
+    const agent = { resolveAgent: jest.fn().mockResolvedValue({ slug: 'extractor', llmModel: 'm' }) };
+    const settings = { getDefaults: jest.fn().mockResolvedValue({ configured: { maxCharacters: 9000 } }) };
+    const service = new SemanticSourceMappingService(database as never, models as never, documents as never, runtime as never, {} as never,
+      undefined, agent as never, settings as never);
+    const reference = { sourceField: 'corps', targetAttribute: 'reference', mode: 'extract' as const, extractionStrategy: 'ai' as const };
+    await service.previewSheetFields('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1',
+      fieldMappings: [{ sourceField: 'id', targetAttribute: 'id', mode: 'direct' }, reference, { sourceField: 'x', targetAttribute: '', mode: 'ignore' }],
+      rows: [{ rowNumber: 2, values: { id: 'M1', corps: 'Réf: A-1' } }],
+    });
+    const request = runtime.previewSheetFields.mock.calls[0][0];
+    expect(request.entry.fieldMappings).toEqual([{ sourceField: 'id', targetAttribute: 'id', mode: 'direct' },
+      { ...reference, label: 'Référence', description: 'Order reference', valueType: 'text' }]);
+    expect(request.entry.options.aiSettings.maxCharacters).toBe(9000);
+    expect(request.rows).toEqual([{ rowNumber: 2, values: { id: 'M1', corps: 'Réf: A-1' } }]);
+    expect(request.aiExtraction).toMatchObject({ agentSlug: 'extractor', model: 'm' });
+    const pdf = buildService();
+    pdf.database.query.mockResolvedValue({ rows: [{}] });
+    await expect(pdf.service.previewSheetFields('user-1', 'model-1', {
+      conceptId: 'concept-1', workspaceId: 'workspace-1', documentId: 'document-1', fieldMappings: [], rows: [{ rowNumber: 1, values: {} }],
+    })).rejects.toThrow('Only spreadsheet');
+  });
+
+  it('forwards the input field recipe to the computed preview', async () => {
+    const models = { requireActiveRole: jest.fn().mockResolvedValue({ id: 'model-1' }) };
+    const runtime = { previewComputedField: jest.fn().mockResolvedValue({ results: [] }) };
+    const service = new SemanticSourceMappingService({} as never, models as never, {} as never, runtime as never, {} as never);
+    const inputRecipe = { input: { kind: 'column' as const, name: 'ref' }, method: 'whole' as const, transform: 'trim' as const };
+    const dto = { computed: { input: { kind: 'field' as const, name: 'id' }, method: 'whole' as const }, samples: [' a '], inputRecipe };
+    await service.previewComputed('user-1', 'model-1', dto);
+    expect(runtime.previewComputedField).toHaveBeenCalledWith(dto);
   });
 
   it('reads document labels from the linked workspace documents, reauthorized by the runtime', async () => {

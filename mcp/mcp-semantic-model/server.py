@@ -42,8 +42,9 @@ Answering from a model's data (records stored in the model, not documents):
 - describe_model first when you do not know the model's concepts and fields: it gives each field's key,
   label and type, the relationships, and how many records each concept holds. Never invent a concept or
   a field: use only the names it returns.
-- find_records for "which record is this": a name, a key or a fuzzy description; then get_related_records
-  follows the real links of the records found (with their entityId).
+- find_records for "which record is this": a name, a key or a fuzzy description, or words that may be
+  deep in a long text (an e-mail body); then get_related_records follows the real links of the records
+  found (with their entityId). Its passages quote the matching part of long fields: cite them as evidence.
 - query_records for everything that filters, counts or compares: "all X where...", how many, totals,
   stats per month or per value, dates and amounts compared, records linked to a record matching a field.
   The total and the groups are exact counts over the whole data, not samples.
@@ -64,8 +65,10 @@ mcp = FastMCP("Semantic Model MCP", instructions=INSTRUCTIONS)
 _client: YellowStormSemanticModelClient | None = None
 
 BASE = "/api/v1/internal/semantic-model-assistant"
-# MCP hints for clients that ask before acting: reads change nothing; these two remove or publish.
+# MCP hints for clients that ask before acting (YellowStorm imports them as each tool's safety): reads change
+# nothing, changes create or edit, destructive tools remove or publish.
 READ_ONLY = {"readOnlyHint": True}
+CHANGES = {"readOnlyHint": False, "destructiveHint": False}
 DESTRUCTIVE = {"readOnlyHint": False, "destructiveHint": True}
 
 
@@ -233,10 +236,25 @@ async def list_semantic_models(search: str | None = None) -> SemanticModelMcpRes
     return await call(backend().get(with_query(f"{BASE}/models", search=search), require_acting_user_id()))
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES)
 async def create_semantic_model(name: str, description: str | None = None) -> SemanticModelMcpResultV1:
     """Create a new, empty semantic model owned by the user. Design it next with apply_model_changes. The conversation shows a button that opens it."""
     return await call(backend().post(f"{BASE}/models", require_acting_user_id(), compact({"name": name, "description": description})))
+
+
+@mcp.tool(annotations=CHANGES)
+async def clone_semantic_model(model_id: str, name: str | None = None, include_sources: bool = True,
+                               include_data: bool = False, include_shares: bool = False) -> SemanticModelMcpResultV1:
+    """Copy a model into a new one the user owns (default name "<name> (copy)"). The structure (concepts, fields, relationships, key fields, layout) is always copied.
+    include_sources: source links and extraction rules (default yes). include_data: the data already built, so the copy is usable without a new build (forces the sources). include_shares: the same people keep their access (owner only). Source files are never duplicated. The conversation shows a button that opens the copy."""
+    return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/clone", require_acting_user_id(), compact({
+        "name": name, "includeSources": include_sources, "includeData": include_data, "includeShares": include_shares})))
+
+
+@mcp.tool(annotations=DESTRUCTIVE)
+async def delete_semantic_model(model_id: str, confirm_name: str) -> SemanticModelMcpResultV1:
+    """PERMANENTLY delete a model and all its data (concepts, fields, source links, records, review items, search index, history). Cannot be undone; workspace documents stay. Only the owner can. First ask the user to confirm explicitly, then pass the model's exact name as confirm_name."""
+    return await call(backend().delete(with_query(f"{BASE}/models/{path_id(model_id)}", confirmName=confirm_name), require_acting_user_id()))
 
 
 @mcp.tool(annotations=READ_ONLY)
@@ -251,7 +269,7 @@ async def check_semantic_model(model_id: str) -> SemanticModelMcpResultV1:
     return await call(backend().get(f"{BASE}/models/{path_id(model_id)}/check", require_acting_user_id()))
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES)
 async def apply_model_changes(
     model_id: str,
     concepts: list[dict[str, Any]] | str | None = None,
@@ -288,7 +306,7 @@ async def list_model_changes(model_id: str) -> SemanticModelMcpResultV1:
     return await call(backend().get(f"{BASE}/models/{path_id(model_id)}/changes", require_acting_user_id()))
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES)
 async def undo_model_change(model_id: str, change_id: str | None = None) -> SemanticModelMcpResultV1:
     """Undo an assistant change (the latest one when change_id is omitted): concepts, fields, key fields, relationships and sources go back to how they were."""
     path = f"{BASE}/models/{path_id(model_id)}/changes/{path_id(change_id)}/undo" if change_id else f"{BASE}/models/{path_id(model_id)}/changes/undo"
@@ -311,7 +329,7 @@ async def list_workspace_files(source_workspace_id: str, folder_id: str | None =
     return await call(backend().get(path, require_acting_user_id()))
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES)
 async def suggest_sources(model_id: str, suggestions: list[dict[str, Any]] | str) -> SemanticModelMcpResultV1:
     """Ask the user to choose the source of each concept, WITHOUT connecting anything. The user picks files from a searchable list of all their workspaces and files, takes one of your options (shown with the workspace name and file count), or skips. Options are optional: leave them empty rather than search for sources.
     suggestions: [{"concept": "Contract", "note": "optional", "options": [] or [{"source_workspace_id": "...", "folder_ids": ["..."], "document_ids": ["..."], "sheet_name": "optional", "reason": "why it fits, in a few words"}]}].
@@ -327,14 +345,14 @@ async def suggest_sources(model_id: str, suggestions: list[dict[str, Any]] | str
     return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/source-suggestions", require_acting_user_id(), payload))
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES)
 async def profile_spreadsheet(model_id: str, source_workspace_id: str, document_id: str, sheet_name: str | None = None) -> SemanticModelMcpResultV1:
     """Read a spreadsheet's sheets, columns (type, how filled, how unique) and a few sample rows, to design concepts or map columns. Only for a spreadsheet the user chose or confirmed. Links the workspace to the model if needed."""
     payload = compact({"workspaceId": source_workspace_id, "documentId": document_id, "sheetName": sheet_name})
     return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/sources/profile", require_acting_user_id(), payload))
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES)
 async def map_spreadsheet(
     model_id: str,
     concept: str,
@@ -355,7 +373,7 @@ async def map_spreadsheet(
     return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/sources/spreadsheet", require_acting_user_id(), payload))
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES)
 async def map_documents(
     model_id: str,
     concept: str,
@@ -389,7 +407,7 @@ async def remove_source(model_id: str, source_id: str) -> SemanticModelMcpResult
 # ── Data ────────────────────────────────────────────────────────────────────
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES)
 async def run_data_update(model_id: str) -> SemanticModelMcpResultV1:
     """Read every source again and rebuild the model's records and graph, in the background. Only when the user asked for it. Follow it with get_run_status; stop it with stop_data_update."""
     return await call(backend().post(f"{BASE}/models/{path_id(model_id)}/runs", require_acting_user_id()))
@@ -402,7 +420,7 @@ async def get_run_status(model_id: str, job_id: str | None = None) -> SemanticMo
     return await call(backend().get(path, require_acting_user_id()))
 
 
-@mcp.tool()
+@mcp.tool(annotations=CHANGES)
 async def stop_data_update(model_id: str, job_id: str | None = None) -> SemanticModelMcpResultV1:
     """Stop a data update (the one running now when job_id is omitted) when the user asks. Nothing it read is kept: the data in use stays as it was before the run."""
     path = f"{BASE}/models/{path_id(model_id)}/runs/{path_id(job_id)}/stop" if job_id else f"{BASE}/models/{path_id(model_id)}/runs/stop"
@@ -438,18 +456,20 @@ async def find_records(
     query: str,
     concepts: list[str] | str | None = None,
     data: str = "published",
-    limit: int = 10,
+    limit: int | None = None,
 ) -> SemanticModelMcpResultV1:
     """Find the records of a semantic model that match a question: by exact key or name first, then by words and meaning. Use it first to answer a question from a model's data, then get_related_records with the entityId of the records found. No change is made.
-    The results are records stored in the model (a customer, a contract, an invoice...) with their key fields and a snippet of their fields, NOT documents or document text. match says how a record was found (exact, lexical, vector, hybrid); a vector or hybrid match is a likely candidate, not proof: check its fields.
-    concepts: concept names (or keys) to search in, e.g. ["Contract"]. data: "published" (default, what chat uses) or "draft" (the data being built; only for the model's editors). limit: 1 to 25.
-    Report the result honestly, using notes: status index_not_ready means the search index is still being built and records may be missing; not_represented means the model has no such concept, so the information is not in the model; no_match means no record matches. Never infer a fact that is not in a field of a returned record."""
+    The results are records stored in the model (a customer, a contract, an invoice, an e-mail...) with their key fields and a snippet of their fields, NOT documents. match says how a record was found (exact, lexical, vector, hybrid); a vector or hybrid match is a likely candidate, not proof: check its fields.
+    Long text fields (an e-mail body, a contract text) are searched to their end: a record may come with passages [{field, fieldKey, text}], the excerpts of those fields that match the question (matchedIn "passage" when the match came from them; the snippet is then the best passage). Quote a passage as evidence, naming its record and field; it is an excerpt, so to read the whole field call query_records on the record's concept with a filter on its name (or a key field) and fields=[the fieldKey] (values longer than 1500 characters come back cut).
+    concepts: concept names (or keys) to search in, e.g. ["Contract"]. data: "published" (default, what chat uses) or "draft" (the data being built; only for the model's editors). limit: how many records (default and maximum are set by the administrator: 10 and 25 unless changed); leave it out unless you need more or fewer.
+    Report the result honestly, using notes: status index_not_ready means the search index is still being built and records may be missing; not_represented means the model has no such concept, so the information is not in the model; no_match means no record matches. hasMore=true means more records match than were returned: the list is incomplete. notes say when the index is incomplete or records are hidden from the user: say so in the answer. A concept name that is nearly right (a plural, a typo) is read as the closest concept. Never infer a fact that is not in a field of a returned record."""
     try:
         payload = compact({
             "query": query.strip() if isinstance(query, str) else query,
             "concepts": string_list(concepts, "concepts") or None,
             "data": choice(data, "data", DATA_CHOICES),
-            "limit": bounded(limit, "limit", 1, 25),
+            # The back end applies the administrator's default and caps at their maximum.
+            "limit": bounded(limit, "limit", 1, 100) if limit is not None else None,
         })
     except ValueError as exc:
         return fail(str(exc))

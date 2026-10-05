@@ -747,10 +747,10 @@ class AgentRunner:
                             else "standard"
                         )
 
+                        tool_args = dict(part.function_call.args or {})
                         recorder.record_function_call(
                             func_name, dict(part.function_call.args or {}), tool_category
                         )
-                        tool_args = dict(part.function_call.args or {})
                         presentation = present_tool_call(func_name, tool_args)
                         logger.info(
                             "[TOOL CALL] ADK requested agent_role=%s agent_name=%s agent_id=%s tool_name=%s argument_keys=%s summary=%s",
