@@ -1,3 +1,4 @@
+import { DEFAULT_WORKER_POLICY, isPlatformOrchestration } from './utils/connector-worker-policy';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '../logger';
@@ -83,6 +84,7 @@ export class ConnectorService {
       mcpServerUrl: dto.mcpServerUrl ?? '',
       mcpServerConfig: sanitizedMcpServerConfig,
       dynamicHeaders,
+      workerPolicy: dto.workerPolicy ?? DEFAULT_WORKER_POLICY,
       actions,
       skillIds: dto.referencedSkillIds ?? [],
       isActive: dto.isActive ?? true,
@@ -657,7 +659,8 @@ export class ConnectorService {
     parameterSchema?: Record<string, unknown>;
     outputSchema?: Record<string, unknown>;
     safety?: string;
-    executionKind?: 'leaf' | 'orchestration' | 'unknown';
+    executionKind?: 'inherit' | 'leaf' | 'orchestration' | 'unknown';
+    workerAccess?: 'inherit' | 'allow' | 'block';
     supportsBatch?: boolean;
     supportsIteration?: boolean;
     isEnabled?: boolean;
@@ -678,7 +681,8 @@ export class ConnectorService {
         parameterSchema: action.parameterSchema ?? {},
         outputSchema: action.outputSchema ?? {},
         safety: action.safety ?? 'read',
-        executionKind: action.executionKind ?? 'unknown',
+        executionKind: isPlatformOrchestration(action.key) ? 'orchestration' : action.executionKind ?? 'inherit',
+        workerAccess: action.workerAccess ?? 'inherit',
         supportsBatch: action.supportsBatch ?? false,
         supportsIteration: action.supportsIteration ?? false,
         isEnabled: action.isEnabled ?? true,
@@ -712,6 +716,7 @@ export class ConnectorService {
       mcpTransportType: doc.mcpTransportType,
       mcpServerUrl: doc.mcpServerUrl,
       mcpServerConfig: doc.mcpServerConfig ?? {},
+      workerPolicy: doc.workerPolicy ?? DEFAULT_WORKER_POLICY,
       dynamicHeaders: (doc.dynamicHeaders ?? []).map((h: any) => ({
         headerName: h.headerName,
         source: h.source,
@@ -724,7 +729,8 @@ export class ConnectorService {
         parameterSchema: a.parameterSchema ?? {},
         outputSchema: a.outputSchema ?? {},
         safety: a.safety ?? 'read',
-        executionKind: a.executionKind ?? 'unknown',
+        executionKind: isPlatformOrchestration(a.key) ? 'orchestration' : a.executionKind ?? 'inherit',
+        workerAccess: a.workerAccess ?? 'inherit',
         supportsBatch: a.supportsBatch ?? false,
         supportsIteration: a.supportsIteration ?? false,
         isEnabled: a.isEnabled ?? true,

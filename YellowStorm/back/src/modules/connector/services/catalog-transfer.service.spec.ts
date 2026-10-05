@@ -25,6 +25,7 @@ const connector = {
   mcpTransportType: 'streamable_http',
   mcpServerUrl: 'https://mcp.example.test',
   mcpServerConfig: { timeout: 1000 },
+  workerPolicy: { enabled: false, defaultExecutionKind: 'unknown', agentLaunchEnabled: false },
   dynamicHeaders: [{ headerName: 'X-User-Id', source: 'user_id', enabled: true }],
   actions: [{
     key: 'search',
@@ -33,6 +34,8 @@ const connector = {
     parameterSchema: { type: 'object' },
     outputSchema: { type: 'array' },
     safety: 'read',
+    workerAccess: 'block',
+    executionKind: 'orchestration',
     supportsBatch: true,
     supportsIteration: true,
     isEnabled: true,
@@ -148,6 +151,14 @@ describe('CatalogTransferService export fidelity', () => {
     );
     return service;
   }
+
+  it('preserves restrictive worker policy and action classification through archive parsing', async () => {
+    const service = createService();
+    const result = await service.exportConnectors(ownerId, { selection: 'all', includeSecurity: false } as never);
+    const archive = service.parseArchive(result.buffer);
+    expect(archive.connectors[0].workerPolicy).toEqual(connector.workerPolicy);
+    expect(archive.connectors[0].actions[0]).toMatchObject({ workerAccess: 'block', executionKind: 'orchestration' });
+  });
 
   it('exports all catalog properties and resolves relationships by skill slug', async () => {
     const result = await createService().exportConnectors(ownerId, {

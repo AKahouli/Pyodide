@@ -1,4 +1,5 @@
 import { Inject } from '@nestjs/common';
+import { isDeepStrictEqual } from 'node:util';
 import { and, asc, desc, eq, gt, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
 import { escapeLike } from '@common/postgres/like';
 import type { NodePgDatabase } from 'drizzle-orm/node-postgres';
@@ -63,6 +64,7 @@ function connectorToRow(r: ConnRow, skillIds: string[]): ConnectorRow {
     mcpTransportType: r.mcpTransportType,
     mcpServerUrl: r.mcpServerUrl,
     mcpServerConfig: r.mcpServerConfig ?? {},
+    workerPolicy: r.workerPolicy,
     dynamicHeaders: (r.dynamicHeaders ?? []) as unknown as ConnectorRow["dynamicHeaders"],
     actions: (r.actions ?? []) as unknown as ConnectorRow["actions"],
     skillIds,
@@ -231,12 +233,24 @@ export class PgConnectorStore implements ConnectorStore {
   async update(id: string, patch: Partial<Omit<NewConnectorRow, 'slug' | 'createdBy'>> & { slug?: string }): Promise<ConnectorRow | null> {
     return withTransaction(this.db, async (tx) => {
       const { skillIds, ...columns } = patch;
+      const [before] = await tx.select().from(schema.integrationsConnectors)
+        .where(eq(schema.integrationsConnectors.id, id)).for('update');
+      if (!before) return null;
+      const workerPolicyChanged = (patch.workerPolicy !== undefined && !isDeepStrictEqual(before.workerPolicy, patch.workerPolicy))
+        || (patch.actions !== undefined && !isDeepStrictEqual(before.actions, patch.actions));
       const [row] = await tx
         .update(schema.integrationsConnectors)
         .set({ ...columns, updatedAt: new Date() } as unknown as Partial<typeof schema.integrationsConnectors.$inferInsert>)
         .where(eq(schema.integrationsConnectors.id, id))
         .returning();
       if (!row) return null;
+      if (workerPolicyChanged) {
+        // Fence frozen worker snapshots in the same transaction as the policy edit.
+        const affected = tx.select({ id: schema.agentConnectors.agentId })
+          .from(schema.agentConnectors).where(eq(schema.agentConnectors.connectorId, id));
+        await tx.update(schema.agents).set({ updatedAt: new Date() })
+          .where(inArray(schema.agents.id, affected));
+      }
       if (skillIds) await this.replaceSkills(tx, id, skillIds);
       const skills = await hydrateSkills(tx, [id]);
       return connectorToRow(row, skills.get(id) ?? []);

@@ -19,6 +19,7 @@ export interface ConnectorRow {
   mcpTransportType: string;
   mcpServerUrl: string;
   mcpServerConfig: Record<string, unknown>;
+  workerPolicy?: import('../connector.types').ConnectorWorkerPolicy;
   dynamicHeaders: ConnectorDynamicHeader[];
   actions: ConnectorAction[];
   /** From connector_skills, ordered by position. */
@@ -47,6 +48,7 @@ export interface NewConnectorRow {
   mcpTransportType: string;
   mcpServerUrl: string;
   mcpServerConfig: Record<string, unknown>;
+  workerPolicy?: import('../connector.types').ConnectorWorkerPolicy;
   dynamicHeaders: ConnectorDynamicHeader[];
   actions: ConnectorAction[];
   skillIds: string[];

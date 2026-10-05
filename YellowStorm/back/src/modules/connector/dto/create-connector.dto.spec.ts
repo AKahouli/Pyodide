@@ -18,6 +18,13 @@ describe('Connector hidden visibility DTO', () => {
 });
 
 describe('ConnectorActionDto web citation semantics', () => {
+  it('rejects malformed worker settings at the REST boundary', async () => {
+    const errors = await validate(plainToInstance(UpdateConnectorDto, {
+      workerPolicy: { enabled: 'false', defaultExecutionKind: 'automatic', agentLaunchEnabled: false },
+      actions: [{ key: 'search', label: 'Search', workerAccess: 'any' }],
+    }));
+    expect(errors.map((error) => error.property)).toEqual(expect.arrayContaining(['workerPolicy', 'actions']));
+  });
   it('accepts configured web search semantics', async () => {
     const errors = await validate(plainToInstance(ConnectorActionDto, {
       key: 'search', label: 'Search', resultKind: 'web_search', citationMode: 'text_fragment',

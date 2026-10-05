@@ -541,5 +541,6 @@
         "maxDuration": "Work-group deadline (seconds)"
       }
     }
-  }
+  },
+  "createEdit.fields.workerConnectorSummary": "Worker policy allows {{count}} selected tools. Existing access and Root limits still apply."
 }

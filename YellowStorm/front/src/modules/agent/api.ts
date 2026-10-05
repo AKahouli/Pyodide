@@ -197,6 +197,7 @@ export async function getActiveSkills(): Promise<SkillOption[]> {
 }
 
 export interface ConnectorOption {
+  workerPolicy?: { enabled: boolean; defaultExecutionKind: 'leaf' | 'unknown'; agentLaunchEnabled: boolean };
   id: string;
   name: string;
   description: string;

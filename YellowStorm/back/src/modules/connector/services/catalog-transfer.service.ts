@@ -440,6 +440,7 @@ export class CatalogTransferService {
         connectedAppKey: connector.connectedAppKey ?? '',
         mcpTransportType: connector.mcpTransportType ?? 'streamable_http',
         mcpServerUrl: connector.mcpServerUrl ?? '',
+        ...(connector.workerPolicy ? { workerPolicy: connector.workerPolicy } : {}),
         skillIds: connector.referencedSkillSlugs.map((slug) => skillIds.get(slug)!),
         isActive: connector.isActive ?? true,
       };
@@ -675,6 +676,7 @@ export class CatalogTransferService {
       mcpTransportType: connector.mcpTransportType ?? 'streamable_http',
       mcpServerUrl: connector.mcpServerUrl ?? '',
       mcpServerConfig: protect(connector.mcpServerConfig ?? {}),
+      workerPolicy: connector.workerPolicy ?? { enabled: true, defaultExecutionKind: 'leaf', agentLaunchEnabled: false },
       dynamicHeaders: (connector.dynamicHeaders ?? []).map((header: Record<string, any>) => ({
         headerName: header.headerName,
         source: header.source,
@@ -687,6 +689,8 @@ export class CatalogTransferService {
         parameterSchema: action.parameterSchema ?? {},
         outputSchema: action.outputSchema ?? {},
         safety: action.safety ?? 'read',
+        workerAccess: action.workerAccess ?? 'inherit',
+        executionKind: action.executionKind ?? 'inherit',
         supportsBatch: action.supportsBatch ?? false,
         supportsIteration: action.supportsIteration ?? false,
         isEnabled: action.isEnabled ?? true,
@@ -768,6 +772,19 @@ export class CatalogTransferService {
       .find((slug) => !SLUG_PATTERN.test(slug));
     if (invalidSlug) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, `The archive contains an invalid slug: ${invalidSlug}.`);
+    }
+    for (const connector of archive.connectors) {
+      const policy = connector.workerPolicy;
+      if (policy && (typeof policy.enabled !== 'boolean' || typeof policy.agentLaunchEnabled !== 'boolean'
+        || !['leaf', 'unknown'].includes(policy.defaultExecutionKind))) {
+        throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Invalid connector worker policy.');
+      }
+      for (const action of connector.actions ?? []) {
+        if ((action.workerAccess !== undefined && !['inherit', 'allow', 'block'].includes(action.workerAccess))
+          || (action.executionKind !== undefined && !['inherit', 'leaf', 'orchestration', 'unknown'].includes(action.executionKind))) {
+          throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Invalid connector worker action policy.');
+        }
+      }
     }
     for (const skill of archive.skills) {
       for (const file of skill.files) {

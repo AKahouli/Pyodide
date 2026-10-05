@@ -355,6 +355,8 @@ export interface SkillOption {
 }
 
 export interface ConnectorActionOption {
+  workerAccess?: 'inherit' | 'allow' | 'block';
+  executionKind?: 'inherit' | 'leaf' | 'orchestration' | 'unknown';
   key: string;
   label: string;
   description: string;

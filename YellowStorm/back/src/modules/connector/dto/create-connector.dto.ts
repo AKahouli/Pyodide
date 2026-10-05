@@ -3,6 +3,7 @@ import {
   IsBoolean,
   IsEnum,
   IsObject,
+  IsIn,
   IsOptional,
   IsString,
   Matches,
@@ -28,6 +29,20 @@ export class ConnectorDynamicHeaderDto {
   @IsOptional()
   @IsBoolean()
   enabled?: boolean;
+}
+
+export class ConnectorWorkerPolicyDto {
+  @ApiPropertyOptional({ default: true })
+  @IsBoolean()
+  enabled!: boolean;
+
+  @ApiPropertyOptional({ enum: ['leaf', 'unknown'], default: 'leaf' })
+  @IsIn(['leaf', 'unknown'])
+  defaultExecutionKind!: 'leaf' | 'unknown';
+
+  @ApiPropertyOptional({ default: false })
+  @IsBoolean()
+  agentLaunchEnabled!: boolean;
 }
 
 export class ConnectorActionDto {
@@ -62,10 +77,15 @@ export class ConnectorActionDto {
   @IsString()
   safety?: ConnectorActionSafety;
 
-  @ApiPropertyOptional({ enum: ConnectorActionExecutionKind, default: ConnectorActionExecutionKind.UNKNOWN })
+  @ApiPropertyOptional({ enum: ConnectorActionExecutionKind, default: ConnectorActionExecutionKind.INHERIT })
   @IsOptional()
   @IsEnum(ConnectorActionExecutionKind)
   executionKind?: ConnectorActionExecutionKind;
+
+  @ApiPropertyOptional({ enum: ['inherit', 'allow', 'block'], default: 'inherit' })
+  @IsOptional()
+  @IsIn(['inherit', 'allow', 'block'])
+  workerAccess?: 'inherit' | 'allow' | 'block';
 
   @ApiPropertyOptional({ description: 'Whether the action supports batch mode' })
   @IsOptional()
@@ -99,6 +119,12 @@ export class ConnectorActionDto {
 }
 
 export class CreateConnectorDto {
+  @ApiPropertyOptional({ type: ConnectorWorkerPolicyDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ConnectorWorkerPolicyDto)
+  workerPolicy?: ConnectorWorkerPolicyDto;
+
   @ApiProperty({ description: 'Unique connector slug' })
   @IsString()
   @MaxLength(64)

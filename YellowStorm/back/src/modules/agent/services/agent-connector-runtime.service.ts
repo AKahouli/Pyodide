@@ -1,3 +1,4 @@
+import { workerExecutionKind } from '../../connector/utils/connector-worker-policy';
 import { Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'node:crypto';
@@ -212,7 +213,7 @@ export class AgentConnectorRuntimeService {
             parameter_schema: {},
             parameter_schema_json: JSON.stringify(action.parameterSchema || {}),
             safety: String(action.safety || 'unknown').toLowerCase(),
-            execution_kind: action.executionKind || 'unknown',
+            execution_kind: workerExecutionKind(connector.workerPolicy, action),
             result_kind: action.resultKind || 'generic',
             citation_mode: action.citationMode || 'none',
             result_mapping_json: JSON.stringify(action.resultMapping || {}),

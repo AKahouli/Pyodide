@@ -114,6 +114,7 @@ export const integrationsConnectors = integrationsSchema.table(
     mcpServerUrl: varchar('mcp_server_url', { length: 1024 }).notNull(),
     /** May hold headers/env secrets (parity). */
     mcpServerConfig: jsonb('mcp_server_config').$type<Record<string, unknown>>().notNull().default({}),
+    workerPolicy: jsonb('worker_policy').$type<import('../../connector/connector.types').ConnectorWorkerPolicy>().notNull().default({ enabled: true, defaultExecutionKind: 'leaf', agentLaunchEnabled: false }),
     dynamicHeaders: jsonb('dynamic_headers').$type<Record<string, unknown>[]>().notNull().default([]),
     /** Subdocument _ids preserved inside (plan DDL note). */
     actions: jsonb('actions').$type<Record<string, unknown>[]>().notNull().default([]),

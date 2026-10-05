@@ -541,5 +541,6 @@
         "maxDuration": "Échéance du groupe de travail (secondes)"
       }
     }
-  }
+  },
+  "createEdit.fields.workerConnectorSummary": "La politique autorise {{count}} outils sélectionnés pour les agents délégués. Les droits d’accès et limites du Root restent applicables."
 }

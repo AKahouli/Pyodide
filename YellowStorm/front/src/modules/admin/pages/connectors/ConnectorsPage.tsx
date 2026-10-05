@@ -160,6 +160,7 @@ export function ConnectorsPage() {
           }))
           .filter((row) => row.headerName.length > 0),
         actions: parsedActions,
+        workerPolicy: data.workerPolicy,
         referencedSkillIds: data.referencedSkillIds,
         isActive: data.isActive,
         isHidden: data.isHidden,

@@ -44,7 +44,7 @@ describe('AgentConnectorRuntimeService', () => {
 
     expect(bindings[0].actions).toEqual(expect.arrayContaining([
       expect.objectContaining({ action_key: 'update', safety: 'write', execution_kind: 'leaf' }),
-      expect.objectContaining({ action_key: 'read', safety: 'unknown', execution_kind: 'unknown' }),
+      expect.objectContaining({ action_key: 'read', safety: 'unknown', execution_kind: 'leaf' }),
     ]));
   });
 

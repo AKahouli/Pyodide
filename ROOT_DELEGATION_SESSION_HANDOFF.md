@@ -2,6 +2,14 @@
 
 Date: 2026-10-05
 
+## Latest continuation — connector worker UI defaults qualified
+
+User approved connector-level UI with worker access ON/default tool Allowed. Implemented worker_policy JSONB/migration0047, per-action Inherit/Allow/Block and trusted execution-kind inheritance, large-catalog search/exceptions, bulk adoption for legacy unknown tools, EN/FR/accessibility and agent editor summary. Existing known platform inference/orchestration remains blocked regardless labels; current depth-one launch switch disabled OFF, remote internals not accounted. Transfer restrictions retained; atomic attached-agent timestamp fencing skips no-op saves. Source reviewer/QA fallback PASS; backend/frontend/native/realPG/liveUI checks in docs/vector-connector-worker-policy.md.
+
+User go approved main rollout prerequisites: applied exact0044/45 in serialized TX, preserved inconsistent old Drizzle hashes and appended correct records. Main tables verified/control1/slots30free. Matching service auth configured locally without output; vector restart defaultoff readiness200. Additive0047 applied main/defaultON37 connectors; no watermark advancement past unrelated pending semantic migration. Final no-op build PASS; backend restarted/latest readiness200. Browser reuses Chrome3existingtab817982231, restored access after user retry, live Save/reopen ON+eightAllowed/keyboard/exception/mobilegeometry PASS; viewport restored. Screenshot partial only; no fullvisualclaim. Own live docs remain uncommitted; unrelated malformed proposal edit preserved.
+
+Original remaining: private Root+Guide qualification profiles/separate scope, main enabled native governed/background UI and30-minute observation, restore flags/deactivate new resources; concrete sandboxwrite target outside prior approval. No global background/capacity enablement or new saved profiles/scope applied yet.
+
 ## Latest continuation — restoration, public WAIT and Stop qualified
 
 - User confirmed shared reset was unintentional and authorized restoration. Own governed qualification restored as separate test/helper; concurrent logging work committed by its owner. Preserve unrelated work/index. Runtime waiting fanout input bug reproduced against real agentstore_test and fixed using existing sealed boundBackgroundManifest; commitb293a7a38 contains only fix+regression.

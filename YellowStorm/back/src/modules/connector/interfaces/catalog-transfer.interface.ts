@@ -39,6 +39,7 @@ export interface CatalogConnectorRecord {
   mcpTransportType: string;
   mcpServerUrl: string;
   mcpServerConfig: Record<string, unknown>;
+  workerPolicy?: import('../connector.types').ConnectorWorkerPolicy;
   dynamicHeaders: { headerName: string; source: string; enabled: boolean }[];
   actions: {
     key: string;
@@ -47,6 +48,8 @@ export interface CatalogConnectorRecord {
     parameterSchema: Record<string, unknown>;
     outputSchema: Record<string, unknown>;
     safety: string;
+    workerAccess?: 'inherit' | 'allow' | 'block';
+    executionKind?: import('../connector.types').ConnectorActionExecutionKind;
     supportsBatch: boolean;
     supportsIteration: boolean;
     isEnabled: boolean;
