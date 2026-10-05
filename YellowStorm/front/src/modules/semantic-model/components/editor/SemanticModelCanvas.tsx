@@ -597,7 +597,7 @@ export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerive
       }}
       nodeDragThreshold={5}
       // A click opens the item's details in the side panel, replacing whatever panel was open.
-      onNodeClick={(event,node)=>{if((event.target as Element).closest('.nodrag')||node.id===quickConcept?.id)return;select(node.id,{details:!isDesignerSourceId(node.id)});}}
+      onNodeClick={(event,node)=>{if((event.target as Element).closest('.nodrag')||node.id===quickConcept?.id)return;select(node.id,{details:false});}}
       onNodeDoubleClick={(event,node)=>{if((event.target as Element).closest('.nodrag')||node.id===quickConcept?.id)return;if(isDesignerSourceId(node.id)){const source=flow.sources.find((item)=>item.id===node.id);if(source)onOpenSource?.(source);return;}openDetails(node.id);}}
       onEdgeClick={(_,edge)=>{const feed=flow.feeds.find((item)=>item.id===edge.id);if(feed?.derived){select(null);onOpenDerived?.(feed.derived);return;}if(feed){select(null);const source=flow.sources.find((item)=>item.id===feed.sourceId);if(source)onOpenSource?.(source,feed.mapping);return;}select(edge.id,{details:true});}} onPaneClick={()=>{select(null);onPaneClick?.();}}
       onNodesChange={followDrag}

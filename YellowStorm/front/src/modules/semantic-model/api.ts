@@ -221,9 +221,13 @@ export const semanticModelApi = {
     return unwrap(await apiClient.post<ApiResponse<{ redone: boolean }>>(API_ENDPOINTS.semanticModels.assistantChange(id, changeId, 'redo'), {}, { timeout: 0 }));
   },
   /** A page of one concept's records in the data in use, optionally searched. */
-  async conceptRecords(id: string, conceptId: string, query: { q?: string; limit?: number; offset?: number } = {}): Promise<ConceptRecordsPage> {
+  /** `filters` narrows per field (field key to text; `__label__` is the record name). */
+  async conceptRecords(id: string, conceptId: string, query: { q?: string; limit?: number; offset?: number; filters?: Record<string, string> } = {}): Promise<ConceptRecordsPage> {
     return unwrap(await apiClient.get<ApiResponse<ConceptRecordsPage>>(API_ENDPOINTS.semanticModels.conceptRecords(id, conceptId), {
-      params: { ...(query.q ? { q: query.q } : {}), limit: query.limit ?? 50, offset: query.offset ?? 0 },
+      params: {
+        ...(query.q ? { q: query.q } : {}), limit: query.limit ?? 50, offset: query.offset ?? 0,
+        ...(query.filters && Object.keys(query.filters).length ? { filters: JSON.stringify(query.filters) } : {}),
+      },
     }));
   },
   /** The AI reading limits a document mapping starts from, as an admin set them. */
@@ -322,7 +326,8 @@ export const semanticModelApi = {
   async mappingHealth(id: string): Promise<MappingHealthResponse> {
     return unwrap(await apiClient.post<ApiResponse<MappingHealthResponse>>(API_ENDPOINTS.semanticModels.mappingHealth(id), {}));
   },
-  async requestPopulationRefresh(id: string, body: { purpose: 'build' | 'refresh'; scope: { kind: 'model' } | { kind: 'mapping'; mappingId: string } }): Promise<PopulationRefreshResponse> {
+  /** A concept scope reads that concept's sources again and keeps every other concept's data in use. */
+  async requestPopulationRefresh(id: string, body: { purpose: 'build' | 'refresh'; scope: { kind: 'model' } | { kind: 'mapping'; mappingId: string } | { kind: 'concept'; conceptId: string } }): Promise<PopulationRefreshResponse> {
     return unwrap(await apiClient.post<ApiResponse<PopulationRefreshResponse>>(API_ENDPOINTS.semanticModels.populationRefresh(id), body, { timeout: 0 }));
   },
   /** Clear every record, link and review item generated for the model, then read every source again. */

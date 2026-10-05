@@ -278,6 +278,24 @@ def test_concept_records_are_searched_a_page_at_a_time(client: TestClient):
                       headers=AUTH).status_code == 422
 
 
+def test_concept_records_are_filtered_per_field(client: TestClient):
+    binding = {"model_id": "m1", "model_version_id": "v1", "data_revision_id": "dr_1"}
+    pool = RecordingPool([binding, 0, [], []])
+    _inject(client, pool)
+    filters = '{"__label__": "acme", "city": "Par", "empty": " "}'
+    response = client.get("/v1/semantic-model-population/models/m1/concepts/c1/records",
+                          params={"filters": filters}, headers=AUTH)
+    assert response.status_code == 200
+    sql, params = next((sql, params) for sql, params in pool.calls if "count(*)" in sql)
+    # Blank filters are ignored; the name filters the label, a field its value or its key part.
+    assert params == ("dr_1", "c1", None, "%acme%", "%Par%", "city")
+    assert "label ILIKE $4" in sql and "attributes->>$6 ILIKE $5" in sql
+    for bad in ('["city"]', '{"city": 3}', "not json"):
+        rejected = client.get("/v1/semantic-model-population/models/m1/concepts/c1/records",
+                              params={"filters": bad}, headers=AUTH)
+        assert rejected.status_code == 422
+
+
 def test_project_rejects_truncated_listing(client: TestClient):
     revision = {"id": "dr_9", "model_id": "m1", "validation_state": "valid",
                 "projection_ref": None, "correction_sequence": 0}

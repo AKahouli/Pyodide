@@ -903,10 +903,11 @@ export class SemanticRuntimeClientService {
   }
 
   async searchConceptRecords(modelId: string, conceptId: string, actorUserId: string,
-    query: { q?: string; limit: number; offset: number; dataRevisionId?: string }): Promise<RuntimeConceptRecordsPage> {
+    query: { q?: string; limit: number; offset: number; dataRevisionId?: string; filters?: string }): Promise<RuntimeConceptRecordsPage> {
     const params = new URLSearchParams({ environment: 'draft', limit: String(query.limit), offset: String(query.offset) });
     if (query.q) params.set('q', query.q);
     if (query.dataRevisionId) params.set('dataRevisionId', query.dataRevisionId);
+    if (query.filters) params.set('filters', query.filters);
     return this.get<RuntimeConceptRecordsPage>(
       `/v1/semantic-model-population/models/${encodeURIComponent(modelId)}/concepts/${encodeURIComponent(conceptId)}/records?${params}`,
       actorUserId,

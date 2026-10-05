@@ -5,7 +5,7 @@ import { useSemanticModelEditorStore } from '../../store';
 import type { SemanticGraph } from '../../types';
 import { ConceptRecordsPanel } from './ConceptRecordsPanel';
 
-const api = vi.hoisted(() => ({ conceptRecords: vi.fn(), listSourceMappings: vi.fn() }));
+const api = vi.hoisted(() => ({ conceptRecords: vi.fn(), listSourceMappings: vi.fn(), listDerivedSources: vi.fn() }));
 vi.mock('../../api', () => ({ semanticModelApi: api }));
 
 const graph: SemanticGraph = {
@@ -20,8 +20,8 @@ const record = (index: number) => ({
   values: { country: 'FR' }, identity: { customer_id: `c${index}` }, provenance: { country: origin }, conflicts: [],
 });
 
-const renderPanel = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-  <ConceptRecordsPanel modelId='model-1' conceptId='customer' onClose={vi.fn()} />
+const renderPanel = (props: { onRefresh?: () => void; refreshing?: boolean } = {}) => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+  <ConceptRecordsPanel modelId='model-1' conceptId='customer' onClose={vi.fn()} {...props} />
 </QueryClientProvider>);
 
 describe('ConceptRecordsPanel', () => {
@@ -32,6 +32,7 @@ describe('ConceptRecordsPanel', () => {
       { id: 'm1', conceptId: 'customer', workspaceId: 'w', documentId: 'd', documentName: 'customers.xlsx', sheetName: 'Customers', assetKind: 'excel_sheet', fieldMappings: [], status: 'ready', createdBy: '', createdAt: '', updatedAt: '', identityFields: [] },
       { id: 'm2', conceptId: 'customer', workspaceId: 'w', documentId: 'workspace:w:all', documentName: 'Legal', sheetName: '', assetKind: 'document', fieldMappings: [], status: 'ready', createdBy: '', createdAt: '', updatedAt: '', identityFields: [], scope: 'workspace', fileCount: 1200 },
     ]);
+    api.listDerivedSources.mockResolvedValue([]);
     api.conceptRecords.mockResolvedValue({ dataRevisionId: 'dr', total: 120, offset: 0, limit: 50, records: [record(1), record(2)] });
   });
 
@@ -53,9 +54,61 @@ describe('ConceptRecordsPanel', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'records.table.search' }), { target: { value: ' acme ' } });
     await act(async () => { vi.advanceTimersByTime(350); });
     vi.useRealTimers();
-    await waitFor(() => expect(api.conceptRecords).toHaveBeenLastCalledWith('model-1', 'customer', { q: 'acme', limit: 50, offset: 0 }));
+    await waitFor(() => expect(api.conceptRecords).toHaveBeenLastCalledWith('model-1', 'customer', { q: 'acme', filters: {}, limit: 50, offset: 0 }));
     fireEvent.click(screen.getByRole('button', { name: 'records.table.next' }));
-    await waitFor(() => expect(api.conceptRecords).toHaveBeenLastCalledWith('model-1', 'customer', { q: 'acme', limit: 50, offset: 50 }));
+    await waitFor(() => expect(api.conceptRecords).toHaveBeenLastCalledWith('model-1', 'customer', { q: 'acme', filters: {}, limit: 50, offset: 50 }));
+  });
+
+  it('filters each column as the person types, by its field key, the name by the record label', async () => {
+    renderPanel();
+    await screen.findByText('Acme 1');
+    vi.useFakeTimers();
+    fireEvent.change(screen.getAllByRole('textbox', { name: 'records.table.filter' })[0], { target: { value: 'Ac' } });
+    fireEvent.change(screen.getAllByRole('textbox', { name: 'records.table.filter' })[2], { target: { value: ' FR ' } });
+    await act(async () => { vi.advanceTimersByTime(350); });
+    vi.useRealTimers();
+    await waitFor(() => expect(api.conceptRecords).toHaveBeenLastCalledWith('model-1', 'customer',
+      { q: undefined, filters: { __label__: 'Ac', country: 'FR' }, limit: 50, offset: 0 }));
+    // A filter matching nothing keeps the filters on screen, so they can be cleared.
+    api.conceptRecords.mockResolvedValue({ dataRevisionId: 'dr', total: 0, offset: 0, limit: 50, records: [] });
+    fireEvent.click(screen.getByRole('button', { name: /records.table.clearFilters/ }));
+    await waitFor(() => expect(api.conceptRecords).toHaveBeenLastCalledWith('model-1', 'customer', { q: undefined, filters: {}, limit: 50, offset: 0 }));
+  });
+
+  it('resizes a column with the keyboard and remembers it for the concept', async () => {
+    window.localStorage.clear();
+    renderPanel();
+    await screen.findByText('Acme 1');
+    const handle = screen.getAllByRole('separator', { name: 'records.table.resizeColumn' })[1];
+    fireEvent.keyDown(handle, { key: 'ArrowRight' });
+    expect(JSON.parse(window.localStorage.getItem('semantic-model.records-columns.model-1.customer') ?? '{}')).toEqual({ customer_id: 176 });
+  });
+
+  it('refreshes the concept only when the person may run the model, and not while a run is under way', async () => {
+    const onRefresh = vi.fn();
+    const { unmount } = renderPanel({ onRefresh });
+    await screen.findByText('Acme 1');
+    fireEvent.click(screen.getByRole('button', { name: /records.table.refresh$/ }));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    unmount();
+    renderPanel({ onRefresh, refreshing: true });
+    await screen.findByText('Acme 1');
+    expect(screen.getByRole('button', { name: /records.table.refreshing/ })).toBeDisabled();
+  });
+
+  it('refreshes a concept filled from another concept, and says which one', async () => {
+    api.listSourceMappings.mockResolvedValue([]);
+    api.listDerivedSources.mockResolvedValue([{ id: 'dv', conceptId: 'customer', sourceConceptId: 'contract', fieldMappings: [], conflictRule: 'latest', orderBy: null }]);
+    renderPanel({ onRefresh: vi.fn() });
+    expect(await screen.findByText('records.table.madeFrom')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: /records.table.refresh$/ })).toBeEnabled());
+    expect(screen.queryByText('records.table.noSource')).not.toBeInTheDocument();
+  });
+
+  it('offers no refresh without the right to run the model', async () => {
+    renderPanel();
+    await screen.findByText('Acme 1');
+    expect(screen.queryByRole('button', { name: /records.table.refresh/ })).not.toBeInTheDocument();
   });
 
   it('says when no data has been generated yet', async () => {

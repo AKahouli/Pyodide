@@ -137,5 +137,8 @@ def test_only_whole_model_builds_finalize():
                                                "scope": {"kind": "model"}}}) is True
     assert is_whole_model_build({"payload": {"purpose": "build",
                                                "scope": {"kind": "mapping"}}}) is False
+    # A concept refresh keeps every other concept, so its result is the whole model's data too.
+    assert is_whole_model_build({"payload": {"purpose": "build",
+                                               "scope": {"kind": "concept", "conceptId": "c1"}}}) is True
     assert is_whole_model_build({"payload": {"purpose": "refresh",
                                                "scope": {"kind": "model"}}}) is False

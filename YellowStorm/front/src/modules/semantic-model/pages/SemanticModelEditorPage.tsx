@@ -205,6 +205,7 @@ export function SemanticModelEditorPage() {
       setBoundDataRevisionId(undefined);
       // Drop, not just invalidate: cached data would re-pin the replaced revision.
       queryClient.removeQueries({ queryKey: ['semantic-models', 'data-preview', modelId] });
+      void queryClient.invalidateQueries({ queryKey: ['semantic-models', 'concept-records', modelId] });
       void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId ?? 'none') });
       void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.reviewQueue(modelId ?? 'none') });
     }
@@ -613,6 +614,17 @@ export function SemanticModelEditorPage() {
     closeKnowledge();
     void openMappingTarget({ ...base, conceptId: first.conceptId, replaces: first });
   };
+  /** Read one concept's sources again from its records table; the rest of the data in use is kept. */
+  const refreshConcept = async (conceptId: string) => {
+    if (!modelId) return;
+    try {
+      const run = await semanticModelApi.requestPopulationRefresh(modelId, { purpose: 'build', scope: { kind: 'concept', conceptId } });
+      setPopulationJobId(run.jobId);
+      setPopulation({ jobId: run.jobId, status: run.status, skipped: run.skipped, reused: run.reused, sourceCount: run.sourceCount });
+    } catch (error) {
+      showError(t('records.table.refreshError'), { description: parseApiError(error).message });
+    }
+  };
   const readSwitched = async (mappingIds: string[]) => {
     if (!modelId) return;
     try {
@@ -842,6 +854,8 @@ export function SemanticModelEditorPage() {
             conceptId={recordsConceptId}
             onClose={() => setRecordsConceptId(null)}
             onOpenSource={(mapping) => void openMappingTarget(mappingTarget_(mapping))}
+            onRefresh={canEdit ? () => void refreshConcept(recordsConceptId) : undefined}
+            refreshing={Boolean(populationJobId)}
           />}
           {mode === 'records' && modelId && <SemanticDataPreview modelId={modelId} dataRevisionId={boundDataRevisionId} onDataRevision={setBoundDataRevisionId} onOpenReview={openReview} focus={dataFocus} canEdit={canEdit}
             onOpenMapping={repairMapping} onOpenIdentity={(id) => { setMode('structure'); focus(id, 'identity'); }} onOpenMatching={(id) => { setMode('structure'); focus(id, 'matching'); }} onRebuildStarted={setPopulationJobId} />}

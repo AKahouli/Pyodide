@@ -170,8 +170,10 @@ class Derivation(BaseModel):
 class PopulationScope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["model", "mapping"]
+    kind: Literal["model", "mapping", "concept"]
     mapping_id: str | None = Field(default=None, alias="mappingId", max_length=200)
+    # A concept refresh re-reads one concept's sources and keeps the rest of the data in use.
+    concept_id: str | None = Field(default=None, alias="conceptId", max_length=200)
 
 
 class PopulationPayload(BaseModel):

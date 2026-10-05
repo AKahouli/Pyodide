@@ -650,3 +650,22 @@ def test_lease_owners_name_the_worker_node_and_this_process():
     owner = lease_owner_for("semantic-population@host")
     assert owner.startswith(node_lease_prefix("semantic-population@host") + WORKER_BOOT_ID + ":")
     assert owner != lease_owner_for("semantic-population@host")
+
+
+def test_concept_refresh_accepts_links_and_no_source_of_concepts_it_keeps():
+    binding = [{"relationId": "r1", "referenceField": "parent_ref", "targetField": "agreement_no"}]
+    whole = command(bindings=binding)
+    # A whole build must read the fields a link matches on.
+    assert run_population_for_payload(whole)["errorCode"] == "invalid_relation_bindings"
+    refresh = command(bindings=binding)
+    refresh["payload"]["scope"] = {"kind": "concept", "conceptId": "c1"}
+    # The kept concept's fields come from the data in use.
+    assert run_population_for_payload(refresh)["ok"] is True
+    unknown = command(bindings=[{**binding[0], "referenceField": "no_such_field"}])
+    unknown["payload"]["scope"] = {"kind": "concept", "conceptId": "c1"}
+    assert run_population_for_payload(unknown)["errorCode"] == "invalid_relation_bindings"
+    # A concept made from another one alone has no source of its own.
+    derived_only = command(sources=[])
+    derived_only["payload"]["scope"] = {"kind": "concept", "conceptId": "c2"}
+    assert run_population_for_payload(derived_only)["ok"] is True
+    assert run_population_for_payload(command(sources=[]))["errorCode"] == "invalid_sources"

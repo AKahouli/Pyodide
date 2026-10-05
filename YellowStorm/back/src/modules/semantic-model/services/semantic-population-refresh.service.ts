@@ -20,11 +20,15 @@ import { DOCUMENT_MIME_TYPES, STRUCTURED_MIME_PREFIXES } from './semantic-source
 import { mappingSelection, type WorkspaceSelection, workspaceMappingFiles } from '../domain/workspace-source-scope';
 import type { DocumentResponse as WorkspaceDocumentResponse } from '@modules/workspace/interfaces/workspace-document.interface';
 
-export type PopulationRefreshScope = { kind: 'model' } | { kind: 'mapping'; mappingId: string };
+/** A concept refresh reads one concept's sources again; the runtime keeps every other concept's data in use. */
+/** Bumped when a fix makes earlier concept-refresh requests worth sending again (they were refused). */
+const CONCEPT_REFRESH_VERSION = 2;
+
+export type PopulationRefreshScope = { kind: 'model' } | { kind: 'mapping'; mappingId: string } | { kind: 'concept'; conceptId: string };
 
 export interface RequestPopulationRefreshInput {
   purpose: 'build' | 'refresh';
-  scope: { kind: 'model' | 'mapping'; mappingId?: string };
+  scope: { kind: 'model' | 'mapping' | 'concept'; mappingId?: string; conceptId?: string };
 }
 
 interface NodeTypeRow {
@@ -194,7 +198,7 @@ export class SemanticPopulationRefreshService {
    * value came from. Answers "nothing yet" rather than failing when no data has been generated.
    */
   async conceptRecords(userId: string, modelId: string, conceptId: string,
-    query: { q?: string; limit?: number; offset?: number; dataRevisionId?: string }) {
+    query: { q?: string; limit?: number; offset?: number; dataRevisionId?: string; filters?: string }) {
     const model = await this.models.requireRole(userId, modelId, ['owner', 'editor', 'viewer']);
     if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
     const limit = query.limit ?? 50;
@@ -202,7 +206,7 @@ export class SemanticPopulationRefreshService {
     let page;
     try {
       page = await this.runtime.searchConceptRecords(model.id, conceptId, userId,
-        { q: query.q?.trim() || undefined, limit, offset, dataRevisionId: query.dataRevisionId });
+        { q: query.q?.trim() || undefined, limit, offset, dataRevisionId: query.dataRevisionId, filters: query.filters || undefined });
     } catch (error) {
       if ((error as { status?: number }).status === 404) return { dataRevisionId: null, total: 0, offset, limit, records: [] };
       throw error;
@@ -574,7 +578,11 @@ export class SemanticPopulationRefreshService {
     if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
     const scope: PopulationRefreshScope = input.scope.kind === 'mapping'
       ? { kind: 'mapping', mappingId: input.scope.mappingId ?? '' }
-      : { kind: 'model' };
+      : input.scope.kind === 'concept' ? { kind: 'concept', conceptId: input.scope.conceptId ?? '' } : { kind: 'model' };
+    // A concept refresh is planned as a whole build (every concept, link and derivation), then sends only
+    // that concept's sources: the runtime keeps the rest from the data in use and matches every link again.
+    const wholeModel = scope.kind !== 'mapping';
+    const inRun = (source: { conceptId: string }) => scope.kind !== 'concept' || source.conceptId === scope.conceptId;
     const [nodes, relationRows, identityRules, relationRules, links, labelFields] = await Promise.all([
       this.database.query<NodeTypeRow>(
         'SELECT id, key, label, aliases, attributes FROM semantic_model.node_types WHERE version_id=$1',
@@ -609,7 +617,10 @@ export class SemanticPopulationRefreshService {
     if (!homeWorkspaceId) {
       throw new ConflictException(ErrorCode.SEMANTIC_MODEL_WORKSPACE_INVALID, 'The model has no origin workspace');
     }
-    const mappings = await this.loadScopeMappings(model.id, scope);
+    if (scope.kind === 'concept' && !nodes.some((node) => node.id === scope.conceptId)) {
+      throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'Concept not found');
+    }
+    const mappings = await this.loadScopeMappings(model.id, scope.kind === 'concept' ? { kind: 'model' } : scope);
     const sources = [];
     const usableMappings: MappingRow[] = [];
     const skipped: Array<{ mappingId: string; reason: string }> = [];
@@ -635,15 +646,15 @@ export class SemanticPopulationRefreshService {
         usableMappings.push(mapping);
       } catch (error) {
         if (scope.kind === 'mapping') throw error;
-        skipped.push({ mappingId: mapping.id, reason: (error as Error).message });
+        if (inRun(mapping)) skipped.push({ mappingId: mapping.id, reason: (error as Error).message });
       }
     }
-    const manual = scope.kind === 'model'
+    const manual = wholeModel
       ? await this.manualSource(model.id, model.currentDraftVersionId, homeWorkspaceId, nodes)
       : null;
     if (manual) sources.push(...manual.sources);
     // Concepts made from another concept's records, when that concept is read by this run.
-    const derivations = scope.kind === 'model' && this.derivedSources
+    const derivations = wholeModel && this.derivedSources
       ? this.derivedSources.runtimeDerivations(await this.derivedSources.forModel(model.id), nodes,
         new Set(sources.map((source) => source.conceptId)), identityRules,
         effectiveAiSettings(await this.adminAiSettings()), labelFields)
@@ -660,13 +671,15 @@ export class SemanticPopulationRefreshService {
         );
       }
     }
-    if (!sources.length) {
+    // A concept made from another one alone is refreshed from that concept's records in use.
+    const madeFromAnother = scope.kind === 'concept' && derivations.some((derivation) => derivation.conceptId === scope.conceptId);
+    if (!sources.filter(inRun).length && !madeFromAnother) {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'No usable source in the selected scope');
     }
     // Only the limits an admin set travel with the run, so other runs keep their fingerprint.
     const limits = await this.adminRunLimits();
     const maxRunSources = limits.maxRunSources ?? DEFAULT_RUN_LIMITS.maxRunSources;
-    if (sources.length > maxRunSources) {
+    if (sources.filter(inRun).length > maxRunSources) {
       throw new BadRequestException(
         ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
         `A run can read at most ${maxRunSources} files; map a folder instead of the whole workspace, or raise the limit in Admin > Semantic models`,
@@ -763,9 +776,9 @@ export class SemanticPopulationRefreshService {
       throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, 'The population specification could not be hashed');
     }
     const { specHash, ...specification } = snapshot;
-    const scopeKey = scope.kind === 'model' ? 'model' : `mapping:${scope.mappingId}`;
+    const scopeKey = scope.kind === 'model' ? 'model' : scope.kind === 'concept' ? `concept:${scope.conceptId}` : `mapping:${scope.mappingId}`;
     relationBindings.sort((left, right) => left.relationId < right.relationId ? -1 : left.relationId > right.relationId ? 1 : 0);
-    const runtimeSources = JSON.parse(JSON.stringify(sources)) as typeof sources;
+    const runtimeSources = JSON.parse(JSON.stringify(sources.filter(inRun))) as typeof sources;
     // The AI agent's effective model is part of revision identity, so an admin
     // changing it produces a new revision instead of reusing persisted rows.
     const aiExtraction = await this.aiExtractionIdentity(runtimeSources, derivations);
@@ -816,7 +829,7 @@ export class SemanticPopulationRefreshService {
       specification,
     });
     // A new data fix must rebuild even when every source is unchanged.
-    const correctionSequence = scope.kind === 'model' && typeof this.runtime.listCorrections === 'function'
+    const correctionSequence = scope.kind !== 'mapping' && typeof this.runtime.listCorrections === 'function'
       ? await this.runtime.listCorrections(model.id, userId).then((listed) => listed.correctionSequence).catch(() => 0)
       : 0;
     const idempotencyKey = createHash('sha256')
@@ -827,6 +840,8 @@ export class SemanticPopulationRefreshService {
         populationExecutionFingerprint,
         purpose: input.purpose,
         scope: scopeKey,
+        // A concept refresh builds on the data in use, which this key cannot see: never reuse a failed one.
+        ...(scope.kind === 'concept' ? { concept: CONCEPT_REFRESH_VERSION } : {}),
         sources: runtimeSources,
         relationBindings,
         ...(derivations.length ? { derivations } : {}),

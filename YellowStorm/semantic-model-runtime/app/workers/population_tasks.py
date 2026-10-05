@@ -226,7 +226,10 @@ def run_population_for_payload(command_dump: dict) -> dict:
         if canonical_spec_hash(spec) != expected_hash:
             return {"ok": False, "errorCode": "spec_hash_mismatch"}
         sources = payload.get("sources")
-        if (not isinstance(sources, list) or not sources
+        # A concept refresh keeps every other concept from the data in use: its own concept may be made
+        # from another one alone (no source of its own), and its links may reach concepts it does not read.
+        concept_refresh = (payload.get("scope") or {}).get("kind") == "concept"
+        if (not isinstance(sources, list) or (not sources and not concept_refresh)
                 or len(sources) > min(MAX_SOURCES_PER_TASK, run_limits(payload)["maxRunSources"])):
             return {"ok": False, "errorCode": "invalid_sources"}
         compiled = compile_specification(spec)
@@ -392,10 +395,16 @@ def run_population_for_payload(command_dump: dict) -> dict:
             target_identity = target_concept["keyComponents"]
             if target is None and len(target_identity) == 1:
                 target = target_identity[0]
+            def mapped(concept_id: str, field: str) -> bool:
+                # A kept concept's fields were checked when its data was made; the back plans every link.
+                if concept_refresh and concept_id not in mapped_fields:
+                    return field in compiled["concepts"][concept_id]["allowedFields"]
+                return field in mapped_fields.get(concept_id, set())
+
             if (not isinstance(reference, str)
-                    or reference not in mapped_fields.get(relation["sourceConceptId"], set())
+                    or not mapped(relation["sourceConceptId"], reference)
                     or not isinstance(target, str)
-                    or target not in mapped_fields.get(relation["targetConceptId"], set())):
+                    or not mapped(relation["targetConceptId"], target)):
                 return {"ok": False, "errorCode": "invalid_relation_bindings"}
             normalized_bindings.append({"relationId": relation["relationId"],
                                         "referenceField": reference, "targetField": target})
@@ -430,8 +439,12 @@ def run_population_for_payload(command_dump: dict) -> dict:
 async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=None,
                                   query=None, index_connection=None, metadata_fetch=None,
                                   manual_pool=None, progress: PopulationProgress | None = None,
-                                  extraction_cache=None, upload_derived=None, derive=None) -> dict:
-    """Fetch, prepare, query and populate every mapped source (bounded), reporting progress."""
+                                  extraction_cache=None, upload_derived=None, derive=None,
+                                  carried: dict | None = None) -> dict:
+    """Fetch, prepare, query and populate every mapped source (bounded), reporting progress.
+
+    ``carried`` is the data in use when the run refreshes one concept: every record, value and link the
+    run does not make again is kept from it (see ``carry_over``)."""
     import asyncio
     import os
     import tempfile
@@ -790,9 +803,26 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
         merged_by_concept[concept_id] = merged
         for key in counts:
             counts[key] += merged["counts"].get(key, 0)
+    rerun = {derivation["derivationId"] for derivation in validated["derivations"]}
+    carried_links: list[dict] = []
+    if carried is not None:
+        read_concepts = set(per_concept) | ({carried["conceptId"]} if carried.get("conceptId") else set())
+        rerun = derivations_to_rerun(validated["derivations"], read_concepts, carried.get("conceptId"))
+        carried_links = carry_over(merged_by_concept, carried, read_concepts, rerun, validated["derivations"],
+                                   {entry["conceptId"] for entry in validated["sources"]
+                                    if entry.get("sourceKind") == "manual"})
+        read_assets = {str(asset) for observation in observations
+                       if (asset := (observation.get("assetRef") or {}).get("assetId"))}
+        observations.extend(observation for observation in carried.get("sourceObservations", [])
+                            if (observation.get("assetRef") or {}).get("assetId") not in read_assets)
+        # The kept data is part of this result, so a refresh of the same sources over other data differs.
+        dataset_fingerprints.add(f"carried:{carried['revisionId']}")
+        complete_enumeration = complete_enumeration and carried.get("completeEnumeration", True)
     # Concepts made from another concept's records, once every source has been read.
     derived_links: list[dict] = []
     for derivation in validated["derivations"]:
+        if derivation["derivationId"] not in rerun:
+            continue
         source = merged_by_concept.get(derivation["sourceConceptId"])
         if source is None:
             continue
@@ -871,6 +901,11 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
     relationships.extend(link for link in derived_links
                          if link["sourceEntityId"] in kept_ids and link["targetEntityId"] in kept_ids)
     relationships.extend(manual_relationships(kept, manual_links, compiled["relations"]))
+    if carried_links:
+        made = {(link["relationId"], link["sourceEntityId"], link["targetEntityId"]) for link in relationships}
+        relationships.extend(link for link in carried_links
+                             if link["sourceEntityId"] in kept_ids and link["targetEntityId"] in kept_ids
+                             and (link["relationId"], link["sourceEntityId"], link["targetEntityId"]) not in made)
     # Links grow with records: a run allowed more records may keep proportionally more links.
     max_relationships = max(MAX_TOTAL_RELATIONSHIPS, 2 * limits["maxRecordsPerRun"])
     if len(relationships) > max_relationships:
@@ -894,6 +929,113 @@ async def run_population_for_task(command_dump: dict, *, fetch=None, prepare=Non
              "sourceObservations": observations,
              "documentCoverage": document_coverage, "indexObservations": index_observations,
              "jobState": "completed_with_gaps" if gaps else "completed"}
+
+
+def derivations_to_rerun(derivations: list[dict], read_concepts: set[str],
+                         refreshed_concept: str | None = None) -> set[str]:
+    """The derivations a concept refresh makes again: those making the refreshed concept (from the kept
+    records of the concept it is made from), those reading a refreshed concept, and so on down."""
+    refreshed = set(read_concepts)
+    rerun: set[str] = {derivation["derivationId"] for derivation in derivations
+                       if refreshed_concept and derivation["conceptId"] == refreshed_concept}
+    refreshed.update(derivation["conceptId"] for derivation in derivations if derivation["derivationId"] in rerun)
+    changed = True
+    while changed:
+        changed = False
+        for derivation in derivations:
+            if derivation["derivationId"] not in rerun and derivation["sourceConceptId"] in refreshed:
+                rerun.add(derivation["derivationId"])
+                refreshed.add(derivation["conceptId"])
+                changed = True
+    return rerun
+
+
+def _derivation_of(item: dict, key: str) -> str | None:
+    derived_from = (item.get(key) or {}).get("derivedFrom")
+    return derived_from.get("derivationId") if isinstance(derived_from, dict) else None
+
+
+def carry_over(merged_by_concept: dict[str, dict], carried: dict, read_concepts: set[str],
+               rerun: set[str], derivations: list[dict], manual_concepts: set[str]) -> list[dict]:
+    """Keep, from the data in use, what a concept refresh does not make again.
+
+    A record read from a source is kept unless its concept was read again; a record a derivation made
+    is kept unless that derivation runs again. Values a rerun derivation filled into a kept record are
+    dropped, so the derivation fills them afresh. Returns the links to keep: those made by derivations
+    or typed by people, which the run does not match again itself.
+    """
+    read_values: set[str] = set()  # records holding a value read from a source, not derived
+    for assertion in carried.get("assertions", []):
+        if _derivation_of(assertion, "evidence") is None:
+            read_values.add(assertion["entityId"])
+    entities_by_id: dict[str, dict] = {}
+    direct: dict[str, list[dict]] = {}
+    derived: dict[str, list[dict]] = {}
+    for entity in carried.get("entities", []):
+        derivation_id = _derivation_of(entity, "provenance")
+        if derivation_id is not None and not (derivation_id in rerun and entity["entityId"] in read_values):
+            if derivation_id in rerun:
+                continue
+            derived.setdefault(entity["conceptId"], []).append(entity)
+        elif entity["conceptId"] in read_concepts:
+            continue
+        else:
+            # A record a source gave and a rerun derivation completed keeps what the source gave.
+            if derivation_id is not None:
+                entity["provenance"] = {key: value for key, value in entity["provenance"].items()
+                                        if key != "derivedFrom"}
+            direct.setdefault(entity["conceptId"], []).append(entity)
+        entities_by_id[entity["entityId"]] = entity
+    values: dict[str, list[dict]] = {}
+    for assertion in carried.get("assertions", []):
+        entity = entities_by_id.get(assertion["entityId"])
+        if entity is None:
+            continue
+        if _derivation_of(assertion, "evidence") in rerun:
+            entity["attributes"].pop(assertion["attribute"], None)
+            continue
+        values.setdefault(assertion["entityId"], []).append(assertion)
+
+    def part(entities: list[dict]) -> dict:
+        return {"entities": entities, "gaps": [], "counts": {},
+                "assertions": [assertion for entity in entities for assertion in values.get(entity["entityId"], [])]}
+
+    for concept_id, entities in direct.items():
+        merged_by_concept[concept_id] = part(entities)
+    for concept_id, entities in derived.items():
+        merged_by_concept[concept_id] = merge_derived(merged_by_concept.get(concept_id), part(entities))
+    concept_of = {entity["entityId"]: entity["conceptId"] for entity in carried.get("entities", [])}
+    rerun_relations = {relation for derivation in derivations if derivation["derivationId"] in rerun
+                       and (relation := (derivation.get("expand") or {}).get("relationId"))}
+    kept: list[dict] = []
+    for link in carried.get("relationships", []):
+        strategy = link.get("matchingStrategy")
+        if strategy == "derived" and link["relationId"] not in rerun_relations:
+            kept.append(link)
+        elif strategy == "manual" and not ({concept_of.get(link["sourceEntityId"]),
+                                             concept_of.get(link["targetEntityId"])} & manual_concepts):
+            kept.append(link)
+    return kept
+
+
+async def load_carried_data(pool, command_dump: dict) -> dict | None:  # type: ignore[no-untyped-def]
+    """The data in use a concept refresh keeps; None when the model has none yet."""
+    from app.persistence.population_store import (get_active_binding, get_revision_reading,
+                                                  list_revision_assertions, list_revision_entities,
+                                                  list_revision_relationships)
+
+    model_id = str(command_dump.get("modelId") or command_dump.get("model_id") or "")
+    current = await get_active_binding(pool, model_id, "draft") if model_id else None
+    if current is None:
+        return None
+    revision_id = current["data_revision_id"]
+    payload = command_dump.get("payload") or {}
+    reading = await get_revision_reading(pool, revision_id)
+    return {"revisionId": revision_id, "conceptId": (payload.get("scope") or {}).get("conceptId"),
+            "entities": await list_revision_entities(pool, revision_id, limit=1_000_000),
+            "assertions": await list_revision_assertions(pool, revision_id),
+            "relationships": await list_revision_relationships(pool, revision_id, limit=1_000_000),
+            **reading}
 
 
 async def _populate_manual_source(pool, entry: dict, concept: dict) -> dict:  # type: ignore[no-untyped-def]
@@ -1012,13 +1154,24 @@ async def changes_from_data_in_use(pool, command_dump: dict, revision_id: str,  
         return {"added": 0, "removed": 0, "changed": 0, "removedSources": []}
     current_assets = {str(asset) for entry in sources
                       if (asset := (entry.get("source") or {}).get("assetId"))}
-    return compare_revisions(await list_revision_entities(pool, previous_id),
-                             await list_revision_entities(pool, revision_id), current_assets)
+    after = await list_revision_entities(pool, revision_id, limit=1_000_000)
+    if is_concept_refresh(command_dump):
+        # Sources of the concepts kept as they were are still in use, though this run did not read them.
+        current_assets |= {asset for entity in after for asset in _entity_assets(entity)}
+    return compare_revisions(await list_revision_entities(pool, previous_id, limit=1_000_000),
+                             after, current_assets)
+
+
+def is_concept_refresh(command_dump: dict) -> bool:
+    payload = command_dump.get("payload", {})
+    return payload.get("purpose") == "build" and (payload.get("scope") or {}).get("kind") == "concept"
 
 
 def is_whole_model_build(command_dump: dict) -> bool:
+    """A build whose result is the model's whole data: a full build, or a concept refresh, which
+    carries every other concept over from the data in use."""
     payload = command_dump.get("payload", {})
-    return payload.get("purpose") == "build" and (payload.get("scope") or {}).get("kind") == "model"
+    return payload.get("purpose") == "build" and (payload.get("scope") or {}).get("kind") in ("model", "concept")
 
 
 async def has_draft_binding(pool, command_dump: dict) -> bool:  # type: ignore[no-untyped-def]
@@ -1233,10 +1386,16 @@ async def _run_task(task_id: int, lease_owner: str) -> dict:
 
         progress = PopulationProgress(report)
         model_id = str(lease.payload.get("modelId") or lease.payload.get("model_id") or "")
+        carried = await load_carried_data(pool, lease.payload) if is_concept_refresh(lease.payload) else None
         try:
-            outcome = await run_population_for_task(
-                lease.payload, manual_pool=pool, progress=progress,
-                extraction_cache=DocumentExtractionCache(pool, model_id) if model_id else None)
+            if is_concept_refresh(lease.payload) and carried is None:
+                # Nothing to keep: one concept alone would replace the whole model's data.
+                outcome = {"ok": False, "errorCode": "no_data_in_use"}
+            else:
+                outcome = await run_population_for_task(
+                    lease.payload, manual_pool=pool, progress=progress,
+                    extraction_cache=DocumentExtractionCache(pool, model_id) if model_id else None,
+                    carried=carried)
             if outcome.get("ok") and outcome.get("purpose") != "preview":
                 # The last chance to stop: after this the new data is saved.
                 await progress.enter("saving")

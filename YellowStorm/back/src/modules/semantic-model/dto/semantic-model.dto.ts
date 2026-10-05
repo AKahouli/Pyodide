@@ -1193,6 +1193,12 @@ export class ConceptRecordsQueryDto {
   @IsString()
   @MaxLength(200)
   dataRevisionId?: string;
+
+  @ApiPropertyOptional({ description: 'Per-field filters as a JSON object of field to text; __label__ is the record name' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(8000)
+  filters?: string;
 }
 
 export class SourceAssetProfileQueryDto {
@@ -1360,15 +1366,22 @@ export class ResolveReviewItemDto {
 }
 
 export class PopulationRefreshScopeDto {
-  @ApiProperty({ enum: ['model', 'mapping'] })
-  @IsIn(['model', 'mapping'])
-  kind!: 'model' | 'mapping';
+  @ApiProperty({ enum: ['model', 'mapping', 'concept'] })
+  @IsIn(['model', 'mapping', 'concept'])
+  kind!: 'model' | 'mapping' | 'concept';
 
   @ApiPropertyOptional({ description: 'Required when kind is mapping' })
   @ValidateIf((scope: PopulationRefreshScopeDto) => scope.kind === 'mapping')
   @IsDefined()
   @IsUUID()
   mappingId?: string;
+
+  @ApiPropertyOptional({ description: 'Required when kind is concept: read its sources again, keep the rest of the data in use' })
+  @ValidateIf((scope: PopulationRefreshScopeDto) => scope.kind === 'concept')
+  @IsDefined()
+  @IsString()
+  @MaxLength(200)
+  conceptId?: string;
 }
 
 export class RequestPopulationRefreshDto {

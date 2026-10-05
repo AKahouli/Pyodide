@@ -609,25 +609,46 @@ async def list_revision_entities(pool: Any, revision_id: str,
     return result
 
 
+RECORD_NAME_FILTER = "__label__"
+
+
+def _like_pattern(text: str) -> str:
+    escaped = text.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
 async def search_revision_entities(pool: Any, revision_id: str, concept_id: str, *,
                                    query: str | None = None, limit: int = 50,
-                                   offset: int = 0) -> tuple[int, list[dict[str, Any]]]:
-    """A page of one concept's records, optionally narrowed to those whose name or values contain ``query``."""
-    pattern = None
-    if query and query.strip():
-        escaped = query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        pattern = f"%{escaped}%"
+                                   offset: int = 0,
+                                   filters: dict[str, str] | None = None) -> tuple[int, list[dict[str, Any]]]:
+    """A page of one concept's records, optionally narrowed to those whose name or values contain ``query``,
+    and to those whose given fields each contain their filter text (``__label__`` is the record's name)."""
+    pattern = _like_pattern(query) if query and query.strip() else None
     where = ("data_revision_id = $1 AND concept_id = $2 "
              "AND ($3::text IS NULL OR label ILIKE $3 OR attributes::text ILIKE $3 "
              "OR identity_key ILIKE $3)")
+    arguments: list[Any] = [revision_id, concept_id, pattern]
+    for field, text in sorted((filters or {}).items()):
+        if not text.strip():
+            continue
+        arguments.append(_like_pattern(text))
+        value = f"${len(arguments)}"
+        if field == RECORD_NAME_FILTER:
+            where += f" AND label ILIKE {value}"
+            continue
+        arguments.append(field)
+        key = f"${len(arguments)}"
+        # A key field lives in the matching key, not among the attributes.
+        where += (f" AND (attributes->>{key} ILIKE {value} OR (CASE WHEN left(identity_key, 1) = '{{' "
+                  f"THEN identity_key::jsonb->>{key} END) ILIKE {value})")
     total = await pool.fetchval(
-        f"SELECT count(*) FROM semantic_population.entities WHERE {where}",
-        revision_id, concept_id, pattern)
+        f"SELECT count(*) FROM semantic_population.entities WHERE {where}", *arguments)
+    page = len(arguments)
     rows = await pool.fetch(
         "SELECT id, concept_id, namespace, label, attributes, provenance, identity_key "
         f"FROM semantic_population.entities WHERE {where} "
-        "ORDER BY lower(label), id LIMIT $4 OFFSET $5",
-        revision_id, concept_id, pattern, limit, offset)
+        f"ORDER BY lower(label), id LIMIT ${page + 1} OFFSET ${page + 2}",
+        *arguments, limit, offset)
     entities = []
     for row in rows:
         values = dict(row)
@@ -703,6 +724,38 @@ async def list_entity_origins(pool: Any, revision_id: str,
         result.setdefault(row["entity_id"], {})[row["attribute"]] = _origin_of(
             evidence, row["origin"])
     return result
+
+
+async def list_revision_assertions(pool: Any, revision_id: str) -> list[dict[str, Any]]:
+    """Every value a revision holds, as a run produced it (value, origin, evidence)."""
+    rows = await pool.fetch(
+        "SELECT entity_id, attribute, value, origin, evidence "
+        "FROM semantic_population.assertions WHERE data_revision_id = $1 "
+        "ORDER BY entity_id, attribute",
+        revision_id,
+    )
+    result = []
+    for row in rows:
+        evidence = row["evidence"]
+        result.append({"entityId": row["entity_id"], "attribute": row["attribute"], "value": row["value"],
+                       "origin": row["origin"] or "source",
+                       "evidence": json.loads(evidence) if isinstance(evidence, str) else dict(evidence or {})})
+    return result
+
+
+async def get_revision_reading(pool: Any, revision_id: str) -> dict[str, Any]:
+    """What a revision read: its source observations and whether every source was read in full."""
+    row = await pool.fetchrow(
+        "SELECT source_observations, coverage FROM semantic_population.data_revisions WHERE id = $1",
+        revision_id,
+    )
+    if row is None:
+        return {"sourceObservations": [], "completeEnumeration": True}
+    observations = row["source_observations"]
+    observations = json.loads(observations) if isinstance(observations, str) else list(observations or [])
+    coverage = _json_object(row["coverage"])
+    return {"sourceObservations": [item for item in observations if isinstance(item, dict)],
+            "completeEnumeration": bool(coverage.get("completeEnumeration", True))}
 
 
 async def list_revision_relationships(pool: Any, revision_id: str,
