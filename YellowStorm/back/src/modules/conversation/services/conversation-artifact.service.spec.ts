@@ -17,6 +17,30 @@ describe('ConversationArtifactService', () => {
 
   beforeEach(() => jest.clearAllMocks());
 
+  it('resolves governed citations only through the current pinned scope, without ordinary workspace expansion', async () => {
+    const runtime = { resolveRuntime: jest.fn().mockResolvedValue({ workspaceIds: ['approved'] }) };
+    const governed = new ConversationArtifactService(messageService as never, documentService as never,
+      conversationService as never, workspaceDocumentService as never, undefined, runtime as never);
+    messageService.getMessageDocument.mockResolvedValue({ conversationId: 'conversation',
+      components: [{ type: 'citation', data: { source: 'guide.pdf', reference: '1', workspaceId: 'approved' } }] });
+    const conversation = { runtimeMode: 'governed', createdBy: 'viewer', governanceContext: { revisionId: 'pinned' },
+      workspaces: ['unapproved'], systemWorkspaceId: 'unapproved-system' };
+    conversationService.getConversationDocument.mockResolvedValue(conversation);
+    workspaceDocumentService.findByMultipleWorkspaces.mockResolvedValue({ documents: [{
+      originalName: 'guide.pdf', filename: 'guide.pdf', path: 'approved/guide.pdf', mimeType: 'application/pdf', isFolder: false }],
+      pagination: { total: 1 } });
+    documentService.generateSasUrl.mockResolvedValue('https://storage.test/current');
+    expect(await governed.resolveCitationUrl('conversation', 'message', { source: 'guide.pdf', reference: '1' }, 'viewer'))
+      .toMatchObject({ fileName: 'guide.pdf' });
+    expect(workspaceDocumentService.findByMultipleWorkspaces).toHaveBeenCalledWith(['approved'], expect.anything());
+    expect(runtime.resolveRuntime).toHaveBeenCalledTimes(2);
+    expect(conversationService.filterAccessibleWorkspaceIds).not.toHaveBeenCalled();
+    runtime.resolveRuntime.mockRejectedValueOnce(new Error('Scope revoked'));
+    await expect(governed.resolveCitationUrl('conversation', 'message', { source: 'guide.pdf' }, 'viewer')).rejects.toThrow('revoked');
+    runtime.resolveRuntime.mockResolvedValueOnce({ workspaceIds: ['approved'] }).mockRejectedValueOnce(new Error('Late revocation'));
+    await expect(governed.resolveCitationUrl('conversation', 'message', { source: 'guide.pdf' }, 'viewer')).rejects.toThrow('Late revocation');
+  });
+
   it('resolves a published delegate artifact through its original producer and current viewer', async () => {
     const rootEvidence = { resolve: jest.fn().mockResolvedValue({ kind: 'artifact', url: 'https://storage.test/current', fileName: 'result.txt' }) };
     const owned = new ConversationArtifactService(messageService as never, documentService as never,

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { DocumentService } from '../../document/document.service';
 import { NotFoundException, ServiceUnavailableException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
@@ -7,6 +7,7 @@ import { ConversationService } from './conversation.service';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
 import { ResolveCitationUrlDto } from '../dto/resolve-citation-url.dto';
 import { RootEvidenceService } from '../root-work/root-evidence.service';
+import { GovernedConversationRuntimeService } from '../../governance/services/governed-conversation-runtime.service';
 
 @Injectable()
 export class ConversationArtifactService {
@@ -16,6 +17,7 @@ export class ConversationArtifactService {
     private readonly conversationService: ConversationService,
     private readonly workspaceDocumentService: WorkspaceDocumentService,
     private readonly rootEvidence?: RootEvidenceService,
+    @Optional() private readonly governedRuntime?: GovernedConversationRuntimeService,
   ) {}
 
   async listRecent(userId: string, limit: number): Promise<{
@@ -138,13 +140,15 @@ export class ConversationArtifactService {
     const persistedCitation = [...uniqueCitations.values()][0];
 
     const conversation = await this.conversationService.getConversationDocument(conversationId);
-    const allowedWorkspaceIds = new Set(
-      await this.conversationService.filterAccessibleWorkspaceIds(
-        userId,
-        (conversation.workspaces || []).map((id) => id.toString()),
-      ),
-    );
-    if (conversation.systemWorkspaceId) {
+    const governed = conversation.runtimeMode === 'governed';
+    if (governed && (!userId || !this.governedRuntime)) {
+      throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Citation not found');
+    }
+    const allowedWorkspaceIds = new Set(governed
+      ? (await this.governedRuntime!.resolveRuntime(userId!, conversation)).workspaceIds
+      : await this.conversationService.filterAccessibleWorkspaceIds(userId,
+        (conversation.workspaces || []).map((id) => id.toString())));
+    if (!governed && conversation.systemWorkspaceId) {
       allowedWorkspaceIds.add(conversation.systemWorkspaceId.toString());
     }
     if (persistedCitation.workspaceId && !allowedWorkspaceIds.has(persistedCitation.workspaceId)) {
@@ -179,6 +183,14 @@ export class ConversationArtifactService {
       expiryMinutes: 10,
       checkExists: true,
     });
+    if (governed) {
+      const current = await this.conversationService.getConversationDocument(conversationId);
+      const runtime = await this.governedRuntime!.resolveRuntime(userId!, current);
+      if (current.governanceContext?.revisionId !== conversation.governanceContext?.revisionId
+        || [...allowedWorkspaceIds].some((id) => !runtime.workspaceIds.includes(id))) {
+        throw new NotFoundException(ErrorCode.CHAT_MESSAGE_NOT_FOUND, 'Citation not found');
+      }
+    }
     return { url, fileName: document.originalName, mimeType: document.mimeType };
   }
 
