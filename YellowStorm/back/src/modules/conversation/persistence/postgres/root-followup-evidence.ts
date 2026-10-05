@@ -28,7 +28,7 @@ export async function loadFollowupEvidence(tx: RootControlTransaction, members: 
       component: sanitizePublicComponent({ id: record.id, type: record.kind === 'citation' ? 'citation' : 'artifact',
         data: { evidenceId: record.id, executionId: record.executionId, actorId: record.producerAgentId,
           ...(record.kind === 'citation' ? { source: filename || `evidence:${record.id}`, fileName: filename || undefined,
-            reference: displayReference } : { artifactId: record.id, nativeArtifactId: source.artifact_id, filename,
+            reference: displayReference, page: String(source.page ?? '') } : { artifactId: record.id, nativeArtifactId: source.artifact_id, filename,
             artifactKind: source.artifact_kind, mimeType: source.mime_type, sizeBytes: source.size_bytes, availability: 'ready' }) } }) };
   });
 }

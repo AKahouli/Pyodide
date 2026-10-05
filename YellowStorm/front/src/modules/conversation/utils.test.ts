@@ -64,12 +64,13 @@ describe('conversation utils', () => {
   it('maps components and attaches citation to parent text', () => {
     const parts = mapComponentsToContentParts([
       { id: 'p1', type: 'text', data: { content: 'Hello' } } as never,
-      { type: 'citation', data: { parentId: 'p1', source: 'doc.pdf', page: '2' } } as never,
+      { type: 'citation', data: { parentId: 'p1', source: 'doc.pdf', page: '2', evidenceId: 'evidence', executionId: 'worker' } } as never,
     ]);
 
     expect(parts[0]?.type).toBe('text');
     if (parts[0]?.type === 'text') {
       expect(parts[0].citations?.[0]?.source).toBe('doc.pdf');
+      expect(parts[0].citations?.[0]).toMatchObject({ evidenceId: 'evidence', executionId: 'worker' });
     }
   });
 

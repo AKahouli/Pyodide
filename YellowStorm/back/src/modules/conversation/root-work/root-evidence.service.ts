@@ -25,6 +25,9 @@ export class RootEvidenceService {
       throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Evidence is unavailable');
     }
     const source = flattenProducerEvidence(registered.payload);
+    const pageValue = typeof source.page === 'number' || typeof source.page === 'string' && /^[1-9]\d*$/.test(source.page)
+      ? Number(source.page) : NaN;
+    const registeredPage = Number.isSafeInteger(pageValue) && pageValue > 0 ? pageValue : undefined;
     const workspaceId = text(source.workspace_id || source.workspaceId || source.brain_id);
     const documentId = text(source.document_id || source.documentId);
     const filename = text(source.filename || source.file_name || source.fileName);
@@ -74,6 +77,7 @@ export class RootEvidenceService {
       throw new NotFoundException(ErrorCode.CHAT_NOT_FOUND, 'Source access is unavailable');
     }
     return { evidenceId, kind: registered.kind, producerAgentId: registered.producerAgentId, url, fileName,
+      ...(registeredPage ? { page: registeredPage } : {}),
       ...(mimeType ? { mimeType } : {}) };
   }
 }

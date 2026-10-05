@@ -2,6 +2,9 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import { openCitationSource, type CitationData } from './ai-message-content';
 import { openFileViewerFromUrlLoader } from '@/modules/file-viewer';
+import { fetchRootEvidence, getCitationViewUrl } from '@/modules/conversation/api';
+
+vi.mock('@/modules/conversation/api', () => ({ fetchRootEvidence: vi.fn(), getCitationViewUrl: vi.fn() }));
 
 vi.mock('@/modules/file-viewer', () => ({
   openFileViewerFromUrl: vi.fn(),
@@ -25,8 +28,41 @@ function makeCitation(overrides: Partial<CitationData>): CitationData {
 
 describe('openCitationSource', () => {
   beforeEach(() => {
-    vi.mocked(openFileViewerFromUrlLoader).mockClear();
+    vi.clearAllMocks();
   });
+
+  it('resolves owned evidence before web routing and uses its registered page and scoped cache key', async () => {
+    const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
+    vi.mocked(fetchRootEvidence).mockResolvedValue({ evidenceId: 'evidence', kind: 'citation', producerAgentId: 'worker',
+      url: 'https://storage.test/read', fileName: 'report.pdf', page: 13 });
+    await openCitationSource(makeCitation({ evidenceId: 'evidence', executionId: 'worker', source: 'https://ignored.test', page: '1' }),
+      'sidebar', 'Source', { conversationId: 'conversation', messageId: 'message' });
+    expect(fetchRootEvidence).toHaveBeenCalledWith('conversation', 'worker', 'evidence');
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(getCitationViewUrl).not.toHaveBeenCalled();
+    const call = vi.mocked(openFileViewerFromUrlLoader).mock.calls[0];
+    expect(call[0]).toBe(JSON.stringify(['conversation', 'worker', 'evidence']));
+    expect(call[4]).toMatchObject({ page: 13 });
+    expect(await call[3]()).toMatchObject({ page: 13 });
+    await call[3]();
+    expect(fetchRootEvidence).toHaveBeenCalledTimes(2);
+  });
+
+  it('never falls back after owned evidence is denied', async () => {
+    vi.mocked(fetchRootEvidence).mockRejectedValue(new Error('denied'));
+    await expect(openCitationSource(makeCitation({ evidenceId: 'evidence', executionId: 'worker', source: 'doc.pdf' }),
+      'sidebar', 'Source', { conversationId: 'conversation', messageId: 'message' })).rejects.toThrow('denied');
+    expect(getCitationViewUrl).not.toHaveBeenCalled();
+    expect(openFileViewerFromUrlLoader).not.toHaveBeenCalled();
+  });
+
+  it.each([{ evidenceId: 'evidence' }, { executionId: 'worker' }, { evidenceId: '', executionId: 'worker' }])
+    ('rejects incomplete owned identity without fallback: %o', async (identity) => {
+      await expect(openCitationSource(makeCitation({ ...identity, source: 'doc.pdf' }), 'sidebar', 'Source',
+        { conversationId: 'conversation', messageId: 'message' })).rejects.toThrow('identity');
+      expect(fetchRootEvidence).not.toHaveBeenCalled();
+      expect(getCitationViewUrl).not.toHaveBeenCalled();
+    });
 
   it('opens web citations directly in a new tab without calling the citations API', async () => {
     const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);

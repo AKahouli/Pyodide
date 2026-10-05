@@ -50,6 +50,8 @@ const ChartPartRenderer = lazy(() => import('./chart-part-renderer').then((m) =>
 export type CitationBBox = [number, number, number, number];
 
 export interface CitationData {
+  evidenceId?: string;
+  executionId?: string;
   parentId: string;
   sourceType: 'text' | 'image' | 'web';
   sourceKind?: 'document' | 'image' | 'web';
@@ -476,6 +478,24 @@ export async function openCitationSource(
   defaultLabel: string,
   citationScope?: { conversationId: string; messageId: string },
 ): Promise<void> {
+  if (citation.evidenceId !== undefined || citation.executionId !== undefined) {
+    if (typeof citation.evidenceId !== 'string' || !citation.evidenceId.trim()
+      || typeof citation.executionId !== 'string' || !citation.executionId.trim() || !citationScope?.conversationId) {
+      throw new Error('Incomplete evidence identity');
+    }
+    const { fetchRootEvidence } = await import('@/modules/conversation/api');
+    const load = () => fetchRootEvidence(citationScope.conversationId, citation.executionId!, citation.evidenceId!);
+    const location = await load();
+    let initial: typeof location | undefined = location;
+    const key = JSON.stringify([citationScope.conversationId, citation.executionId, citation.evidenceId]);
+    await openFileViewerFromUrlLoader(key, location.fileName || defaultLabel,
+      location.mimeType || getMimeTypeFromFilename(location.fileName) || 'application/octet-stream',
+      async () => {
+        if (initial) { const result = initial; initial = undefined; return result; }
+        return load();
+      }, { displayMode, closeOnOutsideClick: displayMode === 'floating', page: location.page });
+    return;
+  }
   const objectKey = (citation.sourceType === 'image' ? citation.path : citation.source) || '';
   if (!objectKey) return;
 
@@ -854,6 +874,8 @@ const CitationPartRenderer = ({ citation, citationScope }: { citation: CitationP
     citations={[
       {
         parentId: citation.parentId,
+        evidenceId: citation.evidenceId,
+        executionId: citation.executionId,
         sourceType: citation.sourceType,
         source: citation.source,
         fileName: citation.fileName,

@@ -29,6 +29,15 @@ describe('Root evidence current access', () => {
     h.conversations.filterAccessibleWorkspaceIds.mockResolvedValueOnce(['workspace']).mockResolvedValueOnce([]);
     await expect(h.service.resolve('conversation', 'child', 'evidence', 'owner')).rejects.toThrow('access');
   });
+  it.each([13, '13'])('returns the registered source page %s', async (page) => {
+    const h = setup({ document_id: 'document', workspace_id: 'workspace', page });
+    expect(await h.service.resolve('conversation', 'child', 'evidence', 'owner')).toMatchObject({ page: 13 });
+  });
+  it.each([0, -1, 1.5, Infinity, '13-14', ' 13', '01', {}, Number.MAX_SAFE_INTEGER + 1])
+    ('omits invalid registered page %s', async (page) => {
+      const h = setup({ document_id: 'document', workspace_id: 'workspace', page });
+      expect(await h.service.resolve('conversation', 'child', 'evidence', 'owner')).not.toHaveProperty('page');
+    });
   it('denies forged producer, execution references and mismatched document paths', async () => {
     const h = setup({ document_id: 'document', workspace_id: 'workspace', file_path: 'other/private' });
     await expect(h.service.resolve('conversation', 'child', 'evidence', 'owner')).rejects.toThrow('unavailable');

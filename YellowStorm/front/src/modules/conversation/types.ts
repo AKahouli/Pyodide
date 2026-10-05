@@ -869,6 +869,8 @@ export interface RootExecutionTextResult {
 }
 
 export interface RootExecutionEvidenceLocation {
+  page?: number;
+  mimeType?: string;
   evidenceId: string;
   kind: 'citation' | 'artifact';
   producerAgentId: string | null;
