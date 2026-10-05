@@ -214,6 +214,17 @@ def find_relation(compiled: dict[str, Any], catalog: dict[str, Any], concept: Co
     return None
 
 
+def relation_names(compiled: dict[str, Any], catalog: dict[str, Any], concept: Concept) -> list[str]:
+    """The relationships of the concept, by label (and inverse label), for error messages."""
+    labels = {item.get("key"): item for item in catalog.get("relations") or [] if item.get("key")}
+    names = []
+    for relation in compiled["relations"].values():
+        if concept.concept_id in (relation["sourceConceptId"], relation["targetConceptId"]):
+            entry = labels.get(relation.get("key")) or {}
+            names += [name for name in (entry.get("label") or relation.get("key"), entry.get("inverseLabel")) if name]
+    return names
+
+
 # Dates -------------------------------------------------------------------------------------
 
 
@@ -551,6 +562,32 @@ def _related_exists(builder: _Builder, relation: Relation, condition: str | None
             + (f" AND {condition}" if condition else "") + ")")
 
 
+def _compile_linked_to(builder: _Builder, errors: _Errors, compiled: dict[str, Any], catalog: dict[str, Any],
+                       concept: Concept, specs: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
+    """Records linked through a relation to given records (by entityId), always required on
+    top of the filters: e.g. the facts an e-mail states, from the e-mail's entityId."""
+    if len(specs) > MAX_FILTERS:
+        errors.add("linkedTo", "too_many", f"At most {MAX_FILTERS} links")
+        specs = specs[:MAX_FILTERS]
+    links = []
+    for index, spec in enumerate(specs):
+        part = f"linkedTo[{index}]"
+        name, ids = spec.get("relation"), spec.get("recordIds")
+        relation = find_relation(compiled, catalog, concept, name) if isinstance(name, str) else None
+        if relation is None:
+            errors.add(f"{part}.relation", "unknown_relation", f"{concept.label} has no relationship {name!r}",
+                       value=name, available=relation_names(compiled, catalog, concept))
+            continue
+        if not isinstance(ids, list) or not ids or not all(isinstance(item, str) and item for item in ids):
+            errors.add(f"{part}.recordIds", "invalid_value", "recordIds must be a non-empty list of entityIds",
+                       value=ids)
+            continue
+        condition = _related_exists(builder, relation, f"o.id = ANY({builder.bind(ids)}::text[])")
+        links.append((condition, {"relation": relation.label or relation.key, "direction": relation.direction,
+                                  "linkedConcept": relation.other.label, "recordIds": ids}))
+    return links
+
+
 def _local_field(errors: _Errors, concept: Concept, part: str, name: Any, compiled: dict[str, Any],
                  catalog: dict[str, Any]) -> Field | None:
     item, relation = _resolve_field(compiled, catalog, concept, name)
@@ -595,6 +632,10 @@ def compile_query(compiled: dict[str, Any], catalog: dict[str, Any], request: di
             conditions.append(f"({condition})")
     applied.update(filters=echoed, match=match)
     where = (" AND " if match == "all" else " OR ").join(conditions) if conditions else "true"
+    links = _compile_linked_to(builder, errors, compiled, catalog, concept, request.get("linkedTo") or [])
+    if links:
+        applied["linkedTo"] = [echo for _, echo in links]
+        where = " AND ".join([f"({where})", *(f"({condition})" for condition, _ in links)])
 
     group_specs = request.get("groupBy") or []
     if len(group_specs) > MAX_GROUP_BY:

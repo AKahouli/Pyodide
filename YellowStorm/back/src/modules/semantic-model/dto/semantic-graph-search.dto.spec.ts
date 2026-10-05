@@ -33,6 +33,12 @@ describe('AssistantQueryRecordsDto', () => {
     expect(dto.groupBy).toEqual([{ field: 'received', bucket: 'month' }]);
   });
 
+  it('keeps the records to follow links from', async () => {
+    const linkedTo = [{ relation: 'énonce', recordIds: ['ent-1', 'ent-2'] }];
+    const dto = await transform({ concept: 'Fait', linkedTo, limit: 200 });
+    expect(dto.linkedTo).toEqual(linkedTo);
+  });
+
   it.each([
     [{ filters: [{ field: 'x', op: 'like', value: 'a' }] }],
     [{ filters: [{ field: '', op: 'eq', value: 'a' }] }],
@@ -49,6 +55,9 @@ describe('AssistantQueryRecordsDto', () => {
     [{ offset: 100001 }],
     [{ data: 'production' }],
     [{ concept: '' }],
+    [{ linkedTo: [{ relation: 'énonce', recordIds: [] }] }],
+    [{ linkedTo: [{ relation: '', recordIds: ['a'] }] }],
+    [{ linkedTo: [{ relation: 'énonce', recordIds: ['a'], depth: 2 }] }],
   ])('refuses a malformed query: %j', async (part) => {
     await expect(transform({ concept: 'Invoice', ...part })).rejects.toThrow();
   });

@@ -105,11 +105,6 @@ export class AssistantMapDocumentsDto {
   @ApiPropertyOptional({ type: [String] }) @IsOptional() @IsArray() @ArrayMaxSize(10) @IsString({ each: true }) keyFields?: string[];
 }
 
-export class AssistantRecordsQueryDto {
-  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(200) q?: string;
-  @ApiPropertyOptional() @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50) limit?: number;
-}
-
 export class AssistantChangesQueryDto {
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(40) since?: string;
 }

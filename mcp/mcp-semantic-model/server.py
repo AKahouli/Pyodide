@@ -423,13 +423,6 @@ async def stop_data_update(model_id: str, job_id: str | None = None) -> Semantic
     return await call(backend().post(path, require_acting_user_id()))
 
 
-@mcp.tool(annotations=READ_ONLY)
-async def search_records(model_id: str, concept: str, query: str | None = None, limit: int = 20) -> SemanticModelMcpResultV1:
-    """Look at the records a concept holds after the last data update, optionally searched by any value. No change is made."""
-    path = with_query(f"{BASE}/models/{path_id(model_id)}/concepts/{path_id(concept)}/records", q=query, limit=limit)
-    return await call(backend().get(path, require_acting_user_id()))
-
-
 DATA_CHOICES = ("published", "draft")
 DIRECTIONS = ("outgoing", "incoming", "both")
 
@@ -523,6 +516,15 @@ def filter_spec(item: Any) -> dict[str, Any]:
     return spec
 
 
+def linked_spec(item: Any) -> dict[str, Any]:
+    if not isinstance(item, dict) or not isinstance(item.get("relation"), str):
+        raise ValueError('each linked_to item must be an object {"relation": ..., "record_ids": [...]}')
+    ids = string_list(item.get("record_ids", item.get("recordIds")), "record_ids") or []
+    if not ids:
+        raise ValueError("linked_to needs record_ids: the entityId of the records to follow links from")
+    return {"relation": item["relation"], "recordIds": ids}
+
+
 def group_spec(item: Any) -> dict[str, Any]:
     if isinstance(item, str):
         return {"field": item}
@@ -569,6 +571,7 @@ async def query_records(
     aggregates: list[Any] | str | None = None,
     order_by: list[Any] | str | None = None,
     fields: list[str] | str | None = None,
+    linked_to: list[dict[str, Any]] | str | None = None,
     limit: int = 50,
     offset: int = 0,
     data: str = "published",
@@ -578,6 +581,7 @@ async def query_records(
     filters: [{"field": "Sender domain", "op": "eq", "value": "acme.com"}]. ops: eq, ne, contains, starts_with, ends_with, in (list), gt, gte, lt, lte, between ([from, to] or one relative period), is_empty, not_empty. Text compares ignore case and accents; ne also keeps records with no value.
     Dates (date fields): an ISO date "2026-07-14", a month "2026-07" or a year "2026" (each covers the whole period), or a period resolved on the server in UTC: today, yesterday, last_7_days, last_N_days|weeks|months|years (N units up to today), this_week|month|quarter|year, last_week|month|quarter|year. Numbers compare as numbers on number fields.
     A linked record: "field": "<relation>.<field>" keeps the records linked through that relation (key, label or inverse label) to a record whose field matches, e.g. {"field": "sent by.domain", "op": "eq", "value": "acme.com"}; "field": "<relation>" with is_empty / not_empty keeps the records with no / some linked record.
+    linked_to: [{"relation": "<relation>", "record_ids": ["<entityId>", ...]}] keeps only the records linked through that relation to those exact records (entityId from find_records or query_records), on top of the filters. Use it to read or summarise the records linked to a record, e.g. concept="Fait", linked_to=[{"relation": "énonce", "record_ids": [the e-mail's entityId]}]: unlike get_related_records it returns their fields and an exact total.
     "as": "date"|"number"|"text"|"boolean" in a filter, group or aggregate reads a field with another type than declared (dates kept in a text field). match: "all" (default) or "any" of the filters.
     group_by: up to 2 fields, e.g. [{"field": "Received", "bucket": "month"}, "Sender"]; bucket (date fields): day, week, month, quarter, year. aggregates: [{"op": "count"}, {"op": "count_distinct", "field": "Sender"}, {"op": "sum", "field": "Amount"}] with count, count_distinct, sum, avg, min, max; [count] by default with group_by. Groups come back sorted (dates in order, otherwise largest count first), at most 500.
     Without group_by: total (exact) and a page of records {entityId, name, keyFields, values}, ordered by order_by [{"field": "Received", "direction": "desc"}]; fields: the fields to return (default all; ask only for what you need); long values are cut at 1500 characters (truncated). limit: 0 to 200 (0 returns only total and totals); offset pages through: call again with offset=nextOffset.
@@ -592,6 +596,7 @@ async def query_records(
             "aggregates": [aggregate_spec(item) for item in parse_json(aggregates, "aggregates", list) or []] or None,
             "orderBy": [order_spec(item) for item in parse_json(order_by, "order_by", list) or []] or None,
             "fields": string_list(fields, "fields") or None,
+            "linkedTo": [linked_spec(item) for item in parse_json(linked_to, "linked_to", list) or []] or None,
             "limit": bounded(limit, "limit", 0, 200),
             "offset": bounded(offset, "offset", 0, 100000),
             "data": choice(data, "data", DATA_CHOICES),

@@ -479,6 +479,7 @@ export interface RuntimeRecordsQueryRequest {
   aggregates?: RuntimeRecordsAggregate[];
   orderBy?: RuntimeRecordsOrderBy[];
   fields?: string[];
+  linkedTo?: Array<{ relation: string; recordIds: string[] }>;
   limit?: number;
   offset?: number;
   catalog: RuntimeRecordsCatalog;

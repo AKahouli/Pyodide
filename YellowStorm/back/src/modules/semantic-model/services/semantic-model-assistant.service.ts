@@ -1034,16 +1034,6 @@ export class SemanticModelAssistantService {
     };
   }
 
-  async searchRecords(userId: string, modelId: string, concept: string, query?: string, limit = 20) {
-    const graph = await this.graph.getGraph(userId, modelId) as SemanticGraph;
-    const node = this.findConcept(graph, concept);
-    if (!node) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, `There is no concept "${concept}" in this model`);
-    const page = await this.population.conceptRecords(userId, modelId, node.id, { q: query, limit: Math.min(Math.max(limit, 1), 50), offset: 0 }) as {
-      total: number; records: Array<{ label: string; values: Record<string, unknown>; identity?: Record<string, unknown> }>;
-    };
-    return { concept: node.label, total: page.total, records: page.records.map((record) => ({ name: record.label, ...record.identity, ...record.values })) };
-  }
-
   /**
    * Records of the model found by key, words and meaning (find_records). They are records the model holds,
    * not documents; notes say plainly when the index is not ready, nothing matched or the model has no such

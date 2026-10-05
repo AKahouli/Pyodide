@@ -14,7 +14,7 @@ No benchmark has been run.
 Decisions taken with the recommended defaults:
 - **D1:** the runtime calls LiteLLM directly (`SEMANTIC_EMBEDDING_*`).
 - **D2:** workspace filtering is always on, for chat and the editor.
-- **D3:** `search_records` is kept.
+- **D3:** `search_records` was retired: `find_records` searches, `query_records` lists and counts.
 
 Live check on the dev data:
 - 8 bound revisions indexed;

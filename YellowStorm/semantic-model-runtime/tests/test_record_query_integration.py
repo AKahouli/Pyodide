@@ -210,6 +210,28 @@ async def test_a_linked_record_must_match_and_be_readable(pool) -> None:  # type
 
 
 @pytest.mark.asyncio
+async def test_records_linked_to_given_records_by_entity_id(pool) -> None:  # type: ignore[no-untyped-def]
+    # The invoices billed to one customer, from its entityId: every one, readable only.
+    of_fr = await query(pool, {"linkedTo": [{"relation": "billed to", "recordIds": ["customer:C-FR"]}]})
+    assert names(of_fr) == ["Invoice F-1", "Invoice F-3"] and of_fr["total"] == 2
+    # Always required on top of the filters, even with match any.
+    paid = await query(pool, {"match": "any", "filters": [{"field": "status", "op": "eq", "value": "draft"}],
+                              "linkedTo": [{"relation": "billed_to", "recordIds": ["customer:C-FR", "customer:C-DE"]}]})
+    assert names(paid) == ["Invoice F-3"]
+    # From the other side, by the inverse label.
+    customers = await query(pool, {"concept": "Customer",
+                                   "linkedTo": [{"relation": "receives", "recordIds": ["invoice:F-2"]}]})
+    assert names(customers) == ["C-DE"]
+    compiled = await routes._compiled(pool, REVISION)
+    _, errors, _ = compile_query(compiled, CATALOG, {"concept": "Invoice", "linkedTo": [
+        {"relation": "sends", "recordIds": ["x"]}, {"relation": "billed to", "recordIds": []}]},
+        model_id=MODEL, revision_id=REVISION, allowed_workspaces=["ws1"], now=NOW)
+    assert [(e["part"], e["reason"]) for e in errors] == [
+        ("linkedTo[0].relation", "unknown_relation"), ("linkedTo[1].recordIds", "invalid_value")]
+    assert "billed to" in errors[0]["available"]
+
+
+@pytest.mark.asyncio
 async def test_pages_long_values_and_hostile_input(pool) -> None:  # type: ignore[no-untyped-def]
     page = await query(pool, {"limit": 2, "offset": 1, "fields": ["notes", "Invoice number"]})
     assert page["total"] == 6 and names(page) == ["Invoice F-2", "Invoice F-3"] and page["nextOffset"] == 3

@@ -101,6 +101,13 @@ class RecordFilter(BaseModel):
     as_: str | None = Field(default=None, alias="as", max_length=20)
 
 
+class LinkedTo(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    relation: str = Field(max_length=300)
+    record_ids: list[str] = Field(alias="recordIds", min_length=1, max_length=200)
+
+
 class GroupBy(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -168,6 +175,7 @@ class RecordsQuery(_Pinned):
     aggregates: list[Aggregate] = Field(default_factory=list, max_length=30)
     order_by: list[OrderBy] = Field(default_factory=list, alias="orderBy", max_length=10)
     fields: list[str] | None = Field(default=None, max_length=200)
+    linked_to: list[LinkedTo] = Field(default_factory=list, alias="linkedTo", max_length=20)
     limit: int = 50
     offset: int = 0
     catalog: Catalog = Field(default_factory=Catalog)
@@ -355,7 +363,7 @@ async def query_records(command: RecordsQuery, request: Request) -> dict[str, ob
     compiled = await _compiled(pool, binding["data_revision_id"])
     query = command.model_dump(by_alias=True, exclude_none=True,
                                include={"concept", "filters", "match", "group_by", "aggregates",
-                                        "order_by", "fields", "limit", "offset"})
+                                        "order_by", "fields", "linked_to", "limit", "offset"})
     plan, errors, applied = compile_query(
         compiled, command.catalog.model_dump(by_alias=True), query, model_id=command.model_id,
         revision_id=binding["data_revision_id"], allowed_workspaces=command.allowed_workspace_ids,
