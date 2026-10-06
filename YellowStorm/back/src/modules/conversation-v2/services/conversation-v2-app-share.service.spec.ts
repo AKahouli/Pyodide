@@ -69,6 +69,7 @@ function sessionRecord(
     eventSequence: 0,
     eventCount: 0,
     systemWorkspaceId: null,
+    starterRevisionId: null,
     createdAt: new Date(0),
     updatedAt: new Date(0),
     ...overrides,

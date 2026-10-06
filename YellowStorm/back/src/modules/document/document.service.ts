@@ -85,7 +85,9 @@ export class DocumentService {
     options: UploadOptions = {},
   ): Promise<UploadedDocument> {
     this.ensureAvailable();
-    await this.validateFile(originalName, mimeType, file instanceof Buffer ? file.length : undefined);
+    await this.validateFile(originalName, mimeType, file instanceof Buffer ? file.length : undefined, {
+      skipMimeValidation: options.skipMimeValidation === true,
+    });
 
     const id = randomUUID();
     const sanitizedName = this.sanitizeFileName(originalName);
@@ -507,9 +509,18 @@ export class DocumentService {
     }
   }
 
-  private async validateFile(fileName: string, mimeType: string, size?: number): Promise<void> {
+  private async validateFile(
+    fileName: string,
+    mimeType: string,
+    size?: number,
+    options: { skipMimeValidation?: boolean } = {},
+  ): Promise<void> {
     const { maxFileSizeBytes, allowedMimeTypes } = await this.getUploadLimits();
-    if (allowedMimeTypes.length > 0 && !allowedMimeTypes.includes(mimeType)) {
+    if (
+      !options.skipMimeValidation &&
+      allowedMimeTypes.length > 0 &&
+      !allowedMimeTypes.includes(mimeType)
+    ) {
       throw new BadRequestException(
         `File type '${mimeType}' is not allowed. Allowed types: ${allowedMimeTypes.join(', ')}`,
       );

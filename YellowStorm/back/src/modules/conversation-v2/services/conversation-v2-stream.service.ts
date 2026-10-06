@@ -1,10 +1,12 @@
 import {
+  Inject,
   Injectable,
   Logger,
   OnModuleDestroy,
   NotFoundException,
   BadRequestException,
   ConflictException,
+  forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
@@ -90,8 +92,13 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     private readonly skillService: SkillService,
     private readonly connectorService: ConnectorService,
     private readonly modelsService: ModelsService,
+    // forwardRef: App Runtime services inject Conversation V2 ports that depend
+    // on this stream service — breaks Nest's silent bootstrap deadlock (exit 0).
+    @Inject(forwardRef(() => RuntimeFinalizedRevisionService))
     private readonly finalizedRevisions: RuntimeFinalizedRevisionService,
+    @Inject(forwardRef(() => RuntimeRevisionService))
     private readonly runtimeRevisions: RuntimeRevisionService,
+    @Inject(forwardRef(() => RuntimeBindingService))
     private readonly runtimeBindings: RuntimeBindingService,
   ) {}
 
@@ -154,6 +161,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     // model wins; otherwise the conversation-v2 default (admin-configured on an
     // existing model, reusing its config) and then the global default.
     const model = req.model ?? (await this.resolveConversationV2DefaultModel());
+    const appAiModel = await this.resolveAppAiCatalogModelId(model);
 
     // Historical-version send: validate the selected revision, branch a fresh
     // revision from it and pin the runtime binding, so the agent builds from
@@ -234,7 +242,19 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     // (mirrors v1's conversation-level `selectedSkills`). Refreshed every send.
     await this.sessions.setSelectedSkills(sessionId, req.skillIds ?? []);
     await this.sessions.setSelectedConnectors(sessionId, req.connectorIds ?? []);
-    this.runGrpc(userId, grpcUserId, sessionId, aiSessionId, systemWorkspaceId, req, model, skills, connectors, branchRevisionId);
+    this.runGrpc(
+      userId,
+      grpcUserId,
+      sessionId,
+      aiSessionId,
+      systemWorkspaceId,
+      req,
+      model,
+      skills,
+      connectors,
+      branchRevisionId,
+      appAiModel,
+    );
   }
 
   /**
@@ -283,6 +303,31 @@ export class ConversationV2StreamService implements OnModuleDestroy {
   }
 
 
+  /**
+   * Catalog model id for generated-app AI Proxy (same Studio selection as the
+   * stream). `streamModel` is typically a LiteLLM identifier from the composer.
+   */
+  private async resolveAppAiCatalogModelId(
+    streamModel: string | undefined,
+  ): Promise<string | undefined> {
+    try {
+      if (streamModel?.trim()) {
+        const hit = await this.modelsService.findByIdOrLitellmModel(streamModel.trim());
+        if (hit?.id) return hit.id;
+      }
+      const conversationV2Default =
+        await this.modelsService.getConversationV2DefaultModel();
+      if (conversationV2Default?.id) return conversationV2Default.id;
+      const platformDefault = await this.modelsService.getDefaultModel();
+      return platformDefault?.id || undefined;
+    } catch (err) {
+      this.logger.warn(
+        `Failed to resolve app AI catalog model: ${(err as Error).message}`,
+      );
+      return undefined;
+    }
+  }
+
   private runGrpc(
     actorUserId: string,
     grpcUserId: string,
@@ -294,6 +339,7 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     skills: IGrpcSkill[],
     connectors: IGrpcConnector[],
     branchRevisionId: string | null = null,
+    appAiModel?: string,
   ): void {
     const key = `${actorUserId}:${sessionId}`;
     const idleMs = this.config.get<number>('conversationV2.grpcIdleTimeoutMs') ?? 120000;
@@ -382,7 +428,16 @@ export class ConversationV2StreamService implements OnModuleDestroy {
     }
 
     const subscription = this.grpcClient
-      .chat(grpcUserId, aiSessionId, gRpcMessage, model, req.connectorRepo, skills, connectors)
+      .chat(
+        grpcUserId,
+        aiSessionId,
+        gRpcMessage,
+        model,
+        req.connectorRepo,
+        skills,
+        connectors,
+        appAiModel,
+      )
       .subscribe({
         next: (event) => {
           resetIdle();

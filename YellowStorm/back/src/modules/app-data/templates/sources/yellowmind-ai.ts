@@ -243,8 +243,8 @@ let cachedDefaultModelId: string | null = null;
 
 /**
  * Resolve a chat model id that the AI proxy will accept.
- * Prefer `VITE_YM_AI_DEFAULT_MODEL` (host-injected), else first catalog entry.
- * Never hardcode `gpt-4o` — it may be absent from the tenant catalog.
+ * Prefer `VITE_YM_AI_DEFAULT_MODEL` (host-injected studio session model), else first catalog entry.
+ * Never hardcode `gpt-4o` / `gpt-4o-mini` — they may be absent from the tenant catalog.
  */
 export async function resolveDefaultAiModel(accessToken?: string): Promise<string> {
   const fromEnv = (import.meta.env.VITE_YM_AI_DEFAULT_MODEL as string | undefined)?.trim();
@@ -264,6 +264,49 @@ export async function resolveDefaultAiModel(accessToken?: string): Promise<strin
   cachedDefaultModelId = first;
   ymDiag.info('ai', 'resolved default model from catalog', { model: first });
   return first;
+}
+
+/**
+ * Prefer an explicit model only when it is in the AI proxy catalog; otherwise
+ * fall back to the studio session default. Stops agent-invented ids like
+ * `gpt-4o-mini` from 400ing the proxy.
+ */
+async function resolveChatModel(
+  requested: string | undefined,
+  accessToken?: string,
+): Promise<string> {
+  const trimmed = requested?.trim();
+  if (!trimmed) {
+    return resolveDefaultAiModel(accessToken);
+  }
+
+  const fromEnv = (import.meta.env.VITE_YM_AI_DEFAULT_MODEL as string | undefined)?.trim();
+  if (fromEnv && trimmed === fromEnv) {
+    return fromEnv;
+  }
+
+  try {
+    const listed = await listAIModels(accessToken);
+    const ids = new Set(
+      (listed.data ?? [])
+        .map((m) => m.id?.trim())
+        .filter((id): id is string => Boolean(id)),
+    );
+    if (ids.has(trimmed)) {
+      return trimmed;
+    }
+    ymDiag.warn('ai', 'requested model not in catalog; using studio default', {
+      requested: trimmed,
+      fallback: fromEnv || '(catalog)',
+    });
+  } catch (err) {
+    ymDiag.warn('ai', 'catalog lookup failed while resolving model; using default', {
+      requested: trimmed,
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  return resolveDefaultAiModel(accessToken);
 }
 
 /** Build chat.completions.create params; omit optional sampling fields unless set. */
@@ -339,7 +382,7 @@ export async function chatCompletion(
     accessToken?: string;
   },
 ) {
-  const model = options?.model?.trim() || (await resolveDefaultAiModel(options?.accessToken));
+  const model = await resolveChatModel(options?.model, options?.accessToken);
   ymDiag.info('ai', 'chatCompletion', {
     model,
     messageCount: messages.length,
@@ -394,7 +437,7 @@ export async function streamChatCompletion(
     accessToken?: string;
   },
 ) {
-  const model = options?.model?.trim() || (await resolveDefaultAiModel(options?.accessToken));
+  const model = await resolveChatModel(options?.model, options?.accessToken);
   const client = createAIClient(options?.accessToken);
   const params = buildChatCompletionParams(model, messages, {
     temperature: options?.temperature,

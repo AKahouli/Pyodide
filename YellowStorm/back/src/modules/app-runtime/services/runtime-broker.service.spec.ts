@@ -4,6 +4,7 @@ import type { RuntimeBindingRecord as AppRuntimeBinding } from '../persistence/r
 import { RuntimeBrokerService } from './runtime-broker.service';
 import { RuntimeToolDispatcherService } from './runtime-tool-dispatcher.service';
 import { AppRuntimeConversationNotifierService } from './app-runtime-conversation-notifier.service';
+import { PlatformBaselineService } from '../platform-kit/platform-baseline.service';
 
 describe('RuntimeBrokerService', () => {
   const invoke = jest.fn();
@@ -17,7 +18,10 @@ describe('RuntimeBrokerService', () => {
     notifyFinalize,
   } as unknown as AppRuntimeConversationNotifierService;
 
-  const broker = new RuntimeBrokerService(dispatcher, config, conversationNotifier);
+  const planBaseline = jest.fn();
+  const baseline = { planBaseline } as unknown as PlatformBaselineService;
+
+  const broker = new RuntimeBrokerService(dispatcher, config, conversationNotifier, baseline);
 
   const binding = (): AppRuntimeBinding =>
     ({
@@ -34,6 +38,26 @@ describe('RuntimeBrokerService', () => {
       broker.dispatch('not_a_tool', {}, binding(), 'tc_1'),
     ).rejects.toMatchObject({ message: expect.stringContaining('Unknown tool') });
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('answers platform_check from the revision store without touching the browser', async () => {
+    planBaseline.mockResolvedValueOnce({
+      mode: 'deploy',
+      files: [{ path: 'src/lib/ym-diag.ts', content: '' }],
+      violations: ['src/AppRouter.tsx: missing basename'],
+      warnings: [],
+      entry: 'src/main.jsx',
+      appRoot: 'src/App.jsx',
+    });
+
+    const outcome = await broker.dispatch('platform_check', {}, binding(), 'tc_check');
+
+    expect(invoke).not.toHaveBeenCalled();
+    expect(outcome.result).toMatchObject({
+      ok: false,
+      violations: ['src/AppRouter.tsx: missing basename'],
+      missingPlatformFiles: ['src/lib/ym-diag.ts'],
+    });
   });
 
   it('dispatches read and returns dispatcher result', async () => {

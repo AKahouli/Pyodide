@@ -24,6 +24,11 @@ import {
   shouldApplyTerminalEvent,
 } from './utils/session-reducer';
 import { normalizeFilesTree } from './utils/files-tree';
+import { deployError, deployLog, deployWarn } from './utils/deploy-log';
+import {
+  isDeployConnectionLost,
+  pollDeployStateFromSession,
+} from './utils/reconcile-deploy';
 import {
   syncHostRevisionSources,
   maybeRestartDevServerAfterAppDataTool,
@@ -36,7 +41,6 @@ import {
   type FinalizedAppVersion,
 } from './utils/finalized-versions';
 import { CONVERSATION_V2_DEFAULT_MODEL_CHANGED_EVENT } from '@/modules/models/store';
-
 export type { FinalizedAppVersion };
 
 export interface ApplicationComponentState {
@@ -762,9 +766,21 @@ export const useConversationV2Store = create<State & Actions>()(
       },
       deploy: async (revisionId) => {
         const id = get().sessionId;
-        if (!id) return;
+        if (!id) {
+          deployWarn('store:skip', { reason: 'no sessionId' });
+          return;
+        }
         const state = get();
         const deployRevisionId = resolveDeployRevisionId(state, revisionId);
+        deployLog('store:start', {
+          sessionId: id,
+          requestedRevisionId: revisionId ?? null,
+          deployRevisionId: deployRevisionId ?? null,
+          previewRevisionId: state.previewRevisionId,
+          latestFinalizedRevisionId: state.finalizedVersions[0]?.revisionId ?? null,
+          applicationRevisionId: state.applicationComponent?.workspaceRevisionId ?? null,
+          previousStatus: state.deployStatus,
+        });
         set({ deployStatus: 'deploying' }, false, 'deploy/start');
         try {
           const title =
@@ -773,6 +789,14 @@ export const useConversationV2Store = create<State & Actions>()(
           const r = await conversationV2Api.deploySession(id, {
             title,
             revisionId: deployRevisionId,
+          });
+          deployLog('store:done', {
+            sessionId: id,
+            deployRevisionId: deployRevisionId ?? null,
+            deployStatus: r.deployStatus,
+            deployedUrl: r.deployedUrl,
+            lastDeployedAt: r.lastDeployedAt,
+            hasOwnerInviteToken: Boolean(r.ownerInviteToken),
           });
           set(
             {
@@ -788,6 +812,33 @@ export const useConversationV2Store = create<State & Actions>()(
             'deploy/done',
           );
         } catch (err) {
+          if (isDeployConnectionLost(err)) {
+            const reconciled = await pollDeployStateFromSession(id, (sid) =>
+              conversationV2Api.getSession(sid),
+            );
+            if (reconciled?.deployStatus === 'deployed' && reconciled.deployedUrl) {
+              deployLog('store:reconciled', {
+                sessionId: id,
+                deployedUrl: reconciled.deployedUrl,
+              });
+              set(
+                {
+                  deployStatus: reconciled.deployStatus,
+                  deployedUrl: reconciled.deployedUrl,
+                  lastDeployedAt: reconciled.lastDeployedAt,
+                  ownerInviteToken: reconciled.ownerInviteToken ?? null,
+                  appViewMode: 'deployed',
+                },
+                false,
+                'deploy/reconciled',
+              );
+              return;
+            }
+          }
+          deployError('store:error', err, {
+            sessionId: id,
+            deployRevisionId: deployRevisionId ?? null,
+          });
           set({ deployStatus: 'error' }, false, 'deploy/error');
           throw err;
         }
@@ -1014,10 +1065,15 @@ export const useConversationV2Store = create<State & Actions>()(
                           : {}),
                       }
                     : {};
+
                 if (idx >= 0) {
                   const next = state.events.slice();
                   next[idx] = event;
-                  return withSeq({ events: next, liveToolCallId: nextLive, ...autoOpen });
+                  return withSeq({
+                    events: next,
+                    liveToolCallId: nextLive,
+                    ...autoOpen,
+                  });
                 }
                 return withSeq({
                   events: [...state.events, event],

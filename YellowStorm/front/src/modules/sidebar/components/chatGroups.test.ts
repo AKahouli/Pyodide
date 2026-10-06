@@ -68,7 +68,7 @@ describe('buildHistoryRows', () => {
     );
     expect(rows.map((r) => r.id)).toEqual(['s1', 'c1']);
     expect(rows[0].title).toBe('Untitled');
-    expect(rows[0].to).toBe('/conversation-v2/s1');
+    expect(rows[0].to).toBe('/studio/s1');
     expect(rows[1].to).toBe('/conversation/c1');
   });
 

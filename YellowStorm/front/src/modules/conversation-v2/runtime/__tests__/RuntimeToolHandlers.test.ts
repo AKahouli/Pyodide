@@ -47,6 +47,14 @@ function makeAdapter(initial: Record<string, string> = {}) {
       if (found === undefined) throw new Error(`ENOENT: ${path}`);
       return found;
     },
+    async readFileBytes(path: string) {
+      const found = files.get(path);
+      if (found === undefined) throw new Error(`ENOENT: ${path}`);
+      // Copy into a fresh buffer: TS 5.7+ parameterises Uint8Array over its
+      // backing buffer, and the adapter contract requires a plain ArrayBuffer
+      // (not ArrayBufferLike / SharedArrayBuffer).
+      return new Uint8Array(new TextEncoder().encode(found));
+    },
     async writeFile(path: string, content: string) {
       files.set(path, content);
     },
@@ -399,15 +407,45 @@ describe('write', () => {
     );
   });
 
-  it('omits binary files from the persisted revision snapshot', async () => {
+  it('includes binary files in the persisted revision snapshot', async () => {
     const { ctx, adapter } = await makeContext(BASE_FILES);
     await adapter.writeFile('/public/hero.png', 'not-a-real-png');
     await dispatchTool('write', { path: 'src/New.tsx', content: 'x', create: true }, ctx);
     const body = vi.mocked(conversationV2Api.commitWorkspaceRevision).mock.calls.at(-1)?.[1] as {
-      files: Array<{ path: string }>;
+      files: Array<{ path: string; encoding?: string }>;
+      presentPaths: string[];
     };
-    expect(body.files.some((file) => file.path.endsWith('.png'))).toBe(false);
+    expect(body.files.some((file) => file.path === 'public/hero.png')).toBe(true);
+    expect(body.files.find((file) => file.path === 'public/hero.png')?.encoding).toBe('base64');
+    expect(body.presentPaths).toContain('public/hero.png');
     expect(body.files.some((file) => file.path === 'src/New.tsx')).toBe(true);
+  });
+
+  it('lists binary paths in presentPaths even when byte read fails so Ceph can inherit', async () => {
+    const { ctx, adapter } = await makeContext(BASE_FILES);
+    await adapter.writeFile('/src/assets/hero.png', 'png-bytes');
+    const original = adapter.readFileBytes.bind(adapter);
+    adapter.readFileBytes = vi.fn(async (path: string) => {
+      if (path.endsWith('.png')) throw new Error('binary read failed');
+      // The adapter contract requires a plain-ArrayBuffer view; the bound
+      // original widens to ArrayBufferLike under TS 5.7+.
+      return new Uint8Array(await original(path));
+    });
+    // Force shaManifest to include the png without relying on readFileBytes success in commit.
+    adapter.shaManifest = async () => {
+      const manifest = new Map<string, string>();
+      for (const [full, content] of adapter.files) {
+        manifest.set(full.replace(/^\//, ''), await sha256(content));
+      }
+      return manifest;
+    };
+    await dispatchTool('write', { path: 'src/New.tsx', content: 'x', create: true }, ctx);
+    const body = vi.mocked(conversationV2Api.commitWorkspaceRevision).mock.calls.at(-1)?.[1] as {
+      files: Array<{ path: string }>;
+      presentPaths: string[];
+    };
+    expect(body.presentPaths).toContain('src/assets/hero.png');
+    expect(body.files.some((file) => file.path === 'src/assets/hero.png')).toBe(false);
   });
 
   it('rolls back the local revision when Ceph persist fails', async () => {

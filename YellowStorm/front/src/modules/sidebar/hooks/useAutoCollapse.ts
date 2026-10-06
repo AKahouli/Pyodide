@@ -20,7 +20,11 @@ export function useAutoCollapse() {
   setOpenRef.current = setOpen;
 
   useEffect(() => {
-    if (pathname === '/' || /^\/conversation(?:\/|$)/.test(pathname)) {
+    if (
+      pathname === '/' ||
+      /^\/conversation(?:\/|$)/.test(pathname) ||
+      /^\/studio(?:\/|$)/.test(pathname)
+    ) {
       setOpenRef.current(false);
     }
   }, [pathname]);

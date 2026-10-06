@@ -40,6 +40,20 @@ function makeIframe(html = '<h1 id="title">Hi</h1>'): HTMLIFrameElement {
   return iframe;
 }
 
+describe('PreviewController probeAndPromote', () => {
+  it('promotes after in-pod HTTP when promotePolicy is direct', async () => {
+    const ctrl = new PreviewController();
+    const pod = makePod();
+    const url = 'http://localhost/__virtual__/pod-1/5173/';
+    const result = await ctrl.probeAndPromote(pod, url, 5173, () => false, {
+      promotePolicy: 'direct',
+    });
+    expect(result.ok).toBe(true);
+    expect(ctrl.previewUrl).toBe(url);
+    expect(pod.proxy.handleRequest).toHaveBeenCalled();
+  });
+});
+
 describe('PreviewController inspection bridge', () => {
   let ctrl: PreviewController;
 

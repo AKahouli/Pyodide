@@ -35,6 +35,8 @@ import { ConversationV2SessionAccessGuard } from './guards/conversation-v2-sessi
 import { RequireConversationSessionPermission } from './decorators/require-conversation-session-permission.decorator';
 import { CurrentConversationSession } from './decorators/current-conversation-session.decorator';
 import { ConversationV2SessionPermissions } from './constants/conversation-v2-session-permissions';
+import { Permissions } from '@modules/authorization/constants/permissions';
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import type { ConversationV2SessionPermission } from './constants/conversation-v2-session-permissions';
 import type { ConversationV2ResolvedSession } from './services/conversation-v2-session-access.service';
 import { CreateSessionDto } from './dto/create-session.dto';
@@ -56,6 +58,7 @@ import { ConversationV2EventStoreService, PersistedEventRow } from './services/c
 import { ConversationV2DeployService } from './services/conversation-v2-deploy.service';
 import { ConversationV2AppShareService } from './services/conversation-v2-app-share.service';
 import { ConversationV2AppAiFeaturesService } from './services/conversation-v2-app-ai-features.service';
+import { ConversationV2TemplateService } from './services/conversation-v2-template.service';
 import { normalizeAppSourceCephPrefix } from './utils/normalize-app-source-ceph-prefix';
 import { RuntimeTicketService } from '@modules/app-runtime/services/runtime-ticket.service';
 import { AiPreviewTicketService } from '@modules/ai-proxy/services/ai-preview-ticket.service';
@@ -65,7 +68,7 @@ import { RuntimeBindingService } from '@modules/app-runtime/services/runtime-bin
 import { RuntimeFinalizedRevisionService } from '@modules/app-runtime/services/runtime-finalized-revision.service';
 import type { RuntimeTicketResult } from '@modules/app-runtime/types/app-runtime-protocol';
 
-interface AuthUser { id: string; }
+interface AuthUser { id: string; permissions?: string[]; }
 
 interface ConversationV2Request {
   conversationV2Access?: {
@@ -97,6 +100,7 @@ export class ConversationV2Controller {
     private readonly runtimeBindings: RuntimeBindingService,
     private readonly finalizedRevisions: RuntimeFinalizedRevisionService,
     private readonly appAiFeatures: ConversationV2AppAiFeaturesService,
+    private readonly templates: ConversationV2TemplateService,
   ) {}
 
   /**
@@ -132,7 +136,16 @@ export class ConversationV2Controller {
       await this.workspaceShare.assertUserHasAccess(user.id, workspaceIds);
     }
 
-    const draft = await this.sessions.createDraft(user.id, workspaceIds);
+    // Optional template seed: the session (and therefore the browser runtime
+    // binding) boots on the template's published revision.
+    let starterRevisionId: string | undefined;
+    if (body.templateId) {
+      const isSuperAdmin = user.permissions?.includes(Permissions.SUPER_ADMIN) ?? false;
+      const template = await this.templates.requireUsableForUser(body.templateId, isSuperAdmin);
+      starterRevisionId = template.revisionId ?? undefined;
+    }
+
+    const draft = await this.sessions.createDraft(user.id, workspaceIds, starterRevisionId);
     const draftId = draft.id;
 
     let systemWorkspaceId: string;
@@ -154,7 +167,11 @@ export class ConversationV2Controller {
 
     let aiSessionId: string;
     try {
-      aiSessionId = await this.grpcClient.createSession(user.id, workspaceIds);
+      aiSessionId = await this.grpcClient.createSession(
+        user.id,
+        workspaceIds,
+        body.capability ?? 'web_app',
+      );
     } catch (err) {
       this.discardDraft(draftId, systemWorkspaceId);
       throw err;
@@ -269,6 +286,8 @@ export class ConversationV2Controller {
     lastEventAt: Date;
     eventCount: number;
     systemWorkspaceId: string | null;
+    /** Template `template_<id>` or system starter — needed so refresh keeps the clone preview. */
+    starterRevisionId: string | null;
     deployStatus: string;
     deployedUrl: string | null;
     lastDeployedAt: string | null;
@@ -289,6 +308,7 @@ export class ConversationV2Controller {
       lastEventAt: pointer.lastEventAt,
       eventCount: pointer.eventCount ?? 0,
       systemWorkspaceId: pointer.systemWorkspaceId ?? null,
+      starterRevisionId: pointer.starterRevisionId ?? null,
       deployStatus: pointer.deployStatus ?? 'idle',
       deployedUrl: pointer.deployedUrl ?? null,
       lastDeployedAt: pointer.lastDeployedAt
@@ -532,6 +552,11 @@ export class ConversationV2Controller {
   }> {
     const pointer = session.pointer;
     const ownerId = session.ownerId;
+    const startedAt = Date.now();
+    this.logger.log(
+      `[deploy] HTTP start session=${id} aiSessionId=${pointer.aiSessionId ?? 'none'} ` +
+        `requestedRevision=${body.revisionId?.trim() || 'latest'} title=${body.title?.trim() || 'none'}`,
+    );
     if (!pointer.aiSessionId) {
       throw new NotFoundException('Session not found');
     }
@@ -546,15 +571,27 @@ export class ConversationV2Controller {
         id,
         body.revisionId,
       );
+      this.logger.log(
+        `[deploy] HTTP resolved revision session=${id} revision=${resolvedRevisionId ?? 'none'}`,
+      );
       if (!resolvedRevisionId) {
         throw new BadRequestException(
           'No finalized revision is available to deploy. Wait until the app is ready.',
         );
       }
       revisionId = resolvedRevisionId;
-      const result = await this.deployment.deploy(pointer.aiSessionId, revisionId);
+      const result = await this.deployment.deploy(pointer.aiSessionId, revisionId, ownerId);
       deployedUrl = result.url;
+      this.logger.log(
+        `[deploy] HTTP deployer ok session=${id} revision=${revisionId} url=${deployedUrl} ` +
+          `elapsedMs=${Date.now() - startedAt}`,
+      );
     } catch (err) {
+      this.logger.error(
+        `[deploy] HTTP failed session=${id} elapsedMs=${Date.now() - startedAt}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
       await this.sessions
         .setDeployState(ownerId, id, { deployStatus: 'error' })
         .catch(() => undefined);
@@ -597,6 +634,11 @@ export class ConversationV2Controller {
     } catch (err) {
       this.logger.warn(`Owner auto-invite failed for session ${id}: ${err}`);
     }
+
+    this.logger.log(
+      `[deploy] HTTP complete session=${id} revision=${revisionId} url=${deployedUrl} ` +
+        `invite=${Boolean(ownerInviteToken)} elapsedMs=${Date.now() - startedAt}`,
+    );
 
     return {
       deployStatus: 'deployed',
@@ -763,6 +805,7 @@ export class ConversationV2Controller {
       revisionId: body.revisionId,
       parentRevisionId: body.parentRevisionId ?? null,
       files: body.files,
+      presentPaths: body.presentPaths,
       toolCallId: body.toolCallId ?? null,
     });
     return {

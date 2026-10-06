@@ -1,4 +1,4 @@
-import { Loader2Icon, AlertCircleIcon, CheckCircle2Icon } from 'lucide-react';
+import { Loader2Icon, AlertCircleIcon, CheckCircle2Icon, CheckIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import type { AppBuildProgress } from '../../types';
@@ -84,7 +84,10 @@ export function AppBuildProgressPanel({ progress, title }: AppBuildProgressPanel
             const active = phase === progress.phase;
             const labelKey = buildPhaseTranslationKey(phase);
             const translated = t(labelKey);
-            const label = translated === labelKey ? phase.replaceAll('_', ' ') : translated;
+            // Never surface a raw phase identifier to the user; a missing
+            // translation degrades to the generic status rather than
+            // "fetching app code" leaking through as a backend enum value.
+            const label = translated === labelKey ? t('nodepod.statusLoading') : translated;
             return (
               <li
                 key={phase}
@@ -102,7 +105,11 @@ export function AppBuildProgressPanel({ progress, title }: AppBuildProgressPanel
                     active && !done && 'border-primary/40 bg-primary/10',
                   )}
                 >
-                  {done ? '✓' : active ? '•' : ''}
+                  {done ? (
+                    <CheckIcon className='size-2.5' aria-hidden />
+                  ) : active ? (
+                    <Loader2Icon className='size-2.5 animate-spin motion-reduce:animate-none' aria-hidden />
+                  ) : null}
                 </span>
                 <span className='truncate'>{label}</span>
               </li>

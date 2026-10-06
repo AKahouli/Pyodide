@@ -38,7 +38,8 @@ describe('RuntimeMcpDispatcherService', () => {
     const names = (response.result as { tools: { name: string }[] }).tools.map((t) => t.name);
     expect(names).toContain('read');
     expect(names).toContain('finalize');
-    expect(names.length).toBe(12);
+    expect(names).toContain('platform_check');
+    expect(names.length).toBe(13);
   });
 
   it('dispatches tools/call through the broker', async () => {

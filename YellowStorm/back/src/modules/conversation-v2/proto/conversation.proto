@@ -35,7 +35,12 @@ message DeployResponse { string url = 1; int64 deployed_at = 2; }
 // AI service uses these as List-prefix bases when scanning the workspace's
 // documents. Note: path roots under the workspace OWNER, not the current
 // user — collaborator uploads share the same prefix as the owner's files.
-message CreateSessionRequest  { string user_id = 1; repeated string workspace_paths = 2; }
+message CreateSessionRequest  {
+  string user_id = 1;
+  repeated string workspace_paths = 2;
+  // Session capability: "web_app" (default) or "database_design".
+  optional string capability = 3;
+}
 message CreateSessionResponse { string session_id = 1; }
 
 message GetSessionRequest  { string user_id = 1; string session_id = 2; }
@@ -61,6 +66,9 @@ message ChatRequest {
   string model = 6;  // Required: full LiteLLM model identifier e.g. "azure/gpt-4.1", "anthropic/claude-sonnet-4-5"
   repeated Skill  skills    = 8;   // skills selected by the user, injected into the agent prompt
   repeated ConnectorBinding connectors = 9;   // selected connectors (MCP servers); auth already resolved by YellowMind
+  // Catalog model id for generated-app AI Proxy calls (same Studio composer selection).
+  // Distinct from `model` (LiteLLM id used by the OpenCode builder).
+  optional string app_ai_model = 10;
 }
 
 // --- Skills (Agent Skills pattern / progressive disclosure) ---

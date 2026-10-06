@@ -3,10 +3,14 @@ import {
   Inject,
   Injectable,
   Logger,
+  Optional,
   forwardRef,
 } from '@nestjs/common';
-import { ConversationV2EventStoreService } from '@modules/conversation-v2/services/conversation-v2-event-store.service';
-import { PgRuntimeFinalizedRevisionStore } from '../persistence/pg-runtime-finalized-revision.store';
+import {
+  APPLICATION_COMPONENT_EVENT_SOURCE,
+  type ApplicationComponentEventSource,
+} from '../ports/application-component-events.port';
+import { PgRuntimeFinalizedRevisionStore } from '../persistence/pg-runtime-finalized-revision.store';
 
 export interface FinalizedRevisionRecord {
   revisionId: string;
@@ -37,8 +41,11 @@ export class RuntimeFinalizedRevisionService {
 
   constructor(
     private readonly store: PgRuntimeFinalizedRevisionStore,
-    @Inject(forwardRef(() => ConversationV2EventStoreService))
-    private readonly eventStore: ConversationV2EventStoreService,
+    // forwardRef: the Conversation V2 implementation of this port depends on
+    // StreamService, which depends on this service (cross-module DI cycle).
+    @Optional()
+    @Inject(forwardRef(() => APPLICATION_COMPONENT_EVENT_SOURCE))
+    private readonly applicationComponents?: ApplicationComponentEventSource,
   ) {}
 
   async record(input: RecordFinalizedRevisionInput): Promise<void> {
@@ -99,10 +106,8 @@ export class RuntimeFinalizedRevisionService {
     const list = await this.store.listByWorkspace(workspaceId);
     if (list.length > 0) return;
 
-    const rows = await this.eventStore.listByType(
-      sessionPointerId,
-      'application_component',
-    );
+    const rows =
+      (await this.applicationComponents?.listApplicationComponents(sessionPointerId)) ?? [];
 
     for (const row of rows) {
       const revisionId = row.payload.revision_id;

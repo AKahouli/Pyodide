@@ -67,6 +67,14 @@ if (
   HTMLElement.prototype.hasPointerCapture = vi.fn(() => false);
 }
 
+// jsdom ships no object URL support, so image previews that call
+// createObjectURL would throw and unmount the tree under test.
+if (typeof URL !== 'undefined' && !URL.createObjectURL) {
+  let objectUrlSeq = 0;
+  URL.createObjectURL = vi.fn(() => `blob:mock/${++objectUrlSeq}`);
+  URL.revokeObjectURL = vi.fn();
+}
+
 if (
   !globalThis.localStorage
   || typeof globalThis.localStorage.getItem !== 'function'

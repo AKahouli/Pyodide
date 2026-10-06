@@ -2,7 +2,7 @@
  * Upload a starter directory to Ceph and emit embedded constants for the backend.
  *
  * Usage (from YellowStorm/back):
- *   npx ts-node scripts/publish-starter-to-ceph.ts --dir ../starters/starter-react-vite-v3 --revision starter_react_vite_v3
+ *   npx ts-node scripts/publish-starter-to-ceph.ts --dir ../starters/starter-react-vite-v6 --revision starter_react_vite_v6
  *
  * Env (APImanus/YellowStorm .env or shell):
  *   CEPH_S3_ENDPOINT / CEPH_ENDPOINT
@@ -93,10 +93,15 @@ function writeConstants(revision: string, files: StarterFileEntry[]): void {
     )
     .join(',\n');
 
-  const outFile =
-    revision === 'starter_react_vite_v3'
-      ? path.resolve(__dirname, '..', 'src', 'modules', 'app-runtime', 'constants', 'starter-react-vite-v3.ts')
-      : path.resolve(__dirname, '..', 'src', 'modules', 'app-runtime', 'constants', `${revision}.ts`);
+  const outFile = path.resolve(
+    __dirname,
+    '..',
+    'src',
+    'modules',
+    'app-runtime',
+    'constants',
+    `${revision}.ts`,
+  );
 
   const content = `/**
  * Canonical React/Vite starter revision seeded in Ceph.

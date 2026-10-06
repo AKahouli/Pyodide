@@ -1948,7 +1948,7 @@
   "evaluationSettings.correctiveGuardedDescription": "Vérifier et corriger la réponse avant sa publication.",
   "evaluationSettings.comingLater": "Prochainement",
   "evaluationSettings.notAvailable": "Indisponible dans ce MVP",
-  "evaluationSettings.scope": "S'applique uniquement à Conversation classique. Conversation V2 n'est pas inclus.",
+  "evaluationSettings.scope": "S'applique uniquement à Conversation classique. App Builder n'est pas inclus.",
   "evaluationSettings.judgeModel": "Modèle juge",
   "evaluationSettings.selectModel": "Sélectionner un modèle de chat actif",
   "evaluationSettings.noModel": "Aucun modèle juge actif et compatible n'est disponible. Activez un modèle de chat dans Admin > Modèles.",

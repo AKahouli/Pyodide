@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { BotIcon } from 'lucide-react';
+import { Sparkles } from 'lucide-react';
+
 import {
   ChatConversation,
   ChatConversationContent,
@@ -48,8 +49,8 @@ export function MessageList({ events: eventsProp, canOpenAttachments = true }: M
             title={t('conversation.emptyTitle')}
             description={t('conversation.emptyDescription')}
             icon={
-              <div className='rounded-full bg-gradient-to-br from-rose-500/20 to-red-500/20 p-4'>
-                <BotIcon className='size-8 text-rose-500' />
+              <div className='rounded-2xl border border-primary/15 bg-primary/10 p-4 shadow-sm ring-1 ring-inset ring-primary/10'>
+                <Sparkles className='size-7 text-primary' aria-hidden />
               </div>
             }
           />

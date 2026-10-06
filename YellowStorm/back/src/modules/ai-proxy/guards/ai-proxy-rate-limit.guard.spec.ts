@@ -52,12 +52,12 @@ describe('AiProxyRateLimitGuard', () => {
   it('allows requests under the configured limit and scopes by model', async () => {
     const guard = new AiProxyRateLimitGuard(rateLimiterService, configService);
 
-    await expect(guard.canActivate(createContext({ model: 'gpt-4o' }))).resolves.toBe(true);
+    await expect(guard.canActivate(createContext({ model: 'catalog-chat-model' }))).resolves.toBe(true);
 
     expect(generateKey).toHaveBeenCalledWith(
       'user-1',
       '127.0.0.1',
-      'POST:AiProxyController:chatCompletions:gpt-4o',
+      'POST:AiProxyController:chatCompletions:catalog-chat-model',
     );
     expect(check).toHaveBeenCalledWith('user:u1:endpoint', {
       limit: 60,
@@ -77,7 +77,7 @@ describe('AiProxyRateLimitGuard', () => {
     });
     const guard = new AiProxyRateLimitGuard(rateLimiterService, configService);
 
-    await expect(guard.canActivate(createContext({ model: 'gpt-4o' }))).rejects.toThrow(
+    await expect(guard.canActivate(createContext({ model: 'catalog-chat-model' }))).rejects.toThrow(
       TooManyRequestsException,
     );
     expect(setHeader).toHaveBeenCalledWith('Retry-After', '30');
