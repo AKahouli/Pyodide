@@ -81,6 +81,21 @@ export function semanticModelChatActionKeys(connector: IConnectorResponse, selec
     .filter((key) => !selected || selected.has(key)));
 }
 
+/**
+ * Whether an agent update actually requests a root-policy change: an explicit policy payload or a non-empty
+ * allowlist. The agent form sends empty `delegateAgentIds`/`delegateTeamIds` arrays on every save, so treating
+ * "field present" as intent rejected every non-root agent with ERR_1006.
+ */
+export function updateRequestsRootPolicy(dto: {
+  rootExecutionPolicy?: unknown;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
+}): boolean {
+  return dto.rootExecutionPolicy !== undefined
+    || (dto.delegateAgentIds?.length ?? 0) > 0
+    || (dto.delegateTeamIds?.length ?? 0) > 0;
+}
+
 export interface PlaybookPlannerAgentConfig {
   agentTypeId: string;
   agentTypeSlug: string;
@@ -353,7 +368,7 @@ export class AgentService {
 
     const agentTypeSlug = dto.agentType ? await this.resolveAgentTypeSlug(dto.agentType) : undefined;
     const patch = this.dtoToUpdateInput(dto, agent, { agentTypeSlug, normalizedSlug });
-    if (dto.rootExecutionPolicy !== undefined || dto.delegateAgentIds !== undefined || dto.delegateTeamIds !== undefined) {
+    if (updateRequestsRootPolicy(dto)) {
       // The effective type is the retyped slug when the same request changes it.
       this.rootPolicyService.requireEligibleRootType(agentTypeSlug ?? agent.agentTypeSlug);
       await this.rootPolicyService.validateAllowlist(
@@ -539,7 +554,7 @@ export class AgentService {
 
     const agentTypeSlug = dto.agentType ? await this.resolveAgentTypeSlug(dto.agentType) : undefined;
     const patch = this.dtoToUpdateInput(dto, agent, { agentTypeSlug, normalizedSlug });
-    if (dto.rootExecutionPolicy !== undefined || dto.delegateAgentIds !== undefined || dto.delegateTeamIds !== undefined) {
+    if (updateRequestsRootPolicy(dto)) {
       this.rootPolicyService.requireEligibleRootType(agent.agentTypeSlug);
       await this.rootPolicyService.validateAllowlist(
         agent._id,
@@ -1166,6 +1181,7 @@ export class AgentService {
           if (!this.isTrustedIdentityBinding(binding)) continue;
           binding.auth_headers = {
             ...((binding.auth_headers) || {}),
+            'X-YellowStorm-User-Id': userId,
             'X-YellowStorm-Agent-Id': agent.id,
             'X-YellowStorm-Conversation-Id': runtimeContext?.conversationId || sessionId || 'playbook-runtime',
             'X-Correlation-Id': runtimeContext?.correlationId || sessionId || 'playbook-runtime',
