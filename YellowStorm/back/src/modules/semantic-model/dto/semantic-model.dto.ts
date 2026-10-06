@@ -1428,16 +1428,16 @@ export class RequestPopulationRefreshDto {
   @ValidateNested()
   @Type(() => PopulationRefreshScopeDto)
   scope!: PopulationRefreshScopeDto;
-}
-
-export class RebuildPopulationDto {
-  @ApiPropertyOptional({ description: 'Also read every document again with AI instead of reusing earlier readings' })
-  @IsOptional()
 
   @ApiPropertyOptional({ description: 'Read every document again with AI instead of reusing earlier readings' })
   @IsOptional()
   @IsBoolean()
   rereadDocuments?: boolean;
+}
+
+export class RebuildPopulationDto {
+  @ApiPropertyOptional({ description: 'Also read every document again with AI instead of reusing earlier readings' })
+  @IsOptional()
   @IsBoolean()
   forgetDocumentReading?: boolean;
 }
