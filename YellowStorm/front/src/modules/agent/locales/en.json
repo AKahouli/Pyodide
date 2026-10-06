@@ -339,6 +339,7 @@
   "card.inactive": "Inactive",
   "card.unknownType": "Unknown",
   "card.default": "Default",
+  "createEdit.fields.typeChangeRemovesRoot": "Saving this type removes delegation, temporary-worker and background settings. Other agent settings are kept.",
   "card.viewSettings": "View settings",
   "card.duplicate": "Duplicate",
   "card.duplicatePrefix": "Copy of",

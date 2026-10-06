@@ -353,14 +353,8 @@ export class AgentService {
 
     const agentTypeSlug = dto.agentType ? await this.resolveAgentTypeSlug(dto.agentType) : undefined;
     const patch = this.dtoToUpdateInput(dto, agent, { agentTypeSlug, normalizedSlug });
-    if (dto.rootExecutionPolicy !== undefined || dto.delegateAgentIds !== undefined || dto.delegateTeamIds !== undefined) {
-      // The effective type is the retyped slug when the same request changes it.
-      this.rootPolicyService.requireEligibleRootType(agentTypeSlug ?? agent.agentTypeSlug);
-      await this.rootPolicyService.validateAllowlist(
-        agent._id,
-        patch.delegateAgentIds ?? agent.delegateAgentIds ?? [],
-        patch.delegateTeamIds ?? agent.delegateTeamIds ?? [],
-      );
+    if (dto.agentType !== undefined || dto.rootExecutionPolicy !== undefined || dto.delegateAgentIds !== undefined || dto.delegateTeamIds !== undefined) {
+      await this.validateRootPolicyUpdate(agent, patch, agentTypeSlug ?? agent.agentTypeSlug);
     }
     const updated = await this.agentRepository.updateById(agentId, patch);
 
@@ -539,13 +533,8 @@ export class AgentService {
 
     const agentTypeSlug = dto.agentType ? await this.resolveAgentTypeSlug(dto.agentType) : undefined;
     const patch = this.dtoToUpdateInput(dto, agent, { agentTypeSlug, normalizedSlug });
-    if (dto.rootExecutionPolicy !== undefined || dto.delegateAgentIds !== undefined || dto.delegateTeamIds !== undefined) {
-      this.rootPolicyService.requireEligibleRootType(agent.agentTypeSlug);
-      await this.rootPolicyService.validateAllowlist(
-        agent._id,
-        patch.delegateAgentIds ?? agent.delegateAgentIds ?? [],
-        patch.delegateTeamIds ?? agent.delegateTeamIds ?? [],
-      );
+    if (dto.agentType !== undefined || dto.rootExecutionPolicy !== undefined || dto.delegateAgentIds !== undefined || dto.delegateTeamIds !== undefined) {
+      await this.validateRootPolicyUpdate(agent, patch, agentTypeSlug ?? agent.agentTypeSlug);
     }
     const updated = await this.agentRepository.updateById(agentId, patch);
 
@@ -1586,6 +1575,16 @@ export class AgentService {
       delegateAgentIds: this.normalizeIdList(dto.delegateAgentIds ?? []),
       delegateTeamIds: this.normalizeIdList(dto.delegateTeamIds ?? []),
     };
+  }
+
+  private async validateRootPolicyUpdate(existing: AgentRecord, patch: UpdateAgentInput, effectiveTypeSlug: string): Promise<void> {
+    const policy = patch.rootExecutionPolicy === undefined ? existing.rootExecutionPolicy : patch.rootExecutionPolicy;
+    const agents = patch.delegateAgentIds ?? existing.delegateAgentIds ?? [];
+    const teams = patch.delegateTeamIds ?? existing.delegateTeamIds ?? [];
+    if (policy != null || agents.length || teams.length) {
+      this.rootPolicyService.requireEligibleRootType(effectiveTypeSlug);
+    }
+    await this.rootPolicyService.validateAllowlist(existing._id, agents, teams);
   }
 
   private rootPolicyUpdateFields(patch: UpdateAgentInput, dto: UpdateAgentDto, existing: AgentRecord): void {

@@ -241,13 +241,12 @@ export function CreateEditAgentDialog({
   const watchDelegateAgents = watch("delegateAgentIds");
   const watchDelegateTeams = watch("delegateTeamIds");
 
-  // Root candidacy (WP02): the edited agent's type, or the type picked in
-  // create mode. Only mono-agent records may carry a root-execution policy.
+  // Only the currently selected mono-agent type may carry a Root policy.
   const isRootCandidate = useMemo(() => {
-    if (agent) return isRootAgentType(agent.agentType.slug);
     const picked = agentTypes.find((type) => type.id === selectedAgentTypeId);
-    return isRootAgentType(picked?.slug);
+    return isRootAgentType(picked?.slug ?? (selectedAgentTypeId === agent?.agentType.id ? agent.agentType.slug : undefined));
   }, [agent, agentTypes, selectedAgentTypeId]);
+  const removesRootSettings = Boolean(agent && isRootAgentType(agent.agentType.slug) && !isRootCandidate);
 
   const formTabs = useMemo<
     Array<{
@@ -406,7 +405,9 @@ export function CreateEditAgentDialog({
           </div>
         ) : (
           <form
-            onSubmit={readOnly ? (event) => event.preventDefault() : handleSubmit(onSave, scrollToFirstError)}
+            onSubmit={readOnly ? (event) => event.preventDefault() : handleSubmit((data) => onSave(removesRootSettings
+              ? { ...data, rootExecutionPolicy: null, delegateAgentIds: [], delegateTeamIds: [], enable_temporary_child_agents: false }
+              : data), scrollToFirstError)}
             className="flex flex-col min-h-0 flex-1"
           >
             <Tabs defaultValue={initialTab} className="flex-1 min-h-0 flex flex-col">
@@ -488,6 +489,7 @@ export function CreateEditAgentDialog({
                         {errors.agentType && (
                           <p className="text-xs text-destructive">{errors.agentType.message}</p>
                         )}
+                        {removesRootSettings && <p className="text-xs text-muted-foreground">{t('createEdit.fields.typeChangeRemovesRoot')}</p>}
                       </div>
 
                       {/* Role */}

@@ -156,11 +156,11 @@ export class UpdateAgentDto {
   @Max(8)
   max_temporary_child_agents?: number;
 
-  @ApiPropertyOptional({ description: 'Root-delegation policy (mono-agent roots only). Omit to leave unchanged.' })
+  @ApiPropertyOptional({ type: RootExecutionPolicyDto, description: 'Root-delegation policy (mono-agent roots only). Omit to leave unchanged; null removes the policy and allowlists.', nullable: true })
   @IsOptional()
   @ValidateNested()
   @Type(() => RootExecutionPolicyDto)
-  rootExecutionPolicy?: RootExecutionPolicyDto;
+  rootExecutionPolicy?: RootExecutionPolicyDto | null;
 
   @ApiPropertyOptional({ description: 'Direct specialist ids the root may delegate to' })
   @IsOptional()

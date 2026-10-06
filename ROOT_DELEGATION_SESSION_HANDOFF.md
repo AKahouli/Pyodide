@@ -2,6 +2,16 @@
 
 Date: 2026-10-06
 
+## Agent retyping after disabled delegation — completed
+
+User could not save Advisory Strategy Specialist (6aa851deab04c2c842b26879) as `simple` after disabling library delegation. Confirmed three real PATCH failures (400 / ERR_1006): the editor retained Root policy fields, while the backend rejected even explicit null unenrollment on a non-mono target. Disabling library delegation does not disable independently configured temporary workers, fan-out, or background work.
+
+The shared personal/admin editor now follows the selected type, explains that leaving mono-agent removes Root settings, and explicitly submits null policy, empty allowlists, and disabled legacy temporary workers on save. Form and update API/DTO types preserve null; create serializers retain absence semantics. Both backend update routes validate the effective stored/patched policy against the selected target type. Null unenrollment clears policy and allowlist junctions in the repository transaction; retained or omitted policy cannot bypass eligibility checks. The old admin-specific dialog is not used by current management routes and was not changed.
+
+User confirmed `simple`; the existing Chrome 3 tab 817982281 successfully saved that type and retained it after reload/reopening. Read-only before/after field and junction hashes confirmed no unrelated changes, including Smart Agent. Root policy is absent, both delegate pools are empty, and legacy temporary workers are false. Screenshot: [saved Simple type](docs/vector-agent-retype-simple.png). System means admin-managed (`isDefault`); system default additionally means preferred for its type (`isDefaultForType`), independently of a personal default.
+
+Verification: 14 retype tests plus 52 existing backend tests; 7 dialog tests, 5 schema tests, and 1 save-hook test; frontend TypeScript and backend build passed. Plan, reviewer, source/screenshot frontend QA, and primary live browser save/reload PASS. Maintainer updated the durable Root-toggle/type-change invariant. Graph MCP unavailable; focused source fallback used. Backend restarted on 3002; native runtime unchanged. All unrelated staged/unstaged work remains preserved. Earlier Root qualification closure remains in force.
+
 ## Answer agent-name fix — completed
 
 Conversation answer headers now identify the configured producer instead of the generic “Assistant”. Native initial activity records the selected single/default/Root or team manager/hierarchy root name and ID, including corrective replay. Backend text components retain the actual chunk producer ID across ordinary, replay, and single-agent buffer paths. The shared frontend bubble prefers the text producer, uses the saved initial name when IDs match, and supports older identified messages through the agent directory. Tool worker names and model self-reports never determine answer attribution. Old answers with no recorded identity show the localized “Agent name unavailable”; no historical routing guess or data backfill was made.

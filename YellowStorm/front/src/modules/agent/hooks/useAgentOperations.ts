@@ -116,7 +116,7 @@ export function useAgentOperations(): UseAgentOperationsResult {
         if (editingAgent) {
           await updateAgent(editingAgent.id, payload);
         } else {
-          await createAgent(payload);
+          await createAgent({ ...payload, rootExecutionPolicy: payload.rootExecutionPolicy ?? undefined });
         }
         setShowCreateEditDialog(false);
         setEditingAgent(null);

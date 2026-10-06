@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { forwardRef, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { CreateEditAgentDialog } from './CreateEditAgentDialog';
+import { defaultRootExecutionPolicy } from './root-execution-policy-schema';
 
 const fetchAgentTypesMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const fetchModelsMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
@@ -22,7 +23,7 @@ const modelsStateMock = vi.hoisted(() => ({
 }));
 
 vi.mock('../store', () => ({
-  useAgentTypes: () => [{ id: 'type-1', name: 'Manager' }],
+  useAgentTypes: () => [{ id: 'type-1', name: 'Manager' }, { id: 'mono', name: 'Mono', slug: 'mono-agent' }, { id: 'simple', name: 'Simple', slug: 'simple' }],
   useAgents: () => [],
   useEvaluationDatasets: () => [],
   useEvaluations: () => [],
@@ -52,6 +53,8 @@ vi.mock('../api', () => ({
 vi.mock('@/modules/workspace', () => ({
   getWorkspaces: getWorkspacesMock,
 }));
+vi.mock('@/modules/team/api', () => ({ getAllTeams: vi.fn(async () => []) }));
+vi.mock('./RootExecutionPolicyFields', () => ({ RootExecutionPolicyFields: () => <div>root-settings</div> }));
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
@@ -95,11 +98,11 @@ vi.mock('@/components/ui/checkbox', () => ({
 }));
 
 vi.mock('@/components/ui/select', () => ({
-  Select: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SelectContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SelectItem: ({ children, value }: { children: ReactNode; value: string }) => <div data-value={value}>{children}</div>,
-  SelectTrigger: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SelectValue: ({ placeholder }: { placeholder?: string }) => <div>{placeholder}</div>,
+  Select: ({ children, value, onValueChange }: { children: ReactNode; value: string; onValueChange: (value: string) => void }) => <select aria-label={`select-${value}`} value={value} onChange={(event) => onValueChange(event.target.value)}>{children}</select>,
+  SelectContent: ({ children }: { children: ReactNode }) => <>{children}</>,
+  SelectItem: ({ children, value }: { children: ReactNode; value: string }) => <option value={value}>{children}</option>,
+  SelectTrigger: () => null,
+  SelectValue: () => null,
 }));
 
 vi.mock('@/components/ui/slider', () => ({
@@ -157,6 +160,27 @@ vi.mock('@/lib/form-utils', () => ({
 }));
 
 describe('CreateEditAgentDialog', () => {
+  it('removes Root settings explicitly when a saved mono-agent is changed to simple', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    render(<CreateEditAgentDialog open onOpenChange={vi.fn()} saving={false} onSave={onSave} agent={{
+      id: 'agent', name: 'Specialist', slug: 'specialist', agentType: { id: 'mono', name: 'Mono', slug: 'mono-agent' },
+      role: 'Role', description: '', temperature: 0.5, model: 'model-1', instruction: 'Keep instruction',
+      ignorePrePrompt: false, knowledgeBases: [], tools: [], connectors: [],
+      isDefault: false, isDefaultForType: true, isActive: true, createdBy: 'owner', createdAt: '', updatedAt: '',
+      rootExecutionPolicy: { ...defaultRootExecutionPolicy, delegation: { ...defaultRootExecutionPolicy.delegation, enabled: false } },
+      delegateAgentIds: ['worker'], delegateTeamIds: ['team'], enable_temporary_child_agents: true,
+    }} />);
+    expect(await screen.findByText('root-settings')).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText('select-mono'), 'simple');
+    expect(screen.queryByText('root-settings')).not.toBeInTheDocument();
+    expect(screen.getByText('createEdit.fields.typeChangeRemovesRoot')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'createEdit.actions.saveChanges' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      agentType: 'simple', rootExecutionPolicy: null, delegateAgentIds: [], delegateTeamIds: [],
+      enable_temporary_child_agents: false, instruction: 'Keep instruction', model: 'model-1',
+    })));
+  });
   it('uses the wide agent editor layout', async () => {
     render(
       <CreateEditAgentDialog
@@ -248,7 +272,6 @@ describe('CreateEditAgentDialog', () => {
     await user.click(screen.getByRole('button', { name: 'createEdit.actions.saveChanges' }));
     await waitFor(() => expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({ slug: 'platform-copilot', reasoningEffort: 'high' }),
-      expect.anything(),
     ));
     expect(screen.getByTestId('telegram-section')).toHaveTextContent('telegram-section-a1');
   });

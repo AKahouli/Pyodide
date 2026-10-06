@@ -553,7 +553,7 @@ export interface UpdateAgentData {
   deploymentSettings?: AgentDeploymentSettings;
   enable_temporary_child_agents?: boolean;
   max_temporary_child_agents?: number;
-  rootExecutionPolicy?: RootExecutionPolicy;
+  rootExecutionPolicy?: RootExecutionPolicy | null;
   delegateAgentIds?: string[];
   delegateTeamIds?: string[];
 }

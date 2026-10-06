@@ -339,6 +339,7 @@
   "card.inactive": "Inactif",
   "card.unknownType": "Inconnu",
   "card.default": "Par défaut",
+  "createEdit.fields.typeChangeRemovesRoot": "Enregistrer ce type retire les paramètres de délégation, de workers temporaires et de travail en arrière-plan. Les autres paramètres de l’agent sont conservés.",
   "card.viewSettings": "Voir les paramètres",
   "card.duplicate": "Dupliquer",
   "card.duplicatePrefix": "Copie de",

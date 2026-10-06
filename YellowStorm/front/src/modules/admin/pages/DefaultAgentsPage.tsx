@@ -131,7 +131,7 @@ export function DefaultAgentsPage() {
           deploymentSettings: data.deploymentSettings,
           enable_temporary_child_agents: data.enable_temporary_child_agents,
           max_temporary_child_agents: data.max_temporary_child_agents,
-          rootExecutionPolicy: data.rootExecutionPolicy,
+          rootExecutionPolicy: data.rootExecutionPolicy ?? undefined,
           delegateAgentIds: data.delegateAgentIds,
           delegateTeamIds: data.delegateTeamIds,
         });

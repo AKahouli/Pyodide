@@ -224,7 +224,7 @@ export const userAgentFormSchema = z.object({
   isActive: z.boolean().default(true),
   enable_temporary_child_agents: z.boolean().default(false),
   max_temporary_child_agents: z.number().int().min(1).max(8).default(4),
-  rootExecutionPolicy: rootExecutionPolicySchema.optional(),
+  rootExecutionPolicy: rootExecutionPolicySchema.nullable().optional(),
   delegateAgentIds: z.array(z.string()).default([]),
   delegateTeamIds: z.array(z.string()).default([]),
   guardrails: agentGuardrailsSchema.default(defaultGuardrails),
