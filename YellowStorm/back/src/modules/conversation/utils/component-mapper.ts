@@ -183,6 +183,7 @@ export function extractComponentData(comp: any, agentId?: string): { type: Compo
           content: comp.text?.content || '',
           outputPortId: comp.text?.output_port_id || '',
           output_port_id: comp.text?.output_port_id || '',
+          ...(agentId ? { actorId: agentId } : {}),
         },
       };
     case 'code':

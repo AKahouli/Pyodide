@@ -1519,7 +1519,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         const component = chunk.component;
         if (component?.id && ['add', 'update', 'delete'].includes(chunk.action)) {
           if (chunk.action === 'delete') buffer.delete(component.id);
-          else this.applyChunkToBuffer(buffer, chunk.action, component);
+          else this.applyChunkToBuffer(buffer, chunk.action, component, undefined, chunk.metadata?.agent_id);
         }
         if (chunk.usage) {
           inputTokens += chunk.usage.input_tokens || 0;
@@ -2820,7 +2820,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
       resetIdleTimeout();
 
-      call.on('data', (chunk: { action?: string; component?: Record<string, unknown> }) => {
+      call.on('data', (chunk: { action?: string; component?: Record<string, unknown>; metadata?: { agent_id?: string } }) => {
         resetIdleTimeout();
         if (chunk.action === 'heartbeat') return;
         chunkCount++;
@@ -2835,7 +2835,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           return;
         }
         if (action === 'add' || action === 'update') {
-          this.applyChunkToBuffer(buffer, action, comp);
+          this.applyChunkToBuffer(buffer, action, comp, undefined, chunk.metadata?.agent_id);
         }
       });
 

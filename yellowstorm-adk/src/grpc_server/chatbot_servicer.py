@@ -490,8 +490,11 @@ class ChatbotServicer(
                     action="replay_started",
                     metadata=chatbot_pb2.Metadata(message_id=request.conversation_id),
                 )
-            else:
-                yield self._build_initial_agent_activity_chunk(request.conversation_id)
+            root_ids = [node.agent_id for node in request.team_definition.nodes if not node.parent_agent_id]
+            producer = next(agent for agent in request.agents if
+                            (root_ids and agent.id == root_ids[0]) or
+                            (not root_ids and agent.agent_type == "manager"))
+            yield self._build_initial_agent_activity_chunk(request.conversation_id, producer.id, producer.name)
 
             if internal_request.attached_files:
                 index_task = asyncio.create_task(
@@ -724,8 +727,7 @@ class ChatbotServicer(
                     action="replay_started",
                     metadata=chatbot_pb2.Metadata(message_id=request.conversation_id),
                 )
-            else:
-                yield self._build_initial_agent_activity_chunk(request.conversation_id)
+            yield self._build_initial_agent_activity_chunk(request.conversation_id, request.agent.id, request.agent.name)
 
             if internal_request.attached_files:
                 index_task = asyncio.create_task(
@@ -859,16 +861,16 @@ class ChatbotServicer(
 
     # ========== CONVERSION HELPERS ==========
 
-    def _build_initial_agent_activity_chunk(self, message_id: str) -> "chatbot_pb2.StreamChunk":
+    def _build_initial_agent_activity_chunk(self, message_id: str, agent_id: str = "", agent_name: str = "") -> "chatbot_pb2.StreamChunk":
         """Emit the initial progress row before model reasoning is available."""
         return self._dict_to_stream_chunk({
             "action": "add",
             "component": {
                 "id": f"activity-{uuid.uuid4()}",
                 "type": "agent_activity",
-                "data": {"summary": "", "status": "completed"},
+                "data": {"summary": "", "status": "completed", "actor_id": agent_id, "actor_name": agent_name},
             },
-            "metadata": {"message_id": message_id},
+            "metadata": {"message_id": message_id, "agent_id": agent_id},
         })
 
     @staticmethod

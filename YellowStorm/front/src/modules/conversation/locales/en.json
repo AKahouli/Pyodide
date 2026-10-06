@@ -424,6 +424,7 @@
   "stream.activity.agentRowAria": "{{description}}, {{status}}. Show full reasoning",
   "stream.activity.agentPlanning": "Preparing your request",
   "stream.activity.assistant": "Assistant",
+  "stream.activity.agentNameUnavailable": "Agent name unavailable",
   "stream.activity.delegateTo": "Delegate to {{name}}",
   "stream.activity.openAgentEditor": "Open agent editor",
   "stream.activity.code": "Code",

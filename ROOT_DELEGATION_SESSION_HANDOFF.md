@@ -1,6 +1,16 @@
 # Root delegation — session handoff
 
-Date: 2026-10-05
+Date: 2026-10-06
+
+## Answer agent-name fix — completed
+
+Conversation answer headers now identify the configured producer instead of the generic “Assistant”. Native initial activity records the selected single/default/Root or team manager/hierarchy root name and ID, including corrective replay. Backend text components retain the actual chunk producer ID across ordinary, replay, and single-agent buffer paths. The shared frontend bubble prefers the text producer, uses the saved initial name when IDs match, and supports older identified messages through the agent directory. Tool worker names and model self-reports never determine answer attribution. Old answers with no recorded identity show the localized “Agent name unavailable”; no historical routing guess or data backfill was made.
+
+Verification: 14 native tests, 50 focused backend tests, 66 latest frontend bubble/identity tests plus 2 earlier outline tests passed; frontend TypeScript and backend build passed. Plan and reviewer PASS; maintainer recorded the identity invariant in the existing Conversation vault note. Independent browser QA was BLOCKED because the primary-owned tab could not be bound in its context; primary browser qualification PASS in the existing Chrome 3 tab 817982281. A synthetic tool-free answer in conversation 994fc2146cbc60d3246c18ee displayed “Advisory Strategy Specialist”, matching saved activity and text producer ID 6aa851deab04c2c842b26879, and preserved that name after reload. Proof: [answer-agent screenshot](docs/vector-answer-agent-name.png). Graph MCP was unavailable, so focused source inspection was used.
+
+Affected services restarted on backend 3002 and native HTTP 8003/gRPC 50053; readiness 200. All unrelated staged and unstaged changes were preserved. The previously accepted local Root qualification closure below remains in force.
+
+Commit-hook graph refresh encountered a locked SQLite database. Its subsequent blast-radius report included 66 shared-worktree changes and reported test gaps despite the focused tests above; this was not treated as a fresh graph gate PASS. Correctness review used the owned source diff and executed tests.
 
 ## Final authorized closure — local qualification CLOSED
 
