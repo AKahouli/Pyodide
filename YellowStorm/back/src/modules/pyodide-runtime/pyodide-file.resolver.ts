@@ -8,7 +8,6 @@ import { PgShareStore } from '../workspace/stores/postgres/pg-share-store';
 import type { DocumentResponse } from '../workspace/interfaces/workspace-document.interface';
 import {
   PyodideArtifactReference,
-  PyodideInputFileRef,
   PyodideOutputFile,
   PyodideResolvedInputFile,
 } from './pyodide-runtime.types';
@@ -21,6 +20,30 @@ export class PyodideFileError extends Error {
 }
 
 const DEFAULT_MIME = 'application/octet-stream';
+
+/** Workspace uploads reject a mismatched MIME for several extensions, so infer it from the file name. */
+const MIME_BY_EXTENSION: Record<string, string> = {
+  csv: 'text/csv',
+  tsv: 'text/tab-separated-values',
+  txt: 'text/plain',
+  json: 'application/json',
+  md: 'text/markdown',
+  html: 'text/html',
+  xml: 'application/xml',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  xls: 'application/vnd.ms-excel',
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  svg: 'image/svg+xml',
+};
+
+function inferMimeType(name: string, fallback?: string): string {
+  const extension = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : '';
+  return MIME_BY_EXTENSION[extension] ?? (fallback && fallback !== DEFAULT_MIME ? fallback : DEFAULT_MIME);
+}
 
 /**
  * Resolves the model's logical file references to bounded bytes for the acting user (§27): a workspace
@@ -40,9 +63,9 @@ export class PyodideFileResolver {
   async resolveInputs(
     userId: string,
     workspaceId: string,
-    refs: PyodideInputFileRef[],
+    names: string[],
   ): Promise<PyodideResolvedInputFile[]> {
-    if (refs.length === 0) return [];
+    if (names.length === 0) return [];
     if (!isObjectId(workspaceId)) {
       throw new PyodideFileError('PYODIDE_EXECUTION_ERROR', 'A trusted workspace context is required to read files.');
     }
@@ -52,8 +75,8 @@ export class PyodideFileResolver {
     const resolved: PyodideResolvedInputFile[] = [];
     let total = 0;
 
-    for (const ref of refs) {
-      const document = await this.resolveDocument(workspaceId, ref);
+    for (const name of names) {
+      const document = await this.resolveDocument(workspaceId, name);
       const remaining = maxTotal - total;
       if (remaining <= 0) {
         throw new PyodideFileError('PYODIDE_REQUEST_TOO_LARGE', 'The input files exceeded the configured limit.');
@@ -62,7 +85,7 @@ export class PyodideFileResolver {
       const { data } = await this.downloader.download(url, { maxBytes: remaining, deadlineMs: 30_000 });
       total += data.length;
       resolved.push({
-        name: ref.as,
+        name: document.originalName,
         mimeType: document.mimeType || DEFAULT_MIME,
         contentBase64: data.toString('base64'),
       });
@@ -96,7 +119,7 @@ export class PyodideFileResolver {
         userId,
         buffer,
         file.name,
-        file.mimeType || DEFAULT_MIME,
+        inferMimeType(file.name, file.mimeType),
       );
       artifacts.push({
         name: document.originalName,
@@ -108,18 +131,14 @@ export class PyodideFileResolver {
     return artifacts;
   }
 
-  private async resolveDocument(workspaceId: string, ref: PyodideInputFileRef): Promise<DocumentResponse> {
-    if (ref.documentId) {
-      const [document] = await this.documents.findByIdsInWorkspace(workspaceId, [ref.documentId]);
-      if (!document || document.isFolder) {
-        throw new PyodideFileError('PYODIDE_EXECUTION_ERROR', `File not found in the workspace: ${ref.documentId}.`);
-      }
-      return document;
-    }
-    const page = await this.documents.findAllByWorkspace(workspaceId, { search: ref.name ?? '', limit: 50 });
-    const exact = page.documents.find((document) => !document.isFolder && document.originalName === ref.name);
+  private async resolveDocument(workspaceId: string, name: string): Promise<DocumentResponse> {
+    const page = await this.documents.findAllByWorkspace(workspaceId, { search: name, limit: 50 });
+    const target = name.toLowerCase();
+    const exact = page.documents.find(
+      (document) => !document.isFolder && document.originalName.toLowerCase() === target,
+    );
     if (!exact) {
-      throw new PyodideFileError('PYODIDE_EXECUTION_ERROR', `File not found in the workspace: ${ref.name}.`);
+      throw new PyodideFileError('PYODIDE_EXECUTION_ERROR', `File not found in the workspace: ${name}.`);
     }
     return exact;
   }

@@ -67,34 +67,12 @@ def _safe_file_name(value: Any) -> str:
     return name
 
 
-def _input_file_specs(raw: Any) -> list[dict[str, str]]:
-    """Logical references only: a workspace document id or an exact file name, never a path/URL."""
+def _workspace_file_names(raw: Any, label: str) -> list[str]:
+    """Logical references only: exact workspace file names, never a path/URL."""
     if raw is None:
         return []
     if not isinstance(raw, list):
-        raise ValueError("inputs must be a list of {document_id|name, as?}")
-    specs: list[dict[str, str]] = []
-    for item in raw:
-        if not isinstance(item, dict):
-            raise ValueError("each input must be an object")
-        document_id = str(item.get("document_id") or "").strip()
-        name = str(item.get("name") or "").strip()
-        if bool(document_id) == bool(name):
-            raise ValueError("each input must set exactly one of document_id or name")
-        spec = {"as": _safe_file_name(item.get("as") or name)}
-        if document_id:
-            spec["document_id"] = document_id
-        else:
-            spec["name"] = name
-        specs.append(spec)
-    return specs
-
-
-def _output_file_names(raw: Any) -> list[str]:
-    if raw is None:
-        return []
-    if not isinstance(raw, list):
-        raise ValueError("outputs must be a list of file names")
+        raise ValueError(f"{label} must be a list of file names")
     return [_safe_file_name(item) for item in raw]
 
 
@@ -117,13 +95,14 @@ async def execute_python(
     code: str,
     input: Any = None,
     timeout_seconds: int = 30,
-    inputs: list[dict[str, Any]] | None = None,
+    inputs: list[str] | None = None,
     outputs: list[str] | None = None,
 ) -> dict[str, Any]:
     """Execute bounded Python code in the user's connected browser and return its result and logs.
 
-    Optionally read workspace files (logical references only: ``inputs=[{"document_id"| "name": ..., "as": ...}]``)
-    mounted under /workspace/input, and capture named files from /workspace/output as artifacts.
+    To read workspace files, list their exact names in ``inputs``; each is mounted read-only at
+    ``/workspace/input/<name>``. To save results, write files under ``/workspace/output/<name>`` and list
+    those names in ``outputs``; YellowStorm persists them to the workspace as artifacts.
     """
     try:
         require_actor_context()
@@ -146,8 +125,8 @@ async def execute_python(
     except ValueError as exc:
         return error_result("PYODIDE_EXECUTION_ERROR", str(exc))
     try:
-        input_files = _input_file_specs(inputs)
-        output_files = _output_file_names(outputs)
+        input_files = _workspace_file_names(inputs, "inputs")
+        output_files = _workspace_file_names(outputs, "outputs")
     except ValueError as exc:
         return error_result("PYODIDE_EXECUTION_ERROR", str(exc))
     if len(input_files) > settings.max_input_files:

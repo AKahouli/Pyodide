@@ -74,7 +74,7 @@ async def test_execute_python_relays_logical_file_references(monkeypatch):
         async with Client(mcp) as client:
             await client.call_tool("execute_python", {
                 "code": "1",
-                "inputs": [{"document_id": "abc", "as": "data.txt"}, {"name": "other.csv"}],
+                "inputs": ["data.txt", "other.csv"],
                 "outputs": ["result.csv"],
             })
     finally:
@@ -84,7 +84,7 @@ async def test_execute_python_relays_logical_file_references(monkeypatch):
         "code": "1",
         "input": None,
         "timeoutMs": 30000,
-        "inputs": [{"as": "data.txt", "document_id": "abc"}, {"as": "other.csv", "name": "other.csv"}],
+        "inputs": ["data.txt", "other.csv"],
         "outputs": ["result.csv"],
     }]
 
@@ -108,7 +108,7 @@ async def test_execute_python_rejects_paths_in_file_names(monkeypatch):
 async def test_execute_python_rejects_too_many_inputs(monkeypatch):
     stub = BackendStub(response={"ok": True})
     monkeypatch.setattr(server, "backend", lambda: stub)
-    too_many = [{"document_id": f"id{i}", "as": f"f{i}.txt"} for i in range(server.settings.max_input_files + 1)]
+    too_many = [f"f{i}.txt" for i in range(server.settings.max_input_files + 1)]
     token = actor_headers()
     try:
         async with Client(mcp) as client:

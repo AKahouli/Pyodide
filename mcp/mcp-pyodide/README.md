@@ -39,15 +39,15 @@ execute_python(
     code: str,
     input: any = null,
     timeout_seconds: int = 30,
-    inputs: list[{document_id?|name?, as?}] = [],
+    inputs: list[str] = [],
     outputs: list[str] = [],
 ) -> PyodideExecutionResultV1
 ```
 
-`inputs`/`outputs` are the §27 workspace-file extension: **logical references only** (a workspace document id,
-or an exact file name), never a storage path or URL. Inputs are mounted under `/workspace/input`; named files
-from `/workspace/output` are persisted by YellowStorm and returned as bounded `artifacts` references (no file
-content through MCP). Sizes/limits remain those of the MVP.
+`inputs`/`outputs` are the §27 workspace-file extension: **logical references only** (exact workspace file
+names), never a storage path or URL. Inputs are mounted read-only under `/workspace/input`; files written to
+`/workspace/output` and named in `outputs` are persisted by YellowStorm and returned as bounded `artifacts`
+references (no file content through MCP). Sizes/limits remain those of the MVP.
 
 ## Connect it to an agent
 

@@ -39,13 +39,6 @@ export interface PyodideRuntimeConnection {
   activeExecutionId?: string;
 }
 
-/** A logical file reference from the model: a document id or an exact name, never a storage path. */
-export interface PyodideInputFileRef {
-  as: string;
-  documentId?: string;
-  name?: string;
-}
-
 /** A bounded input file handed to the browser and mounted under /workspace/input. */
 export interface PyodideResolvedInputFile {
   name: string;
@@ -72,7 +65,7 @@ export interface ExecutePyodideRequest {
   code: string;
   input?: unknown;
   timeoutMs: number;
-  inputs?: PyodideInputFileRef[];
+  inputs?: string[];
   outputs?: string[];
   /** Resolved, bounded input files injected by the relay controller before dispatch. */
   inputFiles?: PyodideResolvedInputFile[];

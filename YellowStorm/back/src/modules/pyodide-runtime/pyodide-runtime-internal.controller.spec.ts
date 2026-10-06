@@ -59,7 +59,7 @@ describe('PyodideRuntimeInternalController', () => {
     const dispatcher = { execute: jest.fn() } as unknown as PyodideRuntimeDispatcher;
     const controller = new PyodideRuntimeInternalController(dispatcher, resolverStub(), configWith(true));
 
-    const response = await controller.execute(request, { code: '1', inputs: [{ as: 'a.txt', documentId: 'x' }] });
+    const response = await controller.execute(request, { code: '1', inputs: ['a.txt'] });
 
     expect(response.error?.code).toBe('PYODIDE_EXECUTION_ERROR');
     expect(dispatcher.execute).not.toHaveBeenCalled();
@@ -79,11 +79,11 @@ describe('PyodideRuntimeInternalController', () => {
 
     const response = await controller.execute(fileRequest, {
       code: '1',
-      inputs: [{ as: 'a.txt', documentId: 'doc-a' }],
+      inputs: ['a.txt'],
       outputs: ['out.csv'],
     });
 
-    expect(resolver.resolveInputs).toHaveBeenCalledWith(USER_ID, WORKSPACE_ID, [{ as: 'a.txt', documentId: 'doc-a' }]);
+    expect(resolver.resolveInputs).toHaveBeenCalledWith(USER_ID, WORKSPACE_ID, ['a.txt']);
     expect(resolver.persistOutputs).toHaveBeenCalledWith(USER_ID, WORKSPACE_ID, [{ name: 'out.csv', contentBase64: 'YSxi' }]);
     expect(response.artifacts).toEqual([{ name: 'out.csv', sizeBytes: 3, documentId: 'doc-1' }]);
     expect(response.outputFiles).toBeUndefined();
