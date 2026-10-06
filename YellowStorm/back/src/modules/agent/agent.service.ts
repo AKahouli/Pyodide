@@ -1255,7 +1255,6 @@ export class AgentService {
               guardrails_classifier_model: guardrailsClassifierModelId,
               ...(options?.semanticSchemaName ? {
                 semantic_model_schema_name: options.semanticSchemaName,
-                semantic_search_url: `${this.configService.get<string>('SEMANTIC_SEARCH_URL', 'http://127.0.0.1:8100').replace(/\/$/, '')}/v1/graphs/search/fused`,
                 semantic_search_token: this.configService.get<string>('SEMANTIC_SEARCH_TOKEN', ''),
                 semantic_search_timeout_seconds: String(this.configService.get<number>('SEMANTIC_SEARCH_TIMEOUT_SECONDS', 300)),
               } : {}),
