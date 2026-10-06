@@ -13,7 +13,7 @@ describe('AdminCatalogTransferController import permissions', () => {
       skillCategories?: unknown[];
     },
     policy: 'skip' | 'overwrite' = 'skip',
-  ) => (controller as unknown as {
+  ) => { (controller as unknown as {
     assertImportPermissions(
       user: { permissions: string[] },
       value: {
@@ -28,44 +28,44 @@ describe('AdminCatalogTransferController import permissions', () => {
     connectorCategories: [],
     skillCategories: [],
     ...archive,
-  }, policy);
+  }, policy); };
 
   it('does not let a skill-only administrator import connectors', () => {
-    expect(() => authorize(
+    expect(() => { authorize(
       [Permissions.SKILLS_CREATE],
       { connectors: [{}], skills: [] },
-    )).toThrow(ForbiddenException);
+    ); }).toThrow(ForbiddenException);
   });
 
   it('requires both connector and skill permissions when the archive contains both', () => {
-    expect(() => authorize(
+    expect(() => { authorize(
       [Permissions.CONNECTORS_CREATE],
       { connectors: [{}], skills: [{}] },
-    )).toThrow(ForbiddenException);
+    ); }).toThrow(ForbiddenException);
 
-    expect(() => authorize(
+    expect(() => { authorize(
       [Permissions.CONNECTORS_CREATE, Permissions.SKILLS_CREATE],
       { connectors: [{}], skills: [{}] },
-    )).not.toThrow();
+    ); }).not.toThrow();
   });
 
   it('requires update permissions for overwrite imports', () => {
-    expect(() => authorize(
+    expect(() => { authorize(
       [Permissions.CONNECTORS_CREATE],
       { connectors: [{}], skills: [] },
       'overwrite',
-    )).toThrow(ForbiddenException);
+    ); }).toThrow(ForbiddenException);
   });
 
   it('requires resource permissions for category-only archives', () => {
-    expect(() => authorize(
+    expect(() => { authorize(
       [Permissions.SKILLS_CREATE],
       { connectors: [], skills: [], connectorCategories: [{}] },
-    )).toThrow(ForbiddenException);
+    ); }).toThrow(ForbiddenException);
 
-    expect(() => authorize(
+    expect(() => { authorize(
       [Permissions.CONNECTORS_CREATE],
       { connectors: [], skills: [], connectorCategories: [{}] },
-    )).not.toThrow();
+    ); }).not.toThrow();
   });
 });

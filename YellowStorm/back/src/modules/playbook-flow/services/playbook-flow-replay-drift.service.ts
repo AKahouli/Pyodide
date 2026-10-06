@@ -511,7 +511,7 @@ export class PlaybookFlowReplayDriftService {
     executionId: string;
     flowId: string;
     taskId: string;
-    hitlSummary: Record<string, unknown> | null;
+    hitlSummary: Record<string, unknown> | FlowReplayHitlSummary | null;
     reportId?: string;
     executionMode?: string;
   }): void {
@@ -538,7 +538,7 @@ export class PlaybookFlowReplayDriftService {
   }
 
   private resolveObservedIntentKeyFromTraceMetadata(traceMetadata?: Record<string, unknown> | null): string | null {
-    const observedIntentKey = traceMetadata?.['observed_intent_key'];
+    const observedIntentKey = traceMetadata?.observed_intent_key;
     return typeof observedIntentKey === 'string' && observedIntentKey !== '' ? observedIntentKey : null;
   }
 
@@ -695,7 +695,7 @@ export class PlaybookFlowReplayDriftService {
       outputFormatMatch: number | null;
       contextDrift: number | null;
       dataDrift: number | null;
-      driftFindings: Array<{ category: string; severity: 'info' | 'warning' | 'fail'; reason: string }>;
+      driftFindings: { category: string; severity: 'info' | 'warning' | 'fail'; reason: string }[];
       blockedBy: string[];
     },
   ): { verdict: ReplayRunVerdict; overallScore: number | null; verdictReasons: ReplayVerdictReason[] } {
@@ -779,7 +779,7 @@ export class PlaybookFlowReplayDriftService {
 
   private mapFlexReasons(report: {
     blockedBy: string[];
-    driftFindings: Array<{ category: string; severity: 'info' | 'warning' | 'fail'; reason: string }>;
+    driftFindings: { category: string; severity: 'info' | 'warning' | 'fail'; reason: string }[];
     semanticMatch: FlowTaskSemanticMatch | null;
     structuralDriftReasons: string[];
   }): ReplayVerdictReason[] {
@@ -901,7 +901,7 @@ export class PlaybookFlowReplayDriftService {
   }
 
   private countReusableHitlSnapshots(snapshots: FlowReplayHitlMemorySnapshot[]): number {
-    return snapshots.filter((snapshot) => snapshot.reusableInReplay === true).length;
+    return snapshots.filter((snapshot) => snapshot.reusableInReplay).length;
   }
 
   private async countReusableHitlMemories(params: {
@@ -916,7 +916,7 @@ export class PlaybookFlowReplayDriftService {
     return this.hitlMemoryRepository.countActiveFromExecution(params.flowId, params.taskId, params.referenceExecutionId);
   }
 
-  private async findHitlEventsForTask(executionId: string, taskId: string): Promise<Array<{ type?: string }>> {
+  private async findHitlEventsForTask(executionId: string, taskId: string): Promise<{ type?: string }[]> {
     if (!executionId) return [];
     const execution = await this.executionRepository.findById(executionId);
     const events = Array.isArray(execution?.hitlEvents) ? execution.hitlEvents : [];
@@ -927,7 +927,7 @@ export class PlaybookFlowReplayDriftService {
     taskId: string,
     baselineCount: number,
     runtimeCount: number,
-  ): Array<{ severity: 'info' | 'warning' | 'fail'; message: string; nodeId: string }> {
+  ): { severity: 'info' | 'warning' | 'fail'; message: string; nodeId: string }[] {
     if (baselineCount > 0 && runtimeCount === 0) {
       return [{
         severity: 'info',
@@ -950,7 +950,7 @@ function asNumberOrNull(value: unknown): number | null {
   return typeof value === 'number' && !Number.isNaN(value) ? value : null;
 }
 
-function asReplayFindings(value: unknown): Array<{ category: string; severity: 'info' | 'warning' | 'fail'; reason: string }> {
+function asReplayFindings(value: unknown): { category: string; severity: 'info' | 'warning' | 'fail'; reason: string }[] {
   if (!Array.isArray(value)) {
     return [];
   }

@@ -133,7 +133,7 @@ export interface GovernanceReconciliationRunRecord {
   dryRun: boolean;
   cursor?: string;
   stats: Record<string, number>;
-  errors: Array<{ documentId?: string; message: string }>;
+  errors: { documentId?: string; message: string }[];
   startedAt?: Date;
   completedAt?: Date;
   leaseToken?: string;
@@ -203,7 +203,7 @@ export interface GovernanceDryRunRecord {
   testerId: string;
   status: 'running' | 'passed' | 'failed' | 'needs_review';
   executionMode: 'conversation' | 'manual';
-  testCases: Array<Record<string, unknown>>;
+  testCases: Record<string, unknown>[];
   checks: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;

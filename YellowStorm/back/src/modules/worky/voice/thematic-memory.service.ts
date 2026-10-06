@@ -83,7 +83,7 @@ export class ThematicMemoryService {
   ): Promise<{ ok: boolean; text: string; error?: string; skipped?: string }> {
     if (!this.apiKey) return { ok: false, text: '', skipped: 'no-key', error: 'no key configured' };
     const c = await this.connectors.findBySlug('smart-memory');
-    if (!c || !c.actions?.some((a) => a.key === name)) {
+    if (!c?.actions?.some((a) => a.key === name)) {
       return { ok: false, text: '', skipped: 'no-connector', error: 'smart-memory connector unavailable' };
     }
 

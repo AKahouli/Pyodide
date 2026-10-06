@@ -56,7 +56,7 @@ export class PlaybookFlowReplayHashService {
       return null;
     }
 
-    if (typeof value === 'object' && !Array.isArray(value) && Object.keys(value as Record<string, unknown>).length === 0) {
+    if (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0) {
       return null;
     }
 

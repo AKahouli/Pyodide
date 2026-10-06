@@ -217,7 +217,7 @@ describe('ChoiceInteractionService', () => {
       },
     ]);
 
-    const content = JSON.parse(result.content) as Array<Record<string, unknown>>;
+    const content = JSON.parse(result.content) as Record<string, unknown>[];
     expect(content).toHaveLength(2);
     expect(content[0].selectedChoices).toEqual([
       {

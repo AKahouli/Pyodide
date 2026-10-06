@@ -14,7 +14,6 @@ import { AppDataDeploymentService } from './services/app-data-deployment.service
 import { AppDataEndUserAuthService } from './services/app-data-end-user-auth.service';
 import { AppDataEndUserGrantsService } from './services/app-data-end-user-grants.service';
 import { AppDataEndUserService } from './services/app-data-end-user.service';
-import { AppDataPublicAccessService } from './services/app-data-public-access.service';
 import { AppDataIdentifierService } from './services/app-data-identifier.service';
 import { AppDataMigrationService } from './services/app-data-migration.service';
 import { AppDataMcpAuthService } from './services/app-data-mcp-auth.service';
@@ -77,7 +76,7 @@ const LOCAL_PROVIDERS = [
   AppDataEndUserGrantsService,
   AppDataEndUserService,
   AppDataEndUserAuthService,
-  AppDataPublicAccessService,
+
   AppDataMcpAuthService,
   AppDataMcpDispatcherService,
   AppDataReleaseBindingService,

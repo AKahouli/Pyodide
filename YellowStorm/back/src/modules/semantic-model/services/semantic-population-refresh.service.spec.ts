@@ -40,6 +40,7 @@ const setup = (
   relationRules: unknown[] = [],
   records: unknown[] = [],
   recordRelations: unknown[] = [],
+  labels: Record<string, string> = { 'c-customer': 'name', 'c-contract': 'contract_id' },
 ) => {
   const database = {
     query: jest.fn(async (sql: string, params: unknown[] = []) => {
@@ -49,6 +50,7 @@ const setup = (
         return { rows: Object.entries(identity).map(([conceptId, fields]) => ({ conceptId, fields })) };
       }
       if (sql.includes('FROM semantic_model.relation_resolution_rules')) return { rows: relationRules };
+      if (sql.includes('FROM semantic_model.label_fields')) return { rows: Object.entries(labels).map(([conceptId, field]) => ({ conceptId, field })) };
       if (sql.includes('FROM semantic_model.workspace_links')) {
         return { rows: [{ workspaceId: 'ws-1', role: 'origin' }] };
       }
@@ -79,6 +81,10 @@ const setup = (
     appendManualRows: jest.fn(async () => undefined),
     commitManualSnapshot: jest.fn(async () => ({ reused: false })),
     requestPopulationRun: jest.fn(async () => ({ jobId: 'j-1', status: 'queued', reused: false })),
+    purgeModelData: jest.fn(async () => ({ modelId: 'model-1', revisions: 2, jobs: 1 })),
+    forgetDocumentReadings: jest.fn(async () => ({ modelId: 'model-1', documentReadings: 12 })),
+    getGraphStatus: jest.fn(async () => ({ modelId: 'model-1', environments: [] })),
+    reprojectModelGraphs: jest.fn(async () => ({ modelId: 'model-1', revisions: [{ revisionId: 'dr-1', projectionRef: 'age:v2:pop_dr_1_t2', reprojected: true }] })),
     getJob: jest.fn(async () => ({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'completed' })),
     getBoundRecords: jest.fn(async () => ({
       dataRevisionId: 'dr-1',
@@ -136,7 +142,7 @@ describe('SemanticPopulationRefreshService', () => {
   it('says whether the data in use was built from the model as it is now', async () => {
     const { runtime, service, models } = setup();
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
-    const planned = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>]>)[0][0].payload.populationExecutionFingerprint;
+    const planned = (runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>][])[0][0].payload.populationExecutionFingerprint;
     (runtime.getBoundRecords as jest.Mock).mockResolvedValueOnce({ ...(await runtime.getBoundRecords()), executionFingerprint: planned });
     await expect(service.freshness('u-1', 'model-1')).resolves.toEqual({ state: 'current' });
     (runtime.getBoundRecords as jest.Mock).mockResolvedValueOnce({ ...(await runtime.getBoundRecords()), executionFingerprint: 'sha256:older' });
@@ -151,7 +157,7 @@ describe('SemanticPopulationRefreshService', () => {
   it('sends business synonyms in the specification only when there are some', async () => {
     const { database, runtime, service } = setup();
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
-    const plain = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>]>)[0][0];
+    const plain = (runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>][])[0][0];
     expect(plain.payload.specification.concepts[0]).not.toHaveProperty('aliases');
     expect(plain.payload.specification.concepts[0]).not.toHaveProperty('fieldAliases');
     const query = database.query.getMockImplementation()!;
@@ -159,7 +165,7 @@ describe('SemanticPopulationRefreshService', () => {
       ? { rows: [{ ...NODES[0], aliases: [' Client ', 'Client', ''], attributes: [NODES[0].attributes[0], { ...NODES[0].attributes[1], aliases: ['Company name'] }] }, NODES[1]] }
       : query(sql, params));
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
-    const aliased = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>]>)[1][0];
+    const aliased = (runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>][])[1][0];
     expect(aliased.payload.specification.concepts[0]).toMatchObject({ aliases: ['Client'], fieldAliases: { name: ['Company name'] } });
     expect(aliased.payload.specification.specHash).not.toBe(plain.payload.specification.specHash);
   });
@@ -173,6 +179,8 @@ describe('SemanticPopulationRefreshService', () => {
         origins: {
           name: { kind: 'source', assetId: 'd-1', rowNumber: 4, column: 'name' },
           customer_id: { kind: 'source', assetId: 'manual:snap-1', rowNumber: 'r1', column: 'customer_id' },
+          segment: { kind: 'source', assetId: 'd-1', recipeSources: ['first', 'last'],
+            derivedFrom: { conceptId: 'c-contact', entityId: 'e-9', label: 'Ada', attribute: 'email', method: 'rules', records: 2, rule: 'most_frequent' } },
         },
       }],
       relationships: [],
@@ -195,6 +203,11 @@ describe('SemanticPopulationRefreshService', () => {
       field: { method: 'direct_mapping', reference: 'name' },
     });
     expect(entity.provenance.customer_id).toEqual({ mappingId: '', source: { kind: 'manual', documentName: '' } });
+    expect(entity.provenance.segment).toHaveProperty('field');
+    expect((entity.provenance.segment as { field?: unknown }).field).toMatchObject({
+      sources: ['first', 'last'],
+      derivedFrom: { conceptId: 'c-contact', label: 'Ada', attribute: 'email', method: 'rules', records: 2 },
+    });
     expect(result.gaps.missingValues[0]).toMatchObject({ conceptLabel: 'Customer', attributeLabel: 'Name', missing: 2 });
     expect(result.gaps.unresolvedLinks[0]).toMatchObject({ relationLabel: 'belongs to', count: 3 });
     expect(result.summary.unresolvedRelations).toBe(3);
@@ -261,7 +274,7 @@ describe('SemanticPopulationRefreshService', () => {
     expect(runtime.mirrorSpecification).toHaveBeenCalledWith(expect.objectContaining({
       homeWorkspaceId: 'ws-1', modelId: 'model-1', modelVersionId: 'v-1',
     }));
-    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     const command = calls[0][0];
     expect(command.workspaceId).toBe('ws-1');
     expect(command.payload.purpose).toBe('build');
@@ -281,6 +294,55 @@ describe('SemanticPopulationRefreshService', () => {
     expect(ruleQuery).not.toMatch(/source_concept_id|target_concept_id|cardinality/);
   });
 
+  it('reads the documents again with AI on request: forgets the readings, and the run is not taken for an earlier one', async () => {
+    const { runtime, service } = setup();
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' }, rereadDocuments: true });
+    expect(runtime.forgetDocumentReadings).toHaveBeenCalledTimes(1);
+    expect(runtime.forgetDocumentReadings).toHaveBeenCalledWith('model-1', 'u-1');
+    expect(runtime.purgeModelData).not.toHaveBeenCalled();
+    const keys = (runtime.requestPopulationRun.mock.calls as unknown as Array<[unknown, string]>).map((call) => call[1]);
+    expect(keys[0]).not.toEqual(keys[1]);
+  });
+
+  it('keeps the readings when the run is refused', async () => {
+    const { runtime, service } = setup([MAPPING()], {});
+    await expect(service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' }, rereadDocuments: true })).rejects.toThrow();
+    expect(runtime.forgetDocumentReadings).not.toHaveBeenCalled();
+  });
+
+  it('clears the built data, then builds again from scratch', async () => {
+    const { runtime, service } = setup();
+    const result = await service.rebuildFromScratch('u-1', 'model-1', { forgetDocumentReading: true });
+    expect(runtime.purgeModelData).toHaveBeenCalledWith('model-1', 'u-1', { forgetDocumentReading: true });
+    expect(runtime.purgeModelData.mock.invocationCallOrder[0]).toBeLessThan(runtime.requestPopulationRun.mock.invocationCallOrder[0]);
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
+    expect(calls[0][0].payload).toMatchObject({ purpose: 'build', scope: { kind: 'model' } });
+    expect(result).toMatchObject({ jobId: 'j-1', cleared: { revisions: 2 } });
+  });
+
+  it('rebuilds only the graph: no run is started and no source is read', async () => {
+    const { models, runtime, service } = setup();
+    const result = await service.reprojectGraphs('u-1', 'model-1');
+    expect(models.requireRole).toHaveBeenCalledWith('u-1', 'model-1', ['owner', 'editor']);
+    expect(runtime.reprojectModelGraphs).toHaveBeenCalledWith('model-1', 'u-1');
+    expect(runtime.requestPopulationRun).not.toHaveBeenCalled();
+    expect(result.revisions).toHaveLength(1);
+  });
+
+  it('shows the graph in use to anyone who can read the model', async () => {
+    const { models, runtime, service } = setup();
+    await service.graphStatus('u-1', 'model-1');
+    expect(models.requireRole).toHaveBeenCalledWith('u-1', 'model-1', ['owner', 'editor', 'viewer']);
+    expect(runtime.getGraphStatus).toHaveBeenCalledWith('model-1', 'u-1');
+  });
+
+  it('clears nothing when the model cannot be built', async () => {
+    const { runtime, service } = setup([MAPPING()], {});
+    await expect(service.rebuildFromScratch('u-1', 'model-1')).rejects.toThrow();
+    expect(runtime.purgeModelData).not.toHaveBeenCalled();
+  });
+
   it('fingerprints the JSON-normalized source payload', async () => {
     const { documents, runtime, service } = setup();
     documents.findById.mockResolvedValueOnce({
@@ -291,7 +353,7 @@ describe('SemanticPopulationRefreshService', () => {
 
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
 
-    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     const command = calls[0][0];
     const source = command.payload.sources[0];
     expect(source).toEqual(JSON.parse(JSON.stringify(source)));
@@ -310,7 +372,7 @@ describe('SemanticPopulationRefreshService', () => {
       })),
       relationBindings: command.payload.relationBindings,
       aiExtraction: command.payload.aiExtraction,
-      populationEngineVersion: 'r1-mvp-7',
+      populationEngineVersion: 'r1-mvp-8',
     }));
   });
 
@@ -330,11 +392,38 @@ describe('SemanticPopulationRefreshService', () => {
       purpose: 'refresh', scope: { kind: 'mapping', mappingId: 'm-2' },
     });
     expect(result.jobId).toBe('j-1');
-    const scoped = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const scoped = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     const command = scoped[0][0];
     expect(command.payload.sources).toHaveLength(1);
     expect(command.payload.sources[0].conceptId).toBe('c-contract');
     expect(command.payload.specification.concepts.map((c: { conceptId: string }) => c.conceptId)).toEqual(['c-contract']);
+  });
+
+  it('refreshes one concept as a whole build that reads only that concept\'s sources', async () => {
+    const second = MAPPING({
+      id: 'm-2', conceptId: 'c-contract', documentId: 'd-2', identityFields: ['contract_id'],
+      fieldMappings: [
+        { sourceField: 'contract_id', targetAttribute: 'contract_id', mode: 'direct' },
+        { sourceField: 'customer_ref', targetAttribute: 'customer_ref', mode: 'direct' },
+      ],
+    });
+    const { runtime, service } = setup([MAPPING(), second], {
+      'c-customer': ['customer_id'],
+      'c-contract': ['contract_id'],
+    });
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'concept', conceptId: 'c-contract' } });
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const command = calls[0][0];
+    expect(command.payload.scope).toEqual({ kind: 'concept', conceptId: 'c-contract' });
+    expect(command.payload.sources.map((source: { conceptId: string }) => source.conceptId)).toEqual(['c-contract']);
+    // Every concept stays in the specification: the runtime keeps their data and matches every link again.
+    expect(command.payload.specification.concepts.map((c: { conceptId: string }) => c.conceptId).sort())
+      .toEqual(['c-contract', 'c-customer']);
+    const [, key] = calls[0];
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    expect(calls[1][1]).not.toBe(key);
+    await expect(service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'concept', conceptId: 'c-missing' } }))
+      .rejects.toThrow('Concept not found');
   });
 
   it('admits document mappings with extraction recipes and current metadata', async () => {
@@ -354,12 +443,23 @@ describe('SemanticPopulationRefreshService', () => {
     await service.requestRefresh('u-1', 'model-1', {
       purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' },
     });
-    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(calls[0][0].payload.sources[0]).toMatchObject({
       sourceKind: 'document', conceptId: 'c-customer',
       fieldMappings: doc.fieldMappings,
       source: { originalName: 'agreement.pdf', uploaderUserId: 'uploader-1', indexingStatus: 'ready' },
     });
+  });
+
+  it('sends a document making several records by rules alone with only that switch in its options', async () => {
+    const doc = MAPPING({ id: 'm-doc', assetKind: 'document', sheetName: '', aiSettings: { manyRecords: true, maxBlocks: 9 },
+      fieldMappings: [{ sourceField: 'Customer ID', targetAttribute: 'customer_id', mode: 'extract', extractionStrategy: 'deterministic' }] });
+    const { documents, runtime, service } = setup([doc]);
+    documents.findById.mockResolvedValueOnce({ mimeType: 'application/pdf', originalName: 'a.pdf', createdBy: 'u', contentHash: 'sha256:abc',
+      updatedAt: '2026-01-01', uploadedAt: '2026-01-01', size: 100, indexingStatus: 'ready' });
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' } });
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    expect(calls[0][0].payload.sources[0].options).toEqual({ manyRecords: true });
   });
 
   it('carries the per-field extraction strategy into the population payload and fingerprint', async () => {
@@ -381,9 +481,9 @@ describe('SemanticPopulationRefreshService', () => {
       purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' },
     });
 
-    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(calls[0][0].payload.sources[0].fieldMappings).toEqual([
-      { sourceField: 'Customer ID', targetAttribute: 'customer_id', mode: 'extract', extractionStrategy: 'ai' },
+      { sourceField: 'Customer ID', targetAttribute: 'customer_id', mode: 'extract', extractionStrategy: 'ai', valueType: 'text' },
       { sourceField: 'Name', targetAttribute: 'name', mode: 'extract', extractionStrategy: 'deterministic' },
     ]);
     expect(calls[0][0].payload.populationExecutionFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
@@ -403,7 +503,7 @@ describe('SemanticPopulationRefreshService', () => {
       size: 100, indexingStatus: 'ready',
     });
     await first.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' } });
-    const firstCall = (first.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0];
+    const firstCall = (first.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][])[0][0];
     expect(firstCall.payload.aiExtraction).toEqual({
       agentSlug: 'semantic-field-extraction', model: 'gpt-5.4-nano', contractVersion: 'ai-attribute-v1',
     });
@@ -417,7 +517,7 @@ describe('SemanticPopulationRefreshService', () => {
       size: 100, indexingStatus: 'ready',
     });
     await second.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' } });
-    const secondCall = (second.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0];
+    const secondCall = (second.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][])[0][0];
     expect(secondCall.payload.populationExecutionFingerprint)
       .not.toEqual(firstCall.payload.populationExecutionFingerprint);
   });
@@ -434,7 +534,7 @@ describe('SemanticPopulationRefreshService', () => {
       size: 100, indexingStatus: 'ready',
     });
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' } });
-    const call = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0];
+    const call = (runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][])[0][0];
     expect(call.payload.aiExtraction).toBeNull();
     expect(aiExtractionAgent.resolveAgent).not.toHaveBeenCalled();
   });
@@ -458,7 +558,7 @@ describe('SemanticPopulationRefreshService', () => {
       purpose: 'build', scope: { kind: 'mapping', mappingId: 'm-doc' },
     });
 
-    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(calls[0][0].payload.sources[0].fieldMappings).toEqual([
       { sourceField: 'Id', targetAttribute: 'customer_id', mode: 'extract' },
       { sourceField: 'Name', targetAttribute: 'name', mode: 'extract' },
@@ -516,8 +616,20 @@ describe('SemanticPopulationRefreshService', () => {
     const { runtime, service } = setup([MAPPING(), stale]);
     const result = await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
     expect(result.skipped).toEqual([expect.objectContaining({ mappingId: 'm-stale' })]);
-    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(calls[0][0].payload.sources).toHaveLength(1);
+  });
+
+  it('refuses a run while a concept it fills has no field chosen to name its records, and uses the chosen one', async () => {
+    const refused = setup([MAPPING()], undefined, [], [], [], [], {});
+    await expect(refused.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } }))
+      .rejects.toThrow('Choose the field that names each Customer record');
+    const { runtime, service } = setup([MAPPING({ fieldMappings: [
+      { sourceField: 'customer_id', targetAttribute: 'customer_id', mode: 'direct' },
+      { sourceField: 'legal_name', targetAttribute: 'name', mode: 'direct' }] })], undefined, [], [], [], [], { 'c-customer': 'customer_id' });
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    expect(calls[0][0].payload.sources[0].labelField).toBe('customer_id');
   });
 
   it('rejects concepts without usable identity', async () => {
@@ -541,7 +653,7 @@ describe('SemanticPopulationRefreshService', () => {
     const input = { purpose: 'build', scope: { kind: 'model' } } as const;
     await service.requestRefresh('u-1', 'model-1', input);
     await service.requestRefresh('u-1', 'model-1', input);
-    const keys = (runtime.requestPopulationRun.mock.calls as unknown as Array<[unknown, string]>).map((call) => call[1]);
+    const keys = (runtime.requestPopulationRun.mock.calls as unknown as [unknown, string][]).map((call) => call[1]);
     const [first, second] = keys;
     expect(first).toHaveLength(64);
     expect(first).toBe(second);
@@ -554,7 +666,7 @@ describe('SemanticPopulationRefreshService', () => {
     await service.requestRefresh('u-1', 'model-1', input);
     mapping.updatedAt = new Date('2026-01-02T00:00:00.000Z');
     await service.requestRefresh('u-1', 'model-1', input);
-    const keys = (runtime.requestPopulationRun.mock.calls as unknown as Array<[unknown, string]>).map((call) => call[1]);
+    const keys = (runtime.requestPopulationRun.mock.calls as unknown as [unknown, string][]).map((call) => call[1]);
     expect(keys[0]).not.toBe(keys[1]);
   });
 
@@ -578,7 +690,7 @@ describe('SemanticPopulationRefreshService', () => {
       'c-customer': ['customer_id'], 'c-contract': ['contract_id'],
     }, [relation], [rule]);
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
-    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(calls[0][0].payload.relationBindings).toEqual([{
       relationId: 'r-1', referenceField: 'customer_ref', targetField: 'customer_id',
     }]);
@@ -609,10 +721,10 @@ describe('SemanticPopulationRefreshService', () => {
     );
     const built = setup([contract], identity, [relation], [rule]);
     await withDerivation(built).requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
-    const [[command]] = built.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const [[command]] = built.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(command.payload.derivations).toEqual([{
       derivationId: 'dv-1', conceptId: 'c-customer', sourceConceptId: 'c-contract', conflictRule: 'latest', orderBy: 'contract_id',
-      fieldMappings: [{ sourceAttribute: 'customer_ref', targetAttribute: 'customer_id' }], labelField: null,
+      fieldMappings: [{ sourceAttribute: 'customer_ref', targetAttribute: 'customer_id' }], labelField: 'name',
       mappingVersion: '2026-09-30T00:00:00.000Z',
     }]);
     expect(command.payload.specification.concepts.map((concept: { conceptId: string }) => concept.conceptId).sort()).toEqual(['c-contract', 'c-customer']);
@@ -620,10 +732,20 @@ describe('SemanticPopulationRefreshService', () => {
     // Without it, customers have no source: they are left out of the run, and so is the link to them.
     const plain = setup([contract], identity, [relation], [rule]);
     await plain.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
-    const [[plainCommand]] = plain.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const [[plainCommand]] = plain.runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(plainCommand.payload).not.toHaveProperty('derivations');
     expect(plainCommand.payload.relationBindings).toEqual([]);
     expect(plainCommand.payload.populationExecutionFingerprint).not.toBe(command.payload.populationExecutionFingerprint);
+    // Customers alone, made from contracts only: no source is read, the derivation makes them again.
+    const refresh = setup([contract], identity, [relation], [rule]);
+    await withDerivation(refresh).requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'concept', conceptId: 'c-customer' } });
+    const [[refreshCommand]] = refresh.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    expect(refreshCommand.payload.sources).toEqual([]);
+    expect(refreshCommand.payload.derivations).toHaveLength(1);
+    expect(refreshCommand.payload.relationBindings).toEqual([{ relationId: 'r-1', referenceField: 'customer_ref', targetField: 'customer_id' }]);
+    // A concept with neither a source nor a derivation has nothing to refresh.
+    await expect(plain.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'concept', conceptId: 'c-customer' } }))
+      .rejects.toThrow('No usable source in the selected scope');
   });
 
   it('binds one-to-many relations through one field of a composite target identity', async () => {
@@ -649,7 +771,7 @@ describe('SemanticPopulationRefreshService', () => {
 
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
 
-    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(calls[0][0].payload.relationBindings).toEqual([{
       relationId: 'r-1', referenceField: 'customer_id', targetField: 'customer_ref',
     }]);
@@ -679,10 +801,101 @@ describe('SemanticPopulationRefreshService', () => {
     await service.requestRefresh('u-1', 'model-1', {
       purpose: 'build', scope: { kind: 'model' },
     });
-    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(calls[0][0].payload.relationBindings).toEqual([{
       relationId: 'r-1', referenceField: 'customer_id', targetField: 'customer_ref',
     }]);
+  });
+
+  it('sends a transformed sheet field as its recipe, and fingerprints it only when there is one', async () => {
+    const recipe = { input: { kind: 'column' as const, name: 'customer_id' }, method: 'split' as const, delimiter: '-', part: 2, transform: 'upper' as const };
+    const mapping = MAPPING({ fieldMappings: [
+      { sourceField: 'customer_id', targetAttribute: 'customer_id', mode: 'direct', computed: recipe },
+      { sourceField: 'legal_name', targetAttribute: 'name', mode: 'direct' },
+    ] });
+    const { runtime, service } = setup([mapping]);
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const command = calls[0][0];
+    expect(command.payload.sources[0]).toMatchObject({
+      columnMapping: { customer_id: 'customer_id', legal_name: 'name' }, fieldRecipes: { customer_id: recipe },
+    });
+    const canonical = (entry: Record<string, any>, withRecipes: boolean) => ({
+      conceptId: entry.conceptId, sourceKind: entry.sourceKind, source: entry.source, mappingVersion: entry.mappingVersion,
+      columnMapping: entry.columnMapping ?? null, constantMapping: entry.constantMapping ?? null,
+      fieldMappings: entry.fieldMappings ?? null, options: entry.options ?? {}, labelField: entry.labelField ?? null,
+      ...(withRecipes ? { fieldRecipes: entry.fieldRecipes } : {}),
+    });
+    const fingerprint = (withRecipes: boolean) => new ModelSpecificationService().hashCanonical({
+      specHash: command.payload.specHash,
+      sources: command.payload.sources.map((entry: Record<string, any>) => canonical(entry, withRecipes)),
+      relationBindings: command.payload.relationBindings,
+      aiExtraction: command.payload.aiExtraction,
+      populationEngineVersion: 'r1-mvp-8',
+    });
+    expect(command.payload.populationExecutionFingerprint).toBe(fingerprint(true));
+    expect(fingerprint(true)).not.toBe(fingerprint(false));
+
+    const plain = setup();
+    await plain.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const plainCalls = plain.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    expect(plainCalls[0][0].payload.sources[0]).not.toHaveProperty('fieldRecipes');
+  });
+
+  it('sends a sheet field read out of a cell as a cell extraction, with the AI identity only when a cell uses AI', async () => {
+    const rules = { labels: ['Nom'], location: 'same_line' as const };
+    const mapping = MAPPING({ fieldMappings: [
+      { sourceField: 'customer_id', targetAttribute: 'customer_id', mode: 'direct' },
+      { sourceField: 'notes', targetAttribute: 'name', mode: 'extract', extractionStrategy: 'deterministic', rules },
+    ] });
+    const { runtime, service, aiExtractionAgent } = setup([mapping]);
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const command = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0];
+    const [source] = command.payload.sources;
+    expect(source.columnMapping).toEqual({ customer_id: 'customer_id' });
+    expect(source.fieldExtractions).toEqual({ name: { column: 'notes', label: 'Name', extractionStrategy: 'deterministic', rules } });
+    expect(source.options).toEqual({ sheetName: 'Sheet1' });
+    expect(command.payload.aiExtraction).toBeNull();
+    expect(aiExtractionAgent.resolveAgent).not.toHaveBeenCalled();
+
+    const ai = setup([MAPPING({ fieldMappings: [
+      { sourceField: 'customer_id', targetAttribute: 'customer_id', mode: 'direct' },
+      { sourceField: 'notes', targetAttribute: 'name', mode: 'extract', extractionStrategy: 'rules_then_ai', semanticDefinition: 'Legal name' },
+    ] })]);
+    await ai.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const aiCommand = (ai.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0];
+    expect(aiCommand.payload.sources[0].fieldExtractions.name).toMatchObject({ extractionStrategy: 'rules_then_ai', description: 'Legal name', valueType: 'text' });
+    expect(aiCommand.payload.sources[0].options.aiSettings).toBeDefined();
+    expect(aiCommand.payload.aiExtraction).toMatchObject({ agentSlug: 'semantic-field-extraction' });
+
+    // A sheet whose columns are read as they are keeps exactly what it sent before.
+    const plain = setup();
+    await plain.service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const plainSource = (plain.runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0].payload.sources[0];
+    expect(plainSource).not.toHaveProperty('fieldExtractions');
+    expect(Object.keys(plainSource.options)).toEqual(['sheetName']);
+  });
+
+  it('sends a sheet making several records per row with the column it splits in its options', async () => {
+    const expand = { field: 'to', split: 'emails' };
+    const { runtime, service } = setup([MAPPING({ expand, fieldMappings: [
+      { sourceField: '@item', targetAttribute: 'customer_id', mode: 'direct' },
+    ] })]);
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const [source] = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0].payload.sources;
+    expect(source.columnMapping).toEqual({ '@item': 'customer_id' });
+    expect(source.options).toEqual({ sheetName: 'Sheet1', expand });
+  });
+
+  it('sends a sheet field taken from another field as its recipe', async () => {
+    const recipe = { input: { kind: 'field' as const, name: 'customer_id' }, method: 'whole' as const, transform: 'upper' as const };
+    const { runtime, service } = setup([MAPPING({ fieldMappings: [
+      { sourceField: 'customer_id', targetAttribute: 'customer_id', mode: 'direct' },
+      { sourceField: null, targetAttribute: 'name', mode: 'computed', computed: recipe },
+    ] })]);
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    const [source] = (runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>)[0][0].payload.sources;
+    expect(source).toMatchObject({ columnMapping: { customer_id: 'customer_id' }, fieldRecipes: { name: recipe }, labelField: 'name' });
   });
 
   it('compiles structured constants without replacing direct fields', async () => {
@@ -692,7 +905,7 @@ describe('SemanticPopulationRefreshService', () => {
     ] });
     const { runtime, service } = setup([mapping]);
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
-    const calls = runtime.requestPopulationRun.mock.calls as unknown as Array<[Record<string, any>, string]>;
+    const calls = runtime.requestPopulationRun.mock.calls as unknown as [Record<string, any>, string][];
     expect(calls[0][0].payload.sources[0]).toMatchObject({
       columnMapping: { customer_id: 'customer_id' }, constantMapping: { name: 'Unknown' },
     });
@@ -713,13 +926,13 @@ describe('SemanticPopulationRefreshService', () => {
     const links = [{ relationTypeId: 'rel-1', sourceRecordId: 'r-1', targetRecordId: 'r-2' }];
     const { runtime, service } = setup([], {}, [], [], records, links);
     await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
-    const [modelId, snapshotId, batch] = runtime.appendManualRows.mock.calls[0] as unknown as [string, string, { rows: Array<{ values: object }>; links: unknown[] }];
+    const [modelId, snapshotId, batch] = runtime.appendManualRows.mock.calls[0] as unknown as [string, string, { rows: { values: object }[]; links: unknown[] }];
     expect(modelId).toBe('model-1');
     expect(snapshotId).toMatch(/^m[0-9a-f]{40}$/);
     expect(batch.rows[0].values).toEqual({ name: 'Acme' });
     expect(batch.links).toEqual([{ relationId: 'rel-1', sourceRowKey: 'r-1', targetRowKey: 'r-2' }]);
     expect(runtime.commitManualSnapshot).toHaveBeenCalledWith('model-1', snapshotId, { rowCount: 2, linkCount: 1 });
-    const payload = (runtime.requestPopulationRun.mock.calls[0] as unknown as [{ payload: { sources: Array<Record<string, unknown>>; specification: { concepts: Array<{ identity: object }>; sourceScope: unknown[] } } }])[0].payload;
+    const payload = (runtime.requestPopulationRun.mock.calls[0] as unknown as [{ payload: { sources: Record<string, unknown>[]; specification: { concepts: { identity: object }[]; sourceScope: unknown[] } } }])[0].payload;
     expect(payload.sources).toEqual([expect.objectContaining({ sourceKind: 'manual', conceptId: 'c-customer', source: { workspaceId: 'ws-1', assetId: `manual:${snapshotId}`, snapshotId } })]);
     expect(payload.specification.sourceScope).toContainEqual({ workspaceId: 'ws-1', assetId: `manual:${snapshotId}` });
     expect(payload.specification.concepts[0].identity).toEqual({ namespace: 'customer', keyComponents: ['customer_id'] });
@@ -773,7 +986,7 @@ describe('SemanticPopulationRefreshService', () => {
       await service.requestRefresh('u-1', 'model-1', { purpose: 'refresh', scope: { kind: 'model' } });
       withCorrections(runtime as any, 1);
       await service.requestRefresh('u-1', 'model-1', { purpose: 'refresh', scope: { kind: 'model' } });
-      const keys = (runtime.requestPopulationRun.mock.calls as unknown as Array<[unknown, string]>).map((call) => call[1]);
+      const keys = (runtime.requestPopulationRun.mock.calls as unknown as [unknown, string][]).map((call) => call[1]);
       expect(keys[0]).not.toEqual(keys[1]);
     });
 

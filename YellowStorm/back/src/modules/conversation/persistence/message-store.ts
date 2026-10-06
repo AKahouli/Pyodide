@@ -130,12 +130,12 @@ export interface MessageStore {
     cutoff: Date,
     limit: number,
   ): Promise<
-    Array<{
+    {
       id: string;
       conversationId: string;
       executionAttemptId: string | null;
       leaseExpiresAt: Date | null;
-    }>
+    }[]
   >;
   /**
    * Merge the browser-reported sixth latency metric into an AI message's

@@ -63,7 +63,7 @@ export class OAuthController {
   ) {
     try {
       const authUrl = await this.oauthFlowService.buildAuthorizationUrl(providerKey);
-      return res.redirect(authUrl);
+      res.redirect(authUrl); return;
     } catch (error) {
       this.logger.error('OAuth authorize failed', {
         providerKey,
@@ -71,9 +71,9 @@ export class OAuthController {
         stack: (error as Error).stack,
       });
       const errorCode = (error as { code?: string }).code || 'oauth_failed';
-      return res.redirect(
+      res.redirect(
         `${this.frontendUrl}/#/oauth-callback?error=${encodeURIComponent(errorCode)}`,
-      );
+      ); return;
     }
   }
 
@@ -94,15 +94,15 @@ export class OAuthController {
   ) {
     // Provider returned an error (e.g., user denied consent)
     if (error) {
-      return res.redirect(
+      res.redirect(
         `${this.frontendUrl}/#/oauth-callback?error=${encodeURIComponent(error)}`,
-      );
+      ); return;
     }
 
     if (!code || !state) {
-      return res.redirect(
+      res.redirect(
         `${this.frontendUrl}/#/oauth-callback?error=missing_params`,
-      );
+      ); return;
     }
 
     try {
@@ -118,15 +118,15 @@ export class OAuthController {
       );
 
       if (result.type === 'link_required') {
-        return res.redirect(
+        res.redirect(
           `${this.frontendUrl}/#/oauth-callback?link_required=true&email=${encodeURIComponent(result.maskedEmail || '')}`,
-        );
+        ); return;
       }
 
       // Success — redirect with temp token
-      return res.redirect(
+      res.redirect(
         `${this.frontendUrl}/#/oauth-callback?token=${result.accessToken}`,
-      );
+      ); return;
     } catch (err) {
       this.logger.error('OAuth callback failed', {
         providerKey,
@@ -134,9 +134,9 @@ export class OAuthController {
         stack: (err as Error).stack,
       });
       const errorCode = (err as { code?: string }).code || 'oauth_failed';
-      return res.redirect(
+      res.redirect(
         `${this.frontendUrl}/#/oauth-callback?error=${encodeURIComponent(errorCode)}`,
-      );
+      ); return;
     }
   }
 
@@ -188,17 +188,17 @@ export class OAuthController {
     @Res() res: Response,
   ) {
     if (!token) {
-      return res.redirect(`${this.frontendUrl}/#/oauth-callback?error=missing_token`);
+      res.redirect(`${this.frontendUrl}/#/oauth-callback?error=missing_token`); return;
     }
 
     try {
       await this.oauthFlowService.verifyAndLink(token);
-      return res.redirect(`${this.frontendUrl}/#/oauth-callback?linked=true`);
+      res.redirect(`${this.frontendUrl}/#/oauth-callback?linked=true`); return;
     } catch (err) {
       const errorCode = (err as { errorCode?: string }).errorCode || 'link_failed';
-      return res.redirect(
+      res.redirect(
         `${this.frontendUrl}/#/oauth-callback?error=${encodeURIComponent(errorCode)}`,
-      );
+      ); return;
     }
   }
 

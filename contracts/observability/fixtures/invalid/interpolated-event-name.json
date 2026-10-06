@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "timestamp": "2026-10-05T20:42:17.381Z",
+  "event_id": "inv-08",
+  "event_name": "request failed for user-42 during retry 3",
+  "message": "request failed",
+  "severity_text": "ERROR",
+  "severity_number": 17,
+  "service_name": "yellowstorm-back",
+  "service_version": "dev",
+  "environment": "local",
+  "event_origin": "application",
+  "attributes": {}
+}

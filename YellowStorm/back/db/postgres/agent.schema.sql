@@ -62,6 +62,11 @@ CREATE TABLE IF NOT EXISTS agents (
   max_temporary_child_agents    smallint     NOT NULL DEFAULT 4
                                   CHECK (max_temporary_child_agents BETWEEN 1 AND 8),
 
+  -- Root-delegation policy (WP01). NULL = not enrolled as a root; only
+  -- mono-agent records may carry one (service validated). See the jsonb
+  -- shape documented at the bottom of this file.
+  root_execution_policy         jsonb,
+
   -- Flags
   is_default                    boolean      NOT NULL DEFAULT false,
   is_active                     boolean      NOT NULL DEFAULT true,
@@ -196,3 +201,91 @@ CREATE INDEX IF NOT EXISTS idx_agent_connector_actions_connector_id ON agent_con
 --     "widget":       object | null   -- free-form Record<string, unknown>
 --   }
 -- =============================================================================
+
+-- =============================================================================
+-- WP01 root delegation: allowlist junctions + policy jsonb shape
+-- =============================================================================
+
+-- Agent.rootDelegateAgentIds[] — direct specialist allowlist of an enrolled
+-- root. Membership alone is not authorization (resolver re-checks grants).
+CREATE TABLE IF NOT EXISTS agent_root_delegate_agents (
+  root_agent_id     object_id NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  delegate_agent_id object_id NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  PRIMARY KEY (root_agent_id, delegate_agent_id)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_root_delegate_agents_delegate ON agent_root_delegate_agents (delegate_agent_id);
+
+-- Agent.rootDelegateTeamIds[] — source Teams whose members feed the pool.
+-- No FK to teams.teams: a deleted Team only stops supplying members.
+CREATE TABLE IF NOT EXISTS agent_root_delegate_teams (
+  root_agent_id object_id NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  team_id       object_id NOT NULL,
+  PRIMARY KEY (root_agent_id, team_id)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_root_delegate_teams_team ON agent_root_delegate_teams (team_id);
+
+-- root_execution_policy jsonb shape (documented, not enforced; version 1):
+--   {
+--     "version": 1,
+--     "delegation":  { "enabled": boolean, "defaultConfigurationMode": "native" | "root_constrained" },
+--     "temporaryWorkers": { "enabled": boolean, "maxPerWorkGroup": number },
+--     "fanout":      { "enabled": boolean, "maxItems": number, "allowBackground": boolean },
+--     "background":  { "enabled": boolean, "maxOutstandingPerConversation": number,
+--                      "taskTimeoutSeconds": number, "maxAttempts": number },
+--     "limits":      { "maxDepth": 1, "maxParallelWorkers": number,
+--                      "maxChildExecutionsPerWorkGroup": number,
+--                      "maxWorkGroupDurationSeconds": number }
+--   }
+-- Per-agent configuration-mode overrides live with the allowlist selection in
+-- the API payload and are stored inside this policy object under
+-- "perAgentModeOverrides": [{ "agentId", "configurationMode" }].
+
+-- =============================================================================
+-- WP03 root delegation: work-group/execution/evidence identity records
+-- =============================================================================
+
+-- One row per logical execution in a root work tree (plan §9.1). Separate from
+-- conversation.conversation_executions (single foreground run per conversation,
+-- keyed by message). Statuses: running | waiting | completed | cancelled |
+-- cancellation_requested | failed | outcome_unknown — a framework interrupt is
+-- never folded into a free-text "success".
+CREATE TABLE IF NOT EXISTS conversation.root_executions (
+  id                  object_id PRIMARY KEY,
+  conversation_id     object_id NOT NULL REFERENCES conversation.conversations(id) ON DELETE CASCADE,
+  root_agent_id       object_id,
+  work_group_id       object_id,
+  parent_execution_id object_id,
+  role                varchar(32) NOT NULL CHECK (role IN ('root', 'library_worker', 'temporary_worker', 'fanout_driver', 'followup')),
+  depth               integer NOT NULL DEFAULT 0 CHECK (depth >= 0),
+  attempt             integer NOT NULL DEFAULT 1,
+  status              varchar(32) NOT NULL DEFAULT 'running'
+                      CHECK (status IN ('running', 'waiting', 'completed', 'cancelled', 'cancellation_requested', 'failed', 'outcome_unknown')),
+  conversation_epoch  integer NOT NULL DEFAULT 0,
+  stop_request_id     uuid,
+  result_payload      jsonb,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  updated_at          timestamptz NOT NULL DEFAULT now(),
+  terminal_at         timestamptz
+);
+CREATE INDEX IF NOT EXISTS idx_root_executions_conversation_epoch ON conversation.root_executions (conversation_id, conversation_epoch);
+CREATE INDEX IF NOT EXISTS idx_root_executions_parent ON conversation.root_executions (parent_execution_id) WHERE parent_execution_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_root_executions_work_group ON conversation.root_executions (work_group_id) WHERE work_group_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_root_executions_nonterminal ON conversation.root_executions (conversation_id)
+  WHERE status IN ('running', 'waiting', 'cancellation_requested');
+
+-- Durable citation/artifact reference registry (plan §12). Producers commit
+-- before returning references; dedup_key = hash(producer execution, native
+-- tool/event identity, output ordinal) makes replays return the same identity.
+CREATE TABLE IF NOT EXISTS conversation.root_evidence_records (
+  id                object_id PRIMARY KEY,
+  execution_id      object_id NOT NULL REFERENCES conversation.root_executions(id) ON DELETE CASCADE,
+  conversation_id   object_id NOT NULL REFERENCES conversation.conversations(id) ON DELETE CASCADE,
+  kind              varchar(32) NOT NULL CHECK (kind IN ('citation', 'artifact')),
+  producer_agent_id object_id,
+  payload           jsonb NOT NULL DEFAULT '{}'::jsonb,
+  dedup_key         varchar(128) NOT NULL UNIQUE,
+  created_at        timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_root_evidence_execution ON conversation.root_evidence_records (execution_id);
+
+ALTER TABLE conversation.conversations ADD COLUMN IF NOT EXISTS root_work_last_stop_request_id uuid;

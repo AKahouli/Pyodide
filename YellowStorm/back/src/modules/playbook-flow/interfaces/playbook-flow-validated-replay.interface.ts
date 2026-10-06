@@ -207,7 +207,7 @@ export interface BuildValidatedReplayBaselineInput {
     reasoningChain?: FlowTaskPublicReasoningTraceItem[];
     judgeResult?: FlowTaskJudgeResult | null;
   };
-  hitlEvents?: Array<{
+  hitlEvents?: {
     interruptId?: string;
     nodeId?: string;
     iteration?: number;
@@ -224,7 +224,7 @@ export interface BuildValidatedReplayBaselineInput {
       remember?: boolean;
     } | null;
     downstreamNodeIds?: string[];
-  }>;
+  }[];
   preserveOutputFormat?: boolean;
   outputFormatGuide?: string | null;
 }

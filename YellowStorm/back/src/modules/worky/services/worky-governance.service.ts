@@ -34,7 +34,7 @@ export interface IGovernanceResolveResult {
 export interface UpsertWorkyGovernancePolicyInput {
   workspaceId: string;
   defaultLevel: WorkyGovernanceLevel;
-  categories: Array<{ category: string; level: WorkyGovernanceLevel }>;
+  categories: { category: string; level: WorkyGovernanceLevel }[];
   allowStreamOwnerOverride: boolean;
   maxOwnerRelaxLevel: WorkyGovernanceLevel;
 }

@@ -48,6 +48,9 @@ jobs:
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
 
+      - name: Stage observability SDK wheel (required by requirements.txt file: dependency)
+        run: node scripts/observability/build-sdks.mjs
+
       - name: Build and push Docker image
         run: |
           # --network=host: the runner's bridge network has no outbound access

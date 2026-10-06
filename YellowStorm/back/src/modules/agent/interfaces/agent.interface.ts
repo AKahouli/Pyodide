@@ -1,3 +1,5 @@
+import type { RootExecutionPolicy } from './root-execution-policy.interface';
+
 export interface IAgentConnectorActionSelectionResponse {
   connectorId: string;
   actionKeys: string[];
@@ -101,7 +103,7 @@ export interface AgentWidgetSettings {
     suggestions: WidgetSuggestion[];
     privacyNotice?: string;
     footerText?: string;
-    footerLinks?: Array<{ label: string; url: string }>;
+    footerLinks?: { label: string; url: string }[];
   };
   labels: {
     inputPlaceholder: string;
@@ -197,6 +199,10 @@ export interface IAgentResponse {
   deploymentSettings: AgentDeploymentSettings;
   enable_temporary_child_agents: boolean;
   max_temporary_child_agents: number;
+  /** Root-delegation policy; present only when the agent is enrolled as a root. */
+  rootExecutionPolicy?: RootExecutionPolicy;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
   /** True when the agent has the "smart-memory" connector (slug === 'smart-memory'). */
   hasSmartMemory?: boolean;
   skills?: string[];
@@ -239,6 +245,10 @@ export interface IAgentForStream {
   agentTypeSkillIds?: string[];
   enable_temporary_child_agents: boolean;
   max_temporary_child_agents: number;
+  /** Root policy snapshot for enrolled roots executing a standard turn. */
+  rootExecutionPolicy?: RootExecutionPolicy;
+  delegateAgentIds?: string[];
+  delegateTeamIds?: string[];
   isDefault: boolean;
   isDefaultForType: boolean;
 }
@@ -250,7 +260,7 @@ export interface IGrpcWorkspaceContext {
   hybrid_search?: boolean;
   instruction?: string;
   tag?: string;
-  workspace_documents: Array<{
+  workspace_documents: {
     _id: string;
     filename: string;
     filepath: string;
@@ -261,7 +271,7 @@ export interface IGrpcWorkspaceContext {
     workspace_name?: string;
     file_name?: string;
     createdAt: string;
-  }>;
+  }[];
 }
 
 /** Proto-shaped (snake_case) compaction config carried on the gRPC Chatbot message. */
@@ -282,7 +292,7 @@ export interface IGrpcAgent {
   agent_type: string;
   save_memory: boolean;
   tools: Record<string, unknown>[];
-  skills?: Array<Record<string, unknown>>;
+  skills?: Record<string, unknown>[];
   brain_context: IGrpcWorkspaceContext[];
   chatbot: {
     model: string;

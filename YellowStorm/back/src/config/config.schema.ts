@@ -373,14 +373,13 @@ export const configValidationSchema = Joi.object({
   PLAYBOOK_EXECUTION_STARTUP_TIMEOUT_MS: Joi.number().min(1000).max(1800000).default(180000),
   PLAYBOOK_EXECUTION_DISPATCH_INTERVAL_MS: Joi.number().min(100).max(60000).default(1000),
   PLAYBOOK_QUEUE_POSITION_UPDATE_THROTTLE_MS: Joi.number().min(0).max(10000).default(500),
+  // Internal MCP servers: connectors created in the connector library that point at one of these URLs
+  // (or at TRUSTED_MCP_SERVER_URLS) receive the acting user's identity. Their bearer token is set on the connector.
   PLAYBOOK_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8025/mcp'),
-  PLAYBOOK_MCP_INGRESS_TOKEN: Joi.string().allow('').default(''),
   AGENT_MCP_SERVER_URL: Joi.string().uri().default('http://localhost:8026/mcp'),
-  AGENT_MCP_INGRESS_TOKEN: Joi.string().allow('').default(''),
-  // Internal MCP servers whose connectors (created by an admin) receive the acting user's identity.
   SEMANTIC_MODEL_MCP_SERVER_URL: Joi.string().allow('').default('http://localhost:8027/mcp'),
-  // Bearer token the back sends to the mcp-semantic-model server (its inbound ingress token).
-  SEMANTIC_MODEL_MCP_INGRESS_TOKEN: Joi.string().allow('').default(''),
+  // Connector-library slug whose find_records / get_related_records chat binds on a semantic model.
+  SEMANTIC_MODEL_SEARCH_CONNECTOR_SLUG: Joi.string().allow('').default(''),
   TRUSTED_MCP_SERVER_URLS: Joi.string().allow('').default(''),
   // Telegram
   TELEGRAM_ENABLED: Joi.boolean().default(true),
@@ -392,14 +391,20 @@ export const configValidationSchema = Joi.object({
   TELEGRAM_WEBHOOK_RATE_WINDOW_MS: Joi.number().min(1000).max(3600000).default(60000),
   TELEGRAM_MAX_REPLY_LENGTH: Joi.number().min(64).max(4096).default(3900),
 
-  // Logging Persistence
+  // Logging Persistence — P11 retired the SQL write path; these vars are no longer read by
+  // any code. They stay validated (defaults) so existing .env files keep booting; remove the
+  // entries from your .env at leisure.
   LOGGING_BUFFER_SIZE: Joi.number().min(10).max(10000).default(100),
   LOGGING_FLUSH_INTERVAL_MS: Joi.number().min(1000).max(60000).default(5000),
   LOGGING_PERSISTENCE_ENABLED: Joi.boolean().default(true),
   LOGGING_DEFAULT_SAVE: Joi.boolean().default(true),
   LOGGING_DEFAULT_DISPLAY: Joi.boolean().default(true),
-  LOGGING_RETENTION_DAYS: Joi.number().min(1).max(3650).default(30),
+  LOGGING_RETENTION_DAYS: Joi.number().min(1).max(3650).default(30), // still live: ops.logs TTL sweeper
   LOGGING_DISPLAY_ONLY_CONTEXTS: Joi.string().optional(),
+  // Unified-logging cutover: historic-only read API + allowlisted Grafana navigation link
+  LOGGING_HISTORIC_CUTOVER_AT: Joi.string().isoDate().optional(),
+  OBS_GRAFANA_BASE_URL: Joi.string().uri().optional(),
+  OBS_GRAFANA_DASHBOARD_UID: Joi.string().max(64).optional(),
 
   // Worky (Chief of Staff)
   WORKY_SSE_HEARTBEAT_MS: Joi.number().min(5000).max(60000).default(15000),

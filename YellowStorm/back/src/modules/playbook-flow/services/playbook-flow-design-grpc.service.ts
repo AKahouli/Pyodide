@@ -50,7 +50,7 @@ export class PlaybookFlowDesignGrpcService implements OnModuleInit, OnModuleDest
         request,
         createGrpcMetadata(this.configService),
         (err: any, response: any) => {
-          if (err) return reject(err);
+          if (err) { reject(err); return; }
           resolve(response);
         },
       );
@@ -118,7 +118,7 @@ export class PlaybookFlowDesignGrpcService implements OnModuleInit, OnModuleDest
 
       const { credentials, options } = buildGrpcChannelCredentials(
         this.configService,
-        (msg) => this.logger.warn(msg),
+        (msg) => { this.logger.warn(msg); },
       );
       this.chatbotClient = new chatbotPackage.ChatbotService(
         this.grpcUrl,
@@ -191,7 +191,7 @@ export class PlaybookFlowDesignGrpcService implements OnModuleInit, OnModuleDest
         return;
       }
       const delay = Math.min(5000 * Math.pow(2, this.watchChannelRetries - 1), 60000);
-      setTimeout(() => this.watchChannelState(), delay);
+      setTimeout(() => { this.watchChannelState(); }, delay);
     }
   }
 }

@@ -186,6 +186,8 @@ function buildCitationData(data: Record<string, unknown>): CitationData {
 
   return {
     parentId: (data.parentId as string) || (data.parent_id as string) || '',
+    evidenceId: sourceData.evidenceId as string | undefined,
+    executionId: sourceData.executionId as string | undefined,
     sourceType,
     ...(sourceType === 'web' ? { sourceKind: 'web' as const } : {}),
     source: (sourceData.source as string) || (sourceData.fileName as string) || (sourceData.file_name as string) || '',

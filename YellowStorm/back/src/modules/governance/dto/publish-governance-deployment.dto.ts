@@ -11,7 +11,7 @@ export class PublishGovernanceDeploymentDto {
   @IsOptional()
   @IsArray()
   @IsIn(['widget', 'telegram'], { each: true })
-  channels?: Array<'widget' | 'telegram'>;
+  channels?: ('widget' | 'telegram')[];
 
   @ApiPropertyOptional()
   @IsOptional()

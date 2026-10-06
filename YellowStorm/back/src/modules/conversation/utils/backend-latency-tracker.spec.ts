@@ -6,7 +6,7 @@ function mockHrtimeSequence(sequenceNs: bigint[]): { restore: () => void } {
   const spy = jest
     .spyOn(process.hrtime, 'bigint')
     .mockImplementation(() => sequenceNs[Math.min(index++, sequenceNs.length - 1)]);
-  return { restore: () => spy.mockRestore() };
+  return { restore: () => { spy.mockRestore(); } };
 }
 
 describe('BackendPreAdkTracker', () => {

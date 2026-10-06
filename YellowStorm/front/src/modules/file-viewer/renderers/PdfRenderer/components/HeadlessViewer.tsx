@@ -29,6 +29,8 @@ type HeadlessViewerProps = Readonly<{
   pendingNavigation: PendingNavigation | null;
   registryRef: MutableRefObject<Map<string, PluginRegistry>>;
   initialPage: number;
+  /** Told the number of pages once the document is laid out. */
+  onPageCount?: (count: number) => void;
 }>;
 
 // Fallback copy function for older browsers
@@ -43,7 +45,7 @@ function fallbackCopy(text: string): void {
   textArea.remove();
 }
 
-export function HeadlessViewer({ tabId, isActive, pendingNavigation, registryRef, initialPage }: HeadlessViewerProps) {
+export function HeadlessViewer({ tabId, isActive, pendingNavigation, registryRef, initialPage, onPageCount }: HeadlessViewerProps) {
   const { registry, activeDocumentId } = useRegistry();
   const pendingHighlightText = extractHighlightText(pendingNavigation?.highlightText);
   const { t } = useModuleTranslation('file-viewer');
@@ -150,7 +152,7 @@ export function HeadlessViewer({ tabId, isActive, pendingNavigation, registryRef
             <ScrollToPageOnLoad documentId={activeDocumentId} initialPage={initialPage} />
             <PendingNavigationEffect documentId={activeDocumentId} tabId={tabId} isActive={isActive} pendingNavigation={pendingNavigation} />
             <HighlightOnLoad documentId={activeDocumentId} text={pendingHighlightText} />
-            <ViewerToolbar documentId={activeDocumentId} />
+            <ViewerToolbar documentId={activeDocumentId} onPageCount={onPageCount} />
             <SearchControls documentId={activeDocumentId} />
             <PanMode />
             <PrintFrame />

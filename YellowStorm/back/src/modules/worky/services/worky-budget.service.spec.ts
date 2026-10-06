@@ -61,7 +61,7 @@ const makeService = (budget: Partial<WorkyStreamBudget> = {}) => {
   const interactions = {
     create: jest.fn().mockImplementation(async (input: Record<string, unknown>) => ({ id: newObjectId(), ...input })),
   };
-  const emitted: Array<{ userId: string; streamId: string; type: string; payload: Record<string, unknown> }> = [];
+  const emitted: { userId: string; streamId: string; type: string; payload: Record<string, unknown> }[] = [];
   const events = {
     emit: jest.fn((userId: string, streamId: string, e: { type: string; payload: Record<string, unknown> }) => {
       emitted.push({ userId, streamId, type: e.type, payload: e.payload });

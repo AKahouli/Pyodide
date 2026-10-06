@@ -33,7 +33,7 @@ const FIXTURE_DISABLED_SKILL_ID = new Types.ObjectId().toString();
 const FIXTURE_CONNECTOR_ID = new Types.ObjectId().toString();
 
 /** fk_agents_agent_type requires the referenced type row to exist. */
-async function seedCanonicalAgentType(pool: { query: (text: string) => Promise<{ rows: Array<{ id: string }> }> }): Promise<void> {
+async function seedCanonicalAgentType(pool: { query: (text: string) => Promise<{ rows: { id: string }[] }> }): Promise<void> {
   await pool.query(
     `INSERT INTO catalog.agent_types (id, name, slug, default_prompt)
      VALUES ('${CANONICAL_AGENT_TYPE_ID}', 'Platform Copilot', 'platform_copilot', '')

@@ -29,5 +29,4 @@ export default registerAs('playbook-flow', () => ({
   executionDispatchIntervalMs: Number.parseInt(process.env.PLAYBOOK_EXECUTION_DISPATCH_INTERVAL_MS || '1000', 10),
   queuePositionUpdateThrottleMs: Number.parseInt(process.env.PLAYBOOK_QUEUE_POSITION_UPDATE_THROTTLE_MS || '500', 10),
   mcpServerUrl: process.env.PLAYBOOK_MCP_SERVER_URL || 'http://localhost:8025/mcp',
-  mcpIngressToken: process.env.PLAYBOOK_MCP_INGRESS_TOKEN || '',
 }));

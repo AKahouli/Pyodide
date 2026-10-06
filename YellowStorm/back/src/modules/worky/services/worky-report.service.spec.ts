@@ -12,7 +12,7 @@ import type {
 interface MakeOptions {
   streamStatus?: string;
   budget?: Partial<WorkyStreamBudget>;
-  tasks?: Array<Partial<WorkyTaskRecord>>;
+  tasks?: Partial<WorkyTaskRecord>[];
   auditCount?: number;
   existingReport?: WorkyExecutionReportRecord;
 }

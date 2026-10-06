@@ -28,7 +28,7 @@ const NAME_KEYS: Record<string, string> = {
   company: "Company",
 };
 
-export function collectEmails(value: unknown, into: Set<string> = new Set()): Set<string> {
+export function collectEmails(value: unknown, into = new Set<string>()): Set<string> {
   if (typeof value === 'string') {
     for (const m of value.match(EMAIL_RE) ?? []) into.add(m);
   } else if (Array.isArray(value)) {

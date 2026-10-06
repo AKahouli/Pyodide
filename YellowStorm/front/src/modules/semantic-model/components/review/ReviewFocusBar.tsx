@@ -2,7 +2,7 @@ import { CheckCircle2, ChevronLeft, ChevronRight, ListChecks, X } from 'lucide-r
 import { Button } from '@/components/ui/button';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ReviewQueueItem } from '../../types';
-import { opensElsewhere, reviewItemText } from './ReviewQueuePanel';
+import { opensElsewhere, reviewFixText, reviewItemText } from './ReviewQueuePanel';
 
 /**
  * Says what is being fixed while the Trust center is out of the way, and moves through the list without
@@ -29,6 +29,7 @@ export function ReviewFocusBar({ item, items, onOpen, onBack, onClose }: Readonl
     <p className='min-w-0 flex-1'>
       <span className='font-medium'>{fixed ? t('reviewFocus.fixed') : t('reviewFocus.fixing', { position: index + 1, total: route.length })}</span>
       <span className='ml-1.5 break-words text-muted-foreground'>{reviewItemText(item, translate)}</span>
+      {!fixed && <span className='mt-0.5 block break-words text-xs'>{reviewFixText(item, translate)}</span>}
     </p>
     <div className='flex items-center gap-1'>
       {previous && <Button variant='ghost' size='sm' className='h-8 px-2' onClick={() => onOpen(previous)} aria-label={t('reviewFocus.previous')} title={reviewItemText(previous, translate)}><ChevronLeft className='h-4 w-4' /></Button>}

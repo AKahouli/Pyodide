@@ -47,7 +47,7 @@ interface CorrectionJob {
 }
 
 interface CorrectorResponse {
-  correctedSegments: Array<{ text: string; evidenceIds: string[] }>;
+  correctedSegments: { text: string; evidenceIds: string[] }[];
   appliedCorrections: AppliedCorrection[];
   remainingUncertainties: string[];
   correctorVersion: string;
@@ -138,7 +138,7 @@ export class ResponseCorrectionService {
     try {
       const message = await this.messageService.getMessageDocument(job.messageId);
       const question = await this.messageService.getMessageDocument(job.questionMessageId);
-      const originalComponents = (message.components || []) as MessageComponent[];
+      const originalComponents = (message.components || []);
       const evidenceInput = this.evidenceBuilder.build(
         {
           id: message.id,
@@ -157,7 +157,7 @@ export class ResponseCorrectionService {
       if (!model?.isActive) throw new CorrectionFailure('judge_model_unavailable');
       const modelName = this.modelsService.getModelIdentifier(model);
       let currentEvaluation = job.originalEvaluation;
-      let previousCandidateSegments: Array<{ text: string }> = [];
+      let previousCandidateSegments: { text: string }[] = [];
       let previousCandidateComponents: MessageComponent[] | undefined;
       const replayContext = await this.resolveReplayContext(job.questionMessageId, job.messageId);
 
@@ -424,7 +424,7 @@ export class ResponseCorrectionService {
     evidenceInput: ResponseReliabilityInput,
     evidence: ReliabilityEvidenceItem[],
     originalComponents: MessageComponent[],
-    previousCandidateSegments: Array<{ text: string }>,
+    previousCandidateSegments: { text: string }[],
     modelName: string,
     omitTemperature: boolean,
     deadline: number,
@@ -492,12 +492,12 @@ export class ResponseCorrectionService {
     )
       throw new CorrectionFailure('corrector_invalid_response');
     const evidenceIds = new Set(
-      ((payload.evidence as Array<{ id?: unknown }>) || [])
+      ((payload.evidence as { id?: unknown }[]) || [])
         .map((item) => item.id)
         .filter((id): id is string => typeof id === 'string'),
     );
     const instructionClaims = new Set(
-      ((payload.instructions as Array<{ claim?: unknown }>) || [])
+      ((payload.instructions as { claim?: unknown }[]) || [])
         .map((item) => item.claim)
         .filter((claim): claim is string => typeof claim === 'string'),
     );

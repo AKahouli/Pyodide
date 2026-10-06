@@ -17,7 +17,7 @@ const FORBIDDEN = [
 ];
 
 /** Still Mongo-backed BY PLAN: [path substring, removing phase]. Empty: the runtime no longer needs MongoDB. */
-const ALLOWLIST: Array<[string, string]> = [];
+const ALLOWLIST: [string, string][] = [];
 
 function walk(dir: string, out: string[]): string[] {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {

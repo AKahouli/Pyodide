@@ -26,6 +26,9 @@ jobs:
           login-server: yscrmetachatbot001.azurecr.io
           username: ${{ secrets.ACR_USERNAME }}
           password: ${{ secrets.ACR_PASSWORD }}
+      - name: Stage observability SDK (required by the file: dependency)
+        run: node scripts/observability/build-sdks.mjs
+
       - name: Build and push
         shell: bash
         run: |

@@ -487,7 +487,7 @@ export class SystemController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Set CORS settings', description: 'Requires system.cors permission.' })
   async setCorsSettings(
-    @Body() body: { origins: Array<{ origin: string; enabled: boolean }> },
+    @Body() body: { origins: { origin: string; enabled: boolean }[] },
     @CurrentUser() user: AuthUser,
     @Req() req: Request,
   ): Promise<CorsSettingsValue> {

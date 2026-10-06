@@ -28,7 +28,7 @@ export interface AppearanceValue {
 }
 
 export interface CorsSettingsValue {
-  origins: Array<{ origin: string; enabled: boolean }>;
+  origins: { origin: string; enabled: boolean }[];
 }
 
 export interface LoginSettingsValue {

@@ -46,18 +46,4 @@ describe('PlaybookFlowMailEventLedgerService', () => {
     const e2 = service.createLedgerEntry(event);
     expect(e1.id).not.toBe(e2.id);
   });
-
-  it('detects duplicates by dedupe key', () => {
-    const entries = [
-      { dedupeKey: 'm365:microsoft:msg-456' },
-      { dedupeKey: 'm365:microsoft:msg-789' },
-    ];
-    expect(service.isDuplicate(entries, event)).toBe(true);
-  });
-
-  it('returns false when no duplicate found', () => {
-    const entries = [{ dedupeKey: 'm365:microsoft:msg-789' }];
-    expect(service.isDuplicate(entries, event)).toBe(false);
-    expect(service.isDuplicate([], event)).toBe(false);
-  });
 });

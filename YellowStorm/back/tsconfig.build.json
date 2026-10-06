@@ -1,7 +1,9 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "rootDir": "./src"
+    "rootDir": "./src",
+    // nest-cli deleteOutDir wipes dist/; incremental emit then skips JS and leaves dist/main missing.
+    "incremental": false
   },
   "exclude": [
     "node_modules",

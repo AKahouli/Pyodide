@@ -12,7 +12,7 @@ export class RateLimiterService implements OnModuleDestroy {
 
   constructor(private readonly platformSettings: PlatformSettingsService) {
     this.cleanupInterval = setInterval(() => {
-      void this.cleanup();
+      this.cleanup();
     }, CLEANUP_INTERVAL_MS);
     this.cleanupInterval.unref();
   }

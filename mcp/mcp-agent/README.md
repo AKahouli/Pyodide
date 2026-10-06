@@ -45,7 +45,6 @@ Copy `.env.example` to `.env` (auto-loaded; real environment variables win):
 | `MCP_PORT` | `8026` | HTTP listen port |
 | `AGENT_MCP_TIMEOUT_SECONDS` | `60` | Backend call timeout (1–300) |
 | `AGENT_MCP_MAX_RESPONSE_BYTES` | `2097152` | Response size cap |
-| `AGENT_MCP_LIST_LIMIT_MAX` | `25` | Unused lists clamp (reserved) |
 
 ## Run locally
 

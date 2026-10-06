@@ -14,7 +14,6 @@ from src.flow_engine.dynamic_reasoning.models import (
     PlannerSnapshot,
 )
 from src.flow_engine.dynamic_reasoning.planner import PlannerDecisionError, decide
-from src.flow_engine.dynamic_reasoning.repair import repair_plan
 from src.flow_engine.dynamic_reasoning.validator import validate_plan
 
 ChildExecutor = Callable[[str, str, str, dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -132,7 +131,11 @@ async def run_dynamic_reasoning(
         emit_dynamic_event(writer, "DynamicPlanValidationFailed", node_id, iteration, {"revision": revision, "validationIssues": [issue.model_dump(by_alias=True) for issue in issues]})
         emit_dynamic_event(writer, "DynamicPlanRepairStarted", node_id, iteration, {"revision": revision + 1})
         try:
-            current = await repair_plan(planner, descriptor, envelope, current, issues)
+            current = await decide(planner, descriptor, envelope, {
+                "instruction": "Regenerate the complete plan while resolving every reported issue.",
+                "originalPlan": current.plan.model_dump(by_alias=True) if current.plan else None,
+                "validationIssues": [issue.model_dump(by_alias=True) for issue in issues],
+            })
         except Exception as exc:
             message = _planner_failure_message(exc)
             emit_dynamic_event(writer, "DynamicPlanningFailed", node_id, iteration, {"error": message})

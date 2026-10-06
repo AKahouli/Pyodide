@@ -164,7 +164,7 @@ export const catalogTools = catalogSchema.table(
     categoryId: objectId('category_id').references(() => catalogToolCategories.id, { onDelete: 'set null' }),
     defaultAgentTypes: text('default_agent_types').array().notNull().default([]),
     /** Subdocument _ids preserved inside (plan DDL note). */
-    attributes: jsonb('attributes').$type<Array<Record<string, unknown>>>().notNull().default([]),
+    attributes: jsonb('attributes').$type<Record<string, unknown>[]>().notNull().default([]),
     requiredAppKey: varchar('required_app_key', { length: 64 }),
     isActive: boolean('is_active').notNull().default(true),
     ...timestamps(),

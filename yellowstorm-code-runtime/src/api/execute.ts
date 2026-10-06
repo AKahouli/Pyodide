@@ -2,7 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ServiceConfig } from "../config.js";
 import { RuntimeError, asRuntimeError } from "../runtime/errors.js";
-import type { Executor } from "../runtime/executor.js";
+import type { QuickJsExecutor } from "../runtime/quickjs-executor.js";
 import type { Metrics } from "../telemetry/metrics.js";
 import type { ExecutionContext, ObjectStore } from "../workspace/types.js";
 import { WorkspaceFS } from "../workspace/workspace-fs.js";
@@ -49,7 +49,7 @@ class ExecutionGate {
 
 export function createExecuteHandler(
   config: ServiceConfig,
-  executor: Executor,
+  executor: QuickJsExecutor,
   store: ObjectStore,
   metrics: Metrics
 ): (request: IncomingMessage, response: ServerResponse) => Promise<void> {

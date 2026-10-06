@@ -10,8 +10,8 @@ export interface FlowNodeAdvisorSuggestion {
     taskTitle?: string;
     taskDescription?: string;
     assignedAgentId?: string;
-    inputPorts?: Array<{ id: string; name: string; artifactKind: string; description?: string }>;
-    outputPorts?: Array<{ id: string; name: string; artifactKind: string; description?: string }>;
+    inputPorts?: { id: string; name: string; artifactKind: string; description?: string }[];
+    outputPorts?: { id: string; name: string; artifactKind: string; description?: string }[];
   };
   warnings?: string[];
 }
@@ -49,7 +49,7 @@ export interface FlowExecutionAdvisorTurnEntry {
 }
 
 export interface FlowAdvisorSuggestionResponse {
-  suggestions: Array<{
+  suggestions: {
     id: string;
     kind: 'upstream' | 'downstream' | 'validation' | 'approval' | 'trigger' | 'action' | 'split';
     title: string;
@@ -59,7 +59,7 @@ export interface FlowAdvisorSuggestionResponse {
     position: 'before' | 'after' | 'parallel';
     connectsFromTaskId: string | null;
     connectsToTaskId: string | null;
-  }>;
+  }[];
   model: string;
   settings: any;
 }

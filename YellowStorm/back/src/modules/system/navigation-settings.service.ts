@@ -101,7 +101,7 @@ export class NavigationSettingsService {
       throw new BadRequestException('Invalid navigation labels');
     }
     if (value.targetKey !== undefined && (typeof value.targetKey !== 'string'
-      || !NAVIGATION_TARGET_KEYS.includes(value.targetKey as (typeof NAVIGATION_TARGET_KEYS)[number]))) {
+      || !NAVIGATION_TARGET_KEYS.includes(value.targetKey))) {
       throw new BadRequestException('Invalid navigation target');
     }
   }

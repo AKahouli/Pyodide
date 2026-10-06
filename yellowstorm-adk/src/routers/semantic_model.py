@@ -137,6 +137,8 @@ class ExtractAttributeValuesRequest(BaseModel):
     fileName: str = Field(default="", max_length=500)
     attributes: list[ExtractAttributeValue] = Field(min_length=1, max_length=50)
     sections: list[ExtractAttributeSection] = Field(min_length=1, max_length=500)
+    # True when the mapping reads several records from one document (one per instance found).
+    multiple: bool = False
 
 
 class ExtractAttributeValueResult(BaseModel):
@@ -145,11 +147,17 @@ class ExtractAttributeValueResult(BaseModel):
     evidenceReferences: list[str]
 
 
+class ExtractAttributeRecord(BaseModel):
+    label: str = ""
+    values: list[ExtractAttributeValueResult]
+
+
 class ExtractAttributeValuesResponse(BaseModel):
     model: str | None = None
     extractorVersion: str
     values: list[ExtractAttributeValueResult]
     failed: list[str]
+    records: list[ExtractAttributeRecord] | None = None
 
 
 @router.post("/attributes/extract", response_model=ExtractAttributeValuesResponse)

@@ -66,11 +66,11 @@ export class AppDataEndUserGrantsService {
   ): AppDataEndUserGrants {
     const base = current ?? DENY_ALL_GRANTS;
     return {
-      create: body?.create !== undefined ? body.create === true : base.create === true,
-      read: body?.read !== undefined ? body.read === true : base.read === true,
-      update: body?.update !== undefined ? body.update === true : base.update === true,
-      delete: body?.delete !== undefined ? body.delete === true : base.delete === true,
-      useAi: body?.useAi !== undefined ? body.useAi === true : base.useAi === true,
+      create: body?.create !== undefined ? body.create : base.create,
+      read: body?.read !== undefined ? body.read : base.read,
+      update: body?.update !== undefined ? body.update : base.update,
+      delete: body?.delete !== undefined ? body.delete : base.delete,
+      useAi: body?.useAi !== undefined ? body.useAi : base.useAi,
     };
   }
 
@@ -80,7 +80,7 @@ export class AppDataEndUserGrantsService {
       read: row.canRead,
       update: row.canUpdate,
       delete: row.canDelete,
-      useAi: row.canUseAi === true,
+      useAi: row.canUseAi,
     };
   }
 
@@ -113,7 +113,7 @@ export class AppDataEndUserGrantsService {
   ): Promise<void> {
     const grantOp = AppDataEndUserGrantsService.policyOperationToGrant(operation);
     const grants = await this.getGrants(appId, userId);
-    if (!grants || !grants[grantOp]) {
+    if (!grants?.[grantOp]) {
       throw new AppDataGrantDeniedException(grantOp);
     }
   }

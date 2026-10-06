@@ -103,7 +103,7 @@ export class PlaybookFlowMailGraphClientService {
     mailboxAppKey: string,
     since: Date,
     top = 50,
-  ): Promise<Array<Record<string, any>>> {
+  ): Promise<Record<string, any>[]> {
     const { token: accessToken } =
       await this.connectedAppTokenService.getM365ValidToken(userId, mailboxAppKey);
     const filter = encodeURIComponent(`receivedDateTime ge ${since.toISOString()}`);
@@ -116,7 +116,7 @@ export class PlaybookFlowMailGraphClientService {
       const body = await response.text();
       throw new Error(`Graph inbox list failed: ${response.status} ${body}`);
     }
-    const payload = (await response.json()) as { value?: Array<Record<string, any>> };
+    const payload = (await response.json()) as { value?: Record<string, any>[] };
     return payload.value ?? [];
   }
 
@@ -132,7 +132,7 @@ export class PlaybookFlowMailGraphClientService {
     chatId: string,
     since: Date,
     top = 20,
-  ): Promise<Array<Record<string, any>>> {
+  ): Promise<Record<string, any>[]> {
     const { token: accessToken } =
       await this.connectedAppTokenService.getM365ValidToken(userId, mailboxAppKey);
     const url = `${GRAPH_BASE}/chats/${encodeURIComponent(chatId)}/messages?$top=${top}`;
@@ -141,7 +141,7 @@ export class PlaybookFlowMailGraphClientService {
       const body = await response.text();
       throw new Error(`Graph chat list failed: ${response.status} ${body}`);
     }
-    const payload = (await response.json()) as { value?: Array<Record<string, any>> };
+    const payload = (await response.json()) as { value?: Record<string, any>[] };
     const cutoff = since.getTime();
     return (payload.value ?? []).filter((m) => {
       const ts = Date.parse((m.createdDateTime as string) ?? '');
@@ -176,7 +176,7 @@ export class PlaybookFlowMailGraphClientService {
     try {
       const resp = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' } });
       if (!resp.ok) return [];
-      const data = (await resp.json()) as { value?: Array<Record<string, any>> };
+      const data = (await resp.json()) as { value?: Record<string, any>[] };
       return (data.value ?? []).filter((a) => a.isInline !== true);
     } catch (err) {
       this.logger.warn('Graph list attachments failed', { messageId, error: err instanceof Error ? err.message : String(err) });
@@ -229,7 +229,7 @@ export class PlaybookFlowMailGraphClientService {
   }
 
   private async tryTranslateResource(accessToken: string, resource: string): Promise<string | null> {
-    const match = resource.match(/^\/users\/([^/]+)\/messages\/([^/?]+)$/i);
+    const match = /^\/users\/([^/]+)\/messages\/([^/?]+)$/i.exec(resource);
     if (!match) return null;
     const [, graphUserId, messageId] = match;
 
@@ -248,7 +248,7 @@ export class PlaybookFlowMailGraphClientService {
           body: JSON.stringify({ inputIds: [messageId], sourceIdType: pair.source, targetIdType: pair.target }),
         });
         if (!resp.ok) continue;
-        const parsed = (await resp.json()) as { value?: Array<{ targetId?: string | null }> };
+        const parsed = (await resp.json()) as { value?: { targetId?: string | null }[] };
         const targetId = parsed.value?.[0]?.targetId;
         if (targetId) return `/users/${graphUserId}/messages/${encodeURIComponent(targetId)}`;
       } catch { continue; }

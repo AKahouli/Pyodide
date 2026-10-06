@@ -21,7 +21,7 @@ export class SemanticAccessEventHandler implements OnModuleInit {
     this.registry.register(this);
   }
 
-  async handle(event: IntegrationEventEnvelope<Record<string, unknown>>): Promise<void> {
+  async handle(event: IntegrationEventEnvelope): Promise<void> {
     const payload = event.payload as unknown as WorkspaceAccessChangedEventV1;
     if (!payload.workspaceId) return;
     await this.grants.revokeWorkspaceAccess(payload.workspaceId, payload.userId);

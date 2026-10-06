@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yellowmind-observability"
+version = "0.1.0"
+description = "Yellowmind unified logging Python SDK (bounded snapshot queue, stderr JSON lines, log-event v1 contract)"
+requires-python = ">=3.11"
+dependencies = ["structlog>=25.4.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+yellowmind_observability = ["_contracts/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

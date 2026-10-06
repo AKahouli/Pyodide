@@ -9,7 +9,7 @@ import { USER_LOOKUP_PORT } from '@common/ports/user-lookup.port';
  */
 describe('UserModule wiring', () => {
   it('binds USER_LOOKUP_PORT to PgUserLookupAdapter', () => {
-    const providers = Reflect.getMetadata('providers', UserModule) as Array<Record<string, unknown>>;
+    const providers = Reflect.getMetadata('providers', UserModule) as Record<string, unknown>[];
     const binding = providers.find((p) => p && p.provide === USER_LOOKUP_PORT);
     expect(binding).toBeDefined();
     expect(binding!.useExisting).toBe(PgUserLookupAdapter);

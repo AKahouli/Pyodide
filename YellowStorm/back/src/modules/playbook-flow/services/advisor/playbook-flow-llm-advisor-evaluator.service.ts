@@ -113,9 +113,9 @@ export class PlaybookFlowLlmAdvisorEvaluatorService {
     workflowGoal: string;
     upstreamContextJson: string;
     model: string;
-  }): Promise<{ messages: Array<{ role: 'system' | 'user'; content: string }> }> {
+  }): Promise<{ messages: { role: 'system' | 'user'; content: string }[] }> {
     const promptTemplate = await this.promptTemplateService.findByKey(ADVISOR_EVALUATION_PROMPT_KEY);
-    const metadata = (params.node.metadata ?? {}) as Record<string, unknown>;
+    const metadata = (params.node.metadata ?? {});
     const taskOutput = typeof params.taskResult.output === 'string'
       ? params.taskResult.output
       : JSON.stringify(params.taskResult.output ?? null, null, 2);
@@ -145,7 +145,7 @@ export class PlaybookFlowLlmAdvisorEvaluatorService {
   }
 
   private extractContent(responseData: unknown): string {
-    const content = (responseData as { choices?: Array<{ message?: { content?: unknown } }> })?.choices?.[0]?.message?.content;
+    const content = (responseData as { choices?: { message?: { content?: unknown } }[] })?.choices?.[0]?.message?.content;
     if (typeof content !== 'string' || !content.trim()) {
       throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR, 'Advisor evaluation returned no content.');
     }

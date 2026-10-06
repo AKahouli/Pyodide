@@ -15,6 +15,7 @@ behaviorally transparent.
 from __future__ import annotations
 
 from typing import AsyncGenerator, Optional, Tuple
+from contextlib import aclosing
 
 from google.adk.models.lite_llm import LiteLlm
 from google.adk.models.llm_response import LlmResponse
@@ -42,6 +43,13 @@ def _cheap_llm_counts(llm_request: LlmRequest) -> Tuple[int, int, int, bool]:
 class InstrumentedLiteLlm(LiteLlm):
     """LiteLlm with first-call TTFT instrumentation; otherwise transparent."""
 
+    def __init__(self, model: str, **kwargs):
+        super().__init__(model=model, **kwargs)
+        from src.config.settings import get_settings
+        if get_settings().ROOT_WORK_LLM_CAPACITY_ENABLED:
+            from src.root_runtime.model_capacity import CapacityClient
+            object.__setattr__(self, 'llm_client', CapacityClient(self.llm_client))
+
     async def generate_content_async(
         self,
         llm_request: LlmRequest,
@@ -64,7 +72,15 @@ class InstrumentedLiteLlm(LiteLlm):
                 llm_counts=counts,
             )
 
-        async for response in super().generate_content_async(llm_request, stream=stream):
-            if is_primary_call:
-                trace.mark_llm_first_delta()
-            yield response
+        from src.root_runtime.model_capacity import CapacityClient
+        capacity = self.llm_client if isinstance(self.llm_client, CapacityClient) else None
+        token = capacity.begin() if capacity else None
+        try:
+            async with aclosing(super().generate_content_async(llm_request, stream=stream)) as responses:
+                async for response in responses:
+                    if is_primary_call:
+                        trace.mark_llm_first_delta()
+                    yield response
+        finally:
+            if capacity:
+                await capacity.end(token)

@@ -48,7 +48,7 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
   private static readonly SESSIONS_CURSOR_KEY = 'sessions:v1';
   private static readonly PLANS_CURSOR_KEY = 'plans:v2';
   private static readonly PLAN_STEPS_CURSOR_KEY = 'plan_steps:v2';
-  private streams: Array<{ unsubscribe: () => void }> = [];
+  private streams: { unsubscribe: () => void }[] = [];
   private destroyed = false;
 
   constructor(
@@ -167,7 +167,7 @@ export class WorkyElectricConsumerService implements OnModuleInit, OnModuleDestr
           this.persistCursor(cursorKey, stream.shapeHandle, String(stream.lastOffset)),
         );
       },
-      (err) => this.logger.error('[worky-electric] stream error', { shape, error: (err as Error).message }),
+      (err) => { this.logger.error('[worky-electric] stream error', { shape, error: (err).message }); },
     );
     this.streams.push({ unsubscribe });
   }

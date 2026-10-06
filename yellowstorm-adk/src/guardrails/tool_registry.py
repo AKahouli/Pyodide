@@ -5,6 +5,7 @@ TOOL_SAFETY_VALUES = frozenset({"read", "write", "delete", "internal", "unknown"
 
 
 NATIVE_TOOL_POLICIES: dict[str, dict[str, str]] = {
+    "adk_request_input": {"safety": "internal", "kind": "invocation_control"},
     "calculator": {"safety": "read", "kind": "native"},
     "render_chart": {"safety": "internal", "kind": "visualization"},
     "present_choices": {"safety": "internal", "kind": "interaction"},

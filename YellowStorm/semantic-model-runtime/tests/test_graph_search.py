@@ -10,6 +10,7 @@ from app.graph_search.embeddings import (STORAGE_DIMENSION, EmbeddingError, Embe
                                          vector_literal)
 from app.graph_search.retrieval import is_visible, resolve_concepts, resolve_relations
 from app.graph_search.traversal import graph_of, step_query
+from app.population.age_projection import relation_label
 from app.population.compiler import PopulationError
 
 CONCEPT = {"conceptId": "c-contract", "key": "contract", "label": "Contract",
@@ -41,8 +42,9 @@ def test_search_text_is_deterministic_readable_and_bounded() -> None:
     moved = build_document({**ENTITY, "provenance": {}}, CONCEPT)
     assert moved["contentHash"] == document["contentHash"]
     long = build_document({**ENTITY, "attributes": {"title": "x" * 900}}, CONCEPT)
-    assert long["diagnostics"] == {"shortenedFields": ["title"]}
+    assert long["diagnostics"] == {"shortenedFields": ["title"], "passageFields": {"title": 1}}
     assert len(long["searchText"]) < 500
+    assert document["passages"] == []
 
 
 def test_a_record_with_only_keys_is_exact_only() -> None:
@@ -69,18 +71,23 @@ def test_visibility_requires_every_source_workspace() -> None:
     assert is_visible({"provenance": {}}, [])
 
 
-def test_step_queries_are_fixed_shapes_with_bound_values() -> None:
-    sql = step_query("pop_dr_abc", "incoming", True, 11)
-    assert "MATCH (t:Entity)-[r:RELATED_TO]->(s:Entity)" in sql
-    assert "s.record_id IN $frontier AND r.relation_id IN $relations" in sql
-    assert sql.endswith("$1) AS (source_id ag_catalog.agtype, relation_id ag_catalog.agtype, "
-                        "target_id ag_catalog.agtype)")
-    assert "$relations" not in step_query("pop_dr_abc", "outgoing", False, 11)
-    for graph, direction, limit in (("pop_x'; drop", "outgoing", 5), ("pop_ok", "sideways", 5),
-                                    ("pop_ok", "outgoing", 0)):
+def test_step_queries_are_fixed_shapes_with_escaped_values() -> None:
+    sql = step_query("pop_dr_abc", "incoming", 11, frontier=["c:1", "o'k"], relations=["r-1"])
+    assert "MATCH (t)-[r]->(s)" in sql  # no label: an Entity graph filters the relation property
+    assert r"WHERE s.record_id IN ['c:1', 'o\'k'] AND r.relation_id IN ['r-1'] RETURN" in sql
+    assert "RETURN s.record_id, r.relation_id, t.record_id, t.concept_id, t.workspace_ids LIMIT 11" in sql
+    typed = step_query("pop_dr_abc", "outgoing", 11, frontier=["c:1"], relations=["r-1"],
+                       edge_label=relation_label("r-1"))
+    assert f"MATCH (s)-[r:{relation_label('r-1')}]->(t) WHERE s.record_id IN ['c:1'] RETURN" in typed
+    assert "relation_id IN" not in typed
+    for graph, direction, limit, frontier in (("pop_x'; drop", "outgoing", 5, ["a"]), ("pop_ok", "sideways", 5, ["a"]),
+                                              ("pop_ok", "outgoing", 0, ["a"]), ("pop_ok", "outgoing", 5, []),
+                                              ("pop_ok", "outgoing", 5, ["a$agesearch$ x"])):
         with pytest.raises(PopulationError):
-            step_query(graph, direction, False, limit)
-    assert graph_of("age:v1:pop_dr_abc") == "pop_dr_abc"
+            step_query(graph, direction, limit, frontier=frontier)
+    with pytest.raises(PopulationError):
+        step_query("pop_ok", "outgoing", 5, frontier=["a"], edge_label="Entity]->(x) DETACH DELETE (x")
+    assert graph_of("age:v1:pop_dr_abc") == graph_of("age:v2:pop_dr_abc") == "pop_dr_abc"
     with pytest.raises(PopulationError):
         graph_of("legacy:pop_dr_abc")
 

@@ -14,8 +14,8 @@ import { PgScopeStore } from '../persistence/postgres/pg-scope.store';
 
 export interface GovernanceScopeAudienceResponse {
   mode: 'all_authenticated' | 'restricted';
-  users: Array<{ id: string; email: string; firstName?: string; lastName?: string }>;
-  groups: Array<{ id: string; name: string; memberCount: number }>;
+  users: { id: string; email: string; firstName?: string; lastName?: string }[];
+  groups: { id: string; name: string; memberCount: number }[];
   estimatedAuthorizedUserCount?: number;
 }
 

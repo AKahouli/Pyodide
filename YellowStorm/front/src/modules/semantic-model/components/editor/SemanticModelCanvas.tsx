@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react';
 import { Background, BaseEdge, Controls, EdgeLabelRenderer, Handle, MarkerType, NodeToolbar, Position, ReactFlow, getBezierPath, type Connection, type Edge, type EdgeProps, type Node, type NodeChange, type NodeProps, type ReactFlowInstance } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { BookOpen, Briefcase, Check, FileStack, FileText, FolderOpen, KeyRound, Keyboard, Library, PanelRight, Plus, Sheet, Tag, Trash2, X } from 'lucide-react';
+import { BookOpen, Briefcase, Check, FileStack, FileText, FolderOpen, KeyRound, Keyboard, Library, PanelRight, Pencil, Plus, Sheet, Tag, Trash2, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -186,7 +186,7 @@ const TONE_CLASS = {
   idle:'bg-muted text-muted-foreground',
 } as const;
 
-type SourceNodeData = Record<string, unknown> & { source: DesignerSource; onAddFeed?: (source: DesignerSource) => void; onRemove?: (source: DesignerSource) => void; onOpen?: (source: DesignerSource) => void; canAddRecord?: boolean };
+type SourceNodeData = Record<string, unknown> & { source: DesignerSource; onAddFeed?: (source: DesignerSource) => void; onSwitch?: (source: DesignerSource) => void; onRemove?: (source: DesignerSource) => void; onOpen?: (source: DesignerSource) => void; canAddRecord?: boolean };
 
 /** A small trash button that appears while the pointer is over its node or line. */
 function HoverDelete({ label,onDelete,className,visible=false }: Readonly<{ label:string;onDelete:()=>void;className?:string;visible?:boolean }>) {
@@ -208,7 +208,7 @@ const SourceNode = memo(function SourceNode({ data,selected }: NodeProps<Node<So
   return <div className='group relative flex w-44 flex-col items-center'>
     <NodeToolbar isVisible={Boolean(selected)} position={Position.Top} offset={14}>
       <SourceToolbar label={title} typed={source.kind==='typed'} onOpen={data.onOpen?()=>data.onOpen?.(source):undefined} onAddFeed={data.onAddFeed?()=>data.onAddFeed?.(source):undefined}
-        onAddRecord={data.canAddRecord?()=>setRecordInputOpen(true):undefined} onRemove={data.onRemove?()=>data.onRemove?.(source):undefined} />
+        onAddRecord={data.canAddRecord?()=>setRecordInputOpen(true):undefined} onSwitch={data.onSwitch&&source.mappings.length?()=>data.onSwitch?.(source):undefined} onRemove={data.onRemove?()=>data.onRemove?.(source):undefined} />
     </NodeToolbar>
     <div className={cn('relative flex h-20 w-20 items-center justify-center rounded-full bg-teal-600 text-white transition-shadow',selected?'ring-8 ring-teal-500/40':'ring-8 ring-teal-500/15 hover:ring-teal-500/30')}>
       <Icon className='h-9 w-9' />
@@ -216,6 +216,7 @@ const SourceNode = memo(function SourceNode({ data,selected }: NodeProps<Node<So
       {source.tone!=='idle'&&<span className={cn('absolute -right-0.5 -top-0.5 h-4 w-4 rounded-full border-2 border-background',source.tone==='ok'?'bg-emerald-500':'bg-amber-500')} role='img' aria-label={t(`designer.tone.${source.tone}`)} />}
       <Handle type='source' position={Position.Right} isConnectable={false} className='!h-2 !w-2 !border-0 !bg-teal-500' />
     </div>
+    {data.onOpen&&source.kind!=='typed'&&<button type='button' className='nodrag nopan absolute left-2 top-[26px] z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 border-teal-500/60 bg-background text-teal-600 opacity-70 transition hover:scale-110 hover:opacity-100 dark:text-teal-400' onClick={(event)=>{event.stopPropagation();data.onOpen?.(source);}} aria-label={t('designer.editSource',{name:title})} title={t('designer.editSource',{name:title})}><Pencil className='h-3.5 w-3.5' /></button>}
     {data.onAddFeed&&source.kind!=='typed'&&<button type='button' className='nodrag nopan absolute right-2 top-[26px] z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 border-teal-500/60 bg-background text-teal-600 opacity-70 transition hover:scale-110 hover:opacity-100 dark:text-teal-400' onClick={(event)=>{event.stopPropagation();data.onAddFeed?.(source);}} aria-label={t('designer.plus.feed',{name:title})} title={t('designer.plus.feed',{name:title})}><Plus className='h-4 w-4' /></button>}
     <div className='mt-3 w-full text-center'><p className='truncate text-sm font-semibold' title={title}>{title}</p><p className='truncate text-[11px] text-muted-foreground'>{detail}</p></div>
     {recordInputOpen&&typedConceptId&&<div className='absolute left-0 right-0 top-full z-20 mt-2 rounded-xl border bg-card p-3 shadow-xl'><QuickRecordForm nodeId={typedConceptId} onClose={()=>setRecordInputOpen(false)} /></div>}
@@ -284,7 +285,7 @@ const FeedEdge = memo(function FeedEdge({ id,sourceX,sourceY,targetX,targetY,sou
 
 const edgeTypes = { relation:RelationEdge, feed:FeedEdge };
 
-export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerived,identityRules,recordCounts,mappingHealth,canEdit,onConnectRequest,knowledge,onOpenKnowledge,onMapStructuredDrop,onOpenSource,onPaneDrop,onAddFeed,onRemoveSource,onToggleKey,sourcePositions,onMoveSource,onBrowseRecords }: Readonly<{ sourceMappings?:ConceptSourceMapping[];
+export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerived,identityRules,recordCounts,mappingHealth,canEdit,onConnectRequest,knowledge,onOpenKnowledge,onMapStructuredDrop,onOpenSource,onPaneDrop,onAddFeed,onSwitchSource,onRemoveSource,onToggleKey,sourcePositions,onMoveSource,onBrowseRecords,onPaneClick }: Readonly<{ sourceMappings?:ConceptSourceMapping[];
   /** Unique fields chosen on the concept itself, so its key badge shows before any source is mapped. */
   identityRules?:{conceptId:string;fields:string[]}[];
   /** Concepts made from another concept's records; each draws a line from that concept. */
@@ -295,8 +296,12 @@ export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerive
   onOpenSource?:(source:DesignerSource,mapping?:ConceptSourceMapping)=>void;
   /** A document from the knowledge panel was dropped on empty canvas, not on a concept. */
   onPaneDrop?:(resource:KnowledgeResource)=>void;
+  /** A click on the empty canvas, after the selection is cleared. */
+  onPaneClick?:()=>void;
   /** The + on a source: map the same file onto another concept. */
   onAddFeed?:(source:DesignerSource)=>void;
+  /** Reads another workspace, document or spreadsheet with the source's mappings, in place. */
+  onSwitchSource?:(source:DesignerSource)=>void;
   /** Stop feeding concepts from a source, or from one of its lines when the mapping is given. */
   onRemoveSource?:(source:DesignerSource,mapping?:ConceptSourceMapping)=>void;
   /** Make a field part of what makes a concept's records unique, or stop it being. */
@@ -533,11 +538,11 @@ export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerive
     if (!graph) return [];
     if (mode==='records') return graph.records.map((record)=>({id:record.id,type:'business',position:record.position,data:{nodeId:record.id,label:record.label,description:String(record.values.description??''),category:'record',protected:false}}));
     const modelNodes = graph.nodes.map((node)=>({id:node.id,type:'business',position:node.position,draggable:canEdit&&!node.systemKey,data:{nodeId:node.id,label:node.label,description:node.description,category:node.category,protected:Boolean(node.systemKey),recordPolicy:node.recordPolicy,attributes:node.attributes,summary:summaries[node.id],quickActions:canEdit,onQuickConcept:beginQuickConcept,onOpenKnowledge,knowledgeCounts:knowledge.countsByNode[node.id]??{workspaces:0,documents:0},dropState:dropStateFor(node.id),onKnowledgeDragEnter:canEdit&&knowledge.draggedResource?setDropNodeId:undefined,onKnowledgeDragLeave:canEdit?((nodeId:string)=>setDropNodeId((current)=>current===nodeId?null:current)):undefined,onKnowledgeDrop:canEdit?dropKnowledge:undefined,onDelete:canEdit&&!node.systemKey?deleteConcept:undefined,keyFields:keyFieldsByConcept[node.id]??[],onToggleKey:canEdit?onToggleKey:undefined,onRename:canEdit&&!node.systemKey?renameConcept:undefined,onDetails:openDetails,onBrowseRecords:node.systemKey?undefined:onBrowseRecords}}));
-    const sourceNodes = flow.sources.map((source)=>({id:source.id,type:'source',position:source.position,draggable:canEdit&&Boolean(onMoveSource),connectable:false,data:{source,onAddFeed:canEdit?onAddFeed:undefined,onRemove:!canEdit?undefined:source.kind==='typed'?removeTypedRecords:onRemoveSource?(item:DesignerSource)=>onRemoveSource(item):undefined,onOpen:onOpenSource?(item:DesignerSource)=>onOpenSource(item):undefined,canAddRecord:canEdit}}));
+    const sourceNodes = flow.sources.map((source)=>({id:source.id,type:'source',position:source.position,draggable:canEdit&&Boolean(onMoveSource),connectable:false,data:{source,onAddFeed:canEdit?onAddFeed:undefined,onSwitch:canEdit?onSwitchSource:undefined,onRemove:!canEdit?undefined:source.kind==='typed'?removeTypedRecords:onRemoveSource?(item:DesignerSource)=>onRemoveSource(item):undefined,onOpen:onOpenSource?(item:DesignerSource)=>onOpenSource(item):undefined,canAddRecord:canEdit}}));
     const withSources = [...sourceNodes,...modelNodes] as unknown as Node<BusinessNodeData>[];
     if (!quickConcept) return withSources;
     return [...withSources,{id:quickConcept.id,type:'business',position:quickConcept.position,draggable:false,selectable:false,focusable:false,data:{nodeId:quickConcept.id,label:'',description:'',category:'business_object',protected:false,draft:true,onDraftSubmit:submitQuickConcept,onDraftCancel:()=>setQuickConcept(null)}}];
-  },[canEdit,dropNodeId,flow,onAddFeed,onRemoveSource,onOpenSource,onMoveSource,onToggleKey,onBrowseRecords,keyFieldsByConcept,graph,knowledge.bindings,knowledge.countsByNode,knowledge.draggedResource,knowledge.isBusy,mode,onOpenKnowledge,quickConcept,summaries]);
+  },[canEdit,dropNodeId,flow,onAddFeed,onSwitchSource,onRemoveSource,onOpenSource,onMoveSource,onToggleKey,onBrowseRecords,keyFieldsByConcept,graph,knowledge.bindings,knowledge.countsByNode,knowledge.draggedResource,knowledge.isBusy,mode,onOpenKnowledge,quickConcept,summaries]);
   // Stage 2 — apply selection cheaply; reuses same object refs for unaffected nodes so memo on BusinessNode holds.
   const nodes = useMemo<Node<BusinessNodeData>[]>(()=>
     baseNodes.map((node)=>{
@@ -592,9 +597,9 @@ export function SemanticModelCanvas({ sourceMappings,derivedSources,onOpenDerive
       }}
       nodeDragThreshold={5}
       // A click opens the item's details in the side panel, replacing whatever panel was open.
-      onNodeClick={(event,node)=>{if((event.target as Element).closest('.nodrag')||node.id===quickConcept?.id)return;select(node.id,{details:!isDesignerSourceId(node.id)});}}
+      onNodeClick={(event,node)=>{if((event.target as Element).closest('.nodrag')||node.id===quickConcept?.id)return;select(node.id,{details:false});}}
       onNodeDoubleClick={(event,node)=>{if((event.target as Element).closest('.nodrag')||node.id===quickConcept?.id)return;if(isDesignerSourceId(node.id)){const source=flow.sources.find((item)=>item.id===node.id);if(source)onOpenSource?.(source);return;}openDetails(node.id);}}
-      onEdgeClick={(_,edge)=>{const feed=flow.feeds.find((item)=>item.id===edge.id);if(feed?.derived){select(null);onOpenDerived?.(feed.derived);return;}if(feed){select(null);const source=flow.sources.find((item)=>item.id===feed.sourceId);if(source)onOpenSource?.(source,feed.mapping);return;}select(edge.id,{details:true});}} onPaneClick={()=>select(null)}
+      onEdgeClick={(_,edge)=>{const feed=flow.feeds.find((item)=>item.id===edge.id);if(feed?.derived){select(null);onOpenDerived?.(feed.derived);return;}if(feed){select(null);const source=flow.sources.find((item)=>item.id===feed.sourceId);if(source)onOpenSource?.(source,feed.mapping);return;}select(edge.id,{details:true});}} onPaneClick={()=>{select(null);onPaneClick?.();}}
       onNodesChange={followDrag}
       onNodeDragStop={(_,node)=>{setDragPositions((current)=>{const next={...current};delete next[node.id];return next;});if(isDesignerSourceId(node.id)){onMoveSource?.(node.id,node.position);return;}if(!graph||node.id===quickConcept?.id)return;const isRecord=mode==='records';if(!isRecord&&graph.nodes.some((item)=>item.id===node.id&&item.systemKey))return;commit({type:'layout.update',positions:[{id:node.id,position:node.position}]},(current)=>isRecord?{...current,records:current.records.map((item)=>item.id===node.id?{...item,position:node.position}:item)}:{...current,nodes:current.nodes.map((item)=>item.id===node.id?{...item,position:node.position}:item)});}}
     ><Background gap={24} size={1} color='hsl(var(--muted-foreground) / 0.18)' /><Controls showInteractive={false} /></ReactFlow>

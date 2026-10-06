@@ -41,7 +41,7 @@ export interface VoiceTaskDetails {
   completedAt: string | null;
   durationMs: number | null;
   budget: { estimateUsd: number; actualUsd: number } | null;
-  artifacts: Array<{ filename: string; kind: string | null }>;
+  artifacts: { filename: string; kind: string | null }[];
 }
 
 @Injectable()
@@ -136,9 +136,9 @@ export class VoiceToolService {
 
     const result = task.result ?? null;
     const resultTruncated = !!result && result.length > RESULT_MAX_CHARS;
-    const trimmed = resultTruncated ? result!.slice(0, RESULT_MAX_CHARS) : result;
+    const trimmed = resultTruncated ? result.slice(0, RESULT_MAX_CHARS) : result;
 
-    let artifacts: Array<{ filename: string; kind: string | null }> = [];
+    let artifacts: { filename: string; kind: string | null }[] = [];
     try {
       const content = await this.tasks.getResultContent(taskId);
       artifacts = content.artifacts

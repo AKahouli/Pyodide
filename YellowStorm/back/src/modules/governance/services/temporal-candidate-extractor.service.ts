@@ -7,8 +7,8 @@ const DATE_PATTERN = /\b(20\d{2})[-/.](0?[1-9]|1[0-2])[-/.](0?[1-9]|[12]\d|3[01]
 
 @Injectable()
 export class TemporalCandidateExtractorService {
-  extract(evidence: ValidityEvidence[]): Array<{ candidate: TemporalCandidate; evidence: ValidityEvidence }> {
-    const candidates: Array<{ candidate: TemporalCandidate; evidence: ValidityEvidence }> = [];
+  extract(evidence: ValidityEvidence[]): { candidate: TemporalCandidate; evidence: ValidityEvidence }[] {
+    const candidates: { candidate: TemporalCandidate; evidence: ValidityEvidence }[] = [];
     for (const item of evidence) {
       const excerpt = item.excerpt ?? '';
       for (const match of excerpt.matchAll(DATE_PATTERN)) {

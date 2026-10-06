@@ -192,7 +192,6 @@ vi.mock('../store', () => ({
   useSelectedSemanticModelId: () => null,
   useSetSelectedWorkspaceIds: () => workspaceSelectionMock.set,
   useDeepSearchEnabled: () => false,
-  useSetDeepSearchEnabled: () => vi.fn(),
   useWebConnectorAccessEnabled: () => true,
   useSetWebConnectorAccessEnabled: () => vi.fn(),
   useSelectedModelId: () => 'model-1',

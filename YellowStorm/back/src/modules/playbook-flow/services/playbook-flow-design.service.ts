@@ -79,7 +79,7 @@ export class PlaybookFlowDesignService {
       this.usageService.recordUsage({
         userId, inputTokens: usage.input_tokens || 0, outputTokens: usage.output_tokens || 0,
         usageType: UsageType.PLAYBOOK, modelName: usage.model || undefined, endpoint: 'flow.generate',
-      }).catch((err) => this.logger.warn('Usage record failed', { error: (err as Error).message }));
+      }).catch((err) => { this.logger.warn('Usage record failed', { error: (err as Error).message }); });
     }
     return { id: flow.id };
   }

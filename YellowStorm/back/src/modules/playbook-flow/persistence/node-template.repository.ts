@@ -101,12 +101,12 @@ function toColumns(fields: NodeTemplateFields): Partial<typeof nt.$inferInsert> 
   if (fields.assignedAgentId !== undefined) out.assignedAgentId = trimOrNull(fields.assignedAgentId);
   if (fields.selectedAction !== undefined) out.selectedAction = trimOrNull(fields.selectedAction);
   if (fields.iteratorConfig !== undefined) out.iteratorConfig = castIteratorConfig(fields.iteratorConfig);
-  if (fields.enabled !== undefined) out.enabled = fields.enabled === true;
+  if (fields.enabled !== undefined) out.enabled = fields.enabled;
   if (fields.routerConfig !== undefined) out.routerConfig = castRouterConfig(fields.routerConfig);
   if (fields.humanApprovalConfig !== undefined) out.humanApprovalConfig = castHumanApprovalConfig(fields.humanApprovalConfig);
   if (fields.retryPolicy !== undefined) out.retryPolicy = castRetryPolicy(fields.retryPolicy);
   if (fields.modelId !== undefined) out.modelId = trimOrNull(fields.modelId);
-  if (fields.isBuiltIn !== undefined) out.isBuiltIn = fields.isBuiltIn === true;
+  if (fields.isBuiltIn !== undefined) out.isBuiltIn = fields.isBuiltIn;
   if (fields.createdBy !== undefined) out.createdBy = idOrNull(fields.createdBy);
   if (fields.updatedBy !== undefined) out.updatedBy = idOrNull(fields.updatedBy);
   return out;

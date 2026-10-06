@@ -14,10 +14,6 @@ xlrd>=2.0.1
 openai>=2.45,<3
 linkup-sdk== 0.2.8
 redis==5.0.8
-pytest==8.4.2
-pytest-cov==7.0.0
-pytest-asyncio==1.2.0
-pytest-mock==3.15.0
 pydantic>=2,<3
 pydantic-settings>=2,<3
 mem0ai==1.0.11
@@ -27,7 +23,7 @@ langchain-community>=0.4,<1
 langchain-core>=1.4.7,<2
 langchain-openai>=1.4,<2
 langchain-qdrant==1.1.0
-google-adk==2.8.0
+google-adk==2.11.0
 asyncpg==0.30.0
 celery[redis]==5.3.6
 neo4j==6.0.3
@@ -47,3 +43,6 @@ semantica==0.6.5
 httpx==0.28.1
 markdown==3.10.3
 greenlet>=3.0.0
+
+# Unified logging SDK (staged by scripts/observability/build-sdks.mjs before install/build)
+yellowmind_observability @ file:./.generated/observability/yellowmind_observability-0.1.0-py3-none-any.whl

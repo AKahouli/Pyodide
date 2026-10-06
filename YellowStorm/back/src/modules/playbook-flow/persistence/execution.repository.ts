@@ -206,7 +206,7 @@ function reviveHitlEvents(value: unknown): ExecutionHitlEvent[] {
   if (!Array.isArray(value)) return [];
   return (value as ExecutionHitlEvent[]).map((event) => ({
     ...event,
-    createdAt: reviveDate(event.createdAt) ?? (event.createdAt as Date),
+    createdAt: reviveDate(event.createdAt) ?? (event.createdAt),
     ...(event.respondedAt != null ? { respondedAt: reviveDate(event.respondedAt) ?? event.respondedAt } : {}),
   }));
 }
@@ -244,7 +244,7 @@ export function toExecutionJson(record: ExecutionRecord): Record<string, unknown
   return json;
 }
 
-const PENDING_APPROVAL_KEYS: ReadonlyArray<keyof ExecutionPendingApproval> = [
+const PENDING_APPROVAL_KEYS: readonly (keyof ExecutionPendingApproval)[] = [
   'nodeId', 'iteration', 'prompt', 'requestedAt', 'interruptType', 'interruptId', 'taskTitle', 'taskDescription', 'result',
   'payloadJson', 'resumableActions', 'blockerRuleId', 'blockerKind', 'reasonCode', 'riskLevel', 'confidence',
   'downstreamNodeIds', 'feedbackScopeDefault', 'interruptPayload',
@@ -262,7 +262,7 @@ function pendingApprovalJson(value: ExecutionPendingApproval): Json {
 /** The HitlResponse subdocument cast: known keys with their schema defaults. */
 export function toHitlResponse(value: ExecutionHitlResponse | Json): ExecutionHitlResponse {
   const response = value as Record<string, unknown>;
-  const text = (key: string): string | null => (typeof response[key] === 'string' ? stripNul(response[key] as string) : null);
+  const text = (key: string): string | null => (typeof response[key] === 'string' ? stripNul(response[key]) : null);
   return {
     action: String(response.action ?? ''),
     message: text('message'),
@@ -293,7 +293,7 @@ function hitlEventJson(event: Partial<ExecutionHitlEvent>): Json {
     downstreamNodeIds: event.downstreamNodeIds ?? [],
     createdAt: event.createdAt ?? new Date(),
     respondedAt: event.respondedAt ?? null,
-  }) as Json;
+  });
 }
 
 function int(value: number | null | undefined): number | null {
@@ -301,7 +301,7 @@ function int(value: number | null | undefined): number | null {
 }
 
 function jsonOrNull<T>(value: T | null | undefined): Json | null {
-  return value == null ? null : (stripNul(value) as unknown as Json);
+  return value == null ? null : (stripNul(value));
 }
 
 function textOrNull(value: string | null | undefined): string | null {
@@ -377,7 +377,7 @@ export class ExecutionRepository {
   // ---------------------------------------------------------------- lists
 
   private flowFilter(flowId: string, statuses?: readonly string[]): SQL {
-    return and(eq(e.flowId, normalizeObjectId(flowId)), statuses?.length ? inArray(e.status, [...statuses]) : undefined) as SQL;
+    return and(eq(e.flowId, normalizeObjectId(flowId)), statuses?.length ? inArray(e.status, [...statuses]) : undefined)!;
   }
 
   /** A flow's runs, newest first (the execution list, the repeatability report). */
@@ -527,7 +527,7 @@ export class ExecutionRepository {
    * Renumbers the owner's queued runs 1..n by age and returns the ones whose position changed, in
    * queue order (the service streams each change).
    */
-  async renumberQueue(ownerId: string): Promise<Array<{ executionId: string; queuePosition: number }>> {
+  async renumberQueue(ownerId: string): Promise<{ executionId: string; queuePosition: number }[]> {
     if (!isObjectId(ownerId)) return [];
     const result = await this.q.execute(sql`
       WITH ranked AS (
@@ -539,7 +539,7 @@ export class ExecutionRepository {
       FROM ranked
       WHERE target.id = ranked.id AND target.queue_position <> ranked.position
       RETURNING target.id AS id, target.queue_position AS position`);
-    return (result.rows as Array<{ id: string; position: number }>)
+    return (result.rows as { id: string; position: number }[])
       .map((row) => ({ executionId: row.id, queuePosition: Number(row.position) }))
       .sort((a, b) => a.queuePosition - b.queuePosition);
   }
@@ -569,7 +569,7 @@ export class ExecutionRepository {
       change.from ? inArray(e.status, [...change.from]) : undefined,
       match ? sql`${e.pendingApproval} @> jsonb_build_object('nodeId', ${match.nodeId}::text, 'iteration', ${Math.trunc(match.iteration)}::int)` : undefined,
       match?.interruptId ? sql`${e.pendingApproval} ->> 'interruptId' = ${match.interruptId}` : undefined,
-    ) as SQL;
+    )!;
   }
 
   /** Writes fields whatever the status. False when the run does not exist. */

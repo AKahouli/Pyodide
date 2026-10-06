@@ -40,8 +40,7 @@ export default registerAs('semanticModel', () => ({
   nativeSearchLogQuery: process.env.SEMANTIC_MODEL_NATIVE_SEARCH_LOG_QUERY === 'true',
   documentExtractionAgentId: process.env.SEMANTIC_MODEL_DOCUMENT_EXTRACTION_AGENT_ID || '',
   documentExtractionTimeoutMs: Number.parseInt(process.env.SEMANTIC_MODEL_DOCUMENT_EXTRACTION_TIMEOUT_MS || '180000', 10),
-  // mcp-semantic-model server (record search tools bound to chat when a model is selected).
-  // An empty URL disables seeding of the hidden system connector.
-  mcpServerUrl: process.env.SEMANTIC_MODEL_MCP_SERVER_URL ?? 'http://localhost:8027/mcp',
-  mcpIngressToken: process.env.SEMANTIC_MODEL_MCP_INGRESS_TOKEN ?? '',
+  // Slug of the connector (created in the connector library) whose record search tools chat binds
+  // when a message carries a semantic model; empty means chat on a model has no search tools.
+  searchConnectorSlug: (process.env.SEMANTIC_MODEL_SEARCH_CONNECTOR_SLUG ?? '').trim(),
 }));

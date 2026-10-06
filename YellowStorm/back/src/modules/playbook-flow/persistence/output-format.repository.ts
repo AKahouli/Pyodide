@@ -62,7 +62,7 @@ export class OutputFormatRepository {
   }
 
   private node(flowId: string, nodeId: string): SQL {
-    return and(eq(of.flowId, normalizeObjectId(flowId)), eq(of.nodeId, nodeId)) as SQL;
+    return and(eq(of.flowId, normalizeObjectId(flowId)), eq(of.nodeId, nodeId))!;
   }
 
   /** The id of the node's active template; the oldest when a legacy node has several. */

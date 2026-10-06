@@ -64,15 +64,15 @@ export class WorkyMessageController {
     @Param('id') streamId: string,
     @Query('limit') limit?: string,
   ): Promise<
-    Array<{
+    {
       id: string;
       role: string;
       content: string;
       turnId: string | null;
       planDeltaRef: string | null;
       createdAt: string;
-      components: Array<{ id: string; type: string; data: Record<string, unknown> }>;
-    }>
+      components: { id: string; type: string; data: Record<string, unknown> }[];
+    }[]
   > {
     const parsedLimit = limit ? Math.max(1, Math.min(500, Number(limit))) : undefined;
     return this.planning.listMessages(

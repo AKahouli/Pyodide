@@ -19,6 +19,11 @@ DEFAULT_PORT = 8010
 def main() -> None:
     load_dotenv(Path(__file__).resolve().parent / ".env")
 
+    # Unified logging (plan P06): the shared SDK owns stderr JSON emission; idempotent.
+    from yellowmind_observability import setup_observability
+
+    setup_observability(service_name=os.environ.get("OBS_SERVICE_NAME") or "semantic-model-runtime")
+
     if not os.environ.get("YELLOWSTORM_INTERNAL_SERVICE_TOKEN"):
         raise SystemExit("YELLOWSTORM_INTERNAL_SERVICE_TOKEN is missing or empty in .env")
     if not os.environ.get("YELLOWSTORM_BACKEND_URL"):
