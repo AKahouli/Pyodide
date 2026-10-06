@@ -1428,6 +1428,11 @@ export class RequestPopulationRefreshDto {
 export class RebuildPopulationDto {
   @ApiPropertyOptional({ description: 'Also read every document again with AI instead of reusing earlier readings' })
   @IsOptional()
+
+  @ApiPropertyOptional({ description: 'Read every document again with AI instead of reusing earlier readings' })
+  @IsOptional()
+  @IsBoolean()
+  rereadDocuments?: boolean;
   @IsBoolean()
   forgetDocumentReading?: boolean;
 }

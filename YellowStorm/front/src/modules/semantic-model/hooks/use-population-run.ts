@@ -12,8 +12,8 @@ import { semanticModelQueryKeys } from '../query/queryKeys';
 export function usePopulationRun(modelId: string | undefined) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (scope: { kind: 'model' } | { kind: 'mapping'; mappingId: string } = { kind: 'model' }) =>
-      semanticModelApi.requestPopulationRefresh(modelId ?? '', { purpose: 'build', scope }),
+    mutationFn: ({ scope = { kind: 'model' }, rereadDocuments = false }: { scope?: { kind: 'model' } | { kind: 'mapping'; mappingId: string }; rereadDocuments?: boolean } = {}) =>
+      semanticModelApi.requestPopulationRefresh(modelId ?? '', { purpose: 'build', scope, ...(rereadDocuments ? { rereadDocuments } : {}) }),
     onSuccess: () => {
       if (!modelId) return;
       // The run is asynchronous and there is no progress endpoint yet, so refresh what the

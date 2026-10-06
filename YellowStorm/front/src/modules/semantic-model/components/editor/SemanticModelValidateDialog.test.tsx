@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SemanticModelValidateDialog } from './SemanticModelValidateDialog';
 
 const mutations = vi.hoisted(() => ({ population: vi.fn(), rebuild: vi.fn(), reproject: vi.fn() }));
@@ -12,53 +12,62 @@ vi.mock('../../hooks/use-population-run', () => ({
 }));
 
 describe('SemanticModelValidateDialog', () => {
-  it('rebuilds only the graph when the box is ticked: no run is started', async () => {
-    mutations.population.mockClear();
+  beforeEach(() => { mutations.population.mockReset(); mutations.rebuild.mockReset(); mutations.reproject.mockReset(); });
+
+  it('reads the sources by default, with one button', async () => {
+    mutations.population.mockResolvedValue({ jobId: 'job-1', status: 'queued', skipped: [], reused: false });
+    const onPopulationStarted = vi.fn();
+    const onOpenChange = vi.fn();
+    render(<SemanticModelValidateDialog open onOpenChange={onOpenChange} modelId="model-1" onPopulationStarted={onPopulationStarted} />);
+
+    expect(screen.getByRole('radio', { name: /run.mode.update.title/ })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: /rebuild.forget/ })).not.toBeChecked();
+    await userEvent.click(screen.getByRole('button', { name: 'run.mode.update.action' }));
+
+    await waitFor(() => expect(mutations.population).toHaveBeenCalledWith({ rereadDocuments: false }));
+    expect(onPopulationStarted).toHaveBeenCalledWith({ jobId: 'job-1', status: 'queued', skipped: [], reused: false });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(mutations.rebuild).not.toHaveBeenCalled();
+  });
+
+  it('updates the data and reads the documents again with AI when ticked', async () => {
+    mutations.population.mockResolvedValue({ jobId: 'job-3', status: 'queued', skipped: [], reused: false });
+    render(<SemanticModelValidateDialog open onOpenChange={vi.fn()} modelId="model-1" />);
+
+    await userEvent.click(screen.getByRole('checkbox', { name: /rebuild.forget/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'run.mode.update.action' }));
+
+    await waitFor(() => expect(mutations.population).toHaveBeenCalledWith({ rereadDocuments: true }));
+    expect(mutations.rebuild).not.toHaveBeenCalled();
+  });
+
+  it('rebuilds only the graph: no run is started', async () => {
     mutations.reproject.mockResolvedValue({ modelId: 'model-1', revisions: [{ revisionId: 'dr-1', projectionRef: 'age:v2:pop_dr_1_t2', reprojected: true, vertices: 217, edges: 195 }] });
     const onOpenChange = vi.fn();
     render(<SemanticModelValidateDialog open onOpenChange={onOpenChange} modelId="model-1" />);
 
-    await userEvent.click(screen.getByRole('checkbox'));
-    await userEvent.click(screen.getByRole('button', { name: 'population.graphOnlyAction' }));
+    await userEvent.click(screen.getByRole('radio', { name: /run.mode.graph.title/ }));
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'run.mode.graph.action' }));
 
     await waitFor(() => expect(mutations.reproject).toHaveBeenCalledTimes(1));
     expect(mutations.population).not.toHaveBeenCalled();
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
-  it('starts a whole-model population run on the runtime', async () => {
-    mutations.population.mockResolvedValue({ jobId: 'job-1', status: 'queued', skipped: [], reused: false });
-    const onPopulationStarted = vi.fn();
-    const onOpenChange = vi.fn();
-    render(<SemanticModelValidateDialog open onOpenChange={onOpenChange} modelId="model-1" onPopulationStarted={onPopulationStarted} />);
-
-    expect(screen.queryByRole('button', { name: 'validate.launch' })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole('button', { name: 'population.action' }));
-
-    await waitFor(() => expect(mutations.population).toHaveBeenCalledWith({ kind: 'model' }));
-    expect(onPopulationStarted).toHaveBeenCalledWith({ jobId: 'job-1', status: 'queued', skipped: [], reused: false });
-    expect(onOpenChange).toHaveBeenCalledWith(false);
-    expect(mutations.rebuild).not.toHaveBeenCalled();
-  });
-
-  it('repopulates from scratch only once the warning is confirmed', async () => {
+  it('starting over shows what is deleted, offers the AI reading, and passes it along', async () => {
     mutations.rebuild.mockResolvedValue({ jobId: 'job-2', status: 'queued', skipped: [], reused: false, cleared: { revisions: 3 } });
     const onPopulationStarted = vi.fn();
     render(<SemanticModelValidateDialog open onOpenChange={vi.fn()} modelId="model-1" onPopulationStarted={onPopulationStarted} />);
 
-    await userEvent.click(screen.getByRole('button', { name: /rebuild.button/ }));
-    expect(mutations.rebuild).not.toHaveBeenCalled();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('radio', { name: /run.mode.scratch.title/ }));
     expect(screen.getByRole('alert')).toHaveTextContent('rebuild.kept');
-
-    // Going back leaves everything as it was.
-    await userEvent.click(screen.getByRole('button', { name: 'action.cancel' }));
-    expect(screen.getByRole('button', { name: 'population.action' })).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole('button', { name: /rebuild.button/ }));
-    await userEvent.click(screen.getByRole('checkbox'));
-    await userEvent.click(screen.getByRole('button', { name: 'rebuild.confirm' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: /rebuild.forget/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'run.mode.scratch.action' }));
 
     await waitFor(() => expect(mutations.rebuild).toHaveBeenCalledWith({ forgetDocumentReading: true }));
-    expect(onPopulationStarted).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'job-2', cleared: true }));
+    expect(onPopulationStarted).toHaveBeenCalledWith({ jobId: 'job-2', status: 'queued', skipped: [], reused: false, cleared: true });
+    expect(mutations.population).not.toHaveBeenCalled();
   });
 });

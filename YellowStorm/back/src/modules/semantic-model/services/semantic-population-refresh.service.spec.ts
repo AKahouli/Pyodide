@@ -82,6 +82,7 @@ const setup = (
     commitManualSnapshot: jest.fn(async () => ({ reused: false })),
     requestPopulationRun: jest.fn(async () => ({ jobId: 'j-1', status: 'queued', reused: false })),
     purgeModelData: jest.fn(async () => ({ modelId: 'model-1', revisions: 2, jobs: 1 })),
+    forgetDocumentReadings: jest.fn(async () => ({ modelId: 'model-1', documentReadings: 12 })),
     getGraphStatus: jest.fn(async () => ({ modelId: 'model-1', environments: [] })),
     reprojectModelGraphs: jest.fn(async () => ({ modelId: 'model-1', revisions: [{ revisionId: 'dr-1', projectionRef: 'age:v2:pop_dr_1_t2', reprojected: true }] })),
     getJob: jest.fn(async () => ({ jobId: 'j-1', jobType: 'population.run', modelId: 'model-1', state: 'completed' })),
@@ -291,6 +292,23 @@ describe('SemanticPopulationRefreshService', () => {
     const ruleQuery = database.query.mock.calls.find(([sql]) =>
       sql.includes('FROM semantic_model.relation_resolution_rules'))?.[0] ?? '';
     expect(ruleQuery).not.toMatch(/source_concept_id|target_concept_id|cardinality/);
+  });
+
+  it('reads the documents again with AI on request: forgets the readings, and the run is not taken for an earlier one', async () => {
+    const { runtime, service } = setup();
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' } });
+    await service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' }, rereadDocuments: true });
+    expect(runtime.forgetDocumentReadings).toHaveBeenCalledTimes(1);
+    expect(runtime.forgetDocumentReadings).toHaveBeenCalledWith('model-1', 'u-1');
+    expect(runtime.purgeModelData).not.toHaveBeenCalled();
+    const keys = (runtime.requestPopulationRun.mock.calls as unknown as Array<[unknown, string]>).map((call) => call[1]);
+    expect(keys[0]).not.toEqual(keys[1]);
+  });
+
+  it('keeps the readings when the run is refused', async () => {
+    const { runtime, service } = setup([MAPPING()], {});
+    await expect(service.requestRefresh('u-1', 'model-1', { purpose: 'build', scope: { kind: 'model' }, rereadDocuments: true })).rejects.toThrow();
+    expect(runtime.forgetDocumentReadings).not.toHaveBeenCalled();
   });
 
   it('clears the built data, then builds again from scratch', async () => {

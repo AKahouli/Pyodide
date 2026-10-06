@@ -337,6 +337,19 @@ async def purge_model_data(model_id: str, command: PurgeModelDataCommand,
     return {**result, "projectionsDropped": dropped}
 
 
+@router.post("/models/{model_id}/forget-readings", status_code=status.HTTP_200_OK)
+async def forget_document_readings(model_id: str, request: Request) -> dict[str, object]:
+    """Forget the model's earlier AI readings of documents so the next run reads every document
+    again. Records, links and the data in use stay as they are."""
+    if not model_id or len(model_id) > 200:
+        raise HTTPException(status_code=422, detail="invalid_model_id")
+    try:
+        forgotten = await store.forget_document_readings(_population_pool(request), model_id)
+    except store.PopulationRunning as exc:
+        raise HTTPException(status_code=409, detail="population_running") from exc
+    return {"modelId": model_id, "documentReadings": forgotten}
+
+
 @router.get("/models/{model_id}/graph-status", status_code=status.HTTP_200_OK)
 async def read_graph_status(model_id: str, request: Request) -> dict[str, object]:
     """Which graph each environment serves (schema, revision, layout), what it holds compared

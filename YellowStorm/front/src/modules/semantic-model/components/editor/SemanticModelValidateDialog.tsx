@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, Loader2, RotateCcw, Share2, Sparkles, Zap } from "lucide-react";
+import { Loader2, Play, RotateCcw, Share2, Sparkles, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { parseApiError } from "@/lib/api-error";
 import { showError, showSuccess } from "@/lib/notifications";
 import { useModuleTranslation } from "@/modules/localization";
@@ -18,23 +19,40 @@ interface Props {
   onRefused?: (message: string) => void;
 }
 
+type RunMode = "update" | "graph" | "scratch";
+const MODES: RunMode[] = ["update", "graph", "scratch"];
+const MODE_ICON = { update: Sparkles, graph: Share2, scratch: RotateCcw } as const;
+
 /**
- * Starts a whole-model population run on the semantic-model runtime. Records typed by
- * hand on the draft are sent along as a manual source. A second, confirmed action clears
- * all generated data first and repopulates the model from scratch.
+ * One screen to start a run: pick what to do (read the sources, rebuild only the graph, or start
+ * over from nothing), with the options of that choice, then one button. Starting over deletes
+ * the generated data, so its warning stays in view and its button is red.
  */
 export function SemanticModelValidateDialog({ open, onOpenChange, modelId, onPopulationStarted, onRefused }: Props) {
   const { t } = useModuleTranslation("semantic-model");
   const populate = usePopulationRun(modelId);
   const rebuild = useRebuildFromScratch(modelId);
-  const [confirming, setConfirming] = useState(false);
   const reproject = useReprojectGraph(modelId);
+  const [mode, setMode] = useState<RunMode>("update");
   const [forgetDocumentReading, setForgetDocumentReading] = useState(false);
-  const [graphOnly, setGraphOnly] = useState(false);
   const busy = populate.isPending || rebuild.isPending || reproject.isPending;
-  useEffect(() => { if (!open) { setConfirming(false); setForgetDocumentReading(false); setGraphOnly(false); } }, [open]);
+  useEffect(() => { if (!open) { setMode("update"); setForgetDocumentReading(false); } }, [open]);
+  // The AI option is a choice per run: changing what to do starts it unticked again.
+  useEffect(() => { setForgetDocumentReading(false); }, [mode]);
 
-  const handleGraphOnly = async () => {
+  const read = async () => {
+    try {
+      const result = await populate.mutateAsync({ rereadDocuments: forgetDocumentReading });
+      onPopulationStarted?.({ jobId: result.jobId, status: result.status, skipped: result.skipped, reused: result.reused, sourceCount: result.sourceCount });
+      onOpenChange(false);
+    } catch (error) {
+      const message = parseApiError(error).message;
+      showError(t("population.startError"), { description: message, duration: 10000 });
+      onRefused?.(message);
+    }
+  };
+
+  const graphOnly = async () => {
     try {
       const result = await reproject.mutateAsync();
       if (!result.revisions.length) {
@@ -49,19 +67,7 @@ export function SemanticModelValidateDialog({ open, onOpenChange, modelId, onPop
     }
   };
 
-  const handleRead = async () => {
-    try {
-      const result = await populate.mutateAsync({ kind: "model" });
-      onPopulationStarted?.({ jobId: result.jobId, status: result.status, skipped: result.skipped, reused: result.reused, sourceCount: result.sourceCount });
-      onOpenChange(false);
-    } catch (error) {
-      const message = parseApiError(error).message;
-      showError(t("population.startError"), { description: message, duration: 10000 });
-      onRefused?.(message);
-    }
-  };
-
-  const handleRebuild = async () => {
+  const startOver = async () => {
     try {
       const result = await rebuild.mutateAsync({ forgetDocumentReading });
       onPopulationStarted?.({ jobId: result.jobId, status: result.status, skipped: result.skipped, reused: result.reused, sourceCount: result.sourceCount, cleared: true });
@@ -74,68 +80,60 @@ export function SemanticModelValidateDialog({ open, onOpenChange, modelId, onPop
     }
   };
 
+  const start = () => void (mode === "graph" ? graphOnly() : mode === "scratch" ? startOver() : read());
+
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
       <DialogContent className="sm:max-w-md">
-        {confirming ? <>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-destructive" />
-              {t("rebuild.title")}
-            </DialogTitle>
-            <DialogDescription>{t("rebuild.description")}</DialogDescription>
-          </DialogHeader>
-          <div role="alert" className="space-y-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
-            <p className="text-destructive">{t("rebuild.removed")}</p>
-            <p className="text-muted-foreground">{t("rebuild.kept")}</p>
-          </div>
-          <label className="flex items-start gap-2.5 rounded-lg border p-3 text-sm">
-            <Checkbox className="mt-0.5" checked={forgetDocumentReading} onCheckedChange={(checked) => setForgetDocumentReading(checked === true)} disabled={busy} />
-            <span>
-              <span className="font-medium">{t("rebuild.forget")}</span>
-              <span className="mt-0.5 block text-xs text-muted-foreground">{t("rebuild.forgetHint")}</span>
-            </span>
-          </label>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setConfirming(false)} disabled={busy}>{t("action.cancel")}</Button>
-            <Button variant="destructive" onClick={() => void handleRebuild()} disabled={busy}>
-              {rebuild.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
-              {t("rebuild.confirm")}
-            </Button>
-          </DialogFooter>
-        </> : <>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Zap className="h-5 w-5 text-primary" />
-              {t("validate.title")}
-            </DialogTitle>
-            <DialogDescription>{t("population.hint")}</DialogDescription>
-          </DialogHeader>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Zap className="h-5 w-5 text-primary" />
+            {t("validate.title")}
+          </DialogTitle>
+          <DialogDescription>{t("run.description")}</DialogDescription>
+        </DialogHeader>
 
-          <label className="flex items-start gap-2.5 rounded-lg border p-3 text-sm">
-            <Checkbox className="mt-0.5" checked={graphOnly} onCheckedChange={(checked) => setGraphOnly(checked === true)} disabled={busy} />
-            <span>
-              <span className="font-medium">{t("population.graphOnly")}</span>
-              <span className="mt-0.5 block text-xs text-muted-foreground">{t("population.graphOnlyHint")}</span>
-            </span>
-          </label>
+        <RadioGroup value={mode} onValueChange={(value) => setMode(value as RunMode)} disabled={busy} className="gap-2" aria-label={t("run.choose")}>
+          {MODES.map((value) => {
+            const Icon = MODE_ICON[value];
+            const selected = mode === value;
+            const danger = value === "scratch";
+            return (
+              <div key={value} className={`rounded-lg border p-3 text-sm transition-colors ${selected ? (danger ? "border-destructive/60 bg-destructive/5" : "border-primary/60 bg-primary/5") : "hover:bg-muted/50"}`}>
+                <label className="flex cursor-pointer items-start gap-2.5">
+                  <RadioGroupItem value={value} className="mt-0.5" aria-describedby={`run-${value}-hint`} />
+                  <span className="min-w-0">
+                    <span className={`flex items-center gap-1.5 font-medium ${danger && selected ? "text-destructive" : ""}`}>
+                      <Icon className="h-3.5 w-3.5" />{t(`run.mode.${value}.title`)}
+                    </span>
+                    <span id={`run-${value}-hint`} className="mt-0.5 block text-xs text-muted-foreground">{t(`run.mode.${value}.hint`)}</span>
+                  </span>
+                </label>
+                {selected && value !== "graph" && <div className="mt-3 space-y-2 pl-6">
+                  {value === "scratch" && <div role="alert" className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs">
+                    <p className="text-destructive">{t("rebuild.removed")}</p>
+                    <p className="text-muted-foreground">{t("rebuild.kept")}</p>
+                  </div>}
+                  <label className="flex cursor-pointer items-start gap-2">
+                    <Checkbox className="mt-0.5" checked={forgetDocumentReading} onCheckedChange={(checked) => setForgetDocumentReading(checked === true)} disabled={busy} />
+                    <span>
+                      <span className="text-xs font-medium">{t("rebuild.forget")}</span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">{t("rebuild.forgetHint")}</span>
+                    </span>
+                  </label>
+                </div>}
+              </div>
+            );
+          })}
+        </RadioGroup>
 
-          <DialogFooter className="sm:flex-col sm:items-stretch sm:gap-2">
-            <Button onClick={() => void (graphOnly ? handleGraphOnly() : handleRead())} disabled={busy}>
-              {(populate.isPending || reproject.isPending) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {graphOnly ? <Share2 className="mr-2 h-4 w-4" /> : <Sparkles className="mr-2 h-4 w-4" />}
-              {t(graphOnly ? "population.graphOnlyAction" : "population.action")}
-            </Button>
-            <div className="flex items-center justify-between gap-2 border-t pt-2">
-              <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => setConfirming(true)} disabled={busy} title={t("rebuild.buttonHint")}>
-                <RotateCcw className="mr-1.5 h-4 w-4" />{t("rebuild.button")}
-              </Button>
-              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
-                {t("action.cancel")}
-              </Button>
-            </div>
-          </DialogFooter>
-        </>}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>{t("action.cancel")}</Button>
+          <Button variant={mode === "scratch" ? "destructive" : "default"} onClick={start} disabled={busy}>
+            {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
+            {t(`run.mode.${mode}.action`)}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

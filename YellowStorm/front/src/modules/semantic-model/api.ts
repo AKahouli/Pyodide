@@ -331,7 +331,7 @@ export const semanticModelApi = {
     return unwrap(await apiClient.post<ApiResponse<MappingHealthResponse>>(API_ENDPOINTS.semanticModels.mappingHealth(id), {}));
   },
   /** A concept scope reads that concept's sources again and keeps every other concept's data in use. */
-  async requestPopulationRefresh(id: string, body: { purpose: 'build' | 'refresh'; scope: { kind: 'model' } | { kind: 'mapping'; mappingId: string } | { kind: 'concept'; conceptId: string } }): Promise<PopulationRefreshResponse> {
+  async requestPopulationRefresh(id: string, body: { purpose: 'build' | 'refresh'; scope: { kind: 'model' } | { kind: 'mapping'; mappingId: string } | { kind: 'concept'; conceptId: string }; rereadDocuments?: boolean }): Promise<PopulationRefreshResponse> {
     return unwrap(await apiClient.post<ApiResponse<PopulationRefreshResponse>>(API_ENDPOINTS.semanticModels.populationRefresh(id), body, { timeout: 0 }));
   },
   /** Clear every record, link and review item generated for the model, then read every source again. */

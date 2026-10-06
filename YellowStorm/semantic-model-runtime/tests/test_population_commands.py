@@ -582,6 +582,30 @@ def test_purge_waits_for_a_running_build(client: TestClient, monkeypatch: pytest
     assert response.json()["detail"] == "population_running"
 
 
+def test_forget_readings_keeps_the_data_and_waits_for_a_running_build(client: TestClient,
+                                                                       monkeypatch: pytest.MonkeyPatch):
+    from app.persistence import population_store as store
+
+    seen: list[str] = []
+
+    async def forget(pool, model_id):  # type: ignore[no-untyped-def]
+        seen.append(model_id)
+        return 12
+
+    monkeypatch.setattr(store, "forget_document_readings", forget)
+    _inject(client, ScriptedPool([]))
+    response = client.post("/v1/semantic-model-population/models/m1/forget-readings", headers=AUTH)
+    assert response.status_code == 200
+    assert response.json() == {"modelId": "m1", "documentReadings": 12} and seen == ["m1"]
+
+    async def running(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise store.PopulationRunning("m1")
+
+    monkeypatch.setattr(store, "forget_document_readings", running)
+    refused = client.post("/v1/semantic-model-population/models/m1/forget-readings", headers=AUTH)
+    assert refused.status_code == 409 and refused.json()["detail"] == "population_running"
+
+
 def test_delete_model_drops_its_graphs_and_returns_no_content(client: TestClient,
                                                               monkeypatch: pytest.MonkeyPatch):
     from app.persistence import population_store as store
