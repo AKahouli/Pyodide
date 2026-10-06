@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronRight, Copy, Crosshair, FileText, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, ArrowRight, Check, ChevronDown, ChevronRight, Copy, Crosshair, FileText, Loader2, X } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 import { CorrectionNotice, FixValueButton, HideRecordButton, useCorrectionActions } from '../preview/RecordCorrections';
 import { linkGroups, type GraphField, type GraphIndex, type GraphRecord } from './graph-analytics';
@@ -8,6 +8,8 @@ export const PANEL_WIDTH_KEY = 'semantic-model.graph.panelWidth';
 const MIN_WIDTH = 320;
 const MAX_WIDTH = 760;
 const LONG_VALUE = 160;
+/** Linked records listed per group before "and N more". */
+const LINKED_SHOWN = 50;
 
 const readWidth = () => {
   try { const stored = Number(localStorage.getItem(PANEL_WIDTH_KEY)); return stored >= MIN_WIDTH && stored <= MAX_WIDTH ? stored : 400; } catch { return 400; }
@@ -29,9 +31,13 @@ export function formatValue(field: Pick<GraphField, 'type' | 'value'>, locale: s
 }
 
 /** Everything about one record of the data graph: its values, what it is linked to, and fixes. */
-export function GraphRecordPanel({ index, record, color, modelId, canEdit, onRebuildStarted, onSelect, onCenter, onClose }: Readonly<{
+export function GraphRecordPanel({ index, record, valuesLoading = false, valuesError, sourceFileName, color, modelId, canEdit, onRebuildStarted, onSelect, onCenter, onClose }: Readonly<{
   index: GraphIndex;
+  /** The record, with its values once they are read. */
   record: GraphRecord;
+  valuesLoading?: boolean;
+  valuesError?: string | null;
+  sourceFileName?: string | null;
   color: string;
   modelId: string;
   canEdit: boolean;
@@ -63,7 +69,7 @@ export function GraphRecordPanel({ index, record, color, modelId, canEdit, onReb
 
   const filled = record.fields.filter((field) => !field.missing);
   const missing = record.fields.filter((field) => field.missing);
-  const source = record.raw.properties.source_file_name;
+  const source = sourceFileName;
   const fieldRow = (field: GraphField) => <FieldRow key={field.key} field={field} text={field.missing ? '' : formatValue(field, language, t('graphViewer.yes'), t('graphViewer.no'))}
     fix={canEdit ? <FixValueButton iconOnly className='rounded p-1 text-white/40 hover:bg-white/10 hover:text-white' label={field.label} value={field.missing ? '' : field.value} busy={fixes.busy}
       onSave={(value) => fixes.save({ action: 'edit_entity', targetIdentity: { entityId: record.id }, payload: { attribute: field.key, value } })} /> : null} />;
@@ -86,12 +92,14 @@ export function GraphRecordPanel({ index, record, color, modelId, canEdit, onReb
 
     {/* Room at the bottom so the assistant's button never covers the last lines. */}
     <div className='flex-1 space-y-5 overflow-y-auto px-4 pb-24 pt-3'>
-      {source && source !== '__missing__' ? <p className='flex items-center gap-2 text-xs text-sky-300/80'><FileText className='h-3.5 w-3.5 shrink-0' /><span className='truncate' title={String(source)}>{String(source)}</span></p> : null}
+      {source ? <p className='flex items-center gap-2 text-xs text-sky-300/80'><FileText className='h-3.5 w-3.5 shrink-0' /><span className='truncate' title={String(source)}>{String(source)}</span></p> : null}
 
       <section aria-label={t('graphViewer.values')}>
         <h4 className='mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-white/40'>{t('graphViewer.values')}</h4>
         {!record.fields.length && <p className='text-xs italic text-white/35'>{t('graphViewer.noAttributes')}</p>}
-        <dl className='divide-y divide-white/5'>{filled.map(fieldRow)}</dl>
+        {valuesLoading && <p className='flex items-center gap-2 py-2 text-xs text-white/45' role='status'><Loader2 className='h-3.5 w-3.5 animate-spin' />{t('graphViewer.loadingValues')}</p>}
+        {valuesError && <p className='py-2 text-xs text-red-400' role='alert'>{valuesError}</p>}
+        {!valuesLoading && !valuesError && <dl className='divide-y divide-white/5'>{filled.map(fieldRow)}</dl>}
         {missing.length > 0 && <div className='mt-2'>
           <button type='button' aria-expanded={showMissing} onClick={() => setShowMissing(!showMissing)} className='flex items-center gap-1 text-xs text-amber-400/80 hover:text-amber-300'>
             {showMissing ? <ChevronDown className='h-3.5 w-3.5' /> : <ChevronRight className='h-3.5 w-3.5' />}{t('graphViewer.missingCount', { count: missing.length })}
@@ -135,7 +143,7 @@ function FieldRow({ field, text, fix }: Readonly<{ field: GraphField; text: stri
 /** What the record is linked to, by relationship; each linked record opens on the graph. */
 function LinkedRecords({ index, record, onSelect }: Readonly<{ index: GraphIndex; record: GraphRecord; onSelect: (id: string) => void }>) {
   const { t } = useModuleTranslation('semantic-model');
-  const groups = linkGroups(index, record.id);
+  const groups = useMemo(() => linkGroups(index, record.id), [index, record.id]);
   const [open, setOpen] = useState<Record<string, boolean>>({});
   useEffect(() => setOpen({}), [record.id]);
   return <section aria-label={t('graphViewer.linked')}>
@@ -151,9 +159,11 @@ function LinkedRecords({ index, record, onSelect }: Readonly<{ index: GraphIndex
           <span className='truncate'>{group.label}</span><Arrow className='h-3 w-3 shrink-0 text-white/40' />
           <span className='truncate font-medium text-white/90'>{group.records.length} {group.conceptLabel}</span>
         </button>
-        {isOpen && <ul className='ml-5 border-l border-white/10 pl-2'>{group.records.map((other) => <li key={other.id}>
+        {isOpen && <ul className='ml-5 border-l border-white/10 pl-2'>{group.records.slice(0, LINKED_SHOWN).map((other) => <li key={other.id}>
           <button type='button' onClick={() => onSelect(other.id)} className='w-full truncate rounded px-1.5 py-0.5 text-left text-xs text-sky-300 hover:bg-white/5 hover:underline' title={other.label}>{other.label}</button>
-        </li>)}</ul>}
+        </li>)}
+          {group.records.length > LINKED_SHOWN && <li className='px-1.5 py-0.5 text-[11px] text-white/40'>{t('graphViewer.andMore', { count: group.records.length - LINKED_SHOWN })}</li>}
+        </ul>}
       </li>;
     })}</ul>
   </section>;

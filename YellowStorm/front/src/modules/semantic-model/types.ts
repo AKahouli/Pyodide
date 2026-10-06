@@ -131,6 +131,30 @@ export interface AgeGraphNode {
   properties: Record<string, unknown>;
 }
 
+/** Every record and link of the data graph, without values: what the graph view draws and counts. */
+export interface GraphOutline {
+  dataRevisionId?: string;
+  concepts: Array<{ id: string; fields: string[] }>;
+  /** Id, concept id, name, missing field keys, and dates by field. */
+  records: Array<{ id: string; c: string; l: string; m?: string[]; d?: Record<string, string> }>;
+  /** Id, relation id, source, target. */
+  links: Array<{ id: string; r: string; s: string; t: string }>;
+}
+
+export interface GraphRecordValues { id: string; values: Record<string, unknown>; sourceFileName: string | null }
+
+export type GraphExportChoice = 'full' | 'short' | 'exclude';
+
+export interface GraphExportContent {
+  dataRevisionId?: string;
+  modelName: string;
+  exportedBy: string;
+  exportedAt: string;
+  shortenTo: number;
+  records: Array<{ id: string; c: string; l: string; v: Record<string, unknown> }>;
+  links: Array<{ id: string; r: string; s: string; t: string }>;
+}
+
 export interface AgeGraphEdge {
   id: string;
   label: string;

@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import type { AgeGraphEdge, AgeGraphNode, SemanticGraph } from '../../types';
+import type { GraphOutline, SemanticGraph } from '../../types';
 import {
   buildGraphIndex, countPer, shownRecords, dateFields, fieldCompleteness, linkGroups, monthlyCounts, mostLinked, neighbourhood, searchRecords, shortestPath, unlinkedRecords,
 } from './graph-analytics';
 
-const node = (id: string, concept: string, label: string, values: Record<string, unknown>): AgeGraphNode => ({
-  id, label: concept, properties: { record_label: label, ...values, _meta: { nodeTypeLabel: concept, attributes: Object.entries(values).map(([key, value]) => ({ key, label: key, value })) } },
-});
-const edge = (id: string, sourceId: string, targetId: string, label: string): AgeGraphEdge => ({ id, label, sourceId, targetId, properties: {} });
+const FIELDS: Record<string, string[]> = { 'c-mail': ['sujet', 'envoye_le'], 'c-person': ['nom'], 'c-file': ['nom_fichier'] };
+const DATE = /^\d{4}-\d{2}/;
+const node = (id: string, concept: string, label: string, values: Record<string, unknown>): GraphOutline['records'][number] => {
+  const m = FIELDS[`c-${concept}`].filter((key) => values[key] === null || values[key] === '' || values[key] === '__missing__');
+  const d = Object.fromEntries(Object.entries(values).filter(([, value]) => typeof value === 'string' && DATE.test(value)));
+  return { id, c: `c-${concept}`, l: label, ...(m.length ? { m } : {}), ...(Object.keys(d).length ? { d: d as Record<string, string> } : {}) };
+};
+const edge = (id: string, s: string, t: string, r: string) => ({ id, r, s, t });
 
 const model = {
   nodes: [
@@ -31,7 +35,7 @@ const edges = [
   edge('e1', 'm1', 'p1', 'r-sent'), edge('e2', 'm2', 'p1', 'r-sent'), edge('e3', 'm3', 'p2', 'r-sent'),
   edge('e4', 'm2', 'f1', 'r-has'),
 ];
-const index = buildGraphIndex(nodes, edges, model);
+const index = buildGraphIndex({ concepts: Object.entries(FIELDS).map(([id, fields]) => ({ id, fields })), records: nodes, links: edges }, model);
 
 describe('graph analytics', () => {
   it('names fields, concepts and links as people read them', () => {
@@ -73,11 +77,10 @@ describe('graph analytics', () => {
     ]);
   });
 
-  it('searches names first, then values, ignoring accents and case', () => {
+  it('searches names, those starting with the words first, ignoring accents and case', () => {
     expect(searchRecords(index, 'ana').map((hit) => hit.record.id)).toEqual(['p1']);
-    const hit = searchRecords(index, 'fevrier')[0];
-    expect(hit.record.id).toBe('m2');
-    expect(hit.field?.label).toBe('Subject');
+    expect(searchRecords(index, 'PDF').map((hit) => hit.record.id)).toEqual(['f1', 'f9']);
+    expect(searchRecords(index, 'fevrier')).toEqual([]);
   });
 
   it('draws the concepts shown, near the focus, inside the period with what is linked only to it', () => {

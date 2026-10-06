@@ -14,9 +14,10 @@ import { ModelSpecificationService } from './model-specification.service';
 import { SemanticModelService } from './semantic-model.service';
 import { SemanticDerivedSourceService } from './semantic-derived-source.service';
 import type { RuntimeDerivation } from '../domain/semantic-derived-source.types';
-import { SemanticRuntimeClientService, type RuntimeValueOrigin } from './semantic-runtime-client.service';
+import { SemanticRuntimeClientService, type RuntimeBoundGraph, type RuntimeValueOrigin } from './semantic-runtime-client.service';
 import { SemanticAttributeExtractionService } from './semantic-attribute-extraction.service';
 import { DOCUMENT_MIME_TYPES, STRUCTURED_MIME_PREFIXES } from './semantic-source-mapping.service';
+import { graphExport, graphFieldKey, graphOutline, graphRecordValues, searchGraphValues, type ExportFieldChoice } from '../domain/graph-outline';
 import { mappingSelection, type WorkspaceSelection, workspaceMappingFiles } from '../domain/workspace-source-scope';
 import type { DocumentResponse as WorkspaceDocumentResponse } from '@modules/workspace/interfaces/workspace-document.interface';
 
@@ -567,6 +568,71 @@ export class SemanticPopulationRefreshService {
         label: relationLabels.get(edge.label) ?? edge.label,
       })),
     };
+  }
+
+  /** The runtime graph read lately, per person, model and revision: the outline, a record and a search read it in turn. */
+  private readonly graphCache = new Map<string, { at: number; graph: Promise<RuntimeBoundGraph> }>();
+
+  private async cachedGraph(userId: string, modelId: string, roles: Array<'owner' | 'editor' | 'viewer'>, dataRevisionId?: string) {
+    const model = await this.models.requireRole(userId, modelId, roles);
+    if (!model.currentDraftVersionId) throw new ConflictException(ErrorCode.SEMANTIC_MODEL_NO_DRAFT);
+    const key = `${userId}|${model.id}|${dataRevisionId ?? 'current'}`;
+    // A named revision never changes; "the current one" may move on, so it is read again sooner.
+    const ttl = dataRevisionId ? 5 * 60_000 : 30_000;
+    const now = Date.now();
+    for (const [cached, entry] of this.graphCache) if (now - entry.at > 5 * 60_000) this.graphCache.delete(cached);
+    let entry = this.graphCache.get(key);
+    if (!entry || now - entry.at > ttl) {
+      entry = { at: now, graph: this.runtime.getBoundGraph(model.id, userId, dataRevisionId) };
+      entry.graph.catch(() => this.graphCache.delete(key));
+      this.graphCache.delete(key);
+      this.graphCache.set(key, entry);
+      while (this.graphCache.size > 6) this.graphCache.delete(this.graphCache.keys().next().value!);
+    }
+    return { model, graph: await entry.graph };
+  }
+
+  /** Every record and link of the data graph, without values: what the graph view draws and counts. */
+  async graphOutline(userId: string, modelId: string, dataRevisionId?: string) {
+    const { graph } = await this.cachedGraph(userId, modelId, ['owner', 'editor', 'viewer'], dataRevisionId);
+    return graphOutline(graph);
+  }
+
+  /** One record's values, read when someone opens it. */
+  async graphRecord(userId: string, modelId: string, recordId: string, dataRevisionId?: string) {
+    const { graph } = await this.cachedGraph(userId, modelId, ['owner', 'editor', 'viewer'], dataRevisionId);
+    const record = graphRecordValues(graph, recordId);
+    if (!record) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, 'This record is not in the data graph');
+    return record;
+  }
+
+  /** Records whose values hold the words typed. */
+  async searchGraph(userId: string, modelId: string, query: string, dataRevisionId?: string, limit = 8) {
+    const { graph } = await this.cachedGraph(userId, modelId, ['owner', 'editor', 'viewer'], dataRevisionId);
+    return { hits: searchGraphValues(graph, query, limit) };
+  }
+
+  /**
+   * The whole data graph for a standalone file, each field kept, cut or left out as chosen. Only owners and editors
+   * may take the data out of the app, and each export is recorded in the model's history.
+   */
+  async exportGraph(user: { id: string; name: string }, modelId: string,
+    input: { dataRevisionId?: string; fields?: Record<string, Record<string, ExportFieldChoice>>; shortenTo?: number }) {
+    const { model, graph } = await this.cachedGraph(user.id, modelId, ['owner', 'editor'], input.dataRevisionId);
+    const shortenTo = Math.min(Math.max(Math.trunc(input.shortenTo ?? 200) || 200, 20), 100_000);
+    const choices: Record<string, Record<string, ExportFieldChoice>> = {};
+    for (const [concept, fields] of Object.entries(input.fields ?? {})) {
+      if (!fields || typeof fields !== 'object') continue;
+      choices[concept] = Object.fromEntries(Object.entries(fields).filter(([, choice]) => choice === 'full' || choice === 'short' || choice === 'exclude'));
+    }
+    const content = graphExport(graph, choices, shortenTo);
+    const exportedAt = new Date().toISOString();
+    await this.database.transaction((client) => this.models.audit(client, model.id, model.currentDraftVersionId, user.id, 'graph.exported', {
+      dataRevisionId: content.dataRevisionId, records: content.records.length, links: content.links.length, shortenTo,
+      excluded: Object.entries(choices).flatMap(([concept, fields]) => Object.entries(fields).filter(([, choice]) => choice === 'exclude').map(([field]) => `${concept}.${field}`)),
+      full: Object.entries(choices).flatMap(([concept, fields]) => Object.entries(fields).filter(([, choice]) => choice === 'full').map(([field]) => `${concept}.${field}`)),
+    }));
+    return { ...content, modelName: model.name, exportedBy: user.name, exportedAt, shortenTo };
   }
 
   /**
@@ -1205,10 +1271,7 @@ export class SemanticPopulationRefreshService {
 }
 
 /** The name the graph stores a field under: the runtime replaces characters it cannot use in a property name. */
-export function graphPropertyKey(field: string): string {
-  const safe = field.replace(/[^a-zA-Z0-9_]/g, '_');
-  return /^[0-9]/.test(safe) ? `_${safe}` : safe;
-}
+export const graphPropertyKey = graphFieldKey;
 
 /** What the extraction agent is told about a field read by AI, beyond its label. Empty parts are left out. */
 export { aiFieldHints };

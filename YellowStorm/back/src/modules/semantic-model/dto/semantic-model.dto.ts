@@ -1495,3 +1495,44 @@ export class SaveCanvasPositionsDto {
   @Type(() => CanvasPositionDto)
   positions!: CanvasPositionDto[];
 }
+
+export class GraphSearchQueryDto {
+  @ApiProperty({ maxLength: 200 })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  q!: string;
+
+  @ApiPropertyOptional({ default: 8, maximum: 50 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  limit?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  dataRevisionId?: string;
+}
+
+export class GraphExportDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  dataRevisionId?: string;
+
+  @ApiPropertyOptional({ description: "Per concept id, per field: 'full', 'short' or 'exclude'. Fields left out are shortened." })
+  @IsOptional()
+  @IsObject()
+  fields?: Record<string, Record<string, 'full' | 'short' | 'exclude'>>;
+
+  @ApiPropertyOptional({ default: 200, minimum: 20, maximum: 100000 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(20)
+  @Max(100000)
+  shortenTo?: number;
+}

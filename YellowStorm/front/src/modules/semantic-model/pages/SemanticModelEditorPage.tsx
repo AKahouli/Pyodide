@@ -968,6 +968,7 @@ export function SemanticModelEditorPage() {
           dataRevisionId={boundDataRevisionId}
           onDataRevision={setBoundDataRevisionId}
           canEdit={canEdit}
+          canExport={model.data?.role === "owner" || model.data?.role === "editor"}
           onRebuildStarted={setPopulationJobId}
         />
       )}
