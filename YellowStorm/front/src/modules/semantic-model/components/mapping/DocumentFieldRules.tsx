@@ -420,15 +420,17 @@ export function AiLimitFields({ value, placeholder, onChange, idPrefix }: Readon
 }
 
 /** This source's AI reading limits, starting from the admin defaults; only what is changed is kept. */
-export function AiLimitsEditor({ defaults, value, onChange }: Readonly<{
+export function AiLimitsEditor({ defaults, value, onChange, folded }: Readonly<{
   defaults?: AiExtractionSettings;
   value: Partial<AiExtractionSettings>;
   onChange: (value: Partial<AiExtractionSettings>) => void;
+  /** Starts folded even when this source changed the limits (its title says so). */
+  folded?: boolean;
 }>) {
   const { t } = useModuleTranslation('semantic-model');
   // "Several records per document" lives in the same settings but is not a reading limit.
   const overridden = Object.keys(value).some((key) => key !== 'manyRecords');
-  const [open, setOpen] = useState(overridden);
+  const [open, setOpen] = useState(overridden && !folded);
   const effective = defaults ? { ...defaults, ...value } : undefined;
   return <div className='rounded-lg border'>
     <div className='flex items-center gap-1 pr-2'>

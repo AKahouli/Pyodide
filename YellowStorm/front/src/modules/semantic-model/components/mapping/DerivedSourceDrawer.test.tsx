@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useSemanticModelEditorStore } from '../../store';
 import type { DerivedSource, SemanticGraph } from '../../types';
-import { DerivedSourceDrawer, PANES_KEY, suggestSourceField } from './DerivedSourceDrawer';
+import { DerivedSourceDrawer, suggestSourceField } from './DerivedSourceDrawer';
 import { derivedPayload, derivedRows } from './derivedMapping';
 import { readingKeys } from './readingText';
 
@@ -61,14 +61,22 @@ function renderDrawer(derived: DerivedSource | undefined = saved) {
   render(<QueryClientProvider client={client}><DerivedSourceDrawer modelId='model-1' target={{ conceptId: 'org', derived }} onClose={vi.fn()} /></QueryClientProvider>);
 }
 
+/** Opens every folded part and field, as a person reading the whole editor; folding is tried on its own. */
+async function openAll() {
+  await screen.findByRole('region', { name: 'derived.fields' });
+  for (let round = 0; round < 4; round++) {
+    const folded = screen.queryAllByRole('button', { expanded: false });
+    if (!folded.length) return;
+    folded.forEach((button) => fireEvent.click(button));
+  }
+}
+
 /** The row of one field in the shared field list. */
 const fieldRow = (label: string) => within(screen.getByRole('region', { name: 'derived.fields' })).getByText(label, { selector: 'span.truncate' }).closest('div.space-y-2') as HTMLElement;
 
 describe('Derived source with the shared field mapping', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Every part open, as a person who opened them all; folding is tried on its own below.
-    localStorage.setItem(PANES_KEY, JSON.stringify({ samples: true, expand: true, fields: true, keys: true, conflict: true, result: true }));
     useSemanticModelEditorStore.getState().hydrate(graph);
     api.listDerivedSources.mockResolvedValue([saved]);
     api.listIdentityRules.mockResolvedValue([{ conceptId: 'org', fields: ['id'] }]);
@@ -87,7 +95,7 @@ describe('Derived source with the shared field mapping', () => {
 
   it('renders the shared field list with the source concept fields as inputs', async () => {
     renderDrawer();
-    await screen.findByText('Country', { selector: 'span.truncate' });
+    await openAll();
     expect(screen.getByText('derived.fields')).toBeInTheDocument();
     expect(screen.getByRole('group', { name: 'mapping.readAll.label' })).toBeInTheDocument();
     const id = fieldRow('ID');
@@ -97,26 +105,60 @@ describe('Derived source with the shared field mapping', () => {
     expect(within(fieldRow('Country')).getByRole('combobox', { name: 'mapping.methodFor' })).toHaveTextContent('mapping.method.ignore');
   });
 
-  it('folds every part but the fields, says on each title what it holds, and remembers what is opened', async () => {
-    localStorage.removeItem(PANES_KEY);
+  it('opens with every part folded, each title saying what it holds', async () => {
     renderDrawer();
-    await screen.findByText('Country', { selector: 'span.truncate' });
-    const pane = (name: string) => screen.getByRole('region', { name });
-    expect(within(pane('derived.fields')).getByRole('button', { expanded: true })).toBeInTheDocument();
-    const keys = within(pane('derived.keysTitle')).getByRole('button', { expanded: false });
+    const fields = await screen.findByRole('region', { name: 'derived.fields' });
+    expect(within(fields).getByRole('button', { expanded: false })).toHaveTextContent('derived.fieldsSummary');
     // Folded, the key fields still show on the title.
-    expect(keys).toHaveTextContent('ID');
-    expect(screen.queryAllByRole('button', { name: 'derived.keyFor' })).toHaveLength(0);
-    fireEvent.click(keys);
-    expect(screen.getAllByRole('button', { name: 'derived.keyFor' }).length).toBeGreaterThan(0);
-    expect(JSON.parse(localStorage.getItem(PANES_KEY) ?? '{}')).toMatchObject({ keys: true, samples: false });
+    expect(within(screen.getByRole('region', { name: 'derived.keysTitle' })).getByRole('button', { expanded: false })).toHaveTextContent('ID');
+    expect(screen.queryAllByRole('button', { expanded: true })).toHaveLength(0);
+  });
+
+  it('shows each field on one line with where and how it reads, opens it, and marks it as a key there', async () => {
+    renderDrawer();
+    fireEvent.click(within(await screen.findByRole('region', { name: 'derived.fields' })).getByRole('button', { expanded: false }));
+    const id = screen.getAllByRole('button', { name: 'mapping.fold.toggle' })[0];
+    expect(id).toHaveTextContent('ID');
+    expect(id).toHaveTextContent('Customer ID · mapping.method.direct');
+    expect(screen.queryByRole('combobox', { name: 'mapping.methodFor' })).not.toBeInTheDocument();
+    fireEvent.click(id);
+    expect(screen.getAllByRole('combobox', { name: 'mapping.methodFor' })).toHaveLength(1);
+    // ID is the key; Name can become one from its line.
+    const keyButtons = screen.getAllByRole('button', { name: 'derived.keyFor' });
+    expect(keyButtons.map((button) => button.getAttribute('aria-pressed'))).toEqual(['true', 'false']);
+    fireEvent.click(keyButtons[1]);
+    expect(within(screen.getByRole('region', { name: 'derived.keysTitle' })).getByRole('button', { expanded: false })).toHaveTextContent('ID, Name');
+  });
+
+  it('reads one field on the sample records from its line', async () => {
+    renderDrawer();
+    fireEvent.click(within(await screen.findByRole('region', { name: 'derived.fields' })).getByRole('button', { expanded: false }));
+    await waitFor(() => expect(api.previewDerivedFields).toHaveBeenCalled(), { timeout: 2000 });
+    api.previewDerivedFields.mockClear();
+    const read = screen.getAllByRole('button', { name: 'mapping.fold.readFor' })[0];
+    await waitFor(() => expect(read).toBeEnabled());
+    fireEvent.click(read);
+    await waitFor(() => expect(api.previewDerivedFields).toHaveBeenCalledTimes(1));
+    expect(api.previewDerivedFields.mock.calls[0][1].fieldMappings).toEqual([{ sourceAttribute: 'customer_id', targetAttribute: 'id' }]);
+    // What it found shows on the field's line.
+    expect(await screen.findByText(/→ c-1/)).toBeInTheDocument();
+  });
+
+  it('marks a field changed since saving and reverts it', async () => {
+    renderDrawer();
+    await openAll();
+    expect(screen.queryByRole('button', { name: 'mapping.fold.revertFor' })).not.toBeInTheDocument();
+    fireEvent.click(within(fieldRow('Name')).getByRole('combobox', { name: 'mapping.methodFor' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'mapping.method.constant' }));
+    fireEvent.click(screen.getByRole('button', { name: 'mapping.fold.revertFor' }));
+    expect(within(fieldRow('Name')).getByRole('combobox', { name: 'mapping.methodFor' })).toHaveTextContent('mapping.method.direct');
+    expect(screen.queryByRole('button', { name: 'mapping.fold.revertFor' })).not.toBeInTheDocument();
   });
 
   it('marks a folded part that blocks saving, and shows why beside Save', async () => {
-    localStorage.removeItem(PANES_KEY);
     api.listIdentityRules.mockResolvedValue([]);
     renderDrawer({ ...saved, conflictRule: 'latest' });
-    await screen.findByText('Country', { selector: 'span.truncate' });
+    await screen.findByRole('region', { name: 'derived.fields' });
     expect(within(screen.getByRole('region', { name: 'derived.conflictTitle' })).getByRole('button')).toHaveTextContent('derived.problem.orderBy');
     expect(screen.getByRole('alert')).toHaveTextContent('derived.problem.orderBy');
     expect(screen.getByRole('button', { name: 'derived.save' })).toBeDisabled();
@@ -124,7 +166,7 @@ describe('Derived source with the shared field mapping', () => {
 
   it('saves a derived source saved before the field modes exactly as it was', async () => {
     renderDrawer();
-    await screen.findByText('Country', { selector: 'span.truncate' });
+    await openAll();
     fireEvent.click(screen.getByRole('button', { name: 'derived.save' }));
     await waitFor(() => expect(api.saveDerivedSource).toHaveBeenCalled());
     expect(api.saveDerivedSource.mock.calls[0][1]).toEqual({
@@ -140,7 +182,7 @@ describe('Derived source with the shared field mapping', () => {
       ai: { aiRows: 0, aiCalls: 0, aiSkippedRows: 0, aiFailedRows: 0 }, itemFields: ['@item'], itemsTruncated: false,
     });
     renderDrawer({ ...saved, expand, fieldMappings: [{ sourceAttribute: '@item', targetAttribute: 'id' }, { sourceAttribute: '@item', targetAttribute: 'name' }] });
-    await screen.findByText('Country', { selector: 'span.truncate' });
+    await openAll();
     // The item is offered beside the source fields, and the saved rows still read it.
     expect(within(fieldRow('ID')).getByRole('combobox', { name: 'derived.sourceFieldFor' })).toHaveTextContent('derived.expand.item');
     expect(screen.getByRole('switch', { name: /derived.expand.label/ })).toBeChecked();
@@ -150,6 +192,7 @@ describe('Derived source with the shared field mapping', () => {
     // The source field the items come from is sent; the item itself is not a field of the record.
     expect(Object.keys(request.records[0].values)).toEqual(['customer_name']);
     expect(await screen.findByText('derived.expand.found')).toBeInTheDocument();
+    await openAll();
     expect(screen.getAllByText(/derived.expand.itemOf/)).toHaveLength(2);
     fireEvent.click(screen.getByRole('button', { name: 'derived.save' }));
     await waitFor(() => expect(api.saveDerivedSource).toHaveBeenCalled());
@@ -158,7 +201,7 @@ describe('Derived source with the shared field mapping', () => {
 
   it('asks for the field to expand before saving', async () => {
     renderDrawer();
-    await screen.findByText('Country', { selector: 'span.truncate' });
+    await openAll();
     fireEvent.click(screen.getByRole('switch', { name: /derived.expand.label/ }));
     expect(await screen.findByText('derived.expand.problem.field')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'derived.save' })).toBeDisabled();
@@ -169,7 +212,7 @@ describe('Derived source with the shared field mapping', () => {
     api.getExtractionDefaults.mockResolvedValue({ aiSettings: { maxBlocks: 120, maxCharacters: 60000, longDocumentCharacters: 40000, blocksPerField: 8 }, configured: {} });
     renderDrawer({ ...saved, aiSettings: { maxBlocks: 40 }, fieldMappings: [...saved.fieldMappings,
       { sourceAttribute: 'notes', targetAttribute: 'country', mode: 'extract', extractionStrategy: 'ai' }] });
-    await screen.findByText('Country', { selector: 'span.truncate' });
+    await openAll();
     expect(screen.getByText('mapping.ai.title')).toBeInTheDocument();
     expect(screen.getByRole('group', { name: 'mapping.presets.title' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'derived.save' }));
@@ -179,7 +222,7 @@ describe('Derived source with the shared field mapping', () => {
 
   it('picks the first five sample records, filters above eight, and previews each with its evidence', async () => {
     renderDrawer({ ...saved, fieldMappings: [...saved.fieldMappings, { sourceAttribute: 'notes', targetAttribute: 'country', mode: 'extract', extractionStrategy: 'deterministic', rules: { labels: ['Pays'] } }] });
-    await screen.findByText('Country', { selector: 'span.truncate' });
+    await openAll();
     await waitFor(() => expect(screen.getAllByRole('checkbox', { name: 'derived.recordFor' })).toHaveLength(10));
     expect(screen.getAllByRole('checkbox', { name: 'derived.recordFor' }).filter((box) => (box as HTMLInputElement).checked)).toHaveLength(5);
     expect(screen.getByRole('textbox', { name: 'derived.recordsFilter' })).toBeInTheDocument();
@@ -189,6 +232,7 @@ describe('Derived source with the shared field mapping', () => {
     // A key field is only kept in the record's identity; it is sent as the source field's value.
     expect(request.records[0]).toEqual({ entityId: 'contract:k1', values: { customer_id: 'c-1', customer_name: 'Acme', notes: NOTES } });
     const result = await screen.findByRole('region', { name: 'derived.resultTitle' });
+    fireEvent.click(within(result).getByRole('button', { expanded: false }));
     // Each value names the source field and the record it was read on.
     expect(within(result).getAllByText('France')[0]).toBeInTheDocument();
     expect(within(result).getByText(/Notes · K-1 · Client: Acme/)).toBeInTheDocument();
@@ -198,7 +242,7 @@ describe('Derived source with the shared field mapping', () => {
 
   it('saves the field modes with only what each one uses', async () => {
     renderDrawer();
-    await screen.findByText('Country', { selector: 'span.truncate' });
+    await openAll();
     const country = fieldRow('Country');
     fireEvent.click(within(country).getByRole('combobox', { name: 'mapping.methodFor' }));
     fireEvent.click(await screen.findByRole('option', { name: 'mapping.method.extract' }));
