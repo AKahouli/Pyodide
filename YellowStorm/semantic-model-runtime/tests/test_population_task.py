@@ -650,3 +650,45 @@ def test_lease_owners_name_the_worker_node_and_this_process():
     owner = lease_owner_for("semantic-population@host")
     assert owner.startswith(node_lease_prefix("semantic-population@host") + WORKER_BOOT_ID + ":")
     assert owner != lease_owner_for("semantic-population@host")
+
+
+def test_concept_refresh_accepts_links_and_no_source_of_concepts_it_keeps():
+    binding = [{"relationId": "r1", "referenceField": "parent_ref", "targetField": "agreement_no"}]
+    whole = command(bindings=binding)
+    # A whole build must read the fields a link matches on.
+    assert run_population_for_payload(whole)["errorCode"] == "invalid_relation_bindings"
+    refresh = command(bindings=binding)
+    refresh["payload"]["scope"] = {"kind": "concept", "conceptId": "c1"}
+    # The kept concept's fields come from the data in use.
+    assert run_population_for_payload(refresh)["ok"] is True
+    unknown = command(bindings=[{**binding[0], "referenceField": "no_such_field"}])
+    unknown["payload"]["scope"] = {"kind": "concept", "conceptId": "c1"}
+    assert run_population_for_payload(unknown)["errorCode"] == "invalid_relation_bindings"
+    # A concept made from another one alone has no source of its own.
+    derived_only = command(sources=[])
+    derived_only["payload"]["scope"] = {"kind": "concept", "conceptId": "c2"}
+    assert run_population_for_payload(derived_only)["ok"] is True
+    assert run_population_for_payload(command(sources=[]))["errorCode"] == "invalid_sources"
+
+
+@pytest.mark.asyncio
+async def test_progress_says_how_far_the_current_step_is_and_counts_ai_calls():
+    from app.workers.population_tasks import PopulationProgress
+
+    reports: list[dict] = []
+
+    async def report(snapshot: dict) -> None:
+        reports.append(snapshot)
+
+    progress = PopulationProgress(report, min_interval=0)
+    await progress.begin(1)
+    assert "step" not in reports[-1] and "ai" not in reports[-1]
+    await progress.advance("rows", 1000, 25000)
+    await progress.count_ai("planned", 40)
+    await progress.count_ai("answered")
+    await progress.count_ai("reused")
+    assert reports[-1]["step"] == {"unit": "rows", "done": 1000, "total": 25000}
+    assert reports[-1]["ai"] == {"planned": 40, "answered": 1, "reused": 1, "skipped": 0, "failed": 0}
+    # A finished source or a new phase has no step left; the AI tally runs for the whole run.
+    await progress.enter("linking")
+    assert "step" not in reports[-1] and reports[-1]["ai"]["planned"] == 40

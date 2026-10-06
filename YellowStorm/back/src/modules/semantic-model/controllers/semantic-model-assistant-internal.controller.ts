@@ -11,7 +11,6 @@ import {
   AssistantMapSpreadsheetDto,
   AssistantModelChangesDto,
   AssistantProfileDto,
-  AssistantRecordsQueryDto,
   AssistantSuggestSourcesDto,
 } from '../dto/semantic-model-assistant.dto';
 import { AssistantDescribeDataQueryDto, AssistantFindRecordsDto, AssistantQueryRecordsDto, AssistantRelatedRecordsDto } from '../dto/semantic-graph-search.dto';
@@ -186,12 +185,6 @@ export class SemanticModelAssistantInternalController {
   @RequirePermissions(UPDATE, 'any')
   stopRun(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Param('jobId') jobId: string) {
     return this.assistant.stopRun(assistantActorFrom(request.headers).userId, modelId, jobId);
-  }
-
-  @Get('models/:modelId/concepts/:concept/records')
-  @RequirePermissions(READ, 'any')
-  searchRecords(@Req() request: ActorRequest, @Param('modelId') modelId: string, @Param('concept') concept: string, @Query() query: AssistantRecordsQueryDto) {
-    return this.assistant.searchRecords(assistantActorFrom(request.headers).userId, modelId, concept, query.q, query.limit);
   }
 
   @Post('models/:modelId/graph-search')

@@ -5,7 +5,8 @@ import {
   type AiExtractionSettings, type RunLimits,
 } from '../domain/semantic-source-mapping.types';
 
-const KEYS = Object.keys(DEFAULT_AI_EXTRACTION_SETTINGS) as Exclude<keyof AiExtractionSettings, 'manyRecords'>[];
+// parallelCalls has no built-in value here: left out, the runtime uses its own (and no mapping changes fingerprint).
+const KEYS = [...Object.keys(DEFAULT_AI_EXTRACTION_SETTINGS), 'parallelCalls'] as Array<Exclude<keyof AiExtractionSettings, 'manyRecords'>>;
 
 /** Only the limits that were set, as whole numbers; anything else is dropped. */
 export function pickAiSettings(input: unknown): Partial<AiExtractionSettings> {
@@ -54,7 +55,7 @@ export function effectiveAiSettings(defaults: Partial<AiExtractionSettings>, ove
  */
 @Injectable()
 export class SemanticExtractionSettingsService {
-  constructor(private readonly database: SemanticModelDatabaseService) {}
+  constructor(private readonly database: SemanticModelDatabaseService) { }
 
   /** The admin's defaults with every limit filled in, and which ones the admin set. */
   async getDefaults(): Promise<{ aiSettings: AiExtractionSettings; configured: Partial<AiExtractionSettings> }> {

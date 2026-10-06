@@ -11,6 +11,7 @@ const queryState = vi.hoisted(() => ({
   isError: false,
   isFetching: false,
   refetch: vi.fn(),
+  filters: [] as Array<Record<string, string | number | undefined>>,
 }));
 
 vi.mock('@/modules/localization', () => ({
@@ -18,7 +19,7 @@ vi.mock('@/modules/localization', () => ({
 }));
 
 vi.mock('../query/hooks', () => ({
-  useSemanticModels: () => queryState,
+  useSemanticModels: (filters: Record<string, string | number | undefined>) => { queryState.filters.push(filters); return queryState; },
 }));
 
 vi.mock('../components/catalog/SemanticModelCard', () => ({
@@ -36,6 +37,15 @@ describe('SemanticModelCatalogPage', () => {
     queryState.isError = false;
     queryState.isFetching = false;
     queryState.refetch.mockReset();
+    queryState.filters = [];
+  });
+
+  it('asks only for the models shared with the user from the shared tab', async () => {
+    render(<MemoryRouter><SemanticModelCatalogPage /></MemoryRouter>);
+
+    expect(queryState.filters.at(-1)?.scope).toBeUndefined();
+    await userEvent.click(screen.getByRole('tab', { name: 'catalog.section.shared' }));
+    expect(queryState.filters.at(-1)?.scope).toBe('shared');
   });
 
   it('renders a recoverable query error instead of the empty catalog', async () => {

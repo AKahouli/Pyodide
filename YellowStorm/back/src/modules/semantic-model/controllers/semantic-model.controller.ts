@@ -76,7 +76,7 @@ export class SemanticModelController {
   @Get()
   @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
   list(@CurrentUser() user: AuthUser, @Query() query: SemanticModelQueryDto) {
-    return this.models.list(user._id.toString(),query);
+    return this.models.list(user._id.toString(),query).then((page) => this.shares.attachOwners(page));
   }
 
   @Post()
@@ -387,6 +387,21 @@ export class SemanticModelController {
   @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
   rebuildPopulation(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string,@Body() dto: RebuildPopulationDto) {
     return this.populationRefresh.rebuildFromScratch(user._id.toString(),modelId,dto);
+  }
+
+  @Get(':modelId/population/graph-status')
+  @ApiOperation({ summary: 'The graph the draft and published data use: schema, revision, layout, counts and search index' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_READ,Permissions.SEMANTIC_MODELS_ALL],'any')
+  graphStatus(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
+    return this.populationRefresh.graphStatus(user._id.toString(),modelId);
+  }
+
+  @Post(':modelId/population/reproject')
+  @ApiOperation({ summary: 'Rebuild the graph of the data in use from its stored records and links; no source is read again' })
+  @RateLimit({ limit: 3, windowMs: 60_000, keyPrefix: 'semantic-model:population-reproject' })
+  @RequirePermissions([Permissions.SEMANTIC_MODELS_UPDATE,Permissions.SEMANTIC_MODELS_ALL],'any')
+  reprojectGraphs(@CurrentUser() user: AuthUser,@Param('modelId') modelId: string) {
+    return this.populationRefresh.reprojectGraphs(user._id.toString(),modelId);
   }
 
   @Get(':modelId/population/freshness')

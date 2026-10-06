@@ -96,6 +96,22 @@ describe('SemanticRuntimeClientService (P2.11)', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('says why the runtime refused a run, and that it cannot be reached when it is down', async () => {
+    const client = new SemanticRuntimeClientService(config() as any);
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ detail: [
+      { loc: ['body', 'payload', 'sources'], msg: 'Value error, a run reads at least one source' },
+    ] }), { status: 422 }));
+    await expect(client.requestPopulationRun(runCommand as any, 'k')).rejects.toMatchObject({
+      code: ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED,
+      message: 'The semantic runtime refused the request (payload › sources: a run reads at least one source).',
+    });
+    fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'));
+    await expect(client.requestPopulationRun(runCommand as any, 'k')).rejects.toMatchObject({
+      code: ErrorCode.SEMANTIC_MODEL_UNAVAILABLE,
+      message: expect.stringMatching(/cannot be reached right now/),
+    });
+  });
+
   describe('graph search', () => {
     const query = {
       actorUserId: 'u1', modelId: 'm1', environment: 'production' as const, query: 'acme', allowedWorkspaceIds: ['ws-1'],

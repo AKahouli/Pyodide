@@ -147,6 +147,8 @@ export class AssistantRelatedRecordsDto {
   @ApiPropertyOptional({ type: [String] }) @IsOptional() @IsArray() @ArrayMaxSize(10) @IsString({ each: true }) @MaxLength(200, { each: true }) concepts?: string[];
   @ApiPropertyOptional({ enum: ASSISTANT_DATA, default: 'published' }) @IsOptional() @IsIn(ASSISTANT_DATA) data?: AssistantData;
   @ApiPropertyOptional({ default: 50, maximum: 100 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(100) maxRecords?: number;
+  @ApiPropertyOptional({ type: [String], maxItems: 60, description: 'Field values to return with the linked records (key, label or alias; "*" for all)' })
+  @IsOptional() @IsArray() @ArrayMaxSize(60) @IsString({ each: true }) @MaxLength(300, { each: true }) fields?: string[];
 }
 
 /** How query_records compares, groups and totals; checked in full (names, types, values) by the runtime. */
@@ -186,6 +188,13 @@ export class AssistantRecordOrderByDto {
   @ApiPropertyOptional({ enum: RECORD_VALUE_TYPES }) @IsOptional() @IsIn(RECORD_VALUE_TYPES) as?: (typeof RECORD_VALUE_TYPES)[number];
 }
 
+export class AssistantRecordLinkedToDto {
+  @ApiProperty({ description: 'A relationship of the concept, by name (or its inverse name)' })
+  @IsString() @MinLength(1) @MaxLength(300) relation!: string;
+  @ApiProperty({ type: [String], maxItems: 200, description: 'entityId of the linked records (from find_records or query_records)' })
+  @IsArray() @ArrayMinSize(1) @ArrayMaxSize(200) @IsString({ each: true }) @MinLength(1, { each: true }) @MaxLength(300, { each: true }) recordIds!: string[];
+}
+
 export class AssistantQueryRecordsDto {
   @ApiProperty({ description: 'Concept key, label or alias' }) @IsString() @MinLength(1) @MaxLength(300) concept!: string;
   @ApiPropertyOptional({ type: [AssistantRecordFilterDto], maxItems: 20 })
@@ -198,6 +207,8 @@ export class AssistantQueryRecordsDto {
   @ApiPropertyOptional({ type: [AssistantRecordOrderByDto], maxItems: 3 })
   @IsOptional() @IsArray() @ArrayMaxSize(3) @ValidateNested({ each: true }) @Type(() => AssistantRecordOrderByDto) orderBy?: AssistantRecordOrderByDto[];
   @ApiPropertyOptional({ type: [String], maxItems: 60 }) @IsOptional() @IsArray() @ArrayMaxSize(60) @IsString({ each: true }) @MaxLength(300, { each: true }) fields?: string[];
+  @ApiPropertyOptional({ type: [AssistantRecordLinkedToDto], maxItems: 5, description: 'Only records linked through a relationship to these records; always applied on top of the filters' })
+  @IsOptional() @IsArray() @ArrayMaxSize(5) @ValidateNested({ each: true }) @Type(() => AssistantRecordLinkedToDto) linkedTo?: AssistantRecordLinkedToDto[];
   @ApiPropertyOptional({ default: 50, minimum: 0, maximum: 200, description: '0 returns only the total and aggregates' })
   @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(200) limit?: number;
   @ApiPropertyOptional({ default: 0, maximum: 100000 }) @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(100000) offset?: number;

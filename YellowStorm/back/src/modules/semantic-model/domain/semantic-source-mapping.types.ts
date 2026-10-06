@@ -114,6 +114,8 @@ export interface AiExtractionSettings {
   longDocumentCharacters: number;
   /** Blocks kept per field in a long document. */
   blocksPerField: number;
+  /** AI calls made at once for this mapping (one per record); bounded by the admin's ceiling. Absent: 4. */
+  parallelCalls?: number;
   /** One document gives several records (one per item the AI finds), e.g. each line of a table. Mapping only. */
   manyRecords?: boolean;
 }
@@ -128,6 +130,18 @@ export interface RunLimits {
   maxRecordsPerRun: number;
   /** Most field values one run keeps, all records together. */
   maxValuesPerRun: number;
+  /** Most records of one source read with AI in a run (the rest keep their other fields). */
+  maxAiRowsPerSource: number;
+  /** Most AI calls one run makes at once, whatever a mapping asks. */
+  maxAiParallelCalls: number;
+  /** Most e-mails one archive may hold. */
+  maxArchiveEmails: number;
+  /** Largest e-mail archive read, in MB. */
+  maxArchiveMb: number;
+  /** Memory of the reader process for one source, in MB (enforced on Linux). */
+  parserMemoryMb: number;
+  /** Time one full read of an e-mail archive may take, in seconds. */
+  archiveTimeoutSeconds: number;
 }
 
 export const DEFAULT_RUN_LIMITS: RunLimits = {
@@ -135,13 +149,25 @@ export const DEFAULT_RUN_LIMITS: RunLimits = {
   maxRecordsPerSource: 5000,
   maxRecordsPerRun: 10000,
   maxValuesPerRun: 50000,
+  maxAiRowsPerSource: 500,
+  maxAiParallelCalls: 8,
+  maxArchiveEmails: 50000,
+  maxArchiveMb: 1024,
+  parserMemoryMb: 512,
+  archiveTimeoutSeconds: 900,
 };
 
 export const RUN_LIMIT_RANGES: Record<keyof RunLimits, readonly [number, number]> = {
   maxRunSources: [1, 50000],
-  maxRecordsPerSource: [100, 200000],
-  maxRecordsPerRun: [100, 200000],
-  maxValuesPerRun: [1000, 2000000],
+  maxRecordsPerSource: [100, 500000],
+  maxRecordsPerRun: [100, 500000],
+  maxValuesPerRun: [1000, 5000000],
+  maxAiRowsPerSource: [0, 200000],
+  maxAiParallelCalls: [1, 32],
+  maxArchiveEmails: [100, 200000],
+  maxArchiveMb: [10, 51200],
+  parserMemoryMb: [256, 16384],
+  archiveTimeoutSeconds: [60, 7200],
 };
 
 export const DEFAULT_AI_EXTRACTION_SETTINGS: AiExtractionSettings = {

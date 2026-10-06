@@ -278,6 +278,24 @@ def test_concept_records_are_searched_a_page_at_a_time(client: TestClient):
                       headers=AUTH).status_code == 422
 
 
+def test_concept_records_are_filtered_per_field(client: TestClient):
+    binding = {"model_id": "m1", "model_version_id": "v1", "data_revision_id": "dr_1"}
+    pool = RecordingPool([binding, 0, [], []])
+    _inject(client, pool)
+    filters = '{"__label__": "acme", "city": "Par", "empty": " "}'
+    response = client.get("/v1/semantic-model-population/models/m1/concepts/c1/records",
+                          params={"filters": filters}, headers=AUTH)
+    assert response.status_code == 200
+    sql, params = next((sql, params) for sql, params in pool.calls if "count(*)" in sql)
+    # Blank filters are ignored; the name filters the label, a field its value or its key part.
+    assert params == ("dr_1", "c1", None, "%acme%", "%Par%", "city")
+    assert "label ILIKE $4" in sql and "attributes->>$6 ILIKE $5" in sql
+    for bad in ('["city"]', '{"city": 3}', "not json"):
+        rejected = client.get("/v1/semantic-model-population/models/m1/concepts/c1/records",
+                              params={"filters": bad}, headers=AUTH)
+        assert rejected.status_code == 422
+
+
 def test_project_rejects_truncated_listing(client: TestClient):
     revision = {"id": "dr_9", "model_id": "m1", "validation_state": "valid",
                 "projection_ref": None, "correction_sequence": 0}
@@ -327,7 +345,7 @@ def test_project_rebuilds_legacy_unverified_reference(client: TestClient):
     response = client.post("/v1/semantic-model-population/revisions/dr_1/project",
                            headers=AUTH)
     assert response.status_code == 200
-    assert response.json()["projectionRef"] == "age:v1:pop_dr_1"
+    assert response.json()["projectionRef"] == "age:v2:pop_dr_1"  # rebuilt typed
 
 
 def test_activation_swaps_binding_only_on_expected_tuple(client: TestClient):
@@ -562,6 +580,30 @@ def test_purge_waits_for_a_running_build(client: TestClient, monkeypatch: pytest
     response = client.post("/v1/semantic-model-population/models/m1/purge", headers=AUTH, json={})
     assert response.status_code == 409
     assert response.json()["detail"] == "population_running"
+
+
+def test_forget_readings_keeps_the_data_and_waits_for_a_running_build(client: TestClient,
+                                                                       monkeypatch: pytest.MonkeyPatch):
+    from app.persistence import population_store as store
+
+    seen: list[str] = []
+
+    async def forget(pool, model_id):  # type: ignore[no-untyped-def]
+        seen.append(model_id)
+        return 12
+
+    monkeypatch.setattr(store, "forget_document_readings", forget)
+    _inject(client, ScriptedPool([]))
+    response = client.post("/v1/semantic-model-population/models/m1/forget-readings", headers=AUTH)
+    assert response.status_code == 200
+    assert response.json() == {"modelId": "m1", "documentReadings": 12} and seen == ["m1"]
+
+    async def running(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        raise store.PopulationRunning("m1")
+
+    monkeypatch.setattr(store, "forget_document_readings", running)
+    refused = client.post("/v1/semantic-model-population/models/m1/forget-readings", headers=AUTH)
+    assert refused.status_code == 409 and refused.json()["detail"] == "population_running"
 
 
 def test_delete_model_drops_its_graphs_and_returns_no_content(client: TestClient,

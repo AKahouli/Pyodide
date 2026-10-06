@@ -371,6 +371,53 @@ describe('SemanticModelAssistantService', () => {
     expect(result.notes.join(' ')).toMatch(/another version of the model/);
   });
 
+  it('reads the records linked to a record with their values, and says how many exist in all', async () => {
+    const graphSearch = {
+      expand: jest.fn().mockResolvedValue({
+        status: 'partial', truncated: true, hiddenSeeds: 0, dataRevisionId: 'dr-1',
+        nodes: [
+          { entityId: 'mail', conceptId: 'c-mail', conceptLabel: 'Message', label: 'Relance', keyFields: {}, inclusionReason: 'seed', path: [], provenance: [] },
+          { entityId: 'f-1', conceptId: 'c-fact', conceptLabel: 'Fait', label: 'F1', keyFields: {}, inclusionReason: 'relationship', provenance: [],
+            values: { statement: 'Le contrat expire en juin' }, path: [{ fromEntityId: 'mail', relationId: 'r', relationKey: 'enonce', direction: 'outgoing', toEntityId: 'f-1' }] },
+        ],
+        edges: [], unknownFields: ['colour'],
+        linkCounts: [{ relationId: 'r', relationKey: 'enonce', direction: 'outgoing', conceptId: 'c-fact', conceptLabel: 'Fait', count: 60, hidden: 2 }],
+      }),
+    };
+    const { service } = setup(undefined, { graphSearch });
+    const result = await service.relatedRecords('user-1', 'model-1', {
+      recordIds: ['mail'], relations: ['énonce'], direction: 'outgoing', fields: ['statement', 'colour'], maxRecords: 1,
+    });
+    expect(graphSearch.expand).toHaveBeenCalledWith('user-1', 'model-1', expect.objectContaining({ fields: ['statement', 'colour'], maxNodes: 1 }));
+    expect(result.records[1]).toMatchObject({ name: 'F1', values: { statement: 'Le contrat expire en juin' } });
+    expect(result.linkCounts).toEqual([{ relation: 'enonce', direction: 'outgoing', concept: 'Fait', count: 60, hidden: 2 }]);
+    expect(result.completeness).toMatchObject({ complete: false, returned: 1, total: 60, hasMore: true, hiddenRecords: 2 });
+    const notes = result.notes.join(' ');
+    expect(notes).toMatch(/1 of the 60 linked records are returned/);
+    expect(notes).toMatch(/linked_to/);
+    expect(notes).toMatch(/counted in linkCounts as hidden/);
+    expect(notes).toMatch(/fields "colour"/);
+  });
+
+  it('explains an empty result: which condition left nothing, and the stored values a word may have meant', async () => {
+    const graphSearch = {
+      queryRecords: jest.fn().mockResolvedValue({
+        status: 'ok', modelVersionId: 'v-1', definitionsVersionId: 'v-1', dataRevisionId: 'dr-1', concept: { label: 'Invoice' },
+        total: 0, hiddenRecords: 0, unparsable: {}, appliedQuery: {}, records: [], returned: 0, offset: 0, nextOffset: null,
+        diagnostics: { readableRecords: 6, checks: [
+          { part: 'filters[0]', field: 'Status', op: 'eq', matches: 0, didYouMean: ['Payée', 'payee'] },
+          { part: 'filters[1]', field: 'Amount', op: 'gt', matches: 3 }] },
+      }),
+    };
+    const { service } = setup(undefined, { graphSearch });
+    const result = await service.queryRecords('user-1', 'model-1', { concept: 'Invoice', filters: [{ field: 'status', op: 'eq', value: 'payed' }] });
+    expect(result).toMatchObject({ total: 0, completeness: { complete: true, total: 0 }, diagnostics: { readableRecords: 6 } });
+    const notes = result.notes.join(' ');
+    expect(notes).toMatch(/out of 6 readable records/);
+    expect(notes).toMatch(/filters\[0\] \(Status eq\) 0; filters\[1\] \(Amount gt\) 3/);
+    expect(notes).toMatch(/"Payée", "payee"/);
+  });
+
   it('hands back what is wrong in a query so the assistant can fix it', async () => {
     const errors = [{ code: 'invalid_query', part: 'filters[0].field', reason: 'unknown_field', message: 'Invoice has no field "colour"', available: ['Amount'] }];
     const graphSearch = { queryRecords: jest.fn()

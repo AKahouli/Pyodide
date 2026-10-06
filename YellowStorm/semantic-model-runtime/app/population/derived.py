@@ -28,6 +28,7 @@ from __future__ import annotations
 from typing import Any
 
 from .document_rules import RuleError, normalize_ai_settings, to_iso_date
+from .run_limits import ai_pacing
 from .expand import ExpandError, expand_entities, is_item_attribute, normalize_expand
 from .tabular import MAX_ASSERTIONS, MAX_MATERIALIZED_ENTITIES, entity_key, normalize_identity_value
 
@@ -265,7 +266,8 @@ def _recipe_attribute(field: dict, by_field: dict[str, dict]) -> str | None:
 
 
 async def read_derived_fields(derivation: dict, source_entities: list[dict], context: dict[str, Any], *,
-                              cache: Any = None, extract: Any = None, ai_records: int | None = None) -> dict:
+                              cache: Any = None, extract: Any = None, ai_records: int | None = None,
+                              limits: dict[str, int] | None = None, progress: Any = None) -> dict:
     """The fields of a derivation that are not copied as they are, read on every source record with the
     sheet readers: a source field's text read by the document rules and/or AI (``CellReader``: AI once
     per record for all its AI fields, at most ``ai_records`` records per run, unchanged texts reuse
@@ -286,10 +288,12 @@ async def read_derived_fields(derivation: dict, source_entities: list[dict], con
     outcomes: list[dict | None] = [None] * len(ordered)
     reader = None
     if plan["extractions"]:
+        settings = normalize_ai_settings(derivation.get("aiSettings"))
+        pacing = ai_pacing(limits, settings) if limits else {}
         reader = CellReader(plan["extractions"], {
-            **context, "unit": "record", "mappingVersion": derivation["mappingVersion"],
-            "settings": normalize_ai_settings(derivation.get("aiSettings"))},
-            cache=cache, ai_rows=ai_records, extract=extract)
+            **context, "unit": "record", "mappingVersion": derivation["mappingVersion"], "settings": settings},
+            cache=cache, ai_rows=ai_records if ai_records is not None else pacing.get("aiRows"),
+            extract=extract, concurrency=pacing.get("concurrency"), progress=progress)
         columns = extraction_columns(plan["extractions"])
         outcomes = list(await reader.read_rows([
             (entity["entityId"], {column: cell_text(_source_value(entity, column)) for column in columns})
@@ -329,11 +333,14 @@ async def read_derived_fields(derivation: dict, source_entities: list[dict], con
 
 
 def derive_concept(target: dict, derivation: dict, source_entities: list[dict],
-                   source_assertions: list[dict], readings: dict[str, dict] | None = None) -> dict:
+                   source_assertions: list[dict], readings: dict[str, dict] | None = None, *,
+                   max_entities: int = MAX_MATERIALIZED_ENTITIES, max_assertions: int = MAX_ASSERTIONS) -> dict:
     """One target record per distinct key found in the source records, shaped like a source's output.
 
     ``readings`` (from :func:`read_derived_fields`) holds, per source record, the values and evidence
     of the fields that are not copied as they are; a copied field reads the source record itself.
+    ``max_entities`` and ``max_assertions`` bound the result (a run passes its admin's limits: a
+    concept made from 25,000 e-mails has as many records).
     """
     fields = derivation["fieldMappings"]
     by_field = {field["targetAttribute"]: field for field in fields}
@@ -382,7 +389,7 @@ def derive_concept(target: dict, derivation: dict, source_entities: list[dict],
         key = entity_key(target["namespace"], identity)
         group = groups.get(key)
         if group is None:
-            if len(groups) >= MAX_MATERIALIZED_ENTITIES:
+            if len(groups) >= max_entities:
                 gaps.append({"kind": "materialization_cap", "conceptId": target["conceptId"],
                              "rowNumber": None, "detail": "bounded entity budget reached"})
                 continue
@@ -408,7 +415,7 @@ def derive_concept(target: dict, derivation: dict, source_entities: list[dict],
                              "detail": f"attribute '{target_attribute}' has {distinct} different values",
                              "field": target_attribute, "derivationId": derivation["derivationId"]})
                 continue
-            if len(assertions) >= MAX_ASSERTIONS:
+            if len(assertions) >= max_assertions:
                 gaps.append({"kind": "assertion_cap", "conceptId": target["conceptId"], "rowNumber": None,
                              "detail": "bounded assertion budget reached"})
                 continue

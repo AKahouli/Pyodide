@@ -386,3 +386,18 @@ def test_corps_falls_back_to_full_text_when_nothing_new() -> None:
     row = next(read_messages(raw, "message/rfc822")).row
     assert row["corps"] == row["corps_complet"]
     assert "Le devis est joint." in row["corps"]
+
+
+def test_one_read_prepares_the_three_tables_as_reading_each_does(archive: bytes, tmp_path: Path):
+    from app.datasource.parser_sandbox import prepare_dataset_subprocess, prepare_email_tables_subprocess
+
+    on_disk = tmp_path / "mailbox.zip"
+    on_disk.write_bytes(archive)
+    source = {**SOURCE, "sizeBytes": len(archive)}
+    tables = prepare_email_tables_subprocess(source, on_disk, tmp_path / "tables")
+    for sheet in ("messages", "participants", "attachments"):
+        single = prepare_dataset_subprocess(source, {"sheetName": sheet}, on_disk, tmp_path / f"{sheet}.parquet")["dataset"]
+        assert {key: tables[sheet][key] for key in ("rowCount", "columns")} == {key: single[key] for key in ("rowCount", "columns")}
+        together = query_parquet(tables[sheet]["path"], columns=single["columns"], limit=100)["rows"]
+        alone = query_parquet(tmp_path / f"{sheet}.parquet", columns=single["columns"], limit=100)["rows"]
+        assert together == alone

@@ -8,6 +8,9 @@ from pathlib import Path
 import sys
 
 
+DERIVED_MANIFEST = "manifest.json"
+
+
 def _apply_resource_limits() -> None:
     if os.name != "posix":
         return
@@ -42,14 +45,25 @@ def main() -> int:
         if not isinstance(source, dict) or (options is not None and not isinstance(options, dict)):
             raise ValueError("invalid_command")
         from .discovery import is_email_archive
-        if operation not in ("preview", "prepare", "derive"):
+        if operation not in ("preview", "prepare", "derive", "prepare_tables"):
             raise ValueError("invalid_operation")
+        if operation == "prepare_tables":
+            if not is_email_archive(source.get("mimeType")):
+                raise ValueError("unsupported_format_for_dataset")
+            from .datasets import prepare_email_tables
+            with open(sys.argv[2], "rb") as archive:
+                result = {"tables": prepare_email_tables(archive, source["mimeType"], Path(sys.argv[3]))}
+            sys.stdout.write(json.dumps({"ok": True, "result": result}, separators=(",", ":")))
+            return 0
         if operation == "derive":
             if not is_email_archive(source.get("mimeType")):
                 raise ValueError("unsupported_format_for_derivation")
             from .email_archive import derived_manifest
             with open(sys.argv[2], "rb") as archive:
-                result = {"files": derived_manifest(archive, source["mimeType"], Path(sys.argv[3]))}
+                files = derived_manifest(archive, source["mimeType"], Path(sys.argv[3]))
+            # The list goes beside the files: for tens of thousands of e-mails it outgrows the result.
+            (Path(sys.argv[3]) / DERIVED_MANIFEST).write_text(json.dumps(files, separators=(",", ":")), encoding="utf-8")
+            result = {"manifest": DERIVED_MANIFEST, "count": len(files)}
             sys.stdout.write(json.dumps({"ok": True, "result": result}, separators=(",", ":")))
             return 0
         # An e-mail archive is read from disk entry by entry; it never sits in memory whole.

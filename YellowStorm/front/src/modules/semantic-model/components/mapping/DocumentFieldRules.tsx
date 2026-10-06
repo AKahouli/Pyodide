@@ -377,18 +377,22 @@ export function LabelSuggestionChips({ suggestions, added, full, onAdd }: Readon
   </div>;
 }
 
+/** The AI calls a run makes at once when nothing sets it (the runtime's own default). */
+export const DEFAULT_PARALLEL_CALLS = 4;
+
 const LIMIT_KEYS: Array<{ key: Exclude<keyof AiExtractionSettings, 'manyRecords'>; min: number; max: number }> = [
   { key: 'maxBlocks', min: 10, max: 500 },
   { key: 'maxCharacters', min: 2000, max: 400000 },
   { key: 'longDocumentCharacters', min: 1000, max: 2000000 },
   { key: 'blocksPerField', min: 1, max: 50 },
+  { key: 'parallelCalls', min: 1, max: 32 },
 ];
 
 export function limitProblem(value: Partial<AiExtractionSettings>) {
   return LIMIT_KEYS.find(({ key, min, max }) => value[key] !== undefined && (!Number.isInteger(value[key]) || value[key]! < min || value[key]! > max));
 }
 
-/** Fields for the four AI reading limits; an empty field falls back to `placeholder`. */
+/** Fields for the AI reading limits and parallel calls; an empty field falls back to `placeholder`. */
 export function AiLimitFields({ value, placeholder, onChange, idPrefix }: Readonly<{
   value: Partial<AiExtractionSettings>;
   placeholder?: AiExtractionSettings;
@@ -402,7 +406,7 @@ export function AiLimitFields({ value, placeholder, onChange, idPrefix }: Readon
       const invalid = current !== undefined && (!Number.isInteger(current) || current < min || current > max);
       return <FormField key={key} label={t(`mapping.ai.${key}`)} help={t(`mapping.ai.${key}Help`)} htmlFor={`${idPrefix}-${key}`}>
         <Input id={`${idPrefix}-${key}`} type='number' min={min} max={max} className={cn(INPUT, 'tabular-nums')} aria-invalid={invalid}
-          value={current ?? ''} placeholder={placeholder ? String(placeholder[key]) : undefined}
+          value={current ?? ''} placeholder={placeholder ? String(placeholder[key] ?? (key === 'parallelCalls' ? DEFAULT_PARALLEL_CALLS : '')) : undefined}
           onChange={(event) => {
             const text = event.target.value;
             const next = { ...value };
@@ -436,6 +440,7 @@ export function AiLimitsEditor({ defaults, value, onChange }: Readonly<{
           {effective ? t(overridden ? 'mapping.ai.summaryChanged' : 'mapping.ai.summaryDefault', {
             blocks: effective.maxBlocks.toLocaleString(), characters: effective.maxCharacters.toLocaleString(),
             long: effective.longDocumentCharacters.toLocaleString(), perField: effective.blocksPerField,
+            calls: effective.parallelCalls ?? DEFAULT_PARALLEL_CALLS,
           }) : ''}
         </span>
       </button>

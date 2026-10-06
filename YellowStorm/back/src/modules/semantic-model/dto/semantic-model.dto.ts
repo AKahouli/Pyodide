@@ -103,6 +103,11 @@ export class SemanticModelQueryDto {
   @IsString()
   workspace?: string;
 
+  @ApiPropertyOptional({ enum: ['mine', 'shared'], description: 'mine: models the user owns; shared: models other people shared with the user' })
+  @IsOptional()
+  @IsIn(['mine', 'shared'])
+  scope?: 'mine' | 'shared';
+
   @ApiPropertyOptional({ default: 1 })
   @IsOptional()
   @Type(() => Number)
@@ -617,6 +622,10 @@ export class AiExtractionSettingsDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50)
   blocksPerField?: number;
 
+  @ApiPropertyOptional({ minimum: 1, maximum: 32, description: 'AI calls made at once (one per record); never above the admin ceiling' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(32)
+  parallelCalls?: number;
+
   @ApiPropertyOptional({ description: 'One document gives several records, one per item the AI finds (mapping only)' })
   @IsOptional() @IsBoolean()
   manyRecords?: boolean;
@@ -627,17 +636,41 @@ export class RunLimitsDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(50000)
   maxRunSources?: number;
 
-  @ApiPropertyOptional({ minimum: 100, maximum: 200000, description: 'Most records one source gives' })
-  @IsOptional() @Type(() => Number) @IsInt() @Min(100) @Max(200000)
+  @ApiPropertyOptional({ minimum: 100, maximum: 500000, description: 'Most records one source gives' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(100) @Max(500000)
   maxRecordsPerSource?: number;
 
-  @ApiPropertyOptional({ minimum: 100, maximum: 200000, description: 'Most records one run keeps' })
-  @IsOptional() @Type(() => Number) @IsInt() @Min(100) @Max(200000)
+  @ApiPropertyOptional({ minimum: 100, maximum: 500000, description: 'Most records one run keeps' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(100) @Max(500000)
   maxRecordsPerRun?: number;
 
-  @ApiPropertyOptional({ minimum: 1000, maximum: 2000000, description: 'Most field values one run keeps' })
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1000) @Max(2000000)
+  @ApiPropertyOptional({ minimum: 1000, maximum: 5000000, description: 'Most field values one run keeps' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1000) @Max(5000000)
   maxValuesPerRun?: number;
+
+  @ApiPropertyOptional({ minimum: 0, maximum: 200000, description: 'Most records of one source read with AI in a run' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(0) @Max(200000)
+  maxAiRowsPerSource?: number;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 32, description: 'Most AI calls one run makes at once' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(32)
+  maxAiParallelCalls?: number;
+
+  @ApiPropertyOptional({ minimum: 100, maximum: 200000, description: 'Most e-mails one archive may hold' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(100) @Max(200000)
+  maxArchiveEmails?: number;
+
+  @ApiPropertyOptional({ minimum: 10, maximum: 51200, description: 'Largest e-mail archive read, in MB' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(10) @Max(51200)
+  maxArchiveMb?: number;
+
+  @ApiPropertyOptional({ minimum: 256, maximum: 16384, description: 'Memory of the reader process for one source, in MB' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(256) @Max(16384)
+  parserMemoryMb?: number;
+
+  @ApiPropertyOptional({ minimum: 60, maximum: 7200, description: 'Time one full read of an e-mail archive may take, in seconds' })
+  @IsOptional() @Type(() => Number) @IsInt() @Min(60) @Max(7200)
+  archiveTimeoutSeconds?: number;
 }
 
 export class DerivedFieldMappingDto {
@@ -1193,6 +1226,12 @@ export class ConceptRecordsQueryDto {
   @IsString()
   @MaxLength(200)
   dataRevisionId?: string;
+
+  @ApiPropertyOptional({ description: 'Per-field filters as a JSON object of field to text; __label__ is the record name' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(8000)
+  filters?: string;
 }
 
 export class SourceAssetProfileQueryDto {
@@ -1360,15 +1399,22 @@ export class ResolveReviewItemDto {
 }
 
 export class PopulationRefreshScopeDto {
-  @ApiProperty({ enum: ['model', 'mapping'] })
-  @IsIn(['model', 'mapping'])
-  kind!: 'model' | 'mapping';
+  @ApiProperty({ enum: ['model', 'mapping', 'concept'] })
+  @IsIn(['model', 'mapping', 'concept'])
+  kind!: 'model' | 'mapping' | 'concept';
 
   @ApiPropertyOptional({ description: 'Required when kind is mapping' })
   @ValidateIf((scope: PopulationRefreshScopeDto) => scope.kind === 'mapping')
   @IsDefined()
   @IsUUID()
   mappingId?: string;
+
+  @ApiPropertyOptional({ description: 'Required when kind is concept: read its sources again, keep the rest of the data in use' })
+  @ValidateIf((scope: PopulationRefreshScopeDto) => scope.kind === 'concept')
+  @IsDefined()
+  @IsString()
+  @MaxLength(200)
+  conceptId?: string;
 }
 
 export class RequestPopulationRefreshDto {
@@ -1382,6 +1428,11 @@ export class RequestPopulationRefreshDto {
   @ValidateNested()
   @Type(() => PopulationRefreshScopeDto)
   scope!: PopulationRefreshScopeDto;
+
+  @ApiPropertyOptional({ description: 'Read every document again with AI instead of reusing earlier readings' })
+  @IsOptional()
+  @IsBoolean()
+  rereadDocuments?: boolean;
 }
 
 export class RebuildPopulationDto {

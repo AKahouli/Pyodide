@@ -10,7 +10,7 @@ import { CreateSemanticModelDialog } from '../components/catalog/CreateSemanticM
 import { SemanticModelCard } from '../components/catalog/SemanticModelCard';
 import { useSemanticModels } from '../query/hooks';
 
-type CatalogSection = 'all' | 'designed' | 'automatic' | 'records' | 'attention' | 'archived';
+type CatalogSection = 'all' | 'shared' | 'designed' | 'automatic' | 'records' | 'attention' | 'archived';
 
 export function SemanticModelCatalogPage() {
   const { t } = useModuleTranslation('semantic-model');
@@ -23,6 +23,7 @@ export function SemanticModelCatalogPage() {
     search: deferredSearch || undefined,
     kind: section === 'designed' ? 'designed' : section === 'automatic' ? 'workspace_default' : undefined,
     status: section === 'archived' ? 'archived' : undefined,
+    scope: section === 'shared' ? 'shared' : undefined,
   };
   const query = useSemanticModels(filters);
   const items = (query.data?.items ?? []).filter((model) => section === 'archived' || model.status !== 'archived').filter((model) => section !== 'records' || Boolean(model.recordCount)).filter((model) => section !== 'attention' || Boolean(model.brokenBindingCount));
@@ -41,7 +42,7 @@ export function SemanticModelCatalogPage() {
       <section className='space-y-4'>
         <div className='flex flex-col gap-3 rounded-2xl border bg-background/85 p-3 shadow-sm backdrop-blur sm:flex-row sm:items-center'>
           <div className='relative min-w-64 flex-1'><Search className='absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground' /><Input className='pl-9' value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('catalog.search')} aria-label={t('catalog.search')} /></div>
-          <Tabs value={section} onValueChange={(value) => setSection(value as CatalogSection)} className='min-w-0 max-w-full overflow-x-auto'><TabsList className='w-max'>{(['all','designed','automatic','records','attention','archived'] as const).map((item) => <TabsTrigger key={item} value={item}>{t(`catalog.section.${item}`)}</TabsTrigger>)}</TabsList></Tabs>
+          <Tabs value={section} onValueChange={(value) => setSection(value as CatalogSection)} className='min-w-0 max-w-full overflow-x-auto'><TabsList className='w-max'>{(['all','shared','designed','automatic','records','attention','archived'] as const).map((item) => <TabsTrigger key={item} value={item}>{t(`catalog.section.${item}`)}</TabsTrigger>)}</TabsList></Tabs>
         </div>
         {query.isLoading ? (
           <div className='grid gap-5 md:grid-cols-2 xl:grid-cols-3' role='status' aria-label={t('catalog.loading')}>

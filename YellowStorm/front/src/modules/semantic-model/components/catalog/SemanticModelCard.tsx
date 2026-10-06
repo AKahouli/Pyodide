@@ -24,6 +24,7 @@ export function SemanticModelCard({ model }: Readonly<{ model: SemanticModel }>)
   const attention = Boolean(model.brokenBindingCount);
   const isOwner = model.role === 'owner' || !model.role;
   const canEdit = model.role !== 'viewer';
+  const ownerLabel = model.ownerName || model.ownerEmail;
   const [shareOpen, setShareOpen] = useState(false);
   const [cloneOpen, setCloneOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
@@ -62,6 +63,7 @@ export function SemanticModelCard({ model }: Readonly<{ model: SemanticModel }>)
                   <Share2 className='h-4 w-4' />
                 </Button>
               )}
+              {!isOwner && <Badge variant='outline' className='gap-1 border-blue-500/40 text-blue-600 dark:text-blue-300' title={ownerLabel ? t('catalog.sharedBy', { name: ownerLabel }) : undefined}><Share2 className='h-3 w-3' />{model.role === 'editor' ? t('catalog.badge.shared.editor') : t('catalog.badge.shared.viewer')}</Badge>}
               <Badge variant='secondary'>{t(automatic ? 'catalog.badge.automatic' : 'catalog.badge.designed')}</Badge>
               <Badge variant={model.status === 'published' ? 'default' : 'outline'}>{t(`status.${model.status}`)}</Badge>
             </div>
@@ -82,6 +84,7 @@ export function SemanticModelCard({ model }: Readonly<{ model: SemanticModel }>)
                 </Button>
               )}
             </div>
+            {!isOwner && ownerLabel && <p className='line-clamp-1 text-xs text-muted-foreground'>{t('catalog.sharedBy', { name: ownerLabel })}</p>}
             <p className='line-clamp-2 min-h-10 text-sm text-muted-foreground'>{model.description || t('catalog.noDescription')}</p>
           </div>
         </CardHeader>

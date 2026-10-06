@@ -22,10 +22,11 @@ from app.jobs.models import (ActivateRevisionCommand, CorrectionCommand, Idempot
                              ReviewResolveCommand)
 from app.persistence import manual_store
 from app.persistence import population_store as store
-from app.population.age_projection import (LIVE_PROJECTION_PREFIX, ProjectionUnavailable,
+from app.population.age_projection import (ProjectionUnavailable, projection_graph,
                                              drop_projection, ensure_revision_projection,
                                              is_live_projection_ref, projection_exists,
-                                             read_projection_graph)
+                                             graph_counts, is_typed_projection,
+                                             read_projection_graph, reproject_revision)
 from app.population.engine_version import population_engine_version
 from app.population.compiler import (PopulationError, canonical_spec_hash, validate_specification)
 from app.workers.celery_app import POPULATION_QUEUES
@@ -120,17 +121,37 @@ async def mirror_specification(command: MirrorSpecificationCommand,
             "specHash": command.spec_hash, "reused": existing is not None}
 
 
+def _record_filters(raw: str | None) -> dict[str, str]:
+    """Per-field filters of the records table: at most 30 fields, each text at most 200 characters."""
+    if not raw:
+        return {}
+    import json
+
+    try:
+        parsed = json.loads(raw) if len(raw) <= 8000 else None
+    except ValueError:
+        parsed = None
+    if (not isinstance(parsed, dict) or len(parsed) > 30
+            or any(not isinstance(key, str) or not key or len(key) > 200
+                   or not isinstance(value, str) or len(value) > 200 for key, value in parsed.items())):
+        raise HTTPException(status_code=422, detail="invalid_record_filters")
+    return {key: value for key, value in parsed.items() if value.strip()}
+
+
 @router.get("/models/{model_id}/concepts/{concept_id}/records", status_code=status.HTTP_200_OK)
 async def search_concept_records(model_id: str, concept_id: str, request: Request,
                                  environment: str = "draft", q: str | None = None,
                                  limit: int = 50, offset: int = 0,
                                  data_revision_id: str | None = Query(default=None,
                                                                       alias="dataRevisionId"),
+                                 filters: str | None = None,
                                  ) -> dict[str, object]:
-    """Browse one concept's records in the data in use: searchable, a page at a time."""
+    """Browse one concept's records in the data in use: searchable, filterable per field
+    (``filters`` is a JSON object of field to text), a page at a time."""
     if (environment != "draft" or limit < 1 or limit > 200 or offset < 0 or offset > 1_000_000
             or (q is not None and len(q) > 200)):
         raise HTTPException(status_code=422, detail="invalid_read_scope")
+    field_filters = _record_filters(filters)
     pool = _population_read_pool(request)
     binding = await store.get_active_binding(pool, model_id, environment)
     if binding is None:
@@ -139,7 +160,7 @@ async def search_concept_records(model_id: str, concept_id: str, request: Reques
     if data_revision_id is not None and data_revision_id != revision_id:
         raise HTTPException(status_code=409, detail="active_binding_changed")
     total, entities = await store.search_revision_entities(
-        pool, revision_id, concept_id, query=q, limit=limit, offset=offset)
+        pool, revision_id, concept_id, query=q, limit=limit, offset=offset, filters=field_filters)
     origins = await store.list_entity_origins(pool, revision_id,
                                               sorted(entity["entityId"] for entity in entities))
     for entity in entities:
@@ -304,7 +325,7 @@ async def purge_model_data(model_id: str, command: PurgeModelDataCommand,
     for ref in result.pop("projections"):
         if age_pool is None or not is_live_projection_ref(ref):
             continue
-        graph = ref[len(LIVE_PROJECTION_PREFIX):]
+        graph = projection_graph(ref)
         try:
             async with age_pool.acquire() as connection:
                 if await projection_exists(connection, graph):
@@ -314,6 +335,86 @@ async def purge_model_data(model_id: str, command: PurgeModelDataCommand,
             logger.warning("Could not drop graph %s of model %s: %s", graph, model_id,
                            type(exc).__name__)
     return {**result, "projectionsDropped": dropped}
+
+
+@router.post("/models/{model_id}/forget-readings", status_code=status.HTTP_200_OK)
+async def forget_document_readings(model_id: str, request: Request) -> dict[str, object]:
+    """Forget the model's earlier AI readings of documents so the next run reads every document
+    again. Records, links and the data in use stay as they are."""
+    if not model_id or len(model_id) > 200:
+        raise HTTPException(status_code=422, detail="invalid_model_id")
+    try:
+        forgotten = await store.forget_document_readings(_population_pool(request), model_id)
+    except store.PopulationRunning as exc:
+        raise HTTPException(status_code=409, detail="population_running") from exc
+    return {"modelId": model_id, "documentReadings": forgotten}
+
+
+@router.get("/models/{model_id}/graph-status", status_code=status.HTTP_200_OK)
+async def read_graph_status(model_id: str, request: Request) -> dict[str, object]:
+    """Which graph each environment serves (schema, revision, layout), what it holds compared
+    with the stored records and links, and the state of its search index. Read only."""
+    from app.graph_search.embeddings import profile_from_env
+    from app.persistence import graph_search_store as search_store
+
+    if not model_id or len(model_id) > 200:
+        raise HTTPException(status_code=422, detail="invalid_model_id")
+    pool = _population_read_pool(request)
+    age_pool = getattr(request.app.state, "age_pool", None)
+    profile = profile_from_env()
+    environments: list[dict[str, Any]] = []
+    for served in await store.served_graphs(pool, model_id):
+        ref = served["projection_ref"]
+        graph = projection_graph(ref) if is_live_projection_ref(ref) else None
+        counts = None
+        if graph and age_pool is not None:
+            try:
+                async with age_pool.acquire() as connection:
+                    counts = await graph_counts(connection, graph)
+            except Exception as exc:  # noqa: BLE001 - the status says the graph could not be read
+                logger.warning("Could not count graph %s: %s", graph, type(exc).__name__)
+        stored = {"records": int(served["records"]), "links": int(served["links"])}
+        if counts is None:
+            state = "missing"
+        elif counts["vertices"] != stored["records"] or counts["edges"] != stored["links"]:
+            state = "mismatch"
+        else:
+            state = "ok"
+        generation = (await search_store.latest_generation(pool, served["data_revision_id"], profile.fingerprint)
+                      if profile else None)
+        index = search_store.public_generation(generation)
+        created = served["created_at"]
+        environments.append({
+            "environment": served["environment"], "dataRevisionId": served["data_revision_id"],
+            "modelVersionId": served["model_version_id"], "projectionRef": ref, "graphSchema": graph,
+            "layout": "typed" if is_typed_projection(ref) else "entity",
+            "builtAt": created.isoformat() if hasattr(created, "isoformat") else created,
+            "stored": stored, "graph": counts, "state": state,
+            "index": {key: index.get(key) for key in ("state", "expectedCount", "indexedCount", "completedAt")},
+        })
+    return {"modelId": model_id, "environments": environments}
+
+
+@router.post("/models/{model_id}/reproject", status_code=status.HTTP_200_OK)
+async def reproject_model_graphs(model_id: str, request: Request) -> dict[str, object]:
+    """Rebuild the graphs of the data a model serves from its stored records and links: no
+    source is read again and no record changes. Refused while a build runs."""
+    if not model_id or len(model_id) > 200:
+        raise HTTPException(status_code=422, detail="invalid_model_id")
+    pool = _population_pool(request)
+    age_pool = _age_pool(request)
+    if await store.population_running(pool, model_id):
+        raise HTTPException(status_code=409, detail="population_running")
+    rebuilt: list[dict[str, Any]] = []
+    for revision_id in await store.served_revisions(pool, model_id):
+        try:
+            rebuilt.append(await reproject_revision(pool, age_pool, revision_id, force=True))
+        except PopulationError as exc:
+            raise HTTPException(status_code=409, detail=exc.code) from exc
+        except ProjectionUnavailable as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    logger.info("Rebuilt the graphs of model %s: %s", model_id, rebuilt)
+    return {"modelId": model_id, "revisions": rebuilt}
 
 
 @router.delete("/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -335,7 +436,7 @@ async def delete_model(model_id: str, request: Request) -> Response:
     for ref in result["projections"]:
         if age_pool is None or not is_live_projection_ref(ref):
             continue
-        graph = ref[len(LIVE_PROJECTION_PREFIX):]
+        graph = projection_graph(ref)
         try:
             async with age_pool.acquire() as connection:
                 if await projection_exists(connection, graph):

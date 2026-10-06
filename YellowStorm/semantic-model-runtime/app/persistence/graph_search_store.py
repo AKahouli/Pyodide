@@ -311,16 +311,38 @@ async def lexical_candidates(pool: Any, index_id: str, terms: list[str], label_q
     return [{"entityId": row["entity_id"], "score": float(row["score"])} for row in rows]
 
 
+# Neighbours an approximate (HNSW) scan looks at, at least: more finds the true nearest more often.
+MIN_EF_SEARCH = 100
+# Passages looked at per record wanted, before keeping each record's best ones.
+PASSAGES_SCANNED_PER_RECORD = 8
+
+
+async def _nearest(pool: Any, sql: str, *args: Any, wanted: int) -> list[Any]:
+    """Run a nearest-neighbour query through the HNSW index. The filters (generation, concept,
+    workspaces) are applied while the index is walked (iterative scan), so a narrow filter
+    still gets ``wanted`` rows; their order is fixed by the outer ORDER BY."""
+    acquire = getattr(pool, "acquire", None)
+    if acquire is None:  # a single connection (tests, scripts)
+        return await pool.fetch(sql, *args)
+    async with acquire() as connection, connection.transaction():
+        await connection.execute(f"SET LOCAL hnsw.ef_search = {max(MIN_EF_SEARCH, min(wanted, 1000))}")
+        await connection.execute("SET LOCAL hnsw.iterative_scan = relaxed_order")
+        return await connection.fetch(sql, *args)
+
+
 async def vector_candidates(pool: Any, index_id: str, vector: str, concept_ids: list[str] | None,
                             allowed_workspaces: list[str] | None, limit: int) -> list[dict[str, Any]]:
-    """Exact cosine nearest records (no approximate index: the reference ranking)."""
-    rows = await pool.fetch(
-        "SELECT entity_id, 1 - (embedding <=> $4::text::halfvec) AS similarity "
-        "FROM semantic_graph_search.entity_documents "
-        f"WHERE index_id = $1::uuid AND ($2::text[] IS NULL OR concept_id = ANY($2::text[])) AND {_VISIBLE} "
-        "AND status = 'ready' "
-        "ORDER BY embedding <=> $4::text::halfvec, entity_id LIMIT $5",
-        index_id, concept_ids, allowed_workspaces, vector, limit)
+    """The cosine-nearest records, through the vector index (approximate, very close to exact)."""
+    rows = await _nearest(
+        pool,
+        "SELECT entity_id, 1 - distance AS similarity FROM ("
+        "  SELECT entity_id, embedding <=> $4::text::halfvec AS distance "
+        "  FROM semantic_graph_search.entity_documents "
+        f"  WHERE index_id = $1::uuid AND ($2::text[] IS NULL OR concept_id = ANY($2::text[])) AND {_VISIBLE} "
+        "  AND status = 'ready' "
+        "  ORDER BY embedding <=> $4::text::halfvec LIMIT $5) nearest "
+        "ORDER BY distance, entity_id",
+        index_id, concept_ids, allowed_workspaces, vector, limit, wanted=limit)
     return [{"entityId": row["entity_id"], "similarity": float(row["similarity"])} for row in rows]
 
 
@@ -362,21 +384,23 @@ async def lexical_passage_candidates(pool: Any, index_id: str, terms: list[str],
 async def vector_passage_candidates(pool: Any, index_id: str, vector: str, concept_ids: list[str] | None,
                                     allowed_workspaces: list[str] | None, limit: int,
                                     per_record: int = PASSAGES_PER_RECORD) -> list[dict[str, Any]]:
-    """Records with the passages nearest the query (exact cosine), ranked by their best
-    passage; each with its best ``per_record`` passages."""
-    rows = await pool.fetch(
+    """Records with the passages nearest the query (cosine, through the vector index), ranked by
+    their best passage; each with its best ``per_record`` passages among the nearest ones."""
+    scanned = limit * max(per_record, PASSAGES_SCANNED_PER_RECORD)
+    rows = await _nearest(
+        pool,
         "WITH scored AS ("
         "  SELECT entity_id, ordinal, 1 - (embedding <=> $4::text::halfvec) AS similarity "
         "  FROM semantic_graph_search.entity_passages "
         f"  WHERE index_id = $1::uuid AND ($2::text[] IS NULL OR concept_id = ANY($2::text[])) AND {_VISIBLE} "
-        "  AND status = 'ready'), "
+        "  AND status = 'ready' ORDER BY embedding <=> $4::text::halfvec LIMIT $7), "
         "ranked AS (SELECT *, row_number() OVER (PARTITION BY entity_id ORDER BY similarity DESC, ordinal) "
         "  AS place FROM scored), "
         "best AS (SELECT entity_id, similarity FROM ranked WHERE place = 1 "
         "  ORDER BY similarity DESC, entity_id LIMIT $5) "
         "SELECT ranked.entity_id, ranked.ordinal, ranked.similarity FROM ranked JOIN best USING (entity_id) "
         "WHERE ranked.place <= $6 ORDER BY best.similarity DESC, ranked.entity_id, ranked.place",
-        index_id, concept_ids, allowed_workspaces, vector, limit, per_record)
+        index_id, concept_ids, allowed_workspaces, vector, limit, per_record, scanned, wanted=scanned)
     return _passage_hits(rows, "similarity")
 
 
@@ -436,3 +460,64 @@ async def document_texts(pool: Any, index_id: str, entity_ids: list[str]) -> dic
         "SELECT entity_id, search_text FROM semantic_graph_search.entity_documents "
         "WHERE index_id = $1::uuid AND entity_id = ANY($2::text[])", index_id, entity_ids)
     return {row["entity_id"]: row["search_text"] for row in rows}
+
+
+async def entity_attributes(pool: Any, revision_id: str, entity_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """The stored field values of some records: key fields and attributes together."""
+    if not entity_ids:
+        return {}
+    rows = await pool.fetch(
+        "SELECT id, identity_key, attributes FROM semantic_population.entities "
+        "WHERE data_revision_id = $1 AND id = ANY($2::text[])", revision_id, list(entity_ids))
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        values: dict[str, Any] = {}
+        for raw in (row["identity_key"], row["attributes"]):
+            parsed = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(parsed, dict):
+                values.update(parsed)
+        result[row["id"]] = values
+    return result
+
+
+# Every workspace the linked record was read from is readable (manual records have none).
+_LINKED_VISIBLE = (
+    "($4::text[] IS NULL OR NOT EXISTS (SELECT 1 FROM jsonb_array_elements("
+    "CASE WHEN jsonb_typeof(o.provenance -> 'sources') = 'array' THEN o.provenance -> 'sources' "
+    "ELSE '[]'::jsonb END) AS src(item) "
+    "WHERE COALESCE(src.item -> 'assetRef' ->> 'workspaceId', '') <> '' "
+    "AND NOT ((src.item -> 'assetRef' ->> 'workspaceId') = ANY($4::text[]))))")
+
+
+async def link_counts(pool: Any, revision_id: str, seed_ids: list[str], relations: list[str] | None,
+                      direction: str, allowed_workspaces: list[str] | None,
+                      concept_ids: list[str] | None = None) -> list[dict[str, Any]]:
+    """Distinct records linked to the seeds by accepted links, per relation, direction and
+    linked concept (only ``concept_ids`` when given): all of them (``total``) and those the
+    actor may see (``visible``)."""
+    if not seed_ids:
+        return []
+    parts = []
+    if direction in ("outgoing", "both"):
+        parts.append("SELECT relation_id, 'outgoing' AS direction, target_entity_id AS other "
+                     "FROM semantic_population.relationships WHERE data_revision_id = $1 "
+                     "AND state = 'accepted' AND source_entity_id = ANY($2::text[]) "
+                     "AND ($3::text[] IS NULL OR relation_id = ANY($3::text[]))")
+    if direction in ("incoming", "both"):
+        parts.append("SELECT relation_id, 'incoming' AS direction, source_entity_id AS other "
+                     "FROM semantic_population.relationships WHERE data_revision_id = $1 "
+                     "AND state = 'accepted' AND target_entity_id = ANY($2::text[]) "
+                     "AND ($3::text[] IS NULL OR relation_id = ANY($3::text[]))")
+    if not parts:
+        return []
+    rows = await pool.fetch(
+        "SELECT l.relation_id, l.direction, o.concept_id, count(DISTINCT o.id) AS total, "
+        f"count(DISTINCT o.id) FILTER (WHERE {_LINKED_VISIBLE}) AS visible "
+        f"FROM ({' UNION ALL '.join(parts)}) l "
+        "JOIN semantic_population.entities o ON o.data_revision_id = $1 AND o.id = l.other "
+        "WHERE ($5::text[] IS NULL OR o.concept_id = ANY($5::text[])) "
+        "GROUP BY l.relation_id, l.direction, o.concept_id ORDER BY l.relation_id, l.direction, o.concept_id",
+        revision_id, list(seed_ids), list(relations) if relations else None, allowed_workspaces,
+        list(concept_ids) if concept_ids else None)
+    return [{"relationId": row["relation_id"], "direction": row["direction"], "conceptId": row["concept_id"],
+             "total": int(row["total"]), "visible": int(row["visible"])} for row in rows]

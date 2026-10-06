@@ -70,6 +70,7 @@ vi.mock("../query/hooks", () => ({
   useSemanticVersions: () => ({ data: [], isLoading: false }),
   useVersionComparison: () => ({ data: undefined, isLoading: false }),
   usePopulationFreshness: () => ({ data: undefined, isLoading: false }),
+  useGraphStatus: () => ({ data: undefined, isLoading: false, isError: false }),
   useSemanticReviewItems: () => ({ data: [], isLoading: false, isError: false }),
 }));
 

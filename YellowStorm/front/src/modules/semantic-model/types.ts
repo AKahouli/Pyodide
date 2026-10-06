@@ -35,6 +35,9 @@ export interface SemanticModel {
   currentDraftVersionId: string | null;
   currentPublishedVersionId: string | null;
   role?: 'owner' | 'editor' | 'viewer';
+  /** Who owns a model shared with the user; absent on models the user owns. */
+  ownerName?: string | null;
+  ownerEmail?: string | null;
   workspaceCount?: number;
   nodeCount?: number;
   relationCount?: number;
@@ -336,6 +339,12 @@ export interface RunLimits {
   maxRecordsPerSource: number;
   maxRecordsPerRun: number;
   maxValuesPerRun: number;
+  maxAiRowsPerSource: number;
+  maxAiParallelCalls: number;
+  maxArchiveEmails: number;
+  maxArchiveMb: number;
+  parserMemoryMb: number;
+  archiveTimeoutSeconds: number;
 }
 
 export interface RunLimitsDefaults {
@@ -348,6 +357,8 @@ export interface AiExtractionSettings {
   maxCharacters: number;
   longDocumentCharacters: number;
   blocksPerField: number;
+  /** AI calls made at once (one per record), never above the admin ceiling. Absent: 4. */
+  parallelCalls?: number;
   /** One document gives several records, one per item the AI finds. Set on a mapping only. */
   manyRecords?: boolean;
 }
@@ -626,6 +637,32 @@ export interface PopulationRefreshResponse {
 }
 
 /** A rebuild from scratch: what was cleared, then the build it started. */
+/** The graph one environment serves, what it holds compared with the stored data, and its search index. */
+export interface ServedGraph {
+  environment: 'draft' | 'production';
+  dataRevisionId: string;
+  modelVersionId: string;
+  projectionRef: string;
+  graphSchema: string | null;
+  layout: 'typed' | 'entity';
+  builtAt: string | null;
+  stored: { records: number; links: number };
+  graph: { vertices: number; edges: number; conceptLabels: number; relationLabels: number } | null;
+  state: 'ok' | 'mismatch' | 'missing';
+  index: { state: string; expectedCount?: number; indexedCount?: number; completedAt?: string | null };
+}
+
+export interface GraphStatus {
+  modelId: string;
+  environments: ServedGraph[];
+}
+
+/** The graphs rebuilt from the records already stored, one per data revision in use (draft, published). */
+export interface PopulationReprojectResponse {
+  modelId: string;
+  revisions: Array<{ revisionId: string; projectionRef: string; reprojected: boolean; vertices?: number; edges?: number }>;
+}
+
 export interface PopulationRebuildResponse extends PopulationRefreshResponse {
   cleared: { revisions: number; reviewItems: number; jobs: number; documentReadings: number };
 }
@@ -645,7 +682,7 @@ export interface PopulationJob {
 }
 
 export interface PopulationProgress {
-  phase: 'starting' | 'reading' | 'linking' | 'saving';
+  phase: 'starting' | 'reading' | 'deriving' | 'making' | 'linking' | 'saving' | 'projecting';
   total: number;
   done: number;
   /** Files whose earlier result was reused because nothing about them changed. */
@@ -657,6 +694,28 @@ export interface PopulationProgress {
   startedAt: string;
   /** What the saved result changed in the data in use; absent until saved, or when there was no data before. */
   changes?: PopulationChanges;
+  /** How far the current step is: rows of a sheet, files sent for indexing; no total while an archive opens. */
+  step?: { unit: 'rows' | 'files' | 'opening' | string; done: number; total: number | null };
+  /** AI calls of the whole run so far. */
+  ai?: { planned: number; answered: number; reused: number; skipped: number; failed: number };
+}
+
+/** The search index of a model's data: built in the background after each run. */
+export interface SearchIndexStatus {
+  modelId: string;
+  environment: 'draft' | 'production';
+  dataRevisionId: string | null;
+  index: {
+    state: 'missing' | 'queued' | 'indexing' | 'ready' | 'failed' | 'unavailable' | string;
+    expectedCount?: number;
+    indexedCount?: number;
+    exactOnlyCount?: number;
+    failedCount?: number;
+    reusedCount?: number;
+    passageCount?: number;
+    passageIndexedCount?: number;
+    lastErrorCode?: string | null;
+  };
 }
 
 export interface PopulationChanges {

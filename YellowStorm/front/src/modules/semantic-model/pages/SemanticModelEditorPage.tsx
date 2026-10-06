@@ -68,6 +68,7 @@ import { CanvasPalette } from '../components/editor/CanvasPalette';
 import { SemanticTrustPanel } from '../components/review/SemanticTrustPanel';
 import { PopulationStartedPanel, populationServing, type PopulationOutcome } from '../components/population/PopulationStartedPanel';
 import { RunHistoryPanel } from '../components/population/RunHistoryPanel';
+import { GraphStatusTooltip } from '../components/population/GraphStatusTooltip';
 import { VersionsPanel } from "../components/versions/VersionsPanel";
 import { useKnowledgeLinking, type KnowledgeResource } from "../hooks/use-knowledge-linking";
 import { useAssistantSync } from "../hooks/use-assistant-sync";
@@ -205,6 +206,7 @@ export function SemanticModelEditorPage() {
       setBoundDataRevisionId(undefined);
       // Drop, not just invalidate: cached data would re-pin the replaced revision.
       queryClient.removeQueries({ queryKey: ['semantic-models', 'data-preview', modelId] });
+      void queryClient.invalidateQueries({ queryKey: ['semantic-models', 'concept-records', modelId] });
       void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.readiness(modelId ?? 'none') });
       void queryClient.invalidateQueries({ queryKey: semanticModelQueryKeys.reviewQueue(modelId ?? 'none') });
     }
@@ -213,8 +215,9 @@ export function SemanticModelEditorPage() {
     const finalState = populationJob.data.state;
     const finalProgress = populationJob.data.progress;
     const finalServing = populationServing(populationJob.data.result);
+    const finalError = populationJob.data.errorCode;
     setPopulation((current) => current && current.jobId === populationJobId
-      ? { ...current, status: finalState, progress: finalProgress ?? current.progress, serving: finalServing ?? current.serving } : current);
+      ? { ...current, status: finalState, progress: finalProgress ?? current.progress, serving: finalServing ?? current.serving, errorCode: finalError ?? current.errorCode } : current);
     setPopulationJobId(undefined);
   }, [populationJob.data]);
   const [mappingTarget, setMappingTarget] = useState<SourceMappingTarget | null>(null);
@@ -613,6 +616,17 @@ export function SemanticModelEditorPage() {
     closeKnowledge();
     void openMappingTarget({ ...base, conceptId: first.conceptId, replaces: first });
   };
+  /** Read one concept's sources again from its records table; the rest of the data in use is kept. */
+  const refreshConcept = async (conceptId: string) => {
+    if (!modelId) return;
+    try {
+      const run = await semanticModelApi.requestPopulationRefresh(modelId, { purpose: 'build', scope: { kind: 'concept', conceptId } });
+      setPopulationJobId(run.jobId);
+      setPopulation({ jobId: run.jobId, status: run.status, skipped: run.skipped, reused: run.reused, sourceCount: run.sourceCount });
+    } catch (error) {
+      showError(t('records.table.refreshError'), { description: parseApiError(error).message });
+    }
+  };
   const readSwitched = async (mappingIds: string[]) => {
     if (!modelId) return;
     try {
@@ -763,6 +777,7 @@ export function SemanticModelEditorPage() {
             <span className={`inline-block h-1.5 w-1.5 rounded-full align-middle ${freshnessState === 'current' ? 'bg-emerald-500' : freshnessState === 'outdated' ? 'bg-amber-500' : 'bg-muted-foreground/50'}`} aria-hidden />
             <span className='ml-1 hidden 2xl:inline'>{t(`freshness.${freshnessState}`)}</span><span className='sr-only 2xl:hidden'>{t(`freshness.${freshnessState}`)}</span></span></>}
         </p>
+        {modelId && <GraphStatusTooltip modelId={modelId} />}
         <div className="flex shrink-0 items-center gap-1.5">
           {!onCanvas && <Button size='sm' variant='outline' onClick={() => setMode('structure')}><Workflow className='mr-1.5 h-4 w-4' />{t('designer.backToCanvas')}</Button>}
           {onCanvas && <DropdownMenu>
@@ -842,6 +857,8 @@ export function SemanticModelEditorPage() {
             conceptId={recordsConceptId}
             onClose={() => setRecordsConceptId(null)}
             onOpenSource={(mapping) => void openMappingTarget(mappingTarget_(mapping))}
+            onRefresh={canEdit ? () => void refreshConcept(recordsConceptId) : undefined}
+            refreshing={Boolean(populationJobId)}
           />}
           {mode === 'records' && modelId && <SemanticDataPreview modelId={modelId} dataRevisionId={boundDataRevisionId} onDataRevision={setBoundDataRevisionId} onOpenReview={openReview} focus={dataFocus} canEdit={canEdit}
             onOpenMapping={repairMapping} onOpenIdentity={(id) => { setMode('structure'); focus(id, 'identity'); }} onOpenMatching={(id) => { setMode('structure'); focus(id, 'matching'); }} onRebuildStarted={setPopulationJobId} />}
@@ -878,6 +895,8 @@ export function SemanticModelEditorPage() {
           onStop={canEdit ? () => void stopRun() : undefined}
           stopping={stoppingRun}
           serving={(populationJob.data?.jobId === population.jobId ? populationServing(populationJob.data?.result) : undefined) ?? population.serving}
+          modelId={modelId}
+          dataRevisionId={populationJob.data?.jobId === population.jobId && typeof populationJob.data?.result?.dataRevisionId === 'string' ? populationJob.data.result.dataRevisionId : undefined}
         />}
         {runHistoryOpen && modelId && !population && <RunHistoryPanel modelId={modelId} onClose={() => setRunHistoryOpen(false)} onOpenReview={openReview}
           onOpenRun={(job) => { setRunHistoryOpen(false); setPopulationJobId(job.jobId); setPopulation({ jobId: job.jobId, status: job.state, skipped: [], reused: false }); }} />}

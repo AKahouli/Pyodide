@@ -7,6 +7,7 @@ import { WorkspaceShareService } from '@modules/workspace/workspace-share.servic
 import { WorkspaceDocumentService } from '@modules/workspace/workspace-document.service';
 import { SemanticModelDatabaseService } from '../infrastructure/semantic-model-database.service';
 import { graphDiff } from '../domain/graph-diff';
+import { findCompleteness, queryCompleteness, relatedCompleteness } from '../domain/answer-completeness';
 import {
   attributeTypes,
   type AttributeDefinition,
@@ -232,6 +233,22 @@ function queryResultBody(result: RuntimeRecordsQueryResult) {
   };
 }
 
+/** Why a records query matched nothing: an empty concept, or which filter or link left nothing, and the stored values a text value may have meant. */
+function emptyResultNotes(result: RuntimeRecordsQueryResult): string[] {
+  const diagnostics = result.diagnostics;
+  if (!diagnostics) return ['No record matches this query.'];
+  if (diagnostics.readableRecords === 0) {
+    return [result.hiddenRecords
+      ? 'No record matches: every record of this concept comes from sources the user cannot open.'
+      : 'No record matches: this concept holds no record yet.'];
+  }
+  const notes = [`No record matches this query, out of ${String(diagnostics.readableRecords)} readable records. Each condition alone keeps: ${diagnostics.checks.map((check) => `${check.part} (${check.field} ${check.op}) ${String(check.matches)}`).join('; ')}.`];
+  for (const check of diagnostics.checks.filter((item) => item.didYouMean?.length)) {
+    notes.push(`${check.part} matches no stored value of "${check.field}". Stored values that look like it: ${(check.didYouMean ?? []).map((value) => `"${value}"`).join(', ')}. Ask the user or retry with one of them; never present the empty result as the answer.`);
+  }
+  return notes;
+}
+
 /** What a records query left out or could not read, said so the assistant reports it. */
 function queryNotes(result: RuntimeRecordsQueryResult): string[] {
   const notes: string[] = [];
@@ -252,7 +269,7 @@ function queryNotes(result: RuntimeRecordsQueryResult): string[] {
     notes.push(`${String(count)} value${count > 1 ? 's' : ''} of "${field.label}" could not be read as ${kinds[field.type] ?? 'typed values'} and ${count > 1 ? 'were' : 'was'} left out of the comparisons, groups and totals on this field. Say so in the answer.`);
   }
   if (result.hiddenRecords) notes.push(`${String(result.hiddenRecords)} records of this concept come from sources the user cannot open: they are not counted or shown.`);
-  if (result.total === 0) notes.push('No record matches this query.');
+  if (result.total === 0) notes.push(...emptyResultNotes(result));
   if (result.bucketsTruncated) notes.push(`Only the first ${String(result.buckets?.length ?? 0)} groups are returned: more exist. Say the list is incomplete, or narrow the query.`);
   if (!result.buckets && result.nextOffset !== null && result.nextOffset !== undefined) {
     const first = (result.offset ?? 0) + 1;
@@ -280,7 +297,7 @@ export class SemanticModelAssistantService {
     private readonly workspaceShares: WorkspaceShareService,
     private readonly documents: WorkspaceDocumentService,
     private readonly graphSearch: SemanticGraphSearchService,
-  ) {}
+  ) { }
 
   // ── Models ────────────────────────────────────────────────────────────────
 
@@ -918,8 +935,10 @@ export class SemanticModelAssistantService {
     if (unknown.length) throw new BadRequestException(ErrorCode.SEMANTIC_MODEL_VALIDATION_FAILED, `Some picked files or folders are not in ${workspace.name}`);
     const nameOf = (id: string) => { const item = byId.get(id)!; return item.isFolder ? item.folderName || item.originalName : item.originalName; };
     const reason = option.reason?.trim().slice(0, 300) ?? '';
-    const base = { workspaceId: option.workspaceId, workspaceName: workspace.name, folderIds, documentIds, reason,
-      folders: folderIds.slice(0, 10).map(nameOf), documents: documentIds.slice(0, 10).map(nameOf) };
+    const base = {
+      workspaceId: option.workspaceId, workspaceName: workspace.name, folderIds, documentIds, reason,
+      folders: folderIds.slice(0, 10).map(nameOf), documents: documentIds.slice(0, 10).map(nameOf)
+    };
     if (!folderIds.length && documentIds.length === 1) {
       const document = byId.get(documentIds[0])!;
       if (STRUCTURED_MIME_PREFIXES.some((prefix) => document.mimeType.startsWith(prefix))) {
@@ -1030,18 +1049,8 @@ export class SemanticModelAssistantService {
       jobId: target, state: job.state, stopped: job.state === 'cancelled' || stopping,
       message: job.state === 'cancelled' ? 'The data update was stopped; the data in use did not change'
         : stopping ? 'The data update is stopping; the data in use will not change'
-        : RUN_ENDED.has(job.state) ? 'This data update had already ended' : 'The data update could not be stopped',
+          : RUN_ENDED.has(job.state) ? 'This data update had already ended' : 'The data update could not be stopped',
     };
-  }
-
-  async searchRecords(userId: string, modelId: string, concept: string, query?: string, limit = 20) {
-    const graph = await this.graph.getGraph(userId, modelId);
-    const node = this.findConcept(graph, concept);
-    if (!node) throw new NotFoundException(ErrorCode.SEMANTIC_MODEL_NOT_FOUND, `There is no concept "${concept}" in this model`);
-    const page = await this.population.conceptRecords(userId, modelId, node.id, { q: query, limit: Math.min(Math.max(limit, 1), 50), offset: 0 }) as {
-      total: number; records: { label: string; values: Record<string, unknown>; identity?: Record<string, unknown> }[];
-    };
-    return { concept: node.label, total: page.total, records: page.records.map((record) => ({ name: record.label, ...record.identity, ...record.values })) };
   }
 
   /**
@@ -1071,6 +1080,12 @@ export class SemanticModelAssistantService {
     if (result.coverage.passageTruncatedCount) {
       notes.push(`${String(result.coverage.passageTruncatedCount)} records have fields too long to be searched to their end: words near the end of those fields may not be found.`);
     }
+    const completeness = findCompleteness(result);
+    if (completeness.hasMore) notes.push(`More records match than the ${String(completeness.returned)} returned: the list is not complete. Raise limit, narrow the search, or use query_records for every record of a concept.`);
+    if (completeness.reasons.includes('index_partial')) {
+      notes.push(`Only ${String(result.coverage.indexedCount + result.coverage.exactOnlyCount)} of ${String(result.coverage.expectedCount)} records are in the search index: matching records may be missing.`);
+    }
+    if (completeness.hiddenRecords) notes.push(`${String(completeness.hiddenRecords)} records come from sources the user cannot open: they were not searched or shown.`);
     return {
       model: this.modelRef(model), data, status: result.status, searchMode: result.modeUsed, indexState: result.index.state,
       concepts: result.concepts.map((concept) => concept.label), unknownConcepts: result.unknownConcepts,
@@ -1085,7 +1100,7 @@ export class SemanticModelAssistantService {
           ...(passages.length ? { passages } : {}), sourceCount: seed.provenance.length,
         };
       }),
-      coverage: result.coverage, notes,
+      coverage: result.coverage, completeness, notes,
     };
   }
 
@@ -1096,7 +1111,7 @@ export class SemanticModelAssistantService {
    */
   async relatedRecords(userId: string, modelId: string, input: {
     recordIds: string[]; relations?: string[]; direction?: RuntimeGraphExpandStep['direction']; thenRelations?: string[];
-    concepts?: string[]; data?: AssistantDataChoice; maxRecords?: number;
+    concepts?: string[]; data?: AssistantDataChoice; maxRecords?: number; fields?: string[];
   }) {
     const data = input.data ?? 'published';
     const direction = input.direction ?? 'both';
@@ -1110,9 +1125,22 @@ export class SemanticModelAssistantService {
     const model = await this.models.get(userId, modelId);
     const result = await this.graphSearch.expand(userId, modelId, {
       environment: assistantEnvironment(data), seedEntityIds: input.recordIds, steps, maxNodes: input.maxRecords ?? 50,
+      ...(input.fields?.length ? { fields: input.fields } : {}),
     });
+    const completeness = relatedCompleteness(result, !twoSteps);
+    const linkCounts = (result.linkCounts ?? []).map((count) => ({
+      relation: count.relationKey, direction: count.direction, concept: count.conceptLabel, count: count.count,
+      ...(count.hidden ? { hidden: count.hidden } : {}),
+    }));
     const notes: string[] = [];
-    if (result.truncated) notes.push(`The result stopped at ${String(result.nodes.length)} records: more linked records exist. Say that the list is incomplete.`);
+    if (completeness.hasMore) {
+      notes.push(completeness.total !== null
+        ? `${String(completeness.returned)} of the ${String(completeness.total)} linked records are returned (linkCounts gives the exact count per relationship). To read them all, call query_records on the linked concept with linked_to=[{"relation": ..., "record_ids": [...]}] and page with nextOffset; otherwise say the list is incomplete.`
+        : `The result stopped at ${String(result.nodes.length)} records: more linked records exist. Say that the list is incomplete.`);
+    }
+    if (linkCounts.some((count) => count.hidden)) notes.push('Some linked records come from sources the user cannot open: they are counted in linkCounts as hidden and not shown.');
+    if (result.unknownFields?.length) notes.push(`No linked record has the fields ${result.unknownFields.map((name) => `"${name}"`).join(', ')}: use the field names from describe_model.`);
+    if (result.nodes.some((node) => node.truncatedFields?.length)) notes.push('Some long values were cut at 1500 characters (truncatedFields): say so if they matter.');
     if (result.hiddenSeeds) notes.push(`${String(result.hiddenSeeds)} of the records asked for come from sources the user cannot open, so they and their links are not shown.`);
     if (result.status === 'no_match') notes.push('These records have no links of the kind asked for.');
     if (result.status === 'partial') notes.push('Only part of the links could be followed. Say that the result may be incomplete.');
@@ -1120,11 +1148,12 @@ export class SemanticModelAssistantService {
       model: this.modelRef(model), data, status: result.status, truncated: result.truncated,
       records: result.nodes.map((node) => ({
         entityId: node.entityId, concept: node.conceptLabel, name: node.label, keyFields: node.keyFields,
+        ...(node.values ? { values: node.values } : {}), ...(node.truncatedFields?.length ? { truncatedFields: node.truncatedFields } : {}),
         includedBecause: node.inclusionReason === 'seed' ? 'asked_for' : 'linked',
         path: node.path.map((step) => ({ from: step.fromEntityId, relation: step.relationKey, direction: step.direction, to: step.toEntityId })),
       })),
       links: result.edges.map((edge) => ({ relation: edge.relationKey, from: edge.sourceEntityId, to: edge.targetEntityId })),
-      notes,
+      linkCounts, completeness, notes,
     };
   }
 
@@ -1156,8 +1185,10 @@ export class SemanticModelAssistantService {
     });
     for (const stored of overview.concepts) {
       if (!nodes.some((node) => node.key === stored.key)) {
-        concepts.push({ key: stored.key, label: stored.label, recordCount: stored.recordCount, keyFields: stored.keyFields,
-          fields: stored.fields.map((key) => ({ key, label: key, type: 'text' })) });
+        concepts.push({
+          key: stored.key, label: stored.label, recordCount: stored.recordCount, keyFields: stored.keyFields,
+          fields: stored.fields.map((key) => ({ key, label: key, type: 'text' }))
+        });
       }
     }
     if (concepts.some((concept) => concept.fields.some((field) => field.inData === false))) {
@@ -1199,7 +1230,10 @@ export class SemanticModelAssistantService {
     if (result.definitionsVersionId && result.modelVersionId !== result.definitionsVersionId) {
       notes.push('The data was built from another version of the model: field names or types may differ from the data.');
     }
-    return { ...base, concept: result.concept?.label, ...queryResultBody(result), notes };
+    return {
+      ...base, concept: result.concept?.label, ...queryResultBody(result),
+      ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}), completeness: queryCompleteness(result), notes,
+    };
   }
 
   async publish(userId: string, modelId: string) {

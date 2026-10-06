@@ -79,6 +79,9 @@ export function useReviewQueue(id: string | undefined, enabled = true) {
 export function usePopulationFreshness(id: string | undefined, enabled = true) {
   return useQuery({ queryKey: semanticModelQueryKeys.freshness(id ?? 'none'), queryFn: () => semanticModelApi.populationFreshness(id ?? ''), enabled: Boolean(id) && enabled, staleTime: 5_000 });
 }
+export function useGraphStatus(id: string | undefined, enabled = true) {
+  return useQuery({ queryKey: semanticModelQueryKeys.graphStatus(id ?? 'none'), queryFn: () => semanticModelApi.graphStatus(id ?? ''), enabled: Boolean(id) && enabled, staleTime: 5_000 });
+}
 export function useCanvasPositions(id: string | undefined) {
   return useQuery({ queryKey: semanticModelQueryKeys.canvasPositions(id ?? 'none'), queryFn: () => semanticModelApi.canvasPositions(id ?? ''), enabled: Boolean(id) });
 }

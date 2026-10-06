@@ -1,7 +1,7 @@
 import { apiClient } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type { ApiResponse } from '@/lib/api/client';
-import type { ComputedFieldRule, DocumentLabelsResponse, ComputedPreviewResult, SheetFieldPreviewRequest, SheetFieldPreviewResponse,AiExtractionDefaults, RunLimits, RunLimitsDefaults, DerivedSource, DerivedSourceDraft, DerivedFieldPreviewRequest, DerivedFieldPreviewResponse, LastDocumentMapping, MappingPreset, MappingSettings, AiExtractionSettings, AgeGraphEdge, AssistantChangesPage, SourceSuggestionsPage, SourceFileMatches, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRebuildResponse, PopulationRefreshResponse, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
+import type { SearchIndexStatus, ComputedFieldRule, DocumentLabelsResponse, ComputedPreviewResult, SheetFieldPreviewRequest, SheetFieldPreviewResponse,AiExtractionDefaults, RunLimits, RunLimitsDefaults, DerivedSource, DerivedSourceDraft, DerivedFieldPreviewRequest, DerivedFieldPreviewResponse, LastDocumentMapping, MappingPreset, MappingSettings, AiExtractionSettings, AgeGraphEdge, AssistantChangesPage, SourceSuggestionsPage, SourceFileMatches, AgeGraphNode, ConceptSourceMapping, KnowledgeBinding, MappingHealthResponse, Paginated, PopulationJob, PopulationRebuildResponse, PopulationRefreshResponse, PopulationReprojectResponse, GraphStatus, RelationMatchStrategy, RelationResolutionPreview, RelationResolutionRule, SemanticDataPreview, SemanticGraph, SemanticGraphOperation, SemanticModel, SemanticModelMember,
 SemanticModelShareResult, SemanticModelShareRole, SemanticReadiness, PopulationFreshness, DesignerBoxPosition, SemanticReviewItem, SemanticVersion,
 SheetProfile, SourceMappingDraft, SourceMappingPreviewDraft, SourceMappingPreviewResponse, SourceResolutionPolicy,
 StructuredSourceAsset, ValidationIssue, RecordCorrection, RecordCorrectionInput, RecordCorrectionResult, VersionComparison, ReviewQueue, ConceptRecordsPage, SemanticModelCloneInclude, SemanticModelCloneResult } from './types';
@@ -221,9 +221,17 @@ export const semanticModelApi = {
     return unwrap(await apiClient.post<ApiResponse<{ redone: boolean }>>(API_ENDPOINTS.semanticModels.assistantChange(id, changeId, 'redo'), {}, { timeout: 0 }));
   },
   /** A page of one concept's records in the data in use, optionally searched. */
-  async conceptRecords(id: string, conceptId: string, query: { q?: string; limit?: number; offset?: number } = {}): Promise<ConceptRecordsPage> {
+  /** `filters` narrows per field (field key to text; `__label__` is the record name). */
+  /** How far the search index of the model's data is built (the draft data unless asked otherwise). */
+  async searchIndexStatus(id: string, environment: 'draft' | 'production' = 'draft'): Promise<SearchIndexStatus> {
+    return unwrap(await apiClient.get<ApiResponse<SearchIndexStatus>>(API_ENDPOINTS.semanticModels.searchIndex(id), { params: { environment } }));
+  },
+  async conceptRecords(id: string, conceptId: string, query: { q?: string; limit?: number; offset?: number; filters?: Record<string, string> } = {}): Promise<ConceptRecordsPage> {
     return unwrap(await apiClient.get<ApiResponse<ConceptRecordsPage>>(API_ENDPOINTS.semanticModels.conceptRecords(id, conceptId), {
-      params: { ...(query.q ? { q: query.q } : {}), limit: query.limit ?? 50, offset: query.offset ?? 0 },
+      params: {
+        ...(query.q ? { q: query.q } : {}), limit: query.limit ?? 50, offset: query.offset ?? 0,
+        ...(query.filters && Object.keys(query.filters).length ? { filters: JSON.stringify(query.filters) } : {}),
+      },
     }));
   },
   /** The AI reading limits a document mapping starts from, as an admin set them. */
@@ -322,12 +330,21 @@ export const semanticModelApi = {
   async mappingHealth(id: string): Promise<MappingHealthResponse> {
     return unwrap(await apiClient.post<ApiResponse<MappingHealthResponse>>(API_ENDPOINTS.semanticModels.mappingHealth(id), {}));
   },
-  async requestPopulationRefresh(id: string, body: { purpose: 'build' | 'refresh'; scope: { kind: 'model' } | { kind: 'mapping'; mappingId: string } }): Promise<PopulationRefreshResponse> {
+  /** A concept scope reads that concept's sources again and keeps every other concept's data in use. */
+  async requestPopulationRefresh(id: string, body: { purpose: 'build' | 'refresh'; scope: { kind: 'model' } | { kind: 'mapping'; mappingId: string } | { kind: 'concept'; conceptId: string }; rereadDocuments?: boolean }): Promise<PopulationRefreshResponse> {
     return unwrap(await apiClient.post<ApiResponse<PopulationRefreshResponse>>(API_ENDPOINTS.semanticModels.populationRefresh(id), body, { timeout: 0 }));
   },
   /** Clear every record, link and review item generated for the model, then read every source again. */
   async rebuildPopulation(id: string, body: { forgetDocumentReading: boolean }): Promise<PopulationRebuildResponse> {
     return unwrap(await apiClient.post<ApiResponse<PopulationRebuildResponse>>(API_ENDPOINTS.semanticModels.populationRebuild(id), body, { timeout: 0 }));
+  },
+  /** Which graph the draft and the published data use, and whether it holds all the stored data. */
+  async graphStatus(id: string): Promise<GraphStatus> {
+    return unwrap(await apiClient.get<ApiResponse<GraphStatus>>(API_ENDPOINTS.semanticModels.populationGraphStatus(id)));
+  },
+  /** Rebuild the graph of the data in use from its stored records and links: no source is read, no AI call. */
+  async reprojectPopulationGraph(id: string): Promise<PopulationReprojectResponse> {
+    return unwrap(await apiClient.post<ApiResponse<PopulationReprojectResponse>>(API_ENDPOINTS.semanticModels.populationReproject(id), {}, { timeout: 0 }));
   },
   /** This person's latest data updates of the model, newest first. */
   async listPopulationJobs(id: string, limit = 20): Promise<PopulationJob[]> {

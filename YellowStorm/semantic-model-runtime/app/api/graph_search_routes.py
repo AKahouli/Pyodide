@@ -28,7 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.graph_search.embeddings import profile_from_env
 from app.graph_search.indexer import (IndexUnavailable, request_index, request_index_quietly,
                                       settings_for_revision)
-from app.graph_search.record_query import compile_query, overview, run_query
+from app.graph_search.record_query import compile_query, diagnose, field_keys_by_concept, overview, run_query
 from app.graph_search.retrieval import find_seeds, resolve_concepts, resolve_relations
 from app.graph_search.settings import IndexSettings, SearchSettings, index_fingerprint
 from app.graph_search.traversal import MAX_STEPS, expand
@@ -90,6 +90,9 @@ class ExpandQuery(_Pinned):
     seed_entity_ids: list[str] = Field(alias="seedEntityIds", min_length=1, max_length=25)
     steps: list[ExpandStep] = Field(min_length=1, max_length=MAX_STEPS)
     max_nodes: int = Field(default=50, alias="maxNodes", ge=1, le=100)
+    # Field values to return with the records (key, label or alias; "*" for all).
+    fields: list[str] | None = Field(default=None, max_length=60)
+    catalog: Catalog | None = None
 
 
 class RecordFilter(BaseModel):
@@ -99,6 +102,13 @@ class RecordFilter(BaseModel):
     op: str = Field(max_length=30)
     value: Any = None
     as_: str | None = Field(default=None, alias="as", max_length=20)
+
+
+class LinkedTo(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    relation: str = Field(max_length=300)
+    record_ids: list[str] = Field(alias="recordIds", min_length=1, max_length=200)
 
 
 class GroupBy(BaseModel):
@@ -159,6 +169,9 @@ class Catalog(BaseModel):
     relations: list[CatalogRelation] = Field(default_factory=list, max_length=1000)
 
 
+ExpandQuery.model_rebuild()
+
+
 class RecordsQuery(_Pinned):
     """Checked part by part by ``compile_query``; here only sizes are bounded."""
     concept: str = Field(min_length=1, max_length=300)
@@ -168,6 +181,7 @@ class RecordsQuery(_Pinned):
     aggregates: list[Aggregate] = Field(default_factory=list, max_length=30)
     order_by: list[OrderBy] = Field(default_factory=list, alias="orderBy", max_length=10)
     fields: list[str] | None = Field(default=None, max_length=200)
+    linked_to: list[LinkedTo] = Field(default_factory=list, alias="linkedTo", max_length=20)
     limit: int = 50
     offset: int = 0
     catalog: Catalog = Field(default_factory=Catalog)
@@ -315,12 +329,13 @@ async def expand_records(command: ExpandQuery, request: Request) -> dict[str, ob
         raise HTTPException(status_code=503, detail="age_projection_unavailable")
     binding = await _pin(pool, command.model_id, command.environment, command.expected_data_revision_id)
     compiled = await _compiled(pool, binding["data_revision_id"])
+    catalog = command.catalog.model_dump(by_alias=True) if command.catalog else {}
     steps = []
     for index, step in enumerate(command.steps):
         if index > 0 and not step.relations:
             # Following every link twice reaches unrelated records through shared ones.
             raise HTTPException(status_code=422, detail="relations_required_for_second_step")
-        relations, unknown = resolve_relations(compiled, step.relations or [])
+        relations, unknown = resolve_relations(compiled, step.relations or [], catalog)
         if unknown:
             raise HTTPException(status_code=422, detail="unknown_relation")
         concepts, unknown_concepts = resolve_concepts(compiled, step.concepts)
@@ -328,12 +343,14 @@ async def expand_records(command: ExpandQuery, request: Request) -> dict[str, ob
             raise HTTPException(status_code=422, detail="unknown_concept")
         steps.append({"relations": relations or None, "direction": step.direction,
                       "conceptIds": [concept["conceptId"] for concept in concepts] or None})
+    field_keys, unknown_fields = field_keys_by_concept(compiled, catalog, command.fields or [])
     try:
         result = await expand(pool, age_pool, revision_id=binding["data_revision_id"],
                               projection_ref=binding["projection_ref"], compiled=compiled,
                               seed_ids=command.seed_entity_ids, steps=steps,
                               max_nodes=command.max_nodes,
-                              allowed_workspaces=command.allowed_workspace_ids)
+                              allowed_workspaces=command.allowed_workspace_ids,
+                              field_keys=field_keys or None)
     except PopulationError as exc:
         raise HTTPException(status_code=409, detail=exc.code) from exc
     if not result["nodes"]:
@@ -342,7 +359,8 @@ async def expand_records(command: ExpandQuery, request: Request) -> dict[str, ob
         outcome = "partial"
     else:
         outcome = "found"
-    return {**_pinned(binding, command.environment), **result, "status": outcome}
+    return {**_pinned(binding, command.environment), **result, "status": outcome,
+            **({"unknownFields": unknown_fields} if unknown_fields else {})}
 
 
 @router.post("/records-query", status_code=status.HTTP_200_OK)
@@ -355,7 +373,7 @@ async def query_records(command: RecordsQuery, request: Request) -> dict[str, ob
     compiled = await _compiled(pool, binding["data_revision_id"])
     query = command.model_dump(by_alias=True, exclude_none=True,
                                include={"concept", "filters", "match", "group_by", "aggregates",
-                                        "order_by", "fields", "limit", "offset"})
+                                        "order_by", "fields", "linked_to", "limit", "offset"})
     plan, errors, applied = compile_query(
         compiled, command.catalog.model_dump(by_alias=True), query, model_id=command.model_id,
         revision_id=binding["data_revision_id"], allowed_workspaces=command.allowed_workspace_ids,
@@ -366,6 +384,9 @@ async def query_records(command: RecordsQuery, request: Request) -> dict[str, ob
         return {**pinned, "status": outcome, "errors": errors, "appliedQuery": applied}
     try:
         result = await run_query(pool, plan)
+        if result["total"] == 0:
+            # Nothing matched: say which filter or link left nothing, and what was stored instead.
+            result["diagnostics"] = await diagnose(pool, plan)
     except (asyncpg.QueryCanceledError, asyncio.TimeoutError) as exc:
         raise HTTPException(status_code=422, detail="query_too_slow") from exc
     return {**pinned, **result}

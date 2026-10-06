@@ -170,8 +170,10 @@ class Derivation(BaseModel):
 class PopulationScope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["model", "mapping"]
+    kind: Literal["model", "mapping", "concept"]
     mapping_id: str | None = Field(default=None, alias="mappingId", max_length=200)
+    # A concept refresh re-reads one concept's sources and keeps the rest of the data in use.
+    concept_id: str | None = Field(default=None, alias="conceptId", max_length=200)
 
 
 class PopulationPayload(BaseModel):
@@ -189,7 +191,8 @@ class PopulationPayload(BaseModel):
     purpose: Literal["preview", "build", "refresh"]
     scope: PopulationScope
     specification: dict[str, Any]
-    sources: list[PopulationSource] = Field(min_length=1, max_length=25)
+    # Empty only for a concept refresh of a concept made from another one alone (see check_sources).
+    sources: list[PopulationSource] = Field(max_length=25)
     relation_bindings: list[RelationBinding] = Field(
         default_factory=list, alias="relationBindings", max_length=50)
     # Concepts made from another concept's records, after every source is read.
@@ -206,6 +209,12 @@ class PopulationPayload(BaseModel):
         default="default", alias="budgetProfileId", max_length=200)
     # Run size limits set by an admin (app.population.run_limits); absent means the built-in ones.
     limits: dict[str, int] | None = Field(default=None)
+
+    @model_validator(mode="after")
+    def check_sources(self) -> "PopulationPayload":
+        if not self.sources and not (self.scope.kind == "concept" and self.derivations):
+            raise ValueError("a run reads at least one source, unless it refreshes a concept made from another one")
+        return self
 
     @model_serializer(mode="wrap")
     def serialize(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:

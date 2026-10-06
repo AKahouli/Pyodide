@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import html
 import io
+import os
 import re
 import struct
 import zipfile
@@ -32,6 +33,8 @@ from email.parser import BytesParser
 from email.utils import getaddresses, parsedate_to_datetime
 from html.parser import HTMLParser
 from typing import Any, Iterator
+
+from .attachment_text import attachment_text
 
 EMAIL_ARCHIVE_MIMES = {"application/zip", "application/x-zip-compressed"}
 EML_MIMES = {"message/rfc822"}
@@ -53,13 +56,14 @@ LEGACY_COLUMNS = {"apercu": "corps"}
 PARTICIPANT_COLUMNS = ["cle_message", "role", "adresse", "nom_affiche", "domaine"]
 ATTACHMENT_COLUMNS = [
     "cle_piece_jointe", "cle_message", "nom_fichier", "type_fichier", "taille",
-    "empreinte", "statut_lecture", "integree", "email_joint",
+    "empreinte", "statut_lecture", "integree", "email_joint", "contenu", "statut_contenu",
 ]
 COLUMNS = {SHEET_MESSAGES: MESSAGE_COLUMNS, SHEET_PARTICIPANTS: PARTICIPANT_COLUMNS,
            SHEET_ATTACHMENTS: ATTACHMENT_COLUMNS}
 
 # Archive bounds: far above the workbook ones, still finite.
-MAX_ARCHIVE_EMAILS = 20000
+DEFAULT_MAX_ARCHIVE_EMAILS = 50000
+MAX_ARCHIVE_EMAILS_CEILING = 200000
 MAX_ARCHIVE_ENTRIES = 50000
 MAX_ARCHIVE_DECOMPRESSED_BYTES = 8 * 1024 * 1024 * 1024
 MAX_EML_BYTES = 100 * 1024 * 1024
@@ -103,6 +107,16 @@ class Message:
 
 # ---------------------------------------------------------------- archive
 
+def max_archive_emails() -> int:
+    """How many e-mails one archive may hold (``SEMANTIC_EMAIL_MAX_ARCHIVE_EMAILS``, set by an admin
+    through the run limits)."""
+    try:
+        value = int(os.environ.get("SEMANTIC_EMAIL_MAX_ARCHIVE_EMAILS", DEFAULT_MAX_ARCHIVE_EMAILS))
+    except ValueError:
+        return DEFAULT_MAX_ARCHIVE_EMAILS
+    return value if 1 <= value <= MAX_ARCHIVE_EMAILS_CEILING else DEFAULT_MAX_ARCHIVE_EMAILS
+
+
 def _is_eml_entry(name: str) -> bool:
     lowered = name.replace("\\", "/").lower()
     return (lowered.endswith(".eml") and not lowered.startswith("__macosx/")
@@ -133,7 +147,8 @@ def iter_raw_emails(data: bytes | str | Any, mime_type: str) -> Iterator[tuple[s
         raise ValueError("unreadable_source") from exc
     with archive:
         infos = archive.infolist()
-        if len(infos) > MAX_ARCHIVE_ENTRIES:
+        # Folders and other files sit beside the e-mails: the entry bound grows with the e-mail one.
+        if len(infos) > max(MAX_ARCHIVE_ENTRIES, 3 * max_archive_emails()):
             raise ValueError("archive_too_many_entries")
         if sum(info.file_size for info in infos) > MAX_ARCHIVE_DECOMPRESSED_BYTES:
             raise ValueError("source_too_large")
@@ -142,7 +157,7 @@ def iter_raw_emails(data: bytes | str | Any, mime_type: str) -> Iterator[tuple[s
                         key=lambda info: info.filename)
         if not emails:
             raise ValueError("archive_has_no_emails")
-        if len(emails) > MAX_ARCHIVE_EMAILS:
+        if len(emails) > max_archive_emails():
             raise ValueError("archive_too_many_emails")
         for info in emails:
             path = _safe_path(info.filename)
@@ -156,7 +171,8 @@ def iter_raw_emails(data: bytes | str | Any, mime_type: str) -> Iterator[tuple[s
             yield path, raw[:MAX_EML_BYTES]
 
 
-def read_messages(data: bytes | Any, mime_type: str, *, with_payloads: bool = False) -> Iterator[Message]:
+def read_messages(data: bytes | Any, mime_type: str, *, with_payloads: bool = False,
+                  with_text: bool = False) -> Iterator[Message]:
     """Parse every e-mail once; copies of one e-mail (same key) are read once."""
     seen: set[str] = set()
     for path, raw in iter_raw_emails(data, mime_type):
@@ -168,7 +184,7 @@ def read_messages(data: bytes | Any, mime_type: str, *, with_payloads: bool = Fa
         if key in seen:
             continue
         seen.add(key)
-        yield from _parse(raw, path, key, parent=None, depth=0, seen=seen, with_payloads=with_payloads)
+        yield from _parse(raw, path, key, parent=None, depth=0, seen=seen, with_payloads=with_payloads, with_text=with_text)
 
 
 def _message_key(raw: bytes) -> str:
@@ -463,7 +479,7 @@ def read_tnef(data: bytes) -> tuple[list[tuple[str, bytes]], str]:
 # ---------------------------------------------------------------- one e-mail
 
 def _parse(raw: bytes, path: str, key: str, *, parent: str | None, depth: int,
-           seen: set[str], with_payloads: bool) -> Iterator[Message]:
+           seen: set[str], with_payloads: bool, with_text: bool = False) -> Iterator[Message]:
     anomalies: list[str] = []
     try:
         message: EmailMessage = BytesParser(policy=policy.default).parsebytes(raw)  # type: ignore[assignment]
@@ -521,7 +537,7 @@ def _parse(raw: bytes, path: str, key: str, *, parent: str | None, depth: int,
             filename = _filename(part) or (str(inner_message.get("Subject") or "e-mail joint") + ".eml"
                                            if inner_message is not None else "e-mail joint.eml")
             attachments.append(_attachment(key, index, filename, "message/rfc822", payload,
-                                           inline=False, is_email=True, with_payloads=with_payloads))
+                                           inline=False, is_email=True, with_payloads=with_payloads, with_text=with_text))
             if payload and depth < MAX_NESTING:
                 nested.append((payload, f"{path}#{index}"))
             continue
@@ -547,11 +563,11 @@ def _parse(raw: bytes, path: str, key: str, *, parent: str | None, depth: int,
             for inner_name, inner_payload in inner_files:
                 index += 1
                 attachments.append(_attachment(key, index, inner_name, _guess_type(inner_name, "application/octet-stream"),
-                                               inner_payload, inline=False, is_email=False, with_payloads=with_payloads))
+                                               inner_payload, inline=False, is_email=False, with_payloads=with_payloads, with_text=with_text))
             continue
         index += 1
         attachments.append(_attachment(key, index, filename, content_type, payload,
-                                       inline=inline, is_email=False, with_payloads=with_payloads))
+                                       inline=inline, is_email=False, with_payloads=with_payloads, with_text=with_text))
 
     full_body = _bounded_body(text, anomalies, "corps complet")
     # A forward or reply that adds nothing of its own: its body is the quoted message.
@@ -585,7 +601,7 @@ def _parse(raw: bytes, path: str, key: str, *, parent: str | None, depth: int,
             continue
         seen.add(nested_key)
         yield from _parse(payload, nested_path, nested_key, parent=key, depth=depth + 1,
-                          seen=seen, with_payloads=with_payloads)
+                          seen=seen, with_payloads=with_payloads, with_text=with_text)
 
 
 def _bounded_body(text: str, anomalies: list[str], label: str) -> str | None:
@@ -621,9 +637,13 @@ def _parts(message: EmailMessage) -> Iterator[EmailMessage]:
 
 def _attachment(message_key: str, index: int, filename: str, content_type: str,
                 payload: bytes | None, *, inline: bool, is_email: bool,
-                with_payloads: bool) -> Attachment:
+                with_payloads: bool, with_text: bool = False) -> Attachment:
     key = _attachment_key(message_key, index)
     status = _status(content_type, payload, filename)
+    # The file's own text, so what an attachment says can be searched like any field.
+    # Read only for the attachments table: the other tables would pay for it on every pass.
+    content, content_status = (attachment_text(content_type, payload)
+                               if with_text and status == "lue" and not is_email else (None, "non extrait"))
     row = {
         "cle_piece_jointe": key,
         "cle_message": message_key,
@@ -634,6 +654,8 @@ def _attachment(message_key: str, index: int, filename: str, content_type: str,
         "statut_lecture": status,
         "integree": inline,
         "email_joint": is_email,
+        "contenu": content,
+        "statut_contenu": content_status,
     }
     return Attachment(key, filename, content_type, payload if with_payloads else None,
                       inline, is_email, status, row)
@@ -662,7 +684,7 @@ def _message_document(row: dict[str, Any], new_text: str, full_text: str) -> str
 def iter_sheet_rows(data: bytes | Any, mime_type: str, sheet: str) -> Iterator[dict[str, Any]]:
     if sheet not in SHEETS:
         raise ValueError("sheet_not_found")
-    for message in read_messages(data, mime_type):
+    for message in read_messages(data, mime_type, with_text=sheet == SHEET_ATTACHMENTS):
         if sheet == SHEET_MESSAGES:
             yield message.row
         elif sheet == SHEET_PARTICIPANTS:
@@ -768,7 +790,7 @@ def parse_email_archive_preview(data: bytes | Any, mime_type: str,
         raise ValueError("archive_has_no_emails")
     rows: dict[str, list[dict[str, Any]]] = {name: [] for name in SHEETS}
     read = 0
-    for message in read_messages(data, mime_type):
+    for message in read_messages(data, mime_type, with_text=sheet == SHEET_ATTACHMENTS):
         read += 1
         rows[SHEET_MESSAGES].append(message.row)
         rows[SHEET_PARTICIPANTS].extend(message.participants)
