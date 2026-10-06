@@ -28,6 +28,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      # npm ci resolves @yellowmind/observability from back/.generated/ (gitignored):
+      # stage it first, or the install fails with ENOENT on the tarball.
+      - uses: ./.github/actions/stage-observability
       - name: Install typescript for the AST checker
         working-directory: YellowStorm/back
         run: npm ci --ignore-scripts
@@ -66,14 +69,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Stage SDK artifacts into consumers
-        run: node scripts/observability/build-sdks.mjs
+      - uses: ./.github/actions/stage-observability
       - name: Verify staged artifacts exist with manifests
         run: |
           test -f YellowStorm/back/.generated/observability/manifest.json
